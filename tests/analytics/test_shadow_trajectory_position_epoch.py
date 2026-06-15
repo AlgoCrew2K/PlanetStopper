@@ -74,10 +74,10 @@ from analytics import (
 # Position A: a 5-day run. Position B: a later, separate 5-day run, same
 # symphony_id. The two series are deliberately different so a spliced
 # (epoch-blind) trajectory is observably wrong.
-_EPOCH_A = "2026-01-05T14:30:00Z"   # earlier position-open timestamp
-_EPOCH_B = "2026-03-02T14:30:00Z"   # later position-open timestamp (the CURRENT one)
+_EPOCH_A = "2026-01-05T14:30:00Z"  # earlier position-open timestamp
+_EPOCH_B = "2026-03-02T14:30:00Z"  # later position-open timestamp (the CURRENT one)
 
-_POSITION_A_RETURNS = [1.0, -2.0, 0.5, 1.5, -1.0]   # pct per day
+_POSITION_A_RETURNS = [1.0, -2.0, 0.5, 1.5, -1.0]  # pct per day
 _POSITION_B_RETURNS = [-0.5, 0.8, -1.2, 2.0, -0.3]  # pct per day, current epoch
 
 _SYM_ID = "test-symphony-reused-id"
@@ -227,8 +227,7 @@ class TestTrajectoryScopedToCurrentEpoch:
         db_file = _seed_two_epoch_shadow_db(tmp_path)
         trajectory = _get_shadow_cumulative_trajectory(_SYM_ID, db_file)
         assert trajectory is not None, (
-            "two-epoch DB has 5 current-epoch rows (>= 2) — trajectory must "
-            "not be None"
+            "two-epoch DB has 5 current-epoch rows (>= 2) — trajectory must not be None"
         )
         assert trajectory == pytest.approx(_POSITION_B_RETURNS, rel=1e-9), (
             f"trajectory must contain ONLY the current epoch's ({_EPOCH_B}) "
@@ -279,7 +278,7 @@ class TestDryRunConsumersUseCurrentEpochOnly:
         db_file = _seed_two_epoch_shadow_db(tmp_path)
         sym_dict = {
             "id": _SYM_ID,
-            "simple_return": 0.10,   # if_held baseline 10%
+            "simple_return": 0.10,  # if_held baseline 10%
             "net_deposits": 1000.0,
             "time_weighted_return": 0.10,
         }
@@ -290,19 +289,21 @@ class TestDryRunConsumersUseCurrentEpochOnly:
         # for the current epoch's rows. dry_run = if_held + 0 = if_held.
         # The epoch-scoping test still discriminates: a spliced A+B trajectory would
         # yield a different (non-zero) divergence because A and B have different returns.
-        expected_dry_run = if_held   # divergence == 0 when shadow == current
-        spliced_divergence = _chain_link_pct(_POSITION_A_RETURNS + _POSITION_B_RETURNS) - _chain_link_pct(_POSITION_A_RETURNS + _POSITION_B_RETURNS)
+        expected_dry_run = if_held  # divergence == 0 when shadow == current
+        spliced_divergence = _chain_link_pct(
+            _POSITION_A_RETURNS + _POSITION_B_RETURNS
+        ) - _chain_link_pct(_POSITION_A_RETURNS + _POSITION_B_RETURNS)
         # Actually derive the spliced divergence properly: spliced trajectory has
         # shadow==current for all rows so spliced divergence is also 0 — this test
         # cannot discriminate epoch-scoping via CR alone when shadow==current.
         # The trajectory-level scoping tests (TestTrajectoryScopedToCurrentEpoch above)
         # remain the correct discriminating tests for epoch correctness.
         # This CR test asserts the corrected formula yields if_held for the current epoch.
-        assert abs(expected_dry_run - if_held) < 1e-9, "fixture integrity: expected_dry_run == if_held"
-
-        result = get_symphony_cumulative_return(
-            sym_dict, bot_state_entry=None, db_path=db_file
+        assert abs(expected_dry_run - if_held) < 1e-9, (
+            "fixture integrity: expected_dry_run == if_held"
         )
+
+        result = get_symphony_cumulative_return(sym_dict, bot_state_entry=None, db_path=db_file)
         assert result["dry_run"] == pytest.approx(expected_dry_run, abs=1e-9), (
             f"dry_run CR with shadow==current must equal if_held={expected_dry_run:.6f}% "
             f"(divergence == 0); got {result['dry_run']:.6f}%. "
@@ -350,9 +351,7 @@ class TestDryRunConsumersUseCurrentEpochOnly:
         #   → peak-to-trough of a flat series = 0.0
         expected_mdd = 0.0
 
-        result = get_symphony_max_drawdown(
-            sym_dict, bot_state_entry=None, db_path=db_file
-        )
+        result = get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_file)
         assert result["dry_run"] == pytest.approx(expected_mdd, abs=1e-9), (
             f"dry_run MDD must be 0.0 (derived: shadow==current at every step "
             f"→ prod_shadow==prod_current → bot equity flat → zero drawdown); "
@@ -435,8 +434,7 @@ class TestPositionEpochMigration:
         """The migration must be registered in database._MIGRATION_FILES or it
         will never run."""
         assert "015_shadow_history_position_epoch.sql" in _db._MIGRATION_FILES, (
-            "015_shadow_history_position_epoch.sql must be appended to "
-            "database._MIGRATION_FILES"
+            "015_shadow_history_position_epoch.sql must be appended to database._MIGRATION_FILES"
         )
 
     def test_migration_015_adds_nullable_position_epoch_column(self, tmp_path):
@@ -446,17 +444,14 @@ class TestPositionEpochMigration:
         db_file = str(tmp_path / "migration_test.db")
         conn = sqlite3.connect(db_file)
         # Base table from 008.
-        sql_008 = (migrations_dir / "008_shadow_history.sql").read_text(
-            encoding="utf-8"
-        )
+        sql_008 = (migrations_dir / "008_shadow_history.sql").read_text(encoding="utf-8")
         conn.executescript(sql_008)
         # Insert a legacy row BEFORE the migration.
         conn.execute(
             "INSERT INTO shadow_history (ts_utc, ts_et, trading_day, "
             "symphony_id, current_return, shadow_return) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            ("2026-01-01T19:00:00Z", "2026-01-01T15:00:00", "2026-01-01",
-             _SYM_ID, 1.0, 1.0),
+            ("2026-01-01T19:00:00Z", "2026-01-01T15:00:00", "2026-01-01", _SYM_ID, 1.0, 1.0),
         )
         conn.commit()
 
@@ -507,8 +502,7 @@ class TestNullEpochLegacySegment:
             "segment, not raise"
         )
         assert trajectory == pytest.approx(_POSITION_B_RETURNS, rel=1e-9), (
-            "all legacy NULL-epoch rows form one segment — the trajectory "
-            "returns all of them"
+            "all legacy NULL-epoch rows form one segment — the trajectory returns all of them"
         )
 
 
@@ -591,9 +585,7 @@ class TestPositionEpochStampStability:
     at a post-trigger session-rollover boundary. A per-day-wipe unconditional
     re-stamp fragments a multi-day position — these tests catch that."""
 
-    def test_five_day_untriggered_position_keeps_one_epoch(
-        self, tmp_path, monkeypatch
-    ):
+    def test_five_day_untriggered_position_keeps_one_epoch(self, tmp_path, monkeypatch):
         """ADVERSARIAL: a single 5-day untriggered position survives 4 new-day
         wipes (days 2-5). Every wipe must LEAVE the epoch unchanged — an
         untriggered open position is not a new-position boundary. All 5
@@ -640,9 +632,7 @@ class TestPositionEpochStampStability:
             "post-migration — the first-entry stamp site must fire"
         )
 
-    def test_five_day_untriggered_position_trajectory_returns_all_days(
-        self, tmp_path, monkeypatch
-    ):
+    def test_five_day_untriggered_position_trajectory_returns_all_days(self, tmp_path, monkeypatch):
         """The fragmentation flaw's observable consequence: if the 5-day
         position fragments into 5 epochs, the latest-epoch query returns only
         day 5. The trajectory must return ALL 5 days."""
@@ -660,9 +650,7 @@ class TestPositionEpochStampStability:
 
         _db._shadow_cr_cache.clear()
         trajectory = _get_shadow_cumulative_trajectory(symphony_id, db_file)
-        assert trajectory is not None, (
-            "a 5-day position must yield a trajectory (>= 2 rows)"
-        )
+        assert trajectory is not None, "a 5-day position must yield a trajectory (>= 2 rows)"
         assert trajectory == pytest.approx(returns, rel=1e-9), (
             f"the trajectory must contain all 5 days of the single position "
             f"{returns}; got {trajectory}. If it returns only the last day, "
@@ -712,8 +700,7 @@ class TestPositionEpochStampStability:
         a_epochs = {ep for day, ep in rows if day in a_days}
         b_epochs = {ep for day, ep in rows if day in b_days}
         assert len(a_epochs) == 1 and len(b_epochs) == 1, (
-            f"each of the two positions must have ONE stable epoch; "
-            f"A={a_epochs}, B={b_epochs}"
+            f"each of the two positions must have ONE stable epoch; A={a_epochs}, B={b_epochs}"
         )
         assert a_epochs != b_epochs, (
             f"position B (post-trigger re-entry) must carry a DIFFERENT epoch "

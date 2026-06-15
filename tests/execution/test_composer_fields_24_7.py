@@ -49,9 +49,7 @@ import alpha_bot_execution
 # Fixture loading
 # ---------------------------------------------------------------------------
 
-_FIXTURE_PATH = (
-    Path(__file__).parent.parent / "fixtures" / "composer" / "symphony_stats_meta.json"
-)
+_FIXTURE_PATH = Path(__file__).parent.parent / "fixtures" / "composer" / "symphony_stats_meta.json"
 _FOUR_FIELDS = ("simple_return", "net_deposits", "time_weighted_return", "max_drawdown")
 
 
@@ -72,18 +70,19 @@ _ACCOUNT_ID = "acct-crmdd24-test"
 
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
 
     def _et(year: int, month: int, day: int, hour: int, minute: int) -> datetime:
         return datetime(year, month, day, hour, minute, 0, tzinfo=_ET)
 except Exception:  # pragma: no cover -- tzdata missing
+
     def _et(year: int, month: int, day: int, hour: int, minute: int) -> datetime:
-        return datetime(year, month, day, hour, minute, 0,
-                        tzinfo=timezone(timedelta(hours=-4)))
+        return datetime(year, month, day, hour, minute, 0, tzinfo=timezone(timedelta(hours=-4)))
 
 
 # Fixed ET times for each scenario
-_WEEKDAY_PRE_OPEN = _et(2025, 5, 14, 8, 0)     # Wed 08:00 — before market open
+_WEEKDAY_PRE_OPEN = _et(2025, 5, 14, 8, 0)  # Wed 08:00 — before market open
 _WEEKDAY_EOD_WINDOW = _et(2025, 5, 16, 16, 2)  # Fri 16:02 — within post-mortem window
 _WEEKEND_AFTER_CLOSE = _et(2025, 5, 17, 10, 0)  # Sat 10:00 — weekend, market closed
 
@@ -145,9 +144,7 @@ def _seed_state_with_composer_fields() -> dict:
 def _minimal_history(date_str: str) -> dict:
     return {
         date_str: {
-            "SPY": {
-                "c": 500.0, "daily_ret": 0.001, "high": 501.0, "low": 499.0, "close": 500.0
-            }
+            "SPY": {"c": 500.0, "daily_ret": 0.001, "high": 501.0, "low": 499.0, "close": 500.0}
         }
     }
 
@@ -158,6 +155,7 @@ def _minimal_history(date_str: str) -> dict:
 # All scenarios need the same base patches. Each test overrides get_current_et
 # and any scenario-specific values.
 # ---------------------------------------------------------------------------
+
 
 def _base_patches(
     current_et: datetime,
@@ -196,35 +194,37 @@ def _run_cycle_with_patches(
     captured_states: list[dict] = []
 
     def capture_save_state(state):
-        captured_states.append({k: (v.copy() if isinstance(v, dict) else v)
-                                 for k, v in state.items()})
+        captured_states.append(
+            {k: (v.copy() if isinstance(v, dict) else v) for k, v in state.items()}
+        )
 
     # Deep-copy the bot_state so load_state returns a fresh mutable copy per call
     import copy
 
-    with patch.object(alpha_bot_execution, "database") as mock_db, \
-         patch.object(alpha_bot_execution, "reporting") as _mock_reporting, \
-         patch.object(alpha_bot_execution, "fetch_symphony_stats",
-                      return_value=fetch_sym_return_value) as _mock_fetch_sym, \
-         patch.object(alpha_bot_execution, "fetch_alpaca_history",
-                      return_value=_minimal_history(date_str)) as _mock_fetch_hist, \
-         patch.object(alpha_bot_execution, "fetch_intraday_vwaps",
-                      return_value={}) as _mock_fetch_vwap, \
-         patch.object(alpha_bot_execution, "get_current_et",
-                      return_value=current_et), \
-         patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
-         patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key"), \
-         patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"), \
-         patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-         patch.object(alpha_bot_execution.time, "sleep"), \
-         patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]), \
-         patch.object(alpha_bot_execution, "autotuner") as _mock_autotuner:
-
+    with (
+        patch.object(alpha_bot_execution, "database") as mock_db,
+        patch.object(alpha_bot_execution, "reporting") as _mock_reporting,
+        patch.object(
+            alpha_bot_execution, "fetch_symphony_stats", return_value=fetch_sym_return_value
+        ) as _mock_fetch_sym,
+        patch.object(
+            alpha_bot_execution, "fetch_alpaca_history", return_value=_minimal_history(date_str)
+        ) as _mock_fetch_hist,
+        patch.object(
+            alpha_bot_execution, "fetch_intraday_vwaps", return_value={}
+        ) as _mock_fetch_vwap,
+        patch.object(alpha_bot_execution, "get_current_et", return_value=current_et),
+        patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+        patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key"),
+        patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"),
+        patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+        patch.object(alpha_bot_execution.time, "sleep"),
+        patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+        patch.object(alpha_bot_execution, "autotuner") as _mock_autotuner,
+    ):
         mock_db.acquire_lock.return_value = True
         mock_db.load_state.return_value = copy.deepcopy(initial_bot_state)
-        mock_db.load_chart_history.return_value = {
-            "date": date_str, "symphonies": {}
-        }
+        mock_db.load_chart_history.return_value = {"date": date_str, "symphonies": {}}
         mock_db.get_symphony_strategy.return_value = {"params": {}, "locked_vars": {}}
         mock_db.normalize_name.side_effect = lambda n: n.strip().lower()
         mock_db.wipe_transient_state.side_effect = lambda s: s
@@ -247,6 +247,7 @@ def _run_cycle_with_patches(
 # early-return at alpha_bot_execution.py:310-313 fires before any Composer fetch,
 # so the 4 fields are never written. After the fix, the 4 fields must be present.
 # ---------------------------------------------------------------------------
+
 
 class TestMarketClosedCyclePopulatesComposerFields:
     """The test that would have caught the b9ab6f9 deployment-timing gap."""
@@ -344,8 +345,8 @@ class TestMarketClosedCyclePopulatesComposerFields:
 # _persist_composer_fields_to_bot_state. After the fix it must.
 # ---------------------------------------------------------------------------
 
-class TestEodWindowPopulatesComposerFields:
 
+class TestEodWindowPopulatesComposerFields:
     def test_eod_window_friday_populates_all_four_fields(self):
         """
         After an EOD post-mortem cycle (Fri 16:02 ET), the 4 Composer fields
@@ -381,17 +382,15 @@ class TestEodWindowPopulatesComposerFields:
 # on whether the persist has already run for today).
 # ---------------------------------------------------------------------------
 
-class TestWeekendCyclePopulatesComposerFields:
 
+class TestWeekendCyclePopulatesComposerFields:
     def test_weekend_cycle_populates_all_four_fields(self):
         """
         After a weekend cycle (Saturday), the 4 Composer fields must be present
         in bot_state. Weekend implies is_weekday=False, so the early-return at
         :310-313 fires (unless the fix restructures that check).
         """
-        initial = _seed_state_with_symphonies(
-            extra_top_level={"date": "2025-05-17"}
-        )
+        initial = _seed_state_with_symphonies(extra_top_level={"date": "2025-05-17"})
         final = _run_cycle_with_patches(
             current_et=_WEEKEND_AFTER_CLOSE,
             initial_bot_state=initial,
@@ -421,8 +420,8 @@ class TestWeekendCyclePopulatesComposerFields:
 # the LAST successful values — do NOT overwrite with absent/None on failure."
 # ---------------------------------------------------------------------------
 
-class TestFetchFailurePreservesPriorValues:
 
+class TestFetchFailurePreservesPriorValues:
     def test_fetch_failure_cycle_preserves_prior_simple_return(self):
         """
         When the Composer fetch returns [] on cycle 2, bot_state must still
@@ -519,9 +518,7 @@ class TestFetchFailurePreservesPriorValues:
             fetch_sym_return_value=[],  # fetch failure
         )
 
-        assert final.get(sym_id, {}).get("simple_return") == pytest.approx(
-            prior_value, abs=1e-9
-        ), (
+        assert final.get(sym_id, {}).get("simple_return") == pytest.approx(prior_value, abs=1e-9), (
             f"bot_state[{sym_id}]['simple_return'] must remain {prior_value!r} after "
             f"a fetch-failure cycle; the fix must guard against overwriting prior values "
             f"with None when fetch returns []."
@@ -538,8 +535,8 @@ class TestFetchFailurePreservesPriorValues:
 # 689 call is removed. This test asserts at most one call per symphony per cycle.
 # ---------------------------------------------------------------------------
 
-class TestNoPersistDoubleCallWithinIntraday:
 
+class TestNoPersistDoubleCallWithinIntraday:
     def test_persist_function_called_at_most_once_per_symphony_per_intraday_cycle(self):
         """
         During an intraday cycle (09:30-16:00 ET), _persist_composer_fields_to_bot_state
@@ -556,16 +553,17 @@ class TestNoPersistDoubleCallWithinIntraday:
         """
         try:
             from zoneinfo import ZoneInfo
+
             et = ZoneInfo("America/New_York")
             intraday_et = datetime(2025, 5, 14, 11, 30, 0, tzinfo=et)
         except Exception:
-            intraday_et = datetime(2025, 5, 14, 11, 30, 0,
-                                   tzinfo=timezone(timedelta(hours=-4)))
+            intraday_et = datetime(2025, 5, 14, 11, 30, 0, tzinfo=timezone(timedelta(hours=-4)))
 
         initial = _seed_state_with_symphonies()
         date_str = intraday_et.strftime("%Y-%m-%d")
 
         import copy
+
         call_log: list[tuple[str, str]] = []  # (symphony_id, field_snapshot_key)
 
         original_persist = alpha_bot_execution._persist_composer_fields_to_bot_state
@@ -574,30 +572,32 @@ class TestNoPersistDoubleCallWithinIntraday:
             call_log.append(symphony_id)
             original_persist(bot_state, symphony_id, sym)
 
-        with patch.object(alpha_bot_execution, "database") as mock_db, \
-             patch.object(alpha_bot_execution, "reporting"), \
-             patch.object(alpha_bot_execution, "fetch_symphony_stats",
-                          return_value=_FIXTURE_SYMPHONIES), \
-             patch.object(alpha_bot_execution, "fetch_alpaca_history",
-                          return_value=_minimal_history(date_str)), \
-             patch.object(alpha_bot_execution, "fetch_intraday_vwaps",
-                          return_value={}), \
-             patch.object(alpha_bot_execution, "get_current_et",
-                          return_value=intraday_et), \
-             patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
-             patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key"), \
-             patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"), \
-             patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-             patch.object(alpha_bot_execution.time, "sleep"), \
-             patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]), \
-             patch.object(alpha_bot_execution, "_persist_composer_fields_to_bot_state",
-                          side_effect=spy_persist):
-
+        with (
+            patch.object(alpha_bot_execution, "database") as mock_db,
+            patch.object(alpha_bot_execution, "reporting"),
+            patch.object(
+                alpha_bot_execution, "fetch_symphony_stats", return_value=_FIXTURE_SYMPHONIES
+            ),
+            patch.object(
+                alpha_bot_execution, "fetch_alpaca_history", return_value=_minimal_history(date_str)
+            ),
+            patch.object(alpha_bot_execution, "fetch_intraday_vwaps", return_value={}),
+            patch.object(alpha_bot_execution, "get_current_et", return_value=intraday_et),
+            patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+            patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key"),
+            patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"),
+            patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+            patch.object(alpha_bot_execution.time, "sleep"),
+            patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+            patch.object(
+                alpha_bot_execution,
+                "_persist_composer_fields_to_bot_state",
+                side_effect=spy_persist,
+            ),
+        ):
             mock_db.acquire_lock.return_value = True
             mock_db.load_state.return_value = copy.deepcopy(initial)
-            mock_db.load_chart_history.return_value = {
-                "date": date_str, "symphonies": {}
-            }
+            mock_db.load_chart_history.return_value = {"date": date_str, "symphonies": {}}
             mock_db.get_symphony_strategy.return_value = {"params": {}, "locked_vars": {}}
             mock_db.normalize_name.side_effect = lambda n: n.strip().lower()
             mock_db.wipe_transient_state.side_effect = lambda s: s
@@ -638,8 +638,8 @@ class TestNoPersistDoubleCallWithinIntraday:
 # Finding raised by composer-alpaca-integration review.
 # ---------------------------------------------------------------------------
 
-class TestMarketClosedWithMissingComposerKeyGracefullyDegrades:
 
+class TestMarketClosedWithMissingComposerKeyGracefullyDegrades:
     def test_market_closed_with_no_composer_key_does_not_crash_and_preserves_state(self):
         """
         When COMPOSER_KEY_ID is None during a market-closed cycle, fetch_symphony_stats
@@ -660,24 +660,23 @@ class TestMarketClosedWithMissingComposerKeyGracefullyDegrades:
         def capture_save_state(state):
             captured_states.append(copy.deepcopy(state))
 
-        with patch.object(alpha_bot_execution, "database") as mock_db, \
-             patch.object(alpha_bot_execution, "reporting"), \
-             patch.object(alpha_bot_execution, "fetch_symphony_stats",
-                          return_value=[]) as mock_fetch, \
-             patch.object(alpha_bot_execution, "get_current_et",
-                          return_value=_WEEKDAY_PRE_OPEN), \
-             patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
-             patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", None), \
-             patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"), \
-             patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-             patch.object(alpha_bot_execution.time, "sleep"), \
-             patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]):
-
+        with (
+            patch.object(alpha_bot_execution, "database") as mock_db,
+            patch.object(alpha_bot_execution, "reporting"),
+            patch.object(
+                alpha_bot_execution, "fetch_symphony_stats", return_value=[]
+            ) as mock_fetch,
+            patch.object(alpha_bot_execution, "get_current_et", return_value=_WEEKDAY_PRE_OPEN),
+            patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+            patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", None),
+            patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"),
+            patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+            patch.object(alpha_bot_execution.time, "sleep"),
+            patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+        ):
             mock_db.acquire_lock.return_value = True
             mock_db.load_state.return_value = copy.deepcopy(prior_state)
-            mock_db.load_chart_history.return_value = {
-                "date": date_str, "symphonies": {}
-            }
+            mock_db.load_chart_history.return_value = {"date": date_str, "symphonies": {}}
             mock_db.get_symphony_strategy.return_value = {"params": {}, "locked_vars": {}}
             mock_db.normalize_name.side_effect = lambda n: n.strip().lower()
             mock_db.wipe_transient_state.side_effect = lambda s: s

@@ -125,7 +125,9 @@ class TestAdvisorTabRenderIsReadOnly:
         mock_db.save_symphony_strategy.assert_not_called()
         mock_db.record_exit_trigger.assert_not_called()
         mock_db.record_shadow_observation.assert_not_called()
-        mock_db.write_telemetry_row.assert_not_called() if hasattr(mock_db, "write_telemetry_row") else None
+        mock_db.write_telemetry_row.assert_not_called() if hasattr(
+            mock_db, "write_telemetry_row"
+        ) else None
         # AC-5: record_llm_suggestion is a new operator-decision write path; it must
         # stay off the render path (only /accept and /reject may call it).
         mock_db.record_llm_suggestion.assert_not_called()
@@ -313,7 +315,10 @@ class TestAdvisorRejectIsNarrow:
         with patch.object(app_module, "database", mock_db):
             resp = flask_client.post(
                 "/ai-advisor/reject",
-                json={"symphony_id": "sym-001", "suggestion": {"config_key": "TRIGGER_THRESHOLD_PCT"}},
+                json={
+                    "symphony_id": "sym-001",
+                    "suggestion": {"config_key": "TRIGGER_THRESHOLD_PCT"},
+                },
             )
 
         assert resp.status_code == 200
@@ -389,8 +394,11 @@ class TestAdvisorRouteUsesAdvisorRoQueryGateway:
         # If get_ro_connection is called FROM the route body (not a helper), that is a bypass.
         # We verify this by checking that mock_db.get_ro_connection was not called
         # (it would be called if the route directly opens a connection).
-        mock_db.get_ro_connection.assert_not_called(), (
-            "POST /ai-advisor/suggest called database.get_ro_connection() directly. "
-            "Advisor DB reads must go through named helpers (get_symphony_strategy, "
-            "advisor_ro_query) — raw connection handles bypass the wall-breach tripwire."
+        (
+            mock_db.get_ro_connection.assert_not_called(),
+            (
+                "POST /ai-advisor/suggest called database.get_ro_connection() directly. "
+                "Advisor DB reads must go through named helpers (get_symphony_strategy, "
+                "advisor_ro_query) — raw connection handles bypass the wall-breach tripwire."
+            ),
         )

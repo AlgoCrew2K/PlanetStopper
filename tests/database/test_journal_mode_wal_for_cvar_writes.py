@@ -181,7 +181,11 @@ def test_no_migration_sets_journal_mode_to_delete():
     for sql_file in migrations_dir.glob("*.sql"):
         content = sql_file.read_text(encoding="utf-8").lower()
         # journal_mode=delete, journal_mode=off, or journal_mode=memory would all break WAL
-        if "journal_mode=delete" in content or "journal_mode=off" in content or "journal_mode=memory" in content:
+        if (
+            "journal_mode=delete" in content
+            or "journal_mode=off" in content
+            or "journal_mode=memory" in content
+        ):
             offending_migrations.append(sql_file.name)
 
     assert not offending_migrations, (
@@ -205,8 +209,7 @@ def test_cvar_diagnostics_migration_registered_in_migration_files():
     swallow discards all CVaR data silently.
     """
     assert hasattr(db, "_MIGRATION_FILES"), (
-        "database._MIGRATION_FILES not found. "
-        "It must be the ordered list of migration filenames."
+        "database._MIGRATION_FILES not found. It must be the ordered list of migration filenames."
     )
     migration_names = list(db._MIGRATION_FILES)
     cvar_migrations = [m for m in migration_names if "cvar_diagnostics" in m.lower()]

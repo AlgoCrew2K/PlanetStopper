@@ -23,9 +23,7 @@ import pytest
 # Fixture loading helpers
 # ---------------------------------------------------------------------------
 
-SYMPHONY_FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent / "fixtures" / "symphony_logic"
-)
+SYMPHONY_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "symphony_logic"
 
 
 def _load_fixture(name: str) -> dict:
@@ -298,9 +296,7 @@ def test_condense_preserves_dominant_indicator_signal(raw_large):
     from symphony_logic import condense_symphony_logic
 
     ref = _reference_census(raw_large)
-    dominant_fn, dominant_count = max(
-        ref["indicators"].items(), key=lambda kv: kv[1]
-    )
+    dominant_fn, dominant_count = max(ref["indicators"].items(), key=lambda kv: kv[1])
     summary = condense_symphony_logic(raw_large)
     indicators = summary["indicators_used"]
     assert dominant_fn in indicators, (
@@ -510,9 +506,7 @@ def test_get_condensed_logic_returns_condensed_summary(monkeypatch):
     import symphony_logic
 
     fixture_body = _load_fixture("sample_score_small.json")
-    monkeypatch.setattr(
-        symphony_logic, "fetch_symphony_score", lambda sid: fixture_body
-    )
+    monkeypatch.setattr(symphony_logic, "fetch_symphony_score", lambda sid: fixture_body)
 
     result = symphony_logic.get_condensed_logic("sym-1", use_cache=False)
     assert isinstance(result, dict)
@@ -633,12 +627,8 @@ from hypothesis import strategies as st  # noqa: E402
 
 # A recursive strategy that builds arbitrary symphony-tree-shaped dicts:
 # nodes with a `step`, optional `ticker`, optional `name`, and `children`.
-_tickers = st.text(
-    alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ", min_size=1, max_size=5
-)
-_steps = st.sampled_from(
-    ["root", "group", "if", "if-child", "asset", "filter", "wt-cash-equal"]
-)
+_tickers = st.text(alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ", min_size=1, max_size=5)
+_steps = st.sampled_from(["root", "group", "if", "if-child", "asset", "filter", "wt-cash-equal"])
 
 
 def _node_strategy():

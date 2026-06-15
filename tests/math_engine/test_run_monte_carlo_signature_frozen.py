@@ -70,6 +70,7 @@ def _live_sig() -> inspect.Signature:
 # 1. Parameter names are frozen
 # ---------------------------------------------------------------------------
 
+
 def test_run_monte_carlo_parameter_names_match_frozen_baseline() -> None:
     """
     The parameter name set must equal the baseline exactly. Any add or rename
@@ -97,6 +98,7 @@ def test_run_monte_carlo_parameter_names_match_frozen_baseline() -> None:
 # 2. Parameter count is frozen
 # ---------------------------------------------------------------------------
 
+
 def test_run_monte_carlo_parameter_count_matches_frozen_baseline() -> None:
     """
     An extra keyword-only parameter raises the count; a removal lowers it.
@@ -119,6 +121,7 @@ def test_run_monte_carlo_parameter_count_matches_frozen_baseline() -> None:
 # 3. Parameter kinds (POSITIONAL_OR_KEYWORD vs KEYWORD_ONLY etc.) are frozen
 # ---------------------------------------------------------------------------
 
+
 def test_run_monte_carlo_parameter_kinds_match_frozen_baseline() -> None:
     """
     Converting a POSITIONAL_OR_KEYWORD parameter to KEYWORD_ONLY silently breaks
@@ -140,9 +143,7 @@ def test_run_monte_carlo_parameter_kinds_match_frozen_baseline() -> None:
         live_kind = sig.parameters[param_name].kind.name
         frozen_kind = spec["kind"]
         if live_kind != frozen_kind:
-            kind_mismatches.append(
-                f"  {param_name!r}: frozen={frozen_kind!r}, live={live_kind!r}"
-            )
+            kind_mismatches.append(f"  {param_name!r}: frozen={frozen_kind!r}, live={live_kind!r}")
 
     assert not kind_mismatches, (
         "run_monte_carlo parameter kinds have changed:\n"
@@ -154,6 +155,7 @@ def test_run_monte_carlo_parameter_kinds_match_frozen_baseline() -> None:
 # ---------------------------------------------------------------------------
 # 4. Parameters that have defaults still have defaults; those without do not
 # ---------------------------------------------------------------------------
+
 
 def test_run_monte_carlo_default_presence_matches_frozen_baseline() -> None:
     """
@@ -180,15 +182,15 @@ def test_run_monte_carlo_default_presence_matches_frozen_baseline() -> None:
                 f"live has_default={live_has_default}"
             )
 
-    assert not mismatch, (
-        "run_monte_carlo parameter default presence has changed:\n"
-        + "\n".join(mismatch)
+    assert not mismatch, "run_monte_carlo parameter default presence has changed:\n" + "\n".join(
+        mismatch
     )
 
 
 # ---------------------------------------------------------------------------
 # 5. seed default is None (the only concrete default value we pin)
 # ---------------------------------------------------------------------------
+
 
 def test_run_monte_carlo_seed_default_is_none() -> None:
     """
@@ -214,6 +216,7 @@ def test_run_monte_carlo_seed_default_is_none() -> None:
 # ---------------------------------------------------------------------------
 # 6. Return-type annotation does not exclude None
 # ---------------------------------------------------------------------------
+
 
 def test_run_monte_carlo_return_annotation_does_not_exclude_none() -> None:
     """

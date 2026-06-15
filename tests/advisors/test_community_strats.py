@@ -162,6 +162,7 @@ class TestCacheRoutingHitMiss:
 
         def spy_cached_pull(collection_name, fetch_fn, **kwargs):
             """Wrap the real cached_pull; count how many times fetch_fn is called."""
+
             def counted_fetch():
                 fetch_call_count["calls"] += 1
                 return single_valid_doc
@@ -196,6 +197,7 @@ class TestCacheRoutingHitMiss:
         # Pre-populate the cache directly so the second call is a guaranteed HIT.
         import json as _json
         from datetime import datetime, timezone
+
         conn = sqlite3.connect(isolated_atlas_cache_db)
         try:
             now_iso = datetime.now(timezone.utc).isoformat()
@@ -325,9 +327,7 @@ class TestCandidateShape:
         tree = candidate["tree"]
         assert isinstance(tree, dict), f"expected tree to be a dict; got {type(tree).__name__}"
         errors = ss.validate_tree(tree)
-        assert errors == [], (
-            f"candidate tree failed validate_tree: {errors}"
-        )
+        assert errors == [], f"candidate tree failed validate_tree: {errors}"
 
     def test_candidate_tickers_match_extract_tickers(self, module_under_test, single_valid_doc):
         """candidate['tickers'] must equal symphony_schema.extract_tickers(tree)
@@ -368,8 +368,13 @@ class TestCandidateShape:
             result = mod.load_community_strategies()
         stats = result.get("stats", {})
         required_stat_keys = {
-            "pulled", "valid", "missing_edn_string", "parse_failed",
-            "validate_rejected", "sharpe_filtered", "deduped",
+            "pulled",
+            "valid",
+            "missing_edn_string",
+            "parse_failed",
+            "validate_rejected",
+            "sharpe_filtered",
+            "deduped",
         }
         missing = required_stat_keys - stats.keys()
         assert not missing, (
@@ -479,9 +484,7 @@ class TestFilteringAndStats:
         assert result["stats"]["parse_failed"] >= 1, "bad-edn doc must be counted"
         assert result["stats"]["missing_edn_string"] >= 1, "missing-edn doc must be counted"
 
-    def test_empty_collection_returns_available_true_with_empty_candidates(
-        self, module_under_test
-    ):
+    def test_empty_collection_returns_available_true_with_empty_candidates(self, module_under_test):
         """An empty collection (no docs from Mongo) must yield available=True,
         candidates=[], stats.pulled=0. (Edge case from feature plan.)"""
         with patch("advisors.atlas_cache.cached_pull", return_value=[]):
@@ -504,9 +507,7 @@ class TestDeduplication:
     """AC-5: Two docs with the same composition hash collapse to one,
     retaining the higher OOS Sharpe."""
 
-    def _make_duplicate_pair(
-        self, sharpe_a: float = 0.5, sharpe_b: float = 1.8
-    ) -> list:
+    def _make_duplicate_pair(self, sharpe_a: float = 0.5, sharpe_b: float = 1.8) -> list:
         """Return two docs whose trees hash identically (same ticker = same hash)."""
         # Same ticker → same tree structure → same composition_hash.
         tree = _make_minimal_tree(name="Dup Strategy", ticker="IVV")
@@ -545,8 +546,7 @@ class TestDeduplication:
         actual_sharpe = surviving["oos_metrics"].get("sharpe")
         assert actual_sharpe == pytest.approx(high_sharpe, rel=1e-6), (
             # Tolerance: rel=1e-6 because sharpe is a float round-trip from JSON.
-            f"dedup must retain the higher sharpe ({high_sharpe}); "
-            f"got {actual_sharpe!r}"
+            f"dedup must retain the higher sharpe ({high_sharpe}); got {actual_sharpe!r}"
         )
 
     def test_dedup_count_reflected_in_stats(self, module_under_test):
@@ -563,9 +563,7 @@ class TestDeduplication:
             f"got {result['stats'].get('deduped')}"
         )
 
-    def test_dedup_missing_sharpe_treated_as_lower_than_any_present_sharpe(
-        self, module_under_test
-    ):
+    def test_dedup_missing_sharpe_treated_as_lower_than_any_present_sharpe(self, module_under_test):
         """When one doc has a sharpe and the other doesn't, the one with a
         sharpe must win dedup (a missing sharpe is never 'better')."""
         tree = _make_minimal_tree(name="Dedup Test", ticker="GLD")
@@ -628,7 +626,9 @@ class TestSharpeFilterAndLimit:
         """Docs lacking oos_metrics['sharpe'] entirely must be KEPT, not excluded,
         regardless of the min_oos_sharpe floor (contract: absence != failing metric)."""
         floor = 5.0  # very high — any present sharpe would fail this
-        doc_no_sharpe = _make_mongo_doc(sid="no-sharpe", name="No Sharpe", ticker="GLD", sharpe=None)
+        doc_no_sharpe = _make_mongo_doc(
+            sid="no-sharpe", name="No Sharpe", ticker="GLD", sharpe=None
+        )
         doc_with_low_sharpe = _make_mongo_doc(sid="low", name="Low", ticker="TLT", sharpe=0.1)
         docs = [doc_no_sharpe, doc_with_low_sharpe]
 
@@ -737,9 +737,7 @@ class TestNeverRaisingD1Contract:
         assert not missing, (
             f"D-1 failure dict missing keys: {missing!r} — got {set(result.keys())!r}"
         )
-        assert result["candidates"] == [], (
-            "D-1 failure dict must carry candidates=[]"
-        )
+        assert result["candidates"] == [], "D-1 failure dict must carry candidates=[]"
         # reason must reflect the actual exception, not the stub sentinel.
         assert result.get("reason") != "NotImplemented", (
             "reason must be the caught exception class name, not the stub sentinel 'NotImplemented'"
@@ -756,14 +754,13 @@ class TestNeverRaisingD1Contract:
         unittest.mock raises it directly without forwarding call args, which
         would cause a TypeError masking the real exception type.
         """
+
         class _FakeMongoPymongoError(ConnectionError):
             pass
 
         # Use an exception INSTANCE as side_effect so mock raises it directly,
         # without forwarding the (collection_name, fetch_fn, ...) call arguments.
-        exc_instance = _FakeMongoPymongoError(
-            "mongodb+srv://user:password@cluster.example.com"
-        )
+        exc_instance = _FakeMongoPymongoError("mongodb+srv://user:password@cluster.example.com")
 
         with patch("advisors.atlas_cache.cached_pull", side_effect=exc_instance):
             mod = importlib.reload(module_under_test)
@@ -900,6 +897,7 @@ class TestSecretsIsolation:
             "pr-worktrees/community-strats/advisors/community_strats.py"
         )
         import pathlib
+
         src = pathlib.Path(source_path)
         if not src.exists():
             pytest.skip("advisors/community_strats.py does not exist yet (pre-implementation RED)")
@@ -930,6 +928,7 @@ class TestSecretsIsolation:
     def test_no_flask_import(self):
         """advisors/community_strats.py must not import Flask (no web dependency)."""
         import pathlib
+
         source_path = (
             "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/"
             "pr-worktrees/community-strats/advisors/community_strats.py"
@@ -1039,7 +1038,7 @@ class TestProjection:
 
         # The projection must not include any 'backtest' or 'quantstats' keys.
         heavy_field_substrings = ("backtest", "quantstats")
-        for key in (projection or {}):
+        for key in projection or {}:
             for heavy in heavy_field_substrings:
                 assert heavy.lower() not in str(key).lower(), (
                     f"projection must exclude heavy field {key!r} "
@@ -1051,9 +1050,7 @@ class TestProjection:
         # Projection dicts: key=1 means include, key=0 means exclude.
         # A whitelist projection has all the wanted fields set to 1 (or truthy).
         for field in required_projection_fields:
-            assert field in projection, (
-                f"projection must include required field {field!r} — AC-9"
-            )
+            assert field in projection, f"projection must include required field {field!r} — AC-9"
 
 
 # ---------------------------------------------------------------------------
@@ -1088,14 +1085,9 @@ class TestSignatureAndPlumbing:
         assert p.kind in (
             inspect.Parameter.KEYWORD_ONLY,
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        ), (
-            f"force_refresh must be keyword-only or positional-or-keyword; "
-            f"got kind={p.kind.name!r}"
-        )
+        ), f"force_refresh must be keyword-only or positional-or-keyword; got kind={p.kind.name!r}"
         # Default must be False (safe default — never force-refresh unless asked).
-        assert p.default is False, (
-            f"force_refresh default must be False; got {p.default!r}"
-        )
+        assert p.default is False, f"force_refresh default must be False; got {p.default!r}"
 
     def test_force_refresh_propagated_to_cached_pull(self, module_under_test):
         """When load_community_strategies is called with force_refresh=True, the
@@ -1210,9 +1202,7 @@ class TestCachePipelineIntegrity:
         )
         # The tree must pass validate_tree (pipeline ran correctly).
         errors = ss.validate_tree(candidate["tree"])
-        assert errors == [], (
-            f"cache-hit candidate tree failed validate_tree: {errors}"
-        )
+        assert errors == [], f"cache-hit candidate tree failed validate_tree: {errors}"
 
 
 class TestStatsInvariant:
@@ -1232,14 +1222,16 @@ class TestStatsInvariant:
         missing_edn = {"sid": "m1", "name": "Missing", "oos_metrics": {}}
 
         bad_parse = {
-            "sid": "p1", "name": "BadParse",
+            "sid": "p1",
+            "name": "BadParse",
             "edn_string": "NOT_JSON{{{",
             "oos_metrics": {},
         }
 
         # A tree that parses but validate_tree rejects (list at root).
         bad_tree_doc = {
-            "sid": "t1", "name": "BadTree",
+            "sid": "t1",
+            "name": "BadTree",
             "edn_string": json.dumps([{"step": "asset", "ticker": "X"}]),
             "oos_metrics": {},
         }

@@ -58,8 +58,11 @@ def _replay_machinery_nodes() -> list[ast.FunctionDef]:
 def _numeric_constants_in(node: ast.AST) -> list[float]:
     out: list[float] = []
     for n in ast.walk(node):
-        if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)) \
-                and not isinstance(n.value, bool):
+        if (
+            isinstance(n, ast.Constant)
+            and isinstance(n.value, (int, float))
+            and not isinstance(n.value, bool)
+        ):
             out.append(float(n.value))
     return out
 
@@ -131,15 +134,18 @@ def test_replay_time_ratio_reaches_one_on_last_tick_of_half_day(
         seen.append(time_ratio)
         return real_decay(time_ratio)
 
-    monkeypatch.setattr(
-        autotuner.math_engine, "compute_time_squeeze_decay", _spy_decay
-    )
+    monkeypatch.setattr(autotuner.math_engine, "compute_time_squeeze_decay", _spy_decay)
 
     n_ticks = 210  # a US equity half-day: 09:30-13:00
     ticks = [
         {
-            "time": "09:30", "return": 0.5, "mc_prob": 50.0, "vol": 0.5,
-            "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0,
+            "time": "09:30",
+            "return": 0.5,
+            "mc_prob": 50.0,
+            "vol": 0.5,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 0.0,
         }
         for _ in range(n_ticks)
     ]
@@ -175,14 +181,17 @@ def test_replay_time_ratio_first_tick_is_zero(
         seen.append(time_ratio)
         return real_decay(time_ratio)
 
-    monkeypatch.setattr(
-        autotuner.math_engine, "compute_time_squeeze_decay", _spy_decay
-    )
+    monkeypatch.setattr(autotuner.math_engine, "compute_time_squeeze_decay", _spy_decay)
 
     ticks = [
         {
-            "time": "09:30", "return": 0.5, "mc_prob": 50.0, "vol": 0.5,
-            "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0,
+            "time": "09:30",
+            "return": 0.5,
+            "mc_prob": 50.0,
+            "vol": 0.5,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 0.0,
         }
         for _ in range(30)
     ]
@@ -190,9 +199,7 @@ def test_replay_time_ratio_first_tick_is_zero(
     autotuner.run_simulation(_default_params(), history, ["sym-A"], "2026-05-01", {})
 
     assert seen, "compute_time_squeeze_decay was never called."
-    assert seen[0] == 0.0, (
-        f"First tick (session open) must have time_ratio 0.0; got {seen[0]}."
-    )
+    assert seen[0] == 0.0, f"First tick (session open) must have time_ratio 0.0; got {seen[0]}."
 
 
 def test_replay_time_ratio_full_day_still_reaches_one(
@@ -209,14 +216,17 @@ def test_replay_time_ratio_full_day_still_reaches_one(
         seen.append(time_ratio)
         return real_decay(time_ratio)
 
-    monkeypatch.setattr(
-        autotuner.math_engine, "compute_time_squeeze_decay", _spy_decay
-    )
+    monkeypatch.setattr(autotuner.math_engine, "compute_time_squeeze_decay", _spy_decay)
 
     ticks = [
         {
-            "time": "09:30", "return": 0.5, "mc_prob": 50.0, "vol": 0.5,
-            "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0,
+            "time": "09:30",
+            "return": 0.5,
+            "mc_prob": 50.0,
+            "vol": 0.5,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 0.0,
         }
         for _ in range(390)
     ]
@@ -263,15 +273,18 @@ def test_replay_single_tick_day_time_ratio_reaches_one(
         seen.append(time_ratio)
         return real_decay(time_ratio)
 
-    monkeypatch.setattr(
-        autotuner.math_engine, "compute_time_squeeze_decay", _spy_decay
-    )
+    monkeypatch.setattr(autotuner.math_engine, "compute_time_squeeze_decay", _spy_decay)
 
     # A single-tick day — the degenerate n_ticks == 1 case.
     ticks = [
         {
-            "time": "09:30", "return": 0.5, "mc_prob": 50.0, "vol": 0.5,
-            "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0,
+            "time": "09:30",
+            "return": 0.5,
+            "mc_prob": 50.0,
+            "vol": 0.5,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 0.0,
         }
     ]
     history = {"sym-A": {"2026-04-06": ticks}}
@@ -279,8 +292,7 @@ def test_replay_single_tick_day_time_ratio_reaches_one(
 
     assert seen, "compute_time_squeeze_decay was never called for the 1-tick day."
     assert len(seen) == 1, (
-        f"A 1-tick day must drive compute_time_squeeze_decay exactly once; "
-        f"got {len(seen)} calls."
+        f"A 1-tick day must drive compute_time_squeeze_decay exactly once; got {len(seen)} calls."
     )
     # Exact equality: a faithful single-tick day maps the lone tick to the
     # session close — time_ratio 1.0 exactly, no tolerance.

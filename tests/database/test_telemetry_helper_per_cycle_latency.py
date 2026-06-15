@@ -50,18 +50,15 @@ _ITERATIONS = 100
 
 # Thresholds match the record_shadow_observation precedent and the
 # shadow-logging-pattern plan §Golden-fixture tests (1)(2).
-_MEDIAN_BUDGET_MS = 50.0   # per-call median must be below this
-_P99_BUDGET_MS = 200.0     # 99th-percentile must be below this
+_MEDIAN_BUDGET_MS = 50.0  # per-call median must be below this
+_P99_BUDGET_MS = 200.0  # 99th-percentile must be below this
 
 # ---------------------------------------------------------------------------
 # Fixture loading
 # ---------------------------------------------------------------------------
 
 _FIXTURE_PATH = (
-    pathlib.Path(__file__).parents[1]
-    / "fixtures"
-    / "math"
-    / "telemetry_helper_write_basic.json"
+    pathlib.Path(__file__).parents[1] / "fixtures" / "math" / "telemetry_helper_write_basic.json"
 )
 
 

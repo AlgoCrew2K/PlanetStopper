@@ -76,6 +76,7 @@ import pytest
 try:
     from hypothesis import given, settings, assume
     from hypothesis import strategies as st
+
     _HYPOTHESIS_AVAILABLE = True
 except ImportError:
     _HYPOTHESIS_AVAILABLE = False
@@ -113,11 +114,10 @@ def fred_shape_fixture() -> dict:
 # Helpers: shape assertions (derive from fixture, never hardcode values)
 # ---------------------------------------------------------------------------
 
+
 def _is_http_url(value: Any) -> bool:
     """True if value is a string starting with http:// or https://."""
-    return isinstance(value, str) and (
-        value.startswith("http://") or value.startswith("https://")
-    )
+    return isinstance(value, str) and (value.startswith("http://") or value.startswith("https://"))
 
 
 def _assert_lens_block_shape(block: dict, lens_name: str) -> None:
@@ -126,12 +126,10 @@ def _assert_lens_block_shape(block: dict, lens_name: str) -> None:
         f"_build_{lens_name}_section must return dict, got {type(block)}"
     )
     assert block.get("lens") == lens_name, (
-        f"_build_{lens_name}_section 'lens' must equal '{lens_name}', "
-        f"got {block.get('lens')!r}"
+        f"_build_{lens_name}_section 'lens' must equal '{lens_name}', got {block.get('lens')!r}"
     )
     assert isinstance(block.get("available"), bool), (
-        f"_build_{lens_name}_section 'available' must be bool, "
-        f"got {type(block.get('available'))}"
+        f"_build_{lens_name}_section 'available' must be bool, got {type(block.get('available'))}"
     )
 
 
@@ -197,6 +195,7 @@ def _make_mock_response(json_data: dict, status_code: int = 200) -> MagicMock:
     mock_resp.raise_for_status = MagicMock()
     if status_code >= 400:
         from requests.exceptions import HTTPError
+
         mock_resp.raise_for_status.side_effect = HTTPError(
             f"HTTP {status_code}", response=mock_resp
         )
@@ -218,14 +217,13 @@ class TestGdeltSentimentProducer:
         for the producer tests — Cycle 2 replaces the stub with a real fetcher.
         """
         import ai_advisor
+
         assert hasattr(ai_advisor, "_build_sentiment_section"), (
             "ai_advisor._build_sentiment_section is missing"
         )
         assert callable(ai_advisor._build_sentiment_section)
 
-    def test_sentiment_available_true_when_gdelt_returns_articles(
-        self, gdelt_shape_fixture: dict
-    ):
+    def test_sentiment_available_true_when_gdelt_returns_articles(self, gdelt_shape_fixture: dict):
         """When GDELT returns articles, _build_sentiment_section returns available=True.
 
         The mock provides the captured GDELT artlist shape from the fixture.
@@ -247,21 +245,15 @@ class TestGdeltSentimentProducer:
         # never hardcode the value
         fixture_articles = gdelt_shape_fixture["gdelt_artlist_shape"]["articles"]
         payload = block["payload"]
-        assert isinstance(payload, dict), (
-            "sentiment payload must be a dict"
-        )
-        assert "article_count" in payload, (
-            "sentiment payload must carry 'article_count'"
-        )
+        assert isinstance(payload, dict), "sentiment payload must be a dict"
+        assert "article_count" in payload, "sentiment payload must carry 'article_count'"
         assert payload["article_count"] == len(fixture_articles), (
             f"sentiment payload 'article_count' must equal the number of articles "
             f"in the GDELT response ({len(fixture_articles)}), "
             f"got {payload['article_count']!r}"
         )
 
-    def test_sentiment_sources_derived_from_gdelt_articles(
-        self, gdelt_shape_fixture: dict
-    ):
+    def test_sentiment_sources_derived_from_gdelt_articles(self, gdelt_shape_fixture: dict):
         """Each GDELT article becomes a source with title, url, published, lens.
 
         Sources are NOT hardcoded — they are derived from the mocked GDELT
@@ -293,9 +285,7 @@ class TestGdeltSentimentProducer:
             f"Expected {fixture_urls}, got {source_urls}."
         )
 
-    def test_sentiment_seendate_mapped_to_published(
-        self, gdelt_shape_fixture: dict
-    ):
+    def test_sentiment_seendate_mapped_to_published(self, gdelt_shape_fixture: dict):
         """GDELT 'seendate' maps to 'published' in each citation source.
 
         GDELT returns 'seendate' (e.g. '20260610T120000Z') — the producer must
@@ -316,12 +306,10 @@ class TestGdeltSentimentProducer:
         sources = block["sources"]
         for i, src in enumerate(sources):
             assert "published" in src, (
-                f"Source[{i}] is missing 'published'. "
-                f"GDELT seendate must be mapped to published."
+                f"Source[{i}] is missing 'published'. GDELT seendate must be mapped to published."
             )
             assert isinstance(src["published"], str) and src["published"].strip(), (
-                f"Source[{i}]['published'] must be a non-empty string. "
-                f"Got {src['published']!r}"
+                f"Source[{i}]['published'] must be a non-empty string. Got {src['published']!r}"
             )
             assert src.get("lens") == "sentiment", (
                 f"Source[{i}]['lens'] must equal 'sentiment', got {src.get('lens')!r}"
@@ -351,9 +339,7 @@ class TestGdeltSentimentProducer:
             "return available=True, not available=False. "
             "Empty != error (CC-3 / GATE-1-AC §1 edge cases)."
         )
-        assert block.get("sources", []) == [], (
-            "Empty article list must produce empty sources list."
-        )
+        assert block.get("sources", []) == [], "Empty article list must produce empty sources list."
         payload = block.get("payload", {})
         assert isinstance(payload, dict), "payload must be a dict even when empty"
         assert payload.get("article_count") == 0, (
@@ -420,10 +406,7 @@ class TestGdeltSentimentProducer:
         import ai_advisor
 
         # Simulate an environment with NO GDELT-related env vars
-        env_without_gdelt_key = {
-            k: v for k, v in os.environ.items()
-            if "GDELT" not in k.upper()
-        }
+        env_without_gdelt_key = {k: v for k, v in os.environ.items() if "GDELT" not in k.upper()}
 
         gdelt_artlist = {
             "articles": [
@@ -498,6 +481,7 @@ class TestSecEdgarFundamentalsProducer:
     def test_fundamentals_section_helper_exists(self):
         """ai_advisor._build_fundamentals_section exists and is callable."""
         import ai_advisor
+
         assert hasattr(ai_advisor, "_build_fundamentals_section")
         assert callable(ai_advisor._build_fundamentals_section)
 
@@ -526,16 +510,12 @@ class TestSecEdgarFundamentalsProducer:
         assert "entity_name" in payload, (
             "fundamentals payload must carry 'entity_name' from companyfacts"
         )
-        assert "key_facts" in payload, (
-            "fundamentals payload must carry 'key_facts' dict"
-        )
+        assert "key_facts" in payload, "fundamentals payload must carry 'key_facts' dict"
         assert isinstance(payload["key_facts"], dict), (
             "fundamentals payload 'key_facts' must be a dict"
         )
 
-    def test_fundamentals_sources_are_sec_filing_urls(
-        self, sec_shape_fixture: dict
-    ):
+    def test_fundamentals_sources_are_sec_filing_urls(self, sec_shape_fixture: dict):
         """Sources in the fundamentals block carry SEC EDGAR filing URLs.
 
         Sources are derived from the fetched companyfacts response, not invented.
@@ -558,18 +538,16 @@ class TestSecEdgarFundamentalsProducer:
         for i, src in enumerate(sources):
             url = src.get("url", "")
             assert (
-                url.startswith("https://www.sec.gov/") or
-                url.startswith("https://data.sec.gov/") or
-                url.startswith("https://efts.sec.gov/")
+                url.startswith("https://www.sec.gov/")
+                or url.startswith("https://data.sec.gov/")
+                or url.startswith("https://efts.sec.gov/")
             ), (
                 f"fundamentals Source[{i}] URL must be a SEC EDGAR domain "
                 f"(sec.gov or data.sec.gov), got {url!r}. "
                 f"Sources must trace to real filing links."
             )
 
-    def test_fundamentals_producer_sends_user_agent_header(
-        self, sec_shape_fixture: dict
-    ):
+    def test_fundamentals_producer_sends_user_agent_header(self, sec_shape_fixture: dict):
         """Every SEC EDGAR request includes a non-empty User-Agent header.
 
         The SEC requires a 'User-Agent: CompanyName email@domain' header.
@@ -706,6 +684,7 @@ class TestFredMacroProducer:
     def test_macro_section_helper_exists(self):
         """ai_advisor._build_macro_section exists and is callable."""
         import ai_advisor
+
         assert hasattr(ai_advisor, "_build_macro_section")
         assert callable(ai_advisor._build_macro_section)
 
@@ -721,10 +700,7 @@ class TestFredMacroProducer:
         """
         import ai_advisor
 
-        env_without_fred = {
-            k: v for k, v in os.environ.items()
-            if k != "FRED_API_KEY"
-        }
+        env_without_fred = {k: v for k, v in os.environ.items() if k != "FRED_API_KEY"}
 
         with patch.dict(os.environ, env_without_fred, clear=True):
             block = ai_advisor._build_macro_section()
@@ -773,12 +749,8 @@ class TestFredMacroProducer:
         _assert_available_true_shape(block, "macro")
         payload = block["payload"]
         assert isinstance(payload, dict), "macro payload must be a dict"
-        assert "series" in payload, (
-            "macro payload must carry a 'series' dict of fetched FRED data"
-        )
-        assert isinstance(payload["series"], dict), (
-            "macro payload 'series' must be a dict"
-        )
+        assert "series" in payload, "macro payload must carry a 'series' dict of fetched FRED data"
+        assert isinstance(payload["series"], dict), "macro payload 'series' must be a dict"
         assert len(payload["series"]) >= 1, (
             f"macro payload 'series' must have at least one entry when fetch succeeds, "
             f"got {payload['series']!r}"
@@ -811,10 +783,13 @@ class TestFredMacroProducer:
         )
         for i, src in enumerate(sources):
             url = src.get("url", "")
-            assert _is_http_url(url), (
-                f"macro Source[{i}] URL must be http/https, got {url!r}"
-            )
-            assert "stlouisfed.org" in url or "fred" in url.lower() or "bls.gov" in url or "federalreserve.gov" in url, (
+            assert _is_http_url(url), f"macro Source[{i}] URL must be http/https, got {url!r}"
+            assert (
+                "stlouisfed.org" in url
+                or "fred" in url.lower()
+                or "bls.gov" in url
+                or "federalreserve.gov" in url
+            ), (
                 f"macro Source[{i}] URL should be a FRED or related macro release URL. "
                 f"Got {url!r}. Sources must trace to real clickable release pages."
             )
@@ -829,9 +804,7 @@ class TestFredMacroProducer:
         import ai_advisor
         from requests.exceptions import Timeout
 
-        timeout_exc = Timeout(
-            "Connection to api.stlouisfed.org timed out: key=secretAPIkey123"
-        )
+        timeout_exc = Timeout("Connection to api.stlouisfed.org timed out: key=secretAPIkey123")
 
         with (
             patch.dict(os.environ, {"FRED_API_KEY": "secretAPIkey123"}, clear=False),
@@ -886,9 +859,7 @@ class TestFredMacroProducer:
             f"Cycle 2 must replace the stub with a real FRED producer."
         )
 
-    def test_macro_series_payload_values_are_not_hardcoded(
-        self, fred_shape_fixture: dict
-    ):
+    def test_macro_series_payload_values_are_not_hardcoded(self, fred_shape_fixture: dict):
         """Macro payload derives series values from the mocked response, not hardcoded.
 
         Change the mock response and verify the payload changes — a hardcoded
@@ -938,17 +909,18 @@ class TestFredMacroProducer:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("lens_name,ticker_kwarg", [
-    ("sentiment", {}),
-    ("fundamentals", {"ticker": "AAPL"}),
-    ("macro", {}),
-])
+@pytest.mark.parametrize(
+    "lens_name,ticker_kwarg",
+    [
+        ("sentiment", {}),
+        ("fundamentals", {"ticker": "AAPL"}),
+        ("macro", {}),
+    ],
+)
 class TestD1ErrorContract:
     """All three Cycle-2 producers must expose only type(exc).__name__ in reason."""
 
-    def test_connection_error_reason_is_exc_class_only(
-        self, lens_name: str, ticker_kwarg: dict
-    ):
+    def test_connection_error_reason_is_exc_class_only(self, lens_name: str, ticker_kwarg: dict):
         """A ConnectionError results in available=False, reason = class name only.
 
         str(ConnectionError) often contains hostnames, socket addresses, or
@@ -960,16 +932,10 @@ class TestD1ErrorContract:
         from requests.exceptions import ConnectionError as ReqConnError
 
         # Embed a hostname in the exc that must NOT appear in the reason
-        conn_exc = ReqConnError(
-            "Failed to establish connection to secret-internal.example.com:443"
-        )
+        conn_exc = ReqConnError("Failed to establish connection to secret-internal.example.com:443")
 
         helper = getattr(ai_advisor, f"_build_{lens_name}_section")
-        env_patch = (
-            {"FRED_API_KEY": "test-key-sentinel"}
-            if lens_name == "macro"
-            else {}
-        )
+        env_patch = {"FRED_API_KEY": "test-key-sentinel"} if lens_name == "macro" else {}
 
         with (
             patch.dict(os.environ, env_patch, clear=False),
@@ -984,30 +950,23 @@ class TestD1ErrorContract:
             f"into reason: {reason!r}. Only type(exc).__name__ is permitted."
         )
         # The class name SHOULD appear (it's the only allowed content)
-        assert "ConnectionError" in reason or "error" in reason.lower() or "connection" in reason.lower(), (
-            f"D-1 error reason for {lens_name} must reference the exception class. "
-            f"Got: {reason!r}"
-        )
+        assert (
+            "ConnectionError" in reason
+            or "error" in reason.lower()
+            or "connection" in reason.lower()
+        ), f"D-1 error reason for {lens_name} must reference the exception class. Got: {reason!r}"
 
-    def test_generic_exception_reason_is_exc_class_only(
-        self, lens_name: str, ticker_kwarg: dict
-    ):
+    def test_generic_exception_reason_is_exc_class_only(self, lens_name: str, ticker_kwarg: dict):
         """Any unexpected exception results in available=False, reason = class only.
 
         A RuntimeError with a message containing a secret must not leak.
         """
         import ai_advisor
 
-        secret_exc = RuntimeError(
-            "Internal error: api_key=supersecretkey, detail=FAIL"
-        )
+        secret_exc = RuntimeError("Internal error: api_key=supersecretkey, detail=FAIL")
 
         helper = getattr(ai_advisor, f"_build_{lens_name}_section")
-        env_patch = (
-            {"FRED_API_KEY": "test-key-sentinel"}
-            if lens_name == "macro"
-            else {}
-        )
+        env_patch = {"FRED_API_KEY": "test-key-sentinel"} if lens_name == "macro" else {}
 
         with (
             patch.dict(os.environ, env_patch, clear=False),
@@ -1147,6 +1106,7 @@ def test_fred_series_values_are_not_wrapped_as_clickable_sources(
 
 
 if _HYPOTHESIS_AVAILABLE:
+
     @given(article_count=st.integers(min_value=0, max_value=50))
     @settings(max_examples=30)
     def test_gdelt_sources_count_equals_article_count(article_count: int):
@@ -1208,8 +1168,8 @@ if _HYPOTHESIS_AVAILABLE:
             # Trigger via timeout (GDELT) — patch time.sleep so the backoff
             # loop doesn't wait real wall-clock seconds inside the test.
             from requests.exceptions import Timeout
-            with patch("requests.get", side_effect=Timeout("test")), \
-                 patch("ai_advisor.time.sleep"):
+
+            with patch("requests.get", side_effect=Timeout("test")), patch("ai_advisor.time.sleep"):
                 block = ai_advisor._build_sentiment_section()
 
         if block.get("available") is False:
@@ -1250,9 +1210,7 @@ def test_live_gdelt_sentiment_returns_articles_for_market_query():
         assert isinstance(block.get("sources"), list)
         _assert_citations_valid(block)
         for src in block["sources"]:
-            assert _is_http_url(src.get("url", "")), (
-                f"Live GDELT source missing valid URL: {src!r}"
-            )
+            assert _is_http_url(src.get("url", "")), f"Live GDELT source missing valid URL: {src!r}"
 
 
 @pytest.mark.live

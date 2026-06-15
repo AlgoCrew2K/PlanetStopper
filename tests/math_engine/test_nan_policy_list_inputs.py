@@ -451,13 +451,12 @@ _MC_TICKER = "AAA"
 # sufficiency guard counts days remaining after the early-window exclusion, so a
 # history must have >= MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1) raw days
 # (+ a margin) to run the real MC path.
-_MC_NUM_DAYS = (
-    math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1) + 10
-)
+_MC_NUM_DAYS = math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1) + 10
 
 
-def _build_mc_history(num_days: int = _MC_NUM_DAYS, spy_amp: float = 0.02,
-                      ticker_amp: float = 0.03) -> dict:
+def _build_mc_history(
+    num_days: int = _MC_NUM_DAYS, spy_amp: float = 0.02, ticker_amp: float = 0.03
+) -> dict:
     """Alternating daily_ret history with SPY + AAA for run_monte_carlo."""
     history: dict = {}
     for i in range(num_days):
@@ -469,9 +468,7 @@ def _build_mc_history(num_days: int = _MC_NUM_DAYS, spy_amp: float = 0.02,
     return history
 
 
-_MC_VALID_HOLDINGS = [
-    {"ticker": _MC_TICKER, "allocation": 1.0, "last_percent_change": 0.01}
-]
+_MC_VALID_HOLDINGS = [{"ticker": _MC_TICKER, "allocation": 1.0, "last_percent_change": 0.01}]
 
 
 @pytest.mark.parametrize("bad", NON_FINITE)
@@ -497,9 +494,7 @@ def test_run_monte_carlo_rejects_non_finite_historical_data_ticker_daily_ret(
     history = _build_mc_history()
     first_date = sorted(history.keys())[0]
     history[first_date][_MC_TICKER]["daily_ret"] = bad
-    holdings = [
-        {"ticker": _MC_TICKER, "allocation": 1.0, "last_percent_change": 0.01}
-    ]
+    holdings = [{"ticker": _MC_TICKER, "allocation": 1.0, "last_percent_change": 0.01}]
     with pytest.raises(ValueError) as exc_info:
         np.random.seed(42)  # deterministic in case of accidental MC entry
         math_engine.run_monte_carlo(
@@ -528,9 +523,7 @@ def test_run_monte_carlo_rejects_non_finite_historical_data_spy_daily_ret(
     history = _build_mc_history()
     first_date = sorted(history.keys())[0]
     history[first_date]["SPY"]["daily_ret"] = bad
-    holdings = [
-        {"ticker": _MC_TICKER, "allocation": 1.0, "last_percent_change": 0.01}
-    ]
+    holdings = [{"ticker": _MC_TICKER, "allocation": 1.0, "last_percent_change": 0.01}]
     with pytest.raises(ValueError) as exc_info:
         np.random.seed(42)
         math_engine.run_monte_carlo(

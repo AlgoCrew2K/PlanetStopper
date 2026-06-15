@@ -82,9 +82,7 @@ def test_compute_overfitting_raises_on_id_none():
         mod.compute_overfitting_conscience_observation(run, ledger_rows=[])
 
     msg = str(excinfo.value)
-    assert "id" in msg.lower(), (
-        f"Exception message must mention 'id'; got {msg!r}"
-    )
+    assert "id" in msg.lower(), f"Exception message must mention 'id'; got {msg!r}"
 
 
 def test_compute_overfitting_accepts_positive_id():

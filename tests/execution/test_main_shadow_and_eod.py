@@ -72,7 +72,7 @@ import alpha_bot_execution
 
 # Reuse B1's harness verbatim. Duplicating the fixture / helpers would drift.
 from tests.execution.test_main_pipeline import (
-    patched_environment,           # noqa: F401  (re-exported pytest fixture)
+    patched_environment,  # noqa: F401  (re-exported pytest fixture)
     _seed_state,
     _make_symphony_payload,
     _make_vwap_payload,
@@ -88,21 +88,22 @@ from tests.execution.test_main_pipeline import (
 # ZoneInfo for the EOD fixed clocks. Mirrors test_main_pipeline.py's fallback.
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
 
     def _et(year, month, day, hour, minute):
         return datetime(year, month, day, hour, minute, 0, tzinfo=_ET)
 except Exception:  # pragma: no cover -- tzdata missing
+
     def _et(year, month, day, hour, minute):
-        return datetime(year, month, day, hour, minute, 0,
-                        tzinfo=timezone(timedelta(hours=-4)))
+        return datetime(year, month, day, hour, minute, 0, tzinfo=timezone(timedelta(hours=-4)))
 
 
 # Wednesday 2025-05-14 11:30 ET — re-used from the harness baseline (intraday).
 # Friday 2025-05-16 is the natural Friday next to that Wednesday.
 # Monday 2025-05-12 is the natural Monday before.
-_FRIDAY_EOD = _et(2025, 5, 16, 16, 2)   # Fri 16:02 ET — within EOD window
-_MONDAY_EOD = _et(2025, 5, 12, 16, 2)   # Mon 16:02 ET — within EOD window
+_FRIDAY_EOD = _et(2025, 5, 16, 16, 2)  # Fri 16:02 ET — within EOD window
+_MONDAY_EOD = _et(2025, 5, 12, 16, 2)  # Mon 16:02 ET — within EOD window
 
 
 # =============================================================================
@@ -120,15 +121,15 @@ _MONDAY_EOD = _et(2025, 5, 12, 16, 2)   # Mon 16:02 ET — within EOD window
 #
 # The frozen baseline values are pre-seeded via ``_seed_state(..., triggered=True, ...)``.
 
-_FROZEN_TRIGGERED_AT_RETURN = 2.5    # %, pre-trigger HWM-relative return at freeze
-_FROZEN_TRIGGERED_AT_HWM    = 3.0    # %, frozen HWM at the trigger instant
-_FROZEN_TRIGGER_PRICE       = 500.00 # SPY price at trigger instant
-_FROZEN_BASKET_ALLOC        = 1.0    # whole-portfolio SPY at trigger
+_FROZEN_TRIGGERED_AT_RETURN = 2.5  # %, pre-trigger HWM-relative return at freeze
+_FROZEN_TRIGGERED_AT_HWM = 3.0  # %, frozen HWM at the trigger instant
+_FROZEN_TRIGGER_PRICE = 500.00  # SPY price at trigger instant
+_FROZEN_BASKET_ALLOC = 1.0  # whole-portfolio SPY at trigger
 
 # These are sentinel values the LIVE feed reports — distinct from frozen ones
 # so divergence is observable.
-_LIVE_PERCENT_CHANGE        = 0.50   # symphony's live last_percent_change (=50%)
-_LIVE_LAST_PRICE            = 510.00 # SPY's CURRENT VWAP price (2% above frozen)
+_LIVE_PERCENT_CHANGE = 0.50  # symphony's live last_percent_change (=50%)
+_LIVE_LAST_PRICE = 510.00  # SPY's CURRENT VWAP price (2% above frozen)
 
 
 def _seed_triggered_state():
@@ -142,27 +143,32 @@ def _seed_triggered_state():
     """
     state = _seed_state(
         armed=False,
-        hwm=-999.0,                     # post-trigger sentinel
+        hwm=-999.0,  # post-trigger sentinel
         triggered=True,
         triggered_reason="Trailing Stop",
         triggered_at_return=_FROZEN_TRIGGERED_AT_RETURN,
         triggered_at_hwm=_FROZEN_TRIGGERED_AT_HWM,
-        triggered_at_stop=1.5,          # arbitrary stop level, not under test
+        triggered_at_stop=1.5,  # arbitrary stop level, not under test
         triggered_at_time="11:25",
         current_holdings=[{"ticker": _TICKER, "allocation": _FROZEN_BASKET_ALLOC}],
         trigger_prices={_TICKER: _FROZEN_TRIGGER_PRICE},
-        triggered_basket_snapshot=[{
-            "ticker": _TICKER,
-            "allocation": _FROZEN_BASKET_ALLOC,
-            "price": _FROZEN_TRIGGER_PRICE,
-        }],
+        triggered_basket_snapshot=[
+            {
+                "ticker": _TICKER,
+                "allocation": _FROZEN_BASKET_ALLOC,
+                "price": _FROZEN_TRIGGER_PRICE,
+            }
+        ],
     )
     return state
 
 
-def _expected_override_return(p_start: float, p_now: float,
-                              frozen_ret: float = _FROZEN_TRIGGERED_AT_RETURN,
-                              alloc: float = _FROZEN_BASKET_ALLOC) -> float:
+def _expected_override_return(
+    p_start: float,
+    p_now: float,
+    frozen_ret: float = _FROZEN_TRIGGERED_AT_RETURN,
+    alloc: float = _FROZEN_BASKET_ALLOC,
+) -> float:
     """Algebraic recompute of the override formula at line 477.
 
     ``current_return = triggered_at_return + (alloc * (p_now - p_start) / p_start) * 100.0``
@@ -203,14 +209,17 @@ class TestShadowOverrideUsesFrozenBaseline:
         # The compute_exit_confirmation arms-guard already protects against
         # re-fire (is_triggered=True, armed=False), but we pin it to no-op for
         # determinism.
-        with patch.object(
-            alpha_bot_execution.math_engine,
-            "compute_exit_confirmation",
-            return_value=(0, False),
-        ), patch.object(
-            alpha_bot_execution.math_engine,
-            "compute_vwap_breakdown_update",
-            return_value=(0, 0, False, False),
+        with (
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_exit_confirmation",
+                return_value=(0, False),
+            ),
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_vwap_breakdown_update",
+                return_value=(0, 0, False, False),
+            ),
         ):
             alpha_bot_execution.main()
 
@@ -261,14 +270,17 @@ class TestShadowOverrideHwmRemainsFrozenPostTrigger:
         env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(_LIVE_LAST_PRICE)
         env["db"].load_state.return_value = _seed_triggered_state()
 
-        with patch.object(
-            alpha_bot_execution.math_engine,
-            "compute_exit_confirmation",
-            return_value=(0, False),
-        ), patch.object(
-            alpha_bot_execution.math_engine,
-            "compute_vwap_breakdown_update",
-            return_value=(0, 0, False, False),
+        with (
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_exit_confirmation",
+                return_value=(0, False),
+            ),
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_vwap_breakdown_update",
+                return_value=(0, 0, False, False),
+            ),
         ):
             alpha_bot_execution.main()
 
@@ -278,9 +290,9 @@ class TestShadowOverrideHwmRemainsFrozenPostTrigger:
         sym_state = final_state[_SYMPHONY_ID]
 
         # Frozen HWM unchanged — derived from seed fixture.
-        assert sym_state["triggered_at_hwm"] == pytest.approx(
-            _FROZEN_TRIGGERED_AT_HWM, rel=1e-9
-        ), "triggered_at_hwm must NOT mutate on subsequent ticks post-trigger"
+        assert sym_state["triggered_at_hwm"] == pytest.approx(_FROZEN_TRIGGERED_AT_HWM, rel=1e-9), (
+            "triggered_at_hwm must NOT mutate on subsequent ticks post-trigger"
+        )
 
         # Live HWM stays at the sentinel -999.0 (post-trigger reset value).
         # If line 519's ``not triggered`` guard breaks, high_water_mark would
@@ -310,9 +322,7 @@ class TestShadowOverrideDoesNotRefireDiscordAlert:
     end-to-end (no mocking of compute_exit_confirmation).
     """
 
-    def test_already_triggered_symphony_does_not_re_fire_discord_alert(
-        self, patched_environment
-    ):
+    def test_already_triggered_symphony_does_not_re_fire_discord_alert(self, patched_environment):
         env = patched_environment
 
         env["fetch_symphony_stats"].return_value = [
@@ -361,19 +371,22 @@ class TestShadowOverrideUsesFrozenHoldingsNotLiveHoldings:
         # the live basket, post_trigger_move would reflect QQQ's +10%.
         env["fetch_intraday_vwaps"].return_value = {
             _TICKER: {"vwap": _LIVE_LAST_PRICE, "last_price": _LIVE_LAST_PRICE},
-            "QQQ":   {"vwap": 550.0,            "last_price": 550.0},
+            "QQQ": {"vwap": 550.0, "last_price": 550.0},
         }
 
         env["db"].load_state.return_value = _seed_triggered_state()
 
-        with patch.object(
-            alpha_bot_execution.math_engine,
-            "compute_exit_confirmation",
-            return_value=(0, False),
-        ), patch.object(
-            alpha_bot_execution.math_engine,
-            "compute_vwap_breakdown_update",
-            return_value=(0, 0, False, False),
+        with (
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_exit_confirmation",
+                return_value=(0, False),
+            ),
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_vwap_breakdown_update",
+                return_value=(0, 0, False, False),
+            ),
         ):
             alpha_bot_execution.main()
 
@@ -384,8 +397,8 @@ class TestShadowOverrideUsesFrozenHoldingsNotLiveHoldings:
 
         # Recompute the EXPECTED value using the FROZEN basket (SPY).
         expected_frozen_basket = _expected_override_return(
-            p_start=_FROZEN_TRIGGER_PRICE,   # frozen
-            p_now=_LIVE_LAST_PRICE,          # live SPY
+            p_start=_FROZEN_TRIGGER_PRICE,  # frozen
+            p_now=_LIVE_LAST_PRICE,  # live SPY
         )
         # The DECOY value: what we'd see if override used the LIVE basket (QQQ).
         # QQQ has no entry in trigger_prices, so the inner ``if t in trigger_prices``
@@ -394,9 +407,7 @@ class TestShadowOverrideUsesFrozenHoldingsNotLiveHoldings:
         # Either way, the expected value comes from the FROZEN basket — and it
         # is NOT a function of QQQ's live price. Pin via the frozen-basket
         # recompute.
-        assert sym_state["current_return"] == pytest.approx(
-            expected_frozen_basket, rel=1e-9
-        ), (
+        assert sym_state["current_return"] == pytest.approx(expected_frozen_basket, rel=1e-9), (
             "override must compute post_trigger_move against the FROZEN basket "
             "(current_holdings + trigger_prices), NOT the live Composer holdings"
         )
@@ -443,10 +454,9 @@ class TestEodPostMortemInvokesSnapshotAfterMarketClose:
         # post_mortem_run is unset → branch should fire.
         env["db"].load_state.return_value = {"date": _FRIDAY_EOD.strftime("%Y-%m-%d")}
 
-        with patch.object(
-            alpha_bot_execution, "get_current_et", return_value=_FRIDAY_EOD
-        ), patch.object(
-            alpha_bot_execution.autotuner, "run_autotuner", return_value=None
+        with (
+            patch.object(alpha_bot_execution, "get_current_et", return_value=_FRIDAY_EOD),
+            patch.object(alpha_bot_execution.autotuner, "run_autotuner", return_value=None),
         ):
             alpha_bot_execution.main()
 
@@ -482,11 +492,12 @@ class TestEodPostMortemFridayTriggersAutotuner:
         env["fetch_symphony_stats"].return_value = []
         env["db"].load_state.return_value = {"date": _FRIDAY_EOD.strftime("%Y-%m-%d")}
 
-        with patch.object(
-            alpha_bot_execution, "get_current_et", return_value=_FRIDAY_EOD
-        ), patch.object(
-            alpha_bot_execution.autotuner, "run_autotuner", return_value={}
-        ) as mock_autotuner:
+        with (
+            patch.object(alpha_bot_execution, "get_current_et", return_value=_FRIDAY_EOD),
+            patch.object(
+                alpha_bot_execution.autotuner, "run_autotuner", return_value={}
+            ) as mock_autotuner,
+        ):
             alpha_bot_execution.main()
 
         # autotuner.run_autotuner was called exactly once.
@@ -518,11 +529,10 @@ class TestEodPostMortemMidWeekSkipsAutotuner:
         env["fetch_symphony_stats"].return_value = []
         env["db"].load_state.return_value = {"date": _MONDAY_EOD.strftime("%Y-%m-%d")}
 
-        with patch.object(
-            alpha_bot_execution, "get_current_et", return_value=_MONDAY_EOD
-        ), patch.object(
-            alpha_bot_execution.autotuner, "run_autotuner"
-        ) as mock_autotuner:
+        with (
+            patch.object(alpha_bot_execution, "get_current_et", return_value=_MONDAY_EOD),
+            patch.object(alpha_bot_execution.autotuner, "run_autotuner") as mock_autotuner,
+        ):
             alpha_bot_execution.main()
 
         # Snapshot fires (Monday is still a weekday inside the EOD window).
@@ -542,9 +552,7 @@ class TestEodPostMortemIdempotentWithinSameDay:
     is NOT regenerated.
     """
 
-    def test_second_tick_within_same_day_does_not_regenerate_snapshot(
-        self, patched_environment
-    ):
+    def test_second_tick_within_same_day_does_not_regenerate_snapshot(self, patched_environment):
         env = patched_environment
         date_str = _FRIDAY_EOD.strftime("%Y-%m-%d")
 
@@ -555,11 +563,10 @@ class TestEodPostMortemIdempotentWithinSameDay:
             "post_mortem_run": date_str,
         }
 
-        with patch.object(
-            alpha_bot_execution, "get_current_et", return_value=_FRIDAY_EOD
-        ), patch.object(
-            alpha_bot_execution.autotuner, "run_autotuner"
-        ) as mock_autotuner:
+        with (
+            patch.object(alpha_bot_execution, "get_current_et", return_value=_FRIDAY_EOD),
+            patch.object(alpha_bot_execution.autotuner, "run_autotuner") as mock_autotuner,
+        ):
             alpha_bot_execution.main()
 
         # generate_eod_snapshot MUST NOT have been called — the idempotency

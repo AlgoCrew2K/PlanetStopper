@@ -78,12 +78,18 @@ def patched_role_accessor():
     DIVERGENCE_EXPLAINER feature-off placeholder (NOT_APPLICABLE, symphony B).
     """
     genuine = _obs_row(
-        101, role="OVERFITTING_CONSCIENCE", verdict="WATCH",
-        symphony_id=_SYM_A, raw_response={"s_count": 3, "note": "selection drift"},
+        101,
+        role="OVERFITTING_CONSCIENCE",
+        verdict="WATCH",
+        symphony_id=_SYM_A,
+        raw_response={"s_count": 3, "note": "selection drift"},
     )
     placeholder = _obs_row(
-        102, role="DIVERGENCE_EXPLAINER", verdict="NOT_APPLICABLE",
-        symphony_id=_SYM_B, raw_response={"feature_flag": "off"},
+        102,
+        role="DIVERGENCE_EXPLAINER",
+        verdict="NOT_APPLICABLE",
+        symphony_id=_SYM_B,
+        raw_response={"feature_flag": "off"},
     )
 
     def _by_role(role, limit=50):
@@ -127,8 +133,8 @@ def test_render_shows_symphony_name_per_observation_row(flask_client, patched_ro
         or "obs-symphony" in html_text
     )
     assert has_symphony_cell, (
-        "No per-row symphony cell hook (data-testid=\"obs-symphony\" or "
-        "class=\"obs-symphony\") in the rendered observations table. "
+        'No per-row symphony cell hook (data-testid="obs-symphony" or '
+        'class="obs-symphony") in the rendered observations table. '
         "AC-3: each row must show which symphony it belongs to."
     )
     # The genuine OC row's symphony name must appear in the rendered HTML — proves
@@ -144,7 +150,9 @@ def test_render_shows_symphony_name_per_observation_row(flask_client, patched_ro
 # ===========================================================================
 
 
-def test_feature_off_placeholder_not_rendered_as_recommendation(flask_client, patched_role_accessor):
+def test_feature_off_placeholder_not_rendered_as_recommendation(
+    flask_client, patched_role_accessor
+):
     """A DIVERGENCE_EXPLAINER NOT_APPLICABLE feature-off stub must NOT appear as a
     genuine recommendation row.
 
@@ -168,13 +176,15 @@ def test_feature_off_placeholder_not_rendered_as_recommendation(flask_client, pa
     if placeholder_symphony_present or feature_off_shown:
         assert placeholder_flagged, (
             "A NOT_APPLICABLE / feature-off placeholder row is rendered in the "
-            "recommendations view WITHOUT a data-testid=\"obs-placeholder\" marker. "
+            'recommendations view WITHOUT a data-testid="obs-placeholder" marker. '
             "AC-6: either omit feature-off stub rows or clearly label them so they "
             "do not read as recommendations."
         )
 
 
-def test_not_applicable_verdict_is_visually_distinct_from_real_verdicts(flask_client, patched_role_accessor):
+def test_not_applicable_verdict_is_visually_distinct_from_real_verdicts(
+    flask_client, patched_role_accessor
+):
     """NOT_APPLICABLE must not be styled identically to a CLEAR/WATCH/BREACH verdict.
 
     The template's _VERDICT_CLASS maps only CLEAR/WATCH/BREACH; NOT_APPLICABLE

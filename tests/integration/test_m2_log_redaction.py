@@ -103,9 +103,8 @@ def isolated_db_with_cvar(tmp_path, monkeypatch):
 # C1: Composer account_id embedded in a DB error does not appear in log
 # ---------------------------------------------------------------------------
 
-def test_composer_account_id_in_db_error_does_not_appear_in_m2_log(
-    isolated_db_with_cvar, caplog
-):
+
+def test_composer_account_id_in_db_error_does_not_appear_in_m2_log(isolated_db_with_cvar, caplog):
     """M2 gate 7 C1: when a DB error message contains a Composer account UUID
     (simulating a DB error that was propagated with context from the Composer
     response), the UUID must not appear in the M2 log output.
@@ -145,6 +144,7 @@ def test_composer_account_id_in_db_error_does_not_appear_in_m2_log(
 # C2: Composer position dollar value in exception must not appear in M2 log
 # ---------------------------------------------------------------------------
 
+
 def test_composer_position_dollar_value_in_error_does_not_appear_in_m2_log(
     isolated_db_with_cvar, caplog
 ):
@@ -156,6 +156,7 @@ def test_composer_position_dollar_value_in_error_does_not_appear_in_m2_log(
     error) and that exception flows through record_cvar_diagnostic, the value
     must be stripped before logging.
     """
+
     def _error_raising_connect(*args, **kwargs):
         raise sqlite3.OperationalError(
             "constraint failed: current_value=98765.43 exceeds position limit"
@@ -186,9 +187,8 @@ def test_composer_position_dollar_value_in_error_does_not_appear_in_m2_log(
 # C3: bearer token in exception message does not leak through M2 log path
 # ---------------------------------------------------------------------------
 
-def test_bearer_token_in_db_error_does_not_appear_in_m2_log(
-    isolated_db_with_cvar, caplog
-):
+
+def test_bearer_token_in_db_error_does_not_appear_in_m2_log(isolated_db_with_cvar, caplog):
     """M2 gate 7 C3: a Composer bearer token embedded in a DB error message
     must not appear in any M2 log record.
 
@@ -196,6 +196,7 @@ def test_bearer_token_in_db_error_does_not_appear_in_m2_log(
     accidentally includes the request authorization header in a DB exception
     message (e.g., via a chained exception), the token must be stripped.
     """
+
     def _error_raising_connect(*args, **kwargs):
         raise sqlite3.OperationalError(
             "auth context: Bearer EyJhBcDeFgHiJkLmNoPqRstuVwXYZabc123 rejected"
@@ -225,9 +226,8 @@ def test_bearer_token_in_db_error_does_not_appear_in_m2_log(
 # C4: full cvar_5pct value must not appear in log from record_cvar_diagnostic
 # ---------------------------------------------------------------------------
 
-def test_cvar_5pct_value_does_not_appear_in_m2_error_log(
-    isolated_db_with_cvar, caplog
-):
+
+def test_cvar_5pct_value_does_not_appear_in_m2_error_log(isolated_db_with_cvar, caplog):
     """M2 gate 7 C4: the cvar_5pct value passed to record_cvar_diagnostic
     must not appear in any log record emitted on the error path.
 
@@ -240,9 +240,7 @@ def test_cvar_5pct_value_does_not_appear_in_m2_error_log(
     distinctive_cvar = 0.031415926  # pi/100 sentinel — must NOT appear in log
 
     with patch("sqlite3.connect") as mock_connect:
-        mock_connect.side_effect = sqlite3.OperationalError(
-            "no such table: cvar_diagnostics"
-        )
+        mock_connect.side_effect = sqlite3.OperationalError("no such table: cvar_diagnostics")
         with caplog.at_level(logging.DEBUG, logger="database"):
             db.record_cvar_diagnostic(
                 cycle_id="CYCLE_M2_C4_001",
@@ -266,9 +264,8 @@ def test_cvar_5pct_value_does_not_appear_in_m2_error_log(
 # C5: cycle_id IS present (permitted field) — positive control
 # ---------------------------------------------------------------------------
 
-def test_cycle_id_present_in_m2_error_log(
-    isolated_db_with_cvar, caplog
-):
+
+def test_cycle_id_present_in_m2_error_log(isolated_db_with_cvar, caplog):
     """Positive control C5: cycle_id must appear in the M2 error log record.
 
     The allowlist permits cycle_id as the correlation handle.  An implementation
@@ -278,9 +275,7 @@ def test_cycle_id_present_in_m2_error_log(
     cycle_id = "CYCLE_M2_POSCTRL_001"
 
     with patch("sqlite3.connect") as mock_connect:
-        mock_connect.side_effect = sqlite3.OperationalError(
-            "no such table: cvar_diagnostics"
-        )
+        mock_connect.side_effect = sqlite3.OperationalError("no such table: cvar_diagnostics")
         with caplog.at_level(logging.WARNING, logger="database"):
             db.record_cvar_diagnostic(
                 cycle_id=cycle_id,
@@ -295,13 +290,11 @@ def test_cycle_id_present_in_m2_error_log(
 
     all_text = _collect_all_log_text(caplog.records)
     assert cycle_id in all_text, (
-        f"Positive control C5: cycle_id must appear in M2 error log. "
-        f"Full log text: {all_text!r}"
+        f"Positive control C5: cycle_id must appear in M2 error log. Full log text: {all_text!r}"
     )
     # Error type must also be present
     assert re.search(r"OperationalError|Error", all_text), (
-        f"Positive control C5: error type must appear in M2 error log. "
-        f"Full log text: {all_text!r}"
+        f"Positive control C5: error type must appear in M2 error log. Full log text: {all_text!r}"
     )
 
 
@@ -310,9 +303,8 @@ def test_cycle_id_present_in_m2_error_log(
 #     but verified at the record_cvar_diagnostic interface level
 # ---------------------------------------------------------------------------
 
-def test_m2_replay_mode_raises_and_emits_no_warning(
-    isolated_db_with_cvar, caplog
-):
+
+def test_m2_replay_mode_raises_and_emits_no_warning(isolated_db_with_cvar, caplog):
     """M2 gate 7 C6: replay mode must raise the DB error without logging.
 
     This mirrors the H4 unit test but asserts the contract at the
@@ -320,9 +312,7 @@ def test_m2_replay_mode_raises_and_emits_no_warning(
     adds its own log before delegating to write_telemetry_row, this test fails.
     """
     with patch("sqlite3.connect") as mock_connect:
-        mock_connect.side_effect = sqlite3.OperationalError(
-            "no such table: cvar_diagnostics"
-        )
+        mock_connect.side_effect = sqlite3.OperationalError("no such table: cvar_diagnostics")
         with caplog.at_level(logging.DEBUG, logger="database"):
             with pytest.raises(sqlite3.OperationalError):
                 db.record_cvar_diagnostic(

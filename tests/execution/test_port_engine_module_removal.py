@@ -160,8 +160,7 @@ class TestExitAuthorityDecisionFunctionsRemoved:
         dead code once the toggle has no effect.  Must be removed.
         """
         assert not hasattr(exit_authority_module, "write_exit_authority_to_env"), (
-            "engine.exit_authority.write_exit_authority_to_env must not exist "
-            "after SITE-C1 removal"
+            "engine.exit_authority.write_exit_authority_to_env must not exist after SITE-C1 removal"
         )
 
     def test_exit_authority_constants_per_symphony_removed(self, exit_authority_module):
@@ -228,6 +227,7 @@ class TestExitAuthorityDisplayHelpersPreserved:
         """
         monkeypatch.setenv("EXIT_AUTHORITY", "per_symphony")
         from engine.exit_authority import get_exit_authority_badge_context
+
         ctx = get_exit_authority_badge_context()
         assert isinstance(ctx, dict), "get_exit_authority_badge_context must return a dict"
         assert "is_degraded" in ctx, "returned dict must contain 'is_degraded' key"
@@ -238,6 +238,7 @@ class TestExitAuthorityDisplayHelpersPreserved:
         restart_required key.  Value is derived purely from the input arguments.
         """
         from engine.exit_authority import build_restart_notice_context
+
         ctx = build_restart_notice_context(
             toggle_changed_at=None,
             daemon_started_at="2024-01-01T09:00:00Z",
@@ -270,9 +271,7 @@ class TestAppNoGetExitAuthorityImport:
         app_path = pathlib.Path(__file__).parent.parent.parent / "app.py"
         return ast.parse(app_path.read_text(encoding="utf-8"))
 
-    def _collect_import_from_names(
-        self, tree: ast.AST, module: str
-    ) -> list[str]:
+    def _collect_import_from_names(self, tree: ast.AST, module: str) -> list[str]:
         """Return all names imported from `module` anywhere in the AST."""
         names: list[str] = []
         for node in ast.walk(tree):
@@ -337,6 +336,7 @@ class TestAppNoGetExitAuthorityImport:
 
         try:
             import database
+
             _old = logging.getLogger().level
             logging.getLogger().setLevel(logging.CRITICAL)
             try:
@@ -345,6 +345,7 @@ class TestAppNoGetExitAuthorityImport:
                 logging.getLogger().setLevel(_old)
 
             import app as app_module
+
             result = app_module.get_api_state_dict()
             assert "exit_authority" in result, (
                 "get_api_state_dict must still include 'exit_authority' in its "
@@ -387,16 +388,10 @@ class TestNoRemainingProductionImports:
         """
         for p in root.rglob("*.py"):
             parts = p.relative_to(root).parts
-            if (
-                "tests" not in parts
-                and "__pycache__" not in parts
-                and ".claude" not in parts
-            ):
+            if "tests" not in parts and "__pycache__" not in parts and ".claude" not in parts:
                 yield p
 
-    def _import_from_names_in_file(
-        self, filepath: pathlib.Path, module: str
-    ) -> list[str]:
+    def _import_from_names_in_file(self, filepath: pathlib.Path, module: str) -> list[str]:
         try:
             tree = ast.parse(filepath.read_text(encoding="utf-8"))
         except SyntaxError:

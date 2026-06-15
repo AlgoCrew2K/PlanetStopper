@@ -97,9 +97,7 @@ _FIXTURE_PATH = (
 )
 
 # Migration file path
-_MIGRATION_PATH = (
-    pathlib.Path(__file__).parents[2] / "migrations" / "020_autotune_runs_eut.sql"
-)
+_MIGRATION_PATH = pathlib.Path(__file__).parents[2] / "migrations" / "020_autotune_runs_eut.sql"
 
 # ---------------------------------------------------------------------------
 # DB isolation fixture — function-scoped, redirects DB_FILE, runs full
@@ -181,10 +179,23 @@ def _insert_autotune_run_direct(
             "gamma, lambda_budget, overfitting_verdict, paired_heuristic_study_name) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                run_timestamp, symphony_id, oos_alpha, train_alpha, baseline_decision,
-                fallback_oos_alpha, default_oos_alpha, selection_tstat,
-                spec_bundle_id, d_spec, n_effective, ce_metric, cvar_feasible,
-                gamma, lambda_budget, overfitting_verdict, paired_heuristic_study_name,
+                run_timestamp,
+                symphony_id,
+                oos_alpha,
+                train_alpha,
+                baseline_decision,
+                fallback_oos_alpha,
+                default_oos_alpha,
+                selection_tstat,
+                spec_bundle_id,
+                d_spec,
+                n_effective,
+                ce_metric,
+                cvar_feasible,
+                gamma,
+                lambda_budget,
+                overfitting_verdict,
+                paired_heuristic_study_name,
             ),
         )
         conn.commit()
@@ -544,8 +555,8 @@ def test_phase1_eut_row_cvar_feasible_and_lambda_budget_are_null(migrated_db):
         d_spec=0,
         n_effective=100,
         overfitting_verdict="D_spec=0,N_effective=N_optuna,no_violations",
-        cvar_feasible=None,    # Phase-2 column — must be NULL in Phase 1
-        lambda_budget=None,    # Phase-2 column — must be NULL in Phase 1
+        cvar_feasible=None,  # Phase-2 column — must be NULL in Phase 1
+        lambda_budget=None,  # Phase-2 column — must be NULL in Phase 1
     )
 
     conn = sqlite3.connect(migrated_db)
@@ -724,9 +735,9 @@ def test_020_schema_validator_both_row_shapes_readable(migrated_db):
         d_spec=0,
         n_effective=300,
         ce_metric=0.02,
-        cvar_feasible=None,      # Phase-2 — NULL in Phase 1
+        cvar_feasible=None,  # Phase-2 — NULL in Phase 1
         gamma=3.0,
-        lambda_budget=None,      # Phase-2 — NULL in Phase 1
+        lambda_budget=None,  # Phase-2 — NULL in Phase 1
         overfitting_verdict="D_spec=0,N_effective=N_optuna,no_violations",
         paired_heuristic_study_name="heuristic_2026_05_20__my_symphony",
     )
@@ -736,9 +747,7 @@ def test_020_schema_validator_both_row_shapes_readable(migrated_db):
         legacy_row = conn.execute(
             "SELECT id FROM autotune_runs WHERE id = ?", (legacy_id,)
         ).fetchone()
-        eut_row = conn.execute(
-            "SELECT id FROM autotune_runs WHERE id = ?", (eut_id,)
-        ).fetchone()
+        eut_row = conn.execute("SELECT id FROM autotune_runs WHERE id = ?", (eut_id,)).fetchone()
     finally:
         conn.close()
 
@@ -834,7 +843,9 @@ def test_020_appended_after_021_in_migration_files_list():
 # ===========================================================================
 
 
-def test_h1_dual_write_hostile_duplicate_column_swallow_records_migration(tmp_path, monkeypatch, caplog):
+def test_h1_dual_write_hostile_duplicate_column_swallow_records_migration(
+    tmp_path, monkeypatch, caplog
+):
     """
     When run_migrations() encounters 020_autotune_runs_eut.sql on a fresh DB that
     already has the 9 EUT columns (via init_db()), the duplicate-column-name swallow
@@ -977,8 +988,7 @@ def test_020_migration_uses_alter_table_not_create_table():
     This test reads the migration file directly to guard against this category error.
     """
     assert _MIGRATION_PATH.is_file(), (
-        f"Migration file not found: {_MIGRATION_PATH}. "
-        "Create migrations/020_autotune_runs_eut.sql."
+        f"Migration file not found: {_MIGRATION_PATH}. Create migrations/020_autotune_runs_eut.sql."
     )
 
     sql = _MIGRATION_PATH.read_text(encoding="utf-8")
@@ -993,6 +1003,7 @@ def test_020_migration_uses_alter_table_not_create_table():
     # We allow CREATE TABLE IF NOT EXISTS for schema_migrations bootstrap (if needed),
     # but not for autotune_runs itself.
     import re
+
     create_autotune_runs = re.search(
         r"CREATE\s+TABLE\s+(IF\s+NOT\s+EXISTS\s+)?autotune_runs",
         sql_upper,
@@ -1194,6 +1205,5 @@ def test_020_existing_autotune_run_row_survives_migration(tmp_path, monkeypatch)
 def test_020_migration_file_exists():
     """The migration file migrations/020_autotune_runs_eut.sql must exist."""
     assert _MIGRATION_PATH.is_file(), (
-        f"Migration file not found: {_MIGRATION_PATH}. "
-        "Create migrations/020_autotune_runs_eut.sql."
+        f"Migration file not found: {_MIGRATION_PATH}. Create migrations/020_autotune_runs_eut.sql."
     )

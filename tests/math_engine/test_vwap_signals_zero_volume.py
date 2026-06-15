@@ -74,9 +74,7 @@ def test_zero_volume_ticker_excluded_from_valid_weight() -> None:
 
     # Derived by hand: only REAL (volume > 0) qualifies -> weight == 0.5.
     expected_weight = 0.5
-    assert valid_vwap_weight == pytest.approx(
-        expected_weight, rel=TOL_REL, abs=TOL_ABS
-    ), (
+    assert valid_vwap_weight == pytest.approx(expected_weight, rel=TOL_REL, abs=TOL_ABS), (
         "Zero-volume ticker DEAD was counted in valid_vwap_weight. A ticker "
         "with 0 session volume has no meaningful VWAP and must NOT be in the "
         f"weighting denominator. Expected weight {expected_weight} (REAL "
@@ -111,9 +109,7 @@ def test_zero_volume_ticker_excluded_from_weighted_diff() -> None:
 
     # Derived by hand: only REAL contributes.
     expected_diff = 0.5 * (101.0 - 100.0) / 100.0  # == 0.005
-    assert weighted_vwap_diff == pytest.approx(
-        expected_diff, rel=TOL_REL, abs=TOL_ABS
-    ), (
+    assert weighted_vwap_diff == pytest.approx(expected_diff, rel=TOL_REL, abs=TOL_ABS), (
         "Zero-volume ticker DEAD leaked into weighted_vwap_diff. Expected "
         f"{expected_diff} (REAL alone); a producer that counted DEAD's stale "
         f"VWAP would return ~0.105. Got {weighted_vwap_diff}."
@@ -172,15 +168,11 @@ def test_positive_volume_ticker_still_qualifies() -> None:
 
     expected_weight = 0.8
     expected_diff = 0.8 * (102.0 - 100.0) / 100.0  # == 0.016
-    assert valid_vwap_weight == pytest.approx(
-        expected_weight, rel=TOL_REL, abs=TOL_ABS
-    ), (
+    assert valid_vwap_weight == pytest.approx(expected_weight, rel=TOL_REL, abs=TOL_ABS), (
         "A ticker with positive session volume must still count toward "
         f"valid_vwap_weight. Expected {expected_weight}, got {valid_vwap_weight}."
     )
-    assert weighted_vwap_diff == pytest.approx(
-        expected_diff, rel=TOL_REL, abs=TOL_ABS
-    ), (
+    assert weighted_vwap_diff == pytest.approx(expected_diff, rel=TOL_REL, abs=TOL_ABS), (
         "A ticker with positive session volume must still contribute to "
         f"weighted_vwap_diff. Expected {expected_diff}, got {weighted_vwap_diff}."
     )

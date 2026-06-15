@@ -87,8 +87,7 @@ class TestM2WriteUsesH4TelemetryHelper:
             f"got {calls[0]['table']!r}"
         )
         assert calls[0]["mode"] == "live", (
-            f"mode must be passed through to write_telemetry_row; "
-            f"got {calls[0]['mode']!r}"
+            f"mode must be passed through to write_telemetry_row; got {calls[0]['mode']!r}"
         )
 
     def test_m2_row_dict_contains_required_columns(self, monkeypatch):
@@ -116,9 +115,13 @@ class TestM2WriteUsesH4TelemetryHelper:
         )
 
         required_keys = {
-            "cycle_id", "symphony_id",
-            "cvar_5pct", "cvar_5pct_stderr", "cvar_n_tail",
-            "cvar_5pct_long", "cvar_n_tail_long",
+            "cycle_id",
+            "symphony_id",
+            "cvar_5pct",
+            "cvar_5pct_stderr",
+            "cvar_n_tail",
+            "cvar_5pct_long",
+            "cvar_n_tail_long",
         }
         missing = required_keys - set(captured_row.keys())
         assert not missing, (
@@ -227,6 +230,7 @@ class TestM2WriteP99LatencyUnderBudget:
         """
         # Set up an isolated DB at db_path with the full migration sequence
         import os
+
         old_env = os.environ.get("DB_PATH")
         os.environ["DB_PATH"] = db_path
         try:
@@ -406,6 +410,7 @@ class TestM2WriteOutsideSaveStateTransaction:
         a connection parameter (it manages its own lifecycle).
         """
         import inspect
+
         sig = inspect.signature(_db.write_telemetry_row)
         param_names = list(sig.parameters.keys())
 

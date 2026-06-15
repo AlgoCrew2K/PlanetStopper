@@ -49,9 +49,12 @@ _SENTINEL_CHART_URL = "https://quickchart.example.invalid/chart/SENTINEL"
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+
 def _db_stubs():
     """Return a pair of patches that stub database calls out of SQLite."""
-    patch_normalize = patch("reporting.database.normalize_name", side_effect=lambda n: n.strip().lower())
+    patch_normalize = patch(
+        "reporting.database.normalize_name", side_effect=lambda n: n.strip().lower()
+    )
     patch_get_strat = patch(
         "reporting.database.get_symphony_strategy",
         return_value={"params": {}, "locked_vars": {}},
@@ -79,20 +82,20 @@ def _make_post_mock(status_code=200, json_return=None):
 # to sym["current_return"].  saved_pct = f_ret - live_ret.
 _GUARD_ALPHA_CASES = [
     pytest.param(
-        -2.0,   # f_ret  — frozen exit return (negative, bleed stopped)
-        -4.5,   # live_ret — where price ended up without guard (worse)
+        -2.0,  # f_ret  — frozen exit return (negative, bleed stopped)
+        -4.5,  # live_ret — where price ended up without guard (worse)
         "positive",  # saved_pct = -2.0 - (-4.5) = +2.5  → gain case
         id="gain_live_worse_than_exit",
     ),
     pytest.param(
-        -2.0,   # f_ret
-        -0.5,   # live_ret — market recovered; guard alpha is negative
+        -2.0,  # f_ret
+        -0.5,  # live_ret — market recovered; guard alpha is negative
         "negative",  # saved_pct = -2.0 - (-0.5) = -1.5  → loss case
         id="loss_market_recovered_after_exit",
     ),
     pytest.param(
-        -2.0,   # f_ret
-        -2.0,   # live_ret — identical → tie
+        -2.0,  # f_ret
+        -2.0,  # live_ret — identical → tie
         "zero",  # saved_pct = 0.0
         id="tie_exact_equal",
     ),
@@ -119,7 +122,7 @@ def test_guard_alpha_calculation_sign_matches_scenario(
             "triggered_at_return": f_ret,
             "triggered_at_stop": f_ret - 1.0,  # != f_ret so not Take-Profit
             "triggered_reason": "Trailing Stop",
-            "current_return": live_ret,   # fallback used when no basket
+            "current_return": live_ret,  # fallback used when no basket
             "current_value": 10_000.0,
             "triggered_basket_snapshot": [],  # empty → uses current_return
             "name": "Test Symphony",
@@ -186,6 +189,7 @@ def test_guard_alpha_calculation_sign_matches_scenario(
 #    the FROZEN value and must appear as exit_return in the snapshot.
 # ===========================================================================
 
+
 def test_shadow_return_uses_frozen_triggered_at_return_not_current(tmp_path, monkeypatch):
     """When a symphony has triggered=True and live_prices are provided, the
     Stage 1 snapshot must use triggered_at_return as the exit_return — the
@@ -194,8 +198,8 @@ def test_shadow_return_uses_frozen_triggered_at_return_not_current(tmp_path, mon
     This pins the contract that post-trigger moves cannot retroactively change
     the recorded exit return.
     """
-    frozen_exit_return = -3.0          # locked at trigger time
-    current_return_drifted = -1.0      # current state — should NOT appear as exit_return
+    frozen_exit_return = -3.0  # locked at trigger time
+    current_return_drifted = -1.0  # current state — should NOT appear as exit_return
 
     ticker = "SPY"
     trigger_price = 400.0
@@ -275,7 +279,7 @@ _EXIT_REASON_CASES = [
         "Trailing Stop",
         # current_return > 0 → "Profit Locked" branch (no special exit_reason match)
         "Profit Locked",
-        5763719,   # Green — current_return > 0 path
+        5763719,  # Green — current_return > 0 path
         {"current_return": 1.5},
         id="trailing_stop_profit",
     ),
@@ -303,7 +307,7 @@ _EXIT_REASON_CASES = [
     pytest.param(
         "Take-Profit",
         "Smart Take-Profit Locked",
-        5763719,   # Green
+        5763719,  # Green
         {"current_return": 4.0},
         id="take_profit",
     ),
@@ -327,8 +331,10 @@ def test_send_discord_alert_title_and_color_match_exit_reason(
     """
     current_return = extra_kwargs.get("current_return", 0.0)
 
-    with patch.object(reporting.requests, "post") as mock_post, \
-         patch.object(reporting.time, "sleep"):
+    with (
+        patch.object(reporting.requests, "post") as mock_post,
+        patch.object(reporting.time, "sleep"),
+    ):
         mock_post.return_value = _make_post_mock()
 
         reporting.send_discord_alert(
@@ -372,6 +378,7 @@ def test_send_discord_alert_title_and_color_match_exit_reason(
 #    VWAP Breakdown → "VWAP Breakdown Stats" field present
 #    Take-Profit → "Take-Profit Threshold" field present
 # ===========================================================================
+
 
 @pytest.mark.parametrize(
     "exit_reason,extra_kwargs,expected_field_name",
@@ -418,8 +425,10 @@ def test_conditional_field_injected_when_feature_flag_active(
     prob_underperforming = extra_kwargs.pop("prob_underperforming", 55.0)
     current_return = extra_kwargs.pop("current_return", 0.0)
 
-    with patch.object(reporting.requests, "post") as mock_post, \
-         patch.object(reporting.time, "sleep"):
+    with (
+        patch.object(reporting.requests, "post") as mock_post,
+        patch.object(reporting.time, "sleep"),
+    ):
         mock_post.return_value = _make_post_mock()
 
         reporting.send_discord_alert(
@@ -480,8 +489,10 @@ def test_conditional_field_absent_when_feature_flag_not_set(
     """
     current_return = minimal_kwargs.get("current_return", 0.0)
 
-    with patch.object(reporting.requests, "post") as mock_post, \
-         patch.object(reporting.time, "sleep"):
+    with (
+        patch.object(reporting.requests, "post") as mock_post,
+        patch.object(reporting.time, "sleep"),
+    ):
         mock_post.return_value = _make_post_mock()
 
         reporting.send_discord_alert(
@@ -511,6 +522,7 @@ def test_conditional_field_absent_when_feature_flag_not_set(
 #    15 embeds → first batch of 10 (with file), then second batch of 5.
 #    requests.post must be called exactly 2 times.
 # ===========================================================================
+
 
 def _make_optimization_results(n_symphonies):
     """Build a minimal optimization_results dict producing exactly n_symphonies
@@ -575,13 +587,14 @@ def test_discord_chunking_15_embeds_calls_post_twice(tmp_path, monkeypatch):
     # Call order: [quickchart, discord_batch_1, discord_batch_2]
     # We need to handle that the report file itself gets picked up by glob.
 
-    with patch.object(reporting.requests, "post") as mock_post, \
-         patch.object(reporting.time, "sleep"):
-
+    with (
+        patch.object(reporting.requests, "post") as mock_post,
+        patch.object(reporting.time, "sleep"),
+    ):
         mock_post.side_effect = [
             quickchart_response,  # QuickChart POST
-            discord_response,     # Discord batch 1 (10 embeds)
-            discord_response,     # Discord batch 2 (5 embeds)
+            discord_response,  # Discord batch 1 (10 embeds)
+            discord_response,  # Discord batch 2 (5 embeds)
         ]
 
         reporting.send_eod_discord_post(
@@ -593,8 +606,7 @@ def test_discord_chunking_15_embeds_calls_post_twice(tmp_path, monkeypatch):
 
     # Total POST calls: 1 QuickChart + 2 Discord batches = 3
     assert mock_post.call_count == 3, (
-        f"Expected 3 POST calls (1 QuickChart + 2 Discord batches); "
-        f"got {mock_post.call_count}"
+        f"Expected 3 POST calls (1 QuickChart + 2 Discord batches); got {mock_post.call_count}"
     )
 
     # Extract Discord calls (calls 1 and 2, 0-indexed)
@@ -614,9 +626,7 @@ def test_discord_chunking_15_embeds_calls_post_twice(tmp_path, monkeypatch):
 
     # Second Discord call uses json=
     call2_json = discord_call_2.kwargs.get("json") or discord_call_2[1].get("json")
-    assert call2_json is not None, (
-        "Second Discord call should use json= (no file attachment)"
-    )
+    assert call2_json is not None, "Second Discord call should use json= (no file attachment)"
     batch2_embeds = call2_json["embeds"]
     assert len(batch2_embeds) == 5, (
         f"Second Discord batch should have 5 embeds; got {len(batch2_embeds)}"
@@ -650,9 +660,10 @@ def test_discord_no_chunking_when_10_or_fewer_embeds(tmp_path, monkeypatch):
     quickchart_response.json.return_value = {"url": _SENTINEL_CHART_URL}
     discord_response = MagicMock()
 
-    with patch.object(reporting.requests, "post") as mock_post, \
-         patch.object(reporting.time, "sleep"):
-
+    with (
+        patch.object(reporting.requests, "post") as mock_post,
+        patch.object(reporting.time, "sleep"),
+    ):
         mock_post.side_effect = [
             quickchart_response,
             discord_response,
@@ -667,8 +678,7 @@ def test_discord_no_chunking_when_10_or_fewer_embeds(tmp_path, monkeypatch):
 
     # 1 QuickChart + 1 Discord = 2 calls total (no second Discord batch)
     assert mock_post.call_count == 2, (
-        f"Expected 2 total POST calls (1 QuickChart + 1 Discord); "
-        f"got {mock_post.call_count}"
+        f"Expected 2 total POST calls (1 QuickChart + 1 Discord); got {mock_post.call_count}"
     )
 
     discord_call = mock_post.call_args_list[1]
@@ -687,6 +697,7 @@ def test_discord_no_chunking_when_10_or_fewer_embeds(tmp_path, monkeypatch):
 #    send_eod_discord_post POSTs to QuickChart with a json= body containing
 #    a 'chart' key whose value has 'type', 'data', and 'options'.
 # ===========================================================================
+
 
 def test_quickchart_post_payload_is_well_formed(tmp_path, monkeypatch):
     """Pins that the QuickChart POST contains the required chart config
@@ -736,9 +747,10 @@ def test_quickchart_post_payload_is_well_formed(tmp_path, monkeypatch):
             return quickchart_response
         return discord_response
 
-    with patch.object(reporting.requests, "post", side_effect=_capture_post), \
-         patch.object(reporting.time, "sleep"):
-
+    with (
+        patch.object(reporting.requests, "post", side_effect=_capture_post),
+        patch.object(reporting.time, "sleep"),
+    ):
         reporting.send_eod_discord_post(
             current_date_str=date_str,
             report_file=str(report_file),
@@ -753,9 +765,7 @@ def test_quickchart_post_payload_is_well_formed(tmp_path, monkeypatch):
     )
 
     qc_json = captured_quickchart_kwargs.get("json")
-    assert qc_json is not None, (
-        "QuickChart POST must use json= kwarg (not data= or params=)"
-    )
+    assert qc_json is not None, "QuickChart POST must use json= kwarg (not data= or params=)"
 
     # Top-level structure
     assert "chart" in qc_json, "QuickChart payload missing top-level 'chart' key"
@@ -785,6 +795,7 @@ def test_quickchart_post_payload_is_well_formed(tmp_path, monkeypatch):
 # ===========================================================================
 # Edge cases / guard clauses
 # ===========================================================================
+
 
 def test_send_discord_alert_no_op_when_webhook_url_is_none():
     """send_discord_alert must return immediately without calling requests.post

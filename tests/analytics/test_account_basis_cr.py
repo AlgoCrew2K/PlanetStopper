@@ -202,9 +202,7 @@ class TestAccountBasisMath:
 
 
 class TestAccountBasisEdgeCases:
-    def test_none_dry_run_propagated_as_none(
-        self, total_stats_fixture, symphony_stats_fixture
-    ):
+    def test_none_dry_run_propagated_as_none(self, total_stats_fixture, symphony_stats_fixture):
         """
         When vw_cr["dry_run"] is None (no shadow history), the function must
         return {"if_held": account_if_held, "dry_run": None} without crashing.
@@ -258,13 +256,9 @@ class TestAccountBasisEdgeCases:
             vw_cr, if_held_acct, -100.0, sym_sum
         )
 
-        assert result == vw_cr, (
-            "With account_value < 0, the function must return vw_cr unchanged."
-        )
+        assert result == vw_cr, "With account_value < 0, the function must return vw_cr unchanged."
 
-    def test_zero_symphony_value_sum_returns_vw_cr_unchanged(
-        self, total_stats_fixture
-    ):
+    def test_zero_symphony_value_sum_returns_vw_cr_unchanged(self, total_stats_fixture):
         """
         When symphony_value_sum == 0 (no invested positions), no scaling is possible.
         Return vw_cr unchanged.
@@ -400,7 +394,9 @@ class TestComputePortfolioStripAccountBasis:
             f"Check that _compute_portfolio_strip uses get_portfolio_cumulative_return_account_basis."
         )
 
-    def test_strip_if_held_equals_cached_portfolio_cr(self, total_stats_fixture, symphony_stats_fixture):
+    def test_strip_if_held_equals_cached_portfolio_cr(
+        self, total_stats_fixture, symphony_stats_fixture
+    ):
         """
         The cumulative_return.if_held must be the cached portfolio_cr (Composer
         simple_return * 100) regardless of per-symphony data.

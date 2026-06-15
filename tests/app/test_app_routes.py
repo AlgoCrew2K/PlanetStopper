@@ -216,7 +216,9 @@ def test_api_state_returns_500_on_database_failure(client, mock_database, monkey
 def test_sell_account_returns_400_when_account_id_missing(client, monkeypatch):
     """Missing account_id => 400 with structured error JSON."""
     monkeypatch.setattr(
-        app_module, "dotenv_values", lambda *_a, **_k: {"COMPOSER_KEY_ID": "k", "COMPOSER_SECRET": "s"}
+        app_module,
+        "dotenv_values",
+        lambda *_a, **_k: {"COMPOSER_KEY_ID": "k", "COMPOSER_SECRET": "s"},
     )
     resp = client.post("/api/sell_account", json={})
     assert resp.status_code == 400
@@ -257,22 +259,24 @@ def test_sell_account_rejects_non_live_with_clear_signal(client, monkeypatch):
 
     class FakeThread:
         """Records start() calls; start must NEVER be called for non-live mode."""
+
         def __init__(self, target=None, args=(), **kw):
             pass
 
         def start(self):
             # If this is reached the route spawned a liquidation thread when
             # LIVE_EXECUTION=False — the test must fail.
-            raise AssertionError(
-                "liquidation thread must NOT be started when LIVE_EXECUTION=False"
-            )
+            raise AssertionError("liquidation thread must NOT be started when LIVE_EXECUTION=False")
 
     monkeypatch.setattr(app_module.threading, "Thread", FakeThread)
-    resp = client.post("/api/sell_account", json={
-        "account_id": "ACC1",
-        "confirm_account_id": "ACC1",
-        "confirm_phrase": "LIQUIDATE",
-    })
+    resp = client.post(
+        "/api/sell_account",
+        json={
+            "account_id": "ACC1",
+            "confirm_account_id": "ACC1",
+            "confirm_phrase": "LIQUIDATE",
+        },
+    )
 
     body = resp.get_json()
 
@@ -311,11 +315,14 @@ def test_sell_account_live_mode_passes_true_to_liquidation(client, monkeypatch):
         return real_thread(target=lambda: None)
 
     monkeypatch.setattr(app_module.threading, "Thread", fake_thread)
-    resp = client.post("/api/sell_account", json={
-        "account_id": "ACC2",
-        "confirm_account_id": "ACC2",
-        "confirm_phrase": "LIQUIDATE",
-    })
+    resp = client.post(
+        "/api/sell_account",
+        json={
+            "account_id": "ACC2",
+            "confirm_account_id": "ACC2",
+            "confirm_phrase": "LIQUIDATE",
+        },
+    )
     assert resp.status_code == 200
     target, args, _ = started[0]
     assert target is app_module.perform_account_liquidation
@@ -360,8 +367,8 @@ def test_perform_account_liquidation_posts_when_live_mode_true(monkeypatch):
     fake_get_resp.status_code = 200
     fake_get_resp.json.return_value = {
         "symphonies": [
-            {"symphony_id": "S1", "name": "A"},   # only symphony_id
-            {"id": "S2", "name": "B"},             # only id — would KeyError under old code
+            {"symphony_id": "S1", "name": "A"},  # only symphony_id
+            {"id": "S2", "name": "B"},  # only id — would KeyError under old code
         ]
     }
     posts = []
@@ -477,7 +484,7 @@ def test_post_settings_writes_env_and_saves_symphony_strategy(
     # A-1: LIVE_EXECUTION and credential keys must never appear in set_key calls.
     assert "LIVE_EXECUTION" not in written_keys
     assert "DISCORD_WEBHOOK_URL" not in written_keys
-    for (path, _k, _v) in set_key_calls:
+    for path, _k, _v in set_key_calls:
         assert path == str(isolated_env_file)
 
     # save_symphony_strategy invoked with params coerced to float and locked passed through.
@@ -490,7 +497,9 @@ def test_post_settings_writes_env_and_saves_symphony_strategy(
     assert locked_arg == ["TRIGGER_THRESHOLD_PCT"]
 
 
-def test_post_settings_rejects_non_allowlisted_globals(client, mock_database, isolated_env_file, monkeypatch):
+def test_post_settings_rejects_non_allowlisted_globals(
+    client, mock_database, isolated_env_file, monkeypatch
+):
     """POST /api/settings must return 400 when any submitted global key is not in the allowlist.
 
     A-1 security fix: LIVE_EXECUTION and credential keys are explicitly excluded from
@@ -498,7 +507,11 @@ def test_post_settings_rejects_non_allowlisted_globals(client, mock_database, is
     not a silent write or a 500 crash.
     """
     set_key_calls = []
-    monkeypatch.setattr(app_module, "set_key", lambda *a, **kw: set_key_calls.append((a[1], a[2])) or (True, a[1], a[2]))
+    monkeypatch.setattr(
+        app_module,
+        "set_key",
+        lambda *a, **kw: set_key_calls.append((a[1], a[2])) or (True, a[1], a[2]),
+    )
 
     for disallowed_key in ("LIVE_EXECUTION", "DISCORD_WEBHOOK_URL", "ARBITRARY_KEY"):
         payload = {"globals": {disallowed_key: "some-value"}, "symphonies": {}}
@@ -507,22 +520,30 @@ def test_post_settings_rejects_non_allowlisted_globals(client, mock_database, is
             f"Non-allowlisted key {disallowed_key!r} must produce 400; got {resp.status_code}"
         )
         body = resp.get_json()
-        assert body.get("status") == "error", f"Response must be status=error for {disallowed_key!r}"
+        assert body.get("status") == "error", (
+            f"Response must be status=error for {disallowed_key!r}"
+        )
         assert disallowed_key not in {k for (k, _) in set_key_calls}, (
             f"Non-allowlisted key {disallowed_key!r} must not reach set_key"
         )
 
 
-def test_post_settings_returns_500_on_save_failure(client, mock_database, isolated_env_file, monkeypatch):
+def test_post_settings_returns_500_on_save_failure(
+    client, mock_database, isolated_env_file, monkeypatch
+):
     """Errors from set_key or DB on allowlisted keys are wrapped into a 500 JSON envelope.
 
     A-1 security fix: the payload must use an allowlisted key (EXIT_AUTHORITY) to reach
     the set_key call path.  LIVE_EXECUTION is rejected before set_key is called.
     D-1 security fix: the error message must be generic, NOT the raw exception text.
     """
-    monkeypatch.setattr(app_module, "set_key", lambda *_a, **_kw: (_ for _ in ()).throw(IOError("disk")))
+    monkeypatch.setattr(
+        app_module, "set_key", lambda *_a, **_kw: (_ for _ in ()).throw(IOError("disk"))
+    )
     # Use an allowlisted key so we reach the set_key exception path.
-    resp = client.post("/api/settings", json={"globals": {"EXIT_AUTHORITY": "per_symphony"}, "symphonies": {}})
+    resp = client.post(
+        "/api/settings", json={"globals": {"EXIT_AUTHORITY": "per_symphony"}, "symphonies": {}}
+    )
     assert resp.status_code == 500
     body = resp.get_json()
     assert body["status"] == "error"
@@ -539,9 +560,7 @@ def test_post_settings_returns_500_on_save_failure(client, mock_database, isolat
 # ---------------------------------------------------------------------------
 
 
-def test_force_eod_invokes_autotuner_with_is_forced_true(
-    client, mock_database, monkeypatch
-):
+def test_force_eod_invokes_autotuner_with_is_forced_true(client, mock_database, monkeypatch):
     """
     POST /api/force_eod spawns a background thread that calls
     ``autotuner.run_autotuner(..., is_forced=True)``.  We replace
@@ -622,7 +641,9 @@ def test_force_eod_uses_yesterday_when_chart_history_has_no_date(
 
 def test_resend_discord_calls_send_eod_discord_post(client, mock_database, monkeypatch):
     """POST /api/resend_discord spawns a thread that invokes reporting.send_eod_discord_post."""
-    monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {"DISCORD_WEBHOOK_URL": "https://x"})
+    monkeypatch.setattr(
+        app_module, "dotenv_values", lambda *_a, **_k: {"DISCORD_WEBHOOK_URL": "https://x"}
+    )
     mock_database.load_chart_history.return_value = {"date": "2026-05-01"}
 
     fake_reporting = MagicMock()
@@ -712,9 +733,7 @@ def test_api_logs_returns_500_on_database_error(client, mock_database):
 
 def test_api_chart_returns_per_symphony_history(client, mock_database):
     """GET /api/chart/<id> returns chart history for the requested symphony."""
-    mock_database.load_chart_history.return_value = {
-        "symphonies": {"sym_x": [{"t": 0, "v": 1.0}]}
-    }
+    mock_database.load_chart_history.return_value = {"symphonies": {"sym_x": [{"t": 0, "v": 1.0}]}}
     resp = client.get("/api/chart/sym_x")
     assert resp.status_code == 200
     body = resp.get_json()
@@ -780,12 +799,8 @@ def test_api_history_aggregates_post_mortems_within_window(client, tmp_path, mon
     assert body["total_alpha"] == pytest.approx(expected_alpha, abs=1e-9)
     assert body["total_saved"] == pytest.approx(expected_saved, abs=1e-9)
     assert body["wins"] == expected_wins
-    assert body["avg_guard_alpha"] == pytest.approx(
-        expected_alpha / expected_count, abs=1e-9
-    )
-    assert body["win_rate"] == pytest.approx(
-        (expected_wins / expected_count) * 100, abs=1e-9
-    )
+    assert body["avg_guard_alpha"] == pytest.approx(expected_alpha / expected_count, abs=1e-9)
+    assert body["win_rate"] == pytest.approx((expected_wins / expected_count) * 100, abs=1e-9)
     # Per-reason buckets present
     assert set(body["by_reason"].keys()) == {"Stop", "VWAP"}
 
@@ -842,6 +857,7 @@ def test_trigger_alpha_bot_swallows_called_process_error(monkeypatch):
     trigger_alpha_bot — otherwise the scheduler thread would die and the
     minute cadence would stop firing, silently parking the engine.
     """
+
     def fake_run(*_a, **_kw):
         raise subprocess.CalledProcessError(returncode=1, cmd=["python", "alpha_bot_execution.py"])
 

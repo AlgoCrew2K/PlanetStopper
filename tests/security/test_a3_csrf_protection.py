@@ -72,6 +72,7 @@ def _reenable_csrf(monkeypatch):
 def _stub_database_and_env(monkeypatch):
     """Minimal stubs so routes can start processing — CSRF check runs first."""
     from unittest.mock import MagicMock
+
     db_mock = MagicMock()
     db_mock.save_symphony_strategy.return_value = None
     db_mock.load_state.return_value = {}
@@ -135,8 +136,7 @@ def test_csrf_token_endpoint_exists_and_returns_token(client):
         f"GET /api/csrf-token must return a JSON object; got {type(body)}: {body!r}"
     )
     assert "csrf_token" in body, (
-        f"GET /api/csrf-token response must include 'csrf_token' key. "
-        f"Got keys: {list(body.keys())}"
+        f"GET /api/csrf-token response must include 'csrf_token' key. Got keys: {list(body.keys())}"
     )
     token = body["csrf_token"]
     assert isinstance(token, str) and len(token) >= 32, (
@@ -169,9 +169,12 @@ def test_post_with_valid_csrf_token_is_accepted(client, _stub_database_and_env):
 
     # Step 2: POST with the token in the X-CSRF-Token header.
     from unittest.mock import patch
-    with patch.object(app_module, "dotenv_values", return_value={
-        "LIVE_EXECUTION": "False", "EXECUTION_START_TIME": "09:30"
-    }):
+
+    with patch.object(
+        app_module,
+        "dotenv_values",
+        return_value={"LIVE_EXECUTION": "False", "EXECUTION_START_TIME": "09:30"},
+    ):
         post_resp = client.post(
             "/api/settings",
             json={"globals": {"EXIT_AUTHORITY": "per_symphony"}, "symphonies": {}},
@@ -202,6 +205,7 @@ def test_fabricated_csrf_token_is_rejected(client, _stub_database_and_env):
     (not the actual process token) is rejected with 403.
     """
     import secrets as _secrets
+
     fake_token = _secrets.token_hex(32)  # not the real _CSRF_TOKEN
 
     post_resp = client.post(
@@ -266,7 +270,8 @@ def test_csrf_protection_is_configured_on_flask_app():
 
     # Check for a before_request function whose name or docstring mentions csrf/token.
     csrf_hooks = [
-        fn for fn in app_module.app.before_request_funcs.get(None, [])
+        fn
+        for fn in app_module.app.before_request_funcs.get(None, [])
         if "csrf" in (getattr(fn, "__name__", "") + getattr(fn, "__doc__", "")).lower()
         or "token" in (getattr(fn, "__name__", "") + getattr(fn, "__doc__", "")).lower()
     ]

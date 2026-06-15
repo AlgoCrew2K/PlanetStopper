@@ -47,12 +47,14 @@ def _ensure_repo_on_path() -> None:
 # Flask test client fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def flask_client():
     """Minimal Flask test client.  Database is not initialised; routes under
     test are mocked to avoid live DB/network access."""
     _ensure_repo_on_path()
     import app as _app
+
     _app.app.config["TESTING"] = True
     with _app.app.test_client() as client:
         yield client
@@ -62,11 +64,15 @@ def flask_client():
 # Helper: build a minimal SwapRunResult for mocking
 # ---------------------------------------------------------------------------
 
+
 def _make_swap_run_result(survivors: bool = False, no_api_key: bool = False) -> object:
     """Build a minimal SwapRunResult for use as a mock return value."""
     _ensure_repo_on_path()
     from advisors.asset_swap_engine import (
-        SwapRunResult, SwapProposalResult, SwapObjective, NO_SURVIVORS_MESSAGE
+        SwapRunResult,
+        SwapProposalResult,
+        SwapObjective,
+        NO_SURVIVORS_MESSAGE,
     )
     from advisors.backtest_gate_engine import HARVEY_LIU_FDR_Q, GatedBatch
 
@@ -112,6 +118,7 @@ def _make_swap_run_result(survivors: bool = False, no_api_key: bool = False) -> 
 # Section 1 — Route existence
 # ===========================================================================
 
+
 class TestRoutesExist:
     """Both M3 routes must be registered in app.py."""
 
@@ -143,6 +150,7 @@ class TestRoutesExist:
 # Section 2 — AC-X4: no API key → clear error, no DB write
 # ===========================================================================
 
+
 class TestNoApiKeyRoute:
     """AC-X4: absent key → 'advisor unavailable' + no DB write."""
 
@@ -164,8 +172,7 @@ class TestNoApiKeyRoute:
             f"Response must contain an 'error' key when API key is absent. Got: {data!r}"
         )
         assert "advisor unavailable" in data["error"].lower(), (
-            f"Error message must contain 'advisor unavailable' per AC-X4. "
-            f"Got: {data['error']!r}"
+            f"Error message must contain 'advisor unavailable' per AC-X4. Got: {data['error']!r}"
         )
 
     def test_evaluate_no_api_key_writes_no_db_observations(self, flask_client):
@@ -192,6 +199,7 @@ class TestNoApiKeyRoute:
 # ===========================================================================
 # Section 3 — AC-2.1: evaluate route uses propose_operator_swap
 # ===========================================================================
+
 
 class TestEvaluateRouteUsesCorrectApi:
     """The evaluate route must use propose_operator_swap (not evaluate_single_swap).
@@ -278,6 +286,7 @@ class TestEvaluateRouteUsesCorrectApi:
 # Section 4 — Response shape: gate_batch and key fields present
 # ===========================================================================
 
+
 class TestEvaluateResponseShape:
     """The evaluate route JSON response must expose the required M3 fields."""
 
@@ -290,8 +299,17 @@ class TestEvaluateResponseShape:
         mock_result = _make_swap_run_result(survivors=False)
 
         with patch("advisors.asset_swap_engine._has_composer_key", return_value=True):
-            with patch("symphony_logic.fetch_symphony_score", return_value={"id": "sym-test", "type": "root", "children": [{"type": "asset", "ticker": "SPY"}]}):
-                with patch("advisors.asset_swap_engine.propose_operator_swap", return_value=mock_result):
+            with patch(
+                "symphony_logic.fetch_symphony_score",
+                return_value={
+                    "id": "sym-test",
+                    "type": "root",
+                    "children": [{"type": "asset", "ticker": "SPY"}],
+                },
+            ):
+                with patch(
+                    "advisors.asset_swap_engine.propose_operator_swap", return_value=mock_result
+                ):
                     resp = flask_client.post(
                         "/ai-advisor/asset-swaps/evaluate",
                         json={"symphony_id": "sym-test", "from_ticker": "SPY", "to_ticker": "IALT"},
@@ -315,8 +333,17 @@ class TestEvaluateResponseShape:
         mock_result = _make_swap_run_result(survivors=True)
 
         with patch("advisors.asset_swap_engine._has_composer_key", return_value=True):
-            with patch("symphony_logic.fetch_symphony_score", return_value={"id": "sym-test", "type": "root", "children": [{"type": "asset", "ticker": "SPY"}]}):
-                with patch("advisors.asset_swap_engine.propose_operator_swap", return_value=mock_result):
+            with patch(
+                "symphony_logic.fetch_symphony_score",
+                return_value={
+                    "id": "sym-test",
+                    "type": "root",
+                    "children": [{"type": "asset", "ticker": "SPY"}],
+                },
+            ):
+                with patch(
+                    "advisors.asset_swap_engine.propose_operator_swap", return_value=mock_result
+                ):
                     resp = flask_client.post(
                         "/ai-advisor/asset-swaps/evaluate",
                         json={"symphony_id": "sym-test", "from_ticker": "SPY", "to_ticker": "IALT"},
@@ -337,8 +364,17 @@ class TestEvaluateResponseShape:
         mock_result = _make_swap_run_result(survivors=True)
 
         with patch("advisors.asset_swap_engine._has_composer_key", return_value=True):
-            with patch("symphony_logic.fetch_symphony_score", return_value={"id": "sym-test", "type": "root", "children": [{"type": "asset", "ticker": "SPY"}]}):
-                with patch("advisors.asset_swap_engine.propose_operator_swap", return_value=mock_result):
+            with patch(
+                "symphony_logic.fetch_symphony_score",
+                return_value={
+                    "id": "sym-test",
+                    "type": "root",
+                    "children": [{"type": "asset", "ticker": "SPY"}],
+                },
+            ):
+                with patch(
+                    "advisors.asset_swap_engine.propose_operator_swap", return_value=mock_result
+                ):
                     resp = flask_client.post(
                         "/ai-advisor/asset-swaps/evaluate",
                         json={"symphony_id": "sym-test", "from_ticker": "SPY", "to_ticker": "IALT"},
@@ -359,6 +395,7 @@ class TestEvaluateResponseShape:
 # Section 5 — AC-2.5: zero survivors response
 # ===========================================================================
 
+
 class TestZeroSurvivorsResponse:
     """AC-2.5: zero survivors → explicit message in response, not silent empty."""
 
@@ -372,8 +409,17 @@ class TestZeroSurvivorsResponse:
         assert mock_result.message, "Fixture must have a non-empty message for zero survivors."
 
         with patch("advisors.asset_swap_engine._has_composer_key", return_value=True):
-            with patch("symphony_logic.fetch_symphony_score", return_value={"id": "sym-test", "type": "root", "children": [{"type": "asset", "ticker": "SPY"}]}):
-                with patch("advisors.asset_swap_engine.propose_operator_swap", return_value=mock_result):
+            with patch(
+                "symphony_logic.fetch_symphony_score",
+                return_value={
+                    "id": "sym-test",
+                    "type": "root",
+                    "children": [{"type": "asset", "ticker": "SPY"}],
+                },
+            ):
+                with patch(
+                    "advisors.asset_swap_engine.propose_operator_swap", return_value=mock_result
+                ):
                     resp = flask_client.post(
                         "/ai-advisor/asset-swaps/evaluate",
                         json={"symphony_id": "sym-test", "from_ticker": "SPY", "to_ticker": "IALT"},
@@ -397,6 +443,7 @@ class TestZeroSurvivorsResponse:
 # Section 6 — Template: no apply/deploy button (AC-X1)
 # ===========================================================================
 
+
 class TestTemplateAdviseOnly:
     """AC-X1: the asset-swaps template must not contain apply/deploy/trade buttons."""
 
@@ -415,14 +462,14 @@ class TestTemplateAdviseOnly:
 
         # These button texts/ids would indicate an apply or deploy action surface.
         forbidden_patterns = [
-            'apply swap',
-            'deploy swap',
-            'apply-swap',
-            'deploy-swap',
-            'btn-apply',
-            'btn-deploy',
-            'place trade',
-            'execute trade',
+            "apply swap",
+            "deploy swap",
+            "apply-swap",
+            "deploy-swap",
+            "btn-apply",
+            "btn-deploy",
+            "place trade",
+            "execute trade",
         ]
         for pattern in forbidden_patterns:
             assert pattern not in source, (
@@ -446,9 +493,7 @@ class TestTemplateAdviseOnly:
 
         # The template must reference the apply_guidance field from the engine.
         has_guidance_reference = any(
-            t in source for t in (
-                "apply_guidance", "apply guidance", "manually", "composer"
-            )
+            t in source for t in ("apply_guidance", "apply guidance", "manually", "composer")
         )
         assert has_guidance_reference, (
             "Template ai_advisor_asset_swaps.html must display apply_guidance text. "
@@ -461,6 +506,7 @@ class TestTemplateAdviseOnly:
 # ===========================================================================
 # Section 7 — AC-X2: lazy import guard in app.py
 # ===========================================================================
+
 
 class TestLazyImportGuard:
     """AC-X2: app.py must import asset_swap_engine lazily (inside the route), not at module scope."""
@@ -518,6 +564,7 @@ class TestLazyImportGuard:
 # Section 8 — Input validation
 # ===========================================================================
 
+
 class TestInputValidation:
     """The evaluate route must validate required fields and return clear errors."""
 
@@ -530,10 +577,7 @@ class TestInputValidation:
             )
         assert resp.status_code == 200
         data = resp.get_json()
-        assert "error" in data, (
-            "Missing symphony_id must return a JSON error. "
-            f"Got: {data!r}"
-        )
+        assert "error" in data, f"Missing symphony_id must return a JSON error. Got: {data!r}"
 
     def test_missing_from_ticker_returns_error(self, flask_client):
         """Missing from_ticker → error response."""
@@ -563,6 +607,7 @@ class TestInputValidation:
 # (quant-code-reviewer finding: every name imported by app.py's new asset-swap
 #  routes must exist as a public name in advisors.asset_swap_engine)
 # ===========================================================================
+
 
 class TestRouteImportability:
     """Every name app.py's new routes import from asset_swap_engine must exist.

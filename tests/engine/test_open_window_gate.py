@@ -45,12 +45,7 @@ import pytest
 # Fixture loading
 # ---------------------------------------------------------------------------
 
-_FIXTURES = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "engine"
-    / "open_window_gate"
-)
+_FIXTURES = pathlib.Path(__file__).parent.parent / "fixtures" / "engine" / "open_window_gate"
 
 
 def _load(name: str) -> dict:
@@ -63,6 +58,7 @@ def _load(name: str) -> dict:
 
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
 except Exception:
     _ET = timezone(timedelta(hours=-4))
@@ -95,6 +91,7 @@ class TestVwapOpenWindowGraceMinutesConstant:
     def test_constant_exists_in_alpha_bot_execution(self):
         """VWAP_OPEN_WINDOW_GRACE_MINUTES must be a module-level attribute in alpha_bot_execution."""
         import alpha_bot_execution
+
         assert hasattr(alpha_bot_execution, "VWAP_OPEN_WINDOW_GRACE_MINUTES"), (
             "alpha_bot_execution must expose VWAP_OPEN_WINDOW_GRACE_MINUTES as a "
             "module-level attribute sourced from os.getenv('VWAP_OPEN_WINDOW_GRACE_MINUTES', '15')"
@@ -103,17 +100,17 @@ class TestVwapOpenWindowGraceMinutesConstant:
     def test_constant_default_is_fifteen(self):
         """Without env override, VWAP_OPEN_WINDOW_GRACE_MINUTES must equal 15 (int)."""
         import alpha_bot_execution
+
         val = alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES
         assert isinstance(val, int), (
             f"VWAP_OPEN_WINDOW_GRACE_MINUTES must be an int; got {type(val).__name__}"
         )
-        assert val == 15, (
-            f"Default grace window must be 15 minutes; got {val}"
-        )
+        assert val == 15, f"Default grace window must be 15 minutes; got {val}"
 
     def test_constant_patchable_via_patch_object(self):
         """The constant must be patchable via patch.object for test isolation."""
         import alpha_bot_execution
+
         with patch.object(alpha_bot_execution, "VWAP_OPEN_WINDOW_GRACE_MINUTES", 5):
             assert alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES == 5
 
@@ -237,6 +234,7 @@ class TestVwapBreakdownSuppressedInGrace:
     def test_vwap_breakdown_suppressed_when_grace_active(self):
         """VWAP-Breakdown does NOT fire inside the grace window even if conditions are True."""
         import math_engine
+
         fixture = _load("vwap_suppression_in_grace.json")
         inp = fixture["vwap_inputs"]
 
@@ -299,6 +297,7 @@ class TestVwapBreakdownSuppressedInGrace:
     def test_vwap_breakdown_fires_at_grace_boundary(self):
         """VWAP-Breakdown fires when now == EXECUTION_START_TIME + grace_minutes (not in grace)."""
         import math_engine
+
         fixture = _load("vwap_suppression_in_grace.json")
         inp = fixture["vwap_inputs"]
 
@@ -309,7 +308,9 @@ class TestVwapBreakdownSuppressedInGrace:
             from market_calendar import is_in_open_window_grace  # type: ignore[no-redef]
 
         boundary_et = _et_at("10:45")  # exactly 10:30 + 15 min
-        in_grace = is_in_open_window_grace(boundary_et, fixture["execution_start_hhmm"], fixture["grace_minutes"])
+        in_grace = is_in_open_window_grace(
+            boundary_et, fixture["execution_start_hhmm"], fixture["grace_minutes"]
+        )
         assert in_grace is False, "At boundary + 0s, grace must be expired."
 
         _, _, is_broken, _ = math_engine.compute_vwap_breakdown_update(
@@ -333,6 +334,7 @@ class TestVwapBreakdownSuppressedInGrace:
     def test_vwap_breakdown_fires_one_second_past_boundary(self):
         """VWAP-Breakdown fires at EXECUTION_START_TIME + 15min + 1s (definitively past grace)."""
         import math_engine
+
         fixture = _load("vwap_suppression_in_grace.json")
         inp = fixture["vwap_inputs"]
 
@@ -342,7 +344,9 @@ class TestVwapBreakdownSuppressedInGrace:
             from market_calendar import is_in_open_window_grace  # type: ignore[no-redef]
 
         past_boundary_et = _et_at("10:45:01")
-        in_grace = is_in_open_window_grace(past_boundary_et, fixture["execution_start_hhmm"], fixture["grace_minutes"])
+        in_grace = is_in_open_window_grace(
+            past_boundary_et, fixture["execution_start_hhmm"], fixture["grace_minutes"]
+        )
         assert in_grace is False, "1 second past boundary must be outside grace."
 
         _, _, is_broken, is_bleed = math_engine.compute_vwap_breakdown_update(
@@ -386,9 +390,14 @@ class TestTpAndTrailingStopNotSuppressedInGrace:
         # We verify this structurally: compute_exit_confirmation's signature must NOT
         # include any time or grace parameter — it has no business knowing about grace.
         import inspect
+
         sig = inspect.signature(math_engine.compute_exit_confirmation)
         param_names = set(sig.parameters.keys())
-        grace_related = {p for p in param_names if "grace" in p.lower() or "window" in p.lower() or "time" in p.lower()}
+        grace_related = {
+            p
+            for p in param_names
+            if "grace" in p.lower() or "window" in p.lower() or "time" in p.lower()
+        }
         assert not grace_related, (
             f"compute_exit_confirmation must NOT accept grace/window/time parameters. "
             f"Found: {grace_related}. TP suppression by grace would be a design violation."
@@ -398,10 +407,13 @@ class TestTpAndTrailingStopNotSuppressedInGrace:
         """Trailing Stop function signature must not include grace-window parameters."""
         import math_engine
         import inspect
+
         sig = inspect.signature(math_engine.compute_exit_confirmation)
         # Trailing stop fires via compute_exit_confirmation — same structural check
         param_names = set(sig.parameters.keys())
-        grace_params = {p for p in param_names if "grace" in p.lower() or "open_window" in p.lower()}
+        grace_params = {
+            p for p in param_names if "grace" in p.lower() or "open_window" in p.lower()
+        }
         assert not grace_params, (
             "compute_exit_confirmation (trailing stop path) must not be modified to accept "
             "open-window grace parameters. Grace is a VWAP-only gate."
@@ -473,7 +485,9 @@ class TestGraceWindowRespectsDynamicExecutionStartTime:
 
         for case in fixture["cases"]:
             current_et = _et_at(case["current_hhmm"])
-            result = is_in_open_window_grace(current_et, case["execution_start_hhmm"], case["grace_minutes"])
+            result = is_in_open_window_grace(
+                current_et, case["execution_start_hhmm"], case["grace_minutes"]
+            )
             assert result == case["expected_in_grace"], (
                 f"Case '{case['label']}': expected {case['expected_in_grace']}, got {result}. "
                 f"Grace must shift dynamically with EXECUTION_START_TIME. Note: {case['note']}"
@@ -525,10 +539,12 @@ class TestGraceWindowIntervalProperties:
     def _import_helper(self):
         try:
             from math_engine import is_in_open_window_grace
+
             self._helper = is_in_open_window_grace
         except ImportError:
             try:
                 from market_calendar import is_in_open_window_grace
+
                 self._helper = is_in_open_window_grace
             except ImportError:
                 self._helper = None
@@ -538,12 +554,15 @@ class TestGraceWindowIntervalProperties:
             pytest.fail("is_in_open_window_grace not found — implement per AC-V2.1.")
         return self._helper(current_et, exec_start, grace_min)
 
-    @pytest.mark.parametrize("grace_minutes,start_hhmm", [
-        (15, "10:30"),
-        (5,  "10:30"),
-        (15, "11:00"),
-        (30, "09:30"),
-    ])
+    @pytest.mark.parametrize(
+        "grace_minutes,start_hhmm",
+        [
+            (15, "10:30"),
+            (5, "10:30"),
+            (15, "11:00"),
+            (30, "09:30"),
+        ],
+    )
     def test_monotonicity_grace_window_is_contiguous(self, grace_minutes, start_hhmm):
         """
         Every second from [start, start+N) must be in grace; every second from
@@ -601,6 +620,7 @@ class TestTickAccumulationDuringGrace:
         Starting from 0, after N calls ticks == N. Grace does not intercept this function.
         """
         import math_engine
+
         fixture = _load("tick_accumulation_during_grace.json")
         inp = fixture["vwap_inputs_conditions_always_true"]
 
@@ -633,6 +653,7 @@ class TestTickAccumulationDuringGrace:
         first post-grace cycle without needing additional confirmation ticks.
         """
         import math_engine
+
         fixture = _load("tick_accumulation_during_grace.json")
         inp = fixture["vwap_inputs_conditions_always_true"]
 
@@ -664,6 +685,7 @@ class TestTickAccumulationDuringGrace:
         based on grace. Starting from 0 with conditions True, new_vwap_ticks must be >= 1.
         """
         import math_engine
+
         fixture = _load("tick_accumulation_during_grace.json")
         inp = fixture["vwap_inputs_conditions_always_true"]
 
@@ -683,6 +705,4 @@ class TestTickAccumulationDuringGrace:
             f"compute_vwap_breakdown_update must advance new_vwap_ticks from 0 when conditions "
             f"are True. Got {new_ticks}. The grace gate must not reach into the pure function."
         )
-        assert new_bleed >= 1, (
-            f"new_vwap_bleed_ticks must advance from 0. Got {new_bleed}."
-        )
+        assert new_bleed >= 1, f"new_vwap_bleed_ticks must advance from 0. Got {new_bleed}."

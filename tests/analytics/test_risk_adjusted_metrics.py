@@ -45,6 +45,7 @@ _MIN_OBS = 2
 # Golden-fixture derivation helpers
 # ---------------------------------------------------------------------------
 
+
 def _derive_annualized_vol(returns_pct: list[float]) -> float:
     """
     Formula-derived annualized volatility from percent-scale returns.
@@ -66,6 +67,7 @@ def _derive_annualized_vol(returns_pct: list[float]) -> float:
 # ---------------------------------------------------------------------------
 # Test 1: compute_quantstats_metrics returns 'volatility' key
 # ---------------------------------------------------------------------------
+
 
 def test_compute_quantstats_metrics_includes_volatility_key():
     """
@@ -96,6 +98,7 @@ def test_compute_quantstats_metrics_includes_volatility_key():
 # Test 2: volatility is a positive finite float for normal input
 # ---------------------------------------------------------------------------
 
+
 def test_compute_quantstats_metrics_volatility_is_positive_finite_float():
     """
     Annualized volatility must be a positive finite float when the input series
@@ -117,12 +120,8 @@ def test_compute_quantstats_metrics_volatility_is_positive_finite_float():
     assert vol is not None, (
         "volatility must not be None for a 30-observation series with non-zero variance"
     )
-    assert isinstance(vol, float), (
-        f"volatility must be a float; got {type(vol).__name__}={vol!r}"
-    )
-    assert math.isfinite(vol), (
-        f"volatility must be finite (no NaN/Inf); got {vol!r}"
-    )
+    assert isinstance(vol, float), f"volatility must be a float; got {type(vol).__name__}={vol!r}"
+    assert math.isfinite(vol), f"volatility must be finite (no NaN/Inf); got {vol!r}"
     assert vol > 0.0, (
         "volatility is a std dev — it must be positive for any series with non-zero variance; "
         f"got {vol!r}"
@@ -132,6 +131,7 @@ def test_compute_quantstats_metrics_volatility_is_positive_finite_float():
 # ---------------------------------------------------------------------------
 # Test 3: volatility is in the expected fraction-scale range
 # ---------------------------------------------------------------------------
+
 
 def test_compute_quantstats_metrics_volatility_is_fraction_scale_not_percent_scale():
     """
@@ -185,6 +185,7 @@ def test_compute_quantstats_metrics_volatility_is_fraction_scale_not_percent_sca
 # Test 4: volatility is None when fewer than 2 observations
 # ---------------------------------------------------------------------------
 
+
 def test_compute_quantstats_metrics_volatility_is_none_for_insufficient_data():
     """
     volatility must follow the same None-on-insufficient-data contract as all
@@ -209,6 +210,7 @@ def test_compute_quantstats_metrics_volatility_is_none_for_insufficient_data():
 # ---------------------------------------------------------------------------
 # Test 5: volatility is formula-consistent with manual derivation
 # ---------------------------------------------------------------------------
+
 
 def test_compute_quantstats_metrics_volatility_consistent_with_formula():
     """
@@ -259,6 +261,7 @@ def test_compute_quantstats_metrics_volatility_consistent_with_formula():
 # Test 6: all 8 required keys present in the Phase 2 metrics dict
 # ---------------------------------------------------------------------------
 
+
 def test_compute_quantstats_metrics_phase2_has_eight_required_keys():
     """
     After Phase 2, compute_quantstats_metrics must return 8 keys:
@@ -271,26 +274,49 @@ def test_compute_quantstats_metrics_phase2_has_eight_required_keys():
     from analytics import compute_quantstats_metrics
 
     returns = [
-        0.1, -0.2, 0.3, -0.1, 0.2, 0.4, -0.3, 0.1, 0.2, -0.1,
-        0.3, -0.2, 0.1, 0.4, -0.2, 0.2, -0.1, 0.3, 0.1, -0.2,
+        0.1,
+        -0.2,
+        0.3,
+        -0.1,
+        0.2,
+        0.4,
+        -0.3,
+        0.1,
+        0.2,
+        -0.1,
+        0.3,
+        -0.2,
+        0.1,
+        0.4,
+        -0.2,
+        0.2,
+        -0.1,
+        0.3,
+        0.1,
+        -0.2,
     ]
     metrics = compute_quantstats_metrics(returns, freq="D")
 
     required_keys = {
-        "total_return", "annualized_return", "sharpe", "sortino",
-        "max_drawdown", "calmar", "win_rate",
+        "total_return",
+        "annualized_return",
+        "sharpe",
+        "sortino",
+        "max_drawdown",
+        "calmar",
+        "win_rate",
         "volatility",  # Phase 2 addition
     }
     missing = required_keys - set(metrics.keys())
     assert not missing, (
-        f"compute_quantstats_metrics Phase 2 must return all 8 keys; "
-        f"missing: {missing}"
+        f"compute_quantstats_metrics Phase 2 must return all 8 keys; missing: {missing}"
     )
 
 
 # ---------------------------------------------------------------------------
 # Test 7: volatility_delta sign convention — positive means bot calmer
 # ---------------------------------------------------------------------------
+
 
 def test_volatility_delta_is_positive_when_bot_has_lower_annualized_vol():
     """
@@ -344,6 +370,7 @@ def test_volatility_delta_is_positive_when_bot_has_lower_annualized_vol():
 # Test 8: max_drawdown_delta sign convention — positive means bot had less drawdown
 # ---------------------------------------------------------------------------
 
+
 def test_max_drawdown_delta_is_positive_when_bot_had_shallower_drawdown():
     """
     max_drawdown_delta sign convention:
@@ -363,7 +390,7 @@ def test_max_drawdown_delta_is_positive_when_bot_had_shallower_drawdown():
         fixture = json.load(fh)
 
     held_mdd = fixture["max_drawdown_delta"]["example_held_mdd"]  # <= 0
-    bot_mdd = fixture["max_drawdown_delta"]["example_bot_mdd"]    # <= 0
+    bot_mdd = fixture["max_drawdown_delta"]["example_bot_mdd"]  # <= 0
     expected_delta = fixture["max_drawdown_delta"]["expected_delta"]
 
     # The correct formula uses absolute values to make "less drawdown = positive".
@@ -389,6 +416,7 @@ def test_max_drawdown_delta_is_positive_when_bot_had_shallower_drawdown():
 # Test 9: monotonicity invariant — higher volatility series yields higher vol metric
 # ---------------------------------------------------------------------------
 
+
 def test_annualized_volatility_is_monotonically_higher_for_higher_variance_series():
     """
     Property test: a series with higher daily variance must produce a higher
@@ -405,13 +433,49 @@ def test_annualized_volatility_is_monotonically_higher_for_higher_variance_serie
 
     # Low-variance series: daily moves of ~0.05% percent-scale
     low_var_series = [
-        0.05, -0.04, 0.06, -0.03, 0.05, 0.04, -0.05, 0.06, 0.03, -0.04,
-        0.05, -0.03, 0.04, 0.06, -0.04, 0.05, -0.03, 0.06, 0.04, -0.05,
+        0.05,
+        -0.04,
+        0.06,
+        -0.03,
+        0.05,
+        0.04,
+        -0.05,
+        0.06,
+        0.03,
+        -0.04,
+        0.05,
+        -0.03,
+        0.04,
+        0.06,
+        -0.04,
+        0.05,
+        -0.03,
+        0.06,
+        0.04,
+        -0.05,
     ]
     # High-variance series: daily moves of ~0.5% percent-scale (10x larger)
     high_var_series = [
-        0.5, -0.4, 0.6, -0.3, 0.5, 0.4, -0.5, 0.6, 0.3, -0.4,
-        0.5, -0.3, 0.4, 0.6, -0.4, 0.5, -0.3, 0.6, 0.4, -0.5,
+        0.5,
+        -0.4,
+        0.6,
+        -0.3,
+        0.5,
+        0.4,
+        -0.5,
+        0.6,
+        0.3,
+        -0.4,
+        0.5,
+        -0.3,
+        0.4,
+        0.6,
+        -0.4,
+        0.5,
+        -0.3,
+        0.6,
+        0.4,
+        -0.5,
     ]
 
     low_metrics = compute_quantstats_metrics(low_var_series, freq="D")
@@ -434,6 +498,7 @@ def test_annualized_volatility_is_monotonically_higher_for_higher_variance_serie
 # Test 10: volatility is non-negative for any input (property invariant)
 # ---------------------------------------------------------------------------
 
+
 def test_annualized_volatility_is_non_negative_for_arbitrary_series():
     """
     Property invariant: annualized volatility is a standard deviation and cannot
@@ -447,17 +512,97 @@ def test_annualized_volatility_is_non_negative_for_arbitrary_series():
 
     test_series = [
         # All positive — pure gains series
-        [0.1, 0.2, 0.15, 0.05, 0.25, 0.1, 0.3, 0.12, 0.08, 0.18,
-         0.1, 0.2, 0.15, 0.05, 0.25, 0.1, 0.3, 0.12, 0.08, 0.18],
+        [
+            0.1,
+            0.2,
+            0.15,
+            0.05,
+            0.25,
+            0.1,
+            0.3,
+            0.12,
+            0.08,
+            0.18,
+            0.1,
+            0.2,
+            0.15,
+            0.05,
+            0.25,
+            0.1,
+            0.3,
+            0.12,
+            0.08,
+            0.18,
+        ],
         # All negative — pure loss series
-        [-0.1, -0.2, -0.15, -0.05, -0.25, -0.1, -0.3, -0.12, -0.08, -0.18,
-         -0.1, -0.2, -0.15, -0.05, -0.25, -0.1, -0.3, -0.12, -0.08, -0.18],
+        [
+            -0.1,
+            -0.2,
+            -0.15,
+            -0.05,
+            -0.25,
+            -0.1,
+            -0.3,
+            -0.12,
+            -0.08,
+            -0.18,
+            -0.1,
+            -0.2,
+            -0.15,
+            -0.05,
+            -0.25,
+            -0.1,
+            -0.3,
+            -0.12,
+            -0.08,
+            -0.18,
+        ],
         # Mixed with zero
-        [0.1, 0.0, -0.1, 0.2, 0.0, -0.2, 0.3, 0.0, -0.3, 0.4,
-         0.1, 0.0, -0.1, 0.2, 0.0, -0.2, 0.3, 0.0, -0.3, 0.4],
+        [
+            0.1,
+            0.0,
+            -0.1,
+            0.2,
+            0.0,
+            -0.2,
+            0.3,
+            0.0,
+            -0.3,
+            0.4,
+            0.1,
+            0.0,
+            -0.1,
+            0.2,
+            0.0,
+            -0.2,
+            0.3,
+            0.0,
+            -0.3,
+            0.4,
+        ],
         # Constant series — vol should be 0 (or quantstats may return small float/None)
-        [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1,
-         0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+        [
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+        ],
     ]
 
     for series in test_series:
@@ -473,6 +618,4 @@ def test_annualized_volatility_is_non_negative_for_arbitrary_series():
                 f"annualized volatility must be >= 0; got {vol!r} for series={series[:5]}..."
                 " (std deviation cannot be negative)"
             )
-            assert math.isfinite(vol), (
-                f"annualized volatility must be finite; got {vol!r}"
-            )
+            assert math.isfinite(vol), f"annualized volatility must be finite; got {vol!r}"

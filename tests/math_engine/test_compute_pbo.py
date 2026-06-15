@@ -73,16 +73,19 @@ def pbo_fixture() -> dict:
 
 def _import_math_engine():
     import sys
+
     repo = str(_WORKTREE_ROOT)
     if repo not in sys.path:
         sys.path.insert(0, repo)
     import math_engine
+
     return math_engine
 
 
 # ---------------------------------------------------------------------------
 # Module-level constant requirements
 # ---------------------------------------------------------------------------
+
 
 class TestComputePboConstants:
     """compute_pbo requires named module-level constants (no magic numbers rule)."""
@@ -115,7 +118,9 @@ class TestComputePboConstants:
     def test_pbo_reject_threshold_source_comment_in_source(self):
         """PBO_REJECT_THRESHOLD must have a sourced comment citing Bailey&LdP 2014."""
         src = (_WORKTREE_ROOT / "math_engine.py").read_text(encoding="utf-8")
-        assert "PBO_REJECT_THRESHOLD" in src, "PBO_REJECT_THRESHOLD constant must be defined in math_engine.py"
+        assert "PBO_REJECT_THRESHOLD" in src, (
+            "PBO_REJECT_THRESHOLD constant must be defined in math_engine.py"
+        )
         assert "Bailey" in src, (
             "math_engine.py must reference Bailey (Bailey&LdP 2014) in the PBO_REJECT_THRESHOLD comment"
         )
@@ -130,6 +135,7 @@ class TestComputePboConstants:
 # ---------------------------------------------------------------------------
 # Golden-fixture test: known K×T matrix with a KNOWN PBO (Bailey&LdP 2014 property)
 # ---------------------------------------------------------------------------
+
 
 class TestComputePboGoldenFixture:
     """Golden-fixture tests: hand-derived PBO values that compute_pbo must reproduce."""
@@ -151,8 +157,7 @@ class TestComputePboGoldenFixture:
         assert pbo == pytest.approx(scenario["expected"]["pbo"], abs=1e-9), (
             # Tolerance: PBO is a fraction of integer counts — for 6 combos the
             # minimum non-zero value is 1/6~=0.167; 1e-9 is well below that.
-            f"Expected PBO={scenario['expected']['pbo']} (IS-best always OOS-best), "
-            f"got {pbo}"
+            f"Expected PBO={scenario['expected']['pbo']} (IS-best always OOS-best), got {pbo}"
         )
 
     def test_is_best_always_worst_oos_returns_one_pbo(self, pbo_fixture):
@@ -168,8 +173,7 @@ class TestComputePboGoldenFixture:
         pbo = me.compute_pbo(configs, eligible_dates, gamma, S=S)
 
         assert pbo == pytest.approx(scenario["expected"]["pbo"], abs=1e-9), (
-            f"Expected PBO={scenario['expected']['pbo']} (IS-best always OOS-worst), "
-            f"got {pbo}"
+            f"Expected PBO={scenario['expected']['pbo']} (IS-best always OOS-worst), got {pbo}"
         )
 
     def test_lambda_formula_pin_against_fixture(self, pbo_fixture):
@@ -206,6 +210,7 @@ class TestComputePboGoldenFixture:
 # Partition correctness: S=8 blocks are even/contiguous/tiling
 # ---------------------------------------------------------------------------
 
+
 class TestComputePboPartition:
     """The S-block partition must be contiguous, tiling, and evenly sized."""
 
@@ -239,9 +244,7 @@ class TestComputePboPartition:
         configs, dates = self._make_uniform_configs(K=5, n_dates=40)
         gamma = 3.0
         results = [me.compute_pbo(configs, dates, gamma=gamma, S=8) for _ in range(3)]
-        assert len(set(results)) == 1, (
-            f"compute_pbo is not deterministic across 3 calls: {results}"
-        )
+        assert len(set(results)) == 1, f"compute_pbo is not deterministic across 3 calls: {results}"
 
     def test_pbo_output_bounded_in_zero_one(self):
         """PBO must always be in [0, 1] — it is a fraction of combos."""
@@ -265,6 +268,7 @@ class TestComputePboPartition:
 # ---------------------------------------------------------------------------
 # Edge cases: configs with no triggered returns in a block
 # ---------------------------------------------------------------------------
+
 
 class TestComputePboEdgeCases:
     """Edge cases: empty blocks, ties, minimal configs."""
@@ -313,12 +317,13 @@ class TestComputePboEdgeCases:
             "so 0.5 must NOT trigger a reject veto"
         )
         # PBO=0.50001 > threshold must reject:
-        assert (0.50001 > threshold), "PBO=0.50001 must exceed threshold and trigger reject"
+        assert 0.50001 > threshold, "PBO=0.50001 must exceed threshold and trigger reject"
 
 
 # ---------------------------------------------------------------------------
 # Anti-double-count regression: compute_pbo must not touch n_effective or _haircut_select
 # ---------------------------------------------------------------------------
+
 
 class TestComputePboOrthogonality:
     """BHY/n_effective = multiplicity axis; PBO = sample-robustness axis.
@@ -331,6 +336,7 @@ class TestComputePboOrthogonality:
     def test_compute_pbo_does_not_call_haircut_select(self):
         """compute_pbo must not invoke _haircut_select (orthogonality invariant)."""
         import ast
+
         src = (_WORKTREE_ROOT / "math_engine.py").read_text(encoding="utf-8")
         # Verify compute_pbo is defined in math_engine (not autotuner).
         assert "def compute_pbo" in src, "compute_pbo must be defined in math_engine.py"
@@ -363,15 +369,14 @@ class TestComputePboOrthogonality:
     def test_compute_pbo_is_defined_in_math_engine_not_autotuner(self):
         """compute_pbo must live in math_engine, not autotuner."""
         import ast
+
         autotuner_src = (_WORKTREE_ROOT / "autotuner.py").read_text(encoding="utf-8")
         autotuner_tree = ast.parse(autotuner_src)
         autotuner_fndefs = [
-            node.name for node in ast.walk(autotuner_tree)
-            if isinstance(node, ast.FunctionDef)
+            node.name for node in ast.walk(autotuner_tree) if isinstance(node, ast.FunctionDef)
         ]
         assert "compute_pbo" not in autotuner_fndefs, (
-            "compute_pbo must be defined in math_engine.py (the math crux), "
-            "not in autotuner.py"
+            "compute_pbo must be defined in math_engine.py (the math crux), not in autotuner.py"
         )
         me = _import_math_engine()
         assert hasattr(me, "compute_pbo"), "compute_pbo must be importable from math_engine"
@@ -384,6 +389,7 @@ class TestComputePboOrthogonality:
         there would violate architecture constraint #1 (no blocking I/O on exit path).
         """
         import ast
+
         abe_path = _WORKTREE_ROOT / "alpha_bot_execution.py"
         assert abe_path.exists(), f"Expected alpha_bot_execution.py at {abe_path}"
         src = abe_path.read_text(encoding="utf-8")
@@ -420,7 +426,10 @@ class TestComputePboOrthogonality:
 
 _TIE_FIXTURE_PATH = (
     pathlib.Path(__file__).resolve().parents[2]
-    / "tests" / "fixtures" / "math" / "pbo_tie_convention.json"
+    / "tests"
+    / "fixtures"
+    / "math"
+    / "pbo_tie_convention.json"
 )
 
 

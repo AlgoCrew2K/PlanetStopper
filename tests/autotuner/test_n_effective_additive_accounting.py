@@ -67,6 +67,7 @@ def _load_fixture() -> dict:
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
@@ -83,8 +84,13 @@ def test_fixture_file_exists_and_is_valid_json():
     )
     data = _load_fixture()
     assert "scenarios" in data, "Fixture must have a 'scenarios' key."
-    for key in ("nn1_honest_s0", "single_pnl_toured_facet", "defect2_subsweep_counting",
-                "frozen_eval_tainted_excluded", "winner_bundle_self_excluded"):
+    for key in (
+        "nn1_honest_s0",
+        "single_pnl_toured_facet",
+        "defect2_subsweep_counting",
+        "frozen_eval_tainted_excluded",
+        "winner_bundle_self_excluded",
+    ):
         assert key in data["scenarios"], f"Fixture missing scenario '{key}'."
 
 
@@ -139,9 +145,9 @@ class TestNN1HonestNoOp:
         # Values are chosen so one trial plausibly clears the FDR gate while the others
         # do not — we verify the same winner emerges both with and without n_effective.
         trials = [
-            _make_fake_trial(value=3.5, daily_returns=[0.01] * 60),   # strong signal
+            _make_fake_trial(value=3.5, daily_returns=[0.01] * 60),  # strong signal
             _make_fake_trial(value=0.8, daily_returns=[0.005] * 40),  # noise
-            _make_fake_trial(value=-0.2, daily_returns=[0.002] * 30), # noise
+            _make_fake_trial(value=-0.2, daily_returns=[0.002] * 30),  # noise
         ]
 
         # Legacy call (no n_effective argument — backward-compatible default).
@@ -228,10 +234,7 @@ class TestSinglePnlToured:
         # 10 trials: one strong signal, nine noise.
         trials = [
             _make_fake_trial(value=4.0, daily_returns=[0.02] * 80),
-        ] + [
-            _make_fake_trial(value=0.5, daily_returns=[0.003] * 50)
-            for _ in range(9)
-        ]
+        ] + [_make_fake_trial(value=0.5, daily_returns=[0.003] * 50) for _ in range(9)]
 
         # S=0 baseline (NN1-honest).
         _winner_base, p_adj_base, _tstat_base = autotuner._haircut_select(trials)
@@ -515,6 +518,7 @@ class TestConservativeUpperBoundProperty:
         # Fixed 20-trial p-vector for reproducibility: evenly spaced [0.01, 0.99].
         # Not derived from Sortinos — just a representative spread of raw p-values.
         import math as _math
+
         n = 20
         p_values = [0.01 + (0.98 / (n - 1)) * i for i in range(n)]
 
@@ -528,7 +532,7 @@ class TestConservativeUpperBoundProperty:
             f"{len(p_values) + s} elements, got {len(p_adj_inflated)}."
         )
 
-        for i, (base, inflated) in enumerate(zip(p_adj_base, p_adj_inflated[:len(p_values)])):
+        for i, (base, inflated) in enumerate(zip(p_adj_base, p_adj_inflated[: len(p_values)])):
             assert inflated >= base - _BHY_TOL, (
                 f"Conservative upper-bound violation (S={s}): element {i} "
                 f"p_adj_inflated={inflated!r} < p_adj_base={base!r} "
@@ -629,6 +633,7 @@ class TestHaircutSelectNEffectiveParameter:
         """_haircut_select must accept an explicit n_effective keyword argument."""
         autotuner = _import_autotuner()
         import inspect
+
         sig = inspect.signature(autotuner._haircut_select)
         assert "n_effective" in sig.parameters, (
             "_haircut_select must accept an 'n_effective' parameter (plan D2). "
@@ -736,6 +741,7 @@ class TestLedgerAccessor:
     def test_get_researcher_dof_ledger_for_run_exists_in_database(self):
         """database must expose get_researcher_dof_ledger_for_run(run_timestamp, winning_spec_bundle_id)."""
         import database
+
         assert hasattr(database, "get_researcher_dof_ledger_for_run"), (
             "database must expose get_researcher_dof_ledger_for_run(run_timestamp, "
             "winning_spec_bundle_id) -> list — the D4 ledger query helper. "
@@ -745,6 +751,7 @@ class TestLedgerAccessor:
     def test_ledger_accessor_returns_list(self, tmp_path, monkeypatch):
         """get_researcher_dof_ledger_for_run must return a list (possibly empty)."""
         import database as db_module
+
         db_path = str(tmp_path / "test_neff_ledger.db")
         monkeypatch.setattr(db_module, "DB_FILE", db_path)
         db_module.init_db()
@@ -757,9 +764,7 @@ class TestLedgerAccessor:
         assert isinstance(result, list), (
             f"get_researcher_dof_ledger_for_run must return a list; got {type(result)!r}."
         )
-        assert result == [], (
-            f"Empty DB must return empty list, not {result!r}."
-        )
+        assert result == [], f"Empty DB must return empty list, not {result!r}."
 
 
 # ===========================================================================
@@ -794,12 +799,10 @@ class TestNOptunaIsNotSentinelInflated:
         n_sentinel = 10
 
         real_trials = [
-            _make_fake_trial(value=1.5, daily_returns=[0.01] * 50)
-            for _ in range(n_real)
+            _make_fake_trial(value=1.5, daily_returns=[0.01] * 50) for _ in range(n_real)
         ]
         sentinel_trials = [
-            _make_fake_trial(value=sentinel_value, daily_returns=[])
-            for _ in range(n_sentinel)
+            _make_fake_trial(value=sentinel_value, daily_returns=[]) for _ in range(n_sentinel)
         ]
         all_completed = real_trials + sentinel_trials
 
@@ -925,6 +928,7 @@ def _make_fake_trial(value: float, daily_returns: list[float]):
     These are the only attributes it touches per the current source.
     """
     from unittest.mock import MagicMock
+
     trial = MagicMock()
     trial.value = value
     trial.user_attrs = {"daily_returns": daily_returns}

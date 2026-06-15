@@ -38,9 +38,7 @@ import pytest
 
 import database as _db
 
-_FIXTURE = (
-    Path(__file__).parent.parent / "fixtures" / "math" / "guard_alpha_lifetime_epochs.json"
-)
+_FIXTURE = Path(__file__).parent.parent / "fixtures" / "math" / "guard_alpha_lifetime_epochs.json"
 
 _SCHEMA = """
     CREATE TABLE shadow_history (
@@ -73,8 +71,15 @@ def _make_db(tmp_path: Path, scenarios: dict) -> str:
                 "INSERT INTO shadow_history "
                 "(symphony_id, ts_utc, trading_day, current_return, shadow_return, "
                 "is_post_trigger, position_epoch) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (sym_id, row["ts_utc"], row["trading_day"], row["current_return"],
-                 row["shadow_return"], row.get("is_post_trigger", 0), row["position_epoch"]),
+                (
+                    sym_id,
+                    row["ts_utc"],
+                    row["trading_day"],
+                    row["current_return"],
+                    row["shadow_return"],
+                    row.get("is_post_trigger", 0),
+                    row["position_epoch"],
+                ),
             )
     conn.commit()
     conn.close()
@@ -84,15 +89,19 @@ def _make_db(tmp_path: Path, scenarios: dict) -> str:
 
 def _sym_dict(sym_id: str, if_held_pct: float, value: float) -> dict:
     return {
-        "id": sym_id, "value": value,
-        "simple_return": if_held_pct / 100.0, "net_deposits": 1000.0,
-        "time_weighted_return": if_held_pct / 100.0, "max_drawdown": 0.08,
+        "id": sym_id,
+        "value": value,
+        "simple_return": if_held_pct / 100.0,
+        "net_deposits": 1000.0,
+        "time_weighted_return": if_held_pct / 100.0,
+        "max_drawdown": 0.08,
     }
 
 
 # ---------------------------------------------------------------------------
 # Epoch-additive + W1 windowing reference (derives expected values)
 # ---------------------------------------------------------------------------
+
 
 def _epoch_groups(rows):
     groups, cur = [], object()
@@ -124,9 +133,11 @@ def _last_n_days(rows, n):
 # Existence (the literal BLOCK) + window echo
 # ===========================================================================
 
+
 class TestWindowedFunctionsExist:
     def test_functions_are_defined_and_callable(self):
         import analytics
+
         assert hasattr(analytics, "compute_windowed_portfolio_strip") and callable(
             analytics.compute_windowed_portfolio_strip
         ), "analytics.compute_windowed_portfolio_strip must be defined (app.py:1771 calls it)."
@@ -139,11 +150,13 @@ class TestWindowedFunctionsExist:
 # W1 windowing — ALL == AC-1 lifetime; windowing bites; never-triggered == 0
 # ===========================================================================
 
+
 class TestWindowedGuardAlpha:
     def test_all_window_equals_lifetime_epoch_additive(self, fixture, tmp_path):
         """The 'all' window guard alpha == the AC-1 lifetime epoch-additive value EXACTLY —
         the consistency anchor with what shipped at 86ca6e0."""
         import analytics
+
         scen = fixture["scenarios"]["triggered_iaSOO_saved_in_prior_epochs"]
         rows = scen["shadow_history_rows"]
         if_held = scen["if_held_pct"]
@@ -163,6 +176,7 @@ class TestWindowedGuardAlpha:
         """A window SHORTER than the age of the prior-epoch divergence yields a smaller
         alpha than ALL — windowing must actually bite (W1 slice-then-regroup)."""
         import analytics
+
         scen = fixture["scenarios"]["triggered_iaSOO_saved_in_prior_epochs"]
         rows = scen["shadow_history_rows"]
         if_held = scen["if_held_pct"]
@@ -192,7 +206,9 @@ class TestWindowedGuardAlpha:
         alpha_30 = analytics.compute_windowed_symphony_guard_alpha(
             _sym_dict(sym_id, if_held, 10000.0), None, window="30d", db_path=db_old
         )
-        assert alpha_all == pytest.approx(_epoch_additive_alpha(old_scen["shadow_history_rows"]), abs=1e-6)
+        assert alpha_all == pytest.approx(
+            _epoch_additive_alpha(old_scen["shadow_history_rows"]), abs=1e-6
+        )
         assert abs(alpha_30) < abs(alpha_all) - 1e-6, (
             f"30d-window alpha {alpha_30} must be smaller than ALL {alpha_all} when the "
             "divergence is OLDER than 30 days — windowing must bite."
@@ -200,6 +216,7 @@ class TestWindowedGuardAlpha:
 
     def test_never_triggered_zero_on_every_window(self, fixture, tmp_path):
         import analytics
+
         scen = fixture["scenarios"]["never_triggered_n2ooA"]
         if_held = scen["if_held_pct"]
         sym_id = scen["symphony_id"]
@@ -217,9 +234,11 @@ class TestWindowedGuardAlpha:
 # Portfolio strip shape + window echo + F7 vol gate
 # ===========================================================================
 
+
 class TestWindowedPortfolioStrip:
     def test_strip_echoes_window_and_has_expected_keys(self, fixture, tmp_path):
         import analytics
+
         scen = fixture["scenarios"]["triggered_iaSOO_saved_in_prior_epochs"]
         sym_id = scen["symphony_id"]
         db_file = _make_db(tmp_path, {"a": scen})
@@ -240,6 +259,7 @@ class TestWindowedPortfolioStrip:
         day-count < _V1_BOOTSTRAP_MIN_DAYS (30). The fixture has 9 trading days, so a 30d
         window over it is still only 9 days -> below the floor -> vol gated off."""
         import analytics
+
         scen = fixture["scenarios"]["triggered_iaSOO_saved_in_prior_epochs"]
         sym_id = scen["symphony_id"]
         db_file = _make_db(tmp_path, {"a": scen})
@@ -261,6 +281,7 @@ class TestWindowedPortfolioStrip:
 # Helper — age a scenario so its divergence falls OUTSIDE a 30-day window
 # ---------------------------------------------------------------------------
 
+
 def _aged_scenario(scen: dict, *, days_old: int) -> dict:
     """Shift all trading_days back by `days_old` so the divergence is older than 30 days,
     making a '30d' window exclude it. Preserves epoch structure + returns verbatim."""
@@ -268,6 +289,5 @@ def _aged_scenario(scen: dict, *, days_old: int) -> dict:
     base_shift = timedelta(days=days_old)
     for r in scen["shadow_history_rows"]:
         d = date.fromisoformat(r["trading_day"]) - base_shift
-        rows.append({**r, "trading_day": d.isoformat(),
-                     "ts_utc": d.isoformat() + "T20:00:00Z"})
+        rows.append({**r, "trading_day": d.isoformat(), "ts_utc": d.isoformat() + "T20:00:00Z"})
     return {**scen, "shadow_history_rows": rows}

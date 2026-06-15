@@ -107,9 +107,7 @@ def test_run_simulation_completes_on_raw_none_mc_prob_tick() -> None:
     """
     history = _history([_tick(mc_prob=None)])
     # Must not raise — the merged replay handles a raw None mc_prob.
-    result = autotuner.run_simulation(
-        _PARAMS, history, ["sym-A"], "2026-05-10", {}
-    )
+    result = autotuner.run_simulation(_PARAMS, history, ["sym-A"], "2026-05-10", {})
     assert result is not None, (
         "run_simulation returned None for a None-mc tick stream — it must "
         "complete and return a guard-alpha figure. The merged Cluster 3 "
@@ -136,9 +134,7 @@ def test_none_mc_tick_does_not_fabricate_an_arm() -> None:
     none_mc_result = autotuner.run_simulation(
         _PARAMS, _history([_tick(mc_prob=None)]), ["sym-A"], "2026-05-10", {}
     )
-    assert none_mc_result is not None, (
-        "run_simulation must complete on an all-None-mc tick stream."
-    )
+    assert none_mc_result is not None, "run_simulation must complete on an all-None-mc tick stream."
 
     # Cross-check: a tick stream whose mc sits squarely INSIDE the arm band
     # (between TAKE_PROFIT_MC_PCT and TRIGGER_THRESHOLD_PCT) exercises the arm
@@ -147,12 +143,13 @@ def test_none_mc_tick_does_not_fabricate_an_arm() -> None:
     # having fabricated the same arm. They are computed over different MC
     # inputs; the contract is simply that the None run completes WITHOUT the
     # arm path, which the mc_available gate enforces.
-    in_band_mc = (
-        _PARAMS["TAKE_PROFIT_MC_PCT"] + _PARAMS["TRIGGER_THRESHOLD_PCT"]
-    ) / 2.0
+    in_band_mc = (_PARAMS["TAKE_PROFIT_MC_PCT"] + _PARAMS["TRIGGER_THRESHOLD_PCT"]) / 2.0
     armed_result = autotuner.run_simulation(
-        _PARAMS, _history([_tick(mc_prob=in_band_mc)]), ["sym-A"],
-        "2026-05-10", {},
+        _PARAMS,
+        _history([_tick(mc_prob=in_band_mc)]),
+        ["sym-A"],
+        "2026-05-10",
+        {},
     )
     assert armed_result is not None, (
         "run_simulation must also complete on an in-band-mc tick stream — "
@@ -179,17 +176,13 @@ def test_mixed_none_and_numeric_mc_stream_completes() -> None:
     evaluated per tick. This pins that a heterogeneous stream does not crash
     when it crosses from a None tick to a numeric one or back.
     """
-    in_band_mc = (
-        _PARAMS["TAKE_PROFIT_MC_PCT"] + _PARAMS["TRIGGER_THRESHOLD_PCT"]
-    ) / 2.0
+    in_band_mc = (_PARAMS["TAKE_PROFIT_MC_PCT"] + _PARAMS["TRIGGER_THRESHOLD_PCT"]) / 2.0
     mixed = [
         _tick(mc_prob=None),
         _tick(mc_prob=in_band_mc),
         _tick(mc_prob=None),
     ]
-    result = autotuner.run_simulation(
-        _PARAMS, _history(mixed), ["sym-A"], "2026-05-10", {}
-    )
+    result = autotuner.run_simulation(_PARAMS, _history(mixed), ["sym-A"], "2026-05-10", {})
     assert result is not None, (
         "run_simulation must complete on a tick stream mixing None and "
         "numeric mc_prob values — the mc_available guard is per-tick, so a "

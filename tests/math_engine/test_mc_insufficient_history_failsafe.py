@@ -63,16 +63,14 @@ import pytest
 import math_engine
 
 FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "mc_insufficient_failsafe"
+    pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "mc_insufficient_failsafe"
 )
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _load_fixture(filename: str) -> dict[str, Any]:
     with (FIXTURE_DIR / filename).open("r", encoding="utf-8") as fh:
@@ -117,6 +115,7 @@ def _is_insufficient_sentinel(value: Any) -> bool:
 # ---------------------------------------------------------------------------
 # 1. run_monte_carlo signals insufficient history out-of-band
 # ---------------------------------------------------------------------------
+
 
 def test_insufficient_history_returns_out_of_band_sentinel() -> None:
     """
@@ -189,6 +188,7 @@ def test_insufficient_sentinel_is_distinct_from_in_band_full_confidence() -> Non
 # ---------------------------------------------------------------------------
 # 2. THE FAIL-SAFE PROOF — insufficient MC must not disable the protective stop
 # ---------------------------------------------------------------------------
+
 
 def test_protective_stop_still_fires_when_mc_history_insufficient() -> None:
     """
@@ -345,6 +345,7 @@ def test_insufficient_mc_does_not_veto_exit_on_a_single_qualifying_tick() -> Non
 # ---------------------------------------------------------------------------
 # 4. The misleading comment must be corrected
 # ---------------------------------------------------------------------------
+
 
 def test_insufficient_history_comment_no_longer_claims_skips_mc_exit_gate() -> None:
     """

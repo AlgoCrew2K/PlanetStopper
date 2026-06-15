@@ -61,12 +61,7 @@ import math_engine
 # Fixture paths
 # ---------------------------------------------------------------------------
 
-FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math"
-    / "regime_exit_adjustment"
-)
+FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "math" / "regime_exit_adjustment"
 
 
 def _load_fixtures() -> list[tuple[str, dict]]:
@@ -105,9 +100,7 @@ def _call_from_fixture(fixture: dict) -> int:
     FIXTURES,
     ids=[name for name, _ in FIXTURES],
 )
-def test_regime_adjustment_fixture_direction_and_bounds(
-    fixture_name: str, fixture: dict
-) -> None:
+def test_regime_adjustment_fixture_direction_and_bounds(fixture_name: str, fixture: dict) -> None:
     """
     For each golden fixture, apply_regime_exit_adjustment(regime_label, base_ticks)
     must satisfy:
@@ -129,8 +122,7 @@ def test_regime_adjustment_fixture_direction_and_bounds(
     expected = fixture["expected"]
 
     assert isinstance(result, int), (
-        f"{fixture_name}: apply_regime_exit_adjustment must return int, "
-        f"got {type(result).__name__}"
+        f"{fixture_name}: apply_regime_exit_adjustment must return int, got {type(result).__name__}"
     )
 
     direction = expected.get("direction")
@@ -191,17 +183,14 @@ def test_trending_exit_ticks_named_constant_exists() -> None:
         "comment (PHASE3_DECISIONS.md §Regime->response; Kaminski-Lo 2014)."
     )
     val = math_engine.TRENDING_EXIT_TICKS
-    assert isinstance(val, int), (
-        f"TRENDING_EXIT_TICKS must be int, got {type(val).__name__}"
-    )
+    assert isinstance(val, int), f"TRENDING_EXIT_TICKS must be int, got {type(val).__name__}"
     # Direction: trending -> more-active -> fewer ticks than the baseline
     assert val < math_engine.EXIT_CONFIRM_TICKS, (
         f"TRENDING_EXIT_TICKS={val} must be < EXIT_CONFIRM_TICKS="
         f"{math_engine.EXIT_CONFIRM_TICKS} (more-active direction)"
     )
     assert val >= 1, (
-        f"TRENDING_EXIT_TICKS={val} must be >= 1 "
-        f"(cannot confirm on 0 ticks — safety lower bound)"
+        f"TRENDING_EXIT_TICKS={val} must be >= 1 (cannot confirm on 0 ticks — safety lower bound)"
     )
 
 
@@ -215,9 +204,7 @@ def test_mean_reverting_exit_ticks_named_constant_exists() -> None:
         "(RESTRAINT direction: more ticks = harder to confirm = exits less)."
     )
     val = math_engine.MEAN_REVERTING_EXIT_TICKS
-    assert isinstance(val, int), (
-        f"MEAN_REVERTING_EXIT_TICKS must be int, got {type(val).__name__}"
-    )
+    assert isinstance(val, int), f"MEAN_REVERTING_EXIT_TICKS must be int, got {type(val).__name__}"
     assert val > math_engine.EXIT_CONFIRM_TICKS, (
         f"MEAN_REVERTING_EXIT_TICKS={val} must be > EXIT_CONFIRM_TICKS="
         f"{math_engine.EXIT_CONFIRM_TICKS} (RESTRAINT: exits less "
@@ -237,9 +224,7 @@ def test_high_vol_exit_ticks_named_constant_exists() -> None:
         "(bounded-protective: at or below base EXIT_CONFIRM_TICKS, >= 1)."
     )
     val = math_engine.HIGH_VOL_EXIT_TICKS
-    assert isinstance(val, int), (
-        f"HIGH_VOL_EXIT_TICKS must be int, got {type(val).__name__}"
-    )
+    assert isinstance(val, int), f"HIGH_VOL_EXIT_TICKS must be int, got {type(val).__name__}"
     assert 1 <= val <= math_engine.EXIT_CONFIRM_TICKS, (
         f"HIGH_VOL_EXIT_TICKS={val} must be in [1, EXIT_CONFIRM_TICKS="
         f"{math_engine.EXIT_CONFIRM_TICKS}] (bounded-protective: not loosened "
@@ -302,9 +287,7 @@ def test_return_type_is_int() -> None:
     float).  The result feeds compute_exit_confirmation's EXIT_CONFIRM_TICKS
     threshold comparison — non-int types would be a category error.
     """
-    result = math_engine.apply_regime_exit_adjustment(
-        regime_label=None, base_ticks=3
-    )
+    result = math_engine.apply_regime_exit_adjustment(regime_label=None, base_ticks=3)
     assert type(result) is int, (
         f"apply_regime_exit_adjustment must return EXACTLY int, got "
         f"{type(result).__name__}. numpy int subtypes or floats are forbidden; "
@@ -409,9 +392,7 @@ def test_mean_reverting_always_more_ticks_than_trending(base_ticks: int) -> None
     mr = math_engine.apply_regime_exit_adjustment(
         regime_label="mean-reverting", base_ticks=base_ticks
     )
-    tr = math_engine.apply_regime_exit_adjustment(
-        regime_label="trending", base_ticks=base_ticks
-    )
+    tr = math_engine.apply_regime_exit_adjustment(regime_label="trending", base_ticks=base_ticks)
     assert mr > tr, (
         f"Direction invariant violated for base_ticks={base_ticks}: "
         f"mean-reverting adjusted_ticks={mr} must be STRICTLY GREATER THAN "
@@ -458,9 +439,9 @@ def test_fail_safe_composes_with_regime_adjustment(regime_label: str | None) -> 
     _, hit = math_engine.compute_exit_confirmation(
         armed=True,
         is_triggered=False,
-        current_return=-10.0,          # deep below any stop
-        stop_trigger_level=-1.0,       # stop at -1.0 -> threshold -1.10
-        prob_underperforming=None,             # MC absent (fail-safe path)
+        current_return=-10.0,  # deep below any stop
+        stop_trigger_level=-1.0,  # stop at -1.0 -> threshold -1.10
+        prob_underperforming=None,  # MC absent (fail-safe path)
         current_below_stop_count=starting_count,
         exit_confirm_ticks=adjusted_ticks,  # regime-adjusted ticks parameter
     )
@@ -503,7 +484,7 @@ def test_fail_safe_mc_absent_does_not_veto_stop_under_any_regime(
         is_triggered=False,
         current_return=-5.0,
         stop_trigger_level=-1.0,
-        prob_underperforming=None,             # MC absent — fail-safe must not block stop
+        prob_underperforming=None,  # MC absent — fail-safe must not block stop
         current_below_stop_count=starting_count,
         exit_confirm_ticks=adjusted_ticks,
     )
@@ -564,10 +545,7 @@ def test_no_magic_numbers_in_adjustment_function_body() -> None:
 
     target: ast.FunctionDef | None = None
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.FunctionDef)
-            and node.name == "apply_regime_exit_adjustment"
-        ):
+        if isinstance(node, ast.FunctionDef) and node.name == "apply_regime_exit_adjustment":
             target = node
             break
 
@@ -613,8 +591,7 @@ def test_adjustment_function_docstring_cites_kaminski_lo() -> None:
     """
     fn = getattr(math_engine, "apply_regime_exit_adjustment", None)
     assert fn is not None, (
-        "apply_regime_exit_adjustment not found in math_engine "
-        "(RED state — not yet implemented)"
+        "apply_regime_exit_adjustment not found in math_engine (RED state — not yet implemented)"
     )
     doc = fn.__doc__ or ""
     assert "Kaminski" in doc or "kaminski" in doc.lower(), (
@@ -644,6 +621,7 @@ def test_exit_confirmation_accepts_exit_confirm_ticks_kwarg() -> None:
     tests are in test_fail_safe_composes_with_regime_adjustment above.
     """
     import inspect
+
     sig = inspect.signature(math_engine.compute_exit_confirmation)
     assert "exit_confirm_ticks" in sig.parameters, (
         "compute_exit_confirmation must accept 'exit_confirm_ticks' as a "
@@ -730,9 +708,7 @@ def test_exit_confirmation_exit_confirm_ticks_override_works() -> None:
         f"Override threshold={override}: starting_count={override - 2} + 1 "
         f"= {new_count} < {override} -> should NOT fire yet, got hit={hit_not_yet}"
     )
-    assert new_count == override - 1, (
-        f"Expected new_count={override - 1}, got {new_count}"
-    )
+    assert new_count == override - 1, f"Expected new_count={override - 1}, got {new_count}"
 
     # starting_count = override-1: new_count = override >= override -> MUST fire
     new_count_2, hit_now = math_engine.compute_exit_confirmation(
@@ -744,9 +720,7 @@ def test_exit_confirmation_exit_confirm_ticks_override_works() -> None:
         current_below_stop_count=override - 1,
         exit_confirm_ticks=override,
     )
-    assert new_count_2 == override, (
-        f"Expected new_count={override}, got {new_count_2}"
-    )
+    assert new_count_2 == override, f"Expected new_count={override}, got {new_count_2}"
     assert hit_now is True, (
         f"Override threshold={override}: new_count={new_count_2} >= {override} "
         f"-> should fire, got hit={hit_now}"

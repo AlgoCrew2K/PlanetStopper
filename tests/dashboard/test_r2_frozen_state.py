@@ -46,9 +46,7 @@ import pytest
 # Fixture loader
 # ---------------------------------------------------------------------------
 
-_FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent / "fixtures" / "dashboard" / "frozen_state"
-)
+_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "dashboard" / "frozen_state"
 
 
 def _load(name: str) -> dict:
@@ -58,6 +56,7 @@ def _load(name: str) -> dict:
 # ---------------------------------------------------------------------------
 # Flask test-client fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def flask_client():
@@ -73,7 +72,10 @@ def flask_client():
         mock_analytics.get_portfolio_cumulative_return.return_value = None
         mock_analytics.get_portfolio_max_drawdown.return_value = None
         mock_analytics.get_symphony_today_change.return_value = {"if_held": None, "dry_run": None}
-        mock_analytics.get_symphony_cumulative_return.return_value = {"if_held": None, "dry_run": None}
+        mock_analytics.get_symphony_cumulative_return.return_value = {
+            "if_held": None,
+            "dry_run": None,
+        }
         mock_analytics.get_symphony_max_drawdown.return_value = {"if_held": None, "dry_run": None}
         with app_module.app.test_client() as client:
             yield client, app_module
@@ -94,15 +96,14 @@ def _patch_frozen_db(app_module, bot_state, monkeypatch, market_state="closed_fr
 # AC-1 + AC-2 + AC-3: closed_frozen with snapshot → state is object, frozen_at set
 # ===========================================================================
 
+
 class TestFrozenStateIsObjectNotString:
     """
     Core regression: app.py:239 must NOT set state to a date string.
     When a snapshot exists, state must be a dict keyed by symphony IDs.
     """
 
-    def test_frozen_state_is_dict_not_string_when_snapshot_exists(
-        self, flask_client, monkeypatch
-    ):
+    def test_frozen_state_is_dict_not_string_when_snapshot_exists(self, flask_client, monkeypatch):
         """AC-1: closed_frozen + snapshot → /api/state.state is a dict, not a string."""
         client, app_module = flask_client
         fx = _load("frozen_state_with_symphonies")
@@ -111,7 +112,10 @@ class TestFrozenStateIsObjectNotString:
 
         with patch.object(app_module, "database") as mock_db:
             mock_db.load_state.return_value = bot_state
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
@@ -135,9 +139,7 @@ class TestFrozenStateIsObjectNotString:
             f"Actual value: {state!r}"
         )
 
-    def test_frozen_at_is_nonnull_when_snapshot_exists(
-        self, flask_client, monkeypatch
-    ):
+    def test_frozen_at_is_nonnull_when_snapshot_exists(self, flask_client, monkeypatch):
         """AC-2: frozen_at must be a non-null string (ISO timestamp) when snapshot exists."""
         client, app_module = flask_client
         fx = _load("frozen_state_with_symphonies")
@@ -146,7 +148,10 @@ class TestFrozenStateIsObjectNotString:
 
         with patch.object(app_module, "database") as mock_db:
             mock_db.load_state.return_value = bot_state
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
@@ -178,7 +183,10 @@ class TestFrozenStateIsObjectNotString:
 
         with patch.object(app_module, "database") as mock_db:
             mock_db.load_state.return_value = bot_state
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
@@ -207,6 +215,7 @@ class TestFrozenStateIsObjectNotString:
 # AC-4: JS simulation — Object.keys must yield symphony ID strings, not digits
 # ===========================================================================
 
+
 class TestObjectKeysYieldSymphonyIds:
     """
     AC-4 + AC-9: Python simulation of the JS Object.keys(state) pattern.
@@ -229,7 +238,10 @@ class TestObjectKeysYieldSymphonyIds:
 
         with patch.object(app_module, "database") as mock_db:
             mock_db.load_state.return_value = bot_state
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
@@ -276,22 +288,24 @@ class TestObjectKeysYieldSymphonyIds:
 # AC-5: closed_frozen + no snapshot → state={}, notice present
 # ===========================================================================
 
+
 class TestFrozenStateNoSnapshotReturnsEmptyObject:
     """
     AC-5: fresh deploy (no snapshot) must return state={} not null, not string.
     AC-5b: notice field must be present.
     """
 
-    def test_fresh_deploy_state_is_empty_dict_not_null_not_string(
-        self, flask_client, monkeypatch
-    ):
+    def test_fresh_deploy_state_is_empty_dict_not_null_not_string(self, flask_client, monkeypatch):
         """AC-5a: no snapshot + closed_frozen → state is {} (empty dict)."""
         client, app_module = flask_client
         fx = _load("frozen_state_no_snapshot")
 
         with patch.object(app_module, "database") as mock_db:
             mock_db.load_state.return_value = {}
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
@@ -305,7 +319,9 @@ class TestFrozenStateNoSnapshotReturnsEmptyObject:
         body = resp.get_json()
         state = body.get("state", "MISSING")
 
-        assert state != "MISSING", "/api/state response must include 'state' key even on fresh deploy"
+        assert state != "MISSING", (
+            "/api/state response must include 'state' key even on fresh deploy"
+        )
         assert state is not None, (
             "/api/state.state must be {} (empty dict), not null/None, on fresh deploy. "
             f"Got: {state!r}"
@@ -318,16 +334,17 @@ class TestFrozenStateNoSnapshotReturnsEmptyObject:
             f"/api/state.state must be empty dict {{}}, got {state!r}"
         )
 
-    def test_fresh_deploy_notice_field_is_present(
-        self, flask_client, monkeypatch
-    ):
+    def test_fresh_deploy_notice_field_is_present(self, flask_client, monkeypatch):
         """AC-5b: no snapshot + closed_frozen → notice field present with descriptive message."""
         client, app_module = flask_client
         fx = _load("frozen_state_no_snapshot")
 
         with patch.object(app_module, "database") as mock_db:
             mock_db.load_state.return_value = {}
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
@@ -345,8 +362,7 @@ class TestFrozenStateNoSnapshotReturnsEmptyObject:
             f"Got notice={notice!r}. AC-DM.3.4 requires this field."
         )
         assert fx["expected"]["notice_contains"] in notice, (
-            f"notice must contain '{fx['expected']['notice_contains']}'. "
-            f"Got: {notice!r}"
+            f"notice must contain '{fx['expected']['notice_contains']}'. Got: {notice!r}"
         )
 
 
@@ -354,14 +370,13 @@ class TestFrozenStateNoSnapshotReturnsEmptyObject:
 # AC-6 + AC-7: pre_market path behaves identically to closed_frozen
 # ===========================================================================
 
+
 class TestPreMarketServesFrozenStateObject:
     """
     AC-6 + AC-7: market_state='pre_market' with snapshot → same real-object behavior.
     """
 
-    def test_pre_market_state_is_object_not_string(
-        self, flask_client, monkeypatch
-    ):
+    def test_pre_market_state_is_object_not_string(self, flask_client, monkeypatch):
         """AC-6: pre_market + snapshot → state is a dict, not a string."""
         client, app_module = flask_client
         fx = _load("frozen_state_pre_market")
@@ -370,7 +385,10 @@ class TestPreMarketServesFrozenStateObject:
 
         with patch.object(app_module, "database") as mock_db:
             mock_db.load_state.return_value = bot_state
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
@@ -392,9 +410,7 @@ class TestPreMarketServesFrozenStateObject:
             f"Value: {state!r}. pre_market path shares the same fix as closed_frozen."
         )
 
-    def test_pre_market_state_contains_expected_symphony_ids(
-        self, flask_client, monkeypatch
-    ):
+    def test_pre_market_state_contains_expected_symphony_ids(self, flask_client, monkeypatch):
         """AC-7: pre_market + snapshot → state keys are the snapshot's symphony IDs."""
         client, app_module = flask_client
         fx = _load("frozen_state_pre_market")
@@ -404,7 +420,10 @@ class TestPreMarketServesFrozenStateObject:
 
         with patch.object(app_module, "database") as mock_db:
             mock_db.load_state.return_value = bot_state
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
@@ -416,9 +435,7 @@ class TestPreMarketServesFrozenStateObject:
 
         body = resp.get_json()
         state = body.get("state", {})
-        assert isinstance(state, dict), (
-            f"state must be a dict, got {type(state).__name__!r}"
-        )
+        assert isinstance(state, dict), f"state must be a dict, got {type(state).__name__!r}"
         actual_sym_keys = {k for k in state.keys() if k != "date"}
         missing = expected_ids - actual_sym_keys
         assert not missing, (
@@ -431,15 +448,14 @@ class TestPreMarketServesFrozenStateObject:
 # AC-8: market_state='open' preserves current live behavior (no regression)
 # ===========================================================================
 
+
 class TestOpenMarketPreservesLiveBehavior:
     """
     AC-8: The R2 fix must not break the live (open) path.
     state must still be the live bot_state dict when market is open.
     """
 
-    def test_open_market_state_field_is_live_bot_state(
-        self, flask_client, monkeypatch
-    ):
+    def test_open_market_state_field_is_live_bot_state(self, flask_client, monkeypatch):
         """AC-8: market_state='open' → state is live bot_state (with symphony dicts), frozen_at=null."""
         client, app_module = flask_client
 
@@ -462,22 +478,21 @@ class TestOpenMarketPreservesLiveBehavior:
             patch.object(app_module, "render_template", return_value=""),
         ):
             mock_db.load_state.return_value = dict(live_state)
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
-            monkeypatch.setattr(
-                app_module, "get_market_state", lambda dt: "open", raising=False
-            )
+            monkeypatch.setattr(app_module, "get_market_state", lambda dt: "open", raising=False)
 
             resp = client.get("/api/state")
 
         assert resp.status_code == 200
         body = resp.get_json()
         assert body.get("market_state") == "open"
-        assert body.get("frozen_at") is None, (
-            "frozen_at must be null when market is open"
-        )
+        assert body.get("frozen_at") is None, "frozen_at must be null when market is open"
         state = body.get("state")
         assert isinstance(state, dict), (
             f"Live path state must still be a dict. Got {type(state).__name__!r}"
@@ -491,6 +506,7 @@ class TestOpenMarketPreservesLiveBehavior:
 # ===========================================================================
 # AC-10: EOD snapshot accounts_map contains full symphony dicts (not just IDs)
 # ===========================================================================
+
 
 class TestSnapshotAccountsMapContainsFullSymphonyDicts:
     """
@@ -552,7 +568,10 @@ class TestSnapshotAccountsMapContainsFullSymphonyDicts:
 
         with patch.object(app_module, "database") as mock_db:
             mock_db.load_state.return_value = bot_state
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None

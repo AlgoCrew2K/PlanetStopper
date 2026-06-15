@@ -69,16 +69,14 @@ import pytest
 import math_engine
 
 FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "mc_knn_standardization"
+    pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "mc_knn_standardization"
 )
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _load_fixture(filename: str) -> dict[str, Any]:
     with (FIXTURE_DIR / filename).open("r", encoding="utf-8") as fh:
@@ -141,6 +139,7 @@ def _build_constant_history(
 # ---------------------------------------------------------------------------
 # 1. THE PROOF — high-vol query must select the high-vol (crash) neighbour
 # ---------------------------------------------------------------------------
+
 
 def test_high_vol_query_selects_crash_regime_neighbor() -> None:
     """
@@ -243,6 +242,7 @@ def test_high_vol_query_does_not_select_calm_regime_neighbor() -> None:
 # 2. PROPERTY — the volatility feature is load-bearing (neither feature dominates)
 # ---------------------------------------------------------------------------
 
+
 def test_vol_feature_is_load_bearing_changes_regime_selection() -> None:
     """
     AC-1 property: 'neither feature dominates the distance.' Operationalized as
@@ -304,6 +304,7 @@ def test_vol_feature_is_load_bearing_changes_regime_selection() -> None:
 # 3. EDGE CASE — zero-variance feature must not break standardization
 # ---------------------------------------------------------------------------
 
+
 def test_zero_variance_feature_does_not_produce_nan_or_inf() -> None:
     """
     AC-1 edge case: a feature with zero variance over the window. Every SPY day
@@ -335,6 +336,5 @@ def test_zero_variance_feature_does_not_produce_nan_or_inf() -> None:
         f"z-score (feature std == 0) with a finite fallback."
     )
     assert 0.0 <= result <= 100.0, (
-        f"run_monte_carlo returned {result!r} outside [0, 100] for a "
-        f"zero-variance feature."
+        f"run_monte_carlo returned {result!r} outside [0, 100] for a zero-variance feature."
     )

@@ -99,14 +99,11 @@ def test_module_docstring_does_not_claim_backtest_selection_acceptable():
     if "BACKTEST_SELECTION" in doc:
         # Allow ONLY if every occurrence sits in a clearly-negative clause —
         # i.e., the same line/sentence also contains an exclusion keyword.
-        lines_with_token = [
-            ln for ln in doc.splitlines() if "BACKTEST_SELECTION" in ln
-        ]
+        lines_with_token = [ln for ln in doc.splitlines() if "BACKTEST_SELECTION" in ln]
         for ln in lines_with_token:
             lowered = ln.lower()
             negated = any(
-                kw in lowered
-                for kw in ("not ", "exclud", "reject", "forbidden", "disallow")
+                kw in lowered for kw in ("not ", "exclud", "reject", "forbidden", "disallow")
             )
             assert negated, (
                 "Module docstring mentions BACKTEST_SELECTION without an "

@@ -38,6 +38,7 @@ _AUTOTUNER_SRC = _WORKTREE_ROOT / "autotuner.py"
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
@@ -67,15 +68,17 @@ def _write_post_mortem(directory: pathlib.Path, date_str: str, content: str) -> 
 
 # A well-formed post-mortem the loop should consume without complaint.
 def _valid_post_mortem_json(reason: str, exit_return: float, attempted: float) -> str:
-    return json.dumps({
-        "triggers": [
-            {
-                "exit_reason": reason,
-                "exit_return": exit_return,
-                "attempted_trigger_level": attempted,
-            }
-        ]
-    })
+    return json.dumps(
+        {
+            "triggers": [
+                {
+                    "exit_reason": reason,
+                    "exit_return": exit_return,
+                    "attempted_trigger_level": attempted,
+                }
+            ]
+        }
+    )
 
 
 # ===========================================================================
@@ -95,18 +98,17 @@ def test_no_bare_except_in_calculate_historical_deviation():
     tree = ast.parse(_AUTOTUNER_SRC.read_text(encoding="utf-8"))
 
     func = next(
-        (n for n in ast.walk(tree)
-         if isinstance(n, ast.FunctionDef)
-         and n.name == "calculate_historical_deviation"),
+        (
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name == "calculate_historical_deviation"
+        ),
         None,
     )
-    assert func is not None, (
-        "calculate_historical_deviation not found in autotuner.py."
-    )
+    assert func is not None, "calculate_historical_deviation not found in autotuner.py."
 
     bare_handlers = [
-        h for h in ast.walk(func)
-        if isinstance(h, ast.ExceptHandler) and h.type is None
+        h for h in ast.walk(func) if isinstance(h, ast.ExceptHandler) and h.type is None
     ]
     assert not bare_handlers, (
         f"calculate_historical_deviation still has {len(bare_handlers)} bare "
@@ -129,9 +131,11 @@ def test_per_file_except_names_the_specific_exception_set():
     tree = ast.parse(_AUTOTUNER_SRC.read_text(encoding="utf-8"))
 
     func = next(
-        (n for n in ast.walk(tree)
-         if isinstance(n, ast.FunctionDef)
-         and n.name == "calculate_historical_deviation"),
+        (
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name == "calculate_historical_deviation"
+        ),
         None,
     )
     assert func is not None, "calculate_historical_deviation not found."
@@ -155,9 +159,9 @@ def test_per_file_except_names_the_specific_exception_set():
 
     # The per-file handler is the one whose caught set is a superset of `required`.
     matching = [
-        h for h in ast.walk(func)
-        if isinstance(h, ast.ExceptHandler)
-        and required.issubset(_handler_caught_names(h))
+        h
+        for h in ast.walk(func)
+        if isinstance(h, ast.ExceptHandler) and required.issubset(_handler_caught_names(h))
     ]
     assert matching, (
         "calculate_historical_deviation has no except clause catching the "
@@ -199,11 +203,10 @@ def test_malformed_post_mortem_is_skipped_and_logged(deviation_workdir, capsys):
     current_date = "2026-05-10"
     # Both dates are inside the 45-calendar-day lookback and strictly before
     # current_date, so both files are in-window.
-    malformed = _write_post_mortem(
-        deviation_workdir, "2026-05-01", "{ this is not valid json ,,, "
-    )
+    malformed = _write_post_mortem(deviation_workdir, "2026-05-01", "{ this is not valid json ,,, ")
     _write_post_mortem(
-        deviation_workdir, "2026-05-02",
+        deviation_workdir,
+        "2026-05-02",
         _valid_post_mortem_json("Trailing Stop", -1.0, -0.5),
     )
 
@@ -246,11 +249,10 @@ def test_valid_post_mortem_still_processed_alongside_malformed(deviation_workdir
     attempted = -0.5
     expected_deviation = exit_return - attempted  # derived, not hardcoded
 
+    _write_post_mortem(deviation_workdir, "2026-05-01", "{ corrupt ]]] not json")
     _write_post_mortem(
-        deviation_workdir, "2026-05-01", "{ corrupt ]]] not json"
-    )
-    _write_post_mortem(
-        deviation_workdir, "2026-05-03",
+        deviation_workdir,
+        "2026-05-03",
         _valid_post_mortem_json("Trailing Stop", exit_return, attempted),
     )
 
@@ -282,7 +284,8 @@ def test_keyboard_interrupt_is_not_swallowed(deviation_workdir, monkeypatch):
     autotuner = _import_autotuner()
 
     _write_post_mortem(
-        deviation_workdir, "2026-05-01",
+        deviation_workdir,
+        "2026-05-01",
         _valid_post_mortem_json("Trailing Stop", -1.0, -0.5),
     )
 

@@ -80,6 +80,7 @@ def _inject_correlation_diagnostic_stub(return_value: list):
     # so CRISIS_CAVEAT assertions bind to the real constant.
     try:
         from advisors import correlation_diagnostic as _real
+
         if hasattr(_real, "CRISIS_CAVEAT"):
             # Real module has the constant — override compute fn for test control
             # but keep the real CRISIS_CAVEAT so route-binding tests work.
@@ -95,6 +96,7 @@ def _inject_correlation_diagnostic_stub(return_value: list):
 
     # Also ensure the advisors package exposes the attribute.
     import advisors as _advisors_pkg
+
     _advisors_pkg.correlation_diagnostic = stub  # type: ignore[attr-defined]
     sys.modules["advisors.correlation_diagnostic"] = stub
     return stub
@@ -105,6 +107,7 @@ def _remove_correlation_diagnostic_stub():
     sys.modules.pop("advisors.correlation_diagnostic", None)
     try:
         import advisors as _advisors_pkg
+
         if hasattr(_advisors_pkg, "correlation_diagnostic"):
             delattr(_advisors_pkg, "correlation_diagnostic")
     except ImportError:
@@ -197,9 +200,7 @@ def test_correlations_tab_returns_200(test_client, two_pair_matrix):
     ):
         resp = test_client.get("/ai-advisor")
 
-    assert resp.status_code == 200, (
-        f"GET /ai-advisor must return 200; got {resp.status_code}"
-    )
+    assert resp.status_code == 200, f"GET /ai-advisor must return 200; got {resp.status_code}"
 
 
 # ---------------------------------------------------------------------------
@@ -281,9 +282,7 @@ def test_correlations_tab_each_matrix_entry_has_required_fields(test_client, two
 # ---------------------------------------------------------------------------
 
 
-def test_correlations_tab_crisis_caveat_comes_from_module_constant(
-    test_client, two_pair_matrix
-):
+def test_correlations_tab_crisis_caveat_comes_from_module_constant(test_client, two_pair_matrix):
     """The route must pass `correlation_diagnostic.CRISIS_CAVEAT` as the
     'crisis_caveat' template context value — not an inline string literal.
 
@@ -350,9 +349,7 @@ def test_correlations_tab_context_has_as_of_timestamp(test_client, two_pair_matr
     ):
         test_client.get("/ai-advisor")
 
-    assert "as_of" in captured, (
-        "template context must include 'as_of' timestamp key"
-    )
+    assert "as_of" in captured, "template context must include 'as_of' timestamp key"
     assert captured["as_of"], (
         "'as_of' must be a non-empty string — the operator needs to see when "
         "the diagnostic data was computed"
@@ -404,9 +401,7 @@ def test_correlations_tab_empty_portfolio_returns_200_with_insufficient_data(tes
 # ---------------------------------------------------------------------------
 
 
-def test_correlations_route_does_not_call_insert_advisor_observation(
-    test_client, two_pair_matrix
-):
+def test_correlations_route_does_not_call_insert_advisor_observation(test_client, two_pair_matrix):
     """The correlations route must NOT call insert_advisor_observation.
 
     The diagnostic is pure measurement — no persistence is needed for the
@@ -425,9 +420,12 @@ def test_correlations_route_does_not_call_insert_advisor_observation(
     ):
         test_client.get("/ai-advisor")
 
-    insert_mock.assert_not_called(), (
-        "GET /ai-advisor/correlations must not call insert_advisor_observation — "
-        "the display route is read-only; persistence happens on a separate 'run' action"
+    (
+        insert_mock.assert_not_called(),
+        (
+            "GET /ai-advisor/correlations must not call insert_advisor_observation — "
+            "the display route is read-only; persistence happens on a separate 'run' action"
+        ),
     )
 
 
@@ -436,9 +434,7 @@ def test_correlations_route_does_not_call_insert_advisor_observation(
 # ---------------------------------------------------------------------------
 
 
-def test_correlations_tab_thin_data_entries_are_passed_to_template(
-    test_client, thin_pair_matrix
-):
+def test_correlations_tab_thin_data_entries_are_passed_to_template(test_client, thin_pair_matrix):
     """When the diagnostic returns thin-data pairs (n_obs < 30, thin_data=True),
     those entries must appear in the correlation_matrix context with thin_data=True.
 

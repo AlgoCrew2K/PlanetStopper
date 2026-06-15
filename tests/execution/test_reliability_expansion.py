@@ -56,6 +56,7 @@ import app as app_module
 
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
 
     def _et(hour: int, minute: int, weekday_date: str = "2025-05-14") -> datetime:
@@ -63,10 +64,10 @@ try:
         return datetime(y, mo, d, hour, minute, 0, tzinfo=_ET)
 
 except Exception:  # pragma: no cover
+
     def _et(hour: int, minute: int, weekday_date: str = "2025-05-14") -> datetime:
         y, mo, d = map(int, weekday_date.split("-"))
-        return datetime(y, mo, d, hour, minute, 0,
-                        tzinfo=timezone(timedelta(hours=-4)))
+        return datetime(y, mo, d, hour, minute, 0, tzinfo=timezone(timedelta(hours=-4)))
 
 
 _PRE_GATE_09_45 = _et(9, 45)
@@ -125,8 +126,7 @@ def _make_sym_payload(last_pct: float = 0.015) -> dict:
 def _make_minimal_history(date_str: str = _DATE_STR) -> dict:
     return {
         date_str: {
-            _TICKER: {"c": 500.0, "daily_ret": 0.001,
-                      "high": 501.0, "low": 499.0, "close": 500.0}
+            _TICKER: {"c": 500.0, "daily_ret": 0.001, "high": 501.0, "low": 499.0, "close": 500.0}
         }
     }
 
@@ -135,6 +135,7 @@ def _make_minimal_history(date_str: str = _DATE_STR) -> dict:
 # Shared full-cycle runner (same as test_data_action_split.py but without
 # the math_engine patch so we can probe print() output via capsys)
 # ---------------------------------------------------------------------------
+
 
 def _run_main_patched(
     current_et: datetime,
@@ -162,26 +163,27 @@ def _run_main_patched(
     def capture_save(s: dict) -> None:
         captured.append(copy.deepcopy(s))
 
-    with patch.object(alpha_bot_execution, "database") as mock_db, \
-         patch.object(alpha_bot_execution, "reporting"), \
-         patch.object(alpha_bot_execution, "fetch_symphony_stats",
-                      return_value=fetch_sym_return), \
-         patch.object(alpha_bot_execution, "fetch_alpaca_history",
-                      return_value=fetch_alpaca_return), \
-         patch.object(alpha_bot_execution, "fetch_intraday_vwaps",
-                      return_value={_TICKER: {"vwap": 500.0, "last_price": 500.0}}), \
-         patch.object(alpha_bot_execution, "get_current_et",
-                      return_value=current_et), \
-         patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
-         patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", composer_key), \
-         patch.object(alpha_bot_execution, "ALPACA_KEY", alpaca_key), \
-         patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-         patch.object(alpha_bot_execution, "EXECUTION_START_TIME", execution_start_time), \
-         patch.object(alpha_bot_execution.time, "sleep"), \
-         patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]), \
-         patch.object(alpha_bot_execution, "autotuner") as _mock_autotuner, \
-         patch.object(alpha_bot_execution, "math_engine") as mock_math:
-
+    with (
+        patch.object(alpha_bot_execution, "database") as mock_db,
+        patch.object(alpha_bot_execution, "reporting"),
+        patch.object(alpha_bot_execution, "fetch_symphony_stats", return_value=fetch_sym_return),
+        patch.object(alpha_bot_execution, "fetch_alpaca_history", return_value=fetch_alpaca_return),
+        patch.object(
+            alpha_bot_execution,
+            "fetch_intraday_vwaps",
+            return_value={_TICKER: {"vwap": 500.0, "last_price": 500.0}},
+        ),
+        patch.object(alpha_bot_execution, "get_current_et", return_value=current_et),
+        patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+        patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", composer_key),
+        patch.object(alpha_bot_execution, "ALPACA_KEY", alpaca_key),
+        patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+        patch.object(alpha_bot_execution, "EXECUTION_START_TIME", execution_start_time),
+        patch.object(alpha_bot_execution.time, "sleep"),
+        patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+        patch.object(alpha_bot_execution, "autotuner") as _mock_autotuner,
+        patch.object(alpha_bot_execution, "math_engine") as mock_math,
+    ):
         mock_db.acquire_lock.return_value = True
         mock_db.load_state.return_value = copy.deepcopy(initial_bot_state)
         mock_db.load_chart_history.return_value = {"date": date_str, "symphonies": {}}
@@ -216,6 +218,7 @@ def _run_main_patched(
 # 1. CACHE-POISON HARDENING
 # ===========================================================================
 
+
 class TestCachePoisonHardening:
     """
     fetch_alpaca_history must NOT write history_cache.json when historical_data=={}.
@@ -239,10 +242,11 @@ class TestCachePoisonHardening:
         tickers = ["SPY"]
         date_str = _DATE_STR
 
-        with patch.object(alpha_bot_execution, "HISTORY_CACHE_FILE", str(cache_file)), \
-             patch.object(alpha_bot_execution.requests, "get") as mock_get, \
-             patch.object(alpha_bot_execution.time, "sleep"):
-
+        with (
+            patch.object(alpha_bot_execution, "HISTORY_CACHE_FILE", str(cache_file)),
+            patch.object(alpha_bot_execution.requests, "get") as mock_get,
+            patch.object(alpha_bot_execution.time, "sleep"),
+        ):
             # Simulate every Alpaca request returning HTTP 500 → success=False → break
             mock_resp = MagicMock()
             mock_resp.status_code = 500
@@ -252,8 +256,7 @@ class TestCachePoisonHardening:
 
         # The function must return an empty dict
         assert result == {}, (
-            "fetch_alpaca_history must return {} when all batches fail; "
-            f"got {result!r}"
+            f"fetch_alpaca_history must return {{}} when all batches fail; got {result!r}"
         )
         # The cache file must NOT exist (or must not have been written this call)
         assert not cache_file.exists(), (
@@ -286,10 +289,11 @@ class TestCachePoisonHardening:
             "next_page_token": None,
         }
 
-        with patch.object(alpha_bot_execution, "HISTORY_CACHE_FILE", str(cache_file)), \
-             patch.object(alpha_bot_execution.requests, "get") as mock_get, \
-             patch.object(alpha_bot_execution.time, "sleep"):
-
+        with (
+            patch.object(alpha_bot_execution, "HISTORY_CACHE_FILE", str(cache_file)),
+            patch.object(alpha_bot_execution.requests, "get") as mock_get,
+            patch.object(alpha_bot_execution.time, "sleep"),
+        ):
             mock_resp = MagicMock()
             mock_resp.status_code = 200
             mock_resp.json.return_value = alpaca_response
@@ -297,9 +301,7 @@ class TestCachePoisonHardening:
 
             result = alpha_bot_execution.fetch_alpaca_history(tickers, date_str)
 
-        assert result, (
-            "fetch_alpaca_history must return non-empty dict on successful fetch"
-        )
+        assert result, "fetch_alpaca_history must return non-empty dict on successful fetch"
         assert cache_file.exists(), (
             "history_cache.json must be written after a successful non-empty fetch; "
             "the empty-data guard must not block valid cache writes."
@@ -307,8 +309,7 @@ class TestCachePoisonHardening:
         with open(cache_file, encoding="utf-8") as fh:
             cached = json.load(fh)
         assert cached.get("date") == date_str, (
-            f"Cached date must equal current_date_str={date_str!r}; "
-            f"got {cached.get('date')!r}"
+            f"Cached date must equal current_date_str={date_str!r}; got {cached.get('date')!r}"
         )
 
     # -----------------------------------------------------------------------
@@ -333,9 +334,11 @@ class TestCachePoisonHardening:
         date_str = _DATE_STR
 
         # First call: all batches fail → empty data → cache should NOT be written
-        with patch.object(alpha_bot_execution, "HISTORY_CACHE_FILE", str(cache_file)), \
-             patch.object(alpha_bot_execution.requests, "get") as mock_get_1, \
-             patch.object(alpha_bot_execution.time, "sleep"):
+        with (
+            patch.object(alpha_bot_execution, "HISTORY_CACHE_FILE", str(cache_file)),
+            patch.object(alpha_bot_execution.requests, "get") as mock_get_1,
+            patch.object(alpha_bot_execution.time, "sleep"),
+        ):
             mock_resp_fail = MagicMock()
             mock_resp_fail.status_code = 500
             mock_get_1.return_value = mock_resp_fail
@@ -344,9 +347,11 @@ class TestCachePoisonHardening:
         # If the guard is correct, no cache file exists after the empty fetch
         # (the second call will attempt a real network call, not return from cache)
         # We verify: after the first call, calling again makes at least one requests.get call
-        with patch.object(alpha_bot_execution, "HISTORY_CACHE_FILE", str(cache_file)), \
-             patch.object(alpha_bot_execution.requests, "get") as mock_get_2, \
-             patch.object(alpha_bot_execution.time, "sleep"):
+        with (
+            patch.object(alpha_bot_execution, "HISTORY_CACHE_FILE", str(cache_file)),
+            patch.object(alpha_bot_execution.requests, "get") as mock_get_2,
+            patch.object(alpha_bot_execution.time, "sleep"),
+        ):
             mock_resp_fail2 = MagicMock()
             mock_resp_fail2.status_code = 500
             mock_get_2.return_value = mock_resp_fail2
@@ -423,24 +428,23 @@ class TestCachePoisonHardening:
         date_str = _POST_GATE_10_45.strftime("%Y-%m-%d")
         captured: list[dict] = []
 
-        with patch.object(alpha_bot_execution, "database") as mock_db, \
-             patch.object(alpha_bot_execution, "reporting"), \
-             patch.object(alpha_bot_execution, "fetch_symphony_stats",
-                          return_value=[_make_sym_payload()]), \
-             patch.object(alpha_bot_execution, "fetch_alpaca_history",
-                          return_value={}), \
-             patch.object(alpha_bot_execution, "fetch_intraday_vwaps",
-                          return_value={}), \
-             patch.object(alpha_bot_execution, "get_current_et",
-                          return_value=_POST_GATE_10_45), \
-             patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
-             patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key"), \
-             patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"), \
-             patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-             patch.object(alpha_bot_execution, "EXECUTION_START_TIME", "10:30"), \
-             patch.object(alpha_bot_execution.time, "sleep"), \
-             patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]):
-
+        with (
+            patch.object(alpha_bot_execution, "database") as mock_db,
+            patch.object(alpha_bot_execution, "reporting"),
+            patch.object(
+                alpha_bot_execution, "fetch_symphony_stats", return_value=[_make_sym_payload()]
+            ),
+            patch.object(alpha_bot_execution, "fetch_alpaca_history", return_value={}),
+            patch.object(alpha_bot_execution, "fetch_intraday_vwaps", return_value={}),
+            patch.object(alpha_bot_execution, "get_current_et", return_value=_POST_GATE_10_45),
+            patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+            patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key"),
+            patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"),
+            patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+            patch.object(alpha_bot_execution, "EXECUTION_START_TIME", "10:30"),
+            patch.object(alpha_bot_execution.time, "sleep"),
+            patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+        ):
             mock_db.acquire_lock.return_value = True
             mock_db.load_state.return_value = copy.deepcopy(initial)
             mock_db.load_chart_history.return_value = {"date": date_str, "symphonies": {}}
@@ -463,8 +467,7 @@ class TestCachePoisonHardening:
                 # but on the empty-history path the loop should never run. So if
                 # current_return is present, it must come from the data phase (same value).
                 assert saved_return is None or isinstance(saved_return, (int, float)), (
-                    f"current_return in saved state must be a number or None; "
-                    f"got {saved_return!r}"
+                    f"current_return in saved state must be a number or None; got {saved_return!r}"
                 )
 
     # -----------------------------------------------------------------------
@@ -492,11 +495,11 @@ class TestCachePoisonHardening:
             mock_resp.status_code = 500
             return mock_resp
 
-        with patch.object(alpha_bot_execution, "HISTORY_CACHE_FILE", str(cache_file)), \
-             patch.object(alpha_bot_execution.requests, "get",
-                          side_effect=counting_get), \
-             patch.object(alpha_bot_execution.time, "sleep"):
-
+        with (
+            patch.object(alpha_bot_execution, "HISTORY_CACHE_FILE", str(cache_file)),
+            patch.object(alpha_bot_execution.requests, "get", side_effect=counting_get),
+            patch.object(alpha_bot_execution.time, "sleep"),
+        ):
             alpha_bot_execution.fetch_alpaca_history(tickers, date_str)
 
         # 1 batch × max_retries=3 attempts = exactly 3 requests.get calls
@@ -510,6 +513,7 @@ class TestCachePoisonHardening:
 # ===========================================================================
 # 2. last_successful_cycle_at HEALTH FIELD
 # ===========================================================================
+
 
 class TestLastSuccessfulCycleAt:
     """
@@ -614,11 +618,11 @@ class TestLastSuccessfulCycleAt:
         date_str = _PRE_GATE_09_45.strftime("%Y-%m-%d")
         captured: list[dict] = []
 
-        with patch.object(alpha_bot_execution, "database") as mock_db, \
-             patch.object(alpha_bot_execution, "get_current_et",
-                          return_value=_PRE_GATE_09_45), \
-             patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]):
-
+        with (
+            patch.object(alpha_bot_execution, "database") as mock_db,
+            patch.object(alpha_bot_execution, "get_current_et", return_value=_PRE_GATE_09_45),
+            patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+        ):
             mock_db.acquire_lock.return_value = False  # overlap
             mock_db.save_state.side_effect = lambda s: captured.append(copy.deepcopy(s))
 
@@ -697,20 +701,19 @@ class TestLastSuccessfulCycleAt:
         date_str = _POST_GATE_10_45.strftime("%Y-%m-%d")
         captured: list[dict] = []
 
-        with patch.object(alpha_bot_execution, "database") as mock_db, \
-             patch.object(alpha_bot_execution, "reporting"), \
-             patch.object(alpha_bot_execution, "fetch_symphony_stats",
-                          return_value=[]), \
-             patch.object(alpha_bot_execution, "get_current_et",
-                          return_value=_POST_GATE_10_45), \
-             patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
-             patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", None), \
-             patch.object(alpha_bot_execution, "ALPACA_KEY", None), \
-             patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-             patch.object(alpha_bot_execution, "EXECUTION_START_TIME", "10:30"), \
-             patch.object(alpha_bot_execution.time, "sleep"), \
-             patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]):
-
+        with (
+            patch.object(alpha_bot_execution, "database") as mock_db,
+            patch.object(alpha_bot_execution, "reporting"),
+            patch.object(alpha_bot_execution, "fetch_symphony_stats", return_value=[]),
+            patch.object(alpha_bot_execution, "get_current_et", return_value=_POST_GATE_10_45),
+            patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+            patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", None),
+            patch.object(alpha_bot_execution, "ALPACA_KEY", None),
+            patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+            patch.object(alpha_bot_execution, "EXECUTION_START_TIME", "10:30"),
+            patch.object(alpha_bot_execution.time, "sleep"),
+            patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+        ):
             mock_db.acquire_lock.return_value = True
             mock_db.load_state.return_value = copy.deepcopy(initial)
             mock_db.load_chart_history.return_value = {"date": date_str, "symphonies": {}}
@@ -731,6 +734,7 @@ class TestLastSuccessfulCycleAt:
 # ===========================================================================
 # 3. /api/state SURFACES last_successful_cycle_at
 # ===========================================================================
+
 
 class TestApiStateExposesLastSuccessfulCycleAt:
     """
@@ -756,20 +760,20 @@ class TestApiStateExposesLastSuccessfulCycleAt:
             "last_successful_cycle_at": timestamp,
         }
 
-        with app_module.app.test_client() as client, \
-             patch.object(app_module.database, "load_state",
-                          return_value=mock_state), \
-             patch.object(app_module, "schedule") as mock_schedule, \
-             patch.object(app_module.database, "normalize_name",
-                          side_effect=lambda n: n.strip().lower()):
-
+        with (
+            app_module.app.test_client() as client,
+            patch.object(app_module.database, "load_state", return_value=mock_state),
+            patch.object(app_module, "schedule") as mock_schedule,
+            patch.object(
+                app_module.database, "normalize_name", side_effect=lambda n: n.strip().lower()
+            ),
+        ):
             mock_schedule.get_jobs.return_value = []
 
             resp = client.get("/api/state")
 
         assert resp.status_code == 200, (
-            f"/api/state returned HTTP {resp.status_code}: "
-            f"{resp.get_data(as_text=True)[:200]}"
+            f"/api/state returned HTTP {resp.status_code}: {resp.get_data(as_text=True)[:200]}"
         )
         data = resp.get_json()
         assert data is not None, "/api/state must return valid JSON"
@@ -801,13 +805,14 @@ class TestApiStateExposesLastSuccessfulCycleAt:
             "last_execution_mode": False,
         }
 
-        with app_module.app.test_client() as client, \
-             patch.object(app_module.database, "load_state",
-                          return_value=mock_state), \
-             patch.object(app_module, "schedule") as mock_schedule, \
-             patch.object(app_module.database, "normalize_name",
-                          side_effect=lambda n: n.strip().lower()):
-
+        with (
+            app_module.app.test_client() as client,
+            patch.object(app_module.database, "load_state", return_value=mock_state),
+            patch.object(app_module, "schedule") as mock_schedule,
+            patch.object(
+                app_module.database, "normalize_name", side_effect=lambda n: n.strip().lower()
+            ),
+        ):
             mock_schedule.get_jobs.return_value = []
             resp = client.get("/api/state")
 
@@ -820,6 +825,7 @@ class TestApiStateExposesLastSuccessfulCycleAt:
 # ===========================================================================
 # 4. SUBPROCESS STDOUT CAPTURE IN app.py
 # ===========================================================================
+
 
 class TestSubprocessStdoutCapture:
     """
@@ -839,9 +845,10 @@ class TestSubprocessStdoutCapture:
         Fix: open a log file (e.g. LOG_FILE = os.path.join(os.path.dirname(__file__), 'alphabot_daemon.log'))
         in append mode and pass as stdout=fh, stderr=fh to subprocess.run.
         """
-        with patch.object(app_module.subprocess, "run") as mock_run, \
-             patch("builtins.open", mock_open()) as mock_file:
-
+        with (
+            patch.object(app_module.subprocess, "run") as mock_run,
+            patch("builtins.open", mock_open()) as mock_file,
+        ):
             mock_run.return_value = MagicMock(returncode=0)
             app_module.trigger_alpha_bot()
 
@@ -849,9 +856,9 @@ class TestSubprocessStdoutCapture:
         # Look through all open() calls for one with 'a' mode
         open_calls = mock_file.call_args_list
         append_calls = [
-            c for c in open_calls
-            if len(c.args) >= 2 and c.args[1] == "a"
-            or c.kwargs.get("mode") == "a"
+            c
+            for c in open_calls
+            if len(c.args) >= 2 and c.args[1] == "a" or c.kwargs.get("mode") == "a"
         ]
         assert append_calls, (
             f"trigger_alpha_bot() must open a log file in append mode ('a') before "
@@ -868,9 +875,10 @@ class TestSubprocessStdoutCapture:
 
         RED: current code: subprocess.run(cmd, check=True, env=env) — no stdout/stderr.
         """
-        with patch.object(app_module.subprocess, "run") as mock_run, \
-             patch("builtins.open", mock_open()):
-
+        with (
+            patch.object(app_module.subprocess, "run") as mock_run,
+            patch("builtins.open", mock_open()),
+        ):
             mock_run.return_value = MagicMock(returncode=0)
             app_module.trigger_alpha_bot()
 
@@ -881,6 +889,7 @@ class TestSubprocessStdoutCapture:
         # stdout must be passed as a non-None, non-PIPE value (it must be a file handle)
         # subprocess.PIPE (= -1) would buffer in memory and not write to a file
         import subprocess
+
         stdout = kwargs.get("stdout")
         assert stdout is not None, (
             f"subprocess.run must receive stdout=<file_handle>; got stdout=None. "
@@ -903,8 +912,12 @@ class TestSubprocessStdoutCapture:
         RED: no log file constant exists in app.py yet.
         """
         # After the fix, app_module must expose a LOG_FILE constant (or similar name)
-        assert hasattr(app_module, "LOG_FILE") or hasattr(app_module, "DAEMON_LOG_FILE") or \
-               hasattr(app_module, "ENGINE_LOG_FILE") or hasattr(app_module, "BOT_LOG_FILE"), (
+        assert (
+            hasattr(app_module, "LOG_FILE")
+            or hasattr(app_module, "DAEMON_LOG_FILE")
+            or hasattr(app_module, "ENGINE_LOG_FILE")
+            or hasattr(app_module, "BOT_LOG_FILE")
+        ), (
             "app.py must expose a module-level constant for the log file path "
             "(e.g. LOG_FILE, DAEMON_LOG_FILE). This makes the path discoverable "
             "by operators and tests without reading the function source."
@@ -914,6 +927,7 @@ class TestSubprocessStdoutCapture:
 # ===========================================================================
 # 5. EXECUTION_START_TIME COMES FROM ENV (not hardcoded)
 # ===========================================================================
+
 
 class TestExecutionStartTimeFromEnv:
     """
@@ -936,9 +950,9 @@ class TestExecutionStartTimeFromEnv:
         """
         initial = _seed_state()
         _, mocks = _run_main_patched(
-            current_et=_POST_GATE_10_45,   # 10:45 ET
+            current_et=_POST_GATE_10_45,  # 10:45 ET
             initial_bot_state=initial,
-            execution_start_time="11:00",   # gate is at 11:00, so 10:45 is pre-gate
+            execution_start_time="11:00",  # gate is at 11:00, so 10:45 is pre-gate
         )
 
         assert mocks["mock_math"].run_monte_carlo.call_count == 0, (
@@ -958,7 +972,7 @@ class TestExecutionStartTimeFromEnv:
         """
         initial = _seed_state()
         _, mocks = _run_main_patched(
-            current_et=_POST_GATE_10_45,   # 10:45 ET — well after the 09:45 gate
+            current_et=_POST_GATE_10_45,  # 10:45 ET — well after the 09:45 gate
             initial_bot_state=initial,
             execution_start_time="09:45",  # earlier gate
         )

@@ -66,6 +66,7 @@ _BASIC_FIXTURE_PATH = (
 
 def _load_fixture() -> dict:
     import json
+
     return json.loads(_BASIC_FIXTURE_PATH.read_text(encoding="utf-8"))
 
 
@@ -73,23 +74,27 @@ def _load_fixture() -> dict:
 # Shared stub helpers — patch only network/DB, never the math engine
 # ---------------------------------------------------------------------------
 
+
 def _stub_analytics(monkeypatch):
-    monkeypatch.setattr(app_module.analytics, "get_history_with_cache_invalidation",
-                        lambda **kw: {})
-    monkeypatch.setattr(app_module.analytics, "list_available_symphonies",
-                        lambda h: [])
-    monkeypatch.setattr(app_module.analytics, "compute_per_symphony_returns",
-                        lambda h, sym: ([], [], []))
+    monkeypatch.setattr(
+        app_module.analytics, "get_history_with_cache_invalidation", lambda **kw: {}
+    )
+    monkeypatch.setattr(app_module.analytics, "list_available_symphonies", lambda h: [])
+    monkeypatch.setattr(
+        app_module.analytics, "compute_per_symphony_returns", lambda h, sym: ([], [], [])
+    )
 
 
 def _stub_db_observations(monkeypatch):
-    monkeypatch.setattr(app_module.database, "get_advisor_observations_for_role",
-                        lambda role, limit=50: [])
+    monkeypatch.setattr(
+        app_module.database, "get_advisor_observations_for_role", lambda role, limit=50: []
+    )
 
 
 # ---------------------------------------------------------------------------
 # Flask client fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def client(monkeypatch):
@@ -121,6 +126,7 @@ def advisor_page_html(client, monkeypatch):
 # AC1 — 6th tab button + panel in ai_advisor.html
 # ===========================================================================
 
+
 class TestAC1SixthTabInSPA:
     """AC1: GET /ai-advisor must contain the 6th tab button and panel for Strategy Builder."""
 
@@ -135,9 +141,9 @@ class TestAC1SixthTabInSPA:
         """
         html = advisor_page_html
         assert 'data-tab="strategy-builder"' in html, (
-            "GET /ai-advisor must contain a tab button with data-tab=\"strategy-builder\". "
+            'GET /ai-advisor must contain a tab button with data-tab="strategy-builder". '
             "The 6th tab button is absent from the unified SPA template. "
-            "Add a <button role=\"tab\" data-tab=\"strategy-builder\"> following the "
+            'Add a <button role="tab" data-tab="strategy-builder"> following the '
             "existing 5 tabs pattern in templates/ai_advisor.html (AC1)."
         )
 
@@ -151,9 +157,9 @@ class TestAC1SixthTabInSPA:
         """
         html = advisor_page_html
         assert 'id="tab-panel-strategy-builder"' in html, (
-            "GET /ai-advisor must contain a panel div with id=\"tab-panel-strategy-builder\". "
+            'GET /ai-advisor must contain a panel div with id="tab-panel-strategy-builder". '
             "The 6th tab panel is absent from the unified SPA template. "
-            "Add <div id=\"tab-panel-strategy-builder\" role=\"tabpanel\"> (AC1)."
+            'Add <div id="tab-panel-strategy-builder" role="tabpanel"> (AC1).'
         )
 
     def test_spa_strategy_builder_panel_has_role_tabpanel(self, advisor_page_html):
@@ -172,9 +178,9 @@ class TestAC1SixthTabInSPA:
         assert panel_start != -1, (
             "tab-panel-strategy-builder panel not found in GET /ai-advisor (AC1)."
         )
-        context = html[max(0, panel_start - 200): panel_start + 200]
+        context = html[max(0, panel_start - 200) : panel_start + 200]
         assert 'role="tabpanel"' in context, (
-            "The tab-panel-strategy-builder div must have role=\"tabpanel\" on the same "
+            'The tab-panel-strategy-builder div must have role="tabpanel" on the same '
             "element (ARIA tab pattern — AC1, AC2)."
         )
 
@@ -191,15 +197,15 @@ class TestAC1SixthTabInSPA:
         idx = html.find(marker)
         if idx == -1:
             pytest.fail(
-                "data-tab=\"strategy-builder\" not found in /ai-advisor — AC1-D cannot verify."
+                'data-tab="strategy-builder" not found in /ai-advisor — AC1-D cannot verify.'
             )
-        before = html[max(0, idx - 300): idx]
+        before = html[max(0, idx - 300) : idx]
         last_open = before.rfind("<")
         tag_snippet = before[last_open:] + marker
         assert tag_snippet.lstrip("<").startswith("button"), (
             f"The strategy-builder tab control must be a <button> element, not <a href>. "
             f"Found opening tag context: {tag_snippet[:80]!r}. "
-            "In-place switching requires <button role=\"tab\"> — any <a> would navigate (AC1, AC2)."
+            'In-place switching requires <button role="tab"> — any <a> would navigate (AC1, AC2).'
         )
 
     def test_spa_has_six_tab_buttons_total(self, advisor_page_html):
@@ -213,7 +219,7 @@ class TestAC1SixthTabInSPA:
         html = advisor_page_html
         tab_buttons = re.findall(r'role="tab"', html)
         assert len(tab_buttons) >= 6, (
-            f"GET /ai-advisor has {len(tab_buttons)} role=\"tab\" element(s); expected >= 6. "
+            f'GET /ai-advisor has {len(tab_buttons)} role="tab" element(s); expected >= 6. '
             "The 6th tab (Strategy Builder) must be added to the tablist — AC1."
         )
 
@@ -221,6 +227,7 @@ class TestAC1SixthTabInSPA:
 # ===========================================================================
 # AC2 — Panel content: risk banner, run controls, STRATEGY_BUILDER observations
 # ===========================================================================
+
 
 class TestAC2StrategyBuilderPanelContent:
     """AC2: Strategy Builder panel renders risk banner and run controls."""
@@ -238,7 +245,7 @@ class TestAC2StrategyBuilderPanelContent:
         has_text = "Logic-change proposals carry the highest overfitting risk" in html
         assert has_testid or has_text, (
             "The strategy-builder tab panel must contain the non-dismissible risk banner. "
-            "Expected either data-testid=\"strategy-builder-risk-banner\" or the text "
+            'Expected either data-testid="strategy-builder-risk-banner" or the text '
             "'Logic-change proposals carry the highest overfitting risk'. "
             "The risk banner must be ported from the standalone template (AC2)."
         )
@@ -256,14 +263,12 @@ class TestAC2StrategyBuilderPanelContent:
         has_sb_run_btn = 'data-testid="sb-run-btn"' in html
         assert has_controls_testid or has_sb_run_btn, (
             "The strategy-builder tab panel must contain run controls. "
-            "Expected data-testid=\"strategy-builder-controls\" or "
-            "data-testid=\"sb-run-btn\" in the /ai-advisor response. "
+            'Expected data-testid="strategy-builder-controls" or '
+            'data-testid="sb-run-btn" in the /ai-advisor response. '
             "Port the run controls from the standalone template (AC2)."
         )
 
-    def test_spa_strategy_builder_observations_passed_to_template(
-        self, monkeypatch
-    ):
+    def test_spa_strategy_builder_observations_passed_to_template(self, monkeypatch):
         """AC2-C: The /ai-advisor route must pass STRATEGY_BUILDER observations to the template.
 
         The old standalone GET route loaded STRATEGY_BUILDER observations and passed
@@ -289,8 +294,11 @@ class TestAC2StrategyBuilderPanelContent:
         fake_corr.CRISIS_CAVEAT = "caveat"
 
         with (
-            patch.object(app_module.database, "get_advisor_observations_for_role",
-                         side_effect=lambda role, limit=50: sb_obs if role == "STRATEGY_BUILDER" else []),
+            patch.object(
+                app_module.database,
+                "get_advisor_observations_for_role",
+                side_effect=lambda role, limit=50: sb_obs if role == "STRATEGY_BUILDER" else [],
+            ),
             patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
             patch("flask.templating._render", side_effect=lambda *a, **kw: "stub"),
             patch("app.render_template", side_effect=_capture),
@@ -341,6 +349,7 @@ class TestAC2StrategyBuilderPanelContent:
 # ===========================================================================
 # AC3 — GET /ai-advisor/strategy-builder → 302; POST /run unchanged
 # ===========================================================================
+
 
 class TestAC3RouteRedirect:
     """AC3: GET /ai-advisor/strategy-builder becomes a 302 redirect to /ai-advisor."""
@@ -404,13 +413,15 @@ class TestAC3RouteRedirect:
         """
         mock_run_module = MagicMock()
         from types import SimpleNamespace
+
         mock_run = SimpleNamespace(
-            candidates=[], gated_batch=SimpleNamespace(results=[], survivors=[],
-                                                       n_candidates=0, fdr_q=0.05),
-            screened_survivors=[], observations_written=0, error=None,
+            candidates=[],
+            gated_batch=SimpleNamespace(results=[], survivors=[], n_candidates=0, fdr_q=0.05),
+            screened_survivors=[],
+            observations_written=0,
+            error=None,
         )
-        with patch("advisors.strategy_builder_engine.propose_strategies",
-                   return_value=mock_run):
+        with patch("advisors.strategy_builder_engine.propose_strategies", return_value=mock_run):
             resp = client.post(
                 "/ai-advisor/strategy-builder/run",
                 json={"objective": "diversify", "universe": ["SPY"], "symphony_id": "sym-test"},
@@ -454,6 +465,7 @@ class TestAC3RouteRedirect:
 # AC4 — /ai-advisor route prefetches STRATEGY_BUILDER observations
 # ===========================================================================
 
+
 class TestAC4PrefetchInSPARoute:
     """AC4: The /ai-advisor route must prefetch STRATEGY_BUILDER observations."""
 
@@ -478,8 +490,9 @@ class TestAC4PrefetchInSPARoute:
         fake_corr.CRISIS_CAVEAT = "caveat"
 
         with (
-            patch.object(app_module.database, "get_advisor_observations_for_role",
-                         side_effect=_capture_role),
+            patch.object(
+                app_module.database, "get_advisor_observations_for_role", side_effect=_capture_role
+            ),
             patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):
             app_module.app.config["TESTING"] = True
@@ -518,8 +531,11 @@ class TestAC4PrefetchInSPARoute:
         fake_corr.CRISIS_CAVEAT = "caveat"
 
         with (
-            patch.object(app_module.database, "get_advisor_observations_for_role",
-                         side_effect=lambda role, limit=50: sb_obs if role == "STRATEGY_BUILDER" else []),
+            patch.object(
+                app_module.database,
+                "get_advisor_observations_for_role",
+                side_effect=lambda role, limit=50: sb_obs if role == "STRATEGY_BUILDER" else [],
+            ),
             patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
             patch("app.render_template", side_effect=_capture),
         ):
@@ -528,7 +544,9 @@ class TestAC4PrefetchInSPARoute:
                 c.get("/ai-advisor")
 
         # The route must pass card artifacts for strategy-builder obs
-        sb_artifact_keys = {k for k in captured if "card_artifact" in k.lower() or "sb_card" in k.lower()}
+        sb_artifact_keys = {
+            k for k in captured if "card_artifact" in k.lower() or "sb_card" in k.lower()
+        }
         assert sb_artifact_keys, (
             f"GET /ai-advisor did not pass card_artifacts for strategy-builder observations. "
             f"Template context keys found: {sorted(captured.keys())}. "
@@ -540,6 +558,7 @@ class TestAC4PrefetchInSPARoute:
 # ===========================================================================
 # AC5 — sbRunAnalysis / openChatWithArtifact in static/ai_advisor.js (not inline)
 # ===========================================================================
+
 
 class TestAC5JSFunctionsInStaticFile:
     """AC5: sbRunAnalysis() and openChatWithArtifact() must live in static/ai_advisor.js."""
@@ -602,7 +621,7 @@ class TestAC5JSFunctionsInStaticFile:
         # We look for the navigation assignment inside sbRunAnalysis context.
         # Strategy: search for the function, then look for its navigation statements.
         fn_start = source.find("sbRunAnalysis")
-        fn_context = source[fn_start: fn_start + 1500]
+        fn_context = source[fn_start : fn_start + 1500]
 
         # Must NOT navigate to the old standalone URL
         old_url = "/ai-advisor/strategy-builder"
@@ -666,6 +685,7 @@ class TestAC5JSFunctionsInStaticFile:
 # AC6 — Standalone template DELETED; no references remain
 # ===========================================================================
 
+
 class TestAC6StandaloneTemplateDeleted:
     """AC6: templates/ai_advisor_strategy_builder.html must be deleted."""
 
@@ -713,7 +733,7 @@ class TestAC6StandaloneTemplateDeleted:
         # The standalone template url_for was: url_for('ai_advisor_strategy_builder')
         # After port, the tab button must be <button data-tab="strategy-builder">, not an <a href>.
         bad_patterns = [
-            "ai_advisor_strategy_builder'",   # url_for('ai_advisor_strategy_builder')
+            "ai_advisor_strategy_builder'",  # url_for('ai_advisor_strategy_builder')
             'href="/ai-advisor/strategy-builder"',
         ]
         for p in bad_patterns:
@@ -727,6 +747,7 @@ class TestAC6StandaloneTemplateDeleted:
 # ===========================================================================
 # AC7 — node --check on static/ai_advisor.js (JS parse safety guard)
 # ===========================================================================
+
 
 class TestAC7JSParseGuard:
     """AC7: static/ai_advisor.js must pass node --check after functions are moved in."""
@@ -767,6 +788,7 @@ class TestAC7JSParseGuard:
 # Advisory-only contract — preserved after SPA-port (regression guard)
 # ===========================================================================
 
+
 class TestAdvisoryOnlyContractPreserved:
     """Verify that the advisory-only + CSRF contracts hold in the SPA context."""
 
@@ -781,9 +803,7 @@ class TestAdvisoryOnlyContractPreserved:
         html = advisor_page_html
 
         # Count submit buttons — must be zero
-        submit_buttons = re.findall(
-            r'<button[^>]+type\s*=\s*["\']submit["\']', html, re.IGNORECASE
-        )
+        submit_buttons = re.findall(r'<button[^>]+type\s*=\s*["\']submit["\']', html, re.IGNORECASE)
         assert not submit_buttons, (
             f"The unified SPA /ai-advisor page contains {len(submit_buttons)} "
             "<button type='submit'> element(s). "
@@ -792,9 +812,7 @@ class TestAdvisoryOnlyContractPreserved:
         )
 
         # Count submit inputs — must be zero
-        submit_inputs = re.findall(
-            r'<input[^>]+type\s*=\s*["\']submit["\']', html, re.IGNORECASE
-        )
+        submit_inputs = re.findall(r'<input[^>]+type\s*=\s*["\']submit["\']', html, re.IGNORECASE)
         assert not submit_inputs, (
             f"The unified SPA /ai-advisor page contains {len(submit_inputs)} "
             "<input type='submit'> element(s). Advisory-only contract violation."
@@ -807,10 +825,12 @@ class TestAdvisoryOnlyContractPreserved:
         redirect added to the GET route.
         """
         import app as app_module
+
         _app = app_module.app
         _app.config["TESTING"] = True
 
         import app as _am
+
         original = _am._csrf_check_enabled
         try:
             _am._csrf_check_enabled = True
@@ -850,6 +870,7 @@ class TestAdvisoryOnlyContractPreserved:
 # Existing test compatibility — A1..A4 of test_strategy_builder_route.py
 # must be updated to assert the SPA model (verify the update happened)
 # ===========================================================================
+
 
 class TestRouteTestsSPAModelVerification:
     """Verify that the original test_strategy_builder_route.py has been updated

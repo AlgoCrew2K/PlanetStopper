@@ -36,6 +36,7 @@ import database as db
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_isolated_db(tmp_path: pathlib.Path) -> str:
     """Return path to an isolated temp DB patched into the database module."""
     return str(tmp_path / "test_alphabot_state.db")
@@ -108,8 +109,7 @@ def test_init_db_wal_pragma_source_commented():
     """
     source = inspect.getsource(db.init_db)
     has_comment = any(
-        keyword in source
-        for keyword in ("WAL", "journal_mode", "write-ahead", "Write-Ahead")
+        keyword in source for keyword in ("WAL", "journal_mode", "write-ahead", "Write-Ahead")
     )
     assert has_comment, (
         "init_db() must contain a source comment explaining the WAL PRAGMA. "
@@ -133,7 +133,9 @@ def test_wal_shm_files_created_after_first_connect(initialised_db):
     # on Windows which removes the side-files before we can observe them.
     conn = sqlite3.connect(initialised_db)
     try:
-        conn.execute("INSERT OR IGNORE INTO execution_lock (id, is_locked, timestamp) VALUES (1, 0, 0)")
+        conn.execute(
+            "INSERT OR IGNORE INTO execution_lock (id, is_locked, timestamp) VALUES (1, 0, 0)"
+        )
         conn.commit()
         assert wal_path.exists() or shm_path.exists(), (
             "Neither -wal nor -shm file was created after first write. "
@@ -153,9 +155,7 @@ def test_get_ro_connection_exists():
     assert hasattr(db, "get_ro_connection"), (
         "database.get_ro_connection() does not exist. MED-2 requires this helper."
     )
-    assert callable(db.get_ro_connection), (
-        "database.get_ro_connection is not callable."
-    )
+    assert callable(db.get_ro_connection), "database.get_ro_connection is not callable."
 
 
 def test_get_ro_connection_returns_sqlite_connection(initialised_db):
@@ -195,11 +195,12 @@ def test_get_ro_connection_write_raises_operational_error(initialised_db):
 
 def test_get_ro_connection_source_commented():
     """AC-2 (source): get_ro_connection() body contains a comment explaining the URI mode."""
-    assert hasattr(db, "get_ro_connection"), "get_ro_connection() missing — see test_get_ro_connection_exists"
+    assert hasattr(db, "get_ro_connection"), (
+        "get_ro_connection() missing — see test_get_ro_connection_exists"
+    )
     source = inspect.getsource(db.get_ro_connection)
     has_comment = any(
-        keyword in source
-        for keyword in ("mode=ro", "read-only", "read_only", "readonly", "URI")
+        keyword in source for keyword in ("mode=ro", "read-only", "read_only", "readonly", "URI")
     )
     assert has_comment, (
         "get_ro_connection() must contain a source comment explaining the ?mode=ro URI. "
@@ -316,7 +317,8 @@ def test_no_new_migration_files_for_r7():
     helper — neither requires a .sql migration file.
     """
     r7_migrations = [
-        m for m in db._MIGRATION_FILES
+        m
+        for m in db._MIGRATION_FILES
         if "wal" in m.lower()
         or m.lower().startswith("ro_")
         or "_ro_" in m.lower()

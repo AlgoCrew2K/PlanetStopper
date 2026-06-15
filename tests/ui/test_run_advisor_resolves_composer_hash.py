@@ -52,6 +52,7 @@ def flask_client():
     if "." not in sys.path:
         sys.path.insert(0, ".")
     import app as _app
+
     _app.app.config["TESTING"] = True
     with _app.app.test_client() as client:
         yield client
@@ -117,8 +118,9 @@ def test_logic_changes_evaluate_fetches_tree_by_composer_hash(flask_client, bot_
         patch("advisors.logic_change_engine._has_composer_key", return_value=True),
         patch("symphony_logic.fetch_symphony_score", side_effect=_spy),
         patch("database.load_state", return_value=bot_state_with_mapping),
-        patch("advisors.logic_change_engine.propose_operator_logic_change",
-              side_effect=_engine_spy),
+        patch(
+            "advisors.logic_change_engine.propose_operator_logic_change", side_effect=_engine_spy
+        ),
     ):
         resp = flask_client.post(
             "/ai-advisor/logic-changes/evaluate",
@@ -150,7 +152,9 @@ def test_logic_changes_evaluate_fetches_tree_by_composer_hash(flask_client, bot_
     )
 
 
-def test_logic_changes_evaluate_known_symphony_no_tree_fetch_error(flask_client, bot_state_with_mapping):
+def test_logic_changes_evaluate_known_symphony_no_tree_fetch_error(
+    flask_client, bot_state_with_mapping
+):
     """A known symphony (present in bot_state, tree fetchable by hash) must NOT
     return the 'could not fetch symphony tree' error.
 
@@ -165,8 +169,9 @@ def test_logic_changes_evaluate_known_symphony_no_tree_fetch_error(flask_client,
         patch("advisors.logic_change_engine._has_composer_key", return_value=True),
         patch("symphony_logic.fetch_symphony_score", side_effect=_score_tree_only_for_hash),
         patch("database.load_state", return_value=bot_state_with_mapping),
-        patch("advisors.logic_change_engine.propose_operator_logic_change",
-              return_value=fake_result),
+        patch(
+            "advisors.logic_change_engine.propose_operator_logic_change", return_value=fake_result
+        ),
     ):
         resp = flask_client.post(
             "/ai-advisor/logic-changes/evaluate",

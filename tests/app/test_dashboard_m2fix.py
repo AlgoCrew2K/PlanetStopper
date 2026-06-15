@@ -141,9 +141,7 @@ class TestContainerWidth:
 
         # page-wrap skeleton CSS lives in static/layout.css post-consolidation.
         layout_css = (_WORKTREE / "static" / "layout.css").read_text(encoding="utf-8")
-        page_wrap_css_match = re.search(
-            r'\.page-wrap\s*\{([^}]+)\}', layout_css, re.DOTALL
-        )
+        page_wrap_css_match = re.search(r"\.page-wrap\s*\{([^}]+)\}", layout_css, re.DOTALL)
         assert page_wrap_css_match, (
             ".page-wrap CSS definition not found in static/layout.css — the "
             "shared page-layout skeleton must define it."
@@ -153,8 +151,8 @@ class TestContainerWidth:
         # A narrow literal cap on the rule itself, or on the --studio-page-max-width
         # custom property the rule resolves, would re-introduce the 1280px cap bug.
         narrow_cap = re.search(
-            r'(?:max-width|--studio-page-max-width)\s*:\s*'
-            r'(?:[0-9]{1,3}px|[0-9]{2,3}rem)',
+            r"(?:max-width|--studio-page-max-width)\s*:\s*"
+            r"(?:[0-9]{1,3}px|[0-9]{2,3}rem)",
             layout_css,
         )
         assert not narrow_cap, (
@@ -201,11 +199,11 @@ class TestPortfolioStripSize:
         )
 
         # The hero-section CSS must include padding (Studio uses .hero-section { padding: ... })
-        hero_css_match = re.search(r'\.hero-section\s*\{([^}]+)\}', html, re.DOTALL)
+        hero_css_match = re.search(r"\.hero-section\s*\{([^}]+)\}", html, re.DOTALL)
         assert hero_css_match, ".hero-section CSS definition not found in index.html <style> block"
 
         css_body = hero_css_match.group(1)
-        assert 'padding' in css_body, (
+        assert "padding" in css_body, (
             ".hero-section CSS must include a padding declaration; "
             "the Studio design uses padding: 28px 32px 24px or similar for visual prominence"
         )
@@ -220,7 +218,7 @@ class TestPortfolioStripSize:
         html = _INDEX_HTML.read_text(encoding="utf-8")
 
         # Assert vs-row-label CSS is defined (the Studio replacement for tiny strip labels)
-        vs_label_css = re.search(r'\.vs-row-label\s*\{([^}]+)\}', html, re.DOTALL)
+        vs_label_css = re.search(r"\.vs-row-label\s*\{([^}]+)\}", html, re.DOTALL)
         assert vs_label_css, (
             ".vs-row-label CSS class definition not found in index.html <style> block; "
             "the Studio comparison rows use .vs-row-label for label styling"
@@ -228,7 +226,7 @@ class TestPortfolioStripSize:
 
         # The label class must not set a font-size of 10px or less
         css_body = vs_label_css.group(1)
-        tiny_font = re.search(r'font-size\s*:\s*(?:[0-9]px|10px)', css_body)
+        tiny_font = re.search(r"font-size\s*:\s*(?:[0-9]px|10px)", css_body)
         assert not tiny_font, (
             f".vs-row-label must not set a font-size of 10px or less; got: {css_body.strip()!r}"
         )
@@ -298,11 +296,11 @@ class TestPortfolioStripIfHeldFormat:
         )
 
         # The vs-row-top CSS must use flex-direction: row (not column)
-        vs_row_top_css = re.search(r'\.vs-row-top\s*\{([^}]+)\}', html, re.DOTALL)
+        vs_row_top_css = re.search(r"\.vs-row-top\s*\{([^}]+)\}", html, re.DOTALL)
         if vs_row_top_css:
             css_body = vs_row_top_css.group(1)
             # flex-col pattern must not be present
-            assert 'flex-direction: column' not in css_body, (
+            assert "flex-direction: column" not in css_body, (
                 ".vs-row-top CSS must not use flex-direction: column; "
                 "the Studio design stacks Bot/Held values horizontally, not vertically"
             )
@@ -494,8 +492,8 @@ class TestPerSymphonyIfHeldFormat:
         # (the function does its own * 100 internally at analytics.py:723).
         # The template must render them directly — no additional * 100.
         analytics_mock.get_symphony_max_drawdown.return_value = {
-            "dry_run": 5.55,   # percent-scale: renders as 5.55%
-            "if_held": 8.88,   # percent-scale: renders as 8.88%
+            "dry_run": 5.55,  # percent-scale: renders as 5.55%
+            "if_held": 8.88,  # percent-scale: renders as 8.88%
         }
         html = self._get_rendered_html(
             client, mock_database, monkeypatch, analytics_mock=analytics_mock

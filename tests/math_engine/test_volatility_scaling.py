@@ -38,10 +38,7 @@ import pytest
 import math_engine
 
 FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "volatility_scaling"
+    pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "volatility_scaling"
 )
 
 # --- Tolerance --------------------------------------------------------------
@@ -55,6 +52,7 @@ APPROX_ABS = 1e-12
 
 
 # --- Synthetic-history builder ---------------------------------------------
+
 
 def _date_key(i: int) -> str:
     """ISO date string for synthetic day index i (just needs to sort)."""
@@ -128,6 +126,7 @@ def _build_history(spec: dict[str, Any]) -> dict[str, dict[str, dict[str, float]
 
 # --- Fixture discovery ------------------------------------------------------
 
+
 def _load_fixtures() -> list[tuple[str, dict[str, Any]]]:
     paths = sorted(FIXTURE_DIR.glob("*.json"))
     out: list[tuple[str, dict[str, Any]]] = []
@@ -142,6 +141,7 @@ FIXTURES = _load_fixtures()
 
 
 # --- Golden-fixture parametrized test --------------------------------------
+
 
 @pytest.mark.parametrize(
     "fixture_name,fixture",
@@ -174,6 +174,7 @@ def test_volatility_scaling_matches_derived_expected(
 
 # --- Property tests --------------------------------------------------------
 
+
 def _make_simple_history(num_days: int, amplitude: float) -> dict[str, dict[str, dict[str, float]]]:
     """Alternating +/-amplitude SPY + AAA, num_days long."""
     h: dict[str, dict[str, dict[str, float]]] = {}
@@ -204,10 +205,7 @@ def test_volatility_is_monotonically_non_decreasing_in_amplitude() -> None:
     """
     holdings = [{"ticker": "AAA", "allocation": 1.0}]
     amps = [0.0, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25]
-    vols = [
-        math_engine.calculate_20d_vol(holdings, _make_simple_history(20, a))
-        for a in amps
-    ]
+    vols = [math_engine.calculate_20d_vol(holdings, _make_simple_history(20, a)) for a in amps]
     for i in range(1, len(vols)):
         assert vols[i] >= vols[i - 1], (
             f"Vol decreased as amplitude grew: amp[{i - 1}]={amps[i - 1]} -> "
@@ -226,9 +224,7 @@ def test_volatility_is_zero_when_insufficient_history() -> None:
     for n in range(0, 20):
         history = _make_simple_history(n, 0.05)
         vol = math_engine.calculate_20d_vol(holdings, history)
-        assert vol == 0.0, (
-            f"Expected clamp to 0.0 at n={n} days of history, got {vol}"
-        )
+        assert vol == 0.0, f"Expected clamp to 0.0 at n={n} days of history, got {vol}"
 
 
 def test_volatility_uses_only_last_20_days_when_more_provided() -> None:
@@ -272,9 +268,7 @@ def test_volatility_scales_linearly_with_allocation_for_single_holding() -> None
     history = _make_simple_history(20, 0.02)
     weights = [0.25, 0.5, 1.0, 2.0]
     vols = [
-        math_engine.calculate_20d_vol(
-            [{"ticker": "AAA", "allocation": w}], history
-        )
+        math_engine.calculate_20d_vol([{"ticker": "AAA", "allocation": w}], history)
         for w in weights
     ]
     # Expected: w * 2.0 (since amplitude 0.02 -> base vol 2.0)
@@ -286,6 +280,7 @@ def test_volatility_scales_linearly_with_allocation_for_single_holding() -> None
 
 
 # --- Constant / magic-number provenance scan --------------------------------
+
 
 def test_no_unnamed_magic_numbers_in_volatility_scaling_path() -> None:
     """
@@ -312,10 +307,10 @@ def test_no_unnamed_magic_numbers_in_volatility_scaling_path() -> None:
     # Trivially-structural literals that don't carry domain meaning.
     # Each entry MUST have a comment justifying why it is not a magic number.
     STRUCTURAL = {
-        0,        # numpy index zero / array init
-        1,        # numpy single-axis / increment
-        -1,       # last-element index
-        0.0,      # zero default / clamp floor (documented in the function)
+        0,  # numpy index zero / array init
+        1,  # numpy single-axis / increment
+        -1,  # last-element index
+        0.0,  # zero default / clamp floor (documented in the function)
     }
 
     # Find the FunctionDef node for calculate_20d_vol.

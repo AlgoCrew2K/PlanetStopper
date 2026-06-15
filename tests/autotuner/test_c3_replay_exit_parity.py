@@ -90,26 +90,19 @@ def _pin_execution_start_time_to_session_open(monkeypatch):
     non-default-EXECUTION_START_TIME behavior is exercised independently
     by tests/autotuner/test_n3_replay_grace_execution_start_time.py.
     """
-    monkeypatch.setattr(
-        "alpha_bot_execution.EXECUTION_START_TIME", "09:30", raising=False
-    )
+    monkeypatch.setattr("alpha_bot_execution.EXECUTION_START_TIME", "09:30", raising=False)
 
 
 # ---------------------------------------------------------------------------
 # Constants sourced from the producers (never re-typed as bare literals).
 # ---------------------------------------------------------------------------
 
-_FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "autotuner"
-    / "replay_parity"
-)
+_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "autotuner" / "replay_parity"
 
 # Production-side names re-exported so the harness reads them, not literals.
-_MC_SANITY_THRESHOLD = math_engine.MC_BREAKDOWN_THRESHOLD          # 60.0
-_EXIT_CONFIRM_TICKS = math_engine.EXIT_CONFIRM_TICKS            # 3
-_MAGNITUDE_FLOOR_PCT = math_engine.MAGNITUDE_FLOOR_PCT          # 0.10
+_MC_SANITY_THRESHOLD = math_engine.MC_BREAKDOWN_THRESHOLD  # 60.0
+_EXIT_CONFIRM_TICKS = math_engine.EXIT_CONFIRM_TICKS  # 3
+_MAGNITUDE_FLOOR_PCT = math_engine.MAGNITUDE_FLOOR_PCT  # 0.10
 _VWAP_BREAK_CONFIRM_TICKS = math_engine.VWAP_BREAK_CONFIRM_TICKS  # 3
 
 _ET = ZoneInfo("America/New_York")
@@ -204,16 +197,23 @@ def _production_exit_sequence(
                 below_stop_count = 0
 
         time_ratio = tick_idx / max(1, len(ticks) - 1)
-        dynamic_multiplier, dynamic_min_stop = math_engine.compute_time_squeeze_decay(
-            time_ratio
-        )
+        dynamic_multiplier, dynamic_min_stop = math_engine.compute_time_squeeze_decay(time_ratio)
         active_stop_dist = math_engine.compute_active_trailing_stop(
-            vol, dynamic_multiplier, dynamic_min_stop,
-            para_armed, breakeven_locked, params.get("MAX_PARABOLIC_SQUEEZE", 0.50),
+            vol,
+            dynamic_multiplier,
+            dynamic_min_stop,
+            para_armed,
+            breakeven_locked,
+            params.get("MAX_PARABOLIC_SQUEEZE", 0.50),
         )
         base_stop = safe_hwm - active_stop_dist
         hwm_hold_ticks, breakeven_locked, stop_level = math_engine.compute_breakeven_update(
-            ret, vol, base_stop, hwm_hold_ticks, breakeven_locked, False,
+            ret,
+            vol,
+            base_stop,
+            hwm_hold_ticks,
+            breakeven_locked,
+            False,
         )
 
         # Check 1: Trailing Stop — the real production primitive.
@@ -262,9 +262,7 @@ def _production_exit_sequence(
             )
         )
         current_et = base_open + timedelta(minutes=tick_idx)
-        if math_engine.is_in_open_window_grace(
-            current_et, session_open_hhmm, grace_minutes
-        ):
+        if math_engine.is_in_open_window_grace(current_et, session_open_hhmm, grace_minutes):
             is_vwap_broken = False
             is_vwap_bleed_broken = False
 
@@ -324,9 +322,7 @@ def _replay_seq(ticks: list[dict], params: dict, grace_minutes: int) -> list[dic
             "autotuner.replay_exit_sequence missing — see "
             "test_autotuner_exposes_replay_exit_sequence_helper."
         )
-    return autotuner.replay_exit_sequence(
-        ticks, params, grace_minutes=grace_minutes
-    )
+    return autotuner.replay_exit_sequence(ticks, params, grace_minutes=grace_minutes)
 
 
 def _default_params() -> dict:
@@ -374,9 +370,7 @@ def test_replay_exit_decision_matches_production(fixture_name: str) -> None:
     params = fx.get("params") or _default_params()
     grace_minutes = fx["grace_minutes"]
 
-    production = _production_exit_sequence(
-        ticks, params, grace_minutes=grace_minutes
-    )
+    production = _production_exit_sequence(ticks, params, grace_minutes=grace_minutes)
     replay = _replay_seq(ticks, params, grace_minutes)
 
     prod_decisions = [(d["tick_idx"], d["exit_reason"]) for d in production]

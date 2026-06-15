@@ -66,6 +66,7 @@ import alpha_bot_execution
 # ET hours/minutes/weekday, so a naive datetime with the right values works.
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
     _FIXED_ET = datetime(2025, 5, 14, 11, 30, 0, tzinfo=_ET)  # Wed 11:30 ET
 except Exception:  # pragma: no cover -- tzdata missing
@@ -182,24 +183,26 @@ def patched_environment():
       * ``time.sleep``                          — no-op (no real waits)
       * ``sys.argv``                            — bare argv so ``--force`` is absent
     """
-    with patch.object(alpha_bot_execution, "database") as mock_db, \
-         patch.object(alpha_bot_execution, "reporting") as mock_reporting, \
-         patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch_sym, \
-         patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_fetch_hist, \
-         patch.object(alpha_bot_execution, "fetch_intraday_vwaps") as mock_fetch_vwap, \
-         patch.object(alpha_bot_execution, "get_current_et", return_value=_FIXED_ET), \
-         patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
-         patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-composer-key"), \
-         patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"), \
-         patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-         patch.object(alpha_bot_execution.time, "sleep"), \
-         patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]):
-
+    with (
+        patch.object(alpha_bot_execution, "database") as mock_db,
+        patch.object(alpha_bot_execution, "reporting") as mock_reporting,
+        patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch_sym,
+        patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_fetch_hist,
+        patch.object(alpha_bot_execution, "fetch_intraday_vwaps") as mock_fetch_vwap,
+        patch.object(alpha_bot_execution, "get_current_et", return_value=_FIXED_ET),
+        patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+        patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-composer-key"),
+        patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"),
+        patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+        patch.object(alpha_bot_execution.time, "sleep"),
+        patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+    ):
         # Defaults that downstream code expects to exist. Tests override as needed.
         mock_db.acquire_lock.return_value = True
         mock_db.load_state.return_value = {}
         mock_db.load_chart_history.return_value = {
-            "date": _FIXED_ET.strftime("%Y-%m-%d"), "symphonies": {}
+            "date": _FIXED_ET.strftime("%Y-%m-%d"),
+            "symphonies": {},
         }
         # live_mode=True: the patched_environment is shared by dry-run (pipeline)
         # and live-execution tests alike.  The master-switch gate
@@ -207,14 +210,16 @@ def patched_environment():
         # trades to fire.  Dry-run tests override LIVE_EXECUTION=False, so
         # live_mode=True here has no effect on them; live-execution tests set
         # LIVE_EXECUTION=True and rely on live_mode=True to pass the gate.
-        mock_db.get_symphony_strategy.return_value = {"params": {}, "locked_vars": {}, "live_mode": True}
+        mock_db.get_symphony_strategy.return_value = {
+            "params": {},
+            "locked_vars": {},
+            "live_mode": True,
+        }
         mock_db.normalize_name.side_effect = lambda n: n.strip().lower()
         mock_db.wipe_transient_state.side_effect = lambda s: s  # identity
 
         mock_fetch_sym.return_value = []
-        mock_fetch_hist.return_value = _make_minimal_history(
-            _FIXED_ET.strftime("%Y-%m-%d")
-        )
+        mock_fetch_hist.return_value = _make_minimal_history(_FIXED_ET.strftime("%Y-%m-%d"))
         mock_fetch_vwap.return_value = {}
 
         yield {
@@ -272,13 +277,14 @@ class TestTriggerFiresStateFreeze:
         # Force the trailing-stop branch. We patch the math layer at the
         # ``alpha_bot_execution.math_engine`` import-site (which IS the same
         # module object as ``math_engine``); restore on context exit.
-        with patch.object(
-            alpha_bot_execution.math_engine,
-            "compute_exit_confirmation",
-            return_value=(3, True),  # (new_below_stop_count, is_trailing_stop_hit)
-        ), patch.object(
-            alpha_bot_execution, "execute_sell_to_cash"
-        ) as mock_execute:
+        with (
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_exit_confirmation",
+                return_value=(3, True),  # (new_below_stop_count, is_trailing_stop_hit)
+            ),
+            patch.object(alpha_bot_execution, "execute_sell_to_cash") as mock_execute,
+        ):
             alpha_bot_execution.main()
 
         # ----- 1. State freeze invariants -----
@@ -315,9 +321,9 @@ class TestTriggerFiresStateFreeze:
 
         # ----- 2. trigger_prices populated from live_vwaps -----
         assert _TICKER in sym_state["trigger_prices"]
-        assert sym_state["trigger_prices"][_TICKER] == pytest.approx(
-            live_price, rel=1e-9
-        ), "trigger_price must equal the live_vwap last_price at freeze instant"
+        assert sym_state["trigger_prices"][_TICKER] == pytest.approx(live_price, rel=1e-9), (
+            "trigger_price must equal the live_vwap last_price at freeze instant"
+        )
 
         # ----- 3. triggered_basket_snapshot populated -----
         snapshot = sym_state["triggered_basket_snapshot"]
@@ -379,14 +385,17 @@ class TestHwmUpdateAdvancesOnRisingReturn:
         # Suppress every exit pathway so we observe ONLY the HWM update.
         # compute_exit_confirmation → no trigger.
         # compute_vwap_breakdown_update → no VWAP break / bleed.
-        with patch.object(
-            alpha_bot_execution.math_engine,
-            "compute_exit_confirmation",
-            return_value=(0, False),
-        ), patch.object(
-            alpha_bot_execution.math_engine,
-            "compute_vwap_breakdown_update",
-            return_value=(0, 0, False, False),
+        with (
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_exit_confirmation",
+                return_value=(0, False),
+            ),
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_vwap_breakdown_update",
+                return_value=(0, 0, False, False),
+            ),
         ):
             alpha_bot_execution.main()
 
@@ -399,9 +408,7 @@ class TestHwmUpdateAdvancesOnRisingReturn:
 
         # The HWM must have been pushed up to AT LEAST the current return
         # (line 519-520 sets it to current_return verbatim on the rise).
-        assert sym_state["high_water_mark"] == pytest.approx(
-            expected_current_return, rel=1e-9
-        ), (
+        assert sym_state["high_water_mark"] == pytest.approx(expected_current_return, rel=1e-9), (
             "HWM must advance to fixture-derived current_return; seeded HWM "
             f"({seed_hwm}) must have been overwritten by current_return "
             f"({expected_current_return})"

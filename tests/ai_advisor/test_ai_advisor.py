@@ -104,6 +104,7 @@ def _block_network_producers(stub_network_producers):  # noqa: PT004
 # Fixtures — all function-scoped, no shared mutable state.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def ai_advisor_fixtures_dir() -> pathlib.Path:
     """Absolute path to tests/fixtures/ai_advisor."""
@@ -173,16 +174,19 @@ def symphony_context(fake_autotune_run, fake_condensed_logic):
     """
     import ai_advisor  # lazy import — module does not exist until GREEN
 
-    with patch.object(
-        ai_advisor.database, "get_latest_autotune_run",
-        return_value=fake_autotune_run,
-    ), patch.object(
-        ai_advisor.symphony_logic, "get_condensed_logic",
-        return_value=fake_condensed_logic,
+    with (
+        patch.object(
+            ai_advisor.database,
+            "get_latest_autotune_run",
+            return_value=fake_autotune_run,
+        ),
+        patch.object(
+            ai_advisor.symphony_logic,
+            "get_condensed_logic",
+            return_value=fake_condensed_logic,
+        ),
     ):
-        ctx = ai_advisor.assemble_advisor_context(
-            scope="symphony", symphony_id="test-symphony-a"
-        )
+        ctx = ai_advisor.assemble_advisor_context(scope="symphony", symphony_id="test-symphony-a")
     return ctx
 
 
@@ -200,6 +204,7 @@ def _serialize(ctx) -> str:
 # Each element pinned with its OWN assertion so a partial implementation
 # fails on the specific missing element, not a vague "something's missing".
 # ===========================================================================
+
 
 def test_assembled_context_is_a_dict(symphony_context):
     """assemble_advisor_context returns a dict (the prompt-context blob)."""
@@ -221,8 +226,7 @@ def test_context_element_1_param_definitions_with_risk_polarity(symphony_context
     # MAX_PARABOLIC_SQUEEZE is the canonical 'tightens below 1.0' example the
     # research calls out by name; its definition must be carried.
     assert "max_parabolic_squeeze" in blob, (
-        "per-param definitions must cover every suggestible param, including "
-        "MAX_PARABOLIC_SQUEEZE"
+        "per-param definitions must cover every suggestible param, including MAX_PARABOLIC_SQUEEZE"
     )
 
 
@@ -234,8 +238,7 @@ def test_context_element_2_valid_range_of_every_param(symphony_context):
     blob = _serialize(symphony_context)
     for key in autotuner.OPTUNA_SEARCH_SPACE_KEYS:
         assert key.lower() in blob, (
-            f"valid-range context must enumerate every Optuna search-space "
-            f"key; {key} is missing"
+            f"valid-range context must enumerate every Optuna search-space key; {key} is missing"
         )
     # The range bounds must be present as structured data somewhere — assert
     # the context exposes min/max bounds (shape, not specific numbers).
@@ -258,8 +261,7 @@ def _find_range_bounds(obj) -> bool:
     return False
 
 
-def test_context_element_3_optuna_oos_vs_train_delta(symphony_context,
-                                                     fake_autotune_run):
+def test_context_element_3_optuna_oos_vs_train_delta(symphony_context, fake_autotune_run):
     """Element 3: train_alpha, oos_alpha, fallback_oos_alpha,
     default_oos_alpha, baseline_decision — the overfitting signal. These come
     from the P1 accessor; assert each is carried into the context."""
@@ -272,7 +274,10 @@ def test_context_element_3_optuna_oos_vs_train_delta(symphony_context,
     # The four alpha metrics must each be present (by value, derived from the
     # mocked accessor — NOT hardcoded literals; they come from the fixture).
     for metric_key in (
-        "oos_alpha", "train_alpha", "fallback_oos_alpha", "default_oos_alpha",
+        "oos_alpha",
+        "train_alpha",
+        "fallback_oos_alpha",
+        "default_oos_alpha",
     ):
         assert str(fake_autotune_run[metric_key]) in blob, (
             f"context must carry {metric_key} from the autotune run — element 3"
@@ -306,30 +311,22 @@ def test_context_element_5_locked_vars(symphony_context):
     """Element 5: locked_vars must be carried so Claude knows which params it
     may comment on but must not emit a suggested value for."""
     blob = _serialize(symphony_context)
-    assert "locked_vars" in blob or "locked" in blob, (
-        "context must carry locked_vars — element 5"
-    )
+    assert "locked_vars" in blob or "locked" in blob, "context must carry locked_vars — element 5"
 
 
 def test_context_element_6_volatility_regime_context(symphony_context):
     """Element 6: current 20-day vol and 14-day ATR% vs their 125-day window
     range. 'Are we in a high-vol regime the tuning window under-samples?'"""
     blob = _serialize(symphony_context)
-    assert "vol" in blob, (
-        "context must carry volatility regime context (20-day vol) — element 6"
-    )
-    assert "atr" in blob, (
-        "context must carry 14-day ATR% regime context — element 6"
-    )
+    assert "vol" in blob, "context must carry volatility regime context (20-day vol) — element 6"
+    assert "atr" in blob, "context must carry 14-day ATR% regime context — element 6"
 
 
 def test_context_element_7_data_window_and_limits(symphony_context):
     """Element 7: the data window stated explicitly — 125 trading days,
     80/20 walk-forward, synthetic/replay history, regimes covered/not."""
     blob = _serialize(symphony_context)
-    assert "125" in blob, (
-        "context must state the 125-trading-day tuning window — element 7"
-    )
+    assert "125" in blob, "context must state the 125-trading-day tuning window — element 7"
     # The walk-forward / synthetic-replay nature must be stated so Claude can
     # invoke the 'insufficient data' escape hatch.
     assert "walk" in blob or "80/20" in blob or "wfa" in blob, (
@@ -339,8 +336,7 @@ def test_context_element_7_data_window_and_limits(symphony_context):
         "context must state the history is synthetic/replay — element 7"
     )
     assert "regime" in blob, (
-        "context must state which market regimes are / are not in the "
-        "window — element 7"
+        "context must state which market regimes are / are not in the window — element 7"
     )
 
 
@@ -364,9 +360,7 @@ def test_context_element_9_role_and_task_framing(symphony_context):
     who reviews every suggestion; it proposes hypotheses, it does not tune the
     system; it should prefer fewer well-justified suggestions."""
     blob = _serialize(symphony_context)
-    assert "operator" in blob, (
-        "context must carry the operator-assist role framing — element 9"
-    )
+    assert "operator" in blob, "context must carry the operator-assist role framing — element 9"
     # The 'hypothesis not validated result / human reviews every suggestion'
     # framing must be present.
     assert "suggest" in blob or "hypothes" in blob or "propose" in blob, (
@@ -392,9 +386,7 @@ def test_context_carries_all_eight_elements_in_one_pass(symphony_context):
         "9: role framing": ("operator" in blob),
     }
     missing = [name for name, present in checks.items() if not present]
-    assert not missing, (
-        f"assembled context is missing must-have prompt elements: {missing}"
-    )
+    assert not missing, f"assembled context is missing must-have prompt elements: {missing}"
 
 
 # ===========================================================================
@@ -424,8 +416,8 @@ _CRED_ENV = {
 # Hard-exclusion config keys (config-surface.md §2) — neither the KEY NAME nor
 # a value for it may surface in the context.
 _FORBIDDEN_TOKENS = [
-    "leak_sentinel",          # any injected credential value
-    "sk-ant-",                # anthropic api key prefix
+    "leak_sentinel",  # any injected credential value
+    "sk-ant-",  # anthropic api key prefix
     "composer_secret",
     "composer_key_id",
     "alpaca_secret",
@@ -433,8 +425,8 @@ _FORBIDDEN_TOKENS = [
     "discord_webhook",
     "live_execution",
     "execution_start_time",
-    "simulation_paths",       # methodology knob — never suggestible
-    "neighbor_k",             # methodology knob — never suggestible
+    "simulation_paths",  # methodology knob — never suggestible
+    "neighbor_k",  # methodology knob — never suggestible
     "account_individual",
     "account_roth",
     "account_trad",
@@ -442,8 +434,7 @@ _FORBIDDEN_TOKENS = [
 
 
 @pytest.fixture
-def context_with_creds_in_env(monkeypatch, fake_autotune_run,
-                              fake_condensed_logic):
+def context_with_creds_in_env(monkeypatch, fake_autotune_run, fake_condensed_logic):
     """Assemble a context with credential-shaped values planted in os.environ.
 
     The adversarial setup: if assemble_advisor_context dumps the environment
@@ -455,16 +446,19 @@ def context_with_creds_in_env(monkeypatch, fake_autotune_run,
     for key, val in _CRED_ENV.items():
         monkeypatch.setenv(key, val)
 
-    with patch.object(
-        ai_advisor.database, "get_latest_autotune_run",
-        return_value=fake_autotune_run,
-    ), patch.object(
-        ai_advisor.symphony_logic, "get_condensed_logic",
-        return_value=fake_condensed_logic,
+    with (
+        patch.object(
+            ai_advisor.database,
+            "get_latest_autotune_run",
+            return_value=fake_autotune_run,
+        ),
+        patch.object(
+            ai_advisor.symphony_logic,
+            "get_condensed_logic",
+            return_value=fake_condensed_logic,
+        ),
     ):
-        ctx = ai_advisor.assemble_advisor_context(
-            scope="symphony", symphony_id="test-symphony-a"
-        )
+        ctx = ai_advisor.assemble_advisor_context(scope="symphony", symphony_id="test-symphony-a")
     return ctx
 
 
@@ -490,7 +484,9 @@ def test_assembled_context_only_contains_allowlisted_config_keys(symphony_contex
     # Methodology knobs and the master safety flag must never appear even
     # without env injection — they must be structurally excluded.
     for forbidden_key in (
-        "simulation_paths", "neighbor_k", "live_execution",
+        "simulation_paths",
+        "neighbor_k",
+        "live_execution",
         "execution_start_time",
     ):
         assert forbidden_key not in blob, (
@@ -500,9 +496,9 @@ def test_assembled_context_only_contains_allowlisted_config_keys(symphony_contex
         )
 
 
-def test_assemble_context_does_not_dump_full_environment(monkeypatch,
-                                                         fake_autotune_run,
-                                                         fake_condensed_logic):
+def test_assemble_context_does_not_dump_full_environment(
+    monkeypatch, fake_autotune_run, fake_condensed_logic
+):
     """ADVERSARIAL: plant a uniquely-named junk env var and assert it never
     appears in the context. Proves assembly reads specific allowlisted keys,
     not the whole environment."""
@@ -510,16 +506,19 @@ def test_assemble_context_does_not_dump_full_environment(monkeypatch,
 
     monkeypatch.setenv("ALPHABOT_C1_ENV_LEAK_CANARY", "CANARY_VALUE_should_not_leak")
 
-    with patch.object(
-        ai_advisor.database, "get_latest_autotune_run",
-        return_value=fake_autotune_run,
-    ), patch.object(
-        ai_advisor.symphony_logic, "get_condensed_logic",
-        return_value=fake_condensed_logic,
+    with (
+        patch.object(
+            ai_advisor.database,
+            "get_latest_autotune_run",
+            return_value=fake_autotune_run,
+        ),
+        patch.object(
+            ai_advisor.symphony_logic,
+            "get_condensed_logic",
+            return_value=fake_condensed_logic,
+        ),
     ):
-        ctx = ai_advisor.assemble_advisor_context(
-            scope="symphony", symphony_id="test-symphony-a"
-        )
+        ctx = ai_advisor.assemble_advisor_context(scope="symphony", symphony_id="test-symphony-a")
 
     blob = _serialize(ctx)
     assert "canary_value_should_not_leak" not in blob, (
@@ -533,59 +532,63 @@ def test_assemble_context_does_not_dump_full_environment(monkeypatch,
 # Mock both accessors; assert their outputs are present in the context.
 # ===========================================================================
 
-def test_context_invokes_p1_autotune_accessor(fake_autotune_run,
-                                               fake_condensed_logic):
+
+def test_context_invokes_p1_autotune_accessor(fake_autotune_run, fake_condensed_logic):
     """assemble_advisor_context must call database.get_latest_autotune_run
     with the symphony_id it was given."""
     import ai_advisor
 
-    with patch.object(
-        ai_advisor.database, "get_latest_autotune_run",
-        return_value=fake_autotune_run,
-    ) as mock_p1, patch.object(
-        ai_advisor.symphony_logic, "get_condensed_logic",
-        return_value=fake_condensed_logic,
+    with (
+        patch.object(
+            ai_advisor.database,
+            "get_latest_autotune_run",
+            return_value=fake_autotune_run,
+        ) as mock_p1,
+        patch.object(
+            ai_advisor.symphony_logic,
+            "get_condensed_logic",
+            return_value=fake_condensed_logic,
+        ),
     ):
-        ai_advisor.assemble_advisor_context(
-            scope="symphony", symphony_id="test-symphony-a"
-        )
+        ai_advisor.assemble_advisor_context(scope="symphony", symphony_id="test-symphony-a")
 
     mock_p1.assert_called_once()
     # symphony_id must be threaded through to the accessor.
     called_args = mock_p1.call_args
-    assert "test-symphony-a" in called_args.args or \
-        "test-symphony-a" in called_args.kwargs.values(), (
-        "get_latest_autotune_run must be called with the symphony_id"
-    )
+    assert (
+        "test-symphony-a" in called_args.args or "test-symphony-a" in called_args.kwargs.values()
+    ), "get_latest_autotune_run must be called with the symphony_id"
 
 
-def test_context_invokes_p2_condensed_logic_accessor(fake_autotune_run,
-                                                     fake_condensed_logic):
+def test_context_invokes_p2_condensed_logic_accessor(fake_autotune_run, fake_condensed_logic):
     """assemble_advisor_context must call symphony_logic.get_condensed_logic
     with the symphony_id it was given."""
     import ai_advisor
 
-    with patch.object(
-        ai_advisor.database, "get_latest_autotune_run",
-        return_value=fake_autotune_run,
-    ), patch.object(
-        ai_advisor.symphony_logic, "get_condensed_logic",
-        return_value=fake_condensed_logic,
-    ) as mock_p2:
-        ai_advisor.assemble_advisor_context(
-            scope="symphony", symphony_id="test-symphony-a"
-        )
+    with (
+        patch.object(
+            ai_advisor.database,
+            "get_latest_autotune_run",
+            return_value=fake_autotune_run,
+        ),
+        patch.object(
+            ai_advisor.symphony_logic,
+            "get_condensed_logic",
+            return_value=fake_condensed_logic,
+        ) as mock_p2,
+    ):
+        ai_advisor.assemble_advisor_context(scope="symphony", symphony_id="test-symphony-a")
 
     mock_p2.assert_called_once()
     called_args = mock_p2.call_args
-    assert "test-symphony-a" in called_args.args or \
-        "test-symphony-a" in called_args.kwargs.values(), (
-        "get_condensed_logic must be called with the symphony_id"
-    )
+    assert (
+        "test-symphony-a" in called_args.args or "test-symphony-a" in called_args.kwargs.values()
+    ), "get_condensed_logic must be called with the symphony_id"
 
 
-def test_context_uses_composer_symphony_id_for_condensed_logic(fake_autotune_run,
-                                                                fake_condensed_logic):
+def test_context_uses_composer_symphony_id_for_condensed_logic(
+    fake_autotune_run, fake_condensed_logic
+):
     """When composer_symphony_id is supplied, get_condensed_logic MUST be called
     with the Composer hash, NOT the normalized DB name.
 
@@ -603,13 +606,18 @@ def test_context_uses_composer_symphony_id_for_condensed_logic(fake_autotune_run
     hash_id = "n2ooAZTvBRN6ZzpMmWmU"
     normalized_name = "(invest:crypto) we do a little trolling planet's mix v1.4 | 10.19.2022"
 
-    with patch.object(
-        ai_advisor.database, "get_latest_autotune_run",
-        return_value=fake_autotune_run,
-    ) as mock_p1, patch.object(
-        ai_advisor.symphony_logic, "get_condensed_logic",
-        return_value=fake_condensed_logic,
-    ) as mock_p2:
+    with (
+        patch.object(
+            ai_advisor.database,
+            "get_latest_autotune_run",
+            return_value=fake_autotune_run,
+        ) as mock_p1,
+        patch.object(
+            ai_advisor.symphony_logic,
+            "get_condensed_logic",
+            return_value=fake_condensed_logic,
+        ) as mock_p2,
+    ):
         ai_advisor.assemble_advisor_context(
             scope="symphony",
             symphony_id=normalized_name,
@@ -627,7 +635,9 @@ def test_context_uses_composer_symphony_id_for_condensed_logic(fake_autotune_run
     # DB lookup (autotune) must still use the normalized name, not the hash.
     mock_p1.assert_called_once()
     db_call_args = mock_p1.call_args
-    db_first_arg = db_call_args.args[0] if db_call_args.args else db_call_args.kwargs.get("symphony_id")
+    db_first_arg = (
+        db_call_args.args[0] if db_call_args.args else db_call_args.kwargs.get("symphony_id")
+    )
     assert db_first_arg == normalized_name, (
         f"get_latest_autotune_run called with {db_first_arg!r}; expected normalized name "
         f"{normalized_name!r}. The DB lookup key must not be replaced by the Composer hash."
@@ -646,16 +656,14 @@ def test_context_embeds_p1_autotune_output(symphony_context, fake_autotune_run):
     )
 
 
-def test_context_embeds_p2_condensed_logic_output(symphony_context,
-                                                  fake_condensed_logic):
+def test_context_embeds_p2_condensed_logic_output(symphony_context, fake_condensed_logic):
     """The P2 accessor's output (the condensed symphony logic) must be present
     in the assembled context — not just fetched and discarded."""
     blob = _serialize(symphony_context)
     # asset_universe tickers from the condensed logic must appear.
     for ticker in fake_condensed_logic["asset_universe"]:
         assert ticker.lower() in blob, (
-            f"the P2 condensed-logic asset {ticker} must be embedded in the "
-            f"context"
+            f"the P2 condensed-logic asset {ticker} must be embedded in the context"
         )
 
 
@@ -665,12 +673,17 @@ def test_context_handles_none_autotune_run_gracefully(fake_condensed_logic):
     must still produce a well-shaped context — not raise, not omit the rest."""
     import ai_advisor
 
-    with patch.object(
-        ai_advisor.database, "get_latest_autotune_run",
-        return_value=None,
-    ), patch.object(
-        ai_advisor.symphony_logic, "get_condensed_logic",
-        return_value=fake_condensed_logic,
+    with (
+        patch.object(
+            ai_advisor.database,
+            "get_latest_autotune_run",
+            return_value=None,
+        ),
+        patch.object(
+            ai_advisor.symphony_logic,
+            "get_condensed_logic",
+            return_value=fake_condensed_logic,
+        ),
     ):
         ctx = ai_advisor.assemble_advisor_context(
             scope="symphony", symphony_id="never-tuned-symphony"
@@ -696,6 +709,7 @@ def test_symphony_scope_requires_symphony_id():
 # Mock the anthropic SDK to return the schema-derived fixture; assert the
 # response parses into the Pydantic schema with every field populated.
 # ===========================================================================
+
 
 def _make_fake_anthropic_client(parsed_obj=None, raise_exc=None):
     """Build a MagicMock standing in for anthropic.Anthropic().
@@ -751,13 +765,10 @@ def test_request_suggestions_happy_path_parses_into_schema(
     parsed = ai_advisor.ConfigSuggestionsResponse(**sample_response_payload)
     fake_client = _make_fake_anthropic_client(parsed_obj=parsed)
 
-    with patch.object(ai_advisor, "_build_client", return_value=fake_client,
-                      create=True):
+    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
         response, error = ai_advisor.request_suggestions(symphony_context)
 
-    assert error is None, (
-        f"happy path must return None error; got {error!r}"
-    )
+    assert error is None, f"happy path must return None error; got {error!r}"
     assert isinstance(response, ai_advisor.ConfigSuggestionsResponse), (
         "happy path must return a ConfigSuggestionsResponse instance"
     )
@@ -773,14 +784,11 @@ def test_request_suggestions_happy_path_all_fields_populated(
     parsed = ai_advisor.ConfigSuggestionsResponse(**sample_response_payload)
     fake_client = _make_fake_anthropic_client(parsed_obj=parsed)
 
-    with patch.object(ai_advisor, "_build_client", return_value=fake_client,
-                      create=True):
+    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
         response, error = ai_advisor.request_suggestions(symphony_context)
 
     assert error is None
-    assert len(response.suggestions) >= 1, (
-        "the schema-derived fixture carries 2-3 suggestions"
-    )
+    assert len(response.suggestions) >= 1, "the schema-derived fixture carries 2-3 suggestions"
     for s in response.suggestions:
         assert isinstance(s.config_key, str) and s.config_key, (
             "config_key must be a non-empty string"
@@ -797,8 +805,7 @@ def test_request_suggestions_happy_path_all_fields_populated(
             "rationale must be a non-empty string"
         )
         assert s.risk_direction in {"loosens", "tightens", "neutral"}, (
-            f"risk_direction must be one of loosens/tightens/neutral; "
-            f"got {s.risk_direction!r}"
+            f"risk_direction must be one of loosens/tightens/neutral; got {s.risk_direction!r}"
         )
         assert isinstance(s.confidence, str) and s.confidence, (
             "confidence must be a non-empty string"
@@ -808,9 +815,7 @@ def test_request_suggestions_happy_path_all_fields_populated(
         )
 
 
-def test_request_suggestions_fixture_covers_all_risk_directions(
-    sample_response_payload
-):
+def test_request_suggestions_fixture_covers_all_risk_directions(sample_response_payload):
     """Guards the fixture itself: the schema-derived fixture must exercise all
     three risk_direction values so downstream (C2) risk-direction handling has
     a complete sample. A wrong fixture would silently weaken every test."""
@@ -819,8 +824,7 @@ def test_request_suggestions_fixture_covers_all_risk_directions(
     parsed = ai_advisor.ConfigSuggestionsResponse(**sample_response_payload)
     seen = {s.risk_direction for s in parsed.suggestions}
     assert seen == {"loosens", "tightens", "neutral"}, (
-        f"schema-derived fixture must cover all three risk_direction values; "
-        f"saw {seen}"
+        f"schema-derived fixture must cover all three risk_direction values; saw {seen}"
     )
 
 
@@ -829,6 +833,7 @@ def test_request_suggestions_fixture_covers_all_risk_directions(
 # Mock the SDK to raise rate-limit / timeout / API-error; assert
 # request_suggestions returns (None, error_message) and NEVER raises.
 # ===========================================================================
+
 
 def _anthropic_exc_classes():
     """Yield (label, exception_instance) for the SDK failure modes.
@@ -844,8 +849,13 @@ def _anthropic_exc_classes():
 
         # RateLimitError / APITimeoutError / APIStatusError / APIError exist
         # across modern anthropic SDK versions; guard each individually.
-        for name in ("RateLimitError", "APITimeoutError", "APIConnectionError",
-                     "APIStatusError", "APIError"):
+        for name in (
+            "RateLimitError",
+            "APITimeoutError",
+            "APIConnectionError",
+            "APIStatusError",
+            "APIError",
+        ):
             exc_cls = getattr(anthropic, name, None)
             if exc_cls is not None:
                 cases.append((name, exc_cls))
@@ -862,9 +872,7 @@ def _anthropic_exc_classes():
     _anthropic_exc_classes(),
     ids=lambda v: v if isinstance(v, str) else "",
 )
-def test_request_suggestions_degrades_gracefully_on_sdk_error(
-    symphony_context, exc_label, exc_cls
-):
+def test_request_suggestions_degrades_gracefully_on_sdk_error(symphony_context, exc_label, exc_cls):
     """Every anthropic SDK failure mode degrades to (None, error_message) —
     request_suggestions must NEVER raise. The feature is on-demand operator-
     assist; a failure is 'no suggestion this click', zero engine impact."""
@@ -879,8 +887,7 @@ def test_request_suggestions_degrades_gracefully_on_sdk_error(
 
     fake_client = _make_fake_anthropic_client(raise_exc=exc_instance)
 
-    with patch.object(ai_advisor, "_build_client", return_value=fake_client,
-                      create=True):
+    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
         try:
             response, error = ai_advisor.request_suggestions(symphony_context)
         except Exception as exc:  # noqa: BLE001 - the whole point is to catch
@@ -890,25 +897,21 @@ def test_request_suggestions_degrades_gracefully_on_sdk_error(
                 f"(None, error_message), never raise."
             )
 
-    assert response is None, (
-        f"on a {exc_label} SDK failure, response must be None"
-    )
+    assert response is None, f"on a {exc_label} SDK failure, response must be None"
     assert isinstance(error, str) and error.strip(), (
         f"on a {exc_label} SDK failure, error must be a non-empty string the "
         f"UI can show the operator"
     )
 
 
-def test_request_suggestions_handles_client_construction_failure(
-    symphony_context
-):
+def test_request_suggestions_handles_client_construction_failure(symphony_context):
     """If the SDK client itself can't be built (missing/invalid API key),
     request_suggestions still degrades gracefully — does not raise."""
     import ai_advisor
 
-    with patch.object(ai_advisor, "_build_client",
-                      side_effect=RuntimeError("no ANTHROPIC_API_KEY"),
-                      create=True):
+    with patch.object(
+        ai_advisor, "_build_client", side_effect=RuntimeError("no ANTHROPIC_API_KEY"), create=True
+    ):
         try:
             response, error = ai_advisor.request_suggestions(symphony_context)
         except Exception as exc:  # noqa: BLE001
@@ -927,9 +930,8 @@ def test_request_suggestions_handles_client_construction_failure(
 # assert graceful (None, error).
 # ===========================================================================
 
-def test_request_suggestions_malformed_response_missing_required_field(
-    symphony_context
-):
+
+def test_request_suggestions_malformed_response_missing_required_field(symphony_context):
     """SDK returns a suggestion missing a required field — request_suggestions
     must NOT raise; it must return (None, error_message)."""
     import ai_advisor
@@ -941,8 +943,7 @@ def test_request_suggestions_malformed_response_missing_required_field(
     fake_client = MagicMock()
     fake_client.messages.parse.return_value = malformed
 
-    with patch.object(ai_advisor, "_build_client", return_value=fake_client,
-                      create=True):
+    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
         try:
             response, error = ai_advisor.request_suggestions(symphony_context)
         except Exception as exc:  # noqa: BLE001
@@ -951,9 +952,7 @@ def test_request_suggestions_malformed_response_missing_required_field(
                 f"malformed response — it must return (None, error_message)."
             )
 
-    assert response is None, (
-        "a malformed/unparseable SDK response must yield response=None"
-    )
+    assert response is None, "a malformed/unparseable SDK response must yield response=None"
     assert isinstance(error, str) and error.strip(), (
         "a malformed response must yield a non-empty error message"
     )
@@ -969,8 +968,7 @@ def test_request_suggestions_malformed_response_wrong_shape(symphony_context):
     fake_client = MagicMock()
     fake_client.messages.parse.return_value = bad_response
 
-    with patch.object(ai_advisor, "_build_client", return_value=fake_client,
-                      create=True):
+    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
         try:
             response, error = ai_advisor.request_suggestions(symphony_context)
         except Exception as exc:  # noqa: BLE001
@@ -1006,6 +1004,7 @@ def test_malformed_payload_fails_pydantic_validation():
 # Assert that is a valid NON-ERROR response.
 # ===========================================================================
 
+
 def test_request_suggestions_empty_list_is_valid_non_error(symphony_context):
     """An empty suggestions list is a valid, encouraged answer (the 'config
     looks sound' / abstention escape hatch). It must flow through as
@@ -1015,8 +1014,7 @@ def test_request_suggestions_empty_list_is_valid_non_error(symphony_context):
     empty = ai_advisor.ConfigSuggestionsResponse(suggestions=[])
     fake_client = _make_fake_anthropic_client(parsed_obj=empty)
 
-    with patch.object(ai_advisor, "_build_client", return_value=fake_client,
-                      create=True):
+    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
         response, error = ai_advisor.request_suggestions(symphony_context)
 
     assert error is None, (
@@ -1027,8 +1025,7 @@ def test_request_suggestions_empty_list_is_valid_non_error(symphony_context):
         "an empty-suggestions response must still be a ConfigSuggestionsResponse"
     )
     assert response.suggestions == [], (
-        "the empty suggestions list must be preserved, not coerced to None "
-        "or dropped"
+        "the empty suggestions list must be preserved, not coerced to None or dropped"
     )
 
 

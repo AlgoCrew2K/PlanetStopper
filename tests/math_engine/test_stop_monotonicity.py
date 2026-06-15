@@ -142,7 +142,7 @@ def test_high_water_mark_is_monotone_non_decreasing_within_a_position() -> None:
     for i in range(len(returns)):
         assert hwm_series[i] == pytest.approx(
             max(returns[: i + 1]), rel=APPROX_REL, abs=APPROX_ABS
-        ), f"HWM[{i}]={hwm_series[i]} != running max {max(returns[:i+1])}"
+        ), f"HWM[{i}]={hwm_series[i]} != running max {max(returns[: i + 1])}"
 
 
 # ===========================================================================
@@ -155,11 +155,11 @@ def test_high_water_mark_is_monotone_non_decreasing_within_a_position() -> None:
     "scenario_id,base_sequence",
     [
         # base rises -> stop rises
-        ("base_rises",       [0.5, 1.0, 1.5, 2.0]),
+        ("base_rises", [0.5, 1.0, 1.5, 2.0]),
         # base falls -> stop FALLS (the H-1 point: distance widened)
-        ("base_falls",       [2.0, 1.5, 1.0, 0.5]),
+        ("base_falls", [2.0, 1.5, 1.0, 0.5]),
         # base oscillates -> stop oscillates; no clamp pins a floor
-        ("base_oscillates",  [1.0, 2.0, 1.0, 2.0]),
+        ("base_oscillates", [1.0, 2.0, 1.0, 2.0]),
         # base retraces then recovers
         ("base_dip_recover", [1.0, 2.0, 0.5, 3.0]),
     ],
@@ -197,9 +197,7 @@ def test_unlocked_stop_tracks_base_each_tick_no_clamp(
             f"[{scenario_id}] tick {i}: lock should not fire on a "
             f"sub-threshold return; got locked={locked}."
         )
-        assert stop == pytest.approx(
-            base_sequence[i], rel=APPROX_REL, abs=APPROX_ABS
-        ), (
+        assert stop == pytest.approx(base_sequence[i], rel=APPROX_REL, abs=APPROX_ABS), (
             f"[{scenario_id}] tick {i}: stop {stop} != base_stop_level "
             f"{base_sequence[i]}. The unlocked stop must equal the "
             f"recomputed base each tick — no cross-tick clamp."
@@ -218,8 +216,18 @@ def test_unlocked_stop_is_allowed_to_decrease_tick_to_tick() -> None:
     """
     results = _simulate_position_lifetime(
         [
-            {"current_return": -5.0, "symphony_vol": 1.0, "base_stop_level": 2.0, "is_triggered": False},
-            {"current_return": -5.0, "symphony_vol": 1.0, "base_stop_level": 0.5, "is_triggered": False},
+            {
+                "current_return": -5.0,
+                "symphony_vol": 1.0,
+                "base_stop_level": 2.0,
+                "is_triggered": False,
+            },
+            {
+                "current_return": -5.0,
+                "symphony_vol": 1.0,
+                "base_stop_level": 0.5,
+                "is_triggered": False,
+            },
         ]
     )
     stop1, stop2 = results[0][2], results[1][2]
@@ -282,20 +290,38 @@ def test_post_breakeven_stop_may_still_move_down_above_the_zero_floor() -> None:
     """
     results = _simulate_position_lifetime(
         [
-            {"current_return": 2.0, "symphony_vol": 1.0, "base_stop_level": 2.5, "is_triggered": False},
-            {"current_return": 2.0, "symphony_vol": 1.0, "base_stop_level": 0.8, "is_triggered": False},
+            {
+                "current_return": 2.0,
+                "symphony_vol": 1.0,
+                "base_stop_level": 2.5,
+                "is_triggered": False,
+            },
+            {
+                "current_return": 2.0,
+                "symphony_vol": 1.0,
+                "base_stop_level": 0.8,
+                "is_triggered": False,
+            },
         ]
     )
     # Both ticks: prime the lock first so currently_breakeven_locked is True.
     # The helper starts unlocked; for a clean two-tick post-lock test we call
     # directly with currently_breakeven_locked=True.
     _, locked1, stop1 = math_engine.compute_breakeven_update(
-        current_return=2.0, symphony_vol=1.0, base_stop_level=2.5,
-        current_hold_ticks=5, currently_breakeven_locked=True, is_triggered=False,
+        current_return=2.0,
+        symphony_vol=1.0,
+        base_stop_level=2.5,
+        current_hold_ticks=5,
+        currently_breakeven_locked=True,
+        is_triggered=False,
     )
     _, locked2, stop2 = math_engine.compute_breakeven_update(
-        current_return=2.0, symphony_vol=1.0, base_stop_level=0.8,
-        current_hold_ticks=6, currently_breakeven_locked=True, is_triggered=False,
+        current_return=2.0,
+        symphony_vol=1.0,
+        base_stop_level=0.8,
+        current_hold_ticks=6,
+        currently_breakeven_locked=True,
+        is_triggered=False,
     )
     assert locked1 is True and locked2 is True, "both ticks must be post-lock"
     assert stop2 < stop1, (
@@ -325,8 +351,7 @@ def test_locked_stop_is_max_of_base_and_zero_single_call() -> None:
         )
         expected = max(base, 0.0)
         assert stop == pytest.approx(expected, rel=APPROX_REL, abs=APPROX_ABS), (
-            f"locked stop for base={base}: expected max(base,0.0)={expected}, "
-            f"got {stop}."
+            f"locked stop for base={base}: expected max(base,0.0)={expected}, got {stop}."
         )
 
 
@@ -353,21 +378,65 @@ def test_breakeven_locked_is_one_way_latch_across_sequential_calls() -> None:
     The lock must be True on every tick from t5 onward.
     """
     ticks = [
-        {"current_return":  1.5, "symphony_vol": 1.0, "base_stop_level": -0.5, "is_triggered": False},
-        {"current_return":  1.5, "symphony_vol": 1.0, "base_stop_level": -0.5, "is_triggered": False},
-        {"current_return":  1.5, "symphony_vol": 1.0, "base_stop_level": -0.5, "is_triggered": False},
-        {"current_return":  1.5, "symphony_vol": 1.0, "base_stop_level": -0.5, "is_triggered": False},
-        {"current_return":  1.5, "symphony_vol": 1.0, "base_stop_level": -0.5, "is_triggered": False},
-        {"current_return": -5.0, "symphony_vol": 1.0, "base_stop_level": -2.0, "is_triggered": False},
-        {"current_return": -5.0, "symphony_vol": 5.0, "base_stop_level": -2.0, "is_triggered": False},
-        {"current_return": -5.0, "symphony_vol": 0.1, "base_stop_level": -2.0, "is_triggered": True},
-        {"current_return":  0.5, "symphony_vol": 1.0, "base_stop_level":  0.0, "is_triggered": False},
-        {"current_return": -5.0, "symphony_vol": 1.0, "base_stop_level": -1.0, "is_triggered": False},
+        {
+            "current_return": 1.5,
+            "symphony_vol": 1.0,
+            "base_stop_level": -0.5,
+            "is_triggered": False,
+        },
+        {
+            "current_return": 1.5,
+            "symphony_vol": 1.0,
+            "base_stop_level": -0.5,
+            "is_triggered": False,
+        },
+        {
+            "current_return": 1.5,
+            "symphony_vol": 1.0,
+            "base_stop_level": -0.5,
+            "is_triggered": False,
+        },
+        {
+            "current_return": 1.5,
+            "symphony_vol": 1.0,
+            "base_stop_level": -0.5,
+            "is_triggered": False,
+        },
+        {
+            "current_return": 1.5,
+            "symphony_vol": 1.0,
+            "base_stop_level": -0.5,
+            "is_triggered": False,
+        },
+        {
+            "current_return": -5.0,
+            "symphony_vol": 1.0,
+            "base_stop_level": -2.0,
+            "is_triggered": False,
+        },
+        {
+            "current_return": -5.0,
+            "symphony_vol": 5.0,
+            "base_stop_level": -2.0,
+            "is_triggered": False,
+        },
+        {
+            "current_return": -5.0,
+            "symphony_vol": 0.1,
+            "base_stop_level": -2.0,
+            "is_triggered": True,
+        },
+        {"current_return": 0.5, "symphony_vol": 1.0, "base_stop_level": 0.0, "is_triggered": False},
+        {
+            "current_return": -5.0,
+            "symphony_vol": 1.0,
+            "base_stop_level": -1.0,
+            "is_triggered": False,
+        },
     ]
     results = _simulate_position_lifetime(ticks)
     assert results[4][1] is True, (
-        f"Sanity: lock should fire on tick 5 (5 qualifying ticks). Got "
-        f"locked={results[4][1]}."
+        f"Sanity: lock should fire on tick 5 (5 qualifying ticks). Got locked={results[4][1]}."
     )
     for i in range(4, len(results)):
         assert results[i][1] is True, (
@@ -385,11 +454,16 @@ def test_breakeven_locked_is_one_way_latch_across_sequential_calls() -> None:
 @pytest.mark.parametrize(
     "base_stop_level,locked",
     [
-        (-5.0, False), (-5.0, True),
-        (-0.001, False), (-0.001, True),
-        (0.0, False), (0.0, True),
-        (2.0, False), (2.0, True),
-        (100.0, False), (100.0, True),
+        (-5.0, False),
+        (-5.0, True),
+        (-0.001, False),
+        (-0.001, True),
+        (0.0, False),
+        (0.0, True),
+        (2.0, False),
+        (2.0, True),
+        (100.0, False),
+        (100.0, True),
     ],
 )
 def test_triggered_override_yields_sentinel_regardless_of_inputs(
@@ -459,8 +533,7 @@ def test_active_trailing_stop_lower_bound_is_dynamic_min_stop_when_unsqueezed(
         parabolic_squeeze_multiplier=0.5,  # set but should NOT fire
     )
     assert output >= dynamic_min_stop, (
-        f"Lower-bound violated: output {output} < dynamic_min_stop "
-        f"{dynamic_min_stop}."
+        f"Lower-bound violated: output {output} < dynamic_min_stop {dynamic_min_stop}."
     )
 
 
@@ -476,8 +549,13 @@ def test_simulate_position_lifetime_is_deterministic() -> None:
     stateless w.r.t. the stop level; this confirms no accidental state leak.
     """
     ticks = [
-        {"current_return": 1.5, "symphony_vol": 1.0, "base_stop_level": -0.5, "is_triggered": False},
-        {"current_return": 2.0, "symphony_vol": 1.0, "base_stop_level":  1.0, "is_triggered": False},
-        {"current_return": 1.5, "symphony_vol": 1.0, "base_stop_level":  0.5, "is_triggered": False},
+        {
+            "current_return": 1.5,
+            "symphony_vol": 1.0,
+            "base_stop_level": -0.5,
+            "is_triggered": False,
+        },
+        {"current_return": 2.0, "symphony_vol": 1.0, "base_stop_level": 1.0, "is_triggered": False},
+        {"current_return": 1.5, "symphony_vol": 1.0, "base_stop_level": 0.5, "is_triggered": False},
     ]
     assert _simulate_position_lifetime(ticks) == _simulate_position_lifetime(ticks)

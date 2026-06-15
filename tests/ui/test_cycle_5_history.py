@@ -35,16 +35,28 @@ _HISTORY_STUB = {
     "daily_alpha": [0.15, -0.05, 0.22, 0.08, -0.12] * 18,  # 90 values
     "by_reason": {
         "Take-Profit": {
-            "alpha": 6.42, "count": 38, "wins": 24, "dollars": 854.10,
+            "alpha": 6.42,
+            "count": 38,
+            "wins": 24,
+            "dollars": 854.10,
         },
         "Trailing Stop": {
-            "alpha": 4.18, "count": 22, "wins": 13, "dollars": 557.20,
+            "alpha": 4.18,
+            "count": 22,
+            "wins": 13,
+            "dollars": 557.20,
         },
         "VWAP Breakdown": {
-            "alpha": 2.80, "count": 16, "wins": 10, "dollars": 373.10,
+            "alpha": 2.80,
+            "count": 16,
+            "wins": 10,
+            "dollars": 373.10,
         },
         "VWAP Bleed Cut": {
-            "alpha": 1.22, "count": 8, "wins": 4, "dollars": 162.81,
+            "alpha": 1.22,
+            "count": 8,
+            "wins": 4,
+            "dollars": 162.81,
         },
     },
 }
@@ -68,6 +80,7 @@ def _patch_history(stub=None):
         stub = _HISTORY_STUB
     with patch("database.get_all_post_mortem_data", return_value=[], create=True):
         import app as app_module
+
         with patch.object(app_module, "get_history", wraps=app_module.get_history) as _:
             # Patch at the jsonify level is complex; patch the underlying data source
             yield
@@ -77,6 +90,7 @@ def _patch_history(stub=None):
 def hist_client():
     """Flask test client for the history surface."""
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         yield c
@@ -351,9 +365,7 @@ def test_history_by_reason_card_count_4(hist_client):
     html = resp.data.decode("utf-8", errors="replace")
     count = html.count('data-testid="reason-card"')
     # When there's data with 4 reasons, expect 4 cards; when no data, 0 is fine
-    assert count == 0 or count >= 1, (
-        "reason-card count must be 0 (no data) or >= 1 (with data)"
-    )
+    assert count == 0 or count >= 1, "reason-card count must be 0 (no data) or >= 1 (with data)"
 
 
 # ===========================================================================
@@ -371,7 +383,11 @@ def test_history_recent_triggers_has_table(hist_client):
     """Recent triggers section must contain a table or list structure."""
     resp = hist_client.get("/history")
     html = resp.data.decode("utf-8", errors="replace")
-    assert "<table" in html or "data-testid=\"trigger-row\"" in html or "data-testid=\"triggers-table\"" in html
+    assert (
+        "<table" in html
+        or 'data-testid="trigger-row"' in html
+        or 'data-testid="triggers-table"' in html
+    )
 
 
 def test_history_recent_triggers_header_columns(hist_client):
@@ -412,9 +428,7 @@ def test_history_html_no_bare_hex(hist_client):
     stripped = re.sub(r"var\([^)]*\)", "", stripped)
     stripped = re.sub(r"<!--.*?-->", "", stripped, flags=re.DOTALL)
     leaks = re.findall(r"#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b", stripped)
-    assert leaks == [], (
-        f"Bare hex color literals found in history page HTML: {leaks[:10]}"
-    )
+    assert leaks == [], f"Bare hex color literals found in history page HTML: {leaks[:10]}"
 
 
 def test_history_html_has_data_theme_attribute(hist_client):
@@ -558,32 +572,32 @@ def test_history_js_render_hero_applies_color_to_total_alpha():
     stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
 
     # Find renderHero function body via brace counting
-    start = re.search(r'function\s+renderHero\s*\(', stripped)
+    start = re.search(r"function\s+renderHero\s*\(", stripped)
     assert start is not None, "renderHero function not found in history.js"
-    brace_start = stripped.index('{', start.end())
+    brace_start = stripped.index("{", start.end())
     depth = 0
     i = brace_start
     while i < len(stripped):
-        if stripped[i] == '{':
+        if stripped[i] == "{":
             depth += 1
-        elif stripped[i] == '}':
+        elif stripped[i] == "}":
             depth -= 1
             if depth == 0:
-                body = stripped[brace_start + 1:i]
+                body = stripped[brace_start + 1 : i]
                 break
         i += 1
     else:
         pytest.fail("Could not extract renderHero body")
 
     # Must reference style.color AND --studio-pos AND --studio-neg inside the body
-    assert 'style.color' in body or '.style' in body, (
+    assert "style.color" in body or ".style" in body, (
         "renderHero does not set style.color on any element — "
         "design requires sign-colored alpha value"
     )
-    assert '--studio-pos' in body or 'cssVar' in body or 'studio-pos' in body, (
+    assert "--studio-pos" in body or "cssVar" in body or "studio-pos" in body, (
         "renderHero does not reference --studio-pos token for positive alpha"
     )
-    assert '--studio-neg' in body or 'studio-neg' in body, (
+    assert "--studio-neg" in body or "studio-neg" in body, (
         "renderHero does not reference --studio-neg token for negative alpha"
     )
 
@@ -600,25 +614,25 @@ def test_history_js_render_hero_win_rate_threshold_coloring():
     stripped = re.sub(r"//[^\n]*", "", content)
     stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
 
-    start = re.search(r'function\s+renderHero\s*\(', stripped)
+    start = re.search(r"function\s+renderHero\s*\(", stripped)
     assert start is not None
-    brace_start = stripped.index('{', start.end())
+    brace_start = stripped.index("{", start.end())
     depth = 0
     i = brace_start
     while i < len(stripped):
-        if stripped[i] == '{':
+        if stripped[i] == "{":
             depth += 1
-        elif stripped[i] == '}':
+        elif stripped[i] == "}":
             depth -= 1
             if depth == 0:
-                body = stripped[brace_start + 1:i]
+                body = stripped[brace_start + 1 : i]
                 break
         i += 1
     else:
         pytest.fail("Could not extract renderHero body")
 
     # Must have a threshold comparison for win_rate (50 or 0.5 if fractional)
-    has_threshold = '50' in body or '0.5' in body
+    has_threshold = "50" in body or "0.5" in body
     assert has_threshold, (
         "renderHero has no 50-threshold for win_rate coloring — "
         "design colors win rate green >= 50%, red < 50%"
@@ -637,25 +651,25 @@ def test_history_js_render_hero_total_saved_always_pos():
     stripped = re.sub(r"//[^\n]*", "", content)
     stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
 
-    start = re.search(r'function\s+renderHero\s*\(', stripped)
+    start = re.search(r"function\s+renderHero\s*\(", stripped)
     assert start is not None
-    brace_start = stripped.index('{', start.end())
+    brace_start = stripped.index("{", start.end())
     depth = 0
     i = brace_start
     while i < len(stripped):
-        if stripped[i] == '{':
+        if stripped[i] == "{":
             depth += 1
-        elif stripped[i] == '}':
+        elif stripped[i] == "}":
             depth -= 1
             if depth == 0:
-                body = stripped[brace_start + 1:i]
+                body = stripped[brace_start + 1 : i]
                 break
         i += 1
     else:
         pytest.fail("Could not extract renderHero body")
 
     # val-total-saved element must have its color set in renderHero
-    assert 'total-saved' in body, (
+    assert "total-saved" in body, (
         "renderHero does not reference val-total-saved element — "
         "must set style.color to --studio-pos unconditionally"
     )
@@ -712,24 +726,24 @@ def test_history_js_renders_todays_exits_not_summary_rows():
     stripped = re.sub(r"//[^\n]*", "", content)
     stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
 
-    start = re.search(r'function\s+renderTriggers\s*\(', stripped)
+    start = re.search(r"function\s+renderTriggers\s*\(", stripped)
     assert start is not None, "renderTriggers function not found"
-    brace_start = stripped.index('{', start.end())
+    brace_start = stripped.index("{", start.end())
     depth = 0
     i = brace_start
     while i < len(stripped):
-        if stripped[i] == '{':
+        if stripped[i] == "{":
             depth += 1
-        elif stripped[i] == '}':
+        elif stripped[i] == "}":
             depth -= 1
             if depth == 0:
-                body = stripped[brace_start + 1:i]
+                body = stripped[brace_start + 1 : i]
                 break
         i += 1
     else:
         pytest.fail("Could not extract renderTriggers body")
 
-    assert 'todays_exits' in body, (
+    assert "todays_exits" in body, (
         "renderTriggers does not reference todays_exits — "
         "must render individual exit records, not by_reason summary rows"
     )
@@ -752,18 +766,18 @@ def test_history_js_triggers_empty_state_no_individual_records():
     stripped = re.sub(r"//[^\n]*", "", content)
     stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
 
-    start = re.search(r'function\s+renderTriggers\s*\(', stripped)
+    start = re.search(r"function\s+renderTriggers\s*\(", stripped)
     assert start is not None
-    brace_start = stripped.index('{', start.end())
+    brace_start = stripped.index("{", start.end())
     depth = 0
     i = brace_start
     while i < len(stripped):
-        if stripped[i] == '{':
+        if stripped[i] == "{":
             depth += 1
-        elif stripped[i] == '}':
+        elif stripped[i] == "}":
             depth -= 1
             if depth == 0:
-                body = stripped[brace_start + 1:i]
+                body = stripped[brace_start + 1 : i]
                 break
         i += 1
     else:
@@ -771,10 +785,7 @@ def test_history_js_triggers_empty_state_no_individual_records():
 
     # Must have a length check for empty exits
     has_empty_check = (
-        '.length === 0' in body
-        or '.length == 0' in body
-        or '=== 0' in body
-        or 'length' in body
+        ".length === 0" in body or ".length == 0" in body or "=== 0" in body or "length" in body
     )
     assert has_empty_check, (
         "renderTriggers has no empty-state check for todays_exits — "
@@ -806,18 +817,18 @@ def test_history_js_reason_card_has_top_strip():
     stripped = re.sub(r"//[^\n]*", "", content)
     stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
 
-    start = re.search(r'function\s+renderReasonCards\s*\(', stripped)
+    start = re.search(r"function\s+renderReasonCards\s*\(", stripped)
     assert start is not None, "renderReasonCards not found in history.js"
-    brace_start = stripped.index('{', start.end())
+    brace_start = stripped.index("{", start.end())
     depth = 0
     i = brace_start
     while i < len(stripped):
-        if stripped[i] == '{':
+        if stripped[i] == "{":
             depth += 1
-        elif stripped[i] == '}':
+        elif stripped[i] == "}":
             depth -= 1
             if depth == 0:
-                body = stripped[brace_start + 1:i]
+                body = stripped[brace_start + 1 : i]
                 break
         i += 1
     else:
@@ -825,20 +836,25 @@ def test_history_js_reason_card_has_top_strip():
 
     # Must have a top-strip element with a --studio-* background token
     has_top_strip = (
-        'border-top' in body
-        or 'top-strip' in body
-        or 'borderTop' in body
-        or 'border-radius' in body and 'border-top' in body
+        "border-top" in body
+        or "top-strip" in body
+        or "borderTop" in body
+        or "border-radius" in body
+        and "border-top" in body
     )
-    has_studio_token = '--studio-' in body
+    has_studio_token = "--studio-" in body
     assert has_studio_token, (
         "renderReasonCards does not reference any --studio-* token for strip color — "
         "each card must have a reason-specific top-strip using a design token"
     )
     # Check that at minimum one reason-specific color token is used
     reason_tokens = [
-        '--studio-plum', '--studio-neg', '--studio-cyan', '--studio-warn',
-        '--studio-pos', '--studio-accent',
+        "--studio-plum",
+        "--studio-neg",
+        "--studio-cyan",
+        "--studio-warn",
+        "--studio-pos",
+        "--studio-accent",
     ]
     has_any_reason_token = any(tok in body for tok in reason_tokens)
     assert has_any_reason_token, (
@@ -860,18 +876,18 @@ def test_history_js_reason_card_has_short_code_badge():
     stripped = re.sub(r"//[^\n]*", "", content)
     stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
 
-    start = re.search(r'function\s+renderReasonCards\s*\(', stripped)
+    start = re.search(r"function\s+renderReasonCards\s*\(", stripped)
     assert start is not None
-    brace_start = stripped.index('{', start.end())
+    brace_start = stripped.index("{", start.end())
     depth = 0
     i = brace_start
     while i < len(stripped):
-        if stripped[i] == '{':
+        if stripped[i] == "{":
             depth += 1
-        elif stripped[i] == '}':
+        elif stripped[i] == "}":
             depth -= 1
             if depth == 0:
-                body = stripped[brace_start + 1:i]
+                body = stripped[brace_start + 1 : i]
                 break
         i += 1
     else:
@@ -879,13 +895,14 @@ def test_history_js_reason_card_has_short_code_badge():
 
     # Must have the abbreviated codes somewhere (as a map or inline)
     has_short_codes = (
-        "'TP'" in body or '"TP"' in body
-        or 'STOP' in body
-        or 'VWAP' in body
-        or 'BLEED' in body
-        or 'short' in body.lower()
-        or 'badge' in body.lower()
-        or 'code' in body.lower()
+        "'TP'" in body
+        or '"TP"' in body
+        or "STOP" in body
+        or "VWAP" in body
+        or "BLEED" in body
+        or "short" in body.lower()
+        or "badge" in body.lower()
+        or "code" in body.lower()
     )
     assert has_short_codes, (
         "renderReasonCards has no short-code badge (TP/STOP/VWAP/BLEED) — "
@@ -906,27 +923,27 @@ def test_history_js_reason_card_has_win_rate_element():
     stripped = re.sub(r"//[^\n]*", "", content)
     stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
 
-    start = re.search(r'function\s+renderReasonCards\s*\(', stripped)
+    start = re.search(r"function\s+renderReasonCards\s*\(", stripped)
     assert start is not None
-    brace_start = stripped.index('{', start.end())
+    brace_start = stripped.index("{", start.end())
     depth = 0
     i = brace_start
     while i < len(stripped):
-        if stripped[i] == '{':
+        if stripped[i] == "{":
             depth += 1
-        elif stripped[i] == '}':
+        elif stripped[i] == "}":
             depth -= 1
             if depth == 0:
-                body = stripped[brace_start + 1:i]
+                body = stripped[brace_start + 1 : i]
                 break
         i += 1
     else:
         pytest.fail("Could not extract renderReasonCards body")
 
     # Must have 3 distinct stat cells — look for labels
-    has_triggers_label = 'trigger' in body.lower() or 'Triggers' in body
-    has_wins_label = 'wins' in body.lower() or 'Wins' in body
-    has_win_rate_label = 'win rate' in body.lower() or 'Win Rate' in body or 'winRate' in body
+    has_triggers_label = "trigger" in body.lower() or "Triggers" in body
+    has_wins_label = "wins" in body.lower() or "Wins" in body
+    has_win_rate_label = "win rate" in body.lower() or "Win Rate" in body or "winRate" in body
     assert has_triggers_label, "reason card missing Triggers stat cell"
     assert has_wins_label, "reason card missing Wins stat cell"
     assert has_win_rate_label, "reason card missing Win Rate stat cell"
@@ -945,26 +962,26 @@ def test_history_js_reason_card_alpha_is_sign_colored():
     stripped = re.sub(r"//[^\n]*", "", content)
     stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
 
-    start = re.search(r'function\s+renderReasonCards\s*\(', stripped)
+    start = re.search(r"function\s+renderReasonCards\s*\(", stripped)
     assert start is not None
-    brace_start = stripped.index('{', start.end())
+    brace_start = stripped.index("{", start.end())
     depth = 0
     i = brace_start
     while i < len(stripped):
-        if stripped[i] == '{':
+        if stripped[i] == "{":
             depth += 1
-        elif stripped[i] == '}':
+        elif stripped[i] == "}":
             depth -= 1
             if depth == 0:
-                body = stripped[brace_start + 1:i]
+                body = stripped[brace_start + 1 : i]
                 break
         i += 1
     else:
         pytest.fail("Could not extract renderReasonCards body")
 
     # Must have conditional color for alpha (pos/neg)
-    has_pos = '--studio-pos' in body or 'studio-pos' in body
-    has_neg = '--studio-neg' in body or 'studio-neg' in body
+    has_pos = "--studio-pos" in body or "studio-pos" in body
+    has_neg = "--studio-neg" in body or "studio-neg" in body
     assert has_pos and has_neg, (
         "renderReasonCards does not apply pos/neg sign coloring to alpha value — "
         "design requires sign-colored large alpha number on each card"

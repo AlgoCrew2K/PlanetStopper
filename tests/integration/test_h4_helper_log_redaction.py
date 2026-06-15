@@ -83,6 +83,7 @@ def _collect_all_log_text(records: list) -> str:
 # Shared fixture for an isolated DB
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def isolated_db(tmp_path, monkeypatch):
     """Redirect DB_PATH to a temp file and initialise schema."""
@@ -118,9 +119,8 @@ def _make_cvar_table(db_path: str) -> None:
 # H1: account_id substring in APIError message must not appear in log
 # ---------------------------------------------------------------------------
 
-def test_alpaca_account_id_in_error_message_does_not_appear_in_log(
-    isolated_db, caplog
-):
+
+def test_alpaca_account_id_in_error_message_does_not_appear_in_log(isolated_db, caplog):
     """Gate 7 H1: when the DB error message contains an Alpaca account_id pattern
     (simulating an error from a DB write whose row came from an Alpaca response),
     the account_id pattern must not appear in any log record.
@@ -173,9 +173,8 @@ def test_alpaca_account_id_in_error_message_does_not_appear_in_log(
 # H2: position_qty float substring in error message must not appear in log
 # ---------------------------------------------------------------------------
 
-def test_alpaca_position_qty_in_error_message_does_not_appear_in_log(
-    isolated_db, caplog
-):
+
+def test_alpaca_position_qty_in_error_message_does_not_appear_in_log(isolated_db, caplog):
     """Gate 7 H2: when the DB error message contains a position_qty value
     (simulating a response body fragment embedded in the exception), that
     value must not appear in any log record.
@@ -215,9 +214,8 @@ def test_alpaca_position_qty_in_error_message_does_not_appear_in_log(
 # H3: webhook URL in exception args must not appear in log
 # ---------------------------------------------------------------------------
 
-def test_webhook_url_in_error_message_does_not_appear_in_log(
-    isolated_db, caplog
-):
+
+def test_webhook_url_in_error_message_does_not_appear_in_log(isolated_db, caplog):
     """Gate 7 H3: when the DB error message contains a Discord webhook URL
     pattern, it must not appear in log output.
 
@@ -258,9 +256,8 @@ def test_webhook_url_in_error_message_does_not_appear_in_log(
 # H4: full response dict stringified in exception message must not leak
 # ---------------------------------------------------------------------------
 
-def test_full_response_dict_in_exception_does_not_appear_in_log(
-    isolated_db, caplog
-):
+
+def test_full_response_dict_in_exception_does_not_appear_in_log(isolated_db, caplog):
     """Gate 7 H4: when the exception message contains a stringified response
     body dict (the most common accident — developers log str(response.json())),
     the dict contents must not appear in any log record.
@@ -304,8 +301,7 @@ def test_full_response_dict_in_exception_does_not_appear_in_log(
         f"Full log text: {all_text!r}"
     )
     assert not _RESPONSE_BODY_INDICATOR.search(all_text), (
-        f"Gate 7 H4 violation: 'response body' indicator found in log. "
-        f"Full log text: {all_text!r}"
+        f"Gate 7 H4 violation: 'response body' indicator found in log. Full log text: {all_text!r}"
     )
 
 
@@ -313,9 +309,8 @@ def test_full_response_dict_in_exception_does_not_appear_in_log(
 # H5: account_id in a structured row field must not appear in log
 # ---------------------------------------------------------------------------
 
-def test_account_id_in_row_field_does_not_appear_in_log(
-    isolated_db, caplog
-):
+
+def test_account_id_in_row_field_does_not_appear_in_log(isolated_db, caplog):
     """Gate 7 H5: if a row_dict contains a field whose value matches an
     account_id pattern, that value must not appear in any log record.
 
@@ -339,9 +334,7 @@ def test_account_id_in_row_field_does_not_appear_in_log(
     }
 
     with patch("sqlite3.connect") as mock_connect:
-        mock_connect.side_effect = sqlite3.OperationalError(
-            "no such table: cvar_diagnostics"
-        )
+        mock_connect.side_effect = sqlite3.OperationalError("no such table: cvar_diagnostics")
         with caplog.at_level(logging.DEBUG, logger="database"):
             db.write_telemetry_row("cvar_diagnostics", row, mode="live")
 
@@ -365,9 +358,8 @@ def test_account_id_in_row_field_does_not_appear_in_log(
 # H6: bearer token fragment in exception must not appear in log
 # ---------------------------------------------------------------------------
 
-def test_bearer_token_in_exception_does_not_appear_in_log(
-    isolated_db, caplog
-):
+
+def test_bearer_token_in_exception_does_not_appear_in_log(isolated_db, caplog):
     """Gate 7 H6: when the exception message contains a Bearer token fragment
     (simulating a headers-in-exception scenario from a downstream HTTP error),
     the token must not appear in any log record.
@@ -408,9 +400,8 @@ def test_bearer_token_in_exception_does_not_appear_in_log(
 # Positive control: table_name and error type ARE present (log is not empty)
 # ---------------------------------------------------------------------------
 
-def test_log_contains_table_name_and_error_type_after_redaction(
-    isolated_db, caplog
-):
+
+def test_log_contains_table_name_and_error_type_after_redaction(isolated_db, caplog):
     """Positive control: after all redaction, the permitted fields (table_name,
     error_type) must still be present in the log record.
 
@@ -438,11 +429,9 @@ def test_log_contains_table_name_and_error_type_after_redaction(
 
     all_text = _collect_all_log_text(caplog.records)
     assert table_name in all_text, (
-        f"Positive control: table_name must appear in log after redaction; "
-        f"full log: {all_text!r}"
+        f"Positive control: table_name must appear in log after redaction; full log: {all_text!r}"
     )
     # Error type: OperationalError or its base Error — either is acceptable
     assert re.search(r"OperationalError|sqlite3.Error|Error", all_text), (
-        f"Positive control: error type must appear in log after redaction; "
-        f"full log: {all_text!r}"
+        f"Positive control: error type must appear in log after redaction; full log: {all_text!r}"
     )

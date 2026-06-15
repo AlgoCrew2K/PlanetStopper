@@ -33,6 +33,7 @@ Fixtures:
   tests/fixtures/math/crra_tstat_near_floor_wealth.json — floor-hitting
     scenario for W-H4 boundary test (W_raw < WEALTH_ARG_FLOOR; floor on W).
 """
+
 from __future__ import annotations
 
 import json
@@ -44,11 +45,14 @@ import pytest
 
 _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
 _FIXTURE_FORMULA = _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "crra_tstat_formula_pin.json"
-_FIXTURE_FLOOR = _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "crra_tstat_near_floor_wealth.json"
+_FIXTURE_FLOOR = (
+    _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "crra_tstat_near_floor_wealth.json"
+)
 
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
@@ -66,6 +70,7 @@ def _get_wealth_arg_floor():
     """
     import autotuner
     import math_engine
+
     if hasattr(math_engine, "WEALTH_ARG_FLOOR"):
         return math_engine.WEALTH_ARG_FLOOR
     if hasattr(autotuner, "WEALTH_ARG_FLOOR"):
@@ -217,9 +222,7 @@ def _check_floor_scenario(autotuner, fixture, scenario_key: str) -> None:
 
     # The mean must also be finite.
     mean_U = sum(U_series) / len(U_series)
-    assert math.isfinite(mean_U), (
-        f"[{scenario_key}] mean(U_series) is non-finite: {mean_U!r}"
-    )
+    assert math.isfinite(mean_U), f"[{scenario_key}] mean(U_series) is non-finite: {mean_U!r}"
 
 
 def test_crra_eu_tstat_finite_at_wealth_argument_floor_gamma_2():
@@ -316,8 +319,7 @@ def test_crra_eu_tstat_returns_zero_on_empty_series():
     result = autotuner.compute_crra_eu_tstat([])
 
     assert result == 0.0, (
-        f"compute_crra_eu_tstat([]) must return 0.0 (no-fold neutral sentinel).\n"
-        f"  got {result!r}"
+        f"compute_crra_eu_tstat([]) must return 0.0 (no-fold neutral sentinel).\n  got {result!r}"
     )
 
 
@@ -392,7 +394,7 @@ def test_crra_eu_tstat_uses_sample_stdev_not_population():
         f"  expected (sample) = {t_sample!r}\n"
         f"  got = {result!r}\n"
         f"  wrong (population) = {t_pop!r}\n"
-        f"  ratio sample/pop = {t_sample/t_pop:.6f} (= sqrt(T/(T-1)) = sqrt(5/4) ~ 1.118).\n"
+        f"  ratio sample/pop = {t_sample / t_pop:.6f} (= sqrt(T/(T-1)) = sqrt(5/4) ~ 1.118).\n"
         f"  Using pstdev would shift haircut calibration by ~11.8% at T=5."
     )
 
@@ -426,12 +428,16 @@ def test_crra_eu_tstat_source_does_not_contain_sortino_form_multiplication():
     src = (_WORKTREE_ROOT / "autotuner.py").read_text(encoding="utf-8")
 
     import ast
+
     tree = ast.parse(src)
 
     # Find compute_crra_eu_tstat function body.
     tstat_func = next(
-        (n for n in ast.walk(tree)
-         if isinstance(n, ast.FunctionDef) and n.name == "compute_crra_eu_tstat"),
+        (
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name == "compute_crra_eu_tstat"
+        ),
         None,
     )
     assert tstat_func is not None, (

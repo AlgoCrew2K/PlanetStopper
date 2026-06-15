@@ -305,6 +305,7 @@ from advisors.backtest_gate_engine import HARVEY_LIU_FDR_Q as _FDR_Q  # noqa: E4
 def _empty_gate_batch() -> GatedBatch:
     """Return an empty GatedBatch (zero candidates, zero survivors)."""
     from advisors.backtest_gate_engine import GatedBatch  # noqa: PLC0415
+
     return GatedBatch(results=[], survivors=[], n_candidates=0, fdr_q=_FDR_Q)
 
 
@@ -316,6 +317,7 @@ def _empty_gate_batch() -> GatedBatch:
 def _has_composer_key() -> bool:
     """Return True iff Composer API credentials are configured."""
     from alpha_bot_execution import COMPOSER_KEY_ID, COMPOSER_SECRET  # noqa: PLC0415
+
     return bool(COMPOSER_KEY_ID and COMPOSER_SECRET)
 
 
@@ -581,7 +583,7 @@ def generate_objective_directed_candidates(
                 n = len(series)
                 mean = sum(series) / n
                 variance = sum((r - mean) ** 2 for r in series) / n
-                std = variance ** 0.5
+                std = variance**0.5
                 pseudo_sharpe = mean / std if std > 1e-12 else 0.0
             else:
                 pseudo_sharpe = 0.0
@@ -757,6 +759,7 @@ def _persist_observation(
     if sources:
         try:
             from ai_advisor import build_citation as _bc  # noqa: PLC0415
+
             _validated_sources = [r for s in sources if (r := _bc(s)) is not None]
         except Exception:
             # Fallback: write valid-looking dicts unvalidated rather than losing them.
@@ -813,7 +816,9 @@ def _evaluate_single_variant(
     lens evidence for ``candidate_asset``.
     """
     candidate_id = f"{symphony_id}:{incumbent_asset}->{candidate_asset}"
-    rationale = _build_objective_rationale(candidate_asset, incumbent_asset, objective, lens_scores=lens_scores)
+    rationale = _build_objective_rationale(
+        candidate_asset, incumbent_asset, objective, lens_scores=lens_scores
+    )
     symphony_name = symphony_name or symphony_id
 
     apply_guidance = ADVISE_ONLY_APPLY_TEMPLATE.format(
@@ -948,7 +953,9 @@ def propose_operator_swap(
     Returns:
         ``SwapRunResult`` — always returned, never raises.
     """
-    symphony_name = (score_tree.get("name") or symphony_id) if isinstance(score_tree, dict) else symphony_id
+    symphony_name = (
+        (score_tree.get("name") or symphony_id) if isinstance(score_tree, dict) else symphony_id
+    )
 
     bt_candidate, proposal_shell, baseline_stats = _evaluate_single_variant(
         raw_value=score_tree,
@@ -1019,7 +1026,9 @@ def propose_operator_swap(
     # Use caller-supplied lens_sources when provided (AC-4 citation provenance);
     # fall back to auto-collected sources from lens_scores metadata otherwise.
     candidate_lens_evidence = _build_candidate_lens_evidence(candidate_asset, lens_scores)
-    candidate_sources = lens_sources if lens_sources is not None else _collect_lens_sources(lens_scores)
+    candidate_sources = (
+        lens_sources if lens_sources is not None else _collect_lens_sources(lens_scores)
+    )
     persistence_error = None
     try:
         _persist_observation(
@@ -1038,11 +1047,7 @@ def propose_operator_swap(
             exc_info=True,
         )
 
-    message = (
-        f"1 swap survived the gate for {symphony_name}"
-        if survivors
-        else NO_SURVIVORS_MESSAGE
-    )
+    message = f"1 swap survived the gate for {symphony_name}" if survivors else NO_SURVIVORS_MESSAGE
 
     return SwapRunResult(
         gate_batch=gate_batch,
@@ -1110,7 +1115,9 @@ def suggest_swaps(
         ``SwapRunResult`` — always returned, never raises.
         Zero survivors is a valid outcome (AC-2.5).
     """
-    symphony_name = (score_tree.get("name") or symphony_id) if isinstance(score_tree, dict) else symphony_id
+    symphony_name = (
+        (score_tree.get("name") or symphony_id) if isinstance(score_tree, dict) else symphony_id
+    )
 
     # Detect absent API key early (AC-X4).
     if not _has_composer_key():
@@ -1163,9 +1170,7 @@ def suggest_swaps(
     for candidate_entry in candidates_ranked:
         # candidates_ranked contains dicts with "ticker" key (per generate_objective_directed_candidates).
         candidate_asset = (
-            candidate_entry["ticker"]
-            if isinstance(candidate_entry, dict)
-            else candidate_entry
+            candidate_entry["ticker"] if isinstance(candidate_entry, dict) else candidate_entry
         )
         if candidate_asset in present_tickers:
             # Skip tickers already in the tree (swapping A→A is a no-op).
@@ -1226,7 +1231,9 @@ def suggest_swaps(
                 cand_lens_ev = _build_candidate_lens_evidence(cand_ticker, lens_scores)
                 # AC-4: use caller-supplied citations when provided; fall back to
                 # auto-collected metadata from lens_scores otherwise.
-                cand_sources = lens_sources if lens_sources is not None else _collect_lens_sources(lens_scores)
+                cand_sources = (
+                    lens_sources if lens_sources is not None else _collect_lens_sources(lens_scores)
+                )
                 _persist_observation(
                     symphony_id,
                     shell,
@@ -1288,10 +1295,12 @@ def _select_incumbent_asset(
         if target_series:
             best_ticker = max(
                 present_tickers,
-                key=lambda t: abs(_pearson_corr_series(
-                    correlation_data.get(t, []),
-                    target_series,
-                )),
+                key=lambda t: abs(
+                    _pearson_corr_series(
+                        correlation_data.get(t, []),
+                        target_series,
+                    )
+                ),
             )
             return best_ticker
 

@@ -48,10 +48,7 @@ import pytest
 
 _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
 _FIXTURE_PATH = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math"
-    / "nn1_spec_freeze_discipline.json"
+    pathlib.Path(__file__).parent.parent / "fixtures" / "math" / "nn1_spec_freeze_discipline.json"
 )
 _AUTOTUNER_SRC = _WORKTREE_ROOT / "autotuner.py"
 
@@ -62,17 +59,20 @@ def _load_fixture() -> dict:
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
 def _import_database():
     import database
+
     return database
 
 
 # ---------------------------------------------------------------------------
 # Helpers — DB scaffolding
 # ---------------------------------------------------------------------------
+
 
 def _make_all_theory_bundle(db, facets: "list[dict] | None" = None) -> tuple[str, int]:
     """Insert a spec_bundle + three all-THEORY Phase-1 facets.
@@ -98,6 +98,7 @@ def _make_all_theory_bundle(db, facets: "list[dict] | None" = None) -> tuple[str
     # The rowid of the inserted spec_bundles row — used as spec_bundle_id.
     # Fetched by re-querying since insert_spec_bundle returns None.
     import sqlite3
+
     conn = _db.get_connection()
     bundle_id = conn.execute(
         "SELECT id FROM spec_bundles WHERE bundle_hash = ?", (bundle_hash,)
@@ -107,9 +108,13 @@ def _make_all_theory_bundle(db, facets: "list[dict] | None" = None) -> tuple[str
     default_facets = [
         {"facet_name": "gamma", "facet_value": "2.0", "freeze_discipline": "THEORY"},
         {"facet_name": "utility_family", "facet_value": "CRRA", "freeze_discipline": "THEORY"},
-        {"facet_name": "wealth_argument", "facet_value": "compounded_return", "freeze_discipline": "THEORY"},
+        {
+            "facet_name": "wealth_argument",
+            "facet_value": "compounded_return",
+            "freeze_discipline": "THEORY",
+        },
     ]
-    for f in (facets or default_facets):
+    for f in facets or default_facets:
         _db.insert_spec_bundle_facet(
             bundle_hash=bundle_hash,
             facet_name=f["facet_name"],
@@ -137,6 +142,7 @@ def _make_single_backtest_selection_bundle(db) -> tuple[str, int]:
         facets_json=canonical_json,
     )
     import sqlite3
+
     conn = _db.get_connection()
     bundle_id = conn.execute(
         "SELECT id FROM spec_bundles WHERE bundle_hash = ?", (bundle_hash,)
@@ -182,6 +188,7 @@ def _make_mixed_violation_bundle(db) -> tuple[str, int]:
         facets_json=canonical_json,
     )
     import sqlite3
+
     conn = _db.get_connection()
     bundle_id = conn.execute(
         "SELECT id FROM spec_bundles WHERE bundle_hash = ?", (bundle_hash,)
@@ -214,6 +221,7 @@ def _make_mixed_violation_bundle(db) -> tuple[str, int]:
 # T1 — Fixture coherence: fixture file is well-formed and structurally complete
 # ---------------------------------------------------------------------------
 
+
 def test_nn1_fixture_is_structurally_complete():
     """The fixture must be loadable and contain all required top-level keys.
 
@@ -221,9 +229,14 @@ def test_nn1_fixture_is_structurally_complete():
     assert producer-computed values, only shape.
     """
     fixture = _load_fixture()
-    for key in ("freeze_disciplines", "phase_1_load_bearing_facets",
-                "validate_nn1_compliance_contract", "validate_search_space_nn1_contract",
-                "nn1_violation_scenarios", "dof_ledger_population"):
+    for key in (
+        "freeze_disciplines",
+        "phase_1_load_bearing_facets",
+        "validate_nn1_compliance_contract",
+        "validate_search_space_nn1_contract",
+        "nn1_violation_scenarios",
+        "dof_ledger_population",
+    ):
         assert key in fixture, f"fixture missing required key: {key!r}"
 
     honest_set = fixture["freeze_disciplines"]["honest_set"]
@@ -236,6 +249,7 @@ def test_nn1_fixture_is_structurally_complete():
 # ---------------------------------------------------------------------------
 # T2 — D1: Named constant exports exist in autotuner
 # ---------------------------------------------------------------------------
+
 
 def test_nn1_honest_disciplines_constant_exists_and_is_frozenset():
     """autotuner must expose NN1_HONEST_DISCIPLINES as a frozenset.
@@ -308,12 +322,14 @@ def test_backtest_selection_not_in_nn1_honest_disciplines():
 # T3 — D2 / T1 (plan): all-THEORY bundle passes validation
 # ---------------------------------------------------------------------------
 
+
 def test_validate_nn1_compliance_all_theory_bundle_returns_honest_and_empty_violations():
     """An all-THEORY bundle must return (True, []) — zero violations, autotuner proceeds.
 
     Fixture scenario: nn1_violation_scenarios.all_theory_bundle.
     """
     import database as _db
+
     at = _import_autotuner()
 
     assert hasattr(at, "validate_nn1_compliance"), (
@@ -323,17 +339,14 @@ def test_validate_nn1_compliance_all_theory_bundle_returns_honest_and_empty_viol
     _, bundle_id = _make_all_theory_bundle(_db)
     is_honest, violations = at.validate_nn1_compliance(bundle_id)
 
-    assert is_honest is True, (
-        f"All-THEORY bundle returned is_honest={is_honest!r}; expected True"
-    )
-    assert violations == [], (
-        f"All-THEORY bundle returned violations={violations!r}; expected []"
-    )
+    assert is_honest is True, f"All-THEORY bundle returned is_honest={is_honest!r}; expected True"
+    assert violations == [], f"All-THEORY bundle returned violations={violations!r}; expected []"
 
 
 # ---------------------------------------------------------------------------
 # T4 — D2 / T2 (plan): single BACKTEST_SELECTION facet trips violation
 # ---------------------------------------------------------------------------
+
 
 def test_validate_nn1_compliance_single_backtest_selection_facet_is_not_honest():
     """A bundle with even one BACKTEST_SELECTION facet must return (False, [...]).
@@ -342,6 +355,7 @@ def test_validate_nn1_compliance_single_backtest_selection_facet_is_not_honest()
     The violation message must name the offending facet.
     """
     import database as _db
+
     at = _import_autotuner()
 
     _, bundle_id = _make_single_backtest_selection_bundle(_db)
@@ -371,6 +385,7 @@ def test_validate_nn1_compliance_single_backtest_selection_facet_is_not_honest()
 # T5 — D2 / mixed bundle: partial honesty is a fail (one bad facet = whole bundle bad)
 # ---------------------------------------------------------------------------
 
+
 def test_validate_nn1_compliance_mixed_bundle_is_not_honest():
     """A bundle with mixed THEORY + BACKTEST_SELECTION facets must return is_honest=False.
 
@@ -378,6 +393,7 @@ def test_validate_nn1_compliance_mixed_bundle_is_not_honest():
     partial honesty is not honesty.
     """
     import database as _db
+
     at = _import_autotuner()
 
     _, bundle_id = _make_mixed_violation_bundle(_db)
@@ -396,6 +412,7 @@ def test_validate_nn1_compliance_mixed_bundle_is_not_honest():
 # T6 — D2 default-deny: unknown freeze_discipline is treated as a violation
 # ---------------------------------------------------------------------------
 
+
 def test_validate_nn1_compliance_unknown_discipline_is_treated_as_violation():
     """A facet with an unrecognised freeze_discipline must be treated as a violation.
 
@@ -404,6 +421,7 @@ def test_validate_nn1_compliance_unknown_discipline_is_treated_as_violation():
     must never silently allow a facet through as honest.
     """
     import database as _db
+
     at = _import_autotuner()
 
     # Build a bundle where one facet has a discipline value not in either honest or
@@ -417,6 +435,7 @@ def test_validate_nn1_compliance_unknown_discipline_is_treated_as_violation():
     _db.insert_spec_bundle(bundle_hash=bundle_hash, facets_json=canonical_json)
 
     import sqlite3
+
     conn = _db.get_connection()
     bundle_id = conn.execute(
         "SELECT id FROM spec_bundles WHERE bundle_hash = ?", (bundle_hash,)
@@ -446,6 +465,7 @@ def test_validate_nn1_compliance_unknown_discipline_is_treated_as_violation():
 # T7 — D2 / T3 (plan): OOS evidence_source trips stricter violation label
 # ---------------------------------------------------------------------------
 
+
 def test_validate_nn1_compliance_oos_evidence_source_is_stricter_violation():
     """A facet with evidence_source=OOS must be flagged as a stricter violation.
 
@@ -462,6 +482,7 @@ def test_validate_nn1_compliance_oos_evidence_source_is_stricter_violation():
     same message as a plain BACKTEST_SELECTION row.
     """
     import database as _db
+
     at = _import_autotuner()
 
     # Insert a DOF ledger row with evidence_source=OOS for a bundle that
@@ -499,6 +520,7 @@ def test_validate_nn1_compliance_oos_evidence_source_is_stricter_violation():
 # T8 — D5 / T4 (plan): validate_search_space_nn1 raises on forbidden key in search space
 # ---------------------------------------------------------------------------
 
+
 def test_validate_search_space_nn1_raises_when_gamma_added_to_search_space():
     """validate_search_space_nn1 must raise RuntimeError if 'gamma' is in OPTUNA_SEARCH_SPACE_KEYS.
 
@@ -521,9 +543,7 @@ def test_validate_search_space_nn1_raises_when_gamma_added_to_search_space():
         f"RuntimeError message {msg!r} does not contain 'NN1 VIOLATION'; "
         "the error must be clearly labelled so the developer sees the category of failure"
     )
-    assert "gamma" in msg, (
-        f"RuntimeError message {msg!r} does not name the offending key 'gamma'"
-    )
+    assert "gamma" in msg, f"RuntimeError message {msg!r} does not name the offending key 'gamma'"
 
 
 def test_validate_search_space_nn1_raises_for_each_known_forbidden_facet():
@@ -539,9 +559,12 @@ def test_validate_search_space_nn1_raises_for_each_known_forbidden_facet():
     for facet in forbidden:
         contaminated = at.OPTUNA_SEARCH_SPACE_KEYS | frozenset({facet})
         with patch.object(at, "OPTUNA_SEARCH_SPACE_KEYS", contaminated):
-            with pytest.raises(RuntimeError, match="NN1 VIOLATION"), (
-                # message is the test failure detail if it does NOT raise
-                __import__("contextlib").suppress()
+            with (
+                pytest.raises(RuntimeError, match="NN1 VIOLATION"),
+                (
+                    # message is the test failure detail if it does NOT raise
+                    __import__("contextlib").suppress()
+                ),
             ):
                 at.validate_search_space_nn1()
                 pytest.fail(
@@ -552,6 +575,7 @@ def test_validate_search_space_nn1_raises_for_each_known_forbidden_facet():
 # ---------------------------------------------------------------------------
 # T9 — D5 / T6 (plan): frozen facets are NOT in OPTUNA_SEARCH_SPACE_KEYS (static tripwire)
 # ---------------------------------------------------------------------------
+
 
 def test_gamma_and_phase1_theory_facets_are_not_in_optuna_search_space():
     """gamma, utility_family, wealth_argument must never appear in OPTUNA_SEARCH_SPACE_KEYS.
@@ -572,6 +596,7 @@ def test_gamma_and_phase1_theory_facets_are_not_in_optuna_search_space():
 # T10 — D2 wiring: BACKTEST_SELECTION violations are written to researcher_dof_ledger
 # ---------------------------------------------------------------------------
 
+
 def test_validate_nn1_compliance_writes_backtest_selection_to_dof_ledger():
     """BACKTEST_SELECTION facets detected by validate_nn1_compliance must be persisted.
 
@@ -580,6 +605,7 @@ def test_validate_nn1_compliance_writes_backtest_selection_to_dof_ledger():
     After the call, count_dof_backtest_selections(spec_bundle_id) must return > 0.
     """
     import database as _db
+
     at = _import_autotuner()
 
     bundle_hash, bundle_id = _make_single_backtest_selection_bundle(_db)
@@ -606,6 +632,7 @@ def test_validate_nn1_compliance_all_theory_bundle_writes_zero_dof_rows():
     S must stay zero — no contribution to N_effective from an honest bundle.
     """
     import database as _db
+
     at = _import_autotuner()
 
     bundle_hash, bundle_id = _make_all_theory_bundle(_db)
@@ -626,6 +653,7 @@ def test_validate_nn1_compliance_all_theory_bundle_writes_zero_dof_rows():
 # T11 — T5 (plan): immutability of frozen facets — no UPDATE path exists
 # ---------------------------------------------------------------------------
 
+
 def test_spec_facets_has_no_update_accessor_in_database():
     """database.py must not expose an update_spec_bundle_facet or equivalent function.
 
@@ -639,9 +667,10 @@ def test_spec_facets_has_no_update_accessor_in_database():
     # Any function whose name contains 'update' AND 'facet' would be a
     # write-guard violation. We check for the most likely naming patterns.
     suspicious = [
-        name for name in dir(_db)
-        if "facet" in name.lower() and
-        any(verb in name.lower() for verb in ("update", "modify", "set", "replace", "edit"))
+        name
+        for name in dir(_db)
+        if "facet" in name.lower()
+        and any(verb in name.lower() for verb in ("update", "modify", "set", "replace", "edit"))
     ]
     assert len(suspicious) == 0, (
         f"database.py exposes potential facet-update accessor(s): {suspicious}. "
@@ -654,6 +683,7 @@ def test_spec_facets_has_no_update_accessor_in_database():
 # T12 — run_autotuner signature must accept spec_bundle_id
 # ---------------------------------------------------------------------------
 
+
 def test_run_autotuner_accepts_spec_bundle_id_parameter():
     """run_autotuner must accept a spec_bundle_id keyword parameter.
 
@@ -662,6 +692,7 @@ def test_run_autotuner_accepts_spec_bundle_id_parameter():
     for an unexpected keyword argument means the parameter hasn't been added yet.
     """
     import inspect
+
     at = _import_autotuner()
 
     sig = inspect.signature(at.run_autotuner)
@@ -676,6 +707,7 @@ def test_run_autotuner_accepts_spec_bundle_id_parameter():
 # T13 — No pinned spec bundle causes run_autotuner to refuse to start
 # ---------------------------------------------------------------------------
 
+
 def test_run_autotuner_refuses_to_start_without_pinned_spec_bundle():
     """run_autotuner must raise when spec_bundle_id is None (Phase-1 strict).
 
@@ -683,6 +715,7 @@ def test_run_autotuner_refuses_to_start_without_pinned_spec_bundle():
     pinned spec bundle. A None bundle_id is a configuration error, not a silent fallback.
     """
     import inspect
+
     at = _import_autotuner()
 
     sig = inspect.signature(at.run_autotuner)
@@ -712,6 +745,7 @@ def test_run_autotuner_refuses_to_start_without_pinned_spec_bundle():
 # T14 — Hash mismatch causes run_autotuner to refuse to start
 # ---------------------------------------------------------------------------
 
+
 def test_run_autotuner_refuses_to_start_on_bundle_hash_mismatch():
     """run_autotuner must refuse to start when the bundle's facets_json hash doesn't
     match the stored bundle_hash.
@@ -721,6 +755,7 @@ def test_run_autotuner_refuses_to_start_on_bundle_hash_mismatch():
     """
     import inspect
     import database as _db
+
     at = _import_autotuner()
 
     sig = inspect.signature(at.run_autotuner)
@@ -763,6 +798,7 @@ def test_run_autotuner_refuses_to_start_on_bundle_hash_mismatch():
 # T15 — BACKTEST_SELECTION bundle causes run_autotuner hard-fail (load-bearing NN1)
 # ---------------------------------------------------------------------------
 
+
 def test_run_autotuner_refuses_to_start_when_bundle_contains_backtest_selection_facet():
     """run_autotuner must refuse to start when the pinned bundle has a BACKTEST_SELECTION facet.
 
@@ -775,6 +811,7 @@ def test_run_autotuner_refuses_to_start_when_bundle_contains_backtest_selection_
     """
     import inspect
     import database as _db
+
     at = _import_autotuner()
 
     sig = inspect.signature(at.run_autotuner)
@@ -807,6 +844,7 @@ def test_run_autotuner_refuses_to_start_when_bundle_contains_backtest_selection_
 # T16 — D5 wiring: validate_search_space_nn1 is called inside run_autotuner
 # ---------------------------------------------------------------------------
 
+
 def test_run_autotuner_calls_validate_search_space_nn1_before_create_study():
     """validate_search_space_nn1 must be invoked inside run_autotuner before
     optuna.create_study, so any leaked frozen facet is caught at runtime.
@@ -829,6 +867,7 @@ def test_run_autotuner_calls_validate_search_space_nn1_before_create_study():
     )
 
     import database as _db
+
     _, bundle_id = _make_all_theory_bundle(_db)
 
     call_log: list[str] = []
@@ -847,8 +886,14 @@ def test_run_autotuner_calls_validate_search_space_nn1_before_create_study():
     # Stub history: key "stub_sym" = normalize_name("stub_sym") = "stub_sym".
     # Two dates so total_days=2 passes the "Need at least 2 days" guard.
     # Tick shape matches the fields _collect_sim_returns reads.
-    _stub_tick = {"return": 0.0, "mc_prob": 50.0, "vol": 1.0,
-                  "vwap_diff": 0.0, "base_atr_pct": 1.0, "valid_vwap_weight": 1.0}
+    _stub_tick = {
+        "return": 0.0,
+        "mc_prob": 50.0,
+        "vol": 1.0,
+        "vwap_diff": 0.0,
+        "base_atr_pct": 1.0,
+        "valid_vwap_weight": 1.0,
+    }
     _stub_history = {
         "stub_sym": {
             "2026-01-02": _stub_tick,
@@ -862,26 +907,31 @@ def test_run_autotuner_calls_validate_search_space_nn1_before_create_study():
 
     import inspect
     from unittest.mock import MagicMock
+
     sig = inspect.signature(at.run_autotuner)
     call_kwargs = (
-        {"bot_state": _bot_state, "current_date_str": "2026-01-03",
-         "account_uuids": ["acc-1"], "spec_bundle_id": bundle_id}
+        {
+            "bot_state": _bot_state,
+            "current_date_str": "2026-01-03",
+            "account_uuids": ["acc-1"],
+            "spec_bundle_id": bundle_id,
+        }
         if "spec_bundle_id" in sig.parameters
-        else {"bot_state": _bot_state, "current_date_str": "2026-01-03",
-              "account_uuids": ["acc-1"]}
+        else {"bot_state": _bot_state, "current_date_str": "2026-01-03", "account_uuids": ["acc-1"]}
     )
 
     import optuna as _optuna
-    with patch.object(at.synthetic_history, "generate_synthetic_history",
-                      return_value=_stub_history):
+
+    with patch.object(
+        at.synthetic_history, "generate_synthetic_history", return_value=_stub_history
+    ):
         with patch.object(at, "validate_search_space_nn1", _recording_validate):
-            with patch.object(at.database, "get_symphony_strategy",
-                              return_value={"params": {}, "locked_vars": []}):
+            with patch.object(
+                at.database, "get_symphony_strategy", return_value={"params": {}, "locked_vars": []}
+            ):
                 with patch.object(at.database, "load_chart_history", return_value={}):
-                    with patch.object(_optuna.storages, "RDBStorage",
-                                      return_value=MagicMock()):
-                        with patch.object(_optuna, "create_study",
-                                          side_effect=_abort_create_study):
+                    with patch.object(_optuna.storages, "RDBStorage", return_value=MagicMock()):
+                        with patch.object(_optuna, "create_study", side_effect=_abort_create_study):
                             with pytest.raises(
                                 (StopIteration, RuntimeError, ValueError, TypeError)
                             ):
@@ -897,14 +947,14 @@ def test_run_autotuner_calls_validate_search_space_nn1_before_create_study():
         )
     else:
         assert "validate_search_space_nn1" in call_log, (
-            "validate_search_space_nn1 was never called during run_autotuner — "
-            "D5 wiring is missing"
+            "validate_search_space_nn1 was never called during run_autotuner — D5 wiring is missing"
         )
 
 
 # ---------------------------------------------------------------------------
 # T16 — D1: NN1 disclosure block exists alongside OPTUNA_SEARCH_SPACE_KEYS (static)
 # ---------------------------------------------------------------------------
+
 
 def test_nn1_disclosure_block_exists_in_autotuner_source():
     """The NN1 disclosure block (D4) must be present in autotuner.py near OPTUNA_SEARCH_SPACE_KEYS.
@@ -916,8 +966,7 @@ def test_nn1_disclosure_block_exists_in_autotuner_source():
     src = _AUTOTUNER_SRC.read_text(encoding="utf-8")
 
     assert "NN1" in src, (
-        "autotuner.py source does not contain 'NN1' — "
-        "the NN1 disclosure block (D4) is missing"
+        "autotuner.py source does not contain 'NN1' — the NN1 disclosure block (D4) is missing"
     )
     assert "OPTUNA_SEARCH_SPACE_KEYS" in src, (
         "autotuner.py source does not contain 'OPTUNA_SEARCH_SPACE_KEYS' — "
@@ -927,11 +976,9 @@ def test_nn1_disclosure_block_exists_in_autotuner_source():
     # The disclosure must appear near OPTUNA_SEARCH_SPACE_KEYS.
     # We find the line range and assert the disclosure is within 50 lines.
     lines = src.splitlines()
-    ss_line = next(
-        (i for i, l in enumerate(lines) if "OPTUNA_SEARCH_SPACE_KEYS" in l), None
-    )
+    ss_line = next((i for i, l in enumerate(lines) if "OPTUNA_SEARCH_SPACE_KEYS" in l), None)
     assert ss_line is not None
-    window = "\n".join(lines[max(0, ss_line - 10): ss_line + 50])
+    window = "\n".join(lines[max(0, ss_line - 10) : ss_line + 50])
     assert "NN1" in window, (
         "NN1 disclosure block is not found within 50 lines of OPTUNA_SEARCH_SPACE_KEYS — "
         "the disclosure must appear immediately adjacent to the search space definition (D4)"
@@ -945,6 +992,7 @@ def test_nn1_disclosure_block_exists_in_autotuner_source():
 #        raises ValueError for any unrecognised value — the implementer must extend
 #        database._VALID_FREEZE_DISCIPLINES to match the full D1 enum set)
 # ---------------------------------------------------------------------------
+
 
 def test_database_valid_freeze_disciplines_includes_politis_white_and_cadence():
     """database._VALID_FREEZE_DISCIPLINES must include POLITIS_WHITE and CADENCE.
@@ -1118,6 +1166,7 @@ def test_dof_ledger_read_path_uses_bundle_hash_not_str_int_id():
     test makes that invisible failure visible by asserting a positive detection.
     """
     import database as _db
+
     at = _import_autotuner()
 
     bundle_hash, bundle_id = _make_single_backtest_selection_bundle(_db)
@@ -1193,6 +1242,7 @@ def test_count_dof_backtest_selections_returns_positive_when_queried_by_bundle_h
     by str returns > 0, triggering the consistency assertion).
     """
     import database as _db
+
     at = _import_autotuner()
 
     bundle_hash, bundle_id = _make_single_backtest_selection_bundle(_db)

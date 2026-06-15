@@ -124,17 +124,35 @@ _KNOWN_CHART_ARCHIVE_ROWS = []
 for _i in range(28):
     _date = f"2026-04-{_i + 1:02d}"
     for _sym in ("sym_alpha", "sym_beta"):
-        _KNOWN_CHART_ARCHIVE_ROWS.append((
-            _date, _sym,
-            json.dumps({"live_ret": round((_i + 1) * 0.001, 4), "f_ret": round((_i + 1) * 0.0012, 4), "weight": 1.0})
-        ))
+        _KNOWN_CHART_ARCHIVE_ROWS.append(
+            (
+                _date,
+                _sym,
+                json.dumps(
+                    {
+                        "live_ret": round((_i + 1) * 0.001, 4),
+                        "f_ret": round((_i + 1) * 0.0012, 4),
+                        "weight": 1.0,
+                    }
+                ),
+            )
+        )
 for _i in range(7):
     _date = f"2026-05-{_i + 1:02d}"
     for _sym in ("sym_alpha", "sym_beta"):
-        _KNOWN_CHART_ARCHIVE_ROWS.append((
-            _date, _sym,
-            json.dumps({"live_ret": round((_i + 29) * 0.001, 4), "f_ret": round((_i + 29) * 0.0012, 4), "weight": 1.0})
-        ))
+        _KNOWN_CHART_ARCHIVE_ROWS.append(
+            (
+                _date,
+                _sym,
+                json.dumps(
+                    {
+                        "live_ret": round((_i + 29) * 0.001, 4),
+                        "f_ret": round((_i + 29) * 0.0012, 4),
+                        "weight": 1.0,
+                    }
+                ),
+            )
+        )
 
 
 @pytest.fixture
@@ -189,16 +207,18 @@ def minimal_state_db(tmp_path):
             "INSERT INTO strategies VALUES (?, ?, ?)",
             (
                 sym_id,
-                json.dumps({
-                    "TRIGGER_THRESHOLD_PCT": 15.0,
-                    "TAKE_PROFIT_MC_PCT": 5.0,
-                    "MAX_SQUEEZE_FLOOR": 0.20,
-                    "VWAP_CROSS_HWM_PCT": 1.0,
-                    "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
-                    "MAX_PARABOLIC_SQUEEZE": 0.50,
-                    "VWAP_BLEED_MULTIPLIER": 1.5,
-                    "VWAP_BLEED_TICKS": 10,
-                }),
+                json.dumps(
+                    {
+                        "TRIGGER_THRESHOLD_PCT": 15.0,
+                        "TAKE_PROFIT_MC_PCT": 5.0,
+                        "MAX_SQUEEZE_FLOOR": 0.20,
+                        "VWAP_CROSS_HWM_PCT": 1.0,
+                        "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+                        "MAX_PARABOLIC_SQUEEZE": 0.50,
+                        "VWAP_BLEED_MULTIPLIER": 1.5,
+                        "VWAP_BLEED_TICKS": 10,
+                    }
+                ),
                 json.dumps(["TRIGGER_THRESHOLD_PCT"]),
             ),
         )
@@ -218,5 +238,6 @@ def db_patched_to_minimal(minimal_state_db, monkeypatch):
     monkeypatch.setenv("DB_PATH", minimal_state_db)
     # Also patch the module-level DB_FILE so existing open connections redirect
     import database as db_module
+
     monkeypatch.setattr(db_module, "DB_FILE", minimal_state_db)
     return minimal_state_db

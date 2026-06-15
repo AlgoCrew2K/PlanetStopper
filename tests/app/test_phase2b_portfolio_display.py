@@ -118,9 +118,7 @@ def test_hero_vol_row_shows_bot_vol_when_provided():
         r'data-testid="comp-vol-bot-text"[^>]*>(.*?)<',
         html,
     )
-    assert vol_bot_match is not None, (
-        "comp-vol-bot-text element must be present in rendered HTML"
-    )
+    assert vol_bot_match is not None, "comp-vol-bot-text element must be present in rendered HTML"
     text = vol_bot_match.group(1).strip()
     # When wired: text should contain a '%' digit (e.g. '3.1%' or 'Bot 3.1%').
     # The stub shows '—' (em-dash as HTML entity or unicode); wired shows a percent value.
@@ -153,9 +151,7 @@ def test_hero_vol_row_shows_held_vol_when_provided():
         r'data-testid="comp-vol-held-text"[^>]*>(.*?)<',
         html,
     )
-    assert vol_held_match is not None, (
-        "comp-vol-held-text element must be present in rendered HTML"
-    )
+    assert vol_held_match is not None, "comp-vol-held-text element must be present in rendered HTML"
     text = vol_held_match.group(1).strip()
     assert "%" in text, (
         f"comp-vol-held-text='{text}' must contain a formatted percent value when "
@@ -227,9 +223,7 @@ def test_hero_vol_delta_is_positive_when_bot_calmer():
         r'data-testid="comp-vol-delta"[^>]*>(.*?)<',
         html,
     )
-    assert delta_match is not None, (
-        "comp-vol-delta element must be present in rendered HTML"
-    )
+    assert delta_match is not None, "comp-vol-delta element must be present in rendered HTML"
     delta_text = delta_match.group(1).strip()
     # When wired: delta should contain a digit (the formatted improvement value).
     has_digit = any(c.isdigit() for c in delta_text)
@@ -314,14 +308,11 @@ def test_index_js_open_detail_panel_fetches_performance_api():
 
     # The fetch must reference /api/performance with scope=symphony.
     # We accept any reasonable variant of the query string construction.
-    has_perf_fetch = (
-        "api/performance" in content
-        and (
-            "scope=symphony" in content
-            or "scope='symphony'" in content
-            or 'scope="symphony"' in content
-            or "scope%3Dsymphony" in content  # URL-encoded variant
-        )
+    has_perf_fetch = "api/performance" in content and (
+        "scope=symphony" in content
+        or "scope='symphony'" in content
+        or 'scope="symphony"' in content
+        or "scope%3Dsymphony" in content  # URL-encoded variant
     )
     assert has_perf_fetch, (
         "index.js openDetailPanel() must fetch /api/performance?scope=symphony&symphony_id=... "
@@ -346,12 +337,8 @@ def test_index_js_detail_panel_populates_risk_profile_element():
     js_path = PROJECT_ROOT / "static" / "index.js"
     content = js_path.read_text(encoding="utf-8")
 
-    has_populate = (
-        "detail-risk-profile" in content
-        and (
-            "innerHTML" in content
-            or "textContent" in content
-        )
+    has_populate = "detail-risk-profile" in content and (
+        "innerHTML" in content or "textContent" in content
     )
     assert has_populate, (
         "index.js must populate #detail-risk-profile element with innerHTML "
@@ -425,9 +412,7 @@ def test_index_js_risk_profile_renders_volatility_row():
 
     # 'volatility' must appear in the risk profile rendering block.
     has_volatility = (
-        "volatility" in fn_body
-        or "ann. vol" in fn_body.lower()
-        or "ann.vol" in fn_body.lower()
+        "volatility" in fn_body or "ann. vol" in fn_body.lower() or "ann.vol" in fn_body.lower()
     )
     assert has_volatility, (
         "openDetailPanel() risk profile section must render Ann. volatility. "
@@ -527,11 +512,11 @@ def test_api_performance_response_includes_volatility_in_live_and_shadow_metrics
                         "list_available_symphonies",
                         return_value=["sym-A"],
                     ):
-                        resp = client.get("/api/performance?scope=symphony&symphony_id=sym-A&days=60")
+                        resp = client.get(
+                            "/api/performance?scope=symphony&symphony_id=sym-A&days=60"
+                        )
 
-    assert resp.status_code == 200, (
-        f"/api/performance must return 200; got {resp.status_code}"
-    )
+    assert resp.status_code == 200, f"/api/performance must return 200; got {resp.status_code}"
     data = resp.get_json()
     assert data is not None, "/api/performance must return JSON"
 
@@ -599,7 +584,9 @@ def test_api_performance_volatility_value_is_fraction_scale_not_percent():
                         "list_available_symphonies",
                         return_value=["sym-A"],
                     ):
-                        resp = client.get("/api/performance?scope=symphony&symphony_id=sym-A&days=60")
+                        resp = client.get(
+                            "/api/performance?scope=symphony&symphony_id=sym-A&days=60"
+                        )
 
     data = resp.get_json()
     shadow_vol = (data.get("shadow_metrics") or {}).get("volatility")

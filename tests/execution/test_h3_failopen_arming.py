@@ -74,9 +74,7 @@ import math_engine
 
 _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
 _EXEC_FILE = _WORKTREE_ROOT / "alpha_bot_execution.py"
-_FIXTURE_DIR = (
-    _WORKTREE_ROOT / "tests" / "fixtures" / "math_engine" / "arming_gate_failopen"
-)
+_FIXTURE_DIR = _WORKTREE_ROOT / "tests" / "fixtures" / "math_engine" / "arming_gate_failopen"
 
 # ---------------------------------------------------------------------------
 # Fixture loading helpers
@@ -96,6 +94,7 @@ def _load_fixture(name: str) -> dict:
 # AST helpers for inspecting the arming gate
 # ---------------------------------------------------------------------------
 
+
 def _parse_exec_module() -> ast.Module:
     source = _EXEC_FILE.read_text(encoding="utf-8")
     return ast.parse(source)
@@ -114,9 +113,7 @@ def _find_arming_gate_block(tree: ast.Module) -> ast.If:
         for sub in ast.walk(node):
             if isinstance(sub, ast.If):
                 # Collect all Name nodes in the test
-                names_in_test = {
-                    n.id for n in ast.walk(sub.test) if isinstance(n, ast.Name)
-                }
+                names_in_test = {n.id for n in ast.walk(sub.test) if isinstance(n, ast.Name)}
                 if "should_arm" in names_in_test:
                     candidates.append(sub)
     assert len(candidates) >= 1, (
@@ -333,8 +330,7 @@ def test_mc_present_disarm_branch_still_requires_mc_available() -> None:
         test = node.test
         # Check test contains mc_available positively
         has_mc_available = any(
-            isinstance(sub, ast.Name) and sub.id == "mc_available"
-            for sub in ast.walk(test)
+            isinstance(sub, ast.Name) and sub.id == "mc_available" for sub in ast.walk(test)
         )
         if not has_mc_available:
             continue
@@ -439,8 +435,14 @@ def test_exit_confirmation_mc_absent_return_above_stop_does_not_fire() -> None:
 @pytest.mark.parametrize(
     "fixture_name,tick_idx",
     [
-        ("09_mc_absent_mc_sanity_irrelevant_magnitude_gates.json", 0),  # at stop, not below threshold
-        ("09_mc_absent_mc_sanity_irrelevant_magnitude_gates.json", 1),  # exactly at threshold boundary
+        (
+            "09_mc_absent_mc_sanity_irrelevant_magnitude_gates.json",
+            0,
+        ),  # at stop, not below threshold
+        (
+            "09_mc_absent_mc_sanity_irrelevant_magnitude_gates.json",
+            1,
+        ),  # exactly at threshold boundary
     ],
 )
 def test_exit_confirmation_mc_absent_magnitude_floor_boundary(
@@ -475,9 +477,7 @@ def test_exit_confirmation_mc_absent_magnitude_floor_boundary(
         f"new_below_stop_count expected {expected['new_below_stop_count']}, got {new_count}. "
         f"Derivation: {step['derivation']}"
     )
-    assert hit is False, (
-        f"Tick {tick_idx}: hit must be False at boundary counts. Got {hit}."
-    )
+    assert hit is False, f"Tick {tick_idx}: hit must be False at boundary counts. Got {hit}."
 
 
 # ===========================================================================
@@ -538,7 +538,7 @@ def test_transient_mc_gap_single_tick_does_not_fire() -> None:
         (10.0, 2, 0, False),
         (59.9, 2, 0, False),  # just under MC_BREAKDOWN_THRESHOLD -> veto -> reset
         # HIGH underperformance (>= 60.0) -> confirmed breakdown -> stop fires.
-        (60.0, 2, 3, True),   # at threshold (>= is inclusive) -> count increments, hits at 3
+        (60.0, 2, 3, True),  # at threshold (>= is inclusive) -> count increments, hits at 3
         (75.0, 2, 3, True),
         (99.9, 2, 3, True),
     ],
@@ -617,9 +617,7 @@ def test_not_armed_guard_intact_with_mc_absent(
         f"Guard broken: armed=False + MC absent must preserve count. "
         f"Expected {current_below_stop_count}, got {new_count}."
     )
-    assert hit is False, (
-        f"Guard broken: armed=False + MC absent must return hit=False. Got {hit}."
-    )
+    assert hit is False, f"Guard broken: armed=False + MC absent must return hit=False. Got {hit}."
 
 
 # ===========================================================================
@@ -631,10 +629,10 @@ def test_not_armed_guard_intact_with_mc_absent(
 @pytest.mark.parametrize(
     "current_return,stop_trigger_level",
     [
-        (0.0, -1.0),    # well above stop
-        (-0.5, -1.0),   # above threshold -1.10
+        (0.0, -1.0),  # well above stop
+        (-0.5, -1.0),  # above threshold -1.10
         (-1.09, -1.0),  # just above threshold boundary (strict: -1.09 > -1.10)
-        (5.0, 0.0),     # positive return
+        (5.0, 0.0),  # positive return
     ],
 )
 def test_exit_confirmation_mc_absent_no_magnitude_no_increment(
@@ -663,9 +661,7 @@ def test_exit_confirmation_mc_absent_no_magnitude_no_increment(
         f"current_return={current_return}, stop={stop_trigger_level}, "
         f"threshold={stop_trigger_level - MAGNITUDE_FLOOR_PCT:.4f}. Got count={new_count}."
     )
-    assert hit is False, (
-        f"MC absent, return not below stop: must not fire. Got hit={hit}."
-    )
+    assert hit is False, f"MC absent, return not below stop: must not fire. Got hit={hit}."
 
 
 # ===========================================================================
@@ -694,15 +690,10 @@ def test_arming_gate_is_in_alpha_bot_execution_not_math_engine() -> None:
     # Find compute_exit_confirmation
     target: ast.FunctionDef | None = None
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.FunctionDef)
-            and node.name == "compute_exit_confirmation"
-        ):
+        if isinstance(node, ast.FunctionDef) and node.name == "compute_exit_confirmation":
             target = node
             break
-    assert target is not None, (
-        "compute_exit_confirmation not found in math_engine.py"
-    )
+    assert target is not None, "compute_exit_confirmation not found in math_engine.py"
 
     # Within compute_exit_confirmation, look for any assignment to 'armed' or
     # any reference to 'should_arm' — these are arming-gate identifiers and

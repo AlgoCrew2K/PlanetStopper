@@ -69,16 +69,19 @@ class TestIsAlphabotProcessAlive:
 
     def test_returns_false_on_no_such_process(self):
         import psutil
+
         with patch("app.psutil.Process", side_effect=psutil.NoSuchProcess(99999)):
             assert app_module._is_alphabot_process_alive(99999) is False
 
     def test_returns_false_on_access_denied(self):
         import psutil
+
         with patch("app.psutil.Process", side_effect=psutil.AccessDenied(99999)):
             assert app_module._is_alphabot_process_alive(99999) is False
 
     def test_returns_false_on_zombie_process(self):
         import psutil
+
         with patch("app.psutil.Process", side_effect=psutil.ZombieProcess(99999)):
             assert app_module._is_alphabot_process_alive(99999) is False
 
@@ -182,9 +185,7 @@ class TestAcquireDaemonSingleton:
 
     # --- 3. Stale pidfile takeover ---
 
-    def test_takes_over_stale_pidfile_and_overwrites_with_our_pid(
-        self, tmp_path, monkeypatch
-    ):
+    def test_takes_over_stale_pidfile_and_overwrites_with_our_pid(self, tmp_path, monkeypatch):
         """
         When the pidfile contains a dead PID, startup must overwrite it with
         our own PID and continue (no SystemExit).
@@ -270,9 +271,7 @@ class TestAcquireDaemonSingleton:
         for fn, args, kwargs in registered_handlers:
             fn(*args, **kwargs)
 
-        assert os.path.exists(pidfile), (
-            "must not remove pidfile that belongs to a different daemon"
-        )
+        assert os.path.exists(pidfile), "must not remove pidfile that belongs to a different daemon"
         assert _read_pid(pidfile) == 9999
 
     # --- Edge: no pidfile initially, normal flow ---

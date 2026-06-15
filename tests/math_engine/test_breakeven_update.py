@@ -116,12 +116,7 @@ import pytest
 
 import math_engine
 
-FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "breakeven_update"
-)
+FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "breakeven_update"
 
 # --- Tolerance --------------------------------------------------------------
 
@@ -174,8 +169,7 @@ def test_breakeven_update_matches_derived_expected(
     """
     func_name = fixture["function"]
     assert func_name == "compute_breakeven_update", (
-        f"{fixture_name}: only compute_breakeven_update is in scope for "
-        f"this cycle"
+        f"{fixture_name}: only compute_breakeven_update is in scope for this cycle"
     )
 
     inputs = fixture["inputs"]
@@ -227,14 +221,14 @@ def test_breakeven_update_matches_derived_expected(
 @pytest.mark.parametrize(
     "current_return,symphony_vol,base_stop_level,current_hold_ticks,is_triggered",
     [
-        (-10.0, 0.1, -5.0, 0, False),     # vol below MIN, return crashed, ticks zero
-        (-10.0, 5.0, -5.0, 0, False),     # vol above MAX
-        (0.0, 1.0, 0.0, 0, False),         # zero everything
-        (5.0, 2.0, 1.0, 100, False),       # high return, high ticks
-        (-1.0, 0.4, -2.0, 4, True),        # triggered=True still latches lock
-        (1.5, 3.0, -0.5, 0, True),         # triggered with reset
-        (-100.0, 1.0, -50.0, 0, False),    # deep negative return
-        (100.0, 1.0, 0.5, 0, False),       # large positive return
+        (-10.0, 0.1, -5.0, 0, False),  # vol below MIN, return crashed, ticks zero
+        (-10.0, 5.0, -5.0, 0, False),  # vol above MAX
+        (0.0, 1.0, 0.0, 0, False),  # zero everything
+        (5.0, 2.0, 1.0, 100, False),  # high return, high ticks
+        (-1.0, 0.4, -2.0, 4, True),  # triggered=True still latches lock
+        (1.5, 3.0, -0.5, 0, True),  # triggered with reset
+        (-100.0, 1.0, -50.0, 0, False),  # deep negative return
+        (100.0, 1.0, 0.5, 0, False),  # large positive return
     ],
 )
 def test_latching_invariant_locked_stays_locked(
@@ -351,13 +345,13 @@ def test_ticks_reset_fully_to_zero_when_return_disqualifies(
 @pytest.mark.parametrize(
     "current_return,symphony_vol,base_stop_level,current_hold_ticks,currently_locked",
     [
-        (0.0, 1.0, 0.0, 0, False),         # baseline
-        (5.0, 1.0, 100.0, 10, True),       # large positive base, locked
-        (-5.0, 1.0, -100.0, 0, False),     # large negative base
-        (1.0, 0.1, -0.5, 4, False),        # vol below MIN clamp
-        (1.0, 5.0, 0.25, 4, True),         # vol above MAX clamp + locked
-        (-1.0, 2.0, 50.0, 0, True),        # locked, large positive base
-        (0.0, 1.0, 0.0, 0, True),          # locked, zero base
+        (0.0, 1.0, 0.0, 0, False),  # baseline
+        (5.0, 1.0, 100.0, 10, True),  # large positive base, locked
+        (-5.0, 1.0, -100.0, 0, False),  # large negative base
+        (1.0, 0.1, -0.5, 4, False),  # vol below MIN clamp
+        (1.0, 5.0, 0.25, 4, True),  # vol above MAX clamp + locked
+        (-1.0, 2.0, 50.0, 0, True),  # locked, large positive base
+        (0.0, 1.0, 0.0, 0, True),  # locked, zero base
     ],
 )
 def test_triggered_override_is_absolute(
@@ -424,9 +418,7 @@ def test_return_type_contract_int_bool_float() -> None:
         currently_breakeven_locked=False,
         is_triggered=False,
     )
-    assert isinstance(result, tuple) and len(result) == 3, (
-        f"Expected 3-tuple, got {result!r}"
-    )
+    assert isinstance(result, tuple) and len(result) == 3, f"Expected 3-tuple, got {result!r}"
     new_hold_ticks, new_breakeven_locked, stop_trigger_level = result
 
     assert type(new_hold_ticks) is int, (
@@ -532,8 +524,7 @@ def test_hwm_hold_ticks_threshold_is_module_level_named_constant() -> None:
         "constant."
     )
     assert math_engine.HWM_HOLD_TICKS_THRESHOLD == 5, (
-        f"HWM_HOLD_TICKS_THRESHOLD should be 5, got "
-        f"{math_engine.HWM_HOLD_TICKS_THRESHOLD}"
+        f"HWM_HOLD_TICKS_THRESHOLD should be 5, got {math_engine.HWM_HOLD_TICKS_THRESHOLD}"
     )
 
 
@@ -548,8 +539,7 @@ def test_triggered_override_level_is_module_level_named_constant() -> None:
         "positions must be a named module-level constant."
     )
     assert math_engine.TRIGGERED_OVERRIDE_LEVEL == -999.0, (
-        f"TRIGGERED_OVERRIDE_LEVEL should be -999.0, got "
-        f"{math_engine.TRIGGERED_OVERRIDE_LEVEL}"
+        f"TRIGGERED_OVERRIDE_LEVEL should be -999.0, got {math_engine.TRIGGERED_OVERRIDE_LEVEL}"
     )
 
 
@@ -591,17 +581,14 @@ def test_no_unnamed_magic_numbers_in_breakeven_update_path() -> None:
     # 0.0 is a semantic anchor: "stop can't be worse than zero loss" --
     # explicitly whitelisted for this function only).
     STRUCTURAL = {
-        0,    # universal zero AND breakeven floor 0.0 (same hash key)
-        1,    # increment +1 in `ticks + 1` (universal one)
-        -1,   # unlikely but harmless
+        0,  # universal zero AND breakeven floor 0.0 (same hash key)
+        1,  # increment +1 in `ticks + 1` (universal one)
+        -1,  # unlikely but harmless
     }
 
     target: ast.FunctionDef | None = None
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.FunctionDef)
-            and node.name == "compute_breakeven_update"
-        ):
+        if isinstance(node, ast.FunctionDef) and node.name == "compute_breakeven_update":
             target = node
             break
     assert target is not None, (
@@ -673,15 +660,11 @@ def test_domain_constants_are_named_not_bare_literals_in_function_body() -> None
 
     target: ast.FunctionDef | None = None
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.FunctionDef)
-            and node.name == "compute_breakeven_update"
-        ):
+        if isinstance(node, ast.FunctionDef) and node.name == "compute_breakeven_update":
             target = node
             break
     assert target is not None, (
-        "compute_breakeven_update not found in math_engine.py "
-        "(expected RED state)"
+        "compute_breakeven_update not found in math_engine.py (expected RED state)"
     )
 
     # Domain values that MUST come from named constants, never bare.

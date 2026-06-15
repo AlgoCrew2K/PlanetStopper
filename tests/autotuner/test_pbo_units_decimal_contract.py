@@ -36,6 +36,7 @@ constant; the floor-collapse assertions are inequalities, not exact floats.
 
 Fixture: tests/fixtures/math/pbo_units_decimal_contract.json
 """
+
 from __future__ import annotations
 
 import json
@@ -46,9 +47,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 _WORKTREE_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_FIXTURE_PATH = (
-    _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "pbo_units_decimal_contract.json"
-)
+_FIXTURE_PATH = _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "pbo_units_decimal_contract.json"
 
 
 @pytest.fixture(scope="module")
@@ -117,9 +116,7 @@ class TestDecimalUnitsDoNotFloor:
         u_decimal = math_engine.compute_crra_eu_objective(decimal_series, gamma)
         u_raw = math_engine.compute_crra_eu_objective(raw_series, gamma)
 
-        assert math.isfinite(u_decimal), (
-            f"Decimal-unit mean(U) must be finite; got {u_decimal!r}."
-        )
+        assert math.isfinite(u_decimal), f"Decimal-unit mean(U) must be finite; got {u_decimal!r}."
         assert u_decimal > sc["decimal_utility_lower_bound_exclusive"], (
             f"Decimal-unit mean(U)={u_decimal!r} must be > "
             f"{sc['decimal_utility_lower_bound_exclusive']} (no WEALTH_ARG_FLOOR "
@@ -184,9 +181,12 @@ class TestCscvDateReturnsStoredInDecimalUnits:
         mock_study = MagicMock()
         mock_study.best_value = -0.1
         mock_study.best_params = {
-            "TAKE_PROFIT_MC_PCT": 0.5, "VWAP_CROSS_HWM_PCT": 0.5,
-            "VWAP_BLEED_MULTIPLIER": 0.5, "VWAP_BLEED_TICKS": 2,
-            "PARABOLIC_VELOCITY_THRESHOLD": 0.5, "MAX_PARABOLIC_SQUEEZE": 0.5,
+            "TAKE_PROFIT_MC_PCT": 0.5,
+            "VWAP_CROSS_HWM_PCT": 0.5,
+            "VWAP_BLEED_MULTIPLIER": 0.5,
+            "VWAP_BLEED_TICKS": 2,
+            "PARABOLIC_VELOCITY_THRESHOLD": 0.5,
+            "MAX_PARABOLIC_SQUEEZE": 0.5,
         }
         mock_study.trials = []
 
@@ -197,32 +197,39 @@ class TestCscvDateReturnsStoredInDecimalUnits:
 
         fake_sym_id = "acc123__sym456"
         fake_bot_state = {fake_sym_id: {"name": "TestSymphony", "is_live": False}}
-        fake_strat_data = {"locked_vars": [], "params": {
-            "TAKE_PROFIT_MC_PCT": 0.5, "VWAP_CROSS_HWM_PCT": 0.5,
-            "VWAP_BLEED_MULTIPLIER": 0.5, "VWAP_BLEED_TICKS": 2,
-            "PARABOLIC_VELOCITY_THRESHOLD": 0.5, "MAX_PARABOLIC_SQUEEZE": 0.5,
-        }}
+        fake_strat_data = {
+            "locked_vars": [],
+            "params": {
+                "TAKE_PROFIT_MC_PCT": 0.5,
+                "VWAP_CROSS_HWM_PCT": 0.5,
+                "VWAP_BLEED_MULTIPLIER": 0.5,
+                "VWAP_BLEED_TICKS": 2,
+                "PARABOLIC_VELOCITY_THRESHOLD": 0.5,
+                "MAX_PARABOLIC_SQUEEZE": 0.5,
+            },
+        }
         # >= 60 dates so the CPCV machinery produces non-empty folds.
         fake_history = {
             fake_sym_id: {
-                f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}": [{"return": 0.5}]
-                for i in range(90)
+                f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}": [{"return": 0.5}] for i in range(90)
             }
         }
 
-        with patch("autotuner.database") as mock_db, \
-             patch("autotuner._collect_sim_returns", return_value=flat_returns_pct), \
-             patch("autotuner._collect_sim_returns_dated", return_value=dated_returns_pct), \
-             patch("autotuner.compute_sortino_ratio", return_value=1.0), \
-             patch("autotuner.optuna") as mock_optuna, \
-             patch("autotuner._apply_optuna_archive_migration_if_needed"), \
-             patch("autotuner.validate_nn1_compliance", return_value=(True, [])), \
-             patch("autotuner.validate_search_space_nn1"), \
-             patch("autotuner.calculate_historical_deviation", return_value={}), \
-             patch("autotuner.synthetic_history.generate_synthetic_history",
-                   return_value=fake_history), \
-             patch("autotuner.synthetic_history.HistoryShortfallError", Exception):
-
+        with (
+            patch("autotuner.database") as mock_db,
+            patch("autotuner._collect_sim_returns", return_value=flat_returns_pct),
+            patch("autotuner._collect_sim_returns_dated", return_value=dated_returns_pct),
+            patch("autotuner.compute_sortino_ratio", return_value=1.0),
+            patch("autotuner.optuna") as mock_optuna,
+            patch("autotuner._apply_optuna_archive_migration_if_needed"),
+            patch("autotuner.validate_nn1_compliance", return_value=(True, [])),
+            patch("autotuner.validate_search_space_nn1"),
+            patch("autotuner.calculate_historical_deviation", return_value={}),
+            patch(
+                "autotuner.synthetic_history.generate_synthetic_history", return_value=fake_history
+            ),
+            patch("autotuner.synthetic_history.HistoryShortfallError", Exception),
+        ):
             mock_db.get_spec_bundle_by_id.return_value = {
                 "bundle_hash": "fakehash123",
                 "frozen_at": "2026-05-26T00:00:00Z",
@@ -238,9 +245,12 @@ class TestCscvDateReturnsStoredInDecimalUnits:
             mock_db.save_autotune_run.return_value = 1
             mock_db.PHASE1_THEORY_GAMMA = "2.0"
             mock_db.DEFAULT_STRATEGY = {
-                "TAKE_PROFIT_MC_PCT": 0.5, "VWAP_CROSS_HWM_PCT": 0.5,
-                "VWAP_BLEED_MULTIPLIER": 0.5, "VWAP_BLEED_TICKS": 2,
-                "PARABOLIC_VELOCITY_THRESHOLD": 0.5, "MAX_PARABOLIC_SQUEEZE": 0.5,
+                "TAKE_PROFIT_MC_PCT": 0.5,
+                "VWAP_CROSS_HWM_PCT": 0.5,
+                "VWAP_BLEED_MULTIPLIER": 0.5,
+                "VWAP_BLEED_TICKS": 2,
+                "PARABOLIC_VELOCITY_THRESHOLD": 0.5,
+                "MAX_PARABOLIC_SQUEEZE": 0.5,
             }
 
             mock_optuna.create_study.return_value = mock_study
@@ -251,8 +261,11 @@ class TestCscvDateReturnsStoredInDecimalUnits:
             mock_optuna.pruners.NopPruner.return_value = MagicMock()
 
             autotuner.run_autotuner(
-                fake_bot_state, "2026-05-26", ["acc123"],
-                is_forced=True, spec_bundle_id=1,
+                fake_bot_state,
+                "2026-05-26",
+                ["acc123"],
+                is_forced=True,
+                spec_bundle_id=1,
             )
 
         return captured
@@ -267,9 +280,9 @@ class TestCscvDateReturnsStoredInDecimalUnits:
         """
         import autotuner
 
-        raw_minus_one = units_fixture["scenarios"][
-            "sub_one_percent_day_raw_vs_decimal"
-        ]["raw_percent_minus_one_percent"]
+        raw_minus_one = units_fixture["scenarios"]["sub_one_percent_day_raw_vs_decimal"][
+            "raw_percent_minus_one_percent"
+        ]
         the_date = "2026-01-05"
         dated_returns_pct = [(the_date, raw_minus_one)]
 
@@ -308,14 +321,12 @@ class TestCscvDateReturnsStoredInDecimalUnits:
         import autotuner
         import math_engine
 
-        raw_minus_one = units_fixture["scenarios"][
-            "sub_one_percent_day_raw_vs_decimal"
-        ]["raw_percent_minus_one_percent"]
+        raw_minus_one = units_fixture["scenarios"]["sub_one_percent_day_raw_vs_decimal"][
+            "raw_percent_minus_one_percent"
+        ]
         the_date = "2026-01-05"
 
-        captured = self._run_objective_once_and_capture_user_attrs(
-            [(the_date, raw_minus_one)]
-        )
+        captured = self._run_objective_once_and_capture_user_attrs([(the_date, raw_minus_one)])
         stored = captured["cscv_date_returns"]
         u_stored = math_engine.compute_crra_eu_objective([stored[the_date]], 2.0)
 

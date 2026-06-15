@@ -93,6 +93,7 @@ import math_engine
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _normalize(text: str) -> str:
     """Collapse whitespace so the canonical formula can be matched across
     line wraps in the docstring. We don't care about exact whitespace; we
@@ -118,6 +119,7 @@ def _dataclass_doc() -> str:
 # T1 — floor(alpha*N) substring in function docstring
 # ---------------------------------------------------------------------------
 
+
 def test_function_docstring_contains_floor_alpha_n_substring():
     """The function docstring must contain `floor(alpha*N)` (whitespace-
     insensitive). This is the FIRST term of the canonical formula; it must
@@ -137,6 +139,7 @@ def test_function_docstring_contains_floor_alpha_n_substring():
 # T2 — fractional_weight token in function docstring
 # ---------------------------------------------------------------------------
 
+
 def test_function_docstring_contains_fractional_weight_token():
     """The function docstring must mention `fractional_weight` — the atom
     partial weight that drives the +1 atom-contribution term. This is the
@@ -152,6 +155,7 @@ def test_function_docstring_contains_fractional_weight_token():
 # ---------------------------------------------------------------------------
 # T3 — Acerbi-Tasche 2002 citation in function docstring
 # ---------------------------------------------------------------------------
+
 
 def test_function_docstring_cites_acerbi_tasche_2002():
     """The function docstring must cite Acerbi & Tasche (2002) — the
@@ -176,6 +180,7 @@ def test_function_docstring_cites_acerbi_tasche_2002():
 # ---------------------------------------------------------------------------
 # T4 — explicit canonical-formula single-line substring in function docstring
 # ---------------------------------------------------------------------------
+
 
 def test_function_docstring_contains_canonical_formula_on_one_line():
     """The function docstring must contain the explicit canonical
@@ -205,6 +210,7 @@ def test_function_docstring_contains_canonical_formula_on_one_line():
 # T5 — CVaREstimate dataclass docstring contains canonical-formula substring
 # ---------------------------------------------------------------------------
 
+
 def test_dataclass_docstring_contains_canonical_formula_substring():
     """The CVaREstimate dataclass docstring must also contain the
     canonical-formula substring so the field-level documentation cannot
@@ -230,6 +236,7 @@ def test_dataclass_docstring_contains_canonical_formula_substring():
 # T6 — code behavior pin: atom-contributes case returns k+1
 # ---------------------------------------------------------------------------
 
+
 def test_atom_contributes_case_returns_k_plus_one():
     """Code/doc sync check: with a pool where alpha*N is non-integer,
     `tail_obs_count` must equal `floor(alpha*N) + 1`. This pins the
@@ -248,9 +255,7 @@ def test_atom_contributes_case_returns_k_plus_one():
     pool = [(-1.0 + i * (2.0 / 149)) for i in range(150)]
     assert len(pool) == 150
 
-    result = math_engine.compute_cvar_5pct_general_distribution(
-        pool, alpha=0.05
-    )
+    result = math_engine.compute_cvar_5pct_general_distribution(pool, alpha=0.05)
 
     # k = floor(0.05 * 150) = 7; atom contributes → tail_obs_count = 8.
     expected_k = int(0.05 * 150)
@@ -275,6 +280,7 @@ def test_atom_contributes_case_returns_k_plus_one():
 # T7 — code behavior pin: zero-fractional / αN-integer case returns k
 # ---------------------------------------------------------------------------
 
+
 def test_zero_fractional_case_returns_k():
     """Code/doc sync check: when alpha*N is an exact integer,
     fractional_weight == 0 and tail_obs_count must equal k (NOT k+1).
@@ -292,9 +298,7 @@ def test_zero_fractional_case_returns_k():
     pool = [(-1.0 + i * (2.0 / 199)) for i in range(200)]
     assert len(pool) == 200
 
-    result = math_engine.compute_cvar_5pct_general_distribution(
-        pool, alpha=0.05
-    )
+    result = math_engine.compute_cvar_5pct_general_distribution(pool, alpha=0.05)
 
     # k = floor(0.05 * 200) = 10; fractional_weight = 0 → tail_obs_count = 10.
     expected_k = int(0.05 * 200)
@@ -306,6 +310,4 @@ def test_zero_fractional_case_returns_k():
         f"{result.tail_obs_count}. The canonical formula docstring must "
         "preserve the second branch of the conditional."
     )
-    assert result.cvar_pct is not None, (
-        "Fixture sanity: must produce a non-sentinel CVaREstimate."
-    )
+    assert result.cvar_pct is not None, "Fixture sanity: must produce a non-sentinel CVaREstimate."

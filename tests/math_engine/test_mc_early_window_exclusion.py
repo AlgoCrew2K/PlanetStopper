@@ -63,17 +63,13 @@ import pytest
 
 import math_engine
 
-FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "mc_early_window"
-)
+FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "mc_early_window"
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _load_fixture(filename: str) -> dict[str, Any]:
     with (FIXTURE_DIR / filename).open("r", encoding="utf-8") as fh:
@@ -133,6 +129,7 @@ def _build_alternating_history(
 # ---------------------------------------------------------------------------
 # 1. THE PROOF — excluding the early-window days flips the regime selection
 # ---------------------------------------------------------------------------
+
 
 def test_excluding_early_window_days_flips_regime_selection() -> None:
     """
@@ -214,6 +211,7 @@ def test_excluding_early_window_days_flips_regime_selection() -> None:
 # and MC_VOL_WINDOW_DAYS — never hardcoded (per risk-engine-specialist's
 # refinement).
 
+
 def _required_raw_days() -> int:
     """Minimum raw history days for a non-degenerate eligible pool (Ruling 2)."""
     return math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
@@ -240,9 +238,7 @@ def test_eligible_insufficient_history_returns_the_insufficient_sentinel() -> No
         "RAW-sufficient (>= MC_MIN_HISTORY_DAYS) — otherwise it would exercise "
         "the plain too-short guard, not the eligible-pool guard."
     )
-    history = _build_alternating_history(
-        num_days=raw_days, spy_amp=0.010, holding_amp=0.005
-    )
+    history = _build_alternating_history(num_days=raw_days, spy_amp=0.010, holding_amp=0.005)
     result = math_engine.run_monte_carlo(
         [{"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.0}],
         history,
@@ -286,8 +282,7 @@ def test_eligible_insufficient_returns_same_sentinel_as_raw_insufficient() -> No
         holdings, eligible_insufficient, 0.2, simulation_paths=2000, neighbor_k=8, seed=42
     )
     assert raw_result is math_engine.MC_INSUFFICIENT_HISTORY_SENTINEL, (
-        f"Raw-too-short history did not return the insufficient sentinel: "
-        f"{raw_result!r}."
+        f"Raw-too-short history did not return the insufficient sentinel: {raw_result!r}."
     )
     assert eligible_result is raw_result, (
         f"The eligible-insufficient history returned {eligible_result!r} but "
@@ -327,10 +322,8 @@ def test_eligible_sufficient_history_runs_real_mc_not_sentinel() -> None:
         f"eligible-sufficient boundary; the real MC path must run."
     )
     assert math.isfinite(result), (
-        f"run_monte_carlo returned non-finite {result!r} at the "
-        f"eligible-sufficient boundary."
+        f"run_monte_carlo returned non-finite {result!r} at the eligible-sufficient boundary."
     )
     assert 0.0 <= result <= 100.0, (
-        f"run_monte_carlo returned {result!r} outside [0, 100] at the "
-        f"eligible-sufficient boundary."
+        f"run_monte_carlo returned {result!r} outside [0, 100] at the eligible-sufficient boundary."
     )

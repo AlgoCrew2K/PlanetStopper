@@ -76,6 +76,7 @@ def _load(name: str) -> dict:
 # Helpers: AST inspection utilities
 # ---------------------------------------------------------------------------
 
+
 def _load_ast(rel_path: str) -> ast.Module:
     src = (_REPO_ROOT / rel_path).read_text(encoding="utf-8")
     return ast.parse(src, filename=rel_path)
@@ -109,8 +110,11 @@ def _find_inline_trigger_cascade(tree: ast.Module) -> list[tuple[int, str]]:
     math_engine.resolve_trigger_priority instead.
     """
     trigger_flag_names = {
-        "is_tp_hit", "is_trailing_hit", "is_trailing_stop_hit",
-        "is_vwap_broken", "is_vwap_bleed_broken",
+        "is_tp_hit",
+        "is_trailing_hit",
+        "is_trailing_stop_hit",
+        "is_vwap_broken",
+        "is_vwap_bleed_broken",
         "tp_triggered_now",
     }
 
@@ -119,7 +123,8 @@ def _find_inline_trigger_cascade(tree: ast.Module) -> list[tuple[int, str]]:
         if not isinstance(node, ast.If):
             continue
         body_assigns = [
-            n for n in node.body
+            n
+            for n in node.body
             if isinstance(n, ast.Assign)
             and any(isinstance(t, ast.Name) and t.id in {"reason_str", "reason"} for t in n.targets)
             and isinstance(n.value, ast.Constant)
@@ -182,9 +187,7 @@ def test_resolve_trigger_zero_flags_returns_none_and_empty_list():
     )
     reason, also_true = result
 
-    assert reason is None, (
-        f"Zero-trigger: expected reason=None; got {reason!r}"
-    )
+    assert reason is None, f"Zero-trigger: expected reason=None; got {reason!r}"
     assert also_true == fixture["expected_also_true"], (
         f"Zero-trigger: expected also_true=[]; got {also_true!r}"
     )
@@ -195,10 +198,13 @@ def test_resolve_trigger_zero_flags_returns_none_and_empty_list():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("fixture_name,flag_key,expected_reason", [
-    ("resolve_trigger_single_trailing_stop.json", "is_trailing_stop_hit", "Trailing Stop"),
-    ("resolve_trigger_single_vwap_breakdown.json", "is_vwap_broken", "VWAP Breakdown"),
-])
+@pytest.mark.parametrize(
+    "fixture_name,flag_key,expected_reason",
+    [
+        ("resolve_trigger_single_trailing_stop.json", "is_trailing_stop_hit", "Trailing Stop"),
+        ("resolve_trigger_single_vwap_breakdown.json", "is_vwap_broken", "VWAP Breakdown"),
+    ],
+)
 def test_resolve_trigger_single_flag_returns_reason_with_empty_also_true(
     fixture_name: str, flag_key: str, expected_reason: str
 ):
@@ -460,8 +466,10 @@ def test_no_duplicate_priority_order_in_autotuner():
         if not isinstance(node, (ast.List, ast.Tuple)):
             continue
         string_elts = [
-            e.value for e in node.elts
-            if isinstance(e, ast.Constant) and isinstance(e.value, str)
+            e.value
+            for e in node.elts
+            if isinstance(e, ast.Constant)
+            and isinstance(e.value, str)
             and e.value in reason_strings
         ]
         if len(string_elts) >= 3:

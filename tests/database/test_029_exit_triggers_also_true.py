@@ -306,6 +306,7 @@ def test_029_migration_uses_alter_table_not_create_table():
     )
 
     import re
+
     create_exit_triggers = re.search(
         r"CREATE\s+TABLE\s+(IF\s+NOT\s+EXISTS\s+)?exit_triggers",
         sql_upper,
@@ -333,9 +334,7 @@ def test_029_migration_does_not_reference_opt_db():
     assert "alphabot_opt" not in sql_lower, (
         "029 references 'alphabot_opt' — exit_triggers is state-DB only (two-DB boundary)."
     )
-    assert "opt.db" not in sql_lower, (
-        "029 references 'opt.db' — state DB only."
-    )
+    assert "opt.db" not in sql_lower, "029 references 'opt.db' — state DB only."
 
 
 # ---------------------------------------------------------------------------
@@ -385,9 +384,7 @@ def test_record_exit_trigger_accepts_also_true_kwarg():
     inspect.signature is used rather than calling the function so the test does
     not require a live DB connection for the signature check alone.
     """
-    assert hasattr(db_module, "record_exit_trigger"), (
-        "database.record_exit_trigger does not exist."
-    )
+    assert hasattr(db_module, "record_exit_trigger"), "database.record_exit_trigger does not exist."
     sig = inspect.signature(db_module.record_exit_trigger)
     assert "also_true" in sig.parameters, (
         "database.record_exit_trigger does not have an 'also_true' parameter. "
@@ -662,8 +659,7 @@ def test_pre_029_rows_survive_migration_with_null_also_true_json(tmp_path, monke
         f"Pre-029 row triggered_reason corrupted after migration: {triggered_reason!r}"
     )
     assert also_true_json is None, (
-        f"Pre-029 row also_true_json must be NULL (DEFAULT NULL applies); "
-        f"got {also_true_json!r}."
+        f"Pre-029 row also_true_json must be NULL (DEFAULT NULL applies); got {also_true_json!r}."
     )
 
 
@@ -790,9 +786,7 @@ def test_get_triggers_returns_also_true_json_in_result(tmp_path, monkeypatch):
 
     results = db_module.get_triggers(symphony_id="sym-rp1")
 
-    assert len(results) == 1, (
-        f"Expected 1 result from get_triggers; got {len(results)}."
-    )
+    assert len(results) == 1, f"Expected 1 result from get_triggers; got {len(results)}."
     row = results[0]
 
     assert "also_true_json" in row, (

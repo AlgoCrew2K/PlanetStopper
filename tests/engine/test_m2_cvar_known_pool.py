@@ -52,6 +52,7 @@ def _load(name: str) -> dict:
 # Shared pool-building helpers (derived from fixture, not hardcoded)
 # ---------------------------------------------------------------------------
 
+
 def _pool_from_fixture(fx: dict) -> list[float]:
     """Return the pool as a sorted list of floats from the fixture."""
     return list(fx["pool_distinct_returns"])
@@ -85,7 +86,9 @@ class TestM2CvarMatchesRockafellarUryasevEstimator:
         pool = _pool_from_fixture(fx)
         expected_cvar = fx["expected"]["cvar_5pct"]
 
-        result = math_engine.compute_cvar_5pct_general_distribution(pool, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+        result = math_engine.compute_cvar_5pct_general_distribution(
+            pool, alpha=math_engine.CVAR_ALPHA_DEFAULT
+        )
 
         assert result.cvar_pct == pytest.approx(
             expected_cvar,
@@ -106,7 +109,9 @@ class TestM2CvarMatchesRockafellarUryasevEstimator:
         pool = _pool_from_fixture(fx)
         expected_var = fx["expected"]["var_5pct"]
 
-        result = math_engine.compute_cvar_5pct_general_distribution(pool, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+        result = math_engine.compute_cvar_5pct_general_distribution(
+            pool, alpha=math_engine.CVAR_ALPHA_DEFAULT
+        )
 
         # CVaRAssessment has no separate var_pct field — the test asserts via the
         # known-pool fixture that the atom at sorted_pool[7]=-0.01 is the VaR.
@@ -173,7 +178,9 @@ class TestM2DisplayedStderrUsesDistinctTailObsCount:
         pool = _pool_from_fixture(fx)
         expected_stderr = fx["expected"]["cvar_5pct_stderr_correct"]
 
-        result = math_engine.compute_cvar_5pct_general_distribution(pool, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+        result = math_engine.compute_cvar_5pct_general_distribution(
+            pool, alpha=math_engine.CVAR_ALPHA_DEFAULT
+        )
 
         assert result.stderr is not None, (
             "stderr must be populated for a sufficient pool (n_tail_distinct=8)"
@@ -202,7 +209,9 @@ class TestM2DisplayedStderrUsesDistinctTailObsCount:
         pool = _pool_from_fixture(fx)
         wrong_stderr = fx["expected"]["cvar_5pct_stderr_wrong_resample"]
 
-        result = math_engine.compute_cvar_5pct_general_distribution(pool, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+        result = math_engine.compute_cvar_5pct_general_distribution(
+            pool, alpha=math_engine.CVAR_ALPHA_DEFAULT
+        )
 
         assert result.stderr is not None, "stderr must be populated"
         # Discriminating-power: correct≈0.004988, wrong≈0.000200. ratio=25x.
@@ -228,7 +237,9 @@ class TestM2DisplayedStderrUsesDistinctTailObsCount:
         pool = _pool_from_fixture(fx)
         expected_n = fx["expected"]["n_tail_displayed"]
 
-        result = math_engine.compute_cvar_5pct_general_distribution(pool, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+        result = math_engine.compute_cvar_5pct_general_distribution(
+            pool, alpha=math_engine.CVAR_ALPHA_DEFAULT
+        )
 
         assert result.tail_obs_count == expected_n, (
             f"tail_obs_count must equal the distinct-tail-obs count ({expected_n}); "
@@ -257,7 +268,9 @@ class TestM2DisplayedStderrUsesDistinctTailObsCount:
         pool = _pool_from_fixture(fx)
         expected_stderr = fx["expected"]["cvar_5pct_stderr_correct"]
 
-        stderr = math_engine.compute_cvar_stderr_distinct_tail(pool, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+        stderr = math_engine.compute_cvar_stderr_distinct_tail(
+            pool, alpha=math_engine.CVAR_ALPHA_DEFAULT
+        )
 
         assert stderr is not None, (
             "compute_cvar_stderr_distinct_tail must return a float for a sufficient pool"
@@ -299,6 +312,7 @@ class TestM2DisplaySurfaceContainsFullS3FourPartContract:
     @pytest.fixture
     def client(self):
         import app as app_module
+
         app_module.app.config["TESTING"] = True
         with app_module.app.test_client() as c:
             yield c
@@ -345,19 +359,28 @@ class TestM2DisplaySurfaceContainsFullS3FourPartContract:
         ):
             db_mock.load_state.return_value = state
             db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
-            db_mock.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            db_mock.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             db_mock.read_cvar_diagnostic_for_cycle.return_value = cvar_row
 
             resp = client.get("/")
             assert resp.status_code == 200
             return resp.data.decode("utf-8")
 
-    @pytest.mark.parametrize("element_label,description", [
-        ("a_stderr", "stderr / uncertainty band — S-3 element (a)"),
-        ("b_tail_obs_count", "tail_obs_count (n=8) — S-3 element (b)"),
-        ("c_diagnostic_label", "'diagnostic, not a signal — do not trade on this' — S-3 element (c)"),
-        ("d_bias_warning", "'known-low-biased LOWER BOUND on tail severity' — S-3 element (d)"),
-    ])
+    @pytest.mark.parametrize(
+        "element_label,description",
+        [
+            ("a_stderr", "stderr / uncertainty band — S-3 element (a)"),
+            ("b_tail_obs_count", "tail_obs_count (n=8) — S-3 element (b)"),
+            (
+                "c_diagnostic_label",
+                "'diagnostic, not a signal — do not trade on this' — S-3 element (c)",
+            ),
+            ("d_bias_warning", "'known-low-biased LOWER BOUND on tail severity' — S-3 element (d)"),
+        ],
+    )
     def test_m2_display_surface_contains_s3_element(
         self, client, cvar_row, element_label, description
     ):
@@ -443,7 +466,7 @@ class TestM2DisplaySurfaceContainsFullS3FourPartContract:
             )
 
         # Check region around the first cvar mention (±2000 chars)
-        region = html[max(0, cvar_region_start - 500): cvar_region_start + 2000]
+        region = html[max(0, cvar_region_start - 500) : cvar_region_start + 2000]
         form_in_region = re.search(r"<form\b", region, re.IGNORECASE)
         button_in_region = re.search(r"<button\b", region, re.IGNORECASE)
 
@@ -477,8 +500,12 @@ class TestM2ReplayDeterminism:
         fx = _load("m2_cvar_known_pool.json")
         pool = _pool_from_fixture(fx)
 
-        result_a = math_engine.compute_cvar_5pct_general_distribution(pool, alpha=math_engine.CVAR_ALPHA_DEFAULT)
-        result_b = math_engine.compute_cvar_5pct_general_distribution(pool, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+        result_a = math_engine.compute_cvar_5pct_general_distribution(
+            pool, alpha=math_engine.CVAR_ALPHA_DEFAULT
+        )
+        result_b = math_engine.compute_cvar_5pct_general_distribution(
+            pool, alpha=math_engine.CVAR_ALPHA_DEFAULT
+        )
 
         # cvar_pct — must be bit-identical (pure arithmetic on fixed input)
         assert result_a.cvar_pct == result_b.cvar_pct, (
@@ -504,6 +531,7 @@ class TestM2ReplayDeterminism:
         contain id or ts_utc. This pins the spec contract on the accessor layer.
         """
         import database as _db
+
         assert hasattr(_db, "_PARITY_DECISION_COLUMNS"), (
             "database must export _PARITY_DECISION_COLUMNS (H-8 A3 binding)"
         )
@@ -512,8 +540,7 @@ class TestM2ReplayDeterminism:
         # Required decision columns must be present
         for required in ("cvar_5pct", "cvar_5pct_stderr", "cvar_n_tail"):
             assert required in decision_cols, (
-                f"_PARITY_DECISION_COLUMNS must contain '{required}'; "
-                f"got {decision_cols}"
+                f"_PARITY_DECISION_COLUMNS must contain '{required}'; got {decision_cols}"
             )
 
         # Exclusions must NOT be present
@@ -548,11 +575,12 @@ class TestM2SentinelMirror:
 
     def test_m2_empty_pool_returns_sentinel(self):
         """Empty pool → sentinel result with cvar_pct=None and tail_obs_count=0."""
-        result = math_engine.compute_cvar_5pct_general_distribution([], alpha=math_engine.CVAR_ALPHA_DEFAULT)
+        result = math_engine.compute_cvar_5pct_general_distribution(
+            [], alpha=math_engine.CVAR_ALPHA_DEFAULT
+        )
 
         assert result.cvar_pct is None, (
-            "Empty pool must return cvar_pct=None (sentinel); "
-            f"got {result.cvar_pct}"
+            f"Empty pool must return cvar_pct=None (sentinel); got {result.cvar_pct}"
         )
         assert result.tail_obs_count == 0, (
             f"Empty pool must return tail_obs_count=0; got {result.tail_obs_count}"
@@ -639,7 +667,9 @@ class TestM2NonFiniteClosure:
         pool_with_nan = [-0.05, -0.03, float("nan"), 0.01, 0.02]
 
         with pytest.raises(ValueError, match="NaN"):
-            math_engine.compute_cvar_5pct_general_distribution(pool_with_nan, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+            math_engine.compute_cvar_5pct_general_distribution(
+                pool_with_nan, alpha=math_engine.CVAR_ALPHA_DEFAULT
+            )
 
     def test_m2_positive_inf_in_pool_raises_value_error(self):
         """
@@ -650,7 +680,9 @@ class TestM2NonFiniteClosure:
         pool_with_inf = [-0.05, float("inf"), 0.01, 0.02]
 
         with pytest.raises(ValueError):
-            math_engine.compute_cvar_5pct_general_distribution(pool_with_inf, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+            math_engine.compute_cvar_5pct_general_distribution(
+                pool_with_inf, alpha=math_engine.CVAR_ALPHA_DEFAULT
+            )
 
     def test_m2_negative_inf_in_pool_raises_value_error(self):
         """
@@ -661,7 +693,9 @@ class TestM2NonFiniteClosure:
         pool_with_neg_inf = [-0.05, float("-inf"), 0.01]
 
         with pytest.raises(ValueError):
-            math_engine.compute_cvar_5pct_general_distribution(pool_with_neg_inf, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+            math_engine.compute_cvar_5pct_general_distribution(
+                pool_with_neg_inf, alpha=math_engine.CVAR_ALPHA_DEFAULT
+            )
 
     def test_m2_stderr_function_raises_on_non_finite(self):
         """
@@ -670,7 +704,9 @@ class TestM2NonFiniteClosure:
         pool_with_nan = [float("nan"), -0.05, 0.01]
 
         with pytest.raises(ValueError):
-            math_engine.compute_cvar_stderr_distinct_tail(pool_with_nan, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+            math_engine.compute_cvar_stderr_distinct_tail(
+                pool_with_nan, alpha=math_engine.CVAR_ALPHA_DEFAULT
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -694,7 +730,9 @@ class TestM2DataStarvedPoolDisplaysNTail:
         pool = _pool_from_fixture(fx)
         expected_n = fx["expected"]["n_tail_displayed"]
 
-        result = math_engine.compute_cvar_5pct_general_distribution(pool, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+        result = math_engine.compute_cvar_5pct_general_distribution(
+            pool, alpha=math_engine.CVAR_ALPHA_DEFAULT
+        )
 
         assert result.tail_obs_count == expected_n, (
             f"Data-starved pool must return tail_obs_count={expected_n}; "
@@ -712,7 +750,9 @@ class TestM2DataStarvedPoolDisplaysNTail:
         pool = _pool_from_fixture(fx)
         expected_stderr = fx["expected"]["cvar_5pct_stderr_correct"]
 
-        result = math_engine.compute_cvar_5pct_general_distribution(pool, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+        result = math_engine.compute_cvar_5pct_general_distribution(
+            pool, alpha=math_engine.CVAR_ALPHA_DEFAULT
+        )
 
         assert result.stderr is not None, "stderr must not be None for a pool with n_tail=3"
         assert result.stderr == pytest.approx(
@@ -754,7 +794,7 @@ class TestM2SecondWindowNullSemantics:
             cvar_5pct=-0.025,
             cvar_5pct_stderr=0.005,
             cvar_n_tail=7,
-            cvar_5pct_long=None,   # insufficient long window
+            cvar_5pct_long=None,  # insufficient long window
             cvar_n_tail_long=None,
             mode="replay",
         )
@@ -767,8 +807,7 @@ class TestM2SecondWindowNullSemantics:
             "Zero would be a fabricated estimate violating the sentinel discipline (F-4 ★)."
         )
         assert row["cvar_n_tail_long"] is None, (
-            "cvar_n_tail_long must persist as NULL; "
-            f"got {row['cvar_n_tail_long']!r}"
+            f"cvar_n_tail_long must persist as NULL; got {row['cvar_n_tail_long']!r}"
         )
 
 
@@ -808,7 +847,9 @@ class TestNoCvarDivergenceColumnOrDisplayValue:
         We match only DDL column definitions (lines that start a column name in CREATE TABLE),
         not table names or other identifiers.
         """
-        migration_sql = (_MIGRATIONS / "021_cvar_diagnostics.sql").read_text(encoding="utf-8").lower()
+        migration_sql = (
+            (_MIGRATIONS / "021_cvar_diagnostics.sql").read_text(encoding="utf-8").lower()
+        )
         allowed_cvar_columns = {
             "cvar_5pct",
             "cvar_5pct_stderr",
@@ -818,6 +859,7 @@ class TestNoCvarDivergenceColumnOrDisplayValue:
         }
 
         import re
+
         # Match column definitions: lines that begin with optional whitespace followed by
         # a cvar_* identifier and a SQL type keyword (REAL, INTEGER, TEXT, BLOB, NUMERIC).
         # This excludes table names (which are followed by '(' not a type keyword).
@@ -839,9 +881,9 @@ class TestNoCvarDivergenceColumnOrDisplayValue:
         database.py must not reference cvar_divergence or regime_recency_weight.
         A column insertion in the helper function would bypass the schema tripwire.
         """
-        db_source = (
-            pathlib.Path(__file__).parent.parent.parent / "database.py"
-        ).read_text(encoding="utf-8")
+        db_source = (pathlib.Path(__file__).parent.parent.parent / "database.py").read_text(
+            encoding="utf-8"
+        )
 
         assert "cvar_divergence" not in db_source.lower(), (
             "database.py contains 'cvar_divergence' — FORBIDDEN by §B.6 binding."
@@ -865,6 +907,7 @@ class TestNoCvarDivergenceColumnOrDisplayValue:
         "tail_obs_count visible" requirement.
         """
         import re
+
         migration_sql = (_MIGRATIONS / "021_cvar_diagnostics.sql").read_text(encoding="utf-8")
 
         # Find the cvar_n_tail column definition line
@@ -900,6 +943,7 @@ class TestNoCvarDivergenceColumnOrDisplayValue:
 # on the DISTINCT kNN pool, not use the resample-mean on 5000 bootstrap paths.
 # ---------------------------------------------------------------------------
 
+
 def _build_uniform_historical_data():
     """
     Build a minimal deterministic historical_data for compute_portfolio_cvar testing.
@@ -919,7 +963,7 @@ def _build_uniform_historical_data():
     construction, not by running compute_portfolio_cvar or compute_cvar_5pct_general_distribution.
     """
     n_dates = 170
-    dates = [f"2024-01-{i+1:04d}" for i in range(n_dates)]
+    dates = [f"2024-01-{i + 1:04d}" for i in range(n_dates)]
     historical_data = {}
     for i, date in enumerate(dates):
         r = -0.10 + i * 0.001
@@ -966,11 +1010,13 @@ class TestComputePortfolioCvarDelegatesToRuEstimator:
         """Compute the R-U reference directly on the known pool (non-SUT path)."""
         dates, historical_data = _build_uniform_historical_data()
         # Candidates start at index MC_VOL_WINDOW_DAYS-1=19; first neighbor_k=150 selected.
-        pool_dates = dates[math_engine.MC_VOL_WINDOW_DAYS - 1 :
-                           math_engine.MC_VOL_WINDOW_DAYS - 1 + math_engine.MC_DEFAULT_NEIGHBOR_K]
+        pool_dates = dates[
+            math_engine.MC_VOL_WINDOW_DAYS - 1 : math_engine.MC_VOL_WINDOW_DAYS
+            - 1
+            + math_engine.MC_DEFAULT_NEIGHBOR_K
+        ]
         pool_returns = [
-            historical_data[d]["TST"]["daily_ret"] * math_engine.PCT_SCALAR
-            for d in pool_dates
+            historical_data[d]["TST"]["daily_ret"] * math_engine.PCT_SCALAR for d in pool_dates
         ]
         return math_engine.compute_cvar_5pct_general_distribution(
             pool_returns, alpha=math_engine.CVAR_ALPHA_DEFAULT
@@ -1102,9 +1148,7 @@ class TestComputePortfolioCvarSentinelWritesExplicitZero:
     discipline is visible at the code level, not deferred to the DB default.
     """
 
-    def test_insufficient_history_sentinel_writes_cvar_n_tail_integer_zero(
-        self, monkeypatch
-    ):
+    def test_insufficient_history_sentinel_writes_cvar_n_tail_integer_zero(self, monkeypatch):
         """
         When compute_portfolio_cvar takes the insufficient-history path (too few
         eligible days), record_cvar_diagnostic must be called with cvar_n_tail=0,

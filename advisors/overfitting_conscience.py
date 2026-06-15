@@ -44,6 +44,7 @@ S_RATIO_BREACH_THRESHOLD = 0.10
 # Pure computation
 # ---------------------------------------------------------------------------
 
+
 def compute_overfitting_conscience_observation(
     autotune_run: dict,
     ledger_rows: list[dict],
@@ -101,7 +102,8 @@ def compute_overfitting_conscience_observation(
 
     # --- I-1 / I-2: Filter ledger rows to this bundle; count S ---
     matching_rows = [
-        r for r in normalised_rows
+        r
+        for r in normalised_rows
         if r.get("spec_bundle_id") == spec_bundle_id
         and r.get("evidence_source") == "BACKTEST_SELECTION"
     ]
@@ -121,10 +123,7 @@ def compute_overfitting_conscience_observation(
     # 020 may have s_count=None, which raises TypeError in the < comparison.
     # Semantics: require >= 2 valid (non-None) prior rows; fewer means no drift signal.
     drift_detected = False
-    same_symphony_prior = [
-        r for r in (prior_runs or [])
-        if r.get("symphony_id") == symphony_id
-    ]
+    same_symphony_prior = [r for r in (prior_runs or []) if r.get("symphony_id") == symphony_id]
     valid_prior_s = [r["s_count"] for r in same_symphony_prior if r["s_count"] is not None]
     # Drift is EVALUABLE only with >= 2 prior runs carrying a non-None s_count.
     # On the live data every autotune_runs.s_count is NULL, so this is structurally
@@ -135,9 +134,7 @@ def compute_overfitting_conscience_observation(
     drift_signal_available = len(valid_prior_s) >= 2
     if drift_signal_available:
         s_series = valid_prior_s + [s]
-        drift_detected = all(
-            s_series[i] < s_series[i + 1] for i in range(len(s_series) - 1)
-        )
+        drift_detected = all(s_series[i] < s_series[i + 1] for i in range(len(s_series) - 1))
 
     # --- Verdict resolution ---
     if s == 0:
@@ -204,6 +201,7 @@ def compute_overfitting_conscience_observation(
 # ---------------------------------------------------------------------------
 # Integration entry point
 # ---------------------------------------------------------------------------
+
 
 def run_overfitting_conscience(
     autotune_run: dict,

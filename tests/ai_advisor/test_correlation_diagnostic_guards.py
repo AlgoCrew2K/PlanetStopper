@@ -130,7 +130,7 @@ def test_correlation_diagnostic_does_not_reference_composer_write_endpoints():
         "/copy",
         "/deploy",
         "go-to-cash",
-        "backtest",      # M1 explicitly runs no backtest (AC-1.4)
+        "backtest",  # M1 explicitly runs no backtest (AC-1.4)
     ]
     for pattern in forbidden_patterns:
         assert pattern not in source, (
@@ -196,6 +196,7 @@ def test_correlation_diagnostic_does_not_write_to_bot_state():
         # flag any write (INSERT/UPDATE/DELETE) context.
         # Simple heuristic: the target name appearing next to a write keyword.
         import re
+
         write_pattern = re.compile(
             r"\b(INSERT|UPDATE|DELETE)\b.*?" + re.escape(target),
             re.IGNORECASE | re.DOTALL,

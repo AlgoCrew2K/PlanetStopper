@@ -156,9 +156,7 @@ def test_advisor_ro_query_excludes_frozen_eval_rows(walled_db):
         # Use a query that the helper's COALESCE wrap will apply to.
         # The query must NOT contain a bare fold_role != predicate.
         try:
-            rows = db.advisor_ro_query(
-                f"SELECT {_FOLD_TABLE_ID_COL}, fold_role FROM {_FOLD_TABLE}"
-            )
+            rows = db.advisor_ro_query(f"SELECT {_FOLD_TABLE_ID_COL}, fold_role FROM {_FOLD_TABLE}")
         except RuntimeError as exc:
             # If a WALL_BREACH RuntimeError is raised here, the helper is NOT
             # applying a COALESCE wrap before execution — it is passing the raw
@@ -210,9 +208,7 @@ def test_advisor_ro_query_excludes_null_fold_role_via_coalesce(walled_db):
     """
     with patch.object(db, "DB_FILE", walled_db):
         try:
-            rows = db.advisor_ro_query(
-                f"SELECT {_FOLD_TABLE_ID_COL}, fold_role FROM {_FOLD_TABLE}"
-            )
+            rows = db.advisor_ro_query(f"SELECT {_FOLD_TABLE_ID_COL}, fold_role FROM {_FOLD_TABLE}")
         except RuntimeError as exc:
             pytest.fail(
                 f"advisor_ro_query raised RuntimeError instead of returning a "
@@ -251,9 +247,7 @@ def test_advisor_ro_query_includes_train_and_validation_rows(walled_db):
     """
     with patch.object(db, "DB_FILE", walled_db):
         try:
-            rows = db.advisor_ro_query(
-                f"SELECT {_FOLD_TABLE_ID_COL}, fold_role FROM {_FOLD_TABLE}"
-            )
+            rows = db.advisor_ro_query(f"SELECT {_FOLD_TABLE_ID_COL}, fold_role FROM {_FOLD_TABLE}")
         except RuntimeError as exc:
             pytest.fail(
                 f"advisor_ro_query raised RuntimeError instead of returning a "
@@ -436,10 +430,7 @@ def test_wall_breach_tripwire_query_detects_post_freeze_frozen_eval_touch(
         conn = sqlite3.connect(tripwire_db)
         try:
             # Remove the breach row; leave the honest pre-freeze row.
-            conn.execute(
-                "DELETE FROM researcher_dof_ledger "
-                "WHERE touched_frozen_eval = 1"
-            )
+            conn.execute("DELETE FROM researcher_dof_ledger WHERE touched_frozen_eval = 1")
             conn.commit()
         finally:
             conn.close()
@@ -723,9 +714,7 @@ def test_advisor_ro_query_bare_predicate_guard_fires_on_nested_subquery_alias(wa
     This tests the string-scan approach covers subquery strings, not just
     top-level WHERE clauses.
     """
-    assert hasattr(db, "advisor_ro_query"), (
-        "database.advisor_ro_query() does not exist."
-    )
+    assert hasattr(db, "advisor_ro_query"), "database.advisor_ro_query() does not exist."
 
     # SQL where the bare != is inside a subquery — the forbidden pattern is present
     # in the string regardless of nesting depth.
@@ -763,9 +752,7 @@ def test_advisor_ro_query_bare_predicate_guard_fires_on_string_concat_predicate(
     string-check approach); it verifies the guard fires when the assembled string
     contains the forbidden pattern, regardless of how the caller built it.
     """
-    assert hasattr(db, "advisor_ro_query"), (
-        "database.advisor_ro_query() does not exist."
-    )
+    assert hasattr(db, "advisor_ro_query"), "database.advisor_ro_query() does not exist."
 
     # Caller assembles the SQL via concatenation before passing it in.
     table_name = _FOLD_TABLE
@@ -853,9 +840,7 @@ def test_advisor_observations_table_exists_after_run_migrations(tmp_path):
 
         conn = sqlite3.connect(db_path)
         try:
-            columns = conn.execute(
-                "PRAGMA table_info(advisor_observations)"
-            ).fetchall()
+            columns = conn.execute("PRAGMA table_info(advisor_observations)").fetchall()
         finally:
             conn.close()
 
@@ -867,8 +852,14 @@ def test_advisor_observations_table_exists_after_run_migrations(tmp_path):
     )
 
     required_cols = {
-        "id", "created_at", "advisor_role", "subject_type",
-        "subject_id", "verdict", "raw_response", "is_advisory_only",
+        "id",
+        "created_at",
+        "advisor_role",
+        "subject_type",
+        "subject_id",
+        "verdict",
+        "raw_response",
+        "is_advisory_only",
     }
     missing = required_cols - col_names
     assert not missing, (
@@ -916,9 +907,7 @@ def test_advisor_ro_query_succeeds_on_table_without_fold_role_column(walled_db):
         # This query must succeed and return at least the schema_migrations row
         # (init_db() always creates schema_migrations).
         try:
-            rows = db.advisor_ro_query(
-                "SELECT migration_name FROM schema_migrations LIMIT 5"
-            )
+            rows = db.advisor_ro_query("SELECT migration_name FROM schema_migrations LIMIT 5")
         except Exception as exc:
             pytest.fail(
                 f"advisor_ro_query raised {type(exc).__name__} on a query against "
@@ -933,9 +922,7 @@ def test_advisor_ro_query_succeeds_on_table_without_fold_role_column(walled_db):
 
     # Result shape: list of sqlite3.Row; must not be empty (schema_migrations always
     # has at least one row after init_db()).
-    assert isinstance(rows, list), (
-        "advisor_ro_query must return a list of sqlite3.Row objects."
-    )
+    assert isinstance(rows, list), "advisor_ro_query must return a list of sqlite3.Row objects."
     assert len(rows) >= 1, (
         "schema_migrations must have at least one row after init_db(). "
         "If 0 rows: init_db() did not apply any migrations — fixture setup failed."

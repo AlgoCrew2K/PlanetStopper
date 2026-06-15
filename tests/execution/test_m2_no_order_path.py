@@ -33,15 +33,17 @@ _WORKTREE_ROOT = pathlib.Path(__file__).parents[2]
 _MATH_ENGINE_PATH = _WORKTREE_ROOT / "math_engine.py"
 
 # Broker-order symbol denylist — presence in any M2 call-chain is a hard block.
-_BROKER_ORDER_DENYLIST: frozenset[str] = frozenset({
-    "submit_order",
-    "place_order",
-    "cancel_order",
-    "liquidate",
-    "go-to-cash",
-    "perform_account_liquidation",
-    "execute_sell_to_cash",
-})
+_BROKER_ORDER_DENYLIST: frozenset[str] = frozenset(
+    {
+        "submit_order",
+        "place_order",
+        "cancel_order",
+        "liquidate",
+        "go-to-cash",
+        "perform_account_liquidation",
+        "execute_sell_to_cash",
+    }
+)
 
 
 # ---------------------------------------------------------------------------

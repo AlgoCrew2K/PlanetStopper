@@ -185,28 +185,19 @@ def _seed_state(*, triggered: bool, mc_history: list, **extras) -> dict:
 def patched_environment():
     """Bundle every patch main()'s pipeline needs — network, clock, DB, Discord —
     leaving the math engine REAL. Yields a dict of mocks for per-test config."""
-    with patch.object(alpha_bot_execution, "database") as mock_db, patch.object(
-        alpha_bot_execution, "reporting"
-    ) as mock_reporting, patch.object(
-        alpha_bot_execution, "fetch_symphony_stats"
-    ) as mock_fetch_sym, patch.object(
-        alpha_bot_execution, "fetch_alpaca_history"
-    ) as mock_fetch_hist, patch.object(
-        alpha_bot_execution, "fetch_intraday_vwaps"
-    ) as mock_fetch_vwap, patch.object(
-        alpha_bot_execution, "get_current_et", return_value=_FIXED_ET
-    ), patch.object(
-        alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]
-    ), patch.object(
-        alpha_bot_execution, "COMPOSER_KEY_ID", "test-composer-key"
-    ), patch.object(
-        alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"
-    ), patch.object(
-        alpha_bot_execution, "LIVE_EXECUTION", False
-    ), patch.object(
-        alpha_bot_execution.time, "sleep"
-    ), patch.object(
-        alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]
+    with (
+        patch.object(alpha_bot_execution, "database") as mock_db,
+        patch.object(alpha_bot_execution, "reporting") as mock_reporting,
+        patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch_sym,
+        patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_fetch_hist,
+        patch.object(alpha_bot_execution, "fetch_intraday_vwaps") as mock_fetch_vwap,
+        patch.object(alpha_bot_execution, "get_current_et", return_value=_FIXED_ET),
+        patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+        patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-composer-key"),
+        patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"),
+        patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+        patch.object(alpha_bot_execution.time, "sleep"),
+        patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
     ):
         mock_db.acquire_lock.return_value = True
         mock_db.load_state.return_value = {}
@@ -251,9 +242,7 @@ def test_sufficient_history_fixture_yields_real_mc_probability() -> None:
     Uses untriggered-shaped holdings (with last_percent_change) so this checks
     only that the history is long enough — independent of the triggered defect.
     """
-    history = _make_sufficient_history(
-        _FIXED_ET.strftime("%Y-%m-%d"), _SUFFICIENT_HISTORY_DAYS
-    )
+    history = _make_sufficient_history(_FIXED_ET.strftime("%Y-%m-%d"), _SUFFICIENT_HISTORY_DAYS)
     holdings = [{"ticker": _TICKER, "allocation": 1.0, "last_percent_change": 0.0}]
     result = math_engine.run_monte_carlo(
         holdings,
@@ -299,13 +288,9 @@ def test_triggered_cycle_does_not_append_to_mc_history(
     # Two real prior probabilities already in the rolling buffer. These are
     # arbitrary fixture inputs (valid 0-100 probabilities), not producer values.
     seed_history = [42.0, 58.0]
-    env["fetch_symphony_stats"].return_value = [
-        _make_symphony_payload(last_percent_change=-0.04)
-    ]
+    env["fetch_symphony_stats"].return_value = [_make_symphony_payload(last_percent_change=-0.04)]
     env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(495.0)
-    env["db"].load_state.return_value = _seed_state(
-        triggered=True, mc_history=seed_history
-    )
+    env["db"].load_state.return_value = _seed_state(triggered=True, mc_history=seed_history)
 
     alpha_bot_execution.main()
 
@@ -345,9 +330,7 @@ def test_untriggered_cycle_still_appends_real_mc_probability(
     """
     env = patched_environment
     seed_history = [40.0]
-    env["fetch_symphony_stats"].return_value = [
-        _make_symphony_payload(last_percent_change=-0.04)
-    ]
+    env["fetch_symphony_stats"].return_value = [_make_symphony_payload(last_percent_change=-0.04)]
     env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(495.0)
     env["db"].load_state.return_value = _seed_state(
         triggered=False, mc_history=seed_history, high_water_mark=0.0

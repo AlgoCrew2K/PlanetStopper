@@ -112,7 +112,7 @@ class TestF2MddInsufficientHistorySuppressAndAnnotate:
             "Cannot locate the MDD bar section."
         )
         # Scan ~600 chars around the first mdd bar for a winner + insufficient guard.
-        mdd_context = html[max(0, mdd_section_start - 200): mdd_section_start + 600]
+        mdd_context = html[max(0, mdd_section_start - 200) : mdd_section_start + 600]
         has_insufficient_guard = "mdd_insufficient" in mdd_context or (
             "insufficient_history" in mdd_context
         )
@@ -133,10 +133,9 @@ class TestF2MddInsufficientHistorySuppressAndAnnotate:
         # Look for the pattern: the mdd alpha span is guarded by insufficient_history.
         mdd_row_start = html.find('data-testid="comp-mdd-bot-text"')
         assert mdd_row_start != -1, (
-            "F-2d FAIL: no comp-mdd-bot-text element found. "
-            "Cannot verify alpha-delta suppression."
+            "F-2d FAIL: no comp-mdd-bot-text element found. Cannot verify alpha-delta suppression."
         )
-        mdd_row_context = html[max(0, mdd_row_start - 100): mdd_row_start + 800]
+        mdd_row_context = html[max(0, mdd_row_start - 100) : mdd_row_start + 800]
         # The delta span (vs-delta) must be guarded.
         has_guard = "mdd_insufficient" in mdd_row_context or (
             "insufficient_history" in mdd_row_context
@@ -155,8 +154,7 @@ class TestF2MddInsufficientHistorySuppressAndAnnotate:
         """
         html = _html()
         assert "card-mdd-insufficient-label" in html or (
-            "insufficient history" in html.lower()
-            and "cfg-cell" in html
+            "insufficient history" in html.lower() and "cfg-cell" in html
         ), (
             "F-2e FAIL: per-card Max DD cell does not contain an insufficient-history "
             "annotation. The alpha-badge will be shown even when the bot has fewer "
@@ -186,11 +184,7 @@ class TestF3HeroTcIfHeldAnnotation:
         """
         html = _html()
         has_testid = "today-held-footnote-marker" in html
-        has_title_attr = (
-            "includes" in html.lower()
-            and "cash" in html.lower()
-            and "Today" in html
-        )
+        has_title_attr = "includes" in html.lower() and "cash" in html.lower() and "Today" in html
         assert has_testid or has_title_attr, (
             "F-3a FAIL: templates/index.html Today row has no footnote marker indicating "
             "the If Held value is account-level (includes uninvested cash). "
@@ -253,16 +247,13 @@ class TestF4ResponsiveHeroGrid:
         media_idx = html.find("@media")
         assert media_idx != -1, "F-4b FAIL: no @media rule found (prerequisite)."
         # Read up to 400 chars after the @media to capture the block.
-        media_block = html[media_idx: media_idx + 400]
+        media_block = html[media_idx : media_idx + 400]
         assert "hero-grid" in media_block, (
             "F-4b FAIL: @media block does not target .hero-grid. "
             "The 1-column layout for narrow viewports is not applied."
         )
         # The block must set a single-column layout.
-        has_one_column = (
-            "1fr" in media_block
-            and "grid-template-columns" in media_block
-        )
+        has_one_column = "1fr" in media_block and "grid-template-columns" in media_block
         assert has_one_column, (
             "F-4b FAIL: @media .hero-grid block does not set grid-template-columns:1fr "
             "(or single-value equivalent). Hero columns will not stack on narrow screens."
@@ -294,7 +285,7 @@ class TestF5GuardAlphaBadgeAtExit:
             "Cannot verify at-exit qualifier."
         )
         # Within 200 chars of 'gave up' there must be 'at exit'.
-        nearby = html[gave_up_idx: gave_up_idx + 200]
+        nearby = html[gave_up_idx : gave_up_idx + 200]
         assert "at exit" in nearby.lower(), (
             "F-5a FAIL: the 'gave up Xα' badge does not have an 'at exit' qualifier "
             "within 200 chars. Operators will read the badge as the current live CR gap."
@@ -307,10 +298,8 @@ class TestF5GuardAlphaBadgeAtExit:
         """
         html = _html()
         saved_idx = html.find("saved +")
-        assert saved_idx != -1, (
-            "F-5b FAIL: 'saved +' text not found in templates/index.html."
-        )
-        nearby = html[saved_idx: saved_idx + 200]
+        assert saved_idx != -1, "F-5b FAIL: 'saved +' text not found in templates/index.html."
+        nearby = html[saved_idx : saved_idx + 200]
         assert "at exit" in nearby.lower(), (
             "F-5b FAIL: the 'saved +Xα' badge does not have an 'at exit' qualifier. "
             "Both positive and negative guard_alpha badges must be qualified."
@@ -464,8 +453,20 @@ class TestFArmedCountMatchesActualArmedSymphonies:
         """
         state = {
             "_internal": {"some": "metadata"},  # no 'name' — excluded
-            "sym_a": {"name": "Alpha", "armed": False, "tp_armed": False, "para_armed": False, "triggered": False},
-            "sym_b": {"name": "Beta", "armed": False, "tp_armed": False, "para_armed": False, "triggered": False},
+            "sym_a": {
+                "name": "Alpha",
+                "armed": False,
+                "tp_armed": False,
+                "para_armed": False,
+                "triggered": False,
+            },
+            "sym_b": {
+                "name": "Beta",
+                "armed": False,
+                "tp_armed": False,
+                "para_armed": False,
+                "triggered": False,
+            },
         }
         meta = self._call_build_meta(state)
         assert meta["tracked"] == 2, (
@@ -516,10 +517,7 @@ def _build_shadow_db_with_rows(
             position_epoch TEXT
         )
     """)
-    conn.execute(
-        "CREATE INDEX idx_sym_day ON shadow_history "
-        "(symphony_id, trading_day, ts_utc)"
-    )
+    conn.execute("CREATE INDEX idx_sym_day ON shadow_history (symphony_id, trading_day, ts_utc)")
     epoch = "2026-01-04T14:30:00Z"  # a fixed epoch shared by all rows
     for row in rows:
         conn.execute(
@@ -541,6 +539,7 @@ def _build_shadow_db_with_rows(
 
     # Patch the database module's shadow cache so the test is isolated.
     import database as _db
+
     _db._shadow_cr_cache.clear()
 
     return db_file
@@ -596,17 +595,13 @@ class TestChainLinkGoldenPerDayReturns:
             "net_deposits": 100.0,  # non-zero -> uses simple_return path, not TWR fallback
             "time_weighted_return": if_held / 100.0,
             # get_symphony_max_drawdown gates on max_drawdown presence (analytics.py:721)
-            "max_drawdown": 0.05,   # 5% if_held MDD; value is not tested here
+            "max_drawdown": 0.05,  # 5% if_held MDD; value is not tested here
         }
 
         from analytics import get_symphony_cumulative_return, get_symphony_max_drawdown
 
-        cr_result = get_symphony_cumulative_return(
-            sym_dict, bot_state_entry=None, db_path=db_file
-        )
-        mdd_result = get_symphony_max_drawdown(
-            sym_dict, bot_state_entry=None, db_path=db_file
-        )
+        cr_result = get_symphony_cumulative_return(sym_dict, bot_state_entry=None, db_path=db_file)
+        mdd_result = get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_file)
 
         assert cr_result is not None and "dry_run" in cr_result, (
             f"F-CHAIN-LINK-1 FAIL: CR returned {cr_result!r}."
@@ -619,7 +614,7 @@ class TestChainLinkGoldenPerDayReturns:
         # divergence = (prod_shadow - prod_current)*100 = 0 when shadow == current.
         # dry_run = if_held + 0 = if_held exactly.
         # Buggy code: dry_run = if_held + (prod_shadow - 1)*100 = if_held + chain_link.
-        expected_dry_run = if_held   # divergence == 0
+        expected_dry_run = if_held  # divergence == 0
 
         assert cr_result["dry_run"] == pytest.approx(expected_dry_run, abs=1e-9), (
             f"F-CHAIN-LINK-1 CR FAIL: dry_run={cr_result['dry_run']:.6f}%, "
@@ -648,9 +643,9 @@ class TestChainLinkGoldenPerDayReturns:
         """
         rows = [
             {"trading_day": "2026-01-05", "shadow_return": -0.5, "ts_utc": "2026-01-05T21:00:00Z"},
-            {"trading_day": "2026-01-06", "shadow_return":  0.8, "ts_utc": "2026-01-06T21:00:00Z"},
+            {"trading_day": "2026-01-06", "shadow_return": 0.8, "ts_utc": "2026-01-06T21:00:00Z"},
             {"trading_day": "2026-01-07", "shadow_return": -1.2, "ts_utc": "2026-01-07T21:00:00Z"},
-            {"trading_day": "2026-01-08", "shadow_return":  2.0, "ts_utc": "2026-01-08T21:00:00Z"},
+            {"trading_day": "2026-01-08", "shadow_return": 2.0, "ts_utc": "2026-01-08T21:00:00Z"},
         ]
         if_held = 3.0
         symphony_id = "sym_chain_link_t2"
@@ -662,21 +657,17 @@ class TestChainLinkGoldenPerDayReturns:
             "simple_return": if_held / 100.0,
             "net_deposits": 100.0,
             "time_weighted_return": if_held / 100.0,
-            "max_drawdown": 0.05,   # gates get_symphony_max_drawdown (analytics.py:721)
+            "max_drawdown": 0.05,  # gates get_symphony_max_drawdown (analytics.py:721)
         }
 
         from analytics import get_symphony_cumulative_return, get_symphony_max_drawdown
 
-        cr_result = get_symphony_cumulative_return(
-            sym_dict, bot_state_entry=None, db_path=db_file
-        )
-        mdd_result = get_symphony_max_drawdown(
-            sym_dict, bot_state_entry=None, db_path=db_file
-        )
+        cr_result = get_symphony_cumulative_return(sym_dict, bot_state_entry=None, db_path=db_file)
+        mdd_result = get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_file)
 
         # CORRECTED oracle: _build_shadow_db_with_rows sets current_return == shadow_return.
         # divergence = (prod_shadow - prod_current)*100 = 0 → dry_run = if_held.
-        expected_dry_run = if_held   # divergence == 0
+        expected_dry_run = if_held  # divergence == 0
 
         assert cr_result["dry_run"] == pytest.approx(expected_dry_run, abs=1e-9), (
             f"F-CHAIN-LINK-2 CR FAIL: dry_run={cr_result['dry_run']:.6f}%, "
@@ -700,14 +691,14 @@ class TestChainLinkGoldenPerDayReturns:
         # Symphony A: 3-day, per-day returns [-1.0, 0.5, -0.5], value=10000
         rows_a = [
             {"trading_day": "2026-01-05", "shadow_return": -1.0, "ts_utc": "2026-01-05T21:00:00Z"},
-            {"trading_day": "2026-01-06", "shadow_return":  0.5, "ts_utc": "2026-01-06T21:00:00Z"},
+            {"trading_day": "2026-01-06", "shadow_return": 0.5, "ts_utc": "2026-01-06T21:00:00Z"},
             {"trading_day": "2026-01-07", "shadow_return": -0.5, "ts_utc": "2026-01-07T21:00:00Z"},
         ]
         # Symphony B: 3-day, per-day returns [0.3, -0.2, 0.6], value=5000
         rows_b = [
-            {"trading_day": "2026-01-05", "shadow_return":  0.3, "ts_utc": "2026-01-05T21:00:00Z"},
+            {"trading_day": "2026-01-05", "shadow_return": 0.3, "ts_utc": "2026-01-05T21:00:00Z"},
             {"trading_day": "2026-01-06", "shadow_return": -0.2, "ts_utc": "2026-01-06T21:00:00Z"},
-            {"trading_day": "2026-01-07", "shadow_return":  0.6, "ts_utc": "2026-01-07T21:00:00Z"},
+            {"trading_day": "2026-01-07", "shadow_return": 0.6, "ts_utc": "2026-01-07T21:00:00Z"},
         ]
         # Per-symphony DBs are not used here (shared_db handles both); these calls
         # are kept only to exercise the helper and ensure cache isolation.
@@ -737,16 +728,23 @@ class TestChainLinkGoldenPerDayReturns:
                     "INSERT INTO shadow_history "
                     "(symphony_id, ts_utc, trading_day, current_return, shadow_return, "
                     "is_post_trigger, position_epoch) VALUES (?, ?, ?, ?, ?, 0, ?)",
-                    (sym_id, row["ts_utc"], row["trading_day"],
-                     row["shadow_return"], row["shadow_return"], epoch),
+                    (
+                        sym_id,
+                        row["ts_utc"],
+                        row["trading_day"],
+                        row["shadow_return"],
+                        row["shadow_return"],
+                        epoch,
+                    ),
                 )
         conn.commit()
         conn.close()
 
         import database as _db
+
         _db._shadow_cr_cache.clear()
 
-        if_held_a = 4.0   # percent
+        if_held_a = 4.0  # percent
         if_held_b = 2.0
         value_a = 10000.0
         value_b = 5000.0
@@ -773,9 +771,7 @@ class TestChainLinkGoldenPerDayReturns:
 
         per_sym_a = get_symphony_cumulative_return(sym_a, bot_state_entry=None, db_path=shared_db)
         per_sym_b = get_symphony_cumulative_return(sym_b, bot_state_entry=None, db_path=shared_db)
-        portfolio = get_portfolio_cumulative_return(
-            [sym_a, sym_b], bot_state={}, db_path=shared_db
-        )
+        portfolio = get_portfolio_cumulative_return([sym_a, sym_b], bot_state={}, db_path=shared_db)
 
         # Value-weighted dry_run: (A.dry_run * value_a + B.dry_run * value_b) / (value_a + value_b)
         expected_portfolio_dry = (
@@ -823,6 +819,7 @@ class TestRegressionSymTableContainerAbsent:
     def test_index_js_passes_node_syntax_check(self):
         """static/index.js must pass `node --check` with exit code 0."""
         import subprocess
+
         js_path = _STATIC / "index.js"
         assert js_path.exists(), "static/index.js must exist"
         result = subprocess.run(

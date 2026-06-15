@@ -835,9 +835,7 @@ class TestReadOnlyContract:
 _INDEX_HTML_PATH = (
     __import__("pathlib").Path(__file__).parent.parent.parent / "templates" / "index.html"
 )
-_INDEX_JS_PATH = (
-    __import__("pathlib").Path(__file__).parent.parent.parent / "static" / "index.js"
-)
+_INDEX_JS_PATH = __import__("pathlib").Path(__file__).parent.parent.parent / "static" / "index.js"
 
 
 class TestPortfolioStripUiWiring:
@@ -921,9 +919,7 @@ class TestPortfolioStripUiWiring:
         chrome_include_pos = html.find("_chrome.html")
         hero_pos = html.find('data-testid="hero-section"')
 
-        assert hero_pos != -1, (
-            'data-testid="hero-section" not found in index.html'
-        )
+        assert hero_pos != -1, 'data-testid="hero-section" not found in index.html'
         assert chrome_include_pos != -1, (
             "index.html must include '_chrome.html' for the page navigation chrome"
         )

@@ -177,6 +177,7 @@ def _make_vwap_side_effect(broken_for_marker: set[float]):
     to 2dp for AI — markers chosen with 2dp precision to survive the rounding
     at autotuner.py:317-318).
     """
+
     # Tolerance: post-rounding to 2 decimal places, markers stay distinct
     # (0.51, 0.52, 0.53 are 2dp-exact). Use exact equality on tag floats.
     def _side_effect(**kwargs):
@@ -193,8 +194,7 @@ def _make_vwap_side_effect(broken_for_marker: set[float]):
 
 
 @contextlib.contextmanager
-def _autotuner_patches(best_params: dict, fallback: dict, default: dict,
-                       vwap_side_effect):
+def _autotuner_patches(best_params: dict, fallback: dict, default: dict, vwap_side_effect):
     """Wire all the mocks needed for one run_autotuner invocation."""
     fake_study = MagicMock(name="fake_optuna_study")
     fake_study.best_params = best_params
@@ -222,20 +222,21 @@ def _autotuner_patches(best_params: dict, fallback: dict, default: dict,
     # accessor to return 0 disables grace, keeping these tests' pinned alpha
     # values valid. AC-2's grace behaviour is covered by
     # tests/autotuner/test_c3_replay_vwap_grace.py.
-    with patch("autotuner._replay_grace_minutes", return_value=0), \
-         patch("autotuner.optuna.create_study", return_value=fake_study), \
-         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()), \
-         patch("autotuner.synthetic_history.generate_synthetic_history",
-               return_value=history), \
-         patch("autotuner.database.load_chart_history", return_value={}), \
-         patch("autotuner.database.save_chart_archive"), \
-         patch("autotuner.database.get_symphony_strategy",
-               return_value={"params": fallback.copy(), "locked_vars": []}), \
-         patch("autotuner.database.save_symphony_strategy",
-               side_effect=_capture_save) as mock_save, \
-         patch("autotuner.database.DEFAULT_STRATEGY", default), \
-         patch("autotuner.math_engine.compute_vwap_breakdown_update",
-               side_effect=vwap_side_effect):
+    with (
+        patch("autotuner._replay_grace_minutes", return_value=0),
+        patch("autotuner.optuna.create_study", return_value=fake_study),
+        patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
+        patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
+        patch("autotuner.database.load_chart_history", return_value={}),
+        patch("autotuner.database.save_chart_archive"),
+        patch(
+            "autotuner.database.get_symphony_strategy",
+            return_value={"params": fallback.copy(), "locked_vars": []},
+        ),
+        patch("autotuner.database.save_symphony_strategy", side_effect=_capture_save) as mock_save,
+        patch("autotuner.database.DEFAULT_STRATEGY", default),
+        patch("autotuner.math_engine.compute_vwap_breakdown_update", side_effect=vwap_side_effect),
+    ):
         yield {
             "save_calls": save_calls,
             "mock_save": mock_save,
@@ -258,8 +259,10 @@ def _run_and_capture(best_params, fallback, default, vwap_side_effect):
     spec_bundle_id = make_phase1_theory_bundle()
     sig = inspect.signature(autotuner.run_autotuner)
     extra = {"spec_bundle_id": spec_bundle_id} if "spec_bundle_id" in sig.parameters else {}
-    with _autotuner_patches(best_params, fallback, default, vwap_side_effect) as ctx, \
-         contextlib.redirect_stdout(buf):
+    with (
+        _autotuner_patches(best_params, fallback, default, vwap_side_effect) as ctx,
+        contextlib.redirect_stdout(buf),
+    ):
         autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **extra)
     return buf.getvalue(), ctx
 
@@ -286,9 +289,7 @@ def test_oos_ai_beats_fallback_and_default_persists_ai_best_params():
     fallback = _fallback_params()
     default = _patched_default_strategy()
     # AI does NOT trigger; fallback and default DO trigger -> AI wins.
-    side_effect = _make_vwap_side_effect(
-        broken_for_marker={FALLBACK_MARKER, DEFAULT_MARKER}
-    )
+    side_effect = _make_vwap_side_effect(broken_for_marker={FALLBACK_MARKER, DEFAULT_MARKER})
 
     stdout, ctx = _run_and_capture(ai, fallback, default, side_effect)
 
@@ -301,9 +302,7 @@ def test_oos_ai_beats_fallback_and_default_persists_ai_best_params():
 
     # The AI's VWAP_CROSS_HWM_PCT marker must be present (post round-to-2dp).
     # AI_MARKER (0.51) is 2dp-exact, so rounding is a no-op.
-    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(
-        AI_MARKER, abs=1e-9
-    ), (
+    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(AI_MARKER, abs=1e-9), (
         "AI VWAP marker must survive into persisted params — proves the "
         "'Adopted AI' branch executed (autotuner.py:347-349)."
     )
@@ -340,9 +339,7 @@ def test_oos_ai_fails_fallback_beats_default_persists_fallback_params():
     ai = _ai_best_params()
     fallback = _fallback_params()
     default = _patched_default_strategy()
-    side_effect = _make_vwap_side_effect(
-        broken_for_marker={AI_MARKER, DEFAULT_MARKER}
-    )
+    side_effect = _make_vwap_side_effect(broken_for_marker={AI_MARKER, DEFAULT_MARKER})
 
     stdout, ctx = _run_and_capture(ai, fallback, default, side_effect)
 
@@ -351,9 +348,7 @@ def test_oos_ai_fails_fallback_beats_default_persists_fallback_params():
     _name, persisted_params, _locked = save_calls[0]
 
     # Fallback's VWAP marker must be the one persisted.
-    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(
-        FALLBACK_MARKER, abs=1e-9
-    ), (
+    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(FALLBACK_MARKER, abs=1e-9), (
         "Fallback VWAP marker must be persisted — proves the 'Reverted to "
         "Fallback' branch executed (autotuner.py:351-354)."
     )
@@ -378,9 +373,7 @@ def test_oos_ai_and_fallback_both_fail_persists_global_default_params():
     ai = _ai_best_params()
     fallback = _fallback_params()
     default = _patched_default_strategy()
-    side_effect = _make_vwap_side_effect(
-        broken_for_marker={AI_MARKER, FALLBACK_MARKER}
-    )
+    side_effect = _make_vwap_side_effect(broken_for_marker={AI_MARKER, FALLBACK_MARKER})
 
     stdout, ctx = _run_and_capture(ai, fallback, default, side_effect)
 
@@ -389,9 +382,7 @@ def test_oos_ai_and_fallback_both_fail_persists_global_default_params():
     _name, persisted_params, _locked = save_calls[0]
 
     # Default's VWAP marker must be the one persisted.
-    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(
-        DEFAULT_MARKER, abs=1e-9
-    ), (
+    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(DEFAULT_MARKER, abs=1e-9), (
         "Default VWAP marker must be persisted — proves the 'Reset to "
         "Global Default' branch executed (autotuner.py:355-359)."
     )
@@ -476,26 +467,28 @@ def test_run_autotuner_aborts_cleanly_when_synthetic_history_empty():
 
     captured = []
 
-    with patch("autotuner.optuna.create_study", return_value=fake_study), \
-         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()), \
-         patch("autotuner.synthetic_history.generate_synthetic_history",
-               return_value={}), \
-         patch("autotuner.database.load_chart_history", return_value={}), \
-         patch("autotuner.database.save_chart_archive"), \
-         patch("autotuner.database.save_symphony_strategy",
-               side_effect=lambda *a, **kw: captured.append(a)):
+    with (
+        patch("autotuner.optuna.create_study", return_value=fake_study),
+        patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
+        patch("autotuner.synthetic_history.generate_synthetic_history", return_value={}),
+        patch("autotuner.database.load_chart_history", return_value={}),
+        patch("autotuner.database.save_chart_archive"),
+        patch(
+            "autotuner.database.save_symphony_strategy",
+            side_effect=lambda *a, **kw: captured.append(a),
+        ),
+    ):
         import autotuner  # local import — see module docstring on lazy import.
         import inspect
         from tests.autotuner.conftest import make_phase1_theory_bundle
+
         _spec_id = make_phase1_theory_bundle()
         _sig = inspect.signature(autotuner.run_autotuner)
         _extra = {"spec_bundle_id": _spec_id} if "spec_bundle_id" in _sig.parameters else {}
         result = autotuner.run_autotuner(_build_bot_state(), "2026-05-10", ["acc-1"], **_extra)
 
     assert result is None, "Expected early-return None on empty history"
-    assert captured == [], (
-        "save_symphony_strategy MUST NOT be called when history fetch fails"
-    )
+    assert captured == [], "save_symphony_strategy MUST NOT be called when history fetch fails"
 
 
 # ===========================================================================
@@ -564,9 +557,11 @@ def _make_constant_alpha_side_effect():
     ``run_simulation`` returns 0.0 -> negated to 0.0 by the caller -> all
     three OOS alphas are exactly 0.0. This is the all-zero tie scenario.
     """
+
     def _side_effect(**kwargs):
         # Returns (vwap_ticks, vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken)
         return (0, 0, False, False)
+
     return _side_effect
 
 
@@ -601,9 +596,7 @@ def test_oos_all_three_alphas_tie_at_zero_prefers_fallback_not_ai():
 
     # Under the strict-positive rule, AI cannot win a tie. Fallback wins via
     # the ``fallback >= default`` cascade (both at 0.0).
-    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(
-        FALLBACK_MARKER, abs=1e-9
-    ), (
+    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(FALLBACK_MARKER, abs=1e-9), (
         "On an all-zero tie across AI/fallback/default, the safer choice is "
         "to preserve the last-known-good fallback params — NOT to import "
         "the over-fit-prone AI proposal. See test docstring for full "
@@ -643,9 +636,7 @@ def test_oos_ai_ties_fallback_above_default_prefers_fallback_not_ai():
     assert len(save_calls) == 1
     _name, persisted_params, _locked = save_calls[0]
 
-    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(
-        FALLBACK_MARKER, abs=1e-9
-    ), (
+    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(FALLBACK_MARKER, abs=1e-9), (
         "AI tied fallback at 0.0 (both above default's negative alpha); "
         "AI did not STRICTLY beat fallback, so fallback must be persisted. "
         "Strict-positive rule guards against over-fit AI silently displacing "
@@ -673,9 +664,7 @@ def test_oos_ai_strictly_beats_both_baselines_persists_ai_params():
     ai = _ai_best_params()
     fallback = _fallback_params()
     default = _patched_default_strategy()
-    side_effect = _make_vwap_side_effect(
-        broken_for_marker={FALLBACK_MARKER, DEFAULT_MARKER}
-    )
+    side_effect = _make_vwap_side_effect(broken_for_marker={FALLBACK_MARKER, DEFAULT_MARKER})
 
     stdout, ctx = _run_and_capture(ai, fallback, default, side_effect)
 
@@ -683,9 +672,7 @@ def test_oos_ai_strictly_beats_both_baselines_persists_ai_params():
     assert len(save_calls) == 1
     _name, persisted_params, _locked = save_calls[0]
 
-    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(
-        AI_MARKER, abs=1e-9
-    ), (
+    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(AI_MARKER, abs=1e-9), (
         "AI strictly beat both baselines (0.0 > negative for fallback AND "
         "default); strict-positive rule MUST still adopt AI here."
     )
@@ -814,9 +801,7 @@ def test_partial_best_params_missing_key_rejects_ai_and_persists_fallback():
     # both go negative. Under the OLD code path AI would win OOS, and the
     # partial dict would be silently merged into fallback. Under the new
     # schema validation, AI is rejected upstream and fallback is persisted.
-    side_effect = _make_vwap_side_effect(
-        broken_for_marker={FALLBACK_MARKER, DEFAULT_MARKER}
-    )
+    side_effect = _make_vwap_side_effect(broken_for_marker={FALLBACK_MARKER, DEFAULT_MARKER})
 
     stdout, ctx = _run_and_capture(partial_ai, fallback, default, side_effect)
 
@@ -832,9 +817,7 @@ def test_partial_best_params_missing_key_rejects_ai_and_persists_fallback():
     # FALLBACK's VWAP marker — so we additionally assert the persisted
     # TRIGGER_THRESHOLD_PCT matches FALLBACK's, not the partial AI's, to
     # detect a Frankenstein merge).
-    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(
-        FALLBACK_MARKER, abs=1e-9
-    ), (
+    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(FALLBACK_MARKER, abs=1e-9), (
         "Partial best_params must NOT cause the AI branch to fire; "
         "fallback marker must be persisted."
     )
@@ -869,9 +852,7 @@ def test_empty_best_params_rejects_ai_and_persists_fallback():
     empty_ai: dict = {}
     fallback = _fallback_params()
     default = _patched_default_strategy()
-    side_effect = _make_vwap_side_effect(
-        broken_for_marker={FALLBACK_MARKER, DEFAULT_MARKER}
-    )
+    side_effect = _make_vwap_side_effect(broken_for_marker={FALLBACK_MARKER, DEFAULT_MARKER})
 
     stdout, ctx = _run_and_capture(empty_ai, fallback, default, side_effect)
 
@@ -916,22 +897,16 @@ def test_extra_keys_in_best_params_are_ignored_ai_proposal_still_valid():
 
     fallback = _fallback_params()
     default = _patched_default_strategy()
-    side_effect = _make_vwap_side_effect(
-        broken_for_marker={FALLBACK_MARKER, DEFAULT_MARKER}
-    )
+    side_effect = _make_vwap_side_effect(broken_for_marker={FALLBACK_MARKER, DEFAULT_MARKER})
 
-    stdout, ctx = _run_and_capture(
-        ai_with_extras, fallback, default, side_effect
-    )
+    stdout, ctx = _run_and_capture(ai_with_extras, fallback, default, side_effect)
 
     save_calls = ctx["save_calls"]
     assert len(save_calls) == 1
     _name, persisted_params, _locked = save_calls[0]
 
     # AI's marker survives -> AI was adopted despite the extra keys.
-    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(
-        AI_MARKER, abs=1e-9
-    ), (
+    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(AI_MARKER, abs=1e-9), (
         "Extra keys in best_params must NOT cause AI rejection — schema "
         "validation requires presence of the 7 known keys, not absence "
         "of unknown keys (forward-compat with future Optuna expansion)."
@@ -940,8 +915,7 @@ def test_extra_keys_in_best_params_are_ignored_ai_proposal_still_valid():
     # All 7 required keys must be present in the persisted dict.
     for key in OPTUNA_SEARCH_SPACE_KEYS:
         assert key in persisted_params, (
-            f"Required Optuna-searched key {key!r} missing from persisted "
-            f"params after AI adoption."
+            f"Required Optuna-searched key {key!r} missing from persisted params after AI adoption."
         )
 
 
@@ -960,16 +934,12 @@ def test_partial_best_params_does_not_raise_unhandled_exception():
     partial_ai = {"TAKE_PROFIT_MC_PCT": 5.0}
     fallback = _fallback_params()
     default = _patched_default_strategy()
-    side_effect = _make_vwap_side_effect(
-        broken_for_marker={FALLBACK_MARKER, DEFAULT_MARKER}
-    )
+    side_effect = _make_vwap_side_effect(broken_for_marker={FALLBACK_MARKER, DEFAULT_MARKER})
 
     # Must complete without raising. Capture but do not assert on stdout
     # here — this test is purely about exception-safety.
     try:
-        _stdout, ctx = _run_and_capture(
-            partial_ai, fallback, default, side_effect
-        )
+        _stdout, ctx = _run_and_capture(partial_ai, fallback, default, side_effect)
     except Exception as exc:  # pragma: no cover - failure surface
         pytest.fail(
             f"run_autotuner must not propagate exceptions when best_params "

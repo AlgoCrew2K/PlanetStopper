@@ -32,6 +32,7 @@ _CPCV_N_PATHS constants.
 
 Fixture: tests/fixtures/math/sentinel_mean_partial_filter.json
 """
+
 from __future__ import annotations
 
 import json
@@ -40,9 +41,7 @@ import pathlib
 import pytest
 
 _WORKTREE_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_FIXTURE_PATH = (
-    _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "sentinel_mean_partial_filter.json"
-)
+_FIXTURE_PATH = _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "sentinel_mean_partial_filter.json"
 
 
 @pytest.fixture(scope="module")
@@ -56,12 +55,16 @@ def sentinel_mean_fixture() -> dict:
 
 
 def _make_trial(value):
-    return type("FakeTrial", (), {
-        "value": value,
-        "user_attrs": {"daily_returns": [0.5, 0.3, 0.4]},
-        "params": {"X": 1.0},
-        "number": 0,
-    })()
+    return type(
+        "FakeTrial",
+        (),
+        {
+            "value": value,
+            "user_attrs": {"daily_returns": [0.5, 0.3, 0.4]},
+            "params": {"X": 1.0},
+            "number": 0,
+        },
+    )()
 
 
 def _partial_sentinel_mean(small_path_scores):
@@ -221,9 +224,7 @@ class TestPartialSentinelNetNegativePathsGap:
         if not hasattr(autotuner, "filter_sortino_sentinels"):
             pytest.fail("autotuner.filter_sortino_sentinels missing — RED.")
 
-        sc = sentinel_mean_fixture["scenarios"][
-            "partial_sentinel_cpcv_mean_net_negative_paths"
-        ]
+        sc = sentinel_mean_fixture["scenarios"]["partial_sentinel_cpcv_mean_net_negative_paths"]
         n = autotuner._CPCV_N_PATHS
         # One sentinel path + (n-1) net-negative paths.
         path_scores = [math_engine._SORTINO_SENTINEL] + list(sc["other_path_scores"])

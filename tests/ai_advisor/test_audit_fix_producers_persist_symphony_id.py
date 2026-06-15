@@ -111,8 +111,7 @@ def test_run_divergence_explainer_passes_symphony_id_when_flag_off():
         f"kwargs keys: {sorted(kwargs.keys())!r}."
     )
     assert kwargs["symphony_id"] == run["symphony_id"], (
-        f"DE persisted symphony_id={kwargs['symphony_id']!r}; expected "
-        f"{run['symphony_id']!r}."
+        f"DE persisted symphony_id={kwargs['symphony_id']!r}; expected {run['symphony_id']!r}."
     )
 
 
@@ -137,8 +136,7 @@ def test_run_divergence_explainer_passes_symphony_id_when_flag_on():
     assert mocked.called
     _, kwargs = mocked.call_args
     assert kwargs.get("symphony_id") == run["symphony_id"], (
-        f"DE (flag on) symphony_id={kwargs.get('symphony_id')!r}; expected "
-        f"{run['symphony_id']!r}."
+        f"DE (flag on) symphony_id={kwargs.get('symphony_id')!r}; expected {run['symphony_id']!r}."
     )
 
 

@@ -137,7 +137,7 @@ def test_tokens_css_no_hardcoded_hex_in_root():
         and not line.strip().startswith("//")
         and not line.strip().startswith("/*")
         and not line.strip().startswith("*")  # inside block comment
-        and not line.strip().endswith("*/")   # end of block comment
+        and not line.strip().endswith("*/")  # end of block comment
     ]
     assert not lines_with_bare_hex, (
         f"tokens.css contains hex colors outside CSS variable declarations: {lines_with_bare_hex}"

@@ -66,6 +66,7 @@ Citations:
   - opt-optuna4 BLOCK on ebbe571 (category-confusion diagnosis — provenance
     for this revision)
 """
+
 from __future__ import annotations
 
 import ast
@@ -85,12 +86,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
-_FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "autotuner"
-    / "oos_fold_collapse"
-)
+_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "autotuner" / "oos_fold_collapse"
 _AUTOTUNER_SRC = _WORKTREE_ROOT / "autotuner.py"
 
 
@@ -98,10 +94,9 @@ _AUTOTUNER_SRC = _WORKTREE_ROOT / "autotuner.py"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_pin() -> dict:
-    return json.loads(
-        (_FIXTURE_DIR / "oos_fold_collapse_pin.json").read_text(encoding="utf-8")
-    )
+    return json.loads((_FIXTURE_DIR / "oos_fold_collapse_pin.json").read_text(encoding="utf-8"))
 
 
 def _parse_autotuner_source() -> str:
@@ -128,16 +123,19 @@ def _find_module_level_assignments(tree: ast.Module) -> dict[str, Any]:
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
 def _make_bundle() -> int:
     from tests.autotuner.conftest import make_phase1_theory_bundle
+
     return make_phase1_theory_bundle()
 
 
 def _spec_bundle_kwarg() -> dict:
     import autotuner as _at
+
     sig = _inspect.signature(_at.run_autotuner)
     if "spec_bundle_id" not in sig.parameters:
         return {}
@@ -167,6 +165,7 @@ def _build_history(n_days: int) -> dict:
         "valid_vwap_weight": 1.0,
     }
     import datetime
+
     start = datetime.date(2025, 6, 2)  # Monday
     dates: list[str] = []
     d = start
@@ -250,6 +249,7 @@ def _autotuner_patches(
 # Test 1 — Named module-level constant pins the usable validation window.
 # ===========================================================================
 
+
 class TestUsableValidationWindowConstantPinned:
     """
     The OPTUNA-4 thin-window justification rests on a SPECIFIC arithmetic
@@ -326,6 +326,7 @@ class TestUsableValidationWindowConstantPinned:
 # ===========================================================================
 # Test 2 — run_autotuner docstring carries the Option-1 honesty framing.
 # ===========================================================================
+
 
 class TestDocstringHonestyFraming:
     """
@@ -444,6 +445,7 @@ class TestDocstringHonestyFraming:
 # confusion (the door that does not reopen).
 # ===========================================================================
 
+
 class TestDocstringForbidsCompensationClaims:
     """
     opt-optuna4's BLOCK on ebbe571 identified a category confusion: the
@@ -485,6 +487,7 @@ class TestDocstringForbidsCompensationClaims:
 # Test 4 — Source comment on _OOS_USABLE_VALIDATION_DAYS_EXPECTED carries
 # the honesty framing and forbids the same compensation phrasings.
 # ===========================================================================
+
 
 class TestNamedConstantSourceComment:
     """
@@ -589,6 +592,7 @@ class TestNamedConstantSourceComment:
 # Test 5 — optimization_results carries the eval_window_days dict.
 # ===========================================================================
 
+
 class TestOptimizationResultsExposesEvalWindowDays:
     """
     Path B's operator-visibility contract: every autotune cycle must
@@ -609,9 +613,7 @@ class TestOptimizationResultsExposesEvalWindowDays:
         n_days = pin["history_length"]
         history = _build_history(n_days)
         params = _default_params()
-        bot_state = {
-            "sym-A": {"name": "OPTUNA-4 Path B Test", "account_uuid": "acc-1"}
-        }
+        bot_state = {"sym-A": {"name": "OPTUNA-4 Path B Test", "account_uuid": "acc-1"}}
 
         buf = io.StringIO()
         with _autotuner_patches(params, history):
@@ -624,16 +626,14 @@ class TestOptimizationResultsExposesEvalWindowDays:
                 )
 
         assert isinstance(result, dict) and result, (
-            "run_autotuner must return a non-empty optimization_results dict. "
-            f"Got: {result!r}"
+            f"run_autotuner must return a non-empty optimization_results dict. Got: {result!r}"
         )
 
         # There is exactly one symphony in this fixture.
         sym_key = next(iter(result))
         sym_entry = result[sym_key]
         assert isinstance(sym_entry, dict), (
-            f"optimization_results[{sym_key!r}] must be a dict; got "
-            f"{type(sym_entry).__name__}"
+            f"optimization_results[{sym_key!r}] must be a dict; got {type(sym_entry).__name__}"
         )
 
         assert field_name in sym_entry, (
@@ -674,9 +674,7 @@ class TestOptimizationResultsExposesEvalWindowDays:
         n_days = pin["history_length"]
         history = _build_history(n_days)
         params = _default_params()
-        bot_state = {
-            "sym-A": {"name": "OPTUNA-4 Arithmetic Test", "account_uuid": "acc-1"}
-        }
+        bot_state = {"sym-A": {"name": "OPTUNA-4 Arithmetic Test", "account_uuid": "acc-1"}}
 
         buf = io.StringIO()
         with _autotuner_patches(params, history):
@@ -691,16 +689,12 @@ class TestOptimizationResultsExposesEvalWindowDays:
         autotuner = _import_autotuner()
 
         val_start_idx = int(n_days * autotuner.TRAIN_RATIO)
-        frozen_start_idx = int(
-            n_days * (autotuner.TRAIN_RATIO + autotuner.VALIDATION_RATIO)
-        )
+        frozen_start_idx = int(n_days * (autotuner.TRAIN_RATIO + autotuner.VALIDATION_RATIO))
         derived = {
             "raw_validation_days": frozen_start_idx - val_start_idx,
             "usable_validation_days": max(
                 0,
-                (frozen_start_idx - val_start_idx)
-                - autotuner.PURGE_DAYS
-                - autotuner.EMBARGO_DAYS,
+                (frozen_start_idx - val_start_idx) - autotuner.PURGE_DAYS - autotuner.EMBARGO_DAYS,
             ),
             "raw_frozen_eval_days": n_days - frozen_start_idx,
             "purge_days": autotuner.PURGE_DAYS,
@@ -726,6 +720,7 @@ class TestOptimizationResultsExposesEvalWindowDays:
 # the pinned 125-day data-budget. (T6 in the engine-audit plan.)
 # ===========================================================================
 
+
 class TestUsableValidationWindowStrictlyPositive:
     """
     At the operator-data-budget the usable validation window must be
@@ -743,12 +738,13 @@ class TestUsableValidationWindowStrictlyPositive:
         n_days = pin["history_length"]
 
         autotuner = _import_autotuner()
-        val_start_idx = int(n_days * autotuner.VALIDATION_RATIO + n_days * autotuner.TRAIN_RATIO) - int(n_days * autotuner.TRAIN_RATIO)
+        val_start_idx = int(
+            n_days * autotuner.VALIDATION_RATIO + n_days * autotuner.TRAIN_RATIO
+        ) - int(n_days * autotuner.TRAIN_RATIO)
         # Equivalent to int(n_days*(TRAIN+VAL)) - int(n_days*TRAIN), which is
         # the raw validation day count under the current split.
-        raw_val_days = (
-            int(n_days * (autotuner.TRAIN_RATIO + autotuner.VALIDATION_RATIO))
-            - int(n_days * autotuner.TRAIN_RATIO)
+        raw_val_days = int(n_days * (autotuner.TRAIN_RATIO + autotuner.VALIDATION_RATIO)) - int(
+            n_days * autotuner.TRAIN_RATIO
         )
         usable = raw_val_days - autotuner.PURGE_DAYS - autotuner.EMBARGO_DAYS
 
@@ -775,9 +771,8 @@ class TestUsableValidationWindowStrictlyPositive:
         expected = pin["usable_window_post_purge"]["usable_validation_days"]
 
         autotuner = _import_autotuner()
-        raw_val_days = (
-            int(n_days * (autotuner.TRAIN_RATIO + autotuner.VALIDATION_RATIO))
-            - int(n_days * autotuner.TRAIN_RATIO)
+        raw_val_days = int(n_days * (autotuner.TRAIN_RATIO + autotuner.VALIDATION_RATIO)) - int(
+            n_days * autotuner.TRAIN_RATIO
         )
         usable = raw_val_days - autotuner.PURGE_DAYS - autotuner.EMBARGO_DAYS
 

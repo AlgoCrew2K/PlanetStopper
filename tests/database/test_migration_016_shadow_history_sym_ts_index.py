@@ -38,9 +38,7 @@ import sqlite3
 import pytest
 
 
-MIGRATIONS_DIR = (
-    pathlib.Path(__file__).resolve().parent.parent.parent / "migrations"
-)
+MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "migrations"
 MIGRATION_FILE = MIGRATIONS_DIR / "031_shadow_history_sym_ts_index.sql"
 EXPECTED_INDEX_NAME = "idx_shadow_history_sym_ts"
 
@@ -64,18 +62,13 @@ class TestMigration031FileExists:
         sql = MIGRATION_FILE.read_text(encoding="utf-8").lower()
 
         assert "create index" in sql, (
-            "Migration 031 must use CREATE INDEX, not a different DDL "
-            "verb."
+            "Migration 031 must use CREATE INDEX, not a different DDL verb."
         )
-        assert "if not exists" in sql, (
-            "Migration 031 must be idempotent — use 'IF NOT EXISTS'."
-        )
+        assert "if not exists" in sql, "Migration 031 must be idempotent — use 'IF NOT EXISTS'."
         assert EXPECTED_INDEX_NAME.lower() in sql, (
             f"Migration 031 must name the index {EXPECTED_INDEX_NAME!r}."
         )
-        assert "shadow_history" in sql, (
-            "Migration 031 must target the shadow_history table."
-        )
+        assert "shadow_history" in sql, "Migration 031 must target the shadow_history table."
         # The composite columns must appear together, in the canonical
         # order — column ORDER matters for index selection.
         pattern = re.compile(
@@ -116,8 +109,7 @@ class TestMigration031AppliedCreatesIndex:
 
         cur = conn.cursor()
         cur.execute(
-            f"SELECT name FROM sqlite_master "
-            f"WHERE type='index' AND name='{EXPECTED_INDEX_NAME}';"
+            f"SELECT name FROM sqlite_master WHERE type='index' AND name='{EXPECTED_INDEX_NAME}';"
         )
         assert cur.fetchone() is not None, (
             f"AC-10 / BUG-001 migration 031 VIOLATED: index "

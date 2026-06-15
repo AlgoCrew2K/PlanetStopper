@@ -44,31 +44,31 @@ def _pick_symphony(page: Page) -> str | None:
     """Return the value of a symphony option whose text contains TARGET_SYMPHONY_SUBSTRING,
     or any non-empty option if the target is not found."""
     options = page.eval_on_selector_all(
-        '#symphony-id-input option',
-        'opts => opts.filter(o => o.value).map(o => ({value: o.value, text: o.textContent}))'
+        "#symphony-id-input option",
+        "opts => opts.filter(o => o.value).map(o => ({value: o.value, text: o.textContent}))",
     )
     for opt in options:
-        if TARGET_SYMPHONY_SUBSTRING in (opt.get('text') or ''):
-            return opt['value']
+        if TARGET_SYMPHONY_SUBSTRING in (opt.get("text") or ""):
+            return opt["value"]
     # fallback to first non-empty option
     for opt in options:
-        if opt.get('value'):
-            return opt['value']
+        if opt.get("value"):
+            return opt["value"]
     return None
 
 
 def _load_suggestions(page: Page, viewport_width: int, viewport_height: int) -> bool:
     """Navigate to advisor, set viewport, select a symphony, trigger suggestions.
     Returns True if at least one suggestion card is present, False otherwise."""
-    page.set_viewport_size({'width': viewport_width, 'height': viewport_height})
+    page.set_viewport_size({"width": viewport_width, "height": viewport_height})
     page.goto(BASE_URL + "/ai-advisor")
-    page.wait_for_load_state('networkidle')
+    page.wait_for_load_state("networkidle")
 
     sym = _pick_symphony(page)
     if not sym:
         return False
 
-    page.select_option('#symphony-id-input', sym)
+    page.select_option("#symphony-id-input", sym)
     # wait for suggestions to load (the change event auto-triggers getSuggestions)
     page.wait_for_function(
         "() => {"
@@ -77,12 +77,9 @@ def _load_suggestions(page: Page, viewport_width: int, viewport_height: int) -> 
         "  return el.querySelector('[data-testid=\"gate-badge\"]') !== null"
         "    || el.textContent.includes('No suggestions');"
         "}",
-        timeout=15000
+        timeout=15000,
     )
-    has_cards = page.eval_on_selector_all(
-        '[data-testid="gate-badge"]',
-        'els => els.length > 0'
-    )
+    has_cards = page.eval_on_selector_all('[data-testid="gate-badge"]', "els => els.length > 0")
     return bool(has_cards)
 
 
@@ -92,7 +89,7 @@ def _load_suggestions(page: Page, viewport_width: int, viewport_height: int) -> 
 
 pytestmark = pytest.mark.skipif(
     not _daemon_reachable(),
-    reason="Live daemon not reachable at http://localhost:5000 — skipping overflow regression tests"
+    reason="Live daemon not reachable at http://localhost:5000 — skipping overflow regression tests",
 )
 
 
@@ -125,8 +122,7 @@ def test_gate_badges_no_wrap_overflow(browser_page: Page):
         pytest.skip("No suggestion cards found — cannot verify badge overflow")
 
     heights = browser_page.eval_on_selector_all(
-        '[data-testid="gate-badge"]',
-        'badges => badges.map(b => b.offsetHeight)'
+        '[data-testid="gate-badge"]', "badges => badges.map(b => b.offsetHeight)"
     )
     assert heights, "Expected at least one gate-badge element"
     for h in heights:
@@ -149,9 +145,9 @@ def test_rationale_full_text_in_dom(browser_page: Page):
     """
     # Fetch the suggestions from the API directly to get ground-truth lengths
     page = browser_page
-    page.set_viewport_size({'width': 1920, 'height': 1080})
+    page.set_viewport_size({"width": 1920, "height": 1080})
     page.goto(BASE_URL + "/ai-advisor")
-    page.wait_for_load_state('networkidle')
+    page.wait_for_load_state("networkidle")
 
     sym = _pick_symphony(page)
     if not sym:
@@ -170,19 +166,18 @@ def test_rationale_full_text_in_dom(browser_page: Page):
         pytest.skip("Suggest API returned 0 suggestions — cannot verify rationale length")
 
     # Navigate browser to the page, select symphony, wait for cards
-    page.select_option('#symphony-id-input', sym)
+    page.select_option("#symphony-id-input", sym)
     page.wait_for_function(
         "() => {"
         "  var el = document.getElementById('suggestions-container');"
         "  return el && el.querySelector('p') !== null;"
         "}",
-        timeout=15000
+        timeout=15000,
     )
 
     # Collect rationale <p> textContent lengths from the DOM
     dom_lengths = page.eval_on_selector_all(
-        '#suggestions-container p',
-        'paras => paras.map(p => p.textContent.trim().length)'
+        "#suggestions-container p", "paras => paras.map(p => p.textContent.trim().length)"
     )
 
     # Every API suggestion that has a rationale longer than 160 chars must be
@@ -224,15 +219,15 @@ def test_gate_badges_a11y_spacing(browser_page: Page):
     container_texts = browser_page.eval_on_selector_all(
         '[data-testid="gate-badge"]',
         # Get the parent container's innerText from the first badge
-        'badges => {'
-        '  const seen = new Set();'
-        '  return badges.map(b => {'
-        '    const parent = b.parentElement;'
-        '    if (!parent || seen.has(parent)) return null;'
-        '    seen.add(parent);'
-        '    return parent.innerText;'
-        '  }).filter(t => t !== null);'
-        '}'
+        "badges => {"
+        "  const seen = new Set();"
+        "  return badges.map(b => {"
+        "    const parent = b.parentElement;"
+        "    if (!parent || seen.has(parent)) return null;"
+        "    seen.add(parent);"
+        "    return parent.innerText;"
+        "  }).filter(t => t !== null);"
+        "}",
     )
 
     assert container_texts, "Expected at least one gate-badge container"
@@ -241,13 +236,13 @@ def test_gate_badges_a11y_spacing(browser_page: Page):
         # The text should have spaces between the badge labels.
         # "allowlist: pass risk direction: pass" — space after each label
         # The failure mode is "allowlist: passrisk direction: pass" (no space)
-        labels = ['allowlist', 'risk direction', 'oos frozen eval', 'locked vars']
+        labels = ["allowlist", "risk direction", "oos frozen eval", "locked vars"]
         for label in labels:
             # Each label must not be immediately preceded by a non-space char
             # (i.e. the prior badge text must have a space before this label starts)
             idx = text.lower().find(label)
             if idx > 0:
-                assert text[idx - 1] == ' ' or text[idx - 1] == '\n', (
+                assert text[idx - 1] == " " or text[idx - 1] == "\n", (
                     f"Badge label '{label}' immediately follows previous badge text without "
                     f"a space separator. Container innerText: {text!r}. "
                     "Fix: change .join('') to .join(' ') in GATE_LABELS map."

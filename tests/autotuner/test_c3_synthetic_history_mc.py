@@ -47,8 +47,9 @@ def _run_monte_carlo_calls() -> list[ast.Call]:
     for node in ast.walk(_SYNTH_TREE):
         if isinstance(node, ast.Call):
             f = node.func
-            if (isinstance(f, ast.Attribute) and f.attr == "run_monte_carlo") \
-                    or (isinstance(f, ast.Name) and f.id == "run_monte_carlo"):
+            if (isinstance(f, ast.Attribute) and f.attr == "run_monte_carlo") or (
+                isinstance(f, ast.Name) and f.id == "run_monte_carlo"
+            ):
                 calls.append(node)
     return calls
 
@@ -64,8 +65,7 @@ def test_synthetic_history_run_monte_carlo_call_exists() -> None:
     assertions below need re-targeting."""
     calls = _run_monte_carlo_calls()
     assert len(calls) == 1, (
-        f"Expected exactly one run_monte_carlo call in synthetic_history.py; "
-        f"found {len(calls)}."
+        f"Expected exactly one run_monte_carlo call in synthetic_history.py; found {len(calls)}."
     )
 
 
@@ -83,14 +83,10 @@ def test_synthetic_history_does_not_pass_neighbor_k_literal_5() -> None:
 
     # Positional neighbor_k is arg index 4 (0-based).
     bad_positional = (
-        len(call.args) > 4
-        and isinstance(call.args[4], ast.Constant)
-        and call.args[4].value == 5
+        len(call.args) > 4 and isinstance(call.args[4], ast.Constant) and call.args[4].value == 5
     )
     bad_kwarg = any(
-        kw.arg == "neighbor_k"
-        and isinstance(kw.value, ast.Constant)
-        and kw.value.value == 5
+        kw.arg == "neighbor_k" and isinstance(kw.value, ast.Constant) and kw.value.value == 5
         for kw in call.keywords
     )
     assert not (bad_positional or bad_kwarg), (
@@ -148,9 +144,7 @@ def test_synthetic_history_neighbor_k_value_matches_production(
         captured.setdefault("paths", paths)
         return 50.0  # any in-band probability — value irrelevant to AC-4
 
-    monkeypatch.setattr(
-        synthetic_history.math_engine, "run_monte_carlo", _recording_mc
-    )
+    monkeypatch.setattr(synthetic_history.math_engine, "run_monte_carlo", _recording_mc)
 
     builder = _per_day_builder_or_skip()
     builder()
@@ -204,19 +198,17 @@ def test_synthetic_history_insufficient_mc_does_not_become_inband_number(
 
     RED: pre-fix the tick's mc_prob becomes 22.5.
     """
+
     def _insufficient_mc(holdings, hist_data, spy_today, paths, neighbor_k, *, seed):
         return math_engine.MC_INSUFFICIENT_HISTORY_SENTINEL  # None
 
-    monkeypatch.setattr(
-        synthetic_history.math_engine, "run_monte_carlo", _insufficient_mc
-    )
+    monkeypatch.setattr(synthetic_history.math_engine, "run_monte_carlo", _insufficient_mc)
 
     builder = _per_day_builder_or_skip()
     ticks = _extract_ticks(builder())
 
     assert ticks, (
-        "The synthetic-history per-day builder produced no ticks — AC-5 "
-        "cannot be exercised."
+        "The synthetic-history per-day builder produced no ticks — AC-5 cannot be exercised."
     )
     for t in ticks:
         mc = t.get("mc_prob")

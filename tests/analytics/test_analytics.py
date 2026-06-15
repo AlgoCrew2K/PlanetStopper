@@ -74,6 +74,7 @@ import pytest
 # Helpers — build fixture post-mortem files matching the producer schema
 # ---------------------------------------------------------------------------
 
+
 def _trigger(
     symphony_name: str,
     exit_return: float,
@@ -133,6 +134,7 @@ def _write_post_mortem(
 def _date_str(day_offset: int, base_year: int = 2026, base_month: int = 1) -> str:
     """ISO date offset from 2026-01-01 (or supplied base)."""
     from datetime import date, timedelta
+
     return (date(base_year, base_month, 1) + timedelta(days=day_offset)).isoformat()
 
 
@@ -140,6 +142,7 @@ def _date_str(day_offset: int, base_year: int = 2026, base_month: int = 1) -> st
 # Helpers to read internal-shape fields without coupling to a specific
 # implementer key-order (tests assert presence + values, not key ordering).
 # ---------------------------------------------------------------------------
+
 
 def _entry_live_ret(entry: dict) -> float:
     """Internal-shape accessor: live_ret (== producer shadow_return)."""
@@ -157,6 +160,7 @@ def _entry_value(entry: dict) -> float:
 # ---------------------------------------------------------------------------
 # Test 1: load_post_mortem_history happy path (3 files)
 # ---------------------------------------------------------------------------
+
 
 def test_load_post_mortem_history_loads_three_files_from_base_dir(tmp_path):
     """
@@ -203,6 +207,7 @@ def test_load_post_mortem_history_loads_three_files_from_base_dir(tmp_path):
 # Test 2: load_post_mortem_history respects days limit
 # ---------------------------------------------------------------------------
 
+
 def test_load_post_mortem_history_respects_days_limit(tmp_path):
     """
     With 65 fixture files on disk and days=60, the loader must return the
@@ -220,9 +225,7 @@ def test_load_post_mortem_history_respects_days_limit(tmp_path):
 
     history = load_post_mortem_history(days=60, base_dir=str(tmp_path))
 
-    assert len(history) == 60, (
-        f"days=60 must yield exactly 60 entries; got {len(history)}"
-    )
+    assert len(history) == 60, f"days=60 must yield exactly 60 entries; got {len(history)}"
     expected_recent = set(all_dates[-60:])  # the 60 most recent by date
     assert set(history.keys()) == expected_recent, (
         f"days=60 must return the 60 most-recent date_strs; "
@@ -233,6 +236,7 @@ def test_load_post_mortem_history_respects_days_limit(tmp_path):
 # ---------------------------------------------------------------------------
 # Test 3: load_post_mortem_history skips malformed JSON
 # ---------------------------------------------------------------------------
+
 
 def test_load_post_mortem_history_silently_skips_malformed_json(tmp_path):
     """
@@ -260,14 +264,13 @@ def test_load_post_mortem_history_silently_skips_malformed_json(tmp_path):
         f"malformed file must be silently skipped; expected only good dates "
         f"{set(good_dates)} but got {set(history.keys())}"
     )
-    assert bad_date not in history, (
-        f"malformed date {bad_date} must not appear in history"
-    )
+    assert bad_date not in history, f"malformed date {bad_date} must not appear in history"
 
 
 # ---------------------------------------------------------------------------
 # Test 4: list_available_symphonies deduplicates and sorts
 # ---------------------------------------------------------------------------
+
 
 def test_list_available_symphonies_deduplicates_and_sorts(tmp_path):
     """
@@ -276,16 +279,28 @@ def test_list_available_symphonies_deduplicates_and_sorts(tmp_path):
     """
     from analytics import list_available_symphonies, load_post_mortem_history
 
-    _write_post_mortem(tmp_path, _date_str(0), [
-        _trigger("sym-A", 1.0, 0.5, 100.0),
-        _trigger("sym-B", 0.5, 0.2, 50.0),
-    ])
-    _write_post_mortem(tmp_path, _date_str(1), [
-        _trigger("sym-A", 2.0, 1.0, 100.0),
-    ])
-    _write_post_mortem(tmp_path, _date_str(2), [
-        _trigger("sym-A", 0.5, 0.25, 100.0),
-    ])
+    _write_post_mortem(
+        tmp_path,
+        _date_str(0),
+        [
+            _trigger("sym-A", 1.0, 0.5, 100.0),
+            _trigger("sym-B", 0.5, 0.2, 50.0),
+        ],
+    )
+    _write_post_mortem(
+        tmp_path,
+        _date_str(1),
+        [
+            _trigger("sym-A", 2.0, 1.0, 100.0),
+        ],
+    )
+    _write_post_mortem(
+        tmp_path,
+        _date_str(2),
+        [
+            _trigger("sym-A", 0.5, 0.25, 100.0),
+        ],
+    )
 
     history = load_post_mortem_history(days=60, base_dir=str(tmp_path))
     symphonies = list_available_symphonies(history)
@@ -299,6 +314,7 @@ def test_list_available_symphonies_deduplicates_and_sorts(tmp_path):
 # ---------------------------------------------------------------------------
 # Test 5: compute_aggregate_returns weighting math
 # ---------------------------------------------------------------------------
+
 
 def test_compute_aggregate_returns_weights_by_symphony_value(tmp_path):
     """
@@ -314,11 +330,15 @@ def test_compute_aggregate_returns_weights_by_symphony_value(tmp_path):
     from analytics import compute_aggregate_returns, load_post_mortem_history
 
     d0 = _date_str(0)
-    _write_post_mortem(tmp_path, d0, [
-        # exit_return -> f_ret, shadow_return -> live_ret, symphony_value -> value
-        _trigger("sym-A", exit_return=0.03, shadow_return=0.02, symphony_value=100.0),
-        _trigger("sym-B", exit_return=0.015, shadow_return=0.01, symphony_value=400.0),
-    ])
+    _write_post_mortem(
+        tmp_path,
+        d0,
+        [
+            # exit_return -> f_ret, shadow_return -> live_ret, symphony_value -> value
+            _trigger("sym-A", exit_return=0.03, shadow_return=0.02, symphony_value=100.0),
+            _trigger("sym-B", exit_return=0.015, shadow_return=0.01, symphony_value=400.0),
+        ],
+    )
 
     history = load_post_mortem_history(days=60, base_dir=str(tmp_path))
     dates, live_returns, shadow_returns = compute_aggregate_returns(history, weight_by="value")
@@ -331,8 +351,8 @@ def test_compute_aggregate_returns_weights_by_symphony_value(tmp_path):
 
     # Tolerance: 1e-9 — pure arithmetic on small floats; any drift indicates
     # an off-by-one weighting bug, not floating-point noise.
-    expected_live = (0.02 * 100.0 + 0.01 * 400.0) / (100.0 + 400.0)   # 0.012
-    expected_f = (0.03 * 100.0 + 0.015 * 400.0) / (100.0 + 400.0)     # 0.018
+    expected_live = (0.02 * 100.0 + 0.01 * 400.0) / (100.0 + 400.0)  # 0.012
+    expected_f = (0.03 * 100.0 + 0.015 * 400.0) / (100.0 + 400.0)  # 0.018
 
     assert live_returns[0] == pytest.approx(expected_live, abs=1e-9), (
         f"weighted live return mismatch: expected {expected_live}, got {live_returns[0]}"
@@ -345,6 +365,7 @@ def test_compute_aggregate_returns_weights_by_symphony_value(tmp_path):
 # ---------------------------------------------------------------------------
 # Test 6: compute_aggregate_returns handles missing weight key per-day
 # ---------------------------------------------------------------------------
+
 
 def test_compute_aggregate_returns_skips_symphony_missing_weight_for_that_day(tmp_path):
     """
@@ -362,28 +383,31 @@ def test_compute_aggregate_returns_skips_symphony_missing_weight_for_that_day(tm
     # Drop the weight key entirely so analytics must skip this entry for the day.
     bad_trigger.pop("symphony_value")
 
-    _write_post_mortem(tmp_path, d0, [
-        _trigger("sym-A", exit_return=0.03, shadow_return=0.02, symphony_value=100.0),
-        bad_trigger,
-    ])
+    _write_post_mortem(
+        tmp_path,
+        d0,
+        [
+            _trigger("sym-A", exit_return=0.03, shadow_return=0.02, symphony_value=100.0),
+            bad_trigger,
+        ],
+    )
 
     history = load_post_mortem_history(days=60, base_dir=str(tmp_path))
     dates, live_returns, shadow_returns = compute_aggregate_returns(history, weight_by="value")
 
     assert dates == [d0], f"single-day fixture must yield 1 date; got {dates}"
     assert live_returns[0] == pytest.approx(0.02, abs=1e-9), (
-        f"sym-B must be skipped (no weight); sym-A alone => live_ret=0.02; "
-        f"got {live_returns[0]}"
+        f"sym-B must be skipped (no weight); sym-A alone => live_ret=0.02; got {live_returns[0]}"
     )
     assert shadow_returns[0] == pytest.approx(0.03, abs=1e-9), (
-        f"sym-B must be skipped (no weight); sym-A alone => f_ret=0.03; "
-        f"got {shadow_returns[0]}"
+        f"sym-B must be skipped (no weight); sym-A alone => f_ret=0.03; got {shadow_returns[0]}"
     )
 
 
 # ---------------------------------------------------------------------------
 # Test 7: compute_aggregate_returns empty history
 # ---------------------------------------------------------------------------
+
 
 def test_compute_aggregate_returns_empty_history_returns_empty_lists():
     """An empty history dict must return three empty parallel lists."""
@@ -393,14 +417,13 @@ def test_compute_aggregate_returns_empty_history_returns_empty_lists():
 
     assert dates == [], f"empty history must yield empty dates list; got {dates}"
     assert live_returns == [], f"empty history must yield empty live list; got {live_returns}"
-    assert shadow_returns == [], (
-        f"empty history must yield empty shadow list; got {shadow_returns}"
-    )
+    assert shadow_returns == [], f"empty history must yield empty shadow list; got {shadow_returns}"
 
 
 # ---------------------------------------------------------------------------
 # Test 8: compute_per_symphony_returns filters correctly and sorts by date
 # ---------------------------------------------------------------------------
+
 
 def test_compute_per_symphony_returns_filters_to_one_symphony_sorted_by_date(tmp_path):
     """
@@ -412,17 +435,25 @@ def test_compute_per_symphony_returns_filters_to_one_symphony_sorted_by_date(tmp
     days = [_date_str(i) for i in range(5)]
     for i, d in enumerate(days):
         # Use a per-day distinct value so we can verify the filter pulled sym-A's row.
-        _write_post_mortem(tmp_path, d, [
-            _trigger("sym-A", exit_return=0.01 * (i + 1), shadow_return=0.005 * (i + 1), symphony_value=100.0),
-            _trigger("sym-B", exit_return=0.99, shadow_return=0.99, symphony_value=999.0),
-        ])
+        _write_post_mortem(
+            tmp_path,
+            d,
+            [
+                _trigger(
+                    "sym-A",
+                    exit_return=0.01 * (i + 1),
+                    shadow_return=0.005 * (i + 1),
+                    symphony_value=100.0,
+                ),
+                _trigger("sym-B", exit_return=0.99, shadow_return=0.99, symphony_value=999.0),
+            ],
+        )
 
     history = load_post_mortem_history(days=60, base_dir=str(tmp_path))
     out_dates, live_returns, shadow_returns = compute_per_symphony_returns(history, "sym-A")
 
     assert out_dates == days, (
-        f"per-symphony dates must be chronologically sorted; "
-        f"expected {days} got {out_dates}"
+        f"per-symphony dates must be chronologically sorted; expected {days} got {out_dates}"
     )
     assert len(live_returns) == 5 and len(shadow_returns) == 5, (
         f"parallel-list lengths must match dates count (5); "
@@ -448,13 +479,18 @@ def test_compute_per_symphony_returns_filters_to_one_symphony_sorted_by_date(tmp
 # Test 9: compute_per_symphony_returns missing symphony returns empty
 # ---------------------------------------------------------------------------
 
+
 def test_compute_per_symphony_returns_unknown_symphony_returns_empty_lists(tmp_path):
     """Requesting a symphony absent from history must yield three empty lists."""
     from analytics import compute_per_symphony_returns, load_post_mortem_history
 
-    _write_post_mortem(tmp_path, _date_str(0), [
-        _trigger("sym-A", 0.01, 0.005, 100.0),
-    ])
+    _write_post_mortem(
+        tmp_path,
+        _date_str(0),
+        [
+            _trigger("sym-A", 0.01, 0.005, 100.0),
+        ],
+    )
 
     history = load_post_mortem_history(days=60, base_dir=str(tmp_path))
     out_dates, live_returns, shadow_returns = compute_per_symphony_returns(
@@ -463,14 +499,13 @@ def test_compute_per_symphony_returns_unknown_symphony_returns_empty_lists(tmp_p
 
     assert out_dates == [], f"unknown symphony must yield empty dates; got {out_dates}"
     assert live_returns == [], f"unknown symphony must yield empty live; got {live_returns}"
-    assert shadow_returns == [], (
-        f"unknown symphony must yield empty shadow; got {shadow_returns}"
-    )
+    assert shadow_returns == [], f"unknown symphony must yield empty shadow; got {shadow_returns}"
 
 
 # ---------------------------------------------------------------------------
 # Test 10: compute_quantstats_metrics happy path — structural assertions
 # ---------------------------------------------------------------------------
+
 
 def test_compute_quantstats_metrics_happy_path_returns_all_keys_finite_floats():
     """
@@ -486,19 +521,55 @@ def test_compute_quantstats_metrics_happy_path_returns_all_keys_finite_floats():
 
     # Deterministic synthetic series: small positive drift with realistic noise.
     # Bounded so sharpe/sortino fall in a reasonable range and drawdown < 0.
-    returns = [0.001, -0.002, 0.003, -0.001, 0.002, 0.004, -0.003, 0.001, 0.002, -0.001,
-               0.003, -0.002, 0.001, 0.004, -0.002, 0.002, -0.001, 0.003, 0.001, -0.002,
-               0.002, 0.001, -0.003, 0.004, -0.001, 0.002, 0.001, -0.002, 0.003, 0.001]
+    returns = [
+        0.001,
+        -0.002,
+        0.003,
+        -0.001,
+        0.002,
+        0.004,
+        -0.003,
+        0.001,
+        0.002,
+        -0.001,
+        0.003,
+        -0.002,
+        0.001,
+        0.004,
+        -0.002,
+        0.002,
+        -0.001,
+        0.003,
+        0.001,
+        -0.002,
+        0.002,
+        0.001,
+        -0.003,
+        0.004,
+        -0.001,
+        0.002,
+        0.001,
+        -0.002,
+        0.003,
+        0.001,
+    ]
 
     metrics = compute_quantstats_metrics(returns, freq="D")
 
     required_keys = {
-        "total_return", "annualized_return", "sharpe", "sortino",
-        "max_drawdown", "calmar", "win_rate",
+        "total_return",
+        "annualized_return",
+        "sharpe",
+        "sortino",
+        "max_drawdown",
+        "calmar",
+        "win_rate",
     }
     assert isinstance(metrics, dict), f"metrics must be a dict; got {type(metrics)}"
     missing = required_keys - set(metrics.keys())
-    assert not missing, f"compute_quantstats_metrics must return all required keys; missing {missing}"
+    assert not missing, (
+        f"compute_quantstats_metrics must return all required keys; missing {missing}"
+    )
 
     # Every non-None value must be a finite float (not NaN, not Inf).
     for key in required_keys:
@@ -538,6 +609,7 @@ def test_compute_quantstats_metrics_happy_path_returns_all_keys_finite_floats():
 # Test 11: compute_quantstats_metrics insufficient data -> all None
 # ---------------------------------------------------------------------------
 
+
 def test_compute_quantstats_metrics_insufficient_data_returns_none_for_all_metrics():
     """
     Per the binding contract: < 2 observations must yield None for every metric
@@ -546,8 +618,13 @@ def test_compute_quantstats_metrics_insufficient_data_returns_none_for_all_metri
     from analytics import compute_quantstats_metrics
 
     required_keys = {
-        "total_return", "annualized_return", "sharpe", "sortino",
-        "max_drawdown", "calmar", "win_rate",
+        "total_return",
+        "annualized_return",
+        "sharpe",
+        "sortino",
+        "max_drawdown",
+        "calmar",
+        "win_rate",
     }
 
     for series in ([], [0.001]):
@@ -570,6 +647,7 @@ def test_compute_quantstats_metrics_insufficient_data_returns_none_for_all_metri
 # Test 12: compute_quantstats_metrics NaN/Inf handling
 # ---------------------------------------------------------------------------
 
+
 def test_compute_quantstats_metrics_handles_nan_and_inf_without_corruption():
     """
     Inputs containing NaN must not corrupt metric outputs.
@@ -583,8 +661,18 @@ def test_compute_quantstats_metrics_handles_nan_and_inf_without_corruption():
     pytest.importorskip("quantstats", reason="quantstats is an optional dep — skip when absent")
     from analytics import compute_quantstats_metrics
 
-    series_with_nan = [0.001, float("nan"), 0.002, -0.001, 0.003,
-                       float("nan"), 0.002, -0.002, 0.001, 0.004]
+    series_with_nan = [
+        0.001,
+        float("nan"),
+        0.002,
+        -0.001,
+        0.003,
+        float("nan"),
+        0.002,
+        -0.002,
+        0.001,
+        0.004,
+    ]
 
     metrics = compute_quantstats_metrics(series_with_nan, freq="D")
 
@@ -607,6 +695,7 @@ def test_compute_quantstats_metrics_handles_nan_and_inf_without_corruption():
 # Test 13: get_history_with_cache_invalidation — mtime-based reload
 # ---------------------------------------------------------------------------
 
+
 def test_get_history_with_cache_invalidation_reloads_only_when_mtime_changes(tmp_path):
     """
     First call: load_post_mortem_history invoked once.
@@ -618,9 +707,13 @@ def test_get_history_with_cache_invalidation_reloads_only_when_mtime_changes(tmp
     """
     import analytics
 
-    _write_post_mortem(tmp_path, _date_str(0), [
-        _trigger("sym-A", 0.01, 0.005, 100.0),
-    ])
+    _write_post_mortem(
+        tmp_path,
+        _date_str(0),
+        [
+            _trigger("sym-A", 0.01, 0.005, 100.0),
+        ],
+    )
     fixture_path = tmp_path / f"post_mortem_{_date_str(0)}.json"
 
     # Reset module-level cache state if the implementation exposes one.
@@ -654,8 +747,7 @@ def test_get_history_with_cache_invalidation_reloads_only_when_mtime_changes(tmp
         # Second call with no mtime change: cache hit, no reload.
         result2 = analytics.get_history_with_cache_invalidation(days=60, base_dir=str(tmp_path))
         assert call_counter["n"] == 1, (
-            f"second call (no mtime change) must hit cache; "
-            f"counter rose to {call_counter['n']}"
+            f"second call (no mtime change) must hit cache; counter rose to {call_counter['n']}"
         )
         assert result2 == result1, "cached result must equal initial load"
 
@@ -674,6 +766,7 @@ def test_get_history_with_cache_invalidation_reloads_only_when_mtime_changes(tmp
 # ---------------------------------------------------------------------------
 # Test 14: Regression canary — schema parity with reporting.py
 # ---------------------------------------------------------------------------
+
 
 def test_analytics_consumes_full_reporting_schema_without_keyerror(tmp_path):
     """
@@ -753,9 +846,7 @@ def test_analytics_consumes_full_reporting_schema_without_keyerror(tmp_path):
     )
 
     out_dates, per_live, per_f = compute_per_symphony_returns(history, "sym-canary")
-    assert out_dates == [d0], (
-        f"per-symphony over canary fixture must yield 1 date; got {out_dates}"
-    )
+    assert out_dates == [d0], f"per-symphony over canary fixture must yield 1 date; got {out_dates}"
     assert per_live[0] == pytest.approx(full_trigger["shadow_return"], abs=1e-9), (
         f"per-symphony live_ret must derive from shadow_return; "
         f"expected {full_trigger['shadow_return']}, got {per_live[0]}"
@@ -771,10 +862,16 @@ def test_analytics_consumes_full_reporting_schema_without_keyerror(tmp_path):
     assert isinstance(metrics, dict), (
         f"metrics over canary fixture must be a dict; got {type(metrics)}"
     )
-    for k in ("total_return", "annualized_return", "sharpe", "sortino",
-              "max_drawdown", "calmar", "win_rate"):
+    for k in (
+        "total_return",
+        "annualized_return",
+        "sharpe",
+        "sortino",
+        "max_drawdown",
+        "calmar",
+        "win_rate",
+    ):
         assert k in metrics, f"metrics must always include key {k!r}; got {list(metrics.keys())}"
         assert metrics[k] is None, (
-            f"with only 1 observation, metrics[{k!r}] must be None per contract; "
-            f"got {metrics[k]!r}"
+            f"with only 1 observation, metrics[{k!r}] must be None per contract; got {metrics[k]!r}"
         )

@@ -100,9 +100,7 @@ def _stocks_bars_url_lines(source: str) -> list[tuple[int, str]]:
     The negative anti-drift test is the only consumer of this helper.
     """
     lines = source.splitlines()
-    return [
-        (idx + 1, line) for idx, line in enumerate(lines) if STOCKS_BARS_URL_LINE.search(line)
-    ]
+    return [(idx + 1, line) for idx, line in enumerate(lines) if STOCKS_BARS_URL_LINE.search(line)]
 
 
 # ---------------------------------------------------------------------------

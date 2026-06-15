@@ -79,26 +79,19 @@ class TestDiscordAlertRendersDecreasingStop:
                 symphony_name="TestSym",
                 current_return=1.5,
                 prob_underperforming=10.0,
-                stop_trigger_level=2.10,        # LOWER than prior
+                stop_trigger_level=2.10,  # LOWER than prior
                 high_water_mark=4.0,
                 is_live=False,
                 discord_webhook_url="https://example.invalid/hook",
                 exit_reason="Trailing Stop",
             )
 
-        assert len(posted_payloads) == 2, (
-            f"Expected 2 Discord posts; got {len(posted_payloads)}."
-        )
+        assert len(posted_payloads) == 2, f"Expected 2 Discord posts; got {len(posted_payloads)}."
         # Inspect the second embed's Stop Level field.
         second = posted_payloads[1]["json"]
         embed = second["embeds"][0]
-        stop_fields = [
-            f for f in embed["fields"] if f["name"] == "Stop Level"
-        ]
-        assert stop_fields, (
-            "send_discord_alert second post must include a 'Stop Level' "
-            "field."
-        )
+        stop_fields = [f for f in embed["fields"] if f["name"] == "Stop Level"]
+        assert stop_fields, "send_discord_alert second post must include a 'Stop Level' field."
         assert stop_fields[0]["value"] == "2.10%", (
             "AC-9 / INV-COV-4 VIOLATED: Discord alert rendered Stop "
             f"Level as {stop_fields[0]['value']!r} instead of '2.10%' on "
@@ -119,8 +112,10 @@ class TestDiscordAlertRendersDecreasingStop:
 
             class _Resp:
                 status_code = 204
+
                 def raise_for_status(self):
                     pass
+
             return _Resp()
 
         with patch("reporting.requests.post", side_effect=_capture_post):
@@ -128,7 +123,7 @@ class TestDiscordAlertRendersDecreasingStop:
                 symphony_name="TestSym",
                 current_return=-0.5,
                 prob_underperforming=10.0,
-                stop_trigger_level=-1.25,        # NEGATIVE stop
+                stop_trigger_level=-1.25,  # NEGATIVE stop
                 high_water_mark=0.5,
                 is_live=False,
                 discord_webhook_url="https://example.invalid/hook",
@@ -169,7 +164,7 @@ class TestDashboardSortHandlesDecreasingStops:
             {"id": "B", "stop_trigger": 2.1},
             {"id": "C", "stop_trigger": 4.0},
             {"id": "D", "stop_trigger": -1.0},
-            {"id": "E", "stop_trigger": None},   # legacy NULL
+            {"id": "E", "stop_trigger": None},  # legacy NULL
         ]
 
         # Reproduce the sort comparator inline (the production code at
@@ -226,7 +221,7 @@ class TestTemplateRendersDecreasingStop:
             "name": "TestSym",
             "current_return": 1.5,
             "high_water_mark": 4.0,
-            "stop_trigger": 2.10,            # decreased from a hypothetical 3.5
+            "stop_trigger": 2.10,  # decreased from a hypothetical 3.5
             "triggered": False,
             "triggered_at_stop": None,
             "breakeven_locked": False,
@@ -247,9 +242,7 @@ class TestTemplateRendersDecreasingStop:
                 data_as_of=None,
             )
         except Exception as exc:
-            pytest.skip(
-                f"table_partial.html render requires fuller context: {exc}"
-            )
+            pytest.skip(f"table_partial.html render requires fuller context: {exc}")
 
         assert "2.10%" in rendered, (
             "AC-9 / INV-COV-4 VIOLATED: table_partial.html did not "
@@ -280,10 +273,7 @@ class TestJsHasNoMonotonicUpStopClamp:
         import pathlib
         import re
 
-        js_path = (
-            pathlib.Path(__file__).resolve().parent.parent.parent
-            / "static" / "index.js"
-        )
+        js_path = pathlib.Path(__file__).resolve().parent.parent.parent / "static" / "index.js"
         if not js_path.exists():
             pytest.skip(f"{js_path} not present.")
         src = js_path.read_text(encoding="utf-8")

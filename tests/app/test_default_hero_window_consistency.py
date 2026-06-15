@@ -52,17 +52,27 @@ def client():
 def _live_bot_state():
     return {
         "sym-x": {
-            "name": "Symphony X", "account": "ACC1", "current_value": 10000.0,
-            "current_return": 1.5, "simple_return": 0.30, "net_deposits": 1000.0,
-            "time_weighted_return": 0.30, "max_drawdown": 0.08,
-            "armed": True, "tp_armed": False, "para_armed": False, "triggered": False,
+            "name": "Symphony X",
+            "account": "ACC1",
+            "current_value": 10000.0,
+            "current_return": 1.5,
+            "simple_return": 0.30,
+            "net_deposits": 1000.0,
+            "time_weighted_return": 0.30,
+            "max_drawdown": 0.08,
+            "armed": True,
+            "tp_armed": False,
+            "para_armed": False,
+            "triggered": False,
         }
     }
 
 
 # A warm account cache (as _refresh_account_totals populates live): account CR ~66%, cash present.
 _WARM_CACHE = {
-    "portfolio_cr": 66.0, "portfolio_tc": 0.5, "portfolio_mdd": 24.47,
+    "portfolio_cr": 66.0,
+    "portfolio_tc": 0.5,
+    "portfolio_mdd": 24.47,
     "portfolio_value": 12945.18,
 }
 
@@ -71,15 +81,18 @@ _WARM_CACHE = {
 # (a) default poll hero windowed guard alpha == /api/strip/<default> — ONE basis
 # ===========================================================================
 
+
 class TestDefaultHeroGuardAlphaMatchesWindowedDefault:
     def test_default_poll_guard_alpha_equals_windowed_default(self, client, monkeypatch):
         """WARM-CACHE path (the live condition): the default /api/state hero's WINDOWED guard
         alpha must EQUAL /api/strip/<default-window>'s guard alpha. No 67-vs-29 jump on first click.
         """
         monkeypatch.setattr(app_module, "_account_totals_cache", dict(_WARM_CACHE), raising=False)
-        with patch.object(app_module.database, "load_state", return_value=_live_bot_state()), \
-             patch.object(app_module, "dotenv_values", lambda *_a, **_k: {}), \
-             patch.object(app_module, "render_template", lambda *_a, **_k: ""):
+        with (
+            patch.object(app_module.database, "load_state", return_value=_live_bot_state()),
+            patch.object(app_module, "dotenv_values", lambda *_a, **_k: {}),
+            patch.object(app_module, "render_template", lambda *_a, **_k: ""),
+        ):
             state = client.get("/api/state").get_json()
             strip = client.get(f"/api/strip/{_DEFAULT_WINDOW}").get_json()
 
@@ -115,6 +128,7 @@ class TestDefaultHeroGuardAlphaMatchesWindowedDefault:
 # (b) account-lifetime CR is a DISTINCT non-windowed field
 # ===========================================================================
 
+
 def _account_all_time_cr(payload: dict):
     """Locate the dedicated account-all-time CR field (Option A). Accept the canonical name or a
     small set of reasonable aliases so the test pins the CONTRACT (a separate field), not a brittle
@@ -124,8 +138,12 @@ def _account_all_time_cr(payload: dict):
     for src in (meta, ps, payload):
         if not isinstance(src, dict):
             continue
-        for k in ("account_all_time_cr", "account_cr_all_time", "account_lifetime_cr",
-                  "account_cr"):
+        for k in (
+            "account_all_time_cr",
+            "account_cr_all_time",
+            "account_lifetime_cr",
+            "account_cr",
+        ):
             if src.get(k) is not None:
                 return src[k]
     return None
@@ -136,9 +154,11 @@ class TestAccountAllTimeCrIsSeparateAndUnwindowed:
         """The ~66% account-lifetime CR must be exposed as its OWN field (not the windowed hero
         value), so the UI can render the 'Account · all-time' stat."""
         monkeypatch.setattr(app_module, "_account_totals_cache", dict(_WARM_CACHE), raising=False)
-        with patch.object(app_module.database, "load_state", return_value=_live_bot_state()), \
-             patch.object(app_module, "dotenv_values", lambda *_a, **_k: {}), \
-             patch.object(app_module, "render_template", lambda *_a, **_k: ""):
+        with (
+            patch.object(app_module.database, "load_state", return_value=_live_bot_state()),
+            patch.object(app_module, "dotenv_values", lambda *_a, **_k: {}),
+            patch.object(app_module, "render_template", lambda *_a, **_k: ""),
+        ):
             state = client.get("/api/state").get_json()
         acct_cr = _account_all_time_cr(state)
         assert acct_cr is not None, (
@@ -155,9 +175,11 @@ class TestAccountAllTimeCrIsSeparateAndUnwindowed:
         (it carries no window label and does not window). /api/strip/<window> must NOT alter it."""
         monkeypatch.setattr(app_module, "_account_totals_cache", dict(_WARM_CACHE), raising=False)
         seen = set()
-        with patch.object(app_module.database, "load_state", return_value=_live_bot_state()), \
-             patch.object(app_module, "dotenv_values", lambda *_a, **_k: {}), \
-             patch.object(app_module, "render_template", lambda *_a, **_k: ""):
+        with (
+            patch.object(app_module.database, "load_state", return_value=_live_bot_state()),
+            patch.object(app_module, "dotenv_values", lambda *_a, **_k: {}),
+            patch.object(app_module, "render_template", lambda *_a, **_k: ""),
+        ):
             for _ in ("first", "second"):
                 state = client.get("/api/state").get_json()
                 acct = _account_all_time_cr(state)
@@ -171,6 +193,7 @@ class TestAccountAllTimeCrIsSeparateAndUnwindowed:
 # ===========================================================================
 # (c) windowed strip carries a re-windowing guard alpha for every token
 # ===========================================================================
+
 
 class TestWindowedGuardAlphaReWindows:
     def test_strip_guard_alpha_defined_for_every_window(self, client, monkeypatch):
@@ -192,12 +215,15 @@ class TestWindowedGuardAlphaReWindows:
 # (d) the template surfaces a distinct 'Account · all-time' element
 # ===========================================================================
 
+
 class TestTemplateHasAccountAllTimeElement:
     def test_template_has_distinct_account_all_time_element(self):
         """templates/index.html must carry a distinct, clearly-labeled account-all-time element,
         separate from the windowed guard-alpha hero (so the ~67% is not mislabeled '30d')."""
-        html = Path(app_module.__file__).parent.joinpath("templates", "index.html").read_text(
-            encoding="utf-8"
+        html = (
+            Path(app_module.__file__)
+            .parent.joinpath("templates", "index.html")
+            .read_text(encoding="utf-8")
         )
         # Require a DEDICATED testid (not a loose word-match — "All Time" picker button + the word
         # "account" elsewhere would incidentally satisfy a substring check). The account-all-time

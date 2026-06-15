@@ -24,6 +24,7 @@ import app as app_module
 
 _FIXTURES_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "app"
 
+
 @pytest.fixture(scope="module")
 def env_snapshot():
     """Load the env-var fixture snapshot (placeholder credentials only)."""
@@ -52,6 +53,7 @@ NON_SECRET_KEYS = [
 # Shared test client
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def client():
     app_module.app.config["TESTING"] = True
@@ -62,6 +64,7 @@ def client():
 @pytest.fixture
 def mock_database(monkeypatch):
     from unittest.mock import patch
+
     with patch.object(app_module, "database") as db_mock:
         db_mock.load_state.return_value = {}
         db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
@@ -72,6 +75,7 @@ def mock_database(monkeypatch):
 # ---------------------------------------------------------------------------
 # RED 1: masked secrets are "" in GET response when set to non-empty values
 # ---------------------------------------------------------------------------
+
 
 def test_get_settings_masks_all_five_secrets_when_set(
     client, mock_database, env_snapshot, monkeypatch
@@ -98,6 +102,7 @@ def test_get_settings_masks_all_five_secrets_when_set(
 # RED 2: raw secret value must NOT appear anywhere in the response body
 # ---------------------------------------------------------------------------
 
+
 def test_get_settings_raw_secret_value_absent_from_response_body(
     client, mock_database, env_snapshot, monkeypatch
 ):
@@ -113,26 +118,27 @@ def test_get_settings_raw_secret_value_absent_from_response_body(
     body_text = resp.get_data(as_text=True)
 
     for key, raw_value in env_snapshot["secrets"].items():
-        assert raw_value not in body_text, (
-            f"Raw value for {key} must not appear in response body"
-        )
+        assert raw_value not in body_text, f"Raw value for {key} must not appear in response body"
 
 
 # ---------------------------------------------------------------------------
 # RED 3: missing/None secrets render as "" — no crash, no spurious mask chars
 # ---------------------------------------------------------------------------
 
-def test_get_settings_missing_secrets_render_as_empty_string(
-    client, mock_database, monkeypatch
-):
+
+def test_get_settings_missing_secrets_render_as_empty_string(client, mock_database, monkeypatch):
     """
     When secret env vars are absent (None / missing), GET must return ""
     for each — no KeyError, no "***None***", no crash.
     """
-    monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {
-        "LIVE_EXECUTION": "False",
-        "EXECUTION_START_TIME": "09:30",
-    })
+    monkeypatch.setattr(
+        app_module,
+        "dotenv_values",
+        lambda *_a, **_k: {
+            "LIVE_EXECUTION": "False",
+            "EXECUTION_START_TIME": "09:30",
+        },
+    )
 
     resp = client.get("/api/settings")
     assert resp.status_code == 200
@@ -141,9 +147,7 @@ def test_get_settings_missing_secrets_render_as_empty_string(
     for key in SECRET_KEYS:
         assert key in globals_out, f"{key} must be present in globals even when unset"
         val = globals_out[key]
-        assert val == "" or val is None, (
-            f"{key} with no env value must be '' or null, got: {val!r}"
-        )
+        assert val == "" or val is None, f"{key} with no env value must be '' or null, got: {val!r}"
         # No spurious mask artifact — value must not contain asterisks.
         if val:
             assert "*" not in str(val), (
@@ -154,6 +158,7 @@ def test_get_settings_missing_secrets_render_as_empty_string(
 # ---------------------------------------------------------------------------
 # RED 4: non-secret settings pass through unchanged
 # ---------------------------------------------------------------------------
+
 
 def test_get_settings_non_secret_fields_pass_through_unchanged(
     client, mock_database, env_snapshot, monkeypatch
@@ -181,18 +186,21 @@ def test_get_settings_non_secret_fields_pass_through_unchanged(
 # RED 5: ANTHROPIC_API_KEY masking pattern is consistent with new secrets
 # ---------------------------------------------------------------------------
 
-def test_get_settings_anthropic_key_also_masked_for_consistency(
-    client, mock_database, monkeypatch
-):
+
+def test_get_settings_anthropic_key_also_masked_for_consistency(client, mock_database, monkeypatch):
     """
     Pre-existing ANTHROPIC_API_KEY mask must still return "" (regression guard).
     All 6 secrets (including Anthropic) use the same pattern.
     """
-    monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {
-        "ANTHROPIC_API_KEY": "sk-ant-test-placeholder-value",
-        "COMPOSER_KEY_ID": "test-ck",
-        "COMPOSER_SECRET": "test-cs",
-    })
+    monkeypatch.setattr(
+        app_module,
+        "dotenv_values",
+        lambda *_a, **_k: {
+            "ANTHROPIC_API_KEY": "sk-ant-test-placeholder-value",
+            "COMPOSER_KEY_ID": "test-ck",
+            "COMPOSER_SECRET": "test-cs",
+        },
+    )
 
     resp = client.get("/api/settings")
     assert resp.status_code == 200
@@ -208,9 +216,8 @@ def test_get_settings_anthropic_key_also_masked_for_consistency(
 #         (A-1 security fix: credential rotation must happen via .env directly)
 # ---------------------------------------------------------------------------
 
-def test_post_settings_rejects_secret_key_writes(
-    client, mock_database, monkeypatch
-):
+
+def test_post_settings_rejects_secret_key_writes(client, mock_database, monkeypatch):
     """POST /api/settings must REJECT credential key submissions.
 
     A-1 security fix: _SETTINGS_WRITE_ALLOWLIST excludes all credential keys
@@ -253,7 +260,9 @@ def test_post_settings_rejects_secret_key_writes(
         "Credential rotation must happen via .env, not the unauthenticated dashboard."
     )
     body = resp.get_json()
-    assert body.get("status") == "error", f"Credential submission must return status=error; got: {body!r}"
+    assert body.get("status") == "error", (
+        f"Credential submission must return status=error; got: {body!r}"
+    )
 
     # No credential must have reached set_key.
     written_keys = {k for (k, _v) in set_key_calls}
@@ -268,6 +277,7 @@ def test_post_settings_rejects_secret_key_writes(
 # RED 7: single masking implementation — no duplicated per-secret logic
 #         (structural: all 5 secrets share one helper or one uniform pattern)
 # ---------------------------------------------------------------------------
+
 
 def test_get_settings_masking_is_uniform_not_per_secret_branches(
     client, mock_database, env_snapshot, monkeypatch
@@ -302,6 +312,7 @@ def test_get_settings_masking_is_uniform_not_per_secret_branches(
 # RED 8: _MASKED_SETTINGS_KEYS is the authoritative list — all its members
 #         must be masked in the GET response (frozenset drives the contract)
 # ---------------------------------------------------------------------------
+
 
 def test_every_key_in_masked_settings_frozenset_is_suppressed_in_response(
     client, mock_database, monkeypatch

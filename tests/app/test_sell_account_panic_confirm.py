@@ -438,10 +438,7 @@ def test_template_contains_panic_modal_with_required_elements():
 
     # Confirm button — Studio design uses --studio-neg for destructive actions (not Tailwind bg-red)
     assert (
-        "studio-neg" in content
-        or "rose" in content
-        or "bg-red" in content
-        or "danger" in content
+        "studio-neg" in content or "rose" in content or "bg-red" in content or "danger" in content
     ), "confirm button must have a destructive visual treatment (studio-neg / red / rose / danger)"
 
     # Cancel button

@@ -138,9 +138,7 @@ def test_planning_docs_have_no_autotuner_acceptable_disciplines_drift(
                 if len(snippet) > 160:
                     snippet = snippet[:157] + "..."
                 rel = doc.relative_to(_REPO_ROOT)
-                violations.append(
-                    f"  {rel}:{line_no} — {label}\n    > {snippet}"
-                )
+                violations.append(f"  {rel}:{line_no} — {label}\n    > {snippet}")
 
     assert not violations, (
         "LOGIC-L-1 doc drift — planning docs misattribute "

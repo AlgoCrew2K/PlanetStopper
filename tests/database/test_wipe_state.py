@@ -31,34 +31,38 @@ from database import wipe_transient_state
 # Canonical set of transient keys that must be reset to a sentinel value.
 # Derived by reading database.py lines 98-113 — do NOT hardcode sentinel
 # values here; assert them by reading back from the returned dict.
-_TRANSIENT_RESET_KEYS = frozenset({
-    "high_water_mark",
-    "shadow_hwm",
-    "prev_return",
-    "armed",
-    "tp_armed",
-    "para_armed",
-    "triggered",
-    "breakeven_locked",
-    "below_stop_count",
-    "above_tp_count",
-    "vwap_ticks",
-    "vwap_bleed_ticks",
-    "hwm_hold_ticks",
-    "mc_history",
-})
+_TRANSIENT_RESET_KEYS = frozenset(
+    {
+        "high_water_mark",
+        "shadow_hwm",
+        "prev_return",
+        "armed",
+        "tp_armed",
+        "para_armed",
+        "triggered",
+        "breakeven_locked",
+        "below_stop_count",
+        "above_tp_count",
+        "vwap_ticks",
+        "vwap_bleed_ticks",
+        "hwm_hold_ticks",
+        "mc_history",
+    }
+)
 
 # Canonical set of trigger-snapshot keys that must be DELETED (not zeroed).
 # Derived from database.py lines 114-118.
-_TRIGGER_DELETE_KEYS = frozenset({
-    "triggered_reason",
-    "triggered_at_return",
-    "triggered_at_hwm",
-    "triggered_at_stop",
-    "triggered_at_time",
-    "trigger_prices",
-    "triggered_basket_snapshot",
-})
+_TRIGGER_DELETE_KEYS = frozenset(
+    {
+        "triggered_reason",
+        "triggered_at_return",
+        "triggered_at_hwm",
+        "triggered_at_stop",
+        "triggered_at_time",
+        "trigger_prices",
+        "triggered_basket_snapshot",
+    }
+)
 
 
 def _make_armed_symphony() -> dict:
@@ -101,6 +105,7 @@ def _make_armed_symphony() -> dict:
 # Test 1: transient fields reset to sentinel values
 # ---------------------------------------------------------------------------
 
+
 def test_wipe_transient_state_resets_all_transient_keys():
     """
     After wipe_transient_state, every key in _TRANSIENT_RESET_KEYS must hold
@@ -121,11 +126,14 @@ def test_wipe_transient_state_resets_all_transient_keys():
         )
 
     # Integer counter fields must be zero
-    for key in ("below_stop_count", "above_tp_count", "vwap_ticks",
-                "vwap_bleed_ticks", "hwm_hold_ticks"):
-        assert sym[key] == 0, (
-            f"wipe_transient_state must reset '{key}' to 0; got {sym[key]!r}"
-        )
+    for key in (
+        "below_stop_count",
+        "above_tp_count",
+        "vwap_ticks",
+        "vwap_bleed_ticks",
+        "hwm_hold_ticks",
+    ):
+        assert sym[key] == 0, f"wipe_transient_state must reset '{key}' to 0; got {sym[key]!r}"
 
     # mc_history must be an empty list (not None, not the old list)
     assert sym["mc_history"] == [], (
@@ -156,6 +164,7 @@ def test_wipe_transient_state_resets_all_transient_keys():
 # Test 2: trigger-snapshot keys are DELETED (not zeroed)
 # ---------------------------------------------------------------------------
 
+
 def test_wipe_transient_state_deletes_trigger_snapshot_keys():
     """
     Keys in _TRIGGER_DELETE_KEYS must be absent from the symphony dict after
@@ -177,6 +186,7 @@ def test_wipe_transient_state_deletes_trigger_snapshot_keys():
 # ---------------------------------------------------------------------------
 # Test 3: non-transient keys are PRESERVED
 # ---------------------------------------------------------------------------
+
 
 def test_wipe_transient_state_preserves_non_transient_keys():
     """
@@ -208,6 +218,7 @@ def test_wipe_transient_state_preserves_non_transient_keys():
 # Test 4: return value is the same object (in-place mutation contract)
 # ---------------------------------------------------------------------------
 
+
 def test_wipe_transient_state_returns_same_dict_object():
     """
     wipe_transient_state must return the same dict object it received, not a
@@ -227,6 +238,7 @@ def test_wipe_transient_state_returns_same_dict_object():
 # ---------------------------------------------------------------------------
 # Test 5: multi-symphony dict — each symphony is wiped independently
 # ---------------------------------------------------------------------------
+
 
 def test_wipe_transient_state_wipes_all_symphonies_independently():
     """
@@ -248,16 +260,10 @@ def test_wipe_transient_state_wipes_all_symphonies_independently():
     for sym_id in ("sym_a", "sym_b"):
         sym = result[sym_id]
         # Transient reset
-        assert sym["triggered"] is False, (
-            f"{sym_id}: 'triggered' must be False after wipe"
-        )
-        assert sym["armed"] is False, (
-            f"{sym_id}: 'armed' must be False after wipe"
-        )
+        assert sym["triggered"] is False, f"{sym_id}: 'triggered' must be False after wipe"
+        assert sym["armed"] is False, f"{sym_id}: 'armed' must be False after wipe"
         # Trigger delete
-        assert "trigger_prices" not in sym, (
-            f"{sym_id}: 'trigger_prices' must be deleted after wipe"
-        )
+        assert "trigger_prices" not in sym, f"{sym_id}: 'trigger_prices' must be deleted after wipe"
         assert "triggered_basket_snapshot" not in sym, (
             f"{sym_id}: 'triggered_basket_snapshot' must be deleted after wipe"
         )
@@ -271,6 +277,7 @@ def test_wipe_transient_state_wipes_all_symphonies_independently():
 # Test 6: non-dict values at top level are skipped (no crash)
 # ---------------------------------------------------------------------------
 
+
 def test_wipe_transient_state_skips_non_dict_top_level_values():
     """
     wipe_transient_state iterates state_dict.items() and guards with
@@ -282,7 +289,7 @@ def test_wipe_transient_state_skips_non_dict_top_level_values():
     """
     state = {
         "last_updated": "2026-05-13T09:30:00",  # non-dict
-        "sym1": _make_armed_symphony(),           # dict — will be wiped
+        "sym1": _make_armed_symphony(),  # dict — will be wiped
     }
 
     # Must not raise
@@ -298,6 +305,7 @@ def test_wipe_transient_state_skips_non_dict_top_level_values():
 # ---------------------------------------------------------------------------
 # Test 7: trigger-snapshot keys only deleted when present (no KeyError)
 # ---------------------------------------------------------------------------
+
 
 def test_wipe_transient_state_tolerates_missing_trigger_keys():
     """
@@ -334,12 +342,11 @@ def test_wipe_transient_state_tolerates_missing_trigger_keys():
 # Test 8: empty state dict returns empty dict
 # ---------------------------------------------------------------------------
 
+
 def test_wipe_transient_state_empty_state_dict_is_idempotent():
     """
     An empty state dict must pass through without error and return an empty dict.
     This exercises the degenerate case where no symphonies have been loaded.
     """
     result = wipe_transient_state({})
-    assert result == {}, (
-        "wipe_transient_state({}) must return {}; got non-empty result"
-    )
+    assert result == {}, "wipe_transient_state({}) must return {}; got non-empty result"

@@ -106,12 +106,13 @@ AI_LOCKED_OVERRIDE = 2.47  # What a broken autotuner would persist for the locke
 
 # VWAP_CROSS_HWM_PCT bounds: [0.5, 2.5] (autotuner._SS_VWAP_CROSS_HWM_MIN/MAX)
 UNLOCKED_AI_MARKER = 1.75  # AI's proposal for the unlocked var
-UNLOCKED_INITIAL = 0.88    # Pre-run current_params value for the unlocked var
+UNLOCKED_INITIAL = 0.88  # Pre-run current_params value for the unlocked var
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _build_bot_state() -> dict:
     return {"sym-1": {"name": "Test Symphony A", "account_uuid": "acc-1"}}
@@ -130,8 +131,9 @@ def _build_history_5d() -> dict:
     return {"sym-1": {d: [tick] for d in dates}}
 
 
-def _make_current_params(golden: dict, *, locked_key: str, locked_value: float,
-                         unlocked_key: str, unlocked_value: float) -> dict:
+def _make_current_params(
+    golden: dict, *, locked_key: str, locked_value: float, unlocked_key: str, unlocked_value: float
+) -> dict:
     """Build a current_params dict that includes ALL search-space keys plus
     TRIGGER_THRESHOLD_PCT (the DEFAULT_LOCKED_VARS key outside the search space).
 
@@ -148,8 +150,7 @@ def _make_current_params(golden: dict, *, locked_key: str, locked_value: float,
     return p
 
 
-def _make_ai_best_params(golden: dict, *, locked_key: str,
-                          unlocked_key: str) -> dict:
+def _make_ai_best_params(golden: dict, *, locked_key: str, unlocked_key: str) -> dict:
     """Return an ai best_params dict with all OPTUNA_SEARCH_SPACE_KEYS present.
 
     The locked_key is set to AI_LOCKED_OVERRIDE — which the fix must NOT let
@@ -181,9 +182,7 @@ def _make_ai_best_params(golden: dict, *, locked_key: str,
     return params
 
 
-def _make_vwap_side_effect_for_key(
-    marker: float, broken_for_markers: set[float]
-):
+def _make_vwap_side_effect_for_key(marker: float, broken_for_markers: set[float]):
     """Return a side_effect for math_engine.compute_vwap_breakdown_update.
 
     Mirrors the approach from test_oos_baseline_selection.py: checks the
@@ -191,10 +190,12 @@ def _make_vwap_side_effect_for_key(
     is_vwap_broken=True only for calls whose kwarg matches a broken marker.
     The autotuner always invokes the helper with kwargs.
     """
+
     def _side_effect(**kwargs):
         m = kwargs.get("vwap_cross_hwm_pct")
         is_broken = any(abs(m - b) < 1e-9 for b in broken_for_markers)
         return (0, 0, is_broken, False)
+
     return _side_effect
 
 
@@ -221,26 +222,27 @@ def _patches(
     def _capture_save(symphony_name, params, lv):
         save_calls.append((symphony_name, dict(params), list(lv)))
 
-    with patch("autotuner._replay_grace_minutes", return_value=0), \
-         patch("autotuner.optuna.create_study", return_value=fake_study), \
-         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()), \
-         patch("autotuner.synthetic_history.generate_synthetic_history",
-               return_value=history), \
-         patch("autotuner.database.load_chart_history", return_value={}), \
-         patch("autotuner.database.save_chart_archive"), \
-         patch("autotuner.database.get_symphony_strategy",
-               return_value={"params": current_params.copy(),
-                              "locked_vars": list(locked_vars)}), \
-         patch("autotuner.database.save_symphony_strategy",
-               side_effect=_capture_save), \
-         patch("autotuner.database.DEFAULT_STRATEGY", default_params), \
-         patch("autotuner.math_engine.compute_vwap_breakdown_update",
-               side_effect=vwap_side_effect):
+    with (
+        patch("autotuner._replay_grace_minutes", return_value=0),
+        patch("autotuner.optuna.create_study", return_value=fake_study),
+        patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
+        patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
+        patch("autotuner.database.load_chart_history", return_value={}),
+        patch("autotuner.database.save_chart_archive"),
+        patch(
+            "autotuner.database.get_symphony_strategy",
+            return_value={"params": current_params.copy(), "locked_vars": list(locked_vars)},
+        ),
+        patch("autotuner.database.save_symphony_strategy", side_effect=_capture_save),
+        patch("autotuner.database.DEFAULT_STRATEGY", default_params),
+        patch("autotuner.math_engine.compute_vwap_breakdown_update", side_effect=vwap_side_effect),
+    ):
         yield {"save_calls": save_calls, "fake_study": fake_study}
 
 
-def _invoke_run_autotuner(current_params, locked_vars, ai_best_params,
-                           default_params, vwap_side_effect):
+def _invoke_run_autotuner(
+    current_params, locked_vars, ai_best_params, default_params, vwap_side_effect
+):
     """Run run_autotuner with all patches in place; return (stdout, save_calls)."""
     import autotuner
     import inspect
@@ -251,9 +253,12 @@ def _invoke_run_autotuner(current_params, locked_vars, ai_best_params,
     extra = {"spec_bundle_id": spec_bundle_id} if "spec_bundle_id" in sig.parameters else {}
 
     buf = io.StringIO()
-    with _patches(current_params, locked_vars, ai_best_params,
-                  default_params, vwap_side_effect) as ctx, \
-         contextlib.redirect_stdout(buf):
+    with (
+        _patches(
+            current_params, locked_vars, ai_best_params, default_params, vwap_side_effect
+        ) as ctx,
+        contextlib.redirect_stdout(buf),
+    ):
         autotuner.run_autotuner(_build_bot_state(), "2026-05-10", ["acc-1"], **extra)
 
     return buf.getvalue(), ctx["save_calls"]
@@ -284,8 +289,8 @@ def test_locked_search_space_var_not_overwritten_when_ai_branch_wins(golden):
     """
     import database
 
-    locked_key = golden["ac1_locked_var"]["key"]          # VWAP_BLEED_MULTIPLIER
-    unlocked_key = golden["ac2_unlocked_var"]["key"]       # VWAP_CROSS_HWM_PCT
+    locked_key = golden["ac1_locked_var"]["key"]  # VWAP_BLEED_MULTIPLIER
+    unlocked_key = golden["ac2_unlocked_var"]["key"]  # VWAP_CROSS_HWM_PCT
 
     current_params = _make_current_params(
         golden,
@@ -294,8 +299,7 @@ def test_locked_search_space_var_not_overwritten_when_ai_branch_wins(golden):
         unlocked_key=unlocked_key,
         unlocked_value=UNLOCKED_INITIAL,
     )
-    ai_params = _make_ai_best_params(golden, locked_key=locked_key,
-                                      unlocked_key=unlocked_key)
+    ai_params = _make_ai_best_params(golden, locked_key=locked_key, unlocked_key=unlocked_key)
     default_params = database.DEFAULT_STRATEGY.copy()
 
     # Make AI win: AI (unlocked_key = UNLOCKED_AI_MARKER) must NOT trigger;
@@ -361,8 +365,7 @@ def test_locked_search_space_var_not_overwritten_when_fallback_branch_fires(gold
         unlocked_key=unlocked_key,
         unlocked_value=UNLOCKED_INITIAL,
     )
-    ai_params = _make_ai_best_params(golden, locked_key=locked_key,
-                                      unlocked_key=unlocked_key)
+    ai_params = _make_ai_best_params(golden, locked_key=locked_key, unlocked_key=unlocked_key)
     default_params = database.DEFAULT_STRATEGY.copy()
 
     # Make FALLBACK win: AI (UNLOCKED_AI_MARKER) triggers (goes negative);
@@ -415,8 +418,7 @@ def test_locked_search_space_var_not_overwritten_when_default_branch_fires(golde
         unlocked_key=unlocked_key,
         unlocked_value=UNLOCKED_INITIAL,
     )
-    ai_params = _make_ai_best_params(golden, locked_key=locked_key,
-                                      unlocked_key=unlocked_key)
+    ai_params = _make_ai_best_params(golden, locked_key=locked_key, unlocked_key=unlocked_key)
     default_params = database.DEFAULT_STRATEGY.copy()
 
     # Make DEFAULT win: both AI and fallback trigger (both go negative);
@@ -483,8 +485,7 @@ def test_locked_var_excluded_from_optuna_suggest_calls(golden):
         unlocked_key=unlocked_key,
         unlocked_value=UNLOCKED_INITIAL,
     )
-    ai_params = _make_ai_best_params(golden, locked_key=locked_key,
-                                      unlocked_key=unlocked_key)
+    ai_params = _make_ai_best_params(golden, locked_key=locked_key, unlocked_key=unlocked_key)
     default_params = database.DEFAULT_STRATEGY.copy()
     default_hwm = float(default_params.get(unlocked_key, 0.90))
     side_effect = _make_vwap_side_effect_for_key(
@@ -571,22 +572,22 @@ def test_locked_var_excluded_from_optuna_suggest_calls(golden):
     extra = {"spec_bundle_id": spec_bundle_id} if "spec_bundle_id" in sig.parameters else {}
     buf = io.StringIO()
 
-    with patch("autotuner._replay_grace_minutes", return_value=0), \
-         patch("autotuner.optuna.create_study", return_value=fake_study), \
-         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()), \
-         patch("autotuner.synthetic_history.generate_synthetic_history",
-               return_value=history), \
-         patch("autotuner.database.load_chart_history", return_value={}), \
-         patch("autotuner.database.save_chart_archive"), \
-         patch("autotuner.database.get_symphony_strategy",
-               return_value={"params": current_params.copy(),
-                              "locked_vars": [locked_key]}), \
-         patch("autotuner.database.save_symphony_strategy",
-               side_effect=_capture_save), \
-         patch("autotuner.database.DEFAULT_STRATEGY", default_params), \
-         patch("autotuner.math_engine.compute_vwap_breakdown_update",
-               side_effect=side_effect), \
-         contextlib.redirect_stdout(buf):
+    with (
+        patch("autotuner._replay_grace_minutes", return_value=0),
+        patch("autotuner.optuna.create_study", return_value=fake_study),
+        patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
+        patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
+        patch("autotuner.database.load_chart_history", return_value={}),
+        patch("autotuner.database.save_chart_archive"),
+        patch(
+            "autotuner.database.get_symphony_strategy",
+            return_value={"params": current_params.copy(), "locked_vars": [locked_key]},
+        ),
+        patch("autotuner.database.save_symphony_strategy", side_effect=_capture_save),
+        patch("autotuner.database.DEFAULT_STRATEGY", default_params),
+        patch("autotuner.math_engine.compute_vwap_breakdown_update", side_effect=side_effect),
+        contextlib.redirect_stdout(buf),
+    ):
         _autotuner.run_autotuner(_build_bot_state(), "2026-05-10", ["acc-1"], **extra)
 
     # Precondition: some suggest_* calls must have been recorded. If none were,
@@ -643,8 +644,7 @@ def test_unlocked_search_space_var_is_tuned_when_ai_wins(golden):
     # Build AI params where the unlocked key equals the fixture's ai_value
     # (not the test-local UNLOCKED_AI_MARKER) so the fixture governs the
     # expected value — no producer hardcode.
-    ai_params = _make_ai_best_params(golden, locked_key=locked_key,
-                                      unlocked_key=unlocked_key)
+    ai_params = _make_ai_best_params(golden, locked_key=locked_key, unlocked_key=unlocked_key)
     ai_params[unlocked_key] = float(ai_unlocked_expected)
 
     current_params = _make_current_params(
@@ -670,9 +670,7 @@ def test_unlocked_search_space_var_is_tuned_when_ai_wins(golden):
     assert len(save_calls) == 1
     _name, persisted, _lv = save_calls[0]
 
-    assert persisted[unlocked_key] == pytest.approx(
-        float(ai_unlocked_expected), abs=1e-2
-    ), (
+    assert persisted[unlocked_key] == pytest.approx(float(ai_unlocked_expected), abs=1e-2), (
         f"AC-2 FAIL: unlocked var '{unlocked_key}' was expected to be "
         f"tuned to the AI value {ai_unlocked_expected!r} (from fixture) "
         f"but persisted as {persisted[unlocked_key]!r}. Tolerance 1e-2 "
@@ -700,7 +698,7 @@ def test_default_locked_var_trigger_threshold_pct_preserved_when_ai_wins(golden)
     """
     import database
 
-    locked_key = golden["ac1_locked_var"]["key"]           # in search space
+    locked_key = golden["ac1_locked_var"]["key"]  # in search space
     unlocked_key = golden["ac2_unlocked_var"]["key"]
     default_locked_key = golden["ac3_default_locked_var"]["key"]  # TRIGGER_THRESHOLD_PCT
 
@@ -717,8 +715,7 @@ def test_default_locked_var_trigger_threshold_pct_preserved_when_ai_wins(golden)
     )
     current_params[default_locked_key] = trigger_pre_run
 
-    ai_params = _make_ai_best_params(golden, locked_key=locked_key,
-                                      unlocked_key=unlocked_key)
+    ai_params = _make_ai_best_params(golden, locked_key=locked_key, unlocked_key=unlocked_key)
     default_params = database.DEFAULT_STRATEGY.copy()
     default_hwm = float(default_params.get(unlocked_key, 0.90))
 
@@ -729,16 +726,13 @@ def test_default_locked_var_trigger_threshold_pct_preserved_when_ai_wins(golden)
     )
 
     _stdout, save_calls = _invoke_run_autotuner(
-        current_params, [locked_key, default_locked_key],
-        ai_params, default_params, side_effect
+        current_params, [locked_key, default_locked_key], ai_params, default_params, side_effect
     )
 
     assert len(save_calls) == 1
     _name, persisted, _lv = save_calls[0]
 
-    assert persisted[default_locked_key] == pytest.approx(
-        trigger_pre_run, abs=1e-9
-    ), (
+    assert persisted[default_locked_key] == pytest.approx(trigger_pre_run, abs=1e-9), (
         f"AC-3 FAIL: '{default_locked_key}' (DEFAULT_LOCKED_VARS, outside "
         f"the search space) was expected to remain at its pre-run value "
         f"{trigger_pre_run!r} but was persisted as "
@@ -776,8 +770,7 @@ def test_default_locked_var_trigger_threshold_pct_preserved_when_default_branch_
     )
     current_params[default_locked_key] = trigger_pre_run
 
-    ai_params = _make_ai_best_params(golden, locked_key=locked_key,
-                                      unlocked_key=unlocked_key)
+    ai_params = _make_ai_best_params(golden, locked_key=locked_key, unlocked_key=unlocked_key)
     default_params = database.DEFAULT_STRATEGY.copy()
 
     # Default wins: AI and fallback both trigger.
@@ -787,16 +780,13 @@ def test_default_locked_var_trigger_threshold_pct_preserved_when_default_branch_
     )
 
     _stdout, save_calls = _invoke_run_autotuner(
-        current_params, [locked_key, default_locked_key],
-        ai_params, default_params, side_effect
+        current_params, [locked_key, default_locked_key], ai_params, default_params, side_effect
     )
 
     assert len(save_calls) == 1
     _name, persisted, _lv = save_calls[0]
 
-    assert persisted[default_locked_key] == pytest.approx(
-        trigger_pre_run, abs=1e-9
-    ), (
+    assert persisted[default_locked_key] == pytest.approx(trigger_pre_run, abs=1e-9), (
         f"AC-3 FAIL (default branch): '{default_locked_key}' must be "
         f"preserved at {trigger_pre_run!r} even when the global-default "
         f"branch fires. The fix must guard all three result-application "
@@ -843,8 +833,7 @@ def test_run_autotuner_completes_without_exception_when_search_space_var_is_lock
         unlocked_key=unlocked_key,
         unlocked_value=UNLOCKED_INITIAL,
     )
-    ai_params = _make_ai_best_params(golden, locked_key=locked_key,
-                                      unlocked_key=unlocked_key)
+    ai_params = _make_ai_best_params(golden, locked_key=locked_key, unlocked_key=unlocked_key)
     # Drop the locked key from ai_params to simulate what happens when the
     # fix correctly excludes the locked var from suggest_* — best_params
     # won't carry it. This is the state the issubset check sees post-fix.
@@ -859,8 +848,7 @@ def test_run_autotuner_completes_without_exception_when_search_space_var_is_lock
 
     try:
         _stdout, save_calls = _invoke_run_autotuner(
-            current_params, [locked_key], ai_params_without_locked,
-            default_params, side_effect
+            current_params, [locked_key], ai_params_without_locked, default_params, side_effect
         )
     except Exception as exc:
         pytest.fail(
@@ -890,8 +878,8 @@ def test_run_autotuner_completes_with_multiple_locked_search_space_vars(golden):
     """
     import database
 
-    locked_key_1 = golden["ac1_locked_var"]["key"]        # VWAP_BLEED_MULTIPLIER
-    locked_key_2 = "PARABOLIC_VELOCITY_THRESHOLD"         # second search-space key
+    locked_key_1 = golden["ac1_locked_var"]["key"]  # VWAP_BLEED_MULTIPLIER
+    locked_key_2 = "PARABOLIC_VELOCITY_THRESHOLD"  # second search-space key
     unlocked_key = golden["ac2_unlocked_var"]["key"]
 
     current_params = _make_current_params(
@@ -904,17 +892,14 @@ def test_run_autotuner_completes_with_multiple_locked_search_space_vars(golden):
     # Give the second locked key a distinct pre-run value derived from
     # the search-space bounds (mid-range), not hardcoded.
     import autotuner as _at
-    parabolic_locked_value = (
-        _at._SS_PARA_VEL_MIN + _at._SS_PARA_VEL_MAX
-    ) / 2.0
+
+    parabolic_locked_value = (_at._SS_PARA_VEL_MIN + _at._SS_PARA_VEL_MAX) / 2.0
     current_params[locked_key_2] = parabolic_locked_value
 
     # Remove both locked keys from ai_params — simulating post-fix best_params.
-    ai_params = _make_ai_best_params(golden, locked_key=locked_key_1,
-                                      unlocked_key=unlocked_key)
+    ai_params = _make_ai_best_params(golden, locked_key=locked_key_1, unlocked_key=unlocked_key)
     ai_params_without_locked = {
-        k: v for k, v in ai_params.items()
-        if k not in {locked_key_1, locked_key_2}
+        k: v for k, v in ai_params.items() if k not in {locked_key_1, locked_key_2}
     }
 
     default_params = database.DEFAULT_STRATEGY.copy()
@@ -926,8 +911,11 @@ def test_run_autotuner_completes_with_multiple_locked_search_space_vars(golden):
 
     try:
         _stdout, save_calls = _invoke_run_autotuner(
-            current_params, [locked_key_1, locked_key_2],
-            ai_params_without_locked, default_params, side_effect
+            current_params,
+            [locked_key_1, locked_key_2],
+            ai_params_without_locked,
+            default_params,
+            side_effect,
         )
     except Exception as exc:
         pytest.fail(
@@ -979,8 +967,7 @@ def test_locked_vars_list_is_persisted_verbatim_by_save_symphony_strategy(golden
         unlocked_key=unlocked_key,
         unlocked_value=UNLOCKED_INITIAL,
     )
-    ai_params = _make_ai_best_params(golden, locked_key=locked_key,
-                                      unlocked_key=unlocked_key)
+    ai_params = _make_ai_best_params(golden, locked_key=locked_key, unlocked_key=unlocked_key)
     default_params = database.DEFAULT_STRATEGY.copy()
     default_hwm = float(default_params.get(unlocked_key, 0.90))
     side_effect = _make_vwap_side_effect_for_key(
@@ -1047,8 +1034,7 @@ def test_locked_var_injection_does_not_mutate_original_best_params_dict(golden):
     )
     # Build ai_params WITHOUT the locked key -- this is what winner_trial.params
     # looks like post-fix (locked var was excluded from suggest_*).
-    ai_params_full = _make_ai_best_params(golden, locked_key=locked_key,
-                                           unlocked_key=unlocked_key)
+    ai_params_full = _make_ai_best_params(golden, locked_key=locked_key, unlocked_key=unlocked_key)
     # shared_ref simulates winner_trial.params: absent locked key, same object.
     shared_ref: dict = {k: v for k, v in ai_params_full.items() if k != locked_key}
     snapshot_before = dict(shared_ref)
@@ -1084,22 +1070,22 @@ def test_locked_var_injection_does_not_mutate_original_best_params_dict(golden):
     extra = {"spec_bundle_id": spec_bundle_id} if "spec_bundle_id" in sig.parameters else {}
     buf = io.StringIO()
 
-    with patch("autotuner._replay_grace_minutes", return_value=0), \
-         patch("autotuner.optuna.create_study", return_value=fake_study), \
-         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()), \
-         patch("autotuner.synthetic_history.generate_synthetic_history",
-               return_value=history), \
-         patch("autotuner.database.load_chart_history", return_value={}), \
-         patch("autotuner.database.save_chart_archive"), \
-         patch("autotuner.database.get_symphony_strategy",
-               return_value={"params": current_params.copy(),
-                              "locked_vars": [locked_key]}), \
-         patch("autotuner.database.save_symphony_strategy",
-               side_effect=_capture_save), \
-         patch("autotuner.database.DEFAULT_STRATEGY", default_params), \
-         patch("autotuner.math_engine.compute_vwap_breakdown_update",
-               side_effect=side_effect), \
-         contextlib.redirect_stdout(buf):
+    with (
+        patch("autotuner._replay_grace_minutes", return_value=0),
+        patch("autotuner.optuna.create_study", return_value=fake_study),
+        patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
+        patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
+        patch("autotuner.database.load_chart_history", return_value={}),
+        patch("autotuner.database.save_chart_archive"),
+        patch(
+            "autotuner.database.get_symphony_strategy",
+            return_value={"params": current_params.copy(), "locked_vars": [locked_key]},
+        ),
+        patch("autotuner.database.save_symphony_strategy", side_effect=_capture_save),
+        patch("autotuner.database.DEFAULT_STRATEGY", default_params),
+        patch("autotuner.math_engine.compute_vwap_breakdown_update", side_effect=side_effect),
+        contextlib.redirect_stdout(buf),
+    ):
         _autotuner.run_autotuner(_build_bot_state(), "2026-05-10", ["acc-1"], **extra)
 
     # shared_ref must be unchanged: no locked key injected into the original.

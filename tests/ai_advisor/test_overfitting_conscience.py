@@ -61,6 +61,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_fixture() -> dict:
     """Return the parsed overfitting_conscience_indicators fixture."""
     fixture_path = (
@@ -84,6 +85,7 @@ def _import_conscience():
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def conscience_fixture() -> dict:
@@ -130,14 +132,13 @@ def boundary_run(conscience_fixture) -> tuple[dict, list]:
 # Test 1 — Pure function contract: return dict structure and required keys.
 # ===========================================================================
 
+
 def test_pure_function_returns_a_dict(honest_run):
     """compute_overfitting_conscience_observation returns a dict on every path."""
     mod = _import_conscience()
     autotune_run, ledger_rows = honest_run
     result = mod.compute_overfitting_conscience_observation(autotune_run, ledger_rows)
-    assert isinstance(result, dict), (
-        "compute_overfitting_conscience_observation must return a dict"
-    )
+    assert isinstance(result, dict), "compute_overfitting_conscience_observation must return a dict"
 
 
 def test_return_dict_has_all_required_keys(honest_run):
@@ -257,6 +258,7 @@ def test_raw_response_is_a_dict(honest_run, watch_run, breach_run):
 # Test 2 — Indicator 1: S > 0 → WATCH or BREACH.
 # ===========================================================================
 
+
 def test_indicator_1_s_gt_0_produces_watch_or_breach(watch_run, breach_run):
     """When ledger_rows has BACKTEST_SELECTION rows for the bundle, verdict is
     WATCH or BREACH — never CLEAR.
@@ -269,8 +271,7 @@ def test_indicator_1_s_gt_0_produces_watch_or_breach(watch_run, breach_run):
         autotune_run, ledger_rows = run_data
         result = mod.compute_overfitting_conscience_observation(autotune_run, ledger_rows)
         assert result["verdict"] in {"WATCH", "BREACH"}, (
-            f"{label}: S > 0 must produce WATCH or BREACH, never CLEAR; "
-            f"got {result['verdict']!r}"
+            f"{label}: S > 0 must produce WATCH or BREACH, never CLEAR; got {result['verdict']!r}"
         )
 
 
@@ -282,11 +283,7 @@ def test_indicator_1_raw_response_includes_s_count(watch_run):
     raw = result["raw_response"]
     # S count must appear under some key — exact key is implementer's choice,
     # but the count must be derivable from raw_response.
-    has_s = (
-        "s_count" in raw
-        or "backtest_selection_count" in raw
-        or "s" in raw
-    )
+    has_s = "s_count" in raw or "backtest_selection_count" in raw or "s" in raw
     assert has_s, (
         "raw_response must include the BACKTEST_SELECTION S count when S > 0; "
         f"got raw_response keys: {sorted(raw.keys())}"
@@ -300,11 +297,7 @@ def test_indicator_1_raw_response_includes_facet_names(watch_run):
     result = mod.compute_overfitting_conscience_observation(autotune_run, ledger_rows)
     raw = result["raw_response"]
     # Facet names must be present in some form.
-    has_facets = (
-        "facet_names" in raw
-        or "facets" in raw
-        or "backtest_selection_facets" in raw
-    )
+    has_facets = "facet_names" in raw or "facets" in raw or "backtest_selection_facets" in raw
     assert has_facets, (
         "raw_response must include BACKTEST_SELECTION facet names when S > 0; "
         f"got raw_response keys: {sorted(raw.keys())}"
@@ -314,6 +307,7 @@ def test_indicator_1_raw_response_includes_facet_names(watch_run):
 # ===========================================================================
 # Test 3 — Indicator 2: S/N_optuna ratio > 0.1 → BREACH.
 # ===========================================================================
+
 
 def test_indicator_2_high_ratio_escalates_to_breach(breach_run, conscience_fixture):
     """When S/N_optuna ratio > 0.1, verdict must be BREACH.
@@ -329,14 +323,11 @@ def test_indicator_2_high_ratio_escalates_to_breach(breach_run, conscience_fixtu
     n_optuna = n_effective - s  # n_optuna = n_effective - S
     assert n_optuna > 0, "fixture must have n_optuna > 0"
     ratio = s / n_optuna
-    assert ratio > 0.1, (
-        f"breach fixture must have S/N_optuna > 0.1; fixture has ratio={ratio:.4f}"
-    )
+    assert ratio > 0.1, f"breach fixture must have S/N_optuna > 0.1; fixture has ratio={ratio:.4f}"
 
     result = mod.compute_overfitting_conscience_observation(autotune_run, ledger_rows)
     assert result["verdict"] == "BREACH", (
-        f"S/N_optuna ratio {ratio:.4f} > 0.1 must produce BREACH; "
-        f"got {result['verdict']!r}"
+        f"S/N_optuna ratio {ratio:.4f} > 0.1 must produce BREACH; got {result['verdict']!r}"
     )
 
 
@@ -389,6 +380,7 @@ def test_indicator_2_boundary_0_1_exact_is_not_breach(boundary_run):
 # Test 4 — Honest case S=0: verdict is CLEAR.
 # ===========================================================================
 
+
 def test_honest_s0_verdict_is_clear(honest_run):
     """S=0 (no BACKTEST_SELECTION rows) must produce CLEAR."""
     mod = _import_conscience()
@@ -410,8 +402,10 @@ def test_honest_s0_raw_response_notes_n_effective_equals_n_optuna(honest_run):
     has_clear_note = (
         "no backtest_selection" in raw_str
         or "s=0" in raw_str
-        or "s_count" in raw and raw.get("s_count") == 0
-        or "backtest_selection_count" in raw and raw.get("backtest_selection_count") == 0
+        or "s_count" in raw
+        and raw.get("s_count") == 0
+        or "backtest_selection_count" in raw
+        and raw.get("backtest_selection_count") == 0
     )
     assert has_clear_note, (
         "raw_response must note that S=0 and no BACKTEST_SELECTION facets are present; "
@@ -441,6 +435,7 @@ def test_empty_ledger_produces_clear():
 # Test 5 — Cross-bundle isolation: ledger rows for a different spec_bundle_id
 #           must be excluded from S.
 # ===========================================================================
+
 
 def test_different_bundle_ledger_rows_excluded(different_bundle_run):
     """A BACKTEST_SELECTION ledger row pointing at a different spec_bundle_id
@@ -509,6 +504,7 @@ def test_only_rows_matching_spec_bundle_id_are_counted():
 #           get_connection / get_ro_connection.
 # ===========================================================================
 
+
 def test_advisors_module_does_not_import_get_connection_directly():
     """The advisors/overfitting_conscience.py module must NOT call
     get_connection() or get_ro_connection() directly.
@@ -520,11 +516,7 @@ def test_advisors_module_does_not_import_get_connection_directly():
     This test inspects the module source as text (no import side effects)
     to enforce the rule at CI time.
     """
-    source_path = (
-        pathlib.Path(__file__).parents[2]
-        / "advisors"
-        / "overfitting_conscience.py"
-    )
+    source_path = pathlib.Path(__file__).parents[2] / "advisors" / "overfitting_conscience.py"
     assert source_path.exists(), (
         f"advisors/overfitting_conscience.py not found at {source_path} — "
         "the implementer must create it before this test can pass"
@@ -533,10 +525,7 @@ def test_advisors_module_does_not_import_get_connection_directly():
     # Neither direct connection function may appear outside a comment/docstring.
     # We strip comments and strings to be precise, but a simple substring check
     # on the non-comment source is sufficient here — the functions have unique names.
-    non_comment_lines = [
-        line for line in source.splitlines()
-        if not line.lstrip().startswith("#")
-    ]
+    non_comment_lines = [line for line in source.splitlines() if not line.lstrip().startswith("#")]
     non_comment_source = "\n".join(non_comment_lines)
     assert "get_connection()" not in non_comment_source, (
         "advisors/overfitting_conscience.py must NOT call get_connection() directly — "
@@ -554,11 +543,7 @@ def test_advisors_module_uses_advisor_ro_query():
     Pairing: the previous test ensures direct connections are absent;
     this test ensures the approved read path IS present.
     """
-    source_path = (
-        pathlib.Path(__file__).parents[2]
-        / "advisors"
-        / "overfitting_conscience.py"
-    )
+    source_path = pathlib.Path(__file__).parents[2] / "advisors" / "overfitting_conscience.py"
     assert source_path.exists(), (
         "advisors/overfitting_conscience.py not found — implementer must create it"
     )
@@ -573,6 +558,7 @@ def test_advisors_module_uses_advisor_ro_query():
 # Test 7 — Read-only contract: producer writes ONLY via insert_advisor_observation.
 #           Must not modify spec_bundles, researcher_dof_ledger, or autotune_runs.
 # ===========================================================================
+
 
 def test_producer_writes_only_via_insert_advisor_observation(honest_run):
     """The call-site integration: after computing the observation dict, the
@@ -639,6 +625,7 @@ def test_run_overfitting_conscience_returns_row_id(honest_run):
 # Test 8 — Phase-2 deferral guard: only OVERFITTING_CONSCIENCE is written.
 # ===========================================================================
 
+
 def test_only_overfitting_conscience_advisor_role_written(honest_run, watch_run, breach_run):
     """The producer must write ONLY the OVERFITTING_CONSCIENCE advisor_role.
 
@@ -671,6 +658,7 @@ def test_only_overfitting_conscience_advisor_role_written(honest_run, watch_run,
 # Test 9 — Performance: producer execution under 100ms.
 # ===========================================================================
 
+
 def test_producer_executes_under_100ms(honest_run):
     """compute_overfitting_conscience_observation must complete in under 100ms.
 
@@ -701,6 +689,7 @@ def test_producer_executes_under_100ms(honest_run):
 #            consecutive runs on same symphony → WATCH.
 # ===========================================================================
 
+
 def test_indicator_3_monotonic_s_growth_produces_watch():
     """Indicator 3: if S grows monotonically across the last N consecutive runs
     on the same symphony, the verdict is WATCH (or escalated to BREACH if ratio
@@ -714,10 +703,22 @@ def test_indicator_3_monotonic_s_growth_produces_watch():
 
     # Three consecutive runs with strictly increasing s_count.
     prior_runs = [
-        {"id": 10, "symphony_id": "sym-drift", "s_count": 1, "n_effective": 501,
-         "spec_bundle_id": "bundle-drift", "run_timestamp": "2026-05-21T16:00:00Z"},
-        {"id": 11, "symphony_id": "sym-drift", "s_count": 3, "n_effective": 503,
-         "spec_bundle_id": "bundle-drift", "run_timestamp": "2026-05-22T16:00:00Z"},
+        {
+            "id": 10,
+            "symphony_id": "sym-drift",
+            "s_count": 1,
+            "n_effective": 501,
+            "spec_bundle_id": "bundle-drift",
+            "run_timestamp": "2026-05-21T16:00:00Z",
+        },
+        {
+            "id": 11,
+            "symphony_id": "sym-drift",
+            "s_count": 3,
+            "n_effective": 503,
+            "spec_bundle_id": "bundle-drift",
+            "run_timestamp": "2026-05-22T16:00:00Z",
+        },
     ]
     current_run = {
         "id": 12,
@@ -748,10 +749,7 @@ def test_indicator_3_monotonic_s_growth_produces_watch():
     # The raw_response must mention the drift trend.
     raw_str = json.dumps(result["raw_response"]).lower()
     has_drift = (
-        "drift" in raw_str
-        or "monoton" in raw_str
-        or "trend" in raw_str
-        or "growing" in raw_str
+        "drift" in raw_str or "monoton" in raw_str or "trend" in raw_str or "growing" in raw_str
     )
     assert has_drift, (
         "raw_response must mention operator drift when I-3 fires; "
@@ -764,10 +762,22 @@ def test_indicator_3_non_monotonic_s_does_not_trigger_drift():
     mod = _import_conscience()
 
     prior_runs = [
-        {"id": 20, "symphony_id": "sym-no-drift", "s_count": 5, "n_effective": 505,
-         "spec_bundle_id": "bundle-nodrift", "run_timestamp": "2026-05-21T16:00:00Z"},
-        {"id": 21, "symphony_id": "sym-no-drift", "s_count": 3, "n_effective": 503,
-         "spec_bundle_id": "bundle-nodrift", "run_timestamp": "2026-05-22T16:00:00Z"},
+        {
+            "id": 20,
+            "symphony_id": "sym-no-drift",
+            "s_count": 5,
+            "n_effective": 505,
+            "spec_bundle_id": "bundle-nodrift",
+            "run_timestamp": "2026-05-21T16:00:00Z",
+        },
+        {
+            "id": 21,
+            "symphony_id": "sym-no-drift",
+            "s_count": 3,
+            "n_effective": 503,
+            "spec_bundle_id": "bundle-nodrift",
+            "run_timestamp": "2026-05-22T16:00:00Z",
+        },
     ]
     current_run = {
         "id": 22,
@@ -792,9 +802,7 @@ def test_indicator_3_non_monotonic_s_does_not_trigger_drift():
     )
     raw_str = json.dumps(result["raw_response"]).lower()
     # Drift indicator should NOT have fired (even though S > 0 fires I-1 → WATCH).
-    has_drift = (
-        "drift" in raw_str and "monoton" in raw_str
-    )
+    has_drift = "drift" in raw_str and "monoton" in raw_str
     assert not has_drift, (
         "non-monotonic S must not trigger I-3 drift; raw_response incorrectly "
         f"mentions drift for non-monotonic sequence 5→3→4: {result['raw_response']!r}"
@@ -807,10 +815,22 @@ def test_indicator_3_prior_runs_from_different_symphony_ignored():
 
     prior_runs = [
         # These belong to a DIFFERENT symphony — must be excluded from trend.
-        {"id": 30, "symphony_id": "OTHER-symphony", "s_count": 1, "n_effective": 501,
-         "spec_bundle_id": "bundle-other", "run_timestamp": "2026-05-21T16:00:00Z"},
-        {"id": 31, "symphony_id": "OTHER-symphony", "s_count": 3, "n_effective": 503,
-         "spec_bundle_id": "bundle-other", "run_timestamp": "2026-05-22T16:00:00Z"},
+        {
+            "id": 30,
+            "symphony_id": "OTHER-symphony",
+            "s_count": 1,
+            "n_effective": 501,
+            "spec_bundle_id": "bundle-other",
+            "run_timestamp": "2026-05-21T16:00:00Z",
+        },
+        {
+            "id": 31,
+            "symphony_id": "OTHER-symphony",
+            "s_count": 3,
+            "n_effective": 503,
+            "spec_bundle_id": "bundle-other",
+            "run_timestamp": "2026-05-22T16:00:00Z",
+        },
     ]
     current_run = {
         "id": 32,
@@ -849,6 +869,7 @@ def test_indicator_3_prior_runs_from_different_symphony_ignored():
 # Test 11 — Hostile edge: missing autotune_runs columns (pre-020 DB).
 # ===========================================================================
 
+
 def test_missing_s_count_column_fails_clearly():
     """When autotune_run dict is missing 's_count' (pre-020 DB schema), the
     function must raise a clear error — never silently no-op.
@@ -870,9 +891,7 @@ def test_missing_s_count_column_fails_clearly():
     ledger_rows: list = []
 
     with pytest.raises((KeyError, ValueError, TypeError)):
-        mod.compute_overfitting_conscience_observation(
-            autotune_run_without_s_count, ledger_rows
-        )
+        mod.compute_overfitting_conscience_observation(autotune_run_without_s_count, ledger_rows)
 
 
 def test_missing_n_effective_column_fails_clearly():
@@ -902,6 +921,7 @@ def test_missing_n_effective_column_fails_clearly():
 # The autotuner must call run_overfitting_conscience after save_autotune_run.
 # This test patches autotuner's call-site without running a full Optuna study.
 # ===========================================================================
+
 
 def test_autotuner_calls_run_overfitting_conscience_after_save_autotune_run():
     """run_overfitting_conscience must be called from the autotuner's
@@ -949,6 +969,7 @@ def test_autotuner_calls_run_overfitting_conscience_after_save_autotune_run():
 #   - A naive try/except that silently swallows every comparison result MUST
 #     fail the adversarial drift tests below.
 # ===========================================================================
+
 
 @pytest.fixture
 def all_none_prior_runs_fixture(conscience_fixture) -> tuple[dict, list, list]:
@@ -1009,8 +1030,7 @@ def test_none_s_count_in_all_prior_runs_produces_valid_verdict(all_none_prior_ru
         autotune_run, ledger_rows, prior_runs=prior_runs
     )
     assert result["verdict"] in {"CLEAR", "WATCH", "BREACH"}, (
-        f"verdict must be a valid enum even with all-None prior s_counts; "
-        f"got {result['verdict']!r}"
+        f"verdict must be a valid enum even with all-None prior s_counts; got {result['verdict']!r}"
     )
     # S=2 fires I-1 → WATCH (not CLEAR, not BREACH unless ratio > 0.1).
     assert result["verdict"] == "WATCH", (
@@ -1096,12 +1116,13 @@ def test_none_interleaved_drift_is_still_detected_when_sufficient_valid_priors(
     mod = _import_conscience()
     autotune_run, ledger_rows, prior_runs = none_interleaved_drift_fixture
     # Verify fixture: after None-drop, valid prior s_counts are [2, 4] + current [7].
-    valid_prior_s = [r["s_count"] for r in prior_runs
-                     if r.get("symphony_id") == autotune_run["symphony_id"]
-                     and r["s_count"] is not None]
+    valid_prior_s = [
+        r["s_count"]
+        for r in prior_runs
+        if r.get("symphony_id") == autotune_run["symphony_id"] and r["s_count"] is not None
+    ]
     assert len(valid_prior_s) >= 2, (
-        f"fixture must have >= 2 valid prior s_counts after None-drop; "
-        f"got {valid_prior_s!r}"
+        f"fixture must have >= 2 valid prior s_counts after None-drop; got {valid_prior_s!r}"
     )
     current_s = autotune_run["s_count"]
     combined = valid_prior_s + [current_s]
@@ -1178,12 +1199,22 @@ def test_none_s_count_crash_is_specifically_typeerror():
     """
     mod = _import_conscience()
     prior_runs_with_nones = [
-        {"id": 200, "symphony_id": "sym-typeerror-test", "s_count": None,
-         "n_effective": 500, "spec_bundle_id": "bundle-te-200",
-         "run_timestamp": "2026-05-28T16:00:00Z"},
-        {"id": 201, "symphony_id": "sym-typeerror-test", "s_count": None,
-         "n_effective": 500, "spec_bundle_id": "bundle-te-201",
-         "run_timestamp": "2026-05-29T16:00:00Z"},
+        {
+            "id": 200,
+            "symphony_id": "sym-typeerror-test",
+            "s_count": None,
+            "n_effective": 500,
+            "spec_bundle_id": "bundle-te-200",
+            "run_timestamp": "2026-05-28T16:00:00Z",
+        },
+        {
+            "id": 201,
+            "symphony_id": "sym-typeerror-test",
+            "s_count": None,
+            "n_effective": 500,
+            "spec_bundle_id": "bundle-te-201",
+            "run_timestamp": "2026-05-29T16:00:00Z",
+        },
     ]
     current_run = {
         "id": 202,
@@ -1230,18 +1261,38 @@ def test_none_in_s_count_naive_swallow_still_detects_real_drift():
     # Prior runs: [None, 1, None, 3] — after dropping Nones: [1, 3] (2 valid priors).
     # Current run: s_count=6. Series: [1, 3, 6] strictly increasing → drift.
     prior_runs = [
-        {"id": 300, "symphony_id": "sym-adv-drift", "s_count": None,
-         "n_effective": 500, "spec_bundle_id": "bundle-adv-300",
-         "run_timestamp": "2026-05-26T16:00:00Z"},
-        {"id": 301, "symphony_id": "sym-adv-drift", "s_count": 1,
-         "n_effective": 501, "spec_bundle_id": "bundle-adv-301",
-         "run_timestamp": "2026-05-27T16:00:00Z"},
-        {"id": 302, "symphony_id": "sym-adv-drift", "s_count": None,
-         "n_effective": 500, "spec_bundle_id": "bundle-adv-302",
-         "run_timestamp": "2026-05-28T16:00:00Z"},
-        {"id": 303, "symphony_id": "sym-adv-drift", "s_count": 3,
-         "n_effective": 503, "spec_bundle_id": "bundle-adv-303",
-         "run_timestamp": "2026-05-29T16:00:00Z"},
+        {
+            "id": 300,
+            "symphony_id": "sym-adv-drift",
+            "s_count": None,
+            "n_effective": 500,
+            "spec_bundle_id": "bundle-adv-300",
+            "run_timestamp": "2026-05-26T16:00:00Z",
+        },
+        {
+            "id": 301,
+            "symphony_id": "sym-adv-drift",
+            "s_count": 1,
+            "n_effective": 501,
+            "spec_bundle_id": "bundle-adv-301",
+            "run_timestamp": "2026-05-27T16:00:00Z",
+        },
+        {
+            "id": 302,
+            "symphony_id": "sym-adv-drift",
+            "s_count": None,
+            "n_effective": 500,
+            "spec_bundle_id": "bundle-adv-302",
+            "run_timestamp": "2026-05-28T16:00:00Z",
+        },
+        {
+            "id": 303,
+            "symphony_id": "sym-adv-drift",
+            "s_count": 3,
+            "n_effective": 503,
+            "spec_bundle_id": "bundle-adv-303",
+            "run_timestamp": "2026-05-29T16:00:00Z",
+        },
     ]
     current_run = {
         "id": 304,
@@ -1284,6 +1335,5 @@ def test_prior_runs_with_none_s_count_is_advisory_only(all_none_prior_runs_fixtu
         autotune_run, ledger_rows, prior_runs=prior_runs
     )
     assert result["is_advisory_only"] == 1, (
-        "is_advisory_only must remain 1 with None prior runs; "
-        f"got {result['is_advisory_only']!r}"
+        f"is_advisory_only must remain 1 with None prior runs; got {result['is_advisory_only']!r}"
     )

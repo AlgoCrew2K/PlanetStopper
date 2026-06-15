@@ -102,18 +102,15 @@ def _function_def(tree: ast.Module, name: str) -> ast.FunctionDef:
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == name:
             return node
-    raise AssertionError(
-        f"AST: expected to find function def {name!r} in autotuner.py."
-    )
+    raise AssertionError(f"AST: expected to find function def {name!r} in autotuner.py.")
 
 
 # ---------------------------------------------------------------------------
 # 1) Storage-backend pin — PERF-005 finding is SQLite-RDBStorage-specific
 # ---------------------------------------------------------------------------
 
-def test_run_autotuner_storage_is_rdbstorage_over_sqlite(
-    autotuner_ast, contract: dict
-):
+
+def test_run_autotuner_storage_is_rdbstorage_over_sqlite(autotuner_ast, contract: dict):
     """``run_autotuner`` must construct an ``optuna.storages.RDBStorage``
     whose URL is the documented sqlite scheme. The PERF-005 finding scope
     is narrow to this backend — a future migration to Postgres/MySQL would
@@ -200,6 +197,7 @@ def test_run_autotuner_storage_is_rdbstorage_over_sqlite(
 # 2) Rationale-docstring lock — the WHY of default-1 must travel with code
 # ---------------------------------------------------------------------------
 
+
 def test_n_jobs_helper_docstring_cites_sqlite_rdbstorage_rationale(
     autotuner_module, contract: dict
 ):
@@ -242,6 +240,7 @@ def test_n_jobs_helper_docstring_cites_sqlite_rdbstorage_rationale(
 # 3) Triple default-1 invariant — unset, garbled, empty-string
 # ---------------------------------------------------------------------------
 
+
 def test_unset_env_defaults_to_one(monkeypatch, autotuner_module, contract: dict):
     """``OPTUNA_N_JOBS`` unset must yield literal 1. Mirrors the existing
     OPTUNA-6 test; included here so the PERF-005 suite is self-contained
@@ -264,9 +263,7 @@ def test_garbled_env_defaults_to_one(monkeypatch, autotuner_module, contract: di
     assert helper() not in contract["default_invariant"]["prohibited_defaults"]
 
 
-def test_empty_string_env_defaults_to_one(
-    monkeypatch, autotuner_module, contract: dict
-):
+def test_empty_string_env_defaults_to_one(monkeypatch, autotuner_module, contract: dict):
     """Empty-string env (``OPTUNA_N_JOBS=``) must default to 1, not crash.
     Some shells / .env loaders surface unset vars as empty strings; the
     helper must handle this the same as unset to preserve the invariant.
@@ -285,9 +282,7 @@ def test_empty_string_env_defaults_to_one(
     )
 
 
-def test_prohibited_default_values_never_returned(
-    monkeypatch, autotuner_module, contract: dict
-):
+def test_prohibited_default_values_never_returned(monkeypatch, autotuner_module, contract: dict):
     """No combination of unset/garbled/empty env yields any of the
     PERF-005 prohibited defaults (-1, 2, 4, 8). This is the negative
     control for the default-1 invariant: a wrong impl that defaulted to
@@ -319,6 +314,7 @@ def test_prohibited_default_values_never_returned(
 # 4) Empirical contention canary
 # ---------------------------------------------------------------------------
 
+
 def _canary_objective(trial):
     """Deterministic 1-D objective; fast enough that contention dominates
     runtime if it occurs. Not a meaningful optimization target — its
@@ -327,9 +323,7 @@ def _canary_objective(trial):
     return -((x - 0.5) ** 2)
 
 
-def test_sqlite_rdbstorage_contention_canary_documents_failure_mode(
-    tmp_path, contract: dict
-):
+def test_sqlite_rdbstorage_contention_canary_documents_failure_mode(tmp_path, contract: dict):
     """Canary: run a small parallel Optuna study against a temp SQLite
     ``RDBStorage`` and observe behaviour. PERF-005 documents an
     unbenchmarked contention risk — this test EXISTS so future maintainers
@@ -419,6 +413,7 @@ def test_sqlite_rdbstorage_contention_canary_documents_failure_mode(
 # 5) Helper signature stability — no positional config drift
 # ---------------------------------------------------------------------------
 
+
 def test_n_jobs_helper_takes_no_arguments(autotuner_module):
     """``_resolve_optuna_n_jobs_from_env()`` must accept no arguments —
     it reads the env directly so the call sites at run_autotuner and
@@ -427,9 +422,11 @@ def test_n_jobs_helper_takes_no_arguments(autotuner_module):
     that would silently reopen the parallel-write pathway from the call site."""
     helper = autotuner_module._resolve_optuna_n_jobs_from_env
     sig = inspect.signature(helper)
-    params = [p for p in sig.parameters.values() if p.kind not in (
-        inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD
-    )]
+    params = [
+        p
+        for p in sig.parameters.values()
+        if p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    ]
     required = [p for p in params if p.default is inspect.Parameter.empty]
     assert not required, (
         f"PERF-005 helper signature lock: _resolve_optuna_n_jobs_from_env "

@@ -131,7 +131,7 @@ class TestH6GateWindowMismatch:
         This isolates the OOS-superiority branch (the H6 surface).
         """
         return dict(
-            winner_trial_is_none=False,   # BHY winner present (veto passes)
+            winner_trial_is_none=False,  # BHY winner present (veto passes)
             winner_p_adj=0.01,
             nn1_compliant=True,
             purge_integrity_ok=True,
@@ -171,7 +171,7 @@ class TestH6GateWindowMismatch:
         verdict = acceptance.evaluate_acceptance_gate(
             **self._adopt_kwargs(
                 oos_alpha=cand_fold_alpha,
-                fallback_oos_alpha=inc_fold_alpha,           # FOLD-matched baseline (the fix)
+                fallback_oos_alpha=inc_fold_alpha,  # FOLD-matched baseline (the fix)
                 default_oos_alpha=h6_fixture["default_oos_alpha_pct"],
             )
         )
@@ -212,7 +212,7 @@ class TestH6GateWindowMismatch:
         verdict = acceptance.evaluate_acceptance_gate(
             **self._adopt_kwargs(
                 oos_alpha=cand_fold_alpha,
-                fallback_oos_alpha=inc_full_history_alpha,    # FULL-history baseline (the bug)
+                fallback_oos_alpha=inc_full_history_alpha,  # FULL-history baseline (the bug)
                 default_oos_alpha=h6_fixture["default_oos_alpha_pct"],
             )
         )
@@ -275,9 +275,11 @@ class TestH6EngineFeedsFoldMatchedBaseline:
                 default_oos_alpha=default_oos_alpha,
             )
 
-        score_tree = {"id": "sym-h6", "type": "root", "children": [
-            {"type": "asset", "ticker": "SPY", "weight": 1.0}
-        ]}
+        score_tree = {
+            "id": "sym-h6",
+            "type": "root",
+            "children": [{"type": "asset", "ticker": "SPY", "weight": 1.0}],
+        }
         objective = swap_engine.SwapObjective(
             objective_type="reduce_correlation",
             target_pair=("sym-h6", "sym-other"),
@@ -360,9 +362,11 @@ class TestH5ExplicitZeroNotReplaced:
                 default_oos_alpha=default_oos_alpha,
             )
 
-        score_tree = {"id": "sym-h5", "type": "root", "children": [
-            {"type": "asset", "ticker": "SPY", "weight": 1.0}
-        ]}
+        score_tree = {
+            "id": "sym-h5",
+            "type": "root",
+            "children": [{"type": "asset", "ticker": "SPY", "weight": 1.0}],
+        }
         objective = swap_engine.SwapObjective(
             objective_type="reduce_correlation",
             target_pair=("sym-h5", "sym-other"),
@@ -380,7 +384,7 @@ class TestH5ExplicitZeroNotReplaced:
                 incumbent_asset="SPY",
                 candidate_asset="IALT",
                 objective=objective,
-                incumbent_oos_alpha=0.0,   # explicit real break-even
+                incumbent_oos_alpha=0.0,  # explicit real break-even
             )
 
         captured_baseline = captured["incumbent_oos_alpha"]

@@ -157,12 +157,7 @@ import pytest
 
 import math_engine
 
-FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "vwap_breakdown"
-)
+FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "vwap_breakdown"
 
 # Reference values used by property tests for cross-checking. These are the
 # EXPECTED named constants in math_engine.py (asserted by the constant-
@@ -212,8 +207,7 @@ def test_vwap_breakdown_update_matches_derived_expected(
     """
     func_name = fixture["function"]
     assert func_name == "compute_vwap_breakdown_update", (
-        f"{fixture_name}: only compute_vwap_breakdown_update is in scope "
-        f"for this cycle"
+        f"{fixture_name}: only compute_vwap_breakdown_update is in scope for this cycle"
     )
 
     inputs = fixture["inputs"]
@@ -235,8 +229,7 @@ def test_vwap_breakdown_update_matches_derived_expected(
     # Contract: 4-tuple. Defensive unpack with a clear failure message if
     # the impl returns a different shape.
     assert isinstance(result, tuple), (
-        f"Fixture {fixture_name}: expected a tuple, got "
-        f"{type(result).__name__}"
+        f"Fixture {fixture_name}: expected a tuple, got {type(result).__name__}"
     )
     assert len(result) == 4, (
         f"Fixture {fixture_name}: expected a 4-tuple "
@@ -357,13 +350,13 @@ def test_triggered_absoluteness_preserves_counts_no_signals(
 @pytest.mark.parametrize(
     "valid_vwap_weight,weighted_vwap_diff",
     [
-        (0.0, -1.0),    # weight far below threshold
-        (0.5, -1.0),    # weight EXACTLY at threshold (strict `>` fails)
+        (0.0, -1.0),  # weight far below threshold
+        (0.5, -1.0),  # weight EXACTLY at threshold (strict `>` fails)
         (0.499, -1.0),  # weight just below
-        (0.9, 0.0),     # diff EXACTLY 0.0 (strict `<` fails)
-        (0.9, 0.5),     # diff positive
-        (0.5, 0.0),     # both clauses fail
-        (0.0, 1.0),     # both clauses fail, different way
+        (0.9, 0.0),  # diff EXACTLY 0.0 (strict `<` fails)
+        (0.9, 0.5),  # diff positive
+        (0.5, 0.0),  # both clauses fail
+        (0.0, 1.0),  # both clauses fail, different way
     ],
 )
 @pytest.mark.parametrize(
@@ -409,7 +402,7 @@ def test_system_a_gate_fail_resets_system_a_only_system_b_follows_own_arm(
         valid_vwap_weight=valid_vwap_weight,
         weighted_vwap_diff=weighted_vwap_diff,
         safe_hwm=10.0,
-        current_return=-50.0,            # System B arm MET (-50 <= -1.0)
+        current_return=-50.0,  # System B arm MET (-50 <= -1.0)
         vwap_cross_hwm_pct=1.0,
         vwap_bleed_arm_pct=-1.0,
         vwap_bleed_ticks_threshold=3,
@@ -586,10 +579,10 @@ def test_system_b_resets_fully_to_zero_when_condition_fails(
     "starting_a,a_condition_met,expected_broken",
     [
         # condition met -> new_a = starting+1; broken iff new_a >= 3
-        (0, True, False),   # 0+1=1, not >= 3
-        (1, True, False),   # 1+1=2, not >= 3
-        (2, True, True),    # 2+1=3, broken (>= 3)
-        (3, True, True),    # 3+1=4, broken
+        (0, True, False),  # 0+1=1, not >= 3
+        (1, True, False),  # 1+1=2, not >= 3
+        (2, True, True),  # 2+1=3, broken (>= 3)
+        (3, True, True),  # 3+1=4, broken
         (10, True, True),
         # condition fails -> new_a = 0; broken False
         (0, False, False),
@@ -641,16 +634,16 @@ def test_system_a_break_truth_table(
     "threshold_param,starting_b,b_condition_met,expected_bleed_broken",
     [
         # Default-ish threshold 3
-        (3, 0, True, False),    # 0+1=1, not >= 3
-        (3, 1, True, False),    # 1+1=2
-        (3, 2, True, True),     # 2+1=3
-        (3, 5, True, True),     # 5+1=6
+        (3, 0, True, False),  # 0+1=1, not >= 3
+        (3, 1, True, False),  # 1+1=2
+        (3, 2, True, True),  # 2+1=3
+        (3, 5, True, True),  # 5+1=6
         # Higher threshold 5 (autotuner could pick this per symphony)
-        (5, 3, True, False),    # 3+1=4, not >= 5
-        (5, 4, True, True),     # 4+1=5, broken
+        (5, 3, True, False),  # 3+1=4, not >= 5
+        (5, 4, True, True),  # 4+1=5, broken
         (5, 10, True, True),
         # Lower threshold 1 (extreme; every tick breaks)
-        (1, 0, True, True),     # 0+1=1, >= 1 broken
+        (1, 0, True, True),  # 0+1=1, >= 1 broken
         (1, 5, True, True),
         # condition fails -> always False, regardless of threshold
         (3, 5, False, False),
@@ -721,20 +714,20 @@ def test_system_a_inputs_do_not_affect_system_b_outputs() -> None:
         is_triggered=False,
         valid_vwap_weight=0.9,
         weighted_vwap_diff=-0.5,
-        current_return=-2.0,           # <= bleed_arm -1.0
+        current_return=-2.0,  # <= bleed_arm -1.0
         vwap_bleed_arm_pct=-1.0,
         vwap_bleed_ticks_threshold=3,
-        current_vwap_bleed_ticks=2,    # will become 3 -> bleed broken
+        current_vwap_bleed_ticks=2,  # will become 3 -> bleed broken
     )
     # Each row is a different System A regime (met / failed / boundary /
     # huge prev). They must all leave System B's output identical.
     a_regimes = [
         # (safe_hwm, vwap_cross_hwm_pct, current_vwap_ticks)
-        (4.0, 2.0, 0),     # A met, prev 0 -> 1
-        (4.0, 2.0, 5),     # A met, prev 5 -> 6 (would break A)
-        (0.5, 2.0, 0),     # A fails (hwm < cross), reset
-        (0.5, 2.0, 9),     # A fails, big prev wiped
-        (2.0, 2.0, 0),     # A boundary (hwm == cross, condition met)
+        (4.0, 2.0, 0),  # A met, prev 0 -> 1
+        (4.0, 2.0, 5),  # A met, prev 5 -> 6 (would break A)
+        (0.5, 2.0, 0),  # A fails (hwm < cross), reset
+        (0.5, 2.0, 9),  # A fails, big prev wiped
+        (2.0, 2.0, 0),  # A boundary (hwm == cross, condition met)
     ]
     b_outputs: list[tuple[int, bool]] = []
     for safe_hwm, vwap_cross_hwm_pct, current_vwap_ticks in a_regimes:
@@ -772,17 +765,17 @@ def test_system_b_inputs_do_not_affect_system_a_outputs() -> None:
         is_triggered=False,
         valid_vwap_weight=0.9,
         weighted_vwap_diff=-0.5,
-        safe_hwm=4.0,                  # >= cross 2.0
-        current_return=1.0,            # < safe_hwm 4.0 (A met);
-                                       # also > any bleed_arm here so B fails
+        safe_hwm=4.0,  # >= cross 2.0
+        current_return=1.0,  # < safe_hwm 4.0 (A met);
+        # also > any bleed_arm here so B fails
         vwap_cross_hwm_pct=2.0,
-        current_vwap_ticks=2,          # will become 3 -> A broken
+        current_vwap_ticks=2,  # will become 3 -> A broken
     )
     b_regimes = [
         # (vwap_bleed_arm_pct, vwap_bleed_ticks_threshold, current_vwap_bleed_ticks)
-        (-1.0, 3, 0),     # B fails (1.0 > -1.0), reset
-        (-1.0, 3, 9),     # B fails, big prev wiped
-        (-5.0, 5, 0),     # B fails (1.0 > -5.0)
+        (-1.0, 3, 0),  # B fails (1.0 > -1.0), reset
+        (-1.0, 3, 9),  # B fails, big prev wiped
+        (-5.0, 5, 0),  # B fails (1.0 > -5.0)
         (-100.0, 1, 50),  # B fails, extreme params
     ]
     a_outputs: list[tuple[int, bool]] = []
@@ -888,9 +881,7 @@ def test_return_type_contract_int_int_bool_bool(
         current_vwap_ticks=starting_a,
         current_vwap_bleed_ticks=starting_b,
     )
-    assert isinstance(result, tuple) and len(result) == 4, (
-        f"Expected 4-tuple, got {result!r}"
-    )
+    assert isinstance(result, tuple) and len(result) == 4, f"Expected 4-tuple, got {result!r}"
     new_a, new_b, is_broken, is_bleed_broken = result
     assert type(new_a) is int, (
         f"new_vwap_ticks must be EXACTLY int, got {type(new_a).__name__} "
@@ -936,8 +927,7 @@ def test_vwap_weight_threshold_is_module_level_named_constant() -> None:
         "constant."
     )
     assert math_engine.VWAP_WEIGHT_THRESHOLD == 0.5, (
-        f"VWAP_WEIGHT_THRESHOLD should be 0.5, got "
-        f"{math_engine.VWAP_WEIGHT_THRESHOLD}"
+        f"VWAP_WEIGHT_THRESHOLD should be 0.5, got {math_engine.VWAP_WEIGHT_THRESHOLD}"
     )
 
 
@@ -960,8 +950,7 @@ def test_vwap_break_confirm_ticks_is_module_level_named_constant() -> None:
         "be a named module-level constant."
     )
     assert math_engine.VWAP_BREAK_CONFIRM_TICKS == 3, (
-        f"VWAP_BREAK_CONFIRM_TICKS should be 3, got "
-        f"{math_engine.VWAP_BREAK_CONFIRM_TICKS}"
+        f"VWAP_BREAK_CONFIRM_TICKS should be 3, got {math_engine.VWAP_BREAK_CONFIRM_TICKS}"
     )
 
 
@@ -1072,10 +1061,7 @@ def test_no_unnamed_magic_numbers_in_vwap_breakdown_function_body() -> None:
 
     target: ast.FunctionDef | None = None
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.FunctionDef)
-            and node.name == "compute_vwap_breakdown_update"
-        ):
+        if isinstance(node, ast.FunctionDef) and node.name == "compute_vwap_breakdown_update":
             target = node
             break
     assert target is not None, (
@@ -1089,9 +1075,7 @@ def test_no_unnamed_magic_numbers_in_vwap_breakdown_function_body() -> None:
     for sub in ast.walk(target):
         if isinstance(sub, ast.Assign):
             for tgt in sub.targets:
-                if isinstance(tgt, ast.Name) and isinstance(
-                    sub.value, ast.Constant
-                ):
+                if isinstance(tgt, ast.Name) and isinstance(sub.value, ast.Constant):
                     named_literal_lines.add(sub.value.lineno)
 
     def line_has_comment(lineno: int) -> bool:
@@ -1105,9 +1089,7 @@ def test_no_unnamed_magic_numbers_in_vwap_breakdown_function_body() -> None:
 
     offenders: list[tuple[int, Any]] = []
     for sub in ast.walk(target):
-        if isinstance(sub, ast.Constant) and isinstance(
-            sub.value, (int, float)
-        ):
+        if isinstance(sub, ast.Constant) and isinstance(sub.value, (int, float)):
             val = sub.value
             if isinstance(val, bool):  # bool is a subclass of int
                 continue
@@ -1149,15 +1131,11 @@ def test_domain_constants_are_named_not_bare_literals_in_function_body() -> None
 
     target: ast.FunctionDef | None = None
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.FunctionDef)
-            and node.name == "compute_vwap_breakdown_update"
-        ):
+        if isinstance(node, ast.FunctionDef) and node.name == "compute_vwap_breakdown_update":
             target = node
             break
     assert target is not None, (
-        "compute_vwap_breakdown_update not found in math_engine.py "
-        "(expected RED state)"
+        "compute_vwap_breakdown_update not found in math_engine.py (expected RED state)"
     )
 
     # Python set hashing: 3 and 3.0 hash identically, so a bare `3` would
@@ -1167,9 +1145,7 @@ def test_domain_constants_are_named_not_bare_literals_in_function_body() -> None
 
     offenders: list[tuple[int, Any]] = []
     for sub in ast.walk(target):
-        if isinstance(sub, ast.Constant) and isinstance(
-            sub.value, (int, float)
-        ):
+        if isinstance(sub, ast.Constant) and isinstance(sub.value, (int, float)):
             if isinstance(sub.value, bool):
                 continue
             if sub.value in forbidden_values:

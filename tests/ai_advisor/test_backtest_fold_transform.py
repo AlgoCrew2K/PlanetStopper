@@ -112,6 +112,7 @@ def _make_candidate(
 # Fixtures (function-scoped unless noted)
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def fixture() -> dict:
     """Load the fold-transform fixture. Fails fast if missing."""
@@ -126,6 +127,7 @@ def fixture() -> dict:
 # ---------------------------------------------------------------------------
 # Section 1 — Module exists and exposes the required public interface
 # ---------------------------------------------------------------------------
+
 
 class TestModuleExists:
     """advisors/backtest_gate_engine.py must exist and expose its contract."""
@@ -163,6 +165,7 @@ class TestModuleExists:
 # ---------------------------------------------------------------------------
 # Section 2 — Withhold on insufficient data (gate must not fabricate a pass)
 # ---------------------------------------------------------------------------
+
 
 class TestWithholdOnInsufficientData:
     """Too-short series → gate must produce REJECT_VETO_FAILED (WITHHOLD), not fabricate."""
@@ -270,6 +273,7 @@ class TestWithholdOnInsufficientData:
 # Section 3 — Purge/look-ahead integrity
 # ---------------------------------------------------------------------------
 
+
 class TestPurgeLookAheadIntegrity:
     """The fold split must respect purge/embargo days (look-ahead guard)."""
 
@@ -313,6 +317,7 @@ class TestPurgeLookAheadIntegrity:
 # Section 4 — Gate-compatible output + one-directional brake preserved
 # ---------------------------------------------------------------------------
 
+
 class TestGateCompatibleOutput:
     """evaluate_candidate_batch output must be compatible with acceptance_gate contracts."""
 
@@ -334,7 +339,11 @@ class TestGateCompatibleOutput:
         """verdict.decision must be one of the three valid AcceptanceVerdict decisions."""
         engine = _import_engine()
         ag = _import_acceptance_gate()
-        valid = {ag.DECISION_ADOPT_CANDIDATE, ag.DECISION_KEEP_INCUMBENT, ag.DECISION_REJECT_VETO_FAILED}
+        valid = {
+            ag.DECISION_ADOPT_CANDIDATE,
+            ag.DECISION_KEEP_INCUMBENT,
+            ag.DECISION_REJECT_VETO_FAILED,
+        }
 
         returns = _make_synthetic_returns_pct(252, seed=43)
         batch = engine.evaluate_candidate_batch([_make_candidate(returns)])
@@ -380,7 +389,9 @@ class TestGateCompatibleOutput:
         This is the one-directional brake applied to the purge-integrity veto path.
         """
         engine = _import_engine()
-        scenario_fixture_path = _REPO_ROOT / "tests" / "fixtures" / "math" / "backtest_fold_transform_basic.json"
+        scenario_fixture_path = (
+            _REPO_ROOT / "tests" / "fixtures" / "math" / "backtest_fold_transform_basic.json"
+        )
         with scenario_fixture_path.open() as f:
             fix = json.load(f)
 
@@ -440,6 +451,7 @@ class TestGateCompatibleOutput:
 # Section 5 — Multiple-testing FDR semantics (AC-3.2 MANDATORY guardrail)
 # ---------------------------------------------------------------------------
 
+
 class TestMultipleTestingFdrSemantics:
     """BHY correction tightens as N_candidates grows (AC-3.2 MANDATORY)."""
 
@@ -464,7 +476,9 @@ class TestMultipleTestingFdrSemantics:
     def test_n_candidates_equals_batch_size(self):
         """GatedBatch.n_candidates must equal the number of candidates submitted."""
         engine = _import_engine()
-        candidates = [_make_candidate(_make_synthetic_returns_pct(252, seed=i), f"cand-{i}") for i in range(5)]
+        candidates = [
+            _make_candidate(_make_synthetic_returns_pct(252, seed=i), f"cand-{i}") for i in range(5)
+        ]
         batch = engine.evaluate_candidate_batch(candidates)
         assert batch.n_candidates == 5, (
             f"n_candidates must be 5 (batch size), got {batch.n_candidates}. "
@@ -486,9 +500,7 @@ class TestMultipleTestingFdrSemantics:
         noise_returns = [_make_noisy_returns_pct(500, seed=100 + i) for i in range(9)]
 
         # N=1: just the single best candidate
-        batch_1 = engine.evaluate_candidate_batch(
-            [_make_candidate(best_returns, "best")]
-        )
+        batch_1 = engine.evaluate_candidate_batch([_make_candidate(best_returns, "best")])
         survivors_1 = len(batch_1.survivors)
 
         # N=10: same best candidate + 9 noise candidates
@@ -506,7 +518,9 @@ class TestMultipleTestingFdrSemantics:
         # strong. The critical case is that survivors_10 <= survivors_1 * 10
         # (i.e., the noise candidates are not inflating survivors past the FDR correction).
         # Noise candidates should NOT survive under the BHY correction.
-        noise_survivors = [r for r in batch_10.results[1:] if r.verdict.decision == "ADOPT_CANDIDATE"]
+        noise_survivors = [
+            r for r in batch_10.results[1:] if r.verdict.decision == "ADOPT_CANDIDATE"
+        ]
         assert len(noise_survivors) == 0, (
             f"{len(noise_survivors)} pure-noise candidates survived the gate under N=10. "
             "The BHY FDR correction must prevent noise candidates from passing when "
@@ -531,13 +545,11 @@ class TestMultipleTestingFdrSemantics:
         # the batch size as the BHY denominator
         has_n_effective = "n_effective" in source
         has_n_candidates_as_denominator = (
-            "len(candidates)" in source.lower()
-            or "n_candidates" in source
+            "len(candidates)" in source.lower() or "n_candidates" in source
         )
         has_bhy_reference = any(
-            term in source for term in (
-                "bhy", "benjamini", "yekutieli", "fdr", "benjamini_hochberg"
-            )
+            term in source
+            for term in ("bhy", "benjamini", "yekutieli", "fdr", "benjamini_hochberg")
         )
 
         assert has_bhy_reference, (
@@ -555,6 +567,7 @@ class TestMultipleTestingFdrSemantics:
 # ---------------------------------------------------------------------------
 # Section 6 — Survivor caveats (AC-3.3 MANDATORY)
 # ---------------------------------------------------------------------------
+
 
 class TestSurvivorCaveats:
     """Every ADOPT_CANDIDATE result must carry the mandatory overfitting caveat."""
@@ -594,9 +607,15 @@ class TestSurvivorCaveats:
                 # Verify the caveat mentions selection bias / overfitting
                 all_text = " ".join(result.caveats).lower()
                 has_bias_mention = any(
-                    term in all_text for term in (
-                        "selection bias", "overfitting", "overfit", "selection",
-                        "backtest", "surviving", "survivor"
+                    term in all_text
+                    for term in (
+                        "selection bias",
+                        "overfitting",
+                        "overfit",
+                        "selection",
+                        "backtest",
+                        "surviving",
+                        "survivor",
                     )
                 )
                 assert has_bias_mention, (
@@ -636,6 +655,7 @@ class TestSurvivorCaveats:
 # ---------------------------------------------------------------------------
 # Section 7 — winner_trial_is_none is never hardcoded False
 # ---------------------------------------------------------------------------
+
 
 class TestWinnerTrialIsNoneNotHardcoded:
     """winner_trial_is_none must be DERIVED from BHY statistics, not hardcoded."""
@@ -721,6 +741,7 @@ class TestWinnerTrialIsNoneNotHardcoded:
 # Section 8 — Architecture: offline isolation
 # ---------------------------------------------------------------------------
 
+
 class TestArchitectureOfflineIsolation:
     """The gate engine must not appear on the 1-minute execution path."""
 
@@ -750,6 +771,7 @@ class TestArchitectureOfflineIsolation:
 # Section 10 — BLOCK 1: Golden-fixture numerical pin on fold-transform output
 # ---------------------------------------------------------------------------
 
+
 class TestFoldTransformGoldenFixtureNumericalPin:
     """BLOCK 1 (reviewer): the math layer must have at least one test that pins
     oos_alpha and validation_days to known values on a deterministic input series.
@@ -777,6 +799,7 @@ class TestFoldTransformGoldenFixtureNumericalPin:
         engine = _import_engine()
 
         import sys as _sys
+
         repo = str(_REPO_ROOT)
         if repo not in _sys.path:
             _sys.path.insert(0, repo)
@@ -847,9 +870,19 @@ class TestFoldTransformGoldenFixtureNumericalPin:
         # (b) N candidate backtest p-values from individual folds
         # At least two of these terms together constitute an acknowledgement.
         terms_present = sum(
-            1 for term in (
-                "calibration", "optuna", "trial", "fold", "single", "candidate",
-                "backtest", "difference", "acknowledged", "design", "context"
+            1
+            for term in (
+                "calibration",
+                "optuna",
+                "trial",
+                "fold",
+                "single",
+                "candidate",
+                "backtest",
+                "difference",
+                "acknowledged",
+                "design",
+                "context",
             )
             if term in source
         )
@@ -866,6 +899,7 @@ class TestFoldTransformGoldenFixtureNumericalPin:
 # ---------------------------------------------------------------------------
 # Section 11 — BLOCK 2: Batch AC-X5 isolation + client-module choice
 # ---------------------------------------------------------------------------
+
 
 class TestBatchAcX5IsolationAndClientChoice:
     """BLOCK 2 (reviewer): one candidate's failure must not abort other candidates.
@@ -888,6 +922,7 @@ class TestBatchAcX5IsolationAndClientChoice:
         """
         engine = _import_engine()
         import random
+
         rng = random.Random(1)
 
         short_returns = [0.01, -0.005, 0.008, -0.003, 0.012]  # 5 values — too short
@@ -907,9 +942,7 @@ class TestBatchAcX5IsolationAndClientChoice:
             "must appear in results, with the failing one marked REJECT_VETO_FAILED."
         )
 
-        degenerate_result = next(
-            (r for r in batch.results if r.candidate_id == "degenerate"), None
-        )
+        degenerate_result = next((r for r in batch.results if r.candidate_id == "degenerate"), None)
         assert degenerate_result is not None, (
             "The degenerate candidate ('degenerate') must appear in batch.results."
         )
@@ -933,12 +966,13 @@ class TestBatchAcX5IsolationAndClientChoice:
         """
         engine = _import_engine()
         import random
+
         rng = random.Random(2)
 
         # Mix of short, medium, and long series
         candidates = [
-            _make_candidate([0.01] * 3, candidate_id="very-short"),        # 3 returns — fails
-            _make_candidate([0.01] * 50, candidate_id="medium"),            # 50 returns — borderline
+            _make_candidate([0.01] * 3, candidate_id="very-short"),  # 3 returns — fails
+            _make_candidate([0.01] * 50, candidate_id="medium"),  # 50 returns — borderline
             _make_candidate([rng.gauss(0, 0.5) for _ in range(252)], candidate_id="full"),
         ]
         batch = engine.evaluate_candidate_batch(candidates)
@@ -979,6 +1013,7 @@ class TestBatchAcX5IsolationAndClientChoice:
 # Section 12 — Non-BLOCK: winner_p_adj is always a float (never None)
 # ---------------------------------------------------------------------------
 
+
 class TestWinnerPAdjIsAlwaysFloat:
     """Non-BLOCK (reviewer): winner_p_adj docstring says 'None if not the BHY winner'
     but actual code always assigns p_adj[idx] — always a float.
@@ -1001,14 +1036,12 @@ class TestWinnerPAdjIsAlwaysFloat:
         """
         engine = _import_engine()
         import random
+
         rng = random.Random(42)
 
         # Mix of candidates — some will be BHY winners, most will not
         candidates = [
-            _make_candidate(
-                [rng.gauss(0.05, 0.8) for _ in range(252)],
-                candidate_id=f"cand-{i}"
-            )
+            _make_candidate([rng.gauss(0.05, 0.8) for _ in range(252)], candidate_id=f"cand-{i}")
             for i in range(5)
         ]
         batch = engine.evaluate_candidate_batch(candidates)
@@ -1037,6 +1070,7 @@ class TestWinnerPAdjIsAlwaysFloat:
 # ---------------------------------------------------------------------------
 # Section 9 — Soundness: OOS alpha uses FULL validation fold (not purge-reduced)
 # ---------------------------------------------------------------------------
+
 
 class TestOosAlphaUsesFullValidationFold:
     """OOS alpha must be computed over the FULL raw validation fold, not the purge-reduced side.
@@ -1071,6 +1105,7 @@ class TestOosAlphaUsesFullValidationFold:
 
         # Import the fold constants to compute the expected split exactly
         import sys as _sys
+
         repo = str(_REPO_ROOT)
         if repo not in _sys.path:
             _sys.path.insert(0, repo)
@@ -1113,6 +1148,7 @@ class TestOosAlphaUsesFullValidationFold:
         engine = _import_engine()
 
         import sys as _sys
+
         repo = str(_REPO_ROOT)
         if repo not in _sys.path:
             _sys.path.insert(0, repo)

@@ -158,9 +158,7 @@ def test_cvar_write_does_not_block_under_concurrent_ro_reader(perf_db, bench_fix
         try:
             conn = db.get_ro_connection()
             try:
-                rows = conn.execute(
-                    "SELECT COUNT(*) FROM cvar_diagnostics"
-                ).fetchall()
+                rows = conn.execute("SELECT COUNT(*) FROM cvar_diagnostics").fetchall()
                 read_rows.extend(rows)
             finally:
                 conn.close()

@@ -48,9 +48,7 @@ def reference_sortino(returns: list[float]) -> float:
         return 0.0
     n = len(returns)
     mean_r = sum(returns) / n
-    sum_sq_downside = sum(
-        min(r - _REFERENCE_SORTINO_TARGET, 0.0) ** 2 for r in returns
-    )
+    sum_sq_downside = sum(min(r - _REFERENCE_SORTINO_TARGET, 0.0) ** 2 for r in returns)
     mean_sq_downside = sum_sq_downside / n
     downside_deviation = math.sqrt(mean_sq_downside)
     if downside_deviation == 0.0:
@@ -101,37 +99,95 @@ def reference_bootstrap_se(
 
 # Basic mixed-sign fixture (T=12). Hand-curated for the numeric pin.
 RETURN_SERIES_BASIC: tuple[float, ...] = (
-    0.012, -0.005, 0.008, 0.003, -0.011, 0.006,
-    0.001, 0.015, -0.002, 0.009, 0.004, -0.007,
+    0.012,
+    -0.005,
+    0.008,
+    0.003,
+    -0.011,
+    0.006,
+    0.001,
+    0.015,
+    -0.002,
+    0.009,
+    0.004,
+    -0.007,
 )
 
 # Strongly-positive Sortino fixture (T=20): the sign/direction test
 # requires Sortino > 0 with statistical significance.
 RETURN_SERIES_POSITIVE_SORTINO: tuple[float, ...] = (
-    0.020, 0.015, 0.018, -0.005, 0.022, 0.012, 0.019, -0.003,
-    0.025, 0.014, 0.017, 0.011, -0.006, 0.020, 0.013, 0.016,
-    0.024, 0.018, 0.012, 0.021,
+    0.020,
+    0.015,
+    0.018,
+    -0.005,
+    0.022,
+    0.012,
+    0.019,
+    -0.003,
+    0.025,
+    0.014,
+    0.017,
+    0.011,
+    -0.006,
+    0.020,
+    0.013,
+    0.016,
+    0.024,
+    0.018,
+    0.012,
+    0.021,
 )
 
 # All-negative Sortino fixture (T=15): pin t < 0, p > 0.5.
 RETURN_SERIES_NEGATIVE_SORTINO: tuple[float, ...] = (
-    -0.010, -0.015, -0.008, -0.012, -0.005, -0.020, -0.011,
-    -0.007, -0.014, -0.009, -0.013, -0.006, -0.018, -0.016, -0.010,
+    -0.010,
+    -0.015,
+    -0.008,
+    -0.012,
+    -0.005,
+    -0.020,
+    -0.011,
+    -0.007,
+    -0.014,
+    -0.009,
+    -0.013,
+    -0.006,
+    -0.018,
+    -0.016,
+    -0.010,
 )
 
 # Near-zero Sortino fixture (T=20): symmetric around 0, pin t ≈ 0,
 # p ≈ 0.5.
 RETURN_SERIES_NULL_SORTINO: tuple[float, ...] = (
-    0.010, -0.010, 0.008, -0.008, 0.012, -0.012, 0.005, -0.005,
-    0.015, -0.015, 0.007, -0.007, 0.011, -0.011, 0.009, -0.009,
-    0.013, -0.013, 0.006, -0.006,
+    0.010,
+    -0.010,
+    0.008,
+    -0.008,
+    0.012,
+    -0.012,
+    0.005,
+    -0.005,
+    0.015,
+    -0.015,
+    0.007,
+    -0.007,
+    0.011,
+    -0.011,
+    0.009,
+    -0.009,
+    0.013,
+    -0.013,
+    0.006,
+    -0.006,
 )
 
 # Sentinel-rich fixture (T=30): 28 zeros + 2 small positives so many
 # resamples land entirely at/above target and return the +1e6 sentinel.
 RETURN_SERIES_SENTINEL_RICH: tuple[float, ...] = (
     *([0.0] * 28),
-    0.001, 0.002,
+    0.001,
+    0.002,
 )
 
 
@@ -207,10 +263,7 @@ def main() -> None:
     # Empirical KS distance to Uniform[0,1].
     sorted_p = sorted(p_values)
     n = len(sorted_p)
-    ks = max(
-        max(abs((i + 1) / n - p), abs(i / n - p))
-        for i, p in enumerate(sorted_p)
-    )
+    ks = max(max(abs((i + 1) / n - p), abs(i / n - p)) for i, p in enumerate(sorted_p))
     print(f"  n (non-degenerate)  = {n}")
     print(f"  empirical mean p    = {statistics.mean(sorted_p):.4f}")
     print(f"  empirical median p  = {statistics.median(sorted_p):.4f}")

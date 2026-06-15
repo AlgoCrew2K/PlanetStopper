@@ -412,6 +412,7 @@ def run_pipeline(*, dry_run: bool = False) -> dict:
     if not dry_run:
         try:
             import database  # lazy import (CC-2 style)
+
             market_prism_row_id = database.insert_advisor_observation(
                 advisor_role="MARKET_PRISM",
                 subject_type="portfolio",

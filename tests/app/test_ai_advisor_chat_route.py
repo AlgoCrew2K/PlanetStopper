@@ -120,7 +120,7 @@ def test_get_chat_tab_contains_chat_panel_testid(client):
     _assert_route_exists(resp, "GET /ai-advisor/chat")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="chat-panel"' in body, (
-        "GET /ai-advisor must render data-testid=\"chat-panel\" — "
+        'GET /ai-advisor must render data-testid="chat-panel" — '
         "the JS openChatPanel() targets this element (always-in-DOM — AC4)"
     )
 
@@ -135,7 +135,7 @@ def test_get_chat_tab_contains_explain_only_notice(client):
     _assert_route_exists(resp, "GET /ai-advisor/chat")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="explain-only-notice"' in body, (
-        "GET /ai-advisor must render data-testid=\"explain-only-notice\" — "
+        'GET /ai-advisor must render data-testid="explain-only-notice" — '
         "the persistent UI reminder that chat is explain-only (AC-4.1)"
     )
 
@@ -150,7 +150,7 @@ def test_get_chat_tab_contains_chat_default_state(client):
     _assert_route_exists(resp, "GET /ai-advisor/chat")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="chat-default-state"' in body, (
-        "GET /ai-advisor must render data-testid=\"chat-default-state\" — "
+        'GET /ai-advisor must render data-testid="chat-default-state" — '
         "shown when no artifact is selected (design §Screen 4 default state)"
     )
 
@@ -205,7 +205,7 @@ def test_get_chat_tab_has_chat_tab_active(client):
     _assert_route_exists(resp, "GET /ai-advisor/chat")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="tab-chat"' in body, (
-        "GET /ai-advisor must render data-testid=\"tab-chat\" in the tab bar"
+        'GET /ai-advisor must render data-testid="tab-chat" in the tab bar'
     )
 
 
@@ -232,7 +232,7 @@ def test_get_chat_tab_unavailable_state_rendered_when_no_api_key(client):
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="chat-unavailable"' in body, (
         "When ANTHROPIC_API_KEY is absent, GET /ai-advisor must render "
-        "data-testid=\"chat-unavailable\" — the operator must see a clear "
+        'data-testid="chat-unavailable" — the operator must see a clear '
         "unavailability message, not a blank input (AC-4.3)"
     )
 
@@ -324,9 +324,7 @@ def test_post_chat_send_returns_error_when_llm_unavailable(client):
         f"POST /send must not return {resp.status_code} on LLM unavailability — "
         "return a JSON error response instead (AC-4.3)"
     )
-    assert resp.content_type.startswith("application/json"), (
-        "Error response must be JSON"
-    )
+    assert resp.content_type.startswith("application/json"), "Error response must be JSON"
     data = json.loads(resp.data)
     assert "error" in data, (
         f"Error response must contain 'error' key. Got keys: {sorted(data.keys())}"
@@ -518,7 +516,9 @@ def test_post_chat_send_passes_artifact_to_explain_artifact(client):
     # Inspect the call: artifact must be present as a kwarg or positional arg.
     call_args = mock_fn.call_args.args
     call_kwargs = mock_fn.call_args.kwargs
-    artifact_received = call_kwargs.get("artifact") or (call_args[1] if len(call_args) > 1 else None)
+    artifact_received = call_kwargs.get("artifact") or (
+        call_args[1] if len(call_args) > 1 else None
+    )
     assert artifact_received is not None, (
         "explain_artifact must receive an 'artifact' argument from the route. "
         "The route must pass the artifact from the request body (AC-4.2)."
@@ -547,7 +547,7 @@ def test_get_chat_tab_contains_artifact_summary_strip(client):
     _assert_route_exists(resp, "GET /ai-advisor/chat")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="artifact-summary-strip"' in body, (
-        "GET /ai-advisor must render data-testid=\"artifact-summary-strip\" — "
+        'GET /ai-advisor must render data-testid="artifact-summary-strip" — '
         "the artifact anchor strip shown in the open chat panel (design §Screen 4)"
     )
 
@@ -567,7 +567,7 @@ def test_get_chat_tab_contains_chat_thread_when_available(client):
     _assert_route_exists(resp, "GET /ai-advisor/chat (with API key)")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="chat-thread"' in body, (
-        "GET /ai-advisor (chat_available=True) must render data-testid=\"chat-thread\" — "
+        'GET /ai-advisor (chat_available=True) must render data-testid="chat-thread" — '
         "the JS appends message bubbles to this container"
     )
 
@@ -587,7 +587,7 @@ def test_get_chat_tab_contains_chat_send_btn_when_available(client):
     _assert_route_exists(resp, "GET /ai-advisor/chat (with API key)")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="chat-send-btn"' in body, (
-        "GET /ai-advisor (chat_available=True) must render data-testid=\"chat-send-btn\" — "
+        'GET /ai-advisor (chat_available=True) must render data-testid="chat-send-btn" — '
         "the ONLY permitted action button in the chat panel"
     )
 
@@ -611,6 +611,6 @@ def test_get_chat_tab_hides_input_row_when_unavailable(client):
     _assert_route_exists(resp, "GET /ai-advisor/chat (no API key)")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="chat-input-row"' not in body, (
-        "When chat_available=False, data-testid=\"chat-input-row\" must NOT appear "
+        'When chat_available=False, data-testid="chat-input-row" must NOT appear '
         "in the DOM — the operator must not see an inactive input (AC-4.3)"
     )

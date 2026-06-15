@@ -152,9 +152,7 @@ def test_d1_route_level_parse_failure_does_not_leak_secret(flask_client):
         patch("ai_advisor.symphony_logic") as mock_logic,
         patch("ai_advisor.database") as mock_ai_db,
     ):
-        mock_db.load_state.return_value = {
-            "test-symphony": {"name": "Test Symphony"}
-        }
+        mock_db.load_state.return_value = {"test-symphony": {"name": "Test Symphony"}}
         mock_db.get_latest_autotune_run.return_value = None
         mock_ai_db.get_latest_autotune_run.return_value = None
         mock_logic.get_condensed_logic.return_value = _MINIMAL_CONDENSED_LOGIC
@@ -210,11 +208,14 @@ def test_assemble_context_uses_passed_autotune_run_without_db_fetch():
         )
 
         # The DB call must NOT have been made — the param was supplied.
-        mock_db.get_latest_autotune_run.assert_not_called(), (
-            "assemble_advisor_context called database.get_latest_autotune_run even "
-            "though a pre-fetched autotune_run was passed. The param is a no-op "
-            "(ai_advisor.py:497 overwrites it unconditionally). Fix: only fetch when "
-            "autotune_run is _SENTINEL."
+        (
+            mock_db.get_latest_autotune_run.assert_not_called(),
+            (
+                "assemble_advisor_context called database.get_latest_autotune_run even "
+                "though a pre-fetched autotune_run was passed. The param is a no-op "
+                "(ai_advisor.py:497 overwrites it unconditionally). Fix: only fetch when "
+                "autotune_run is _SENTINEL."
+            ),
         )
 
 
@@ -238,10 +239,13 @@ def test_assemble_context_with_sentinel_fetches_from_db():
             symphony_id="test-symphony",
         )
 
-        mock_db.get_latest_autotune_run.assert_called_once_with("test-symphony"), (
-            "assemble_advisor_context must call database.get_latest_autotune_run "
-            "exactly once when autotune_run is _SENTINEL (default). "
-            "Got call_count=%d" % mock_db.get_latest_autotune_run.call_count
+        (
+            mock_db.get_latest_autotune_run.assert_called_once_with("test-symphony"),
+            (
+                "assemble_advisor_context must call database.get_latest_autotune_run "
+                "exactly once when autotune_run is _SENTINEL (default). "
+                "Got call_count=%d" % mock_db.get_latest_autotune_run.call_count
+            ),
         )
 
 
@@ -268,11 +272,14 @@ def test_assemble_context_uses_passed_none_autotune_run_without_db_fetch():
             autotune_run=None,  # explicitly None: no Optuna run, skip fetch
         )
 
-        mock_db.get_latest_autotune_run.assert_not_called(), (
-            "assemble_advisor_context called database.get_latest_autotune_run even "
-            "though autotune_run=None was explicitly passed. None means 'caller "
-            "knows Optuna has not run'; _SENTINEL means 'caller did not provide'. "
-            "The function must not conflate them."
+        (
+            mock_db.get_latest_autotune_run.assert_not_called(),
+            (
+                "assemble_advisor_context called database.get_latest_autotune_run even "
+                "though autotune_run=None was explicitly passed. None means 'caller "
+                "knows Optuna has not run'; _SENTINEL means 'caller did not provide'. "
+                "The function must not conflate them."
+            ),
         )
 
 
@@ -296,9 +303,7 @@ def test_route_suggest_causes_only_one_db_fetch_for_autotune_run(flask_client):
         patch("ai_advisor.database") as mock_ai_db,
         patch("ai_advisor.symphony_logic") as mock_logic,
     ):
-        mock_app_db.load_state.return_value = {
-            "test-symphony": {"name": "Test Symphony"}
-        }
+        mock_app_db.load_state.return_value = {"test-symphony": {"name": "Test Symphony"}}
         mock_app_db.get_latest_autotune_run.return_value = _MINIMAL_AUTOTUNE_RUN
         mock_ai_db.get_latest_autotune_run.return_value = _MINIMAL_AUTOTUNE_RUN
 
@@ -527,8 +532,7 @@ def test_d1_client_construction_failure_does_not_leak_secrets():
 
     assert error_msg is not None
     assert _SECRET_SENTINEL not in error_msg, (
-        f"D-1 regression: secret leaked in client-construction error path. "
-        f"error_msg={error_msg!r}"
+        f"D-1 regression: secret leaked in client-construction error path. error_msg={error_msg!r}"
     )
     assert "ConnectionError" in error_msg, (
         "Client-construction error_msg must contain the exception class name."
@@ -572,14 +576,10 @@ def test_d1_asset_swaps_evaluate_does_not_leak_exception_text(flask_client):
         # propose_operator_swap is lazily imported: `from advisors.asset_swap_engine import ...`
         patch(
             "advisors.asset_swap_engine.propose_operator_swap",
-            side_effect=RuntimeError(
-                f"internal-error: db_key={_SECRET_SENTINEL}"
-            ),
+            side_effect=RuntimeError(f"internal-error: db_key={_SECRET_SENTINEL}"),
         ),
     ):
-        mock_db.load_state.return_value = {
-            "hash-abc123": {"name": "Test Symphony"}
-        }
+        mock_db.load_state.return_value = {"hash-abc123": {"name": "Test Symphony"}}
         mock_db.normalize_name.side_effect = lambda x: x.lower().replace(" ", "-")
 
         resp = flask_client.post(
@@ -598,7 +598,7 @@ def test_d1_asset_swaps_evaluate_does_not_leak_exception_text(flask_client):
         f"D-1 violation at app.py:2949: secret sentinel leaked in "
         f"/ai-advisor/asset-swaps/evaluate JSON response. "
         f"response JSON={data!r}. Fix: return only type(exc).__name__, "
-        "not f\"{type(exc).__name__}: {exc}\"."
+        'not f"{type(exc).__name__}: {exc}".'
     )
     assert "RuntimeError" in error_text, (
         f"The error field must contain the exception class name ('RuntimeError') "
@@ -621,14 +621,10 @@ def test_d1_logic_changes_evaluate_does_not_leak_exception_text(flask_client):
         # propose_operator_logic_change is lazily imported from advisors.logic_change_engine.
         patch(
             "advisors.logic_change_engine.propose_operator_logic_change",
-            side_effect=ValueError(
-                f"parse-failure: token={_SECRET_SENTINEL}"
-            ),
+            side_effect=ValueError(f"parse-failure: token={_SECRET_SENTINEL}"),
         ),
     ):
-        mock_db.load_state.return_value = {
-            "hash-abc123": {"name": "Test Symphony"}
-        }
+        mock_db.load_state.return_value = {"hash-abc123": {"name": "Test Symphony"}}
         mock_db.normalize_name.side_effect = lambda x: x.lower().replace(" ", "-")
 
         resp = flask_client.post(
@@ -646,7 +642,7 @@ def test_d1_logic_changes_evaluate_does_not_leak_exception_text(flask_client):
         f"D-1 violation at app.py:3086: secret sentinel leaked in "
         f"/ai-advisor/logic-changes/evaluate JSON response. "
         f"response JSON={data!r}. Fix: return only type(exc).__name__, "
-        "not f\"{type(exc).__name__}: {exc}\"."
+        'not f"{type(exc).__name__}: {exc}".'
     )
     assert "ValueError" in error_text, (
         f"The error field must contain the exception class name ('ValueError') "
@@ -671,9 +667,7 @@ def test_d1_logic_changes_evaluate_import_error_does_not_leak_exception_text(fla
 
     def _blocking_import(name, *args, **kwargs):
         if name == "advisors.logic_change_engine":
-            raise ImportError(
-                f"cannot import: missing_dep={_SECRET_SENTINEL}"
-            )
+            raise ImportError(f"cannot import: missing_dep={_SECRET_SENTINEL}")
         return original_import(name, *args, **kwargs)
 
     with patch("builtins.__import__", side_effect=_blocking_import):
@@ -692,13 +686,11 @@ def test_d1_logic_changes_evaluate_import_error_does_not_leak_exception_text(fla
         f"D-1 violation at app.py:3029: secret sentinel leaked in ImportError "
         f"handler of /ai-advisor/logic-changes/evaluate. "
         f"response JSON={data!r}. Fix: return only the error class name, "
-        "not f\"advisor unavailable: {type(_ie).__name__}: {_ie}\"."
+        'not f"advisor unavailable: {type(_ie).__name__}: {_ie}".'
     )
     assert "ImportError" in error_text, (
-        f"The error field must contain 'ImportError' for operator triage. "
-        f"Got: {error_text!r}"
+        f"The error field must contain 'ImportError' for operator triage. Got: {error_text!r}"
     )
-
 
 
 # ---------------------------------------------------------------------------

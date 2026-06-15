@@ -32,6 +32,7 @@ def api_state_db():
     orig = os.environ.get("DB_PATH")
     os.environ["DB_PATH"] = path
     import database
+
     _old_level = logging.getLogger().level
     logging.getLogger().setLevel(logging.CRITICAL)
     try:
@@ -105,6 +106,7 @@ class TestApiStateAdditiveFields:
         monkeypatch.setenv("DB_PATH", api_state_db)
         monkeypatch.setenv("EXIT_AUTHORITY", "per_symphony")
         from app import get_api_state_dict
+
         state = get_api_state_dict()
         assert "port_state" in state, "AC-P2.12.2: /api/state must include 'port_state' field"
 
@@ -112,19 +114,26 @@ class TestApiStateAdditiveFields:
         monkeypatch.setenv("DB_PATH", api_state_db)
         monkeypatch.setenv("EXIT_AUTHORITY", "per_symphony")
         from app import get_api_state_dict
+
         state = get_api_state_dict()
-        assert "exit_authority" in state, "AC-P2.12.2: /api/state must include 'exit_authority' field"
+        assert "exit_authority" in state, (
+            "AC-P2.12.2: /api/state must include 'exit_authority' field"
+        )
 
     def test_api_state_includes_daemon_started_at_field(self, api_state_db, monkeypatch):
         monkeypatch.setenv("DB_PATH", api_state_db)
         from app import get_api_state_dict
+
         state = get_api_state_dict()
-        assert "daemon_started_at" in state, "AC-P2.12.2: /api/state must include 'daemon_started_at' field"
+        assert "daemon_started_at" in state, (
+            "AC-P2.12.2: /api/state must include 'daemon_started_at' field"
+        )
 
     def test_api_state_preserves_existing_fields(self, api_state_db, monkeypatch):
         """AC-P2.12.2: No existing field renamed or removed."""
         monkeypatch.setenv("DB_PATH", api_state_db)
         from app import get_api_state_dict
+
         state = get_api_state_dict()
         for field in ["bot_state", "is_locked"]:
             assert field in state, (
@@ -143,6 +152,7 @@ class TestDegradedStateBadge:
         monkeypatch.setenv("EXIT_AUTHORITY", "invalid_mode")
 
         from engine.exit_authority import get_exit_authority_badge_context
+
         ctx = get_exit_authority_badge_context()
         assert ctx["is_degraded"] is True
         assert "PER-SYMPHONY-fallback" in ctx["label"] or "fallback" in ctx["label"].lower(), (
@@ -153,12 +163,14 @@ class TestDegradedStateBadge:
     def test_normal_badge_when_per_symphony(self, monkeypatch):
         monkeypatch.setenv("EXIT_AUTHORITY", "per_symphony")
         from engine.exit_authority import get_exit_authority_badge_context
+
         ctx = get_exit_authority_badge_context()
         assert ctx["is_degraded"] is False
 
     def test_normal_badge_when_port_level(self, monkeypatch):
         monkeypatch.setenv("EXIT_AUTHORITY", "port_level")
         from engine.exit_authority import get_exit_authority_badge_context
+
         ctx = get_exit_authority_badge_context()
         assert ctx["is_degraded"] is False
         assert ctx.get("color") == "indigo" or "port" in ctx["label"].lower()

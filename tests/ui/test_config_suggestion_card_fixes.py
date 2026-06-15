@@ -42,6 +42,7 @@ def _read_html() -> str:
 # Fix 1 — grid floor: minmax(22rem, 1fr)
 # ---------------------------------------------------------------------------
 
+
 class TestGridFloor:
     """templates/ai_advisor.html .suggestions-col must use minmax(22rem, 1fr)."""
 
@@ -71,6 +72,7 @@ class TestGridFloor:
 # ---------------------------------------------------------------------------
 # Fix 2a — card flex row has flex-wrap:wrap
 # ---------------------------------------------------------------------------
+
 
 class TestCardFlexWrap:
     """ai_advisor.js renderSuggestions card inner flex row must have flex-wrap:wrap.
@@ -102,10 +104,14 @@ class TestCardFlexWrap:
         """
         src = _read_js()
         # After the fix: 'flex:1;min-width:0;'
-        assert re.search(
-            r"flex\s*:\s*1[^;]*;[^'\"]*min-width\s*:\s*0",
-            src,
-        ) or "flex:1;min-width:0;" in src or "flex:1; min-width:0;" in src, (
+        assert (
+            re.search(
+                r"flex\s*:\s*1[^;]*;[^'\"]*min-width\s*:\s*0",
+                src,
+            )
+            or "flex:1;min-width:0;" in src
+            or "flex:1; min-width:0;" in src
+        ), (
             "ai_advisor.js renderSuggestions left content div is missing min-width:0. "
             "Without it the text column resists shrinking and overflows the card. "
             "Add min-width:0 to the div with flex:1."
@@ -115,6 +121,7 @@ class TestCardFlexWrap:
 # ---------------------------------------------------------------------------
 # Fix 2b — ai_advisor.js chat button presence and structure
 # ---------------------------------------------------------------------------
+
 
 class TestChatAboutThisButton:
     """ai_advisor.js renderSuggestions must produce a 'Chat about this' button.
@@ -137,7 +144,7 @@ class TestChatAboutThisButton:
         src = _read_js()
         assert 'data-testid="chat-about-this-btn"' in src or "chat-about-this-btn" in src, (
             "ai_advisor.js renderSuggestions chat button is missing "
-            "data-testid=\"chat-about-this-btn\". "
+            'data-testid="chat-about-this-btn". '
             "Add data-testid='chat-about-this-btn' to the button element."
         )
 
@@ -245,11 +252,13 @@ class TestChatAboutThisButton:
 # node --check guard for ai_advisor.js
 # ---------------------------------------------------------------------------
 
+
 class TestNodeSyntaxCheck:
     """ai_advisor.js must have zero Node.js syntax errors after the edits."""
 
     def _node_available(self) -> bool:
         import subprocess
+
         try:
             result = subprocess.run(
                 ["node", "--version"],
@@ -263,6 +272,7 @@ class TestNodeSyntaxCheck:
     def test_ai_advisor_js_has_no_syntax_errors(self):
         """node --check static/ai_advisor.js must exit 0."""
         import subprocess
+
         if not self._node_available():
             pytest.skip("node not available on PATH — skipping JS syntax check")
 

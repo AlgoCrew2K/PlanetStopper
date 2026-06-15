@@ -51,6 +51,7 @@ _WRITE_LATENCY_BUDGET_MS = 100.0
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def warm_db(tmp_path, monkeypatch):
     """Isolated warm DB with full migration stack applied.
@@ -113,9 +114,8 @@ def watch_ledger_rows() -> list[dict]:
 # F-4 — run_overfitting_conscience completes within 100ms (CLEAR path)
 # ===========================================================================
 
-def test_run_overfitting_conscience_clear_path_under_budget(
-    warm_db, minimal_autotune_run
-):
+
+def test_run_overfitting_conscience_clear_path_under_budget(warm_db, minimal_autotune_run):
     """run_overfitting_conscience on the CLEAR path (no ledger rows) must
     complete within 100ms on a warm DB.
 
@@ -152,6 +152,7 @@ def test_run_overfitting_conscience_clear_path_under_budget(
 # F-4b — run_overfitting_conscience completes within 100ms (WATCH path)
 # ===========================================================================
 
+
 def test_run_overfitting_conscience_watch_path_under_budget(
     warm_db, minimal_autotune_run_watch, watch_ledger_rows
 ):
@@ -168,9 +169,7 @@ def test_run_overfitting_conscience_watch_path_under_budget(
     )
 
     start = time.monotonic()
-    row_id = run_overfitting_conscience(
-        minimal_autotune_run_watch, watch_ledger_rows
-    )
+    row_id = run_overfitting_conscience(minimal_autotune_run_watch, watch_ledger_rows)
     elapsed_ms = (time.monotonic() - start) * 1000.0
 
     assert isinstance(row_id, int) and row_id > 0
@@ -184,9 +183,8 @@ def test_run_overfitting_conscience_watch_path_under_budget(
 # F-4c — Row is persisted: DB contains the observation after the call.
 # ===========================================================================
 
-def test_run_overfitting_conscience_observation_is_persisted(
-    warm_db, minimal_autotune_run
-):
+
+def test_run_overfitting_conscience_observation_is_persisted(warm_db, minimal_autotune_run):
     """Belt-and-suspenders: verify the row is actually in advisor_observations
     after run_overfitting_conscience returns — not just that it returned fast.
 
@@ -198,9 +196,7 @@ def test_run_overfitting_conscience_observation_is_persisted(
         subject_type="autotune_run",
         subject_id=str(minimal_autotune_run["id"]),
     )
-    assert len(observations) == 1, (
-        f"Expected 1 advisor_observation row, found {len(observations)}"
-    )
+    assert len(observations) == 1, f"Expected 1 advisor_observation row, found {len(observations)}"
     obs = observations[0]
     assert obs["id"] == row_id
     assert obs["advisor_role"] == "OVERFITTING_CONSCIENCE"

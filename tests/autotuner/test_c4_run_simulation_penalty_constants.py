@@ -44,10 +44,7 @@ import pytest
 
 _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
 _AUTOTUNER_SRC = _WORKTREE_ROOT / "autotuner.py"
-_FIXTURE = (
-    _WORKTREE_ROOT / "tests" / "fixtures" / "math"
-    / "run_simulation_objective_ordering.json"
-)
+_FIXTURE = _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "run_simulation_objective_ordering.json"
 
 # The five magic numbers finding H-10 names. After AC-4 none of these may appear
 # as a bare numeric literal inside the run_simulation function body.
@@ -58,14 +55,18 @@ _PENALTY_LITERALS = {1.5, 0.75, 2.0, 1.0}
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
 def _run_simulation_func_node() -> ast.FunctionDef:
     tree = ast.parse(_AUTOTUNER_SRC.read_text(encoding="utf-8"))
     func = next(
-        (n for n in ast.walk(tree)
-         if isinstance(n, ast.FunctionDef) and n.name == "run_simulation"),
+        (
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name == "run_simulation"
+        ),
         None,
     )
     assert func is not None, "run_simulation not found in autotuner.py."
@@ -109,9 +110,7 @@ def test_run_simulation_body_has_no_bare_penalty_literals():
             and isinstance(node.value, float)  # penalty literals are floats; ints are structural
             and node.value in _PENALTY_LITERALS
         ):
-            offending.append(
-                f"line {getattr(node, 'lineno', '?')}: float literal {node.value!r}"
-            )
+            offending.append(f"line {getattr(node, 'lineno', '?')}: float literal {node.value!r}")
 
     assert not offending, (
         "run_simulation still contains bare penalty literals from the H-10 set "
@@ -181,9 +180,7 @@ def test_penalty_constants_are_named_at_module_scope():
     missing: list[str] = []
     for role, keyword_sets in required_roles.items():
         matched = any(
-            all(kw in name for kw in kwset)
-            for name in module_const_names
-            for kwset in keyword_sets
+            all(kw in name for kw in kwset) for name in module_const_names for kwset in keyword_sets
         )
         if not matched:
             missing.append(role)
@@ -255,9 +252,7 @@ def test_objective_preserves_ordering_on_dominated_policy_pair():
         "Fixture objective_contract changed — re-derive the ordering direction."
     )
 
-    deviation_dict = {
-        k: v for k, v in fixture["deviation_dict"].items() if k != "comment"
-    }
+    deviation_dict = {k: v for k, v in fixture["deviation_dict"].items() if k != "comment"}
     current_date = fixture["current_date"]
     scenario_date = fixture["scenario_date"]
     pair = fixture["pairs"][0]
@@ -275,35 +270,45 @@ def test_objective_preserves_ordering_on_dominated_policy_pair():
             return (0, 0, False, False)
 
         with (
-            patch("autotuner.math_engine.compute_para_arm_decision",
-                  side_effect=lambda **kw: (0.0, False)),
-            patch("autotuner.math_engine.compute_time_squeeze_decay",
-                  side_effect=lambda tr: (1.5, 0.5)),
-            patch("autotuner.math_engine.compute_active_trailing_stop",
-                  side_effect=lambda *a, **kw: 5.0),
-            patch("autotuner.math_engine.compute_breakeven_update",
-                  side_effect=lambda *a, **kw: (a[3], a[4], a[2])),
-            patch("autotuner.math_engine.compute_tp_confirmation",
-                  side_effect=lambda **kw: (kw.get("tp_armed", False), 0, False)),
-            patch("autotuner.math_engine.compute_exit_confirmation",
-                  side_effect=lambda **kw: (0, False)),
-            patch("autotuner.math_engine.compute_vwap_bleed_arm_threshold",
-                  side_effect=lambda *a, **kw: -100.0),
-            patch("autotuner.math_engine.compute_vwap_breakdown_update",
-                  side_effect=_vwap_trigger_on_exit_tick),
+            patch(
+                "autotuner.math_engine.compute_para_arm_decision",
+                side_effect=lambda **kw: (0.0, False),
+            ),
+            patch(
+                "autotuner.math_engine.compute_time_squeeze_decay",
+                side_effect=lambda tr: (1.5, 0.5),
+            ),
+            patch(
+                "autotuner.math_engine.compute_active_trailing_stop",
+                side_effect=lambda *a, **kw: 5.0,
+            ),
+            patch(
+                "autotuner.math_engine.compute_breakeven_update",
+                side_effect=lambda *a, **kw: (a[3], a[4], a[2]),
+            ),
+            patch(
+                "autotuner.math_engine.compute_tp_confirmation",
+                side_effect=lambda **kw: (kw.get("tp_armed", False), 0, False),
+            ),
+            patch(
+                "autotuner.math_engine.compute_exit_confirmation",
+                side_effect=lambda **kw: (0, False),
+            ),
+            patch(
+                "autotuner.math_engine.compute_vwap_bleed_arm_threshold",
+                side_effect=lambda *a, **kw: -100.0,
+            ),
+            patch(
+                "autotuner.math_engine.compute_vwap_breakdown_update",
+                side_effect=_vwap_trigger_on_exit_tick,
+            ),
             patch("autotuner._replay_grace_minutes", return_value=0),
             contextlib.redirect_stdout(io.StringIO()),
         ):
-            return autotuner.run_simulation(
-                {}, history, ["sym-A"], current_date, deviation_dict
-            )
+            return autotuner.run_simulation({}, history, ["sym-A"], current_date, deviation_dict)
 
-    good_result = _run_policy(
-        pair["good_policy_ticks"], pair["good_policy_exit_tick_idx"]
-    )
-    bad_result = _run_policy(
-        pair["bad_policy_ticks"], pair["bad_policy_exit_tick_idx"]
-    )
+    good_result = _run_policy(pair["good_policy_ticks"], pair["good_policy_exit_tick_idx"])
+    bad_result = _run_policy(pair["bad_policy_ticks"], pair["bad_policy_exit_tick_idx"])
 
     assert good_result < bad_result, (
         f"OBJECTIVE INVERSION (finding H-10): run_simulation ranked the "

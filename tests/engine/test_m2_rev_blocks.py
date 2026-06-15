@@ -84,6 +84,7 @@ class TestRecordCvarDiagnosticCoercesNoneTailToZero:
         then call record_cvar_diagnostic with the given cvar_n_tail value.
         Returns the row dict if a row was written, None if nothing landed.
         """
+
         def _direct_insert(table_name: str, row_dict: dict, *, mode: str) -> None:
             # Bypass write_telemetry_row's own connection management and insert
             # directly into the test connection. Raises on IntegrityError (replay
@@ -114,7 +115,9 @@ class TestRecordCvarDiagnosticCoercesNoneTailToZero:
         ).fetchone()
         if row is None:
             return None
-        cols = [desc[0] for desc in conn.execute("SELECT * FROM cvar_diagnostics LIMIT 0").description]
+        cols = [
+            desc[0] for desc in conn.execute("SELECT * FROM cvar_diagnostics LIMIT 0").description
+        ]
         # re-query with column names
         conn.row_factory = sqlite3.Row
         row = conn.execute(
@@ -168,9 +171,7 @@ class TestRecordCvarDiagnosticCoercesNoneTailToZero:
         finally:
             conn.close()
 
-        assert row is not None, (
-            "record_cvar_diagnostic(cvar_n_tail=0) produced no row."
-        )
+        assert row is not None, "record_cvar_diagnostic(cvar_n_tail=0) produced no row."
         assert row["cvar_n_tail"] == 0, (
             f"cvar_n_tail={row['cvar_n_tail']!r}; expected 0 (roundtrip)."
         )
@@ -306,12 +307,14 @@ class TestDashboardUsesSymphonyBasedCvarRead:
             "symphonies": list(minimal_bot_state.values()),
         }
 
-        with patch("app.get_api_state_dict", return_value=canned_api_state), \
-             patch.object(_db, "read_cvar_diagnostic_for_cycle", side_effect=_capture_cycle_call), \
-             patch.object(_db, "read_cvar_diagnostic_for_symphony", return_value=None, create=True), \
-             patch("app.database.normalize_name", return_value="test-symphony"), \
-             patch("app.database.get_symphony_strategy", return_value=None), \
-             patch("app.render_template", return_value="ok"):
+        with (
+            patch("app.get_api_state_dict", return_value=canned_api_state),
+            patch.object(_db, "read_cvar_diagnostic_for_cycle", side_effect=_capture_cycle_call),
+            patch.object(_db, "read_cvar_diagnostic_for_symphony", return_value=None, create=True),
+            patch("app.database.normalize_name", return_value="test-symphony"),
+            patch("app.database.get_symphony_strategy", return_value=None),
+            patch("app.render_template", return_value="ok"),
+        ):
             _app.app.config["TESTING"] = True
             with _app.app.test_client() as client:
                 client.get("/")
@@ -348,8 +351,7 @@ class TestCvarDiagnosticsMigrationIndexes:
         conn = _make_cvar_db()
         try:
             rows = conn.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='index' AND tbl_name='cvar_diagnostics'"
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='cvar_diagnostics'"
             ).fetchall()
         finally:
             conn.close()

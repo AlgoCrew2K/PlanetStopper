@@ -68,9 +68,9 @@ def _fresh_state(*, armed: bool = False) -> dict:
 _PARAMS = {
     "TRIGGER_THRESHOLD_PCT": 15.0,
     "TAKE_PROFIT_MC_PCT": 5.0,
-    "VWAP_CROSS_HWM_PCT": 99.0,   # VWAP never arms
+    "VWAP_CROSS_HWM_PCT": 99.0,  # VWAP never arms
     "VWAP_BLEED_MULTIPLIER": 1.5,
-    "VWAP_BLEED_TICKS": 999,      # bleed never confirms
+    "VWAP_BLEED_TICKS": 999,  # bleed never confirms
     "PARABOLIC_VELOCITY_THRESHOLD": 99.0,
     "MAX_PARABOLIC_SQUEEZE": 0.5,
 }
@@ -107,9 +107,7 @@ def test_replay_fires_trailing_stop_on_confirmed_crash() -> None:
     n = len(ticks)
     fired = None
     for idx, tk in enumerate(ticks):
-        reason = autotuner._replay_exit_tick(
-            state, tk, idx, n, _PARAMS, grace_minutes=0
-        )
+        reason = autotuner._replay_exit_tick(state, tk, idx, n, _PARAMS, grace_minutes=0)
         if reason:
             fired = (idx, reason)
             break
@@ -137,9 +135,7 @@ def test_replay_suppresses_trailing_stop_on_low_underperformance() -> None:
     n = len(ticks)
     fired = None
     for idx, tk in enumerate(ticks):
-        reason = autotuner._replay_exit_tick(
-            state, tk, idx, n, _PARAMS, grace_minutes=0
-        )
+        reason = autotuner._replay_exit_tick(state, tk, idx, n, _PARAMS, grace_minutes=0)
         if reason:
             fired = (idx, reason)
             break

@@ -24,7 +24,9 @@ def _seed_spec_bundle_rows(request):
     unaffected (fixture is a no-op when migrated_db is absent from the test's
     fixture set).
     """
-    migrated_db_path = request.getfixturevalue("migrated_db") if "migrated_db" in request.fixturenames else None
+    migrated_db_path = (
+        request.getfixturevalue("migrated_db") if "migrated_db" in request.fixturenames else None
+    )
     if migrated_db_path is None:
         return
 

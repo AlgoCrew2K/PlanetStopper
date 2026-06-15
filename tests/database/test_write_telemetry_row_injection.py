@@ -30,6 +30,7 @@ import database as db
 # Helpers: minimal DB + cvar_diagnostics table for success-path tests
 # ---------------------------------------------------------------------------
 
+
 def _setup_cvar_table(tmp_path, monkeypatch) -> str:
     """Return a DB path pointing at an isolated DB with cvar_diagnostics."""
     db_path = str(tmp_path / "cc002_test.db")
@@ -121,9 +122,7 @@ def test_table_name_not_in_allowlist_raises_value_error(tmp_path, monkeypatch):
         db.write_telemetry_row("users", dict(_VALID_ROW), mode="replay")
 
 
-def test_table_name_sql_injection_payload_raises_value_error(
-    tmp_path, monkeypatch
-):
+def test_table_name_sql_injection_payload_raises_value_error(tmp_path, monkeypatch):
     """A table_name containing a SQL injection payload is rejected as not in
     the allowlist — the allowlist check fires before any identifier validation.
     """
@@ -140,9 +139,7 @@ def test_table_name_sql_injection_payload_raises_value_error(
 # ---------------------------------------------------------------------------
 
 
-def test_col_name_with_drop_table_injection_raises_value_error(
-    tmp_path, monkeypatch
-):
+def test_col_name_with_drop_table_injection_raises_value_error(tmp_path, monkeypatch):
     """A column name containing a SQL injection payload must raise ValueError.
 
     The identifier regex ^[a-z_][a-z0-9_]*$ rejects semicolons, spaces, and

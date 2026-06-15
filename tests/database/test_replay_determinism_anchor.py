@@ -94,6 +94,7 @@ def isolated_db(tmp_path, monkeypatch):
 # MC helpers
 # ---------------------------------------------------------------------------
 
+
 def _build_history(spec: dict) -> dict:
     """Expand fixture mc_inputs.historical_data_spec into the dict shape
     that run_monte_carlo consumes."""
@@ -282,16 +283,14 @@ def test_read_cvar_diagnostic_for_cycle_returns_none_for_missing_entry(isolated_
 def test_parity_decision_columns_constant_exists_in_database() -> None:
     """database._PARITY_DECISION_COLUMNS must be defined (plan deliverable 3)."""
     assert hasattr(db, "_PARITY_DECISION_COLUMNS"), (
-        "database._PARITY_DECISION_COLUMNS is missing. "
-        "Plan deliverable 3 requires this constant."
+        "database._PARITY_DECISION_COLUMNS is missing. Plan deliverable 3 requires this constant."
     )
 
 
 def test_parity_exclude_columns_constant_exists_in_database() -> None:
     """database._PARITY_EXCLUDE_COLUMNS must be defined (plan deliverable 3)."""
     assert hasattr(db, "_PARITY_EXCLUDE_COLUMNS"), (
-        "database._PARITY_EXCLUDE_COLUMNS is missing. "
-        "Plan deliverable 3 requires this constant."
+        "database._PARITY_EXCLUDE_COLUMNS is missing. Plan deliverable 3 requires this constant."
     )
 
 
@@ -468,8 +467,9 @@ def test_database_source_contains_no_mc_seed_column_definition() -> None:
     # Match any DDL-style mc_seed column definition or INSERT key.
     # Pattern: 'mc_seed' appearing as a column name in SQL context.
     import re
+
     mc_seed_defs = re.findall(
-        r'\bmc_seed\b',
+        r"\bmc_seed\b",
         source_text,
     )
     assert not mc_seed_defs, (

@@ -43,10 +43,7 @@ import database as db
 # ---------------------------------------------------------------------------
 
 _FIXTURE_PATH = (
-    pathlib.Path(__file__).parents[1]
-    / "fixtures"
-    / "math"
-    / "telemetry_helper_write_basic.json"
+    pathlib.Path(__file__).parents[1] / "fixtures" / "math" / "telemetry_helper_write_basic.json"
 )
 
 
@@ -58,6 +55,7 @@ def telemetry_fixture() -> dict:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _collect_all_log_text(records: list) -> str:
     """Concatenate all log record messages for inspection."""
@@ -83,8 +81,7 @@ def test_live_error_log_contains_table_name(telemetry_fixture, caplog):
 
     all_text = _collect_all_log_text(caplog.records)
     assert table_name in all_text, (
-        f"Log must include table_name '{table_name}'; "
-        f"full log text: {all_text!r}"
+        f"Log must include table_name '{table_name}'; full log text: {all_text!r}"
     )
 
 
@@ -101,8 +98,7 @@ def test_live_error_log_contains_error_type(telemetry_fixture, caplog):
 
     all_text = _collect_all_log_text(caplog.records)
     assert "Error" in all_text or "error" in all_text, (
-        f"Log must contain the error type name; "
-        f"full log text: {all_text!r}"
+        f"Log must contain the error type name; full log text: {all_text!r}"
     )
 
 
@@ -124,7 +120,7 @@ def test_live_error_log_does_not_echo_cvar_5pct(caplog, tmp_path, monkeypatch):
     row = {
         "cycle_id": "CYCLE_GATE7_001",
         "symphony_id": "SYM_GATE7",
-        "cvar_5pct": 0.031415926,   # recognisable sentinel — must NOT appear in log
+        "cvar_5pct": 0.031415926,  # recognisable sentinel — must NOT appear in log
         "cvar_5pct_stderr": 0.001,
         "cvar_n_tail": 7,
         "cvar_5pct_long": None,
@@ -163,8 +159,7 @@ def test_live_error_log_does_not_echo_cvar_5pct_stderr(caplog, tmp_path, monkeyp
 
     all_text = _collect_all_log_text(caplog.records)
     assert "0.027182818" not in all_text, (
-        f"Gate 7 violation: cvar_5pct_stderr value found in log output. "
-        f"Full log text: {all_text!r}"
+        f"Gate 7 violation: cvar_5pct_stderr value found in log output. Full log text: {all_text!r}"
     )
 
 
@@ -240,9 +235,7 @@ def test_live_error_log_does_not_dump_entire_row_dict(caplog, tmp_path, monkeypa
 # ---------------------------------------------------------------------------
 
 
-def test_replay_mode_error_emits_no_warning_log(
-    telemetry_fixture, caplog, tmp_path, monkeypatch
-):
+def test_replay_mode_error_emits_no_warning_log(telemetry_fixture, caplog, tmp_path, monkeypatch):
     """Replay mode: on error, no WARNING is logged before the exception.
 
     If the helper logs-then-raises, the log would contain financial payload

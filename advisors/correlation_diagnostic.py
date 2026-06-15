@@ -71,11 +71,11 @@ class PairResult:
 
     sym_a: str
     sym_b: str
-    n_obs: int                        # overlapping finite observations used; Python int
-    correlation: float | None         # Pearson r ∈ [-1, 1]; None when undefined
-    thin_data: bool                   # True when n_obs < THIN_DATA_THRESHOLD; Python bool
-    window: tuple[str, str] | None    # (first_date, last_date) of overlap for date-keyed
-                                      # input; None for positional list input (AC-1.2)
+    n_obs: int  # overlapping finite observations used; Python int
+    correlation: float | None  # Pearson r ∈ [-1, 1]; None when undefined
+    thin_data: bool  # True when n_obs < THIN_DATA_THRESHOLD; Python bool
+    window: tuple[str, str] | None  # (first_date, last_date) of overlap for date-keyed
+    # input; None for positional list input (AC-1.2)
 
 
 # ---------------------------------------------------------------------------
@@ -227,9 +227,7 @@ def compute_pairwise_correlations(
         # list, but enforce it explicitly as a contract invariant.
         sym_a, sym_b = (name_a, name_b) if name_a <= name_b else (name_b, name_a)
 
-        vals_a, vals_b, window = _extract_aligned_pairs(
-            return_series[sym_a], return_series[sym_b]
-        )
+        vals_a, vals_b, window = _extract_aligned_pairs(return_series[sym_a], return_series[sym_b])
 
         n_obs: int = len(vals_a)  # explicit Python int
         corr = _pearson_r(vals_a, vals_b)  # float | None

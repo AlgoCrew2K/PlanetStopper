@@ -50,6 +50,7 @@ FIXTURE_DIR = (
 # Fixture loading and history builder (reuses mc_rng_seeding pattern)
 # ---------------------------------------------------------------------------
 
+
 def _load_fixture(filename: str) -> dict:
     with (FIXTURE_DIR / filename).open("r", encoding="utf-8") as fh:
         return json.load(fh)
@@ -211,9 +212,7 @@ def test_compute_portfolio_cvar_n_tail_is_bit_identical_across_two_calls():
     PA-18: no expected literal. Equality is asserted as run_a == run_b.
     """
     if not hasattr(math_engine, "compute_portfolio_cvar"):
-        pytest.fail(
-            "compute_portfolio_cvar not found — see test_compute_portfolio_cvar_exists."
-        )
+        pytest.fail("compute_portfolio_cvar not found — see test_compute_portfolio_cvar_exists.")
 
     fixture = _load_fixture("01_standard_inputs.json")
     cycle_id = fixture["cycle_id"]
@@ -320,12 +319,8 @@ def test_different_cycle_ids_produce_different_cvar_5pct():
         neighbor_k=fixture["inputs"]["neighbor_k"],
     )
 
-    result_a = math_engine.compute_portfolio_cvar(
-        cycle_id="20240101_0930", **kwargs_common
-    )
-    result_b = math_engine.compute_portfolio_cvar(
-        cycle_id="20240102_0930", **kwargs_common
-    )
+    result_a = math_engine.compute_portfolio_cvar(cycle_id="20240101_0930", **kwargs_common)
+    result_b = math_engine.compute_portfolio_cvar(cycle_id="20240102_0930", **kwargs_common)
 
     # Only check when both results have a non-None cvar_pct (sufficient data available)
     if result_a.cvar_pct is not None and result_b.cvar_pct is not None:

@@ -202,9 +202,7 @@ _ATS_FLOAT_POSITIONS = [
 
 @pytest.mark.parametrize("bad", NON_FINITE_VALUES)
 @pytest.mark.parametrize("position", _ATS_FLOAT_POSITIONS)
-def test_compute_active_trailing_stop_rejects_non_finite_input(
-    position: str, bad: float
-) -> None:
+def test_compute_active_trailing_stop_rejects_non_finite_input(position: str, bad: float) -> None:
     """
     REJECT policy: for each float position, when that position is
     NaN/Inf/-Inf the function must raise ValueError naming 'NaN'.
@@ -221,14 +219,38 @@ def test_compute_active_trailing_stop_output_is_finite_for_valid_inputs() -> Non
     finite (no NaN, no Inf). This is a shape assertion --- no producer
     value is hardcoded; the test only checks isfinite()."""
     sweeps = [
-        dict(symphony_vol=0.5, dynamic_multiplier=1.5, dynamic_min_stop=0.3,
-             para_armed=False, breakeven_locked=False, parabolic_squeeze_multiplier=0.5),
-        dict(symphony_vol=2.0, dynamic_multiplier=0.8, dynamic_min_stop=0.15,
-             para_armed=True, breakeven_locked=False, parabolic_squeeze_multiplier=0.5),
-        dict(symphony_vol=-0.1, dynamic_multiplier=1.0, dynamic_min_stop=0.2,  # vol<=0 fallback
-             para_armed=False, breakeven_locked=True, parabolic_squeeze_multiplier=0.5),
-        dict(symphony_vol=1.0, dynamic_multiplier=1.0, dynamic_min_stop=0.2,
-             para_armed=True, breakeven_locked=True, parabolic_squeeze_multiplier=0.5),
+        dict(
+            symphony_vol=0.5,
+            dynamic_multiplier=1.5,
+            dynamic_min_stop=0.3,
+            para_armed=False,
+            breakeven_locked=False,
+            parabolic_squeeze_multiplier=0.5,
+        ),
+        dict(
+            symphony_vol=2.0,
+            dynamic_multiplier=0.8,
+            dynamic_min_stop=0.15,
+            para_armed=True,
+            breakeven_locked=False,
+            parabolic_squeeze_multiplier=0.5,
+        ),
+        dict(
+            symphony_vol=-0.1,
+            dynamic_multiplier=1.0,
+            dynamic_min_stop=0.2,  # vol<=0 fallback
+            para_armed=False,
+            breakeven_locked=True,
+            parabolic_squeeze_multiplier=0.5,
+        ),
+        dict(
+            symphony_vol=1.0,
+            dynamic_multiplier=1.0,
+            dynamic_min_stop=0.2,
+            para_armed=True,
+            breakeven_locked=True,
+            parabolic_squeeze_multiplier=0.5,
+        ),
     ]
     for kwargs in sweeps:
         result = math_engine.compute_active_trailing_stop(**kwargs)
@@ -280,9 +302,7 @@ _EXC_FLOAT_POSITIONS = [
 
 @pytest.mark.parametrize("bad", NON_FINITE_VALUES)
 @pytest.mark.parametrize("position", _EXC_FLOAT_POSITIONS)
-def test_compute_exit_confirmation_rejects_non_finite_input(
-    position: str, bad: float
-) -> None:
+def test_compute_exit_confirmation_rejects_non_finite_input(position: str, bad: float) -> None:
     kwargs = dict(_EXC_VALID)
     kwargs[position] = bad
     with pytest.raises(ValueError) as exc_info:
@@ -297,14 +317,38 @@ def test_compute_exit_confirmation_output_is_finite_for_valid_inputs() -> None:
     explicit isfinite loop is preserved so a future contract change
     that adds a float to the return value is still covered."""
     sweeps = [
-        dict(armed=True, is_triggered=False, current_return=-1.0,
-             stop_trigger_level=-0.5, prob_underperforming=30.0, current_below_stop_count=0),
-        dict(armed=True, is_triggered=False, current_return=-0.4,
-             stop_trigger_level=-0.5, prob_underperforming=80.0, current_below_stop_count=2),
-        dict(armed=False, is_triggered=False, current_return=0.0,
-             stop_trigger_level=0.0, prob_underperforming=50.0, current_below_stop_count=5),
-        dict(armed=True, is_triggered=True, current_return=0.0,
-             stop_trigger_level=0.0, prob_underperforming=50.0, current_below_stop_count=5),
+        dict(
+            armed=True,
+            is_triggered=False,
+            current_return=-1.0,
+            stop_trigger_level=-0.5,
+            prob_underperforming=30.0,
+            current_below_stop_count=0,
+        ),
+        dict(
+            armed=True,
+            is_triggered=False,
+            current_return=-0.4,
+            stop_trigger_level=-0.5,
+            prob_underperforming=80.0,
+            current_below_stop_count=2,
+        ),
+        dict(
+            armed=False,
+            is_triggered=False,
+            current_return=0.0,
+            stop_trigger_level=0.0,
+            prob_underperforming=50.0,
+            current_below_stop_count=5,
+        ),
+        dict(
+            armed=True,
+            is_triggered=True,
+            current_return=0.0,
+            stop_trigger_level=0.0,
+            prob_underperforming=50.0,
+            current_below_stop_count=5,
+        ),
     ]
     for kwargs in sweeps:
         result = math_engine.compute_exit_confirmation(**kwargs)
@@ -312,8 +356,7 @@ def test_compute_exit_confirmation_output_is_finite_for_valid_inputs() -> None:
         assert isinstance(result, tuple) and len(result) == 2
         for f in _iter_floats(result):
             assert math.isfinite(f), (
-                f"compute_exit_confirmation returned non-finite {f!r} "
-                f"for valid inputs {kwargs!r}"
+                f"compute_exit_confirmation returned non-finite {f!r} for valid inputs {kwargs!r}"
             )
 
 
@@ -347,9 +390,7 @@ def _valid_mc_inputs() -> dict:
     """Reusable well-formed MC input set (matches the existing
     fixture shape under tests/fixtures/math_engine/mc_gating/)."""
     return dict(
-        holdings=[
-            {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.01}
-        ],
+        holdings=[{"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.01}],
         historical_data=_build_alternating_history(
             num_days=50, spy_amp=0.02, ticker_amp=0.03, ticker="AAA"
         ),
@@ -464,9 +505,7 @@ _PARA_FLOAT_POSITIONS = ["current_return", "prev_return", "para_threshold"]
 
 @pytest.mark.parametrize("bad", NON_FINITE_VALUES)
 @pytest.mark.parametrize("position", _PARA_FLOAT_POSITIONS)
-def test_compute_para_arm_decision_rejects_non_finite_input(
-    position: str, bad: float
-) -> None:
+def test_compute_para_arm_decision_rejects_non_finite_input(position: str, bad: float) -> None:
     kwargs = dict(_PARA_VALID)
     kwargs[position] = bad
     with pytest.raises(ValueError) as exc_info:
@@ -484,8 +523,7 @@ def test_compute_para_arm_decision_output_is_finite_for_valid_inputs() -> None:
         result = math_engine.compute_para_arm_decision(**kwargs)
         for f in _iter_floats(result):
             assert math.isfinite(f), (
-                f"compute_para_arm_decision returned non-finite {f!r} "
-                f"for valid inputs {kwargs!r}"
+                f"compute_para_arm_decision returned non-finite {f!r} for valid inputs {kwargs!r}"
             )
 
 
@@ -500,6 +538,7 @@ def test_compute_para_arm_decision_output_is_finite_for_valid_inputs() -> None:
 # NaN/Inf case is a separate sub-regime: log10(1 + 9*NaN) = NaN
 # silently corrupts both the multiplier and the floor.
 
+
 @pytest.mark.parametrize("bad", NON_FINITE_VALUES)
 def test_compute_time_squeeze_decay_rejects_non_finite_input(bad: float) -> None:
     with pytest.raises(ValueError) as exc_info:
@@ -513,8 +552,7 @@ def test_compute_time_squeeze_decay_output_is_finite_for_valid_inputs() -> None:
         result = math_engine.compute_time_squeeze_decay(t)
         for f in _iter_floats(result):
             assert math.isfinite(f), (
-                f"compute_time_squeeze_decay returned non-finite {f!r} "
-                f"for time_ratio={t!r}"
+                f"compute_time_squeeze_decay returned non-finite {f!r} for time_ratio={t!r}"
             )
 
 
@@ -546,9 +584,7 @@ _BE_FLOAT_POSITIONS = ["current_return", "symphony_vol", "base_stop_level"]
 
 @pytest.mark.parametrize("bad", NON_FINITE_VALUES)
 @pytest.mark.parametrize("position", _BE_FLOAT_POSITIONS)
-def test_compute_breakeven_update_rejects_non_finite_input(
-    position: str, bad: float
-) -> None:
+def test_compute_breakeven_update_rejects_non_finite_input(position: str, bad: float) -> None:
     kwargs = dict(_BE_VALID)
     kwargs[position] = bad
     with pytest.raises(ValueError) as exc_info:
@@ -558,21 +594,44 @@ def test_compute_breakeven_update_rejects_non_finite_input(
 
 def test_compute_breakeven_update_output_is_finite_for_valid_inputs() -> None:
     sweeps = [
-        dict(current_return=1.0, symphony_vol=1.0, base_stop_level=-0.5,
-             current_hold_ticks=0, currently_breakeven_locked=False, is_triggered=False),
-        dict(current_return=3.0, symphony_vol=2.0, base_stop_level=0.3,
-             current_hold_ticks=4, currently_breakeven_locked=False, is_triggered=False),
-        dict(current_return=0.0, symphony_vol=0.4, base_stop_level=-0.1,
-             current_hold_ticks=5, currently_breakeven_locked=True, is_triggered=False),
-        dict(current_return=2.0, symphony_vol=1.5, base_stop_level=0.5,
-             current_hold_ticks=10, currently_breakeven_locked=True, is_triggered=True),
+        dict(
+            current_return=1.0,
+            symphony_vol=1.0,
+            base_stop_level=-0.5,
+            current_hold_ticks=0,
+            currently_breakeven_locked=False,
+            is_triggered=False,
+        ),
+        dict(
+            current_return=3.0,
+            symphony_vol=2.0,
+            base_stop_level=0.3,
+            current_hold_ticks=4,
+            currently_breakeven_locked=False,
+            is_triggered=False,
+        ),
+        dict(
+            current_return=0.0,
+            symphony_vol=0.4,
+            base_stop_level=-0.1,
+            current_hold_ticks=5,
+            currently_breakeven_locked=True,
+            is_triggered=False,
+        ),
+        dict(
+            current_return=2.0,
+            symphony_vol=1.5,
+            base_stop_level=0.5,
+            current_hold_ticks=10,
+            currently_breakeven_locked=True,
+            is_triggered=True,
+        ),
     ]
     for kwargs in sweeps:
         result = math_engine.compute_breakeven_update(**kwargs)
         for f in _iter_floats(result):
             assert math.isfinite(f), (
-                f"compute_breakeven_update returned non-finite {f!r} "
-                f"for valid inputs {kwargs!r}"
+                f"compute_breakeven_update returned non-finite {f!r} for valid inputs {kwargs!r}"
             )
 
 
@@ -656,9 +715,7 @@ _VBD_FLOAT_POSITIONS = [
 
 @pytest.mark.parametrize("bad", NON_FINITE_VALUES)
 @pytest.mark.parametrize("position", _VBD_FLOAT_POSITIONS)
-def test_compute_vwap_breakdown_update_rejects_non_finite_input(
-    position: str, bad: float
-) -> None:
+def test_compute_vwap_breakdown_update_rejects_non_finite_input(position: str, bad: float) -> None:
     kwargs = dict(_VBD_VALID)
     kwargs[position] = bad
     with pytest.raises(ValueError) as exc_info:
@@ -668,18 +725,42 @@ def test_compute_vwap_breakdown_update_rejects_non_finite_input(
 
 def test_compute_vwap_breakdown_update_output_is_finite_for_valid_inputs() -> None:
     sweeps = [
-        dict(is_triggered=False, valid_vwap_weight=0.8, weighted_vwap_diff=-0.2,
-             safe_hwm=2.0, current_return=1.0, vwap_cross_hwm_pct=1.5,
-             vwap_bleed_arm_pct=-1.0, vwap_bleed_ticks_threshold=3,
-             current_vwap_ticks=0, current_vwap_bleed_ticks=0),
-        dict(is_triggered=True, valid_vwap_weight=0.8, weighted_vwap_diff=-0.2,
-             safe_hwm=2.0, current_return=1.0, vwap_cross_hwm_pct=1.5,
-             vwap_bleed_arm_pct=-1.0, vwap_bleed_ticks_threshold=3,
-             current_vwap_ticks=2, current_vwap_bleed_ticks=1),
-        dict(is_triggered=False, valid_vwap_weight=0.3, weighted_vwap_diff=-0.2,
-             safe_hwm=2.0, current_return=1.0, vwap_cross_hwm_pct=1.5,
-             vwap_bleed_arm_pct=-1.0, vwap_bleed_ticks_threshold=3,
-             current_vwap_ticks=2, current_vwap_bleed_ticks=1),
+        dict(
+            is_triggered=False,
+            valid_vwap_weight=0.8,
+            weighted_vwap_diff=-0.2,
+            safe_hwm=2.0,
+            current_return=1.0,
+            vwap_cross_hwm_pct=1.5,
+            vwap_bleed_arm_pct=-1.0,
+            vwap_bleed_ticks_threshold=3,
+            current_vwap_ticks=0,
+            current_vwap_bleed_ticks=0,
+        ),
+        dict(
+            is_triggered=True,
+            valid_vwap_weight=0.8,
+            weighted_vwap_diff=-0.2,
+            safe_hwm=2.0,
+            current_return=1.0,
+            vwap_cross_hwm_pct=1.5,
+            vwap_bleed_arm_pct=-1.0,
+            vwap_bleed_ticks_threshold=3,
+            current_vwap_ticks=2,
+            current_vwap_bleed_ticks=1,
+        ),
+        dict(
+            is_triggered=False,
+            valid_vwap_weight=0.3,
+            weighted_vwap_diff=-0.2,
+            safe_hwm=2.0,
+            current_return=1.0,
+            vwap_cross_hwm_pct=1.5,
+            vwap_bleed_arm_pct=-1.0,
+            vwap_bleed_ticks_threshold=3,
+            current_vwap_ticks=2,
+            current_vwap_bleed_ticks=1,
+        ),
     ]
     for kwargs in sweeps:
         result = math_engine.compute_vwap_breakdown_update(**kwargs)

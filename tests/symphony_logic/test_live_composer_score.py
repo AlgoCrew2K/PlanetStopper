@@ -45,9 +45,7 @@ _EXPECTED_STEP_VALUES = {
 
 
 def _composer_creds_present() -> bool:
-    return bool(os.environ.get("COMPOSER_KEY_ID")) and bool(
-        os.environ.get("COMPOSER_SECRET")
-    )
+    return bool(os.environ.get("COMPOSER_KEY_ID")) and bool(os.environ.get("COMPOSER_SECRET"))
 
 
 def _live_symphony_id() -> str:

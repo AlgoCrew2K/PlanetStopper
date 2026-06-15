@@ -77,6 +77,7 @@ class TestConnUnboundOnConnectFailureLiveMode:
 
     def test_live_mode_swallows_connect_failure_returns_none(self, minimal_row):
         """When sqlite3.connect() raises, live mode swallows it and returns None."""
+
         def _failing_connect(*args, **kwargs):
             raise sqlite3.OperationalError("unable to open database file (test-induced)")
 
@@ -100,6 +101,7 @@ class TestConnUnboundOnConnectFailureLiveMode:
         Verifies the swallow is unconditional — the cycle path is never broken
         by a telemetry connect failure (architecture constraint 1).
         """
+
         def _failing_connect(*args, **kwargs):
             raise sqlite3.OperationalError("disk full (test-induced)")
 
@@ -123,6 +125,7 @@ class TestConnUnboundOnConnectFailureLiveMode:
         That would mean the except swallowed the OperationalError but a NameError
         escapes. This test asserts neither NameError nor AttributeError leaks.
         """
+
         def _failing_connect(*args, **kwargs):
             raise sqlite3.OperationalError("journal file is locked (test-induced)")
 
@@ -155,6 +158,7 @@ class TestConnUnboundOnConnectFailureReplayMode:
 
     def test_replay_mode_propagates_connect_failure(self, minimal_row):
         """When sqlite3.connect() raises, replay mode lets it propagate."""
+
         def _failing_connect(*args, **kwargs):
             raise sqlite3.OperationalError("no such file or directory (test-induced)")
 
@@ -172,6 +176,7 @@ class TestConnUnboundOnConnectFailureReplayMode:
         An implementation that catches all exceptions and returns None would be
         safe for live mode but wrong for replay — this test pins the distinction.
         """
+
         def _failing_connect(*args, **kwargs):
             raise sqlite3.OperationalError("database is locked (test-induced)")
 
@@ -192,9 +197,7 @@ class TestConnUnboundOnConnectFailureReplayMode:
             except sqlite3.OperationalError:
                 raised = True
 
-        assert raised, (
-            "Replay mode must raise sqlite3.OperationalError on connect() failure."
-        )
+        assert raised, "Replay mode must raise sqlite3.OperationalError on connect() failure."
 
 
 # ---------------------------------------------------------------------------
@@ -213,16 +216,19 @@ class TestRecordCvarDiagnosticModeRejection:
     Plan risk R4: mode default disallowed + only literals accepted.
     """
 
-    @pytest.mark.parametrize("bad_mode", [
-        True,    # truthy bool — must not be accepted
-        1,       # truthy int
-        False,   # falsy bool
-        0,       # falsy int
-        "Live",  # wrong casing
-        "LIVE",  # wrong casing
-        None,    # None
-        "",      # empty string
-    ])
+    @pytest.mark.parametrize(
+        "bad_mode",
+        [
+            True,  # truthy bool — must not be accepted
+            1,  # truthy int
+            False,  # falsy bool
+            0,  # falsy int
+            "Live",  # wrong casing
+            "LIVE",  # wrong casing
+            None,  # None
+            "",  # empty string
+        ],
+    )
     def test_record_cvar_diagnostic_rejects_invalid_mode(self, bad_mode):
         """record_cvar_diagnostic must raise TypeError or ValueError for non-literal mode.
 

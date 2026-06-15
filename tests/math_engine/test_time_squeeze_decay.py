@@ -81,10 +81,7 @@ import pytest
 import math_engine
 
 FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "time_squeeze_decay"
+    pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "time_squeeze_decay"
 )
 
 # --- Tolerance --------------------------------------------------------------
@@ -172,15 +169,11 @@ def test_at_time_ratio_zero_returns_open_constants() -> None:
     module-level constants.
     """
     mult, min_stop = math_engine.compute_time_squeeze_decay(time_ratio=0.0)
-    assert mult == pytest.approx(
-        math_engine.MULT_OPEN, rel=APPROX_REL, abs=APPROX_ABS
-    ), (
+    assert mult == pytest.approx(math_engine.MULT_OPEN, rel=APPROX_REL, abs=APPROX_ABS), (
         f"At time_ratio=0, dynamic_multiplier should equal math_engine.MULT_OPEN "
         f"({math_engine.MULT_OPEN}), got {mult}"
     )
-    assert min_stop == pytest.approx(
-        math_engine.MIN_STOP_OPEN, rel=APPROX_REL, abs=APPROX_ABS
-    ), (
+    assert min_stop == pytest.approx(math_engine.MIN_STOP_OPEN, rel=APPROX_REL, abs=APPROX_ABS), (
         f"At time_ratio=0, dynamic_min_stop should equal math_engine.MIN_STOP_OPEN "
         f"({math_engine.MIN_STOP_OPEN}), got {min_stop}"
     )
@@ -193,15 +186,11 @@ def test_at_time_ratio_one_returns_close_constants() -> None:
     direction.
     """
     mult, min_stop = math_engine.compute_time_squeeze_decay(time_ratio=1.0)
-    assert mult == pytest.approx(
-        math_engine.MULT_CLOSE, rel=APPROX_REL, abs=APPROX_ABS
-    ), (
+    assert mult == pytest.approx(math_engine.MULT_CLOSE, rel=APPROX_REL, abs=APPROX_ABS), (
         f"At time_ratio=1, dynamic_multiplier should equal math_engine.MULT_CLOSE "
         f"({math_engine.MULT_CLOSE}), got {mult}"
     )
-    assert min_stop == pytest.approx(
-        math_engine.MIN_STOP_CLOSE, rel=APPROX_REL, abs=APPROX_ABS
-    ), (
+    assert min_stop == pytest.approx(math_engine.MIN_STOP_CLOSE, rel=APPROX_REL, abs=APPROX_ABS), (
         f"At time_ratio=1, dynamic_min_stop should equal math_engine.MIN_STOP_CLOSE "
         f"({math_engine.MIN_STOP_CLOSE}), got {min_stop}"
     )
@@ -409,9 +398,7 @@ def test_decay_curve_matches_closed_form_sqrt_remaining_variance(
         math_engine.MULT_OPEN - math_engine.MULT_CLOSE
     )
     closed_form_decay = 1.0 - math.sqrt(1.0 - time_ratio)
-    assert implied_decay == pytest.approx(
-        closed_form_decay, rel=APPROX_REL, abs=APPROX_ABS
-    ), (
+    assert implied_decay == pytest.approx(closed_form_decay, rel=APPROX_REL, abs=APPROX_ABS), (
         f"At time_ratio={time_ratio}, implied decay_curve={implied_decay} "
         f"does not match the M3 closed-form 1 - sqrt(1 - t) = {closed_form_decay}. "
         f"This indicates the pre-M3 log10(1 + 9*t) heuristic is still in place. "
@@ -491,9 +478,9 @@ def test_no_unnamed_magic_numbers_in_time_squeeze_decay_path() -> None:
 
     # Trivially-structural literals that don't carry domain meaning.
     STRUCTURAL = {
-        0,    # array index / increment
-        1,    # universal one
-        -1,   # last-element index
+        0,  # array index / increment
+        1,  # universal one
+        -1,  # last-element index
         0.0,  # caller-clamp floor; mathematical zero
         1.0,  # caller-clamp ceiling; the '1' inside sqrt(1 - t); universal one
     }
@@ -503,9 +490,7 @@ def test_no_unnamed_magic_numbers_in_time_squeeze_decay_path() -> None:
         if isinstance(node, ast.FunctionDef) and node.name == "compute_time_squeeze_decay":
             target = node
             break
-    assert target is not None, (
-        "compute_time_squeeze_decay not found in math_engine.py"
-    )
+    assert target is not None, "compute_time_squeeze_decay not found in math_engine.py"
 
     named_literal_lines: set[int] = set()
     for sub in ast.walk(target):
@@ -583,16 +568,14 @@ def test_time_squeeze_decay_endpoint_constants_unchanged() -> None:
         "must remain a named module-level constant post-M3."
     )
     assert math_engine.MULT_OPEN == 1.5, (
-        f"MULT_OPEN should be 1.5 (widest stop at market open), "
-        f"got {math_engine.MULT_OPEN}"
+        f"MULT_OPEN should be 1.5 (widest stop at market open), got {math_engine.MULT_OPEN}"
     )
     assert hasattr(math_engine, "MULT_CLOSE"), (
         "math_engine.MULT_CLOSE not found -- the at-close vol multiplier "
         "must remain a named module-level constant post-M3."
     )
     assert math_engine.MULT_CLOSE == 0.5, (
-        f"MULT_CLOSE should be 0.5 (tightest stop at market close), "
-        f"got {math_engine.MULT_CLOSE}"
+        f"MULT_CLOSE should be 0.5 (tightest stop at market close), got {math_engine.MULT_CLOSE}"
     )
 
     # Min-stop floor end-points (at-open: 0.30%, at-close: 0.15%).
@@ -635,9 +618,7 @@ def test_r1_provenance_comment_cites_danielsson_zigrand_2003() -> None:
     # Extract the R1 comment region: from MULT_OPEN definition backwards
     # to a window covering the comment block that documents the layer.
     mult_open_idx = source.find("MULT_OPEN = 1.5")
-    assert mult_open_idx != -1, (
-        "MULT_OPEN = 1.5 not found in math_engine.py source"
-    )
+    assert mult_open_idx != -1, "MULT_OPEN = 1.5 not found in math_engine.py source"
     # Pull a window of ~40 lines before MULT_OPEN to capture the comment block.
     pre_lines = source[:mult_open_idx].splitlines()
     r1_comment_region = "\n".join(pre_lines[-40:])
@@ -658,9 +639,11 @@ def test_r1_provenance_comment_cites_danielsson_zigrand_2003() -> None:
         "Danielsson & Zigrand. Comment region scanned:\n"
         f"{r1_comment_region}"
     )
-    assert ("sqrt" in r1_comment_region.lower()
-            or "square-root" in r1_comment_region.lower()
-            or "square root" in r1_comment_region.lower()), (
+    assert (
+        "sqrt" in r1_comment_region.lower()
+        or "square-root" in r1_comment_region.lower()
+        or "square root" in r1_comment_region.lower()
+    ), (
         "R1 provenance comment must reference the square-root-of-time "
         "scaling in the derivation. Comment region scanned:\n"
         f"{r1_comment_region}"

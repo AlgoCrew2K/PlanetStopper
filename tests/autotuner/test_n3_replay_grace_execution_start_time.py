@@ -151,19 +151,18 @@ class TestReplayGraceNonDefaultExecutionStart:
         [
             # exec_start=10:30 -> start_offset = (10-9)*60 + (30-30) = 60.
             # grace window = [60, 75).
-            ("10:30", 15, 0,   False),  # 09:30 — far before exec_start
-            ("10:30", 15, 30,  False),  # 10:00 — still before exec_start
-            ("10:30", 15, 59,  False),  # 10:29 — one minute before
-            ("10:30", 15, 60,  True),   # 10:30 — exec_start tick
-            ("10:30", 15, 65,  True),   # 10:35 — inside grace
-            ("10:30", 15, 74,  True),   # 10:44 — last grace tick
-            ("10:30", 15, 75,  False),  # 10:45 — grace expired
+            ("10:30", 15, 0, False),  # 09:30 — far before exec_start
+            ("10:30", 15, 30, False),  # 10:00 — still before exec_start
+            ("10:30", 15, 59, False),  # 10:29 — one minute before
+            ("10:30", 15, 60, True),  # 10:30 — exec_start tick
+            ("10:30", 15, 65, True),  # 10:35 — inside grace
+            ("10:30", 15, 74, True),  # 10:44 — last grace tick
+            ("10:30", 15, 75, False),  # 10:45 — grace expired
             ("10:30", 15, 200, False),  # late afternoon
-
             # Sanity for an exotic exec_start
-            ("11:00", 10, 89,  False),
-            ("11:00", 10, 90,  True),   # 11:00 — exec_start
-            ("11:00", 10, 99,  True),   # 11:09 — inside grace
+            ("11:00", 10, 89, False),
+            ("11:00", 10, 90, True),  # 11:00 — exec_start
+            ("11:00", 10, 99, True),  # 11:09 — inside grace
             ("11:00", 10, 100, False),  # 11:10 — grace expired
         ],
     )
@@ -176,15 +175,13 @@ class TestReplayGraceNonDefaultExecutionStart:
     ):
         """Independent expected derivation:
 
-            h, m = exec_start.split(':')
-            start_offset = (h - 9) * 60 + (m - 30)
-            expected = start_offset <= tick_idx < start_offset + grace_minutes
+        h, m = exec_start.split(':')
+        start_offset = (h - 9) * 60 + (m - 30)
+        expected = start_offset <= tick_idx < start_offset + grace_minutes
         """
         h, m = exec_start.split(":")
         start_offset = (int(h) - 9) * 60 + (int(m) - 30)
-        expected_independent = (
-            start_offset <= tick_idx < start_offset + grace_minutes
-        )
+        expected_independent = start_offset <= tick_idx < start_offset + grace_minutes
         assert expected_independent == expected, (
             "Fixture self-check: parametrized expected disagrees with the "
             f"formula ({expected!r} vs {expected_independent!r})."
@@ -244,12 +241,13 @@ class TestReplayCallSiteReadsExecutionStartTime:
         # directly from the replay — the source-scan path.
         d = False
         import inspect
+
         try:
             src = inspect.getsource(autotuner._replay_exit_tick)
             d = "EXECUTION_START_TIME" in src
         except Exception:  # pragma: no cover
             d = False
-        assert (a or b or c or d), (
+        assert a or b or c or d, (
             "AC-5 / N-3: the replay must obtain EXECUTION_START_TIME "
             "somehow — either by a new helper "
             "(_replay_execution_start_time / _replay_grace_context), by "

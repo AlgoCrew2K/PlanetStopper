@@ -79,17 +79,20 @@ def _import_pipeline():
 
 def _import_database():
     import database
+
     return database
 
 
 def _import_ai_advisor():
     import ai_advisor
+
     return ai_advisor
 
 
 # ---------------------------------------------------------------------------
 # Shared stub helpers
 # ---------------------------------------------------------------------------
+
 
 def _stub_lens_available(lens_name: str) -> dict:
     """Return a minimal available=True lens block for a given lens name."""
@@ -143,13 +146,13 @@ class TestPipelineModuleExists:
         pipeline = _import_pipeline()
         fn = getattr(pipeline, "run_pipeline", None)
         assert callable(fn), (
-            "advisors.lens_pipeline must export run_pipeline as a callable. "
-            f"Got: {fn!r}"
+            f"advisors.lens_pipeline must export run_pipeline as a callable. Got: {fn!r}"
         )
 
     def test_run_pipeline_accepts_dry_run_kwarg(self):
         """run_pipeline must accept dry_run as a keyword-only argument."""
         import inspect
+
         pipeline = _import_pipeline()
         fn = pipeline.run_pipeline
         sig = inspect.signature(fn)
@@ -167,11 +170,23 @@ class TestPipelineModuleExists:
         pipeline = _import_pipeline()
         # Mock all lens sections to stub so no live network calls happen in dry_run
         with (
-            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_unavailable("technicals")),
-            patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_unavailable("sentiment")),
-            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch(
+                "ai_advisor._build_technicals_section",
+                return_value=_stub_lens_unavailable("technicals"),
+            ),
+            patch(
+                "ai_advisor._build_sentiment_section",
+                return_value=_stub_lens_unavailable("sentiment"),
+            ),
+            patch(
+                "ai_advisor._build_derivatives_section",
+                return_value=_stub_lens_unavailable("derivatives"),
+            ),
             patch("ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")),
-            patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+            patch(
+                "ai_advisor._build_fundamentals_section",
+                return_value=_stub_lens_unavailable("fundamentals"),
+            ),
             patch("ai_advisor._build_client", return_value=MagicMock()),
             patch("database.insert_advisor_observation") as mock_insert,
         ):
@@ -180,21 +195,40 @@ class TestPipelineModuleExists:
         assert isinstance(result, dict), (
             f"run_pipeline(dry_run=True) must return a dict; got {type(result)}"
         )
-        mock_insert.assert_not_called(), (
-            "dry_run=True must not call database.insert_advisor_observation"
+        (
+            mock_insert.assert_not_called(),
+            ("dry_run=True must not call database.insert_advisor_observation"),
         )
 
     def test_run_pipeline_dry_run_has_required_keys(self):
         """run_pipeline(dry_run=True) dict must contain all required keys."""
         pipeline = _import_pipeline()
-        required_keys = {"run_ts", "lenses_attempted", "lenses_available", "market_prism_row_id", "error_count"}
+        required_keys = {
+            "run_ts",
+            "lenses_attempted",
+            "lenses_available",
+            "market_prism_row_id",
+            "error_count",
+        }
 
         with (
-            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_unavailable("technicals")),
-            patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_unavailable("sentiment")),
-            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch(
+                "ai_advisor._build_technicals_section",
+                return_value=_stub_lens_unavailable("technicals"),
+            ),
+            patch(
+                "ai_advisor._build_sentiment_section",
+                return_value=_stub_lens_unavailable("sentiment"),
+            ),
+            patch(
+                "ai_advisor._build_derivatives_section",
+                return_value=_stub_lens_unavailable("derivatives"),
+            ),
             patch("ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")),
-            patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+            patch(
+                "ai_advisor._build_fundamentals_section",
+                return_value=_stub_lens_unavailable("fundamentals"),
+            ),
             patch("ai_advisor._build_client", return_value=MagicMock()),
             patch("database.insert_advisor_observation"),
         ):
@@ -211,11 +245,23 @@ class TestPipelineModuleExists:
         pipeline = _import_pipeline()
 
         with (
-            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_unavailable("technicals")),
-            patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_unavailable("sentiment")),
-            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch(
+                "ai_advisor._build_technicals_section",
+                return_value=_stub_lens_unavailable("technicals"),
+            ),
+            patch(
+                "ai_advisor._build_sentiment_section",
+                return_value=_stub_lens_unavailable("sentiment"),
+            ),
+            patch(
+                "ai_advisor._build_derivatives_section",
+                return_value=_stub_lens_unavailable("derivatives"),
+            ),
             patch("ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")),
-            patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+            patch(
+                "ai_advisor._build_fundamentals_section",
+                return_value=_stub_lens_unavailable("fundamentals"),
+            ),
             patch("ai_advisor._build_client", return_value=MagicMock()),
             patch("database.insert_advisor_observation"),
         ):
@@ -286,11 +332,23 @@ class TestPerLensIsolation:
             raise ConnectionError("FRED unreachable")
 
         with (
-            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_unavailable("technicals")),
-            patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_available("sentiment")),
-            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch(
+                "ai_advisor._build_technicals_section",
+                return_value=_stub_lens_unavailable("technicals"),
+            ),
+            patch(
+                "ai_advisor._build_sentiment_section",
+                return_value=_stub_lens_available("sentiment"),
+            ),
+            patch(
+                "ai_advisor._build_derivatives_section",
+                return_value=_stub_lens_unavailable("derivatives"),
+            ),
             patch("ai_advisor._build_macro_section", side_effect=_exploding_macro),
-            patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_available("fundamentals")),
+            patch(
+                "ai_advisor._build_fundamentals_section",
+                return_value=_stub_lens_available("fundamentals"),
+            ),
             patch("ai_advisor._build_client", return_value=MagicMock()),
             patch("database.insert_advisor_observation", side_effect=_capture),
         ):
@@ -335,9 +393,18 @@ class TestPerLensIsolation:
             raise ConnectionRefusedError(secret_message)
 
         with (
-            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_unavailable("technicals")),
-            patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_unavailable("sentiment")),
-            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch(
+                "ai_advisor._build_technicals_section",
+                return_value=_stub_lens_unavailable("technicals"),
+            ),
+            patch(
+                "ai_advisor._build_sentiment_section",
+                return_value=_stub_lens_unavailable("sentiment"),
+            ),
+            patch(
+                "ai_advisor._build_derivatives_section",
+                return_value=_stub_lens_unavailable("derivatives"),
+            ),
             patch("ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")),
             patch("ai_advisor._build_fundamentals_section", side_effect=_exploding_fundamentals),
             patch("ai_advisor._build_client", return_value=MagicMock()),
@@ -406,20 +473,29 @@ class TestMarketPrismAlwaysWritten:
             return 100
 
         with (
-            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_unavailable("technicals")),
-            patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_available("sentiment")),
-            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch(
+                "ai_advisor._build_technicals_section",
+                return_value=_stub_lens_unavailable("technicals"),
+            ),
+            patch(
+                "ai_advisor._build_sentiment_section",
+                return_value=_stub_lens_available("sentiment"),
+            ),
+            patch(
+                "ai_advisor._build_derivatives_section",
+                return_value=_stub_lens_unavailable("derivatives"),
+            ),
             patch("ai_advisor._build_macro_section", return_value=_stub_lens_available("macro")),
-            patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+            patch(
+                "ai_advisor._build_fundamentals_section",
+                return_value=_stub_lens_unavailable("fundamentals"),
+            ),
             patch("ai_advisor._build_client", return_value=MagicMock()),
             patch("database.insert_advisor_observation", side_effect=_capture),
         ):
             pipeline.run_pipeline(dry_run=False)
 
-        market_prism_calls = [
-            c for c in captured
-            if c.get("advisor_role") == "MARKET_PRISM"
-        ]
+        market_prism_calls = [c for c in captured if c.get("advisor_role") == "MARKET_PRISM"]
         assert len(market_prism_calls) == 1, (
             f"Exactly one MARKET_PRISM observation must be written per run; "
             f"got {len(market_prism_calls)}. All captured advisor_roles: "
@@ -436,20 +512,29 @@ class TestMarketPrismAlwaysWritten:
             return 101
 
         with (
-            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_unavailable("technicals")),
-            patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_unavailable("sentiment")),
-            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch(
+                "ai_advisor._build_technicals_section",
+                return_value=_stub_lens_unavailable("technicals"),
+            ),
+            patch(
+                "ai_advisor._build_sentiment_section",
+                return_value=_stub_lens_unavailable("sentiment"),
+            ),
+            patch(
+                "ai_advisor._build_derivatives_section",
+                return_value=_stub_lens_unavailable("derivatives"),
+            ),
             patch("ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")),
-            patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+            patch(
+                "ai_advisor._build_fundamentals_section",
+                return_value=_stub_lens_unavailable("fundamentals"),
+            ),
             patch("ai_advisor._build_client", return_value=MagicMock()),
             patch("database.insert_advisor_observation", side_effect=_capture),
         ):
             pipeline.run_pipeline(dry_run=False)
 
-        market_prism_calls = [
-            c for c in captured
-            if c.get("advisor_role") == "MARKET_PRISM"
-        ]
+        market_prism_calls = [c for c in captured if c.get("advisor_role") == "MARKET_PRISM"]
         assert len(market_prism_calls) == 1, (
             "MARKET_PRISM observation must be written even when all lenses unavailable"
         )
@@ -469,11 +554,23 @@ class TestMarketPrismAlwaysWritten:
             return 102
 
         with (
-            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_unavailable("technicals")),
-            patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_unavailable("sentiment")),
-            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch(
+                "ai_advisor._build_technicals_section",
+                return_value=_stub_lens_unavailable("technicals"),
+            ),
+            patch(
+                "ai_advisor._build_sentiment_section",
+                return_value=_stub_lens_unavailable("sentiment"),
+            ),
+            patch(
+                "ai_advisor._build_derivatives_section",
+                return_value=_stub_lens_unavailable("derivatives"),
+            ),
             patch("ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")),
-            patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+            patch(
+                "ai_advisor._build_fundamentals_section",
+                return_value=_stub_lens_unavailable("fundamentals"),
+            ),
             patch("ai_advisor._build_client", return_value=MagicMock()),
             patch("database.insert_advisor_observation", side_effect=_capture),
         ):
@@ -489,11 +586,23 @@ class TestMarketPrismAlwaysWritten:
         expected_row_id = 9999
 
         with (
-            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_unavailable("technicals")),
-            patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_unavailable("sentiment")),
-            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch(
+                "ai_advisor._build_technicals_section",
+                return_value=_stub_lens_unavailable("technicals"),
+            ),
+            patch(
+                "ai_advisor._build_sentiment_section",
+                return_value=_stub_lens_unavailable("sentiment"),
+            ),
+            patch(
+                "ai_advisor._build_derivatives_section",
+                return_value=_stub_lens_unavailable("derivatives"),
+            ),
             patch("ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")),
-            patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+            patch(
+                "ai_advisor._build_fundamentals_section",
+                return_value=_stub_lens_unavailable("fundamentals"),
+            ),
             patch("ai_advisor._build_client", return_value=MagicMock()),
             patch("database.insert_advisor_observation", return_value=expected_row_id),
         ):
@@ -534,11 +643,23 @@ class TestObservationSchema:
             return 200
 
         with (
-            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_unavailable("technicals")),
-            patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_available("sentiment")),
-            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch(
+                "ai_advisor._build_technicals_section",
+                return_value=_stub_lens_unavailable("technicals"),
+            ),
+            patch(
+                "ai_advisor._build_sentiment_section",
+                return_value=_stub_lens_available("sentiment"),
+            ),
+            patch(
+                "ai_advisor._build_derivatives_section",
+                return_value=_stub_lens_unavailable("derivatives"),
+            ),
             patch("ai_advisor._build_macro_section", return_value=_stub_lens_available("macro")),
-            patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+            patch(
+                "ai_advisor._build_fundamentals_section",
+                return_value=_stub_lens_unavailable("fundamentals"),
+            ),
             patch("ai_advisor._build_client", return_value=MagicMock()),
             patch("database.insert_advisor_observation", side_effect=_capture),
         ):
@@ -555,8 +676,7 @@ class TestObservationSchema:
         raw = self._run_and_capture()
         missing = self._REQUIRED_RAW_KEYS - set(raw.keys())
         assert not missing, (
-            f"raw_response is missing required keys: {missing}. "
-            f"Got keys: {sorted(raw.keys())}"
+            f"raw_response is missing required keys: {missing}. Got keys: {sorted(raw.keys())}"
         )
 
     def test_per_lens_digest_contains_all_5_lenses(self):
@@ -590,9 +710,7 @@ class TestObservationSchema:
         """total_lens_count must be 5 (the fixed set of 5 lenses)."""
         raw = self._run_and_capture()
         total = raw.get("total_lens_count")
-        assert total == 5, (
-            f"total_lens_count must be 5; got {total!r}"
-        )
+        assert total == 5, f"total_lens_count must be 5; got {total!r}"
 
     def test_sources_is_list(self):
         """raw_response['sources'] must be a list (possibly empty)."""
@@ -654,11 +772,20 @@ class TestD1ErrorContract:
             raise ConnectionError(secret_details)
 
         with (
-            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_unavailable("technicals")),
+            patch(
+                "ai_advisor._build_technicals_section",
+                return_value=_stub_lens_unavailable("technicals"),
+            ),
             patch("ai_advisor._build_sentiment_section", side_effect=_exploding_sentiment),
-            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch(
+                "ai_advisor._build_derivatives_section",
+                return_value=_stub_lens_unavailable("derivatives"),
+            ),
             patch("ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")),
-            patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+            patch(
+                "ai_advisor._build_fundamentals_section",
+                return_value=_stub_lens_unavailable("fundamentals"),
+            ),
             patch("ai_advisor._build_client", return_value=MagicMock()),
             patch("database.insert_advisor_observation", side_effect=_capture),
         ):
@@ -688,17 +815,31 @@ class TestD1ErrorContract:
 
         with caplog.at_level(logging.WARNING):
             with (
-                patch("ai_advisor._build_technicals_section", return_value=_stub_lens_unavailable("technicals")),
-                patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_unavailable("sentiment")),
-                patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+                patch(
+                    "ai_advisor._build_technicals_section",
+                    return_value=_stub_lens_unavailable("technicals"),
+                ),
+                patch(
+                    "ai_advisor._build_sentiment_section",
+                    return_value=_stub_lens_unavailable("sentiment"),
+                ),
+                patch(
+                    "ai_advisor._build_derivatives_section",
+                    return_value=_stub_lens_unavailable("derivatives"),
+                ),
                 patch("ai_advisor._build_macro_section", side_effect=_exploding_macro),
-                patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+                patch(
+                    "ai_advisor._build_fundamentals_section",
+                    return_value=_stub_lens_unavailable("fundamentals"),
+                ),
                 patch("ai_advisor._build_client", return_value=MagicMock()),
                 patch("database.insert_advisor_observation", return_value=400),
             ):
                 pipeline.run_pipeline(dry_run=False)
 
-        warning_plus_text = " ".join(r.message for r in caplog.records if r.levelno >= logging.WARNING)
+        warning_plus_text = " ".join(
+            r.message for r in caplog.records if r.levelno >= logging.WARNING
+        )
         assert secret_details not in warning_plus_text, (
             "D-1 violation: raw exception message appeared in WARNING+ log records. "
             "Only type(exc).__name__ is permitted."
@@ -729,6 +870,7 @@ class TestImportBoundary:
         source = source_path.read_text(encoding="utf-8")
         # Look for any `import advisors` or `from advisors` at module level
         import re
+
         advisor_imports = re.findall(
             r"^(?:import advisors|from advisors)\b.*$",
             source,
@@ -761,6 +903,7 @@ class TestSchedulerWiring:
         source_path = _REPO_ROOT / "app.py"
         source = source_path.read_text(encoding="utf-8")
         import re
+
         # Accept any schedule.every().day.at(...).do(_run_lens_pipeline) pattern
         pattern = r"schedule\.every\(\)\.day\.at\([^\)]+\)\.do\(_run_lens_pipeline\)"
         match = re.search(pattern, source)
@@ -775,6 +918,7 @@ class TestSchedulerWiring:
         source_path = _REPO_ROOT / "app.py"
         source = source_path.read_text(encoding="utf-8")
         import re
+
         # Find the _run_lens_pipeline function body and check for daemon=True
         # Look for threading.Thread with daemon=True near the _run_lens_pipeline context
         assert "daemon=True" in source, (
@@ -787,6 +931,7 @@ class TestSchedulerWiring:
         source_path = _REPO_ROOT / "app.py"
         source = source_path.read_text(encoding="utf-8")
         import re
+
         # Module-level import = not inside a function (this is a heuristic; check for
         # the import being inside a function body via indentation check)
         # Conservative: check that if lens_pipeline appears in the file, it's not in
@@ -799,15 +944,17 @@ class TestSchedulerWiring:
                 in_function = True
             if not in_function and "from advisors.lens_pipeline" in line:
                 pytest.fail(
-                    f"AC-7/CC-2: app.py has module-level 'from advisors.lens_pipeline' import at line {i+1}. "
+                    f"AC-7/CC-2: app.py has module-level 'from advisors.lens_pipeline' import at line {i + 1}. "
                     "The import must be lazy (inside the worker function), not at module level."
                 )
         # Also ensure it's not a top-level bare import
         for i, line in enumerate(lines[:150]):
-            if not in_function and "import advisors.lens_pipeline" in line and not line.strip().startswith("#"):
-                pytest.fail(
-                    f"AC-7/CC-2: app.py has module-level advisor import at line {i+1}."
-                )
+            if (
+                not in_function
+                and "import advisors.lens_pipeline" in line
+                and not line.strip().startswith("#")
+            ):
+                pytest.fail(f"AC-7/CC-2: app.py has module-level advisor import at line {i + 1}.")
 
 
 # ---------------------------------------------------------------------------
@@ -842,11 +989,23 @@ class TestSourcesRoundTrip:
         }
 
         with (
-            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_unavailable("technicals")),
-            patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_unavailable("sentiment")),
-            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch(
+                "ai_advisor._build_technicals_section",
+                return_value=_stub_lens_unavailable("technicals"),
+            ),
+            patch(
+                "ai_advisor._build_sentiment_section",
+                return_value=_stub_lens_unavailable("sentiment"),
+            ),
+            patch(
+                "ai_advisor._build_derivatives_section",
+                return_value=_stub_lens_unavailable("derivatives"),
+            ),
             patch("ai_advisor._build_macro_section", return_value=macro_block),
-            patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+            patch(
+                "ai_advisor._build_fundamentals_section",
+                return_value=_stub_lens_unavailable("fundamentals"),
+            ),
             patch("ai_advisor._build_client", return_value=MagicMock()),
             patch("database.insert_advisor_observation", side_effect=_capture),
         ):
@@ -860,8 +1019,7 @@ class TestSourcesRoundTrip:
         sources = raw.get("sources", [])
         persisted_urls = [s.get("url") for s in sources if isinstance(s, dict)]
         assert valid_source["url"] in persisted_urls, (
-            f"Valid citation URL must appear in raw_response['sources']; "
-            f"got: {persisted_urls}"
+            f"Valid citation URL must appear in raw_response['sources']; got: {persisted_urls}"
         )
 
     def test_malformed_citations_dropped(self):
@@ -875,9 +1033,19 @@ class TestSourcesRoundTrip:
 
         # Mix of valid and malformed
         mixed_sources = [
-            {"title": "Valid", "url": "https://example.com/article", "published": "2026-06-13", "lens": "sentiment"},
+            {
+                "title": "Valid",
+                "url": "https://example.com/article",
+                "published": "2026-06-13",
+                "lens": "sentiment",
+            },
             {"title": "No URL", "published": "2026-06-13", "lens": "sentiment"},
-            {"title": "FTP bad", "url": "ftp://example.com/data", "published": "2026-06-13", "lens": "sentiment"},
+            {
+                "title": "FTP bad",
+                "url": "ftp://example.com/data",
+                "published": "2026-06-13",
+                "lens": "sentiment",
+            },
         ]
 
         sentiment_block = {
@@ -888,11 +1056,20 @@ class TestSourcesRoundTrip:
         }
 
         with (
-            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_unavailable("technicals")),
+            patch(
+                "ai_advisor._build_technicals_section",
+                return_value=_stub_lens_unavailable("technicals"),
+            ),
             patch("ai_advisor._build_sentiment_section", return_value=sentiment_block),
-            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch(
+                "ai_advisor._build_derivatives_section",
+                return_value=_stub_lens_unavailable("derivatives"),
+            ),
             patch("ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")),
-            patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+            patch(
+                "ai_advisor._build_fundamentals_section",
+                return_value=_stub_lens_unavailable("fundamentals"),
+            ),
             patch("ai_advisor._build_client", return_value=MagicMock()),
             patch("database.insert_advisor_observation", side_effect=_capture),
         ):
@@ -906,12 +1083,8 @@ class TestSourcesRoundTrip:
         sources = raw.get("sources", [])
         urls = [s.get("url", "") for s in sources if isinstance(s, dict)]
 
-        assert "https://example.com/article" in urls, (
-            "Valid citation must survive filtering"
-        )
-        assert not any("ftp://" in (u or "") for u in urls), (
-            "ftp:// citation must be filtered out"
-        )
+        assert "https://example.com/article" in urls, "Valid citation must survive filtering"
+        assert not any("ftp://" in (u or "") for u in urls), "ftp:// citation must be filtered out"
         assert all(u for u in urls if u is not None), (
             "All persisted citations must have a non-empty url"
         )
@@ -930,8 +1103,7 @@ class TestGetLatestMarketPrismSummary:
         db = _import_database()
         fn = getattr(db, "get_latest_market_prism_summary", None)
         assert callable(fn), (
-            "database must export get_latest_market_prism_summary as a callable. "
-            f"Got: {fn!r}"
+            f"database must export get_latest_market_prism_summary as a callable. Got: {fn!r}"
         )
 
     def test_returns_none_when_no_rows_exist(self):
@@ -940,8 +1112,7 @@ class TestGetLatestMarketPrismSummary:
         # _isolate_db autouse fixture in conftest.py ensures a clean DB for each test
         result = db.get_latest_market_prism_summary()
         assert result is None, (
-            f"get_latest_market_prism_summary() must return None when no rows exist; "
-            f"got {result!r}"
+            f"get_latest_market_prism_summary() must return None when no rows exist; got {result!r}"
         )
 
     def test_returns_dict_when_row_exists(self):
@@ -1021,9 +1192,15 @@ class TestGetLatestMarketPrismSummary:
             subject_type="portfolio",
             subject_id="global",
             verdict="neutral",
-            raw_response={"run_ts": "2026-06-13T03:00:00Z", "per_lens_digest": {},
-                          "overall_sentiment": "neutral", "sentiment_rationale": "t",
-                          "available_lens_count": 0, "total_lens_count": 5, "sources": []},
+            raw_response={
+                "run_ts": "2026-06-13T03:00:00Z",
+                "per_lens_digest": {},
+                "overall_sentiment": "neutral",
+                "sentiment_rationale": "t",
+                "available_lens_count": 0,
+                "total_lens_count": 5,
+                "sources": [],
+            },
         )
         result = db.get_latest_market_prism_summary()
         assert result is not None
@@ -1081,11 +1258,23 @@ class TestGoldenFixtureSchemaContract:
             return 600
 
         with (
-            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_unavailable("technicals")),
-            patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_unavailable("sentiment")),
-            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch(
+                "ai_advisor._build_technicals_section",
+                return_value=_stub_lens_unavailable("technicals"),
+            ),
+            patch(
+                "ai_advisor._build_sentiment_section",
+                return_value=_stub_lens_unavailable("sentiment"),
+            ),
+            patch(
+                "ai_advisor._build_derivatives_section",
+                return_value=_stub_lens_unavailable("derivatives"),
+            ),
             patch("ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")),
-            patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+            patch(
+                "ai_advisor._build_fundamentals_section",
+                return_value=_stub_lens_unavailable("fundamentals"),
+            ),
             patch("ai_advisor._build_client", return_value=MagicMock()),
             patch("database.insert_advisor_observation", side_effect=_capture),
         ):
@@ -1139,7 +1328,9 @@ def _make_client_mock(response_text: str) -> MagicMock:
     return client
 
 
-_VALID_JSON_PAYLOAD = '{"overall_sentiment": "risk-on", "sentiment_rationale": "Equities led by momentum."}'
+_VALID_JSON_PAYLOAD = (
+    '{"overall_sentiment": "risk-on", "sentiment_rationale": "Equities led by momentum."}'
+)
 
 
 class TestRobustClaudeJsonParsing:
@@ -1168,11 +1359,23 @@ class TestRobustClaudeJsonParsing:
             return 700
 
         with (
-            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_available("technicals")),
-            patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_unavailable("sentiment")),
-            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch(
+                "ai_advisor._build_technicals_section",
+                return_value=_stub_lens_available("technicals"),
+            ),
+            patch(
+                "ai_advisor._build_sentiment_section",
+                return_value=_stub_lens_unavailable("sentiment"),
+            ),
+            patch(
+                "ai_advisor._build_derivatives_section",
+                return_value=_stub_lens_unavailable("derivatives"),
+            ),
             patch("ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")),
-            patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+            patch(
+                "ai_advisor._build_fundamentals_section",
+                return_value=_stub_lens_unavailable("fundamentals"),
+            ),
             patch("ai_advisor._build_client", return_value=client_mock),
             patch("database.insert_advisor_observation", side_effect=_capture),
         ):
@@ -1204,8 +1407,7 @@ class TestRobustClaudeJsonParsing:
         The fix must skip the prose and extract the first { ... } object.
         """
         prose_response = (
-            "Based on the available lens data, here is my assessment:\n\n"
-            + _VALID_JSON_PAYLOAD
+            "Based on the available lens data, here is my assessment:\n\n" + _VALID_JSON_PAYLOAD
         )
         client_mock = _make_client_mock(prose_response)
 
@@ -1217,11 +1419,23 @@ class TestRobustClaudeJsonParsing:
             return 701
 
         with (
-            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_available("technicals")),
-            patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_unavailable("sentiment")),
-            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch(
+                "ai_advisor._build_technicals_section",
+                return_value=_stub_lens_available("technicals"),
+            ),
+            patch(
+                "ai_advisor._build_sentiment_section",
+                return_value=_stub_lens_unavailable("sentiment"),
+            ),
+            patch(
+                "ai_advisor._build_derivatives_section",
+                return_value=_stub_lens_unavailable("derivatives"),
+            ),
             patch("ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")),
-            patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+            patch(
+                "ai_advisor._build_fundamentals_section",
+                return_value=_stub_lens_unavailable("fundamentals"),
+            ),
             patch("ai_advisor._build_client", return_value=client_mock),
             patch("database.insert_advisor_observation", side_effect=_capture),
         ):
@@ -1263,11 +1477,25 @@ class TestRobustClaudeJsonParsing:
 
         try:
             with (
-                patch("ai_advisor._build_technicals_section", return_value=_stub_lens_available("technicals")),
-                patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_unavailable("sentiment")),
-                patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
-                patch("ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")),
-                patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+                patch(
+                    "ai_advisor._build_technicals_section",
+                    return_value=_stub_lens_available("technicals"),
+                ),
+                patch(
+                    "ai_advisor._build_sentiment_section",
+                    return_value=_stub_lens_unavailable("sentiment"),
+                ),
+                patch(
+                    "ai_advisor._build_derivatives_section",
+                    return_value=_stub_lens_unavailable("derivatives"),
+                ),
+                patch(
+                    "ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")
+                ),
+                patch(
+                    "ai_advisor._build_fundamentals_section",
+                    return_value=_stub_lens_unavailable("fundamentals"),
+                ),
                 patch("ai_advisor._build_client", return_value=client_mock),
                 patch("database.insert_advisor_observation", side_effect=_capture),
             ):

@@ -74,16 +74,17 @@ import alpha_bot_execution
 
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
 
     def _et(hour: int, minute: int, weekday_date: str = "2025-05-14") -> datetime:
         y, mo, d = map(int, weekday_date.split("-"))
         return datetime(y, mo, d, hour, minute, 0, tzinfo=_ET)
 except Exception:  # pragma: no cover
+
     def _et(hour: int, minute: int, weekday_date: str = "2025-05-14") -> datetime:
         y, mo, d = map(int, weekday_date.split("-"))
-        return datetime(y, mo, d, hour, minute, 0,
-                        tzinfo=timezone(timedelta(hours=-4)))
+        return datetime(y, mo, d, hour, minute, 0, tzinfo=timezone(timedelta(hours=-4)))
 
 
 _POST_GATE_10_45 = _et(10, 45)  # solidly inside action-phase window
@@ -104,8 +105,9 @@ _COMPOSER_RETURN_FRAC = 0.015
 _EXPECTED_CURRENT_RETURN = _COMPOSER_RETURN_FRAC * 100.0  # 1.5
 
 
-def _make_sym_payload(sym_id: str, name: str,
-                      last_percent_change: float = _COMPOSER_RETURN_FRAC) -> dict:
+def _make_sym_payload(
+    sym_id: str, name: str, last_percent_change: float = _COMPOSER_RETURN_FRAC
+) -> dict:
     return {
         "id": sym_id,
         "symphony_id": f"actual-{sym_id}",
@@ -124,18 +126,25 @@ def _make_minimal_history(date_str: str) -> dict:
     return {
         date_str: {
             _TICKER: {
-                "c": 500.0, "daily_ret": 0.001,
-                "high": 501.0, "low": 499.0, "close": 500.0,
+                "c": 500.0,
+                "daily_ret": 0.001,
+                "high": 501.0,
+                "low": 499.0,
+                "close": 500.0,
             }
         }
     }
 
 
-def _make_sym_entry(name: str, *, hwm: float = 0.0,
-                    current_return: float = 0.0,
-                    symphony_vol: float | None = None,
-                    triggered: bool = False,
-                    **extras) -> dict:
+def _make_sym_entry(
+    name: str,
+    *,
+    hwm: float = 0.0,
+    current_return: float = 0.0,
+    symphony_vol: float | None = None,
+    triggered: bool = False,
+    **extras,
+) -> dict:
     entry: dict = {
         "high_water_mark": hwm,
         "shadow_hwm": hwm,
@@ -174,6 +183,7 @@ def _seed_state(*entries: tuple[str, dict]) -> dict:
 # calculate_20d_vol.
 # ---------------------------------------------------------------------------
 
+
 def _run_one_cycle(
     current_et: datetime,
     initial_bot_state: dict,
@@ -186,26 +196,31 @@ def _run_one_cycle(
     def capture_save_state(state: dict) -> None:
         captured_states.append(copy.deepcopy(state))
 
-    with patch.object(alpha_bot_execution, "database") as mock_db, \
-         patch.object(alpha_bot_execution, "reporting") as mock_reporting, \
-         patch.object(alpha_bot_execution, "fetch_symphony_stats",
-                      return_value=sym_payloads), \
-         patch.object(alpha_bot_execution, "fetch_alpaca_history",
-                      return_value=_make_minimal_history(date_str)), \
-         patch.object(alpha_bot_execution, "fetch_intraday_vwaps",
-                      return_value={_TICKER: {"vwap": 500.0, "last_price": 500.0}}), \
-         patch.object(alpha_bot_execution, "get_current_et",
-                      return_value=current_et), \
-         patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
-         patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key-id"), \
-         patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"), \
-         patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-         patch.object(alpha_bot_execution, "EXECUTION_START_TIME", execution_start_time), \
-         patch.object(alpha_bot_execution.time, "sleep"), \
-         patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]), \
-         patch.object(alpha_bot_execution, "autotuner") as _mock_autotuner, \
-         patch.object(alpha_bot_execution, "math_engine") as mock_math:
-
+    with (
+        patch.object(alpha_bot_execution, "database") as mock_db,
+        patch.object(alpha_bot_execution, "reporting") as mock_reporting,
+        patch.object(alpha_bot_execution, "fetch_symphony_stats", return_value=sym_payloads),
+        patch.object(
+            alpha_bot_execution,
+            "fetch_alpaca_history",
+            return_value=_make_minimal_history(date_str),
+        ),
+        patch.object(
+            alpha_bot_execution,
+            "fetch_intraday_vwaps",
+            return_value={_TICKER: {"vwap": 500.0, "last_price": 500.0}},
+        ),
+        patch.object(alpha_bot_execution, "get_current_et", return_value=current_et),
+        patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+        patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key-id"),
+        patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"),
+        patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+        patch.object(alpha_bot_execution, "EXECUTION_START_TIME", execution_start_time),
+        patch.object(alpha_bot_execution.time, "sleep"),
+        patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+        patch.object(alpha_bot_execution, "autotuner") as _mock_autotuner,
+        patch.object(alpha_bot_execution, "math_engine") as mock_math,
+    ):
         mock_db.acquire_lock.return_value = True
         mock_db.load_state.return_value = copy.deepcopy(initial_bot_state)
         mock_db.load_chart_history.return_value = {"date": date_str, "symphonies": {}}
@@ -245,6 +260,7 @@ def _run_one_cycle(
 # both phases must invoke calculate_20d_vol exactly once per symphony.
 # Currently calls it twice (data phase + action phase recomputation).
 # ---------------------------------------------------------------------------
+
 
 class TestCalculate20dVolCalledOncePerSymphonyPerCycle:
     """calculate_20d_vol must be deduplicated to one call per symphony per cycle."""
@@ -319,6 +335,7 @@ class TestCalculate20dVolCalledOncePerSymphonyPerCycle:
 # above plus an explicit "the cached value is what compute_vwap_bleed_arm_threshold
 # receives" check.
 # ---------------------------------------------------------------------------
+
 
 class TestActionPhaseConsumesCachedSymphonyVol:
     """The cached symphony_vol from the data phase must be the value the action phase passes downstream."""
@@ -403,6 +420,7 @@ class TestActionPhaseConsumesCachedSymphonyVol:
 # calculate_20d_vol returns, regardless of which phase wrote it.
 # ---------------------------------------------------------------------------
 
+
 class TestSymphonyVolIdentityPreservation:
     """The cached symphony_vol value must equal calculate_20d_vol's return — no math change."""
 
@@ -458,6 +476,7 @@ class TestSymphonyVolIdentityPreservation:
 # path: the symphony was triggered on a PRIOR cycle, the current cycle's
 # data phase still must write the cache, and the action phase reads it.
 # ---------------------------------------------------------------------------
+
 
 class TestTriggeredSymphonyVolStillDeduped:
     """A triggered symphony must still get one calculate_20d_vol call per cycle."""
@@ -522,6 +541,7 @@ class TestTriggeredSymphonyVolStillDeduped:
 # A "silent recompute" pre-fix = calculate_20d_vol gets called in the
 # action phase with the symphony missing its cache.
 # ---------------------------------------------------------------------------
+
 
 class TestActionPhaseFailsNoisyOnMissingCache:
     """If the data-phase cache is missing, the action phase must not silently recompute."""

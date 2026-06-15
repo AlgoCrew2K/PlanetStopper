@@ -229,10 +229,7 @@ def init_db():
             also_true_json   TEXT    DEFAULT NULL
         )
     """)
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_exit_triggers_ts "
-        "ON exit_triggers (ts_utc DESC)"
-    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_exit_triggers_ts ON exit_triggers (ts_utc DESC)")
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_exit_triggers_symphony_ts "
         "ON exit_triggers (symphony_id, ts_utc DESC)"
@@ -476,7 +473,11 @@ def get_symphony_strategy(symphony_name):
     # Initialize with defaults if not found — live_mode defaults to False (dry-run).
     # arch rule 4: is_live=True is explicit, never by omission.
     save_symphony_strategy(symphony_name, DEFAULT_STRATEGY, DEFAULT_LOCKED_VARS)
-    return {"params": DEFAULT_STRATEGY.copy(), "locked_vars": DEFAULT_LOCKED_VARS.copy(), "live_mode": False}
+    return {
+        "params": DEFAULT_STRATEGY.copy(),
+        "locked_vars": DEFAULT_LOCKED_VARS.copy(),
+        "live_mode": False,
+    }
 
 
 def save_symphony_strategy(symphony_name, params, locked_vars):
@@ -1088,7 +1089,15 @@ def insert_advisor_observation(
         "INSERT INTO advisor_observations "
         "(advisor_role, subject_type, subject_id, verdict, raw_response, is_advisory_only, spec_bundle_id, symphony_id) "
         "VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
-        (advisor_role, subject_type, subject_id, verdict, raw_response_str, spec_bundle_id, symphony_id),
+        (
+            advisor_role,
+            subject_type,
+            subject_id,
+            verdict,
+            raw_response_str,
+            spec_bundle_id,
+            symphony_id,
+        ),
     )
     conn.commit()
     row_id = cursor.lastrowid
@@ -1231,8 +1240,7 @@ def insert_prism_audit_entry(
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO prism_audit_log (run_id, agent_role, phase, content)"
-        " VALUES (?, ?, ?, ?)",
+        "INSERT INTO prism_audit_log (run_id, agent_role, phase, content) VALUES (?, ?, ?, ?)",
         (run_id, agent_role, phase, content),
     )
     conn.commit()
@@ -1258,7 +1266,8 @@ def get_prism_audit_for_run(run_id: str) -> list[dict]:
     conn = get_ro_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT " + ", ".join(_PRISM_AUDIT_COLUMNS)
+        "SELECT "
+        + ", ".join(_PRISM_AUDIT_COLUMNS)
         + " FROM prism_audit_log WHERE run_id = ? ORDER BY id ASC",
         (run_id,),
     )
@@ -1455,15 +1464,17 @@ def run_migrations() -> None:
 # invariant at the code level (analogous to the llm_suggestions append-only
 # accessor surface at database.py:670-715).
 
-_VALID_FREEZE_DISCIPLINES: frozenset[str] = frozenset({
-    "THEORY",
-    "MANDATE",
-    "STYLIZED_FACT",
-    "POLITIS_WHITE",
-    "CADENCE",
-    "CALIBRATION",
-    "BACKTEST_SELECTION",
-})
+_VALID_FREEZE_DISCIPLINES: frozenset[str] = frozenset(
+    {
+        "THEORY",
+        "MANDATE",
+        "STYLIZED_FACT",
+        "POLITIS_WHITE",
+        "CADENCE",
+        "CALIBRATION",
+        "BACKTEST_SELECTION",
+    }
+)
 
 _SPEC_BUNDLE_COLUMNS = [
     "id",
@@ -1768,7 +1779,8 @@ def get_spec_bundle(bundle_hash: str) -> "dict | None":
     conn = get_ro_connection()
     try:
         row = conn.execute(
-            "SELECT " + ", ".join(_SPEC_BUNDLE_COLUMNS)
+            "SELECT "
+            + ", ".join(_SPEC_BUNDLE_COLUMNS)
             + " FROM spec_bundles WHERE bundle_hash = ?",
             (bundle_hash,),
         ).fetchone()
@@ -1792,8 +1804,7 @@ def get_spec_bundle_by_id(spec_bundle_id: int) -> "dict | None":
     conn = get_ro_connection()
     try:
         row = conn.execute(
-            "SELECT " + ", ".join(_SPEC_BUNDLE_COLUMNS)
-            + " FROM spec_bundles WHERE id = ?",
+            "SELECT " + ", ".join(_SPEC_BUNDLE_COLUMNS) + " FROM spec_bundles WHERE id = ?",
             (spec_bundle_id,),
         ).fetchone()
     finally:
@@ -1835,8 +1846,14 @@ def insert_spec_bundle_facet(
             "(bundle_hash, facet_name, facet_value, freeze_discipline, "
             "justification, calibration_evidence) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (bundle_hash, facet_name, facet_value, freeze_discipline,
-             justification, calibration_evidence),
+            (
+                bundle_hash,
+                facet_name,
+                facet_value,
+                freeze_discipline,
+                justification,
+                calibration_evidence,
+            ),
         )
         conn.commit()
         if cursor.lastrowid:
@@ -1861,7 +1878,8 @@ def get_spec_facets_for_bundle(bundle_hash: str) -> "list[dict]":
     conn = get_ro_connection()
     try:
         rows = conn.execute(
-            "SELECT " + ", ".join(_SPEC_FACET_COLUMNS)
+            "SELECT "
+            + ", ".join(_SPEC_FACET_COLUMNS)
             + " FROM spec_facets WHERE bundle_hash = ? ORDER BY id ASC",
             (bundle_hash,),
         ).fetchall()
@@ -1884,26 +1902,32 @@ def get_spec_facets_for_bundle(bundle_hash: str) -> "list[dict]":
 # append-only immutability contract enforced for llm_suggestions and
 # advisor_observations (database.py:670-715 and advisor section below).
 
-_VALID_DOF_FACET_CATEGORIES: frozenset[str] = frozenset({
-    "specification",
-    "parameter",
-})
+_VALID_DOF_FACET_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "specification",
+        "parameter",
+    }
+)
 
-_VALID_DOF_DECISION_TYPES: frozenset[str] = frozenset({
-    "FIXED",
-    "SEARCHED",
-    "REVISED",
-    "OOS_PEEK",
-})
+_VALID_DOF_DECISION_TYPES: frozenset[str] = frozenset(
+    {
+        "FIXED",
+        "SEARCHED",
+        "REVISED",
+        "OOS_PEEK",
+    }
+)
 
-_VALID_DOF_EVIDENCE_SOURCES: frozenset[str] = frozenset({
-    "THEORY",
-    "MANDATE",
-    "STYLIZED_FACT",
-    "CALIBRATION",
-    "BACKTEST_SELECTION",
-    "OOS",
-})
+_VALID_DOF_EVIDENCE_SOURCES: frozenset[str] = frozenset(
+    {
+        "THEORY",
+        "MANDATE",
+        "STYLIZED_FACT",
+        "CALIBRATION",
+        "BACKTEST_SELECTION",
+        "OOS",
+    }
+)
 
 _DOF_LEDGER_COLUMNS = [
     "id",
@@ -1988,7 +2012,8 @@ def get_dof_ledger_for_bundle(spec_bundle_id: str) -> "list[dict]":
     conn = get_ro_connection()
     try:
         rows = conn.execute(
-            "SELECT " + ", ".join(_DOF_LEDGER_COLUMNS)
+            "SELECT "
+            + ", ".join(_DOF_LEDGER_COLUMNS)
             + " FROM researcher_dof_ledger WHERE spec_bundle_id = ? ORDER BY id ASC",
             (spec_bundle_id,),
         ).fetchall()
@@ -2054,8 +2079,7 @@ def get_researcher_dof_ledger_for_run(
     try:
         if winning_spec_bundle_id is not None:
             rows = conn.execute(
-                "SELECT " + ", ".join(_DOF_LEDGER_COLUMNS)
-                + " FROM researcher_dof_ledger"
+                "SELECT " + ", ".join(_DOF_LEDGER_COLUMNS) + " FROM researcher_dof_ledger"
                 " WHERE evidence_source = 'BACKTEST_SELECTION'"
                 "   AND COALESCE(touched_frozen_eval, 0) = 0"
                 "   AND (spec_bundle_id IS NULL OR spec_bundle_id != ?)"
@@ -2064,8 +2088,7 @@ def get_researcher_dof_ledger_for_run(
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT " + ", ".join(_DOF_LEDGER_COLUMNS)
-                + " FROM researcher_dof_ledger"
+                "SELECT " + ", ".join(_DOF_LEDGER_COLUMNS) + " FROM researcher_dof_ledger"
                 " WHERE evidence_source = 'BACKTEST_SELECTION'"
                 "   AND COALESCE(touched_frozen_eval, 0) = 0"
                 " ORDER BY id ASC",
@@ -2638,9 +2661,11 @@ _TELEMETRY_VALID_MODES = frozenset({"live", "replay"})
 # Expand this set whenever a new legitimate Phase-N consumer is added.
 # table_name arguments not in this set are rejected before any SQL is built —
 # preventing f-string interpolation of attacker-controlled identifiers.
-_WRITE_TELEMETRY_TABLES = frozenset({
-    "cvar_diagnostics",   # M2 Phase-1 consumer (record_cvar_diagnostic)
-})
+_WRITE_TELEMETRY_TABLES = frozenset(
+    {
+        "cvar_diagnostics",  # M2 Phase-1 consumer (record_cvar_diagnostic)
+    }
+)
 
 # CC-002: column identifier must be a safe SQLite identifier before f-string
 # interpolation.  Matches lowercase letters, digits, and underscores only.
@@ -2714,9 +2739,7 @@ def write_telemetry_row(
     with no default (H4 plan risk R4).
     """
     if mode not in _TELEMETRY_VALID_MODES:
-        raise ValueError(
-            f"write_telemetry_row: mode must be 'live' or 'replay'; got {mode!r}"
-        )
+        raise ValueError(f"write_telemetry_row: mode must be 'live' or 'replay'; got {mode!r}")
 
     if mode == "live":
         try:
@@ -2880,9 +2903,7 @@ def read_cvar_diagnostic_for_symphony(symphony_id: str) -> "dict | None":
     conn.row_factory = sqlite3.Row
     try:
         row = conn.execute(
-            "SELECT * FROM cvar_diagnostics "
-            "WHERE symphony_id = ? "
-            "ORDER BY ts_utc DESC LIMIT 1",
+            "SELECT * FROM cvar_diagnostics WHERE symphony_id = ? ORDER BY ts_utc DESC LIMIT 1",
             (symphony_id,),
         ).fetchone()
     finally:
@@ -2900,9 +2921,7 @@ def prune_old_shadow_history(retention_days: int) -> int:
     """
     from datetime import timedelta
 
-    cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     total_deleted = 0
     try:
         conn = sqlite3.connect(_db_file(), timeout=10.0)
@@ -3125,9 +3144,7 @@ def prune_old_triggers(retention_days: int) -> int:
     """
     from datetime import timedelta
 
-    cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     _PRUNE_BATCH_SIZE = 1000
     deleted_total = 0
     try:

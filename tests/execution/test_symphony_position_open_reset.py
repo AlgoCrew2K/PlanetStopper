@@ -92,20 +92,20 @@ def _dirty_symphony_state() -> dict:
     return {
         "name": "Rotated Symphony",
         "account": "acct-rotate-001",
-        "high_water_mark": -999.0,          # post-trigger sentinel
+        "high_water_mark": -999.0,  # post-trigger sentinel
         "shadow_hwm": 3.2,
         "prev_return": 2.1,
         "armed": False,
         "tp_armed": False,
         "para_armed": True,
-        "triggered": True,                  # STALE — must clear
+        "triggered": True,  # STALE — must clear
         "triggered_reason": "Trailing Stop",
-        "breakeven_locked": True,           # STALE — must clear
-        "hwm_hold_ticks": 8,                # STALE — must clear
-        "below_stop_count": 2,              # STALE — must clear
-        "vwap_ticks": 3,                    # STALE — must clear
-        "vwap_bleed_ticks": 1,              # STALE — must clear
-        "stop_trigger": 2.5,                # STALE — must be DELETED
+        "breakeven_locked": True,  # STALE — must clear
+        "hwm_hold_ticks": 8,  # STALE — must clear
+        "below_stop_count": 2,  # STALE — must clear
+        "vwap_ticks": 3,  # STALE — must clear
+        "vwap_bleed_ticks": 1,  # STALE — must clear
+        "stop_trigger": 2.5,  # STALE — must be DELETED
         "mc_history": [55.0, 61.0, 48.0],
         "current_holdings": [{"ticker": "SPY", "allocation": 1.0}],
     }
@@ -252,8 +252,7 @@ class TestSameBasketCrossDayReopen:
             "reset triggered on the new-day boundary."
         )
         assert reopened.get("stop_trigger") is None, (
-            "C-2 cross-day safety VIOLATED: stale stop_trigger floor "
-            "survived the new-day boundary."
+            "C-2 cross-day safety VIOLATED: stale stop_trigger floor survived the new-day boundary."
         )
         for field in _TRANSIENT_INT_FIELDS:
             assert reopened[field] == 0, (
@@ -315,9 +314,9 @@ class TestRebalanceDoesNotResetLivePosition:
             "armed": True,
             "tp_armed": False,
             "para_armed": False,
-            "triggered": False,             # LIVE position, not exited
-            "breakeven_locked": True,       # latched mid-position — MUST survive
-            "hwm_hold_ticks": 6,            # accumulated — MUST survive
+            "triggered": False,  # LIVE position, not exited
+            "breakeven_locked": True,  # latched mid-position — MUST survive
+            "hwm_hold_ticks": 6,  # accumulated — MUST survive
             "below_stop_count": 1,
             "vwap_ticks": 0,
             "vwap_bleed_ticks": 0,
@@ -340,6 +339,7 @@ class TestRebalanceDoesNotResetLivePosition:
         # differs from any {SPY,QQQ} hash so the test keeps its teeth.
         try:
             from database import compute_composition_hash as _ch
+
             mid_position_state["position_identity"] = _ch(["SPY"])
         except Exception:  # pragma: no cover
             mid_position_state["position_identity"] = "prior-spy-only-identity"
@@ -354,7 +354,7 @@ class TestRebalanceDoesNotResetLivePosition:
         rebalanced_payload = {
             "id": symphony_id,
             "name": "Mid-Position Rebalance Symphony",
-            "last_percent_change": 0.031,   # +3.1% — position continuing
+            "last_percent_change": 0.031,  # +3.1% — position continuing
             "current_value": 10000.0,
             "holdings": [
                 {"ticker": "SPY", "allocation": 0.5},
@@ -364,36 +364,31 @@ class TestRebalanceDoesNotResetLivePosition:
 
         try:
             from zoneinfo import ZoneInfo
-            _et = datetime(
-                2026, 5, 21, 12, 0, 0, tzinfo=ZoneInfo("America/New_York")
-            )
+
+            _et = datetime(2026, 5, 21, 12, 0, 0, tzinfo=ZoneInfo("America/New_York"))
         except Exception:  # pragma: no cover
             from datetime import timedelta, timezone
-            _et = datetime(
-                2026, 5, 21, 12, 0, 0, tzinfo=timezone(timedelta(hours=-4))
-            )
 
-        with patch.object(alpha_bot_execution, "database") as mock_db, \
-             patch.object(alpha_bot_execution, "reporting"), \
-             patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch, \
-             patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_hist, \
-             patch.object(alpha_bot_execution, "fetch_intraday_vwaps") as mock_vwap, \
-             patch.object(alpha_bot_execution, "get_current_et", return_value=_et), \
-             patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [account_id]), \
-             patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "k"), \
-             patch.object(alpha_bot_execution, "ALPACA_KEY", "k"), \
-             patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-             patch.object(alpha_bot_execution.time, "sleep"), \
-             patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]):
+            _et = datetime(2026, 5, 21, 12, 0, 0, tzinfo=timezone(timedelta(hours=-4)))
 
+        with (
+            patch.object(alpha_bot_execution, "database") as mock_db,
+            patch.object(alpha_bot_execution, "reporting"),
+            patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch,
+            patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_hist,
+            patch.object(alpha_bot_execution, "fetch_intraday_vwaps") as mock_vwap,
+            patch.object(alpha_bot_execution, "get_current_et", return_value=_et),
+            patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [account_id]),
+            patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "k"),
+            patch.object(alpha_bot_execution, "ALPACA_KEY", "k"),
+            patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+            patch.object(alpha_bot_execution.time, "sleep"),
+            patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+        ):
             mock_db.acquire_lock.return_value = True
             mock_db.load_state.return_value = bot_state
-            mock_db.load_chart_history.return_value = {
-                "date": "2026-05-21", "symphonies": {}
-            }
-            mock_db.get_symphony_strategy.return_value = {
-                "params": {}, "locked_vars": {}
-            }
+            mock_db.load_chart_history.return_value = {"date": "2026-05-21", "symphonies": {}}
+            mock_db.get_symphony_strategy.return_value = {"params": {}, "locked_vars": {}}
             mock_db.normalize_name.side_effect = lambda n: n.strip().lower()
             mock_db.wipe_transient_state.side_effect = lambda s: s
             # Wire the REAL C-2 functions through the mocked database so the
@@ -405,9 +400,7 @@ class TestRebalanceDoesNotResetLivePosition:
             # would call bare MagicMocks and the test would pass for the
             # WRONG reason (the real reset never running).
             if hasattr(database, "is_new_position_open"):
-                mock_db.is_new_position_open.side_effect = (
-                    database.is_new_position_open
-                )
+                mock_db.is_new_position_open.side_effect = database.is_new_position_open
             if hasattr(database, "reset_symphony_position_state"):
                 mock_db.reset_symphony_position_state.side_effect = (
                     database.reset_symphony_position_state
@@ -416,10 +409,20 @@ class TestRebalanceDoesNotResetLivePosition:
             mock_fetch.return_value = [rebalanced_payload]
             mock_hist.return_value = {
                 "2026-05-21": {
-                    "SPY": {"c": 500.0, "daily_ret": 0.001,
-                            "high": 501.0, "low": 499.0, "close": 500.0},
-                    "QQQ": {"c": 400.0, "daily_ret": 0.001,
-                            "high": 401.0, "low": 399.0, "close": 400.0},
+                    "SPY": {
+                        "c": 500.0,
+                        "daily_ret": 0.001,
+                        "high": 501.0,
+                        "low": 499.0,
+                        "close": 500.0,
+                    },
+                    "QQQ": {
+                        "c": 400.0,
+                        "daily_ret": 0.001,
+                        "high": 401.0,
+                        "low": 399.0,
+                        "close": 400.0,
+                    },
                 }
             }
             mock_vwap.return_value = {
@@ -497,9 +500,7 @@ class TestNoCompositionHashPositionDetection:
                 and isinstance(node.value, str)
                 and node.value in forbidden
             ):
-                offenders.append(
-                    f"string '{node.value}' at line {node.lineno}"
-                )
+                offenders.append(f"string '{node.value}' at line {node.lineno}")
 
         assert not offenders, (
             "The composition-hash position-open detection has crept back "

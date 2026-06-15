@@ -30,9 +30,7 @@ import pathlib
 import pytest
 
 _WORKTREE_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_FIXTURE_PATH = (
-    _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "cscv_date_returns_persist.json"
-)
+_FIXTURE_PATH = _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "cscv_date_returns_persist.json"
 
 
 @pytest.fixture(scope="module")
@@ -47,10 +45,12 @@ def persist_fixture() -> dict:
 
 def _import_autotuner():
     import sys
+
     repo = str(_WORKTREE_ROOT)
     if repo not in sys.path:
         sys.path.insert(0, repo)
     import autotuner
+
     return autotuner
 
 
@@ -66,6 +66,7 @@ def _autotuner_ast() -> ast.Module:
 # Structural: cscv_date_returns user_attr must be set in the objective closure
 # ---------------------------------------------------------------------------
 
+
 class TestCscvDateReturnsSetUserAttr:
     """The Optuna objective closure must call trial.set_user_attr('cscv_date_returns', ...)."""
 
@@ -77,7 +78,9 @@ class TestCscvDateReturnsSetUserAttr:
             "the per-trial date-labeled return dict user_attr required for the CSCV PBO gate"
         )
         # Verify it is actually being set via set_user_attr, not just referenced in a comment.
-        assert 'set_user_attr("cscv_date_returns"' in src or "set_user_attr('cscv_date_returns'" in src, (
+        assert (
+            'set_user_attr("cscv_date_returns"' in src or "set_user_attr('cscv_date_returns'" in src
+        ), (
             "autotuner.py must call trial.set_user_attr('cscv_date_returns', ...) "
             "in the Optuna objective closure"
         )
@@ -91,14 +94,13 @@ class TestCscvDateReturnsSetUserAttr:
         # The value assigned must use the {} / dict union pattern, not extend[].
         # We check via AST: the set_user_attr call for cscv_date_returns must NOT
         # pass a list.extend or list.append result.
-        assert "cscv_date_returns" in src, (
-            "cscv_date_returns must be defined in autotuner.py"
-        )
+        assert "cscv_date_returns" in src, "cscv_date_returns must be defined in autotuner.py"
 
 
 # ---------------------------------------------------------------------------
 # Partition invariant: union has no date collisions
 # ---------------------------------------------------------------------------
+
 
 class TestCscvDateReturnsPartitionInvariant:
     """The union of per-path (date, return) pairs must have no duplicate date keys."""
@@ -163,6 +165,7 @@ class TestCscvDateReturnsPartitionInvariant:
 # Content invariants: only triggered days, dates within eligible window
 # ---------------------------------------------------------------------------
 
+
 class TestCscvDateReturnsContentInvariants:
     """cscv_date_returns must contain only triggered days within the eligible window."""
 
@@ -178,7 +181,10 @@ class TestCscvDateReturnsContentInvariants:
         )
         # This is a structural/invariant test — the actual enforcement is in the
         # implementation. We verify the contract is documented in the fixture.
-        assert persist_fixture["scenarios"]["dates_within_eligible_window_only"]["assertion_kind"] == "set_membership"
+        assert (
+            persist_fixture["scenarios"]["dates_within_eligible_window_only"]["assertion_kind"]
+            == "set_membership"
+        )
 
     def test_cscv_date_returns_empty_when_no_triggered_days(self, persist_fixture):
         """When no day triggers an exit, cscv_date_returns must be an empty dict."""
@@ -210,6 +216,7 @@ class TestCscvDateReturnsContentInvariants:
 # daily_returns unchanged: the existing user_attr must not be broken
 # ---------------------------------------------------------------------------
 
+
 class TestDailyReturnsUnchangedByChange1:
     """The existing daily_returns user_attr must remain intact after Change 1.
 
@@ -231,12 +238,10 @@ class TestDailyReturnsUnchangedByChange1:
         """Both 'daily_returns' and 'cscv_date_returns' must be set in the objective closure."""
         src = _autotuner_src()
         has_daily_returns = (
-            'set_user_attr("daily_returns"' in src
-            or "set_user_attr('daily_returns'" in src
+            'set_user_attr("daily_returns"' in src or "set_user_attr('daily_returns'" in src
         )
         has_cscv_returns = (
-            'set_user_attr("cscv_date_returns"' in src
-            or "set_user_attr('cscv_date_returns'" in src
+            'set_user_attr("cscv_date_returns"' in src or "set_user_attr('cscv_date_returns'" in src
         )
         assert has_daily_returns, (
             "trial.set_user_attr('daily_returns', ...) must be present — BHY haircut depends on it"

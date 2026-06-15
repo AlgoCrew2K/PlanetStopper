@@ -49,9 +49,7 @@ import pytest
 _WORKTREE = pathlib.Path(__file__).parent.parent.parent
 _STATIC_DIR = _WORKTREE / "static"
 _TEMPLATES_DIR = _WORKTREE / "templates"
-_FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent / "fixtures" / "dashboard" / "cards_live"
-)
+_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "dashboard" / "cards_live"
 
 
 def _load_fixture(name: str) -> dict:
@@ -107,9 +105,7 @@ def fixture_state() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_api_state_carries_symphonies_field_keyed_by_id(
-    flask_client, fixture_state, monkeypatch
-):
+def test_api_state_carries_symphonies_field_keyed_by_id(flask_client, fixture_state, monkeypatch):
     """
     /api/state must include a top-level `symphonies` key whose value is a dict
     (or list) keyed/indexed by symphony id, enabling the JS card-update path.
@@ -121,9 +117,7 @@ def test_api_state_carries_symphonies_field_keyed_by_id(
 
     with patch.object(app_module, "database") as db_mock:
         db_mock.load_state.return_value = fixture_state
-        db_mock.normalize_name.side_effect = (
-            lambda n: (n or "").lower().replace(" ", "_")
-        )
+        db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
         db_mock.get_shadow_divergence.return_value = {
             "by_symphony": {},
             "portfolio_today": None,
@@ -199,9 +193,7 @@ def test_api_state_symphonies_field_reflects_exited_symphony(
 
     with patch.object(app_module, "database") as db_mock:
         db_mock.load_state.return_value = fixture_state
-        db_mock.normalize_name.side_effect = (
-            lambda n: (n or "").lower().replace(" ", "_")
-        )
+        db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
         db_mock.get_shadow_divergence.return_value = {
             "by_symphony": {},
             "portfolio_today": None,
@@ -220,8 +212,7 @@ def test_api_state_symphonies_field_reflects_exited_symphony(
 
     symphonies = body.get("symphonies")
     assert symphonies is not None, (
-        "AC-CL.2 FAIL: `symphonies` field absent. "
-        "Cannot verify triggered state without the field."
+        "AC-CL.2 FAIL: `symphonies` field absent. Cannot verify triggered state without the field."
     )
 
     if isinstance(symphonies, list):
@@ -260,9 +251,7 @@ def test_api_state_existing_fields_preserved_after_symphonies_added(
 
     with patch.object(app_module, "database") as db_mock:
         db_mock.load_state.return_value = fixture_state
-        db_mock.normalize_name.side_effect = (
-            lambda n: (n or "").lower().replace(" ", "_")
-        )
+        db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
         db_mock.get_shadow_divergence.return_value = {
             "by_symphony": {},
             "portfolio_today": None,
@@ -402,7 +391,7 @@ def test_index_js_does_not_inject_html_field_into_dom():
             "This injects the dark table_partial.html render into the DOM and "
             "overrides the light card UI — exactly the pattern that broke the "
             "prior cycle. Do NOT use the `html` field for rendering. "
-            f"Found match near: {content[max(0, match.start()-40):match.end()+40]!r}"
+            f"Found match near: {content[max(0, match.start() - 40) : match.end() + 40]!r}"
         )
 
 
@@ -585,7 +574,7 @@ def test_index_js_update_cards_updates_mc_dial_from_sym_mc_prob():
         "AC-CL.11 FAIL: function updateCards not found in static/index.js."
     )
     # Take 2000 chars past the function start — sufficient to cover the function body.
-    update_cards_body = content[update_cards_start: update_cards_start + 2000]
+    update_cards_body = content[update_cards_start : update_cards_start + 2000]
 
     has_mc_prob_in_update_cards = (
         "sym.mc_prob" in update_cards_body

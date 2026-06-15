@@ -110,11 +110,11 @@ def _ref_collect_tickers(node: Any, out: set[str] | None = None) -> set[str]:
                 if not isinstance(cond, dict):
                     continue
                 # binary-compound: collect from top-level tickers list.
-                for t in (cond.get("tickers") or []):
+                for t in cond.get("tickers") or []:
                     if isinstance(t, str) and t and t != "%":
                         out.add(t)
                 # compound: recurse into sub-conditions.
-                for sub in (cond.get("conditions") or []):
+                for sub in cond.get("conditions") or []:
                     if isinstance(sub, dict):
                         cond_stack.append(sub)
         for child in current.get("children") or []:
@@ -2858,8 +2858,7 @@ class TestGrammarFoundationComparatorWidening:
         expected = frozenset({"gt", "lt", "gte", "lte"})
         actual = frozenset(m.KNOWN_COMPARATORS)
         assert actual == expected, (
-            f"AC-1: KNOWN_COMPARATORS must be exactly {{gt, lt, gte, lte}}. "
-            f"Got: {sorted(actual)}"
+            f"AC-1: KNOWN_COMPARATORS must be exactly {{gt, lt, gte, lte}}. Got: {sorted(actual)}"
         )
 
     def test_all_four_comparators_produce_no_hard_errors(self):
@@ -2945,8 +2944,7 @@ class TestGrammarFoundationRebalanceWidening:
         tree = self._make_root_with_rebalance("quarterly")
         errors = m.validate_tree(tree)
         assert errors == [], (
-            f"AC-2: rebalance 'quarterly' (n≈58 corpus) must produce no hard errors. "
-            f"Got: {errors}"
+            f"AC-2: rebalance 'quarterly' (n≈58 corpus) must produce no hard errors. Got: {errors}"
         )
 
     def test_yearly_rebalance_produces_no_hard_errors(self):
@@ -2955,8 +2953,7 @@ class TestGrammarFoundationRebalanceWidening:
         tree = self._make_root_with_rebalance("yearly")
         errors = m.validate_tree(tree)
         assert errors == [], (
-            f"AC-2: rebalance 'yearly' (n≈27 corpus) must produce no hard errors. "
-            f"Got: {errors}"
+            f"AC-2: rebalance 'yearly' (n≈27 corpus) must produce no hard errors. Got: {errors}"
         )
 
     def test_known_rebalance_contains_quarterly_and_yearly(self):
@@ -3013,8 +3010,8 @@ class TestGrammarFoundationIndicatorFnWidening:
 
     # The 6 new corpus-verified indicator fns from the grammar-foundation plan.
     _NEW_INDICATOR_FNS = (
-        "exponential-moving-average-price",    # n≈45,816 in corpus
-        "standard-deviation-price",            # n≈5,572 in corpus (was lint-warning before)
+        "exponential-moving-average-price",  # n≈45,816 in corpus
+        "standard-deviation-price",  # n≈5,572 in corpus (was lint-warning before)
         "percentage-price-oscillator",
         "percentage-price-oscillator-signal",
         "upper-bollinger",
@@ -3603,10 +3600,13 @@ class TestMakeCompoundCondition:
 
         tlt_lhs = m.make_condition_operand("cumulative-return", "TLT", window=200)
         bil_lhs = m.make_condition_operand("cumulative-return", "BIL", window=20)
-        inner_any = m.make_compound_condition("any", [
-            m.make_binary_condition(tlt_lhs, "gt", m.make_constant_rhs(0)),
-            m.make_binary_condition(bil_lhs, "gt", m.make_constant_rhs(0)),
-        ])
+        inner_any = m.make_compound_condition(
+            "any",
+            [
+                m.make_binary_condition(tlt_lhs, "gt", m.make_constant_rhs(0)),
+                m.make_binary_condition(bil_lhs, "gt", m.make_constant_rhs(0)),
+            ],
+        )
 
         outer_all = m.make_compound_condition("all", [rsi_cond, inner_any])
         assert outer_all.get("condition-type") == "compound"
@@ -3692,13 +3692,10 @@ class TestMakeIfCompound:
         )
         children = if_node.get("children", [])
         true_branch = next(
-            (c for c in children
-             if isinstance(c, dict) and not c.get("is-else-condition?")),
+            (c for c in children if isinstance(c, dict) and not c.get("is-else-condition?")),
             None,
         )
-        assert true_branch is not None, (
-            "AC-8: make_if_compound must produce a true-branch if-child"
-        )
+        assert true_branch is not None, "AC-8: make_if_compound must produce a true-branch if-child"
         assert true_branch.get("step") == "if-child", (
             f"AC-8: true branch must have step='if-child'; got {true_branch.get('step')!r}"
         )
@@ -3751,8 +3748,7 @@ class TestMakeIfCompound:
         )
         children = if_node.get("children", [])
         else_branch = next(
-            (c for c in children
-             if isinstance(c, dict) and c.get("is-else-condition?")),
+            (c for c in children if isinstance(c, dict) and c.get("is-else-condition?")),
             None,
         )
         assert else_branch is not None, (
@@ -3820,9 +3816,7 @@ class TestFrontrunnerOverlayIntegration:
     def _build_frontrunner_overlay(self, m) -> dict:
         """Build the complete frontrunner overlay tree using the new compound constructors."""
         # Vol basket: inverse-vol allocation over two ETFs
-        vol_basket = m.make_inverse_vol([
-            m.make_asset(t) for t in self._VOL_BASKET_TICKERS
-        ])
+        vol_basket = m.make_inverse_vol([m.make_asset(t) for t in self._VOL_BASKET_TICKERS])
         # Base: equal-weighted single asset
         base = m.make_weight_equal([m.make_asset(t) for t in self._BASE_TICKERS])
         # Frontrunner condition: RSI of ANY([EYEG, LQD, XLV]) > 80, window=10
@@ -3852,9 +3846,7 @@ class TestFrontrunnerOverlayIntegration:
         m = _import_schema()
         tree = self._build_frontrunner_overlay(m)
         errors = m.validate_tree(tree)
-        assert errors == [], (
-            f"AC-9: frontrunner overlay tree must validate clean; got: {errors}"
-        )
+        assert errors == [], f"AC-9: frontrunner overlay tree must validate clean; got: {errors}"
 
     def test_frontrunner_overlay_extract_tickers_excludes_percent_placeholder(self):
         """AC-9: extract_tickers must NOT include the '%' placeholder ticker.
@@ -3878,8 +3870,7 @@ class TestFrontrunnerOverlayIntegration:
         all_expected = set(self._WATCHED_TICKERS + self._VOL_BASKET_TICKERS + self._BASE_TICKERS)
         missing = all_expected - tickers
         assert not missing, (
-            f"AC-9: extract_tickers is missing real tickers: {missing}. "
-            f"Got: {tickers}"
+            f"AC-9: extract_tickers is missing real tickers: {missing}. Got: {tickers}"
         )
 
     def test_frontrunner_overlay_render_rules_text_contains_any_gate(self):
@@ -4321,16 +4312,28 @@ class TestCompoundConditionInvariants:
         m = _import_schema()
         rhs = m.make_constant_rhs(80)
         cond = m.make_binary_compound_condition(
-            "relative-strength-index", ["SPY"], "gt", rhs, window=10,
+            "relative-strength-index",
+            ["SPY"],
+            "gt",
+            rhs,
+            window=10,
         )
         if1 = m.make_if_compound(
-            cond, then_children=[m.make_asset("SPY")], else_children=[m.make_asset("BIL")],
+            cond,
+            then_children=[m.make_asset("SPY")],
+            else_children=[m.make_asset("BIL")],
         )
         cond2 = m.make_binary_compound_condition(
-            "relative-strength-index", ["SPY"], "gt", rhs, window=10,
+            "relative-strength-index",
+            ["SPY"],
+            "gt",
+            rhs,
+            window=10,
         )
         if2 = m.make_if_compound(
-            cond2, then_children=[m.make_asset("SPY")], else_children=[m.make_asset("BIL")],
+            cond2,
+            then_children=[m.make_asset("SPY")],
+            else_children=[m.make_asset("BIL")],
         )
         assert if1.get("id") != if2.get("id"), (
             "AC-11: two make_if_compound calls must produce different ids (fresh UUID each time)"
@@ -4341,10 +4344,16 @@ class TestCompoundConditionInvariants:
         m = _import_schema()
         rhs = m.make_constant_rhs(80)
         cond = m.make_binary_compound_condition(
-            "relative-strength-index", ["SPY", "QQQ"], "gt", rhs, window=10,
+            "relative-strength-index",
+            ["SPY", "QQQ"],
+            "gt",
+            rhs,
+            window=10,
         )
         if_node = m.make_if_compound(
-            cond, then_children=[m.make_asset("SPY")], else_children=[m.make_asset("BIL")],
+            cond,
+            then_children=[m.make_asset("SPY")],
+            else_children=[m.make_asset("BIL")],
         )
         # Mutate the original condition block
         original_tickers = list(cond.get("tickers", []))
@@ -4368,12 +4377,18 @@ class TestCompoundConditionInvariants:
         m = _import_schema()
         rhs = m.make_constant_rhs(80)
         cond = m.make_binary_compound_condition(
-            "relative-strength-index", ["SPY"], "gt", rhs, window=10,
+            "relative-strength-index",
+            ["SPY"],
+            "gt",
+            rhs,
+            window=10,
         )
         then_asset = m.make_asset("SPY")
         then_list = [then_asset]
         if_node = m.make_if_compound(
-            cond, then_children=then_list, else_children=[m.make_asset("BIL")],
+            cond,
+            then_children=then_list,
+            else_children=[m.make_asset("BIL")],
         )
         # Mutate the input then_list
         then_list.append(m.make_asset("QQQ"))
@@ -4394,7 +4409,11 @@ class TestCompoundConditionInvariants:
         m = _import_schema()
         rhs = m.make_constant_rhs(80)
         cond = m.make_binary_compound_condition(
-            "relative-strength-index", ["SPY", "QQQ"], "gt", rhs, window=10,
+            "relative-strength-index",
+            ["SPY", "QQQ"],
+            "gt",
+            rhs,
+            window=10,
         )
         if_node = m.make_if_compound(
             cond,
@@ -4414,7 +4433,11 @@ class TestCompoundConditionInvariants:
         m = _import_schema()
         rhs = m.make_constant_rhs(80)
         cond = m.make_binary_compound_condition(
-            "relative-strength-index", ["SPY", "QQQ"], "gt", rhs, window=10,
+            "relative-strength-index",
+            ["SPY", "QQQ"],
+            "gt",
+            rhs,
+            window=10,
         )
         if_node = m.make_if_compound(
             cond,
@@ -4434,7 +4457,11 @@ class TestCompoundConditionInvariants:
         m = _import_schema()
         rhs = m.make_constant_rhs(80)
         cond = m.make_binary_compound_condition(
-            "relative-strength-index", ["SPY"], "gt", rhs, window=10,
+            "relative-strength-index",
+            ["SPY"],
+            "gt",
+            rhs,
+            window=10,
         )
         if_node = m.make_if_compound(
             cond,
@@ -4445,7 +4472,9 @@ class TestCompoundConditionInvariants:
         try:
             warnings = m.lint_tree(root)
         except Exception as exc:
-            pytest.fail(f"AC-11: lint_tree raised {type(exc).__name__} on compound block tree: {exc}")
+            pytest.fail(
+                f"AC-11: lint_tree raised {type(exc).__name__} on compound block tree: {exc}"
+            )
         assert isinstance(warnings, list)
 
 
@@ -4473,16 +4502,21 @@ class TestGrammarFoundationNoRegression:
         )
         root = m.make_root("AC-12 Regression", "daily", [m.make_weight_equal([if_node])])
         errors = m.validate_tree(root)
-        assert errors == [], (
-            f"AC-12: flat constructor pipeline regression; got errors: {errors}"
-        )
+        assert errors == [], f"AC-12: flat constructor pipeline regression; got errors: {errors}"
 
     def test_known_steps_unchanged(self):
         """AC-12: KNOWN_STEPS must still contain all 9 original step values (none removed)."""
         m = _import_schema()
         original_steps = {
-            "root", "group", "if", "if-child", "filter",
-            "wt-cash-equal", "wt-cash-specified", "wt-inverse-vol", "asset",
+            "root",
+            "group",
+            "if",
+            "if-child",
+            "filter",
+            "wt-cash-equal",
+            "wt-cash-specified",
+            "wt-inverse-vol",
+            "asset",
         }
         missing = original_steps - set(m.KNOWN_STEPS)
         assert not missing, (
@@ -4493,9 +4527,13 @@ class TestGrammarFoundationNoRegression:
         """AC-12: The original 7 VERIFIED-LOCAL indicator fns must still be in KNOWN_INDICATOR_FNS."""
         m = _import_schema()
         original_fns = {
-            "relative-strength-index", "cumulative-return", "max-drawdown",
-            "current-price", "standard-deviation-return",
-            "moving-average-price", "moving-average-return",
+            "relative-strength-index",
+            "cumulative-return",
+            "max-drawdown",
+            "current-price",
+            "standard-deviation-return",
+            "moving-average-price",
+            "moving-average-return",
         }
         missing = original_fns - set(m.KNOWN_INDICATOR_FNS)
         assert not missing, (

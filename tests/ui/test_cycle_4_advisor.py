@@ -104,22 +104,37 @@ def _patch_advisor():
     # DEV_ADVISOR_FIXTURE in .env bypasses the mocked route path; clear it for tests.
     _prev_dev_fixture = os.environ.pop("DEV_ADVISOR_FIXTURE", None)
     try:
-        with patch("ai_advisor.request_suggestions") as mock_suggest, \
-             patch("ai_advisor.assemble_advisor_context") as mock_ctx, \
-             patch("ai_advisor.enforce_suggestion_allowlist") as mock_allow, \
-             patch("ai_advisor.check_risk_direction_agreement") as mock_risk, \
-             patch("ai_advisor.revalidate_suggestion_oos") as mock_oos, \
-             patch("database.get_all_autotune_runs", return_value=_AUTOTUNE_RUNS_STUB), \
-             patch("database.get_symphony_strategy", return_value={"params": {}, "locked_vars": []}), \
-             patch("database.save_symphony_strategy"):
+        with (
+            patch("ai_advisor.request_suggestions") as mock_suggest,
+            patch("ai_advisor.assemble_advisor_context") as mock_ctx,
+            patch("ai_advisor.enforce_suggestion_allowlist") as mock_allow,
+            patch("ai_advisor.check_risk_direction_agreement") as mock_risk,
+            patch("ai_advisor.revalidate_suggestion_oos") as mock_oos,
+            patch("database.get_all_autotune_runs", return_value=_AUTOTUNE_RUNS_STUB),
+            patch("database.get_symphony_strategy", return_value={"params": {}, "locked_vars": []}),
+            patch("database.save_symphony_strategy"),
+        ):
             # Default: request_suggestions returns a stub response
             import ai_advisor as _ai
+
             fake_response = MagicMock()
             fake_response.suggestions = [
-                _ai.ConfigSuggestion(**{k: v for k, v in s.items()
-                                        if k in {"config_key", "current_value", "suggested_value",
-                                                 "rationale", "risk_direction", "confidence",
-                                                 "data_sufficiency"}})
+                _ai.ConfigSuggestion(
+                    **{
+                        k: v
+                        for k, v in s.items()
+                        if k
+                        in {
+                            "config_key",
+                            "current_value",
+                            "suggested_value",
+                            "rationale",
+                            "risk_direction",
+                            "confidence",
+                            "data_sufficiency",
+                        }
+                    }
+                )
                 for s in _SUGGESTIONS_STUB
             ]
             mock_suggest.return_value = (fake_response, None)
@@ -143,6 +158,7 @@ def _patch_advisor():
 def adv_client():
     """Flask test client for the advisor surface."""
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         yield c
@@ -188,10 +204,12 @@ def test_advisor_accept_post_200(adv_client):
     with _patch_advisor():
         resp = adv_client.post(
             "/ai-advisor/accept",
-            data=json.dumps({
-                "symphony_id": "my_symphony",
-                "suggestion": _SUGGESTIONS_STUB[0],
-            }),
+            data=json.dumps(
+                {
+                    "symphony_id": "my_symphony",
+                    "suggestion": _SUGGESTIONS_STUB[0],
+                }
+            ),
             content_type="application/json",
         )
     assert resp.status_code == 200
@@ -201,10 +219,12 @@ def test_advisor_reject_post_200(adv_client):
     with _patch_advisor():
         resp = adv_client.post(
             "/ai-advisor/reject",
-            data=json.dumps({
-                "symphony_id": "my_symphony",
-                "suggestion": _SUGGESTIONS_STUB[0],
-            }),
+            data=json.dumps(
+                {
+                    "symphony_id": "my_symphony",
+                    "suggestion": _SUGGESTIONS_STUB[0],
+                }
+            ),
             content_type="application/json",
         )
     assert resp.status_code == 200
@@ -600,18 +620,20 @@ def test_accept_returns_accepted_status(adv_client):
     with _patch_advisor():
         resp = adv_client.post(
             "/ai-advisor/accept",
-            data=json.dumps({
-                "symphony_id": "s1",
-                "suggestion": {
-                    "config_key": "VOLATILITY_FLOOR",
-                    "current_value": 0.02,
-                    "suggested_value": 0.025,
-                    "rationale": "test",
-                    "risk_direction": "tightens",
-                    "confidence": "high",
-                    "data_sufficiency": "sufficient",
-                },
-            }),
+            data=json.dumps(
+                {
+                    "symphony_id": "s1",
+                    "suggestion": {
+                        "config_key": "VOLATILITY_FLOOR",
+                        "current_value": 0.02,
+                        "suggested_value": 0.025,
+                        "rationale": "test",
+                        "risk_direction": "tightens",
+                        "confidence": "high",
+                        "data_sufficiency": "sufficient",
+                    },
+                }
+            ),
             content_type="application/json",
         )
     body = json.loads(resp.data)
@@ -635,18 +657,20 @@ def test_accept_blocked_when_oos_fails(adv_client):
         mocks["mock_oos"].return_value = {"passed": False, "detail": "OOS alpha -0.1 below floor"}
         resp = adv_client.post(
             "/ai-advisor/accept",
-            data=json.dumps({
-                "symphony_id": "s1",
-                "suggestion": {
-                    "config_key": "VOLATILITY_FLOOR",
-                    "current_value": 0.02,
-                    "suggested_value": 0.025,
-                    "rationale": "test",
-                    "risk_direction": "tightens",
-                    "confidence": "high",
-                    "data_sufficiency": "sufficient",
-                },
-            }),
+            data=json.dumps(
+                {
+                    "symphony_id": "s1",
+                    "suggestion": {
+                        "config_key": "VOLATILITY_FLOOR",
+                        "current_value": 0.02,
+                        "suggested_value": 0.025,
+                        "rationale": "test",
+                        "risk_direction": "tightens",
+                        "confidence": "high",
+                        "data_sufficiency": "sufficient",
+                    },
+                }
+            ),
             content_type="application/json",
         )
     body = json.loads(resp.data)
@@ -659,18 +683,20 @@ def test_accept_blocked_when_not_in_allowlist(adv_client):
         mocks["mock_allow"].return_value = ([], [MagicMock()])
         resp = adv_client.post(
             "/ai-advisor/accept",
-            data=json.dumps({
-                "symphony_id": "s1",
-                "suggestion": {
-                    "config_key": "FORBIDDEN_KEY",
-                    "current_value": 1,
-                    "suggested_value": 2,
-                    "rationale": "test",
-                    "risk_direction": "neutral",
-                    "confidence": "low",
-                    "data_sufficiency": "sufficient",
-                },
-            }),
+            data=json.dumps(
+                {
+                    "symphony_id": "s1",
+                    "suggestion": {
+                        "config_key": "FORBIDDEN_KEY",
+                        "current_value": 1,
+                        "suggested_value": 2,
+                        "rationale": "test",
+                        "risk_direction": "neutral",
+                        "confidence": "low",
+                        "data_sufficiency": "sufficient",
+                    },
+                }
+            ),
             content_type="application/json",
         )
     body = json.loads(resp.data)
@@ -736,9 +762,7 @@ def test_advisor_html_no_bare_hex(adv_client):
     # Strip HTML comments
     stripped = re.sub(r"<!--.*?-->", "", stripped, flags=re.DOTALL)
     leaks = re.findall(r"#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b", stripped)
-    assert leaks == [], (
-        f"Bare hex color literals found in ai_advisor.html: {leaks[:10]}"
-    )
+    assert leaks == [], f"Bare hex color literals found in ai_advisor.html: {leaks[:10]}"
 
 
 # ===========================================================================
@@ -755,9 +779,7 @@ def test_ai_advisor_js_no_bare_hex():
     # Strip block comments
     stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
     leaks = re.findall(r"#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b", stripped)
-    assert leaks == [], (
-        f"Bare hex color literals found in ai_advisor.js: {leaks}"
-    )
+    assert leaks == [], f"Bare hex color literals found in ai_advisor.js: {leaks}"
 
 
 def test_ai_advisor_js_no_tailwind_classes():
@@ -940,20 +962,20 @@ def _extract_render_suggestions_body(js_path):
     stripped = re.sub(r"//[^\n]*", "", content)
     stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
     # Find the start of renderSuggestions
-    start_match = re.search(r'function\s+renderSuggestions\s*\(', stripped)
+    start_match = re.search(r"function\s+renderSuggestions\s*\(", stripped)
     if start_match is None:
         return None
     # Find the opening brace
-    brace_start = stripped.index('{', start_match.end())
+    brace_start = stripped.index("{", start_match.end())
     depth = 0
     i = brace_start
     while i < len(stripped):
-        if stripped[i] == '{':
+        if stripped[i] == "{":
             depth += 1
-        elif stripped[i] == '}':
+        elif stripped[i] == "}":
             depth -= 1
             if depth == 0:
-                return stripped[brace_start + 1:i]
+                return stripped[brace_start + 1 : i]
         i += 1
     return None
 

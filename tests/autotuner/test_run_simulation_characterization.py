@@ -163,8 +163,7 @@ def _stub_time_squeeze_passthrough(time_ratio):
     return (1.5, 0.5)
 
 
-def _stub_active_stop_const(vol, mult, min_stop, para_armed, breakeven_locked,
-                            max_para_squeeze):
+def _stub_active_stop_const(vol, mult, min_stop, para_armed, breakeven_locked, max_para_squeeze):
     """compute_active_trailing_stop: returns a fixed 5.0pct trailing distance —
     far enough below the tick return regime that the trailing-stop branch
     does NOT fire on its own; the only way to fire a trigger in these tests
@@ -172,8 +171,7 @@ def _stub_active_stop_const(vol, mult, min_stop, para_armed, breakeven_locked,
     return 5.0
 
 
-def _stub_breakeven_no_lock(ret, vol, base_stop, hwm_hold_ticks,
-                             breakeven_locked, is_triggered):
+def _stub_breakeven_no_lock(ret, vol, base_stop, hwm_hold_ticks, breakeven_locked, is_triggered):
     """compute_breakeven_update: keep hwm_hold_ticks at 0, never lock, pass
     base_stop through unmodified.
 
@@ -255,30 +253,37 @@ def _patches_for_run(
     # that accessor to return 0 disables grace, scoping these tests to their
     # actual intent so their hand-computed expected values stay valid; AC-2's
     # grace behaviour is covered by tests/autotuner/test_c3_replay_vwap_grace.py.
-    with patch("autotuner._replay_grace_minutes", return_value=0), \
-         patch("autotuner.optuna.create_study", return_value=fake_study), \
-         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()), \
-         patch("autotuner.synthetic_history.generate_synthetic_history",
-               return_value=history), \
-         patch("autotuner.database.load_chart_history", return_value={}), \
-         patch("autotuner.database.save_chart_archive"), \
-         patch("autotuner.database.get_symphony_strategy",
-               return_value={"params": fallback_params.copy(), "locked_vars": locked}), \
-         patch("autotuner.database.save_symphony_strategy",
-               side_effect=_capture_save), \
-         patch("autotuner.database.DEFAULT_STRATEGY", default_strategy), \
-         patch("autotuner.math_engine.compute_para_arm_decision",
-               side_effect=_stub_para_arm_no_trigger), \
-         patch("autotuner.math_engine.compute_time_squeeze_decay",
-               side_effect=_stub_time_squeeze_passthrough), \
-         patch("autotuner.math_engine.compute_active_trailing_stop",
-               side_effect=_stub_active_stop_const), \
-         patch("autotuner.math_engine.compute_breakeven_update",
-               side_effect=breakeven_side_effect), \
-         patch("autotuner.math_engine.compute_vwap_bleed_arm_threshold",
-               side_effect=_stub_vwap_bleed_arm_pct), \
-         patch("autotuner.math_engine.compute_vwap_breakdown_update",
-               side_effect=vwap_side_effect):
+    with (
+        patch("autotuner._replay_grace_minutes", return_value=0),
+        patch("autotuner.optuna.create_study", return_value=fake_study),
+        patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
+        patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
+        patch("autotuner.database.load_chart_history", return_value={}),
+        patch("autotuner.database.save_chart_archive"),
+        patch(
+            "autotuner.database.get_symphony_strategy",
+            return_value={"params": fallback_params.copy(), "locked_vars": locked},
+        ),
+        patch("autotuner.database.save_symphony_strategy", side_effect=_capture_save),
+        patch("autotuner.database.DEFAULT_STRATEGY", default_strategy),
+        patch(
+            "autotuner.math_engine.compute_para_arm_decision", side_effect=_stub_para_arm_no_trigger
+        ),
+        patch(
+            "autotuner.math_engine.compute_time_squeeze_decay",
+            side_effect=_stub_time_squeeze_passthrough,
+        ),
+        patch(
+            "autotuner.math_engine.compute_active_trailing_stop",
+            side_effect=_stub_active_stop_const,
+        ),
+        patch("autotuner.math_engine.compute_breakeven_update", side_effect=breakeven_side_effect),
+        patch(
+            "autotuner.math_engine.compute_vwap_bleed_arm_threshold",
+            side_effect=_stub_vwap_bleed_arm_pct,
+        ),
+        patch("autotuner.math_engine.compute_vwap_breakdown_update", side_effect=vwap_side_effect),
+    ):
         yield {
             "save_calls": save_calls,
             "fake_study": fake_study,
@@ -307,12 +312,8 @@ def _run_capture(**kwargs):
 # ---------------------------------------------------------------------------
 
 
-_AI_OOS_PASS_BANNER_POS = re.compile(
-    r"OOS Guard Alpha: \+(?P<alpha>-?\d+\.\d{2})%"
-)
-_AI_OOS_PASS_BANNER_NEG = re.compile(
-    r"OOS Guard Alpha: (?P<alpha>-?\d+\.\d{2})% \(Avg:"
-)
+_AI_OOS_PASS_BANNER_POS = re.compile(r"OOS Guard Alpha: \+(?P<alpha>-?\d+\.\d{2})%")
+_AI_OOS_PASS_BANNER_NEG = re.compile(r"OOS Guard Alpha: (?P<alpha>-?\d+\.\d{2})% \(Avg:")
 _FALLBACK_REVERT_BANNER = re.compile(
     r"\(AI: (?P<ai>-?\d+\.\d{2})%\)\. Reverting to Fallback parameters "
     r"\(Fallback: (?P<fallback>-?\d+\.\d{2})% vs Default: (?P<default>-?\d+\.\d{2})%\)"
@@ -352,9 +353,7 @@ def _extract_alphas(stdout):
     m = _AI_OOS_PASS_BANNER_NEG.search(stdout)
     if m:
         return {"branch": "ai", "ai": float(m.group("alpha"))}
-    raise AssertionError(
-        f"Could not parse any OOS decision banner from stdout:\n{stdout}"
-    )
+    raise AssertionError(f"Could not parse any OOS decision banner from stdout:\n{stdout}")
 
 
 # ---------------------------------------------------------------------------
@@ -400,7 +399,11 @@ def _trigger_tick(ret=3.0, mc_prob=50.0):
 # 5 distinct dates -> 4 train / 1 OOS test. We need at least 2 distinct dates
 # overall (autotuner.py:110-112 aborts on <2 days).
 _TEST_DATES_5 = [
-    "2026-04-01", "2026-04-02", "2026-04-03", "2026-04-04", "2026-04-05",
+    "2026-04-01",
+    "2026-04-02",
+    "2026-04-03",
+    "2026-04-04",
+    "2026-04-05",
 ]
 _TEST_DATES_2 = ["2026-04-01", "2026-04-02"]
 _CURRENT_DATE_STR = "2026-05-10"
@@ -501,7 +504,7 @@ def test_run_simulation_triggered_exit_pins_specific_guard_alpha():
     # no literal hardcoded. D5: no decay weight, so the per-day contribution is
     # just penalty * negative-guard-alpha multiplier.
     DEFAULT_VWAP_BREAKDOWN_PENALTY = -0.40  # calculate_historical_deviation default
-    GUARD_ALPHA_NEGATIVE_MULTIPLIER = 2.0   # NEGATIVE_GUARD_ALPHA_LOSS_AVERSE_MULT
+    GUARD_ALPHA_NEGATIVE_MULTIPLIER = 2.0  # NEGATIVE_GUARD_ALPHA_LOSS_AVERSE_MULT
 
     # guard_alpha (per day, single-day OOS) = penalty * 2.0 (no decay weight).
     # run_simulation returns -total_guard_alpha; caller flips back ->
@@ -600,19 +603,17 @@ def test_run_simulation_drawdown_penalty_fires_when_peak_exceeds_threshold():
     high_tick = _trigger_tick(ret=4.0)
     peak_tick = _trigger_tick(ret=10.0)
     crash_tick = _trigger_tick(ret=1.0)
-    history = _make_history(
-        {d: [high_tick, peak_tick, crash_tick] for d in _TEST_DATES_5}
-    )
+    history = _make_history({d: [high_tick, peak_tick, crash_tick] for d in _TEST_DATES_5})
 
     # Hand-compute expected total_guard_alpha per OOS day. Re-pinned for
     # Decision D5: no recency-decay weight — the objective appends RAW
     # guard-alpha, so the per-day weight is 1.0 (no exp(-rate·days_ago) factor)
     # and the contribution no longer depends on the trigger date.
     DEFAULT_VWAP_BREAKDOWN_PENALTY = -0.40
-    MISSED_UPSIDE_THRESHOLD = 1.0   # MISSED_UPSIDE_PENALTY_THRESHOLD
+    MISSED_UPSIDE_THRESHOLD = 1.0  # MISSED_UPSIDE_PENALTY_THRESHOLD
     MISSED_UPSIDE_MULTIPLIER = 1.5  # MISSED_UPSIDE_PENALTY_MULT
-    DRAWDOWN_THRESHOLD = 1.5        # DRAWDOWN_PENALTY_THRESHOLD
-    DRAWDOWN_MULTIPLIER = 0.75      # DRAWDOWN_PENALTY_MULT
+    DRAWDOWN_THRESHOLD = 1.5  # DRAWDOWN_PENALTY_THRESHOLD
+    DRAWDOWN_MULTIPLIER = 0.75  # DRAWDOWN_PENALTY_MULT
     GUARD_ALPHA_NEG_MULTIPLIER = 2.0  # NEGATIVE_GUARD_ALPHA_LOSS_AVERSE_MULT
 
     weight = 1.0  # D5: recency-decay weighting removed — raw guard-alpha
@@ -798,13 +799,9 @@ def test_locked_vars_round_trip_through_run_autotuner_unaffected_by_run_simulati
     # Run simulation produces the same alpha regardless of locked_vars.
     assert alphas_locked["ai"] == pytest.approx(alphas_unlocked["ai"], abs=1e-9)
     if "fallback" in alphas_locked and "fallback" in alphas_unlocked:
-        assert alphas_locked["fallback"] == pytest.approx(
-            alphas_unlocked["fallback"], abs=1e-9
-        )
+        assert alphas_locked["fallback"] == pytest.approx(alphas_unlocked["fallback"], abs=1e-9)
     if "default" in alphas_locked and "default" in alphas_unlocked:
-        assert alphas_locked["default"] == pytest.approx(
-            alphas_unlocked["default"], abs=1e-9
-        )
+        assert alphas_locked["default"] == pytest.approx(alphas_unlocked["default"], abs=1e-9)
 
     # locked_vars round-trips byte-equivalently into save_symphony_strategy.
     assert len(ctx_locked["save_calls"]) == 1

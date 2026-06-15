@@ -40,8 +40,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 _FIXTURE_PATH = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures" / "database" / "autotune_inf_row.json"
+    pathlib.Path(__file__).parent.parent / "fixtures" / "database" / "autotune_inf_row.json"
 )
 
 _NUMERIC_FIELDS = (
@@ -112,6 +111,7 @@ def _make_raw_row(overrides: dict) -> tuple:
 # AC-INF.1: float('-inf') in numeric fields → None in returned dict
 # ===========================================================================
 
+
 class TestNegInfCoercedToNone:
     """
     AC-INF.1: _autotune_run_row_to_dict must coerce float('-inf') to None
@@ -119,17 +119,20 @@ class TestNegInfCoercedToNone:
     trials that produce no valid trades.
     """
 
-    @pytest.mark.parametrize("field", [
-        "oos_alpha",
-        "train_alpha",
-        "fallback_oos_alpha",
-        "default_oos_alpha",
-        "selection_tstat",
-        "naive_sharpe",
-        "validation_sharpe",
-        "frozen_eval_sharpe",
-        "sortino_sentinel_pct",
-    ])
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "oos_alpha",
+            "train_alpha",
+            "fallback_oos_alpha",
+            "default_oos_alpha",
+            "selection_tstat",
+            "naive_sharpe",
+            "validation_sharpe",
+            "frozen_eval_sharpe",
+            "sortino_sentinel_pct",
+        ],
+    )
     def test_neg_inf_field_coerced_to_none(self, field):
         """AC-INF.1: float('-inf') in {field} → None."""
         import database as db_module
@@ -147,6 +150,7 @@ class TestNegInfCoercedToNone:
 # ===========================================================================
 # AC-INF.5: float('inf') and float('nan') also coerced to None
 # ===========================================================================
+
 
 class TestPosInfAndNanCoercedToNone:
     """
@@ -180,6 +184,7 @@ class TestPosInfAndNanCoercedToNone:
 # ===========================================================================
 # AC-INF.4: Finite values pass through unchanged
 # ===========================================================================
+
 
 class TestFiniteValuesUnchanged:
     """
@@ -227,11 +232,13 @@ class TestFiniteValuesUnchanged:
         """
         import database as db_module
 
-        row = _make_raw_row({
-            "baseline_decision": "HOLD",
-            "math_mode": "per_symphony",
-            "account_id": "ACC-INDIVIDUAL",
-        })
+        row = _make_raw_row(
+            {
+                "baseline_decision": "HOLD",
+                "math_mode": "per_symphony",
+                "account_id": "ACC-INDIVIDUAL",
+            }
+        )
         result = db_module._autotune_run_row_to_dict(row)
 
         assert result["baseline_decision"] == "HOLD", (
@@ -249,6 +256,7 @@ class TestFiniteValuesUnchanged:
 # AC-INF.2: json.dumps succeeds without allow_nan
 # ===========================================================================
 
+
 class TestJsonDumpsWithoutAllowNan:
     """
     AC-INF.2: json.dumps(row_dict) must not raise ValueError when the row
@@ -261,13 +269,15 @@ class TestJsonDumpsWithoutAllowNan:
         """AC-INF.2: dict from row with float('-inf') fields serializes without allow_nan."""
         import database as db_module
 
-        row = _make_raw_row({
-            "oos_alpha": float("-inf"),
-            "train_alpha": float("-inf"),
-            "selection_tstat": float("-inf"),
-            "naive_sharpe": float("nan"),
-            "validation_sharpe": float("inf"),
-        })
+        row = _make_raw_row(
+            {
+                "oos_alpha": float("-inf"),
+                "train_alpha": float("-inf"),
+                "selection_tstat": float("-inf"),
+                "naive_sharpe": float("nan"),
+                "validation_sharpe": float("inf"),
+            }
+        )
         result = db_module._autotune_run_row_to_dict(row)
 
         try:
@@ -290,6 +300,7 @@ class TestJsonDumpsWithoutAllowNan:
 # AC-INF.3: json.loads(json.dumps(row)) round-trips cleanly
 # ===========================================================================
 
+
 class TestJsonRoundTrip:
     """
     AC-INF.3: Simulates the browser: json.loads on the serialized row must
@@ -300,10 +311,12 @@ class TestJsonRoundTrip:
         """AC-INF.3: json.loads(json.dumps(row)) completes without error."""
         import database as db_module
 
-        row = _make_raw_row({
-            "oos_alpha": float("-inf"),
-            "fallback_oos_alpha": float("-inf"),
-        })
+        row = _make_raw_row(
+            {
+                "oos_alpha": float("-inf"),
+                "fallback_oos_alpha": float("-inf"),
+            }
+        )
         result = db_module._autotune_run_row_to_dict(row)
 
         try:

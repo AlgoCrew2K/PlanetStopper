@@ -114,6 +114,7 @@ def _load_fixture() -> dict:
 
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
     _FIXED_ET = datetime(2026, 6, 2, 11, 30, 0, tzinfo=_ET)
 except Exception:
@@ -253,11 +254,22 @@ class _PatchStack:
         )
 
         self._patchers = [
-            patcher_mock_db, patcher_reporting, patcher_fetch_sym,
-            patcher_fetch_hist, patcher_fetch_vwap, patcher_sell,
-            patcher_et, patcher_accounts, patcher_key, patcher_alpaca,
-            patcher_live, patcher_sleep, patcher_argv, patcher_mc,
-            patcher_exit_confirm, patcher_vwap,
+            patcher_mock_db,
+            patcher_reporting,
+            patcher_fetch_sym,
+            patcher_fetch_hist,
+            patcher_fetch_vwap,
+            patcher_sell,
+            patcher_et,
+            patcher_accounts,
+            patcher_key,
+            patcher_alpaca,
+            patcher_live,
+            patcher_sleep,
+            patcher_argv,
+            patcher_mc,
+            patcher_exit_confirm,
+            patcher_vwap,
         ]
 
         started = [p.__enter__() for p in self._patchers]
@@ -270,9 +282,7 @@ class _PatchStack:
 
         mock_db.acquire_lock.return_value = True
         mock_db.load_state.return_value = _seed_state()
-        mock_db.load_chart_history.return_value = {
-            "date": date_str, "symphonies": {}
-        }
+        mock_db.load_chart_history.return_value = {"date": date_str, "symphonies": {}}
         # Include live_mode in the get_symphony_strategy return dict so the exec
         # path's symphony_strat.get("live_mode", False) returns the test-controlled
         # value (PM ruling 2026-06-02: reader contract — no second DB query).
@@ -545,6 +555,7 @@ def test_autotuner_does_not_read_live_mode_from_params_dict():
     # We test this against a real in-memory DB to catch implementation drift.
     import os
     import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
         test_db = os.path.join(tmp, "au1.db")
         orig = db_module.DB_FILE
@@ -552,7 +563,9 @@ def test_autotuner_does_not_read_live_mode_from_params_dict():
         try:
             db_module.init_db()
             db_module.run_migrations()
-            db_module.save_symphony_strategy("au1-sym", db_module.DEFAULT_STRATEGY, db_module.DEFAULT_LOCKED_VARS)
+            db_module.save_symphony_strategy(
+                "au1-sym", db_module.DEFAULT_STRATEGY, db_module.DEFAULT_LOCKED_VARS
+            )
             strategy = db_module.get_symphony_strategy("au1-sym")
         finally:
             db_module.DB_FILE = orig
@@ -592,9 +605,12 @@ def test_save_symphony_strategy_params_do_not_contain_live_mode():
             db_module.run_migrations()
 
             # Simulate what the autotuner does: pass DEFAULT_STRATEGY as params.
-            db_module.save_symphony_strategy("au2-sym", db_module.DEFAULT_STRATEGY, db_module.DEFAULT_LOCKED_VARS)
+            db_module.save_symphony_strategy(
+                "au2-sym", db_module.DEFAULT_STRATEGY, db_module.DEFAULT_LOCKED_VARS
+            )
 
             import sqlite3
+
             conn = sqlite3.connect(test_db)
             try:
                 row = conn.execute(
@@ -633,7 +649,7 @@ def test_discord_alert_receives_per_symphony_effective_mode():
     with _PatchStack(
         _FIXED_ET.strftime("%Y-%m-%d"),
         global_live=True,
-        symphony_live_mode=0,   # symphony is dry-run even though global is on
+        symphony_live_mode=0,  # symphony is dry-run even though global is on
         extra_patches={},
     ) as mocks:
         alpha_bot_execution.main()

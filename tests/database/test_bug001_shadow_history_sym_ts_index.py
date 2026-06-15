@@ -81,8 +81,7 @@ def test_run_migrations_creates_shadow_history_composite_index(migrated_db):
     conn = sqlite3.connect(migrated_db)
     try:
         row = conn.execute(
-            "SELECT name, tbl_name FROM sqlite_master "
-            "WHERE type='index' AND name=?",
+            "SELECT name, tbl_name FROM sqlite_master WHERE type='index' AND name=?",
             (_EXPECTED_INDEX_NAME,),
         ).fetchone()
     finally:
@@ -136,9 +135,7 @@ def test_shadow_history_composite_index_covers_symphony_id_then_ts_utc(migrated_
                 "skip I2 to avoid duplicate noise."
             )
 
-        info_rows = conn.execute(
-            f"PRAGMA index_info('{_EXPECTED_INDEX_NAME}');"
-        ).fetchall()
+        info_rows = conn.execute(f"PRAGMA index_info('{_EXPECTED_INDEX_NAME}');").fetchall()
     finally:
         conn.close()
 

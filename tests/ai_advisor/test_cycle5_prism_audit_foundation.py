@@ -51,6 +51,7 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _reload_pipeline():
     """Import or reload advisors.lens_pipeline cleanly."""
     mod_name = "advisors.lens_pipeline"
@@ -68,6 +69,7 @@ def _python() -> str:
 # AC-3 — MARKET_PRISM raw_response carries run_id
 # ---------------------------------------------------------------------------
 
+
 class TestMarketPrismRunId:
     """run_pipeline() must embed run_id in raw_response so audit entries join."""
 
@@ -84,8 +86,17 @@ class TestMarketPrismRunId:
         that was passed to insert_advisor_observation."""
         pipeline = _reload_pipeline()
 
-        lens_result = self._make_available_lens if lenses_available else (
-            lambda name: {"lens": name, "available": False, "reason": "Unavailable", "sources": []}
+        lens_result = (
+            self._make_available_lens
+            if lenses_available
+            else (
+                lambda name: {
+                    "lens": name,
+                    "available": False,
+                    "reason": "Unavailable",
+                    "sources": [],
+                }
+            )
         )
 
         captured_raw_response = {}
@@ -97,10 +108,12 @@ class TestMarketPrismRunId:
             captured_raw_response.update(raw)
             return 42  # fake row id
 
-        synthesis_response = json.dumps({
-            "overall_sentiment": "neutral",
-            "sentiment_rationale": "Balanced.",
-        })
+        synthesis_response = json.dumps(
+            {
+                "overall_sentiment": "neutral",
+                "sentiment_rationale": "Balanced.",
+            }
+        )
         mock_message = MagicMock()
         mock_message.content = [MagicMock(text=synthesis_response)]
         mock_client = MagicMock()
@@ -109,7 +122,11 @@ class TestMarketPrismRunId:
         build_citation_result = None  # drop all sources
 
         with (
-            patch.object(pipeline, "_call_lens_section", side_effect=lambda name: self._make_available_lens(name)),
+            patch.object(
+                pipeline,
+                "_call_lens_section",
+                side_effect=lambda name: self._make_available_lens(name),
+            ),
             patch("database.insert_advisor_observation", side_effect=capture_insert),
             patch("database.get_connection"),  # prevent real DB open
             patch("ai_advisor.build_citation", return_value=build_citation_result),
@@ -122,9 +139,7 @@ class TestMarketPrismRunId:
     def test_run_pipeline_summary_has_run_ts_key(self):
         # Sanity: the existing AC-1 contract (run_ts in summary) must still hold.
         summary, _ = self._run_pipeline_with_mocked_db()
-        assert "run_ts" in summary, (
-            "run_pipeline() summary must contain 'run_ts'"
-        )
+        assert "run_ts" in summary, "run_pipeline() summary must contain 'run_ts'"
 
     def test_raw_response_carries_run_id(self):
         # AC-3 core assertion: raw_response must contain 'run_id'.
@@ -163,6 +178,7 @@ class TestMarketPrismRunId:
         a row whose raw_response JSON lacks the run_id key.
         """
         import database as db_module
+
         # Insert a legacy-style row (no run_id in raw_response).
         legacy_raw = {
             "run_ts": "2026-06-01T03:00:00+00:00",
@@ -191,15 +207,14 @@ class TestMarketPrismRunId:
 # AC-4 — Agent-callable writer (advisors.prism_audit_write)
 # ---------------------------------------------------------------------------
 
+
 class TestPrismAuditWriteCLI:
     """advisors/prism_audit_write.py — module + CLI contract."""
 
     _MODULE_PATH = _REPO_ROOT / "advisors" / "prism_audit_write.py"
 
     def test_writer_module_file_exists(self):
-        assert self._MODULE_PATH.exists(), (
-            "advisors/prism_audit_write.py must exist (AC-4)"
-        )
+        assert self._MODULE_PATH.exists(), "advisors/prism_audit_write.py must exist (AC-4)"
 
     def test_module_importable(self):
         # Clean import attempt — must not raise ImportError.
@@ -215,10 +230,14 @@ class TestPrismAuditWriteCLI:
         result = subprocess.run(
             [
                 _python(),
-                "-m", "advisors.prism_audit_write",
-                "--run-id", "run-cli-test-001",
-                "--role", "technicals_analyst",
-                "--phase", "initial_read",
+                "-m",
+                "advisors.prism_audit_write",
+                "--run-id",
+                "run-cli-test-001",
+                "--role",
+                "technicals_analyst",
+                "--phase",
+                "initial_read",
             ],
             input=content,
             capture_output=True,
@@ -226,9 +245,7 @@ class TestPrismAuditWriteCLI:
             cwd=str(_REPO_ROOT),
             env={
                 **__import__("os").environ,
-                "DB_PATH": str(
-                    pathlib.Path(__import__("tempfile").mkdtemp()) / "cli_test.db"
-                ),
+                "DB_PATH": str(pathlib.Path(__import__("tempfile").mkdtemp()) / "cli_test.db"),
             },
         )
         assert result.returncode == 0, (
@@ -239,9 +256,7 @@ class TestPrismAuditWriteCLI:
         assert stdout.isdigit(), (
             f"CLI writer must print a numeric row id on stdout; got: {stdout!r}"
         )
-        assert int(stdout) > 0, (
-            f"Printed row id must be a positive integer; got: {stdout!r}"
-        )
+        assert int(stdout) > 0, f"Printed row id must be a positive integer; got: {stdout!r}"
 
     def test_multiline_stdin_content_is_accepted(self):
         """Long / multiline stdin content must be stored without truncation.
@@ -249,19 +264,25 @@ class TestPrismAuditWriteCLI:
         We test that the CLI exits 0 and prints a row id — content integrity
         is separately tested by the database layer round-trip tests.
         """
-        multiline = "\n".join([
-            "Line 1: EPS beat expectations.",
-            "Line 2: Revenue in-line.",
-            "Line 3: Guidance raised.",
-            "Line 4: " + "A" * 2000,  # long line
-        ])
+        multiline = "\n".join(
+            [
+                "Line 1: EPS beat expectations.",
+                "Line 2: Revenue in-line.",
+                "Line 3: Guidance raised.",
+                "Line 4: " + "A" * 2000,  # long line
+            ]
+        )
         result = subprocess.run(
             [
                 _python(),
-                "-m", "advisors.prism_audit_write",
-                "--run-id", "run-cli-multi-001",
-                "--role", "fundamentals_analyst",
-                "--phase", "debate_round_1",
+                "-m",
+                "advisors.prism_audit_write",
+                "--run-id",
+                "run-cli-multi-001",
+                "--role",
+                "fundamentals_analyst",
+                "--phase",
+                "debate_round_1",
             ],
             input=multiline,
             capture_output=True,
@@ -269,9 +290,7 @@ class TestPrismAuditWriteCLI:
             cwd=str(_REPO_ROOT),
             env={
                 **__import__("os").environ,
-                "DB_PATH": str(
-                    pathlib.Path(__import__("tempfile").mkdtemp()) / "cli_multi.db"
-                ),
+                "DB_PATH": str(pathlib.Path(__import__("tempfile").mkdtemp()) / "cli_multi.db"),
             },
         )
         assert result.returncode == 0, (
@@ -285,9 +304,12 @@ class TestPrismAuditWriteCLI:
         result = subprocess.run(
             [
                 _python(),
-                "-m", "advisors.prism_audit_write",
-                "--role", "synthesizer",
-                "--phase", "synthesis",
+                "-m",
+                "advisors.prism_audit_write",
+                "--role",
+                "synthesizer",
+                "--phase",
+                "synthesis",
             ],
             input="Some content.",
             capture_output=True,
@@ -295,14 +317,10 @@ class TestPrismAuditWriteCLI:
             cwd=str(_REPO_ROOT),
             env={
                 **__import__("os").environ,
-                "DB_PATH": str(
-                    pathlib.Path(__import__("tempfile").mkdtemp()) / "cli_err.db"
-                ),
+                "DB_PATH": str(pathlib.Path(__import__("tempfile").mkdtemp()) / "cli_err.db"),
             },
         )
-        assert result.returncode != 0, (
-            "CLI writer must exit non-zero when --run-id is missing"
-        )
+        assert result.returncode != 0, "CLI writer must exit non-zero when --run-id is missing"
         # D-1 contract: no raw traceback in stderr.
         assert "Traceback" not in result.stderr, (
             "CLI writer must not dump a traceback to stderr (D-1 contract);\n"
@@ -314,9 +332,12 @@ class TestPrismAuditWriteCLI:
         result = subprocess.run(
             [
                 _python(),
-                "-m", "advisors.prism_audit_write",
-                "--run-id", "run-err-001",
-                "--phase", "synthesis",
+                "-m",
+                "advisors.prism_audit_write",
+                "--run-id",
+                "run-err-001",
+                "--phase",
+                "synthesis",
             ],
             input="Some content.",
             capture_output=True,
@@ -324,24 +345,23 @@ class TestPrismAuditWriteCLI:
             cwd=str(_REPO_ROOT),
             env={
                 **__import__("os").environ,
-                "DB_PATH": str(
-                    pathlib.Path(__import__("tempfile").mkdtemp()) / "cli_err2.db"
-                ),
+                "DB_PATH": str(pathlib.Path(__import__("tempfile").mkdtemp()) / "cli_err2.db"),
             },
         )
         assert result.returncode != 0
-        assert "Traceback" not in result.stderr, (
-            f"Traceback leaked to stderr: {result.stderr!r}"
-        )
+        assert "Traceback" not in result.stderr, f"Traceback leaked to stderr: {result.stderr!r}"
 
     def test_missing_phase_exits_nonzero(self):
         """--phase missing → non-zero exit; no traceback (D-1)."""
         result = subprocess.run(
             [
                 _python(),
-                "-m", "advisors.prism_audit_write",
-                "--run-id", "run-err-002",
-                "--role", "macro_analyst",
+                "-m",
+                "advisors.prism_audit_write",
+                "--run-id",
+                "run-err-002",
+                "--role",
+                "macro_analyst",
             ],
             input="Some content.",
             capture_output=True,
@@ -349,23 +369,21 @@ class TestPrismAuditWriteCLI:
             cwd=str(_REPO_ROOT),
             env={
                 **__import__("os").environ,
-                "DB_PATH": str(
-                    pathlib.Path(__import__("tempfile").mkdtemp()) / "cli_err3.db"
-                ),
+                "DB_PATH": str(pathlib.Path(__import__("tempfile").mkdtemp()) / "cli_err3.db"),
             },
         )
         assert result.returncode != 0
-        assert "Traceback" not in result.stderr, (
-            f"Traceback leaked to stderr: {result.stderr!r}"
-        )
+        assert "Traceback" not in result.stderr, f"Traceback leaked to stderr: {result.stderr!r}"
 
     def test_garbled_unknown_flag_exits_nonzero(self):
         """An unknown / garbled flag must exit non-zero without traceback."""
         result = subprocess.run(
             [
                 _python(),
-                "-m", "advisors.prism_audit_write",
-                "--not-a-real-flag", "value",
+                "-m",
+                "advisors.prism_audit_write",
+                "--not-a-real-flag",
+                "value",
             ],
             input="Content.",
             capture_output=True,
@@ -373,9 +391,7 @@ class TestPrismAuditWriteCLI:
             cwd=str(_REPO_ROOT),
             env={
                 **__import__("os").environ,
-                "DB_PATH": str(
-                    pathlib.Path(__import__("tempfile").mkdtemp()) / "cli_garbled.db"
-                ),
+                "DB_PATH": str(pathlib.Path(__import__("tempfile").mkdtemp()) / "cli_garbled.db"),
             },
         )
         assert result.returncode != 0
@@ -387,10 +403,13 @@ class TestPrismAuditWriteCLI:
         result = subprocess.run(
             [
                 _python(),
-                "-m", "advisors.prism_audit_write",
+                "-m",
+                "advisors.prism_audit_write",
                 # Omit --run-id to trigger an error path.
-                "--role", "synthesizer",
-                "--phase", "synthesis",
+                "--role",
+                "synthesizer",
+                "--phase",
+                "synthesis",
             ],
             input="Content.",
             capture_output=True,
@@ -398,20 +417,14 @@ class TestPrismAuditWriteCLI:
             cwd=str(_REPO_ROOT),
             env={
                 **__import__("os").environ,
-                "DB_PATH": str(
-                    pathlib.Path(__import__("tempfile").mkdtemp()) / "cli_d1.db"
-                ),
+                "DB_PATH": str(pathlib.Path(__import__("tempfile").mkdtemp()) / "cli_d1.db"),
             },
         )
         assert result.returncode != 0
         stderr = result.stderr
         # D-1: no raw exception detail — no file paths, no line numbers.
-        assert "alphabot_state.db" not in stderr, (
-            f"DB file path leaked to stderr: {stderr!r}"
-        )
-        assert "Traceback" not in stderr, (
-            f"Full traceback leaked to stderr: {stderr!r}"
-        )
+        assert "alphabot_state.db" not in stderr, f"DB file path leaked to stderr: {stderr!r}"
+        assert "Traceback" not in stderr, f"Full traceback leaked to stderr: {stderr!r}"
 
     def test_special_chars_in_run_id_accepted(self):
         """run-id with slashes, colons, spaces must be accepted by the CLI."""
@@ -419,10 +432,14 @@ class TestPrismAuditWriteCLI:
         result = subprocess.run(
             [
                 _python(),
-                "-m", "advisors.prism_audit_write",
-                "--run-id", special_run_id,
-                "--role", "macro_analyst",
-                "--phase", "initial_read",
+                "-m",
+                "advisors.prism_audit_write",
+                "--run-id",
+                special_run_id,
+                "--role",
+                "macro_analyst",
+                "--phase",
+                "initial_read",
             ],
             input="Fed held rates.",
             capture_output=True,
@@ -430,9 +447,7 @@ class TestPrismAuditWriteCLI:
             cwd=str(_REPO_ROOT),
             env={
                 **__import__("os").environ,
-                "DB_PATH": str(
-                    pathlib.Path(__import__("tempfile").mkdtemp()) / "cli_special.db"
-                ),
+                "DB_PATH": str(pathlib.Path(__import__("tempfile").mkdtemp()) / "cli_special.db"),
             },
         )
         assert result.returncode == 0, (

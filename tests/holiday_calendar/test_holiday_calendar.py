@@ -51,12 +51,14 @@ import pytest
 # This is intentional: a failing import IS a RED test (module does not exist yet).
 try:
     import market_calendar
+
     _MARKET_CALENDAR_AVAILABLE = True
 except ImportError:
     _MARKET_CALENDAR_AVAILABLE = False
 
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
 
     def _et_datetime(year: int, month: int, day: int, hour: int, minute: int) -> datetime:
@@ -65,6 +67,7 @@ try:
 
 except Exception:  # pragma: no cover
     from datetime import timezone
+
     _ET = timezone(timedelta(hours=-4))  # EST fallback (no DST correction)
 
     def _et_datetime(year: int, month: int, day: int, hour: int, minute: int) -> datetime:
@@ -75,12 +78,7 @@ except Exception:  # pragma: no cover
 # Fixture loading
 # ---------------------------------------------------------------------------
 
-_FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math"
-    / "holiday_calendar"
-)
+_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "math" / "holiday_calendar"
 
 
 def _load_fixture(filename: str) -> dict:
@@ -110,6 +108,7 @@ _requires_calendar = pytest.mark.skipif(
 # ===========================================================================
 # SECTION 1: Calendar authority — is_trading_day
 # ===========================================================================
+
 
 class TestIsTradingDayGoldenFixtures:
     """
@@ -157,6 +156,7 @@ class TestIsTradingDayGoldenFixtures:
         silently misfire on a non-bool truthy.
         """
         from datetime import date as dt_date
+
         result = market_calendar.is_trading_day(dt_date(2025, 5, 14))  # regular Wednesday
         assert type(result) is bool, (
             f"is_trading_day must return exactly bool; got {type(result).__name__}"
@@ -171,6 +171,7 @@ class TestIsTradingDayGoldenFixtures:
         This is the primary adversarial test for the is_trading_day holiday guard.
         """
         from datetime import date as dt_date
+
         result = market_calendar.is_trading_day(dt_date(2024, 12, 25))
         assert result is False, (
             "is_trading_day(2024-12-25) must be False — Christmas Day is a NYSE holiday "
@@ -184,6 +185,7 @@ class TestIsTradingDayGoldenFixtures:
         Friday. The NYSE is the only major exchange that observes Good Friday.
         """
         from datetime import date as dt_date
+
         result = market_calendar.is_trading_day(dt_date(2025, 4, 18))
         assert result is False, (
             "is_trading_day(2025-04-18) must be False — Good Friday 2025 is a NYSE holiday. "
@@ -200,6 +202,7 @@ class TestIsTradingDayGoldenFixtures:
         would incorrectly return False here.
         """
         from datetime import date as dt_date
+
         result = market_calendar.is_trading_day(dt_date(2024, 11, 11))
         assert result is True, (
             "is_trading_day(2024-11-11) must be True — Veterans Day is NOT a NYSE holiday. "
@@ -210,6 +213,7 @@ class TestIsTradingDayGoldenFixtures:
 # ===========================================================================
 # SECTION 2: Calendar authority — session_close and session_open
 # ===========================================================================
+
 
 class TestSessionTimesGoldenFixtures:
     """
@@ -279,10 +283,10 @@ class TestSessionTimesGoldenFixtures:
         in edge-case years.
         """
         from datetime import date as dt_date
+
         result = market_calendar.session_close(dt_date(2024, 11, 29))
         assert result == dt_time(13, 0), (
-            f"session_close(2024-11-29) should be 13:00 (Black Friday early close); "
-            f"got {result}"
+            f"session_close(2024-11-29) should be 13:00 (Black Friday early close); got {result}"
         )
 
     @_requires_calendar
@@ -292,10 +296,10 @@ class TestSessionTimesGoldenFixtures:
         Catches an impl that always returns 13:00 (or uses a constant).
         """
         from datetime import date as dt_date
+
         result = market_calendar.session_close(dt_date(2025, 5, 14))  # regular Wednesday
         assert result == dt_time(16, 0), (
-            f"session_close(2025-05-14) should be 16:00 ET (regular trading day); "
-            f"got {result}"
+            f"session_close(2025-05-14) should be 16:00 ET (regular trading day); got {result}"
         )
 
     @_requires_calendar
@@ -305,6 +309,7 @@ class TestSessionTimesGoldenFixtures:
         or "16:00". Downstream comparison is via dt_time objects.
         """
         from datetime import date as dt_date, time as dt_time_cls
+
         result = market_calendar.session_close(dt_date(2025, 5, 14))
         assert isinstance(result, dt_time_cls), (
             f"session_close must return datetime.time; got {type(result).__name__}"
@@ -329,6 +334,7 @@ class TestSessionTimesGoldenFixtures:
         ET wall-clock time.
         """
         from datetime import date as dt_date
+
         result = market_calendar.session_close(dt_date(2025, 3, 10))
         assert result == dt_time(16, 0), (
             f"session_close(2025-03-10) should be 16:00 ET (first trading day after "
@@ -354,6 +360,7 @@ class TestSessionTimesGoldenFixtures:
         boundary to guard the offset-direction independently.
         """
         from datetime import date as dt_date
+
         result = market_calendar.session_close(dt_date(2024, 11, 4))
         assert result == dt_time(16, 0), (
             f"session_close(2024-11-04) should be 16:00 ET (first trading day after "
@@ -365,6 +372,7 @@ class TestSessionTimesGoldenFixtures:
 # ===========================================================================
 # SECTION 3: Dashboard — get_market_state uses calendar authority
 # ===========================================================================
+
 
 class TestGetMarketStateHolidayAndHalfDay:
     """
@@ -514,6 +522,7 @@ class TestGetMarketStateHolidayAndHalfDay:
 # SECTION 4: Engine gate — holiday path skips data and action phases
 # ===========================================================================
 
+
 class TestEngineSkipsOnHoliday:
     """
     AC-1: On a US equity market HOLIDAY, the engine must take the non-trading-day
@@ -548,20 +557,20 @@ class TestEngineSkipsOnHoliday:
         mock_mc.session_close.return_value = dt_time(16, 0)
         mock_mc.session_open.return_value = dt_time(9, 30)
 
-        with patch.object(alpha_bot_execution, "get_current_et",
-                          return_value=holiday_dt), \
-             patch.object(alpha_bot_execution, "market_calendar", mock_mc), \
-             patch.object(alpha_bot_execution, "database") as mock_db, \
-             patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch, \
-             patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_alpaca, \
-             patch.object(alpha_bot_execution, "math_engine") as mock_math, \
-             patch.object(alpha_bot_execution, "reporting") as mock_reporting, \
-             patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", ["acct-holiday-test"]), \
-             patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key"), \
-             patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"), \
-             patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-             patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]):
-
+        with (
+            patch.object(alpha_bot_execution, "get_current_et", return_value=holiday_dt),
+            patch.object(alpha_bot_execution, "market_calendar", mock_mc),
+            patch.object(alpha_bot_execution, "database") as mock_db,
+            patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch,
+            patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_alpaca,
+            patch.object(alpha_bot_execution, "math_engine") as mock_math,
+            patch.object(alpha_bot_execution, "reporting") as mock_reporting,
+            patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", ["acct-holiday-test"]),
+            patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key"),
+            patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"),
+            patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+            patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+        ):
             mock_db.acquire_lock.return_value = True
             mock_db.load_state.return_value = {"date": holiday_dt.strftime("%Y-%m-%d")}
 
@@ -657,6 +666,7 @@ class TestEngineSkipsOnHoliday:
 # SECTION 5: Half-day time shifts
 # ===========================================================================
 
+
 class TestHalfDayTimeShifts:
     """
     AC-2: On a half-day, ALL close-relative times shift to the 13:00 close:
@@ -739,28 +749,40 @@ class TestHalfDayTimeShifts:
             captured_time_ratios.append(time_ratio)
             return (1.0, 0.3)  # safe defaults that don't trigger exits
 
-        with patch.object(alpha_bot_execution, "get_current_et",
-                          return_value=cycle_dt), \
-             patch.object(alpha_bot_execution, "database") as mock_db, \
-             patch.object(alpha_bot_execution, "reporting") as mock_reporting, \
-             patch.object(alpha_bot_execution, "fetch_symphony_stats",
-                          return_value=[sym_payload]), \
-             patch.object(alpha_bot_execution, "fetch_alpaca_history",
-                          return_value={date_str: {_TICKER: {
-                              "c": 500.0, "daily_ret": 0.001,
-                              "high": 501.0, "low": 499.0, "close": 500.0,
-                          }}}), \
-             patch.object(alpha_bot_execution, "fetch_intraday_vwaps",
-                          return_value={_TICKER: {"vwap": 500.0, "last_price": 500.0}}), \
-             patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
-             patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key"), \
-             patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"), \
-             patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-             patch.object(alpha_bot_execution, "EXECUTION_START_TIME", execution_start_time), \
-             patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]), \
-             patch.object(alpha_bot_execution, "autotuner") as _mock_autotuner, \
-             patch.object(alpha_bot_execution, "math_engine") as mock_math:
-
+        with (
+            patch.object(alpha_bot_execution, "get_current_et", return_value=cycle_dt),
+            patch.object(alpha_bot_execution, "database") as mock_db,
+            patch.object(alpha_bot_execution, "reporting") as mock_reporting,
+            patch.object(alpha_bot_execution, "fetch_symphony_stats", return_value=[sym_payload]),
+            patch.object(
+                alpha_bot_execution,
+                "fetch_alpaca_history",
+                return_value={
+                    date_str: {
+                        _TICKER: {
+                            "c": 500.0,
+                            "daily_ret": 0.001,
+                            "high": 501.0,
+                            "low": 499.0,
+                            "close": 500.0,
+                        }
+                    }
+                },
+            ),
+            patch.object(
+                alpha_bot_execution,
+                "fetch_intraday_vwaps",
+                return_value={_TICKER: {"vwap": 500.0, "last_price": 500.0}},
+            ),
+            patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+            patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key"),
+            patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"),
+            patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+            patch.object(alpha_bot_execution, "EXECUTION_START_TIME", execution_start_time),
+            patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+            patch.object(alpha_bot_execution, "autotuner") as _mock_autotuner,
+            patch.object(alpha_bot_execution, "math_engine") as mock_math,
+        ):
             mock_db.acquire_lock.return_value = True
             mock_db.load_state.return_value = copy.deepcopy(initial_state)
             mock_db.load_chart_history.return_value = {"date": date_str, "symphonies": {}}
@@ -789,9 +811,7 @@ class TestHalfDayTimeShifts:
 
             alpha_bot_execution.main()
 
-        final_state = captured_states[-1] if captured_states else copy.deepcopy(
-            initial_state
-        )
+        final_state = captured_states[-1] if captured_states else copy.deepcopy(initial_state)
         return final_state, {
             "mock_math": mock_math,
             "captured_time_ratios": captured_time_ratios,
@@ -1013,6 +1033,7 @@ class TestHalfDayTimeShifts:
 # SECTION 6: EXECUTION_START_TIME gate is preserved on half-days
 # ===========================================================================
 
+
 class TestExecutionStartTimeGatePreservedOnHalfDays:
     """
     AC-2 constraint: half-day close shifts must NOT open an early-exit hole.
@@ -1054,47 +1075,73 @@ class TestExecutionStartTimeGatePreservedOnHalfDays:
         initial_state = {
             "date": date_str,
             _SYM_ID: {
-                "high_water_mark": 1.0, "shadow_hwm": 1.0,
-                "prev_return": 0.0, "armed": False, "tp_armed": False,
-                "para_armed": False, "triggered": False, "mc_history": [],
-                "below_stop_count": 0, "above_tp_count": 0, "vwap_ticks": 0,
-                "vwap_bleed_ticks": 0, "breakeven_locked": False,
-                "hwm_hold_ticks": 0, "current_return": 1.0,
-                "name": "Gate Test", "account": _ACCOUNT_ID,
+                "high_water_mark": 1.0,
+                "shadow_hwm": 1.0,
+                "prev_return": 0.0,
+                "armed": False,
+                "tp_armed": False,
+                "para_armed": False,
+                "triggered": False,
+                "mc_history": [],
+                "below_stop_count": 0,
+                "above_tp_count": 0,
+                "vwap_ticks": 0,
+                "vwap_bleed_ticks": 0,
+                "breakeven_locked": False,
+                "hwm_hold_ticks": 0,
+                "current_return": 1.0,
+                "name": "Gate Test",
+                "account": _ACCOUNT_ID,
             },
         }
 
         sym_payload = {
-            "id": _SYM_ID, "symphony_id": "actual-gate-sym",
-            "name": "Gate Test", "last_percent_change": 0.01,
-            "current_value": 10_000.0, "simple_return": 0.01,
-            "net_deposits": 9_500.0, "time_weighted_return": 0.01,
+            "id": _SYM_ID,
+            "symphony_id": "actual-gate-sym",
+            "name": "Gate Test",
+            "last_percent_change": 0.01,
+            "current_value": 10_000.0,
+            "simple_return": 0.01,
+            "net_deposits": 9_500.0,
+            "time_weighted_return": 0.01,
             "max_drawdown": 0.01,
             "holdings": [{"ticker": "SPY", "allocation": 1.0}],
         }
 
-        with patch.object(alpha_bot_execution, "get_current_et",
-                          return_value=pre_gate_on_half_day), \
-             patch.object(alpha_bot_execution, "database") as mock_db, \
-             patch.object(alpha_bot_execution, "reporting"), \
-             patch.object(alpha_bot_execution, "fetch_symphony_stats",
-                          return_value=[sym_payload]), \
-             patch.object(alpha_bot_execution, "fetch_alpaca_history",
-                          return_value={date_str: {"SPY": {
-                              "c": 500.0, "daily_ret": 0.001,
-                              "high": 501.0, "low": 499.0, "close": 500.0,
-                          }}}), \
-             patch.object(alpha_bot_execution, "fetch_intraday_vwaps",
-                          return_value={"SPY": {"vwap": 500.0, "last_price": 500.0}}), \
-             patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
-             patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key"), \
-             patch.object(alpha_bot_execution, "ALPACA_KEY", "test-key"), \
-             patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-             patch.object(alpha_bot_execution, "EXECUTION_START_TIME", "10:31"), \
-             patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]), \
-             patch.object(alpha_bot_execution, "autotuner"), \
-             patch.object(alpha_bot_execution, "math_engine") as mock_math:
-
+        with (
+            patch.object(alpha_bot_execution, "get_current_et", return_value=pre_gate_on_half_day),
+            patch.object(alpha_bot_execution, "database") as mock_db,
+            patch.object(alpha_bot_execution, "reporting"),
+            patch.object(alpha_bot_execution, "fetch_symphony_stats", return_value=[sym_payload]),
+            patch.object(
+                alpha_bot_execution,
+                "fetch_alpaca_history",
+                return_value={
+                    date_str: {
+                        "SPY": {
+                            "c": 500.0,
+                            "daily_ret": 0.001,
+                            "high": 501.0,
+                            "low": 499.0,
+                            "close": 500.0,
+                        }
+                    }
+                },
+            ),
+            patch.object(
+                alpha_bot_execution,
+                "fetch_intraday_vwaps",
+                return_value={"SPY": {"vwap": 500.0, "last_price": 500.0}},
+            ),
+            patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+            patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key"),
+            patch.object(alpha_bot_execution, "ALPACA_KEY", "test-key"),
+            patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+            patch.object(alpha_bot_execution, "EXECUTION_START_TIME", "10:31"),
+            patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+            patch.object(alpha_bot_execution, "autotuner"),
+            patch.object(alpha_bot_execution, "math_engine") as mock_math,
+        ):
             mock_db.acquire_lock.return_value = True
             mock_db.load_state.return_value = copy.deepcopy(initial_state)
             mock_db.load_chart_history.return_value = {"date": date_str, "symphonies": {}}
@@ -1129,6 +1176,7 @@ class TestExecutionStartTimeGatePreservedOnHalfDays:
 # ===========================================================================
 # SECTION 7: Calendar memoization — non-blocking per-date cache
 # ===========================================================================
+
 
 class TestCalendarLookupMemoization:
     """
@@ -1205,6 +1253,7 @@ class TestCalendarLookupMemoization:
         Correctness guard for the cache path.
         """
         from datetime import date as dt_date
+
         test_date = dt_date(2024, 11, 29)  # Black Friday — half-day
         first = market_calendar.session_close(test_date)
         second = market_calendar.session_close(test_date)
@@ -1217,6 +1266,7 @@ class TestCalendarLookupMemoization:
 # ===========================================================================
 # SECTION 8: Docstring fix — squeeze-t anchor is EXECUTION_START_TIME, not 09:30
 # ===========================================================================
+
 
 class TestSqueezeDocstringNoLongerClaimsMarketOpen:
     """
@@ -1243,6 +1293,7 @@ class TestSqueezeDocstringNoLongerClaimsMarketOpen:
         """
         import math_engine
         import inspect
+
         source = inspect.getsource(math_engine.compute_time_squeeze_decay)
         # The phrase "0.0 = market open" (in the context of time_ratio) must be absent
         assert "0.0 = market open" not in source, (
@@ -1265,6 +1316,7 @@ class TestSqueezeDocstringNoLongerClaimsMarketOpen:
         """
         import math_engine
         import inspect
+
         source = inspect.getsource(math_engine.compute_time_squeeze_decay)
         acceptable_phrases = [
             "EXECUTION_START_TIME",

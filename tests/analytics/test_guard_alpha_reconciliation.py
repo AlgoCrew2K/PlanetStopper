@@ -48,9 +48,7 @@ from analytics import (
     get_symphony_cumulative_return,
 )
 
-_FIXTURE = (
-    Path(__file__).parent.parent / "fixtures" / "math" / "guard_alpha_lifetime_epochs.json"
-)
+_FIXTURE = Path(__file__).parent.parent / "fixtures" / "math" / "guard_alpha_lifetime_epochs.json"
 
 _SCHEMA = """
     CREATE TABLE shadow_history (
@@ -119,6 +117,7 @@ def _sym_dict(sym_id: str, if_held_pct: float, value: float) -> dict:
 # AC-5 anchor — an all-untriggered portfolio has 0.0 guard alpha (regression guard)
 # ---------------------------------------------------------------------------
 
+
 class TestAllUntriggeredPortfolioIsZeroAlpha:
     """A portfolio of only never-triggered symphonies must show exactly 0.0 portfolio
     Guard Alpha — no phantom alpha aggregated from any card. Passes today; must stay.
@@ -128,10 +127,16 @@ class TestAllUntriggeredPortfolioIsZeroAlpha:
         scen = fixture["scenarios"]["never_triggered_n2ooA"]
         # Two copies of the never-triggered symphony shape at different weights.
         scenarios = {
-            "a": {"symphony_id": "untrig_a", "if_held_pct": scen["if_held_pct"],
-                  "shadow_history_rows": scen["shadow_history_rows"]},
-            "b": {"symphony_id": "untrig_b", "if_held_pct": 12.0,
-                  "shadow_history_rows": scen["shadow_history_rows"]},
+            "a": {
+                "symphony_id": "untrig_a",
+                "if_held_pct": scen["if_held_pct"],
+                "shadow_history_rows": scen["shadow_history_rows"],
+            },
+            "b": {
+                "symphony_id": "untrig_b",
+                "if_held_pct": 12.0,
+                "shadow_history_rows": scen["shadow_history_rows"],
+            },
         }
         db_file = _make_portfolio_db(tmp_path, scenarios)
         symphonies = [
@@ -150,6 +155,7 @@ class TestAllUntriggeredPortfolioIsZeroAlpha:
 # AC-2/AC-5 — per-card alphas value-weight to the portfolio alpha (ONE basis)
 # ---------------------------------------------------------------------------
 
+
 class TestPerCardReconcilesWithPortfolio:
     """The portfolio Guard Alpha must equal the value-weighted mean of the per-card
     Guard Alphas computed on the SAME divergence basis. No third basis, no drift.
@@ -159,18 +165,28 @@ class TestPerCardReconcilesWithPortfolio:
         scenarios = {
             "iaSOO": {
                 "symphony_id": "iaSOOUsmnC",
-                "if_held_pct": fixture["scenarios"]["triggered_iaSOO_saved_in_prior_epochs"]["if_held_pct"],
-                "shadow_history_rows": fixture["scenarios"]["triggered_iaSOO_saved_in_prior_epochs"]["shadow_history_rows"],
+                "if_held_pct": fixture["scenarios"]["triggered_iaSOO_saved_in_prior_epochs"][
+                    "if_held_pct"
+                ],
+                "shadow_history_rows": fixture["scenarios"][
+                    "triggered_iaSOO_saved_in_prior_epochs"
+                ]["shadow_history_rows"],
             },
             "lW4Zz": {
                 "symphony_id": "lW4ZzWuqR8",
-                "if_held_pct": fixture["scenarios"]["triggered_lW4Zz_saved_in_prior_epochs"]["if_held_pct"],
-                "shadow_history_rows": fixture["scenarios"]["triggered_lW4Zz_saved_in_prior_epochs"]["shadow_history_rows"],
+                "if_held_pct": fixture["scenarios"]["triggered_lW4Zz_saved_in_prior_epochs"][
+                    "if_held_pct"
+                ],
+                "shadow_history_rows": fixture["scenarios"][
+                    "triggered_lW4Zz_saved_in_prior_epochs"
+                ]["shadow_history_rows"],
             },
             "n2ooA": {
                 "symphony_id": "n2ooAZTvBR",
                 "if_held_pct": fixture["scenarios"]["never_triggered_n2ooA"]["if_held_pct"],
-                "shadow_history_rows": fixture["scenarios"]["never_triggered_n2ooA"]["shadow_history_rows"],
+                "shadow_history_rows": fixture["scenarios"]["never_triggered_n2ooA"][
+                    "shadow_history_rows"
+                ],
             },
         }
         db_file = _make_portfolio_db(tmp_path, scenarios)
@@ -189,9 +205,9 @@ class TestPerCardReconcilesWithPortfolio:
 
         # Expected portfolio alpha = value-weighted mean of the per-card alphas.
         total_w = sum(weights.values())
-        expected_portfolio_alpha = sum(
-            per_card_alpha[sid] * weights[sid] for sid in weights
-        ) / total_w
+        expected_portfolio_alpha = (
+            sum(per_card_alpha[sid] * weights[sid] for sid in weights) / total_w
+        )
 
         result = get_portfolio_cumulative_return(symphonies, {}, db_path=db_file)
         portfolio_alpha = result["dry_run"] - result["if_held"]
@@ -210,18 +226,28 @@ class TestPerCardReconcilesWithPortfolio:
         scenarios = {
             "iaSOO": {
                 "symphony_id": "iaSOOUsmnC",
-                "if_held_pct": fixture["scenarios"]["triggered_iaSOO_saved_in_prior_epochs"]["if_held_pct"],
-                "shadow_history_rows": fixture["scenarios"]["triggered_iaSOO_saved_in_prior_epochs"]["shadow_history_rows"],
+                "if_held_pct": fixture["scenarios"]["triggered_iaSOO_saved_in_prior_epochs"][
+                    "if_held_pct"
+                ],
+                "shadow_history_rows": fixture["scenarios"][
+                    "triggered_iaSOO_saved_in_prior_epochs"
+                ]["shadow_history_rows"],
             },
             "lW4Zz": {
                 "symphony_id": "lW4ZzWuqR8",
-                "if_held_pct": fixture["scenarios"]["triggered_lW4Zz_saved_in_prior_epochs"]["if_held_pct"],
-                "shadow_history_rows": fixture["scenarios"]["triggered_lW4Zz_saved_in_prior_epochs"]["shadow_history_rows"],
+                "if_held_pct": fixture["scenarios"]["triggered_lW4Zz_saved_in_prior_epochs"][
+                    "if_held_pct"
+                ],
+                "shadow_history_rows": fixture["scenarios"][
+                    "triggered_lW4Zz_saved_in_prior_epochs"
+                ]["shadow_history_rows"],
             },
             "n2ooA": {
                 "symphony_id": "n2ooAZTvBR",
                 "if_held_pct": fixture["scenarios"]["never_triggered_n2ooA"]["if_held_pct"],
-                "shadow_history_rows": fixture["scenarios"]["never_triggered_n2ooA"]["shadow_history_rows"],
+                "shadow_history_rows": fixture["scenarios"]["never_triggered_n2ooA"][
+                    "shadow_history_rows"
+                ],
             },
         }
         db_file = _make_portfolio_db(tmp_path, scenarios)

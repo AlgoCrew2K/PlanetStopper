@@ -61,6 +61,7 @@ from tests.execution.test_main_pipeline import (
 # older .pyc is still loaded.
 # ---------------------------------------------------------------------------
 
+
 def _get_abe_source() -> str:
     return inspect.getsource(alpha_bot_execution)
 
@@ -86,6 +87,7 @@ def _ast_names_in_import(tree: ast.Module) -> set[str]:
 # Group 1 — Structural: removed symbols must not appear in module-level
 #            imports (SITE-A1, SITE-A5 import cleanup).
 # ===========================================================================
+
 
 class TestRemovedImportsAbsent:
     """
@@ -148,6 +150,7 @@ class TestRemovedImportsAbsent:
 # ===========================================================================
 # Group 2 — Structural: removed call sites must not appear in source text.
 # ===========================================================================
+
 
 class TestRemovedCallSitesAbsent:
     """
@@ -220,7 +223,7 @@ class TestRemovedCallSitesAbsent:
         src = _get_abe_source()
         # The manifest cites this literal in SITE-A2 verbatim; if it still
         # appears the block was not removed.
-        assert "altitude=\"port_level\"" not in src, (
+        assert 'altitude="port_level"' not in src, (
             "SITE-A2: altitude='port_level' must not appear in source after "
             "port-dispatch removal; this is the apex guard of the removed block."
         )
@@ -231,6 +234,7 @@ class TestRemovedCallSitesAbsent:
 #            (SITE-A5 replacement: ``if execution_queue:`` not guarded by
 #            is_authoritative).
 # ===========================================================================
+
 
 class TestPerSymphonyQueueFiresUnconditionally:
     """
@@ -248,9 +252,7 @@ class TestPerSymphonyQueueFiresUnconditionally:
     the trigger freeze fires (LIVE_EXECUTION=False path, which we test below).
     """
 
-    def test_execution_queue_fires_when_exit_authority_set_to_port_level(
-        self, patched_environment
-    ):
+    def test_execution_queue_fires_when_exit_authority_set_to_port_level(self, patched_environment):
         """
         SITE-A5: EXIT_AUTHORITY=port_level must no longer suppress the
         per-symphony execution queue.  If the guard ``is_authoritative(
@@ -271,12 +273,14 @@ class TestPerSymphonyQueueFiresUnconditionally:
 
         # Set the env var that used to gate the per-symphony queue to False
         # (i.e., suppress it).  Post-removal it must have no effect.
-        with patch.dict("os.environ", {"EXIT_AUTHORITY": "port_level"}), \
-             patch.object(
-                 alpha_bot_execution.math_engine,
-                 "compute_exit_confirmation",
-                 return_value=(3, True),  # force trailing-stop-hit branch
-             ):
+        with (
+            patch.dict("os.environ", {"EXIT_AUTHORITY": "port_level"}),
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_exit_confirmation",
+                return_value=(3, True),  # force trailing-stop-hit branch
+            ),
+        ):
             alpha_bot_execution.main()
 
         save_calls = env["db"].save_state.call_args_list
@@ -296,9 +300,7 @@ class TestPerSymphonyQueueFiresUnconditionally:
             "the queue is skipped and triggered stays False."
         )
 
-    def test_execution_queue_fires_with_default_exit_authority_absent(
-        self, patched_environment
-    ):
+    def test_execution_queue_fires_with_default_exit_authority_absent(self, patched_environment):
         """
         SITE-A5: Even with EXIT_AUTHORITY unset (defaulting to 'per_symphony'
         in the old code), the queue must fire after removal.  Baseline
@@ -316,14 +318,15 @@ class TestPerSymphonyQueueFiresUnconditionally:
         env["db"].load_state.return_value = _seed_state(armed=True, hwm=seed_hwm)
 
         # Remove EXIT_AUTHORITY entirely so the default path is exercised.
-        patched_env = {k: v for k, v in __import__("os").environ.items()
-                       if k != "EXIT_AUTHORITY"}
-        with patch.dict("os.environ", patched_env, clear=True), \
-             patch.object(
-                 alpha_bot_execution.math_engine,
-                 "compute_exit_confirmation",
-                 return_value=(3, True),
-             ):
+        patched_env = {k: v for k, v in __import__("os").environ.items() if k != "EXIT_AUTHORITY"}
+        with (
+            patch.dict("os.environ", patched_env, clear=True),
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_exit_confirmation",
+                return_value=(3, True),
+            ),
+        ):
             alpha_bot_execution.main()
 
         save_calls = env["db"].save_state.call_args_list
@@ -343,6 +346,7 @@ class TestPerSymphonyQueueFiresUnconditionally:
 #            no row (SITE-A3/A2 smoke test).
 # ===========================================================================
 
+
 class TestEngineCycleCompletesWithoutPortStateRow:
     """
     Smoke test: after SITE-A2 and SITE-A3 removal, a cycle with no port_state
@@ -358,9 +362,7 @@ class TestEngineCycleCompletesWithoutPortStateRow:
     reference to read_port_state on the cycle path at all.
     """
 
-    def test_cycle_completes_normally_when_port_state_row_absent(
-        self, patched_environment
-    ):
+    def test_cycle_completes_normally_when_port_state_row_absent(self, patched_environment):
         env = patched_environment
 
         # Standard non-triggering fixture so no execute_sell_to_cash call.
@@ -383,9 +385,7 @@ class TestEngineCycleCompletesWithoutPortStateRow:
         env["db"].acquire_lock.assert_called_once()
         env["db"].release_lock.assert_called_once()
 
-    def test_read_port_state_not_called_on_execution_path(
-        self, patched_environment
-    ):
+    def test_read_port_state_not_called_on_execution_path(self, patched_environment):
         """
         SITE-A2 residual check: read_port_state must NOT be invoked on the
         per-cycle execution path after port-dispatch removal.  The only
@@ -403,15 +403,16 @@ class TestEngineCycleCompletesWithoutPortStateRow:
 
         alpha_bot_execution.main()
 
-        env["db"].read_port_state.assert_not_called(), (
-            "SITE-A2: read_port_state must not be called on the execution path "
-            "after port-dispatch removal.  Its only remaining callers are the "
-            "dashboard display routes in app.py (SITE-D1/D2)."
+        (
+            env["db"].read_port_state.assert_not_called(),
+            (
+                "SITE-A2: read_port_state must not be called on the execution path "
+                "after port-dispatch removal.  Its only remaining callers are the "
+                "dashboard display routes in app.py (SITE-D1/D2)."
+            ),
         )
 
-    def test_write_port_state_not_called_on_execution_path(
-        self, patched_environment
-    ):
+    def test_write_port_state_not_called_on_execution_path(self, patched_environment):
         """
         SITE-A2/A3 write-side: write_port_state must NOT be invoked on the
         per-cycle execution path after removal.  Pre-removal: it was written
@@ -429,16 +430,20 @@ class TestEngineCycleCompletesWithoutPortStateRow:
 
         alpha_bot_execution.main()
 
-        env["db"].write_port_state.assert_not_called(), (
-            "SITE-A2/A3: write_port_state must not be called on the execution "
-            "path after port-dispatch removal.  Both write sites (port-level "
-            "dispatch block and initialize_port_state_if_absent) are removed."
+        (
+            env["db"].write_port_state.assert_not_called(),
+            (
+                "SITE-A2/A3: write_port_state must not be called on the execution "
+                "path after port-dispatch removal.  Both write sites (port-level "
+                "dispatch block and initialize_port_state_if_absent) are removed."
+            ),
         )
 
 
 # ===========================================================================
 # Group 5 — Behavioural: symphony-level decision math fires unchanged.
 # ===========================================================================
+
 
 class TestSymphonyLevelMathFiringUnchanged:
     """
@@ -451,9 +456,7 @@ class TestSymphonyLevelMathFiringUnchanged:
     patching or inspecting every math function.
     """
 
-    def test_compute_exit_confirmation_still_called_per_armed_symphony(
-        self, patched_environment
-    ):
+    def test_compute_exit_confirmation_still_called_per_armed_symphony(self, patched_environment):
         """
         Confirm that compute_exit_confirmation (the exit-decision layer reached
         after all upstream math) is still called on the per-symphony loop for
@@ -486,9 +489,7 @@ class TestSymphonyLevelMathFiringUnchanged:
             "in place on the queue path the loop body may be suppressed."
         )
 
-    def test_trigger_fired_via_symphony_math_not_port_path(
-        self, patched_environment
-    ):
+    def test_trigger_fired_via_symphony_math_not_port_path(self, patched_environment):
         """
         End-to-end symphony math path: trigger fires, freeze runs, Discord alert
         sent — all via the per-symphony loop with no port-level dispatch.
@@ -522,8 +523,7 @@ class TestSymphonyLevelMathFiringUnchanged:
 
         # Trigger freeze invariants.
         assert sym_state["triggered"] is True, (
-            "Trailing Stop trigger must fire via the per-symphony loop after "
-            "port-dispatch removal."
+            "Trailing Stop trigger must fire via the per-symphony loop after port-dispatch removal."
         )
         assert sym_state["armed"] is False
         assert sym_state["triggered_reason"] == "Trailing Stop"
@@ -545,6 +545,7 @@ class TestSymphonyLevelMathFiringUnchanged:
 # Group 6 — Behavioural: LIVE_EXECUTION safety — no order path opens.
 # ===========================================================================
 
+
 class TestLiveExecutionDefaultFalsePreserved:
     """
     The LIVE_EXECUTION safety contract must survive the removal.
@@ -555,9 +556,7 @@ class TestLiveExecutionDefaultFalsePreserved:
     would be caught.
     """
 
-    def test_execute_sell_to_cash_not_called_when_live_execution_false(
-        self, patched_environment
-    ):
+    def test_execute_sell_to_cash_not_called_when_live_execution_false(self, patched_environment):
         env = patched_environment
 
         fixture_pct_change = 0.15
@@ -569,26 +568,27 @@ class TestLiveExecutionDefaultFalsePreserved:
         env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(500.0)
         env["db"].load_state.return_value = _seed_state(armed=True, hwm=seed_hwm)
 
-        with patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-             patch.object(
-                 alpha_bot_execution.math_engine,
-                 "compute_exit_confirmation",
-                 return_value=(3, True),
-             ), \
-             patch.object(
-                 alpha_bot_execution, "execute_sell_to_cash"
-             ) as mock_execute:
+        with (
+            patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_exit_confirmation",
+                return_value=(3, True),
+            ),
+            patch.object(alpha_bot_execution, "execute_sell_to_cash") as mock_execute,
+        ):
             alpha_bot_execution.main()
 
-        mock_execute.assert_not_called(), (
-            "LIVE_EXECUTION=False must prevent execute_sell_to_cash from being "
-            "called even when a trigger fires.  The port-dispatch removal must "
-            "not alter the dry-run safety gate."
+        (
+            mock_execute.assert_not_called(),
+            (
+                "LIVE_EXECUTION=False must prevent execute_sell_to_cash from being "
+                "called even when a trigger fires.  The port-dispatch removal must "
+                "not alter the dry-run safety gate."
+            ),
         )
 
-    def test_trigger_freeze_still_runs_in_dry_run_mode(
-        self, patched_environment
-    ):
+    def test_trigger_freeze_still_runs_in_dry_run_mode(self, patched_environment):
         """
         Dry-run mode (LIVE_EXECUTION=False) must still produce the full trigger
         freeze: triggered=True, triggered_reason set, trigger_prices populated.
@@ -606,13 +606,15 @@ class TestLiveExecutionDefaultFalsePreserved:
         env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(live_price)
         env["db"].load_state.return_value = _seed_state(armed=True, hwm=seed_hwm)
 
-        with patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-             patch.object(
-                 alpha_bot_execution.math_engine,
-                 "compute_exit_confirmation",
-                 return_value=(3, True),
-             ), \
-             patch.object(alpha_bot_execution, "execute_sell_to_cash"):
+        with (
+            patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_exit_confirmation",
+                return_value=(3, True),
+            ),
+            patch.object(alpha_bot_execution, "execute_sell_to_cash"),
+        ):
             alpha_bot_execution.main()
 
         save_calls = env["db"].save_state.call_args_list
@@ -633,6 +635,7 @@ class TestLiveExecutionDefaultFalsePreserved:
 # ===========================================================================
 # Group 7 — Existing portmode tests slated for deletion: tombstone markers.
 # ===========================================================================
+
 
 class TestPortmodeTestFilesToBeDeleted:
     """
