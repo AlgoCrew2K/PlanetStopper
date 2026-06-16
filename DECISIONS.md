@@ -4,6 +4,42 @@ This file records binding architectural decisions made during Planet Stopper dev
 
 ---
 
+## ARCH-REM-001 — Carried pre-existing test failures remediated (2026-06-16)
+
+Branch: fix/carried-preexisting-failures | HEAD: 526c242
+
+### Root causes and resolutions
+
+**1. GDELT contract doc missing** (`tests/ai_advisor/test_lens_gdelt.py::TestContractDocumentExists::test_contract_document_exists_and_names_timelinetone_endpoint`)
+- Root cause: `.claude/gdelt-contract.md` was never created. The GDELT client shipped at PR #33 (d632de3) but the AC-5 contract-doc deliverable was missed.
+- Fix: Created `.claude/gdelt-contract.md` reconstructed from `advisors/lens_gdelt.py` — documents the timelinetone endpoint URL, response shape, extraction path, return dict contract, retry policy, and normalization. Not a stub; cross-verified against the shipped producer.
+
+**2. VWAP_BLEED_ARM_MIN / VWAP_BLEED_ARM_MAX source comments on wrong line** (`tests/math_engine/test_vwap_bleed_arm.py::test_named_clamp_constants_exist_with_source_comments`)
+- Root cause: Both constants were written as multi-line assignments (`VWAP_BLEED_ARM_MIN = (
+    -3.0
+)  # comment`). The AST reports the assignment `lineno` as the opening line (785/788), which has no `#`. The comment was on the closing `)` line (787/790) — one level removed.
+- Fix: Collapsed both to single-line assignments with trailing comment on the same line as the `=`. Values unchanged (-3.0, -0.5). No math change.
+
+**3. VWAP_BREAK_CONFIRM_TICKS source comment on wrong line** (`tests/math_engine/test_vwap_breakdown.py::test_new_named_constants_have_source_comments`)
+- Root cause: Same multi-line pattern (`VWAP_BREAK_CONFIRM_TICKS = (
+    3  # comment
+)`). The comment was inside the parentheses on the value line (825), not on the assignment line (824).
+- Fix: Collapsed to single line. Value unchanged (3). No math change.
+
+**4. minmax(28rem, 1fr) in .proposal-cards / .rejected-cards** (`tests/ui/test_config_suggestion_card_fixes.py::TestGridFloor::test_suggestions_col_does_not_use_28rem`)
+- Root cause: The test asserts `"minmax(28rem, 1fr)" not in html` (blanket, not scoped to `.suggestions-col`). The `.suggestions-col` at line 179 was already correct (22rem), but `.proposal-cards` (line 588) and `.rejected-cards` (line 657) still used 28rem.
+- Fix: Changed both `.proposal-cards` and `.rejected-cards` grid-template-columns from `minmax(28rem, 1fr)` to `minmax(22rem, 1fr)` in `templates/ai_advisor.html`.
+
+### Files changed
+- `.claude/gdelt-contract.md` — created (AC-5 GDELT API contract)
+- `math_engine.py` — lines 785–790, 824–826 (constant formatting only, no value change)
+- `templates/ai_advisor.html` — lines 588, 657 (28rem → 22rem on proposal/rejected card grids)
+
+### Test result
+4 passed / 0 failed / 0 errors on SHA 526c242. Reviewer: quant-code-reviewer APPROVE conditional on PM merge gate.
+
+---
+
 ## Grammar Foundation — symphony_schema Rebuild (2026-06-14)
 
 Cycle: `grammar-foundation` on branch `team/grammar-foundation`. 210/210 tests GREEN at `83f5623` (AC-1..AC-12). Merger pending PM merge gate.
