@@ -1290,3 +1290,177 @@ class TestBarSourceRecon:
         assert callable(lens_technicals._get_bars), (
             "_get_bars must be callable."
         )
+
+
+# ---------------------------------------------------------------------------
+# HOLLOW-UNIVERSE GUARD — reviewer-found defect (review round 1)
+#
+# Finding: _build_technicals_section calls _fetch_technicals([]) — an
+# unconditional empty universe. _fetch_technicals([]) → _get_bars([]) →
+# synthetic_history.fetch_bars([], ...) → range(0, 0, 30) never runs →
+# returns {} → available=False. The technicals lens is always unavailable
+# in production despite valid bars in the DB.
+#
+# Fix required: _build_technicals_section must source the universe from
+# bot_state (database.load_state) and pass it to _fetch_technicals.
+# ---------------------------------------------------------------------------
+
+
+class TestHollowUniverseGuard:
+    """The wiring must pass a non-empty universe derived from bot_state to
+    _fetch_technicals. Calling _fetch_technicals([]) always produces
+    available=False regardless of what bars are available — that is hollow
+    wiring, not a working lens.
+
+    These tests call _build_technicals_section() with _get_bars mocked at the
+    lens_technicals level (NOT _fetch_technicals) so we can observe what
+    universe reaches the bar fetch. The existing wiring tests mock
+    _fetch_technicals directly, which masks the empty-universe defect.
+    """
+
+    def test_build_technicals_section_passes_non_empty_universe_to_fetch(self):
+        """_build_technicals_section passes a non-empty ticker list to _fetch_technicals.
+
+        HOLLOW-UNIVERSE DEFECT: the current implementation calls
+        `_fetch_technicals([])` unconditionally. That propagates to
+        `_get_bars([])` which calls `synthetic_history.fetch_bars([], ...)`,
+        and the batch loop `range(0, 0, 30)` never runs — always returns {}.
+        Result: technicals lens is always available=False in production.
+
+        This test mocks `_get_bars` directly (bypassing `_fetch_technicals`
+        mock) and asserts `_get_bars` is called with a non-empty list.
+
+        FAILS on the current hollow wiring (universe=[]).
+        Passes only after the implementer sources the universe from bot_state.
+
+        Setup: pre-populate bot_state with two symphonies whose holdings
+        include known tickers so the section can extract a live universe.
+        """
+        from advisors import lens_technicals
+
+        # Spy on _get_bars to capture the universe argument
+        captured_universes: list[list[str]] = []
+
+        def spy_get_bars(universe: list) -> dict:
+            captured_universes.append(list(universe))
+            # Return valid bars so the producer completes successfully
+            bars = _make_bar_sequence([100.0] * 250 + [110.0])
+            return {t: bars for t in universe} if universe else {}
+
+        # Seed bot_state with two symphonies whose logic_holdings contain tickers.
+        # _build_technicals_section must read this state and extract the universe.
+        import database
+
+        state_with_tickers = {
+            "acc_SPY_QQQ": {
+                "name": "TestSymphony",
+                "logic_holdings": {"SPY": 0.6, "QQQ": 0.4},
+            }
+        }
+        database.save_state(state_with_tickers)
+
+        import ai_advisor
+
+        with patch.object(lens_technicals, "_get_bars", side_effect=spy_get_bars):
+            ai_advisor._build_technicals_section()
+
+        assert len(captured_universes) >= 1, (
+            "_get_bars was never called. "
+            "_build_technicals_section must call _fetch_technicals (which calls "
+            "_get_bars) — even if bars are unavailable. "
+            "If _get_bars was not called at all, the section short-circuits before "
+            "reaching the producer."
+        )
+
+        # The universe passed must be non-empty — [] causes available=False always
+        last_universe = captured_universes[-1]
+        assert len(last_universe) > 0, (
+            f"HOLLOW-UNIVERSE DEFECT: _get_bars was called with an empty universe {last_universe!r}. "
+            f"_fetch_technicals([]) always returns available=False because "
+            f"synthetic_history.fetch_bars([], ...) has no tickers to fetch. "
+            f"_build_technicals_section must source the universe from bot_state "
+            f"(database.load_state()) and pass the real tickers to _fetch_technicals. "
+            f"Seeded bot_state had: {list(state_with_tickers.keys())}"
+        )
+
+    def test_build_technicals_section_returns_available_true_with_real_universe(self):
+        """_build_technicals_section returns available=True when bot_state has tickers
+        and _get_bars returns valid bars for those tickers.
+
+        End-to-end hollow-universe regression: even if all other wiring tests pass,
+        this test fails if the universe source is [] because _get_bars([]) returns {}
+        and the producer falls through to available=False.
+
+        Mocks _get_bars (not _fetch_technicals) to verify the full call chain:
+          _build_technicals_section → _fetch_technicals(universe) → _get_bars(universe)
+        with a real non-empty universe from bot_state.
+        """
+        from advisors import lens_technicals
+
+        import database
+
+        # Seed bot_state with tickers
+        state_with_tickers = {
+            "acc_SPY": {
+                "name": "TestSymphony",
+                "logic_holdings": {"SPY": 1.0},
+            }
+        }
+        database.save_state(state_with_tickers)
+
+        spy_bars = _make_bar_sequence([100.0] * 250 + [110.0])
+
+        def bars_for_any_non_empty_universe(universe: list) -> dict:
+            if not universe:
+                # If hollow wiring passes [], return {} (honest — no bars for no tickers)
+                return {}
+            return {t: spy_bars for t in universe}
+
+        import ai_advisor
+
+        with patch.object(
+            lens_technicals, "_get_bars", side_effect=bars_for_any_non_empty_universe
+        ):
+            result = ai_advisor._build_technicals_section()
+
+        assert result.get("available") is True, (
+            f"_build_technicals_section returned available=False even with valid bars. "
+            f"Root cause: the universe passed to _fetch_technicals was empty ([]). "
+            f"_build_technicals_section must source the universe from bot_state — "
+            f"calling _fetch_technicals([]) always produces available=False because "
+            f"the bar fetch loop never runs for an empty ticker list. "
+            f"Full result: {result!r}. "
+            f"Seeded bot_state with: {list(state_with_tickers.keys())}"
+        )
+
+    def test_build_technicals_section_gracefully_unavailable_when_bot_state_empty(self):
+        """_build_technicals_section returns available=False (not crash) when
+        bot_state has no tickers — e.g. on first boot before any symphony data.
+
+        The section must degrade honestly to available=False, not raise.
+        This tests the empty-bot_state edge case of the universe-sourcing fix.
+        """
+        import database
+
+        # Ensure bot_state is empty
+        database.save_state({})
+
+        import ai_advisor
+        from advisors import lens_technicals
+
+        with patch.object(lens_technicals, "_get_bars", return_value={}):
+            try:
+                result = ai_advisor._build_technicals_section()
+            except Exception as exc:
+                pytest.fail(
+                    f"_build_technicals_section raised {type(exc).__name__} when "
+                    f"bot_state was empty. Must degrade to available=False, not raise."
+                )
+
+        assert result.get("available") is False, (
+            f"With empty bot_state (no tickers), result must be available=False. "
+            f"Got: {result!r}"
+        )
+        assert result.get("lens") == "technicals", (
+            f"lens key must always be 'technicals'. Got: {result.get('lens')!r}"
+        )
