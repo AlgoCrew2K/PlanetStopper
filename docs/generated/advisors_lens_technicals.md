@@ -3,7 +3,7 @@
 > Technicals lens producer: MA posture (50/200-day SMA), market breadth, and 20-day momentum from Alpaca daily bars — reuses synthetic_history cache, never raises, honest-availability contract.
 
 **Source:** `advisors/lens_technicals.py`
-**Last updated:** 2026-06-15
+**Last updated:** 2026-06-16
 
 ## Overview
 
@@ -128,6 +128,7 @@ All constants carry inline source comments (math_engine.py coding standard / AC-
 | `_RETRY_BACKOFF_S` | `2.0` | Seconds between retries | Short for a nightly advisory lens; not on the execution path |
 | `_TECHNICALS_SOURCE` | `"Alpaca Markets v2 daily bars — reused synthetic_history cache"` | Citation string | Always present for `lens_pipeline.build_citation` consumption |
 | `_HISTORY_DAYS` | `270` | Calendar days of bar history to fetch | 270 calendar days ≈ 250 trading days after weekends + holidays; matches synthetic_history.py window |
+| `_PROXY_UNIVERSE` | `["SPY","QQQ","IWM","EFA","AGG","GLD","XLF","XLE","XLV","XLI"]` | Market-proxy breadth basket — stable floor universe for off-hours runs (03:00 nightly Prism, weekends, flat markets) | Standard institutional breadth-monitoring basket (Investopedia "market breadth indicators"); covers US large-cap, tech, small-cap, international, bond, and sector breadth |
 
 ---
 
@@ -191,7 +192,9 @@ After `_MAX_ATTEMPTS` exhaustion, returns `available=False, reason=type(last_exc
 
 ## Wiring in `ai_advisor.py`
 
-`ai_advisor._build_technicals_section()` (`ai_advisor.py:439-482`) is the only production caller. It lazy-imports this module (CC-2), derives the universe from `database.load_state()` holdings (tickers across all monitored symphonies), and calls `_fetch_technicals(universe)`, and wraps the result into the lens block shape consumed by `lens_pipeline.run_pipeline()`:
+`ai_advisor._build_technicals_section()` (`ai_advisor.py:439-482`) is the only production caller. It lazy-imports this module (CC-2), derives the universe from the UNION of `database.load_state()` `logic_holdings` tickers and `_PROXY_UNIVERSE` (a named market-proxy basket), and calls `_fetch_technicals(universe)`, wrapping the result into the lens block shape consumed by `lens_pipeline.run_pipeline()`.
+
+**Universe = live holdings UNION `_PROXY_UNIVERSE` (floor).** `logic_holdings` is a runtime field — empty at 03:00 / weekends / flat markets (all 11 live symphonies confirmed empty in PM live-gate test). `_PROXY_UNIVERSE` is applied unconditionally after `load_state()` extraction so the nightly Prism pipeline always receives a real breadth universe. Live holdings are merged on top of the proxy, not replaced (DE-TECH-002).
 
 ```python
 {

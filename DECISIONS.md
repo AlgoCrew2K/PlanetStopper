@@ -742,3 +742,25 @@ Cycle: `lens-technicals` on branch `feat/lens-technicals`. GREEN at `9449674`.
 - `advisors/lens_technicals._get_bars(universe: list[str]) -> dict[str, list[dict]]` — test seam; delegates to `synthetic_history.fetch_bars` in production.
 
 **Status:** GREEN at `9449674`. Acceptance criteria verified. `docs/generated/advisors_lens_technicals.md` committed on `feat/lens-technicals`.
+
+---
+
+### DE-TECH-002: Universe = live holdings UNION _PROXY_UNIVERSE floor; [PM-ASSUMED] proxy-basket choice
+
+**Decision:** `ai_advisor._build_technicals_section()` sources its ticker universe from the UNION of (a) live `database.load_state()` `logic_holdings` tickers and (b) a named module-level constant `lens_technicals._PROXY_UNIVERSE` — a 10-ticker market-proxy breadth basket. The proxy is always applied after the `load_state()` extraction, whether or not holdings are present.
+
+**Trigger:** PM live-gate failure (round 2). The initial implementation sourced the universe from `logic_holdings` only. Live test confirmed all 11 symphonies have `logic_holdings={}` at 03:00 and on weekends/flat markets — the lens's PRIMARY consumer is `lens_pipeline.run_pipeline()` at 03:00. The lens was perpetually `available=False` at the exact time the nightly Prism pipeline needed it — effectively hollow despite structurally honest wiring.
+
+**Root cause:** `logic_holdings` is a RUNTIME field, populated only during market-hours execution cycles. It is the wrong source for an off-hours lens that must produce signals before markets open.
+
+**[PM-ASSUMED] Proxy basket choice:** A named market-proxy breadth basket (`SPY`, `QQQ`, `IWM`, `EFA`, `AGG`, `GLD`, `XLF`, `XLE`, `XLV`, `XLI`) was chosen over Composer `/score` API calls per-symphony. Rationale: the `/score` path requires live network calls per symphony at 03:00 (heavyweight, latency, credentials) and introduces Composer API dependency on the advisory lens path. The proxy basket provides major-cap equity benchmarks across US large-cap, tech, small-cap, international, bond, and sector breadth — sufficient for the Prism `technicals_analyst` reasoning about broad market structure. The basket is documented with Investopedia "market breadth indicators" as the source reference.
+
+**Merge semantics:** `tickers.update(lens_technicals._PROXY_UNIVERSE)` is applied unconditionally after the `try/except` block — the proxy is a FLOOR regardless of whether `load_state()` succeeds or raises. Live holdings tickers are MERGED with the proxy, not replaced: when symphonies hold positions, those tickers appear alongside the proxy basket.
+
+**Implementation:**
+- `advisors/lens_technicals.py`: `_PROXY_UNIVERSE: list[str]` constant added after `_HISTORY_DAYS`, with source comment per AC-6 no-magic-numbers rule.
+- `ai_advisor.py` `_build_technicals_section()`: `tickers.update(lens_technicals._PROXY_UNIVERSE)` inserted between the `try/except` and `universe = sorted(tickers)`. Docstring updated to describe the union semantics.
+
+**Tests:** `TestProxyUniverseGuard` (6 tests, `test_lens_technicals.py`): constant exists + non-empty, proxy tickers reach `_get_bars` when holdings empty, `available=True` at 03:00 flat, live holdings merged not replaced, empty DB still yields proxy universe, genuine bar-fetch failure still degrades D-1.
+
+**Status:** GREEN at `34a4481` — 46/46 tests passing. Reviewer APPROVE (conditional on PM live gate, 2026-06-16T08:19 UTC).
