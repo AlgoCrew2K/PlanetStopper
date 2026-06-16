@@ -1,7 +1,7 @@
 # TDD Handoff — lens-data-warehouse
 Plan: feature-plans/lens-data-warehouse.md
 Branch: feat/lens-warehouse
-Phase: red
+Phase: green
 
 ## Test Files
 - `tests/database/test_lens_warehouse.py` — 49 tests total
@@ -166,3 +166,20 @@ update/delete exports) would make them FAIL, which is the goal.
 ## Status Log
 - [2026-06-16] wh-test-writer (LEAD): Starting RED phase
 - [2026-06-16] wh-test-writer (LEAD): RED complete — 49 tests (5 FAILED + 31 ERROR [fixture cascade] + 13 PASS [negative invariants]); 1 stub created (advisors/lens_warehouse.py)
+- [2026-06-16] wh-sqlite-implementer: GREEN complete — 49/49 tests passing, 0 test bugs documented. Typecheck N/A (stdlib only). Lint ✓.
+
+## Test File Issues (for test-writer to fix)
+None — all 49 tests passed against the implementation as written.
+
+## Implementation Notes
+- Replaced the `NotImplementedError` stub in `advisors/lens_warehouse.py` with full production logic.
+- `_warehouse_db_file(path)` is the single sentinel helper — raises `RuntimeError("...alphabot_warehouse...")` when `path is None` under pytest, mirroring `database._db_file()`.
+- WAL mode enabled on every connection via `PRAGMA journal_mode=WAL` (project standard for concurrent reader + single writer).
+- `sqlite3.Row` set as `row_factory`; `dict(row)` converts rows to dicts for `get_lens_snapshots`.
+- `available` stored as `int(bool(available))` — Python booleans coerce correctly to 0/1.
+- `_SECRET_KEY_NAMES` is a `frozenset` — O(1) membership test; top-level strip only as specified.
+- `persist_lens_snapshot` calls `init_warehouse_db(db_path)` first to ensure schema exists (idempotent init handles this without overhead).
+- `get_lens_snapshots` also calls `init_warehouse_db(db_path)` first for the same reason.
+- Parameterized SQL throughout — no f-string interpolation of user values anywhere.
+- Test run required `DB_PATH` env var pointing to an existing Windows temp dir (the global `pytest_configure` hook sets this during normal `pytest` invocation from the project root; running standalone needs `DB_PATH` pre-set because `tests/database/conftest.py` imports `database` at module level before the hook can fire in some runner modes).
+- No disputed tests.
