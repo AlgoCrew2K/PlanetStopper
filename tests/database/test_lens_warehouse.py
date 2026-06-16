@@ -27,6 +27,9 @@ Coverage (all tests MUST FAIL until GREEN implementation lands):
     15. Secret keys are stripped from `raw_payload` before storage:
         known secret key names (api_key, token, secret, password, Authorization)
         MUST NOT appear as top-level keys in the stored `raw_json`.
+    15b. Secret-key stripping is RECURSIVE — a nested credential (e.g.
+        {"headers": {"Authorization": "Bearer sk-xxx"}}) must also be removed.
+        Shallow-only stripping is insufficient.
     16. Non-secret keys survive the strip (payload content is preserved minus
         the secret keys — spot-checked by asserting a known non-secret key is
         present in the stored JSON).
@@ -476,6 +479,67 @@ class TestPersistLensSnapshot:
                 f"Non-secret key {key!r} must be preserved in stored JSON; "
                 f"got keys: {sorted(stored)}"
             )
+
+    @pytest.mark.parametrize(
+        "nested_payload,secret_key,path_desc",
+        [
+            (
+                {"headers": {"Authorization": "Bearer sk-live-XXXX"}, "safe": "ok"},
+                "Authorization",
+                "headers.Authorization",
+            ),
+            (
+                {"meta": {"api_key": "sk-very-secret"}, "data": [1, 2, 3]},
+                "api_key",
+                "meta.api_key",
+            ),
+            (
+                {"config": {"token": "tok_XXXX", "retry": 3}},
+                "token",
+                "config.token",
+            ),
+        ],
+        ids=["nested_authorization", "nested_api_key", "nested_token"],
+    )
+    def test_nested_secret_key_stripped_from_stored_json(
+        self, initialized_warehouse, nested_payload, secret_key, path_desc
+    ):
+        # Secret keys MUST be stripped recursively — a nested credential (e.g.
+        # {"headers": {"Authorization": "Bearer sk-xxx"}}) must not survive in
+        # the stored raw_json.  Shallow-only stripping fails this test.
+        row_id = wh_module.persist_lens_snapshot(
+            db_path=initialized_warehouse,
+            lens="options",
+            symbol="SPY",
+            source="options_proxy",
+            available=True,
+            raw_payload=nested_payload,
+        )
+        conn = _open_wh(initialized_warehouse)
+        try:
+            row = conn.execute(
+                "SELECT raw_json FROM lens_snapshots WHERE id=?", (row_id,)
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row is not None
+        stored = json.loads(row[0])
+
+        def _find_key_recursive(obj, target_key):
+            """Return True if target_key appears anywhere in the nested structure."""
+            if isinstance(obj, dict):
+                if target_key in obj:
+                    return True
+                return any(_find_key_recursive(v, target_key) for v in obj.values())
+            if isinstance(obj, list):
+                return any(_find_key_recursive(item, target_key) for item in obj)
+            return False
+
+        assert not _find_key_recursive(stored, secret_key), (
+            f"Secret key {secret_key!r} found at nested path {path_desc!r} "
+            f"in stored raw_json — strip must be recursive, not top-level only. "
+            f"Stored keys (top-level): {sorted(stored)}"
+        )
 
     def test_persist_never_raises_on_valid_call(self, initialized_warehouse):
         # D-1 contract: no exception escapes on a valid call.
