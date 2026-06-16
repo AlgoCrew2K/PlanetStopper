@@ -21,14 +21,14 @@ Mocking strategy:
   - @pytest.mark.live tests are excluded from the default run.
 
 Test run command:
-  pytest tests/ai_advisor/test_lens_technicals.py -p no:xdist -o addopts= -m "not live and not slow and not perf"
+  pytest tests/ai_advisor/test_lens_technicals.py \
+    -p no:xdist -o addopts= -m "not live and not slow and not perf"
 """
 
 from __future__ import annotations
 
-import json
 import pathlib
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -166,8 +166,7 @@ class TestProducerExistsAndShape:
 
         source = result.get("source")
         assert isinstance(source, str) and source.strip(), (
-            f"'source' must be a non-empty string (provenance / citation). "
-            f"Got: {source!r}"
+            f"'source' must be a non-empty string (provenance / citation). Got: {source!r}"
         )
 
     def test_available_true_when_bars_present_and_sufficient(self):
@@ -308,7 +307,7 @@ class TestMaPostureShape:
         )
 
     def test_momentum_per_ticker_value_is_float(self):
-        """momentum per-ticker value is a float (20-day return, not %/100 required but float required).
+        """momentum per-ticker value is a float (20-day return; float required).
 
         AC-1: momentum = 20-day return. The value is the raw return (e.g. 0.05 for 5%).
         FAILS if any ticker's momentum value is not a float.
@@ -357,7 +356,9 @@ class TestNamedConstants:
             "SMA window (e.g. _SMA_50_WINDOW = 50). "
             "AC-6 / math_engine.py coding standard: no magic numbers."
         )
-        const_name = "_SMA_50_WINDOW" if hasattr(lens_technicals, "_SMA_50_WINDOW") else "SMA_50_WINDOW"
+        const_name = (
+            "_SMA_50_WINDOW" if hasattr(lens_technicals, "_SMA_50_WINDOW") else "SMA_50_WINDOW"
+        )
         val = getattr(lens_technicals, const_name)
         assert val == 50, (
             f"{const_name} must equal 50 (the standard near-term MA window). Got: {val}"
@@ -378,7 +379,9 @@ class TestNamedConstants:
             "SMA window (e.g. _SMA_200_WINDOW = 200). "
             "AC-6 / math_engine.py coding standard: no magic numbers."
         )
-        const_name = "_SMA_200_WINDOW" if hasattr(lens_technicals, "_SMA_200_WINDOW") else "SMA_200_WINDOW"
+        const_name = (
+            "_SMA_200_WINDOW" if hasattr(lens_technicals, "_SMA_200_WINDOW") else "SMA_200_WINDOW"
+        )
         val = getattr(lens_technicals, const_name)
         assert val == 200, (
             f"{const_name} must equal 200 (the standard long-term MA window). Got: {val}"
@@ -401,7 +404,9 @@ class TestNamedConstants:
             "AC-6 / math_engine.py coding standard: no magic numbers."
         )
         const_name = (
-            "_MOMENTUM_WINDOW" if hasattr(lens_technicals, "_MOMENTUM_WINDOW") else "MOMENTUM_WINDOW"
+            "_MOMENTUM_WINDOW"
+            if hasattr(lens_technicals, "_MOMENTUM_WINDOW")
+            else "MOMENTUM_WINDOW"
         )
         val = getattr(lens_technicals, const_name)
         assert val == 20, (
@@ -423,15 +428,15 @@ class TestNamedConstants:
             "advisors.lens_technicals is missing a named constant for max retry attempts "
             "(e.g. _MAX_ATTEMPTS = 3). AC-4: finite bound is required."
         )
-        const_name = "_MAX_ATTEMPTS" if hasattr(lens_technicals, "_MAX_ATTEMPTS") else "MAX_ATTEMPTS"
+        const_name = (
+            "_MAX_ATTEMPTS" if hasattr(lens_technicals, "_MAX_ATTEMPTS") else "MAX_ATTEMPTS"
+        )
         val = getattr(lens_technicals, const_name)
         assert isinstance(val, int) and val >= 1, (
             f"{const_name} must be a positive integer. Got: {val!r}"
         )
         # Guard against accidentally treating -1 (unlimited) as the bound
-        assert val != -1, (
-            f"{const_name} must not be -1 (unlimited). AC-4: retry must be finite."
-        )
+        assert val != -1, f"{const_name} must not be -1 (unlimited). AC-4: retry must be finite."
         # Sanity upper bound: a retry loop > 10 attempts is suspicious for this producer
         assert val <= 10, (
             f"{const_name}={val} seems too large (>10). "
@@ -465,8 +470,7 @@ class TestHonestAvailability:
             result = lens_technicals._fetch_technicals(["SPY"])
 
         assert result["available"] is False, (
-            f"An Alpaca fetch exception must return available=False (AC-2). "
-            f"Full result: {result!r}"
+            f"An Alpaca fetch exception must return available=False (AC-2). Full result: {result!r}"
         )
         reason = result.get("reason")
         assert isinstance(reason, str) and reason.strip(), (
@@ -540,17 +544,12 @@ class TestHonestAvailability:
         """
         from advisors import lens_technicals
 
-        with patch.object(
-            lens_technicals, "_get_bars", side_effect=Exception("unexpected error")
-        ):
+        with patch.object(lens_technicals, "_get_bars", side_effect=Exception("unexpected error")):
             # Must not raise
             try:
                 result = lens_technicals._fetch_technicals(["SPY"])
             except Exception as exc:
-                pytest.fail(
-                    f"_fetch_technicals must never raise. "
-                    f"Got {type(exc).__name__}: {exc}"
-                )
+                pytest.fail(f"_fetch_technicals must never raise. Got {type(exc).__name__}: {exc}")
         assert result["available"] is False
 
 
@@ -744,7 +743,9 @@ class TestBoundedRetryOn429:
 
         from advisors import lens_technicals
 
-        max_attempts_attr = "_MAX_ATTEMPTS" if hasattr(lens_technicals, "_MAX_ATTEMPTS") else "MAX_ATTEMPTS"
+        max_attempts_attr = (
+            "_MAX_ATTEMPTS" if hasattr(lens_technicals, "_MAX_ATTEMPTS") else "MAX_ATTEMPTS"
+        )
         max_attempts = getattr(lens_technicals, max_attempts_attr)
 
         # Simulate a 429 by raising HTTPError from _get_bars on every call
@@ -957,8 +958,8 @@ class TestGoldenFixtureMath:
         )
         # Sanity: the fixture is constructed so this is False
         assert not expected_above_sma50, (
-            f"Fixture construction error: QQQ last_close={closes[-1]} should be < SMA50={sma50:.4f}. "
-            f"Fix the fixture construction in _build_qqq_below_bars()."
+            f"Fixture construction error: QQQ last_close={closes[-1]} "
+            f"should be < SMA50={sma50:.4f}. Fix _build_qqq_below_bars()."
         )
 
     def test_breadth_equals_fraction_of_universe_above_sma50(self):
@@ -970,8 +971,8 @@ class TestGoldenFixtureMath:
         """
         from advisors import lens_technicals
 
-        spy_bars = self._build_spy_above_bars()   # above SMA50
-        qqq_bars = self._build_qqq_below_bars()   # below SMA50
+        spy_bars = self._build_spy_above_bars()  # above SMA50
+        qqq_bars = self._build_qqq_below_bars()  # below SMA50
         mock_bars = {"SPY": spy_bars, "QQQ": qqq_bars}
 
         with patch.object(lens_technicals, "_get_bars", return_value=mock_bars):
@@ -982,16 +983,11 @@ class TestGoldenFixtureMath:
 
         # Derive expected breadth from the fixture results
         ma_posture = result.get("ma_posture", {})
-        tickers_with_sma50 = [
-            t for t, v in ma_posture.items()
-            if v.get("above_sma50") is not None
-        ]
+        tickers_with_sma50 = [t for t, v in ma_posture.items() if v.get("above_sma50") is not None]
         if not tickers_with_sma50:
             pytest.skip("no tickers have SMA50 data — cannot verify breadth formula")
 
-        above_count = sum(
-            1 for t in tickers_with_sma50 if ma_posture[t].get("above_sma50") is True
-        )
+        above_count = sum(1 for t in tickers_with_sma50 if ma_posture[t].get("above_sma50") is True)
         # Derive expected breadth from the per-ticker flags (same formula producer uses)
         expected_breadth = above_count / len(tickers_with_sma50)
 
@@ -1031,7 +1027,9 @@ class TestGoldenFixtureMath:
 
         closes = [b["c"] for b in spy_bars]
         expected_momentum = self._momentum_20d(closes)
-        assert expected_momentum is not None, "Fixture has 251 bars — 20d momentum must be computable"
+        assert expected_momentum is not None, (
+            "Fixture has 251 bars — 20d momentum must be computable"
+        )
 
         actual_momentum = momentum["SPY"]
         assert isinstance(actual_momentum, float), (
@@ -1159,9 +1157,8 @@ class TestWiringBuildTechnicalsSection:
         Wiring test: honest availability must propagate from producer to section.
         FAILS if the section returns available=True despite a producer that returned False.
         """
-        from advisors import lens_technicals
-
         import ai_advisor
+        from advisors import lens_technicals
 
         producer_unavailable = {
             "available": False,
@@ -1188,9 +1185,8 @@ class TestWiringBuildTechnicalsSection:
         payload=None (or absent) when the producer returned available=False.
         FAILS if the section invents a payload despite the producer being unavailable.
         """
-        from advisors import lens_technicals
-
         import ai_advisor
+        from advisors import lens_technicals
 
         with patch.object(
             lens_technicals,
@@ -1241,7 +1237,6 @@ class TestBarSourceRecon:
         called and the test fails.
         """
         import synthetic_history
-
         from advisors import lens_technicals
 
         spy_bars = _make_bar_sequence([100.0] * 250 + [110.0])
@@ -1250,16 +1245,16 @@ class TestBarSourceRecon:
             synthetic_history,
             "fetch_bars",
             return_value={"SPY": spy_bars},
-        ) as mock_fetch:
+        ) as _mock_fetch:
             # Call through the actual _get_bars path (not a patched _get_bars)
             # to verify the real integration calls synthetic_history
             try:
                 # First try with the real _get_bars to see if it calls synthetic_history
                 with patch("time.sleep"):
-                    result = lens_technicals._fetch_technicals(["SPY"])
+                    lens_technicals._fetch_technicals(["SPY"])
             except Exception:
                 # If this raises (e.g. env missing), skip — we only care about
-                # mock_fetch.called to verify the integration
+                # _mock_fetch.called to verify the integration
                 pass
 
         # If the producer integrates with synthetic_history, mock_fetch was called.
@@ -1268,7 +1263,9 @@ class TestBarSourceRecon:
         # NOTE: This test is intentionally loose on the assertion to avoid false failures
         # from the call path routing (the producer may wrap _get_bars differently).
         # The other tests verify the behavior end-to-end.
-        assert True, "Structural wiring test — see test_returns_dict_with_all_required_keys for behavior"
+        assert True, (
+            "Structural wiring test — see test_returns_dict_with_all_required_keys for behavior"
+        )
 
     def test_get_bars_internal_helper_exists(self):
         """A _get_bars internal helper exists for dependency-injection in tests.
@@ -1287,9 +1284,7 @@ class TestBarSourceRecon:
             "Pattern from lens_gdelt.py: expose _get_bars() as an internal "
             "dependency-injection point."
         )
-        assert callable(lens_technicals._get_bars), (
-            "_get_bars must be callable."
-        )
+        assert callable(lens_technicals._get_bars), "_get_bars must be callable."
 
 
 # ---------------------------------------------------------------------------
@@ -1375,7 +1370,8 @@ class TestHollowUniverseGuard:
         # The universe passed must be non-empty — [] causes available=False always
         last_universe = captured_universes[-1]
         assert len(last_universe) > 0, (
-            f"HOLLOW-UNIVERSE DEFECT: _get_bars was called with an empty universe {last_universe!r}. "
+            f"HOLLOW-UNIVERSE DEFECT: _get_bars called with empty universe "
+            f"{last_universe!r}. "
             f"_fetch_technicals([]) always returns available=False because "
             f"synthetic_history.fetch_bars([], ...) has no tickers to fetch. "
             f"_build_technicals_section must source the universe from bot_state "
@@ -1395,9 +1391,8 @@ class TestHollowUniverseGuard:
           _build_technicals_section → _fetch_technicals(universe) → _get_bars(universe)
         with a real non-empty universe from bot_state.
         """
-        from advisors import lens_technicals
-
         import database
+        from advisors import lens_technicals
 
         # Seed bot_state with tickers
         state_with_tickers = {
@@ -1458,8 +1453,7 @@ class TestHollowUniverseGuard:
                 )
 
         assert result.get("available") is False, (
-            f"With empty bot_state (no tickers), result must be available=False. "
-            f"Got: {result!r}"
+            f"With empty bot_state (no tickers), result must be available=False. Got: {result!r}"
         )
         assert result.get("lens") == "technicals", (
             f"lens key must always be 'technicals'. Got: {result.get('lens')!r}"

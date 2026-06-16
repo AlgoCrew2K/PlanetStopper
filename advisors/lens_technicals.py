@@ -216,14 +216,11 @@ def _fetch_technicals(universe: list[str]) -> dict:
         # --- Breadth: fraction of universe above SMA50 ---
         # Exclude tickers without sufficient bars for SMA50 (above_sma50 is None)
         tickers_with_sma50 = [
-            t for t, flags in ma_posture.items()
-            if flags["above_sma50"] is not None
+            t for t, flags in ma_posture.items() if flags["above_sma50"] is not None
         ]
 
         if tickers_with_sma50:
-            above_count = sum(
-                1 for t in tickers_with_sma50 if ma_posture[t]["above_sma50"]
-            )
+            above_count = sum(1 for t in tickers_with_sma50 if ma_posture[t]["above_sma50"])
             breadth: float | None = float(above_count / len(tickers_with_sma50))
         else:
             breadth = None
