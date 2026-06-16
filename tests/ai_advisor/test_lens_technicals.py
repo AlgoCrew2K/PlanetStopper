@@ -497,7 +497,10 @@ class TestHonestAvailability:
         secret_exc = RuntimeError("ALPACA_SECRET=secret_value_leaked_here")
 
         # Patch time.sleep so the bounded-retry backoff does not consume wall-clock.
-        with patch.object(lens_technicals, "_get_bars", side_effect=secret_exc), patch("time.sleep"):
+        with (
+            patch.object(lens_technicals, "_get_bars", side_effect=secret_exc),
+            patch("time.sleep"),
+        ):
             result = lens_technicals._fetch_technicals(["SPY"])
 
         assert result["available"] is False
@@ -1466,4 +1469,305 @@ class TestHollowUniverseGuard:
         )
         assert result.get("lens") == "technicals", (
             f"lens key must always be 'technicals'. Got: {result.get('lens')!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# PROXY-UNIVERSE GUARD — PM live-gate defect (round 2)
+#
+# Finding: `_build_technicals_section` sources its universe from
+# `database.load_state()` `logic_holdings`.  At 03:00 / weekends / flat
+# markets all 11 symphonies have `logic_holdings={}` (live test confirmed).
+# The lens's PRIMARY consumer is the nightly Prism pipeline (`lens_pipeline.py`
+# `run_pipeline()` at 03:00) — so the lens is perpetually unavailable in its
+# primary consumer = effectively hollow even though the wiring is structurally
+# honest.
+#
+# Fix required: when `logic_holdings` yields no tickers, fall back to a
+# NAMED MODULE-LEVEL market-proxy breadth basket defined in `lens_technicals`
+# (e.g. `_PROXY_UNIVERSE: list[str]` of core equity ETFs).  The proxy provides
+# a stable, always-available universe for breadth / posture / momentum when
+# symphonies hold nothing (off-hours / flat positions).
+#
+# [PM-ASSUMED] choice: named proxy basket constant (NOT Composer /score calls
+# which are network I/O and heavyweight at 03:00).
+# ---------------------------------------------------------------------------
+
+
+class TestProxyUniverseGuard:
+    """The universe must be available when holdings are empty (03:00/weekend).
+
+    `logic_holdings` is a RUNTIME field — empty whenever the engine has not
+    run a market-hours cycle.  The lens must fall back to a stable proxy
+    universe so the nightly Prism pipeline gets real breadth/posture signals
+    instead of an always-False lens.
+
+    Contract:
+    - `lens_technicals._PROXY_UNIVERSE` is a non-empty module-level list of
+      ticker strings with a documented source comment.
+    - When `load_state()` returns symphonies but `logic_holdings={}` on all,
+      `_build_technicals_section` uses the proxy basket.
+    - The proxy basket tickers appear in the universe passed to `_get_bars`.
+    - Existing ticker sets from live holdings are MERGED with the proxy (the
+      proxy is a floor, not a replacement).
+    - Purely empty DB (no symphonies at all) still degrades to available=False
+      ONLY IF the proxy basket itself is somehow unreachable (edge case; the
+      proxy should always produce a universe in practice).
+    """
+
+    def test_proxy_universe_constant_exists_and_is_non_empty(self):
+        """_PROXY_UNIVERSE constant must exist in lens_technicals, be a list,
+        and contain at least one ticker string.
+
+        AC-new: named constant with source comment (no magic literals).
+        FAILS if the constant is absent — the fallback has no source.
+        """
+        from advisors import lens_technicals
+
+        assert hasattr(lens_technicals, "_PROXY_UNIVERSE"), (
+            "lens_technicals._PROXY_UNIVERSE is missing. "
+            "The proxy-universe fallback needs a named module-level constant "
+            "(per math_engine.py coding standard: no magic literals). "
+            "Add e.g. _PROXY_UNIVERSE: list[str] = ['SPY', 'QQQ', ...] with "
+            "a source comment explaining why these tickers are chosen."
+        )
+        proxy = lens_technicals._PROXY_UNIVERSE
+        assert isinstance(proxy, list), (
+            f"_PROXY_UNIVERSE must be a list[str], got {type(proxy).__name__}"
+        )
+        assert len(proxy) > 0, (
+            "_PROXY_UNIVERSE must be non-empty — it is the fallback breadth "
+            "universe when no live holdings are present."
+        )
+        for ticker in proxy:
+            assert isinstance(ticker, str) and ticker, (
+                f"Every entry in _PROXY_UNIVERSE must be a non-empty string. "
+                f"Found: {ticker!r}"
+            )
+
+    def test_proxy_universe_tickers_reach_get_bars_when_logic_holdings_empty(self):
+        """When all symphonies have logic_holdings={}, _get_bars is called with
+        the proxy basket tickers (not an empty list).
+
+        This is the 03:00 / weekend / flat-market case that the PM live gate
+        caught: all 11 live symphonies had logic_holdings={}, producing an
+        empty universe, which means available=False always.
+
+        FAILS if _get_bars receives [] — the proxy fallback is not wired.
+        FAILS if _get_bars is never called — the section short-circuits.
+        Passes only after the implementer adds the proxy fallback.
+        """
+        import ai_advisor
+        import database
+        from advisors import lens_technicals
+
+        # Simulate 03:00: symphonies exist but logic_holdings is empty on all.
+        # This is the exact live-test condition that triggered the gate failure.
+        state_flat = {
+            "sym_A": {"name": "TestSymphA", "logic_holdings": {}},
+            "sym_B": {"name": "TestSymphB", "logic_holdings": {}},
+        }
+        database.save_state(state_flat)
+
+        captured_universes: list[list[str]] = []
+
+        def spy_get_bars(universe: list) -> dict:
+            captured_universes.append(list(universe))
+            bars = _make_bar_sequence([100.0] * 250 + [110.0])
+            return {t: bars for t in universe} if universe else {}
+
+        with patch.object(lens_technicals, "_get_bars", side_effect=spy_get_bars):
+            ai_advisor._build_technicals_section()
+
+        assert len(captured_universes) >= 1, (
+            "_get_bars was never called. Section must call _fetch_technicals "
+            "even when logic_holdings is empty — the proxy basket provides the "
+            "universe."
+        )
+
+        last_universe = captured_universes[-1]
+        assert len(last_universe) > 0, (
+            f"PROXY-UNIVERSE DEFECT: _get_bars called with empty universe "
+            f"{last_universe!r} despite _PROXY_UNIVERSE being defined. "
+            f"When logic_holdings is empty on all symphonies, "
+            f"_build_technicals_section must fall back to "
+            f"lens_technicals._PROXY_UNIVERSE. "
+            f"Seeded bot_state: {list(state_flat.keys())} all with logic_holdings={{}}"
+        )
+
+        # The proxy tickers must be present in the universe
+        proxy_set = set(lens_technicals._PROXY_UNIVERSE)
+        universe_set = set(last_universe)
+        assert proxy_set.issubset(universe_set), (
+            f"Not all proxy tickers reached _get_bars. "
+            f"Expected proxy subset {sorted(proxy_set)} to be in universe "
+            f"{sorted(universe_set)}. The proxy is a floor — all proxy tickers "
+            f"must appear when logic_holdings is empty."
+        )
+
+    def test_available_true_when_flat_with_proxy_bars(self):
+        """_build_technicals_section returns available=True at 03:00 (flat) when
+        proxy basket bars are available.
+
+        This is the end-to-end regression for the PM live-gate failure. The lens
+        must be available for the nightly Prism pipeline even when no holdings exist.
+
+        FAILS if available=False — the proxy is not routing real bars to the
+        producer (most likely: universe is still [] after the fix attempt).
+        Passes only after the proxy fallback is correctly wired.
+        """
+        import ai_advisor
+        import database
+        from advisors import lens_technicals
+
+        # 03:00 state: symphonies registered but flat
+        database.save_state(
+            {
+                "sym_nightly": {
+                    "name": "NightlySymphony",
+                    "logic_holdings": {},
+                }
+            }
+        )
+
+        proxy_bars = _make_bar_sequence([100.0] * 250 + [105.0])
+
+        def bars_for_proxy(universe: list) -> dict:
+            if not universe:
+                return {}  # honest: no tickers, no bars
+            # Return bars for every proxy ticker so producer can compute
+            return {t: proxy_bars for t in universe}
+
+        with patch.object(lens_technicals, "_get_bars", side_effect=bars_for_proxy):
+            result = ai_advisor._build_technicals_section()
+
+        assert result.get("available") is True, (
+            f"NIGHTLY-PATH DEFECT: _build_technicals_section returned "
+            f"available=False at 03:00 (flat holdings). "
+            f"Expected: proxy basket provides universe → real bars → "
+            f"available=True. "
+            f"Actual result: {result!r}. "
+            f"Root cause if still failing: universe is [] (proxy not wired) "
+            f"or proxy bars are not long enough for SMA computation."
+        )
+        assert result.get("lens") == "technicals"
+        payload = result.get("payload")
+        assert isinstance(payload, dict), (
+            f"payload must be a dict when available=True. Got: {payload!r}"
+        )
+
+    def test_live_holdings_tickers_merged_with_proxy(self):
+        """When live holdings contain tickers, those tickers are MERGED with
+        the proxy basket (not replaced by it).
+
+        The proxy is a floor: real holdings tickers are included alongside
+        proxy tickers so the lens reflects the actual portfolio when live.
+
+        FAILS if live holding tickers are missing from the universe passed
+        to _get_bars (proxy replaced the holdings instead of supplementing).
+        """
+        import ai_advisor
+        import database
+        from advisors import lens_technicals
+
+        live_ticker = "TSLA"
+        database.save_state(
+            {
+                "sym_live": {
+                    "name": "LiveSymphony",
+                    "logic_holdings": {live_ticker: 1.0},
+                }
+            }
+        )
+
+        captured_universes: list[list[str]] = []
+
+        def spy_get_bars(universe: list) -> dict:
+            captured_universes.append(list(universe))
+            bars = _make_bar_sequence([100.0] * 250 + [110.0])
+            return {t: bars for t in universe}
+
+        with patch.object(lens_technicals, "_get_bars", side_effect=spy_get_bars):
+            ai_advisor._build_technicals_section()
+
+        assert len(captured_universes) >= 1, "_get_bars was never called."
+        last_universe = set(captured_universes[-1])
+
+        assert live_ticker in last_universe, (
+            f"Live holding ticker {live_ticker!r} was dropped from the universe. "
+            f"The proxy is a FLOOR — live tickers must be merged in, not replaced. "
+            f"Universe seen by _get_bars: {sorted(last_universe)}"
+        )
+
+        proxy_set = set(lens_technicals._PROXY_UNIVERSE)
+        assert proxy_set.issubset(last_universe), (
+            f"Proxy tickers {sorted(proxy_set)} were not included alongside "
+            f"live holding {live_ticker!r}. Both must appear in the universe."
+        )
+
+    def test_empty_state_with_proxy_still_available(self):
+        """When bot_state is completely empty (first boot, no symphonies),
+        the proxy basket alone provides the universe → available=True.
+
+        The prior implementation treated empty bot_state as a terminal
+        degradation path (available=False). With the proxy, an empty DB
+        should still yield real breadth signals because the proxy is always
+        available regardless of symphony state.
+
+        FAILS if available=False — the proxy is not the universe floor.
+        """
+        import ai_advisor
+        import database
+        from advisors import lens_technicals
+
+        # Completely empty state — no symphonies at all
+        database.save_state({})
+
+        proxy_bars = _make_bar_sequence([100.0] * 250 + [105.0])
+
+        with patch.object(
+            lens_technicals,
+            "_get_bars",
+            return_value={t: proxy_bars for t in lens_technicals._PROXY_UNIVERSE},
+        ):
+            result = ai_advisor._build_technicals_section()
+
+        assert result.get("available") is True, (
+            f"With empty bot_state, proxy basket should provide the universe "
+            f"and yield available=True. Got: {result!r}. "
+            f"Proxy: {lens_technicals._PROXY_UNIVERSE}"
+        )
+
+    def test_genuine_unavailability_when_bars_fail(self):
+        """When _get_bars raises for the proxy universe, available=False with
+        D-1 reason (type(exc).__name__ only).
+
+        The proxy adds resilience against empty holdings, not against network
+        failures. A genuine bar-fetch failure still degrades honestly.
+
+        This test verifies D-1 compliance is preserved through the proxy path.
+        """
+        import ai_advisor
+        import database
+        from advisors import lens_technicals
+
+        # Flat state: proxy will be the universe source
+        database.save_state({"sym_flat": {"name": "FlatSymphony", "logic_holdings": {}}})
+
+        class _NetworkError(Exception):
+            pass
+
+        with patch.object(
+            lens_technicals, "_get_bars", side_effect=_NetworkError("connection refused")
+        ):
+            result = ai_advisor._build_technicals_section()
+
+        assert result.get("available") is False, (
+            f"Bar-fetch failure must degrade to available=False. Got: {result!r}"
+        )
+        reason = result.get("reason")
+        assert reason == "_NetworkError", (
+            f"D-1 contract: reason must be type(exc).__name__ only. "
+            f"Expected '_NetworkError', got {reason!r}. "
+            f"Never include str(exc) in the reason field."
         )
