@@ -135,12 +135,14 @@ def assembled_context(fake_autotune_run, fake_condensed_logic):
 
 CYCLE1_LENSES = ["technicals", "sentiment", "derivatives", "macro", "fundamentals"]
 
-# Lenses that remain intentional stubs after Cycle 2.  Sentiment (GDELT),
-# macro (FRED), fundamentals (SEC EDGAR), and derivatives (FRED VIXCLS/VXVCLS) were
-# promoted to real producers and are covered by their own producer test files.
+# Lenses that remain intentional stubs after Cycle 3.  Sentiment (GDELT),
+# macro (FRED), fundamentals (SEC EDGAR), derivatives (FRED VIXCLS/VXVCLS),
+# and technicals (Alpaca daily bars) were all promoted to real producers and
+# are covered by their own producer test files.
 # Stub-contract assertions (available=False, empty payload, unconditional stub)
-# apply only to lenses that are still honest stubs.
-CYCLE1_STUB_LENSES = ["technicals"]
+# apply only to lenses that are STILL honest stubs.  As of feat/lens-technicals
+# (2026-06-16) all five cycle-1 lenses are real producers — this list is empty.
+CYCLE1_STUB_LENSES: list[str] = []
 
 
 @pytest.mark.parametrize("lens_name", CYCLE1_LENSES)
