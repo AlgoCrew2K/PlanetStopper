@@ -234,6 +234,7 @@ update/delete exports) would make them FAIL, which is the goal.
 - [2026-06-16] wh-test-writer (LEAD): RED complete — 49 tests (5 FAILED + 31 ERROR [fixture cascade] + 13 PASS [negative invariants]); 1 stub created (advisors/lens_warehouse.py)
 - [2026-06-16] wh-sqlite-implementer: GREEN complete — 49/49 tests passing @ 6e9b3bb, 0 test bugs documented. Typecheck N/A (stdlib only). Lint OK.
 - [2026-06-16] wh-test-writer (LEAD): REVIEW ROUND 2 — PM flagged AC mislabel (plan AC-4=wiring, AC-5=isolation — test file had them swapped) + anti-hollow: added 8 wiring RED tests in tests/ai_advisor/test_lens_warehouse_wiring.py (5 FAILED: persist not yet wired into _build_sentiment_section / _build_macro_section; 3 PASS: lazy-import invariant + key-absent guard). Phase: red (wiring).
+- [2026-06-16] wh-sqlite-implementer: GREEN round 2 — 60/60 (49 store + 3 recursive-strip + 8 wiring) @ commit to follow. ai_advisor.py wired; lens_warehouse.py _strip_secrets made recursive. Lint ✓ (pre-existing ai_advisor.py issues are not mine). No test bugs.
 
 ## Test File Issues (for test-writer to fix)
 None — all 49 tests passed against the implementation as written.

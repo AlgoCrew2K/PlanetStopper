@@ -67,9 +67,17 @@ def _connect(resolved_path: str) -> sqlite3.Connection:
     return conn
 
 
-def _strip_secrets(payload: dict) -> dict:
-    """Return a shallow copy of *payload* with secret top-level keys removed."""
-    return {k: v for k, v in payload.items() if k not in _SECRET_KEY_NAMES}
+def _strip_secrets(payload: object) -> object:
+    """Recursively remove secret keys from *payload*.
+
+    Walks dicts and lists at all depths, stripping any dict key that appears in
+    _SECRET_KEY_NAMES.  Non-dict, non-list values are returned as-is.
+    """
+    if isinstance(payload, dict):
+        return {k: _strip_secrets(v) for k, v in payload.items() if k not in _SECRET_KEY_NAMES}
+    if isinstance(payload, list):
+        return [_strip_secrets(item) for item in payload]
+    return payload
 
 
 # ---------------------------------------------------------------------------
