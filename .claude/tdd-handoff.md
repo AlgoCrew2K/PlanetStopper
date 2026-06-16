@@ -147,6 +147,72 @@ def _warehouse_db_file(path=None):
 - Export only: `init_warehouse_db`, `persist_lens_snapshot`, `get_lens_snapshots`.
 - No `update_lens_snapshot`, no `delete_lens_snapshot`.
 
+## AC-4 Wiring RED — round 2 (routed by PM, 2026-06-16)
+
+Plan AC-4 is the **producer integration point** — GDELT and FRED must call
+`persist_lens_snapshot` after each fetch. This is separate from the store
+and goes in `ai_advisor.py`. Tests in:
+`tests/ai_advisor/test_lens_warehouse_wiring.py` (8 tests: 5 RED + 3 PASS invariants).
+
+### What the implementer must add to `ai_advisor.py`
+
+In `_build_sentiment_section` (after building the return dict, before returning):
+
+```python
+    # AC-4: persist this lens snapshot to the warehouse (lazy import, CC-2).
+    try:
+        from advisors import lens_warehouse  # noqa: PLC0415
+        _block_available = not (not tone_available and not artlist_available)
+        _wh_payload = (
+            {"article_count": len(articles), "tone_score": tone_score}
+            if _block_available
+            else {"reason": artlist_reason or tone_result.get("reason")}
+        )
+        lens_warehouse.persist_lens_snapshot(
+            lens="sentiment",
+            symbol=None,
+            source="gdelt",
+            available=_block_available,
+            raw_payload=_wh_payload,
+        )
+    except Exception:
+        pass  # D-1: warehouse errors never surface to callers
+```
+
+In `_build_macro_section` (add before each of the two return statements):
+
+```python
+    # AC-4: persist this lens snapshot (lazy import, CC-2).
+    try:
+        from advisors import lens_warehouse  # noqa: PLC0415
+        lens_warehouse.persist_lens_snapshot(
+            lens="macro",
+            symbol=None,
+            source="fred",
+            available=<True or False>,
+            raw_payload=<series_data dict or reason dict>,
+        )
+    except Exception:
+        pass
+```
+
+Constraints:
+- LAZY import only — `from advisors import lens_warehouse` INSIDE the function body.
+  The two lazy-import tests (`test_persist_lens_snapshot_is_lazy_imported_*`) will
+  FAIL if `lens_warehouse` appears as a module-level attribute on `ai_advisor`.
+- available=False on failure paths, available=True on success — mirrors the block.
+- D-1 guard: `try/except Exception: pass` always wraps the persist call.
+- Tests mock `advisors.lens_warehouse.persist_lens_snapshot` at the source path —
+  the lazy import must use exactly `from advisors import lens_warehouse` so the
+  mock patch path `advisors.lens_warehouse.persist_lens_snapshot` intercepts it.
+- Path-scoped commit: `ai_advisor.py` only.
+
+Test command for round 2:
+```
+pytest tests/ai_advisor/test_lens_warehouse_wiring.py -p no:xdist -o addopts= -m "not live and not slow and not perf" -q
+```
+Target: 8 passed, 0 failed.
+
 ## Questions for User / PM
 - None — the plan + AC are clear and fully specified.
 
@@ -166,7 +232,8 @@ update/delete exports) would make them FAIL, which is the goal.
 ## Status Log
 - [2026-06-16] wh-test-writer (LEAD): Starting RED phase
 - [2026-06-16] wh-test-writer (LEAD): RED complete — 49 tests (5 FAILED + 31 ERROR [fixture cascade] + 13 PASS [negative invariants]); 1 stub created (advisors/lens_warehouse.py)
-- [2026-06-16] wh-sqlite-implementer: GREEN complete — 49/49 tests passing, 0 test bugs documented. Typecheck N/A (stdlib only). Lint ✓.
+- [2026-06-16] wh-sqlite-implementer: GREEN complete — 49/49 tests passing @ 6e9b3bb, 0 test bugs documented. Typecheck N/A (stdlib only). Lint OK.
+- [2026-06-16] wh-test-writer (LEAD): REVIEW ROUND 2 — PM flagged AC mislabel (plan AC-4=wiring, AC-5=isolation — test file had them swapped) + anti-hollow: added 8 wiring RED tests in tests/ai_advisor/test_lens_warehouse_wiring.py (5 FAILED: persist not yet wired into _build_sentiment_section / _build_macro_section; 3 PASS: lazy-import invariant + key-absent guard). Phase: red (wiring).
 
 ## Test File Issues (for test-writer to fix)
 None — all 49 tests passed against the implementation as written.
