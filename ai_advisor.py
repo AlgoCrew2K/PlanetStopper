@@ -444,10 +444,11 @@ def _build_technicals_section(_data: object = None) -> dict:
     daily bars.  Honest availability: returns available=False when bars are
     absent or the fetch fails.
 
-    Universe is sourced from live bot_state (database.load_state) — the set
-    of tickers currently held across all monitored symphonies.  Degrades
-    honestly to available=False when bot_state yields no tickers (e.g. first
-    boot before any symphony data).
+    Universe is sourced from the UNION of live bot_state logic_holdings and
+    lens_technicals._PROXY_UNIVERSE (a named market-proxy basket).  The proxy
+    is a floor so the nightly Prism pipeline (03:00, off-hours) always
+    receives a real universe even when symphonies hold nothing (logic_holdings
+    is empty at 03:00 / weekends / flat markets — PM live-gate finding).
 
     CC-2: lazy import keeps the Alpaca client off the module-level import path.
     D-1: reason is type(exc).__name__ only — never str(exc).
@@ -470,12 +471,17 @@ def _build_technicals_section(_data: object = None) -> dict:
         tickers: set[str] = set()
         for entry in bot_state.values():
             if isinstance(entry, dict):
-                for ticker in entry.get("logic_holdings", {}).keys():
+                for ticker in entry.get("logic_holdings", {}):
                     if ticker:  # filter out empty strings
                         tickers.add(ticker)
     except Exception:
         tickers = set()
 
+    # Merge with the proxy basket: live holdings may be empty off-hours
+    # (logic_holdings={} at 03:00 / weekends / flat markets — PM live-gate
+    # finding). The proxy is a FLOOR that ensures the nightly Prism pipeline
+    # always receives a real universe. Live tickers are merged in on top.
+    tickers.update(lens_technicals._PROXY_UNIVERSE)
     universe = sorted(tickers)
 
     try:

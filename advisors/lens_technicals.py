@@ -59,6 +59,25 @@ _TECHNICALS_SOURCE: str = "Alpaca Markets v2 daily bars — reused synthetic_his
 # holidays).  Source: synthetic_history.py uses the same window.
 _HISTORY_DAYS: int = 270
 
+# Market-proxy breadth basket — stable universe for off-hours / flat-holding
+# runs (e.g. nightly Prism at 03:00 when logic_holdings is empty on all
+# symphonies). Chosen as major-cap equity benchmarks covering US large-cap,
+# tech, small-cap, and international breadth. Source: standard institutional
+# breadth-monitoring basket (see Investopedia "market breadth indicators").
+# This is a FLOOR — live holdings tickers are merged in on top, not replaced.
+_PROXY_UNIVERSE: list[str] = [
+    "SPY",   # S&P 500 — US large-cap benchmark
+    "QQQ",   # Nasdaq 100 — tech/growth
+    "IWM",   # Russell 2000 — US small-cap
+    "EFA",   # MSCI EAFE — developed international
+    "AGG",   # US aggregate bond — risk-off signal
+    "GLD",   # Gold — inflation / safe-haven
+    "XLF",   # Financials sector
+    "XLE",   # Energy sector
+    "XLV",   # Health care sector
+    "XLI",   # Industrials sector
+]
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
