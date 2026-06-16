@@ -437,18 +437,77 @@ def _fetch_with_backoff(
 
 
 def _build_technicals_section(_data: object = None) -> dict:
-    """Technicals lens block — cycle-1 stub (Cycle-2b deliverable).
+    """Technicals lens block — Alpaca price/trend/breadth producer.
 
-    Honest availability: Alpaca IEX / Alpha Vantage indicator source not yet
-    connected.  Returns available=False with an informative reason.
+    Fetches MA posture (50-day and 200-day SMA), market breadth (fraction of
+    universe above 50-day SMA), and 20-day momentum from synthetic_history
+    daily bars.  Honest availability: returns available=False when bars are
+    absent or the fetch fails.
+
+    Universe is sourced from the UNION of live bot_state logic_holdings and
+    lens_technicals._PROXY_UNIVERSE (a named market-proxy basket).  The proxy
+    is a floor so the nightly Prism pipeline (03:00, off-hours) always
+    receives a real universe even when symphonies hold nothing (logic_holdings
+    is empty at 03:00 / weekends / flat markets — PM live-gate finding).
+
+    CC-2: lazy import keeps the Alpaca client off the module-level import path.
+    D-1: reason is type(exc).__name__ only — never str(exc).
+
+    Args:
+        _data: unused; reserved for caller pre-injection (test-mockable hook).
+
+    Returns:
+        Lens block dict with keys: lens, available, reason (on False),
+        payload (on True), sources.
     """
-    return {
-        "lens": "technicals",
-        "available": False,
-        "reason": "technicals source not connected — cycle-2b deliverable",
-        "payload": None,
-        "sources": [],
-    }
+    from advisors import lens_technicals  # noqa: PLC0415
+
+    # Source the universe from live bot_state holdings so the producer has
+    # real tickers to fetch bars for.  An empty universe would propagate to
+    # _get_bars([]) → synthetic_history.fetch_bars([], ...) → {} → always
+    # available=False, which is hollow wiring (reviewer finding: round 1).
+    try:
+        bot_state = database.load_state()
+        tickers: set[str] = set()
+        for entry in bot_state.values():
+            if isinstance(entry, dict):
+                for ticker in entry.get("logic_holdings", {}):
+                    if ticker:  # filter out empty strings
+                        tickers.add(ticker)
+    except Exception:
+        tickers = set()
+
+    # Merge with the proxy basket: live holdings may be empty off-hours
+    # (logic_holdings={} at 03:00 / weekends / flat markets — PM live-gate
+    # finding). The proxy is a FLOOR that ensures the nightly Prism pipeline
+    # always receives a real universe. Live tickers are merged in on top.
+    tickers.update(lens_technicals._PROXY_UNIVERSE)
+    universe = sorted(tickers)
+
+    try:
+        result = lens_technicals._fetch_technicals(universe)
+    except Exception as exc:
+        result = {"available": False, "reason": type(exc).__name__}
+
+    if result.get("available"):
+        return {
+            "lens": "technicals",
+            "available": True,
+            "payload": {
+                "ma_posture": result.get("ma_posture"),
+                "breadth": result.get("breadth"),
+                "momentum": result.get("momentum"),
+            },
+            "sources": [],
+        }
+    else:
+        return {
+            "lens": "technicals",
+            "available": False,
+            "reason": result.get("reason", "unavailable"),
+            "payload": None,
+            "sources": [],
+        }
 
 
 def _build_sentiment_section(_data: object = None) -> dict:

@@ -1,9 +1,9 @@
 # ai_advisor
 
-> Claude-backed config advisor: context assembly, structured-output Claude call, per-symphony assessment, safety gates (7-item allowlist, risk-direction cross-check, OOS re-validation), and Cycle-1 multi-lens scaffold (5 honest-availability stub lens blocks + citation convention).
+> Claude-backed config advisor: context assembly, structured-output Claude call, per-symphony assessment, safety gates (7-item allowlist, risk-direction cross-check, OOS re-validation), and multi-lens pipeline (technicals wired; sentiment wired; derivatives, macro, fundamentals stubs).
 
 **Source:** `ai_advisor.py`
-**Last updated:** 2026-06-10
+**Last updated:** 2026-06-15
 
 ## Overview
 
@@ -19,7 +19,11 @@ Real-money-critical input governance: `assemble_advisor_context` never includes 
 
 **Regime context fix (2026-06-10):** `_build_volatility_regime` sets `available: False` with an explicit `reason` when `vol/atr` keys are absent from the autotune run row, rather than fabricating `available: True` with all-null fields.
 
-**Cycle-1 multi-lens scaffold (2026-06-10):** Five new stub lens helpers added (`_build_technicals_section`, `_build_sentiment_section`, `_build_derivatives_section`, `_build_macro_section`, `_build_fundamentals_section`), each following the honest-availability pattern. A citation convention (`build_citation` / `validate_citation`) enforces well-formed sources. See [Multi-Lens Scaffold](#multi-lens-scaffold-cycle-1) below.
+**Cycle-1 multi-lens scaffold (2026-06-10):** Five lens helpers added (`_build_technicals_section`, `_build_sentiment_section`, `_build_derivatives_section`, `_build_macro_section`, `_build_fundamentals_section`), each following the honest-availability pattern. A citation convention (`build_citation` / `validate_citation`) enforces well-formed sources. See [Multi-Lens Scaffold](#multi-lens-scaffold) below.
+
+**Technicals lens wiring (2026-06-15):** `_build_technicals_section` (`ai_advisor.py:439-482`) replaced its Cycle-1 stub with a real producer. It lazy-imports `advisors.lens_technicals` (CC-2), derives the universe from `database.load_state()` holdings (tickers across all monitored symphonies), and calls `_fetch_technicals(universe)`. Returns `available=True` with MA posture, breadth, and momentum payload when bars are available; `available=False` with a named reason otherwise. See [advisors/lens_technicals](advisors_lens_technicals.md).
+
+**Sentiment lens wiring (GDELT, 2026-06-15):** `_build_sentiment_section` lazy-imports `advisors.lens_gdelt` and calls `_fetch_gdelt_sentiment`. Honest-availability: `tone is None → available=False`. See [advisors/lens_gdelt](advisors_lens_gdelt.md).
 
 ## API Reference
 
@@ -40,7 +44,7 @@ Assembles the prompt-ready context blob carrying all 9 must-have prompt elements
 9. Operator-assist role + task framing
 
 As of Cycle-1, the returned dict also includes five top-level lens keys:
-`technicals`, `sentiment`, `derivatives`, `macro`, `fundamentals` — each a lens block dict (see [Multi-Lens Scaffold](#multi-lens-scaffold-cycle-1)).
+`technicals`, `sentiment`, `derivatives`, `macro`, `fundamentals` — each a lens block dict (see [Multi-Lens Scaffold](#multi-lens-scaffold)).
 
 **Parameters:**
 | Name | Type | Description |
@@ -115,11 +119,11 @@ Re-validates an accepted suggestion through the autotuner's OOS gate. Calls `run
 
 The `autotuner` import is lazy (inside the function body) to avoid import-collision with the Anthropic SDK under pytest.
 
-**Returns:** `{"passed": bool, "oos_alpha": float, "baseline_oos_alpha": float, "detail": str}`.
+**Returns:** `{"passed": bool, "oas_alpha": float, "baseline_oos_alpha": float, "detail": str}`.
 
 ---
 
-## Multi-Lens Scaffold (Cycle-1)
+## Multi-Lens Scaffold
 
 ### Lens-Block Contract
 
@@ -128,28 +132,34 @@ Every lens helper returns a dict conforming to this contract:
 ```python
 {
     "lens": str,        # lens name, e.g. "technicals"
-    "available": bool,  # True only when the source is connected and the data is fresh
+    "available": bool,  # True only when the source is connected and data is present
     "reason": str,      # non-empty; explains unavailability or data provenance
     "payload": ...,     # None when available=False; structured data when available=True
     "sources": list,    # list of citation dicts (see Citation Convention); [] when unavailable
 }
 ```
 
-**Honest-availability rule (CC-3):** a lens helper MUST NOT fabricate a payload when `available` is `False`. This mirrors the `_build_volatility_regime` pattern (`ai_advisor.py:218–270`). Cycle-1 stubs all return `available=False` with a reason naming the missing source.
+**Honest-availability rule (CC-3):** a lens helper MUST NOT fabricate a payload when `available` is `False`. This mirrors the `_build_volatility_regime` pattern (`ai_advisor.py:218–270`).
 
-### Cycle-1 Lens Helpers (stubs)
+### Lens Helpers — Current Status
 
-All five are wired as top-level keys in the dict returned by `assemble_advisor_context` (`ai_advisor.py:672–681`):
+All five are wired as top-level keys in the dict returned by `assemble_advisor_context`:
 
-| Helper | Key in context | Missing source (cycle-1 reason) |
-|--------|----------------|----------------------------------|
-| `_build_technicals_section()` | `"technicals"` | Alpaca IEX / Alpha Vantage indicator |
-| `_build_sentiment_section()` | `"sentiment"` | GDELT 2.0 / Alpaca News |
-| `_build_derivatives_section()` | `"derivatives"` | CBOE put/call + Alpaca IV |
-| `_build_macro_section()` | `"macro"` | FRED / US Treasury XML |
-| `_build_fundamentals_section()` | `"fundamentals"` | SEC EDGAR companyfacts |
+| Helper | Key in context | Status | Producer |
+|--------|----------------|--------|----------|
+| `_build_technicals_section()` (`ai_advisor.py:439-482`) | `"technicals"` | **Wired** (2026-06-15) | `advisors/lens_technicals.py` — MA posture, breadth, momentum |
+| `_build_sentiment_section()` | `"sentiment"` | **Wired** (2026-06-15) | `advisors/lens_gdelt.py` — GDELT 2.0 tone + citations |
+| `_build_derivatives_section()` | `"derivatives"` | Stub — `available=False` | CBOE put/call + Alpaca IV (not yet connected) |
+| `_build_macro_section()` | `"macro"` | Stub — `available=False` | FRED / US Treasury XML (not yet connected) |
+| `_build_fundamentals_section()` | `"fundamentals"` | Stub — `available=False` | SEC EDGAR companyfacts (not yet connected) |
 
-Each accepts an optional `_data` argument (ignored in the stub) so that fast-follow producers can wire in a data object without changing the call sites in `assemble_advisor_context`.
+Each accepts an optional `_data` argument (reserved for caller pre-injection; unused in current implementations) so future producers can be wired in without changing call sites in `assemble_advisor_context`.
+
+### `_build_technicals_section(_data=None) → dict` (ai_advisor.py:439-482)
+
+Wired (2026-06-15). Lazy-imports `advisors.lens_technicals` (CC-2) and calls `_fetch_technicals([])`. Returns the lens block with `available=True` and `payload={ma_posture, breadth, momentum}` when bars are available; `available=False` with a named reason otherwise. Defense-in-depth: wraps the import+call in `try/except` — any unexpected exception returns `available=False, reason=type(exc).__name__`.
+
+See [advisors/lens_technicals](advisors_lens_technicals.md) for indicator definitions, constants, and retry protocol.
 
 ### Citation Convention
 
@@ -226,5 +236,7 @@ The 7-item allowlist (6 Optuna search-space keys + `MAX_SQUEEZE_FLOOR`). Note: `
 - `symphony_logic` — `get_condensed_logic` (called with Composer hash ID via `composer_symphony_id`, not normalized name)
 - `autotuner` — `run_simulation`, `calculate_historical_deviation` (lazy import in `revalidate_suggestion_oos`)
 - `synthetic_history` — `generate_synthetic_history` (lazy import in `revalidate_suggestion_oos`)
+- `advisors.lens_technicals` — `_fetch_technicals` (lazy import in `_build_technicals_section`)
+- `advisors.lens_gdelt` — `_fetch_gdelt_sentiment` (lazy import in `_build_sentiment_section`)
 - `anthropic` SDK — `messages.parse` with structured output
 - `pydantic` — `ConfigSuggestion`, `ConfigSuggestionsResponse`

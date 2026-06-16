@@ -1431,20 +1431,27 @@ class TestD1ErrorContract:
 # ---------------------------------------------------------------------------
 
 
-def test_technicals_stub_still_returns_available_false():
-    """_build_technicals_section is unchanged in Cycle 2 — still available=False.
+def test_technicals_section_returns_correct_lens_block_shape():
+    """_build_technicals_section returns a valid lens block with lens='technicals'.
 
-    Cycle 2 fills ONLY sentiment, fundamentals, macro.  Technicals is Cycle-2b.
-    FAILS if Cycle 2 accidentally breaks or changes the technicals stub.
+    Technicals graduated from a Cycle-2 stub to a real producer in
+    feat/lens-technicals (2026-06-16, DE-TECH-001/002).  The stub contract
+    (available=False unconditionally) no longer applies.  This test verifies
+    the lens block SHAPE contract only — the real available/payload values
+    depend on Alpaca bar availability and are covered by
+    tests/ai_advisor/test_lens_technicals.py.
+
+    _get_bars is mocked so this test runs offline (no live Alpaca fetch).
     """
-    import ai_advisor
+    from unittest.mock import patch
 
-    block = ai_advisor._build_technicals_section()
+    import ai_advisor
+    from advisors import lens_technicals
+
+    with patch.object(lens_technicals, "_get_bars", return_value={}):
+        block = ai_advisor._build_technicals_section()
+
     _assert_lens_block_shape(block, "technicals")
-    assert block["available"] is False, (
-        "_build_technicals_section must remain available=False after Cycle 2. "
-        "Technicals is a Cycle-2b deliverable — do not fill it in Cycle 2."
-    )
 
 
 def test_derivatives_stub_still_returns_available_false():

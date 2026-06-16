@@ -1,0 +1,34 @@
+{
+  "_comment": "Golden fixture for lens_technicals math tests. Schema-derived from Alpaca v2 daily bar shape (fields: t, o, h, l, c, v, vw, n). Values are synthetic sentinels chosen so the formula results can be re-derived from this fixture — never hardcoded in tests.",
+  "_provenance": "Schema-derived with runtime validator from Alpaca v2 /stocks/bars response shape. The fixture values for SPY are constructed so that the last close (110.0) is ABOVE the 50-day SMA and the 200-day SMA. The fixture values for QQQ are constructed so the last close (80.0) is BELOW the 50-day SMA (to test mixed breadth). IEX feed field names: t (timestamp), o (open), h (high), l (low), c (close), v (volume), vw (vwap), n (trade count).",
+  "_indicator_windows": {
+    "sma_50_window": 50,
+    "sma_200_window": 200,
+    "momentum_window": 20,
+    "source": "Standard technical analysis convention (Investopedia: 50-day MA is near-term trend; 200-day MA is long-term trend; 20-day momentum is standard short-term lookback)"
+  },
+  "SPY": {
+    "_comment": "250 bars. First 230 bars at close=100.0 (pad to reach 200-day SMA), then 20 bars at close=105.0 (momentum bars), last bar at close=110.0 (current price above both SMAs). SMA50=derived, SMA200=derived, momentum=derived from fixture.",
+    "n_bars": 251,
+    "last_close": 110.0,
+    "pad_close": 100.0,
+    "pad_count": 230,
+    "momentum_close": 105.0,
+    "momentum_count": 20,
+    "final_close": 110.0,
+    "expected_above_sma50": true,
+    "expected_above_sma200": true
+  },
+  "QQQ": {
+    "_comment": "250 bars. Pad bars at close=100.0, last 50 bars drop to close=70.0. Final bar at close=80.0. This places the last close BELOW the 50-day SMA (avg of the 50 drop bars) but ABOVE some of the historical bars. SMA50 of the last 50 bars=70.0, so close=80.0 is ABOVE SMA50. Adjust: use pad_close=100.0, last 50 at 90.0, final=80.0 so SMA50~90.0, close=80.0 is BELOW SMA50.",
+    "n_bars": 251,
+    "last_close": 80.0,
+    "pad_close": 100.0,
+    "pad_count": 200,
+    "recent_close": 90.0,
+    "recent_count": 50,
+    "final_close": 80.0,
+    "expected_above_sma50": false,
+    "expected_above_sma200": false
+  }
+}
