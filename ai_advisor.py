@@ -563,6 +563,19 @@ def _build_sentiment_section(_data: object = None) -> dict:
     # available=False only when both fail.
     if not tone_available and not artlist_available:
         reason = artlist_reason or tone_result.get("reason") or "gdelt_fetch_failed"
+        # AC-4: persist this lens snapshot to the warehouse (lazy import, CC-2).
+        try:
+            from advisors import lens_warehouse  # noqa: PLC0415
+
+            lens_warehouse.persist_lens_snapshot(
+                lens="sentiment",
+                symbol=None,
+                source="gdelt",
+                available=False,
+                raw_payload={"reason": reason},
+            )
+        except Exception:  # noqa: BLE001
+            pass  # D-1: warehouse errors never surface to callers
         return {
             "lens": _lens,
             "available": False,
@@ -593,6 +606,19 @@ def _build_sentiment_section(_data: object = None) -> dict:
         len(articles),
         len(sources),
     )
+    # AC-4: persist this lens snapshot to the warehouse (lazy import, CC-2).
+    try:
+        from advisors import lens_warehouse  # noqa: PLC0415
+
+        lens_warehouse.persist_lens_snapshot(
+            lens="sentiment",
+            symbol=None,
+            source="gdelt",
+            available=True,
+            raw_payload={"article_count": len(articles), "tone_score": tone_score},
+        )
+    except Exception:  # noqa: BLE001
+        pass  # D-1: warehouse errors never surface to callers
     return {
         "lens": _lens,
         "available": True,
@@ -709,6 +735,19 @@ def _build_macro_section(_data: object = None) -> dict:
     _lens = "macro"
     fred_key = os.environ.get("FRED_API_KEY", "").strip()
     if not fred_key:
+        # AC-4: persist this lens snapshot to the warehouse (lazy import, CC-2).
+        try:
+            from advisors import lens_warehouse  # noqa: PLC0415
+
+            lens_warehouse.persist_lens_snapshot(
+                lens="macro",
+                symbol=None,
+                source="fred",
+                available=False,
+                raw_payload={"reason": "FRED_API_KEY_not_configured"},
+            )
+        except Exception:  # noqa: BLE001
+            pass  # D-1: warehouse errors never surface to callers
         return {
             "lens": _lens,
             "available": False,
@@ -770,6 +809,19 @@ def _build_macro_section(_data: object = None) -> dict:
             if last_exc_class
             else "FRED returned no observations"
         )
+        # AC-4: persist this lens snapshot to the warehouse (lazy import, CC-2).
+        try:
+            from advisors import lens_warehouse  # noqa: PLC0415
+
+            lens_warehouse.persist_lens_snapshot(
+                lens="macro",
+                symbol=None,
+                source="fred",
+                available=False,
+                raw_payload={"reason": reason},
+            )
+        except Exception:  # noqa: BLE001
+            pass  # D-1: warehouse errors never surface to callers
         return {
             "lens": _lens,
             "available": False,
@@ -779,6 +831,19 @@ def _build_macro_section(_data: object = None) -> dict:
         }
 
     logger.info("FRED macro: %d series fetched", len(series_data))
+    # AC-4: persist this lens snapshot to the warehouse (lazy import, CC-2).
+    try:
+        from advisors import lens_warehouse  # noqa: PLC0415
+
+        lens_warehouse.persist_lens_snapshot(
+            lens="macro",
+            symbol=None,
+            source="fred",
+            available=True,
+            raw_payload={"series": series_data},
+        )
+    except Exception:  # noqa: BLE001
+        pass  # D-1: warehouse errors never surface to callers
     return {
         "lens": _lens,
         "available": True,
