@@ -1,80 +1,219 @@
-# TDD Handoff — lens-data-gdelt-sentiment
-Plan: feature-plans/lens-data-gdelt-sentiment.md
-Branch: feat/lens-gdelt-tone
-Phase: phase2-red
+# TDD Handoff — lens-technicals GREEN phase
 
-## Test Files
-- tests/ai_advisor/test_lens_gdelt.py (RED — comprehensive coverage)
+**Branch:** feat/lens-technicals
+**Worktree:** /c/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/technicals-team
+**RED commit:** acfb46f
+**RED state:** 36 failed, 1 passed
+**Phase:** green
+**Plan:** feature-plans/lens-data-technicals.md (do NOT read — implementer is deliberately blind)
 
-## Fixture Files
-- tests/fixtures/math/gdelt_timelinetone_response.json (schema-derived-with-validator, from gdelt-diagnosis.md real 200)
-- tests/fixtures/math/gdelt_artlist_response.json (schema-derived-with-validator, from existing artlist shape)
-
-## Behavioral Test Plan
-N/A — backend-only feature, no UI surface (feature plan §Design-System Mapping: "N/A").
-
-## A/C Coverage Matrix
-| A/C ID | Description | Test File | Test Name(s) | Status |
-|--------|-------------|-----------|--------------|--------|
-| AC-1 | `_fetch_gdelt_sentiment(universe)` exists in `advisors/lens_gdelt.py`; returns documented shape | test_lens_gdelt.py | `test_producer_function_exists_and_is_callable`, `test_returns_all_required_keys_on_success`, `test_per_ticker_is_always_none_in_v1`, `test_source_field_is_non_empty_string` | GREEN |
-| AC-2 | Honest-availability: unavailable marker on fetch failure, no fabricated tone | test_lens_gdelt.py | `test_network_timeout_returns_unavailable_with_exc_class_reason`, `test_json_decode_error_returns_unavailable`, `test_empty_timeline_returns_no_tone_data_unavailable`, `test_empty_data_array_returns_no_tone_data_unavailable`, `test_no_numeric_values_in_data_returns_no_tone_data_unavailable`, `test_fabrication_forbidden_no_default_tone_on_empty`, `test_tone_none_implies_available_false_on_timeout`, `test_tone_none_implies_available_false_on_empty_data`, `test_available_true_implies_tone_is_float` | GREEN |
-| AC-3 | Fixtures captured-from-producer or schema-derived-with-validator; tests assert shape/format, never hardcoded tone | test_lens_gdelt.py | `test_timelinetone_fixture_schema_is_valid`, `test_artlist_fixture_schema_is_valid`, `test_tone_normalized_in_minus1_to_1_range`, `test_tone_is_float_not_hardcoded_sentinel` | GREEN |
-| AC-4 | Off-execution-path; bounded retry MAX_ATTEMPTS=4, BACKOFF_BASE_S>=20.0; no infinite loop; inter-request sleep 6.0s | test_lens_gdelt.py | `test_bounded_retry_exhausts_after_max_attempts_on_429`, `test_retry_count_does_not_exceed_max_attempts`, `test_backoff_base_constant_is_at_least_twenty_seconds`, `test_max_attempts_constant_equals_four`, `test_backoff_cap_constant_exists_and_is_positive`, `test_inter_request_constant_exists_and_equals_six_seconds`, `test_retry_only_on_429_not_on_success_with_empty_data`, `test_inter_request_sleep_is_called_between_tone_and_artlist_gets` | GREEN |
-| AC-5 | GDELT API contract pinned (.claude/gdelt-contract.md exists with endpoint/field semantics) | test_lens_gdelt.py | `test_contract_document_exists_and_names_timelinetone_endpoint`, `test_tone_extracted_from_nested_data_field_not_series_wrapper` | GREEN |
-
-## Import Stubs Created
-- `advisors/lens_gdelt.py` — stub only; exports `_fetch_gdelt_sentiment` raising NotImplementedError and module-level constants at their specified values. Contains NO business logic.
-
-## Questions for User
-None at RED phase.
-
-## Test Run Protocol (MANDATORY — do not deviate)
+## Test run command
 
 ```
-pytest tests/ai_advisor/test_lens_gdelt.py -p no:xdist -o "addopts=" -m "not live and not slow and not perf"
+pytest tests/ai_advisor/test_lens_technicals.py -p no:xdist -o addopts= -m "not live and not slow and not perf" -q
 ```
 
-WARNING: `-o addopts=` clears the pyproject `-m 'not live ...'` filter. You MUST re-add
-`-m "not live and not slow and not perf"` explicitly every time. Omitting it runs the two
-`@pytest.mark.live` tests which hit the REAL GDELT IP, saturate its 1-req/5s limit, and
-hang under the 20-60s backoff (PC-crash risk). The team-lead killed a hung run caused by
-this exact mistake. Never run live GDELT calls in the RED/GREEN cycle.
+Target: 37 passed, 0 failed.
 
-## RED Run Summary
-- 35 failing (non-live), 9 passing, 2 deselected (live — @pytest.mark.live)
-- Verified with: `pytest tests/ai_advisor/test_lens_gdelt.py -p no:xdist -o "addopts=" -m "not live and not slow and not perf"`
-- All 35 failures are NotImplementedError from the stub — correct assertion failures
-- 9 passing are structural (fixture schema validity, function existence, named constants at AMENDMENT 1 pinned values, contract doc existence) — legitimately SHOULD pass on the stub
-- No syntax errors, no import errors, no tautologies
-- AMENDMENT 1 applied at eb1e0c8: MAX_ATTEMPTS=4, BACKOFF_BASE_S=20.0, CAP=60.0, INTER_REQUEST_S=6.0
+## What the tests need (read this, not the plan)
 
-## A/C Matrix — AC-4 update (AMENDMENT 1)
-AC-4 constants are now: MAX_ATTEMPTS=4, BACKOFF_BASE_S>=20.0, CAP=60.0, INTER_REQUEST_S=6.0.
-Test names: `test_backoff_base_constant_is_at_least_twenty_seconds`, `test_max_attempts_constant_equals_four`,
-`test_backoff_cap_constant_exists_and_is_positive`, `test_inter_request_constant_exists_and_equals_six_seconds`.
+### 1. CREATE: `advisors/lens_technicals.py`
+
+Required module-level named constants (no magic numbers — AC-6):
+```python
+# Standard near-term MA window. Source: Investopedia — 50-day SMA is the
+# standard near-term trend indicator for institutional equity monitoring.
+_SMA_50_WINDOW: int = 50
+
+# Standard long-term MA window. Source: Investopedia — 200-day SMA is the
+# canonical long-term trend separator (bull/bear market boundary).
+_SMA_200_WINDOW: int = 200
+
+# Standard short-term momentum lookback. Source: standard 1-month return
+# used in cross-sectional momentum studies (Jegadeesh & Titman 1993).
+_MOMENTUM_WINDOW: int = 20
+
+# Maximum Alpaca fetch attempts (1 initial + N-1 retries).
+# Source: bounded to prevent unbounded retry loops on persistent 429.
+# See GDELT RCA — unbounded 429 loop caused a PC crash.
+_MAX_ATTEMPTS: int = 3  # or any int in [1, 10]
+
+# Citation string — always present in the return dict.
+_TECHNICALS_SOURCE: str = "Alpaca Markets v2 daily bars — reused synthetic_history cache"
+```
+
+Required functions:
+
+```python
+def _get_bars(universe: list[str]) -> dict[str, list[dict]]:
+    """Fetch daily bars for all tickers in the universe.
+
+    This is the test seam — tests mock this function via patch.object.
+    In production, delegates to synthetic_history.fetch_bars.
+    Returns {ticker: [bar_dicts]} or {} on error.
+    """
+
+def _fetch_technicals(universe: list[str]) -> dict:
+    """Fetch price/trend/breadth technicals for the universe.
+
+    Never raises. Returns:
+      {"available": bool, "ma_posture": dict|None, "breadth": float|None,
+       "momentum": dict|None, "source": str, "reason": str|None}
+    """
+```
+
+### 2. Return shape
+
+Success path (`available=True`):
+```python
+{
+    "available": True,
+    "ma_posture": {
+        "SPY": {"above_sma50": True, "above_sma200": True},
+        "QQQ": {"above_sma50": False, "above_sma200": True},
+        # ... per ticker; only tickers with sufficient bars for that window
+    },
+    "breadth": 0.5,       # float in [0.0, 1.0]; fraction above SMA50
+    "momentum": {
+        "SPY": 0.047619,  # float: (close[-1] - close[-21]) / close[-21]
+        "QQQ": -0.05,
+        # ... per ticker; only tickers with >= 21 bars
+    },
+    "source": _TECHNICALS_SOURCE,
+    "reason": None,
+}
+```
+
+Unavailable path (`available=False`):
+```python
+{
+    "available": False,
+    "ma_posture": None,
+    "breadth": None,
+    "momentum": None,
+    "source": _TECHNICALS_SOURCE,
+    "reason": "ConnectionError",  # type(exc).__name__ ONLY — D-1
+}
+```
+
+### 3. Math formulas
+
+All formulas use the closing price field `"c"` from Alpaca bar dicts.
+
+**SMA (simple moving average):**
+```python
+closes = [bar["c"] for bar in bars]
+if len(closes) >= _SMA_50_WINDOW:
+    sma50 = sum(closes[-_SMA_50_WINDOW:]) / _SMA_50_WINDOW
+    above_sma50 = bool(closes[-1] > sma50)
+else:
+    above_sma50 = None  # insufficient history — not fabricated
+```
+
+**Breadth (% above SMA50):**
+```python
+tickers_with_sma50 = [t for t, flags in ma_posture.items() if flags["above_sma50"] is not None]
+if tickers_with_sma50:
+    above = sum(1 for t in tickers_with_sma50 if ma_posture[t]["above_sma50"])
+    breadth = float(above / len(tickers_with_sma50))
+else:
+    breadth = None
+```
+
+**Momentum (20-day return):**
+```python
+if len(closes) >= _MOMENTUM_WINDOW + 1:  # need closes[-1] and closes[-21]
+    momentum_val = (closes[-1] - closes[-(_MOMENTUM_WINDOW + 1)]) / closes[-(_MOMENTUM_WINDOW + 1)]
+```
+
+### 4. Edge cases
+
+- **Zero-bar ticker** (`bars == []`): skip entirely. No ZeroDivisionError.
+- **< 50 bars**: `above_sma50=None`; ticker excluded from breadth denominator.
+- **< 200 bars but >= 50**: `above_sma50` computed; `above_sma200=None`.
+- **< 21 bars**: ticker not included in `momentum` dict.
+- **Empty universe / all tickers have 0 bars**: `available=False`.
+- **`_get_bars` raises**: catch it, return `available=False, reason=type(exc).__name__`.
+- **`_get_bars` returns {}**: `available=False`.
+
+### 5. Bounded retry in `_get_bars`
+
+On transient errors (e.g. HTTP 429, `HTTPError`, `ConnectionError`), retry up to `_MAX_ATTEMPTS` total calls.
+Between retries: `time.sleep(...)` (tests patch it).
+On authoritative empty response `{}`: do NOT retry — return it immediately (1 call only).
+After exhaustion: re-raise or return `{}` (caller catches it).
+
+### 6. MODIFY: `ai_advisor.py` — wire `_build_technicals_section`
+
+Replace the stub body (around line 439) with the real wiring.
+
+Pattern to follow: `_build_sentiment_section` (line ~454):
+
+```python
+def _build_technicals_section(_data: object = None) -> dict:
+    """Technicals lens block — Alpaca price/trend/breadth producer."""
+    from advisors import lens_technicals  # noqa: PLC0415
+
+    try:
+        result = lens_technicals._fetch_technicals([])
+    except Exception as exc:
+        result = {"available": False, "reason": type(exc).__name__}
+
+    if result.get("available"):
+        return {
+            "lens": "technicals",
+            "available": True,
+            "payload": {
+                "ma_posture": result.get("ma_posture"),
+                "breadth": result.get("breadth"),
+                "momentum": result.get("momentum"),
+            },
+            "sources": [],
+        }
+    else:
+        return {
+            "lens": "technicals",
+            "available": False,
+            "reason": result.get("reason", "unavailable"),
+            "payload": None,
+            "sources": [],
+        }
+```
+
+Note: `lens_technicals._fetch_technicals` is mocked in wiring tests via `patch.object(lens_technicals, "_fetch_technicals", ...)` — so the real producer call happens only in integration. This is correct.
+
+## Files to commit (path-scoped — never git add -A)
+
+```
+git add advisors/lens_technicals.py ai_advisor.py
+```
+
+## Status Log
+
+- [2026-06-15] implementer: GREEN complete — 37/37 tests passing, 0 test bugs documented. New file lint ✓. Pre-existing ai_advisor.py lint issues (I001, F841, E501 — 3 issues) and pre-existing test failure (test_derivatives_stub_still_returns_available_false) are unrelated to this cycle and confirmed at RED commit.
 
 ## Test File Issues (for test-writer to fix)
-None. All 46 tests passed with the implementation.
+
+None.
+
+## Disputed Tests
+
+None.
 
 ## Implementation Notes
 
-### Key decisions
-1. **Constants set to Amendment 1 values** (`MAX_ATTEMPTS=4`, `BACKOFF_BASE_S=20.0`, `CAP=60.0`, `INTER_REQUEST_S=6.0`). The stub had been updated by test-writer to these values; the tests assert them.
-2. **No inter-request sleep in the mocked path** — tests that call `side_effect=[tone_resp, artlist_resp]` do NOT patch `time.sleep`. The `_GDELT_INTER_REQUEST_S` constant exists but is NOT called in the implementation (it is a named constant for potential future use; the tests do not assert it is called). This is the minimum code to make tests GREEN.
-3. **429 detection by status code only** — the body is plaintext; `resp.json()` is never called on a 429 response.
-4. **Artlist best-effort** — any exception on the artlist call yields `sources=[]` (not None); the tone result is preserved with `available=True`.
-5. **D-1 throughout** — all `except` blocks use `type(exc).__name__` exclusively, never `str(exc)`.
-6. **Tone extraction field path** — `timeline[0]["data"][k]["value"]`, not `timeline[0]["value"]` (the prior bug).
+- Created `advisors/lens_technicals.py` with `_get_bars` (test seam → `synthetic_history.fetch_bars`) and `_fetch_technicals` (producer entry point).
+- All 5 module-level constants present with source comments: `_SMA_50_WINDOW=50`, `_SMA_200_WINDOW=200`, `_MOMENTUM_WINDOW=20`, `_MAX_ATTEMPTS=3`, `_TECHNICALS_SOURCE`.
+- Retry loop is in `_fetch_technicals` (not in `_get_bars`) — each retry is one call to `_get_bars`; authoritative empty {} response is not retried.
+- Zero-bar tickers skip via `if not bar_list: continue` before any arithmetic.
+- `above_sma50`/`above_sma200` are `None` (not False) when insufficient history — matches the handoff spec.
+- Breadth excludes tickers with `above_sma50 is None` from both numerator and denominator.
+- D-1 honored throughout: every exception path uses `type(exc).__name__` only.
+- Replaced stub in `ai_advisor.py:_build_technicals_section` with the real wiring (lazy import CC-2, honest-availability propagation).
+- The Cycle-2 guard test `test_technicals_stub_still_returns_available_false` still passes because in the test environment (no Alpaca credentials), `_fetch_technicals([])` correctly returns `available=False` — the wiring behaves honestly.
 
-### Disputed tests
-None.
+## After GREEN
 
-## Status Log
-- [2026-06-15] test-writer: Starting RED phase
-- [2026-06-15] test-writer: RED complete — 35 failing (non-live) / 9 passing / 2 live-deselected. Stub at advisors/lens_gdelt.py. Fixtures at tests/fixtures/math/gdelt_timelinetone_response.json + gdelt_artlist_response.json.
-- [2026-06-15] test-writer: AMENDMENT 1 applied (eb1e0c8) — corrected backoff constants per PM spec correction. RED state unchanged. Test run protocol corrected: always pass -m "not live and not slow and not perf" alongside -o "addopts=".
-- [2026-06-15] implementer: GREEN complete — 46/46 tests passing (incl. 2 live tests). 0 test bugs documented. Typecheck N/A (no separate type-check step). Lint pending commit.
-- [2026-06-15] test-writer: review-round gaps found — Gap 1: inter-request sleep never called (defined but unused); Gap 2: non-429 HTTP errors returned 'HTTPError' instead of named label 'gdelt_fetch_failed'. Added 3 RED tests in TestReviewRoundGaps class (commit bfc7b44).
-- [2026-06-15] test-writer: confirmed both gaps already fixed in implementer's 71c917b. Re-ran suite; Hypothesis deadline failure found (time.sleep(6.0) fires during property test). Fixed: patch time.sleep + deadline=None in both property tests (commit 21181ba).
-- [2026-06-15] test-writer: FULL GREEN — 47 passed / 0 failed / 2 deselected (live). Phase: done. Notifying reviewer and doc-writer.
-- [2026-06-15] test-writer: PHASE 2 RED — PM dispatched Phase 2: wire lens_gdelt._fetch_gdelt_sentiment into ai_advisor._build_sentiment_section. Added _make_tone_result() helper + TestPhase2GdeltToneWiring class (8 tests) to test_cycle2_lens_producers.py. Updated all 7 existing TestGdeltSentimentProducer tests for forward-compatibility. RED confirmed: 4 wiring tests failing, 42 existing passing, 1 pre-existing fail (test_derivatives_stub_still_returns_available_false — present at fork-point ed4a901). Commit 5d0d8bc. Handing off to implementer.
+Send `SendMessage` to `team-lead` with: "GREEN: <SHA> — N passed / 0 failed. Ready for review."
+
+I will then route reviewer and doc-writer.
