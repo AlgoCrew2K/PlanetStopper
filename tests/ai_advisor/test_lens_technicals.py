@@ -462,10 +462,14 @@ class TestHonestAvailability:
 
         from advisors import lens_technicals
 
-        with patch.object(
-            lens_technicals,
-            "_get_bars",
-            side_effect=ReqConnError("connection refused"),
+        # Patch time.sleep so the bounded-retry backoff does not consume wall-clock.
+        with (
+            patch.object(
+                lens_technicals,
+                "_get_bars",
+                side_effect=ReqConnError("connection refused"),
+            ),
+            patch("time.sleep"),
         ):
             result = lens_technicals._fetch_technicals(["SPY"])
 
@@ -492,7 +496,8 @@ class TestHonestAvailability:
 
         secret_exc = RuntimeError("ALPACA_SECRET=secret_value_leaked_here")
 
-        with patch.object(lens_technicals, "_get_bars", side_effect=secret_exc):
+        # Patch time.sleep so the bounded-retry backoff does not consume wall-clock.
+        with patch.object(lens_technicals, "_get_bars", side_effect=secret_exc), patch("time.sleep"):
             result = lens_technicals._fetch_technicals(["SPY"])
 
         assert result["available"] is False
@@ -544,7 +549,11 @@ class TestHonestAvailability:
         """
         from advisors import lens_technicals
 
-        with patch.object(lens_technicals, "_get_bars", side_effect=Exception("unexpected error")):
+        # Patch time.sleep so the bounded-retry backoff does not consume wall-clock.
+        with (
+            patch.object(lens_technicals, "_get_bars", side_effect=Exception("unexpected error")),
+            patch("time.sleep"),
+        ):
             # Must not raise
             try:
                 result = lens_technicals._fetch_technicals(["SPY"])
