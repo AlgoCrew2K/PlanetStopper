@@ -701,3 +701,44 @@ field path permanently. Any regression to the old path causes immediate RED.
 verified per `tests/ai_advisor/test_lens_gdelt.py` — fixture schema, honest
 availability, D-1 reason labels, tone normalization, bounded retry, artlist sources,
 contract document existence, inter-request sleep, HTTP reason label.
+
+---
+
+## Technicals Lens Producer — lens_technicals (2026-06-15)
+
+Cycle: `lens-technicals` on branch `feat/lens-technicals`. GREEN at `9449674`.
+
+### DE-TECH-001: Producer + wiring shipped together (anti-hollow); reuses synthetic_history cache; no new Alpaca client
+
+**Decision:** `advisors/lens_technicals.py` and the wiring of `ai_advisor._build_technicals_section()` (`ai_advisor.py:439-482`) are shipped in the same cycle. The Cycle-1 stub (`available=False, reason="technicals source not connected"`) is replaced atomically — there is no intermediate state where the producer exists but the section is still a stub, or the section calls a non-existent producer.
+
+**Key design choices:**
+
+1. **Anti-hollow: producer + wiring in one cycle (GDELT lesson).** The GDELT cycle (DE-GDELT-001) established that shipping a lens producer and leaving the section wiring for a follow-on cycle creates a "hollow" lens — the pipeline runs but always records `available=False` even though a working producer exists. This cycle applies that lesson: `lens_technicals._fetch_technicals` and `ai_advisor._build_technicals_section` are both landed in `feat/lens-technicals`.
+
+2. **No new Alpaca client — reuses `synthetic_history.fetch_bars` (AC-5).** The autotuner already fetches 250 trading days of Alpaca bar history via `synthetic_history.fetch_bars`. The technicals lens reuses the same call (270 calendar days to cover weekends and holidays) via a thin `_get_bars` seam. No new Alpaca credentials or client setup is required.
+
+3. **`_get_bars` as test seam.** The module-level `_get_bars(universe)` function is the only I/O boundary. Tests mock it via `unittest.mock.patch.object` without touching the real Alpaca client or `synthetic_history` module. The indicator math helpers (`_compute_sma`, `_compute_momentum`) are pure functions tested independently.
+
+4. **Breadth excludes tickers with insufficient history.** Market breadth is `above_count / len(tickers_with_sma50)`, where the denominator is only tickers with ≥50 bars. Tickers with insufficient history are excluded from both numerator and denominator — they do not dilute the breadth signal with a forced `False`. If no ticker has ≥50 bars, `breadth=None`.
+
+5. **Momentum is sparse, not zero-filled.** Only tickers with ≥21 bars contribute to the `momentum` dict. A ticker with insufficient history is omitted rather than recorded as `0.0` (which would be a fabricated value).
+
+6. **Named constants with source comments — no magic numbers (AC-6).** All windows and retry parameters are module-level constants with inline citations: `_SMA_50_WINDOW` (Investopedia near-term MA), `_SMA_200_WINDOW` (Investopedia long-term trend separator), `_MOMENTUM_WINDOW` (Jegadeesh & Titman 1993), `_MAX_ATTEMPTS` (GDELT RCA — bounded retry), `_RETRY_BACKOFF_S`, `_HISTORY_DAYS`.
+
+7. **Bounded retry; authoritative empty not retried (AC-4).** `_fetch_technicals` retries `_get_bars` on `Exception` up to `_MAX_ATTEMPTS=3`. An authoritative empty response (`{}`) from `_get_bars` is not retried — it is the data source's honest answer, not a transient error.
+
+8. **D-1: named labels for authoritative failures, `type(exc).__name__` for exceptions.** `"no_bars_returned"` and `"insufficient_bar_history"` identify the two authoritative unavailability states. All caught exceptions use `type(exc).__name__` only — never `str(exc)`.
+
+9. **CC-2 lazy import.** `advisors.lens_technicals` is imported inside `ai_advisor._build_technicals_section()` (not at `ai_advisor` module level), maintaining the CC-2 import-boundary invariant. `synthetic_history` is itself imported lazily inside `_get_bars`.
+
+**Indicators shipped:**
+- **MA posture:** per-ticker `{above_sma50: bool | None, above_sma200: bool | None}`. 50-day and 200-day SMA from Investopedia standard windows.
+- **Market breadth:** fraction of universe above 50-day SMA (excluding tickers without sufficient history).
+- **20-day momentum:** per-ticker `(close[-1] - close[-21]) / close[-21]`. Source: Jegadeesh & Titman (1993) cross-sectional momentum lookback.
+
+**Public surface:**
+- `advisors/lens_technicals._fetch_technicals(universe: list[str]) -> dict` — entry point called by `ai_advisor._build_technicals_section()`.
+- `advisors/lens_technicals._get_bars(universe: list[str]) -> dict[str, list[dict]]` — test seam; delegates to `synthetic_history.fetch_bars` in production.
+
+**Status:** GREEN at `9449674`. Acceptance criteria verified. `docs/generated/advisors_lens_technicals.md` committed on `feat/lens-technicals`.
