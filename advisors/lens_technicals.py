@@ -66,16 +66,16 @@ _HISTORY_DAYS: int = 270
 # breadth-monitoring basket (see Investopedia "market breadth indicators").
 # This is a FLOOR — live holdings tickers are merged in on top, not replaced.
 _PROXY_UNIVERSE: list[str] = [
-    "SPY",   # S&P 500 — US large-cap benchmark
-    "QQQ",   # Nasdaq 100 — tech/growth
-    "IWM",   # Russell 2000 — US small-cap
-    "EFA",   # MSCI EAFE — developed international
-    "AGG",   # US aggregate bond — risk-off signal
-    "GLD",   # Gold — inflation / safe-haven
-    "XLF",   # Financials sector
-    "XLE",   # Energy sector
-    "XLV",   # Health care sector
-    "XLI",   # Industrials sector
+    "SPY",  # S&P 500 — US large-cap benchmark
+    "QQQ",  # Nasdaq 100 — tech/growth
+    "IWM",  # Russell 2000 — US small-cap
+    "EFA",  # MSCI EAFE — developed international
+    "AGG",  # US aggregate bond — risk-off signal
+    "GLD",  # Gold — inflation / safe-haven
+    "XLF",  # Financials sector
+    "XLE",  # Energy sector
+    "XLV",  # Health care sector
+    "XLI",  # Industrials sector
 ]
 
 
