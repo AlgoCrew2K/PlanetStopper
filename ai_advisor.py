@@ -437,18 +437,49 @@ def _fetch_with_backoff(
 
 
 def _build_technicals_section(_data: object = None) -> dict:
-    """Technicals lens block — cycle-1 stub (Cycle-2b deliverable).
+    """Technicals lens block — Alpaca price/trend/breadth producer.
 
-    Honest availability: Alpaca IEX / Alpha Vantage indicator source not yet
-    connected.  Returns available=False with an informative reason.
+    Fetches MA posture (50-day and 200-day SMA), market breadth (fraction of
+    universe above 50-day SMA), and 20-day momentum from synthetic_history
+    daily bars.  Honest availability: returns available=False when bars are
+    absent or the fetch fails.
+
+    CC-2: lazy import keeps the Alpaca client off the module-level import path.
+    D-1: reason is type(exc).__name__ only — never str(exc).
+
+    Args:
+        _data: unused; reserved for caller pre-injection (test-mockable hook).
+
+    Returns:
+        Lens block dict with keys: lens, available, reason (on False),
+        payload (on True), sources.
     """
-    return {
-        "lens": "technicals",
-        "available": False,
-        "reason": "technicals source not connected — cycle-2b deliverable",
-        "payload": None,
-        "sources": [],
-    }
+    from advisors import lens_technicals  # noqa: PLC0415
+
+    try:
+        result = lens_technicals._fetch_technicals([])
+    except Exception as exc:
+        result = {"available": False, "reason": type(exc).__name__}
+
+    if result.get("available"):
+        return {
+            "lens": "technicals",
+            "available": True,
+            "payload": {
+                "ma_posture": result.get("ma_posture"),
+                "breadth": result.get("breadth"),
+                "momentum": result.get("momentum"),
+            },
+            "sources": [],
+        }
+    else:
+        return {
+            "lens": "technicals",
+            "available": False,
+            "reason": result.get("reason", "unavailable"),
+            "payload": None,
+            "sources": [],
+        }
 
 
 def _build_sentiment_section(_data: object = None) -> dict:
