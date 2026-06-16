@@ -444,6 +444,11 @@ def _build_technicals_section(_data: object = None) -> dict:
     daily bars.  Honest availability: returns available=False when bars are
     absent or the fetch fails.
 
+    Universe is sourced from live bot_state (database.load_state) — the set
+    of tickers currently held across all monitored symphonies.  Degrades
+    honestly to available=False when bot_state yields no tickers (e.g. first
+    boot before any symphony data).
+
     CC-2: lazy import keeps the Alpaca client off the module-level import path.
     D-1: reason is type(exc).__name__ only — never str(exc).
 
@@ -456,8 +461,25 @@ def _build_technicals_section(_data: object = None) -> dict:
     """
     from advisors import lens_technicals  # noqa: PLC0415
 
+    # Source the universe from live bot_state holdings so the producer has
+    # real tickers to fetch bars for.  An empty universe would propagate to
+    # _get_bars([]) → synthetic_history.fetch_bars([], ...) → {} → always
+    # available=False, which is hollow wiring (reviewer finding: round 1).
     try:
-        result = lens_technicals._fetch_technicals([])
+        bot_state = database.load_state()
+        tickers: set[str] = set()
+        for entry in bot_state.values():
+            if isinstance(entry, dict):
+                for ticker in entry.get("logic_holdings", {}).keys():
+                    if ticker:  # filter out empty strings
+                        tickers.add(ticker)
+    except Exception:
+        tickers = set()
+
+    universe = sorted(tickers)
+
+    try:
+        result = lens_technicals._fetch_technicals(universe)
     except Exception as exc:
         result = {"available": False, "reason": type(exc).__name__}
 
