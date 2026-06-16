@@ -764,3 +764,17 @@ Cycle: `lens-technicals` on branch `feat/lens-technicals`. GREEN at `9449674`.
 **Tests:** `TestProxyUniverseGuard` (6 tests, `test_lens_technicals.py`): constant exists + non-empty, proxy tickers reach `_get_bars` when holdings empty, `available=True` at 03:00 flat, live holdings merged not replaced, empty DB still yields proxy universe, genuine bar-fetch failure still degrades D-1.
 
 **Status:** GREEN at `34a4481` — 46/46 tests passing. Reviewer APPROVE (conditional on PM live gate, 2026-06-16T08:19 UTC).
+
+---
+
+### DW-1: Nightly Lens Data Warehouse — separate append-only DB + recursive secret-strip + producer wiring
+
+**Decision:** New `advisors/lens_warehouse.py` owns a SEPARATE `alphabot_warehouse.db` ([PM-ASSUMED] filename) — the THIRD DB, distinct from the state + optimization DBs (no cross-DB joins). Append-only `lens_snapshots` table; `persist_lens_snapshot(lens, symbol, source, available, raw_payload, ...) -> int` (parameterized, append-only, recursive `_strip_secrets`, D-1) + `get_lens_snapshots(...) -> list[dict]`. WAL, idempotent init, pytest sentinel (opening the real warehouse DB under pytest raises; tests pass a temp `db_path`).
+
+**Wiring (anti-hollow):** `ai_advisor._build_sentiment_section` (GDELT) + `_build_macro_section` (FRED) call `persist_lens_snapshot` after each fetch (lazy import, off-execution-path) — the store has real production writers. Retrofitting the remaining producers is a documented fast-follow (Scope OUT).
+
+**Rationale:** accumulate Planet Stopper's OWN historical lens corpus at $0 (operator directive 2026-06-13); engine-agnostic `raw_json` enables future backtesting / DuckDB-parquet migration. Append-only + dedupe-at-read; never lose a night's pull; never fabricate (`available=0` for a down source).
+
+**Secret-strip:** `_SECRET_KEY_NAMES = {api_key, token, secret, password, Authorization}`, recursive over dicts+lists — verified live (nested `token` stripped).
+
+**Status:** GREEN at `961c0cb` (60 tests). Reviewer APPROVE + PM live gate PASS (persist->get round-trip, append-only, recursive secret-strip, 5 live persist calls in `ai_advisor`). Verifier: 6918 passed / 4 pre-existing fails / zero cycle-caused. PR #35. Supersedes stale closed PR #4 (hollow, 26 tests).
