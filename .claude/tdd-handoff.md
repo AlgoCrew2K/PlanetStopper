@@ -1,7 +1,7 @@
 # TDD Handoff
 Plan: feature-plans/community-strats-route-wiring.md
 Branch: feat/community-strats-route-wiring
-Phase: red
+Phase: done
 
 ## Test Files
 - `tests/ui/test_strategy_builder_community_wiring.py` — route-layer RED tests (AC-1..AC-6 + security)
@@ -168,3 +168,10 @@ None.
 ## Status Log
 - [2026-06-17] test-writer: Starting RED phase
 - [2026-06-17] test-writer: RED complete — 27 tests (6 failing RED on assertions, 21 passing GREEN guards), 0 stubs created. Fixed one test that fired on docstring mention of LIVE_EXECUTION (used AST walk to check executable code only). All 6 RED failures are correct: load_community_strategies never called (AC-3), community_candidates kwarg absent from propose_strategies call (AC-1).
+- [2026-06-17] implementer: GREEN complete — 27/27 tests passing, 0 test bugs documented. Regression suite (tests/ui + tests/advisors): 1134 passed, 17 skipped, 0 failures. Typecheck N/A (Python). Lint deferred to /tdd-finalize.
+
+## Implementation Notes
+- Addition 1 (lazy imports): extended `from advisors.strategy_builder_engine import (...)` to include `MAX_COMMUNITY_CANDIDATES_PER_RUN` and `community_candidate_infos` (alphabetical order within the block); added `from advisors.community_strats import load_community_strategies  # noqa: PLC0415` as a second lazy import on the line immediately following. Both stay inside the handler — off the 1-minute execution path.
+- Addition 2 (community load block): inserted best-effort try/except immediately before the existing `try: run = propose_strategies(...)`. On exception logs only `type(exc).__name__` via `_daemon_log.warning` and falls back to `community_candidates = []`. The outer propose_strategies call always proceeds regardless.
+- Addition 3 (kwarg forwarding): added `community_candidates=community_candidates` to the existing `propose_strategies(...)` call. No other arguments changed.
+- No new routes, no allowlist changes, no template/JS changes, no CSRF changes, no LIVE_EXECUTION references added.
