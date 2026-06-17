@@ -1,7 +1,7 @@
 # TDD Handoff
 Plan: feature-plans/lens-fundamentals-portfolio-fanout-fix.md
 Branch: fix/fundamentals-portfolio-fanout
-Phase: red
+Phase: green
 
 ## Test Files
 - `tests/ai_advisor/test_lens_fundamentals_fanout.py` — 12 tests collected
@@ -80,6 +80,22 @@ and `requests.get`. No new modules to stub.
 ## Questions for User / PM
 None — all design decisions covered by plan or [PM-ASSUMED] annotations.
 
+## Test File Issues (for test-writer to fix)
+None — all 12 tests passed against the implementation as written.
+
+## Disputed Tests
+None.
+
+## Implementation Notes
+- Added `_FUNDAMENTALS_PROXY_UNIVERSE: frozenset[str]` constant at module scope (after `_SEC_KEY_CONCEPTS`). 8 company tickers: AAPL, MSFT, GOOGL, AMZN, NVDA, JPM, XOM, JNJ. No ETFs. Source comment documents S&P 500 cross-sector selection rationale.
+- Extracted `_fetch_fundamentals_for_ticker(ticker: str) -> dict` from the original single-ticker body of `_build_fundamentals_section`. The helper returns a partial block (no `lens` key — callers set it). All existing logic (CIK cache lookup, `_fetch_with_backoff`, `_SEC_KEY_CONCEPTS` extraction, citation building, deduplication) moved verbatim into this helper.
+- `_build_fundamentals_section` now has two paths:
+  - **Single-ticker path** (AC-3 preserved): `ticker is not None` → delegates to `_fetch_fundamentals_for_ticker`, wraps with `lens` key. Shape unchanged.
+  - **Portfolio fan-out path** (AC-1 fix): `ticker=None` → derives universe via `database.load_state()` (CC-2 lazy) ∪ `_FUNDAMENTALS_PROXY_UNIVERSE`, iterates per-ticker with per-ticker exception isolation, aggregates `{tickers: {TICKER: payload}, coverage: {available: N, universe: M}}`.
+- All-fail path returns `reason="no fundamentals available: all tickers failed SEC EDGAR fetch"` — does NOT say "ticker symbol required" (AC-5 distinguisher).
+- Proxy tickers (AAPL, MSFT, etc.) are all in `_SEC_TICKER_CIK_CACHE` → zero extra CIK lookup HTTP calls for the proxy basket. Total calls = 1 companyfacts per ticker → well within the 2× upper bound tested by AC-6.
+
 ## Status Log
 - [2026-06-16] fan-test-writer (quant-test-writer, LEAD): Starting RED phase for fundamentals portfolio fan-out fix
 - [2026-06-16] fan-test-writer: RED complete — 12 tests collected: 4 failing (correct RED on assertions), 2 passing (AC-3 regression guards — existing behavior verified correct), 6 skipped (cascade-gated on upstream RED failures). 0 import/syntax errors. 0 stubs created. HEAD committed to fix/fundamentals-portfolio-fanout.
+- [2026-06-16] fan-implementer (composer-alpaca-integration): GREEN complete — 12/12 tests passing, 0 test bugs documented. All 6 previously-skipped cascade tests now run and pass. Lint: 2 pre-existing errors (I001 import sort, E501 long-line) — not introduced by this change (confirmed via git show HEAD:ai_advisor.py). Changes: ai_advisor.py only.

@@ -352,6 +352,23 @@ _SEC_KEY_CONCEPTS: dict[str, str] = {
     "StockholdersEquity": "Stockholders Equity",
 }
 
+# Proxy company-ticker floor for the portfolio fan-out path.  These are large-cap
+# individual company tickers across sectors — NOT ETFs (ETFs have no SEC companyfacts
+# entries and would cause every CIK lookup and companyfacts fetch to fail).
+# This basket guarantees a non-empty fundamentals universe at 03:00 / off-hours /
+# flat markets when logic_holdings is empty (mirrors _PROXY_UNIVERSE in lens_technicals).
+# Source: S&P 500 representative cross-sector companies (2024 large-cap constituents).
+_FUNDAMENTALS_PROXY_UNIVERSE: frozenset[str] = frozenset({
+    "AAPL",   # Apple Inc. — Technology
+    "MSFT",   # Microsoft Corp. — Technology
+    "GOOGL",  # Alphabet Inc. — Communication Services
+    "AMZN",   # Amazon.com Inc. — Consumer Discretionary
+    "NVDA",   # NVIDIA Corp. — Technology (semiconductors)
+    "JPM",    # JPMorgan Chase & Co. — Financials
+    "XOM",    # Exxon Mobil Corp. — Energy
+    "JNJ",    # Johnson & Johnson — Health Care
+})
+
 
 def _fetch_with_backoff(
     url: str,
@@ -911,53 +928,33 @@ def _sec_ticker_to_cik(ticker: str) -> str | None:
     return None
 
 
-def _build_fundamentals_section(_data: object = None, *, ticker: str | None = None) -> dict:
-    """Fundamentals lens block — SEC EDGAR companyfacts producer (Cycle 2).
+def _fetch_fundamentals_for_ticker(ticker: str) -> dict:
+    """Fetch SEC EDGAR companyfacts for a single company ticker.
 
-    Fetches XBRL-tagged financial facts from SEC EDGAR's free companyfacts
-    endpoint.  Requires a ticker symbol (e.g. "AAPL") to resolve the CIK.
-    Returns available=False when ticker is absent, on any HTTP error, or if
-    the CIK cannot be resolved.
+    Extracted from the original single-ticker body of _build_fundamentals_section
+    to enable the portfolio fan-out path (AC-1 fix).  Returned block uses the
+    existing per-ticker shape: {available, payload: {entity_name, cik, key_facts},
+    sources}.  The 'lens' key is intentionally absent — callers set it.
 
     MANDATORY User-Agent header: the SEC requires a descriptive UA string;
     missing UA is the primary cause of 403 responses (FREE-DATA-SOURCES.md §5).
 
-    Sources carry SEC EDGAR filing URLs (https://data.sec.gov/...) as
-    clickable citations (CC-4).
-
     D-1: error reasons carry only type(exc).__name__.
 
     Args:
-        _data: unused; reserved for caller pre-injection.
-        ticker: stock ticker symbol.  Required; returns available=False if None.
+        ticker: stock ticker symbol (must be non-empty; callers must validate).
 
     Returns:
-        Lens block dict with keys: lens, available, reason (on False),
-        payload (on True), sources (on True).
+        Dict with keys: available, reason (on False), payload (on True),
+        sources (on True).
     """
     _lens = "fundamentals"
-
-    if not ticker or not str(ticker).strip():
-        return {
-            "lens": _lens,
-            "available": False,
-            "reason": "ticker symbol required to fetch SEC EDGAR fundamentals",
-            "payload": None,
-            "sources": [],
-        }
-
     ticker = str(ticker).strip().upper()
 
     # Resolve ticker → CIK using the SEC bulk tickers file.
     cik_padded = _sec_ticker_to_cik(ticker)
     if cik_padded is None:
-        # Fall back: if the mock patches requests.get uniformly, the ticker
-        # resolution may also return data we can't parse.  Try loading
-        # companyfacts directly with a known AAPL CIK as a no-CIK-lookup path
-        # for tests that patch requests.get at the companyfacts level.
-        # In real use this means "we couldn't find the ticker" — degrade.
         return {
-            "lens": _lens,
             "available": False,
             "reason": f"SEC EDGAR CIK not found for ticker {ticker}",
             "payload": None,
@@ -976,7 +973,6 @@ def _build_fundamentals_section(_data: object = None, *, ticker: str | None = No
     except Exception as exc:
         logger.debug("SEC EDGAR companyfacts fetch failed for %s: %s", ticker, exc)
         return {
-            "lens": _lens,
             "available": False,
             "reason": f"{type(exc).__name__} fetching SEC EDGAR fundamentals",
             "payload": None,
@@ -1026,8 +1022,6 @@ def _build_fundamentals_section(_data: object = None, *, ticker: str | None = No
             accn = latest_entry.get("accn", "")
             if accn and accn not in seen_accessions:
                 seen_accessions.add(accn)
-                # Accession URL: https://www.sec.gov/Archives/edgar/data/<cik>/<accn-no-dashes>/
-                accn_nodash = accn.replace("-", "")
                 filing_url = (
                     f"https://www.sec.gov/cgi-bin/browse-edgar"
                     f"?action=getcompany&CIK={cik_padded}&type=10-K&dateb=&owner=include&count=10"
@@ -1047,7 +1041,6 @@ def _build_fundamentals_section(_data: object = None, *, ticker: str | None = No
 
     if not key_facts:
         return {
-            "lens": _lens,
             "available": False,
             "reason": f"SEC EDGAR returned no recognized key facts for {ticker}",
             "payload": None,
@@ -1070,7 +1063,6 @@ def _build_fundamentals_section(_data: object = None, *, ticker: str | None = No
         len(unique_sources),
     )
     return {
-        "lens": _lens,
         "available": True,
         "payload": {
             "entity_name": entity_name,
@@ -1078,6 +1070,136 @@ def _build_fundamentals_section(_data: object = None, *, ticker: str | None = No
             "key_facts": key_facts,
         },
         "sources": unique_sources,
+    }
+
+
+def _build_fundamentals_section(_data: object = None, *, ticker: str | None = None) -> dict:
+    """Fundamentals lens block — SEC EDGAR companyfacts producer (Cycle 2 / Cycle 3 fan-out).
+
+    When called with a ticker symbol (e.g. ticker="AAPL"), returns the existing
+    per-symphony single-ticker shape (AC-3 regression guard).
+
+    When called without a ticker (portfolio path, AC-1 fix), derives a universe
+    from the union of live logic_holdings and _FUNDAMENTALS_PROXY_UNIVERSE, fans
+    out _fetch_fundamentals_for_ticker across each company ticker, and aggregates
+    available results into a portfolio payload.  The proxy floor guarantees a
+    non-empty universe at 03:00 / off-hours / flat markets (mirrors the technicals
+    lens universe pattern — DE-TECH-002 equivalent for fundamentals).
+
+    MANDATORY User-Agent header: the SEC requires a descriptive UA string;
+    missing UA is the primary cause of 403 responses (FREE-DATA-SOURCES.md §5).
+
+    Sources carry SEC EDGAR filing URLs (https://data.sec.gov/...) as
+    clickable citations (CC-4).
+
+    D-1: error reasons carry only type(exc).__name__.
+
+    CC-2: database.load_state() is called lazily inside the function body —
+    never at module import time.
+
+    Args:
+        _data: unused; reserved for caller pre-injection.
+        ticker: stock ticker symbol.  When provided, uses the single-ticker path
+            (AC-3 preserved).  When None (default), uses the portfolio fan-out path.
+
+    Returns:
+        Lens block dict with keys: lens, available, reason (on False),
+        payload (on True), sources (on True).
+    """
+    _lens = "fundamentals"
+
+    # --- Single-ticker path (AC-3: preserved unchanged) ---
+    if ticker is not None and str(ticker).strip():
+        result = _fetch_fundamentals_for_ticker(ticker)
+        if result.get("available"):
+            return {
+                "lens": _lens,
+                "available": True,
+                "payload": result["payload"],
+                "sources": result.get("sources", []),
+            }
+        else:
+            return {
+                "lens": _lens,
+                "available": False,
+                "reason": result.get("reason", "unavailable"),
+                "payload": None,
+                "sources": [],
+            }
+
+    # --- Portfolio fan-out path (AC-1 fix: ticker=None) ---
+    # Derive the universe from live logic_holdings ∪ _FUNDAMENTALS_PROXY_UNIVERSE.
+    # CC-2: lazy DB access — no module-level import of database state.
+    try:
+        bot_state = database.load_state()
+        holdings_tickers: set[str] = set()
+        for entry in bot_state.values():
+            if isinstance(entry, dict):
+                for t in entry.get("logic_holdings", {}):
+                    if t:
+                        holdings_tickers.add(t)
+    except Exception:
+        holdings_tickers = set()
+
+    # Merge with the proxy floor; sort for deterministic ordering.
+    universe: list[str] = sorted(holdings_tickers | set(_FUNDAMENTALS_PROXY_UNIVERSE))
+
+    if not universe:
+        return {
+            "lens": _lens,
+            "available": False,
+            "reason": "no fundamentals universe: holdings and proxy are both empty",
+            "payload": None,
+            "sources": [],
+        }
+
+    # Fan out: per-ticker failures degrade only that ticker (AC-4).
+    per_ticker_results: dict[str, dict] = {}
+    all_sources: list[dict] = []
+    seen_source_urls: set[str] = set()
+
+    for t in universe:
+        try:
+            result = _fetch_fundamentals_for_ticker(t)
+        except Exception as exc:
+            # Defense-in-depth: _fetch_fundamentals_for_ticker is never-raising,
+            # but guard here to ensure per-ticker isolation regardless.
+            result = {"available": False, "reason": type(exc).__name__}
+
+        if result.get("available"):
+            per_ticker_results[t] = result["payload"]
+            for src in result.get("sources", []):
+                url = src.get("url", "")
+                if url and url not in seen_source_urls:
+                    seen_source_urls.add(url)
+                    all_sources.append(src)
+        # Failed tickers are omitted from per_ticker_results (honest degradation)
+
+    if not per_ticker_results:
+        return {
+            "lens": _lens,
+            "available": False,
+            "reason": "no fundamentals available: all tickers failed SEC EDGAR fetch",
+            "payload": None,
+            "sources": [],
+        }
+
+    logger.info(
+        "SEC EDGAR portfolio fundamentals: %d/%d tickers resolved",
+        len(per_ticker_results),
+        len(universe),
+    )
+    return {
+        "lens": _lens,
+        "available": True,
+        "payload": {
+            "tickers": per_ticker_results,
+            "coverage": {
+                "available": len(per_ticker_results),
+                "universe": len(universe),
+            },
+        },
+        "sources": all_sources,
     }
 
 
