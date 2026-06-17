@@ -3,7 +3,7 @@
 > Scheduled off-hours lens pipeline: collects 5 lens blocks, validates citations, synthesizes a Market Prism summary via Claude, and persists exactly one MARKET_PRISM advisor_observation per run — always, regardless of lens availability.
 
 **Source:** `advisors/lens_pipeline.py`
-**Last updated:** 2026-06-13
+**Last updated:** 2026-06-17
 
 ## Overview
 
@@ -51,7 +51,9 @@ Aggregates sources from all `available=True` lens blocks. Each citation is valid
 
 ### Pass 3 — Claude Synthesis
 
-Calls Claude (`claude-haiku-4-5-20251001`, lightest available model) to synthesize the available lens summaries into an `overall_sentiment` label and `sentiment_rationale`. The prompt requests a single JSON response; the response is parsed and validated against the allowed sentinel set (`"risk-on"`, `"neutral"`, `"risk-off"`, `"limited-inputs"`).
+Calls Claude to synthesize the available lens summaries into an `overall_sentiment` label and `sentiment_rationale`. The synthesis model is read from the `ADVISOR_SYNTHESIS_MODEL` environment variable (default `claude-opus-4-8` — see [Configuration](#configuration)). The prompt requests a single JSON response; the response is parsed and validated against the allowed sentinel set (`"risk-on"`, `"neutral"`, `"risk-off"`, `"limited-inputs"`).
+
+The JSON extraction logic (`_extract_json_object`) strips markdown code fences (`` ```json ... ``` `` or `` ``` ... ``` ``) and locates the first balanced `{ ... }` block in the response before parsing. This is required because Claude sometimes wraps its JSON payload in fences or adds leading/trailing prose (confirmed live defect 2026-06-13). This logic is preserved exactly and is not affected by the model change (AC-3).
 
 Degradation paths (all produce `"limited-inputs"` + an explanatory rationale string):
 - All lenses unavailable → Claude call is skipped entirely.
@@ -90,6 +92,27 @@ raw_response    = {
 On persistence failure, `market_prism_row_id` in the return dict is `None` and the error is logged at ERROR level (type name only). The pipeline still returns normally.
 
 Skipped in `dry_run=True` mode.
+
+## Configuration
+
+### `ADVISOR_SYNTHESIS_MODEL` — Synthesis model env var
+
+| Property | Value |
+|----------|-------|
+| **Env var** | `ADVISOR_SYNTHESIS_MODEL` |
+| **Default** | `claude-opus-4-8` |
+| **Scope** | Read at call time inside `_synthesize_via_claude` — re-evaluated on every pipeline run |
+| **Effect** | Model identifier passed to `client.messages.create(model=...)` in Pass 3 |
+
+**Production:** leave unset; the default `claude-opus-4-8` provides the analytical depth needed to synthesize 5 lens blocks into a market-regime verdict.
+
+**CI / tests:** set `ADVISOR_SYNTHESIS_MODEL=mock-model` via `monkeypatch.setenv` (function-scoped) before any test that triggers the synthesis path. The Anthropic client is mocked — no real LLM calls are made in the test suite.
+
+**Invalid / empty value:** the env var is passed directly to the Anthropic client. An unrecognized model ID raises an error from the SDK at call time; the pipeline catches it and degrades to `"limited-inputs"` (D-1 / CC-10 contract).
+
+**Scope boundary with Epic A Phase 2:** once the `prism-synthesizer` standalone agent lands (Epic A Phase 2), the nightly Market Prism synthesis bypasses `_synthesize_via_claude` entirely. This env var continues to apply to any residual programmatic synthesis path and to the `ai_advisor` and `advisor_chat` modules, which also read it (see DE-SYNTH-001 in DECISIONS.md).
+
+Also applies to: `ai_advisor._CLAUDE_MODEL` (read at import time) and `advisors/advisor_chat._CHAT_MODEL` (read at import time). All three advisor call sites share the same env var and the same `claude-opus-4-8` default. See [DE-SYNTH-001 in DECISIONS.md](../../DECISIONS.md).
 
 ## Scheduler Wiring (app.py)
 
@@ -136,4 +159,5 @@ Returns the most recent `MARKET_PRISM` advisor_observations row (deserialized `r
 
 - `ai_advisor` — `_build_technicals_section`, `_build_sentiment_section`, `_build_derivatives_section`, `_build_macro_section`, `_build_fundamentals_section`, `build_citation`, `_build_client` (all lazy imports)
 - `database` — `insert_advisor_observation` (lazy import)
+- `os` — `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` in `_synthesize_via_claude`
 - `app.py` — `_run_lens_pipeline` / `_lens_pipeline_worker` wrappers; `run_scheduler()` daily job registration

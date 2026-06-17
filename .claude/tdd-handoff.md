@@ -38,3 +38,4 @@ file and the env var default in each source module.
 ## Status Log
 - [2026-06-17] sm-test-writer (quant-test-writer, LEAD): Starting RED phase for advisor-synthesis-model-config
 - [2026-06-17] sm-test-writer: RED complete — 22 tests (all failing on assertions), 0 import errors, 0 stubs created. HEAD committed to feat/advisor-synthesis-model-config.
+- [2026-06-17] sm-implementer (composer-alpaca-integration): GREEN complete — 20/20 tests passing (test file collected 20, not 22). Changes: advisors/lens_pipeline.py (add `import os`, replace hardcoded haiku literal), ai_advisor.py (replace _CLAUDE_MODEL literal), advisors/advisor_chat.py (add `import os`, replace _CHAT_MODEL literal). AC-3 fence-stripping logic untouched. HEAD = 00bfe43.

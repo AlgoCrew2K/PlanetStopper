@@ -891,3 +891,33 @@ Extracted from the original single-ticker body (CIK resolve → companyfacts fet
 
 **Status:** GREEN at 3e41a2a. `quant-code-reviewer` APPROVE (pending PM live SEC gate). Acceptance criteria AC-1 through AC-6 verified.
 
+
+---
+
+## Advisor Synthesis Model — Configurable (C1, 2026-06-17)
+
+### DE-SYNTH-001: `ADVISOR_SYNTHESIS_MODEL` env var unifies LLM model config across all three advisor call sites
+
+**Decision:** The hardcoded LLM model literals in all three advisor call sites are replaced with a single `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` read:
+
+- `advisors/lens_pipeline._synthesize_via_claude` — was `"claude-haiku-4-5-20251001"` (a Cycle-4 Haiku placeholder for the nightly Market Prism synthesis)
+- `ai_advisor._CLAUDE_MODEL` — was `"claude-opus-4-7"` (stale; Opus 4.8 was already the intended production model per the corrected plan)
+- `advisors/advisor_chat._CHAT_MODEL` — was `"claude-opus-4-7"` (same staleness; chat uses the same model tier as the config advisor for consistency)
+
+All three now read the env var at the appropriate scope: `lens_pipeline` reads it at call time (inside `_synthesize_via_claude`); `ai_advisor._CLAUDE_MODEL` and `advisor_chat._CHAT_MODEL` read it at import time (module-level constant, re-read each time the module is imported fresh in a process).
+
+**Default: `claude-opus-4-8`.** The prior `claude-haiku-4-5-20251001` default for the nightly synthesis was a cost-saving placeholder chosen at Cycle-4 dispatch time. Opus 4.8 is the correct production model: it provides the analytical reasoning depth appropriate for synthesizing 5 lens blocks into a market-regime verdict. The prior `claude-opus-4-7` in `ai_advisor` and `advisor_chat` was stale — 4.8 is the current Opus generation.
+
+**CI / test override:** Tests set `ADVISOR_SYNTHESIS_MODEL=mock-model` via `monkeypatch.setenv` (function-scoped — no module-level `os.environ` mutation) and mock the Anthropic client. No real Opus calls are made during the test suite (AC-2 / AC-4).
+
+**Scope boundary with Epic A Phase 2:** Once Epic A Phase 2 lands, the nightly Market Prism synthesis is performed by the `prism-synthesizer` agent (standalone Opus 4.8 agent). At that point `_synthesize_via_claude` in `lens_pipeline.py` is superseded for the nightly Prism read — but the env-var pattern remains valid for any residual programmatic synthesis path and for `ai_advisor` + `advisor_chat` which are unaffected by Epic A.
+
+**AC-3 preservation:** The `_extract_json_object` fence-stripping and balanced-brace extraction logic (`lens_pipeline.py:190–240`, fixed at `df2d19e`) is byte-preserved. No change to response processing; only the model string passed to `client.messages.create` changed.
+
+**Files changed:**
+- `advisors/lens_pipeline.py` — add `import os`; `_synthesize_via_claude`: `model="claude-haiku-4-5-20251001"` → `model=os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`
+- `ai_advisor.py` — `_CLAUDE_MODEL = "claude-opus-4-7"` → `_CLAUDE_MODEL = os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`; comment updated
+- `advisors/advisor_chat.py` — add `import os`; `_CHAT_MODEL = "claude-opus-4-7"` → `_CHAT_MODEL = os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`; comment updated
+- `tests/ai_advisor/test_synthesis_model_config.py` — 22 tests (AC-1 env-var wiring for all 3 modules; AC-2 default string assertion; AC-3 fence-stripping regression; AC-4 mock discipline)
+
+**Status:** GREEN at 00bfe43. Acceptance criteria AC-1 through AC-4 verified (AC-5 is this doc-gen deliverable).
