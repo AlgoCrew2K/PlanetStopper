@@ -3,7 +3,7 @@
 > Claude-backed config advisor: context assembly, structured-output Claude call, per-symphony assessment, safety gates (7-item allowlist, risk-direction cross-check, OOS re-validation), and multi-lens pipeline (technicals wired; sentiment wired; derivatives wired with freshness guard; fundamentals wired with portfolio fan-out; macro stub).
 
 **Source:** `ai_advisor.py`
-**Last updated:** 2026-06-16
+**Last updated:** 2026-06-17
 
 ## Overview
 
@@ -91,7 +91,7 @@ Calls Claude's structured-output endpoint. Synchronous — blocks until the resp
 
 **Returns:** `(ConfigSuggestionsResponse, None)` on success; `(None, error_message)` on any failure. Never raises.
 
-**Model:** `claude-opus-4-7`, `max_tokens=2048`.
+**Model:** read from `ADVISOR_SYNTHESIS_MODEL` env var (default `claude-opus-4-8`), `max_tokens=2048`. Set `ADVISOR_SYNTHESIS_MODEL=mock-model` in tests to prevent real API calls (AC-4).
 
 An empty `suggestions` list is a valid non-error response ("no edit is well-supported"). D-1 security contract: fully honored — all failure paths (`messages.parse` at `ai_advisor.py:631` and client construction) return only `type(exc).__name__` to the browser. Full exception detail is logged server-side via `exc_info=True`; no exception text reaches the JSON response.
 
@@ -272,6 +272,14 @@ The 7-item allowlist (6 Optuna search-space keys + `MAX_SQUEEZE_FLOOR`). Note: `
 | `_FUNDAMENTALS_PROXY_UNIVERSE` | `frozenset[str]` | 8 company tickers | Unconditional floor for portfolio fan-out path; guarantees non-empty universe at 03:00 / flat markets. Individual companies only — ETFs excluded (no SEC companyfacts). |
 | `_SEC_USER_AGENT` | `str` | `"Planet Stopper AlphaBot..."` | Mandatory SEC EDGAR User-Agent (missing UA is the primary cause of 403 responses). |
 | `_SEC_KEY_CONCEPTS` | `dict[str, str]` | XBRL → human label map | Defines the set of recognized financial facts extracted from companyfacts responses; keys not in this dict are ignored. |
+
+### Module-Level Constants (LLM Config)
+
+| Constant | Type | Value | Purpose |
+|----------|------|-------|---------|
+| `_CLAUDE_MODEL` | `str` | `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` | Model for all advisor LLM calls. Read at import time. Override via `ADVISOR_SYNTHESIS_MODEL` env var in tests. |
+| `_MAX_TOKENS` | `int` | 2048 | Token budget for structured-output suggestions response. |
+| `_REQUEST_TIMEOUT_SECONDS` | `float` | 30.0 | Client-side timeout; never relies on SDK/urllib3 default. |
 
 ## Internal Dependencies
 

@@ -3,7 +3,7 @@
 > Explain-only chat backend for the AI Advisor (M5): scopes client artifacts to a known allowlist, calls Claude to explain a specific surfaced artifact in plain language, and enforces a hard boundary against any trade, write, or config-mutation path.
 
 **Source:** `advisors/advisor_chat.py`
-**Last updated:** 2026-06-10
+**Last updated:** 2026-06-17
 
 ## Overview
 
@@ -33,7 +33,7 @@ Never raises — all failure paths return `ChatResponse(answer=None, error=<mess
 
 **Returns:** `ChatResponse` — `answer` is a plain-language explanation string on success, `None` on failure; `error` is `None` on success, an operator-safe error string on failure.
 
-**Model:** `claude-opus-4-7`, `max_tokens=1024`, 30-second timeout.
+**Model:** read from `ADVISOR_SYNTHESIS_MODEL` env var (default `claude-opus-4-8`), via the module-level `_CHAT_MODEL` constant (read at import time). `max_tokens=1024`, 30-second timeout. Set `ADVISOR_SYNTHESIS_MODEL=mock-model` in tests.
 
 ---
 
