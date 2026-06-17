@@ -814,3 +814,42 @@ Cycle: `lens-technicals` on branch `feat/lens-technicals`. GREEN at `9449674`.
 **Secret-strip:** `_SECRET_KEY_NAMES = {api_key, token, secret, password, Authorization}`, recursive over dicts+lists — verified live (nested `token` stripped).
 
 **Status:** GREEN at `961c0cb` (60 tests). Reviewer APPROVE + PM live gate PASS (persist->get round-trip, append-only, recursive secret-strip, 5 live persist calls in `ai_advisor`). Verifier: 6918 passed / 4 pre-existing fails / zero cycle-caused. PR #35. Supersedes stale closed PR #4 (hollow, 26 tests).
+
+---
+
+## Derivatives Lens — VIX Freshness Fix (2026-06-16)
+
+Branch: `fix/derivatives-vix-freshness` | HEAD: 3c7e545
+
+### DE-DERIV-001: Freshness guard added to derivatives lens — staleness is now an honest-availability condition
+
+**Defect class:** The shipped `advisors/lens_options_proxy.py` (landed PR #30, `93910b6`) served a ~6-year-stale VIX value as `available=True`. Root cause: `_fetch_fred_series` used `sort_order="asc"`, `limit=100`, `observation_start="2020-01-01"` — fetching the *oldest* 100 observations (approximately Jan–May 2020). `_parse_latest_observation` walked the list in reverse and returned a ~May-2020 date as the "latest" observation. Honest-availability (CC-3 / D-1) covered *fetch failure* only, not *data staleness*, so a stale-but-successful fetch flowed through as a confident, wrong market read into the nightly Market Prism.
+
+**Fix — two-part:**
+
+1. **Recent rolling window (AC-1).** `_fetch_fred_series` now computes `observation_start` as `_today() - timedelta(days=_OPTIONS_PROXY_LOOKBACK_DAYS)` at fetch time instead of the hardcoded `"2020-01-01"`. `_OPTIONS_PROXY_LOOKBACK_DAYS = 90` calendar days — wide enough to always contain several valid trading-day observations across holidays, small enough to keep the response light. `sort_order="asc"` and `_parse_latest_observation`'s reverse-walk are unchanged; the rolling window ensures the response tail is genuinely recent.
+
+2. **Freshness guard (AC-2).** After `_parse_latest_observation` returns `(value, date_str)`, a guard compares `obs_date` to `_today() - timedelta(days=_OPTIONS_PROXY_MAX_STALENESS_DAYS)`. If stale, the function returns `{available: False, reason: "stale_data"}` with no `vix_level`, `vix_term_structure`, `risk_read`, or `as_of_date` keys. No fabricated values reach the pipeline. The guard fires before regime/risk computation.
+
+**`available=True` now requires both:**
+- The HTTP fetch succeeded and FRED returned at least one valid non-`"."` observation.
+- The latest valid observation's date is within `_OPTIONS_PROXY_MAX_STALENESS_DAYS` calendar days of the run date.
+
+**New constants (named, with source comments):**
+- `_OPTIONS_PROXY_MAX_STALENESS_DAYS: int = 10` — threshold above longest normal market closure (long-weekend + adjacent holiday ≈ 4 calendar days); catches genuine staleness decisively. [PM-ASSUMED]
+- `_OPTIONS_PROXY_LOOKBACK_DAYS: int = 90` — rolling window for `observation_start`. [PM-ASSUMED]
+
+**Injectable test seam:**
+- `_today() -> datetime.date` — module-level helper, monkeypatchable in tests. Required so freshness tests are deterministic without wall-clock coupling (AC-5).
+
+**`reason` values when `available=False`:**
+- `"stale_data"` — latest observation older than `_OPTIONS_PROXY_MAX_STALENESS_DAYS` (a data-quality sentinel, not an exception class name).
+- `"KeyError"` — `FRED_API_KEY` not set.
+- `"ValueError"` — no valid observations, malformed date, or bad response shape.
+- `type(exc).__name__` — any caught exception (D-1 contract unchanged).
+
+**Behavior preserved:** All pre-existing fetch-failure, 429-exhausted, and no-valid-observations paths are unchanged. `_classify_regime` and `_derive_risk_read` logic are identical; the freshness guard is purely additive — it short-circuits before those helpers when stale.
+
+**Files changed:** `advisors/lens_options_proxy.py` (lines 137–143 new constants; line 146 `_today()` helper; line 185 rolling window; lines 350–368 freshness guard); `tests/ai_advisor/test_lens_options_proxy.py` (new staleness/freshness/window AC tests).
+
+**Status:** 43/43 GREEN at 3c7e545. `quant-code-reviewer` APPROVE (pending PM live FRED gate).

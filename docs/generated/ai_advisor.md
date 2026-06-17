@@ -1,9 +1,9 @@
 # ai_advisor
 
-> Claude-backed config advisor: context assembly, structured-output Claude call, per-symphony assessment, safety gates (7-item allowlist, risk-direction cross-check, OOS re-validation), and multi-lens pipeline (technicals wired; sentiment wired; derivatives, macro, fundamentals stubs).
+> Claude-backed config advisor: context assembly, structured-output Claude call, per-symphony assessment, safety gates (7-item allowlist, risk-direction cross-check, OOS re-validation), and multi-lens pipeline (technicals wired; sentiment wired; derivatives wired with freshness guard; macro, fundamentals stubs).
 
 **Source:** `ai_advisor.py`
-**Last updated:** 2026-06-15
+**Last updated:** 2026-06-16
 
 ## Overview
 
@@ -24,6 +24,8 @@ Real-money-critical input governance: `assemble_advisor_context` never includes 
 **Technicals lens wiring (2026-06-15):** `_build_technicals_section` (`ai_advisor.py:439-482`) replaced its Cycle-1 stub with a real producer. It lazy-imports `advisors.lens_technicals` (CC-2), derives the universe from `database.load_state()` holdings (tickers across all monitored symphonies), and calls `_fetch_technicals(universe)`. Returns `available=True` with MA posture, breadth, and momentum payload when bars are available; `available=False` with a named reason otherwise. See [advisors/lens_technicals](advisors_lens_technicals.md).
 
 **Sentiment lens wiring (GDELT, 2026-06-15):** `_build_sentiment_section` lazy-imports `advisors.lens_gdelt` and calls `_fetch_gdelt_sentiment`. Honest-availability: `tone is None → available=False`. See [advisors/lens_gdelt](advisors_lens_gdelt.md).
+
+**Derivatives lens wiring (FRED VIX/VXV, 2026-06-16):** `_build_derivatives_section` lazy-imports `advisors.lens_options_proxy` and calls `_fetch_options_proxy()`. Honest-availability now covers **staleness** as well as fetch failure: the freshness guard (`_OPTIONS_PROXY_MAX_STALENESS_DAYS = 10`) rejects observations older than 10 calendar days as `available=False, reason="stale_data"`. Prior stub behavior is superseded — the producer returns a real VIX level, term-structure, and risk read when `FRED_API_KEY` is set and data is fresh. See [advisors/lens_options_proxy](advisors-lens-options-proxy.md).
 
 ## API Reference
 
@@ -149,7 +151,7 @@ All five are wired as top-level keys in the dict returned by `assemble_advisor_c
 |--------|----------------|--------|----------|
 | `_build_technicals_section()` (`ai_advisor.py:439-482`) | `"technicals"` | **Wired** (2026-06-15) | `advisors/lens_technicals.py` — MA posture, breadth, momentum |
 | `_build_sentiment_section()` | `"sentiment"` | **Wired** (2026-06-15) | `advisors/lens_gdelt.py` — GDELT 2.0 tone + citations |
-| `_build_derivatives_section()` | `"derivatives"` | Stub — `available=False` | CBOE put/call + Alpaca IV (not yet connected) |
+| `_build_derivatives_section()` | `"derivatives"` | **Wired** (2026-06-16) — freshness-guarded | `advisors/lens_options_proxy.py` — FRED VIXCLS/VXVCLS; VIX level, term-structure regime, risk read; staleness guard (`_OPTIONS_PROXY_MAX_STALENESS_DAYS=10`) |
 | `_build_macro_section()` | `"macro"` | Stub — `available=False` | FRED / US Treasury XML (not yet connected) |
 | `_build_fundamentals_section()` | `"fundamentals"` | Stub — `available=False` | SEC EDGAR companyfacts (not yet connected) |
 
