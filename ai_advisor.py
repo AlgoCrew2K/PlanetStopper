@@ -60,6 +60,15 @@ _MAX_TOKENS = 2048
 _REQUEST_TIMEOUT_SECONDS = 30.0
 
 
+def resolve_advisor_model() -> str:
+    """Return the configured advisor synthesis model ID.
+
+    Reads ADVISOR_SYNTHESIS_MODEL at call time so a daemon restart is not
+    required to pick up a change.  Default: claude-opus-4-8 (Opus 4.8).
+    """
+    return os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")
+
+
 # ---------------------------------------------------------------------------
 # Suggestible config surface — the 7-item ALLOWLIST (config-surface.md §1).
 # An allowlist, not a denylist: anything not enumerated here is structurally

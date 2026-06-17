@@ -70,10 +70,15 @@ None — all target modules exist. No new modules introduced by this feature.
 None. All design decisions covered by the feature plan or [PM-ASSUMED].
 
 ## Test File Issues (for test-writer to fix)
-None.
 
-## Test File Issues (for test-writer to fix)
-None.
+**TestAppPyAdvisorRouteModelWiring::test_accept_route_does_not_raise_attribute_error_after_constant_removal**
+**TestAppPyAdvisorRouteModelWiring::test_accept_route_records_env_resolved_model_not_hardcoded_constant**
+
+- **File:** `tests/ai_advisor/test_synthesis_model_config.py`, lines ~1106 and ~1147
+- **What the test does:** patches `ai_advisor.enforce_suggestion_allowlist` with `return_value=None`
+- **What correct production code does:** `allowed, rejected = ai_advisor.enforce_suggestion_allowlist(...)` at `app.py:3704` — requires a 2-tuple return value
+- **Root cause:** `return_value=None` cannot be unpacked into 2 variables → `TypeError: cannot unpack non-iterable NoneType` → HTTP 500. Both tests assert `resp.status_code < 500`, so they fail. The `_CLAUDE_MODEL` AttributeError is FIXED (route reaches line 3704 before crashing); the new crash is the mock.
+- **Suggested fix:** Change `patch.object(ai_advisor, "enforce_suggestion_allowlist", return_value=None)` to `return_value=([suggestion_obj], [])` in both tests. Per the test comment "must pass to reach record_llm_suggestion", the intent is to pass `suggestion_obj` through to `record_llm_suggestion`.
 
 ## Implementation Notes
 - `advisors/lens_pipeline.py`: added `import os` (previously absent); replaced hardcoded `"claude-haiku-4-5-20251001"` literal with `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` at `_synthesize_via_claude` call site (line 284). `_extract_json_object`, `_build_client`, and all regex patterns unchanged.
@@ -90,3 +95,5 @@ None.
 - [2026-06-17] c1-implementer: GREEN complete — 30/30 tests passing. Sibling pollution check: 1146 passed, 10 skipped, 0 failures (tests/ai_advisor/). 0 test bugs. 3 production files changed (import os added to 2 files, 3 model literal/constant refs replaced). Typecheck N/A (Python). Lint pending (see /lint).
 - [2026-06-17] c1-test-writer: RED — AC-4 dead-constant removal (5 new tests, 5b104e4). 5 FAILED / 29 PASSED.
 - [2026-06-17] c1-implementer: GREEN — deleted _CLAUDE_MODEL + comment from ai_advisor.py; deleted _CHAT_MODEL + 2 comment lines from advisors/advisor_chat.py. 34/34 passed. 0 test bugs.
+- [2026-06-17] c1-test-writer: RED — app.py consumer + no-external-ref guards (7 new tests, 645c7ca). 7 FAILED / 34 PASSED.
+- [2026-06-17] c1-implementer: GREEN partial — 39/41 passing. Added resolve_advisor_model() to ai_advisor.py; fixed app.py:3748+3781. _CLAUDE_MODEL AttributeError is resolved. 2 remaining failures are test bugs (enforce_suggestion_allowlist mock returns None, route unpacks as 2-tuple → TypeError). Documented in Test File Issues.
