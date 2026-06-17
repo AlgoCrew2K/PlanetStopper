@@ -17,7 +17,7 @@ The advisor synthesis path currently hardcodes a model (`claude-haiku-4-5-202510
 ## Architecture
 
 **Files changed:**
-- `advisors/lens_pipeline.py` — in `_synthesize_via_claude()`, replace the hardcoded model literal with `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-5")` (exact Opus model ID to be confirmed; [PM-ASSUMED] follows the project's Anthropic client pattern)
+- `advisors/lens_pipeline.py` — in `_synthesize_via_claude()`, replace the hardcoded model literal with `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` — default = current Opus 4.8 (`claude-opus-4-8`; the prior `claude-opus-4-5` was stale). Implementer MUST confirm the exact prod ID string against the `/claude-api` reference skill + the repo's existing Anthropic model-string convention (the project uses some dated IDs, e.g. `claude-haiku-4-5-20251001`) before GREEN.
 - Any other advisor modules that hardcode a model literal in an LLM call — audit `ai_advisor.py`, `advisors/advisor_chat.py`, `advisors/asset_swap_engine.py`, `advisors/logic_change_engine.py` for hardcoded model strings; apply the same pattern
 - `tests/conftest.py` or individual test modules — set `ADVISOR_SYNTHESIS_MODEL` to a test stub/cheap model before any test that triggers a synthesis call; ensure no Opus calls escape into CI
 
