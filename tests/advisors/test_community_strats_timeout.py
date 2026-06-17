@@ -574,6 +574,85 @@ class TestCachePathIntact:
 
 
 # ===========================================================================
+# Class 4b: TestTimeoutReasonProductionPath — AC-1 / AC-5 (production seam)
+# ===========================================================================
+
+
+class TestTimeoutReasonProductionPath:
+    """AC-1 / AC-5: verify reason='AtlasFetchTimeout' via the REAL cached_pull.
+
+    The tests in TestHangIsBounded and TestNeverRaisingAndD1 mock cached_pull to
+    call fn() directly — bypassing cached_pull's own exception handler. This means
+    those tests do NOT prove the reason surfaces correctly when the real cached_pull
+    is in use.
+
+    cached_pull catches ALL exceptions from fetch_fn (its 'never raises' contract).
+    If _bounded_fetch_fn raises _AtlasFetchTimeout and cached_pull swallows it,
+    load_community_strategies receives None and returns reason='AtlasCacheUnavailable'
+    — not 'AtlasFetchTimeout'.
+
+    This class tests through the REAL cached_pull (only pymongo.MongoClient is patched)
+    to prove the implementation surfaces the correct reason in production conditions.
+    """
+
+    def test_timeout_reason_is_atlas_fetch_timeout_via_real_cached_pull(
+        self, mod, isolated_cache_db, monkeypatch
+    ):
+        """AC-1 / AC-5: when a real cached_pull call times out (no stale row, MongoClient
+        sleeps past _ATLAS_FETCH_TIMEOUT_S), load_community_strategies must still return
+        reason='AtlasFetchTimeout' — NOT reason='AtlasCacheUnavailable'.
+
+        This is the PRODUCTION-PATH discriminator test. It uses the real cached_pull
+        (only pymongo.MongoClient is patched) so the exception path goes through
+        cached_pull's own exception handler. If the implementation relies on
+        _AtlasFetchTimeout propagating through cached_pull (which it cannot — cached_pull
+        catches all exceptions from fetch_fn), this test will FAIL and expose the gap.
+
+        The fix requires that either:
+        (a) _AtlasFetchTimeout is NOT raised through cached_pull (e.g., via a sentinel
+            return value, a shared flag, or by wrapping cached_pull itself), OR
+        (b) The timeout is detected at a layer that sits OUTSIDE cached_pull's try/except.
+
+        Timing note: MongoClient sleeps _BOUND * 3 (36s). The test timeout is set high
+        enough (50s) to not kill the test while the timeout wrapper fires at ~12s.
+        """
+        monkeypatch.setenv("MONGO_URI", "mongodb+srv://fake-uri-for-test/db")
+
+        sleep_secs = _BOUND * 3  # 36s — well past the bound
+
+        def _sleeping_mongo(*args, **kwargs):
+            time.sleep(sleep_secs)
+            return MagicMock()
+
+        # Do NOT mock cached_pull — use the real implementation via isolated_cache_db
+        # (no stale row seeded, so cached_pull will attempt a live fetch).
+        with patch("pymongo.MongoClient", side_effect=_sleeping_mongo):
+            t0 = time.monotonic()
+            result = mod.load_community_strategies()
+            elapsed = time.monotonic() - t0
+
+        assert result["available"] is False, (
+            f"Timed-out fetch via real cached_pull must return available=False; got {result!r}"
+        )
+        # This is the decisive assertion: the reason must be 'AtlasFetchTimeout',
+        # not 'AtlasCacheUnavailable' (which is what the implementation returns if
+        # _AtlasFetchTimeout is swallowed by cached_pull's except Exception block).
+        assert result.get("reason") == "AtlasFetchTimeout", (
+            f"Production-path FAIL: reason must be 'AtlasFetchTimeout' even through the real "
+            f"cached_pull; got reason={result.get('reason')!r}. "
+            "cached_pull catches all exceptions from fetch_fn — if _AtlasFetchTimeout is raised "
+            "inside _bounded_fetch_fn, cached_pull swallows it and returns None, which causes "
+            "load_community_strategies to return reason='AtlasCacheUnavailable' instead. "
+            "The implementation must surface the timeout reason WITHOUT relying on _AtlasFetchTimeout "
+            "propagating through cached_pull's exception handler."
+        )
+        assert elapsed < _BOUND + _MARGIN_S, (
+            f"Real-cached_pull path must still return within {_BOUND + _MARGIN_S:.1f}s; "
+            f"elapsed={elapsed:.2f}s. Wall-clock timeout must fire via the real seam."
+        )
+
+
+# ===========================================================================
 # Class 5: TestRouteDegradesTemplateOnly — AC-2
 # ===========================================================================
 
