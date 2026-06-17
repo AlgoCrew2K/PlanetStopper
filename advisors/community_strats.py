@@ -14,6 +14,7 @@ exception message or any secret value (MONGO_URI, hostname, credential).
 
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
 import json
 import logging
@@ -24,6 +25,17 @@ from advisors import atlas_cache
 from advisors import symphony_schema
 
 logger = logging.getLogger(__name__)
+
+# Wall-clock bound for the live Atlas fetch leg. serverSelectionTimeoutMS /
+# connectTimeoutMS do NOT cover mongodb+srv:// SRV/TXT DNS resolution (confirmed:
+# hangs >50s with those set). Chosen > 10s serverSelectionTimeoutMS so a
+# reachable-but-slow Atlas still completes server selection.
+_ATLAS_FETCH_TIMEOUT_S: float = 12.0
+
+
+class _AtlasFetchTimeout(Exception):
+    """Raised when the bounded Atlas fetch exceeds _ATLAS_FETCH_TIMEOUT_S."""
+
 
 # ---------------------------------------------------------------------------
 # Mongo query constants
@@ -151,11 +163,27 @@ def load_community_strategies(
             cursor = collection.find({}, _PROJECTION)
             return list(cursor)
 
+        def _bounded_fetch_fn() -> list:
+            """Wrap _fetch_fn with a wall-clock timeout.
+
+            Uses ThreadPoolExecutor with shutdown(wait=False) so a hung worker thread
+            (e.g., blocked on SRV/TXT DNS resolution) does not block the caller on exit.
+            The orphan thread is allowed to linger; MongoClient eventually errors.
+            """
+            ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            fut = ex.submit(_fetch_fn)
+            try:
+                return fut.result(timeout=_ATLAS_FETCH_TIMEOUT_S)
+            except concurrent.futures.TimeoutError:
+                raise _AtlasFetchTimeout("Atlas SRV/DNS fetch timed out")
+            finally:
+                ex.shutdown(wait=False, cancel_futures=True)  # NEVER wait=True
+
         # Route the Atlas read through the weekly cache. Only the raw projected
         # docs are cached; validation/dedup run on every call (cheap in-process).
         raw_docs = atlas_cache.cached_pull(
             _COLLECTION_NAME,
-            _fetch_fn,
+            _bounded_fetch_fn,
             force_refresh=force_refresh,
         )
 
@@ -179,6 +207,14 @@ def load_community_strategies(
                 "source": "captplanet",
             }
 
+    except _AtlasFetchTimeout:
+        return {
+            "available": False,
+            "reason": "AtlasFetchTimeout",
+            "candidates": [],
+            "stats": dict(_EMPTY_STATS),
+            "source": "captplanet",
+        }
     except Exception as exc:  # noqa: BLE001
         return {
             "available": False,
