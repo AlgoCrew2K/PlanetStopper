@@ -8,8 +8,9 @@ dict.
 Off-execution-path. Advisory-only. No Flask routes, no execution flags.
 pymongo is lazy-imported inside the fetch_fn closure only.
 
-D-1 contract: reason fields are always type(exc).__name__ — never the
-exception message or any secret value (MONGO_URI, hostname, credential).
+D-1 contract: reason fields are type(exc).__name__ for general exceptions,
+or a fixed sentinel string for known failure modes (e.g., 'AtlasFetchTimeout')
+— never the exception message or any secret value (MONGO_URI, hostname, credential).
 """
 
 from __future__ import annotations
