@@ -923,3 +923,55 @@ The module-level `_CLAUDE_MODEL` and `_CHAT_MODEL` constants were **removed** at
 **Status:** GREEN at 294f8a5. 30/30 new tests pass; 1146/0 sibling suite clean.
 
 **Follow-up (0357ecb + c3113b6):** `resolve_advisor_model() -> str` added to `ai_advisor.py` (lines 63-69) as a public accessor that surfaces the env-resolved model ID to non-advisor consumers. `app.py` accept (`/ai-advisor/accept`, line 3748) and reject (`/ai-advisor/reject`, line 3781) routes call `ai_advisor.resolve_advisor_model()` to populate the `model_id` field in the `llm_suggestions` audit trail — replacing a previously hardcoded or absent value. 41/41 tests pass at c3113b6.
+
+
+---
+
+### DE-FUND-002: Fundamentals lens vintage fix — XBRL concept-tag fallback (Mode A) + sort-by-end (Mode B)
+
+**Date:** 2026-06-17
+
+**Branch:** `fix/fundamentals-vintage` | **HEAD:** c72bd3a
+
+**Defect class (CLOSEOUT finding F5):** The SEC EDGAR fundamentals lens reported `available=True` but served wrong-vintage values — the "available=True but stale data" defect class (analogous to the stale-VIX fix in DE-TECH-003 / PR #37). Two concurrent defects, both fixed in this cycle.
+
+**Mode A — XBRL concept deprecation (`ai_advisor.py:361-374`):**
+
+`_SEC_KEY_CONCEPTS` previously mapped each logical concept to a single `str` XBRL tag (`dict[str, str]`). When an issuer migrates a concept to a newer GAAP tag, the old tag stops receiving new filings. Live evidence (closeout): MSFT migrated `Revenues` → `SalesRevenueNet` → `RevenueFromContractWithCustomerExcludingAssessedTax`; the producer queried only `"Revenues"` (frozen at `end=2010-06-30`) and never reached `RevenueFromContractWithCustomerExcludingAssessedTax` (`end=2025-06-30`, 48 10-K entries, present in EDGAR).
+
+**Fix (Mode A):** `_SEC_KEY_CONCEPTS` restructured to `dict[str, tuple[str, tuple[str, ...]]]` — each logical concept maps to `(display_label, ordered_candidate_tags)`. The Revenues concept now carries three candidate tags:
+
+```python
+"Revenues": (
+    "Revenue",
+    (
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "SalesRevenueNet",
+        "Revenues",
+    ),
+),
+```
+
+Other four concepts retain single-tag tuples (no migration evidence in the closeout). **Outer logical keys are stable** (`Revenues`, `NetIncomeLoss`, `Assets`, `Liabilities`, `StockholdersEquity`) — these are the `key_facts` output keys consumed by the synthesis prompt and Overview render; changing them is explicitly out of scope.
+
+**Mode B — wrong sort key (`ai_advisor.py:1011-1073`):**
+
+The selection loop previously sorted `entries_to_check` by `e.get("filed", "")` descending and took `[0]`. A single 10-K bundles comparative prior-period entries that share one `filed` date; Python's stable sort then yields the OLDEST `end` first. This affected ALL tickers and ALL non-deprecated concepts — the JPM control case (no Mode A) showed all 5 concepts 1-2 years stale.
+
+**Fix (Mode B):** The loop now:
+1. Unions entries across ALL candidate tags present in `us_gaap` for the concept (`ai_advisor.py:1017-1030`).
+2. Sorts the union by `(end desc, filed desc)` — `end` is primary (the reporting period); `filed` is secondary for restatements sharing the same `end` (`ai_advisor.py:1037-1044`).
+3. Selects `entries_sorted[0]` (`ai_advisor.py:1045`) — the entry with the most recent reporting-period end.
+4. Wraps the whole per-concept block in `try/except` (AC-7 — never raises on malformed or partial XBRL; `ai_advisor.py:1012, 1070-1072`).
+
+**Payload shape preserved (AC-4):** `key_facts` output dict shape — `{label, value, unit, end, filed, form}` per logical key — is byte-identical to the pre-fix shape. Downstream consumers (Overview render, synthesis prompt) see no key-name or value-type change.
+
+**Both paths covered (AC-6):** The selection logic lives in `_fetch_fundamentals_for_ticker` (`ai_advisor.py:952`), shared by both the single-ticker path and the portfolio fan-out path. Both inherit the fix without signature changes.
+
+**C2-COMMENT-1 (trivial ride-along):** The stale comment at `ai_advisor.py:1735` ("Three independent layers") was corrected to "Four independent layers" and the fourth gate (`enforce_locked_var_gate`) was added to the enumeration (`ai_advisor.py:1738-1752`). Comment-only; no behavior change.
+
+**Files changed:**
+- `ai_advisor.py` — `_SEC_KEY_CONCEPTS` type change (`ai_advisor.py:361-374`); selection loop rewrite (`ai_advisor.py:1011-1073`); C2 comment correction (`ai_advisor.py:1738-1752`)
+- `tests/ai_advisor/test_fundamentals_vintage.py` — 21 new tests covering AC-1 through AC-7
+
+**Status:** 21/21 GREEN at c72bd3a. Test-writer APPROVED at 0cf5644. PM merge gate (live SEC functional test + `/review`) pending.

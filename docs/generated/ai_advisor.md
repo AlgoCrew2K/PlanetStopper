@@ -11,7 +11,7 @@
 
 - **C1** — Context assembly + synchronous Claude call. `assemble_advisor_context` reads a curated 7-item allowlist of config values (6 Optuna search-space keys + `MAX_SQUEEZE_FLOOR`), never `os.environ`. `request_suggestions` calls Claude with structured output (`ConfigSuggestionsResponse`). `build_assessment_from_context` synthesises a per-symphony assessment from the assembled context so the UI can explain why no suggestion was made — the common case for symphonies with no validated edge. Never raises — every failure degrades to `(None, error_message)`.
 
-- **C2** — Safety gates. Four independent defense-in-depth gates on the accept path (implemented in `app.py`): (1) `enforce_suggestion_allowlist` — structural rejection of non-allowlisted keys (blocks); (2) `check_risk_direction_agreement` — risk-polarity cross-check (logs only, non-blocking — disagreement is recorded but does not veto the suggestion); (3) `revalidate_suggestion_oos` — OOS re-gate via autotuner simulation (blocks); (4) locked-var guard — defense-in-depth locked-key check (blocks). Note: the source comment at `ai_advisor.py:1710` describes three helper *functions* (the C2 layer); the fourth gate (locked-var) is added at the call site in `app.py`. A follow-on code-fix should reconcile that comment to reflect all 4 gates.
+- **C2** — Safety gates. Four independent defense-in-depth gates on the accept path (implemented in `app.py`): (1) `enforce_suggestion_allowlist` — structural rejection of non-allowlisted keys (blocks); (2) `check_risk_direction_agreement` — risk-polarity cross-check (logs only, non-blocking — disagreement is recorded but does not veto the suggestion); (3) `revalidate_suggestion_oos` — OOS re-gate via autotuner simulation (blocks); (4) `enforce_locked_var_gate` — rejects suggestions that touch a variable locked by the current theory bundle (NN1 spec-freeze enforcement) (blocks). The source comment at `ai_advisor.py:1738` enumerates all four gates. (C2-COMMENT-1 resolved 2026-06-17.)
 
 Real-money-critical input governance: `assemble_advisor_context` never includes credentials, account IDs, safety flags, or methodology knobs. The config surface is an allowlist, not a denylist.
 
@@ -28,6 +28,8 @@ Real-money-critical input governance: `assemble_advisor_context` never includes 
 **Derivatives lens wiring (FRED VIX/VXV, 2026-06-16):** `_build_derivatives_section` lazy-imports `advisors.lens_options_proxy` and calls `_fetch_options_proxy()`. Honest-availability now covers **staleness** as well as fetch failure: the freshness guard (`_OPTIONS_PROXY_MAX_STALENESS_DAYS = 10`) rejects observations older than 10 calendar days as `available=False, reason="stale_data"`. Prior stub behavior is superseded — the producer returns a real VIX level, term-structure, and risk read when `FRED_API_KEY` is set and data is fresh. See [advisors/lens_options_proxy](advisors-lens-options-proxy.md).
 
 **Fundamentals lens portfolio fan-out (2026-06-16 — DE-FUND-001):** `_build_fundamentals_section()` (called with no ticker by both the 03:00 nightly pipeline and `assemble_advisor_context`) previously short-circuited to `available=False, reason="ticker symbol required..."` — a dead lens. Now fans out over a company-ticker universe (live `logic_holdings` ∪ `_FUNDAMENTALS_PROXY_UNIVERSE` floor of 8 large-cap company tickers — NOT ETFs, which have no SEC companyfacts). The single-ticker path (`ticker="AAPL"`) is preserved byte-for-byte via the extracted `_fetch_fundamentals_for_ticker(ticker)` helper. Per-ticker honest degradation; no invented composite ratios; bounded fan-out. See [DE-FUND-001 in DECISIONS.md](../../DECISIONS.md).
+
+**Fundamentals lens vintage fix (2026-06-17 — DE-FUND-002):** Two concurrent vintage defects resolved. Mode A (XBRL concept deprecation): `_SEC_KEY_CONCEPTS` now maps each logical concept to `(label, ordered_candidate_tags)` — the Revenues concept unions three candidate tags (`RevenueFromContractWithCustomerExcludingAssessedTax`, `SalesRevenueNet`, `Revenues`) so migrated issuers are not frozen at a deprecated tag. Mode B (wrong sort key): the entry selection loop now sorts by `(end desc, filed desc)` across the unioned candidate-tag entries, selecting the entry with the most recent reporting-period end date. `key_facts` output keys are stable (logical keys unchanged — `Revenues`, `NetIncomeLoss`, etc.). See [DE-FUND-002 in DECISIONS.md](../../DECISIONS.md).
 
 ## API Reference
 
@@ -174,7 +176,7 @@ All five are wired as top-level keys in the dict returned by `assemble_advisor_c
 | `_build_sentiment_section()` | `"sentiment"` | **Wired** (2026-06-15) | `advisors/lens_gdelt.py` — GDELT 2.0 tone + citations |
 | `_build_derivatives_section()` | `"derivatives"` | **Wired** (2026-06-16) — freshness-guarded | `advisors/lens_options_proxy.py` — FRED VIXCLS/VXVCLS; VIX level, term-structure regime, risk read; staleness guard (`_OPTIONS_PROXY_MAX_STALENESS_DAYS=10`) |
 | `_build_macro_section()` | `"macro"` | **Wired** — FRED producer (DGS10/UNRATE/CPIAUCSL/FEDFUNDS) | FRED API — fetches 10-Year Treasury (DGS10), Unemployment Rate (UNRATE), CPI-U (CPIAUCSL), Federal Funds Rate (FEDFUNDS); each with value+date and clickable fred.stlouisfed.org source citation; degrades to `available=False` when `FRED_API_KEY` is absent |
-| `_build_fundamentals_section()` | `"fundamentals"` | **Wired** (2026-06-16) — portfolio fan-out | SEC EDGAR companyfacts — per-ticker key facts over live holdings ∪ `_FUNDAMENTALS_PROXY_UNIVERSE` (DE-FUND-001) |
+| `_build_fundamentals_section()` | `"fundamentals"` | **Wired** (2026-06-16) — portfolio fan-out; vintage-correct (DE-FUND-001, DE-FUND-002) | SEC EDGAR companyfacts — per-ticker key facts over live holdings ∪ `_FUNDAMENTALS_PROXY_UNIVERSE`; vintage-correct selection: multi-tag union sorted by `(end desc, filed desc)` |
 
 Each accepts an optional `_data` argument (reserved for caller pre-injection; unused in current implementations) so future producers can be wired in without changing call sites in `assemble_advisor_context`.
 
@@ -184,11 +186,11 @@ Wired (2026-06-15). Lazy-imports `advisors.lens_technicals` (CC-2) and calls `_f
 
 See [advisors/lens_technicals](advisors_lens_technicals.md) for indicator definitions, constants, and retry protocol.
 
-### `_build_fundamentals_section(_data=None, *, ticker=None) → dict`
+### `_build_fundamentals_section(_data=None, *, ticker=None) → dict` (ai_advisor.py:1111)
 
-Wired (2026-06-16 — DE-FUND-001). Two paths:
+Wired (2026-06-16 — DE-FUND-001; vintage-corrected 2026-06-17 — DE-FUND-002). Two paths:
 
-**Single-ticker path** (`ticker="AAPL"`): delegates immediately to `_fetch_fundamentals_for_ticker(ticker)` and wraps the result in the standard lens-block shape (adds the `"lens"` key). Per-symphony callers that pass a ticker are unaffected by the fan-out change — behavior is byte-for-byte preserved (AC-3).
+**Single-ticker path** (`ticker="AAPL"`): delegates immediately to `_fetch_fundamentals_for_ticker(ticker)` and wraps the result in the standard lens-block shape (adds the `"lens"` key). Per-symphony callers that pass a ticker are unaffected by any fan-out change — behavior is preserved (AC-6).
 
 **Portfolio fan-out path** (`ticker=None` — used by the 03:00 nightly pipeline and `assemble_advisor_context`):
 1. Lazily calls `database.load_state()` (CC-2 — never at module import time) to collect `logic_holdings` tickers from all monitored symphonies.
@@ -203,15 +205,24 @@ Wired (2026-06-16 — DE-FUND-001). Two paths:
 
 **CC-2:** `database.load_state()` is called lazily inside the function body, never at module level.
 
-### `_fetch_fundamentals_for_ticker(ticker: str) → dict`
+### `_fetch_fundamentals_for_ticker(ticker: str) → dict` (ai_advisor.py:952)
 
-Helper extracted from the original single-ticker body of `_build_fundamentals_section` to enable the portfolio fan-out path. Returns a per-ticker block without the top-level `"lens"` key — callers set `"lens"` on the outer block.
+Helper that performs CIK resolution, companyfacts fetch, and concept extraction for a single ticker. Returns a per-ticker block without the top-level `"lens"` key — callers set `"lens"` on the outer block.
 
-**Returned shape on success:** `{available: True, payload: {entity_name, cik, key_facts: {RevenueFromContractWithCustomerExcludingAssessedTax: ..., ...}}, sources: [{title, url, published, lens}]}`.
+**Vintage-correct selection (DE-FUND-002, `ai_advisor.py:1011-1073`):** For each logical concept in `_SEC_KEY_CONCEPTS`, the helper:
+1. Unions entries across ALL candidate tags present in the `us-gaap` namespace (e.g. for Revenues: `RevenueFromContractWithCustomerExcludingAssessedTax`, `SalesRevenueNet`, `Revenues` — whichever tags exist are included).
+2. Filters to 10-K annual entries where available; falls back to all entries otherwise (existing behavior).
+3. Sorts the union by `(end desc, filed desc)` — the most recently reported accounting period wins; `filed` is a secondary tiebreak for restatements sharing the same `end` date.
+4. Selects `entries_sorted[0]` — the entry with the latest `end`.
+5. Wraps the whole per-concept block in `try/except` (AC-7 — never raises on malformed XBRL).
+
+This resolves Mode B (sort-by-filed selected the oldest comparative entry from a 10-K bundle) and Mode A (a single hardcoded tag never reached data under migrated GAAP concepts).
+
+**Returned shape on success:** `{available: True, payload: {entity_name, cik, key_facts: {"Revenues": {label, value, unit, end, filed, form}, ...}}, sources: [{title, url, published, lens}]}`. The `key_facts` outer keys are the stable logical concept keys from `_SEC_KEY_CONCEPTS` (e.g. `"Revenues"`, `"NetIncomeLoss"`) — not the XBRL candidate-tag names.
 
 **Returned shape on failure:** `{available: False, reason: str, payload: None, sources: []}`.
 
-**Flow:** CIK resolution via `_sec_ticker_to_cik` (SEC bulk tickers file) → `_fetch_with_backoff` for the companyfacts JSON → extraction of `_SEC_KEY_CONCEPTS` keys → citation assembly from accession numbers. All HTTP fetches use `_SEC_USER_AGENT` (mandatory per SEC EDGAR terms). D-1: `type(exc).__name__` on any caught exception; named labels for authoritative failures (CIK not found, no key facts).
+**Flow:** CIK resolution via `_sec_ticker_to_cik` (SEC bulk tickers file) → `_fetch_with_backoff` for the companyfacts JSON → vintage-correct extraction loop (`ai_advisor.py:1011-1073`) → citation assembly from accession numbers. All HTTP fetches use `_SEC_USER_AGENT` (mandatory per SEC EDGAR terms). D-1: `type(exc).__name__` on any caught exception; named labels for authoritative failures (CIK not found, no key facts).
 
 **Never raises.** Per-ticker degradation: if CIK is not found, the companyfacts endpoint is unreachable, or no recognized key facts exist in the response, the function returns `available=False` — it does not raise.
 
@@ -290,7 +301,7 @@ The 7-item allowlist (6 Optuna search-space keys + `MAX_SQUEEZE_FLOOR`). Note: `
 |----------|------|-------|---------|
 | `_FUNDAMENTALS_PROXY_UNIVERSE` | `frozenset[str]` | 8 company tickers | Unconditional floor for portfolio fan-out path; guarantees non-empty universe at 03:00 / flat markets. Individual companies only — ETFs excluded (no SEC companyfacts). |
 | `_SEC_USER_AGENT` | `str` | `"Planet Stopper AlphaBot..."` | Mandatory SEC EDGAR User-Agent (missing UA is the primary cause of 403 responses). |
-| `_SEC_KEY_CONCEPTS` | `dict[str, str]` | XBRL → human label map | Defines the set of recognized financial facts extracted from companyfacts responses; keys not in this dict are ignored. |
+| `_SEC_KEY_CONCEPTS` | `dict[str, tuple[str, tuple[str, ...]]]` | logical concept → (display label, ordered candidate tags) | Maps each of the 5 recognized financial concepts to a display label and an ordered tuple of XBRL us-gaap candidate tags. All present candidate tags are unioned per concept; entry with most recent `end` wins. Outer logical keys are stable (`Revenues`, `NetIncomeLoss`, `Assets`, `Liabilities`, `StockholdersEquity`) — these are the `key_facts` output keys. `ai_advisor.py:361-374`. |
 
 ## Internal Dependencies
 
