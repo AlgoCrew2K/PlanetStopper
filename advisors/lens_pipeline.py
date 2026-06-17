@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -281,7 +282,7 @@ def _synthesize_via_claude(
         )
 
         response = client.messages.create(
-            model="claude-haiku-4-5-20251001",  # lightest model for synthesis
+            model=os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8"),  # configurable; default = Opus 4.8
             max_tokens=256,
             messages=[{"role": "user", "content": synthesis_prompt}],
         )

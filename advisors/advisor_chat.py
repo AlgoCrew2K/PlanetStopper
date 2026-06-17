@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -207,8 +208,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Re-use the same model as the config advisor for consistency.
-# claude-opus-4-7 (analytical reasoning over quant data, claude-api-mechanics.md §2).
-_CHAT_MODEL = "claude-opus-4-7"
+# Reads from ADVISOR_SYNTHESIS_MODEL env var; default = claude-opus-4-8.
+_CHAT_MODEL = os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")
 
 # Token budget for chat responses — longer than config suggestions because we
 # are explaining multi-paragraph reasoning, not producing a structured list.
