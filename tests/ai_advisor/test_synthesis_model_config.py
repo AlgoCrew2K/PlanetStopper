@@ -915,3 +915,305 @@ class TestLensPipelineRunPipelineModelWiring:
             f"run_pipeline with available lenses must pass env model "
             f"{_TEST_MODEL_OVERRIDE!r} to messages.create. Got {actual_model!r}."
         )
+
+
+# ---------------------------------------------------------------------------
+# AC-7 audit — No external consumer references _CLAUDE_MODEL / _CHAT_MODEL
+# ---------------------------------------------------------------------------
+
+
+class TestNoExternalConstantReferences:
+    """AC-7 (extended): After removal, no production module may reference
+    ai_advisor._CLAUDE_MODEL or advisor_chat._CHAT_MODEL as attribute accesses.
+
+    The AC-7 audit previously only scanned the 3 advisor source files.  This
+    class adds a whole-codebase scan (excluding tests and worktrees) so a
+    consumer like app.py cannot silently break when the constant is deleted.
+
+    RED: app.py:3748 and app.py:3781 currently read `ai_advisor._CLAUDE_MODEL`.
+    This causes AttributeError at runtime after AC-4 removes the constant.
+    """
+
+    # Attribute-access patterns to search for in production code.
+    _DEAD_ATTR_RE = re.compile(
+        r'\bai_advisor\._CLAUDE_MODEL\b|\badvisor_chat\._CHAT_MODEL\b'
+    )
+
+    def _production_py_files(self):
+        """Yield all .py files under the repo root, excluding tests/ and .claude/."""
+        for p in _REPO_ROOT.rglob("*.py"):
+            parts = p.relative_to(_REPO_ROOT).parts
+            if parts[0] in ("tests", ".claude"):
+                continue
+            yield p
+
+    def test_no_production_file_references_dead_claude_model_attr(self):
+        """No production .py file may access ai_advisor._CLAUDE_MODEL or
+        advisor_chat._CHAT_MODEL as an attribute after constant removal.
+
+        RED: app.py:3748 + 3781 both reference ai_advisor._CLAUDE_MODEL —
+        these lines raise AttributeError at runtime once the constant is deleted.
+        """
+        violations = []
+        for path in self._production_py_files():
+            try:
+                source = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for lineno, line in enumerate(source.splitlines(), 1):
+                if self._DEAD_ATTR_RE.search(line):
+                    violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: {line.strip()}")
+
+        assert not violations, (
+            "Production code still references the removed constants "
+            "ai_advisor._CLAUDE_MODEL or advisor_chat._CHAT_MODEL:\n"
+            + "\n".join(violations)
+            + "\n\nReplace each reference with "
+            "ai_advisor.resolve_advisor_model() (or inline "
+            "os.environ.get('ADVISOR_SYNTHESIS_MODEL', 'claude-opus-4-8'))."
+        )
+
+    def test_app_py_accept_route_does_not_attribute_access_removed_constant(self):
+        """Targeted guard for app.py's /ai-advisor/accept route.
+
+        The accept route calls database.record_llm_suggestion(..., model_id=...).
+        After AC-4 removes _CLAUDE_MODEL, the model_id= argument must NOT be
+        ai_advisor._CLAUDE_MODEL — it must be the env-resolved model.
+
+        RED: app.py:3748 currently reads `model_id=ai_advisor._CLAUDE_MODEL`.
+        """
+        source = (_REPO_ROOT / "app.py").read_text(encoding="utf-8")
+        assert "ai_advisor._CLAUDE_MODEL" not in source, (
+            "app.py still references ai_advisor._CLAUDE_MODEL (line ~3748 and/or ~3781). "
+            "This raises AttributeError at runtime after AC-4 removes the constant. "
+            "Replace with ai_advisor.resolve_advisor_model() or "
+            "os.environ.get('ADVISOR_SYNTHESIS_MODEL', 'claude-opus-4-8')."
+        )
+
+    def test_app_py_reject_route_does_not_attribute_access_removed_constant(self):
+        """Same guard as above but named for the /ai-advisor/reject route.
+
+        Both accept (line ~3748) and reject (line ~3781) call record_llm_suggestion
+        with model_id=ai_advisor._CLAUDE_MODEL.  This test makes the reject path
+        explicit so a partial fix (only fixing accept) is caught by name.
+
+        The test is logically redundant with the prior test but documents the
+        exact routes so failing output is unambiguous.
+        """
+        source = (_REPO_ROOT / "app.py").read_text(encoding="utf-8")
+        # Count occurrences — both accept and reject routes must be fixed.
+        count = source.count("ai_advisor._CLAUDE_MODEL")
+        assert count == 0, (
+            f"app.py contains {count} reference(s) to ai_advisor._CLAUDE_MODEL. "
+            "Both /ai-advisor/accept (line ~3748) and /ai-advisor/reject (line ~3781) "
+            "must be migrated. Replace each with ai_advisor.resolve_advisor_model() "
+            "or inline os.environ.get('ADVISOR_SYNTHESIS_MODEL', 'claude-opus-4-8')."
+        )
+
+
+# ---------------------------------------------------------------------------
+# AC-5 (app.py) — accept/reject routes record the env-resolved model
+# ---------------------------------------------------------------------------
+
+
+class TestAppPyAdvisorRouteModelWiring:
+    """AC-5 (app.py): The /ai-advisor/accept and /ai-advisor/reject routes must
+    record the env-resolved model ID in the llm_suggestions audit trail, not a
+    constant that no longer exists.
+
+    These are ROUTE-LEVEL tests using the Flask test client.  They mock:
+      - database.record_llm_suggestion (capture model_id arg)
+      - ai_advisor.revalidate_suggestion_oos (return passed=True)
+      - database.get_symphony_strategy + database.save_symphony_strategy
+      - database.normalize_name
+
+    They do NOT call the real Anthropic API.
+
+    RED: both routes currently raise AttributeError on ai_advisor._CLAUDE_MODEL
+    because the constant was removed at 46a6bc4.
+    """
+
+    @pytest.fixture()
+    def flask_client(self, monkeypatch):
+        """Provide a Flask test client with CSRF disabled and DB isolated."""
+        # DB path is already isolated by conftest._isolate_db autouse fixture.
+        # Disable CSRF so POST requests work without a token.
+        monkeypatch.setenv("TESTING", "1")
+        import app as flask_app
+        flask_app.app.config["TESTING"] = True
+        flask_app.app.config["WTF_CSRF_ENABLED"] = False
+        with flask_app.app.test_client() as client:
+            yield client
+
+    def _post_accept(self, client, suggestion_key="VWAP_BLEED_TICKS", suggestion_value=5):
+        """POST a minimal accept payload to /ai-advisor/accept."""
+        return client.post(
+            "/ai-advisor/accept",
+            json={
+                "symphony_id": "test-symphony-hash-001",
+                "suggestion": {
+                    "config_key": suggestion_key,
+                    "suggested_value": suggestion_value,
+                    "current_value": 3,
+                    "rationale": "test",
+                },
+                "csrf_token": "disabled-in-test",
+            },
+            content_type="application/json",
+        )
+
+    def _post_reject(self, client, suggestion_key="VWAP_BLEED_TICKS"):
+        """POST a minimal reject payload to /ai-advisor/reject."""
+        return client.post(
+            "/ai-advisor/reject",
+            json={
+                "symphony_id": "test-symphony-hash-001",
+                "suggestion": {
+                    "config_key": suggestion_key,
+                    "suggested_value": 5,
+                    "current_value": 3,
+                },
+                "csrf_token": "disabled-in-test",
+            },
+            content_type="application/json",
+        )
+
+    def test_accept_route_does_not_raise_attribute_error_after_constant_removal(
+        self, flask_client, monkeypatch
+    ):
+        """The /ai-advisor/accept route must NOT raise AttributeError on
+        ai_advisor._CLAUDE_MODEL after the constant is removed.
+
+        RED: currently raises AttributeError at app.py:3748.
+
+        The route must complete without error — a 200 response means the
+        AttributeError is gone and the model_id argument was resolved correctly.
+        """
+        import ai_advisor
+        import database
+
+        with (
+            patch.object(
+                ai_advisor,
+                "revalidate_suggestion_oos",
+                return_value={"passed": True, "detail": "ok"},
+            ),
+            patch.object(database, "get_symphony_strategy", return_value={"params": {}, "locked_vars": []}),
+            patch.object(database, "save_symphony_strategy", return_value=None),
+            patch.object(database, "normalize_name", side_effect=lambda x: x),
+            patch.object(database, "record_llm_suggestion", return_value=None) as mock_record,
+            # enforce_suggestion_allowlist must pass to reach record_llm_suggestion.
+            patch.object(ai_advisor, "enforce_suggestion_allowlist", return_value=None),
+        ):
+            resp = self._post_accept(flask_client)
+
+        # Any 5xx (especially 500 from AttributeError) means the test catches the bug.
+        assert resp.status_code < 500, (
+            f"/ai-advisor/accept returned HTTP {resp.status_code}. "
+            "If 500: likely AttributeError on ai_advisor._CLAUDE_MODEL at app.py:3748. "
+            "Migrate to ai_advisor.resolve_advisor_model() or inline os.environ.get(...)."
+        )
+
+    def test_accept_route_records_env_resolved_model_not_hardcoded_constant(
+        self, flask_client, monkeypatch
+    ):
+        """The model_id recorded by /ai-advisor/accept must be the env-resolved
+        model (from ADVISOR_SYNTHESIS_MODEL or the default), NOT a constant reference
+        that would raise AttributeError.
+
+        RED: app.py:3748 reads ai_advisor._CLAUDE_MODEL — AttributeError after removal.
+        GREEN: reads ai_advisor.resolve_advisor_model() or equivalent env call.
+        """
+        monkeypatch.setenv("ADVISOR_SYNTHESIS_MODEL", _TEST_MODEL_OVERRIDE)
+
+        import ai_advisor
+        import database
+
+        recorded_model_ids = []
+
+        def capture_record(**kwargs):
+            recorded_model_ids.append(kwargs.get("model_id"))
+
+        with (
+            patch.object(
+                ai_advisor,
+                "revalidate_suggestion_oos",
+                return_value={"passed": True, "detail": "ok"},
+            ),
+            patch.object(database, "get_symphony_strategy", return_value={"params": {}, "locked_vars": []}),
+            patch.object(database, "save_symphony_strategy", return_value=None),
+            patch.object(database, "normalize_name", side_effect=lambda x: x),
+            patch.object(database, "record_llm_suggestion", side_effect=capture_record),
+            patch.object(ai_advisor, "enforce_suggestion_allowlist", return_value=None),
+        ):
+            resp = self._post_accept(flask_client)
+
+        assert resp.status_code < 500, (
+            f"Accept route returned {resp.status_code}. "
+            "AttributeError on _CLAUDE_MODEL or other route failure."
+        )
+        assert len(recorded_model_ids) == 1, (
+            f"Expected record_llm_suggestion to be called once; got {len(recorded_model_ids)} calls."
+        )
+        assert recorded_model_ids[0] == _TEST_MODEL_OVERRIDE, (
+            f"Accept route recorded model_id={recorded_model_ids[0]!r}. "
+            f"Expected {_TEST_MODEL_OVERRIDE!r} (from ADVISOR_SYNTHESIS_MODEL env var). "
+            "The route must resolve the model at call-time from the env var, "
+            "not from the removed ai_advisor._CLAUDE_MODEL constant."
+        )
+
+    def test_reject_route_does_not_raise_attribute_error_after_constant_removal(
+        self, flask_client, monkeypatch
+    ):
+        """The /ai-advisor/reject route must NOT raise AttributeError on
+        ai_advisor._CLAUDE_MODEL after the constant is removed.
+
+        RED: currently raises AttributeError at app.py:3781.
+        """
+        import ai_advisor
+        import database
+
+        with (
+            patch.object(database, "normalize_name", side_effect=lambda x: x),
+            patch.object(database, "record_llm_suggestion", return_value=None),
+        ):
+            resp = self._post_reject(flask_client)
+
+        assert resp.status_code < 500, (
+            f"/ai-advisor/reject returned HTTP {resp.status_code}. "
+            "If 500: likely AttributeError on ai_advisor._CLAUDE_MODEL at app.py:3781. "
+            "Migrate to ai_advisor.resolve_advisor_model() or inline os.environ.get(...)."
+        )
+
+    def test_reject_route_records_env_resolved_model(
+        self, flask_client, monkeypatch
+    ):
+        """The model_id recorded by /ai-advisor/reject must be the env-resolved
+        model, not a removed constant.
+        """
+        monkeypatch.setenv("ADVISOR_SYNTHESIS_MODEL", _TEST_MODEL_OVERRIDE)
+
+        import ai_advisor
+        import database
+
+        recorded_model_ids = []
+
+        def capture_record(**kwargs):
+            recorded_model_ids.append(kwargs.get("model_id"))
+
+        with (
+            patch.object(database, "normalize_name", side_effect=lambda x: x),
+            patch.object(database, "record_llm_suggestion", side_effect=capture_record),
+        ):
+            resp = self._post_reject(flask_client)
+
+        assert resp.status_code < 500, (
+            f"Reject route returned {resp.status_code}."
+        )
+        assert len(recorded_model_ids) == 1, (
+            f"Expected record_llm_suggestion called once; got {len(recorded_model_ids)}."
+        )
+        assert recorded_model_ids[0] == _TEST_MODEL_OVERRIDE, (
+            f"Reject route recorded model_id={recorded_model_ids[0]!r}. "
+            f"Expected {_TEST_MODEL_OVERRIDE!r} from ADVISOR_SYNTHESIS_MODEL env var."
+        )
