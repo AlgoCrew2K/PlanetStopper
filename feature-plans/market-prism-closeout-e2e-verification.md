@@ -1,50 +1,81 @@
-# Feature: Market Prism (AI Council) Closeout — Full End-to-End Verification
+# Feature: AI Advisor System Closeout — Full End-to-End Verification
 Status: ready
 Created: 2026-06-17
+Updated: 2026-06-17 (scope expanded from Market Prism council to the ENTIRE AI Advisor system — operator directive)
 
 ## Summary
 
-This is the **operator-mandated closeout verification** for the AI Council (the Market
-Prism system): *"the closeout must be a full end-to-end verification of EVERY feature in
-the AI council — not a partial proof-run, not just the orchestration."* It is **not** a
-plan to build anything new. It is the exhaustive acceptance protocol that proves every
-shipped Market Prism feature works **live, end-to-end, on real data** — producer →
-consumer → persistence → rendered Overview tab → audit trail — AND that each feature's
-**documentation matches its verified live behavior**. A doc claim contradicted by live
-behavior (the recently-found "macro stub" mislabel class of defect) is a closeout failure,
-not a footnote.
+This is the **operator-mandated closeout verification** for the **entire AI Advisor
+system** — both the Market Prism council AND the full AI Advisor suite (Config Advisor,
+Correlations, Asset Swaps, Logic Changes, Chat, Strategy Builder, Community strategies,
+the proposal/gate infra, and the unified SPA shell). The operator directive: *"the
+closeout must be a full end-to-end verification of EVERY feature... not a partial
+proof-run, not just the orchestration."* It is **not** a plan to build anything new. It is
+the exhaustive acceptance protocol that proves every shipped feature works **live,
+end-to-end, on real data** — producer → consumer → route/engine → persistence → rendered
+tab — AND that each feature's **documentation matches its verified live behavior**. A doc
+claim contradicted by live behavior (the recently-found "macro stub" mislabel class of
+defect) is a closeout failure, not a footnote.
 
-The council is the multi-agent overnight market read: **5 lens producers** feeding **5
-analyst agents** + **1 synthesizer**, coordinating via a real Claude Code Agent Team, each
-writing an auditable deliberation trail keyed to one `run_id`, producing exactly one
-`MARKET_PRISM` `advisor_observations` row that the Overview tab renders. Supporting
-infrastructure: the audit-log DB foundation (migration 032 + accessors + CLI writer), the
-nightly lens pipeline (`run_pipeline`, the programmatic Cycle-4 path), the lens data
-warehouse (third DB), and the configurable synthesis model (C1 / PR #39).
+The matrix has **two clusters**, each capped by an appropriate live-evidence gate:
 
-This closeout is structured as a **verification matrix** (one row per feature) plus a
-**capstone live multi-analyst run** (Phase-3 observed proof run) and an explicit
-**operator sign-off gate** before any Phase-4 unattended scheduling is enabled.
+- **Cluster 1 — Market Prism council** (F1–F21): 5 lens producers feeding 5 analyst
+  agents + 1 synthesizer, an auditable deliberation trail keyed to one `run_id`, exactly
+  one `MARKET_PRISM` row, the Overview tab. Capped by the **operator-observed
+  multi-analyst run** (the Phase-3 proof run). Supporting infra: audit-log foundation
+  (migration 032 + accessors + CLI writer), nightly pipeline (`run_pipeline`), lens
+  warehouse (third DB), and the configurable synthesis model (C1 / PR #39).
+- **Cluster 2 — AI Advisor suite** (F22–F40): the 6-tab unified SPA and its engines.
+  Capped by **live-rendered-tab + real-engine-call evidence** against the running :8090
+  daemon + live DB. Each tab's GET render + each POST action route's real engine call is
+  exercised on the live page.
+
+This closeout is structured as a **verification matrix** (one row per feature) plus the
+**capstone live multi-analyst run** and an explicit **operator sign-off gate** before any
+Phase-4 unattended scheduling is enabled.
 
 **Adversarial-completeness stance:** the inventory below was built from the actual code
-(`ai_advisor.py`, `advisors/lens_*.py`, `advisors/lens_pipeline.py`, `database.py`,
-`templates/ai_advisor.html`, `app.py`, the 6 `.claude/agents/prism-*.md` files), the
-market-prism + lens feature-plans, DECISIONS.md, and the project CLAUDE.md key-files
-table — then expanded to catch anything the existing phase-3 plan omitted. **Assume a
-feature was missed until the whole surface is swept; the matrix below is the proof of the
-sweep.** Verified facts carry a `file:line`; anything not directly verifiable in code is
-labeled `[interpretation]` and must be confirmed during execution.
+(`ai_advisor.py`, `advisors/*.py`, `database.py`, `templates/ai_advisor.html`,
+`static/ai_advisor.js`, `app.py` routes, the 6 `.claude/agents/prism-*.md` files), the
+market-prism + lens + advisor + strategy-builder + community feature-plans, DECISIONS.md,
+`docs/generated/`, and the project CLAUDE.md key-files table — then expanded to catch
+anything the source-of-truth plans omitted. **Assume a feature was missed until the whole
+surface is swept; the matrix below is the proof of the sweep.** Verified facts carry a
+`file:line`; anything not directly verifiable in code is labeled `[interpretation]` and
+must be confirmed during execution.
+
+**Hollow-producer / stale-doc findings surfaced during enumeration** (each is a verifiable
+closeout item, NOT background commentary):
+- **HF-1 (hollow wiring): Community-strategies route injection is absent.** The engine
+  layer is fully built — `strategy_builder_engine.community_candidate_infos`
+  (`:195`) + the `community_candidates` kwarg on `propose_strategies` (`:864`, applied at
+  `:921-922`) + `community_strats.load_community_strategies` (`:98`). But the **production
+  route never injects community candidates**: `app.py:3437` calls
+  `propose_strategies(objective, universe, screen_config, live_returns=[], symphony_id)`
+  with NO `community_candidates=` argument, and nothing in `app.py` ever calls
+  `load_community_strategies` or `community_candidate_infos`. So in production the Strategy
+  Builder runs template-only; the community-strategies feature is reachable only from
+  tests. **This contradicts** the CLAUDE.md `community_strats.py` row ("first production
+  caller: `propose_strategies` via the `community_candidate_infos` adapter (injected at
+  the route boundary)") and DECISIONS.md:633 ("No production caller yet... must not be
+  called from production routes until that wiring is in"). The closeout must verify
+  whether route-level injection is intended-in-scope (then it is a build gap) or
+  deferred (then the CLAUDE.md "injected at the route boundary" claim is a stale-doc
+  defect to correct). Tracked as F35.
+- **HF-2 (stale doc): C1 not merged** — see F20; `lens_pipeline.py:284` still hardcodes
+  Haiku and the CLAUDE.md "Claude Haiku synthesis" line is stale until PR #39 lands.
 
 ---
 
-## Feature Inventory (what "EVERY feature in the AI council" means)
+## Feature Inventory (what "EVERY feature in the AI Advisor system" means)
 
 Enumerated and cross-verified against source on branch base `origin/main @ 348dc26`.
-**21 verification-bearing features** across 6 groups. The existing
-`market-prism-phase3-observed-proof-run.md` plan covers only the capstone orchestration run
-(its AC-1..AC-5) — it does **NOT** independently verify the 5 lens producers, the
-warehouse, the audit-log foundation primitives, the C1 model config, or the per-feature
-doc-accuracy checks. This closeout is a strict superset.
+**40 verification-bearing features** across two clusters: Cluster 1 (Market Prism council,
+F1–F21, 6 groups) and Cluster 2 (AI Advisor suite, F22–F40, 8 groups). The existing
+`market-prism-phase3-observed-proof-run.md` plan covers only the council capstone run
+(its AC-1..AC-5) and nothing in Cluster 2. This closeout is a strict superset.
+
+### Cluster 1 — Market Prism council (F1–F21)
 
 | # | Group | Feature |
 |---|-------|---------|
@@ -70,6 +101,30 @@ doc-accuracy checks. This closeout is a strict superset.
 | F20 | Model config | C1 `ADVISOR_SYNTHESIS_MODEL` env var (default Opus 4.8) — **PR #39, OPEN, unmerged** |
 | F21 | Capstone | Observed multi-analyst proof run: real deliberation, complete audit trail, one MARKET_PRISM row, rendered Overview, operator sign-off |
 
+### Cluster 2 — AI Advisor suite (F22–F40)
+
+| # | Group | Feature |
+|---|-------|---------|
+| F22 | Config Advisor core | `assemble_advisor_context` (Composer hash-not-name, `autotune_run` honoring, allowlisted context surface) |
+| F23 | Config Advisor core | `request_suggestions` (Claude call, D-1 all-error-paths `type(exc).__name__`) |
+| F24 | Config Advisor core | `build_assessment_from_context` (per-symphony informative empty-state; `oos_alpha=None` ≠ error) |
+| F25 | Config Advisor core | 7-item suggestible allowlist (`_SUGGESTIBLE_ALLOWLIST` = 6 Optuna keys + `MAX_SQUEEZE_FLOOR`) + `enforce_suggestion_allowlist` structural rejection |
+| F26 | Config Advisor core | C2 safety gates on accept (allowlist + OOS re-validation + risk-direction cross-check) → `POST /ai-advisor/accept`; reject → `POST /ai-advisor/reject` (no config write) |
+| F27 | Config Advisor core | CRRA-EU + Harvey-Liu FDR strictness (empty suggestions are expected, not a bug) |
+| F28 | Correlations tab | `correlation_diagnostic.compute_pairwise_correlations` → prefetched in `GET /ai-advisor` (`app.py:2910`); rendered in the Correlations panel |
+| F29 | Asset Swaps tab | `asset_swap_engine.propose_operator_swap` (objective-directed candidates, `_apply_lens_blend` `LENS_BLEND_WEIGHT=0.25`, BHY-FDR gate, `lens_evidence` persistence) → `POST /ai-advisor/asset-swaps/evaluate` (CSRF) |
+| F30 | Logic Changes tab | `logic_change_engine.propose_operator_logic_change` (objective-directed logic tweaks, BHY-FDR gate, persistence) → `POST /ai-advisor/logic-changes/evaluate` (CSRF) |
+| F31 | Chat tab (M5) | `advisor_chat.explain_artifact` explain-only (artifact allowlist `CHAT_ARTIFACT_ALLOWED_FIELDS` M1–M4+M6+multi-lens, `validate_artifact` re-validation, hard no-trade/no-write) → `POST /ai-advisor/chat/send` |
+| F32 | Strategy Builder | `strategy_builder_engine.propose_strategies` (T1–T7 templates, single-batch FDR `evaluate_candidate_batch`, `ScreenConfig` post-gate screens, persistence) → `POST /ai-advisor/strategy-builder/run` (CSRF, advisory-only) |
+| F33 | Strategy Builder | `symphony_schema` (never-raising `validate_tree`/`lint_tree`/`extract_tickers`/`render_rules_text` + 10 constructors) |
+| F34 | Strategy Builder | `composer_backtest_client.run_backtest` (1 req/s rate limit, 429 backoff) |
+| F35 | Community strategies | `community_strats.load_community_strategies` (atlas_cache weekly-TTL bill protection, structural-hash dedup, sharpe filter) + `community_candidate_infos` adapter — **HF-1: no production route caller (hollow in prod)** |
+| F36 | Proposal/gate infra | `backtest_gate_engine.evaluate_candidate_batch` (BHY/Yekutieli FDR across the FULL candidate batch — anti-overfit invariant) |
+| F37 | Proposal/gate infra | `acceptance_gate.py` (reusable overfitting acceptance gate, shared by autotuner + advisor proposal suite) |
+| F38 | SPA shell | Unified `templates/ai_advisor.html` — 6 in-place tabs in one server render; `static/ai_advisor.js` `initTabSwitcher` |
+| F39 | SPA shell | The 5 GET sub-routes 302-redirect to `/ai-advisor` (`/correlations`, `/asset-swaps`, `/logic-changes`, `/chat`, `/strategy-builder`) |
+| F40 | SPA shell | CSRF enforcement on all POST action routes (`accept`, `reject`, `suggest`, `*/evaluate`, `chat/send`, `strategy-builder/run`); advisory-only — none in `_SETTINGS_WRITE_ALLOWLIST` |
+
 **Verified source anchors (sample, full anchors in the matrix):**
 - 5 lens builders: `ai_advisor.py:456` (technicals), `:530` (sentiment), `:651` (derivatives), `:732` (macro), `:1076` (fundamentals).
 - 5-lens set + `_call_lens_section`: `advisors/lens_pipeline.py:38-71`.
@@ -80,6 +135,16 @@ doc-accuracy checks. This closeout is a strict superset.
 - Overview prefetch: `app.py:2948-3019`; render block `templates/ai_advisor.html:942-976`.
 - 6 council agents: `.claude/agents/prism-synthesizer.md` + 5 `prism-*-analyst.md` (all `model: opus`).
 - C1 unmerged: `advisors/lens_pipeline.py:284` still hardcodes `claude-haiku-4-5-20251001`; PR #39 (`feat/advisor-synthesis-model-config`) OPEN.
+
+**Cluster 2 — AI Advisor suite anchors:**
+- Routes: `GET /ai-advisor` (`app.py:2848`); GET redirects `/correlations:3023`, `/asset-swaps:3033`, `/logic-changes:3174`, `/chat:3794`, `/strategy-builder:3381`; POST `/asset-swaps/evaluate:3042`, `/logic-changes/evaluate:3183`, `/strategy-builder/run:3394`, `/suggest:3619`, `/accept:3686`, `/reject:3762`, `/chat/send:3803`.
+- Engine call sites (live consumers — none hollow except F35): `compute_pairwise_correlations` ← `app.py:2910`; `propose_operator_swap` ← `:3114`; `propose_operator_logic_change` ← `:3264`; `propose_strategies` ← `:3437`; `explain_artifact` ← `:3888`.
+- Allowlist: `_SUGGESTIBLE_ALLOWLIST` = 6 Optuna keys ∪ `MAX_SQUEEZE_FLOOR` (`ai_advisor.py:1718`); `enforce_suggestion_allowlist:1743`; `_UNTUNED_SUGGESTIBLE_KEY="MAX_SQUEEZE_FLOOR":73`.
+- Asset swap: `LENS_BLEND_WEIGHT=0.25` (`asset_swap_engine.py:78`), `_apply_lens_blend:372`.
+- Strategy builder: `propose_strategies:864` (with `community_candidates` kwarg), `community_candidate_infos:195`, `MAX_COMMUNITY_CANDIDATES_PER_RUN=20:44`; gate `backtest_gate_engine.evaluate_candidate_batch` (BHY/Yekutieli FDR); rate limit `composer_backtest_client.py:30` (1 req/s).
+- Chat: `CHAT_ARTIFACT_ALLOWED_FIELDS:74`, `validate_artifact:167`, `explain_artifact:337`.
+- Community: `load_community_strategies:98` (atlas_cache `cached_pull:156`, structural-hash `_composition_hash:63`).
+- **HF-1 (hollow):** `app.py:3437` `propose_strategies(...)` passes NO `community_candidates`; no `load_community_strategies`/`community_candidate_infos` call exists anywhere in `app.py`.
 
 ---
 
@@ -132,16 +197,49 @@ loops back to the owning feature's cycle (do not paper over a degenerate result)
   **hard-blocked** until sign-off is received.
 - [ ] **AC-12 (No execution-path contamination):** No closeout step touches
   `LIVE_EXECUTION`, trade orders, or position state. Every verified surface is advisory-only
-  (`is_advisory_only=1` on the MARKET_PRISM row).
+  (`is_advisory_only=1` on the MARKET_PRISM and all advisor-observation rows).
+
+**Cluster 2 — AI Advisor suite ACs:**
+
+- [ ] **AC-13 (Every tab renders live):** All 6 SPA tabs (Overview, Correlations, Asset
+  Swaps, Logic Changes, Chat, Strategy Builder) render on the live `GET /ai-advisor` page;
+  tab switching is in-place; `static/ai_advisor.js` passes `node --check`; each panel is
+  confirmed by an eyes-on screenshot read (F28/F38). The 5 GET sub-routes 302-redirect to
+  `/ai-advisor` (F39).
+- [ ] **AC-14 (Every action route drives its real engine live):** Each POST action route
+  invokes its real engine on the live DB with a valid CSRF token and returns the expected
+  shape: suggest→suggestions, accept→3-gate apply, reject→no-write, asset-swaps/evaluate→
+  gated swap candidates + persisted `ASSET_SWAP` row, logic-changes/evaluate→gated logic
+  tweaks + persisted `LOGIC_CHANGE` row, chat/send→explanation, strategy-builder/run→
+  gated survivor/rejected/FDR JSON + persisted survivors (F23/F26/F29/F30/F31/F32).
+- [ ] **AC-15 (Safety boundaries hold live):** the 7-item allowlist rejects out-of-scope
+  keys (F25); the C2 accept gates block on failure (F26); the chat is explain-only — no
+  trade/no-write/no OOS-revalidation/no-backtest (F31); CSRF rejects tokenless POSTs (F40);
+  NO advisor route is in `_SETTINGS_WRITE_ALLOWLIST` and none touches `LIVE_EXECUTION`.
+- [ ] **AC-16 (FDR / overfit invariants hold live):** the BHY/Yekutieli FDR gate runs
+  across the FULL candidate batch (template + any community together — anti-overfit
+  invariant), screens never shrink the gate input, and the same `acceptance_gate` governs
+  autotuner + advisor suite (F36/F37). The Composer backtest client paces at ≤1 req/s (F34).
+- [ ] **AC-17 (Hollow-producer finding resolved — HF-1):** the community-strategies
+  production gap is explicitly adjudicated with the operator: EITHER route-level injection
+  is added (then F35 is a build gap to fix on its own cycle) OR it is deferred-by-design
+  (then the CLAUDE.md "injected at the route boundary" claim is corrected to match
+  reality). The closeout does NOT silently pass F35 as if community strats were live in
+  prod. This AC is satisfied by the adjudication + the doc correction, not by a green test.
+- [ ] **AC-18 (Suite doc-accuracy):** for every Cluster-2 feature F22–F40, the docs
+  (`docs/generated/`, CLAUDE.md key-files, DECISIONS.md) match verified live behavior;
+  HF-1 and any other contradiction is filed + corrected (subsumes AC-10 for the suite).
 
 ---
 
 ## Architecture
 
 This feature introduces **no new code**. It is an observed operational verification that
-exercises the shipped Market Prism deliverables on real data, plus a doc-accuracy
-reconciliation pass. The PM (or a read-only verifier agent for the non-council probes)
-drives it; the capstone council run is an operator-gated Claude Code Agent Team run.
+exercises the shipped AI Advisor system (Market Prism council + the full advisor suite) on
+real data, plus a doc-accuracy reconciliation pass. The PM (or read-only verifier agents
+for the non-council probes) drives it; the capstone council run is an operator-gated Claude
+Code Agent Team run. Cluster 2 (the suite) is verified by live-rendered-tab +
+real-engine-call evidence against the running :8090 daemon + live DB.
 
 **Two execution layers exist and BOTH are verified (they are not the same path):**
 1. **Programmatic Cycle-4 path** — `lens_pipeline.run_pipeline()` calls each
@@ -181,14 +279,16 @@ RGB values.
 
 ---
 
-## Verification Matrix
+## Verification Matrix — Cluster 1: Market Prism council (F1–F21)
 
 Columns: **Feature** | **Producer/Consumer files** | **Live E2E check** | **Expected
-evidence (PASS)** | **Doc-accuracy check** | **Pass/Fail**.
+evidence (PASS)** | **Doc-accuracy check** | **Pass/Fail**. (Cluster 2 — the AI Advisor
+suite, F22–F40 — follows the capstone block below.)
 
 > Run order: Group A (lens producers + infra) and Group B (warehouse/audit/pipeline) are
 > independent probes runnable before the council run. Group C (council) is the capstone and
-> depends on A/B passing. AC-1 (C1 merge + deploy) gates everything.
+> depends on A/B passing. AC-1 (C1 merge + deploy) gates everything. Cluster 2 (F22–F40)
+> is independently runnable once the daemon is on the deployed post-#39 code.
 
 ### Group A — Lens producers + lens infra (F1–F8)
 
@@ -233,6 +333,65 @@ evidence (PASS)** | **Doc-accuracy check** | **Pass/Fail**.
 
 ---
 
+## Verification Matrix — Cluster 2: AI Advisor suite (F22–F40)
+
+Capped by **live-rendered-tab + real-engine-call evidence** against the running :8090
+daemon + live DB. For each tab: load `GET /ai-advisor`, switch to the tab in-place, observe
+the render (eyes-on screenshot where there is a visual surface), and drive each POST action
+route with a real engine call. CSRF tokens required on POST routes (the daemon enforces
+them; `_disable_csrf_for_tests` only applies under pytest, so live calls must carry a token).
+
+### Group H — Config Advisor core (F22–F27)
+
+| Feature | Producer / Consumer | Live E2E check | Expected evidence (PASS) | Doc-accuracy check | P/F |
+|---|---|---|---|---|---|
+| **F22 assemble_advisor_context** | `ai_advisor.assemble_advisor_context` (`:1430`); route resolves NAME→hash from `bot_state`, passes `composer_symphony_id` | For a real live symphony, drive the context assembly via the suggest route; confirm the Composer `/score` call uses the **hash**, not the display name (the hash-not-name rule). | Context assembles without an HTTP 400 from Composer; passing a name would 400 — confirm a real hash was sent; `autotune_run` honoring (pre-fetched row skips internal fetch). | CLAUDE.md `ai_advisor.py` row + Architecture Constraint #6 (hash-not-name) match live behavior. | |
+| **F23 request_suggestions** | `ai_advisor.request_suggestions` (`:1595`) → `POST /ai-advisor/suggest` (`app.py:3619`) | Call `POST /ai-advisor/suggest` on the live page for a real symphony; force an error arm (no API key / bad symphony). | Returns suggestions JSON on success; on any error returns `type(exc).__name__` only (D-1) — no `str(exc)`, no key, no traceback in the response or the daemon log surface. | CLAUDE.md "request_suggestions (D-1 fully honored: all error paths return type(exc).__name__ only)" matches. | |
+| **F24 build_assessment_from_context** | `ai_advisor.build_assessment_from_context` (`:1368`) | On a symphony where all trials were haircut-rejected, observe the assessment block. | The block renders an **informative** empty-state explaining `oos_alpha=None` (haircut-rejected, not an error) — NOT a blank or an error toast. | CLAUDE.md gotcha "AI Advisor empty suggestions... Expected" + `build_assessment_from_context` per-symphony empty-state match. | |
+| **F25 7-item allowlist** | `_SUGGESTIBLE_ALLOWLIST` (`:1718`), `enforce_suggestion_allowlist` (`:1743`) | Submit (or simulate) an accept whose `config_key` is OUTSIDE the 7-item allowlist; confirm structural rejection. | Any key not in {6 Optuna search-space keys, `MAX_SQUEEZE_FLOOR`} is rejected before any write; `LIVE_EXECUTION`/credential keys never accepted. | CLAUDE.md "7-item suggestible allowlist (6 Optuna search-space keys + MAX_SQUEEZE_FLOOR)" matches the code set exactly. | |
+| **F26 C2 safety gates** | `POST /ai-advisor/accept` (`app.py:3686`, "all three C2 safety gates"); `POST /ai-advisor/reject` (`:3762`) | Drive a real accept through the three gates (allowlist + OOS re-validation + risk-direction cross-check); drive a reject. | Accept applies only after all 3 gates pass and writes the allowlisted .env key; a gate failure blocks the write; reject records the rejection with **no** config write. | DECISIONS / CLAUDE.md "C2 safety gates" enumerate the same three gates that fire live. | |
+| **F27 FDR strictness** | CRRA-EU + Harvey-Liu FDR (autotuner/`acceptance_gate`); advisor consumes | Confirm that an empty-suggestions result on a strict symphony is the **expected** strict-gate outcome, not a failure. | Empty suggestions accompanied by the assessment explaining strictness (F24); no error state. | Gotcha "CRRA-EU + Harvey-Liu FDR gate is intentionally strict" matches. | |
+
+### Group I — Correlations / Asset Swaps / Logic Changes tabs (F28–F30)
+
+| Feature | Producer / Consumer | Live E2E check | Expected evidence (PASS) | Doc-accuracy check | P/F |
+|---|---|---|---|---|---|
+| **F28 Correlations tab** | `correlation_diagnostic.compute_pairwise_correlations` (`:196`) ← prefetch `app.py:2910` | Load `GET /ai-advisor`, switch to Correlations; with ≥2 live symphonies having return series, observe the rendered correlation matrix. | A real pairwise correlation matrix renders (values in [-1,1]); the informative empty/insufficient-data state renders when <2 series exist. Eyes-on screenshot read. | CLAUDE.md SPA row lists Correlations as a live tab; `correlation_diagnostic` producer documented + matches. | |
+| **F29 Asset Swaps tab** | `asset_swap_engine.propose_operator_swap` (`:912`) ← `POST /ai-advisor/asset-swaps/evaluate` (`app.py:3042`, CSRF) | POST a real swap evaluation for a live symphony (with CSRF token); inspect the returned candidates + persisted observation. | Returns objective-directed candidates ranked with the `_apply_lens_blend` blend (weight 0.25); survivors passed the BHY-FDR gate; an `ASSET_SWAP` observation persists with `lens_evidence`+`sources` (`is_advisory_only=1`). | DECISIONS DE-CY3-001 (lens blend, weight 0.25, gate unchanged, persistence contract) matches live. | |
+| **F30 Logic Changes tab** | `logic_change_engine.propose_operator_logic_change` ← `POST /ai-advisor/logic-changes/evaluate` (`app.py:3183`, CSRF) | POST a real logic-change evaluation for a live symphony (with CSRF token); inspect candidates + persisted observation. | Returns objective-directed logic tweaks gated by BHY-FDR; a `LOGIC_CHANGE` observation persists (`is_advisory_only=1`); D-1 on error. | CLAUDE.md/DECISIONS logic-change engine docs match the live route behavior. | |
+
+### Group J — Chat tab M5 (F31)
+
+| Feature | Producer / Consumer | Live E2E check | Expected evidence (PASS) | Doc-accuracy check | P/F |
+|---|---|---|---|---|---|
+| **F31 Chat explain-only** | `advisor_chat.explain_artifact` (`:337`), `validate_artifact` (`:167`), `CHAT_ARTIFACT_ALLOWED_FIELDS` (`:74`) ← `POST /ai-advisor/chat/send` (`app.py:3803`) | Send a real chat question against a scoped artifact; ALSO attempt an artifact with a field outside the allowlist + a question that tries to trigger a trade/write. | A real LLM explanation returns; the out-of-allowlist field is **stripped** by `validate_artifact` (re-validated inside `explain_artifact`, defense-in-depth); the chat NEVER calls OOS re-validation, `suggest_swaps`, or `run_backtest` and NEVER writes config — the hard explain-only boundary holds; LLM error → 200 JSON `{error}` (D-1). | `m5-chat-hardening.md` + `security-review-m5-chat.md` + CLAUDE.md (M1–M4+M6+multi-lens fields, explain_artifact re-validation) match the live boundary. | |
+
+### Group K — Strategy Builder tab (F32–F34)
+
+| Feature | Producer / Consumer | Live E2E check | Expected evidence (PASS) | Doc-accuracy check | P/F |
+|---|---|---|---|---|---|
+| **F32 propose_strategies** | `strategy_builder_engine.propose_strategies` (`:864`) ← `POST /ai-advisor/strategy-builder/run` (`app.py:3394`, CSRF) | POST a real Strategy Builder run (objective + universe, CSRF token) on the live page; inspect survivor/rejected/FDR JSON + the Strategy Builder tab render. | Returns T1–T7 template candidates backtested + a **single-batch** FDR gate result (`evaluate_candidate_batch` over the full batch); `ScreenConfig` post-gate screens applied; survivors persisted; advisory-only (not in `_SETTINGS_WRITE_ALLOWLIST`); no `LIVE_EXECUTION`. Eyes-on the rendered survivor/rejected cards. | CLAUDE.md `strategy_builder_engine.py` row + phase-2/3/4 contracts match; **confirm the run is template-only in prod (HF-1) and the doc's "injected at the route boundary" claim is reconciled.** | |
+| **F33 symphony_schema** | `advisors/symphony_schema.py` (`validate_tree`/`lint_tree`/`extract_tickers`/`render_rules_text` + 10 constructors) | Through F32: confirm the built trees pass `validate_tree` (no HARD errors) and `render_rules_text` produces readable rules; feed a deep/oversized tree to confirm lint-only (not raise). | Trees validate; `lint_tree` returns soft warnings (size/depth caps + unknown indicator fns are lint-only, never raise); deterministic rules text; never-raising on arbitrary input. | CLAUDE.md `symphony_schema.py` row (never-raising, lint-only caps, 10 constructors, depth-230 safe) matches; vocabulary pinned by `strategy-builder-composer-grammar.md`. | |
+| **F34 composer_backtest_client** | `composer_backtest_client.run_backtest` (1 req/s, `:30`; 429 backoff `:332`) | Through F32: confirm backtests are paced at ≤1 req/s and a 429 triggers the documented backoff. | Backtest calls respect the Composer 1 req/s limit; a 429 sleeps per `Retry-After`/`_BACKOFF_INTERVALS`; no rate-limit storm. | CLAUDE.md/strategy-builder docs state "1 req/s" — matches the client constant + comment. | |
+
+### Group L — Community strategies + proposal/gate infra (F35–F37)
+
+| Feature | Producer / Consumer | Live E2E check | Expected evidence (PASS) | Doc-accuracy check | P/F |
+|---|---|---|---|---|---|
+| **F35 Community strategies** (HF-1) | `community_strats.load_community_strategies` (`:98`), `community_candidate_infos` (`strategy_builder_engine.py:195`) — **NO production route caller** | Two-part: (a) Verify the engine layer directly — call `load_community_strategies` (atlas_cache weekly TTL: a 2nd call within TTL hits cache, not Mongo; structural-hash dedup; sharpe filter) and adapt via `community_candidate_infos`. (b) **Verify the PRODUCTION GAP:** confirm `app.py:3437` passes NO `community_candidates` and no route fetches Atlas community strats. | (a) loader returns `{available,candidates,stats,source}`, cache protects the provider bill, dedup + sharpe filter work; (b) the Strategy Builder route runs **template-only** in prod — community strats are NOT reachable from the live UI. **This is a finding, not a pass:** decide build-gap vs deferred-by-design with the operator. | **HF-1 / stale-doc:** CLAUDE.md `community_strats.py` row says "first production caller: propose_strategies via the community_candidate_infos adapter (injected at the route boundary)" — FALSE in prod (no route injection). DECISIONS:633 ("no production caller yet") is closer to truth. Reconcile both to the verified state. | |
+| **F36 BHY-FDR gate** | `backtest_gate_engine.evaluate_candidate_batch` (BHY/Yekutieli FDR across the FULL batch) | Through F29/F30/F32: confirm the gate runs FDR across the full candidate set (template + any community together), not per-candidate; screens never shrink the gate input. | The FDR correction's N = full candidate count; survivors are the BHY-adjusted significant set; the anti-overfit invariant (gate input = full batch) holds. | CLAUDE.md strategy-builder row + DECISIONS community-wiring (single-batch FDR invariant) match; gate applies BHY/Yekutieli (Harvey-Liu 2015). | |
+| **F37 acceptance_gate** | `acceptance_gate.py` (shared by autotuner + advisor proposal suite) | Confirm the same reusable gate object governs both the autotuner and the advisor proposal suite (one acceptance contract, not two divergent ones). | The advisor suite and autotuner invoke the same `acceptance_gate` logic; no divergent duplicate gate. | CLAUDE.md `acceptance_gate.py` row ("used by autotuner and AI Advisor proposal suite") matches both call sites. | |
+
+### Group M — Unified SPA shell (F38–F40)
+
+| Feature | Producer / Consumer | Live E2E check | Expected evidence (PASS) | Doc-accuracy check | P/F |
+|---|---|---|---|---|---|
+| **F38 SPA 6-tab shell** | `templates/ai_advisor.html` (6 tabs, one server render); `static/ai_advisor.js` `initTabSwitcher` | Load `GET /ai-advisor` (`app.py:2848`) live; switch through all 6 tabs (Overview, Correlations, Asset Swaps, Logic Changes, Chat, Strategy Builder) in-place; `node --check static/ai_advisor.js`. | All 6 tabs render in one page; tab switching is in-place (no full reload); JS parses clean (`node --check` passes); eyes-on screenshot confirms each tab's panel renders (not blank/error). | CLAUDE.md `templates/ai_advisor.html` + `static/ai_advisor.js` rows (6 in-place tabs, `initTabSwitcher`) match. Confirm the deleted per-tab templates are NOT recreated (gotchas). | |
+| **F39 GET redirects** | 5 GET sub-routes 302→`/ai-advisor` (`app.py:3023/3033/3174/3381/3794`) | `curl -sI` each of `/ai-advisor/correlations`, `/asset-swaps`, `/logic-changes`, `/chat`, `/strategy-builder` on :8090. | Each returns 302 with `Location: /ai-advisor`; the standalone per-tab pages no longer exist. | CLAUDE.md "all 5 GET sub-routes 302-redirect to /ai-advisor" + the Strategy-Builder-template-deleted gotcha match. | |
+| **F40 CSRF on POSTs** | CSRF infra `_validate_csrf`/`_csrf_before_request`; POST routes `accept/reject/suggest/*-evaluate/chat-send/strategy-builder-run` | POST to a protected route WITHOUT a CSRF token (live, non-pytest) → expect rejection; WITH a token → accepted. Confirm none of these routes is in `_SETTINGS_WRITE_ALLOWLIST`. | A tokenless POST is rejected (403/CSRF error); a valid-token POST proceeds; all advisor action routes are advisory-only — none can write `LIVE_EXECUTION` or credential keys. | CLAUDE.md Architecture Constraint #2 (two guarded write paths; advisor routes NOT trade surfaces) + the strategy-builder route "not in allowlist" claim match. | |
+
+---
+
 ## Edge Cases
 
 - **C1 not merged before closeout:** AC-1 fails → closeout is BLOCKED. Do not verify the
@@ -267,6 +426,30 @@ evidence (PASS)** | **Doc-accuracy check** | **Pass/Fail**.
 - **Operator unavailable for sign-off:** Phase-4 stays hard-blocked. The PM does not
   unilaterally clear AC-11.
 
+**Cluster 2 (AI Advisor suite) edge cases:**
+
+- **HF-1 community-strats hollow in prod:** the Strategy Builder route runs template-only —
+  community strategies are reachable only from tests. Do NOT mark F35 "pass" as if community
+  candidates flow through the live UI. Adjudicate with the operator (AC-17): build the route
+  injection (own cycle) or correct the "injected at the route boundary" doc claim. Verifying
+  only the engine layer and calling the feature live is exactly the hollow-wiring trap.
+- **CSRF blocks the live route checks:** the daemon enforces CSRF outside pytest, so the
+  Cluster-2 POST-route probes MUST carry a valid token. A tokenless probe failing is the
+  EXPECTED F40 behavior, not a verification failure — distinguish "CSRF correctly rejected"
+  from "route broken."
+- **No Composer key:** the Strategy Builder / asset-swap / logic-change backtests need a
+  Composer key. Absent it, those engines return an honest no-key result — verify that is an
+  informative degradation (D-1), not a 500. Do not call the feature "verified live" off the
+  no-key path alone; the happy path needs a key present.
+- **Empty suggestions on a strict symphony:** expected (F24/F27), not a failure — the
+  assessment must explain `oos_alpha=None`. A blank panel with no explanation IS a failure.
+- **Tab renders but is visually wrong:** a 200 + JSON shape is necessary but not sufficient
+  for the visual tabs (Correlations, Strategy Builder cards) — eyes-on the screenshot
+  (F28/F32/F38) before asserting correctness, same rule as AC-9.
+- **`node --check` fails on `ai_advisor.js`:** a client-side parse error makes tab switching
+  silently dead while every server/template test stays green. The static JS check is
+  mandatory for F38.
+
 ## Security Considerations
 
 - **Real API keys in use:** `FRED_API_KEY`, SEC UA string, Alpaca creds, `ANTHROPIC_API_KEY`
@@ -287,6 +470,21 @@ evidence (PASS)** | **Doc-accuracy check** | **Pass/Fail**.
 - **Opus spend:** the capstone council run incurs real multi-agent Opus 4.8 spend (operator-
   authorized). Bounded debate (≤3 rounds) and bounded clarification caps runaway spend; the
   operator note records total spend.
+
+**Cluster 2 (AI Advisor suite) security:**
+- **Advisory-only, DB-enforced:** every advisor-observation row (`ASSET_SWAP`,
+  `LOGIC_CHANGE`, `MARKET_PRISM`, `ADD_CANDIDATE`) is `is_advisory_only=1` at the insert
+  layer; AC-15 confirms no advisor route writes `LIVE_EXECUTION` or credential keys and none
+  is in `_SETTINGS_WRITE_ALLOWLIST`.
+- **CSRF on all POST action routes** (F40/AC-15): accept/reject/suggest/*-evaluate/chat-send/
+  strategy-builder-run all require a token. The closeout verifies tokenless rejection live.
+- **Chat explain-only boundary** (F31): `explain_artifact` must never reach a trade, a
+  config write, OOS re-validation, `suggest_swaps`, or `run_backtest`; the artifact allowlist
+  strips unknown fields (`validate_artifact`, re-validated defense-in-depth). Prompt-injection
+  via artifact content is contained by the allowlist + the explain-only system prompt.
+- **D-1 on every suite engine:** route errors surface `type(exc).__name__` only — Composer/
+  Anthropic exceptions may embed keys; `app.py` logs `exc_info` server-side but returns only
+  the class name (e.g. `:3449`, `:3819`).
 
 ## Testing Strategy
 
@@ -309,10 +507,20 @@ mislabel — those needed live verification).
 4. **Group C / capstone (F15–F21):** drive the `prism-synthesizer` Agent Team once on real
    data per the runbook; collect the audit trail; verify one-row-per-run; render + eyes-on
    the Overview tab.
-5. **Doc-accuracy sweep (AC-10):** for every feature, diff the doc claim against verified
-   behavior; file + correct contradictions (the macro-stub mislabel class). The doc-writer
-   on the closeout team lands corrections before sign-off.
-6. **Operator sign-off (AC-11):** surface artifacts; receive explicit go-ahead before
+5. **Cluster-2 suite probes (F22–F40):** with the daemon live, load `GET /ai-advisor`;
+   `node --check static/ai_advisor.js`; switch through all 6 tabs (eyes-on each panel);
+   `curl -sI` the 5 GET redirects; drive each POST action route with a valid CSRF token +
+   real engine call (suggest/accept/reject/asset-swaps-evaluate/logic-changes-evaluate/
+   chat-send/strategy-builder-run); verify the safety boundaries (allowlist reject,
+   tokenless-POST reject, chat explain-only) and the FDR/overfit invariants; verify the HF-1
+   community gap directly (engine layer works; no route injection).
+6. **Doc-accuracy sweep (AC-10 + AC-18):** for every feature in BOTH clusters, diff the doc
+   claim against verified behavior; file + correct contradictions (the macro-stub mislabel
+   class; the HF-1 "injected at the route boundary" claim; the C1 "Haiku synthesis" line).
+   The doc-writer on the closeout team lands corrections before sign-off.
+7. **HF-1 adjudication (AC-17):** present the community-strats production gap to the operator;
+   decide build-the-injection (own cycle) vs deferred-by-design; correct the doc accordingly.
+8. **Operator sign-off (AC-11):** surface artifacts; receive explicit go-ahead before
    Phase-4.
 
 **Fixture provenance:** N/A — this is a live run on real APIs, not a fixture-backed test.
@@ -329,31 +537,45 @@ Evidence is captured-from-live (screenshots, audit-DB dumps, query outputs), not
 | C1 (PR #39) merge+deploy is a hard precondition (AC-1) | The pipeline synthesis path and its doc line are wrong until C1 lands; verifying against stale hardcoded-Haiku code would bake in a doc/behavior mismatch. |
 | Capstone council run is operator-gated; Phase-4 hard-blocked on sign-off | "Prove it before trusting it to run blind" — the operator must see the real artifacts before any unattended schedule. |
 | Eyes-on screenshot read is mandatory for AC-9 | A render-poll + 0 console errors is necessary but not sufficient for visual correctness. |
+| Cluster 2 (the suite) is capped by live-rendered-tab + real-engine-call evidence | Operator directive: the closeout covers the ENTIRE AI Advisor system, not just the council. Each tab/route must be exercised live, not just unit-green — unit suites missed the dead-fundamentals/stale-VIX/macro-mislabel defects. |
+| HF-1 is a finding, not a pass; adjudicated with the operator (AC-17), not silently flipped | The community-strats feature is built + tested but has no production route caller. Verifying only the engine and calling it "live" is the hollow-wiring trap. The doc claiming route-boundary injection is contradicted by `app.py:3437`. |
+| The closeout does NOT build the HF-1 route injection | Scope is verification, not development. Adding the injection (if adopted) is its own TDD cycle. The closeout adjudicates + documents the gap. |
 
 ## Scope Boundaries
 
-- **IN:** live end-to-end verification of all 21 features (F1–F21) on the real environment;
-  both success and honest-degradation arms per lens; warehouse + audit-foundation + pipeline
-  + scheduler probes; the capstone observed multi-analyst council run; per-feature
-  doc-accuracy reconciliation (corrections filed + landed); operator sign-off gate; the
-  C1 merge+deploy precondition check.
-- **OUT:** building any new code or new tests (this is verification, not development);
-  enabling Phase-4 unattended scheduling (hard-blocked until AC-11 sign-off — Phase-4 is its
-  own feature, `market-prism-phase4-unattended-scheduling.md`); any change to the lens
-  producers, the council agents, or the Overview tab beyond doc corrections; reprocessing
-  historical runs; Epic-B lens quality enrichment beyond what is already shipped.
+- **IN:** live end-to-end verification of all **40 features** on the real environment —
+  Cluster 1 (F1–F21: lenses both arms, warehouse, audit-foundation, pipeline, scheduler,
+  the capstone observed multi-analyst council run) AND Cluster 2 (F22–F40: every SPA tab
+  rendered live + every action route driving its real engine on the live DB, safety
+  boundaries, FDR/overfit invariants); per-feature doc-accuracy reconciliation (corrections
+  filed + landed, incl. HF-1 + the C1 doc line); the HF-1 hollow-wiring adjudication;
+  operator sign-off gate; the C1 merge+deploy precondition check.
+- **OUT:** building any new code or new tests (this is verification, not development) —
+  including the HF-1 community-route injection itself (that, if adopted, is its own TDD
+  cycle; the closeout only adjudicates + documents the gap); enabling Phase-4 unattended
+  scheduling (hard-blocked until AC-11 sign-off — Phase-4 is its own feature,
+  `market-prism-phase4-unattended-scheduling.md`); any change to producers, engines, agents,
+  or templates beyond doc corrections; reprocessing historical runs; Epic-B lens quality
+  enrichment beyond what is already shipped.
 
 **Dependencies:**
 1. **C1 / PR #39** (`feat/advisor-synthesis-model-config`) merged to origin AND deployed to
    the running :8090 tree — gates AC-1 and the F13/F20 doc reconciliation.
 2. The :8090 daemon running the **deployed** post-PR-#39 code (not a stale tree).
-3. Keys present: `FRED_API_KEY`, `ANTHROPIC_API_KEY`, Alpaca creds, SEC UA; Opus 4.8 spend
+3. Keys present: `FRED_API_KEY`, `ANTHROPIC_API_KEY`, Alpaca creds, SEC UA, **Composer key**
+   (for the Strategy Builder / asset-swap / logic-change backtests); Opus 4.8 spend
    authorized.
-4. Phases 1 + 2 (audit-log foundation + council agents) merged and clean on main
-   (already on `348dc26`).
-5. Operator available for the AC-11 sign-off gate.
+4. Phases 1 + 2 (audit-log foundation + council agents) + the full AI Advisor suite merged
+   and clean on main (already on `348dc26`).
+5. ≥2 live symphonies with return series for the Correlations tab (F28); at least one live
+   symphony for the Config Advisor / swap / logic-change checks.
+6. Valid CSRF tokens obtainable for the live POST-route checks (the daemon enforces CSRF
+   outside pytest).
+7. Operator available for the AC-11 sign-off gate AND the AC-17 HF-1 adjudication.
 
 **Closeout team composition (when executed):** a non-TDD verification Agent Team —
-read-only verifier(s) driving the Group A/B probes, the `prism-synthesizer` + 5 analysts
-for the capstone council run, a `doc-gen` doc-writer landing the AC-10 corrections, and a
-synthesizing lead reconciling the matrix into one verdict. No Toxic Pair (no code written).
+read-only verifier(s) driving the Cluster-1 Group A/B probes AND the Cluster-2 tab/route
+probes (flask-dashboard-specialist for the live-render + CSRF route checks), the
+`prism-synthesizer` + 5 analysts for the capstone council run, a `doc-gen` doc-writer
+landing the AC-10/AC-18 corrections (incl. HF-1 + C1 doc lines), and a synthesizing lead
+reconciling the two-cluster matrix into one verdict. No Toxic Pair (no code written).
