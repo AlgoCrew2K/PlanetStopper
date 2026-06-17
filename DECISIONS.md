@@ -921,3 +921,5 @@ The module-level `_CLAUDE_MODEL` and `_CHAT_MODEL` constants were **removed** at
 **Files changed:** `advisors/lens_pipeline.py` (`import os` added; model selection updated); `ai_advisor.py` (model selection updated; `_CLAUDE_MODEL` constant removed — 46a6bc4); `advisors/advisor_chat.py` (`import os` added; model selection updated; `_CHAT_MODEL` constant removed — 46a6bc4); `tests/ai_advisor/test_synthesis_model_config.py` (30 new tests, AC-1..AC-7).
 
 **Status:** GREEN at 294f8a5. 30/30 new tests pass; 1146/0 sibling suite clean.
+
+**Follow-up (0357ecb + c3113b6):** `resolve_advisor_model() -> str` added to `ai_advisor.py` (lines 63-69) as a public accessor that surfaces the env-resolved model ID to non-advisor consumers. `app.py` accept (`/ai-advisor/accept`, line 3748) and reject (`/ai-advisor/reject`, line 3781) routes call `ai_advisor.resolve_advisor_model()` to populate the `model_id` field in the `llm_suggestions` audit trail — replacing a previously hardcoded or absent value. 41/41 tests pass at c3113b6.
