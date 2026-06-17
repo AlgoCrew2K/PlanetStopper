@@ -1,0 +1,151 @@
+{
+  "_provenance": "Schema-derived fixture — F5 RED phase (2026-06-17). Reproduces the Mode A defect: MSFT migrated from 'Revenues' -> 'SalesRevenueNet' -> 'RevenueFromContractWithCustomerExcludingAssessedTax'. The legacy 'Revenues' tag has only ONE old entry (end=2010-06-30, frozen). The current migrated tag 'RevenueFromContractWithCustomerExcludingAssessedTax' carries current data (end=2025-06-30). The buggy producer queries ONLY 'Revenues' and returns the 2010 frozen value. The fixed producer unions ALL candidate tags per logical concept and picks the entry with the most recent end across all tags.",
+  "_mode_a_defect": "Current _SEC_KEY_CONCEPTS = {'Revenues': 'Revenue', ...} — a single tag per concept. The loop does: concept_data = us_gaap.get(concept). For MSFT, us_gaap.get('Revenues') returns ONE entry with end=2010-06-30 (frozen). us_gaap['RevenueFromContractWithCustomerExcludingAssessedTax'] is never queried. The fix restructures _SEC_KEY_CONCEPTS so 'Revenues' maps to a tuple of candidate tags, and the selection loop unions entries across all present candidate tags before sorting.",
+  "_msft_cik": 789019,
+  "companyfacts": {
+    "cik": 789019,
+    "entityName": "Microsoft Corporation",
+    "facts": {
+      "us-gaap": {
+        "Revenues": {
+          "label": "Revenues",
+          "description": "Aggregate revenue during the period from the sale of goods and services.",
+          "units": {
+            "USD": [
+              {
+                "accn": "0000789019-10-000001",
+                "end": "2010-06-30",
+                "val": 5000003,
+                "form": "10-K",
+                "filed": "2010-07-30",
+                "frame": "CY2010"
+              }
+            ]
+          }
+        },
+        "SalesRevenueNet": {
+          "label": "Sales Revenue, Net",
+          "description": "Aggregate revenue during the period from the sale of goods (net).",
+          "units": {
+            "USD": [
+              {
+                "accn": "0000789019-18-000001",
+                "end": "2018-06-30",
+                "val": 5000013,
+                "form": "10-K",
+                "filed": "2018-07-30",
+                "frame": "CY2018"
+              }
+            ]
+          }
+        },
+        "RevenueFromContractWithCustomerExcludingAssessedTax": {
+          "label": "Revenue from Contract with Customer, Excluding Assessed Tax",
+          "description": "Amount, excluding tax collected from customer, of revenue from satisfaction of performance obligation.",
+          "units": {
+            "USD": [
+              {
+                "accn": "0000789019-23-000001",
+                "end": "2023-06-30",
+                "val": 5000023,
+                "form": "10-K",
+                "filed": "2023-07-27",
+                "frame": "CY2023"
+              },
+              {
+                "accn": "0000789019-24-000001",
+                "end": "2024-06-30",
+                "val": 5000029,
+                "form": "10-K",
+                "filed": "2024-07-30",
+                "frame": "CY2024"
+              },
+              {
+                "accn": "0000789019-25-000001",
+                "end": "2025-06-30",
+                "val": 5000037,
+                "form": "10-K",
+                "filed": "2025-07-29",
+                "frame": "CY2025"
+              }
+            ]
+          }
+        },
+        "NetIncomeLoss": {
+          "label": "Net Income (Loss)",
+          "description": "The portion of profit or loss for the period.",
+          "units": {
+            "USD": [
+              {
+                "accn": "0000789019-25-000001",
+                "end": "2025-06-30",
+                "val": 6000007,
+                "form": "10-K",
+                "filed": "2025-07-29",
+                "frame": "CY2025"
+              }
+            ]
+          }
+        },
+        "Assets": {
+          "label": "Assets",
+          "description": "Sum of all assets.",
+          "units": {
+            "USD": [
+              {
+                "accn": "0000789019-25-000001",
+                "end": "2025-06-30",
+                "val": 7000003,
+                "form": "10-K",
+                "filed": "2025-07-29",
+                "frame": "CY2025"
+              }
+            ]
+          }
+        },
+        "Liabilities": {
+          "label": "Liabilities",
+          "description": "Sum of all liabilities.",
+          "units": {
+            "USD": [
+              {
+                "accn": "0000789019-25-000001",
+                "end": "2025-06-30",
+                "val": 7000013,
+                "form": "10-K",
+                "filed": "2025-07-29",
+                "frame": "CY2025"
+              }
+            ]
+          }
+        },
+        "StockholdersEquity": {
+          "label": "Stockholders' Equity",
+          "description": "Total stockholders' equity.",
+          "units": {
+            "USD": [
+              {
+                "accn": "0000789019-25-000001",
+                "end": "2025-06-30",
+                "val": 7000019,
+                "form": "10-K",
+                "filed": "2025-07-29",
+                "frame": "CY2025"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "_expected": {
+    "Revenues_logical_concept": {
+      "expected_end": "2025-06-30",
+      "expected_val": 5000037,
+      "expected_from_tag": "RevenueFromContractWithCustomerExcludingAssessedTax",
+      "buggy_end": "2010-06-30",
+      "buggy_val": 5000003,
+      "buggy_from_tag": "Revenues"
+    }
+  }
+}
