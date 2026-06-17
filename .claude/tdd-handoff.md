@@ -1,7 +1,7 @@
 # TDD Handoff
 Plan: feature-plans/advisor-synthesis-model-config.md
 Branch: feat/advisor-synthesis-model-config
-Phase: red
+Phase: green
 
 ## Test Files
 - `tests/ai_advisor/test_synthesis_model_config.py` — 30 tests collected
@@ -72,6 +72,19 @@ None. All design decisions covered by the feature plan or [PM-ASSUMED].
 ## Test File Issues (for test-writer to fix)
 None.
 
+## Test File Issues (for test-writer to fix)
+None.
+
+## Implementation Notes
+- `advisors/lens_pipeline.py`: added `import os` (previously absent); replaced hardcoded `"claude-haiku-4-5-20251001"` literal with `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` at `_synthesize_via_claude` call site (line 284). `_extract_json_object`, `_build_client`, and all regex patterns unchanged.
+- `ai_advisor.py`: `os` already imported; replaced `_CLAUDE_MODEL` reference with `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` at `request_suggestions` call site (line 1632). Module-level `_CLAUDE_MODEL = "claude-opus-4-7"` constant preserved (tests assert `hasattr`).
+- `advisors/advisor_chat.py`: added `import os`; replaced `_CHAT_MODEL` reference with `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` at `explain_artifact` call site (line 389). `_CHAT_MODEL = "claude-opus-4-7"` constant preserved as comment anchor.
+- All 3 paths still route through `ai_advisor._build_client()` mock seam — no new client construction paths introduced.
+
+## Disputed Tests
+None.
+
 ## Status Log
 - [2026-06-17] c1-test-writer: Starting RED phase for advisor-synthesis-model-config
 - [2026-06-17] c1-test-writer: RED complete — 30 tests: 14 failing RED (correct assertion failures on current code), 16 passing regression guards. 0 import/syntax errors. 0 stubs. HEAD committed to feat/advisor-synthesis-model-config.
+- [2026-06-17] c1-implementer: GREEN complete — 30/30 tests passing. Sibling pollution check: 1146 passed, 10 skipped, 0 failures (tests/ai_advisor/). 0 test bugs. 3 production files changed (import os added to 2 files, 3 model literal/constant refs replaced). Typecheck N/A (Python). Lint pending (see /lint).
