@@ -85,6 +85,25 @@ The assessment is derived from `context["optuna_evidence"]` which carries `basel
 
 ### Claude Client
 
+#### `resolve_advisor_model() -> str`
+
+Returns the configured advisor synthesis model ID. Reads `ADVISOR_SYNTHESIS_MODEL` at call time — no daemon restart required to pick up a config change.
+
+**Returns:** `str` — the model ID to use for all advisor LLM calls. Default: `"claude-opus-4-8"`.
+
+**Source:** `ai_advisor.py:63-69`
+
+Used by:
+- `request_suggestions` — structured-output Claude call (`ai_advisor.py`)
+- `explain_artifact` — chat explanation Claude call (`advisors/advisor_chat.py`)
+- `_synthesize_via_claude` — nightly Market Prism synthesis (`advisors/lens_pipeline.py`)
+- `app.py:3748` and `app.py:3781` — accept/reject audit-trail `model_id` field
+
+Override: set `ADVISOR_SYNTHESIS_MODEL` in the daemon environment before start. All three call sites pick up the change on the next call without a code deploy.
+
+---
+
+
 #### `request_suggestions(context: dict) → tuple[ConfigSuggestionsResponse | None, str | None]`
 
 Calls Claude's structured-output endpoint. Synchronous — blocks until the response returns or times out (30 seconds).
