@@ -728,3 +728,88 @@ class TestBoundedFanout:
             "Fan-out made 0 HTTP requests — the implementation is a no-op. "
             "AC-1: the portfolio path must actually contact SEC EDGAR."
         )
+
+
+# ---------------------------------------------------------------------------
+# REVIEW CYCLE: re-point of stale test in test_cycle2_lens_producers.py
+#
+# test_cycle2_lens_producers.py::TestSecEdgarFundamentalsProducer::
+#   test_fundamentals_no_ticker_returns_available_false
+#
+# That test's premise ("missing ticker is a caller error → available=False")
+# is WRONG after the fix. ticker=None is now the intended PORTFOLIO PATH that
+# fans out and returns available=True when any ticker resolves.
+# The test currently passes accidentally (no mock → real network fails → False).
+# This class re-pins the correct behavior with a proper mock.
+# ---------------------------------------------------------------------------
+
+
+class TestNoTickerPortfolioPathRegression:
+    """Regression: calling _build_fundamentals_section() without a ticker uses
+    the portfolio fan-out path, NOT the old 'ticker symbol required' guard.
+
+    This replaces the semantic premise of the now-stale cycle-2 test
+    test_fundamentals_no_ticker_returns_available_false which relied on an
+    un-mocked network call.
+    """
+
+    def test_no_ticker_does_not_return_ticker_symbol_required_reason(
+        self, sec_shape_fixture: dict
+    ):
+        """_build_fundamentals_section() (no ticker) must NOT return the pre-fix
+        short-circuit reason 'ticker symbol required...'.
+
+        The pre-fix reason was: "ticker symbol required to fetch SEC EDGAR fundamentals"
+        After the fix: ticker=None routes to the portfolio fan-out path. The old
+        reason must NEVER appear — its presence means the fix was not applied or
+        was reverted.
+
+        This is the deterministic re-point of the cycle-2 stale test — uses a mock
+        so it does not depend on real network behavior.
+        """
+        import ai_advisor
+
+        companyfacts_resp = _make_mock_response(sec_shape_fixture["companyfacts_shape"])
+
+        with (
+            patch("database.load_state", return_value=_make_empty_holdings_state()),
+            patch("requests.get", return_value=companyfacts_resp),
+        ):
+            block = ai_advisor._build_fundamentals_section()
+
+        reason = block.get("reason", "")
+        assert "ticker symbol required" not in reason.lower(), (
+            f"_build_fundamentals_section() (no ticker) returned the pre-fix "
+            f"short-circuit reason: {reason!r}. "
+            "After the fan-out fix, ticker=None routes to the PORTFOLIO PATH — "
+            "the 'ticker symbol required' guard must not fire. "
+            "If this test fails, the fix was reverted or the guard was re-introduced."
+        )
+
+    def test_no_ticker_routes_to_portfolio_path_not_error_path(
+        self, sec_shape_fixture: dict
+    ):
+        """_build_fundamentals_section() without ticker makes at least 1 SEC call.
+
+        Pre-fix: made 0 HTTP calls (short-circuited before any network access).
+        Post-fix: fans out over the proxy universe → at least 1 companyfacts call.
+
+        This verifies the portfolio path is actually entered (not just a better
+        error message).
+        """
+        import ai_advisor
+
+        companyfacts_resp = _make_mock_response(sec_shape_fixture["companyfacts_shape"])
+
+        with (
+            patch("database.load_state", return_value=_make_empty_holdings_state()),
+            patch("requests.get", return_value=companyfacts_resp) as mock_get,
+        ):
+            ai_advisor._build_fundamentals_section()
+
+        assert mock_get.call_count >= 1, (
+            "_build_fundamentals_section() (no ticker) made 0 HTTP requests. "
+            "Pre-fix behavior: 0 requests (short-circuited). "
+            "Post-fix behavior: at least 1 companyfacts call per proxy ticker. "
+            "If call_count is still 0, the fan-out path is not being entered."
+        )
