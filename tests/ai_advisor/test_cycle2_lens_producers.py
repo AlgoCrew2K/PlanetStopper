@@ -1078,19 +1078,47 @@ class TestSecEdgarFundamentalsProducer:
             f"D-1 violation: reason leaks str(exc) detail: {reason!r}"
         )
 
-    def test_fundamentals_no_ticker_returns_available_false(self):
-        """Calling without a ticker returns available=False with a descriptive reason.
+    def test_fundamentals_no_ticker_routes_to_portfolio_path(self, sec_shape_fixture: dict):
+        """Calling without a ticker uses the portfolio fan-out path (not a guard error).
 
-        The producer needs a ticker symbol to build a CIK lookup URL.
-        A missing ticker is a caller error; the producer must degrade, not raise.
+        RE-POINTED (fan-out fix): the original test asserted available=False for
+        ticker=None, based on a pre-fix guard. The fix (AC-1) makes ticker=None the
+        PORTFOLIO PATH — it fans out over an internal universe and returns available=True
+        when at least one ticker resolves.
+
+        This re-pointed test verifies:
+        1. The pre-fix 'ticker symbol required' reason does NOT appear.
+        2. At least one HTTP call is made (portfolio path entered, not short-circuited).
+        3. The function does not raise.
+
+        Uses a mock so the result is deterministic (not network-dependent).
         """
         import ai_advisor
 
-        block = ai_advisor._build_fundamentals_section()
+        mock_resp = _make_mock_response(sec_shape_fixture["companyfacts_shape"])
 
-        _assert_available_false_shape(block, "fundamentals")
+        with (
+            patch("database.load_state", return_value={}),
+            patch("requests.get", return_value=mock_resp) as mock_get,
+        ):
+            block = ai_advisor._build_fundamentals_section()
+
+        # Must not raise
+        assert isinstance(block, dict), "must return a dict without raising"
+        assert block.get("lens") == "fundamentals", "must return lens='fundamentals'"
+
+        # Must NOT use the pre-fix short-circuit reason
         reason = block.get("reason", "")
-        assert reason.strip(), "missing-ticker reason must be non-empty"
+        assert "ticker symbol required" not in reason.lower(), (
+            f"Pre-fix short-circuit still present: reason={reason!r}. "
+            "After the fan-out fix, ticker=None enters the portfolio path."
+        )
+
+        # Portfolio path must make at least one HTTP call (not a no-op)
+        assert mock_get.call_count >= 1, (
+            "No HTTP calls made — portfolio path not entered. "
+            "ticker=None must fan out over the proxy universe."
+        )
 
     def test_fundamentals_producer_does_not_return_cycle1_stub_reason(
         self, sec_shape_fixture: dict
