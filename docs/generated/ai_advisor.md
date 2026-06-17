@@ -1,6 +1,6 @@
 # ai_advisor
 
-> Claude-backed config advisor: context assembly, structured-output Claude call, per-symphony assessment, safety gates (7-item allowlist, risk-direction cross-check, OOS re-validation), and multi-lens pipeline (technicals wired; sentiment wired; derivatives wired with freshness guard; macro, fundamentals stubs).
+> Claude-backed config advisor: context assembly, structured-output Claude call, per-symphony assessment, safety gates (7-item allowlist, risk-direction cross-check, OOS re-validation), and multi-lens pipeline (technicals wired; sentiment wired; derivatives wired with freshness guard; fundamentals wired with portfolio fan-out; macro stub).
 
 **Source:** `ai_advisor.py`
 **Last updated:** 2026-06-16
@@ -26,6 +26,8 @@ Real-money-critical input governance: `assemble_advisor_context` never includes 
 **Sentiment lens wiring (GDELT, 2026-06-15):** `_build_sentiment_section` lazy-imports `advisors.lens_gdelt` and calls `_fetch_gdelt_sentiment`. Honest-availability: `tone is None → available=False`. See [advisors/lens_gdelt](advisors_lens_gdelt.md).
 
 **Derivatives lens wiring (FRED VIX/VXV, 2026-06-16):** `_build_derivatives_section` lazy-imports `advisors.lens_options_proxy` and calls `_fetch_options_proxy()`. Honest-availability now covers **staleness** as well as fetch failure: the freshness guard (`_OPTIONS_PROXY_MAX_STALENESS_DAYS = 10`) rejects observations older than 10 calendar days as `available=False, reason="stale_data"`. Prior stub behavior is superseded — the producer returns a real VIX level, term-structure, and risk read when `FRED_API_KEY` is set and data is fresh. See [advisors/lens_options_proxy](advisors-lens-options-proxy.md).
+
+**Fundamentals lens portfolio fan-out (2026-06-16 — DE-FUND-001):** `_build_fundamentals_section()` (called with no ticker by both the 03:00 nightly pipeline and `assemble_advisor_context`) previously short-circuited to `available=False, reason="ticker symbol required..."` — a dead lens. Now fans out over a company-ticker universe (live `logic_holdings` ∪ `_FUNDAMENTALS_PROXY_UNIVERSE` floor of 8 large-cap company tickers — NOT ETFs, which have no SEC companyfacts). The single-ticker path (`ticker="AAPL"`) is preserved byte-for-byte via the extracted `_fetch_fundamentals_for_ticker(ticker)` helper. Per-ticker honest degradation; no invented composite ratios; bounded fan-out. See [DE-FUND-001 in DECISIONS.md](../../DECISIONS.md).
 
 ## API Reference
 
@@ -77,7 +79,7 @@ The assessment is derived from `context["optuna_evidence"]` which carries `basel
 |------|------|-------------|
 | `context` | `dict` | Output of `assemble_advisor_context` or any dict with `optuna_evidence` key |
 
-**Returns:** `{"baseline_decision": str | None, "oos_alpha": float | None, "fallback_oos_alpha": float | None, "default_oos_alpha": float | None, "summary": str}`.
+**Returns:** `{"baseline_decision": str | None, "oas_alpha": float | None, "fallback_oas_alpha": float | None, "default_oas_alpha": float | None, "summary": str}`.
 
 ---
 
@@ -153,7 +155,7 @@ All five are wired as top-level keys in the dict returned by `assemble_advisor_c
 | `_build_sentiment_section()` | `"sentiment"` | **Wired** (2026-06-15) | `advisors/lens_gdelt.py` — GDELT 2.0 tone + citations |
 | `_build_derivatives_section()` | `"derivatives"` | **Wired** (2026-06-16) — freshness-guarded | `advisors/lens_options_proxy.py` — FRED VIXCLS/VXVCLS; VIX level, term-structure regime, risk read; staleness guard (`_OPTIONS_PROXY_MAX_STALENESS_DAYS=10`) |
 | `_build_macro_section()` | `"macro"` | Stub — `available=False` | FRED / US Treasury XML (not yet connected) |
-| `_build_fundamentals_section()` | `"fundamentals"` | Stub — `available=False` | SEC EDGAR companyfacts (not yet connected) |
+| `_build_fundamentals_section()` | `"fundamentals"` | **Wired** (2026-06-16) — portfolio fan-out | SEC EDGAR companyfacts — per-ticker key facts over live holdings ∪ `_FUNDAMENTALS_PROXY_UNIVERSE` (DE-FUND-001) |
 
 Each accepts an optional `_data` argument (reserved for caller pre-injection; unused in current implementations) so future producers can be wired in without changing call sites in `assemble_advisor_context`.
 
@@ -162,6 +164,37 @@ Each accepts an optional `_data` argument (reserved for caller pre-injection; un
 Wired (2026-06-15). Lazy-imports `advisors.lens_technicals` (CC-2) and calls `_fetch_technicals([])`. Returns the lens block with `available=True` and `payload={ma_posture, breadth, momentum}` when bars are available; `available=False` with a named reason otherwise. Defense-in-depth: wraps the import+call in `try/except` — any unexpected exception returns `available=False, reason=type(exc).__name__`.
 
 See [advisors/lens_technicals](advisors_lens_technicals.md) for indicator definitions, constants, and retry protocol.
+
+### `_build_fundamentals_section(_data=None, *, ticker=None) → dict`
+
+Wired (2026-06-16 — DE-FUND-001). Two paths:
+
+**Single-ticker path** (`ticker="AAPL"`): delegates immediately to `_fetch_fundamentals_for_ticker(ticker)` and wraps the result in the standard lens-block shape (adds the `"lens"` key). Per-symphony callers that pass a ticker are unaffected by the fan-out change — behavior is byte-for-byte preserved (AC-3).
+
+**Portfolio fan-out path** (`ticker=None` — used by the 03:00 nightly pipeline and `assemble_advisor_context`):
+1. Lazily calls `database.load_state()` (CC-2 — never at module import time) to collect `logic_holdings` tickers from all monitored symphonies.
+2. Merges with `_FUNDAMENTALS_PROXY_UNIVERSE` (unconditional floor — guarantees a non-empty universe at 03:00 / flat markets / off-hours).
+3. Fans out `_fetch_fundamentals_for_ticker` over each ticker; per-ticker failures degrade only that ticker.
+4. Returns `available=True` with `payload={tickers: {AAPL: {...}, ...}, coverage: {available: N, universe: M}}` when at least one ticker resolves.
+5. Returns `available=False` when the universe is empty or every ticker fails — with a real reason, no fabricated payload.
+
+**`_FUNDAMENTALS_PROXY_UNIVERSE`:** Module-level `frozenset[str]` — 8 large-cap company tickers (AAPL, MSFT, GOOGL, AMZN, NVDA, JPM, XOM, JNJ). Individual companies only; ETFs excluded because ETFs have no SEC EDGAR `companyfacts` entries (every CIK lookup would fail). Source comment cites S&P 500 large-cap 2024 constituents.
+
+**D-1:** all failure reasons are `type(exc).__name__` for caught exceptions, or named labels (`"no fundamentals universe..."`, `"no fundamentals available: all tickers failed..."`) for authoritative empty states.
+
+**CC-2:** `database.load_state()` is called lazily inside the function body, never at module level.
+
+### `_fetch_fundamentals_for_ticker(ticker: str) → dict`
+
+Helper extracted from the original single-ticker body of `_build_fundamentals_section` to enable the portfolio fan-out path. Returns a per-ticker block without the top-level `"lens"` key — callers set `"lens"` on the outer block.
+
+**Returned shape on success:** `{available: True, payload: {entity_name, cik, key_facts: {RevenueFromContractWithCustomerExcludingAssessedTax: ..., ...}}, sources: [{title, url, published, lens}]}`.
+
+**Returned shape on failure:** `{available: False, reason: str, payload: None, sources: []}`.
+
+**Flow:** CIK resolution via `_sec_ticker_to_cik` (SEC bulk tickers file) → `_fetch_with_backoff` for the companyfacts JSON → extraction of `_SEC_KEY_CONCEPTS` keys → citation assembly from accession numbers. All HTTP fetches use `_SEC_USER_AGENT` (mandatory per SEC EDGAR terms). D-1: `type(exc).__name__` on any caught exception; named labels for authoritative failures (CIK not found, no key facts).
+
+**Never raises.** Per-ticker degradation: if CIK is not found, the companyfacts endpoint is unreachable, or no recognized key facts exist in the response, the function returns `available=False` — it does not raise.
 
 ### Citation Convention
 
@@ -232,6 +265,14 @@ The 7-item allowlist (6 Optuna search-space keys + `MAX_SQUEEZE_FLOOR`). Note: `
 | `MAX_PARABOLIC_SQUEEZE` | Yes | raising loosens risk |
 | `MAX_SQUEEZE_FLOOR` | No (`_UNTUNED_SUGGESTIBLE_KEY`) | raising loosens risk |
 
+### Module-Level Constants (Fundamentals Lens)
+
+| Constant | Type | Value | Purpose |
+|----------|------|-------|---------|
+| `_FUNDAMENTALS_PROXY_UNIVERSE` | `frozenset[str]` | 8 company tickers | Unconditional floor for portfolio fan-out path; guarantees non-empty universe at 03:00 / flat markets. Individual companies only — ETFs excluded (no SEC companyfacts). |
+| `_SEC_USER_AGENT` | `str` | `"Planet Stopper AlphaBot..."` | Mandatory SEC EDGAR User-Agent (missing UA is the primary cause of 403 responses). |
+| `_SEC_KEY_CONCEPTS` | `dict[str, str]` | XBRL → human label map | Defines the set of recognized financial facts extracted from companyfacts responses; keys not in this dict are ignored. |
+
 ## Internal Dependencies
 
 - `database` — `get_latest_autotune_run`, `get_symphony_strategy`, `load_state`, `normalize_name`, `DEFAULT_STRATEGY`, `DEFAULT_LOCKED_VARS`
@@ -242,3 +283,4 @@ The 7-item allowlist (6 Optuna search-space keys + `MAX_SQUEEZE_FLOOR`). Note: `
 - `advisors.lens_gdelt` — `_fetch_gdelt_sentiment` (lazy import in `_build_sentiment_section`)
 - `anthropic` SDK — `messages.parse` with structured output
 - `pydantic` — `ConfigSuggestion`, `ConfigSuggestionsResponse`
+- `requests` — SEC EDGAR HTTP fetches in `_fetch_fundamentals_for_ticker` / `_fetch_with_backoff` (direct import; no lazy boundary needed — SEC calls are off-execution-path advisory only)

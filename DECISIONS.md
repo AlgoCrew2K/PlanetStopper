@@ -853,3 +853,41 @@ Branch: `fix/derivatives-vix-freshness` | HEAD: 3c7e545
 **Files changed:** `advisors/lens_options_proxy.py` (lines 137–143 new constants; line 146 `_today()` helper; line 185 rolling window; lines 350–368 freshness guard); `tests/ai_advisor/test_lens_options_proxy.py` (new staleness/freshness/window AC tests).
 
 **Status:** 43/43 GREEN at 3c7e545. `quant-code-reviewer` APPROVE (pending PM live FRED gate).
+
+---
+
+## Fundamentals Lens — Portfolio Fan-Out Fix (2026-06-16)
+
+Branch: `fix/fundamentals-portfolio-fanout` | HEAD: 3e41a2a
+
+### DE-FUND-001: Internal portfolio fan-out in `_build_fundamentals_section`; `_FUNDAMENTALS_PROXY_UNIVERSE` company floor; per-ticker honest degradation; no invented composite ratios
+
+**Defect class (REAL BUG 2):** The SEC EDGAR fundamentals lens was permanently unavailable in the nightly Market Prism. Root cause: `_build_fundamentals_section` short-circuited with `available=False, reason="ticker symbol required..."` whenever `ticker=None`. Both production callers — `advisors/lens_pipeline.py:73` (`builder()`, the 03:00 nightly path) and `ai_advisor.py` (`assemble_advisor_context`) — invoke the function with no ticker. SEC EDGAR was never reached; the fundamentals block was a dead lens despite structurally honest wiring.
+
+**Fix — internal portfolio fan-out (AC-1):**
+
+`_build_fundamentals_section(ticker=None)` now derives a company-ticker universe internally and fans out the single-ticker SEC companyfacts logic across it, aggregating results into a portfolio-level block. The per-ticker body was extracted into `_fetch_fundamentals_for_ticker(ticker: str) -> dict` — both the single-ticker path and the fan-out path delegate to it.
+
+**Key design choices:**
+
+1. **Internal fan-out, not a caller signature change.** Both production callers invoke `builder()` with no arguments via the uniform lens map in `lens_pipeline.py`. The universe must be derived inside the producer — exactly as `_build_technicals_section` derives its universe from `load_state()` + `_PROXY_UNIVERSE`. Changing the lens map's calling convention would touch `lens_pipeline` and break the CC-2 lazy-import boundary. The internal derivation is the minimal-surface fix.
+
+2. **`_FUNDAMENTALS_PROXY_UNIVERSE` — company floor, NOT ETFs.** A named module-level `frozenset[str]` of 8 large-cap individual company tickers (AAPL, MSFT, GOOGL, AMZN, NVDA, JPM, XOM, JNJ — cross-sector S&P 500 representatives) is an unconditional floor so the 03:00 nightly Prism always has a real fundamentals universe even when `logic_holdings` is empty (flat market, off-hours, weekend). ETFs are explicitly excluded: ETFs have no SEC EDGAR `companyfacts` entries — every CIK lookup and companyfacts fetch for an ETF would fail. This mirrors the `_PROXY_UNIVERSE` floor pattern in `lens_technicals.py` (established DE-TECH-002).
+
+3. **Per-ticker honest degradation (AC-4).** A ticker that fails to resolve (ETF held as a position / CIK not found / HTTP error / no key facts) is excluded from the aggregate without failing the whole lens. Only that ticker's per-ticker entry is omitted — the lens remains `available=True` via the other resolved tickers. No fabricated facts. Mirrors the breadth-exclusion pattern in the technicals lens.
+
+4. **No invented composite ratios.** The portfolio payload exposes `{tickers: {AAPL: {entity_name, cik, key_facts}, ...}, coverage: {available: N, universe: M}}` — per-ticker raw XBRL key facts and a coverage count. No derived ratio (e.g. weighted average P/E, portfolio-level earnings yield) is computed. Aggregating raw XBRL facts into a synthetic score would fabricate a producer value not grounded in any single filing. Tests assert shape and presence — never hardcoded financial literals (no-hardcoded-test-values rule).
+
+5. **Bounded SEC fan-out (AC-6).** The proxy basket is small (~8 tickers). The existing `_fetch_with_backoff` bounded retry applies per-ticker. Off-execution-path; advisory-only; never touches `LIVE_EXECUTION`. SEC EDGAR is keyless/free — no provider bill concern (scope-out for a fundamentals cache layer).
+
+6. **Single-ticker path preserved byte-for-byte (AC-3).** `_build_fundamentals_section(ticker="AAPL")` delegates to `_fetch_fundamentals_for_ticker("AAPL")` and returns the same block shape as the pre-fix single-ticker behavior. Existing per-symphony callers are unaffected. Regression guarded by `test_single_ticker_path_unchanged`.
+
+**`_fetch_fundamentals_for_ticker(ticker: str) -> dict` helper:**
+Extracted from the original single-ticker body (CIK resolve → companyfacts fetch → `_SEC_KEY_CONCEPTS` extraction → citation build). Returns the per-ticker block without the top-level `lens` key — the `lens` key is set by `_build_fundamentals_section` on the final return. Both paths delegate to this helper; the D-1 / CC-3 / `_SEC_USER_AGENT` invariants are unchanged.
+
+**`_FUNDAMENTALS_PROXY_UNIVERSE` placement:** Module-level constant in `ai_advisor.py`, immediately after `_SEC_KEY_CONCEPTS`. Source comment documents the ETF exclusion rationale and cites S&P 500 large-cap 2024 constituents as the selection basis.
+
+**Files changed:** `ai_advisor.py` (new `_FUNDAMENTALS_PROXY_UNIVERSE` constant; `_fetch_fundamentals_for_ticker` extraction; `_build_fundamentals_section` portfolio fan-out path); `tests/ai_advisor/test_lens_fundamentals_fanout.py` (7 new tests, AC-1..AC-6).
+
+**Status:** GREEN at 3e41a2a. `quant-code-reviewer` APPROVE (pending PM live SEC gate). Acceptance criteria AC-1 through AC-6 verified.
+
