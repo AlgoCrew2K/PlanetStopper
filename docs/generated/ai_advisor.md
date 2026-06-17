@@ -1,6 +1,6 @@
 # ai_advisor
 
-> Claude-backed config advisor: context assembly, structured-output Claude call, per-symphony assessment, safety gates (7-item allowlist, risk-direction cross-check, OOS re-validation), and multi-lens pipeline (technicals wired; sentiment wired; derivatives wired with freshness guard; fundamentals wired with portfolio fan-out; macro stub).
+> Claude-backed config advisor: context assembly, structured-output Claude call, per-symphony assessment, safety gates (7-item allowlist, risk-direction cross-check, OOS re-validation), and multi-lens pipeline (technicals wired; sentiment wired; derivatives wired with freshness guard; fundamentals wired with portfolio fan-out; macro wired with FRED producer (DGS10/UNRATE/CPIAUCSL/FEDFUNDS)).
 
 **Source:** `ai_advisor.py`
 **Last updated:** 2026-06-17
@@ -11,7 +11,7 @@
 
 - **C1** — Context assembly + synchronous Claude call. `assemble_advisor_context` reads a curated 7-item allowlist of config values (6 Optuna search-space keys + `MAX_SQUEEZE_FLOOR`), never `os.environ`. `request_suggestions` calls Claude with structured output (`ConfigSuggestionsResponse`). `build_assessment_from_context` synthesises a per-symphony assessment from the assembled context so the UI can explain why no suggestion was made — the common case for symphonies with no validated edge. Never raises — every failure degrades to `(None, error_message)`.
 
-- **C2** — Safety gates. Three independent defense-in-depth layers on top of C1's context allowlist: `enforce_suggestion_allowlist`, `check_risk_direction_agreement`, `revalidate_suggestion_oos`.
+- **C2** — Safety gates. Four independent defense-in-depth gates on the accept path (implemented in `app.py`): (1) `enforce_suggestion_allowlist` — structural rejection of non-allowlisted keys (blocks); (2) `check_risk_direction_agreement` — risk-polarity cross-check (logs only, non-blocking — disagreement is recorded but does not veto the suggestion); (3) `revalidate_suggestion_oos` — OOS re-gate via autotuner simulation (blocks); (4) locked-var guard — defense-in-depth locked-key check (blocks). Note: the source comment at `ai_advisor.py:1710` describes three helper *functions* (the C2 layer); the fourth gate (locked-var) is added at the call site in `app.py`. A follow-on code-fix should reconcile that comment to reflect all 4 gates.
 
 Real-money-critical input governance: `assemble_advisor_context` never includes credentials, account IDs, safety flags, or methodology knobs. The config surface is an allowlist, not a denylist.
 
@@ -173,7 +173,7 @@ All five are wired as top-level keys in the dict returned by `assemble_advisor_c
 | `_build_technicals_section()` (`ai_advisor.py:439-482`) | `"technicals"` | **Wired** (2026-06-15) | `advisors/lens_technicals.py` — MA posture, breadth, momentum |
 | `_build_sentiment_section()` | `"sentiment"` | **Wired** (2026-06-15) | `advisors/lens_gdelt.py` — GDELT 2.0 tone + citations |
 | `_build_derivatives_section()` | `"derivatives"` | **Wired** (2026-06-16) — freshness-guarded | `advisors/lens_options_proxy.py` — FRED VIXCLS/VXVCLS; VIX level, term-structure regime, risk read; staleness guard (`_OPTIONS_PROXY_MAX_STALENESS_DAYS=10`) |
-| `_build_macro_section()` | `"macro"` | Stub — `available=False` | FRED / US Treasury XML (not yet connected) |
+| `_build_macro_section()` | `"macro"` | **Wired** — FRED producer (DGS10/UNRATE/CPIAUCSL/FEDFUNDS) | FRED API — fetches 10-Year Treasury (DGS10), Unemployment Rate (UNRATE), CPI-U (CPIAUCSL), Federal Funds Rate (FEDFUNDS); each with value+date and clickable fred.stlouisfed.org source citation; degrades to `available=False` when `FRED_API_KEY` is absent |
 | `_build_fundamentals_section()` | `"fundamentals"` | **Wired** (2026-06-16) — portfolio fan-out | SEC EDGAR companyfacts — per-ticker key facts over live holdings ∪ `_FUNDAMENTALS_PROXY_UNIVERSE` (DE-FUND-001) |
 
 Each accepts an optional `_data` argument (reserved for caller pre-injection; unused in current implementations) so future producers can be wired in without changing call sites in `assemble_advisor_context`.
