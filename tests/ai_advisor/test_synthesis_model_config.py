@@ -742,8 +742,9 @@ class TestSuiteOrderingRegression:
         not leave a shadowed or patched version of ai_advisor in sys.modules after
         the test ends (since lens_pipeline lazily imports ai_advisor).
 
-        This test simply imports lens_pipeline, verifies ai_advisor is importable
-        normally after the fact, and that it carries its expected public symbols.
+        This test imports lens_pipeline, verifies ai_advisor is importable normally
+        after the fact, and that it carries its expected public symbols — and does
+        NOT carry the now-removed dead constants (AC-4).
         """
         # Import through the normal path.
         import advisors.lens_pipeline  # noqa: F401
@@ -757,9 +758,85 @@ class TestSuiteOrderingRegression:
         assert hasattr(ai_advisor, "request_suggestions"), (
             "ai_advisor.request_suggestions must be accessible after lens_pipeline import."
         )
-        assert hasattr(ai_advisor, "_CLAUDE_MODEL"), (
-            "ai_advisor._CLAUDE_MODEL must still be accessible (it is a reference anchor "
-            "even after the env-var wiring; it may become a fallback default or removed)."
+        # AC-4: _CLAUDE_MODEL is a dead constant (the call site now reads the env var
+        # inline). It must be removed. This assertion is RED until removal.
+        assert not hasattr(ai_advisor, "_CLAUDE_MODEL"), (
+            "ai_advisor._CLAUDE_MODEL must be REMOVED (AC-4: dead constant, no longer "
+            "used at any call site after the env-var wiring). Remove it from ai_advisor.py."
+        )
+
+
+# ---------------------------------------------------------------------------
+# AC-4 — Dead constants removed
+# ---------------------------------------------------------------------------
+
+
+class TestDeadConstantsRemoved:
+    """AC-4: _CLAUDE_MODEL and _CHAT_MODEL module-level constants are REMOVED.
+
+    After the env-var wiring, both constants are dead duplicates of the default.
+    The plan's Architecture section and Scope Boundaries both require removal.
+    These tests are RED until the implementer deletes the two constant definitions.
+
+    Why removal matters (not just non-use):
+      A dead constant with a hardcoded model ID is a maintenance trap — a future
+      reader may think it is the active model, not the env var default. Removal
+      eliminates the confusion and matches lens_pipeline's existing inline style
+      (which never had a module-level model constant).
+    """
+
+    def test_claude_model_constant_removed_from_ai_advisor(self):
+        """ai_advisor._CLAUDE_MODEL must NOT exist after the env-var refactor.
+
+        RED: currently 'claude-opus-4-7' is still present at ai_advisor.py:59.
+        """
+        import ai_advisor
+
+        assert not hasattr(ai_advisor, "_CLAUDE_MODEL"), (
+            "ai_advisor._CLAUDE_MODEL must be REMOVED (AC-4). "
+            "It is a dead constant — the call site at request_suggestions now reads "
+            "os.environ.get('ADVISOR_SYNTHESIS_MODEL', ...) inline. "
+            "Delete the line '_CLAUDE_MODEL = ...' from ai_advisor.py."
+        )
+
+    def test_chat_model_constant_removed_from_advisor_chat(self):
+        """advisors/advisor_chat._CHAT_MODEL must NOT exist after the env-var refactor.
+
+        RED: currently 'claude-opus-4-7' is still present at advisor_chat.py:212.
+        """
+        from advisors import advisor_chat
+
+        assert not hasattr(advisor_chat, "_CHAT_MODEL"), (
+            "advisor_chat._CHAT_MODEL must be REMOVED (AC-4). "
+            "It is a dead constant — the call site at explain_artifact now reads "
+            "os.environ.get('ADVISOR_SYNTHESIS_MODEL', ...) inline. "
+            "Delete the line '_CHAT_MODEL = ...' from advisors/advisor_chat.py."
+        )
+
+    def test_no_module_level_claude_model_string_in_ai_advisor_source(self):
+        """The source of ai_advisor.py must not contain a module-level assignment
+        of a claude-* model string to _CLAUDE_MODEL.
+
+        Belt-and-suspenders: even if the attribute is somehow absent from the live
+        module object, the source line must also be gone.
+        """
+        source = (_REPO_ROOT / "ai_advisor.py").read_text(encoding="utf-8")
+        # Match: _CLAUDE_MODEL = "claude-..." (module-level constant assignment).
+        pattern = re.compile(r'^_CLAUDE_MODEL\s*=\s*["\']claude-', re.MULTILINE)
+        assert not pattern.search(source), (
+            "ai_advisor.py still contains a module-level '_CLAUDE_MODEL = claude-...' "
+            "assignment. Remove this dead constant per AC-4."
+        )
+
+    def test_no_module_level_chat_model_string_in_advisor_chat_source(self):
+        """The source of advisors/advisor_chat.py must not contain a module-level
+        assignment of a claude-* model string to _CHAT_MODEL.
+        """
+        source = (_REPO_ROOT / "advisors" / "advisor_chat.py").read_text(encoding="utf-8")
+        pattern = re.compile(r'^_CHAT_MODEL\s*=\s*["\']claude-', re.MULTILINE)
+        assert not pattern.search(source), (
+            "advisors/advisor_chat.py still contains a module-level '_CHAT_MODEL = claude-...' "
+            "assignment. Remove this dead constant per AC-4."
         )
 
 
