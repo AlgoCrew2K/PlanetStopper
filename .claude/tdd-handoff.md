@@ -1,183 +1,170 @@
 # TDD Handoff
-Plan: feature-plans/lens-fundamentals-vintage-fix.md
-Branch: fix/fundamentals-vintage
-Phase: done
+Plan: feature-plans/community-strats-route-wiring.md
+Branch: feat/community-strats-route-wiring
+Phase: red
 
 ## Test Files
-- tests/ai_advisor/test_fundamentals_vintage.py — 21 tests (11 failing RED, 10 passing regression guards)
+- `tests/ui/test_strategy_builder_community_wiring.py` — route-layer RED tests (AC-1..AC-6 + security)
 
-## Fixtures
-- tests/fixtures/math/fundamentals_vintage_mode_b_bundled_comparative.json
-- tests/fixtures/math/fundamentals_vintage_mode_a_migrated_concept.json
-- tests/fixtures/math/fundamentals_vintage_cross_tag_later_listed_wins.json
-- tests/fixtures/math/fundamentals_vintage_malformed_payloads.json
+## Import Stubs Created
+None required. This feature edits `app.py` only. All referenced modules
+(`advisors.community_strats`, `advisors.strategy_builder_engine`) are already
+shipped and importable. No new modules, no new stubs.
+
+## A/C Coverage Matrix
+
+| A/C ID | Description | Test File | Test Name(s) | Status |
+|--------|-------------|-----------|--------------|--------|
+| AC-1 | community candidates forwarded as `community_candidates` kwarg | test_strategy_builder_community_wiring.py | TestAC1CommunityKwargForwarding (4 tests) | RED — fails on assertion (kwarg absent) |
+| AC-2 | empty/available=False → template-only, route completes | test_strategy_builder_community_wiring.py | TestAC2TemplateDegradation (5 tests) | GREEN guard — template-only worked before wiring too; must stay GREEN post-impl |
+| AC-3 | force_refresh never True (bill-protection) | test_strategy_builder_community_wiring.py | TestAC3BillProtection (2 tests) | RED — fails on assertion (load never called) |
+| AC-4 | load raises → degrade template-only; propose raises → error classname only (D-1) | test_strategy_builder_community_wiring.py | TestAC4NeverRaisingD1 (6 tests) | GREEN guard — existing D-1 contract tested; must stay GREEN post-impl |
+| AC-5 | lazy imports inside handler; no allowlist/LIVE_EXECUTION addition | test_strategy_builder_community_wiring.py | TestAC5BoundaryPreserved (4 tests) | GREEN guard — constraint guards; must stay GREEN post-impl |
+| AC-6 | empty community → response shape byte-equivalent to template-only | test_strategy_builder_community_wiring.py | TestAC6NoRegression (2 tests) | GREEN guard — shape guards; must stay GREEN post-impl |
+| Security | D-1 no leak; no LIVE_EXECUTION in code; no force_refresh abuse | test_strategy_builder_community_wiring.py | TestSecurityBoundary (4 tests) | GREEN guard — must stay GREEN post-impl |
+
+**RED count: 6 (AC-1 × 4, AC-3 × 2)**
+**GREEN guards: 21 (AC-2 × 5, AC-4 × 6, AC-5 × 4, AC-6 × 2, Security × 4)**
+**Total: 27 tests**
+
+Note on AC-4 guard tests: these test the EXISTING outer try/except D-1 contract. The
+AC-4 RED requirement ("community load raises → degrade template-only") is exercised
+via AC-3's RED tests — after impl adds the best-effort try/except, the AC-4 guard tests
+confirm the existing outer error handler is preserved. The `test_propose_strategies_still_called_when_community_load_raises`
+test specifically verifies the degrade-to-template-only behavior and currently passes because
+without community wiring the route always calls propose_strategies regardless; after impl
+with the try/except this test must remain passing.
 
 ## Behavioral Test Plan
-N/A — pure backend producer fix. No UI, no e2e spec. The testing surface is:
-- `_fetch_fundamentals_for_ticker(ticker)` — the single-ticker SEC EDGAR parser
-- `_build_fundamentals_section(ticker=None)` — the portfolio fan-out path
-No Flask routes, no templates, no JS changed.
+N/A — pure backend route change; no new UI components or navigation flows.
+The Strategy Builder SPA tab renders the same JSON response shape it always has.
+Visual/behavioral verification is the PM's live functional test gate:
+POST `/ai-advisor/strategy-builder/run` → confirm community candidates appear
+in batch when Atlas has results; confirm template-only response when Atlas
+empty/raises.
+
+## Questions for User
+None — plan is unambiguous; all referenced modules exist and are shipped.
 
 ---
 
 ## IMPLEMENTER INSTRUCTIONS (read this file ONLY — do NOT read the plan)
 
-You are `fv-implementer`. Your job: edit `ai_advisor.py` to make the 11 failing
-tests GREEN while keeping the 10 passing tests GREEN. Write MINIMUM code. No
-gold-plating. No new public functions. No new modules.
+You are `cw-implementer`. Your job: edit `app.py` ONLY to make the failing RED
+tests in `tests/ui/test_strategy_builder_community_wiring.py` GREEN while keeping
+the whole test tree GREEN. Write MINIMUM code. No gold-plating. No new modules.
+No new routes. No signature changes.
 
 ### THE ONE FILE TO EDIT
-`ai_advisor.py` — specifically the `_SEC_KEY_CONCEPTS` constant and the
-`_fetch_fundamentals_for_ticker` function's selection loop (~line 997-1047).
+`app.py` — specifically the `ai_advisor_strategy_builder_run()` handler.
+Find it by searching for `def ai_advisor_strategy_builder_run`.
 
-### TWO CHANGES REQUIRED
+### EXACT CHANGE REQUIRED
 
-**Change 1 — `_SEC_KEY_CONCEPTS` restructure (ai_advisor.py ~line 354)**
+The handler currently has a lazy import block and a `propose_strategies(...)` call.
+You must make THREE additions:
 
-Replace:
+**Addition 1 — extend the lazy import block (~line 3413-3418)**
+
+Find this existing block:
 ```python
-_SEC_KEY_CONCEPTS: dict[str, str] = {
-    "Revenues": "Revenue",
-    "NetIncomeLoss": "Net Income / Loss",
-    "Assets": "Total Assets",
-    "Liabilities": "Total Liabilities",
-    "StockholdersEquity": "Stockholders Equity",
-}
+    # Lazy imports keep strategy_builder_engine off the live 1-minute execution path (AC-X2).
+    from advisors.strategy_builder_engine import (  # noqa: PLC0415
+        Objective,
+        ScreenConfig,
+        propose_strategies,
+    )
 ```
 
-With a dict mapping each outer logical key → `(display_label, tuple_of_candidate_tags)`:
+Extend it to also import `community_candidate_infos` and `MAX_COMMUNITY_CANDIDATES_PER_RUN`,
+AND add a second lazy import for `load_community_strategies`. Result:
 ```python
-_SEC_KEY_CONCEPTS: dict[str, tuple[str, tuple[str, ...]]] = {
-    "Revenues":           ("Revenue",             ("RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet", "Revenues")),
-    "NetIncomeLoss":      ("Net Income / Loss",   ("NetIncomeLoss",)),
-    "Assets":             ("Total Assets",        ("Assets",)),
-    "Liabilities":        ("Total Liabilities",   ("Liabilities",)),
-    "StockholdersEquity": ("Stockholders Equity", ("StockholdersEquity",)),
-}
+    # Lazy imports keep strategy_builder_engine off the live 1-minute execution path (AC-X2).
+    from advisors.strategy_builder_engine import (  # noqa: PLC0415
+        MAX_COMMUNITY_CANDIDATES_PER_RUN,
+        Objective,
+        ScreenConfig,
+        community_candidate_infos,
+        propose_strategies,
+    )
+    from advisors.community_strats import load_community_strategies  # noqa: PLC0415
 ```
 
-KEEP the outer logical keys IDENTICAL (Revenues, NetIncomeLoss, Assets, Liabilities,
-StockholdersEquity) — these are the key_facts output keys consumed by the synthesis
-prompt and Overview render. Changing them would break AC-4.
+**Addition 2 — community load block (insert BEFORE the try: propose_strategies block)**
 
-**Change 2 — Selection loop rewrite in `_fetch_fundamentals_for_ticker` (~line 997-1047)**
-
-Replace the current loop that does `for concept, label in _SEC_KEY_CONCEPTS.items()`
-with a loop that:
-1. Unpacks `(label, candidate_tags)` from each value (not just `label`).
-2. For each logical concept, gathers candidate entries from ALL present candidate tags
-   in `us_gaap` (union across all tags, 10-K preferred via existing `form=="10-K"` filter,
-   falling back to all entries as today if no 10-K entries).
-3. Sorts the union by `(end desc, filed desc)` — NOT just `filed desc`.
-4. Takes `[0]` from the sorted union.
-5. Wraps the WHOLE concept block (not just the sort) in `try/except Exception` so
-   malformed inputs (non-list unit_entries, missing keys, etc.) never raise.
-
-The `accn`, `source-citation`, `seen_accessions`, and `break` (one unit type per concept)
-logic is PRESERVED — you are only changing the entry SELECTION within each concept block.
-
-### WHAT THE TESTS VERIFY (summary)
-
-**RED tests (must go GREEN after your fix):**
-- `TestModeB` (3 tests): filed-sort stable-sort bug; 3 entries share filed=2025-02-01,
-  differ in end; current code returns end=2022-12-31, correct is end=2024-12-31.
-- `TestModeA` (2 tests): MSFT Revenues tag frozen at 2010; RevenueFromContract...
-  tag has end=2025-06-30; current code never reaches it; after fix it wins.
-- `TestCrossTag` (2 tests): first-listed candidate tag is staler; SalesRevenueNet
-  (middle candidate) has freshest end; correct producer picks it.
-- `TestBothPaths` (2 tests): single-ticker path and portfolio fan-out path both
-  apply the corrected sort.
-- `TestNeverRaising::test_nonlist_unit_entries_does_not_raise` (1 test): current
-  code raises AttributeError when unit_entries is a dict (not a list) — the list
-  comprehension `[e for e in unit_entries if e.get("form") == ...]` blows up on
-  string iteration. Fix: widen the try/except to cover the whole concept block OR
-  add `if not isinstance(unit_entries, list): continue`.
-- `TestEdgeCases::test_10q_only_issuer_falls_back_to_all_entries_latest_end` (1 test):
-  10-Q-only issuer fallback path also has the filed-stable-sort bug; the fix to
-  sort by end descending also fixes the fallback.
-
-**GREEN tests (regression guards — must stay GREEN):**
-- `TestPayloadShape` (3 tests): key_facts outer keys unchanged; per-entry fields
-  unchanged; sources citation shape unchanged.
-- `TestHonestDegradation` (2 tests): missing concept → omitted; D-1 error format.
-- `TestNeverRaising` (4 of 5 tests): missing units, missing end, missing filed,
-  empty us-gaap all degrade without raising.
-- `TestEdgeCases::test_end_tie_uses_filed_descending_as_tiebreak`: same end → most
-  recently filed wins (secondary tiebreak preserved by new `(end, filed)` tuple key).
-
-### RIDE-ALONG (trivial — NO behavioral change)
-C2-COMMENT-1: correct the stale comment at ai_advisor.py:1710 ("Three independent
-layers" → four gates; add the locked-var gate). One-line comment change only.
-
-### HOW TO RUN THE GATE
+Find the line `try:` that wraps `propose_strategies`. BEFORE it, insert:
+```python
+    # Load community candidates — best-effort; never block template-only run (AC-4).
+    community_candidates: list = []
+    try:
+        _community = load_community_strategies(force_refresh=False)
+        community_candidates = community_candidate_infos(
+            _community, max_candidates=MAX_COMMUNITY_CANDIDATES_PER_RUN
+        )
+    except Exception as exc:
+        _daemon_log.warning("community-strats load skipped: %s", type(exc).__name__)
+        community_candidates = []
 ```
-# From repo root (worktree absolute path):
-cd C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\fundamentals-vintage-team
-python -m pytest tests/ai_advisor/test_fundamentals_vintage.py -v -p no:xdist --override-ini="addopts="
-# Target: 0 failed, 21 passed (from /tmp to bypass pyproject.toml xdist)
+
+**Addition 3 — pass community_candidates into propose_strategies call**
+
+Find the existing `propose_strategies(...)` call and add `community_candidates=community_candidates`:
+```python
+        run = propose_strategies(
+            objective=objective,
+            universe=universe,
+            screen_config=ScreenConfig(),
+            live_returns=[],
+            symphony_id=symphony_id,
+            community_candidates=community_candidates,
+        )
 ```
-When you run from /tmp:
+
+That is the complete change. NO other files. NO new routes. NO allowlist changes.
+
+### PATCH TARGET EXPLANATION (for tests)
+
+The tests mock:
+- `advisors.community_strats.load_community_strategies` — the module where it lives
+- `advisors.strategy_builder_engine.community_candidate_infos` — same
+- `advisors.strategy_builder_engine.propose_strategies` — same
+
+These patch targets work because the lazy `from X import Y` inside the handler
+re-evaluates on every call, reaching back to the module's namespace. The tests
+intercept at the module level, which is the correct seam.
+
+### HOW TO RUN THE TARGET TESTS
+
+```bash
+cd /tmp && python -m pytest "C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\community-wiring-team\tests\ui\test_strategy_builder_community_wiring.py" -v -p no:xdist --override-ini="addopts="
 ```
-cd /tmp && python -m pytest C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\fundamentals-vintage-team\tests\ai_advisor\test_fundamentals_vintage.py -v -p no:xdist --override-ini="addopts="
+
+Target: all tests PASS (currently RED).
+
+### ALSO RUN TO CONFIRM NO REGRESSION
+
+```bash
+cd /tmp && python -m pytest "C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\community-wiring-team\tests\ui" "C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\community-wiring-team\tests\advisors" -v -p no:xdist --override-ini="addopts=" -n0
 ```
 
 ### AFTER GREEN
-Commit path-scoped (NOT git add -A):
-```
-git -C "C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\fundamentals-vintage-team" add ai_advisor.py
-git -C "C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\fundamentals-vintage-team" commit -m "fix(fundamentals): Mode A + Mode B vintage defects — end-sort + multi-tag union"
+
+Commit path-scoped (NEVER `git add -A`):
+```bash
+git -C "C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\community-wiring-team" add app.py
+git -C "C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\community-wiring-team" commit -m "fix(community-wiring): wire community candidates into strategy-builder route (HF-1)"
 ```
 
-Then SendMessage `fv-test-writer` with: "GREEN — all 21 tests pass on <SHA>. Ready for review."
+Then SendMessage `cw-test-writer` with: "GREEN — all tests pass on <SHA>. Ready for review."
 
 ---
 
-## A/C Coverage Matrix
-
-| A/C | Description | Test Class | Test Name | Status |
-|-----|-------------|-----------|-----------|--------|
-| AC-1 | Mode B: latest end from bundled comparatives | TestModeB | test_selects_latest_end_not_oldest_from_shared_filed_date | RED |
-| AC-1 | Mode B: value at max end | TestModeB | test_selected_value_matches_fixture_entry_at_max_end | RED |
-| AC-1 | Mode B: all 5 concepts (JPM-control) | TestModeB | test_jpm_control_all_five_concepts_select_latest_end | RED |
-| AC-2 | Mode A: migrated tag reached | TestModeA | test_reaches_migrated_tag_when_legacy_revenues_tag_is_frozen | RED |
-| AC-2 | Mode A: selected end is from migrated tag | TestModeA | test_selected_end_is_migrated_not_legacy_frozen | RED |
-| AC-3 | Cross-tag: later-listed candidate wins when freshest | TestCrossTag | test_later_listed_candidate_tag_wins_when_freshest | RED |
-| AC-3 | Cross-tag: union across all candidate tags | TestCrossTag | test_union_covers_all_candidate_tags | RED |
-| AC-4 | Payload: outer key_facts keys exact current set | TestPayloadShape | test_key_facts_outer_keys_exact_current_set | GREEN (guard) |
-| AC-4 | Payload: per-entry field set exact | TestPayloadShape | test_each_key_facts_entry_has_exact_field_set | GREEN (guard) |
-| AC-4 | Payload: sources citation shape | TestPayloadShape | test_sources_citation_structure_preserved | GREEN (guard) |
-| AC-5 | Honest degradation: absent concept omitted | TestHonestDegradation | test_concept_absent_when_no_candidate_tag_present | GREEN (guard) |
-| AC-5 | Honest degradation: D-1 fetch-failure | TestHonestDegradation | test_fetch_failure_returns_available_false_d1_reason | GREEN (guard) |
-| AC-6 | Both paths: single-ticker corrected | TestBothPaths | test_single_ticker_path_applies_corrected_end_sort | RED |
-| AC-6 | Both paths: portfolio fan-out corrected | TestBothPaths | test_portfolio_fanout_path_applies_corrected_end_sort | RED |
-| AC-7 | Never-raising: missing units key | TestNeverRaising | test_missing_units_key_does_not_raise | GREEN (guard) |
-| AC-7 | Never-raising: non-list unit entries | TestNeverRaising | test_nonlist_unit_entries_does_not_raise | RED |
-| AC-7 | Never-raising: missing end | TestNeverRaising | test_entry_missing_end_does_not_raise | GREEN (guard) |
-| AC-7 | Never-raising: missing filed | TestNeverRaising | test_entry_missing_filed_does_not_raise | GREEN (guard) |
-| AC-7 | Never-raising: empty us-gaap | TestNeverRaising | test_empty_us_gaap_returns_available_false_not_raise | GREEN (guard) |
-| EDGE | 10-Q-only fallback latest end | TestEdgeCases | test_10q_only_issuer_falls_back_to_all_entries_latest_end | RED |
-| EDGE | End-tie: filed tiebreak | TestEdgeCases | test_end_tie_uses_filed_descending_as_tiebreak | GREEN (guard) |
-
-## Import Stubs Created
-None. `ai_advisor.py` already exists. No new modules introduced.
-
-## Questions for User
-None. The plan is fully specified.
-
-## Status Log
-- [2026-06-17] test-writer: Starting RED phase
-- [2026-06-17] test-writer: RED complete — 21 tests (11 failing on assertions, 10 passing regression guards), 0 stubs created. All failures are on meaningful assertions, not import/syntax errors.
-- [2026-06-17] implementer: GREEN complete — 21/21 tests passing, 0 test bugs documented. Typecheck N/A (Python, no separate step). Lint deferred to /tdd-finalize.
-- [2026-06-17] test-writer: APPROVED — independently confirmed 21/21 on c72bd3a. Implementation diff reviewed: _SEC_KEY_CONCEPTS restructure correct, selection loop union+sort correct, try/except scope correct, C2-COMMENT-1 cosmetic only. No gaps found against AC-1..AC-7. All A/C GREEN.
-
 ## Test File Issues (for test-writer to fix)
-None.
+None yet.
 
 ## Disputed Tests
 None.
 
-## Implementation Notes
-- Change 1 (_SEC_KEY_CONCEPTS): restructured from `dict[str, str]` to `dict[str, tuple[str, tuple[str, ...]]]`. Revenues now carries three candidate tags in order: RevenueFromContractWithCustomerExcludingAssessedTax, SalesRevenueNet, Revenues. Other 4 concepts remain single-tag tuples. Outer logical keys are IDENTICAL to preserve key_facts output contract.
-- Change 2 (selection loop): replaced the single `us_gaap.get(concept)` lookup with a union across ALL candidate_tags. The try/except now wraps the entire concept block (not just the sort), which fixes the nonlist_unit_entries AttributeError (AC-7). The sort key is now `(end desc, filed desc)` tuple — end is primary so the freshest reporting period wins regardless of filing recency. The `accn`, `seen_accessions`, `sources`, and `break` logic are byte-preserved (break is gone — the new structure has no inner `break` since we collect across all tags then take `entries_sorted[0]`; the "one unit type per concept" invariant is satisfied by taking the first sorted entry).
-- Ride-along (C2-COMMENT-1): updated "Three independent layers" → "Four independent layers" at `ai_advisor.py:1738` and added Gate-4 description for the locked-var gate.
-- No new modules, no new public functions, no execution-path changes, no credential changes.
+## Status Log
+- [2026-06-17] test-writer: Starting RED phase
+- [2026-06-17] test-writer: RED complete — 27 tests (6 failing RED on assertions, 21 passing GREEN guards), 0 stubs created. Fixed one test that fired on docstring mention of LIVE_EXECUTION (used AST walk to check executable code only). All 6 RED failures are correct: load_community_strategies never called (AC-3), community_candidates kwarg absent from propose_strategies call (AC-1).
