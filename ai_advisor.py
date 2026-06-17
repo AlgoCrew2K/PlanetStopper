@@ -55,9 +55,9 @@ _OPTUNA_SEARCH_SPACE_KEYS = frozenset(
 # Model + SDK configuration.
 # ---------------------------------------------------------------------------
 
+# Model is read at call time: os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")
+# — see the model= argument in request_suggestions below.
 # Opus 4.8 — analytical reasoning over quant data (claude-api-mechanics.md §2).
-# Reads from ADVISOR_SYNTHESIS_MODEL env var; default = claude-opus-4-8.
-_CLAUDE_MODEL = os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")
 _MAX_TOKENS = 2048
 # Explicit client-side timeout — never rely on the SDK/urllib3 default.
 _REQUEST_TIMEOUT_SECONDS = 30.0

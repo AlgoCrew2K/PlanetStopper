@@ -207,9 +207,9 @@ logger = logging.getLogger(__name__)
 # Model + SDK configuration
 # ---------------------------------------------------------------------------
 
-# Re-use the same model as the config advisor for consistency.
-# Reads from ADVISOR_SYNTHESIS_MODEL env var; default = claude-opus-4-8.
-_CHAT_MODEL = os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")
+# Model is read at call time: os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")
+# — see the model= argument in explain_artifact below.
+# Re-uses the same model as the config advisor for consistency.
 
 # Token budget for chat responses — longer than config suggestions because we
 # are explaining multi-paragraph reasoning, not producing a structured list.

@@ -512,16 +512,22 @@ class TestAdvisorChatModelEnvVar:
 class TestDefaultModelIsOpus:
     """AC-2: the production default is claude-opus-4-8, not any other model.
 
-    These tests guard against the default silently drifting to an older or
-    cheaper model (the original stale draft had claude-opus-4-5).
+    Guards against the default silently drifting to an older or cheaper model
+    (the original stale draft had claude-opus-4-5).
 
-    RED intent: current defaults are claude-haiku-4-5-20251001 (lens_pipeline)
-    and claude-opus-4-7 (ai_advisor, advisor_chat) — neither matches the
-    required claude-opus-4-8.
+    ai_advisor and advisor_chat have no module-level model constants — the default
+    is proven by the call-site wiring tests in TestAiAdvisorModelEnvVar and
+    TestAdvisorChatModelEnvVar (test_env_var_unset_uses_opus_default in each),
+    which assert model_holder[0] == _EXPECTED_DEFAULT with the env var unset.
+    lens_pipeline is covered here via the SDK call path (it has no constant either).
     """
 
     def test_lens_pipeline_default_is_opus_4_8(self, monkeypatch):
-        """The lens pipeline synthesis default must resolve to claude-opus-4-8."""
+        """The lens pipeline synthesis default must resolve to claude-opus-4-8.
+
+        Exercises the actual call path (model_holder captures model= kwarg)
+        with ADVISOR_SYNTHESIS_MODEL unset — authoritative SDK-level guard.
+        """
         monkeypatch.delenv(_ENV_VAR, raising=False)
 
         if "advisors.lens_pipeline" in sys.modules:
@@ -547,45 +553,6 @@ class TestDefaultModelIsOpus:
         assert model_holder[0] == _EXPECTED_DEFAULT, (
             f"lens_pipeline default model must be {_EXPECTED_DEFAULT!r}; "
             f"got {model_holder[0]!r}"
-        )
-
-    def test_ai_advisor_default_is_opus_4_8(self, monkeypatch):
-        """ai_advisor._CLAUDE_MODEL (or equivalent env-var default) must be claude-opus-4-8.
-
-        The call-time wiring test (TestAiAdvisorModelEnvVar::test_env_var_unset_uses_opus_default)
-        is the authoritative guard; this constant check is a lightweight supplementary guard
-        confirming the default value is correct at module level when the env var is absent.
-        Note: the constant is still meaningful after the fix — it is the env-var default
-        embedded in the module, even though the real read happens at call time.
-        """
-        monkeypatch.delenv(_ENV_VAR, raising=False)
-
-        import ai_advisor
-
-        model_constant = getattr(ai_advisor, "_CLAUDE_MODEL", None)
-        assert model_constant == _EXPECTED_DEFAULT, (
-            f"ai_advisor._CLAUDE_MODEL must be {_EXPECTED_DEFAULT!r} when {_ENV_VAR!r} "
-            f"is unset. Got {model_constant!r}. "
-            f"Fix: ensure the default fallback in os.environ.get({_ENV_VAR!r}, ...) "
-            f"is {_EXPECTED_DEFAULT!r}."
-        )
-
-    def test_advisor_chat_default_is_opus_4_8(self, monkeypatch):
-        """advisors/advisor_chat._CHAT_MODEL (or equivalent env-var default) must be claude-opus-4-8.
-
-        Supplementary constant check — see TestAdvisorChatModelEnvVar for the authoritative
-        call-time wiring test.
-        """
-        monkeypatch.delenv(_ENV_VAR, raising=False)
-
-        from advisors import advisor_chat
-
-        model_constant = getattr(advisor_chat, "_CHAT_MODEL", None)
-        assert model_constant == _EXPECTED_DEFAULT, (
-            f"advisors/advisor_chat._CHAT_MODEL must be {_EXPECTED_DEFAULT!r} when "
-            f"{_ENV_VAR!r} is unset. Got {model_constant!r}. "
-            f"Fix: ensure the default fallback in os.environ.get({_ENV_VAR!r}, ...) "
-            f"is {_EXPECTED_DEFAULT!r}."
         )
 
 
