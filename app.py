@@ -3412,10 +3412,13 @@ def ai_advisor_strategy_builder_run():
     """
     # Lazy imports keep strategy_builder_engine off the live 1-minute execution path (AC-X2).
     from advisors.strategy_builder_engine import (  # noqa: PLC0415
+        MAX_COMMUNITY_CANDIDATES_PER_RUN,
         Objective,
         ScreenConfig,
+        community_candidate_infos,
         propose_strategies,
     )
+    from advisors.community_strats import load_community_strategies  # noqa: PLC0415
 
     body = request.get_json(silent=True) or {}
     objective_str = str(body.get("objective", "diversify")).strip()
@@ -3433,6 +3436,17 @@ def ai_advisor_strategy_builder_run():
     except ValueError:
         objective = Objective.diversify
 
+    # Load community candidates — best-effort; never block template-only run (AC-4).
+    community_candidates: list = []
+    try:
+        _community = load_community_strategies(force_refresh=False)
+        community_candidates = community_candidate_infos(
+            _community, max_candidates=MAX_COMMUNITY_CANDIDATES_PER_RUN
+        )
+    except Exception as exc:
+        _daemon_log.warning("community-strats load skipped: %s", type(exc).__name__)
+        community_candidates = []
+
     try:
         run = propose_strategies(
             objective=objective,
@@ -3440,6 +3454,7 @@ def ai_advisor_strategy_builder_run():
             screen_config=ScreenConfig(),
             live_returns=[],
             symphony_id=symphony_id,
+            community_candidates=community_candidates,
         )
     except Exception as exc:
         _daemon_log.error("ai_advisor_strategy_builder_run failed: %s", exc, exc_info=True)
