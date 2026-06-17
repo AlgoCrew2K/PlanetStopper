@@ -39,3 +39,20 @@ file and the env var default in each source module.
 - [2026-06-17] sm-test-writer (quant-test-writer, LEAD): Starting RED phase for advisor-synthesis-model-config
 - [2026-06-17] sm-test-writer: RED complete — 22 tests (all failing on assertions), 0 import errors, 0 stubs created. HEAD committed to feat/advisor-synthesis-model-config.
 - [2026-06-17] sm-implementer (composer-alpaca-integration): GREEN complete — 20/20 tests passing (test file collected 20, not 22). Changes: advisors/lens_pipeline.py (add `import os`, replace hardcoded haiku literal), ai_advisor.py (replace _CLAUDE_MODEL literal), advisors/advisor_chat.py (add `import os`, replace _CHAT_MODEL literal). AC-3 fence-stripping logic untouched. HEAD = 00bfe43.
+- [2026-06-17] c1fix-test-writer (quant-test-writer, LEAD): c1fix RED — diagnosed full-suite isolation bug. Root cause: test_chat_engine.py::test_advisor_chat_does_not_import_alpha_bot_execution pops+reimports advisors.advisor_chat, leaving the package attribute pointing at a stale copy (import-time _CHAT_MODEL frozen to default). importlib.reload in the wiring test reloads sys.modules["advisors.advisor_chat"] (original module M1) but `from advisors import advisor_chat` returns M2 (stale). Fix direction: replace `model=_CHAT_MODEL` and `model=_CLAUDE_MODEL` with inline os.environ.get(...) at call sites. Committed at 8500635 — 4 RED / 18 GREEN / 0 errors. Handing off to c1fix-implementer.
+
+## c1fix RED Summary (HEAD=8500635)
+- 22 tests collected
+- 4 RED (all require call-time env reads):
+  - TestAiAdvisorModelEnvVar::test_env_var_set_overrides_claude_model
+  - TestAdvisorChatModelEnvVar::test_env_var_set_overrides_chat_model
+  - TestSuiteOrderingRegression::test_advisor_chat_call_time_read_survives_stale_package_attribute
+  - TestSuiteOrderingRegression::test_ai_advisor_call_time_read_survives_stale_module_constant
+- 18 GREEN (AC-3 fence-stripping, default guards, lens_pipeline, no-real-LLM, unset-default tests)
+- 0 errors / 0 import errors
+
+## c1fix GREEN Contract
+implementer must change TWO call sites only — no other files:
+  1. ai_advisor.py: replace `model=_CLAUDE_MODEL` with `model=os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` at the messages.parse call site
+  2. advisors/advisor_chat.py: replace `model=_CHAT_MODEL` with `model=os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` at the messages.create call site
+The module-level constants (_CLAUDE_MODEL, _CHAT_MODEL) MAY remain (the constant-check tests in TestDefaultModelIsOpus still reference them), but they must NOT be the value used in the actual SDK call.
