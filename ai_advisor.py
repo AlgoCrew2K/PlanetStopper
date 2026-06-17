@@ -350,13 +350,27 @@ _SEC_TICKERS_URL: str = "https://data.sec.gov/submissions/{cik_padded}.json"
 _SEC_COMPANYFACTS_URL: str = "https://data.sec.gov/api/xbrl/companyfacts/{cik_padded}.json"
 _SEC_TICKERS_JSON_URL: str = "https://data.sec.gov/files/company_tickers.json"
 
-# GAAP concepts extracted for the fundamentals payload (concept → label).
-_SEC_KEY_CONCEPTS: dict[str, str] = {
-    "Revenues": "Revenue",
-    "NetIncomeLoss": "Net Income / Loss",
-    "Assets": "Total Assets",
-    "Liabilities": "Total Liabilities",
-    "StockholdersEquity": "Stockholders Equity",
+# GAAP concepts extracted for the fundamentals payload.
+# Each entry maps a logical concept key → (display_label, ordered_candidate_tags).
+# Candidate tags are tried as a union: all present tags' entries are merged and the
+# entry with the most-recent `end` (filed desc as tiebreak) wins.  This handles XBRL
+# concept deprecations (e.g. Revenues → RevenueFromContractWithCustomerExcludingAssessedTax)
+# without losing the freshest data when a company has partially migrated between tags.
+# Outer logical keys are STABLE — they are the key_facts output keys consumed by the
+# synthesis prompt and the Overview render.
+_SEC_KEY_CONCEPTS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "Revenues": (
+        "Revenue",
+        (
+            "RevenueFromContractWithCustomerExcludingAssessedTax",
+            "SalesRevenueNet",
+            "Revenues",
+        ),
+    ),
+    "NetIncomeLoss":      ("Net Income / Loss",   ("NetIncomeLoss",)),
+    "Assets":             ("Total Assets",        ("Assets",)),
+    "Liabilities":        ("Total Liabilities",   ("Liabilities",)),
+    "StockholdersEquity": ("Stockholders Equity", ("StockholdersEquity",)),
 }
 
 # Proxy company-ticker floor for the portfolio fan-out path.  These are large-cap
@@ -994,29 +1008,41 @@ def _fetch_fundamentals_for_ticker(ticker: str) -> dict:
     sources: list[dict] = []
     seen_accessions: set[str] = set()
 
-    for concept, label in _SEC_KEY_CONCEPTS.items():
-        concept_data = us_gaap.get(concept)
-        if not concept_data:
-            continue
-        # Walk the units (usually USD) for the most recent annual filing.
-        for unit_type, unit_entries in concept_data.get("units", {}).items():
-            if not unit_entries:
+    for concept, (label, candidate_tags) in _SEC_KEY_CONCEPTS.items():
+        try:
+            # Union entries across ALL candidate tags present in us-gaap.
+            # This handles XBRL concept deprecations: a company may have data under
+            # an old tag (e.g. Revenues) AND a newer tag (e.g. RevenueFromContract…);
+            # we union them and pick the entry with the freshest `end` date.
+            all_tag_entries: list[tuple[str, dict]] = []  # (unit_type, entry)
+            for tag in candidate_tags:
+                tag_data = us_gaap.get(tag)
+                if not tag_data:
+                    continue
+                # Walk the units (usually USD) for the most recent annual filing.
+                for unit_type, unit_entries in tag_data.get("units", {}).items():
+                    if not isinstance(unit_entries, list) or not unit_entries:
+                        continue
+                    # Prefer 10-K entries; fall back to all entries when none present.
+                    annual_entries = [e for e in unit_entries if e.get("form") == "10-K"]
+                    entries_to_check = annual_entries or unit_entries
+                    for e in entries_to_check:
+                        all_tag_entries.append((unit_type, e))
+
+            if not all_tag_entries:
                 continue
-            # Pick the most recent 10-K entry (prefer form == "10-K").
-            annual_entries = [e for e in unit_entries if e.get("form") == "10-K"]
-            entries_to_check = annual_entries or unit_entries
-            # Sort by filed date descending; take most recent.
-            try:
-                entries_sorted = sorted(
-                    entries_to_check,
-                    key=lambda e: e.get("filed", "") or "",
-                    reverse=True,
-                )
-            except Exception:
-                entries_sorted = entries_to_check
-            if not entries_sorted:
-                continue
-            latest_entry = entries_sorted[0]
+
+            # Sort the union by (end desc, filed desc) — end is the primary key so that
+            # the most-recently-reported period wins regardless of filing order.
+            entries_sorted = sorted(
+                all_tag_entries,
+                key=lambda te: (
+                    te[1].get("end", "") or "",
+                    te[1].get("filed", "") or "",
+                ),
+                reverse=True,
+            )
+            unit_type, latest_entry = entries_sorted[0]
             key_facts[concept] = {
                 "label": label,
                 "value": latest_entry.get("val"),
@@ -1044,7 +1070,9 @@ def _fetch_fundamentals_for_ticker(ticker: str) -> dict:
                 )
                 if citation is not None:
                     sources.append(citation)
-            break  # one unit type per concept is sufficient
+        except Exception:
+            # Never raise on a malformed concept block; skip and continue to next concept.
+            continue
 
     if not key_facts:
         return {
@@ -1707,7 +1735,7 @@ def request_suggestions(
 # ---------------------------------------------------------------------------
 # C2 — safety gates on the suggestions Claude emits.
 #
-# Three independent layers, defense-in-depth on top of C1's context allowlist:
+# Four independent layers, defense-in-depth on top of C1's context allowlist:
 #   1. enforce_suggestion_allowlist — structural rejection of any config_key
 #      Claude emits that is not one of the 9 suggestible params (hallucinated
 #      keys, credentials, LIVE_EXECUTION, methodology knobs).
@@ -1717,6 +1745,8 @@ def request_suggestions(
 #      self-classification.
 #   3. revalidate_suggestion_oos — routes an accepted suggestion through the
 #      autotuner's run_simulation OOS gate before it can reach live config.
+#   4. enforce_locked_var_gate — rejects any suggestion that touches a variable
+#      locked by the current theory bundle (NN1 spec-freeze enforcement).
 # ---------------------------------------------------------------------------
 
 # The 7-item suggestible allowlist: the 6 Optuna search-space keys plus the one

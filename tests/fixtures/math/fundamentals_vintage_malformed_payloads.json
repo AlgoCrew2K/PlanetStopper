@@ -1,0 +1,117 @@
+{
+  "_provenance": "Schema-derived fixture — F5 RED phase (2026-06-17). AC-7: malformed/partial companyfacts payloads that must NEVER cause an exception. Each entry in 'cases' has a 'label' (describes the malformation) and 'companyfacts' (the partial payload). The producer must degrade honestly — return available=False or omit the concept — but never raise.",
+  "cases": [
+    {
+      "label": "missing_units_key",
+      "_description": "concept data dict has no 'units' key at all",
+      "companyfacts": {
+        "cik": 9999991,
+        "entityName": "MalformedCorp A",
+        "facts": {
+          "us-gaap": {
+            "Revenues": {
+              "label": "Revenues"
+            }
+          }
+        }
+      }
+    },
+    {
+      "label": "nonlist_unit_entries",
+      "_description": "units value is a dict instead of a list (not the SEC spec but must not raise)",
+      "companyfacts": {
+        "cik": 9999992,
+        "entityName": "MalformedCorp B",
+        "facts": {
+          "us-gaap": {
+            "Revenues": {
+              "label": "Revenues",
+              "units": {
+                "USD": {"end": "2024-12-31", "val": 123456, "form": "10-K", "filed": "2025-01-01"}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "label": "entry_missing_end",
+      "_description": "unit entry dict has no 'end' key — should be treated as oldest (empty string sort key), never raise",
+      "companyfacts": {
+        "cik": 9999993,
+        "entityName": "MalformedCorp C",
+        "facts": {
+          "us-gaap": {
+            "Revenues": {
+              "label": "Revenues",
+              "units": {
+                "USD": [
+                  {
+                    "accn": "0009999993-24-000001",
+                    "val": 111111,
+                    "form": "10-K",
+                    "filed": "2024-11-01"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "label": "entry_missing_filed",
+      "_description": "unit entry dict has 'end' but no 'filed' key — secondary sort key missing, must not raise",
+      "companyfacts": {
+        "cik": 9999994,
+        "entityName": "MalformedCorp D",
+        "facts": {
+          "us-gaap": {
+            "Revenues": {
+              "label": "Revenues",
+              "units": {
+                "USD": [
+                  {
+                    "accn": "0009999994-24-000001",
+                    "end": "2024-09-30",
+                    "val": 222222,
+                    "form": "10-K"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "label": "empty_us_gaap",
+      "_description": "facts.us-gaap is an empty dict — no recognized concepts at all, must return available=False",
+      "companyfacts": {
+        "cik": 9999995,
+        "entityName": "MalformedCorp E",
+        "facts": {
+          "us-gaap": {}
+        }
+      }
+    },
+    {
+      "label": "empty_units_list",
+      "_description": "concept present but its USD units list is empty — concept must be omitted, no raise",
+      "companyfacts": {
+        "cik": 9999996,
+        "entityName": "MalformedCorp F",
+        "facts": {
+          "us-gaap": {
+            "Revenues": {
+              "label": "Revenues",
+              "units": {
+                "USD": []
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

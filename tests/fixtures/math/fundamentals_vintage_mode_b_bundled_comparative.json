@@ -1,0 +1,191 @@
+{
+  "_provenance": "Schema-derived fixture — F5 RED phase (2026-06-17). Reproduces the Mode B defect: a single 10-K filing bundles comparative prior-period entries that all share ONE filed date but have DIFFERENT end dates. The current buggy sort-by-filed descending is stable, so Python's stable sort returns the OLDEST end first. The correct sort is by end descending (latest reporting period). Values are test sentinels — NOT hardcoded producer outputs. Each concept has entries with DISTINCT val sentinels so the test can verify WHICH entry was returned without hardcoding the number.",
+  "_mode_b_defect": "Python's sorted(..., key=lambda e: e.get('filed','')) is stable. When all entries share one filed date, the original list order is preserved — and SEC EDGAR companyfacts lists entries in chronological order (oldest first). So sorted()[0] after a filed-descending sort returns the OLDEST end, not the newest.",
+  "_fixture_note": "filed date '2025-02-01' is IDENTICAL for ALL three entries per concept. end dates differ: '2022-12-31' (oldest), '2023-12-31', '2024-12-31' (newest/correct). val sentinels are prime-adjacent integers: oldest=1000001, middle=2000003, newest=3000007 — chosen to be unambiguous without being realistic financial figures.",
+  "companyfacts": {
+    "cik": 19617,
+    "entityName": "JPMorgan Chase & Co.",
+    "facts": {
+      "us-gaap": {
+        "Revenues": {
+          "label": "Revenues",
+          "description": "Amount of revenue recognized from goods sold, services rendered, etc.",
+          "units": {
+            "USD": [
+              {
+                "accn": "0000019617-25-000001",
+                "end": "2022-12-31",
+                "val": 1000001,
+                "form": "10-K",
+                "filed": "2025-02-01",
+                "frame": "CY2022"
+              },
+              {
+                "accn": "0000019617-25-000001",
+                "end": "2023-12-31",
+                "val": 2000003,
+                "form": "10-K",
+                "filed": "2025-02-01",
+                "frame": "CY2023"
+              },
+              {
+                "accn": "0000019617-25-000001",
+                "end": "2024-12-31",
+                "val": 3000007,
+                "form": "10-K",
+                "filed": "2025-02-01",
+                "frame": "CY2024"
+              }
+            ]
+          }
+        },
+        "NetIncomeLoss": {
+          "label": "Net Income (Loss)",
+          "description": "The portion of profit or loss for the period.",
+          "units": {
+            "USD": [
+              {
+                "accn": "0000019617-25-000001",
+                "end": "2022-12-31",
+                "val": 1000011,
+                "form": "10-K",
+                "filed": "2025-02-01",
+                "frame": "CY2022"
+              },
+              {
+                "accn": "0000019617-25-000001",
+                "end": "2023-12-31",
+                "val": 2000013,
+                "form": "10-K",
+                "filed": "2025-02-01",
+                "frame": "CY2023"
+              },
+              {
+                "accn": "0000019617-25-000001",
+                "end": "2024-12-31",
+                "val": 3000017,
+                "form": "10-K",
+                "filed": "2025-02-01",
+                "frame": "CY2024"
+              }
+            ]
+          }
+        },
+        "Assets": {
+          "label": "Assets",
+          "description": "Sum of the carrying amounts as of the balance sheet date of all assets.",
+          "units": {
+            "USD": [
+              {
+                "accn": "0000019617-25-000001",
+                "end": "2022-12-31",
+                "val": 1000021,
+                "form": "10-K",
+                "filed": "2025-02-01",
+                "frame": "CY2022"
+              },
+              {
+                "accn": "0000019617-25-000001",
+                "end": "2023-12-31",
+                "val": 2000023,
+                "form": "10-K",
+                "filed": "2025-02-01",
+                "frame": "CY2023"
+              },
+              {
+                "accn": "0000019617-25-000001",
+                "end": "2024-12-31",
+                "val": 3000029,
+                "form": "10-K",
+                "filed": "2025-02-01",
+                "frame": "CY2024"
+              }
+            ]
+          }
+        },
+        "Liabilities": {
+          "label": "Liabilities",
+          "description": "Sum of the carrying amounts as of the balance sheet date of all liabilities.",
+          "units": {
+            "USD": [
+              {
+                "accn": "0000019617-25-000001",
+                "end": "2022-12-31",
+                "val": 1000031,
+                "form": "10-K",
+                "filed": "2025-02-01",
+                "frame": "CY2022"
+              },
+              {
+                "accn": "0000019617-25-000001",
+                "end": "2023-12-31",
+                "val": 2000033,
+                "form": "10-K",
+                "filed": "2025-02-01",
+                "frame": "CY2023"
+              },
+              {
+                "accn": "0000019617-25-000001",
+                "end": "2024-12-31",
+                "val": 3000037,
+                "form": "10-K",
+                "filed": "2025-02-01",
+                "frame": "CY2024"
+              }
+            ]
+          }
+        },
+        "StockholdersEquity": {
+          "label": "Stockholders' Equity",
+          "description": "Total of all stockholders' equity (deficit) items.",
+          "units": {
+            "USD": [
+              {
+                "accn": "0000019617-25-000001",
+                "end": "2022-12-31",
+                "val": 1000041,
+                "form": "10-K",
+                "filed": "2025-02-01",
+                "frame": "CY2022"
+              },
+              {
+                "accn": "0000019617-25-000001",
+                "end": "2023-12-31",
+                "val": 2000043,
+                "form": "10-K",
+                "filed": "2025-02-01",
+                "frame": "CY2023"
+              },
+              {
+                "accn": "0000019617-25-000001",
+                "end": "2024-12-31",
+                "val": 3000047,
+                "form": "10-K",
+                "filed": "2025-02-01",
+                "frame": "CY2024"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "_expected_max_ends": {
+    "Revenues": "2024-12-31",
+    "NetIncomeLoss": "2024-12-31",
+    "Assets": "2024-12-31",
+    "Liabilities": "2024-12-31",
+    "StockholdersEquity": "2024-12-31"
+  },
+  "_expected_val_at_max_end": {
+    "Revenues": 3000007,
+    "NetIncomeLoss": 3000017,
+    "Assets": 3000029,
+    "Liabilities": 3000037,
+    "StockholdersEquity": 3000047
+  },
+  "_buggy_val_at_filed_sort": {
+    "Revenues": 3000007,
+    "_note": "All entries share the same filed date so the buggy filed-sort is stable. Python's sorted() preserves original list order on equal keys. SEC EDGAR lists entries chronologically (oldest first) so sorted()[0] after stable filed-desc sort returns the FIRST original element = oldest end. The buggy result is 1000001 (end=2022-12-31), not 3000007."
+  }
+}

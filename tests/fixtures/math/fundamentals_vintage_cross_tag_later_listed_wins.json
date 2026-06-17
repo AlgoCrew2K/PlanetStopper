@@ -1,0 +1,83 @@
+{
+  "_provenance": "Schema-derived fixture — F5 RED phase (2026-06-17). Tests AC-3: when MULTIPLE candidate tags for one logical concept are present, the producer picks the entry with the most recent end ACROSS ALL present candidate tags — not merely the first tag in the list. The fixture has three revenue tags present with DIFFERENT freshness. The FIRST-listed candidate tag (RevenueFromContractWithCustomerExcludingAssessedTax) is intentionally set STALER than the LAST-listed tag (SalesRevenueNet) to confirm the union+max-end logic covers all tags.",
+  "_ac3_scenario": "The planned _SEC_KEY_CONCEPTS for 'Revenues' lists candidate tags in order: (RevenueFromContractWithCustomerExcludingAssessedTax, SalesRevenueNet, Revenues). In this fixture, RevenueFromContractWithCustomerExcludingAssessedTax has end=2021-12-31 (stale), Revenues has end=2020-12-31 (staler), but SalesRevenueNet (the MIDDLE candidate) has end=2024-12-31 (freshest). The correct producer must union all and pick SalesRevenueNet's 2024 entry.",
+  "companyfacts": {
+    "cik": 1234567,
+    "entityName": "CrossTag Test Corp",
+    "facts": {
+      "us-gaap": {
+        "Revenues": {
+          "label": "Revenues",
+          "description": "Aggregate revenue.",
+          "units": {
+            "USD": [
+              {
+                "accn": "0001234567-21-000001",
+                "end": "2020-12-31",
+                "val": 9000001,
+                "form": "10-K",
+                "filed": "2021-02-28",
+                "frame": "CY2020"
+              }
+            ]
+          }
+        },
+        "SalesRevenueNet": {
+          "label": "Sales Revenue, Net",
+          "description": "Aggregate revenue (net).",
+          "units": {
+            "USD": [
+              {
+                "accn": "0001234567-25-000001",
+                "end": "2024-12-31",
+                "val": 9000007,
+                "form": "10-K",
+                "filed": "2025-02-15",
+                "frame": "CY2024"
+              }
+            ]
+          }
+        },
+        "RevenueFromContractWithCustomerExcludingAssessedTax": {
+          "label": "Revenue from Contract with Customer",
+          "description": "Revenue from contract.",
+          "units": {
+            "USD": [
+              {
+                "accn": "0001234567-22-000001",
+                "end": "2021-12-31",
+                "val": 9000003,
+                "form": "10-K",
+                "filed": "2022-02-20",
+                "frame": "CY2021"
+              }
+            ]
+          }
+        },
+        "NetIncomeLoss": {
+          "label": "Net Income (Loss)",
+          "description": "Net income or loss.",
+          "units": {
+            "USD": [
+              {
+                "accn": "0001234567-25-000001",
+                "end": "2024-12-31",
+                "val": 8000011,
+                "form": "10-K",
+                "filed": "2025-02-15"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "_expected": {
+    "Revenues_logical_concept": {
+      "expected_end": "2024-12-31",
+      "expected_val": 9000007,
+      "expected_from_tag": "SalesRevenueNet",
+      "_note": "SalesRevenueNet (middle in candidate list) has the freshest end. The first-listed candidate tag (RevenueFromContractWithCustomerExcludingAssessedTax) is STALER at 2021-12-31. A producer that stops at the first-present tag would return the 2021 entry from RevenueFromContractWithCustomerExcludingAssessedTax. The correct union-then-max-end picks 2024-12-31 from SalesRevenueNet."
+    }
+  }
+}
