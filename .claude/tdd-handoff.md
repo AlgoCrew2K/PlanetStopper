@@ -1,7 +1,7 @@
 # TDD Handoff
 Plan: feature-plans/lens-fundamentals-vintage-fix.md
 Branch: fix/fundamentals-vintage
-Phase: red
+Phase: green
 
 ## Test Files
 - tests/ai_advisor/test_fundamentals_vintage.py — 21 tests (11 failing RED, 10 passing regression guards)
@@ -167,3 +167,16 @@ None. The plan is fully specified.
 ## Status Log
 - [2026-06-17] test-writer: Starting RED phase
 - [2026-06-17] test-writer: RED complete — 21 tests (11 failing on assertions, 10 passing regression guards), 0 stubs created. All failures are on meaningful assertions, not import/syntax errors.
+- [2026-06-17] implementer: GREEN complete — 21/21 tests passing, 0 test bugs documented. Typecheck N/A (Python, no separate step). Lint deferred to /tdd-finalize.
+
+## Test File Issues (for test-writer to fix)
+None.
+
+## Disputed Tests
+None.
+
+## Implementation Notes
+- Change 1 (_SEC_KEY_CONCEPTS): restructured from `dict[str, str]` to `dict[str, tuple[str, tuple[str, ...]]]`. Revenues now carries three candidate tags in order: RevenueFromContractWithCustomerExcludingAssessedTax, SalesRevenueNet, Revenues. Other 4 concepts remain single-tag tuples. Outer logical keys are IDENTICAL to preserve key_facts output contract.
+- Change 2 (selection loop): replaced the single `us_gaap.get(concept)` lookup with a union across ALL candidate_tags. The try/except now wraps the entire concept block (not just the sort), which fixes the nonlist_unit_entries AttributeError (AC-7). The sort key is now `(end desc, filed desc)` tuple — end is primary so the freshest reporting period wins regardless of filing recency. The `accn`, `seen_accessions`, `sources`, and `break` logic are byte-preserved (break is gone — the new structure has no inner `break` since we collect across all tags then take `entries_sorted[0]`; the "one unit type per concept" invariant is satisfied by taking the first sorted entry).
+- Ride-along (C2-COMMENT-1): updated "Three independent layers" → "Four independent layers" at `ai_advisor.py:1738` and added Gate-4 description for the locked-var gate.
+- No new modules, no new public functions, no execution-path changes, no credential changes.
