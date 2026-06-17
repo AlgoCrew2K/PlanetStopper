@@ -1101,9 +1101,15 @@ class TestAppPyAdvisorRouteModelWiring:
             patch.object(database, "get_symphony_strategy", return_value={"params": {}, "locked_vars": []}),
             patch.object(database, "save_symphony_strategy", return_value=None),
             patch.object(database, "normalize_name", side_effect=lambda x: x),
-            patch.object(database, "record_llm_suggestion", return_value=None) as mock_record,
-            # enforce_suggestion_allowlist must pass to reach record_llm_suggestion.
-            patch.object(ai_advisor, "enforce_suggestion_allowlist", return_value=None),
+            patch.object(database, "record_llm_suggestion", return_value=None),
+            patch.object(ai_advisor, "check_risk_direction_agreement", return_value=None),
+            # enforce_suggestion_allowlist returns (allowed_list, rejected_list).
+            # Pass the suggestion through so the route reaches record_llm_suggestion.
+            patch.object(
+                ai_advisor,
+                "enforce_suggestion_allowlist",
+                side_effect=lambda suggestions: (suggestions, []),
+            ),
         ):
             resp = self._post_accept(flask_client)
 
@@ -1144,7 +1150,13 @@ class TestAppPyAdvisorRouteModelWiring:
             patch.object(database, "save_symphony_strategy", return_value=None),
             patch.object(database, "normalize_name", side_effect=lambda x: x),
             patch.object(database, "record_llm_suggestion", side_effect=capture_record),
-            patch.object(ai_advisor, "enforce_suggestion_allowlist", return_value=None),
+            patch.object(ai_advisor, "check_risk_direction_agreement", return_value=None),
+            # enforce_suggestion_allowlist returns (allowed_list, rejected_list).
+            patch.object(
+                ai_advisor,
+                "enforce_suggestion_allowlist",
+                side_effect=lambda suggestions: (suggestions, []),
+            ),
         ):
             resp = self._post_accept(flask_client)
 
