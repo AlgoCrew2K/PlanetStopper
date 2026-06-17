@@ -1,5 +1,5 @@
 # Feature: propose_strategies — community-candidate wiring
-Status: ready
+Status: SUPERSEDED — engine layer (community_candidate_infos adapter + MAX_COMMUNITY_CANDIDATES_PER_RUN + community_candidates kwarg on propose_strategies) merged to origin/main (DE-PSW-001). Route injection shipped via feature-plans/community-strats-route-wiring.md (HF-1, 2026-06-17, DE-HF1-001). This plan is archived; do not re-open.
 Created: 2026-06-14
 
 ## Summary

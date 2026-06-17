@@ -975,3 +975,51 @@ The selection loop previously sorted `entries_to_check` by `e.get("filed", "")` 
 - `tests/ai_advisor/test_fundamentals_vintage.py` — 21 new tests covering AC-1 through AC-7
 
 **Status:** 21/21 GREEN at c72bd3a. Test-writer APPROVED at 0cf5644. PM merge gate (live SEC functional test + `/review`) pending.
+
+---
+
+## Community-Strats Route Wiring — HF-1 (2026-06-17)
+
+Branch: `feat/community-strats-route-wiring` | HEAD: 049722a
+
+### DE-HF1-001: `POST /ai-advisor/strategy-builder/run` now loads and passes community candidates; honest template-only degradation when Atlas unavailable
+
+**Decision:** The `ai_advisor_strategy_builder_run()` handler (`app.py:3395`) is the first — and now only — production caller of `advisors/community_strats.load_community_strategies`. The wiring is best-effort: a failed or empty community load never blocks a template-only proposal run.
+
+**What changed (app.py only):**
+
+1. **Lazy imports extended** (`app.py:3415-3421`): the existing lazy-import block inside the handler gains `MAX_COMMUNITY_CANDIDATES_PER_RUN` and `community_candidate_infos` from `advisors.strategy_builder_engine`, plus a new lazy import of `load_community_strategies` from `advisors.community_strats`. All remain inside the handler body — the CC-2 boundary (no module-level advisor imports) is unchanged.
+
+2. **Best-effort community load** (`app.py:3440-3448`):
+   ```python
+   community_candidates: list = []
+   try:
+       _community = load_community_strategies(force_refresh=False)
+       community_candidates = community_candidate_infos(
+           _community, max_candidates=MAX_COMMUNITY_CANDIDATES_PER_RUN
+       )
+   except Exception as exc:
+       _daemon_log.warning("community-strats load skipped: %s", type(exc).__name__)
+       community_candidates = []
+   ```
+   `force_refresh=False` is mandatory — the weekly cache TTL is the operator's bill-protection directive. Both helpers are documented never-raising / D-1; the `try/except` is belt-and-suspenders and logs only the exception class name (never `str(exc)`).
+
+3. **`community_candidates=` kwarg forwarded** (`app.py:3457`): the existing `propose_strategies(...)` call gains `community_candidates=community_candidates`. Everything downstream — single-batch FDR gate, screens, persistence, response JSON shape — is unchanged; `strategy_builder_engine` already merged + caps community candidates into the full gated batch (DE-PSW-001).
+
+**Key design choices:**
+
+1. **Best-effort, never-blocking (AC-4).** A community load failure (Atlas down, MONGO_URI unset, cache miss, any exception) logs the class name and degrades to `community_candidates=[]`. The proposal run completes as a template-only run. The route's response shape and HTTP status are identical to the pre-wiring template-only behavior.
+
+2. **Weekly cache, never forced (AC-3).** `force_refresh=False` is the only valid production value. A per-request forced Atlas pull would violate the operator's bill-protection directive for the captplanet provider. The cache is shared across concurrent requests; no per-call Atlas hit.
+
+3. **Lazy imports inside the handler (AC-5 / CC-2).** `strategy_builder_engine` and `community_strats` are imported inside `ai_advisor_strategy_builder_run()` only, never at `app.py` module level. The 1-minute live execution path is unaffected.
+
+4. **No allowlist / live-exec / CSRF change (AC-5).** The route is not added to `_SETTINGS_WRITE_ALLOWLIST`; CSRF enforcement is unchanged; no `LIVE_EXECUTION` or credential surface is touched. Advisory-only.
+
+5. **No regression to template-only path (AC-6).** `propose_strategies` already treats `community_candidates=[]` as falsy (DE-PSW-001 `if community_candidates:` guard), producing a byte-identical result to the pre-wiring run for the same template inputs.
+
+**Files changed:**
+- `app.py` — `ai_advisor_strategy_builder_run()` handler: lazy imports extended (`app.py:3415-3421`); community load block added (`app.py:3440-3448`); `community_candidates=` kwarg forwarded to `propose_strategies` (`app.py:3457`).
+- `tests/ui/test_strategy_builder_community_wiring.py` — new route-layer tests covering AC-1 through AC-6 (mocked collaborators, no live Atlas/Composer).
+
+**Status:** GREEN at 049722a. Acceptance criteria AC-1 through AC-6 verified.
