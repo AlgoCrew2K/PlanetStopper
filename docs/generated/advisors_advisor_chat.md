@@ -33,7 +33,7 @@ Never raises — all failure paths return `ChatResponse(answer=None, error=<mess
 
 **Returns:** `ChatResponse` — `answer` is a plain-language explanation string on success, `None` on failure; `error` is `None` on success, an operator-safe error string on failure.
 
-**Model:** `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`, `max_tokens=1024`, 30-second timeout. Read at call time — override via `ADVISOR_SYNTHESIS_MODEL` env var (see DE-SYNTH-001 in DECISIONS.md). The `_CHAT_MODEL` constant is retained as a comment anchor but is not read by the SDK call.
+**Model:** `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`, `max_tokens=1024`, 30-second timeout. Read at call time — override via `ADVISOR_SYNTHESIS_MODEL` env var (see DE-SYNTH-001 in DECISIONS.md). `_CHAT_MODEL` was removed at 46a6bc4 (dead-constant cleanup); inline `os.environ.get()` at the `model=` argument is the canonical pattern.
 
 ---
 

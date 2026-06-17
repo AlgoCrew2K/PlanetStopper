@@ -904,7 +904,7 @@ Extracted from the original single-ticker body (CIK resolve → companyfacts fet
 2. `ai_advisor.py` — `request_suggestions`: was `_CLAUDE_MODEL` constant reference; now `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`.
 3. `advisors/advisor_chat.py` — `explain_artifact`: was `_CHAT_MODEL` constant reference; now `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`.
 
-The module-level `_CLAUDE_MODEL` and `_CHAT_MODEL` constants are **preserved** (not removed) as comment anchors for the hasattr contract and historical reference — they are no longer read by any SDK call site.
+The module-level `_CLAUDE_MODEL` and `_CHAT_MODEL` constants were **removed** at 46a6bc4 (dead-constant cleanup). The call sites read `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` inline; there is no retained constant.
 
 **Default model:** `claude-opus-4-8`.
 
@@ -918,6 +918,6 @@ The module-level `_CLAUDE_MODEL` and `_CHAT_MODEL` constants are **preserved** (
 
 **AC-5 fence-stripping:** The test for AC-5 (fence-stripping in `_synthesize_via_claude`) is byte-preserved — the fence-stripping logic and its test coverage are unchanged by this decision.
 
-**Files changed:** `advisors/lens_pipeline.py` (`import os` added; model selection updated); `ai_advisor.py` (model selection updated; `_CLAUDE_MODEL` constant retained); `advisors/advisor_chat.py` (`import os` added; model selection updated; `_CHAT_MODEL` constant retained); `tests/ai_advisor/test_synthesis_model_config.py` (30 new tests, AC-1..AC-7).
+**Files changed:** `advisors/lens_pipeline.py` (`import os` added; model selection updated); `ai_advisor.py` (model selection updated; `_CLAUDE_MODEL` constant removed — 46a6bc4); `advisors/advisor_chat.py` (`import os` added; model selection updated; `_CHAT_MODEL` constant removed — 46a6bc4); `tests/ai_advisor/test_synthesis_model_config.py` (30 new tests, AC-1..AC-7).
 
 **Status:** GREEN at 294f8a5. 30/30 new tests pass; 1146/0 sibling suite clean.

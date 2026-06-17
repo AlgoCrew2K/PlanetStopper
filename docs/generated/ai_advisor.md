@@ -91,7 +91,7 @@ Calls Claude's structured-output endpoint. Synchronous — blocks until the resp
 
 **Returns:** `(ConfigSuggestionsResponse, None)` on success; `(None, error_message)` on any failure. Never raises.
 
-**Model:** `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`, `max_tokens=2048`. The model is read at call time — override via the `ADVISOR_SYNTHESIS_MODEL` env var (see DE-SYNTH-001 in DECISIONS.md). The `_CLAUDE_MODEL` module-level constant is retained as a comment anchor but is not read by the SDK call.
+**Model:** `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`, `max_tokens=2048`. The model is read at call time — override via the `ADVISOR_SYNTHESIS_MODEL` env var (see DE-SYNTH-001 in DECISIONS.md). `_CLAUDE_MODEL` was removed at 46a6bc4 (dead-constant cleanup); inline `os.environ.get()` at the `model=` argument is the canonical pattern.
 
 An empty `suggestions` list is a valid non-error response ("no edit is well-supported"). D-1 security contract: fully honored — all failure paths (`messages.parse` at `ai_advisor.py:631` and client construction) return only `type(exc).__name__` to the browser. Full exception detail is logged server-side via `exc_info=True`; no exception text reaches the JSON response.
 
