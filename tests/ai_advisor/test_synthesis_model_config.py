@@ -48,8 +48,7 @@ from __future__ import annotations
 
 import pathlib
 import re
-import sys
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -863,23 +862,25 @@ class TestLensPipelineRunPipelineModelWiring:
         import ai_advisor
 
         # Patch all lens builders to return available=False so pipeline degrades.
-        lens_stubs = {
-            f"_build_{lens}_section": lambda: {"lens": lens, "available": False, "sources": []}
-            for lens in ("technicals", "sentiment", "derivatives", "macro", "fundamentals")
-        }
+        _unavailable = {"available": False, "sources": []}
         with (
             patch.object(ai_advisor, "_build_client", return_value=mock_client),
-            patch.object(ai_advisor, "_build_technicals_section", return_value={"lens": "technicals", "available": False, "sources": []}),
-            patch.object(ai_advisor, "_build_sentiment_section", return_value={"lens": "sentiment", "available": False, "sources": []}),
-            patch.object(ai_advisor, "_build_derivatives_section", return_value={"lens": "derivatives", "available": False, "sources": []}),
-            patch.object(ai_advisor, "_build_macro_section", return_value={"lens": "macro", "available": False, "sources": []}),
-            patch.object(ai_advisor, "_build_fundamentals_section", return_value={"lens": "fundamentals", "available": False, "sources": []}),
+            patch.object(ai_advisor, "_build_technicals_section",
+                         return_value={"lens": "technicals", **_unavailable}),
+            patch.object(ai_advisor, "_build_sentiment_section",
+                         return_value={"lens": "sentiment", **_unavailable}),
+            patch.object(ai_advisor, "_build_derivatives_section",
+                         return_value={"lens": "derivatives", **_unavailable}),
+            patch.object(ai_advisor, "_build_macro_section",
+                         return_value={"lens": "macro", **_unavailable}),
+            patch.object(ai_advisor, "_build_fundamentals_section",
+                         return_value={"lens": "fundamentals", **_unavailable}),
         ):
             from advisors.lens_pipeline import run_pipeline
-            result = run_pipeline(dry_run=True)
+            run_result = run_pipeline(dry_run=True)
 
         mock_client.messages.create.assert_not_called()
-        assert result["market_prism_row_id"] is None, (
+        assert run_result["market_prism_row_id"] is None, (
             "dry_run must not persist any row (market_prism_row_id must be None)."
         )
 
@@ -905,7 +906,7 @@ class TestLensPipelineRunPipelineModelWiring:
             patch.object(database, "insert_advisor_observation", return_value=99),
         ):
             from advisors.lens_pipeline import run_pipeline
-            result = run_pipeline(dry_run=False)
+            run_pipeline(dry_run=False)
 
         # The LLM call must have fired.
         mock_client.messages.create.assert_called_once()
@@ -1182,7 +1183,6 @@ class TestAppPyAdvisorRouteModelWiring:
 
         RED: currently raises AttributeError at app.py:3781.
         """
-        import ai_advisor
         import database
 
         with (
@@ -1205,7 +1205,6 @@ class TestAppPyAdvisorRouteModelWiring:
         """
         monkeypatch.setenv("ADVISOR_SYNTHESIS_MODEL", _TEST_MODEL_OVERRIDE)
 
-        import ai_advisor
         import database
 
         recorded_model_ids = []

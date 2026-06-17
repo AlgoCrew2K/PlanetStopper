@@ -1,7 +1,7 @@
 # TDD Handoff
 Plan: feature-plans/advisor-synthesis-model-config.md
 Branch: feat/advisor-synthesis-model-config
-Phase: green
+Phase: done
 
 ## Test Files
 - `tests/ai_advisor/test_synthesis_model_config.py` — 30 tests collected
@@ -97,3 +97,5 @@ None.
 - [2026-06-17] c1-implementer: GREEN — deleted _CLAUDE_MODEL + comment from ai_advisor.py; deleted _CHAT_MODEL + 2 comment lines from advisors/advisor_chat.py. 34/34 passed. 0 test bugs.
 - [2026-06-17] c1-test-writer: RED — app.py consumer + no-external-ref guards (7 new tests, 645c7ca). 7 FAILED / 34 PASSED.
 - [2026-06-17] c1-implementer: GREEN partial — 39/41 passing. Added resolve_advisor_model() to ai_advisor.py; fixed app.py:3748+3781. _CLAUDE_MODEL AttributeError is resolved. 2 remaining failures are test bugs (enforce_suggestion_allowlist mock returns None, route unpacks as 2-tuple → TypeError). Documented in Test File Issues.
+- [2026-06-17] c1-test-writer: Fixed test mock bugs in TestAppPyAdvisorRouteModelWiring accept tests — enforce_suggestion_allowlist side_effect=lambda s:(s,[]), check_risk_direction_agreement return_value=None. 41/41 PASSED (c3113b6).
+- [2026-06-17] c1-reviewer: APPROVE at 3448675. All 8 gates pass. resolve_advisor_model() is pure env read, no side effects. app.py routes pre-existing CSRF-protected config-write paths. TestNoExternalConstantReferences whole-codebase scan confirms zero remaining _CLAUDE_MODEL/_CHAT_MODEL attribute accesses. Branch ready for PM full-suite gate and PR.
