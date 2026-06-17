@@ -62,8 +62,11 @@ closeout item, NOT background commentary):
   whether route-level injection is intended-in-scope (then it is a build gap) or
   deferred (then the CLAUDE.md "injected at the route boundary" claim is a stale-doc
   defect to correct). Tracked as F35.
-- **HF-2 (stale doc): C1 not merged** — see F20; `lens_pipeline.py:284` still hardcodes
-  Haiku and the CLAUDE.md "Claude Haiku synthesis" line is stale until PR #39 lands.
+- **HF-2 (stale doc, 3 modules): C1 not merged** — see F20. PR #39 unifies
+  `ADVISOR_SYNTHESIS_MODEL` across THREE LLM modules: `lens_pipeline.py:284` (Haiku),
+  `ai_advisor.py:59` (`_CLAUDE_MODEL="claude-opus-4-7"`), `advisor_chat.py:211`
+  (`_CHAT_MODEL="claude-opus-4-7"`). Until it lands, three model-literal doc/code states are
+  stale and AC-1 gates the F13/F20 pipeline rows AND the F23 config-advisor + F31 chat rows.
 
 ---
 
@@ -153,11 +156,17 @@ F1–F21, 6 groups) and Cluster 2 (AI Advisor suite, F22–F40, 8 groups). The e
 Each AC is a closeout gate. The closeout PASSES only when **every** AC passes; any FAIL
 loops back to the owning feature's cycle (do not paper over a degenerate result).
 
-- [ ] **AC-1 (Dependency precondition):** C1 (PR #39) is merged to origin and the running
-  :8090 daemon is on the deployed code that includes it. The hardcoded
-  `claude-haiku-4-5-20251001` literal no longer governs the production synthesis path;
-  `ADVISOR_SYNTHESIS_MODEL` (default Opus 4.8) does. Verified by reading the deployed
-  `lens_pipeline.py` on the running tree + a config probe.
+- [ ] **AC-1 (Dependency precondition — gates BOTH clusters):** C1 (PR #39) is merged to
+  origin and the running :8090 daemon is on the deployed code that includes it. PR #39
+  touches **THREE** LLM modules, so C1 unifies the model env var across the council pipeline
+  AND the suite's LLM features: at base `348dc26` the hardcoded literals are
+  `lens_pipeline.py:284 = "claude-haiku-4-5-20251001"` (pipeline synthesis — F13/F20),
+  `ai_advisor.py:59 = _CLAUDE_MODEL "claude-opus-4-7"` (config-advisor `request_suggestions`
+  — F23), and `advisors/advisor_chat.py:211 = _CHAT_MODEL "claude-opus-4-7"` (chat — F31).
+  After merge+deploy, NONE of these literals governs the production path —
+  `ADVISOR_SYNTHESIS_MODEL` (default Opus 4.8) does. Verified by reading all three deployed
+  modules on the running tree + a config probe. **This means AC-1 is a precondition for the
+  F13/F20 pipeline rows AND the F23 config-advisor + F31 chat rows.**
 - [ ] **AC-2 (Per-lens live E2E):** For EACH of the 5 lenses (F1–F5), a live call through
   the real producer reaches `available=True` with **real, non-stub values** when its data
   source is reachable AND keys are present; AND the honest-degradation path returns
@@ -323,7 +332,7 @@ suite, F22–F40 — follows the capstone block below.)
 | **F17 Debate/clarification protocol** | synthesizer + analysts; audit `phase` tags | In F21: confirm clarifications are tagged `phase=clarification`, debate rounds `phase=debate_round_N` ONLY on genuine disagreement, and ABSENT when analysts converge. | Audit trail shows correct phase tags; NO spurious `debate_round_*` rows when reads converge; ≤3 debate rounds if disagreement; synthesizer derived availability from audit rows (F17 protocol), not inbox. | Runbook step 4/7 + phase-2 AC-3/AC-4/AC-5 match observed trail behavior. | |
 | **F18 One MARKET_PRISM row/run** | `database.insert_advisor_observation` (`:1053`, `is_advisory_only=1`) | After F21: `SELECT count(*) ... WHERE advisor_role='MARKET_PRISM' AND raw_response run_id=<rid>`. | Exactly 1 row; `is_advisory_only=1`; `verdict` matches synthesizer's `overall_sentiment`; `run_id` matches the audit trail. | DECISIONS DE-ML-003 (MARKET_PRISM advisory-only, DB-enforced flag) matches. | |
 | **F19 Overview tab render** | `templates/ai_advisor.html:942-976`; `database.get_latest_market_prism_summary` (`:1180`); `app.py:2948-3019` prefetch | Load `GET /ai-advisor` on live :8090 after F21; capture a screenshot; **Read it with the Read tool (eyes-on)**; describe chip + rationale + per-lens digest + cited sources. Also verify the empty-state arm (no row) renders informatively. | The rendered block shows the capstone sentiment chip (correct semantic class), rationale text, per-lens digest (5 lenses with available flags), and clickable cited sources; empty-state arm renders the informative message, not a blank/error. PM describes the screenshot before asserting. | CLAUDE.md `templates/ai_advisor.html` Overview row matches what renders (chip/rationale/digest/sources/empty-state). | |
-| **F20 C1 model config** | `advisors/lens_pipeline._synthesize_via_claude` (`:243`, hardcoded `:284` today); PR #39 | After PR #39 merge+deploy: probe that the synthesis path reads `ADVISOR_SYNTHESIS_MODEL` (default Opus 4.8) and no hardcoded Haiku literal governs prod; confirm tests don't fire real Opus. | Deployed `lens_pipeline.py` reads the env var; default resolves to Opus 4.8; no `claude-haiku-4-5-20251001` literal on the prod synthesis path. | DECISIONS / `docs/generated/` document `ADVISOR_SYNTHESIS_MODEL` + default; CLAUDE.md `lens_pipeline` row updated from "Claude Haiku synthesis" to the configurable model. **This doc line is currently stale and MUST be reconciled at closeout.** | |
+| **F20 C1 model config (3 modules)** | PR #39 unifies `ADVISOR_SYNTHESIS_MODEL` across `advisors/lens_pipeline._synthesize_via_claude` (hardcoded Haiku `:284`), `ai_advisor.py` (`_CLAUDE_MODEL` `:59`), `advisors/advisor_chat.py` (`_CHAT_MODEL` `:211`) | After PR #39 merge+deploy: probe that ALL THREE paths read `ADVISOR_SYNTHESIS_MODEL` (default Opus 4.8) and no hardcoded literal governs prod; confirm tests don't fire real Opus. | All 3 deployed modules read the env var; default resolves to Opus 4.8; no `claude-haiku-4-5-20251001` / `claude-opus-4-7` literal on any prod LLM path. | **THREE stale doc lines to reconcile** (all currently wrong until #39 lands): CLAUDE.md `lens_pipeline` "Claude Haiku synthesis", and any `ai_advisor.py` / `advisor_chat.py` model-literal references in DECISIONS / `docs/generated/`. DECISIONS + `docs/generated/` must document `ADVISOR_SYNTHESIS_MODEL` + default. | |
 
 ### Capstone — Phase-3 observed multi-analyst run (F21)
 
@@ -346,7 +355,7 @@ them; `_disable_csrf_for_tests` only applies under pytest, so live calls must ca
 | Feature | Producer / Consumer | Live E2E check | Expected evidence (PASS) | Doc-accuracy check | P/F |
 |---|---|---|---|---|---|
 | **F22 assemble_advisor_context** | `ai_advisor.assemble_advisor_context` (`:1430`); route resolves NAME→hash from `bot_state`, passes `composer_symphony_id` | For a real live symphony, drive the context assembly via the suggest route; confirm the Composer `/score` call uses the **hash**, not the display name (the hash-not-name rule). | Context assembles without an HTTP 400 from Composer; passing a name would 400 — confirm a real hash was sent; `autotune_run` honoring (pre-fetched row skips internal fetch). | CLAUDE.md `ai_advisor.py` row + Architecture Constraint #6 (hash-not-name) match live behavior. | |
-| **F23 request_suggestions** | `ai_advisor.request_suggestions` (`:1595`) → `POST /ai-advisor/suggest` (`app.py:3619`) | Call `POST /ai-advisor/suggest` on the live page for a real symphony; force an error arm (no API key / bad symphony). | Returns suggestions JSON on success; on any error returns `type(exc).__name__` only (D-1) — no `str(exc)`, no key, no traceback in the response or the daemon log surface. | CLAUDE.md "request_suggestions (D-1 fully honored: all error paths return type(exc).__name__ only)" matches. | |
+| **F23 request_suggestions** (C1-gated) | `ai_advisor.request_suggestions` (`:1595`), model `_CLAUDE_MODEL` (`:59`, C1) → `POST /ai-advisor/suggest` (`app.py:3619`) | Call `POST /ai-advisor/suggest` on the live page for a real symphony; force an error arm (no API key / bad symphony). On the deployed post-#39 tree, confirm the model comes from `ADVISOR_SYNTHESIS_MODEL`, not the hardcoded `claude-opus-4-7`. | Returns suggestions JSON on success; on any error returns `type(exc).__name__` only (D-1) — no `str(exc)`, no key, no traceback; the LLM model is env-driven (C1), no `_CLAUDE_MODEL="claude-opus-4-7"` literal governs prod. | CLAUDE.md "request_suggestions (D-1 fully honored...)" matches; **AC-1 gates this row** — the `ai_advisor.py` model literal is reconciled by C1 (F20). | |
 | **F24 build_assessment_from_context** | `ai_advisor.build_assessment_from_context` (`:1368`) | On a symphony where all trials were haircut-rejected, observe the assessment block. | The block renders an **informative** empty-state explaining `oos_alpha=None` (haircut-rejected, not an error) — NOT a blank or an error toast. | CLAUDE.md gotcha "AI Advisor empty suggestions... Expected" + `build_assessment_from_context` per-symphony empty-state match. | |
 | **F25 7-item allowlist** | `_SUGGESTIBLE_ALLOWLIST` (`:1718`), `enforce_suggestion_allowlist` (`:1743`) | Submit (or simulate) an accept whose `config_key` is OUTSIDE the 7-item allowlist; confirm structural rejection. | Any key not in {6 Optuna search-space keys, `MAX_SQUEEZE_FLOOR`} is rejected before any write; `LIVE_EXECUTION`/credential keys never accepted. | CLAUDE.md "7-item suggestible allowlist (6 Optuna search-space keys + MAX_SQUEEZE_FLOOR)" matches the code set exactly. | |
 | **F26 C2 safety gates** | `POST /ai-advisor/accept` (`app.py:3686`, "all three C2 safety gates"); `POST /ai-advisor/reject` (`:3762`) | Drive a real accept through the three gates (allowlist + OOS re-validation + risk-direction cross-check); drive a reject. | Accept applies only after all 3 gates pass and writes the allowlisted .env key; a gate failure blocks the write; reject records the rejection with **no** config write. | DECISIONS / CLAUDE.md "C2 safety gates" enumerate the same three gates that fire live. | |
@@ -364,7 +373,7 @@ them; `_disable_csrf_for_tests` only applies under pytest, so live calls must ca
 
 | Feature | Producer / Consumer | Live E2E check | Expected evidence (PASS) | Doc-accuracy check | P/F |
 |---|---|---|---|---|---|
-| **F31 Chat explain-only** | `advisor_chat.explain_artifact` (`:337`), `validate_artifact` (`:167`), `CHAT_ARTIFACT_ALLOWED_FIELDS` (`:74`) ← `POST /ai-advisor/chat/send` (`app.py:3803`) | Send a real chat question against a scoped artifact; ALSO attempt an artifact with a field outside the allowlist + a question that tries to trigger a trade/write. | A real LLM explanation returns; the out-of-allowlist field is **stripped** by `validate_artifact` (re-validated inside `explain_artifact`, defense-in-depth); the chat NEVER calls OOS re-validation, `suggest_swaps`, or `run_backtest` and NEVER writes config — the hard explain-only boundary holds; LLM error → 200 JSON `{error}` (D-1). | `m5-chat-hardening.md` + `security-review-m5-chat.md` + CLAUDE.md (M1–M4+M6+multi-lens fields, explain_artifact re-validation) match the live boundary. | |
+| **F31 Chat explain-only** (C1-gated) | `advisor_chat.explain_artifact` (`:337`), `validate_artifact` (`:167`), `CHAT_ARTIFACT_ALLOWED_FIELDS` (`:74`), model `_CHAT_MODEL` (`:211`, C1) ← `POST /ai-advisor/chat/send` (`app.py:3803`) | Send a real chat question against a scoped artifact; ALSO attempt an artifact with a field outside the allowlist + a question that tries to trigger a trade/write. On the deployed post-#39 tree, confirm the chat model is env-driven, not the hardcoded `claude-opus-4-7`. | A real LLM explanation returns; the out-of-allowlist field is **stripped** by `validate_artifact` (re-validated inside `explain_artifact`, defense-in-depth); the chat NEVER calls OOS re-validation, `suggest_swaps`, or `run_backtest` and NEVER writes config — the hard explain-only boundary holds; LLM error → 200 JSON `{error}` (D-1); model env-driven (C1), no `_CHAT_MODEL="claude-opus-4-7"` literal in prod. | `m5-chat-hardening.md` + `security-review-m5-chat.md` + CLAUDE.md (M1–M4+M6+multi-lens fields, explain_artifact re-validation) match the live boundary; **AC-1 gates this row** — the `advisor_chat.py` model literal is reconciled by C1 (F20). | |
 
 ### Group K — Strategy Builder tab (F32–F34)
 
@@ -560,7 +569,9 @@ Evidence is captured-from-live (screenshots, audit-DB dumps, query outputs), not
 
 **Dependencies:**
 1. **C1 / PR #39** (`feat/advisor-synthesis-model-config`) merged to origin AND deployed to
-   the running :8090 tree — gates AC-1 and the F13/F20 doc reconciliation.
+   the running :8090 tree — gates AC-1 and the model-literal reconciliation across BOTH
+   clusters: F13/F20 (pipeline), F23 (config advisor, `ai_advisor.py:59`), and F31 (chat,
+   `advisor_chat.py:211`). PR #39 touches all three modules + their docs.
 2. The :8090 daemon running the **deployed** post-PR-#39 code (not a stale tree).
 3. Keys present: `FRED_API_KEY`, `ANTHROPIC_API_KEY`, Alpaca creds, SEC UA, **Composer key**
    (for the Strategy Builder / asset-swap / logic-change backtests); Opus 4.8 spend
