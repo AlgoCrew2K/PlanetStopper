@@ -91,7 +91,7 @@ Calls Claude's structured-output endpoint. Synchronous — blocks until the resp
 
 **Returns:** `(ConfigSuggestionsResponse, None)` on success; `(None, error_message)` on any failure. Never raises.
 
-**Model:** read from `ADVISOR_SYNTHESIS_MODEL` env var (default `claude-opus-4-8`), `max_tokens=2048`. Set `ADVISOR_SYNTHESIS_MODEL=mock-model` in tests to prevent real API calls (AC-4).
+**Model:** read inline at the `messages.parse` call site (`ai_advisor.py:1633`) via `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` — call time, not import time. `max_tokens=2048`. Set `ADVISOR_SYNTHESIS_MODEL=mock-model` in tests to prevent real API calls (AC-4).
 
 An empty `suggestions` list is a valid non-error response ("no edit is well-supported"). D-1 security contract: fully honored — all failure paths (`messages.parse` at `ai_advisor.py:631` and client construction) return only `type(exc).__name__` to the browser. Full exception detail is logged server-side via `exc_info=True`; no exception text reaches the JSON response.
 
@@ -275,9 +275,10 @@ The 7-item allowlist (6 Optuna search-space keys + `MAX_SQUEEZE_FLOOR`). Note: `
 
 ### Module-Level Constants (LLM Config)
 
+The LLM model is **not** a module-level constant. `request_suggestions` reads `ADVISOR_SYNTHESIS_MODEL` inline at the `messages.parse` call site (`ai_advisor.py:1633`) via `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` on every invocation — call time, not import time. No daemon restart is required for a changed value to take effect. The `_CLAUDE_MODEL` module-level constant was removed in the c1fix follow-up (e8730ab).
+
 | Constant | Type | Value | Purpose |
 |----------|------|-------|---------|
-| `_CLAUDE_MODEL` | `str` | `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` | Model for all advisor LLM calls. Read at import time. Override via `ADVISOR_SYNTHESIS_MODEL` env var in tests. |
 | `_MAX_TOKENS` | `int` | 2048 | Token budget for structured-output suggestions response. |
 | `_REQUEST_TIMEOUT_SECONDS` | `float` | 30.0 | Client-side timeout; never relies on SDK/urllib3 default. |
 

@@ -112,7 +112,7 @@ Skipped in `dry_run=True` mode.
 
 **Scope boundary with Epic A Phase 2:** once the `prism-synthesizer` standalone agent lands (Epic A Phase 2), the nightly Market Prism synthesis bypasses `_synthesize_via_claude` entirely. This env var continues to apply to any residual programmatic synthesis path and to the `ai_advisor` and `advisor_chat` modules, which also read it (see DE-SYNTH-001 in DECISIONS.md).
 
-Also applies to: `ai_advisor._CLAUDE_MODEL` (read at import time) and `advisors/advisor_chat._CHAT_MODEL` (read at import time). All three advisor call sites share the same env var and the same `claude-opus-4-8` default. See [DE-SYNTH-001 in DECISIONS.md](../../DECISIONS.md).
+Also applies to: `ai_advisor.request_suggestions` (`ai_advisor.py:1633`) and `advisors/advisor_chat.explain_artifact` (`advisor_chat.py:390`) — both read the env var inline at their SDK call sites (call time). The `_CLAUDE_MODEL` and `_CHAT_MODEL` module-level constants were removed in the c1fix follow-up (e8730ab), matching the call-time pattern already in `lens_pipeline`. All three advisor call sites share the same env var and the same `claude-opus-4-8` default. See [DE-SYNTH-001 in DECISIONS.md](../../DECISIONS.md).
 
 ## Scheduler Wiring (app.py)
 

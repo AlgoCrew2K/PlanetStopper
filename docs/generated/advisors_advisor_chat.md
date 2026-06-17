@@ -33,7 +33,7 @@ Never raises — all failure paths return `ChatResponse(answer=None, error=<mess
 
 **Returns:** `ChatResponse` — `answer` is a plain-language explanation string on success, `None` on failure; `error` is `None` on success, an operator-safe error string on failure.
 
-**Model:** read from `ADVISOR_SYNTHESIS_MODEL` env var (default `claude-opus-4-8`), via the module-level `_CHAT_MODEL` constant (read at import time). `max_tokens=1024`, 30-second timeout. Set `ADVISOR_SYNTHESIS_MODEL=mock-model` in tests.
+**Model:** read inline at the `messages.create` call site (`advisor_chat.py:390`) via `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` — call time, not import time. No module-level constant; the `_CHAT_MODEL` constant was removed in the c1fix follow-up (e8730ab). `max_tokens=1024`, 30-second timeout. Set `ADVISOR_SYNTHESIS_MODEL=mock-model` in tests.
 
 ---
 

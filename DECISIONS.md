@@ -904,7 +904,7 @@ Extracted from the original single-ticker body (CIK resolve → companyfacts fet
 - `ai_advisor._CLAUDE_MODEL` — was `"claude-opus-4-7"` (stale; Opus 4.8 was already the intended production model per the corrected plan)
 - `advisors/advisor_chat._CHAT_MODEL` — was `"claude-opus-4-7"` (same staleness; chat uses the same model tier as the config advisor for consistency)
 
-All three now read the env var at the appropriate scope: `lens_pipeline` reads it at call time (inside `_synthesize_via_claude`); `ai_advisor._CLAUDE_MODEL` and `advisor_chat._CHAT_MODEL` read it at import time (module-level constant, re-read each time the module is imported fresh in a process).
+All three now read the env var inline at the SDK call site (call time): `lens_pipeline._synthesize_via_claude` at `lens_pipeline.py:285`; `ai_advisor.request_suggestions` at `ai_advisor.py:1633`; `advisors/advisor_chat.explain_artifact` at `advisor_chat.py:390`. No module-level constants are involved — the env var is re-evaluated on every call, so a changed `ADVISOR_SYNTHESIS_MODEL` takes effect without a daemon restart.
 
 **Default: `claude-opus-4-8`.** The prior `claude-haiku-4-5-20251001` default for the nightly synthesis was a cost-saving placeholder chosen at Cycle-4 dispatch time. Opus 4.8 is the correct production model: it provides the analytical reasoning depth appropriate for synthesizing 5 lens blocks into a market-regime verdict. The prior `claude-opus-4-7` in `ai_advisor` and `advisor_chat` was stale — 4.8 is the current Opus generation.
 
@@ -916,8 +916,8 @@ All three now read the env var at the appropriate scope: `lens_pipeline` reads i
 
 **Files changed:**
 - `advisors/lens_pipeline.py` — add `import os`; `_synthesize_via_claude`: `model="claude-haiku-4-5-20251001"` → `model=os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`
-- `ai_advisor.py` — `_CLAUDE_MODEL = "claude-opus-4-7"` → `_CLAUDE_MODEL = os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`; comment updated
-- `advisors/advisor_chat.py` — add `import os`; `_CHAT_MODEL = "claude-opus-4-7"` → `_CHAT_MODEL = os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`; comment updated
+- `ai_advisor.py` — (c1fix follow-up) `_CLAUDE_MODEL` module-level constant removed; `model=_CLAUDE_MODEL` at the `messages.parse` call site (`ai_advisor.py:1633`) replaced with inline `model=os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`
+- `advisors/advisor_chat.py` — (c1fix follow-up) `_CHAT_MODEL` module-level constant removed; `model=_CHAT_MODEL` at the `messages.create` call site (`advisor_chat.py:390`) replaced with inline `model=os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`
 - `tests/ai_advisor/test_synthesis_model_config.py` — 22 tests (AC-1 env-var wiring for all 3 modules; AC-2 default string assertion; AC-3 fence-stripping regression; AC-4 mock discipline)
 
-**Status:** GREEN at 00bfe43. Acceptance criteria AC-1 through AC-4 verified (AC-5 is this doc-gen deliverable).
+**Status:** GREEN at e8730ab (c1fix: call-time inline read + constant removal). Acceptance criteria AC-1 through AC-4 verified (AC-5 is this doc-gen deliverable).
