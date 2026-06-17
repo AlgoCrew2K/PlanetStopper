@@ -1023,3 +1023,40 @@ Branch: `feat/community-strats-route-wiring` | HEAD: 049722a
 - `tests/ui/test_strategy_builder_community_wiring.py` — new route-layer tests covering AC-1 through AC-6 (mocked collaborators, no live Atlas/Composer).
 
 **Status:** GREEN at 049722a. Acceptance criteria AC-1 through AC-6 verified.
+
+---
+
+## Community-Strats Atlas Fetch — Wall-Clock Timeout (2026-06-17)
+
+Branch: `fix/community-strats-atlas-timeout` | HEAD: 55b00ea
+
+### DE-CS-002: Wall-clock `ThreadPoolExecutor` timeout on the Atlas live fetch leg; `serverSelectionTimeoutMS` cannot bound SRV/DNS hangs
+
+**Root cause:** A `mongodb+srv://` URI triggers an SRV DNS query before the Mongo driver can begin its TCP handshake. `serverSelectionTimeoutMS` and `connectTimeoutMS` — the driver-level timeout knobs — apply only after DNS resolves. When the SRV/TXT DNS query hangs (observed: >50 s with both driver timeouts set to 10 s), pymongo blocks indefinitely, causing the Strategy Builder route to hang rather than degrade to template-only. The HF-1 wiring (DE-HF1-001) introduced `load_community_strategies` as a production caller of `cached_pull`; this exposed the pre-existing unbounded Atlas fetch as a route-hang risk.
+
+**Decision:** Wrap the live Atlas fetch in a `ThreadPoolExecutor(max_workers=1)` with `fut.result(timeout=_ATLAS_FETCH_TIMEOUT_S)`.
+
+**Key design choices:**
+
+1. **Wall-clock bound via `ThreadPoolExecutor`, not `serverSelectionTimeoutMS` (root cause fix).** `serverSelectionTimeoutMS` / `connectTimeoutMS` are driver-level and cannot interrupt DNS resolution. The only reliable bound on a `mongodb+srv://` hang is an OS-level wall clock managed outside pymongo's control. `ThreadPoolExecutor(max_workers=1)` submits `_fetch_fn` to a background thread and calls `fut.result(timeout=12.0)`. After 12.0 s, `concurrent.futures.TimeoutError` is raised in the calling thread regardless of what pymongo's internal state machine is doing.
+
+2. **`_ATLAS_FETCH_TIMEOUT_S = 12.0` (> 10 s `serverSelectionTimeoutMS`).** The constant is set above the `serverSelectionTimeoutMS=10_000` value so a reachable-but-slow Atlas cluster can still complete server selection within the wall-clock window without a false timeout. Named constant with an inline source comment explaining the SRV/DNS root cause and the `>10s` rationale.
+
+3. **`shutdown(wait=False, cancel_futures=True)` — never `wait=True`.** When `concurrent.futures.TimeoutError` fires, the worker thread is blocked in pymongo and cannot be interrupted. `shutdown(wait=True)` would block the `finally` clause indefinitely, defeating the timeout. `shutdown(wait=False)` releases the calling thread immediately; the orphaned worker thread is allowed to linger until pymongo's own internal socket timeout eventually unblocks it. The comment `# NEVER wait=True` is on the line.
+
+4. **`_timeout_fired: list[bool]` closure flag.** `cached_pull` has a never-raising contract: it catches all exceptions from `fetch_fn` and returns `None`. After `cached_pull` returns `None`, the outer scope cannot distinguish a wall-clock timeout from any other Atlas failure. A `list[bool]` flag (mutated inside the closure before `_AtlasFetchTimeout` is raised) persists across the `cached_pull` boundary — it is set to `True` before the exception is raised so that even if `cached_pull` swallows `_AtlasFetchTimeout`, the flag remains readable. The `raw_docs is None` branch checks the flag: `reason = "AtlasFetchTimeout" if _timeout_fired[0] else "AtlasCacheUnavailable"`.
+
+5. **`_AtlasFetchTimeout` custom exception.** A dedicated exception class distinguishes a timeout from `concurrent.futures.TimeoutError` at the caller boundary and avoids leaking CPython internals through the D-1 reason contract.
+
+6. **Fix-forward, not revert of HF-1.** The production call site in `app.py` (DE-HF1-001) is unchanged. The best-effort `try/except` around `load_community_strategies` in the route handler already degrades to `community_candidates=[]` on any exception or `available=False` result. The timeout fix improves the *speed* of that degradation — from an indefinite hang to a bounded 12 s — without changing any route contract or HTTP response shape.
+
+**New symbols in `advisors/community_strats.py`:**
+- `_ATLAS_FETCH_TIMEOUT_S: float = 12.0` — wall-clock bound; named constant with inline source comment.
+- `_AtlasFetchTimeout(Exception)` — sentinel raised inside `_bounded_fetch_fn` on timeout.
+- `_bounded_fetch_fn()` (nested def inside `load_community_strategies`) — `ThreadPoolExecutor` wrapper; `shutdown(wait=False, cancel_futures=True)` in `finally`.
+- `_timeout_fired: list[bool]` (closure variable) — cross-boundary timeout signal.
+- `import concurrent.futures` — module-level import (stdlib).
+
+**Route behavior:** On a SRV/DNS hang, the route now degrades to template-only within ~12 s instead of hanging indefinitely. `reason="AtlasFetchTimeout"` is logged at WARNING level by the route's `try/except`. The Strategy Builder response is template-only; HTTP status and JSON shape are unchanged.
+
+**Status:** GREEN at 55b00ea. 14/14 tests GREEN (AC-1 through AC-5).

@@ -3,7 +3,7 @@
 > Weekly-cached captplanet Atlas loader: validates, deduplicates, and filters community strategy documents for the Strategy Builder proposal suite.
 
 **Source:** `advisors/community_strats.py`
-**Last updated:** 2026-06-17
+**Last updated:** 2026-06-17 (wall-clock timeout — DE-CS-002)
 
 ## Overview
 
@@ -98,9 +98,13 @@ cached_pull("captplanet.strategies", fetch_fn)
     -> {available, candidates, stats, source}
 ```
 
-### Atlas fetch (weekly cache)
+### Atlas fetch (weekly cache, wall-clock bounded)
 
-`fetch_fn` lazy-imports `pymongo`, connects to `os.environ["MONGO_URI"]`, and fetches from `captplanet.strategies` using the projection `{sid, name, edn_string, oos_metrics}` only — explicitly excluding multi-MB `backtest` and `quantstats_metrics` arrays. `cached_pull` routes this through the weekly cache; the second call within the TTL returns the cached payload without touching Mongo.
+The live Atlas fetch is bounded by a `_bounded_fetch_fn` wrapper (nested def inside `load_community_strategies`): a `ThreadPoolExecutor(max_workers=1)` submits `_fetch_fn` to a background thread and calls `fut.result(timeout=_ATLAS_FETCH_TIMEOUT_S)` (12.0 s). If `_fetch_fn` does not return within that window, `concurrent.futures.TimeoutError` is caught, the `_timeout_fired` closure flag is set to `True`, and `_AtlasFetchTimeout` is raised before `shutdown(wait=False, cancel_futures=True)` releases the calling thread.
+
+**Why `ThreadPoolExecutor` and not `serverSelectionTimeoutMS`:** A `mongodb+srv://` URI triggers an SRV/TXT DNS query before the Mongo driver starts server selection. `serverSelectionTimeoutMS` and `connectTimeoutMS` apply only after DNS resolves — they cannot bound an SRV/DNS hang. `_ATLAS_FETCH_TIMEOUT_S=12.0` is set above `serverSelectionTimeoutMS=10_000` so a reachable-but-slow Atlas cluster can still complete server selection without a false timeout. See `DE-CS-002` in `DECISIONS.md`.
+
+`_fetch_fn` (the inner unwrapped function) lazy-imports `pymongo`, connects to `os.environ["MONGO_URI"]`, and fetches from `captplanet.strategies` using the projection `{sid, name, edn_string, oos_metrics}` only — explicitly excluding multi-MB `backtest` and `quantstats_metrics` arrays. `cached_pull` routes `_bounded_fetch_fn` through the weekly cache; the second call within the TTL returns the cached payload without touching Mongo or entering the timeout wrapper.
 
 ### edn_string parse
 
@@ -143,12 +147,13 @@ pulled == (valid + missing_edn_string + parse_failed + validate_rejected
 |-----------|----------|-------------|
 | `MONGO_URI` not set | `"KeyError"` | `False` |
 | pymongo connection error | `"ServerSelectionTimeoutError"` (or similar) | `False` |
-| `atlas_cache.cached_pull` returns `None` (cache miss + fetch failed + no stale row) | `"AtlasCacheUnavailable"` | `False` |
+| SRV/DNS or Mongo fetch hangs > `_ATLAS_FETCH_TIMEOUT_S` (12.0 s) | `"AtlasFetchTimeout"` | `False` |
+| `atlas_cache.cached_pull` returns `None` (cache miss + fetch failed + no stale row, no timeout) | `"AtlasCacheUnavailable"` | `False` |
 | `atlas_cache.cached_pull` returns a non-list payload (corrupt cache) | `"TypeError"` | `False` |
 | Any other exception in the outer try block | `type(exc).__name__` | `False` |
 | Empty collection (zero docs) | — | `True` (candidates=[], stats.pulled=0) |
 
-The `"AtlasCacheUnavailable"` reason is a named sentinel (not `type(exc).__name__`) for the `raw_docs is None` branch. This string predates the HF-1 route wiring (2026-06-17); no change was made to the sentinel value.
+`"AtlasFetchTimeout"` is set when `_timeout_fired[0]` is `True` (the wall-clock wrapper fired before `cached_pull` returned). `"AtlasCacheUnavailable"` is the named sentinel for the `raw_docs is None` path when the timeout did not fire. Both are named strings (not `type(exc).__name__`). See `DE-CS-002` in `DECISIONS.md` for the full root-cause and design rationale.
 
 ## DB Isolation
 
@@ -166,10 +171,11 @@ The `"AtlasCacheUnavailable"` reason is a named sentinel (not `type(exc).__name_
 
 - `advisors.atlas_cache` — `cached_pull` for weekly-TTL Atlas read routing
 - `advisors.symphony_schema` — `validate_tree`, `extract_tickers`
+- `concurrent.futures` — `ThreadPoolExecutor` wall-clock timeout wrapper (`_bounded_fetch_fn`)
 - `json` — `edn_string` parsing and composition hash canonical form
 - `hashlib` — SHA-256 composition hash
 - `os` — `MONGO_URI` env read inside `fetch_fn`
-- `pymongo` — lazy-imported inside `fetch_fn` only; not a module-level import
+- `pymongo` — lazy-imported inside `_fetch_fn` only; not a module-level import
 
 No imports from `database.py`, `autotuner.py`, `app.py`, or any execution module.
 

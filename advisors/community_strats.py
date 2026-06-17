@@ -8,12 +8,14 @@ dict.
 Off-execution-path. Advisory-only. No Flask routes, no execution flags.
 pymongo is lazy-imported inside the fetch_fn closure only.
 
-D-1 contract: reason fields are always type(exc).__name__ — never the
-exception message or any secret value (MONGO_URI, hostname, credential).
+D-1 contract: reason fields are type(exc).__name__ for general exceptions,
+or a fixed sentinel string for known failure modes (e.g., 'AtlasFetchTimeout')
+— never the exception message or any secret value (MONGO_URI, hostname, credential).
 """
 
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
 import json
 import logging
@@ -24,6 +26,17 @@ from advisors import atlas_cache
 from advisors import symphony_schema
 
 logger = logging.getLogger(__name__)
+
+# Wall-clock bound for the live Atlas fetch leg. serverSelectionTimeoutMS /
+# connectTimeoutMS do NOT cover mongodb+srv:// SRV/TXT DNS resolution (confirmed:
+# hangs >50s with those set). Chosen > 10s serverSelectionTimeoutMS so a
+# reachable-but-slow Atlas still completes server selection.
+_ATLAS_FETCH_TIMEOUT_S: float = 12.0
+
+
+class _AtlasFetchTimeout(Exception):
+    """Raised when the bounded Atlas fetch exceeds _ATLAS_FETCH_TIMEOUT_S."""
+
 
 # ---------------------------------------------------------------------------
 # Mongo query constants
@@ -135,6 +148,14 @@ def load_community_strategies(
         "deduped": 0,
     }
 
+    # Closure-captured flag: set to True inside _bounded_fetch_fn when the
+    # wall-clock timeout fires. checked after cached_pull returns None to
+    # distinguish AtlasFetchTimeout from AtlasCacheUnavailable.
+    # cached_pull catches all exceptions from fetch_fn (its never-raises contract),
+    # so _AtlasFetchTimeout cannot propagate through it; the flag is the only
+    # reliable signal available to the outer scope.
+    _timeout_fired: list[bool] = [False]
+
     try:
         # Build a fetch_fn closure: lazy pymongo import inside so the module
         # is importable without pymongo installed.
@@ -151,19 +172,41 @@ def load_community_strategies(
             cursor = collection.find({}, _PROJECTION)
             return list(cursor)
 
+        def _bounded_fetch_fn() -> list:
+            """Wrap _fetch_fn with a wall-clock timeout.
+
+            Uses ThreadPoolExecutor with shutdown(wait=False) so a hung worker thread
+            (e.g., blocked on SRV/TXT DNS resolution) does not block the caller on exit.
+            The orphan thread is allowed to linger; MongoClient eventually errors.
+            Sets _timeout_fired[0] = True before raising so the outer scope can
+            distinguish a timeout from other cached_pull failures.
+            """
+            ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            fut = ex.submit(_fetch_fn)
+            try:
+                return fut.result(timeout=_ATLAS_FETCH_TIMEOUT_S)
+            except concurrent.futures.TimeoutError:
+                _timeout_fired[0] = True  # signal before cached_pull swallows
+                raise _AtlasFetchTimeout("Atlas SRV/DNS fetch timed out")
+            finally:
+                ex.shutdown(wait=False, cancel_futures=True)  # NEVER wait=True
+
         # Route the Atlas read through the weekly cache. Only the raw projected
         # docs are cached; validation/dedup run on every call (cheap in-process).
         raw_docs = atlas_cache.cached_pull(
             _COLLECTION_NAME,
-            _fetch_fn,
+            _bounded_fetch_fn,
             force_refresh=force_refresh,
         )
 
         # cached_pull returns None when fetch failed and no stale row exists.
+        # Check the closure flag to distinguish a wall-clock timeout from other
+        # Atlas / cache failures (e.g., connectivity error, corrupt cache).
         if raw_docs is None:
+            reason = "AtlasFetchTimeout" if _timeout_fired[0] else "AtlasCacheUnavailable"
             return {
                 "available": False,
-                "reason": "AtlasCacheUnavailable",
+                "reason": reason,
                 "candidates": [],
                 "stats": dict(_EMPTY_STATS),
                 "source": "captplanet",
@@ -180,9 +223,13 @@ def load_community_strategies(
             }
 
     except Exception as exc:  # noqa: BLE001
+        # When the timeout wrapper raises _AtlasFetchTimeout (which propagates if
+        # cached_pull is mocked to call fn() directly), treat it identically to the
+        # closure-flag path — both must surface reason="AtlasFetchTimeout".
+        reason = "AtlasFetchTimeout" if _timeout_fired[0] else type(exc).__name__
         return {
             "available": False,
-            "reason": type(exc).__name__,
+            "reason": reason,
             "candidates": [],
             "stats": dict(_EMPTY_STATS),
             "source": "captplanet",
