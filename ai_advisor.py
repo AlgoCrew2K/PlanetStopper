@@ -55,8 +55,6 @@ _OPTUNA_SEARCH_SPACE_KEYS = frozenset(
 # Model + SDK configuration.
 # ---------------------------------------------------------------------------
 
-# Opus 4.7 — analytical reasoning over quant data (claude-api-mechanics.md §2).
-_CLAUDE_MODEL = "claude-opus-4-7"
 _MAX_TOKENS = 2048
 # Explicit client-side timeout — never rely on the SDK/urllib3 default.
 _REQUEST_TIMEOUT_SECONDS = 30.0

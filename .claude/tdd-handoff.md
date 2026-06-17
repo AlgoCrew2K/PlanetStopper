@@ -88,3 +88,5 @@ None.
 - [2026-06-17] c1-test-writer: Starting RED phase for advisor-synthesis-model-config
 - [2026-06-17] c1-test-writer: RED complete — 30 tests: 14 failing RED (correct assertion failures on current code), 16 passing regression guards. 0 import/syntax errors. 0 stubs. HEAD committed to feat/advisor-synthesis-model-config.
 - [2026-06-17] c1-implementer: GREEN complete — 30/30 tests passing. Sibling pollution check: 1146 passed, 10 skipped, 0 failures (tests/ai_advisor/). 0 test bugs. 3 production files changed (import os added to 2 files, 3 model literal/constant refs replaced). Typecheck N/A (Python). Lint pending (see /lint).
+- [2026-06-17] c1-test-writer: RED — AC-4 dead-constant removal (5 new tests, 5b104e4). 5 FAILED / 29 PASSED.
+- [2026-06-17] c1-implementer: GREEN — deleted _CLAUDE_MODEL + comment from ai_advisor.py; deleted _CHAT_MODEL + 2 comment lines from advisors/advisor_chat.py. 34/34 passed. 0 test bugs.

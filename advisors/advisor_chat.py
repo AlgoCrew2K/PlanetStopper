@@ -207,10 +207,6 @@ logger = logging.getLogger(__name__)
 # Model + SDK configuration
 # ---------------------------------------------------------------------------
 
-# Re-use the same model as the config advisor for consistency.
-# claude-opus-4-7 (analytical reasoning over quant data, claude-api-mechanics.md §2).
-_CHAT_MODEL = "claude-opus-4-7"
-
 # Token budget for chat responses — longer than config suggestions because we
 # are explaining multi-paragraph reasoning, not producing a structured list.
 _CHAT_MAX_TOKENS = 1024
