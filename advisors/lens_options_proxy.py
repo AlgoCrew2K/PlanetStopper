@@ -47,9 +47,11 @@ Reference: project spec, Prism Phase 4 derivatives lens brief.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 import time
+from datetime import timedelta
 from typing import Any
 
 import requests
@@ -124,6 +126,29 @@ _SOURCE_CITATION: str = (
 
 
 # ---------------------------------------------------------------------------
+# Freshness policy
+# ---------------------------------------------------------------------------
+
+# Maximum age of the latest FRED observation before the lens is marked
+# unavailable. FRED publishes VIX data on each trading day; the longest
+# normal market closure (a long-weekend + adjacent holiday) is ~4 calendar
+# days. A threshold of 10 days sits comfortably above that ceiling while
+# still catching genuinely stale data (e.g., the pre-fix 2020-batch defect).
+_OPTIONS_PROXY_MAX_STALENESS_DAYS: int = 10
+
+# Rolling window for the FRED observation_start query parameter. Requesting
+# the most-recent 90 calendar days ensures we fetch recent observations while
+# keeping the response small; 90 days covers any plausible FRED publication
+# lag and leaves headroom for future series.
+_OPTIONS_PROXY_LOOKBACK_DAYS: int = 90
+
+
+def _today() -> datetime.date:
+    """Return today's date. Injectable seam — monkeypatch in tests."""
+    return datetime.date.today()
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -156,8 +181,8 @@ def _fetch_fred_series(series_id: str, api_key: str) -> dict[str, Any]:
         "api_key": api_key,
         "file_type": "json",
         "sort_order": "asc",
-        "limit": 100,  # only the most recent batch needed
-        "observation_start": "2020-01-01",  # sufficient historical window
+        "limit": 100,
+        "observation_start": (_today() - timedelta(days=_OPTIONS_PROXY_LOOKBACK_DAYS)).isoformat(),
     }
 
     last_exc: Exception | None = None
@@ -318,6 +343,29 @@ def _fetch_options_proxy() -> dict[str, Any]:
                 "source": _SOURCE_CITATION,
             }
         spot_vix, as_of_date = spot_result
+
+        # Freshness guard: reject stale observations before computing any values.
+        # D-1: reason is a sentinel string, not type(exc).__name__, because
+        # staleness is a data quality decision, not an exception.
+        try:
+            obs_date = datetime.date.fromisoformat(as_of_date)
+        except (ValueError, TypeError):
+            return {
+                "available": False,
+                "reason": "ValueError",
+                "source": _SOURCE_CITATION,
+            }
+        if obs_date < _today() - timedelta(days=_OPTIONS_PROXY_MAX_STALENESS_DAYS):
+            logger.warning(
+                "Derivatives lens: VIXCLS observation %s is stale (>%d days old).",
+                as_of_date,
+                _OPTIONS_PROXY_MAX_STALENESS_DAYS,
+            )
+            return {
+                "available": False,
+                "reason": "stale_data",
+                "source": _SOURCE_CITATION,
+            }
 
         # Fetch VXVCLS (3-month VIX)
         vxv_data = _fetch_fred_series(_SERIES_VXVCLS, api_key)

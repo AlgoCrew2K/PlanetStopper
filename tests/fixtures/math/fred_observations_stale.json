@@ -1,0 +1,37 @@
+{
+  "_fixture_meta": {
+    "description": "Schema-derived FRED observations response reproducing the live defect on origin/main. The stale bug: asc + limit=100 + observation_start=2020-01-01 → OLDEST 100 observations returned. The reverse-walk then picks ~May-2020 as 'latest'. This fixture has the same shape but uses a controlled sentinel date of '2020-05-15' as the latest valid observation, clearly stale relative to a monkeypatched _today() of '2026-06-16' (gap ~6 years >> any staleness threshold).",
+    "series": "VIXCLS",
+    "provenance": "Schema from https://fred.stlouisfed.org/docs/api/fred/series_observations.html",
+    "sentinel_design": "latest valid observation = '2020-05-15', value '28.72'. Gap from _today()='2026-06-16' is ~2223 days >> _OPTIONS_PROXY_MAX_STALENESS_DAYS. Tests must assert available=False, reason='stale_data', no fabricated values.",
+    "validator_fields": ["realtime_start", "realtime_end", "observation_start", "observation_end", "units", "output_type", "file_type", "order_by", "sort_order", "count", "offset", "limit", "observations"],
+    "observation_fields": ["realtime_start", "realtime_end", "date", "value"]
+  },
+  "realtime_start": "2026-06-16",
+  "realtime_end": "2026-06-16",
+  "observation_start": "2020-01-01",
+  "observation_end": "9999-12-31",
+  "units": "lin",
+  "output_type": 1,
+  "file_type": "json",
+  "order_by": "observation_date",
+  "sort_order": "asc",
+  "count": 100,
+  "offset": 0,
+  "limit": 100,
+  "observations": [
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2020-01-02", "value": "12.47"},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2020-01-03", "value": "13.21"},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2020-01-06", "value": "12.88"},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2020-01-07", "value": "13.14"},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2020-01-08", "value": "13.02"},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2020-02-24", "value": "25.03"},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2020-02-25", "value": "27.56"},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2020-02-26", "value": "34.41"},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2020-03-16", "value": "82.69"},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2020-04-01", "value": "57.08"},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2020-05-01", "value": "."},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2020-05-14", "value": "."},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2020-05-15", "value": "28.72"}
+  ]
+}
