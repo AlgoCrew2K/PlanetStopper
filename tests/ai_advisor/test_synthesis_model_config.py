@@ -1,5 +1,5 @@
 """
-RED tests — Advisor Synthesis Model Config (C1).
+Tests — Advisor Synthesis Model Config (C1).
 
 Feature: make all advisor LLM calls read their model identifier from the
 ``ADVISOR_SYNTHESIS_MODEL`` environment variable, with a documented default
@@ -28,16 +28,27 @@ Coverage (AC-1..4 from feature-plans/advisor-synthesis-model-config.md):
   AC-4  Tests assert config wiring via function-scoped monkeypatch.setenv,
         NOT module-level os.environ mutation.  No hardcoded provider values.
 
-Adversarial RED intent:
-  - The hardcoded literals in lens_pipeline, ai_advisor, and advisor_chat
-    have NOT been replaced with env-var lookups yet.  Therefore:
-      * Tests that check ``os.environ.get("ADVISOR_SYNTHESIS_MODEL", <default>)``
-        will fail because the modules still read a hardcoded constant.
-      * Tests that check the default is ``claude-opus-4-8`` will fail because
-        the current defaults are ``claude-haiku-4-5-20251001`` and
-        ``claude-opus-4-7``.
-      * AC-3 regression tests PASS (the logic exists and is correct) —
-        they are correct regression guards, not RED tests that must fail.
+Hermetic test design (AC-4b — call-time read contract):
+  After the implementer's fix, each ``model=`` argument reads the env var
+  at CALL TIME (inline ``os.environ.get(...)``), not at module-import time.
+  This makes the wiring tests order-independent: they do NOT rely on
+  ``importlib.reload`` to re-evaluate a module-level constant.  Any sibling
+  test that imports the module first cannot cause these tests to see a stale
+  model string, because the env var is read fresh on every function call.
+
+Suite-ordering regression tests (TestSuiteOrderingRegression):
+  Reproduce the exact failure mode observed in the full suite:
+  ``test_advisor_chat_does_not_import_alpha_bot_execution`` (test_chat_engine.py)
+  pops ``advisors.advisor_chat`` from ``sys.modules``, re-imports it, then
+  restores ``sys.modules`` via a saved reference — but Python also writes the
+  re-imported module as an attribute on the ``advisors`` package object.
+  After the restore, ``sys.modules["advisors.advisor_chat"]`` is the original
+  module but ``advisors.advisor_chat`` (the package attribute) is the newly
+  imported copy.  A ``from advisors import advisor_chat`` then gets the stale
+  copy whose import-time ``_CHAT_MODEL`` was frozen to the default, ignoring
+  any subsequent ``monkeypatch.setenv`` + ``importlib.reload`` calls.
+  The ordering-regression tests simulate this state deterministically and
+  assert that a CALL-TIME env read survives it.
 
 Mocking strategy:
   - Anthropic client: patched to a MagicMock whose messages.create /
@@ -304,33 +315,32 @@ class TestLensPipelineModelEnvVar:
 
 
 class TestAiAdvisorModelEnvVar:
-    """AC-1/AC-2: ai_advisor must read its model from ADVISOR_SYNTHESIS_MODEL.
+    """AC-1/AC-2: ai_advisor must read its model from ADVISOR_SYNTHESIS_MODEL at CALL TIME.
 
-    Current state: _CLAUDE_MODEL = "claude-opus-4-7" (hardcoded at ai_advisor.py:59).
-    After the fix: _CLAUDE_MODEL must resolve from the env var with default claude-opus-4-8.
+    After the fix: the ``model=`` argument to ``messages.parse`` is evaluated
+    as ``os.environ.get(ADVISOR_SYNTHESIS_MODEL, default)`` inline at each call
+    site, not from a module-level constant set at import time.  This makes the
+    tests order-independent — no ``importlib.reload`` needed.
 
-    RED intent: these tests fail because (a) the default is wrong (4-7 not 4-8)
-    and (b) setting the env var has no effect on the hardcoded constant.
+    These tests are hermetic: they do NOT reload the module.  Regardless of
+    when or how often ai_advisor was previously imported, the live env var
+    value at call time must be what reaches the SDK.
     """
 
     def test_env_var_unset_uses_opus_default(self, monkeypatch):
         """When ADVISOR_SYNTHESIS_MODEL is unset, the model passed to messages.parse
         must be the production default (claude-opus-4-8).
 
-        RED: current default is claude-opus-4-7 (wrong version), not claude-opus-4-8.
+        Hermetic: does not reload ai_advisor.  A call-time env read must return
+        the default regardless of previous imports or sibling-test env state.
         """
         monkeypatch.delenv(_ENV_VAR, raising=False)
-
-        if "ai_advisor" in sys.modules:
-            importlib.reload(sys.modules["ai_advisor"])
 
         model_holder: list[str] = []
         client_mock = _make_client_mock_for_parse(model_holder)
 
         import ai_advisor
 
-        # Build a minimal context to trigger the messages.parse call.
-        # We mock _build_client to return our recording mock.
         stub_context = {
             "technicals": _stub_lens_unavailable("technicals"),
             "sentiment": _stub_lens_unavailable("sentiment"),
@@ -355,20 +365,18 @@ class TestAiAdvisorModelEnvVar:
         assert actual_model == _EXPECTED_DEFAULT, (
             f"When {_ENV_VAR!r} is unset, ai_advisor must pass {_EXPECTED_DEFAULT!r} "
             f"to messages.parse. Got: {actual_model!r}. "
-            f"Fix: replace _CLAUDE_MODEL = 'claude-opus-4-7' with "
-            f"os.environ.get({_ENV_VAR!r}, {_EXPECTED_DEFAULT!r})."
+            f"Fix: replace the module-level _CLAUDE_MODEL reference with an inline "
+            f"os.environ.get({_ENV_VAR!r}, {_EXPECTED_DEFAULT!r}) at the model= call site."
         )
 
     def test_env_var_set_overrides_claude_model(self, monkeypatch):
         """When ADVISOR_SYNTHESIS_MODEL is set, ai_advisor must pass that value
         to messages.parse.
 
-        RED: the hardcoded _CLAUDE_MODEL constant ignores the env var.
+        Hermetic: does not reload ai_advisor.  A call-time env read must pick up
+        the new value even if the module was already imported under a different env.
         """
         monkeypatch.setenv(_ENV_VAR, _CHEAP_TEST_MODEL)
-
-        if "ai_advisor" in sys.modules:
-            importlib.reload(sys.modules["ai_advisor"])
 
         model_holder: list[str] = []
         client_mock = _make_client_mock_for_parse(model_holder)
@@ -397,7 +405,9 @@ class TestAiAdvisorModelEnvVar:
         actual_model = model_holder[0]
         assert actual_model == _CHEAP_TEST_MODEL, (
             f"When {_ENV_VAR!r}={_CHEAP_TEST_MODEL!r}, ai_advisor must pass that value "
-            f"to messages.parse. Got: {actual_model!r}."
+            f"to messages.parse. Got: {actual_model!r}. "
+            f"Fix: replace the module-level _CLAUDE_MODEL reference with an inline "
+            f"os.environ.get({_ENV_VAR!r}, {_EXPECTED_DEFAULT!r}) at the model= call site."
         )
 
 
@@ -407,28 +417,30 @@ class TestAiAdvisorModelEnvVar:
 
 
 class TestAdvisorChatModelEnvVar:
-    """AC-1/AC-2: advisors/advisor_chat must read its model from ADVISOR_SYNTHESIS_MODEL.
+    """AC-1/AC-2: advisors/advisor_chat must read its model from ADVISOR_SYNTHESIS_MODEL
+    at CALL TIME — not from a module-level constant set at import time.
 
-    Current state: _CHAT_MODEL = "claude-opus-4-7" (hardcoded at advisor_chat.py:211).
-    After the fix: _CHAT_MODEL must resolve from the env var with default claude-opus-4-8.
+    After the fix: the ``model=`` argument to ``messages.create`` is evaluated
+    as ``os.environ.get(ADVISOR_SYNTHESIS_MODEL, default)`` inline at each call
+    site.  This makes the tests order-independent — no ``importlib.reload`` needed.
 
     advisor_chat delegates client construction to ai_advisor._build_client() (see
-    advisor_chat.py:378 comment: "Tests patch ai_advisor._build_client").
+    advisor_chat.py comment: "Tests patch ai_advisor._build_client").
     Patch ai_advisor._build_client, not advisor_chat._build_client.
 
-    RED intent: default is wrong (4-7 not 4-8) and env var has no effect.
+    These tests are hermetic: they do NOT reload the module.  Regardless of
+    when or how often advisors.advisor_chat was previously imported, the live
+    env var value at call time must be what reaches the SDK.
     """
 
     def test_env_var_unset_uses_opus_default(self, monkeypatch):
         """When ADVISOR_SYNTHESIS_MODEL is unset, advisor_chat must pass
         claude-opus-4-8 to client.messages.create.
 
-        RED: current default is claude-opus-4-7, not claude-opus-4-8.
+        Hermetic: does not reload advisors.advisor_chat.  A call-time env read
+        must return the default regardless of previous imports or env state.
         """
         monkeypatch.delenv(_ENV_VAR, raising=False)
-
-        if "advisors.advisor_chat" in sys.modules:
-            importlib.reload(sys.modules["advisors.advisor_chat"])
 
         model_holder: list[str] = []
         client_mock = _make_client_mock_for_chat(model_holder)
@@ -436,7 +448,6 @@ class TestAdvisorChatModelEnvVar:
         import ai_advisor
         from advisors import advisor_chat
 
-        # advisor_chat calls ai_advisor._build_client() for the shared factory seam.
         stub_artifact = {"type": "config_suggestion", "suggestion": "test suggestion"}
 
         with patch.object(ai_advisor, "_build_client", return_value=client_mock):
@@ -453,20 +464,19 @@ class TestAdvisorChatModelEnvVar:
         assert actual_model == _EXPECTED_DEFAULT, (
             f"When {_ENV_VAR!r} is unset, advisor_chat must pass {_EXPECTED_DEFAULT!r} "
             f"to messages.create. Got: {actual_model!r}. "
-            f"Fix: replace _CHAT_MODEL = 'claude-opus-4-7' with "
-            f"os.environ.get({_ENV_VAR!r}, {_EXPECTED_DEFAULT!r})."
+            f"Fix: replace the module-level _CHAT_MODEL reference with an inline "
+            f"os.environ.get({_ENV_VAR!r}, {_EXPECTED_DEFAULT!r}) at the model= call site."
         )
 
     def test_env_var_set_overrides_chat_model(self, monkeypatch):
         """When ADVISOR_SYNTHESIS_MODEL is set, advisor_chat must pass that value
         to client.messages.create.
 
-        RED: hardcoded constant ignores the env var.
+        Hermetic: does not reload advisors.advisor_chat.  A call-time env read
+        must pick up the new value even if the module was already imported under
+        a different env (e.g., by a sibling test file in the same pytest process).
         """
         monkeypatch.setenv(_ENV_VAR, _CHEAP_TEST_MODEL)
-
-        if "advisors.advisor_chat" in sys.modules:
-            importlib.reload(sys.modules["advisors.advisor_chat"])
 
         model_holder: list[str] = []
         client_mock = _make_client_mock_for_chat(model_holder)
@@ -488,7 +498,9 @@ class TestAdvisorChatModelEnvVar:
         actual_model = model_holder[0]
         assert actual_model == _CHEAP_TEST_MODEL, (
             f"When {_ENV_VAR!r}={_CHEAP_TEST_MODEL!r}, advisor_chat must pass that value "
-            f"to messages.create. Got: {actual_model!r}."
+            f"to messages.create. Got: {actual_model!r}. "
+            f"Fix: replace the module-level _CHAT_MODEL reference with an inline "
+            f"os.environ.get({_ENV_VAR!r}, {_EXPECTED_DEFAULT!r}) at the model= call site."
         )
 
 
@@ -538,33 +550,33 @@ class TestDefaultModelIsOpus:
         )
 
     def test_ai_advisor_default_is_opus_4_8(self, monkeypatch):
-        """ai_advisor._CLAUDE_MODEL (or equivalent env-var default) must be claude-opus-4-8."""
-        monkeypatch.delenv(_ENV_VAR, raising=False)
+        """ai_advisor._CLAUDE_MODEL (or equivalent env-var default) must be claude-opus-4-8.
 
-        if "ai_advisor" in sys.modules:
-            importlib.reload(sys.modules["ai_advisor"])
+        The call-time wiring test (TestAiAdvisorModelEnvVar::test_env_var_unset_uses_opus_default)
+        is the authoritative guard; this constant check is a lightweight supplementary guard
+        confirming the default value is correct at module level when the env var is absent.
+        Note: the constant is still meaningful after the fix — it is the env-var default
+        embedded in the module, even though the real read happens at call time.
+        """
+        monkeypatch.delenv(_ENV_VAR, raising=False)
 
         import ai_advisor
 
-        # After the fix, the module-level constant must reflect the env-var default.
-        # We check the constant directly as a lightweight guard; the full wiring
-        # test in TestAiAdvisorModelEnvVar::test_env_var_unset_uses_opus_default
-        # proves the value is actually used in the messages.parse call.
-        # Note: if the implementer reads the env var at call time (not import time),
-        # the constant test is not meaningful — but the wiring test covers that path.
         model_constant = getattr(ai_advisor, "_CLAUDE_MODEL", None)
         assert model_constant == _EXPECTED_DEFAULT, (
             f"ai_advisor._CLAUDE_MODEL must be {_EXPECTED_DEFAULT!r} when {_ENV_VAR!r} "
             f"is unset. Got {model_constant!r}. "
-            f"Fix: set _CLAUDE_MODEL = os.environ.get({_ENV_VAR!r}, {_EXPECTED_DEFAULT!r})."
+            f"Fix: ensure the default fallback in os.environ.get({_ENV_VAR!r}, ...) "
+            f"is {_EXPECTED_DEFAULT!r}."
         )
 
     def test_advisor_chat_default_is_opus_4_8(self, monkeypatch):
-        """advisors/advisor_chat._CHAT_MODEL (or equivalent env-var default) must be claude-opus-4-8."""
-        monkeypatch.delenv(_ENV_VAR, raising=False)
+        """advisors/advisor_chat._CHAT_MODEL (or equivalent env-var default) must be claude-opus-4-8.
 
-        if "advisors.advisor_chat" in sys.modules:
-            importlib.reload(sys.modules["advisors.advisor_chat"])
+        Supplementary constant check — see TestAdvisorChatModelEnvVar for the authoritative
+        call-time wiring test.
+        """
+        monkeypatch.delenv(_ENV_VAR, raising=False)
 
         from advisors import advisor_chat
 
@@ -572,7 +584,8 @@ class TestDefaultModelIsOpus:
         assert model_constant == _EXPECTED_DEFAULT, (
             f"advisors/advisor_chat._CHAT_MODEL must be {_EXPECTED_DEFAULT!r} when "
             f"{_ENV_VAR!r} is unset. Got {model_constant!r}. "
-            f"Fix: set _CHAT_MODEL = os.environ.get({_ENV_VAR!r}, {_EXPECTED_DEFAULT!r})."
+            f"Fix: ensure the default fallback in os.environ.get({_ENV_VAR!r}, ...) "
+            f"is {_EXPECTED_DEFAULT!r}."
         )
 
 
@@ -598,9 +611,6 @@ class TestNoRealLlmCallsInTests:
         made) rather than the production default.  It will always pass.
         """
         monkeypatch.delenv(_ENV_VAR, raising=False)
-
-        if "advisors.lens_pipeline" in sys.modules:
-            importlib.reload(sys.modules["advisors.lens_pipeline"])
 
         import advisors.lens_pipeline as pipeline_mod
 
@@ -630,9 +640,6 @@ class TestNoRealLlmCallsInTests:
     def test_ai_advisor_request_asserts_model_string_only(self, monkeypatch):
         """ai_advisor wiring tests assert the model= kwarg from mock, not a real response."""
         monkeypatch.delenv(_ENV_VAR, raising=False)
-
-        if "ai_advisor" in sys.modules:
-            importlib.reload(sys.modules["ai_advisor"])
 
         import ai_advisor
 
@@ -666,9 +673,6 @@ class TestNoRealLlmCallsInTests:
         """
         monkeypatch.delenv(_ENV_VAR, raising=False)
 
-        if "advisors.advisor_chat" in sys.modules:
-            importlib.reload(sys.modules["advisors.advisor_chat"])
-
         import ai_advisor
         from advisors import advisor_chat
 
@@ -687,6 +691,180 @@ class TestNoRealLlmCallsInTests:
             )
 
         assert isinstance(model_holder, list), "model_holder populated by mock side_effect only"
+
+
+# ---------------------------------------------------------------------------
+# Suite-ordering regression — reproduces the full-suite failure deterministically
+# ---------------------------------------------------------------------------
+
+
+class TestSuiteOrderingRegression:
+    """Regression: call-time env reads must survive the import-time constant trap.
+
+    Root cause (diagnosed 2026-06-17):
+      ``test_chat_engine.py::test_advisor_chat_does_not_import_alpha_bot_execution``
+      executes this sequence:
+        1. saved = sys.modules.get("advisors.advisor_chat")      # original module object
+        2. sys.modules.pop("advisors.advisor_chat", None)
+        3. importlib.import_module("advisors.advisor_chat")       # creates NEW module object M2
+           => Python also sets advisors.advisor_chat (package attr) = M2
+        4. [finally] sys.modules["advisors.advisor_chat"] = saved  # restores original M1
+           => advisors.advisor_chat (package attr) is STILL M2
+
+    After this, ``sys.modules["advisors.advisor_chat"]`` is M1 (original),
+    but ``from advisors import advisor_chat`` returns M2 (the stale re-import).
+
+    The existing ``test_env_var_set_overrides_chat_model`` then does:
+        monkeypatch.setenv(...)
+        importlib.reload(sys.modules["advisors.advisor_chat"])   # reloads M1
+        from advisors import advisor_chat                         # gets M2 (not reloaded!)
+        advisor_chat.explain_artifact(...)                        # M2._CHAT_MODEL = default
+
+    This causes the test to see the import-time default instead of the override.
+
+    The FIX: read ``os.environ.get(...)`` inline at the ``model=`` call site
+    in ``explain_artifact`` (and ``request_suggestions``).  Then there is no
+    module-level constant to go stale — M2's ``explain_artifact`` reads the
+    env var live on every call.
+
+    These tests simulate the stale-package-attribute state deterministically
+    and assert that a call-time env read survives it.  They MUST FAIL on
+    import-time constant code and PASS after the call-time fix.
+    """
+
+    @staticmethod
+    def _simulate_pop_reimport_restore(module_key: str) -> None:
+        """Reproduce the sys.modules + package-attribute desync from
+        ``test_advisor_chat_does_not_import_alpha_bot_execution``.
+
+        After this helper returns:
+          - sys.modules[module_key] is the ORIGINAL module object
+          - the package attribute (e.g. advisors.advisor_chat) points to a
+            NEWLY IMPORTED copy whose import-time constants were frozen under
+            whatever env vars were set during this helper's execution
+        """
+        import importlib as _importlib
+
+        saved = sys.modules.get(module_key)
+        sys.modules.pop(module_key, None)
+        # Re-import creates a NEW module object AND updates the package attribute.
+        _importlib.import_module(module_key)
+        # Restore sys.modules to the original — but the package attribute stays
+        # pointing at the newly imported copy (the desync).
+        if saved is not None:
+            sys.modules[module_key] = saved
+        else:
+            sys.modules.pop(module_key, None)
+
+    def test_advisor_chat_call_time_read_survives_stale_package_attribute(self, monkeypatch):
+        """After a pop+reimport+restore cycle leaves a stale advisors.advisor_chat
+        package attribute, a call-time env read must still return the current env var.
+
+        Reproduces the exact full-suite ordering failure:
+          ADVISOR_SYNTHESIS_MODEL unset at re-import → M2._CHAT_MODEL frozen to default.
+          Then monkeypatch sets the env var.
+          ``from advisors import advisor_chat`` returns M2 (stale).
+          With import-time code: M2.explain_artifact uses M2._CHAT_MODEL = default → FAIL.
+          With call-time code: M2.explain_artifact reads os.environ.get(...) live → PASS.
+
+        This test MUST FAIL on import-time constant code and PASS after call-time fix.
+        """
+        # Ensure the module is imported first (simulating sibling import), then desync it.
+        import advisors  # noqa: F401 — ensure the package is loaded
+        import advisors.advisor_chat  # noqa: F401 — ensure initial import happened
+
+        # Simulate the pop+reimport+restore with NO env var set (M2 frozen to default).
+        monkeypatch.delenv(_ENV_VAR, raising=False)
+        self._simulate_pop_reimport_restore("advisors.advisor_chat")
+
+        # Now set the env var — this is what the original test did.
+        monkeypatch.setenv(_ENV_VAR, _CHEAP_TEST_MODEL)
+
+        # Get advisor_chat via the package attribute (returns M2 — the stale copy).
+        from advisors import advisor_chat
+
+        model_holder: list[str] = []
+        client_mock = _make_client_mock_for_chat(model_holder)
+
+        import ai_advisor
+
+        stub_artifact = {"type": "config_suggestion", "suggestion": "test suggestion"}
+
+        with patch.object(ai_advisor, "_build_client", return_value=client_mock):
+            advisor_chat.explain_artifact(
+                question="Why does this survive the ordering failure?",
+                artifact=stub_artifact,
+            )
+
+        assert model_holder, (
+            "advisor_chat.explain_artifact never called messages.create — "
+            "mock setup error in the ordering regression test."
+        )
+        actual_model = model_holder[0]
+        assert actual_model == _CHEAP_TEST_MODEL, (
+            f"SUITE-ORDERING REGRESSION: after a pop+reimport+restore cycle that leaves "
+            f"a stale advisors.advisor_chat package attribute (M2 frozen at import time "
+            f"to {_EXPECTED_DEFAULT!r}), setting {_ENV_VAR!r}={_CHEAP_TEST_MODEL!r} and "
+            f"calling explain_artifact must still pass {_CHEAP_TEST_MODEL!r} to "
+            f"messages.create. Got: {actual_model!r}. "
+            f"Fix: replace `model=_CHAT_MODEL` with an inline "
+            f"`model=os.environ.get({_ENV_VAR!r}, {_EXPECTED_DEFAULT!r})` "
+            f"at the call site in advisors/advisor_chat.py."
+        )
+
+    def test_ai_advisor_call_time_read_survives_stale_module_constant(self, monkeypatch):
+        """After ai_advisor is imported under the default env, setting the env var
+        must cause messages.parse to use the new value without any reload.
+
+        This is the equivalent hermetic ordering test for ai_advisor.request_suggestions.
+        ai_advisor does not have the pop+reimport+restore side-effect because
+        test_chat_engine.py only manipulates advisors.advisor_chat; however, any
+        sibling that imports ai_advisor fixes the import-time _CLAUDE_MODEL to the
+        default.  A call-time read must survive this.
+
+        This test MUST FAIL on import-time constant code (the constant was frozen at
+        import time to the default, ignoring the subsequent monkeypatch.setenv) and
+        PASS after the call-time fix.
+        """
+        # Ensure ai_advisor is already imported (simulating sibling import).
+        import ai_advisor  # noqa: F401
+
+        # Now set the env var AFTER the module is already imported.
+        monkeypatch.setenv(_ENV_VAR, _CHEAP_TEST_MODEL)
+
+        model_holder: list[str] = []
+        client_mock = _make_client_mock_for_parse(model_holder)
+
+        stub_context = {
+            "technicals": _stub_lens_unavailable("technicals"),
+            "sentiment": _stub_lens_unavailable("sentiment"),
+            "derivatives": _stub_lens_unavailable("derivatives"),
+            "macro": _stub_lens_unavailable("macro"),
+            "fundamentals": _stub_lens_unavailable("fundamentals"),
+            "config": {},
+            "bot_state": {},
+        }
+
+        with (
+            patch.object(ai_advisor, "_build_client", return_value=client_mock),
+            patch.object(ai_advisor, "_build_messages", return_value=[{"role": "user", "content": "test"}]),
+        ):
+            ai_advisor.request_suggestions(stub_context)
+
+        assert model_holder, (
+            "ai_advisor.request_suggestions never called messages.parse — "
+            "mock setup error in the ordering regression test."
+        )
+        actual_model = model_holder[0]
+        assert actual_model == _CHEAP_TEST_MODEL, (
+            f"SUITE-ORDERING REGRESSION: ai_advisor already imported under default env "
+            f"(import-time _CLAUDE_MODEL frozen to {_EXPECTED_DEFAULT!r}), then "
+            f"{_ENV_VAR!r}={_CHEAP_TEST_MODEL!r} was set WITHOUT reloading the module. "
+            f"messages.parse must receive {_CHEAP_TEST_MODEL!r}. Got: {actual_model!r}. "
+            f"Fix: replace `model=_CLAUDE_MODEL` with an inline "
+            f"`model=os.environ.get({_ENV_VAR!r}, {_EXPECTED_DEFAULT!r})` "
+            f"at the call site in ai_advisor.py."
+        )
 
 
 # ---------------------------------------------------------------------------
