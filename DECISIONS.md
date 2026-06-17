@@ -891,3 +891,35 @@ Extracted from the original single-ticker body (CIK resolve → companyfacts fet
 
 **Status:** GREEN at 3e41a2a. `quant-code-reviewer` APPROVE (pending PM live SEC gate). Acceptance criteria AC-1 through AC-6 verified.
 
+
+---
+
+### DE-SYNTH-001: ADVISOR_SYNTHESIS_MODEL env var — call-time model selection at all 3 advisor LLM call sites
+
+**Date:** 2026-06-17
+
+**Decision:** All three advisor LLM call sites read `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` inline at the SDK call (call time). The previously hardcoded model strings are replaced by a single env var:
+
+1. `advisors/lens_pipeline.py` — `_synthesize_via_claude`: was `"claude-haiku-4-5-20251001"` (hardcoded); now `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`.
+2. `ai_advisor.py` — `request_suggestions`: was `_CLAUDE_MODEL` constant reference; now `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`.
+3. `advisors/advisor_chat.py` — `explain_artifact`: was `_CHAT_MODEL` constant reference; now `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`.
+
+The module-level `_CLAUDE_MODEL` and `_CHAT_MODEL` constants were **removed** at 46a6bc4 (dead-constant cleanup). The call sites read `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` inline; there is no retained constant.
+
+**Default model:** `claude-opus-4-8`.
+
+**Rationale for default upgrade (Haiku → Opus 4.8):** The nightly lens pipeline (`_synthesize_via_claude`) was the only production caller of `claude-haiku-4-5-20251001`. At 1 call/night and ~256 max_tokens per synthesis, the cost difference between Haiku and Opus 4.8 is negligible (~$0.001/call delta at current API rates). Upgrading the default to Opus 4.8 aligns all three advisor call sites to the same default and delivers higher synthesis quality for the nightly Market Prism summary.
+
+**Why call-time, not module-level constant:** Module-level constant resolution happens at import time; reading the env var inline at the SDK call means tests and CI can override the model via `monkeypatch.setenv("ADVISOR_SYNTHESIS_MODEL", "claude-haiku-4-5-20251001")` without patching internal module state. It also means the operator can change the model by setting/unsetting the env var and restarting the daemon, without any code change.
+
+**Scope boundary:** This change is model selection only — no new HTTP paths, no fixture changes, no Composer endpoints touched, no `LIVE_EXECUTION` path touched, no `is_live` propagation change. Advisory-only surface.
+
+**Epic-A Phase-2 (`prism-synthesizer`) scope boundary:** A future `prism-synthesizer` agent (Epic-A Phase-2) may introduce per-lens model routing or a separate synthesizer constant. `ADVISOR_SYNTHESIS_MODEL` is the single shared default for all three current call sites; per-call-site overrides are out of scope for this decision.
+
+**AC-5 fence-stripping:** The test for AC-5 (fence-stripping in `_synthesize_via_claude`) is byte-preserved — the fence-stripping logic and its test coverage are unchanged by this decision.
+
+**Files changed:** `advisors/lens_pipeline.py` (`import os` added; model selection updated); `ai_advisor.py` (model selection updated; `_CLAUDE_MODEL` constant removed — 46a6bc4); `advisors/advisor_chat.py` (`import os` added; model selection updated; `_CHAT_MODEL` constant removed — 46a6bc4); `tests/ai_advisor/test_synthesis_model_config.py` (30 new tests, AC-1..AC-7).
+
+**Status:** GREEN at 294f8a5. 30/30 new tests pass; 1146/0 sibling suite clean.
+
+**Follow-up (0357ecb + c3113b6):** `resolve_advisor_model() -> str` added to `ai_advisor.py` (lines 63-69) as a public accessor that surfaces the env-resolved model ID to non-advisor consumers. `app.py` accept (`/ai-advisor/accept`, line 3748) and reject (`/ai-advisor/reject`, line 3781) routes call `ai_advisor.resolve_advisor_model()` to populate the `model_id` field in the `llm_suggestions` audit trail — replacing a previously hardcoded or absent value. 41/41 tests pass at c3113b6.

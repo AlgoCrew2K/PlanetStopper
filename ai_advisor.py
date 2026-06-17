@@ -55,11 +55,18 @@ _OPTUNA_SEARCH_SPACE_KEYS = frozenset(
 # Model + SDK configuration.
 # ---------------------------------------------------------------------------
 
-# Opus 4.7 — analytical reasoning over quant data (claude-api-mechanics.md §2).
-_CLAUDE_MODEL = "claude-opus-4-7"
 _MAX_TOKENS = 2048
 # Explicit client-side timeout — never rely on the SDK/urllib3 default.
 _REQUEST_TIMEOUT_SECONDS = 30.0
+
+
+def resolve_advisor_model() -> str:
+    """Return the configured advisor synthesis model ID.
+
+    Reads ADVISOR_SYNTHESIS_MODEL at call time so a daemon restart is not
+    required to pick up a change.  Default: claude-opus-4-8 (Opus 4.8).
+    """
+    return os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")
 
 
 # ---------------------------------------------------------------------------
@@ -1629,7 +1636,7 @@ def request_suggestions(
     # .parsed_output (see the extraction loop below).
     try:
         sdk_response = client.messages.parse(
-            model=_CLAUDE_MODEL,
+            model=os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8"),
             max_tokens=_MAX_TOKENS,
             output_format=ConfigSuggestionsResponse,
             messages=_build_messages(context),

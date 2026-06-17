@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -205,10 +206,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Model + SDK configuration
 # ---------------------------------------------------------------------------
-
-# Re-use the same model as the config advisor for consistency.
-# claude-opus-4-7 (analytical reasoning over quant data, claude-api-mechanics.md §2).
-_CHAT_MODEL = "claude-opus-4-7"
 
 # Token budget for chat responses — longer than config suggestions because we
 # are explaining multi-paragraph reasoning, not producing a structured list.
@@ -386,7 +383,7 @@ def explain_artifact(
     # free-form explanations, not typed schemas.
     try:
         sdk_response = client.messages.create(
-            model=_CHAT_MODEL,
+            model=os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8"),
             max_tokens=_CHAT_MAX_TOKENS,
             system=_EXPLAIN_ONLY_SYSTEM_PROMPT,
             messages=_build_chat_messages(question, artifact),

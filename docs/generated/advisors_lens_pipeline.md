@@ -3,7 +3,7 @@
 > Scheduled off-hours lens pipeline: collects 5 lens blocks, validates citations, synthesizes a Market Prism summary via Claude, and persists exactly one MARKET_PRISM advisor_observation per run — always, regardless of lens availability.
 
 **Source:** `advisors/lens_pipeline.py`
-**Last updated:** 2026-06-13
+**Last updated:** 2026-06-17
 
 ## Overview
 
@@ -51,7 +51,7 @@ Aggregates sources from all `available=True` lens blocks. Each citation is valid
 
 ### Pass 3 — Claude Synthesis
 
-Calls Claude (`claude-haiku-4-5-20251001`, lightest available model) to synthesize the available lens summaries into an `overall_sentiment` label and `sentiment_rationale`. The prompt requests a single JSON response; the response is parsed and validated against the allowed sentinel set (`"risk-on"`, `"neutral"`, `"risk-off"`, `"limited-inputs"`).
+Calls Claude to synthesize the available lens summaries into an `overall_sentiment` label and `sentiment_rationale`. The model is read at call time via `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` — override by setting `ADVISOR_SYNTHESIS_MODEL` in the environment before starting the daemon (see DE-SYNTH-001 in DECISIONS.md). Default upgraded from `claude-haiku-4-5-20251001` to `claude-opus-4-8` (1 call/night, ~256 tokens; quality gain outweighs negligible cost delta). The prompt requests a single JSON response; the response is parsed and validated against the allowed sentinel set (`"risk-on"`, `"neutral"`, `"risk-off"`, `"limited-inputs"`).
 
 Degradation paths (all produce `"limited-inputs"` + an explanatory rationale string):
 - All lenses unavailable → Claude call is skipped entirely.

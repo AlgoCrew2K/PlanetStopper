@@ -3,7 +3,7 @@
 > Claude-backed config advisor: context assembly, structured-output Claude call, per-symphony assessment, safety gates (7-item allowlist, risk-direction cross-check, OOS re-validation), and multi-lens pipeline (technicals wired; sentiment wired; derivatives wired with freshness guard; fundamentals wired with portfolio fan-out; macro stub).
 
 **Source:** `ai_advisor.py`
-**Last updated:** 2026-06-16
+**Last updated:** 2026-06-17
 
 ## Overview
 
@@ -85,13 +85,32 @@ The assessment is derived from `context["optuna_evidence"]` which carries `basel
 
 ### Claude Client
 
+#### `resolve_advisor_model() -> str`
+
+Returns the configured advisor synthesis model ID. Reads `ADVISOR_SYNTHESIS_MODEL` at call time — no daemon restart required to pick up a config change.
+
+**Returns:** `str` — the model ID to use for all advisor LLM calls. Default: `"claude-opus-4-8"`.
+
+**Source:** `ai_advisor.py:63-69`
+
+Used by:
+- `request_suggestions` — structured-output Claude call (`ai_advisor.py`)
+- `explain_artifact` — chat explanation Claude call (`advisors/advisor_chat.py`)
+- `_synthesize_via_claude` — nightly Market Prism synthesis (`advisors/lens_pipeline.py`)
+- `app.py:3748` and `app.py:3781` — accept/reject audit-trail `model_id` field
+
+Override: set `ADVISOR_SYNTHESIS_MODEL` in the daemon environment before start. All three call sites pick up the change on the next call without a code deploy.
+
+---
+
+
 #### `request_suggestions(context: dict) → tuple[ConfigSuggestionsResponse | None, str | None]`
 
 Calls Claude's structured-output endpoint. Synchronous — blocks until the response returns or times out (30 seconds).
 
 **Returns:** `(ConfigSuggestionsResponse, None)` on success; `(None, error_message)` on any failure. Never raises.
 
-**Model:** `claude-opus-4-7`, `max_tokens=2048`.
+**Model:** `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`, `max_tokens=2048`. The model is read at call time — override via the `ADVISOR_SYNTHESIS_MODEL` env var (see DE-SYNTH-001 in DECISIONS.md). `_CLAUDE_MODEL` was removed at 46a6bc4 (dead-constant cleanup); inline `os.environ.get()` at the `model=` argument is the canonical pattern.
 
 An empty `suggestions` list is a valid non-error response ("no edit is well-supported"). D-1 security contract: fully honored — all failure paths (`messages.parse` at `ai_advisor.py:631` and client construction) return only `type(exc).__name__` to the browser. Full exception detail is logged server-side via `exc_info=True`; no exception text reaches the JSON response.
 
