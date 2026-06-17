@@ -1,7 +1,7 @@
 # TDD Handoff
 Plan: feature-plans/lens-derivatives-vix-freshness-fix.md
 Branch: fix/derivatives-vix-freshness
-Phase: red
+Phase: green
 
 ## Test Files
 - tests/ai_advisor/test_lens_options_proxy_freshness.py  (AC-1 through AC-6)
@@ -79,3 +79,20 @@ None — all design decisions covered by plan or [PM-ASSUMED] annotations.
 ## Status Log
 - [2026-06-16] df-test-writer (quant-test-writer, LEAD): Starting RED phase for derivatives-vix-freshness fix
 - [2026-06-16] df-test-writer (quant-test-writer, LEAD): RED complete — 43 tests (13 failing on assertions, 30 passing on preserved correct behavior), 0 stubs created, 2 fixtures created. HEAD=a93a2ba on fix/derivatives-vix-freshness. Handoff ready for df-implementer to run /tdd-implement.
+- [2026-06-16] df-implementer (composer-alpaca-integration): GREEN complete — 43/43 tests passing, 0 test bugs documented. Lint ✓. Changes: advisors/lens_options_proxy.py only.
+
+## Test File Issues (for test-writer to fix)
+None — all 43 tests passed against the implementation as written.
+
+## Disputed Tests
+None.
+
+## Implementation Notes
+- Added `import datetime` and `from datetime import timedelta` to the module imports (these were absent in the shipped code).
+- Added three new module-level symbols before the internal helpers section:
+  - `_OPTIONS_PROXY_MAX_STALENESS_DAYS: int = 10` — with source comment explaining the 10-day threshold vs. ~4-day longest market closure.
+  - `_OPTIONS_PROXY_LOOKBACK_DAYS: int = 90` — rolling window for `observation_start` query param.
+  - `def _today() -> datetime.date` — injectable run-date seam; returns `datetime.date.today()` in production; tests monkeypatch it.
+- In `_fetch_fred_series`: replaced `"observation_start": "2020-01-01"` with `(_today() - timedelta(days=_OPTIONS_PROXY_LOOKBACK_DAYS)).isoformat()`. Kept `sort_order="asc"` and `limit=100` (the existing `_parse_latest_observation` reverse-walk still selects the latest correctly from an asc list).
+- In `_fetch_options_proxy`: added freshness guard immediately after unpacking `spot_vix, as_of_date` from `_parse_latest_observation`. The guard parses `as_of_date` via `datetime.date.fromisoformat` (strict; falls back to `ValueError` on malformed date), then compares against `_today() - timedelta(days=_OPTIONS_PROXY_MAX_STALENESS_DAYS)`. Stale result short-circuits before `_classify_regime`/`_derive_risk_read` and returns `{"available": False, "reason": "stale_data", "source": _SOURCE_CITATION}` — no fabricated vix/regime/risk values.
+- All existing paths (fetch-failure, 429-exhausted, no-valid-observations, fresh data) preserved unchanged.
