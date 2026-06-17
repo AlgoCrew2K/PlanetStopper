@@ -3,7 +3,7 @@
 > Claude-backed config advisor: context assembly, structured-output Claude call, per-symphony assessment, safety gates (7-item allowlist, risk-direction cross-check, OOS re-validation), and multi-lens pipeline (technicals wired; sentiment wired; derivatives wired with freshness guard; fundamentals wired with portfolio fan-out; macro stub).
 
 **Source:** `ai_advisor.py`
-**Last updated:** 2026-06-16
+**Last updated:** 2026-06-17
 
 ## Overview
 
@@ -91,7 +91,7 @@ Calls Claude's structured-output endpoint. Synchronous — blocks until the resp
 
 **Returns:** `(ConfigSuggestionsResponse, None)` on success; `(None, error_message)` on any failure. Never raises.
 
-**Model:** `claude-opus-4-7`, `max_tokens=2048`.
+**Model:** `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`, `max_tokens=2048`. The model is read at call time — override via the `ADVISOR_SYNTHESIS_MODEL` env var (see DE-SYNTH-001 in DECISIONS.md). The `_CLAUDE_MODEL` module-level constant is retained as a comment anchor but is not read by the SDK call.
 
 An empty `suggestions` list is a valid non-error response ("no edit is well-supported"). D-1 security contract: fully honored — all failure paths (`messages.parse` at `ai_advisor.py:631` and client construction) return only `type(exc).__name__` to the browser. Full exception detail is logged server-side via `exc_info=True`; no exception text reaches the JSON response.
 
