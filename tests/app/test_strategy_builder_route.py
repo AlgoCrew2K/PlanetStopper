@@ -1392,3 +1392,63 @@ def test_survivor_card_caveat_text_contains_overfitting_risk_wording(client):
         "The caveat-text element must be updated to include: "
         '"Overfitting risk cannot be eliminated — only resisted."'
     )
+
+
+# ---------------------------------------------------------------------------
+# Q: HF-1 regression — community-strats load must NOT reach real Atlas in
+#    the offline suite (DE-HF1-001 best-effort degradation contract)
+# ---------------------------------------------------------------------------
+
+
+def test_post_run_does_not_call_real_atlas_in_offline_suite(client, _stub_community_strats_offline):
+    """Q-29: POST /run must never reach real Atlas (MongoDB) during the offline suite.
+
+    After HF-1 the route ALWAYS calls load_community_strategies.  The
+    tests/app/conftest.py autouse fixture stubs it out, but this test
+    explicitly asserts the stub was invoked — confirming the patch seam is
+    correct and no test-infrastructure change can silently re-expose the live
+    call.
+
+    Failure means the conftest stub is broken or the patch target changed:
+    the offline suite would hang on real Atlas connections (observed as 51 GB
+    memory balloon and a 32%-stall, 2026-06-17).
+
+    The stub is the autouse `_stub_community_strats_offline` fixture from
+    tests/app/conftest.py, yielded as a MagicMock so call-count is
+    inspectable.  We do NOT assert the count == 1 (the route is free to call
+    it once or delegate) — we assert count >= 1 to confirm the seam fired and
+    the route did not bypass the stub.
+    """
+    mock_run = MagicMock()
+    mock_run.error = None
+    gate = MagicMock()
+    gate.n_candidates = 0
+    gate.fdr_q = 0.05
+    gate.results = []
+    gate.survivors = []
+    mock_run.gated_batch = gate
+    mock_run.candidates = []
+    mock_run.screened_survivors = []
+
+    with patch(
+        "advisors.strategy_builder_engine.propose_strategies",
+        return_value=mock_run,
+    ):
+        resp = client.post(
+            "/ai-advisor/strategy-builder/run",
+            json={"objective": "diversify", "universe": ["SPY", "AGG"]},
+            content_type="application/json",
+        )
+
+    assert resp.status_code == 200, (
+        f"POST /run returned {resp.status_code} — route should succeed even with "
+        "community strats unavailable (template-only degradation, DE-HF1-001)."
+    )
+
+    assert _stub_community_strats_offline.call_count >= 1, (
+        "load_community_strategies stub was never called during POST /run. "
+        "The HF-1 route wiring (app.py: lazy from advisors.community_strats import "
+        "load_community_strategies) must invoke the function exactly once per request. "
+        "If this assertion fails the patch seam is broken — the route may be reaching "
+        "real Atlas (MongoDB) during the offline suite."
+    )

@@ -3,7 +3,7 @@
 > Weekly-cached captplanet Atlas loader: validates, deduplicates, and filters community strategy documents for the Strategy Builder proposal suite.
 
 **Source:** `advisors/community_strats.py`
-**Last updated:** 2026-06-14
+**Last updated:** 2026-06-17
 
 ## Overview
 
@@ -148,7 +148,7 @@ pulled == (valid + missing_edn_string + parse_failed + validate_rejected
 | Any other exception in the outer try block | `type(exc).__name__` | `False` |
 | Empty collection (zero docs) | — | `True` (candidates=[], stats.pulled=0) |
 
-The `"AtlasCacheUnavailable"` reason is a named sentinel (not `type(exc).__name__`) for the `raw_docs is None` branch. The propose_strategies wiring cycle will improve this to a more descriptive message.
+The `"AtlasCacheUnavailable"` reason is a named sentinel (not `type(exc).__name__`) for the `raw_docs is None` branch. This string predates the HF-1 route wiring (2026-06-17); no change was made to the sentinel value.
 
 ## DB Isolation
 
@@ -173,6 +173,28 @@ The `"AtlasCacheUnavailable"` reason is a named sentinel (not `type(exc).__name_
 
 No imports from `database.py`, `autotuner.py`, `app.py`, or any execution module.
 
-## No Production Caller Yet
+## Production Caller
 
-`advisors/community_strats.py` is scaffolded and test-verified but has no production caller. The propose_strategies wiring (making `strategy_builder_engine` consume these candidates) is the next cycle. Do not reference community-strats candidates from production code until that wiring is in.
+`advisors/community_strats.py` is called from production by the Strategy Builder route handler `ai_advisor_strategy_builder_run()` in `app.py` (handler defined at `app.py:3395`).
+
+The route lazily imports `load_community_strategies` at `app.py:3421` (inside the handler body — never at module level, preserving the CC-2 import boundary). The community load is **best-effort**:
+
+```python
+# app.py:3440-3448
+community_candidates: list = []
+try:
+    _community = load_community_strategies(force_refresh=False)
+    community_candidates = community_candidate_infos(
+        _community, max_candidates=MAX_COMMUNITY_CANDIDATES_PER_RUN
+    )
+except Exception as exc:
+    _daemon_log.warning("community-strats load skipped: %s", type(exc).__name__)
+    community_candidates = []
+```
+
+Key invariants of the production call:
+- `force_refresh=False` is mandatory — the weekly Atlas cache TTL is the operator bill-protection directive. A per-request forced pull is never acceptable.
+- Any exception (Atlas down, `MONGO_URI` unset, cache miss, adapter failure) logs only the exception class name and degrades to `community_candidates=[]`. The proposal run completes as template-only.
+- `community_candidates=` is forwarded to `propose_strategies` at `app.py:3457`. When non-empty, community candidates enter the single-batch FDR gate alongside template candidates (anti-overfit invariant — DE-PSW-001). When empty or `None`, `propose_strategies` behaves identically to the pre-wiring template-only path.
+
+See `DE-HF1-001` in `DECISIONS.md` for the full architectural rationale.
