@@ -1,77 +1,39 @@
-# Feature: Advisor Synthesis Model — Configurable (Opus Prod / Cheap CI)
+# Feature: ADVISOR_SYNTHESIS_MODEL — env-configurable advisor LLM model (C1)
 Status: ready
-Created: 2026-06-13
+Created: 2026-06-13 (refined 2026-06-17 — call-time design + hermetic tests locked)
 
 ## Summary
-
-The advisor synthesis path currently hardcodes a model (`claude-haiku-4-5-20251001` in `advisors/lens_pipeline._synthesize_via_claude`, a Cycle-4 placeholder). Production analysis should run on Opus 4.8; CI/tests should not burn Opus tokens. This feature makes the model configurable via an environment variable with a sensible default so prod uses Opus and test/CI uses a cheap/mocked model. Scoped to advisor LLM calls that remain after Epic A (real agent team) lands — specifically: the Cycle-4 `_synthesize_via_claude` path and any advisor chat/swap/logic explanation calls that should be model-tiered. Does NOT re-plumb the Market Prism synthesizer agent (that becomes a standalone Opus 4.8 agent in Phase 2).
+The advisor LLM model is hardcoded at three call sites. Make it operator-configurable via a single `ADVISOR_SYNTHESIS_MODEL` env var read **at call time** (so a change takes effect without a daemon restart and tests are hermetic), default `claude-opus-4-8`. Advisory-only; no execution-path impact. Does NOT re-plumb the Epic-A Phase-2 `prism-synthesizer` agent (that supersedes the nightly programmatic synthesis later).
 
 ## Acceptance Criteria
-
-- [ ] AC-1: The synthesis model (and any other advisor LLM call that is model-tiered) reads its model identifier from a single config source — an environment variable (e.g. `ADVISOR_SYNTHESIS_MODEL`) with a documented sensible default — not a hardcoded literal anywhere in the production path.
-- [ ] AC-2: When `ADVISOR_SYNTHESIS_MODEL` is not set, the default resolves to Opus 4.8 in production. When set to a test/CI value, the code uses that model. No production path makes a real Opus call during a pytest run.
-- [ ] AC-3: The JSON-extraction / fence-stripping logic fixed at `df2d19e` is preserved exactly — no behavior change to the response processing path.
-- [ ] AC-4: Tests assert the config wiring (which model is selected under which env state), not a specific network response. No real LLM calls in unit tests.
-- [ ] AC-5: The `ADVISOR_SYNTHESIS_MODEL` env var is documented in the project's configuration reference (doc-gen updates `docs/generated/` and `DECISIONS.md`).
+- **AC-1:** All three advisor LLM call sites read `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` **inline at the SDK call** (call time, NOT a module-level constant read at import time):
+  - `advisors/lens_pipeline._synthesize_via_claude` (`messages.create`) — was hardcoded `claude-haiku-4-5-20251001`.
+  - `ai_advisor.request_suggestions` (`messages.parse`) — was module constant `_CLAUDE_MODEL = "claude-opus-4-7"`.
+  - `advisors/advisor_chat.explain_artifact` (`messages.create`) — was module constant `_CHAT_MODEL = "claude-opus-4-7"`.
+- **AC-2:** Env var UNSET → all three resolve to `claude-opus-4-8`. This intentionally upgrades the nightly synthesis Haiku→Opus 4.8; record DE-SYNTH-001 with the cost rationale + the Epic-A scope boundary. Confirm `claude-opus-4-8` is the current Opus ID via the `/claude-api` reference; do NOT reintroduce `claude-opus-4-7`/`claude-opus-4-5`.
+- **AC-3:** Env var SET → all three pass that value to the SDK call.
+- **AC-4:** The now-dead module-level `_CLAUDE_MODEL` / `_CHAT_MODEL` constants are REMOVED (no unused duplicate-of-default; matches `lens_pipeline`'s existing inline style). Any test asserting the default must assert it via the SDK call, not a module constant.
+- **AC-5:** `lens_pipeline`'s `_extract_json_object` fence-stripping / balanced-brace extraction (fixed at `df2d19e`) is **byte-preserved** — only the `model=` argument changes.
+- **AC-6:** NO real Anthropic/LLM call in any pytest. Tests mock the client (`ai_advisor._build_client`) and assert the model string reaching the SDK call. Use function-scoped `monkeypatch.setenv`, never module-level `os.environ` mutation.
+- **AC-7:** Audit `ai_advisor`, `advisors/advisor_chat`, `advisors/lens_pipeline`, `advisors/asset_swap_engine`, `advisors/logic_change_engine` for any OTHER hardcoded model literal; convert or confirm none remain (grep evidence in the handoff).
 
 ## Architecture
-
-**Files changed:**
-- `advisors/lens_pipeline.py` — in `_synthesize_via_claude()`, replace the hardcoded model literal with `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-5")` (exact Opus model ID to be confirmed; [PM-ASSUMED] follows the project's Anthropic client pattern)
-- Any other advisor modules that hardcode a model literal in an LLM call — audit `ai_advisor.py`, `advisors/advisor_chat.py`, `advisors/asset_swap_engine.py`, `advisors/logic_change_engine.py` for hardcoded model strings; apply the same pattern
-- `tests/conftest.py` or individual test modules — set `ADVISOR_SYNTHESIS_MODEL` to a test stub/cheap model before any test that triggers a synthesis call; ensure no Opus calls escape into CI
-
-**Data flow (unchanged):** `run_pipeline()` → `_synthesize_via_claude(lens_outputs)` → reads env var → passes model to Anthropic client. Response processing (JSON extraction, fence stripping) is identical.
-
-**Scope boundary with Epic A:** once Epic A Phase 2 lands, the Prism's overnight synthesis is done by the `prism-synthesizer` agent (Opus 4.8 directly) — the `_synthesize_via_claude` path is superseded for the nightly Prism read. This feature applies to the remaining advisor LLM calls (chat, swap/logic explanations, any non-Prism synthesis that stays on the programmatic path).
-
-## Design-System Mapping
-
-N/A — backend feature, no UI surface. (All 10 are backend/infra; the Cycle-5 Market Prism Overview UI already shipped separately.)
+- Inline `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")` at each `messages.create`/`messages.parse` `model=` argument; remove the module-level constants. `lens_pipeline.py` is the reference (already inline).
+- Data flow unchanged: `run_pipeline → _synthesize_via_claude` and the two advisor calls read the env at call time → pass `model` to the Anthropic client. Response processing (JSON extraction, fence stripping) identical.
 
 ## Edge Cases
-
-- **Empty or invalid `ADVISOR_SYNTHESIS_MODEL` env var:** if set to an empty string or an unrecognized model ID, the Anthropic client raises an error at call time (not at import time). D-1: `type(exc).__name__` on error, no model string leaked to the caller.
-- **CI without the env var set:** the default (Opus 4.8) would fire real API calls in CI — tests MUST set the env var or mock the Anthropic client before any synthesis call.
-- **Multiple advisor modules with hardcoded models:** the audit must cover all modules in `advisors/`; missing one leaves a hardcoded literal in the codebase. The implementer confirms the full list before the GREEN handoff.
-- **Model ID drift (Anthropic deprecates Opus 4.5 or renames it):** the env var default is a single-point update. Document the exact model ID string and which Anthropic API version it targets.
-- **Test isolation:** if `ADVISOR_SYNTHESIS_MODEL` is set globally in the test process, it affects all tests in that run. Use function-scoped `monkeypatch.setenv` in tests, not module-level `os.environ` mutation.
+- Invalid/empty env value → SDK 400 at call time; each site's never-raising D-1 contract degrades to an honest error (only `type(exc).__name__`). No new validation.
+- **Shared-process test isolation (the critical one):** assertions MUST be hermetic + order-independent. Do NOT rely on `importlib.reload` to re-evaluate a module constant — that fails once a sibling test (e.g. `tests/ai_advisor/test_chat_engine.py`) has already imported the module (stale package attribute). Call-time reads make reload unnecessary: set the env then call, and assert the model that reaches the mocked SDK. Include a DETERMINISTIC suite-ordering regression that reproduces the failure for BOTH `ai_advisor` and `advisor_chat`, and ensure the regression restores `sys.modules` cleanly so it does not pollute downstream tests.
 
 ## Security Considerations
-
-- **API key handling:** no change to `ANTHROPIC_API_KEY` handling. The model change does not affect key security.
-- **Data exposure:** the model identifier is a config string, not sensitive data. It appears in the env but is not logged to the DB, UI, or Discord. D-1 contract unchanged.
-- **Authz / advisory-only:** off-execution-path; no change to `LIVE_EXECUTION` interaction.
-- **Input validation:** the env var is a model identifier string passed to the Anthropic client. The client validates the model; no additional validation needed in the producer.
-- **No secret leakage:** the model name is not a secret; it may be logged for observability (e.g. in the audit log `source` field) without a security concern.
+- Model string is operator config, not user input — no injection/secret surface. D-1 contract intact. Off-execution-path; no `LIVE_EXECUTION` interaction. No change to `ANTHROPIC_API_KEY` handling.
 
 ## Testing Strategy
-
-**Approach:** this is either a one-line literal→env-var swap on an existing path (no new codepath, existing tests guard behavior) or a new codepath if the config loading adds meaningful logic. Confirm which at dispatch.
-
-**If a pure literal→env swap (no new logic):**
-- Existing tests in `tests/ai_advisor/` must pass without real Opus calls (add `monkeypatch.setenv("ADVISOR_SYNTHESIS_MODEL", "mock-model")` + mock Anthropic client where needed)
-- `test_synthesis_model_config.py` — `os.environ` unset → default is the Opus model ID string; `ADVISOR_SYNTHESIS_MODEL=X` → model passed to client is `X`; assert no real HTTP call is made in tests (mock the Anthropic client)
-
-**If new config-loading logic (new codepath → Toxic Pair TDD):**
-- `tests/ai_advisor/test_synthesis_model_config.py` — same assertions as above, plus edge cases (empty string, unset)
-
-**Fixture provenance:** no external API fixtures needed — tests mock the Anthropic client (no network). Assert model string, not response content.
-
-**Run protocol:** `DB_PATH` set via `tests/conftest.py`; targeted: `pytest tests/ai_advisor -n0 -o addopts= -p no:xdist`. No real Opus/Anthropic calls in CI.
-
-## Decisions
-
-| Decision | Rationale |
-|----------|-----------|
-| Single env var `ADVISOR_SYNTHESIS_MODEL` with Opus 4.8 default | One change-point; consistent with the project's env-var config pattern; tests can override without code changes |
-| Scope to remaining advisor LLM calls (not the Prism synthesizer) | Once Epic A lands, the Prism synthesizer becomes a standalone Opus 4.8 agent — this feature should not re-plumb that path |
-| Preserve `df2d19e` JSON-extraction fix exactly | The fence-stripping logic was a deliberate fix; any response-processing change is out of scope |
-| Confirm which modules have hardcoded literals at dispatch | An audit is needed before claiming the fix is complete; missing one leaves a hardcoded literal |
+- `tests/ai_advisor/test_synthesis_model_config.py`: per-site default (unset→opus-4-8) + override (set→reaches SDK), no-real-LLM-call (mocked client), AC-5 fence-stripping byte-preservation guards, and the hermetic suite-ordering regression. Run: `pytest tests/ai_advisor/test_synthesis_model_config.py -p no:xdist -o addopts= -m "not live and not slow and not perf"`.
+- Cycle-complete gate (PM-run, independent): full-suite verifier vs base `348dc26` (established zero-failure; `--ignore=tests/meta/test_zero_skip_xfail_close.py`) → must be 0 fail / 0 err. Watch specifically for the new test polluting `sys.modules` and breaking downstream tests (e.g. `tests/ui/test_cycle_4_advisor.py`).
 
 ## Scope Boundaries
+- **IN:** the 3 call-site conversions, dead-constant removal, DECISIONS DE-SYNTH-001, regenerated module docs, the test file.
+- **OUT:** any change to the synthesis prompt / `df2d19e` JSON-extraction logic; new model-ID validation; the Epic-A Phase-2 `prism-synthesizer` path; autotuner/core-engine model changes.
 
-- **IN**: replace hardcoded model literal(s) in `advisors/lens_pipeline._synthesize_via_claude` and any other advisor LLM calls with an env-var-backed config; tests asserting config wiring; doc-gen updating the configuration reference
-- **OUT**: Market Prism synthesizer agent (Phase 2 concern); changes to `df2d19e` JSON-extraction logic; changes to `ANTHROPIC_API_KEY` handling; model changes for the autotuner or core engine (out of scope for this feature)
-
-**Dependencies:** none hard. Schedule around Epic A's exclusive-focus window (can be worked in parallel on a separate branch).
+**Dependencies:** none hard. Base off `origin/main` `348dc26`.
