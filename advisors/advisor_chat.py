@@ -387,7 +387,7 @@ def explain_artifact(
     # free-form explanations, not typed schemas.
     try:
         sdk_response = client.messages.create(
-            model=_CHAT_MODEL,
+            model=os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8"),
             max_tokens=_CHAT_MAX_TOKENS,
             system=_EXPLAIN_ONLY_SYSTEM_PROMPT,
             messages=_build_chat_messages(question, artifact),

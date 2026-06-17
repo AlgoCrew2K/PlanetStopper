@@ -1630,7 +1630,7 @@ def request_suggestions(
     # .parsed_output (see the extraction loop below).
     try:
         sdk_response = client.messages.parse(
-            model=_CLAUDE_MODEL,
+            model=os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8"),
             max_tokens=_MAX_TOKENS,
             output_format=ConfigSuggestionsResponse,
             messages=_build_messages(context),
