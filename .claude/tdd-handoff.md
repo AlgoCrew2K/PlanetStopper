@@ -1,98 +1,85 @@
 # TDD Handoff
-Plan: feature-plans/lens-derivatives-vix-freshness-fix.md
-Branch: fix/derivatives-vix-freshness
-Phase: green
+Plan: feature-plans/lens-fundamentals-portfolio-fanout-fix.md
+Branch: fix/fundamentals-portfolio-fanout
+Phase: red
 
 ## Test Files
-- tests/ai_advisor/test_lens_options_proxy_freshness.py  (AC-1 through AC-6)
-- tests/fixtures/math/fred_observations_fresh.json       (golden fixture — fresh-window FRED shape)
-- tests/fixtures/math/fred_observations_stale.json       (golden fixture — stale/2020-batch FRED shape)
+- `tests/ai_advisor/test_lens_fundamentals_fanout.py` — 12 tests collected
+  (4 failing RED, 2 passing regression guards, 6 skip-gated on upstream RED tests)
 
 ## Behavioral Test Plan
 N/A — backend producer, no UI surface (plan §Design-System Mapping).
 
-## Implementation Contract for df-implementer
+## Implementation Contract for fan-implementer
 
-These are the exact symbols the tests import/monkeypatch from `advisors.lens_options_proxy`.
+These are the exact symbols the tests import/monkeypatch from `ai_advisor`.
 Coordinate on them BEFORE writing production code:
 
-1. `_OPTIONS_PROXY_MAX_STALENESS_DAYS: int` — named module-level constant, value ~10
-   (PM-ASSUMED). MUST have a source comment explaining the threshold choice.
+1. `_FUNDAMENTALS_PROXY_UNIVERSE: frozenset[str]` (or `set[str]`) — named
+   module-level constant of company ticker strings. MUST have a source comment.
+   The proxy must NOT include ETFs (SPY, QQQ, IWM etc.) — ETFs have no SEC
+   companyfacts. Tests inspect this attribute directly.
+   Recommended ~8 tickers: AAPL, MSFT, GOOGL, AMZN, NVDA, JPM, XOM, JNJ
+   (or similar large-cap cross-sector companies).
 
-2. `_OPTIONS_PROXY_LOOKBACK_DAYS: int` — named module-level constant, value ~90
-   (PM-ASSUMED). Governs rolling recent-window start date passed to FRED.
+2. `_build_fundamentals_section(_data=None, *, ticker=None)` — existing signature
+   preserved. When `ticker=None`, the function now fans out over the internal
+   universe (holdings ∪ proxy). When `ticker="AAPL"`, it returns the SAME shape
+   as today (AC-3 regression guard).
 
-3. `_today() -> datetime.date` — module-level callable returning today's date.
-   Tests monkeypatch via:
-     `monkeypatch.setattr(advisors.lens_options_proxy, "_today", lambda: datetime.date(...))`.
-   Implementer MUST expose this exact symbol at module scope.
+3. `_fetch_fundamentals_for_ticker(ticker: str) -> dict` — new internal helper
+   extracted from the current single-ticker body. Tests check AC-3 behavior
+   via _build_fundamentals_section(ticker="AAPL") — if that function works
+   correctly via the helper, the contract is satisfied.
 
-4. `_fetch_fred_series` request params MUST NOT hardcode `"observation_start":
-   "2020-01-01"` with `"sort_order": "asc"` + `"limit": 100`. The AC-1 test asserts
-   the MOST-RECENT valid observation is selected (not the oldest-from-2020).
+4. Portfolio payload shape (AC-5): `{tickers: {TICKER: {...per-ticker block...}},
+   coverage: {available: N, universe: M}}`. Tests assert shape/presence only —
+   never hardcoded financial values.
 
-5. Freshness guard: when `_parse_latest_observation` returns `(value, date_str)` and
-   `datetime.date.fromisoformat(date_str) < _today() - timedelta(days=_OPTIONS_PROXY_MAX_STALENESS_DAYS)`,
-   `_fetch_options_proxy` MUST return:
-     `{"available": False, "reason": "stale_data", "source": <_SOURCE_CITATION>}`
-   — NO `vix_level`, NO `vix_term_structure`, NO `risk_read`, NO `as_of_date`.
+5. Fan-out must be BOUNDED (AC-6): the number of requests.get calls must be <=
+   2 * len(universe) (CIK lookup cached for proxy tickers → 1 companyfacts call
+   each; at most 2 calls per ticker total). Tests count call_count on requests.get.
 
-6. Fresh data: `as_of_date` in the returned dict equals the date string of the selected
-   observation — not today's date.
+6. Per-ticker failures degrade ONLY that ticker (AC-4): if one ticker's companyfacts
+   fetch returns 404 or raises, the remaining tickers resolve normally and the lens
+   returns available=True.
 
-7. Existing paths (fetch-failure / 429 / no-valid-observations) remain unchanged.
+7. All-fail reason must NOT be "ticker symbol required..." (AC-5): that is the
+   pre-fix short-circuit reason. After the fix, the all-fail reason must reflect
+   the genuine outcome (e.g. "no fundamentals available: all tickers failed",
+   "SEC EDGAR returned no key facts for any ticker", etc.).
+
+8. `database.load_state` is called lazily inside `_build_fundamentals_section`
+   (CC-2: no module-level DB access). Tests mock `database.load_state` directly.
 
 ## A/C Coverage Matrix
 
-| A/C ID | Description | Test Class / Test Name | Status |
-|--------|-------------|------------------------|--------|
-| AC-1 | Recent-window: most-recent valid obs selected from fixture | TestRecentWindowFetch | RED |
-| AC-1 | Recent-window: request does NOT use the stale 2020-01-01 start | test_fetch_does_not_use_stale_2020_start | RED |
-| AC-2 | Stale obs → available=False, reason="stale_data" | TestFreshnessGuard.test_stale_latest_observation_available_false | RED |
-| AC-2 | Stale obs → no fabricated vix_level | TestFreshnessGuard.test_stale_obs_returns_no_vix_level | RED |
-| AC-2 | Stale obs → no fabricated vix_term_structure | TestFreshnessGuard.test_stale_obs_returns_no_vix_term_structure | RED |
-| AC-2 | Stale obs → no fabricated risk_read | TestFreshnessGuard.test_stale_obs_returns_no_risk_read | RED |
-| AC-2 | Fresh obs → available=True with real values | TestFreshnessGuard.test_fresh_latest_observation_available_true | RED |
-| AC-2 | Freshness constant is named module-level symbol | test_named_staleness_constant_exists | RED |
-| AC-2 | Lookback constant is named module-level symbol | test_named_lookback_constant_exists | RED |
-| AC-3 | as_of_date equals selected observation's real date (not today) | TestAsOfDateTruthful | RED |
-| AC-4 | Fetch-failure path still returns available=False, reason=exc type | TestHonestAvailabilityPreserved.test_fetch_failure_returns_unavailable | RED |
-| AC-4 | 429-exhausted path still returns available=False | TestHonestAvailabilityPreserved.test_429_exhausted_returns_unavailable | RED |
-| AC-4 | No-valid-observations still returns available=False | TestHonestAvailabilityPreserved.test_no_valid_observations_returns_unavailable | RED |
-| AC-4 | Regime classification unchanged when data is fresh | TestHonestAvailabilityPreserved.test_regime_classification_preserved_when_fresh | RED |
-| AC-5 | _today() is monkeypatchable at module scope | TestRunDateInjectable.test_today_is_injectable | RED |
-| AC-5 | Freshness comparison uses _today() not datetime.date.today() | TestRunDateInjectable.test_freshness_uses_injectable_today | RED |
-| AC-6 | Bounded retry max-attempts constant still present | TestBoundedRetryPreserved.test_max_attempts_constant_present | RED |
-| AC-6 | _fetch_options_proxy never raises (off-path) | TestBoundedRetryPreserved.test_fetch_options_proxy_never_raises | RED |
-| Weekend | Latest obs 3-4 days old → still available (guard not false-positive) | TestWeekendHolidayEdgeCase | RED |
+| A/C ID | Description | Test File | Test Name(s) | Status |
+|--------|-------------|-----------|--------------|--------|
+| AC-1 | portfolio call fans out and returns available=True | test_lens_fundamentals_fanout.py | TestPortfolioFanout::test_portfolio_call_fans_out_and_is_available | RED |
+| AC-2a | empty holdings → proxy floor → available=True (no hollow at 03:00) | test_lens_fundamentals_fanout.py | TestUniverseDerivation::test_empty_holdings_uses_proxy_floor | RED |
+| AC-2b | holdings tickers merged with proxy floor | test_lens_fundamentals_fanout.py | TestUniverseDerivation::test_holdings_merged_with_proxy_floor | SKIP (gated on AC-6b) |
+| AC-3a | single-ticker path shape unchanged | test_lens_fundamentals_fanout.py | TestSingleTickerPathPreserved::test_single_ticker_path_shape_unchanged | GREEN (regression guard — correct pre-fix behavior) |
+| AC-3b | single-ticker path still fetches SEC | test_lens_fundamentals_fanout.py | TestSingleTickerPathPreserved::test_single_ticker_path_still_fetches_sec | GREEN (regression guard — correct pre-fix behavior) |
+| AC-4 | per-ticker failure degrades only that ticker | test_lens_fundamentals_fanout.py | TestPerTickerDegradation::test_per_ticker_failure_degrades_not_whole_lens | SKIP (gated on AC-6b) |
+| AC-5a | portfolio payload has per-ticker facts + coverage count | test_lens_fundamentals_fanout.py | TestPortfolioFanout::test_portfolio_payload_has_per_ticker_facts_and_coverage | SKIP (gated on AC-1) |
+| AC-5b | all tickers fail → available=False with genuine reason (not pre-fix short-circuit) | test_lens_fundamentals_fanout.py | TestAllTickersFailPath::test_all_tickers_fail_available_false | RED |
+| AC-5c | no composite ratios invented in portfolio payload | test_lens_fundamentals_fanout.py | TestPortfolioFanout::test_no_composite_ratios_invented | SKIP (gated on AC-1) |
+| AC-6a | fan-out is bounded | test_lens_fundamentals_fanout.py | TestBoundedFanout::test_fanout_is_bounded | SKIP (gated on AC-6b) |
+| AC-6b | _FUNDAMENTALS_PROXY_UNIVERSE constant present at module scope | test_lens_fundamentals_fanout.py | TestNamedProxyConstant::test_named_proxy_constant_present | RED |
+| AC-6c | proxy constant contains company tickers, not ETFs | test_lens_fundamentals_fanout.py | TestNamedProxyConstant::test_named_proxy_constant_contains_company_tickers_not_etfs | SKIP (gated on AC-6b) |
+
+**Cascade:** Once AC-6b (constant present) and AC-1 (fan-out implemented) are GREEN,
+all 6 SKIP tests will become runnable and are expected to either pass or reveal new
+assertion failures.
 
 ## Import Stubs Created
-None needed — `advisors/lens_options_proxy.py` already exists.
-
-New symbols (`_OPTIONS_PROXY_MAX_STALENESS_DAYS`, `_OPTIONS_PROXY_LOOKBACK_DAYS`, `_today`)
-do NOT yet exist in the module — tests will fail with `AttributeError` on those names until
-the implementer adds them. That is the correct RED failure mode for AC-2 and AC-5.
+None — the test file imports only `ai_advisor` (exists) and patches `database.load_state`
+and `requests.get`. No new modules to stub.
 
 ## Questions for User / PM
 None — all design decisions covered by plan or [PM-ASSUMED] annotations.
 
 ## Status Log
-- [2026-06-16] df-test-writer (quant-test-writer, LEAD): Starting RED phase for derivatives-vix-freshness fix
-- [2026-06-16] df-test-writer (quant-test-writer, LEAD): RED complete — 43 tests (13 failing on assertions, 30 passing on preserved correct behavior), 0 stubs created, 2 fixtures created. HEAD=a93a2ba on fix/derivatives-vix-freshness. Handoff ready for df-implementer to run /tdd-implement.
-- [2026-06-16] df-implementer (composer-alpaca-integration): GREEN complete — 43/43 tests passing, 0 test bugs documented. Lint ✓. Changes: advisors/lens_options_proxy.py only.
-
-## Test File Issues (for test-writer to fix)
-None — all 43 tests passed against the implementation as written.
-
-## Disputed Tests
-None.
-
-## Implementation Notes
-- Added `import datetime` and `from datetime import timedelta` to the module imports (these were absent in the shipped code).
-- Added three new module-level symbols before the internal helpers section:
-  - `_OPTIONS_PROXY_MAX_STALENESS_DAYS: int = 10` — with source comment explaining the 10-day threshold vs. ~4-day longest market closure.
-  - `_OPTIONS_PROXY_LOOKBACK_DAYS: int = 90` — rolling window for `observation_start` query param.
-  - `def _today() -> datetime.date` — injectable run-date seam; returns `datetime.date.today()` in production; tests monkeypatch it.
-- In `_fetch_fred_series`: replaced `"observation_start": "2020-01-01"` with `(_today() - timedelta(days=_OPTIONS_PROXY_LOOKBACK_DAYS)).isoformat()`. Kept `sort_order="asc"` and `limit=100` (the existing `_parse_latest_observation` reverse-walk still selects the latest correctly from an asc list).
-- In `_fetch_options_proxy`: added freshness guard immediately after unpacking `spot_vix, as_of_date` from `_parse_latest_observation`. The guard parses `as_of_date` via `datetime.date.fromisoformat` (strict; falls back to `ValueError` on malformed date), then compares against `_today() - timedelta(days=_OPTIONS_PROXY_MAX_STALENESS_DAYS)`. Stale result short-circuits before `_classify_regime`/`_derive_risk_read` and returns `{"available": False, "reason": "stale_data", "source": _SOURCE_CITATION}` — no fabricated vix/regime/risk values.
-- All existing paths (fetch-failure, 429-exhausted, no-valid-observations, fresh data) preserved unchanged.
+- [2026-06-16] fan-test-writer (quant-test-writer, LEAD): Starting RED phase for fundamentals portfolio fan-out fix
+- [2026-06-16] fan-test-writer: RED complete — 12 tests collected: 4 failing (correct RED on assertions), 2 passing (AC-3 regression guards — existing behavior verified correct), 6 skipped (cascade-gated on upstream RED failures). 0 import/syntax errors. 0 stubs created. HEAD committed to fix/fundamentals-portfolio-fanout.
