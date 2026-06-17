@@ -1,0 +1,36 @@
+{
+  "_fixture_meta": {
+    "description": "Schema-derived FRED observations response for lens_options_proxy freshness tests.",
+    "series": "VIXCLS",
+    "provenance": "Schema from https://fred.stlouisfed.org/docs/api/fred/series_observations.html",
+    "sentinel_design": "latest valid observation date is set to '2026-06-10' — a sentinel date known to be recent relative to a monkeypatched _today() of '2026-06-16'. Gap = 6 days, within any reasonable _OPTIONS_PROXY_MAX_STALENESS_DAYS threshold (expected ~10). Older rows use '.' to exercise the reverse-walk skip logic.",
+    "validator_fields": ["realtime_start", "realtime_end", "observation_start", "observation_end", "units", "output_type", "file_type", "order_by", "sort_order", "count", "offset", "limit", "observations"],
+    "observation_fields": ["realtime_start", "realtime_end", "date", "value"]
+  },
+  "realtime_start": "2026-06-16",
+  "realtime_end": "2026-06-16",
+  "observation_start": "2026-03-18",
+  "observation_end": "9999-12-31",
+  "units": "lin",
+  "output_type": 1,
+  "file_type": "json",
+  "order_by": "observation_date",
+  "sort_order": "asc",
+  "count": 63,
+  "offset": 0,
+  "limit": 100,
+  "observations": [
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2026-03-18", "value": "22.34"},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2026-03-19", "value": "21.80"},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2026-03-20", "value": "."},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2026-03-21", "value": "20.95"},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2026-04-01", "value": "19.75"},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2026-04-07", "value": "."},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2026-04-08", "value": "18.42"},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2026-05-15", "value": "17.60"},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2026-06-05", "value": "."},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2026-06-06", "value": "14.88"},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2026-06-09", "value": "."},
+    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16", "date": "2026-06-10", "value": "15.23"}
+  ]
+}
