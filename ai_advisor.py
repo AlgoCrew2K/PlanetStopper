@@ -643,6 +643,17 @@ def _build_sentiment_section(_data: object = None) -> dict:
     except Exception:  # noqa: BLE001
         pass  # D-1: warehouse errors never surface to callers
 
+    sources: list[dict] = []
+    for art in corpus:
+        citation = build_citation({
+            "title": art.get("title", ""),
+            "url": art.get("url", ""),
+            "published": art.get("published", ""),
+            "lens": _lens,
+        })
+        if citation is not None:
+            sources.append(citation)
+
     return {
         "lens": _lens,
         "available": True,
@@ -650,8 +661,9 @@ def _build_sentiment_section(_data: object = None) -> dict:
             "tone_score": tone_score,
             "corpus": corpus,
             "events": events,  # AC-5: events in legacy shape for render compatibility
+            "article_count": len(corpus),
         },
-        "sources": [],
+        "sources": sources,
     }
 
 
