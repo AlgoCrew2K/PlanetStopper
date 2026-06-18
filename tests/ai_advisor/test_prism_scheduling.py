@@ -2220,3 +2220,220 @@ class TestSynthesizerWaitBarrierDeHollowed:
             f"All old-regex matches found: "
             f"{[m.group() for m in old_regex_matches]!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# F-4 — Scheduler must verify MARKET_PRISM row before declaring success
+#
+# Defect: main() calls _run_prism(run_id) → rc==0 → prints "Run completed
+# successfully." and exits 0 regardless of whether the council actually
+# persisted a MARKET_PRISM observation row.  A council that exits cleanly
+# but writes no row is a silent false-green — dangerous for unattended nightly.
+#
+# Fix contract:
+#   - Add _get_market_prism_row_for_run(run_id) as a patchable seam that
+#     queries advisor_observations for a MARKET_PRISM row matching run_id.
+#   - Fold the row check into the per-attempt success condition inside the
+#     existing MAX_ATTEMPTS retry loop:
+#       per-attempt success = (rc==0) AND (_get_market_prism_row_for_run returns a dict)
+#   - If all MAX_ATTEMPTS exhaust without a row, fail loudly (exit non-zero).
+#   - Spend logging (_persist_spend) fires on rc==0 BEFORE the row check;
+#     it is NOT skipped on an empty-row attempt (preservation of existing contract).
+#
+# Tests:
+#   Test 1 — RED: rc==0 but no row → scheduler reports FAILURE (non-zero exit,
+#            no "Run completed successfully" in stdout).
+#   Test 2 — happy path regression lock: rc==0 + row exists → exit 0 +
+#            success message.  Skips if seam absent (happens pre-GREEN), so it
+#            does NOT count as a RED gate — it exists to catch a broken happy path
+#            post-GREEN.
+#   Test 3 — RED: rc==0 + no row on attempt 1, then rc==0 + row on attempt 2 →
+#            subprocess called TWICE (retry happened) and exit 0.
+# ---------------------------------------------------------------------------
+
+# Minimal MARKET_PRISM row dict — shape only, no computed values.
+_SAMPLE_MARKET_PRISM_ROW: dict = {
+    "id": 99,
+    "advisor_role": "MARKET_PRISM",
+    "verdict": "risk-on",
+    "rationale": "Synthetic test row — not a real council output.",
+    "created_at": "2026-06-18 03:00:00",
+    "raw_response": {"run_id": "placeholder"},
+}
+
+
+class TestMarketPrismRowVerification:
+    """F-4: scheduler must verify a MARKET_PRISM row exists before declaring success.
+
+    Per-attempt success = subprocess rc==0 AND _get_market_prism_row_for_run(run_id)
+    returns a non-None dict.  Silent false-green on an empty council run is the bug.
+    """
+
+    def test_scheduler_fails_when_subprocess_succeeds_but_no_market_prism_row(
+        self, capsys
+    ):
+        """rc==0 + no MARKET_PRISM row → all MAX_ATTEMPTS exhausted → exit non-zero
+        + no 'Run completed successfully' in stdout.
+
+        RED on current code: current main() exits 0 on the first rc==0 without
+        checking for a row.  The SystemExit(0) causes `.code != 0` to fail.
+
+        After fix: the row-absent path is not counted as per-attempt success, so
+        all MAX_ATTEMPTS are consumed and main() exits 1.
+        """
+        mod = _import_scheduler()
+
+        mock_subprocess_result = MagicMock()
+        mock_subprocess_result.returncode = 0
+        mock_subprocess_result.stdout = "{}"
+        mock_subprocess_result.stderr = ""
+
+        with (
+            patch.object(mod, "_get_summary", return_value=None),
+            patch("subprocess.run", return_value=mock_subprocess_result),
+            # create=True: installs the mock even before the seam exists.
+            # Pre-GREEN: main() never calls it → exits 0 → behavioral assertion fires.
+            # Post-GREEN: main() calls it → gets None → retries → exits 1 → passes.
+            patch.object(
+                mod,
+                "_get_market_prism_row_for_run",
+                return_value=None,
+                create=True,
+            ),
+            patch("time.sleep", return_value=None),  # suppress backoff
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                mod.main()
+
+        assert exc_info.value.code != 0, (
+            "Scheduler exited 0 even though subprocess returned rc==0 but NO "
+            "MARKET_PRISM row was written for the run_id.  "
+            "This is the F-4 silent false-green: 'Run completed successfully' "
+            "must NOT be reported when the council produced no row.  "
+            "Fix: add _get_market_prism_row_for_run(run_id) as a patchable seam, "
+            "call it after rc==0, and treat a None return as a failed attempt — "
+            "retry inside MAX_ATTEMPTS and fail loudly (exit non-zero) if all "
+            "attempts exhaust without a confirmed row."
+        )
+
+        captured = capsys.readouterr()
+        assert "Run completed successfully" not in captured.out, (
+            "Scheduler printed 'Run completed successfully' despite no MARKET_PRISM "
+            "row existing for the run_id.  Success message must only appear when "
+            "the row is confirmed present."
+        )
+
+    def test_scheduler_succeeds_when_subprocess_succeeds_and_market_prism_row_exists(
+        self, capsys
+    ):
+        """Happy-path regression lock: rc==0 + row present → exit 0 + success message.
+
+        This test SKIPS (not fails) when _get_market_prism_row_for_run is absent from
+        the module — i.e., pre-GREEN — so it does NOT count as a RED gate.
+        After the implementer adds the seam, it must run and PASS (exit 0 preserved).
+
+        Assertion: happy path must not be broken by the F-4 fix.
+        """
+        mod = _import_scheduler()
+
+        # Skip if seam not yet added — this is the happy-path regression lock,
+        # not the RED gate.  Tests 1 and 3 are the RED gates.
+        if not hasattr(mod, "_get_market_prism_row_for_run"):
+            pytest.skip(
+                "_get_market_prism_row_for_run seam not yet present (pre-GREEN).  "
+                "This happy-path regression lock will run after the F-4 fix is added."
+            )
+
+        mock_subprocess_result = MagicMock()
+        mock_subprocess_result.returncode = 0
+        mock_subprocess_result.stdout = '{"total_cost_usd": 5.0}'
+        mock_subprocess_result.stderr = ""
+
+        sample_row = dict(_SAMPLE_MARKET_PRISM_ROW)
+
+        with (
+            patch.object(mod, "_get_summary", return_value=None),
+            patch("subprocess.run", return_value=mock_subprocess_result),
+            patch.object(
+                mod, "_get_market_prism_row_for_run", return_value=sample_row
+            ),
+            patch.object(mod, "_persist_spend"),  # suppress audit write side-effect
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                mod.main()
+
+        assert exc_info.value.code == 0, (
+            f"Scheduler exited {exc_info.value.code} on the happy path (rc==0 + row "
+            f"present).  The F-4 fix must preserve exit 0 when the row exists.  "
+            f"stdout: {capsys.readouterr().out!r}"
+        )
+
+        captured = capsys.readouterr()
+        # Accept any success-indicating message — exact wording may change.
+        success_indicators = ["completed successfully", "success", "run complete"]
+        assert any(ind in captured.out.lower() for ind in success_indicators), (
+            "No success message found in stdout on the happy path (rc==0 + row present).  "
+            f"stdout: {captured.out!r}  "
+            "Expected one of: " + str(success_indicators)
+        )
+
+    def test_scheduler_retries_when_subprocess_succeeds_but_no_row_then_succeeds_on_second_attempt(
+        self, capsys
+    ):
+        """Retry design: rc==0 + no row on attempt 1, then rc==0 + row on attempt 2
+        → subprocess called TWICE and exit 0.
+
+        RED on current code: current main() calls subprocess once and exits 0 on
+        the first rc==0 — subprocess is called exactly once, not twice.
+
+        After fix (retry-on-empty design): the no-row attempt is not counted as
+        success; the loop continues to the second attempt which finds the row and
+        exits 0.  subprocess.run must have been called twice.
+        """
+        mod = _import_scheduler()
+
+        mock_subprocess_result = MagicMock()
+        mock_subprocess_result.returncode = 0
+        mock_subprocess_result.stdout = '{"total_cost_usd": 5.0}'
+        mock_subprocess_result.stderr = ""
+
+        sample_row = dict(_SAMPLE_MARKET_PRISM_ROW)
+
+        # _get_market_prism_row_for_run returns None on attempt 1, row on attempt 2.
+        row_side_effects = [None, sample_row]
+
+        with (
+            patch.object(mod, "_get_summary", return_value=None),
+            patch("subprocess.run", return_value=mock_subprocess_result) as mock_sub,
+            # create=True: installs the mock even before the seam exists.
+            # Pre-GREEN: main() never calls it → subprocess called once → assertion fires.
+            # Post-GREEN: main() calls it → None first, row second → called twice.
+            patch.object(
+                mod,
+                "_get_market_prism_row_for_run",
+                side_effect=row_side_effects,
+                create=True,
+            ),
+            patch.object(mod, "_persist_spend"),  # suppress audit write side-effect
+            patch("time.sleep", return_value=None),  # suppress backoff delay
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                mod.main()
+
+        subprocess_call_count = mock_sub.call_count
+
+        assert subprocess_call_count >= 2, (
+            f"subprocess.run was called {subprocess_call_count} time(s).  "
+            "Expected ≥2 calls: attempt 1 (rc==0 but no row → not success, retry), "
+            "attempt 2 (rc==0 + row → success).  "
+            "Current code exits 0 on the first rc==0 without checking for a row — "
+            "that is the F-4 bug.  "
+            "Fix: treat rc==0-but-no-row as a failed attempt and let the MAX_ATTEMPTS "
+            "loop continue to the next attempt."
+        )
+
+        assert exc_info.value.code == 0, (
+            f"Scheduler exited {exc_info.value.code} after attempt 2 succeeded "
+            f"(rc==0 + row present).  Expected exit 0.  "
+            f"subprocess call count: {subprocess_call_count}"
+        )
