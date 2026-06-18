@@ -2889,6 +2889,18 @@ def ai_advisor_tab():
     ]
     observations = deduped_obs[:_ADVISOR_OBSERVATIONS_PAGE_LIMIT]
 
+    # Stamp _preview_text onto each non-MARKET_PRISM observation so the template
+    # can render a concise human-readable cell without dumping raw JSON.
+    # MARKET_PRISM rows are handled separately (show verdict only).
+    try:
+        from advisors.prism_render import humanize_obs_preview as _humanize_obs  # noqa: PLC0415
+
+        for _obs in observations:
+            if _obs.get("advisor_role") != "MARKET_PRISM":
+                _obs["_preview_text"] = _humanize_obs(_obs.get("raw_response"))
+    except Exception:
+        pass  # Humanization failure must never crash the route.
+
     # ------------------------------------------------------------------ #
     # Correlations panel: pairwise return matrix                           #
     # Lazy import keeps the module off the live 1-minute execution path.   #

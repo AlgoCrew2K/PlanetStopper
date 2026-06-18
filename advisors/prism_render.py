@@ -229,3 +229,44 @@ def humanize_lens_summary(lens_name: str, lens_entry: dict | None) -> str:
     except Exception:  # noqa: BLE001
         # D-1: never raise; degrade to honest empty-state
         return _EMPTY_STATE
+
+
+def humanize_obs_preview(raw_response: object) -> str:
+    """Produce a concise, human-readable preview string for an advisor_observation row.
+
+    Used by the obs-raw-preview table cell for non-MARKET_PRISM rows.  Prefers the
+    `note` key (already prose) from raw_response; falls back to an honest empty-state.
+    Never emits raw JSON object syntax.
+
+    Args:
+        raw_response: The raw_response value from an advisor_observations row.
+                      database.py deserializes this to a dict before returning rows,
+                      but this function also handles str (legacy) and None gracefully.
+
+    Returns:
+        A non-empty string, always.  Never raises (D-1).
+    """
+    try:
+        # Normalize: str → dict (legacy rows stored as JSON string)
+        rr = raw_response
+        if isinstance(rr, str):
+            try:
+                rr = json.loads(rr)
+            except (json.JSONDecodeError, ValueError):
+                # Non-JSON string — treat as prose note
+                stripped = rr.strip()
+                return stripped if stripped else _EMPTY_STATE
+
+        if not isinstance(rr, dict):
+            return _EMPTY_STATE
+
+        # Prefer the `note` field — it is already human-readable prose
+        note = rr.get("note")
+        if note and isinstance(note, str) and note.strip():
+            return note.strip()
+
+        # No note: return honest empty-state rather than dumping JSON
+        return _EMPTY_STATE
+
+    except Exception:  # noqa: BLE001
+        return _EMPTY_STATE

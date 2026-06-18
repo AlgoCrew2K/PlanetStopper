@@ -2003,7 +2003,7 @@
                         {%- if obs.advisor_role == 'MARKET_PRISM' -%}
                             {{ obs.verdict | e }}
                         {%- else -%}
-                            {{ obs.raw_response | tojson | e }}
+                            {{ obs.get('_preview_text', '') | e }}
                         {%- endif -%}
                     </td>
                 </tr>
