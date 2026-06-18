@@ -81,7 +81,7 @@ _GDELT_TONE_URL: str = (
 
 _GDELT_ARTLIST_URL: str = (
     "https://api.gdeltproject.org/api/v2/doc/doc"
-    "?query=stock+market+finance+sourcelang:eng&mode=artlist&format=json&maxrecords=10"
+    "?query=stock+market+finance+sourcelang:eng&mode=artlist&format=json&maxrecords=50"
 )
 
 # Maximum number of events to surface from the artlist (named for prompt-budget control).
