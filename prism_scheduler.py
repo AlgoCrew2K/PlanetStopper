@@ -16,10 +16,12 @@ Exit codes:
   1  — failure (all MAX_ATTEMPTS exhausted without a successful run)
 """
 
+import json
 import os
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,6 +32,7 @@ from pathlib import Path
 MAX_ATTEMPTS: int = 3           # Max subprocess invocations per run
 BACKOFF_BASE_SECONDS: int = 30  # First retry wait
 BACKOFF_CAP_SECONDS: int = 60   # Maximum wait between retries
+MAX_BUDGET_USD: float = 5.0     # Per-run Opus spend cap — adjust as needed
 
 # Project root: the directory containing this script
 _PROJECT_ROOT: Path = Path(__file__).parent.resolve()
@@ -71,7 +74,29 @@ def _is_todays_row(row: dict | None) -> bool:
         return False
 
 
-def _run_prism() -> bool:
+def _persist_spend(run_id: str, stdout: str) -> None:
+    """Parse subprocess JSON stdout for cost_usd and persist to prism_audit_log.
+
+    Non-fatal — a parse or DB failure is logged as type-only (D-1) and swallowed.
+    """
+    try:
+        parsed = json.loads(stdout)
+        cost = parsed.get("cost_usd")
+        if cost is not None:
+            sys.path.insert(0, str(_PROJECT_ROOT))
+            import database  # noqa: PLC0415
+            database.insert_prism_audit_entry(
+                run_id=run_id,
+                agent_role="LAUNCHER",
+                phase="spend_log",
+                content=json.dumps({"cost_usd": cost}),
+            )
+    except Exception as exc:  # noqa: BLE001
+        # D-1: log type only — never exc message or path
+        print(f"[prism_scheduler] SpendLogError: {type(exc).__name__}", file=sys.stderr)
+
+
+def _run_prism(run_id: str = "unknown") -> bool:
     """
     Invoke prism-synthesizer via headless claude subprocess.
 
@@ -85,7 +110,11 @@ def _run_prism() -> bool:
         "prism-synthesizer",
         "--dangerously-skip-permissions",
         "--model",
-        "opus",
+        "claude-opus-4-8",
+        "--max-budget-usd",
+        str(MAX_BUDGET_USD),
+        "--output-format",
+        "json",
         "Run the Market Prism nightly run.",
     ]
     try:
@@ -93,7 +122,11 @@ def _run_prism() -> bool:
             cmd,
             cwd=str(_PROJECT_ROOT),
             env=os.environ.copy(),
+            capture_output=True,
+            text=True,
         )
+        if result.returncode == 0:
+            _persist_spend(run_id, result.stdout)
         return result.returncode == 0
     except Exception as exc:  # noqa: BLE001
         # D-1: log type only — never exc message or path
@@ -122,10 +155,12 @@ def main() -> None:
         print(f"[prism_scheduler] Already ran today (run_id: {run_id}). Skipping.")
         sys.exit(0)
 
+    run_id = str(uuid.uuid4())
+
     # --- Bounded retry loop ---
     for attempt in range(1, MAX_ATTEMPTS + 1):
         print(f"[prism_scheduler] Attempt {attempt}/{MAX_ATTEMPTS}")
-        success = _run_prism()
+        success = _run_prism(run_id=run_id)
         if success:
             print("[prism_scheduler] Run completed successfully.")
             sys.exit(0)

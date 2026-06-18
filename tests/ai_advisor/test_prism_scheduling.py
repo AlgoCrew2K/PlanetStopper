@@ -135,7 +135,7 @@ EXPECTED_CLAUDE_ARGS = [
     "prism-synthesizer",
     "--dangerously-skip-permissions",
     "--model",
-    "opus",
+    "claude-opus-4-8",
 ]
 
 
