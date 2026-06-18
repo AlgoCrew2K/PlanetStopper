@@ -19,8 +19,8 @@ tags: [gdelt, sentiment, news-events, tone, lens, advisory, off-execution-path]
 
 > GDELT 2.0 sentiment/news-events producer: surfaces real English-language market
 > news events (title/domain/date) as the primary signal, with normalized tone
-> secondary. Used by `ai_advisor._build_sentiment_section` and fed into the Market
-> Prism nightly synthesis via `lens_pipeline.py`.
+> secondary. Used by `advisors/news_corpus` (single delegated call for both tone
+> and artlist) and preserved as a fallback/test seam in the sentiment section.
 
 **Source:** `advisors/lens_gdelt.py`
 **Contract reference:** `.claude/gdelt-contract.md` (pinned 2026-06-15)
@@ -45,9 +45,11 @@ degrades to `events=[]` while preserving any valid tone. This replaced the prior
 tone-only availability gate where `available=True, tone=None` was a reachable
 (forbidden) state.
 
-The module is wired into `ai_advisor._build_sentiment_section` (lazy import, CC-2
-import-boundary invariant). The `"events"` key is surfaced on the success-path
-payload so the Market Prism synthesizer can include real news headlines.
+The module is wired into `advisors/news_corpus.build_news_corpus()` (CC-2 lazy
+import) — `build_news_corpus` calls `_fetch_gdelt_sentiment([])` once for both
+Facet A tone and Facet B artlist articles. `_fetch_gdelt_sentiment` is also
+preserved as the GDELT test seam: patching it propagates into
+`ai_advisor._build_sentiment_section` via `build_news_corpus`.
 
 ## Public API
 
@@ -69,9 +71,9 @@ Fetch GDELT sentiment and news events for the configured universe.
 | `tone` | `float \| None` | Normalized mean AvgTone in `[-1.0, 1.0]`; `None` when tone extraction failed or the timeline was empty. |
 | `per_ticker` | `None` | Always `None` in v1 (universe-level only). |
 | `source` | `str` | Human-readable citation string; always present, even on the unavailable path. |
-| `sources` | `list \| None` | Raw artlist citations (url/title/seendate/domain dicts). `None` when the whole producer is unavailable; `[]` when artlist failed or returned no articles. |
+| `sources` | `list \| None` | Raw artlist citations (url/title/seendate/domain dicts). `None` when the whole producer is unavailable; `[]` when artlist failed or returned no articles. Used by `news_corpus._normalize_gdelt_articles` to obtain Facet B input. |
 | `events` | `list` | Ranked, domain-deduplicated English-language news events (title/domain/seendate dicts), capped at `_GDELT_MAX_EVENTS`. Always present; `[]` on any unavailable path. |
-| `reason` | `str \| None` | `None` on success. On failure: a named label from §4 or `type(exc).__name__` only (D-1). |
+| `reason` | `str \| None` | `None` on success. On failure: a named label from the reason table below or `type(exc).__name__` only (D-1). |
 
 **Never raises.** All exceptions yield `available=False` with a reason.
 
@@ -88,15 +90,15 @@ artlist article dicts. Internal helper called after a successful artlist fetch.
 
 **Returns:** `list[dict]`, each with keys `title`, `domain`, `seendate`. Never raises.
 
-## Constants (contract §5 — all load-bearing, never magic numbers)
+## Constants (contract section 5 — all load-bearing, never magic numbers)
 
 | Constant | Value | Source |
 |----------|-------|--------|
-| `_GDELT_MAX_ATTEMPTS` | `4` | Contract §5 Amendment 1. 1 initial + 3 retries. |
-| `_GDELT_BACKOFF_BASE_S` | `20.0` | Contract §5 Amendment 1. 4x margin above GDELT's 5 s/req floor. Prior value `1.0` caused a persistent-429 PC crash. |
-| `_GDELT_BACKOFF_CAP_S` | `60.0` | Contract §5 Amendment 1. Caps exponential ramp: 20 s -> 40 s -> 60 s. |
-| `_GDELT_TIMEOUT_S` | `15.0` | Contract §5. Explicit connect+read timeout; avoids urllib3 `None` default. |
-| `_GDELT_INTER_REQUEST_S` | `6.0` | Contract §5 Amendment 1. Sleep between tone GET and artlist GET; both share GDELT's per-IP rate-limit window. |
+| `_GDELT_MAX_ATTEMPTS` | `4` | Contract section 5 Amendment 1. 1 initial + 3 retries. |
+| `_GDELT_BACKOFF_BASE_S` | `20.0` | Contract section 5 Amendment 1. 4x margin above GDELT's 5 s/req floor. Prior value `1.0` caused a persistent-429 PC crash. |
+| `_GDELT_BACKOFF_CAP_S` | `60.0` | Contract section 5 Amendment 1. Caps exponential ramp: 20 s -> 40 s -> 60 s. |
+| `_GDELT_TIMEOUT_S` | `15.0` | Contract section 5. Explicit connect+read timeout; avoids urllib3 `None` default. |
+| `_GDELT_INTER_REQUEST_S` | `6.0` | Contract section 5 Amendment 1. Sleep between tone GET and artlist GET; both share GDELT's per-IP rate-limit window. |
 | `_GDELT_MAX_EVENTS` | `7` | Feature plan AC-2. Caps events list for prompt-budget control (~5-8 events target). |
 
 ## Endpoint URLs
@@ -108,11 +110,12 @@ non-English and null-language articles to pass through).
 | Endpoint | URL constant |
 |----------|-------------|
 | Tone signal | `_GDELT_TONE_URL` — `timelinetone` mode |
-| Article citations + events | `_GDELT_ARTLIST_URL` — `artlist` mode, `maxrecords=50`, `timespan=1440` (last 24 hours); bumped 10→50 in the multi-source upgrade to feed the `news_corpus` artlist fetch |
+| Article citations + events | `_GDELT_ARTLIST_URL` — `artlist` mode, `maxrecords=50`, `timespan=1440` (last 24 hours); bumped 10->50 in the multi-source upgrade to feed the `news_corpus` artlist fetch |
 
-`_GDELT_ARTLIST_URL` is consumed by `advisors/news_corpus._fetch_gdelt_artlist`
-(via a CC-2 lazy import of `lens_gdelt`) — the multi-source corpus builder reuses
-the pinned URL constant to ensure consistent query parameters.
+`_GDELT_ARTLIST_URL` is consumed indirectly by `advisors/news_corpus.build_news_corpus()`
+— `build_news_corpus` calls `_fetch_gdelt_sentiment([])` once; `lens_gdelt` uses
+`_GDELT_ARTLIST_URL` internally. `news_corpus` does not reference the URL constant
+directly.
 
 ## Design Invariants
 
@@ -127,7 +130,7 @@ exception) return early before the artlist call. Tone-extraction failures (empty
 timeline, non-numeric data) set `tone=None` but continue to the artlist call — if
 events are found, the result is `available=True` with `tone=None`.
 
-**Named reason labels (§4):**
+**Named reason labels:**
 
 | Condition | `reason` |
 |-----------|----------|
@@ -169,19 +172,21 @@ values sets `tone=None` and continues to the artlist call.
 
 ## Wiring into `ai_advisor._build_sentiment_section`
 
-`_build_sentiment_section` uses a two-path architecture (multi-source upgrade):
+`_build_sentiment_section` calls `news_corpus.build_news_corpus()` as its sole
+entry point (CC-2 lazy import). The direct `_fetch_gdelt_sentiment` call that
+existed in the cycle-1 interim has been removed from the section.
 
-- **Primary:** lazy-imports `advisors.news_corpus` (CC-2) and calls
-  `news_corpus.build_news_corpus()` for the full two-facet result.
-- **Fallback / test seam:** lazy-imports `advisors.lens_gdelt` (CC-2) and calls
-  `lens_gdelt._fetch_gdelt_sentiment([])`. Patching `_fetch_gdelt_sentiment`
-  in tests propagates into `_build_sentiment_section`, preserving the test seam.
+`news_corpus.build_news_corpus()` is the single GDELT caller: it calls
+`_fetch_gdelt_sentiment([])` once for both Facet A (tone from `result["tone"]`)
+and Facet B input (artlist articles from `result["sources"]`, normalized by
+`news_corpus._normalize_gdelt_articles`). This produces exactly 2 GDELT GETs
+(timelinetone + artlist) per sentiment section call, properly spaced by
+`_GDELT_INTER_REQUEST_S` inside `_fetch_gdelt_sentiment`.
 
-The `events` field in the payload is mapped from corpus articles when
-`news_corpus` produced a non-empty corpus (legacy shape for render compatibility,
-AC-5); falls back to `gdelt_result["events"]` when the corpus is empty but GDELT
-has events. The independent `_fetch_with_backoff` artlist call that existed in
-the GDELT-only interim version has been removed.
+**Test seam:** The GDELT test seam is preserved. Patching
+`lens_gdelt._fetch_gdelt_sentiment` propagates into `_build_sentiment_section`
+via `build_news_corpus` — tests that patch `_fetch_gdelt_sentiment` still control
+the GDELT data path without needing to patch `build_news_corpus` directly.
 
 ## Testing
 
@@ -208,8 +213,7 @@ the GDELT-only interim version has been removed.
   (>= 6 s/ticker). Deferred to v2.
 - **No artlist retry.** Artlist failures yield `events=[]`, `sources=[]` silently.
   A future improvement could retry artlist on 429 with the same bounded-backoff logic.
-- **Serial artlist + tone.** `_fetch_gdelt_tone` and `_fetch_gdelt_artlist`
-  (called from `news_corpus`) both hit GDELT endpoints, each with its own
-  `time.sleep` or inter-request delay. The combined delay is bounded by
-  `_GDELT_INTER_REQUEST_S` + the `requests.get` timeout. No retry on artlist;
-  tone retry is bounded by `_GDELT_MAX_ATTEMPTS`.
+- **Serial tone + artlist within `_fetch_gdelt_sentiment`.** Both GETs happen inside
+  one call (`_GDELT_INTER_REQUEST_S=6.0s` inter-request sleep). `news_corpus` makes
+  this call once; there are no additional GDELT GETs elsewhere in the sentiment path.
+  Tone retry is bounded by `_GDELT_MAX_ATTEMPTS`; artlist has no retry.

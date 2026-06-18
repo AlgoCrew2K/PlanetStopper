@@ -36,14 +36,21 @@ the GDELT tone or at least one article was fetched.
 
 **Two-facet design:**
 
-- **Facet A — GDELT tone** (`_fetch_gdelt_tone`): a single `float | None` in
-  `[-1, 1]`, normalized from GDELT `AvgTone`. Independent of the corpus fetch.
-  Uses `lens_gdelt._GDELT_TONE_URL` via a lazy import (CC-2), adding an explicit
-  `User-Agent` header (`_UA_STD`).
+- **Facet A — GDELT tone** (from `lens_gdelt._fetch_gdelt_sentiment`): a single
+  `float | None` in `[-1, 1]`, normalized from GDELT `AvgTone`. `build_news_corpus`
+  calls `lens_gdelt._fetch_gdelt_sentiment([])` once and extracts `result["tone"]`.
 
 - **Facet B — ranked corpus** (`_fetch_all_feeds` → dedup → score → top-K): up
   to `TOP_K=25` articles from GDELT artlist + 8 RSS/Atom feeds, after cross-source
-  deduplication, composite scoring, and topic tagging.
+  deduplication, composite scoring, and topic tagging. GDELT artlist articles are
+  obtained from `result["sources"]` (the same single `_fetch_gdelt_sentiment` call
+  used for Facet A) via `_normalize_gdelt_articles()`. `_fetch_all_feeds()` is
+  RSS-only — no direct GDELT HTTP calls in `news_corpus`.
+
+**Single GDELT call invariant:** `build_news_corpus()` makes exactly ONE
+`lens_gdelt._fetch_gdelt_sentiment([])` call per invocation, producing <=2 spaced
+GDELT GETs (timelinetone + artlist, already spaced by `_GDELT_INTER_REQUEST_S=6.0s`
+inside `lens_gdelt`). This satisfies the <=2-GETs-per-run rate-limit contract.
 
 **Dependency:** `feedparser>=6.0` (added to `requirements.txt`).
 
@@ -73,19 +80,20 @@ Each article dict in `corpus` has keys: `url`, `title`, `published`, `domain`,
 
 ## Feed Sources
 
-GDELT artlist is fetched via JSON (not RSS); all other sources are RSS/Atom parsed
+GDELT artlist articles arrive via `lens_gdelt._fetch_gdelt_sentiment` (one call,
+normalized by `_normalize_gdelt_articles`). All other sources are RSS/Atom parsed
 via `feedparser`.
 
 | Feed name | URL | UA |
 |-----------|-----|----|
-| `gdelt_artlist` | `lens_gdelt._GDELT_ARTLIST_URL` (maxrecords=50) | `_UA_STD` |
+| `gdelt_artlist` | Via `lens_gdelt._fetch_gdelt_sentiment` (maxrecords=50, sourcelang:eng) | Handled by `lens_gdelt` |
 | `google_news_business` | `https://news.google.com/rss/headlines/section/topic/BUSINESS` | `_UA_STD` |
 | `cnbc_markets` | `https://www.cnbc.com/id/10000664/device/rss/rss.html` | `_UA_STD` |
 | `marketwatch_top` | `https://feeds.marketwatch.com/marketwatch/topstories/` | `_UA_STD` |
 | `yahoo_finance` | `https://finance.yahoo.com/news/rssindex` | `_UA_STD` |
 | `fed_press` | `https://www.federalreserve.gov/feeds/press_all.xml` | `_UA_GOV` |
 | `bls_latest` | `https://www.bls.gov/feed/bls_latest.rss` | `_UA_GOV` |
-| `bea_rss` | `https://apps.bea.gov/rss/xml` | `_UA_GOV` |
+| `bea_rss` | `https://apps.bea.gov/rss/rss.xml` | `_UA_GOV` |
 | `sec_8k` | `https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&output=atom&count=10` | `_UA_GOV` |
 
 `.gov` feeds (SEC, Fed, BLS, BEA) require a descriptive contact UA; they return
@@ -98,7 +106,7 @@ All weights and thresholds are sourced from `feature-plans/news-sources-referenc
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
-| `W_RECENCY` | `0.40` | Weight for recency component; `exp(-Δt_hours / TAU_HOURS)` |
+| `W_RECENCY` | `0.40` | Weight for recency component; `exp(-delta_hours / TAU_HOURS)` |
 | `W_RELEVANCE` | `0.35` | Weight for relevance component; `min(1.0, keyword_hits / 3)` |
 | `W_AUTHORITY` | `0.25` | Weight for domain authority component |
 | `TAU_HOURS` | `24.0` | Recency decay half-life in hours |
@@ -154,7 +162,8 @@ score = W_RECENCY * exp(-delta_hours / TAU_HOURS)
 ```
 
 Articles are sorted descending by score; top `TOP_K` are kept as the corpus.
-Recency defaults to `0.5` on unparseable dates.
+Recency defaults to `0.5` on unparseable dates. Timestamps computed with
+`datetime.datetime.now(datetime.timezone.utc)` (Python 3.12+ compatible).
 
 ## Internal Helpers
 
@@ -169,16 +178,20 @@ Recency defaults to `0.5` on unparseable dates.
 | `_canonical_url(url)` | Strip query + fragment for dedup comparison |
 | `_jaccard(title_a, title_b)` | Token-set Jaccard similarity |
 | `_dedup(articles)` | Three-step cross-source dedup pipeline |
-| `_fetch_gdelt_tone()` | Facet A — GDELT tone scalar; lazy-imports `lens_gdelt` (CC-2) |
-| `_fetch_gdelt_artlist()` | Fetch + normalize GDELT artlist JSON; lazy-imports `lens_gdelt` (CC-2) |
+| `_fetch_gdelt_tone()` | Standalone helper: delegates to `lens_gdelt._fetch_gdelt_sentiment`; returns `float \| None`. NOT called from `build_news_corpus` — the main function calls `_fetch_gdelt_sentiment` directly inline. Used by tests that call `_fetch_gdelt_tone()` as an isolated unit. |
+| `_normalize_gdelt_articles(sources_raw)` | Pure normalizer: converts GDELT `sources` field records `{url, seendate, title, domain}` to the common article shape; `source_feed="gdelt_artlist"` |
 | `_fetch_rss_feed(name, url, ua)` | Fetch + normalize one RSS/Atom feed via `feedparser`; per-feed isolation |
-| `_fetch_all_feeds()` | Orchestrates artlist + all RSS feeds; per-feed isolation |
+| `_fetch_all_feeds()` | Orchestrates all RSS/Atom feeds (RSS-only; no direct GDELT GETs here) |
 
 ## Design Invariants
 
 **D-1.** Every error path returns `type(exc).__name__` only — never `str(exc)`.
 
-**Per-feed isolation.** One feed failing (403, timeout, parse error) degrades
+**Single GDELT call.** `build_news_corpus` calls `lens_gdelt._fetch_gdelt_sentiment([])` once
+inline. Both tone (Facet A) and artlist articles (Facet B input) come from that one call.
+No direct GDELT HTTP requests originate in `news_corpus` itself.
+
+**Per-feed isolation.** One RSS feed failing (403, timeout, parse error) degrades
 that feed only. `_fetch_all_feeds` always returns a list; absent feeds contribute
 `[]` silently.
 
@@ -195,42 +208,45 @@ constant with an inline source comment.
 
 ## Wiring into `ai_advisor._build_sentiment_section`
 
-`_build_sentiment_section` uses a two-path architecture:
+`_build_sentiment_section` calls `news_corpus.build_news_corpus()` as its sole
+entry point. The direct `lens_gdelt._fetch_gdelt_sentiment` call that existed
+in the cycle-1 interim has been removed from the section — GDELT data reaches
+the section only through `build_news_corpus`.
 
-1. **Primary:** `news_corpus.build_news_corpus()` — produces `tone` + `corpus`.
-2. **Fallback:** `lens_gdelt._fetch_gdelt_sentiment([])` — GDELT-only path
-   preserved as a test seam and fallback. Patching
-   `lens_gdelt._fetch_gdelt_sentiment` in tests propagates into the section.
+The GDELT test seam is preserved: `build_news_corpus` delegates to
+`lens_gdelt._fetch_gdelt_sentiment` internally, so patching `_fetch_gdelt_sentiment`
+propagates into `_build_sentiment_section`.
 
-`available=True` if either source produced data. The payload carries:
-- `tone_score`: from `corpus_result` when corpus is available, else from
-  `gdelt_result`.
-- `corpus`: the ranked article list from `news_corpus` (empty list when corpus
-  unavailable).
-- `events`: mapped from corpus articles (legacy shape `{title, domain, seendate}`)
-  when corpus is non-empty; falls back to `gdelt_result["events"]` when corpus
-  is empty but GDELT has events (AC-5 render compatibility).
+On the success path, the payload carries:
+- `tone_score`: from `corpus_result["tone"]`.
+- `corpus`: the ranked article list (up to `TOP_K`).
+- `events`: mapped from corpus articles to legacy shape `{title, domain, seendate}`
+  for render compatibility (AC-5).
+- `article_count`: `len(corpus)`.
+
+`sources[]` is populated by calling `build_citation({title, url, published, lens})`
+per corpus article; `None` returns are filtered.
+
+**Warehouse persistence (DW-1):** `_build_sentiment_section` calls
+`lens_warehouse.persist_lens_snapshot` on both paths (CC-2 lazy import, wrapped
+in `try/except` — warehouse errors never surface to callers):
+- **Unavailable path:** `{lens="sentiment", source="news_corpus", available=False, raw_payload={"reason": reason}}`
+- **Success path:** `{lens="sentiment", source="news_corpus", available=True, raw_payload={"tone_score": tone_score, "corpus_size": len(corpus)}}`
 
 ## Testing
 
-- **Test files:** `tests/ai_advisor/test_news_corpus.py` (new),
+- **Test files:** `tests/ai_advisor/test_news_corpus.py`,
   `tests/ai_advisor/test_lens_gdelt.py` (updated for maxrecords=50)
 - **Fixtures:** `tests/fixtures/ai_advisor/` — `gdelt_artlist_maxrecords50.json`,
   `google_news_business.xml`, `fed_press.xml`, `bea_rss.xml`, `sec_8k_atom.xml`,
   `news_corpus_feeds_provenance.json`
 - **Mocking strategy:** All CI tests mock `requests.get` and `feedparser.parse`.
   No live network calls in the default run.
-- **Per-feed isolation tests:** each feed failure path asserts the corpus is not
-  empty when other feeds succeed.
-- **Total suite:** 107 passed / 0 failed at GREEN commit b93b724.
-
-## Known Gaps / Deferred Work
-
-- **Serial fetching.** `_fetch_all_feeds` fetches all 9 sources serially. A
-  future improvement could parallelize with `ThreadPoolExecutor`, subject to
-  rate-limit considerations on `.gov` feeds.
-- **No warehouse persistence.** `news_corpus` does not call `lens_warehouse`
-  directly. Persistence of the corpus to the nightly warehouse is deferred.
-- **GDELT artlist UA.** The artlist fetch uses `_UA_STD`. GDELT does not require
-  a `.gov`-style contact UA, but if GDELT begins 403-ing on standard UAs,
-  switching to `_UA_GOV` is the fix.
+- **Single-GDELT-path tests (cycle-2):** Assert `_fetch_gdelt_sentiment` is called
+  at most once per `_build_sentiment_section` call; assert `_fetch_gdelt_sentiment`
+  is NOT called directly from `_build_sentiment_section` when `news_corpus` is
+  available; assert `_fetch_gdelt_tone` delegates to `_fetch_gdelt_sentiment`.
+- **Warehouse persistence tests (cycle-2):** Assert `persist_lens_snapshot` is called
+  with `lens="sentiment"` on both the success and unavailable paths; assert payload
+  shape carries `tone` and `corpus_size` keys (no hardcoded values).
+- **Total suite:** 166 passed / 0 failed at GREEN commit 5e2a830.
