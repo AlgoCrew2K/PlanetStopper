@@ -224,18 +224,25 @@ class TestUserAgentAndPerFeedIsolation:
     """Every feed fetch sets an explicit User-Agent; one feed failing doesn't kill the lens."""
 
     def test_fetch_feeds_sets_explicit_user_agent(self, fed_press_xml, bea_rss_xml):
-        """All requests.get calls carry an explicit User-Agent header.
+        """All RSS/Atom feed requests carry an explicit User-Agent header.
 
         AC-1 LOAD-BEARING: SEC/CNBC/Fed/BLS return 403 to the default requests UA.
-        FAILS if any call uses the default requests User-Agent string.
+        FAILS if any RSS/Atom feed fetch uses the default requests User-Agent string.
+
+        GDELT API calls (api.gdeltproject.org) are delegated to lens_gdelt and excluded
+        from this assertion — those calls are lens_gdelt's UA responsibility, tested
+        separately in test_lens_gdelt.py.
         """
         from advisors import news_corpus
 
-        call_headers: list[dict] = []
+        _GDELT_HOST = "api.gdeltproject.org"
+        rss_call_headers: list[tuple[str, dict]] = []
 
         def capture_get(url, **kwargs):
             headers = kwargs.get("headers", {})
-            call_headers.append(dict(headers))
+            if _GDELT_HOST not in url:
+                # Only capture non-GDELT calls — RSS/Atom feeds are news_corpus's responsibility
+                rss_call_headers.append((url, dict(headers)))
             resp = MagicMock()
             resp.status_code = 200
             resp.content = fed_press_xml
@@ -245,17 +252,20 @@ class TestUserAgentAndPerFeedIsolation:
         with patch("requests.get", side_effect=capture_get):
             news_corpus.build_news_corpus()
 
-        assert len(call_headers) >= 1, "build_news_corpus made no HTTP calls"
-        for i, headers in enumerate(call_headers):
+        assert len(rss_call_headers) >= 1, (
+            "build_news_corpus made no RSS/Atom feed HTTP calls. "
+            "Expected calls to the configured RSS feeds (Google News, CNBC, Fed, etc.)."
+        )
+        for i, (url, headers) in enumerate(rss_call_headers):
             ua = headers.get("User-Agent") or headers.get("user-agent")
             assert ua is not None, (
-                f"HTTP call[{i}] has no User-Agent header. "
-                f"AC-1: every feed fetch must set an explicit User-Agent. "
+                f"RSS feed call[{i}] to {url!r} has no User-Agent header. "
+                f"AC-1: every RSS/Atom feed fetch must set an explicit User-Agent. "
                 f"Headers: {headers}"
             )
             # Must not be the bare requests default
             assert "python-requests" not in ua.lower(), (
-                f"HTTP call[{i}] is using the default requests User-Agent ({ua!r}). "
+                f"RSS feed call[{i}] to {url!r} uses the default requests UA ({ua!r}). "
                 f"SEC/CNBC/Fed/BLS return 403 to this UA. "
                 f"Set an explicit descriptive User-Agent."
             )
