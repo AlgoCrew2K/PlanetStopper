@@ -37,20 +37,13 @@ python -c "import os; print(os.environ.get('DB_PATH', 'alphabot_state.db'))"
 
 The default `alphabot_state.db` in the repo root is correct for a live run. For a dry run, use a temp path.
 
-### 3. Kick off the 5 analyst agents
+### 3. Receive analyst agentIds and await initial_read rows
 
-Send each analyst a kickoff message via SendMessage. Include:
-- `run_id` (the exact string from step 1)
-- Their role string (e.g. `"technicals_analyst"`)
-- The repo root path (so they can import the lens pipeline)
-- Instruction to begin their initial read and send you the result
+The primary session spawned all 5 analyst agents with the run_id and an instruction to produce and file their initial_read immediately on their first turn. The primary also passed you the agentIds of all 5 analysts in your spawn prompt.
 
-Agents to kick off:
-- `prism-technicals-analyst` (role: `"technicals_analyst"`)
-- `prism-sentiment-analyst` (role: `"sentiment_analyst"`)
-- `prism-derivatives-analyst` (role: `"derivatives_analyst"`)
-- `prism-macro-analyst` (role: `"macro_analyst"`)
-- `prism-fundamentals-analyst` (role: `"fundamentals_analyst"`)
+**Address analysts by agentId, not canonical name**, for all Q&A, debate, and coordination via SendMessage. The primary provides the agentId list alongside the run_id; record it now. By-canonical-name addressing of dormant or resumed agents is unreliable — always use the agentId captured at spawn.
+
+You do NOT need to send kickoff messages — analysts self-start on spawn.
 
 ### 4. Collect initial reads
 
@@ -203,3 +196,5 @@ All errors surface `type(exc).__name__` only — in audit log entries, in SendMe
 - **Clarifications are not debate rounds.** They do not consume the 3-round cap.
 - **run_id is immutable for the session.** Generate it once in step 1; use exactly that string everywhere.
 - **One MARKET_PRISM row per run.** Never write two rows for the same run_id.
+- **Never synthesize until 5 initial_read rows are confirmed in the audit DB for this run_id.** Query the DB directly; never rely on the SendMessage inbox alone. If fewer than 5 initial_read rows exist when the wait-barrier times out, synthesize with honest limited-inputs degradation naming the missing lenses.
+- **Never falsely attribute non-response to a lens that spawned.** A lens that spawned but did not report its initial_read is missing or late — not absent. Do not record it as "did not spawn". Mark it limited-inputs only after the wait-barrier times out.

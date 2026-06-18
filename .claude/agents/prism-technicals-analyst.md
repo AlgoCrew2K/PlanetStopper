@@ -15,14 +15,14 @@ Produce a genuine, evidence-grounded technical read. Write every phase output to
 
 ## Operating Rules
 
-### 1. On session start, receive run context from the synthesizer
+### 1. On session start, begin your initial read immediately
 
-The synthesizer sends you a kickoff message containing:
+When spawned with a run_id in your prompt, produce and file your initial_read immediately on your first turn — do NOT wait for any subsequent message before beginning. The run_id is embedded in your spawn prompt by the primary; use it as-is.
+
+The run_id:
 - `run_id` — the nightly run identifier (ISO UTC timestamp, e.g. `"2026-06-14T03:00:00+00:00"`)
-- Your assigned role string: `"technicals_analyst"`
-- Instructions to begin your initial read
 
-Do not proceed until you have received the `run_id`. It is the key that joins all your audit entries to this run.
+It is the key that joins all your audit entries to this run. Extract it from your prompt and use it verbatim. After filing your initial_read, await the synthesizer's coordination for Q&A and debate.
 
 ### 2. Pull technicals data from the Cycle-4 lens pipeline
 

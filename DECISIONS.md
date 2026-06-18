@@ -1273,3 +1273,69 @@ vs `available=True` assertion failure. This was classified as a merge-gate break
    (`test_news_corpus.py:1627`), which patches `requests.get` through the real production path.
 
 **Status:** Fixed at bed4afb. Reviewer delta-APPROVE confirmed all four checks pass.
+
+---
+
+### DE-PRISM-COUNCIL: 5/5 analyst participation — embed-kickoff + agentId addressing (prism-council-5of5 cycle, 2026-06-18)
+
+Branch: `feat/prism-council-5of5` | GREEN at 87ba7ae (delta-APPROVE)
+
+**Problem:** The nightly unattended Market Prism council reliably produced only 2/5 analyst reads. The prior orchestration pattern spawned all 5 analysts first, then sent a kickoff `SendMessage` to each. Dormant agents missed the subsequent kickoff and never produced an `initial_read` audit entry.
+
+**Root cause (independently falsified):** Transient by-canonical-name resume failure of dormant subagents. Not analyst crash, data unavailability, or a bug in the audit-write CLI. When an agent is spawned and then goes dormant before receiving a kickoff message, addressing it by canonical name via `SendMessage` is unreliable. The fix is architectural: eliminate the dormancy window by embedding the kickoff in the spawn prompt, and ensure a single authoritative run_id flows through all rows.
+
+**Decision — four orchestration directives (DE-PRISM-5OF5) + two synthesizer Hard Rules:**
+
+**(a) Scheduler-generated run_id threaded into PRISM_RUN_PROMPT at call time.** `main()` generates `run_id = str(uuid.uuid4())` before calling `_run_prism(run_id)`. `_run_prism` appends `" The run_id for this session is: {run_id}. Use this exact string as the run_id for ALL audit rows and the MARKET_PRISM observation. Do not generate a new run_id."` to the static `PRISM_RUN_PROMPT` preamble. This is the single authoritative join key shared by: all analyst `initial_read` audit entries, the synthesizer audit entries, the MARKET_PRISM observation `raw_response`, and the `_persist_spend` LAUNCHER spend_log row. The council does NOT mint its own run_id.
+
+**(b) Embed kickoff in each analyst's spawn prompt.** Each of the 5 analyst agents is spawned with the run_id AND an explicit instruction to produce and file their `initial_read` immediately on their first turn. This eliminates the dormancy window — the analyst acts on spawn rather than waiting for a subsequent `SendMessage`. The prior pattern (spawn → separate kickoff message) caused 2/5 participation.
+
+**(c) Capture agentIds at spawn; pass to synthesizer.** The primary captures each analyst's `agentId` at spawn and passes the full list to `prism-synthesizer` in its spawn prompt. The synthesizer uses agentIds — not canonical names — for all Q&A, debate, and coordination via `SendMessage`. By-canonical-name addressing of dormant or resumed agents is unreliable.
+
+**(d) Wait-barrier before synthesis (Hard Rule).** `prism-synthesizer` must not synthesize until all 5 `initial_read` rows are confirmed present in the audit DB for this specific `run_id` (via `database.get_prism_audit_for_run(run_id)`), or the barrier times out. The SendMessage inbox is explicitly rejected as the wait mechanism — the audit DB is the authoritative source of truth. If the barrier times out with fewer than 5 rows, the synthesizer degrades to `limited-inputs`, naming each missing lens by its absence in the audit DB.
+
+**(e) False-attribution prohibition (Hard Rule).** A lens that spawned but did not report its `initial_read` is missing or late — not absent. `prism-synthesizer` must never record a spawned lens as "did not spawn". The correct attribution is `limited-inputs` with the reason being absence of an `initial_read` row in the audit DB after the wait-barrier timeout.
+
+**Role-file changes:**
+
+- **5 analyst role files** (prism-technicals, prism-sentiment, prism-derivatives, prism-macro, prism-fundamentals): Removed the dormancy-triggering line "Do not proceed until you have received the run_id." Added explicit instruction: begin `initial_read` immediately on session start, using the run_id embedded in the spawn prompt.
+
+- **prism-synthesizer.md** Hard Rules: Two new bullets added — (1) never synthesize until 5 `initial_read` rows confirmed in the audit DB for this run_id; honest `limited-inputs` degradation naming missing lenses on barrier timeout; (2) never falsely attribute non-response as "did not spawn" — spawned-but-silent = `limited-inputs` only.
+
+**Regression-safe:** Command shape (`claude -p --dangerously-skip-permissions --model claude-opus-4-8 --max-budget-usd 15.0 --output-format json`), spend-key parsing (`total_cost_usd`), idempotency guard, bounded retry (MAX_ATTEMPTS=3), and budget cap (MAX_BUDGET_USD=15.0) are all unchanged from the Phase-4 scheduler.
+
+**Files changed:** `prism_scheduler.py` (PRISM_RUN_PROMPT made static preamble; `_run_prism` appends scheduler-generated run_id at call time); `.claude/agents/prism-technicals-analyst.md`, `prism-sentiment-analyst.md`, `prism-derivatives-analyst.md`, `prism-macro-analyst.md`, `prism-fundamentals-analyst.md` (dormancy line removed, immediate-action instruction added); `.claude/agents/prism-synthesizer.md` (Step 3: agentId addressing, no kickoff messages needed; Hard Rules: wait-barrier + false-attribution prohibition added).
+
+**Tests:** `tests/ai_advisor/test_prism_scheduling.py` — GREEN at 87ba7ae. All tests covering AC-1 through AC-8, HC-1 (spend cap), HC-2 (spend logging), HC-3 (model pin), the Phase-4 invocation shape, the council architecture (primary spawns all 6; `prism-synthesizer` coordinates only via SendMessage), and the 5/5 orchestration directives pass. F-1 tests verify run_id is scheduler-generated and threaded (not council-minted). F-2 tests verify the Hard Rule wait-barrier text and false-attribution prohibition in `prism-synthesizer.md`. F-3 hollow-pattern fix verified by reviewer.
+
+**Note on scheduling:** `schedule_prism.ps1` (Windows Task Scheduler registration) is retained only for test-green purposes. The production nightly trigger will move to droplet cron/systemd when the deployment environment is provisioned.
+
+**Status (F-1/F-2/F-3):** GREEN at 87ba7ae. pc-reviewer delta-APPROVE confirmed all 3 findings resolved.
+
+---
+
+### DE-PRISM-COUNCIL-F4: row-verification + retry-on-empty — scheduler false-green eliminated (prism-council-5of5 cycle, 2026-06-18)
+
+Branch: `feat/prism-council-5of5`
+
+**Problem:** `main()` declared success ("Run completed successfully", exit 0) whenever `_run_prism()` returned True (subprocess `returncode == 0`). A council run that exits cleanly but writes no MARKET_PRISM row — e.g., due to a synthesizer failure, budget exhaustion mid-run, or a write error — produced a silent false-green. Unattended nightly: the operator had no way to know the council produced nothing.
+
+**Decision — per-attempt success = rc==0 AND row-exists:**
+
+The retry loop now applies a two-part success test on each attempt:
+1. `_run_prism(run_id)` returns `True` (subprocess `rc==0`).
+2. `_get_market_prism_row_for_run(run_id)` returns a non-None dict — the MARKET_PRISM `advisor_observations` row for this `run_id` is confirmed present.
+
+If `rc==0` but no row exists, the attempt is classified as failed, a diagnostic message is written to stderr, and the retry loop continues to the next attempt (up to `MAX_ATTEMPTS`). After all attempts are exhausted without a confirmed row, `main()` exits 1.
+
+**New seam — `_get_market_prism_row_for_run(run_id: str) -> dict | None`:**
+
+Queries `advisor_observations` for a MARKET_PRISM row whose `raw_response["run_id"]` matches the scheduler-generated `run_id`. Implementation: calls `database.get_latest_market_prism_summary()` (existing seam) and confirms `raw_response["run_id"] == run_id`. Since the scheduler's `run_id` is a unique uuid4, the latest row is this run's row iff it was written. Non-fatal — returns `None` on any DB or parse error; logs `type(exc).__name__` only (D-1). Never raises.
+
+**Spend logging preserved on rc==0:** `_persist_spend` fires on `returncode == 0` *before* the row check. An attempt that exits 0 but writes no row still logs its spend. This preserves the existing spend-logging contract and avoids lost billing data on partially-successful attempts.
+
+**Files changed:** `prism_scheduler.py` — `_get_market_prism_row_for_run(run_id)` added as a patchable seam; `main()` retry loop updated: a `proc_ok=True` outcome now calls `_get_market_prism_row_for_run(run_id)` and treats a `None` return as a failed attempt before logging and sleeping.
+
+**Tests:** `tests/ai_advisor/test_prism_scheduling.py` — `TestMarketPrismRowVerification` class (3 tests): (1) rc==0 + no row -> all MAX_ATTEMPTS exhausted -> non-zero exit + no "Run completed successfully" in stdout (RED gate); (2) rc==0 + row present -> exit 0 + success message (happy-path regression lock, skips pre-GREEN); (3) rc==0 + no row on attempt 1, rc==0 + row on attempt 2 -> subprocess called twice + exit 0 (retry-on-empty RED gate). Pre-existing happy-path tests patched to supply `_get_market_prism_row_for_run=_SAMPLE_MARKET_PRISM_ROW` so prior expectations are preserved. GREEN at 9de5f71.
+
+**Status:** GREEN at 9de5f71. Pending pc-reviewer APPROVE.
