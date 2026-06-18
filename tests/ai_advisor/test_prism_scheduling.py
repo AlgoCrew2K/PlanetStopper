@@ -1072,6 +1072,476 @@ class TestModelPin:
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Council 5/5 orchestration directives (RED for prism-council-5of5)
+#
+# The root cause of 2/5 analyst participation: analysts spawn, emit ONE turn
+# ("Standing by for the synthesizer's kickoff"), then go DORMANT.  The synthesizer
+# then tries to resume them BY CANONICAL NAME via SendMessage — but by-name resume
+# of a dormant subagent is unreliable.  The fix: embed the run_id + immediate-
+# initial_read instruction INTO THE SPAWN PROMPT so the first turn IS the work.
+#
+# These tests assert that PRISM_RUN_PROMPT carries the directives that make 5/5
+# achievable.  The LIVE council run (PM-gated) is the acceptance gate; these
+# tests are a necessary precondition, not sufficient.
+# ---------------------------------------------------------------------------
+
+
+class TestCouncil5of5OrchestrationDirectives:
+    """Assert PRISM_RUN_PROMPT contains the directives required for 5/5 participation."""
+
+    def test_prompt_instructs_generating_run_id_before_spawning(self):
+        """PRISM_RUN_PROMPT must instruct the primary to generate the run_id BEFORE
+        spawning the analysts, so the run_id is available to embed in each analyst's
+        spawn prompt.
+
+        Directive (a): generate/use a run_id before any spawn.
+
+        The test checks that the prompt contains language about generating a run_id
+        AND that this generation instruction appears before (or alongside) the spawn
+        instruction — not as an afterthought.
+
+        RED intent: current PRISM_RUN_PROMPT tells the primary to spawn immediately
+        without mentioning run_id generation first.  The run_id is mentioned only in
+        the context of synthesizer-sends-kickoff (the old broken path), not as a
+        pre-spawn step the primary does itself.
+        """
+        mod = _import_scheduler()
+
+        assert hasattr(mod, "PRISM_RUN_PROMPT"), "PRISM_RUN_PROMPT must exist"
+        prompt = mod.PRISM_RUN_PROMPT
+        prompt_lower = prompt.lower()
+
+        # The prompt must reference run_id generation — not just passing run_id along.
+        # Accept any of these generation-directive phrases.
+        generation_phrases = ["generate", "create the run_id", "run_id first", "generate a run_id"]
+        has_generation = any(p in prompt_lower for p in generation_phrases)
+        # Also accept: "run_id" AND "before" as a weaker signal.
+        has_runid_before = "run_id" in prompt_lower and "before" in prompt_lower
+
+        assert has_generation or has_runid_before, (
+            "PRISM_RUN_PROMPT must instruct the primary to generate the run_id BEFORE "
+            "spawning analysts, so the run_id is available to embed in each analyst's "
+            "spawn prompt.  The current prompt does not contain any generation directive "
+            "(e.g. 'generate a run_id' or 'run_id first ... then spawn').  "
+            "Without this, analysts cannot receive the run_id at spawn time."
+        )
+
+    def test_prompt_instructs_embedding_kickoff_in_spawn_prompt(self):
+        """PRISM_RUN_PROMPT must instruct the primary to embed the run_id AND an
+        immediate-initial_read instruction INTO EACH ANALYST'S SPAWN PROMPT.
+
+        Directive (b): embed-kickoff — do NOT spawn then send a kickoff message.
+
+        The broken pattern is: spawn analyst (who stands by) → send kickoff via
+        SendMessage (which may not reach a dormant agent).  The fix: put the
+        run_id + 'produce your initial_read NOW' into the spawn prompt itself,
+        so the first turn IS the initial_read.
+
+        The prompt must contain language about embedding instructions in the spawn,
+        NOT the old 'send a kickoff message after spawning' pattern.
+
+        RED intent: current PRISM_RUN_PROMPT says the synthesizer 'messages each one'
+        for their reads — the old kickoff-via-SendMessage path that broke at 2/5.
+        """
+        import re
+
+        mod = _import_scheduler()
+
+        assert hasattr(mod, "PRISM_RUN_PROMPT"), "PRISM_RUN_PROMPT must exist"
+        prompt = mod.PRISM_RUN_PROMPT
+        prompt_lower = prompt.lower()
+
+        # The prompt must use embed-in-spawn language.
+        # Accept: "include in the spawn", "embed ... spawn", "spawn prompt includes",
+        # "in the spawn prompt", "immediately" near analyst/spawn, etc.
+        embed_phrases = [
+            "include in the spawn",
+            "embed",
+            "spawn prompt",
+            "in each analyst's spawn",
+            "immediately on spawn",
+            "in their spawn",
+            "in the analyst spawn",
+        ]
+        has_embed_directive = any(p in prompt_lower for p in embed_phrases)
+
+        # Stronger: "immediately" + ("initial_read" or "file" or "produce")
+        immediate_action = re.search(
+            r"immediat\w+.{0,80}(initial.read|file|produce|audit)",
+            prompt_lower,
+            re.DOTALL,
+        )
+
+        assert has_embed_directive or immediate_action, (
+            "PRISM_RUN_PROMPT must instruct the primary to embed the run_id and "
+            "an immediate-initial_read instruction INTO EACH ANALYST'S SPAWN PROMPT "
+            "(not send a kickoff message after spawning). "
+            "The current prompt describes the old synthesizer-kicks-off-via-SendMessage "
+            "pattern, which is the root cause of 2/5 participation.  "
+            "Required language: e.g. 'include run_id and instruction to produce initial_read "
+            "immediately in each analyst\\'s spawn prompt'."
+        )
+
+    def test_prompt_instructs_capturing_agent_ids_not_canonical_names(self):
+        """PRISM_RUN_PROMPT must instruct the primary to capture each analyst's agentId
+        at spawn and address analysts by agentId (not canonical name) for the debate phase.
+
+        Directive (c): address by agentId, not canonical name.
+
+        The root cause of 2/5: the synthesizer tried SendMessage to
+        'prism-technicals-analyst' (canonical name) to resume a dormant agent —
+        by-name addressing of dormant subagents is unreliable (the harness wants
+        the internal agentId).  Fix: primary captures agentId at spawn, passes it
+        to the synthesizer; synthesizer addresses by agentId.
+
+        The prompt must contain agentId-addressing language for the debate/coordination
+        phase.
+
+        RED intent: current PRISM_RUN_PROMPT has no mention of agentId — it still
+        describes the synthesizer addressing analysts by canonical name.
+        """
+        mod = _import_scheduler()
+
+        assert hasattr(mod, "PRISM_RUN_PROMPT"), "PRISM_RUN_PROMPT must exist"
+        prompt = mod.PRISM_RUN_PROMPT
+        prompt_lower = prompt.lower()
+
+        # The prompt must contain agentId language.
+        agent_id_phrases = [
+            "agentid",
+            "agent id",
+            "agent_id",
+            "capture.*id",
+            "id.*spawn",
+        ]
+        import re
+        has_agent_id = any(
+            re.search(p, prompt_lower)
+            for p in agent_id_phrases
+        )
+
+        assert has_agent_id, (
+            "PRISM_RUN_PROMPT must instruct the primary to capture each analyst's "
+            "agentId at spawn and pass it to the synthesizer for addressing. "
+            "By-canonical-name addressing of dormant subagents is unreliable — "
+            "this was the mechanism behind 2/5 participation. "
+            "Required language: e.g. 'capture each analyst\\'s agentId at spawn' or "
+            "'address analysts by agentId, not canonical name'. "
+            "Current prompt has no agentId reference."
+        )
+
+    def test_prompt_instructs_wait_barrier_before_synthesis(self):
+        """PRISM_RUN_PROMPT must instruct the synthesizer to wait for 5 initial_read
+        rows in the audit DB before synthesizing (the audit-DB wait-barrier).
+
+        Directive (d): never synthesize with <5 initial_read rows until barrier times out.
+
+        The synthesizer must not synthesize on whatever analysts happened to respond
+        in time — it must wait for the audit-DB write barrier (5 initial_read rows)
+        before integrating.  This is the safety check that prevents hollow syntheses.
+        The wait-barrier times out gracefully (limited-inputs for non-filers) but
+        must be attempted.
+
+        RED intent: current PRISM_RUN_PROMPT has no mention of a wait-barrier, audit-DB
+        check for initial_read count, or a minimum threshold before synthesis.
+        """
+        mod = _import_scheduler()
+
+        assert hasattr(mod, "PRISM_RUN_PROMPT"), "PRISM_RUN_PROMPT must exist"
+        prompt = mod.PRISM_RUN_PROMPT
+        prompt_lower = prompt.lower()
+
+        # Look for wait-barrier language: either an explicit count (5) or
+        # "audit" + "wait" near each other, or "initial_read" + "before" + "synthes".
+        import re
+
+        # Pattern 1: mentions waiting for initial_read rows before synthesizing
+        wait_before_synthesis = re.search(
+            r"(initial.read|audit.db|audit db).{0,150}(before|synthes)",
+            prompt_lower,
+            re.DOTALL,
+        )
+
+        # Pattern 2: "5" + "initial" (explicit count barrier)
+        five_initial = re.search(r"\b5\b.{0,50}initial", prompt_lower, re.DOTALL)
+        initial_five = re.search(r"initial.{0,50}\b5\b", prompt_lower, re.DOTALL)
+
+        # Pattern 3: "wait" + "barrier" or "wait" + "all" + "analyst"
+        wait_barrier = re.search(
+            r"wait.{0,80}(barrier|all.{0,20}analyst|initial.read)",
+            prompt_lower,
+            re.DOTALL,
+        )
+
+        has_wait_barrier = bool(
+            wait_before_synthesis or five_initial or initial_five or wait_barrier
+        )
+
+        assert has_wait_barrier, (
+            "PRISM_RUN_PROMPT must include a wait-barrier directive: the synthesizer "
+            "must not synthesize until it has confirmed (via the audit DB) that all 5 "
+            "analysts have filed their initial_read rows, or until the barrier times out. "
+            "Required language: e.g. 'wait until 5 initial_read rows appear in the audit DB' "
+            "or 'do not synthesize until the audit-DB wait-barrier is satisfied'. "
+            "Current prompt has no wait-barrier or audit-DB count check."
+        )
+
+    def test_prompt_names_all_five_analyst_types_for_spawning(self):
+        """PRISM_RUN_PROMPT must name all 5 analyst types explicitly so the primary
+        knows which agents to spawn.  (All 6 including synthesizer covered by the
+        existing test; this pins the analyst list independently for clarity.)
+
+        Directive (e): names all 5 analyst types + the synthesizer.
+
+        This test extends the existing 6-agent naming test with tighter coupling to
+        the directive context.
+
+        RED intent: if any analyst name is dropped from the prompt during the refactor,
+        this fails (defence-in-depth alongside the existing 6-agent test).
+        """
+        mod = _import_scheduler()
+
+        assert hasattr(mod, "PRISM_RUN_PROMPT"), "PRISM_RUN_PROMPT must exist"
+        prompt = mod.PRISM_RUN_PROMPT
+
+        five_analysts = [
+            "prism-technicals-analyst",
+            "prism-sentiment-analyst",
+            "prism-derivatives-analyst",
+            "prism-macro-analyst",
+            "prism-fundamentals-analyst",
+        ]
+        for name in five_analysts:
+            assert name in prompt, (
+                f"PRISM_RUN_PROMPT must name '{name}' (one of the 5 analysts the primary "
+                f"must spawn).  Missing from current prompt."
+            )
+
+        # Synthesizer must also be present — it is the team lead that coordinates.
+        assert "prism-synthesizer" in prompt, (
+            "PRISM_RUN_PROMPT must name 'prism-synthesizer' (the team lead). "
+            "Missing from current prompt."
+        )
+
+
+class TestAnalystRoleFilesImmediateInitialRead:
+    """Assert analyst role files instruct immediate initial_read on spawn, not 'stand by'.
+
+    The dormancy root cause: analyst role files say 'Do not proceed until you have
+    received the run_id' (from the synthesizer's kickoff).  With embed-kickoff, the
+    run_id arrives IN the spawn prompt — so analysts must produce initial_read
+    immediately on their first turn, not stand by waiting.
+
+    Failures in this class are RED — they indicate the role files still have the old
+    'wait for kickoff from synthesizer' instruction rather than the new 'produce
+    initial_read immediately when spawned with run_id' instruction.
+    """
+
+    # Analyst role files live in .claude/agents/ inside the shared project root.
+    # In the worktree, they are accessible at _PROJECT_ROOT/.claude/agents/.
+    _ANALYST_FILES = [
+        "prism-technicals-analyst.md",
+        "prism-sentiment-analyst.md",
+        "prism-derivatives-analyst.md",
+        "prism-macro-analyst.md",
+        "prism-fundamentals-analyst.md",
+    ]
+
+    @staticmethod
+    def _read_analyst_file(filename: str) -> str:
+        """Read an analyst role file from .claude/agents/."""
+        import os
+        worktree = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+        agents_dir = os.path.join(worktree, ".claude", "agents")
+        filepath = os.path.join(agents_dir, filename)
+        with open(filepath, encoding="utf-8") as f:
+            return f.read()
+
+    def test_analyst_role_files_exist(self):
+        """All 5 analyst role files must exist in .claude/agents/."""
+        import os
+        worktree = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+        agents_dir = os.path.join(worktree, ".claude", "agents")
+        for filename in self._ANALYST_FILES:
+            filepath = os.path.join(agents_dir, filename)
+            assert os.path.exists(filepath), (
+                f"Analyst role file '{filename}' not found at {filepath}. "
+                "All 5 analyst role files must exist."
+            )
+
+    def test_analysts_do_not_wait_for_synthesizer_kickoff(self):
+        """Analyst role files must NOT instruct analysts to wait for a kickoff from
+        the synthesizer before proceeding.
+
+        The dormancy root cause: 'Do not proceed until you have received the run_id'
+        (from the synthesizer's kickoff via SendMessage).  With embed-kickoff, the
+        run_id arrives in the spawn prompt — waiting for a subsequent SendMessage
+        kickoff causes dormancy.
+
+        RED intent: current analyst files contain 'Do not proceed until you have
+        received the run_id' — this test FAILS because that instruction is still present.
+        """
+        import re
+
+        dormancy_patterns = [
+            r"do not proceed until you have received",
+            r"wait.*until.*run_id",
+            r"do not proceed until.*kickoff",
+            r"standby.*kickoff",
+            r"stand by.*kickoff",
+        ]
+
+        for filename in self._ANALYST_FILES:
+            content = self._read_analyst_file(filename)
+            content_lower = content.lower()
+            for pattern in dormancy_patterns:
+                match = re.search(pattern, content_lower)
+                assert match is None, (
+                    f"Analyst role file '{filename}' contains dormancy-triggering language: "
+                    f"matched '{match.group()}'. "
+                    "With embed-kickoff, the run_id arrives in the spawn prompt — analysts "
+                    "must NOT wait for a subsequent SendMessage kickoff from the synthesizer. "
+                    "Remove 'Do not proceed until you have received the run_id' and replace "
+                    "with 'when spawned with run_id, produce and file your initial_read "
+                    "immediately on your first turn'."
+                )
+
+    def test_analysts_instructed_to_produce_initial_read_immediately_on_spawn(self):
+        """Analyst role files must instruct: when spawned with a run_id, produce and
+        file the initial_read IMMEDIATELY on the first turn.
+
+        This is the positive complement to the anti-dormancy test above.  Not just
+        removing the bad instruction but adding the correct one.
+
+        RED intent: current analyst files do not contain any 'immediately on spawn'
+        or 'first turn' instruction — analysts only know to wait for the synthesizer.
+        """
+        import re
+
+        immediate_phrases = [
+            "immediately",
+            "first turn",
+            "on spawn",
+            "as soon as spawned",
+            "upon spawn",
+            "when spawned",
+        ]
+
+        for filename in self._ANALYST_FILES:
+            content = self._read_analyst_file(filename)
+            content_lower = content.lower()
+            has_immediate = any(p in content_lower for p in immediate_phrases)
+            assert has_immediate, (
+                f"Analyst role file '{filename}' does not contain an immediate-action "
+                "instruction.  When spawned with a run_id in the spawn prompt, the analyst "
+                "must be instructed to produce and file its initial_read IMMEDIATELY on "
+                "its first turn (not wait for a SendMessage kickoff). "
+                f"Add language such as: 'When spawned with run_id in your prompt, "
+                "produce and file your initial_read immediately on your first turn.' "
+                f"Missing from {filename}."
+            )
+
+
+class TestSynthesizerRoleFileAgentIdAddressing:
+    """Assert prism-synthesizer.md instructs addressing analysts by agentId.
+
+    The synthesizer's step 3 currently says 'Send each analyst a kickoff message
+    via SendMessage' to canonical names.  With embed-kickoff (analysts self-start
+    on spawn), the synthesizer no longer needs to send kickoff messages — but
+    it DOES need to address analysts by agentId for Q&A and debate, not canonical
+    names (which fail for dormant/resumed agents).
+
+    These tests are RED against the current synthesizer file.
+    """
+
+    @staticmethod
+    def _read_synthesizer_file() -> str:
+        import os
+        worktree = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+        filepath = os.path.join(worktree, ".claude", "agents", "prism-synthesizer.md")
+        with open(filepath, encoding="utf-8") as f:
+            return f.read()
+
+    def test_synthesizer_instructs_addressing_by_agent_id_for_debate(self):
+        """prism-synthesizer.md must instruct addressing analysts by agentId (not
+        canonical name) for the debate/Q&A phase.
+
+        RED intent: current prism-synthesizer.md does not mention agentId — it
+        describes sending kickoff messages and Q&A via SendMessage to canonical names.
+        """
+        content = self._read_synthesizer_file()
+        content_lower = content.lower()
+
+        agent_id_phrases = ["agentid", "agent id", "agent_id"]
+        has_agent_id = any(p in content_lower for p in agent_id_phrases)
+
+        assert has_agent_id, (
+            "prism-synthesizer.md must instruct the synthesizer to address analysts "
+            "by agentId (not canonical name) for the debate and Q&A phase. "
+            "By-canonical-name addressing of dormant/resumed agents is unreliable "
+            "(root cause of 2/5 participation). "
+            "Add: 'Address each analyst by their agentId (captured at spawn by the "
+            "primary and passed to you), not their canonical name.' "
+            "Current file has no agentId reference."
+        )
+
+    def test_synthesizer_instructs_wait_barrier_before_synthesis(self):
+        """prism-synthesizer.md must instruct querying the audit DB for 5 initial_read
+        rows before synthesizing (the wait-barrier).
+
+        RED intent: current prism-synthesizer.md's step 4 says 'wait for each analyst
+        to send you their initial read via SendMessage' — inbox-based, not audit-DB-based
+        as the wait-barrier.  The audit-DB is the authoritative source; it already has
+        a note about it, but the explicit count-based barrier (5 rows) and the
+        instruction to NOT synthesize until the barrier is satisfied must be present.
+        """
+        content = self._read_synthesizer_file()
+        content_lower = content.lower()
+
+        import re
+
+        # Pattern: "5" near "initial_read" and "before" near "synthes"
+        five_initial_read = re.search(r"\b5\b.{0,80}initial.read", content_lower, re.DOTALL)
+        initial_read_five = re.search(r"initial.read.{0,80}\b5\b", content_lower, re.DOTALL)
+
+        # Pattern: "never synthesize" or "do not synthesize" + "fewer than" / "<5" / "all 5"
+        never_synthesize_early = re.search(
+            r"(never|do not|don.t|not).{0,30}synthes.{0,80}(fewer|<.{0,5}5|\ball 5\b|5.initial)",
+            content_lower,
+            re.DOTALL,
+        )
+
+        # Pattern: "wait" + "barrier" or "wait" + "5" + "initial"
+        wait_barrier = re.search(
+            r"wait.{0,100}(barrier|5.{0,20}initial|initial.{0,20}5)",
+            content_lower,
+            re.DOTALL,
+        )
+
+        has_barrier = bool(
+            five_initial_read or initial_read_five
+            or never_synthesize_early or wait_barrier
+        )
+
+        assert has_barrier, (
+            "prism-synthesizer.md must include a wait-barrier directive: "
+            "do not synthesize until 5 initial_read rows are present in the audit DB "
+            "(or the barrier times out gracefully). "
+            "The current file lacks an explicit count-based wait barrier. "
+            "Add: 'Never synthesize until you have confirmed (by querying the audit DB) "
+            "that all 5 analysts have filed initial_read rows, or until the wait-barrier "
+            "times out.' "
+        )
+
+
+# ---------------------------------------------------------------------------
 # HC-2 regression — _persist_spend must read total_cost_usd (real CC envelope key)
 # ---------------------------------------------------------------------------
 
