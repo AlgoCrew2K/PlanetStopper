@@ -1947,6 +1947,227 @@ class TestUtcnowDeprecation:
 
 
 # ---------------------------------------------------------------------------
+# AC-3 Deviation 1 — recency factor inert for RSS (published_parsed fix)
+# ---------------------------------------------------------------------------
+
+
+class TestRssRecencyFromPublishedParsed:
+    """_fetch_rss_feed must produce a parseable published field so _recency()
+    reflects the article's real age.
+
+    Current bug: _fetch_rss_feed stores entry.published (RFC-822 string, e.g.
+    "Thu, 18 Jun 2026 12:01:05 GMT") as the article's published field.
+    _recency() uses datetime.fromisoformat(), which cannot parse RFC-822 —
+    it falls through to the `except → 0.5` default for EVERY RSS article.
+    The 40%-weight recency factor is therefore constant for all RSS articles,
+    making ranking equivalent to relevance+authority only.
+
+    Fix: use entry.published_parsed (a time.struct_time feedparser always
+    provides) to produce an ISO string, or add an email.utils fallback in
+    _recency. Either way: recency must vary for RSS articles of different ages.
+
+    Tests use the existing fed_press.xml fixture (captured live 2026-06-18)
+    which has entries spanning several days — zero live HTTP.
+    """
+
+    def test_rss_article_recency_is_not_stuck_at_default(self, fed_press_xml):
+        """_fetch_rss_feed articles from fed_press must have a published value
+        that _recency() resolves to something OTHER than the 0.5 fallback.
+
+        RED: fails while _fetch_rss_feed stores entry.published (RFC-822 string)
+        and _recency() cannot parse RFC-822.
+        GREEN: fix uses entry.published_parsed → ISO string (or RFC-822 fallback
+        in _recency) so at least one article has recency != 0.5.
+        """
+        import datetime
+
+        from advisors.news_corpus import _recency, _fetch_rss_feed
+
+        articles = []
+        with patch("requests.get", return_value=_make_xml_response(fed_press_xml)):
+            articles = _fetch_rss_feed(
+                "fed_press",
+                "https://www.federalreserve.gov/feeds/press_all.xml",
+                "test-ua",
+            )
+
+        assert articles, "fed_press fixture must yield at least one article"
+
+        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        recency_vals = [_recency(art["published"], now) for art in articles]
+
+        non_default = [v for v in recency_vals if v != 0.5]
+        assert non_default, (
+            f"ALL {len(recency_vals)} RSS articles have recency == 0.5 (the fallback). "
+            f"_recency() cannot parse RFC-822 dates emitted by feedparser entry.published. "
+            f"Fix: use entry.published_parsed (time.struct_time) → calendar.timegm → "
+            f"datetime.utcfromtimestamp → isoformat, so _recency gets an ISO string. "
+            f"Or add email.utils.parsedate_to_datetime fallback in _recency itself. "
+            f"Sample published values: {[art['published'] for art in articles[:3]]}"
+        )
+
+    def test_rss_recency_varies_across_entries_of_different_ages(self, fed_press_xml):
+        """Articles published days apart must have meaningfully different recency scores.
+
+        The fed_press fixture has entries from the same day AND from >7 days ago.
+        With tau=24h, a 7-day-old article has recency = exp(-168/24) ≈ 0.001,
+        while a 1-hour-old article has recency ≈ 0.96. If all recency values are
+        stuck at 0.5, all articles are scored identically on the recency axis.
+
+        RED: fails while _fetch_rss_feed stores RFC-822 strings → recency is 0.5 for all.
+        GREEN: recency values span a meaningful range (max - min > 0.1).
+        """
+        import datetime
+
+        from advisors.news_corpus import _recency, _fetch_rss_feed, TAU_HOURS
+
+        articles = []
+        with patch("requests.get", return_value=_make_xml_response(fed_press_xml)):
+            articles = _fetch_rss_feed(
+                "fed_press",
+                "https://www.federalreserve.gov/feeds/press_all.xml",
+                "test-ua",
+            )
+
+        assert len(articles) >= 2, "fed_press fixture must yield at least 2 articles"
+
+        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        recency_vals = [_recency(art["published"], now) for art in articles]
+
+        spread = max(recency_vals) - min(recency_vals)
+        assert spread > 0.1, (
+            f"Recency spread across {len(recency_vals)} fed_press articles is {spread:.4f} "
+            f"(expected > 0.1 for articles spanning multiple days). "
+            f"All values stuck at {set(recency_vals)} — RFC-822 dates not being parsed. "
+            f"Fix: use entry.published_parsed to emit an ISO string _recency() can parse. "
+            f"TAU_HOURS={TAU_HOURS}: a 7-day-old article should score ~0.001 vs "
+            f"same-day ~0.96."
+        )
+
+
+# ---------------------------------------------------------------------------
+# AC-3 Deviation 2 — Google News wrapper URLs not resolved to publisher domain
+# ---------------------------------------------------------------------------
+
+
+class TestGoogleNewsPublisherDomain:
+    """_fetch_rss_feed must resolve Google News wrapper URLs to the publisher domain.
+
+    Current bug: for the google_news_business feed, entry.link is always a
+    news.google.com/rss/articles/... wrapper URL. _extract_domain(entry.link)
+    returns "news.google.com" for every article → authority 0.4 (wrong) + no
+    cross-source dedup against the same story from direct feeds.
+
+    feedparser exposes the publisher via entry.source.href (e.g. "https://www.cnbc.com").
+    The fix: when entry.source.href is present, derive domain from it instead of
+    entry.link.
+
+    Tests use the existing google_news_business.xml fixture (captured live 2026-06-18,
+    which has <source url="..."> elements — confirmed: entries[0].source.href ==
+    "https://www.cnbc.com"). Zero live HTTP.
+    """
+
+    def test_google_news_articles_have_publisher_domain_not_google(self, google_news_xml):
+        """_fetch_rss_feed('google_news_business', ...) must yield articles whose
+        domain is the publisher (e.g. 'cnbc.com', 'wsj.com'), NOT 'news.google.com'.
+
+        RED: fails while _fetch_rss_feed uses _extract_domain(entry.link) —
+        returns 'news.google.com' for every Google News article.
+        GREEN: _fetch_rss_feed derives domain from entry.source.href when present.
+        """
+        from advisors.news_corpus import _fetch_rss_feed
+
+        with patch("requests.get", return_value=_make_xml_response(google_news_xml)):
+            articles = _fetch_rss_feed(
+                "google_news_business",
+                "https://news.google.com/rss/headlines/section/topic/BUSINESS",
+                "test-ua",
+            )
+
+        assert articles, "google_news_business.xml fixture must yield at least one article"
+
+        google_domains = [a for a in articles if a.get("domain") == "news.google.com"]
+        publisher_domains = [a for a in articles if a.get("domain") != "news.google.com"]
+
+        assert publisher_domains, (
+            f"ALL {len(articles)} Google News articles have domain='news.google.com'. "
+            f"AC-3 requires resolving wrapper URLs to the publisher domain. "
+            f"feedparser exposes the publisher via entry.source.href "
+            f"(e.g. 'https://www.cnbc.com'). "
+            f"Fix: in _fetch_rss_feed, when entry.source.href is present, derive "
+            f"domain from source.href instead of entry.link."
+        )
+
+        # Allow zero google.com domains after fix — none should remain
+        assert not google_domains, (
+            f"{len(google_domains)} of {len(articles)} articles still have "
+            f"domain='news.google.com' after fix. Every Google News entry in the "
+            f"fixture has a source.href — all domains should resolve to the publisher."
+        )
+
+    def test_google_news_publisher_domain_authority_is_not_default(self, google_news_xml):
+        """Publisher domains must receive their correct SOURCE_AUTHORITY score,
+        not the 0.4 unknown-domain default that 'news.google.com' gets.
+
+        This validates that the domain fix actually improves ranking.  At least
+        one Google News article should come from a domain in SOURCE_AUTHORITY
+        (reuters.com, cnbc.com, apnews.com, etc.).
+
+        RED: fails while domain is stuck at 'news.google.com' (authority 0.4 always).
+        GREEN: at least one article has a domain with authority > 0.4.
+        """
+        from advisors.news_corpus import _fetch_rss_feed, _authority
+
+        with patch("requests.get", return_value=_make_xml_response(google_news_xml)):
+            articles = _fetch_rss_feed(
+                "google_news_business",
+                "https://news.google.com/rss/headlines/section/topic/BUSINESS",
+                "test-ua",
+            )
+
+        assert articles, "google_news_business.xml fixture must yield at least one article"
+
+        high_authority = [
+            a for a in articles if _authority(a.get("domain", "")) > 0.4
+        ]
+        assert high_authority, (
+            f"No Google News article has authority > 0.4 (the unknown-domain default). "
+            f"The fixture contains articles from known publishers (cnbc.com, cnn.com, "
+            f"bbc.com, etc.) — at least one should resolve to a domain in SOURCE_AUTHORITY. "
+            f"Domains found: {sorted({a.get('domain') for a in articles})}. "
+            f"Fix: derive domain from entry.source.href."
+        )
+
+    def test_non_google_feeds_domain_extraction_unchanged(self, fed_press_xml):
+        """Non-Google-News feeds must continue to derive domain from entry.link.
+
+        The entry.source.href fix must NOT affect feeds where entry.link is already
+        the canonical publisher URL.
+
+        RED: passes (the fix is not yet applied, so current behavior is unchanged).
+        Included so a wrong implementation that breaks all feeds fails here.
+        GREEN: fed_press articles still have domain 'federalreserve.gov'.
+        """
+        from advisors.news_corpus import _fetch_rss_feed
+
+        with patch("requests.get", return_value=_make_xml_response(fed_press_xml)):
+            articles = _fetch_rss_feed(
+                "fed_press",
+                "https://www.federalreserve.gov/feeds/press_all.xml",
+                "test-ua",
+            )
+
+        assert articles, "fed_press fixture must yield at least one article"
+
+        gov_domains = [a for a in articles if "federalreserve.gov" in a.get("domain", "")]
+        assert gov_domains, (
+            f"fed_press articles lost their federalreserve.gov domain after fix. "
+            f"Non-Google-News feeds must continue to use _extract_domain(entry.link). "
+            f"Domains found: {sorted({a.get('domain') for a in articles})}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # @pytest.mark.live — excluded from default run
 # ---------------------------------------------------------------------------
 
