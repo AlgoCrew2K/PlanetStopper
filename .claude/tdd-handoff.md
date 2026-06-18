@@ -1,148 +1,264 @@
-# TDD Handoff — fix/prism-followups
+# TDD Handoff — lens-news-events upgrade
 
-**Status:** BACKEND GREEN — pf-impl-backend complete (3/3 tests passing). UI still pending.
+**For:** nl-implementer (blind to the feature plan — read ONLY this file)
+**Branch:** feat/lens-news-events
+**Worktree:** C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/lens-news-events
 
-**Worktree:** `C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/prism-followups`
-**Branch:** `fix/prism-followups`
+## Your job
+
+Make 14 RED tests pass in `tests/ai_advisor/test_lens_gdelt.py` by modifying:
+1. `advisors/lens_gdelt.py` — the GDELT producer
+2. `ai_advisor.py` — the consumer (`_build_sentiment_section` + its `_GDELT_ARTLIST_URL` constant)
+
+Do NOT modify the test file. Do NOT modify `advisors/lens_pipeline.py` (out of scope here).
+
+Run after every change:
+```
+python -m pytest tests/ai_advisor/test_lens_gdelt.py -o addopts= -p no:cacheprovider -q
+```
+Target: 0 FAILED, 68 passed (54 existing + 14 new).
 
 ---
 
-## BACKEND — pf-impl-backend (advisors/prism_audit_write.py ONLY)
+## Contract 1 — `advisors/lens_gdelt.py`
 
-### Failing tests
-`tests/advisors/test_prism_dotenv_hardening.py` — 3 tests
+### 1a. Add English-language filter to both URL constants
 
-Run to verify RED:
+Both `_GDELT_TONE_URL` and `_GDELT_ARTLIST_URL` must contain `sourcelang:eng` in the query string.
+
+Before (current):
 ```
-python -m pytest "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/prism-followups/tests/advisors/test_prism_dotenv_hardening.py" -v -n0
+?query=stock+market+finance&mode=timelinetone&format=json
+?query=stock+market+finance&mode=artlist&format=json&maxrecords=10
 ```
 
-### Root cause
-`advisors/prism_audit_write.py` does not call `load_dotenv()`.  The `import database`
-is lazy (inside `_main()`), but `database._db_file()` reads `os.environ["DB_PATH"]` at
-call time.  When the CLI is invoked from a non-primary cwd without `DB_PATH` in the
-shell env, `_db_file()` resolves to the cwd-relative `alphabot_state.db` — a silent
-split-brain write.
+After (required):
+```
+?query=stock+market+finance+sourcelang:eng&mode=timelinetone&format=json
+?query=stock+market+finance+sourcelang:eng&mode=artlist&format=json&maxrecords=10
+```
 
-### Exact minimal change — ONE file only
+GDELT accepts `sourcelang:eng` as a query operator. Append it after the existing query terms with a `+` separator (GDELT uses `+` as a URL-safe space).
 
-**File:** `advisors/prism_audit_write.py`
-
-Add `load_dotenv()` at module level, after `from __future__ import annotations` and
-before the argparse imports.  This ensures `DB_PATH` from `.env` is in `os.environ`
-before `_main()` lazily imports `database` and `_db_file()` fires.
+### 1b. Add `_GDELT_MAX_EVENTS` named constant
 
 ```python
-# Before (current lines 1-26):
-from __future__ import annotations
-
-import argparse
-import sys
-
-# After (add these two lines after the __future__ import):
-from __future__ import annotations
-
-from dotenv import load_dotenv
-
-load_dotenv()  # populate DB_PATH (and other env vars) from .env before _db_file() resolves
-
-import argparse
-import sys
+# Maximum number of events to surface from the artlist (named for prompt-budget control).
+# Source: feature-plans/lens-news-events-upgrade.md AC-2 — ~5-8 events.
+_GDELT_MAX_EVENTS: int = 7
 ```
 
-**Rules:**
-- Do NOT change `database.py` resolution logic.
-- Do NOT add `load_dotenv()` to any other file.
-- Do NOT change the D-1 error contract (type(exc).__name__ only).
-- The comment near "DB_PATH must be set" stays — it is now satisfied by load_dotenv().
+Any value in [3, 10] is acceptable. 7 is the recommended default.
 
-### Expected GREEN
-All 3 tests pass:
-- `test_cli_honors_dotenv_db_path_when_not_in_shell_env` — exit 0, row in temp DB
-- `test_cli_shell_env_wins_over_dotenv` — shell env wins over .env (load_dotenv default)
-- `test_cli_missing_dotenv_does_not_crash` — no ImportError/AttributeError when no .env
+### 1c. Add `events` key to ALL return paths
 
-### Report back
-SendMessage `pf-test-writer` with: "BACKEND GREEN — <SHA> — test_prism_dotenv_hardening 3/3 pass"
+The function currently returns:
+```python
+{"available", "tone", "per_ticker", "source", "sources", "reason"}
+```
+
+Add an `events` key to ALL return paths (success, unavailable, and the `_unavailable()` helper).
+
+**`_unavailable()` helper** — add `"events": []` to its return dict:
+```python
+def _unavailable(reason: str) -> dict[str, Any]:
+    return {
+        "available": False,
+        "tone": None,
+        "per_ticker": None,
+        "source": _GDELT_SOURCE,
+        "sources": None,
+        "reason": reason,
+        "events": [],  # NEW
+    }
+```
+
+### 1d. New helper `_extract_events`
+
+Add this helper before `_fetch_gdelt_sentiment`:
+
+```python
+def _extract_events(sources_raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Extract a ranked, domain-deduped list of English-language events.
+
+    Filters non-English articles (language != 'English'), deduplicates by domain
+    (most-recent per domain kept), sorts most-recent-first by seendate,
+    caps at _GDELT_MAX_EVENTS.
+
+    Parameters
+    ----------
+    sources_raw:
+        Raw article dicts from the GDELT artlist response.
+
+    Returns
+    -------
+    list of dicts, each with keys: title, domain, seendate.
+    Never raises.
+    """
+    # 1. Filter English-only
+    english = [a for a in sources_raw if a.get("language") == "English"]
+
+    # 2. Sort most-recent-first by seendate (GDELT format: YYYYMMDDTHHmmssZ —
+    #    lexicographic sort is correct for this zero-padded ISO-like format)
+    english.sort(key=lambda a: a.get("seendate", ""), reverse=True)
+
+    # 3. Deduplicate by domain — keep the most-recent article per domain
+    seen_domains: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for art in english:
+        domain = art.get("domain", "")
+        if domain and domain not in seen_domains:
+            seen_domains.add(domain)
+            deduped.append({
+                "title": art.get("title", ""),
+                "domain": domain,
+                "seendate": art.get("seendate", ""),
+            })
+
+    # 4. Cap at _GDELT_MAX_EVENTS
+    return deduped[:_GDELT_MAX_EVENTS]
+```
+
+### 1e. Call `_extract_events` after the artlist fetch (Step 4)
+
+In `_fetch_gdelt_sentiment`, after building `sources` from the artlist response,
+also call `_extract_events`:
+
+```python
+# After Step 4 artlist fetch, add:
+articles_raw = articles  # the list of raw article dicts from artlist_data
+events = _extract_events(articles_raw)
+```
+
+Pass the raw `artlist_data.get("articles", [])` list (before mapping to sources)
+to `_extract_events`. Store as `events`.
+
+### 1f. New availability rule — events-OR-tone
+
+Replace the current unconditional Step 5 `available=True` return with:
+
+```python
+# available=True iff at least one signal is present (events OR tone)
+has_events = bool(events)
+has_tone = tone is not None
+
+if not has_events and not has_tone:
+    return {
+        "available": False,
+        "tone": None,
+        "per_ticker": None,
+        "source": _GDELT_SOURCE,
+        "sources": None,
+        "reason": "no_news_events",
+        "events": [],
+    }
+
+# At least one signal present — return success with both
+return {
+    "available": True,
+    "tone": tone,
+    "per_ticker": None,
+    "source": _GDELT_SOURCE,
+    "sources": sources,
+    "reason": None,
+    "events": events,  # NEW
+}
+```
 
 ---
 
-## UI — pf-impl-ui (templates/ai_advisor.html chip mapping ONLY)
+## Contract 2 — `ai_advisor.py`
 
-### Failing tests
-`tests/ai_advisor/test_prism_chip_color_mapping.py` — 2 tests fail in RED state
-(the bullish and bearish assertions); 5 pass as regression/meta guards.
+### 2a. Fix `_GDELT_ARTLIST_URL` constant (around line 317)
 
-Run to verify RED:
-```
-python -m pytest "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claire/worktrees/prism-followups/tests/ai_advisor/test_prism_chip_color_mapping.py" -v -n0
-```
-
-Correct path:
-```
-python -m pytest "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/prism-followups/tests/ai_advisor/test_prism_chip_color_mapping.py" -v -n0
-```
-
-### Root cause
-`templates/ai_advisor.html` lines 968-973 — the Jinja2 dict mapping `_sentiment`
-to CSS modifier class:
-
-```jinja2
-{% set _chip_class = {
-    'risk-on':        'prism-sentiment-chip--risk-on',
-    'risk-off':       'prism-sentiment-chip--risk-off',
-    'neutral':        'prism-sentiment-chip--neutral',
-    'limited-inputs': 'prism-sentiment-chip--limited-inputs',
-}.get(_sentiment, 'prism-sentiment-chip--neutral') %}
+The constant currently reads:
+```python
+_GDELT_ARTLIST_URL: str = (
+    "https://api.gdeltproject.org/api/v2/doc/doc"
+    "?query=stock+market+finance"
+    "&mode=artlist"
+    "&maxrecords=10"
+    "&format=json"
+    "&timespan=1440"
+)
 ```
 
-Missing keys: `bullish` and `bearish`.  The lens_pipeline synthesizer can produce
-either canonical (`risk-on`/`risk-off`) or synonym (`bullish`/`bearish`) verdicts.
-Both synonyms fall through to `--neutral` (wrong color).
-
-### Exact minimal change — ONE file only
-
-**File:** `templates/ai_advisor.html`, lines 968-973
-
-Add two keys to the mapping dict:
-
-```jinja2
-{% set _chip_class = {
-    'bullish':        'prism-sentiment-chip--risk-on',
-    'risk-on':        'prism-sentiment-chip--risk-on',
-    'bearish':        'prism-sentiment-chip--risk-off',
-    'risk-off':       'prism-sentiment-chip--risk-off',
-    'neutral':        'prism-sentiment-chip--neutral',
-    'limited-inputs': 'prism-sentiment-chip--limited-inputs',
-}.get(_sentiment, 'prism-sentiment-chip--neutral') %}
+Add `+sourcelang:eng` to the query:
+```python
+_GDELT_ARTLIST_URL: str = (
+    "https://api.gdeltproject.org/api/v2/doc/doc"
+    "?query=stock+market+finance+sourcelang:eng"
+    "&mode=artlist"
+    "&maxrecords=10"
+    "&format=json"
+    "&timespan=1440"
+)
 ```
 
-**Rules:**
-- Do NOT change the verdict TEXT rendering (line 976: `{{ _sentiment | e }}`).
-- Do NOT change the CSS class DEFINITIONS (lines 706-724 in the `<style>` block).
-- Do NOT touch any JS files — chip mapping is template-only.
-- Keep ALL existing keys intact (regression guard tests cover them).
+### 2b. Add `events` to `_build_sentiment_section` payload
 
-### Expected GREEN
-All 7 tests pass:
-- `test_bullish_verdict_yields_risk_on_chip_class` — bullish -> --risk-on, NOT --neutral
-- `test_bearish_verdict_yields_risk_off_chip_class` — bearish -> --risk-off, NOT --neutral
-- `test_risk_on_verdict_yields_risk_on_chip_class` — regression guard
-- `test_risk_off_verdict_yields_risk_off_chip_class` — regression guard
-- `test_neutral_verdict_yields_neutral_chip_class` — regression guard
-- `test_unknown_verdict_falls_back_to_neutral_chip_class` — safe default preserved
-- `test_chip_color_assertions_are_class_based_not_rgb` — meta-guard
+The current success-path return (around line 660) is:
+```python
+return {
+    "lens": _lens,
+    "available": True,
+    "payload": {
+        "article_count": len(articles),
+        "tone_summary": None,
+        "tone_score": tone_score,
+    },
+    "sources": sources,
+}
+```
 
-### Report back
-SendMessage `pf-test-writer` with: "UI GREEN — <SHA> — test_prism_chip_color_mapping 7/7 pass"
+Add `"events"` to the payload. Read it from `tone_result` (the producer result
+already carries events after the lens_gdelt upgrade):
 
-## Status Log
-- [2026-06-17] pf-impl-ui: GREEN complete — 7/7 tests passing on SHA 9839209. 0 test bugs. No JS touched. Lint not required (template-only change, no Python). File changed: templates/ai_advisor.html (5 insertions, 1 deletion — added bullish/bearish keys + updated comment).
-- [2026-06-17] pf-impl-backend: GREEN complete — 3/3 tests passing. 0 test bugs. File changed: advisors/prism_audit_write.py only. Implementation notes below.
+```python
+return {
+    "lens": _lens,
+    "available": True,
+    "payload": {
+        "article_count": len(articles),
+        "tone_summary": None,
+        "tone_score": tone_score,
+        "events": tone_result.get("events", []),  # NEW — from lens_gdelt producer
+    },
+    "sources": sources,
+}
+```
 
-## Test File Issues (for test-writer to fix)
-None.
+---
 
-## Implementation Notes
-- Single dict expansion in the Jinja2 chip mapping at templates/ai_advisor.html:968-979. Added `bullish` → `--risk-on` and `bearish` → `--risk-off` as the two missing synonym keys. Updated the comment block to explain the dual-form (canonical vs synonym) contract. All existing keys preserved intact. No CSS definitions touched, no JS touched, no verdict text rendering touched.
-- BACKEND (DE-PRISM-DOTENV): `load_dotenv()` without arguments uses `find_dotenv()` which walks up from the *calling file's directory* (i.e., `advisors/`), not from `os.getcwd()`. The worktree's own `.env` was found first, not the test's `tmp_path/.env`. Fix: `load_dotenv(find_dotenv(usecwd=True))` — `usecwd=True` makes `find_dotenv()` start from `os.getcwd()` (the subprocess's cwd = `tmp_path` in the test, or the repo root in production). This correctly honors `.env` relative to wherever the CLI is invoked from. D-1 contract, shell-env precedence (`override=False` default), and no-op-when-missing behavior all preserved.
+## Fixtures used by the RED tests
+
+- `tests/fixtures/math/gdelt_artlist_events_captured.json` — English-filtered artlist (schema-derived)
+- `tests/fixtures/math/gdelt_artlist_response.json` — existing artlist (used by prior tests)
+- `tests/fixtures/math/gdelt_timelinetone_response.json` — existing tone response
+
+---
+
+## Invariants that must NOT regress (54 existing PASSING tests)
+
+- Bounded retry: `_GDELT_MAX_ATTEMPTS == 4`, `_GDELT_BACKOFF_BASE_S == 20.0`, `_GDELT_BACKOFF_CAP_S == 60.0`, `_GDELT_INTER_REQUEST_S == 6.0`
+- D-1: `reason = type(exc).__name__` only (never `str(exc)`)
+- `available=True` => tone is float OR events is non-empty (after refactor)
+- `_unavailable()` returns `available=False, tone=None, sources=None`
+- Non-429 HTTP -> `reason='gdelt_fetch_failed'` (not `'HTTPError'`)
+- `_GDELT_INTER_REQUEST_S` sleep called between tone GET and artlist GET
+
+---
+
+## When GREEN
+
+Commit path-scoped (do NOT use git add -A):
+```
+git -C C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/lens-news-events \
+  add advisors/lens_gdelt.py ai_advisor.py
+```
+
+Commit message: `fix(gdelt): news-events upgrade — English filter, events extraction, honest availability`
+
+Quote SHA and counts: `N passed / 0 failed on <sha>`
+
+SendMessage to nl-test-writer with: SHA + counts.

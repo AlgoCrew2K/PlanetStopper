@@ -1632,3 +1632,804 @@ def test_live_gdelt_sources_carry_url_and_seendate():
         for i, src in enumerate(result["sources"]):
             assert "url" in src, f"Live source[{i}] missing 'url'"
             assert "seendate" in src, f"Live source[{i}] missing 'seendate'"
+
+
+# ---------------------------------------------------------------------------
+# News-Events Upgrade — RED tests (feature-plans/lens-news-events-upgrade.md)
+#
+# These tests cover AC-1..AC-6 of the news-events upgrade.  ALL tests in this
+# section FAIL on the current implementation (no `events` key, no English
+# filter, available-iff-tone-only invariant).  Existing tests above are
+# unaffected.
+#
+# Fixture:
+#   tests/fixtures/math/gdelt_artlist_events_captured.json
+#   Provenance: schema-derived-with-runtime-validator (live capture attempted
+#   2026-06-18, rate-limited by nightly daemon; honest fallback per AC fixture
+#   provenance rule).
+# ---------------------------------------------------------------------------
+
+_EVENTS_FIXTURE = pathlib.Path(__file__).parents[1] / "fixtures" / "math" / "gdelt_artlist_events_captured.json"
+
+
+def validate_artlist_events_shape(data: dict) -> None:
+    """Assert the events fixture matches the expected shape for the upgrade.
+
+    Each article MUST carry: url, title, seendate, domain, language.
+    Language must be 'English' for all entries (the English-filter invariant).
+    """
+    assert "articles" in data, "events fixture missing 'articles' key"
+    articles = data["articles"]
+    assert isinstance(articles, list) and len(articles) >= 1, (
+        "events fixture 'articles' must be a non-empty list"
+    )
+    for i, art in enumerate(articles):
+        for field in ("url", "title", "seendate", "domain", "language"):
+            assert field in art, (
+                f"events fixture article[{i}] missing '{field}' "
+                f"(required for events extraction contract)"
+            )
+        assert art["language"] == "English", (
+            f"events fixture article[{i}]['language'] must be 'English' "
+            f"(the sourcelang:eng filter invariant). Got: {art['language']!r}"
+        )
+
+
+@pytest.fixture
+def artlist_events_fixture() -> dict:
+    """Schema-derived events-capable artlist response (English-filtered)."""
+    data = json.loads(_EVENTS_FIXTURE.read_text(encoding="utf-8"))
+    validate_artlist_events_shape(data)
+    return data
+
+
+# ---------------------------------------------------------------------------
+# AC-1 — English/market-relevance filter in the GDELT query URLs
+# ---------------------------------------------------------------------------
+
+
+class TestEnglishLanguageFilter:
+    """The GDELT query URLs must carry an English-language filter.
+
+    The live defect (row 77): Chinese-language articles with tone_score=null
+    came through because the query had no language restriction.  These tests
+    lock the fix: the URL constants must contain a language-restriction operator.
+    """
+
+    def test_gdelt_artlist_url_contains_english_language_filter(self):
+        """_GDELT_ARTLIST_URL contains a sourcelang:eng (or equivalent) filter.
+
+        FAILS on the current implementation — the URL is:
+          ?query=stock+market+finance&mode=artlist...
+        with no language filter.
+
+        The fix requires adding sourcelang:eng to the query string.
+        """
+        from advisors import lens_gdelt
+
+        assert hasattr(lens_gdelt, "_GDELT_ARTLIST_URL"), (
+            "advisors.lens_gdelt._GDELT_ARTLIST_URL constant is missing"
+        )
+        url = lens_gdelt._GDELT_ARTLIST_URL
+        assert isinstance(url, str), f"_GDELT_ARTLIST_URL must be a string, got {type(url)}"
+        # The English-language filter must appear in the URL query string.
+        # Accept either sourcelang:eng or sourcelang%3Aeng (URL-encoded colon).
+        has_filter = "sourcelang:eng" in url or "sourcelang%3Aeng" in url
+        assert has_filter, (
+            f"_GDELT_ARTLIST_URL is missing the English language filter. "
+            f"Expected 'sourcelang:eng' (or URL-encoded form) in the query string. "
+            f"Current URL: {url!r}. "
+            f"Live defect row 77: Chinese articles with tone_score=null slipped "
+            f"through because there was no language restriction."
+        )
+
+    def test_gdelt_tone_url_contains_english_language_filter(self):
+        """_GDELT_TONE_URL also carries the English-language filter.
+
+        Both endpoints (timelinetone + artlist) should query English sources only
+        so the tone signal is computed from English-language articles.
+
+        FAILS on the current implementation.
+        """
+        from advisors import lens_gdelt
+
+        assert hasattr(lens_gdelt, "_GDELT_TONE_URL"), (
+            "advisors.lens_gdelt._GDELT_TONE_URL constant is missing"
+        )
+        url = lens_gdelt._GDELT_TONE_URL
+        has_filter = "sourcelang:eng" in url or "sourcelang%3Aeng" in url
+        assert has_filter, (
+            f"_GDELT_TONE_URL is missing the English language filter. "
+            f"Got: {url!r}. "
+            f"Both tone and artlist endpoints should restrict to English sources."
+        )
+
+    def test_articles_with_non_english_language_are_dropped_from_events(
+        self, timelinetone_fixture: dict
+    ):
+        """Mock artlist with mixed-language articles: only English entries appear in events.
+
+        AC-1: events must contain ONLY English-language articles.
+        FAILS on the current implementation — there is no `events` key in the result
+        and no language filtering logic.
+
+        Fixture provenance: inline mock — one English article + one Chinese article.
+        """
+        from advisors import lens_gdelt
+
+        mixed_artlist = {
+            "articles": [
+                {
+                    "url": "https://www.english-news.com/market-update",
+                    "title": "Market Update: Equities Rise on Strong Jobs Data",
+                    "seendate": "20260618T120000Z",
+                    "language": "English",
+                    "domain": "english-news.com",
+                    "sourcecountry": "United States",
+                },
+                {
+                    "url": "https://www.chinese-finance.cn/article-123",
+                    "title": "中国股市分析",
+                    "seendate": "20260618T110000Z",
+                    "language": "Chinese",
+                    "domain": "chinese-finance.cn",
+                    "sourcecountry": "China",
+                },
+            ]
+        }
+        tone_resp = _make_mock_http_response(timelinetone_fixture)
+        artlist_resp = _make_mock_http_response(mixed_artlist)
+
+        with (
+            patch("requests.get", side_effect=[tone_resp, artlist_resp]),
+            patch("time.sleep"),
+        ):
+            result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
+
+        # The result must have an 'events' key (AC-2 — fails on current code)
+        assert "events" in result, (
+            "Result missing 'events' key. AC-2 requires a first-class events list. "
+            "FAILS on current implementation."
+        )
+        events = result["events"]
+        assert isinstance(events, list), f"'events' must be a list, got {type(events)}"
+        # All events must be English — the Chinese article must be filtered out
+        for i, ev in enumerate(events):
+            lang = ev.get("language")
+            # Language field may be absent if the implementer strips it from events;
+            # in that case verify the Chinese domain is absent.
+            if lang is not None:
+                assert lang == "English", (
+                    f"events[{i}] has language={lang!r}. "
+                    f"Non-English articles must be filtered out of events. "
+                    f"AC-1: events must contain only English-language articles."
+                )
+            assert ev.get("domain") != "chinese-finance.cn", (
+                f"events[{i}] is from 'chinese-finance.cn' (a Chinese-language article). "
+                f"AC-1: non-English articles must be dropped from events."
+            )
+        # The English article must be present
+        english_domains = [ev.get("domain") for ev in events]
+        assert "english-news.com" in english_domains, (
+            "The English article (domain='english-news.com') is absent from events. "
+            "English articles must be retained."
+        )
+
+
+# ---------------------------------------------------------------------------
+# AC-2 — events list is a first-class output field
+# ---------------------------------------------------------------------------
+
+
+class TestEventsFirstClassField:
+    """The lens result must carry a first-class `events` list.
+
+    Current output: {available, tone, per_ticker, source, sources, reason}.
+    Required output: adds `events` — a ranked, domain-deduped list of article
+    dicts, each with title/domain/seendate.
+
+    ALL tests in this class FAIL on the current implementation.
+    """
+
+    def test_lens_result_has_events_key_on_success(
+        self, timelinetone_fixture: dict, artlist_events_fixture: dict
+    ):
+        """A successful fetch returns an 'events' key in the result dict.
+
+        FAILS on current code — the key is absent.
+        """
+        from advisors import lens_gdelt
+
+        tone_resp = _make_mock_http_response(timelinetone_fixture)
+        artlist_resp = _make_mock_http_response(artlist_events_fixture)
+
+        with (
+            patch("requests.get", side_effect=[tone_resp, artlist_resp]),
+            patch("time.sleep"),
+        ):
+            result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
+
+        assert "events" in result, (
+            f"Result is missing 'events' key. "
+            f"AC-2 requires a first-class 'events' list in the lens output. "
+            f"Current keys: {set(result.keys())}. "
+            f"FAILS on current implementation."
+        )
+
+    def test_events_is_list_of_dicts_with_title_domain_seendate(
+        self, timelinetone_fixture: dict, artlist_events_fixture: dict
+    ):
+        """Each event in the events list carries title, domain, seendate.
+
+        AC-2: events shape — title/domain/seendate are required per-event fields.
+        Asserts shape/presence only — never hardcodes specific string values.
+        FAILS on current code (no events key).
+        """
+        from advisors import lens_gdelt
+
+        tone_resp = _make_mock_http_response(timelinetone_fixture)
+        artlist_resp = _make_mock_http_response(artlist_events_fixture)
+
+        with (
+            patch("requests.get", side_effect=[tone_resp, artlist_resp]),
+            patch("time.sleep"),
+        ):
+            result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
+
+        assert "events" in result, "Result missing 'events' key — AC-2 not implemented."
+        events = result["events"]
+        assert isinstance(events, list), f"'events' must be a list, got {type(events)}"
+        assert len(events) >= 1, (
+            "events list is empty despite a non-empty artlist fixture. "
+            "Expected at least one event to be extracted."
+        )
+        for i, ev in enumerate(events):
+            assert isinstance(ev, dict), (
+                f"events[{i}] must be a dict, got {type(ev)}"
+            )
+            for field in ("title", "domain", "seendate"):
+                assert field in ev, (
+                    f"events[{i}] missing '{field}'. "
+                    f"AC-2: each event must carry title, domain, seendate. "
+                    f"Got keys: {set(ev.keys())}"
+                )
+                assert isinstance(ev[field], str) and ev[field].strip(), (
+                    f"events[{i}]['{field}'] must be a non-empty string. "
+                    f"Got: {ev[field]!r}"
+                )
+
+    def test_events_are_domain_deduped(self, timelinetone_fixture: dict):
+        """Two articles from the same domain produce only one event for that domain.
+
+        AC-2: domain-deduplication — the council should not see the same outlet twice.
+        FAILS on current code (no events key, no dedup logic).
+
+        Fixture: inline mock with two articles from the same domain.
+        """
+        from advisors import lens_gdelt
+
+        dup_domain_artlist = {
+            "articles": [
+                {
+                    "url": "https://www.reuters.com/markets/article-1",
+                    "title": "Fed Signals Pause in Rate Hikes",
+                    "seendate": "20260618T120000Z",
+                    "language": "English",
+                    "domain": "reuters.com",
+                    "sourcecountry": "United States",
+                },
+                {
+                    "url": "https://www.reuters.com/markets/article-2",
+                    "title": "Markets Rally on Fed Statement",
+                    "seendate": "20260618T110000Z",
+                    "language": "English",
+                    "domain": "reuters.com",
+                    "sourcecountry": "United States",
+                },
+                {
+                    "url": "https://www.bloomberg.com/news/article-3",
+                    "title": "Equities Surge After Fed Announcement",
+                    "seendate": "20260618T100000Z",
+                    "language": "English",
+                    "domain": "bloomberg.com",
+                    "sourcecountry": "United States",
+                },
+            ]
+        }
+        tone_resp = _make_mock_http_response(timelinetone_fixture)
+        artlist_resp = _make_mock_http_response(dup_domain_artlist)
+
+        with (
+            patch("requests.get", side_effect=[tone_resp, artlist_resp]),
+            patch("time.sleep"),
+        ):
+            result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
+
+        assert "events" in result, "Result missing 'events' key — AC-2 not implemented."
+        events = result["events"]
+        domains = [ev.get("domain") for ev in events]
+        reuters_count = domains.count("reuters.com")
+        assert reuters_count == 1, (
+            f"Domain 'reuters.com' appeared {reuters_count} times in events. "
+            f"AC-2: events must be domain-deduped — each domain appears at most once. "
+            f"Got events domains: {domains}"
+        )
+        # The non-duplicate domain must still be present
+        assert "bloomberg.com" in domains, (
+            "Domain 'bloomberg.com' (unique domain) is absent from deduped events."
+        )
+
+    def test_events_count_bounded_by_named_constant(
+        self, timelinetone_fixture: dict, artlist_events_fixture: dict
+    ):
+        """len(events) <= _GDELT_MAX_EVENTS (a named constant, ~5-8).
+
+        AC-2: the events list is bounded to a named constant so the prompt
+        budget is controlled.  FAILS on current code (_GDELT_MAX_EVENTS absent).
+        """
+        from advisors import lens_gdelt
+
+        assert hasattr(lens_gdelt, "_GDELT_MAX_EVENTS"), (
+            "advisors.lens_gdelt._GDELT_MAX_EVENTS constant is missing. "
+            "AC-2 requires a named bound on the events list (no magic numbers)."
+        )
+        max_events = lens_gdelt._GDELT_MAX_EVENTS
+        assert isinstance(max_events, int) and max_events >= 1, (
+            f"_GDELT_MAX_EVENTS must be a positive int. Got: {max_events!r}"
+        )
+        # Reasonable range: 3..10 (feature plan says ~5-8)
+        assert 3 <= max_events <= 10, (
+            f"_GDELT_MAX_EVENTS={max_events} is outside the expected range [3, 10]. "
+            f"Feature plan specifies ~5-8 events."
+        )
+
+        tone_resp = _make_mock_http_response(timelinetone_fixture)
+        artlist_resp = _make_mock_http_response(artlist_events_fixture)
+
+        with (
+            patch("requests.get", side_effect=[tone_resp, artlist_resp]),
+            patch("time.sleep"),
+        ):
+            result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
+
+        assert "events" in result, "Result missing 'events' key."
+        events = result["events"]
+        assert len(events) <= max_events, (
+            f"events list has {len(events)} entries but _GDELT_MAX_EVENTS={max_events}. "
+            f"The events list must be bounded."
+        )
+
+    def test_events_sorted_most_recent_first(self, timelinetone_fixture: dict):
+        """events are ordered most-recent-first by seendate.
+
+        AC-2: ranked list — most recent articles are surfaced first so the council
+        sees current news, not stale coverage.
+        FAILS on current code (no events key).
+
+        Asserts ordering shape (events[0].seendate >= events[-1].seendate),
+        never specific date values.
+        """
+        from advisors import lens_gdelt
+
+        # Provide articles with distinct, ordered seendates (oldest last)
+        ordered_artlist = {
+            "articles": [
+                {
+                    "url": "https://www.site-a.com/newest",
+                    "title": "Newest Article",
+                    "seendate": "20260618T150000Z",
+                    "language": "English",
+                    "domain": "site-a.com",
+                    "sourcecountry": "United States",
+                },
+                {
+                    "url": "https://www.site-b.com/middle",
+                    "title": "Middle Article",
+                    "seendate": "20260618T120000Z",
+                    "language": "English",
+                    "domain": "site-b.com",
+                    "sourcecountry": "United States",
+                },
+                {
+                    "url": "https://www.site-c.com/oldest",
+                    "title": "Oldest Article",
+                    "seendate": "20260618T090000Z",
+                    "language": "English",
+                    "domain": "site-c.com",
+                    "sourcecountry": "United States",
+                },
+            ]
+        }
+        tone_resp = _make_mock_http_response(timelinetone_fixture)
+        artlist_resp = _make_mock_http_response(ordered_artlist)
+
+        with (
+            patch("requests.get", side_effect=[tone_resp, artlist_resp]),
+            patch("time.sleep"),
+        ):
+            result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
+
+        assert "events" in result, "Result missing 'events' key — AC-2 not implemented."
+        events = result["events"]
+        if len(events) >= 2:
+            # seendate is GDELT format YYYYMMDDTHHmmssZ — lexicographic sort works
+            first_date = events[0].get("seendate", "")
+            last_date = events[-1].get("seendate", "")
+            assert first_date >= last_date, (
+                f"events are not sorted most-recent-first. "
+                f"events[0].seendate={first_date!r} < events[-1].seendate={last_date!r}. "
+                f"AC-2: ranked list — most recent first."
+            )
+
+
+# ---------------------------------------------------------------------------
+# AC-3 — Honest availability: available=True iff events OR tone
+# ---------------------------------------------------------------------------
+
+
+class TestHonestAvailabilityNewsEvents:
+    """Lock the new availability rule: available=True iff events OR tone present.
+
+    Prior rule (prior cycle): available=True iff tone present.
+    New rule (AC-3): available=True if EITHER events (non-empty) OR tone (non-None).
+    This allows events-only availability (tone empty/null but articles present).
+
+    ALL tests in this class FAIL on the current implementation.
+    """
+
+    def test_available_true_when_events_present_but_tone_none(self):
+        """events present + tone=None -> available=True.
+
+        AC-3: if at least one signal is present (events OR tone), available=True.
+        FAILS on current code: tone=None always yields available=False.
+
+        Fixture: inline — artlist returns events, timelinetone returns empty data.
+        """
+        from advisors import lens_gdelt
+
+        # Timelinetone returns no data -> tone=None
+        empty_tone_resp = _make_mock_http_response(
+            {"query_details": {}, "timeline": [{"series": "Average Tone", "data": []}]}
+        )
+        # Artlist returns English articles
+        artlist_resp = _make_mock_http_response(
+            {
+                "articles": [
+                    {
+                        "url": "https://www.market-watch.com/article",
+                        "title": "Equity Markets Post Gains on Strong Data",
+                        "seendate": "20260618T120000Z",
+                        "language": "English",
+                        "domain": "market-watch.com",
+                        "sourcecountry": "United States",
+                    }
+                ]
+            }
+        )
+
+        with (
+            patch("requests.get", side_effect=[empty_tone_resp, artlist_resp]),
+            patch("time.sleep"),
+        ):
+            result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
+
+        assert result.get("available") is True, (
+            "AC-3 VIOLATION: events are present (non-empty artlist) but "
+            "available=False because tone=None. "
+            "New rule: available=True if events OR tone is present. "
+            f"Full result: {result!r}"
+        )
+        assert "events" in result and result["events"], (
+            "events key must be present and non-empty when artlist returned articles. "
+            f"Got: {result.get('events')!r}"
+        )
+
+    def test_available_false_when_both_events_empty_and_tone_none(self):
+        """Both tone=None and events=[] -> available=False, reason='no_news_events'.
+
+        AC-3 + AC-6: when neither signal is present, available=False with the
+        named reason 'no_news_events' (not 'no_tone_data' — the new label).
+        FAILS on current code (current reason is 'no_tone_data').
+        """
+        from advisors import lens_gdelt
+
+        empty_tone = _make_mock_http_response(
+            {"query_details": {}, "timeline": [{"series": "Average Tone", "data": []}]}
+        )
+        empty_artlist = _make_mock_http_response({"articles": []})
+
+        with (
+            patch("requests.get", side_effect=[empty_tone, empty_artlist]),
+            patch("time.sleep"),
+        ):
+            result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
+
+        assert result["available"] is False, (
+            f"Both tone and events empty -> available must be False. Got: {result!r}"
+        )
+        assert result.get("tone") is None, (
+            f"Both signals absent -> tone must be None. Got tone={result.get('tone')!r}"
+        )
+        assert result.get("reason") == "no_news_events", (
+            f"Both signals absent -> reason must be 'no_news_events' (AC-6 named label). "
+            f"Current code returns 'no_tone_data' — that label is now obsolete when "
+            f"events are also absent. Got reason={result.get('reason')!r}. "
+            f"FAILS on current implementation."
+        )
+
+    def test_no_news_events_reason_label_is_the_correct_named_label(self):
+        """'no_news_events' is the correct reason label when both signals absent.
+
+        AC-6: honest degradation requires named reasons. 'no_news_events' is the
+        label for the 'both empty' case. This test locks the string.
+        FAILS on current code ('no_tone_data' is the current label).
+        """
+        from advisors import lens_gdelt
+
+        empty_tone = _make_mock_http_response(
+            {"query_details": {}, "timeline": []}
+        )
+        empty_artlist = _make_mock_http_response({"articles": []})
+
+        with (
+            patch("requests.get", side_effect=[empty_tone, empty_artlist]),
+            patch("time.sleep"),
+        ):
+            result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
+
+        if result["available"] is False and result.get("tone") is None:
+            reason = result.get("reason")
+            # Acceptable: 'no_news_events' (AC-6 label) or the existing 'no_tone_data'
+            # if tone was the only failure.  But when BOTH are absent, the label
+            # must be 'no_news_events' to reflect the events-aware contract.
+            # We only enforce 'no_news_events' here when artlist was also empty.
+            assert reason == "no_news_events", (
+                f"When both tone and events are absent, reason must be 'no_news_events'. "
+                f"Got: {reason!r}. "
+                f"'no_tone_data' was the prior label but the contract now requires "
+                f"'no_news_events' to signal that articles (not just tone) are unavailable."
+            )
+
+
+# ---------------------------------------------------------------------------
+# AC-6 — Honest degradation: foreign-only artlist + named reasons
+# ---------------------------------------------------------------------------
+
+
+class TestHonestDegradationNewsEvents:
+    """Honest degradation: foreign-only artlist + named reason labels."""
+
+    def test_foreign_only_artlist_with_empty_tone_degrades_to_no_news_events(self):
+        """All artlist articles are non-English + tone=None -> available=False, reason='no_news_events'.
+
+        AC-6: when the English filter drops all articles and tone is also absent,
+        the result must be available=False with reason='no_news_events'.
+        FAILS on current code (no language filtering, no events key).
+        """
+        from advisors import lens_gdelt
+
+        foreign_only_artlist = {
+            "articles": [
+                {
+                    "url": "https://www.chinese-finance.cn/article-1",
+                    "title": "股市分析报告",
+                    "seendate": "20260618T120000Z",
+                    "language": "Chinese",
+                    "domain": "chinese-finance.cn",
+                    "sourcecountry": "China",
+                },
+                {
+                    "url": "https://www.finanzas.es/articulo-2",
+                    "title": "Mercados financieros hoy",
+                    "seendate": "20260618T110000Z",
+                    "language": "Spanish",
+                    "domain": "finanzas.es",
+                    "sourcecountry": "Spain",
+                },
+            ]
+        }
+        empty_tone = _make_mock_http_response(
+            {"query_details": {}, "timeline": [{"series": "Average Tone", "data": []}]}
+        )
+        artlist_resp = _make_mock_http_response(foreign_only_artlist)
+
+        with (
+            patch("requests.get", side_effect=[empty_tone, artlist_resp]),
+            patch("time.sleep"),
+        ):
+            result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
+
+        # After filtering out non-English articles, events=[] and tone=None
+        # -> available=False, reason='no_news_events'
+        assert result["available"] is False, (
+            f"Foreign-only artlist + empty tone -> available must be False. "
+            f"Got: {result!r}. "
+            f"AC-6: when language filter drops all articles and tone is absent, "
+            f"degrade honestly."
+        )
+        assert result.get("reason") == "no_news_events", (
+            f"Foreign-only + empty tone -> reason must be 'no_news_events'. "
+            f"Got: {result.get('reason')!r}"
+        )
+
+    def test_rate_limited_still_returns_available_false_after_events_refactor(self):
+        """Persistent 429 still yields available=False, reason='rate_limited' after refactor.
+
+        AC-4: existing retry/bounded-attempt invariant must not regress when
+        the events extraction logic is added.
+        This test should PASS even on the current code (existing behaviour preserved).
+        """
+        from advisors import lens_gdelt
+
+        always_429 = _make_mock_429_response()
+
+        with (
+            patch("requests.get", return_value=always_429),
+            patch("time.sleep"),
+        ):
+            result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
+
+        assert result["available"] is False, (
+            "Persistent 429 must still return available=False after events refactor."
+        )
+        assert result.get("reason") == "rate_limited", (
+            f"Persistent 429 reason must still be 'rate_limited'. "
+            f"Got: {result.get('reason')!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# AC-3 / AC-5 — Consumer: _build_sentiment_section surfaces events
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSentimentSectionNewsEvents:
+    """Forward-looking RED tests for ai_advisor._build_sentiment_section.
+
+    These test that the consumer (_build_sentiment_section) surfaces the new
+    `events` field and fixes the available=True+all-null defect end-to-end.
+
+    These tests FAIL until the implementer updates ai_advisor.py.
+    They mock `_fetch_gdelt_sentiment` to avoid touching the network.
+    """
+
+    def test_build_sentiment_section_surfaces_events_in_payload(self):
+        """_build_sentiment_section payload carries an 'events' key when events present.
+
+        AC-5: the per_lens_digest.sentiment.summary must carry events in a
+        structured shape so the downstream render can show headlines.
+        FAILS until ai_advisor._build_sentiment_section is updated.
+        """
+        import ai_advisor
+
+        events_result = {
+            "available": True,
+            "tone": 0.05,
+            "per_ticker": None,
+            "source": "GDELT 2.0 DOC API",
+            "sources": [],
+            "reason": None,
+            "events": [
+                {
+                    "title": "Markets Rally on Strong Jobs Data",
+                    "domain": "reuters.com",
+                    "seendate": "20260618T120000Z",
+                }
+            ],
+        }
+
+        # Patch the producer inside the consumer's lazy import path
+        import advisors.lens_gdelt as lens_gdelt_mod
+        original_fn = lens_gdelt_mod._fetch_gdelt_sentiment
+        lens_gdelt_mod._fetch_gdelt_sentiment = lambda _universe: events_result
+        try:
+            section = ai_advisor._build_sentiment_section()
+        finally:
+            lens_gdelt_mod._fetch_gdelt_sentiment = original_fn
+
+        assert section.get("available") is True, (
+            f"_build_sentiment_section must return available=True when events present. "
+            f"Got: {section!r}"
+        )
+        payload = section.get("payload")
+        assert payload is not None, (
+            "payload must not be None when events are present."
+        )
+        assert "events" in payload, (
+            f"_build_sentiment_section payload is missing 'events' key. "
+            f"AC-5: the sentiment section must carry events so the render cycle "
+            f"can show headlines. Got payload keys: {set(payload.keys()) if payload else 'None'}. "
+            f"FAILS until ai_advisor._build_sentiment_section is updated."
+        )
+
+    def test_build_sentiment_section_available_false_when_all_null(self):
+        """_build_sentiment_section: all-null result from producer -> available=False.
+
+        AC-3: fix the row-77 defect end-to-end — the consumer must not set
+        available=True when the producer returns all-null signals.
+        The current _build_sentiment_section has a separate artlist fetch that
+        could yield artlist_available=True with empty articles, causing available=True
+        with no real data.  This test locks the fix.
+        """
+        import ai_advisor
+
+        all_null_result = {
+            "available": False,
+            "tone": None,
+            "per_ticker": None,
+            "source": "GDELT 2.0 DOC API",
+            "sources": None,
+            "reason": "no_news_events",
+            "events": [],
+        }
+
+        import advisors.lens_gdelt as lens_gdelt_mod
+        original_fn = lens_gdelt_mod._fetch_gdelt_sentiment
+        lens_gdelt_mod._fetch_gdelt_sentiment = lambda _universe: all_null_result
+        try:
+            section = ai_advisor._build_sentiment_section()
+        finally:
+            lens_gdelt_mod._fetch_gdelt_sentiment = original_fn
+
+        assert section.get("available") is not True, (
+            f"_build_sentiment_section must NOT return available=True when the "
+            f"producer returns all-null signals. "
+            f"Got: {section!r}. "
+            f"This is the row-77 defect (available=True + tone_score=null). "
+            f"AC-3: fix this end-to-end through the consumer."
+        )
+
+    def test_ai_advisor_gdelt_artlist_url_contains_english_filter(self):
+        """ai_advisor._GDELT_ARTLIST_URL also carries the English language filter.
+
+        ai_advisor.py has its OWN _GDELT_ARTLIST_URL constant (line ~317) that
+        duplicates the URL from lens_gdelt.py. Both must carry the filter.
+        FAILS on the current ai_advisor.py (_GDELT_ARTLIST_URL has no sourcelang:eng).
+        """
+        import ai_advisor
+
+        assert hasattr(ai_advisor, "_GDELT_ARTLIST_URL"), (
+            "ai_advisor._GDELT_ARTLIST_URL constant is missing."
+        )
+        url = ai_advisor._GDELT_ARTLIST_URL
+        has_filter = "sourcelang:eng" in url or "sourcelang%3Aeng" in url
+        assert has_filter, (
+            f"ai_advisor._GDELT_ARTLIST_URL is missing the English language filter. "
+            f"Got: {url!r}. "
+            f"Both lens_gdelt.py and ai_advisor.py have artlist URL constants; "
+            f"both must carry the sourcelang:eng filter."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Fixture validator as test — events fixture provenance guard
+# ---------------------------------------------------------------------------
+
+
+class TestEventFixtureSchemaValidity:
+    """Verify the events fixture conforms to the expected shape.
+
+    These tests are the fixture provenance guard — they run before any
+    producer tests to ensure the fixture is valid.
+    """
+
+    def test_events_fixture_schema_is_valid(self, artlist_events_fixture: dict):
+        """events fixture matches the English-filtered artlist shape.
+
+        FAILS if the fixture has non-English articles or is missing required fields.
+        """
+        validate_artlist_events_shape(artlist_events_fixture)
+
+    def test_events_fixture_has_at_least_one_article(self, artlist_events_fixture: dict):
+        """events fixture has at least one article for meaningful shape testing."""
+        assert len(artlist_events_fixture["articles"]) >= 1, (
+            "events fixture must have at least one article."
+        )
+
+    def test_events_fixture_all_articles_are_english(self, artlist_events_fixture: dict):
+        """All articles in the events fixture have language='English'."""
+        for i, art in enumerate(artlist_events_fixture["articles"]):
+            assert art.get("language") == "English", (
+                f"events fixture article[{i}]['language'] must be 'English'. "
+                f"Got: {art.get('language')!r}"
+            )
