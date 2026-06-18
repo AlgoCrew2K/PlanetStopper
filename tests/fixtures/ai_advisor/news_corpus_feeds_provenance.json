@@ -1,0 +1,57 @@
+{
+  "_provenance": "Corpus feed fixtures captured live 2026-06-18 for the multi-source news lens RED phase.",
+  "feeds": {
+    "fed_press.xml": {
+      "source": "Federal Reserve press releases RSS",
+      "url": "https://www.federalreserve.gov/feeds/press_all.xml",
+      "user_agent": "PlanetStopper/1.0 paulmgreaney@gmail.com",
+      "captured": "2026-06-18",
+      "status": 200,
+      "format": "RSS 2.0",
+      "items": 20,
+      "item_fields": ["title", "link", "guid", "description", "category", "pubDate"],
+      "note": "Stable official .gov feed. Requires descriptive contact UA — returns 403 without it."
+    },
+    "bea_rss.xml": {
+      "source": "US Bureau of Economic Analysis RSS",
+      "url": "https://apps.bea.gov/rss/rss.xml",
+      "user_agent": "PlanetStopper/1.0 paulmgreaney@gmail.com",
+      "captured": "2026-06-18",
+      "status": 200,
+      "format": "RSS 2.0",
+      "items": 45,
+      "item_fields": ["dbId", "title", "link", "guid", "description", "data", "NextReleaseDate", "unitsOfMeasure"],
+      "note": "Confirmed active 2025 per researcher. GDP/trade/PCE data releases. .gov — needs UA."
+    },
+    "google_news_business.xml": {
+      "source": "Google News BUSINESS topic RSS",
+      "url": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en",
+      "user_agent": "PlanetStopper/1.0 (market-news lens; paulmgreaney@gmail.com)",
+      "captured": "2026-06-18",
+      "status": 200,
+      "format": "RSS 2.0",
+      "items": 69,
+      "item_fields": ["title", "link", "guid", "pubDate", "description", "source"],
+      "note": "Google News wrapper URLs — links wrap to news.google.com/rss/articles/... not the publisher URL directly. Dedup must handle wrapper URL vs publisher URL collision."
+    },
+    "sec_8k_atom.xml": {
+      "source": "SEC EDGAR current 8-K filings Atom feed",
+      "url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&output=atom&count=10",
+      "user_agent": "PlanetStopper/1.0 paulmgreaney@gmail.com",
+      "captured": "2026-06-18",
+      "status": 200,
+      "format": "Atom 1.0",
+      "items": 10,
+      "item_fields": ["{http://www.w3.org/2005/Atom}title", "{http://www.w3.org/2005/Atom}link", "{http://www.w3.org/2005/Atom}summary", "{http://www.w3.org/2005/Atom}updated", "{http://www.w3.org/2005/Atom}id"],
+      "note": "HARD RATE LIMIT: 10 req/s across all EDGAR. Descriptive contact UA required. Atom namespace."
+    },
+    "gdelt_artlist_maxrecords50.json": {
+      "source": "GDELT DOC API artlist, maxrecords=50, sourcelang:eng",
+      "url": "https://api.gdeltproject.org/api/v2/doc/doc?query=stock+market+finance+sourcelang:eng&mode=artlist&format=json&maxrecords=50",
+      "captured": "2026-06-18",
+      "status": "429 — rate-limited (nightly daemon holds IP window)",
+      "fallback": "schema-derived-with-runtime-validator",
+      "note": "Live capture failed. Schema-derived fixture represents the same shape as the existing gdelt_artlist_response.json but with maxrecords=50 scale and explicit language field on all entries."
+    }
+  }
+}
