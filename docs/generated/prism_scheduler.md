@@ -50,7 +50,7 @@ Returns `True` if `row["created_at"]` (format `"YYYY-MM-DD HH:MM:SS"`, UTC) matc
 
 ### `_persist_spend(run_id: str, stdout: str) -> None`
 
-Parses the subprocess JSON stdout for `cost_usd` and writes a `prism_audit_log` row via `database.insert_prism_audit_entry` with `agent_role="LAUNCHER"` and `phase="spend_log"`. Non-fatal — a parse or DB failure is logged as `type(exc).__name__` only (D-1) and swallowed. Called only on `returncode == 0`.
+Parses the subprocess JSON stdout for `total_cost_usd` (CC 2.1.181+ envelope) with a tolerant fallback to the legacy `cost_usd` key, and writes a `prism_audit_log` row via `database.insert_prism_audit_entry` with `agent_role="LAUNCHER"` and `phase="spend_log"`. The persisted `content` JSON uses `total_cost_usd` as the key name. Non-fatal — a parse or DB failure is logged as `type(exc).__name__` only (D-1) and swallowed. Called only on `returncode == 0`.
 
 ### `_run_prism(run_id: str = "unknown") -> bool`
 
@@ -107,7 +107,7 @@ The bounded retry loop iterates `range(1, MAX_ATTEMPTS + 1)`. On each failed att
 
 ## Spend Logging Contract
 
-On each successful subprocess invocation (`returncode == 0`), `_persist_spend()` parses `result.stdout` as JSON and extracts `cost_usd`. If present, it writes one `prism_audit_log` entry: `run_id=<uuid>`, `agent_role="LAUNCHER"`, `phase="spend_log"`, `content={"cost_usd": <value>}`. Failures in parsing or DB write are non-fatal — the run is still considered successful.
+On each successful subprocess invocation (`returncode == 0`), `_persist_spend()` parses `result.stdout` as JSON and extracts `total_cost_usd` (CC 2.1.181+ envelope key), falling back to the legacy `cost_usd` key for older/local CC builds. If a value is found, it writes one `prism_audit_log` entry: `run_id=<uuid>`, `agent_role="LAUNCHER"`, `phase="spend_log"`, `content={"total_cost_usd": <value>}`. Failures in parsing or DB write are non-fatal — the run is still considered successful.
 
 ## D-1 Error Contract
 
@@ -123,4 +123,4 @@ All error paths surface `type(exc).__name__` only — no raw exception messages,
 
 ## Tests
 
-`tests/ai_advisor/test_prism_scheduling.py` — 23 tests covering AC-1 through AC-8 plus HC-1 (spend cap), HC-2 (spend logging), and HC-3 (model pin). All tests mock `subprocess.run`, `time.sleep`, and `_get_summary()` — no real DB calls, no real subprocess invocations.
+`tests/ai_advisor/test_prism_scheduling.py` — 25 tests covering AC-1 through AC-8 plus HC-1 (spend cap), HC-2 (spend logging), and HC-3 (model pin). All tests mock `subprocess.run`, `time.sleep`, and `_get_summary()` — no real DB calls, no real subprocess invocations.

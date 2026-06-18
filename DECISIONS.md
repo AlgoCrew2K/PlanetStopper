@@ -1121,7 +1121,7 @@ Branch: `feat/prism-phase4-scheduling` | HEAD: 4166ac0
 **Hardening (HC-1 / HC-2 / HC-3):**
 
 - **HC-1 — Spend cap:** `MAX_BUDGET_USD = 5.0` constant. Passed as `--max-budget-usd 5.0` to the subprocess. Makes per-run Opus spend runaway observable and bounded before it becomes a problem (AC-4).
-- **HC-2 — Spend logging:** `--output-format json` added to the subprocess command. On `returncode == 0`, `_persist_spend(run_id, stdout)` parses `cost_usd` from the JSON stdout and writes one `prism_audit_log` entry (`agent_role="LAUNCHER"`, `phase="spend_log"`). The `run_id` is a fresh `uuid4` generated in `main()` and threaded through to `_run_prism()` and `_persist_spend()`. Non-fatal — spend-log failure does not fail the run.
+- **HC-2 — Spend logging:** `--output-format json` added to the subprocess command. On `returncode == 0`, `_persist_spend(run_id, stdout)` parses `total_cost_usd` (CC 2.1.181+ envelope) with a tolerant fallback to the legacy `cost_usd` key from the JSON stdout, and writes one `prism_audit_log` entry (`agent_role="LAUNCHER"`, `phase="spend_log"`, `content={"total_cost_usd": <value>}`). The `run_id` is a fresh `uuid4` generated in `main()` and threaded through to `_run_prism()` and `_persist_spend()`. Non-fatal — spend-log failure does not fail the run.
 - **HC-3 — Model pin:** `--model claude-opus-4-8` (fully qualified, pinned). Replaces the bare alias `"opus"` from the original Option B baseline to prevent drift if the alias is reassigned.
 
 **Why daemon-decoupled (Option B over A):**
