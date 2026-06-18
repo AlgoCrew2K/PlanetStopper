@@ -3,7 +3,7 @@
 > Nightly Market Prism scheduler wrapper — invokes the Market Prism council via a vanilla-primary headless Claude session, triggered by Windows Task Scheduler (Option B, daemon-decoupled).
 
 **Source:** `prism_scheduler.py`
-**Last updated:** 2026-06-18
+**Last updated:** 2026-06-18 (post-fix: F-1 scheduler-generated run_id, F-2 synthesizer Hard Rules)
 
 ## Overview
 
@@ -21,13 +21,23 @@ Per-run Opus spend is captured from the `--output-format json` subprocess stdout
 | `BACKOFF_BASE_SECONDS` | `30` | First retry wait in seconds |
 | `BACKOFF_CAP_SECONDS` | `60` | Maximum wait between retries in seconds |
 | `MAX_BUDGET_USD` | `15.0` | Per-run spend ceiling passed as `--max-budget-usd`. A full 6-agent Opus council realistically costs $5–10/run; 15.0 is a runaway-prevention ceiling, not a target. |
-| `PRISM_RUN_PROMPT` | (see below) | Prompt passed to the vanilla-primary headless session. Instructs the primary session to spawn all 6 agents directly (prism-synthesizer + 5 analysts). `prism-synthesizer` has no Agent/spawn tool — it coordinates the already-running analysts via SendMessage only. |
+| `PRISM_RUN_PROMPT` | (see below) | Prompt passed to the vanilla-primary headless session. Encodes the 5/5 council orchestration directives (DE-PRISM-5OF5). |
 
 ### `PRISM_RUN_PROMPT`
 
-The full prompt passed as the final positional argument to `claude -p`. It instructs the primary session to spawn all 6 agents directly: `prism-synthesizer` (as team lead) plus the 5 analysts (`prism-technicals-analyst`, `prism-sentiment-analyst`, `prism-derivatives-analyst`, `prism-macro-analyst`, `prism-fundamentals-analyst`). Once all agents are running, `prism-synthesizer` coordinates them via SendMessage: it requests each analyst's read, runs Q&A and conditional debate (up to 3 rounds), integrates all outputs into one `MARKET_PRISM` observation, and writes it to the DB via `prism_audit_write`. The primary session includes a completion guard — it does not return until `prism-synthesizer` confirms the row is written. The session is fully unattended — no user input will arrive.
+The full prompt passed as the final positional argument to `claude -p`. It encodes four orchestration directives that ensure reliable 5/5 analyst participation (DE-PRISM-5OF5):
 
-**Why the primary spawns all 6 (not prism-synthesizer):** `prism-synthesizer` is a named agent with a coordination-only role — it has no Agent/spawn tool in its toolset. Giving it spawn responsibility would require adding a general-purpose tool that blurs its role boundary. The primary session is the only session with the full Agent tool surface; it spawns all council members, then hands control to `prism-synthesizer` to coordinate. This keeps each agent's role clean: primary = dispatcher, synthesizer = coordinator, analysts = producers.
+**(a) Scheduler-generated run_id threaded into the prompt at call time.** `main()` generates `run_id = str(uuid.uuid4())` and passes it to `_run_prism(run_id)`. `_run_prism` builds the final prompt by appending `" The run_id for this session is: {run_id}. Use this exact string as the run_id for ALL audit rows and the MARKET_PRISM observation. Do not generate a new run_id."` to the static `PRISM_RUN_PROMPT` preamble. The council uses exactly this run_id — it does NOT mint its own. This is the single authoritative join key shared by all analyst `initial_read` audit entries, the synthesizer audit entries, the MARKET_PRISM observation `raw_response`, and the LAUNCHER spend_log row written by `_persist_spend`.
+
+**(b) Embed kickoff in each analyst's spawn prompt.** Each of the 5 analyst agents is spawned with the run_id and an explicit instruction to produce and file their `initial_read` immediately on their first turn. This eliminates the dormancy window: the prior pattern (spawn first, then send a kickoff via SendMessage) caused 2/5 participation when dormant agents missed the subsequent message (root cause: transient by-canonical-name resume failure of dormant subagents, independently falsified — see DE-PRISM-COUNCIL).
+
+**(c) Capture agentIds at spawn; pass to synthesizer.** The primary captures each analyst's agentId at spawn time and passes the full list to `prism-synthesizer` in its spawn prompt. The synthesizer uses agentIds — not canonical names — for all Q&A and debate coordination. By-canonical-name addressing of dormant/resumed subagents is unreliable.
+
+**(d) Wait-barrier directive for synthesizer (Hard Rule).** The synthesizer is instructed not to synthesize until all 5 `initial_read` rows are present in the audit DB for this specific `run_id` (queried directly via `database.get_prism_audit_for_run(run_id)`) or the barrier times out with honest `limited-inputs` degradation naming each missing lens. Inbox-only collection is rejected as the wait mechanism: the audit DB is the authoritative source of truth.
+
+**(e) False-attribution prohibition (Hard Rule).** A spawned analyst that did not file its `initial_read` is missing or late — not absent. `prism-synthesizer` must never record it as "did not spawn". The correct attribution is `limited-inputs` with the reason being absence of an `initial_read` row in the audit DB after the wait-barrier timeout.
+
+**Why the primary spawns all 6 (not prism-synthesizer):** `prism-synthesizer` has no Agent/spawn tool in its toolset — it coordinates the analysts via SendMessage only. Giving it spawn responsibility would require adding a general-purpose tool that blurs its role boundary. The primary session is the only session with the full Agent tool surface; it spawns all council members, then hands control to `prism-synthesizer` to coordinate. This keeps each agent's role clean: primary = dispatcher, synthesizer = coordinator, analysts = producers.
 
 ## API Reference
 
@@ -71,8 +81,10 @@ claude -p --dangerously-skip-permissions
        --model claude-opus-4-8
        --max-budget-usd 15.0
        --output-format json
-       "<PRISM_RUN_PROMPT>"
+       "<PRISM_RUN_PROMPT> + scheduler-generated run_id suffix"
 ```
+
+The final positional argument is `PRISM_RUN_PROMPT + f" The run_id for this session is: {run_id}. Use this exact string as the run_id for ALL audit rows and the MARKET_PRISM observation. Do not generate a new run_id."` — the run_id is appended at call time by `_run_prism(run_id)`, not embedded statically in the constant.
 
 **Subprocess options:**
 - `cwd=str(_PROJECT_ROOT)` — project root, not caller's cwd
@@ -91,6 +103,8 @@ powershell -ExecutionPolicy Bypass -File schedule_prism.ps1
 ```
 
 Registers `PlanetStopperMarketPrism` in Windows Task Scheduler to run daily at 03:00 local time. `$ProjectRoot` is derived from `$PSScriptRoot` — no hardcoded paths.
+
+> **Note:** `schedule_prism.ps1` is retained only for test-green purposes. The production nightly trigger will move to droplet cron/systemd when the deployment environment is provisioned.
 
 ### Manual run
 
@@ -132,4 +146,4 @@ All error paths surface `type(exc).__name__` only — no raw exception messages,
 
 ## Tests
 
-`tests/ai_advisor/test_prism_scheduling.py` — 33 tests covering AC-1 through AC-8 plus HC-1 (spend cap), HC-2 (spend logging), HC-3 (model pin), the Phase-4 invocation shape (vanilla `-p`, no `--agent` pin, `PRISM_RUN_PROMPT` as positional arg, `MAX_BUDGET_USD=15.0`), and the council architecture (primary spawns all 6; `prism-synthesizer` coordinates only via SendMessage). All tests mock `subprocess.run`, `time.sleep`, and `_get_summary()` — no real DB calls, no real subprocess invocations.
+`tests/ai_advisor/test_prism_scheduling.py` — 43 tests covering AC-1 through AC-8, HC-1 (spend cap), HC-2 (spend logging), HC-3 (model pin), the Phase-4 invocation shape (vanilla `-p`, no `--agent` pin, `PRISM_RUN_PROMPT` as positional arg, `MAX_BUDGET_USD=15.0`), the council architecture (primary spawns all 6; `prism-synthesizer` coordinates only via SendMessage), and the 5/5 orchestration directives (DE-PRISM-5OF5): run_id generated before spawning, kickoff embedded in analyst spawn prompts, agentIds captured and passed to synthesizer, wait-barrier before synthesis. All tests mock `subprocess.run`, `time.sleep`, and `_get_summary()` — no real DB calls, no real subprocess invocations.
