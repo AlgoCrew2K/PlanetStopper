@@ -35,25 +35,6 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _gdelt_tone_result(available: bool, tone=None):
-    """Minimal tone result shape from lens_gdelt._fetch_gdelt_sentiment."""
-    return {
-        "available": available,
-        "tone": tone if available else None,
-        "per_ticker": None,
-        "source": "GDELT 2.0 DOC API timelinetone",
-        "reason": None if available else "no_tone_data",
-    }
-
-
-def _artlist_response(articles=None):
-    """Minimal mock Response for the GDELT artlist endpoint."""
-    mock_resp = MagicMock()
-    mock_resp.raise_for_status.return_value = None
-    mock_resp.json.return_value = {"articles": articles or []}
-    return mock_resp
-
-
 def _fred_response(series_id, value="1.23", date="2026-06-01"):
     """Minimal mock Response for a FRED observations endpoint call."""
     mock_resp = MagicMock()
@@ -71,124 +52,27 @@ def _fred_response(series_id, value="1.23", date="2026-06-01"):
 
 
 class TestSentimentSectionWarehouseWiring:
-    """_build_sentiment_section must call persist_lens_snapshot after its fetch."""
+    """CC-2 structural guard for _build_sentiment_section's lens_warehouse import.
 
-    def test_persist_called_after_successful_gdelt_fetch(self):
-        """On a successful GDELT fetch (available=True), persist_lens_snapshot
-        must be called once with lens='sentiment', available=True, and a
-        non-None payload.
+    The three persist-wiring tests that previously lived here
+    (test_persist_called_after_successful_gdelt_fetch,
+     test_persist_called_with_available_false_when_gdelt_down,
+     test_persist_payload_is_not_fabricated_when_down)
+    were patching the OLD seam (lens_gdelt._fetch_gdelt_sentiment +
+    ai_advisor._fetch_with_backoff).  The cycle moved _build_sentiment_section
+    to call news_corpus.build_news_corpus() — those patches no longer intercepted
+    _fetch_all_feeds(), which issued live RSS HTTP on every run, making the
+    available=False test non-deterministic.
 
-        FAILS until _build_sentiment_section adds a persist_lens_snapshot call.
-        """
-        import ai_advisor
+    Superseded by TestWarehousePersistence in test_news_corpus.py
+    (test_persist_lens_snapshot_called_on_success_path,
+     test_persist_lens_snapshot_called_on_unavailable_path,
+     test_persist_payload_contains_tone_and_corpus_summary)
+    which patch news_corpus.build_news_corpus directly (the correct seam)
+    and fire zero live HTTP.
 
-        tone_result = _gdelt_tone_result(available=True, tone=0.1)
-        artlist_resp = _artlist_response(articles=[])
-
-        with (
-            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
-            patch("ai_advisor._fetch_with_backoff", return_value=artlist_resp),
-            patch("advisors.lens_warehouse.persist_lens_snapshot") as mock_persist,
-        ):
-            ai_advisor._build_sentiment_section()
-
-        mock_persist.assert_called_once()
-        kwargs = mock_persist.call_args
-        # Accept positional or keyword — normalize to kwargs dict.
-        all_kwargs = kwargs[1] if kwargs[1] else {}
-        all_args = kwargs[0]
-
-        # lens must be "sentiment"
-        lens_val = all_kwargs.get("lens") or (all_args[0] if all_args else None)
-        assert lens_val == "sentiment", (
-            f"persist_lens_snapshot must be called with lens='sentiment'; got {lens_val!r}"
-        )
-
-        # available must be True (mirrors the block's available field)
-        avail_val = all_kwargs.get("available")
-        assert avail_val is True or avail_val == 1, (
-            f"persist_lens_snapshot must be called with available=True on success; got {avail_val!r}"
-        )
-
-        # raw_payload must not be None (not fabricated)
-        payload_val = all_kwargs.get("raw_payload")
-        assert payload_val is not None, (
-            "persist_lens_snapshot raw_payload must not be None on a successful fetch"
-        )
-
-    def test_persist_called_with_available_false_when_gdelt_down(self):
-        """On a failed GDELT fetch (both tone and artlist fail), persist_lens_snapshot
-        must be called with available=False — honest unavailability, no fabrication.
-
-        FAILS until _build_sentiment_section adds a persist_lens_snapshot call.
-        """
-        import ai_advisor
-
-        tone_result = _gdelt_tone_result(available=False)
-        failing_resp = MagicMock()
-        failing_resp.raise_for_status.side_effect = ConnectionError("network down")
-
-        with (
-            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
-            patch("ai_advisor._fetch_with_backoff", return_value=failing_resp),
-            patch("advisors.lens_warehouse.persist_lens_snapshot") as mock_persist,
-        ):
-            block = ai_advisor._build_sentiment_section()
-
-        # The block itself must be available=False.
-        assert block["available"] is False, (
-            "Block must be available=False when both GDELT sources fail"
-        )
-
-        # persist must still be called — we record even down sources (AC-6).
-        mock_persist.assert_called_once()
-        kwargs = mock_persist.call_args
-        all_kwargs = kwargs[1] if kwargs[1] else {}
-        avail_val = all_kwargs.get("available")
-        assert avail_val is False or avail_val == 0, (
-            "persist_lens_snapshot must be called with available=False when GDELT is down; "
-            f"got {avail_val!r}"
-        )
-
-    def test_persist_payload_is_not_fabricated_when_down(self):
-        """When GDELT is down, the raw_payload passed to persist must NOT be a
-        fabricated success payload — it must be None or a reason-bearing dict,
-        never a dict pretending to have real tone/article data.
-
-        FAILS until the wiring is present.
-        """
-        import ai_advisor
-
-        tone_result = _gdelt_tone_result(available=False)
-        failing_resp = MagicMock()
-        failing_resp.raise_for_status.side_effect = ConnectionError("network down")
-
-        with (
-            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
-            patch("ai_advisor._fetch_with_backoff", return_value=failing_resp),
-            patch("advisors.lens_warehouse.persist_lens_snapshot") as mock_persist,
-        ):
-            ai_advisor._build_sentiment_section()
-
-        # persist must have been called — if not, fail with a clear message.
-        assert mock_persist.called, (
-            "persist_lens_snapshot must be called even when GDELT is down "
-            "(record the down-source row with available=False)"
-        )
-        kwargs = mock_persist.call_args
-        all_kwargs = kwargs[1] if (kwargs and kwargs[1]) else {}
-        payload_val = all_kwargs.get("raw_payload")
-
-        # Payload must not look like fabricated success data (no tone_score key
-        # with a real value, no article_count > 0).
-        if isinstance(payload_val, dict):
-            assert not (
-                "tone_score" in payload_val
-                and payload_val.get("tone_score") is not None
-            ), (
-                "persist raw_payload must not contain a non-None tone_score when GDELT is down "
-                "(no fabricated data)"
-            )
+    Only the CC-2 lazy-import guard is retained below — it fires no HTTP.
+    """
 
     def test_persist_lens_snapshot_is_lazy_imported_in_sentiment(self):
         """lens_warehouse must NOT be imported at the ai_advisor module level —

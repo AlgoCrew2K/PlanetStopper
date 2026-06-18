@@ -1,0 +1,16 @@
+{
+  "_provenance": "Schema-derived-with-runtime-validator. Live capture of GDELT artlist (maxrecords=50, sourcelang:eng) attempted 2026-06-18 but rate-limited (nightly daemon holds IP window). Shape is production-accurate per GDELT 2.0 DOC API JSONFeed spec and the existing gdelt_artlist_response.json fixture. All articles are English-language. Tests assert shape/structure/presence only — never headline text or tone values.",
+  "_api_url": "https://api.gdeltproject.org/api/v2/doc/doc?query=stock+market+finance+sourcelang:eng&mode=artlist&format=json&maxrecords=50&sort=date",
+  "articles": [
+    {"url": "https://www.reuters.com/markets/us/stock-market-update-a", "title": "Wall Street Edges Higher on Earnings Optimism", "seendate": "20260618T150000Z", "language": "English", "domain": "reuters.com", "sourcecountry": "United States"},
+    {"url": "https://www.reuters.com/markets/us/stock-market-update-b", "title": "S&P 500 Gains As Tech Sector Leads Rally", "seendate": "20260618T140000Z", "language": "English", "domain": "reuters.com", "sourcecountry": "United States"},
+    {"url": "https://www.reuters.com/markets/us/stock-market-update-c", "title": "Nasdaq Composite Closes Up on Strong Jobs Report", "seendate": "20260618T130000Z", "language": "English", "domain": "reuters.com", "sourcecountry": "United States"},
+    {"url": "https://www.reuters.com/markets/us/stock-market-update-d", "title": "Dow Futures Point to Flat Open Amid Rate Concerns", "seendate": "20260618T120000Z", "language": "English", "domain": "reuters.com", "sourcecountry": "United States"},
+    {"url": "https://www.bloomberg.com/news/market-a", "title": "Federal Reserve Holds Rates Steady Amid Mixed Data", "seendate": "20260618T150000Z", "language": "English", "domain": "bloomberg.com", "sourcecountry": "United States"},
+    {"url": "https://www.bloomberg.com/news/market-b", "title": "Treasury Yields Dip as Investors Seek Safety", "seendate": "20260618T140000Z", "language": "English", "domain": "bloomberg.com", "sourcecountry": "United States"},
+    {"url": "https://www.cnbc.com/finance/article-a", "title": "Inflation Data Shows Progress Toward Fed Target", "seendate": "20260618T150000Z", "language": "English", "domain": "cnbc.com", "sourcecountry": "United States"},
+    {"url": "https://www.cnbc.com/finance/article-b", "title": "Markets Rally on Better-Than-Expected GDP Figures", "seendate": "20260618T130000Z", "language": "English", "domain": "cnbc.com", "sourcecountry": "United States"},
+    {"url": "https://www.ft.com/content/market-a", "title": "European Stocks Slip on Energy Price Volatility", "seendate": "20260618T120000Z", "language": "English", "domain": "ft.com", "sourcecountry": "United Kingdom"},
+    {"url": "https://www.wsj.com/articles/market-a", "title": "Bond Market Signals Easing Inflation Pressure", "seendate": "20260618T110000Z", "language": "English", "domain": "wsj.com", "sourcecountry": "United States"}
+  ]
+}

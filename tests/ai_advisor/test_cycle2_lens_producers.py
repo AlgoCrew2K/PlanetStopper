@@ -207,6 +207,63 @@ def _make_mock_response(json_data: dict, status_code: int = 200) -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
+def _make_corpus_result(
+    articles: list[dict] | None = None,
+    tone: float | None = 0.12,
+    available: bool = True,
+    reason: str | None = None,
+) -> dict:
+    """Build a mock news_corpus.build_news_corpus() return dict for use in tests.
+
+    Phase 3 (lens-news-events): _build_sentiment_section now calls
+    news_corpus.build_news_corpus() as its primary seam. Tests mock this
+    function rather than requests.get (old direct GDELT artlist call) +
+    lens_gdelt._fetch_gdelt_sentiment.
+
+    The corpus articles are in the news_corpus normalized shape:
+      {url, title, published, domain, source_feed, topics, score}
+    NOT the raw GDELT artlist shape (url, title, seendate, domain).
+
+    Args:
+        articles: list of article dicts in news_corpus normalized shape.
+            Defaults to a minimal 2-article corpus if None.
+        tone: GDELT AvgTone float in [-1, 1], or None on unavailability.
+        available: True iff tone is not None OR corpus is non-empty.
+        reason: non-None only when available=False (D-1 named reason).
+
+    Returns:
+        dict matching the news_corpus.build_news_corpus() contract:
+            {available, tone, corpus, reason}
+    """
+    if articles is None:
+        articles = [
+            {
+                "url": "https://www.example-news-site.com/article-1",
+                "title": "Markets Signal Risk Shift as Indicators Diverge",
+                "published": "20260610T120000Z",
+                "domain": "example-news-site.com",
+                "source_feed": "gdelt_artlist",
+                "topics": ["macro"],
+                "score": 0.72,
+            },
+            {
+                "url": "https://www.finance-news.com/fed-watch",
+                "title": "Fed Watch: Interest Rate Expectations Update",
+                "published": "20260610T090000Z",
+                "domain": "finance-news.com",
+                "source_feed": "gdelt_artlist",
+                "topics": ["macro", "broad-sentiment"],
+                "score": 0.65,
+            },
+        ]
+    return {
+        "available": available,
+        "tone": tone if available else None,
+        "corpus": articles if available else [],
+        "reason": reason if not available else None,
+    }
+
+
 def _make_tone_result(
     available: bool = True,
     tone: float | None = 0.12,
@@ -218,6 +275,12 @@ def _make_tone_result(
     Phase 2: _build_sentiment_section calls both artlist (via _fetch_with_backoff)
     and _fetch_gdelt_sentiment (via advisors.lens_gdelt). Tests that cover the
     full merged path must mock BOTH call sites.
+
+    Phase 3 (lens-news-events): _build_sentiment_section now delegates to
+    news_corpus.build_news_corpus(). Tests that use this helper should migrate
+    to _make_corpus_result() which mocks at the correct seam.
+    This helper is retained for backward compat with tests that mock
+    lens_gdelt._fetch_gdelt_sentiment directly.
     """
     return {
         "available": available,
@@ -257,73 +320,103 @@ class TestGdeltSentimentProducer:
     def test_sentiment_available_true_when_gdelt_returns_articles(self, gdelt_shape_fixture: dict):
         """When GDELT returns articles, _build_sentiment_section returns available=True.
 
-        The mock provides the captured GDELT artlist shape from the fixture.
-        Tests that the producer correctly maps articles -> available lens block.
+        Phase 3 (lens-news-events): _build_sentiment_section now calls
+        news_corpus.build_news_corpus() as its primary seam. Mock at that boundary
+        so the test is hermetic (no live GDELT or RSS network calls).
 
-        Phase 2: also mocks the tone producer so the wired call doesn't fire
-        the live GDELT timelinetone endpoint.
-
-        FAILS if _build_sentiment_section is still the Cycle-1 stub (returns
-        available=False unconditionally).
+        FAILS if _build_sentiment_section ignores the corpus result and returns
+        available=False unconditionally (hollow implementation).
         """
         import ai_advisor
 
-        mock_resp = _make_mock_response(gdelt_shape_fixture["gdelt_artlist_shape"])
-        tone_result = _make_tone_result(available=True, tone=0.05)
+        # Build corpus from the fixture's gdelt_artlist_shape articles, normalized
+        # to news_corpus shape (published instead of seendate).
+        fixture_articles = gdelt_shape_fixture["gdelt_artlist_shape"]["articles"]
+        corpus_articles = [
+            {
+                "url": a["url"],
+                "title": a["title"],
+                "published": a.get("seendate", ""),
+                "domain": a.get("domain", ""),
+                "source_feed": "gdelt_artlist",
+                "topics": ["broad-sentiment"],
+                "score": 0.5,
+            }
+            for a in fixture_articles
+        ]
+        corpus_result = _make_corpus_result(articles=corpus_articles, tone=0.05, available=True)
 
-        with (
-            patch("requests.get", return_value=mock_resp),
-            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
-        ):
+        with patch("advisors.news_corpus.build_news_corpus", return_value=corpus_result):
             block = ai_advisor._build_sentiment_section()
 
         _assert_available_true_shape(block, "sentiment")
 
         # The payload must report the article count — derive from the fixture,
-        # never hardcode the value
-        fixture_articles = gdelt_shape_fixture["gdelt_artlist_shape"]["articles"]
+        # never hardcode the value.
+        # FAILS if implementer drops article_count from payload.
         payload = block["payload"]
         assert isinstance(payload, dict), "sentiment payload must be a dict"
-        assert "article_count" in payload, "sentiment payload must carry 'article_count'"
-        assert payload["article_count"] == len(fixture_articles), (
+        assert "article_count" in payload, (
+            "sentiment payload must carry 'article_count'. "
+            "FAILS on current implementation that uses corpus/events but drops article_count."
+        )
+        assert payload["article_count"] == len(corpus_articles), (
             f"sentiment payload 'article_count' must equal the number of articles "
-            f"in the GDELT response ({len(fixture_articles)}), "
+            f"in the corpus ({len(corpus_articles)}), "
             f"got {payload['article_count']!r}"
         )
 
     def test_sentiment_sources_derived_from_gdelt_articles(self, gdelt_shape_fixture: dict):
-        """Each GDELT article becomes a source with title, url, published, lens.
+        """Each corpus article becomes a citation source with title, url, published, lens.
 
-        Sources are NOT hardcoded — they are derived from the mocked GDELT
-        response. Asserts shape and validity via build_citation.
+        Sources are NOT hardcoded — they are derived from the mocked corpus result.
+        Asserts shape and validity via build_citation.
 
-        FAILS if the producer discards articles or fabricates sources.
+        Phase 3 (lens-news-events): _build_sentiment_section maps corpus articles
+        (from news_corpus.build_news_corpus()) to sources via build_citation().
+        Mock at the build_news_corpus boundary; assert sources are populated.
+
+        FAILS if _build_sentiment_section returns sources=[] (current broken state
+        where the implementer hardcoded sources=[]).
         """
         import ai_advisor
 
         fixture_articles = gdelt_shape_fixture["gdelt_artlist_shape"]["articles"]
-        mock_resp = _make_mock_response(gdelt_shape_fixture["gdelt_artlist_shape"])
-        tone_result = _make_tone_result(available=True, tone=0.05)
+        corpus_articles = [
+            {
+                "url": a["url"],
+                "title": a["title"],
+                "published": a.get("seendate", ""),
+                "domain": a.get("domain", ""),
+                "source_feed": "gdelt_artlist",
+                "topics": ["broad-sentiment"],
+                "score": 0.5,
+            }
+            for a in fixture_articles
+        ]
+        corpus_result = _make_corpus_result(articles=corpus_articles, tone=0.05, available=True)
 
-        with (
-            patch("requests.get", return_value=mock_resp),
-            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
-        ):
+        with patch("advisors.news_corpus.build_news_corpus", return_value=corpus_result):
             block = ai_advisor._build_sentiment_section()
 
         _assert_available_true_shape(block, "sentiment")
         sources = block["sources"]
-        assert len(sources) == len(fixture_articles), (
-            f"Expected {len(fixture_articles)} sources (one per GDELT article), "
-            f"got {len(sources)}. The producer must map each article to a source."
+        assert len(sources) >= 1, (
+            f"Expected at least 1 source (one per corpus article), "
+            f"got {len(sources)}. "
+            f"FAILS on current implementation that hardcodes sources=[]."
+        )
+        assert len(sources) == len(corpus_articles), (
+            f"Expected {len(corpus_articles)} sources (one per corpus article), "
+            f"got {len(sources)}. The producer must map each corpus article to a source."
         )
         _assert_citations_valid(block)
 
         # Each source URL must match the article url from the fixture
-        fixture_urls = {a["url"] for a in fixture_articles}
+        fixture_urls = {a["url"] for a in corpus_articles}
         source_urls = {s.get("url") for s in sources}
         assert source_urls == fixture_urls, (
-            f"Source URLs don't match fixture article URLs. "
+            f"Source URLs don't match corpus article URLs. "
             f"Expected {fixture_urls}, got {source_urls}."
         )
 
@@ -364,80 +457,79 @@ class TestGdeltSentimentProducer:
     def test_sentiment_empty_articles_returns_available_true_with_empty_sources(
         self, gdelt_shape_fixture: dict
     ):
-        """An empty GDELT article list returns available=True, empty sources.
+        """A corpus with tone but no articles returns available=True, empty sources.
 
         Empty-but-successful fetch is distinct from a fetch error (CC-3).
         available=True with empty sources correctly signals 'no news found' —
         NOT a fabrication failure.
 
-        Phase 2: tone mock returns available=True so only the artlist path
-        produces available=True; both sources contribute to availability.
+        Phase 3: tone is available (corpus_result available=True) so available=True.
+        corpus is empty, so sources=[] and article_count=0.
 
-        FAILS if the producer returns available=False for an empty-article response.
+        FAILS if the producer returns available=False when tone is present.
         """
         import ai_advisor
 
-        empty_resp = _make_mock_response(gdelt_shape_fixture["empty_artlist_shape"])
-        tone_result = _make_tone_result(available=True, tone=0.0)
+        # Empty corpus but tone available → available=True with no articles
+        corpus_result = _make_corpus_result(articles=[], tone=0.0, available=True)
 
-        with (
-            patch("requests.get", return_value=empty_resp),
-            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
-        ):
+        with patch("advisors.news_corpus.build_news_corpus", return_value=corpus_result):
             block = ai_advisor._build_sentiment_section()
 
         _assert_lens_block_shape(block, "sentiment")
         assert block["available"] is True, (
-            "An empty GDELT article list (successful fetch, zero articles) must "
+            "An empty corpus (successful fetch, zero articles) with tone available must "
             "return available=True, not available=False. "
             "Empty != error (CC-3 / GATE-1-AC §1 edge cases)."
         )
-        assert block.get("sources", []) == [], "Empty article list must produce empty sources list."
+        assert block.get("sources", []) == [], "Empty corpus must produce empty sources list."
         payload = block.get("payload", {})
         assert isinstance(payload, dict), "payload must be a dict even when empty"
         assert payload.get("article_count") == 0, (
-            f"payload.article_count must be 0 for empty article list, "
-            f"got {payload.get('article_count')!r}"
+            f"payload.article_count must be 0 for empty corpus, "
+            f"got {payload.get('article_count')!r}. "
+            f"FAILS on current implementation missing article_count from payload."
         )
 
     def test_sentiment_timeout_returns_available_false_with_exc_class_only(self):
-        """A network timeout on the artlist path returns available=False (D-1).
+        """When news_corpus returns unavailable, _build_sentiment_section returns available=False.
 
-        D-1: error reasons expose ONLY type(exc).__name__, never raw str(exc).
-        str(exc) may contain hostnames, partial URLs, or sensitive context.
+        D-1: error reasons must NEVER expose str(exc) content (hostnames, URLs, credentials).
+        The reason may be a fixed named string (e.g. 'no_news_events') or type(exc).__name__.
 
-        Phase 2: both artlist (requests.get) and tone (_fetch_gdelt_sentiment)
-        are mocked. The timeout fires on the artlist side; tone mock returns
-        unavailable to confirm both-fail path returns available=False.
+        Phase 3: mock news_corpus.build_news_corpus to return unavailable state
+        (simulating all fetch paths failing). Assert D-1 is satisfied.
 
-        FAILS if the producer raises, or exposes str(exc) in the reason.
+        FAILS if the producer raises, or exposes raw exception message details in reason.
         """
         import ai_advisor
-        from requests.exceptions import Timeout
 
-        timeout_exc = Timeout("Connection to api.gdeltproject.org timed out after 30s")
-        tone_result = _make_tone_result(available=False, tone=None, reason="Timeout")
+        corpus_result = _make_corpus_result(
+            articles=[], tone=None, available=False, reason="no_news_events"
+        )
 
-        with (
-            patch("requests.get", side_effect=timeout_exc),
-            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
-        ):
+        with patch("advisors.news_corpus.build_news_corpus", return_value=corpus_result):
             block = ai_advisor._build_sentiment_section()
 
         _assert_available_false_shape(block, "sentiment")
         reason = block.get("reason", "")
-        # Must name the exception class
-        assert "Timeout" in reason or "timeout" in reason.lower() or "error" in reason.lower(), (
-            f"Timeout reason must reference the exception type. Got: {reason!r}"
-        )
-        # Must NOT contain str(exc) content (would leak the URL/host)
-        assert "gdeltproject.org" not in reason, (
-            f"D-1 violation: reason exposes internal URL from str(exc): {reason!r}. "
-            f"Only type(exc).__name__ may appear."
-        )
-        assert "timed out after 30s" not in reason, (
-            f"D-1 violation: reason exposes str(exc) detail: {reason!r}. "
-            f"Only type(exc).__name__ may appear."
+        # D-1: must NOT contain raw exception message fragments
+        _SECRET_FRAGMENTS = [
+            "api.gdeltproject.org",
+            "timed out after",
+            "Connection refused",
+            "socket",
+            "secret-internal",
+        ]
+        for fragment in _SECRET_FRAGMENTS:
+            assert fragment not in reason, (
+                f"D-1 violation: reason exposes internal detail '{fragment}' "
+                f"from str(exc): {reason!r}. "
+                f"Only type(exc).__name__ or a named reason string is permitted."
+            )
+        # Reason must be a non-empty named string or exception class name
+        assert isinstance(reason, str) and reason.strip(), (
+            f"D-1: reason must be a non-empty string, got {reason!r}"
         )
 
     def test_sentiment_http_error_returns_available_false(self):
@@ -631,41 +723,60 @@ class TestPhase2GdeltToneWiring:
     def test_tone_score_none_when_tone_unavailable_but_artlist_ok(
         self, gdelt_shape_fixture: dict
     ):
-        """When tone is unavailable but artlist succeeds: available=True, tone_score=None.
+        """When tone is unavailable but corpus has articles: available=True, tone_score=None.
 
-        Per-source isolation: a failed tone GET must NOT invalidate artlist citations.
-        The block is available because artlist gave us articles; tone_score is None
+        Per-source isolation: a failed tone signal must NOT invalidate corpus citations.
+        The block is available because the corpus has articles; tone_score is None
         because the tone producer was unavailable.
 
-        FAILS if tone failure degrades available to False (incorrect coupling).
+        Phase 3: mock news_corpus.build_news_corpus returning corpus with articles
+        but tone=None (tone path failed inside build_news_corpus).
+
+        FAILS if tone=None degrades available to False (incorrect coupling).
         """
         import ai_advisor
 
-        mock_resp = _make_mock_response(gdelt_shape_fixture["gdelt_artlist_shape"])
-        tone_result = _make_tone_result(available=False, tone=None, reason="Timeout")
+        fixture_articles = gdelt_shape_fixture["gdelt_artlist_shape"]["articles"]
+        corpus_articles = [
+            {
+                "url": a["url"],
+                "title": a["title"],
+                "published": a.get("seendate", ""),
+                "domain": a.get("domain", ""),
+                "source_feed": "gdelt_artlist",
+                "topics": ["broad-sentiment"],
+                "score": 0.5,
+            }
+            for a in fixture_articles
+        ]
+        # tone=None but corpus has articles → available=True (corpus availability wins)
+        corpus_result = {
+            "available": True,  # articles make it available even without tone
+            "tone": None,       # tone path failed
+            "corpus": corpus_articles,
+            "reason": None,
+        }
 
-        with (
-            patch("requests.get", return_value=mock_resp),
-            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
-        ):
+        with patch("advisors.news_corpus.build_news_corpus", return_value=corpus_result):
             block = ai_advisor._build_sentiment_section()
 
         assert block.get("available") is True, (
-            "Tone unavailable must NOT degrade available to False when artlist succeeded. "
-            "Per-source isolation: artlist citations make the block available independently. "
+            "Tone=None must NOT degrade available to False when corpus has articles. "
+            "Per-source isolation: corpus articles make the block available independently. "
             f"Got: {block!r}"
         )
         payload = block.get("payload", {})
         assert payload.get("tone_score") is None, (
-            "tone_score must be None when tone producer returned available=False. "
+            "tone_score must be None when corpus.tone is None. "
             f"Got tone_score={payload.get('tone_score')!r}"
         )
-        # artlist citations must still be present
+        # corpus citations must still be present
+        # FAILS if implementer returns sources=[] (current broken state)
         sources = block.get("sources", [])
-        fixture_count = len(gdelt_shape_fixture["gdelt_artlist_shape"]["articles"])
-        assert len(sources) == fixture_count, (
-            f"Artlist citations must be present even when tone fails. "
-            f"Expected {fixture_count} sources, got {len(sources)}."
+        assert len(sources) == len(corpus_articles), (
+            f"Corpus citations must be present even when tone fails. "
+            f"Expected {len(corpus_articles)} sources, got {len(sources)}. "
+            f"FAILS on current implementation that hardcodes sources=[]."
         )
 
     def test_tone_ok_artlist_fails_available_true_with_tone_score(self):
@@ -776,59 +887,66 @@ class TestPhase2GdeltToneWiring:
         )
 
     def test_empty_published_citation_is_rejected_by_build_citation(self):
-        """A GDELT article with empty seendate must NOT produce a citation source.
+        """A corpus article with empty published date must NOT produce a citation source.
 
         build_citation requires 'published' to be a non-empty string (CC-4).
-        An article with seendate='' must be silently dropped (citation=None),
+        An article with published='' must be silently dropped (citation=None),
         not emitted as a source with published=''.
 
-        FAILS if the section emits a source with an empty 'published' field,
-        which would fail the citation guard and leak invalid citations.
+        Phase 3: mock news_corpus.build_news_corpus with a corpus that contains
+        one article with a non-empty published and one with published='' — the
+        empty-published one must be dropped by build_citation inside the section.
+
+        FAILS if the section emits a source with an empty 'published' field.
         """
         import ai_advisor
 
-        artlist_with_empty_seendate = {
-            "articles": [
-                {
-                    "url": "https://www.example.com/valid-article",
-                    "title": "Valid Article With Date",
-                    "seendate": "20260610T120000Z",
-                    "domain": "example.com",
-                },
-                {
-                    "url": "https://www.example.com/no-date-article",
-                    "title": "Article Missing Seendate",
-                    "seendate": "",  # empty — build_citation must reject this
-                    "domain": "example.com",
-                },
-            ]
-        }
-        mock_resp = _make_mock_response(artlist_with_empty_seendate)
-        tone_result = _make_tone_result(available=True, tone=0.05)
+        corpus_with_empty_published = [
+            {
+                "url": "https://www.example.com/valid-article",
+                "title": "Valid Article With Date",
+                "published": "20260610T120000Z",
+                "domain": "example.com",
+                "source_feed": "gdelt_artlist",
+                "topics": ["macro"],
+                "score": 0.7,
+            },
+            {
+                "url": "https://www.example.com/no-date-article",
+                "title": "Article Missing Published Date",
+                "published": "",  # empty — build_citation must reject this
+                "domain": "example.com",
+                "source_feed": "gdelt_artlist",
+                "topics": ["macro"],
+                "score": 0.6,
+            },
+        ]
+        corpus_result = _make_corpus_result(
+            articles=corpus_with_empty_published, tone=0.05, available=True
+        )
 
-        with (
-            patch("requests.get", return_value=mock_resp),
-            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
-        ):
+        with patch("advisors.news_corpus.build_news_corpus", return_value=corpus_result):
             block = ai_advisor._build_sentiment_section()
 
         sources = block.get("sources", [])
-        # Only the valid article (non-empty seendate) should survive
+        # Only the valid article (non-empty published) should survive
         for i, src in enumerate(sources):
             published = src.get("published", "")
             assert isinstance(published, str) and published.strip(), (
                 f"Source[{i}] has empty 'published' field — build_citation should have "
-                f"rejected this article (seendate was ''). Got: {src!r}"
+                f"rejected this article (published was ''). Got: {src!r}"
             )
         # The valid article must be present
+        # Note: if implementer returns sources=[] this assertion catches it.
         valid_urls = {s.get("url") for s in sources}
         assert "https://www.example.com/valid-article" in valid_urls, (
-            "The valid article (non-empty seendate) must appear in sources. "
-            f"Got sources: {sources!r}"
+            "The valid article (non-empty published) must appear in sources. "
+            f"Got sources: {sources!r}. "
+            f"FAILS on current implementation that hardcodes sources=[]."
         )
         # The rejected article must NOT be present
         assert "https://www.example.com/no-date-article" not in valid_urls, (
-            "The article with empty seendate must be rejected by build_citation. "
+            "The article with empty published must be rejected by build_citation. "
             f"Got sources: {sources!r}"
         )
 
@@ -857,37 +975,42 @@ class TestPhase2GdeltToneWiring:
     def test_combined_path_tone_score_propagates_alongside_artlist_sources(
         self, gdelt_shape_fixture: dict
     ):
-        """Combined path: both tone AND artlist succeed — tone_score must propagate.
+        """Combined path: both tone AND corpus articles succeed — tone_score must propagate.
 
-        This is the reviewer gap (Phase 2 APPROVE condition): none of the
-        existing property tests mock _fetch_gdelt_sentiment, so they silently
-        exercise only the artlist-only path and cannot catch a regression where
-        tone_score is dropped while artlist citations are still emitted.
-
-        Contract (combined path):
+        Phase 3 contract (news_corpus delegation):
           - available=True
-          - payload['tone_score'] == value returned by tone producer (not None)
-          - len(sources) == number of articles in fixture
+          - payload['tone_score'] == tone value from corpus_result (not None)
+          - len(sources) == number of corpus articles
 
-        FAILS if tone_score is None or absent when tone producer returned
-        available=True alongside a successful artlist fetch.
+        FAILS if tone_score is None or absent when corpus.tone is a float,
+        or if sources are empty when corpus has articles.
         """
         import ai_advisor
 
         fixture_articles = gdelt_shape_fixture["gdelt_artlist_shape"]["articles"]
-        mock_resp = _make_mock_response(gdelt_shape_fixture["gdelt_artlist_shape"])
+        corpus_articles = [
+            {
+                "url": a["url"],
+                "title": a["title"],
+                "published": a.get("seendate", ""),
+                "domain": a.get("domain", ""),
+                "source_feed": "gdelt_artlist",
+                "topics": ["broad-sentiment"],
+                "score": 0.5,
+            }
+            for a in fixture_articles
+        ]
         # Arbitrary in-range tone value — not hardcoded to a producer constant
         expected_tone = 0.33
-        tone_result = _make_tone_result(available=True, tone=expected_tone)
+        corpus_result = _make_corpus_result(
+            articles=corpus_articles, tone=expected_tone, available=True
+        )
 
-        with (
-            patch("requests.get", return_value=mock_resp),
-            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
-        ):
+        with patch("advisors.news_corpus.build_news_corpus", return_value=corpus_result):
             block = ai_advisor._build_sentiment_section()
 
         assert block.get("available") is True, (
-            f"Combined path (tone ok + artlist ok) must return available=True. "
+            f"Combined path (tone ok + corpus ok) must return available=True. "
             f"Got: {block!r}"
         )
         payload = block.get("payload") or {}
@@ -897,16 +1020,15 @@ class TestPhase2GdeltToneWiring:
         ), (
             # abs=1e-9: tone_score passes through without arithmetic; exact equality
             # is expected. pytest.approx used defensively for float identity.
-            f"payload['tone_score'] must equal the tone producer's value "
+            f"payload['tone_score'] must equal the corpus tone value "
             f"({expected_tone}) when both signals succeed. "
-            f"Got tone_score={tone_score!r}. "
-            f"A regression here means tone_score is being dropped or overwritten "
-            f"while artlist citations are still emitted."
+            f"Got tone_score={tone_score!r}."
         )
         sources = block.get("sources", [])
-        assert len(sources) == len(fixture_articles), (
-            f"Combined path must emit one source per fixture article. "
-            f"Expected {len(fixture_articles)}, got {len(sources)}."
+        assert len(sources) == len(corpus_articles), (
+            f"Combined path must emit one source per corpus article. "
+            f"Expected {len(corpus_articles)}, got {len(sources)}. "
+            f"FAILS on current implementation that hardcodes sources=[]."
         )
 
 
@@ -1389,10 +1511,18 @@ class TestD1ErrorContract:
     """All three Cycle-2 producers must expose only type(exc).__name__ in reason."""
 
     def test_connection_error_reason_is_exc_class_only(self, lens_name: str, ticker_kwarg: dict):
-        """A ConnectionError results in available=False, reason = class name only.
+        """A ConnectionError results in available=False; reason must not leak str(exc).
 
         str(ConnectionError) often contains hostnames, socket addresses, or
         partial credentials — never safe to surface.
+
+        For fundamentals and macro: the producer directly calls requests.get, so
+        reason must name the exception class.
+
+        For sentiment (Phase 3 / lens-news-events): the producer delegates to
+        news_corpus.build_news_corpus() which handles errors internally and returns
+        a fixed named reason (e.g. 'no_news_events'). The D-1 invariant still holds
+        (no hostname leakage) but the positive class-name assertion does not apply.
 
         FAILS for any producer that leaks str(exc) detail into 'reason'.
         """
@@ -1413,16 +1543,23 @@ class TestD1ErrorContract:
 
         _assert_available_false_shape(block, lens_name)
         reason = block.get("reason", "")
+        # D-1 hard invariant (ALL producers): str(exc) hostname must never appear.
         assert "secret-internal.example.com" not in reason, (
             f"D-1 violation in {lens_name} producer: str(exc) hostname leaked "
-            f"into reason: {reason!r}. Only type(exc).__name__ is permitted."
+            f"into reason: {reason!r}. Only type(exc).__name__ or a named reason is permitted."
         )
-        # The class name SHOULD appear (it's the only allowed content)
-        assert (
-            "ConnectionError" in reason
-            or "error" in reason.lower()
-            or "connection" in reason.lower()
-        ), f"D-1 error reason for {lens_name} must reference the exception class. Got: {reason!r}"
+        if lens_name != "sentiment":
+            # fundamentals and macro call requests.get directly → reason names exc class.
+            assert (
+                "ConnectionError" in reason
+                or "error" in reason.lower()
+                or "connection" in reason.lower()
+            ), (
+                f"D-1 error reason for {lens_name} must reference the exception class. "
+                f"Got: {reason!r}"
+            )
+        # For sentiment: news_corpus delegates error handling internally → any non-empty
+        # D-1 compliant reason is accepted (no hostname = passes D-1).
 
     def test_generic_exception_reason_is_exc_class_only(self, lens_name: str, ticker_kwarg: dict):
         """Any unexpected exception results in available=False, reason = class only.
@@ -1595,39 +1732,37 @@ if _HYPOTHESIS_AVAILABLE:
     def test_gdelt_sources_count_equals_article_count(article_count: int):
         """PROPERTY: len(sources) == article_count for any non-negative count.
 
-        The GDELT producer must produce exactly one source per article.
-        This invariant must hold for any article count from 0 to 50.
+        The sentiment producer must produce exactly one citation source per corpus
+        article (after build_citation filtering). This invariant must hold for any
+        corpus article count from 0 to 50.
 
-        Phase 2: also mocks _fetch_gdelt_sentiment with available=True so the
-        combined path (tone + artlist both succeed) is exercised. Without this
-        mock, the lazy import fires the live producer against the artlist-mock,
-        gets no "timeline" key, returns unavailable, and the test silently only
-        exercises the artlist-only path.
+        Phase 3 (lens-news-events): mock news_corpus.build_news_corpus() with a
+        corpus of deterministic articles — all with non-empty published dates so
+        build_citation accepts them all.
 
-        deadline=None: _make_tone_result helper + mock setup must not be subject
-        to the 200ms hypothesis deadline.
+        deadline=None: mock setup must not be subject to the 200ms hypothesis deadline.
         """
         import ai_advisor
 
-        articles = [
+        # Corpus articles in news_corpus normalized shape (published not seendate).
+        # All have non-empty published so build_citation accepts every one.
+        corpus_articles = [
             {
                 "url": f"https://www.example.com/article-{i}",
                 "title": f"Test Article {i}",
-                "seendate": "20260610T120000Z",
-                "language": "English",
+                "published": "20260610T120000Z",
                 "domain": "example.com",
-                "sourcecountry": "United States",
+                "source_feed": "gdelt_artlist",
+                "topics": ["broad-sentiment"],
+                "score": 0.5,
             }
             for i in range(article_count)
         ]
-        mock_resp = _make_mock_response({"articles": articles})
-        # tone available=True so we exercise combined path, not artlist-only path
-        tone_result = _make_tone_result(available=True, tone=0.10)
+        corpus_result = _make_corpus_result(
+            articles=corpus_articles, tone=0.10, available=(article_count > 0)
+        )
 
-        with (
-            patch("requests.get", return_value=mock_resp),
-            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
-        ):
+        with patch("advisors.news_corpus.build_news_corpus", return_value=corpus_result):
             block = ai_advisor._build_sentiment_section()
 
         if block.get("available") is True:
@@ -1635,12 +1770,13 @@ if _HYPOTHESIS_AVAILABLE:
             assert len(sources) == article_count, (
                 f"PROPERTY VIOLATION: article_count={article_count} but "
                 f"len(sources)={len(sources)}. "
-                f"Each GDELT article must produce exactly one citation source."
+                f"Each corpus article must produce exactly one citation source. "
+                f"FAILS on current implementation that hardcodes sources=[]."
             )
-            # Combined path: tone_score must be the value from the tone producer
+            # Combined path: tone_score must be the value from the corpus result
             payload = block.get("payload", {})
             assert payload.get("tone_score") is not None, (
-                f"PROPERTY VIOLATION: combined path (tone available=True, artlist ok) "
+                f"PROPERTY VIOLATION: combined path (corpus available=True with tone) "
                 f"must carry a non-None tone_score in payload. Got payload={payload!r}"
             )
 

@@ -316,7 +316,7 @@ _SEC_USER_AGENT: str = "PlanetStopper advisor contact@alphabotpm.example"
 # GDELT 2.0 DOC API — free, no key, artlist mode returning JSON.
 _GDELT_ARTLIST_URL: str = (
     "https://api.gdeltproject.org/api/v2/doc/doc"
-    "?query=stock+market+finance"
+    "?query=stock+market+finance+sourcelang:eng"
     "&mode=artlist"
     "&maxrecords=10"
     "&format=json"
@@ -549,66 +549,52 @@ def _build_technicals_section(_data: object = None) -> dict:
 
 
 def _build_sentiment_section(_data: object = None) -> dict:
-    """Sentiment / news lens block — GDELT 2.0 DOC API producer (Cycle 2).
+    """Sentiment / news lens block — multi-source two-facet producer (lens-news-events upgrade).
 
-    Fetches tone from the GDELT timelinetone endpoint (via lens_gdelt producer)
-    and article citations from the artlist endpoint.  Per-source isolation:
-    either signal can succeed independently; available=False only when both fail.
+    Single-path architecture:
+      news_corpus.build_news_corpus() — multi-source corpus (8 RSS/Atom feeds + GDELT artlist)
+      plus GDELT AvgTone scalar.  A single lens_gdelt._fetch_gdelt_sentiment() call inside
+      news_corpus delivers both tone and artlist articles (≤2 GDELT GETs total per run).
+
+    available=True iff news_corpus returns tone or a non-empty corpus.
+    Payload carries: tone_score, corpus (Facet B ranked articles), events (Facet A legacy shape
+    for render compatibility), article_count.
+    sources: built from corpus via build_citation() — feeds lens_pipeline aggregation +
+    the Overview "Cited sources" block.
 
     GDELT is key-less; no env-var gate.  D-1: reason is type(exc).__name__ only.
+    CC-2: all advisors modules imported lazily (never at module level).
 
     Args:
         _data: unused; reserved for caller pre-injection (test-mockable hook).
 
     Returns:
         Lens block dict with keys: lens, available, reason (on False),
-        payload (on True), sources (on True).
+        payload (on True), sources.
     """
     _lens = "sentiment"
 
-    # --- Tone signal (CC-2: lazy import inside function body) ---
-    from advisors import lens_gdelt  # noqa: PLC0415
-
+    # --- Primary path: multi-source corpus builder (CC-2: lazy import) ---
+    corpus_result: dict = {"available": False, "tone": None, "corpus": [], "reason": None}
     try:
-        tone_result = lens_gdelt._fetch_gdelt_sentiment([])
+        from advisors import news_corpus as _news_corpus  # noqa: PLC0415
+
+        corpus_result = _news_corpus.build_news_corpus()
     except Exception as exc:
-        # Defense-in-depth: the producer itself never raises, but guard anyway.
-        tone_result = {
-            "available": False,
-            "tone": None,
-            "reason": type(exc).__name__,  # D-1: never str(exc)
-        }
+        logger.debug("news_corpus.build_news_corpus failed: %s", type(exc).__name__)
 
-    tone_score = tone_result["tone"] if tone_result.get("available") else None
-    tone_available = bool(tone_result.get("available"))
+    corpus_available = bool(corpus_result.get("available"))
 
-    # --- Artlist citations (best-effort) ---
-    articles: list = []
-    artlist_available = False
-    artlist_reason: str | None = None
-    try:
-        resp = _fetch_with_backoff(_GDELT_ARTLIST_URL)
-        resp.raise_for_status()
-        data = resp.json()
-        articles = data.get("articles") or []
-        artlist_available = True
-    except Exception as exc:
-        artlist_reason = type(exc).__name__  # D-1: never str(exc)
-        logger.debug("GDELT artlist fetch failed: %s", artlist_reason)
-
-    # --- Per-source isolation ---
-    # available=True if either tone OR artlist gave us something.
-    # available=False only when both fail.
-    if not tone_available and not artlist_available:
-        reason = artlist_reason or tone_result.get("reason") or "gdelt_fetch_failed"
-        # AC-4: persist this lens snapshot to the warehouse (lazy import, CC-2).
+    if not corpus_available:
+        reason = corpus_result.get("reason") or "no_news_events"
+        # DW-1: persist unavailability event to warehouse (lazy import, CC-2).
         try:
             from advisors import lens_warehouse  # noqa: PLC0415
 
             lens_warehouse.persist_lens_snapshot(
                 lens="sentiment",
                 symbol=None,
-                source="gdelt",
+                source="news_corpus",
                 available=False,
                 raw_payload={"reason": reason},
             )
@@ -617,53 +603,67 @@ def _build_sentiment_section(_data: object = None) -> dict:
         return {
             "lens": _lens,
             "available": False,
-            "reason": reason,
             "payload": None,
             "sources": [],
+            "reason": reason,
         }
 
-    sources = []
-    for article in articles:
-        url = article.get("url", "")
-        title = article.get("title", "")
-        seendate = article.get("seendate", "")
-        citation = build_citation(
+    tone_score = corpus_result.get("tone")
+    corpus = corpus_result.get("corpus", [])
+
+    # events: legacy shape mapped from corpus articles for render compatibility (AC-5)
+    if corpus:
+        events = [
             {
-                "title": title,
-                "url": url,
-                "published": seendate,
-                "lens": _lens,
+                "title": art.get("title", ""),
+                "domain": art.get("domain", ""),
+                "seendate": art.get("published", ""),
             }
-        )
-        if citation is not None:
-            sources.append(citation)
+            for art in corpus
+        ]
+    else:
+        events = []
 
     logger.info(
-        "GDELT sentiment: tone=%s articles=%d citations=%d",
+        "multi-source sentiment: tone=%s corpus_size=%d events=%d",
         tone_score,
-        len(articles),
-        len(sources),
+        len(corpus),
+        len(events),
     )
-    # AC-4: persist this lens snapshot to the warehouse (lazy import, CC-2).
+
+    # DW-1: persist this lens snapshot to the warehouse (lazy import, CC-2).
     try:
         from advisors import lens_warehouse  # noqa: PLC0415
 
         lens_warehouse.persist_lens_snapshot(
             lens="sentiment",
             symbol=None,
-            source="gdelt",
+            source="news_corpus",
             available=True,
-            raw_payload={"article_count": len(articles), "tone_score": tone_score},
+            raw_payload={"tone_score": tone_score, "corpus_size": len(corpus)},
         )
     except Exception:  # noqa: BLE001
         pass  # D-1: warehouse errors never surface to callers
+
+    sources: list[dict] = []
+    for art in corpus:
+        citation = build_citation({
+            "title": art.get("title", ""),
+            "url": art.get("url", ""),
+            "published": art.get("published", ""),
+            "lens": _lens,
+        })
+        if citation is not None:
+            sources.append(citation)
+
     return {
         "lens": _lens,
         "available": True,
         "payload": {
-            "article_count": len(articles),
-            "tone_summary": None,
             "tone_score": tone_score,
+            "corpus": corpus,
+            "events": events,  # AC-5: events in legacy shape for render compatibility
+            "article_count": len(corpus),
         },
         "sources": sources,
     }

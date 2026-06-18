@@ -1097,3 +1097,179 @@ Branch: `fix/prism-followups` | HEAD: 8e59305
 **Files changed:** `templates/ai_advisor.html` (lines 967–977: comment + two new dict entries).
 
 **Status:** GREEN at 8e59305. 7/7 AC-2 chip-mapping tests pass.
+
+
+---
+
+### DE-GDELT-005: News-events upgrade — sourcelang:eng filter, _extract_events, events-OR-tone availability gate (2026-06-18)
+
+Branch: `feat/lens-news-events` | HEAD: 2649229
+
+**Decision:** Upgrade `advisors/lens_gdelt.py` from aggregate-tone-only to real English-language market news events as the primary signal, with tone secondary.
+
+**Why the prior design was insufficient:**
+
+1. **No language filter.** The artlist query had no `sourcelang:eng` constraint, so GDELT returned articles in any language (including non-English and articles with a null `language` field). Non-English headlines are not useful to English-language operators and add noise to the Market Prism synthesis prompt.
+
+2. **Tone-only availability gate allowed a forbidden state.** The prior gate set `available=True` as soon as the tone endpoint returned HTTP 200 — even when tone extraction yielded `None` (empty timeline, no numeric data). `available=True, tone=None` is explicitly forbidden by the honest-availability contract (§4). The fix changes the gate to `available = bool(events) OR tone is not None`, so availability is tied to a real signal.
+
+3. **No first-class events field.** The return dict had no `events` key; the artlist payload was buried in `sources` as raw citation dicts. The Market Prism synthesizer could not directly access ranked news headlines without re-parsing citations.
+
+**What changed in `advisors/lens_gdelt.py`:**
+
+- `sourcelang:eng` added to both `_GDELT_TONE_URL` and `_GDELT_ARTLIST_URL` (server-side pre-filter).
+- `_GDELT_MAX_EVENTS: int = 7` constant added (feature plan AC-2 pin — ~5-8 events for prompt-budget control).
+- `_extract_events(sources_raw)` helper added: filters `language == "English"` (client-side defense-in-depth), sorts most-recent-first by seendate (lexicographic on `YYYYMMDDTHHmmssZ`), deduplicates by domain (most-recent per domain), caps at `_GDELT_MAX_EVENTS`. Returns `list[dict]` with keys `title`, `domain`, `seendate`. Never raises.
+- Availability gate changed: tone-extraction failures (`tone=None`) no longer short-circuit before the artlist call. Only HTTP-level tone failures (rate_limited, gdelt_fetch_failed, exception) return early. An empty timeline sets `tone=None` but continues to artlist — if events are found, `available=True` with `tone=None` is a valid result.
+- `events` key added to ALL return paths: the success path returns `_extract_events(articles_raw)`; all unavailable/failure paths return `[]`.
+- `_unavailable()` helper updated to include `events: []`.
+- `_tone_unavail_reason` internal variable tracks whether the final `no_news_events` or `no_tone_data` label is appropriate when both signals are absent (artlist-reached vs tone-side-only failure distinction preserved per contract §4).
+
+**What changed in `ai_advisor.py`:**
+
+- `_GDELT_ARTLIST_URL` updated to include `sourcelang:eng` in the query string.
+- `_build_sentiment_section` success-path payload updated: `events: tone_result.get("events", [])` surfaces the ranked domain-deduped events list from the lens_gdelt producer call.
+
+**Scope boundary:** No changes to `lens_pipeline.py`, `lens_warehouse.py`, `tests/` fixture schemas (the artlist fixture already contains `language` fields; existing tests updated to cover the new behavior), or any template. The `sources` field in the return dict is unchanged.
+
+**Files changed:** `advisors/lens_gdelt.py` (constants, `_unavailable`, `_extract_events` new helper, tone-extraction step, artlist step, availability gate), `ai_advisor.py` (`_GDELT_ARTLIST_URL`, `_build_sentiment_section` payload).
+
+**Status:** GREEN at 2649229. 68/68 tests pass.
+
+
+---
+
+### DE-NC-001: Multi-source news corpus — two-facet design (Facet A: GDELT tone + Facet B: ranked RSS corpus) (2026-06-18)
+
+Branch: `feat/lens-news-events` | HEAD: b93b724
+
+**Decision:** Replace the GDELT-artlist-only interim corpus (2649229) with a production-grade multi-source news corpus builder in a dedicated `advisors/news_corpus.py` module.
+
+**Why the GDELT-artlist-only interim was insufficient:**
+
+1. **Single source.** GDELT artlist is one aggregator with limited coverage of primary sources (.gov data releases, wire services, domain-specific financial media). A single source is a single point of failure and biases coverage.
+
+2. **No scoring or ranking.** The interim design returned articles in GDELT's raw order with no recency/relevance/authority weighting. Articles from low-authority or off-topic sources ranked alongside primary data releases.
+
+3. **No cross-source deduplication.** Multiple sources covering the same story (e.g., a Fed decision reported by CNBC, Reuters, and MarketWatch) would appear as separate entries, consuming prompt budget and inflating apparent signal.
+
+4. **No topic tagging.** The Market Prism synthesizer had no structured signal about which articles were macro vs fundamentals vs technicals vs derivatives — all articles were treated as undifferentiated sentiment.
+
+**Two-facet design:**
+
+- **Facet A (GDELT tone):** Independent scalar. `_fetch_gdelt_tone()` hits `lens_gdelt._GDELT_TONE_URL` with `_UA_STD`. Tone failure does not abort the corpus fetch — the two facets are always attempted independently.
+
+- **Facet B (ranked corpus):** `_fetch_all_feeds()` fetches GDELT artlist (JSON, `maxrecords=50`) + 8 RSS/Atom feeds via `feedparser`:
+  - Commercial financial media (`_UA_STD`): Google News Business, CNBC Markets, MarketWatch Top Stories, Yahoo Finance.
+  - `.gov` primary data (`_UA_GOV = "PlanetStopper/1.0 paulmgreaney@gmail.com"` — required to avoid 403s): Fed press releases, BLS latest releases, BEA RSS, SEC 8-K filings.
+
+**Scoring formula (weights sum to 1.0, all named constants):**
+
+```
+score = W_RECENCY(0.40) * exp(-delta_hours / TAU_HOURS(24))
+      + W_RELEVANCE(0.35) * min(1.0, keyword_hits / 3)
+      + W_AUTHORITY(0.25) * SOURCE_AUTHORITY.get(domain, 0.4)
+```
+
+Recency defaults to 0.5 on unparseable dates. The `SOURCE_AUTHORITY` table ranges from 1.0 (.gov sources) to 0.4 (unknown domains).
+
+**Cross-source deduplication (three-step, applied before scoring):**
+
+1. URL canonical dedup (strip query + fragment via `_canonical_url`) — highest-authority article wins per canonical URL.
+2. Title Jaccard dedup (token-set, threshold `DEDUP_JACCARD_THRESHOLD=0.85`) — same-story duplicates across sources; highest-authority article is kept.
+3. Per-domain cap (`_PER_DOMAIN_CAP=3`) — no single source dominates the final corpus.
+
+**Topic tagging (`_tag_topics`):** Pure stdlib keyword matching across four topics (macro, fundamentals, technicals, derivatives). Multi-label. Defaults to `["broad-sentiment"]` when no keywords match.
+
+**Availability:** `available = tone is not None OR bool(corpus)`. `reason = "no_news_events"` only when both absent.
+
+**Impact on `ai_advisor._build_sentiment_section`:**
+
+The interim standalone `_fetch_with_backoff` artlist call has been removed. New two-path architecture:
+- Primary: `news_corpus.build_news_corpus()` — full two-facet result.
+- Fallback/test-seam: `lens_gdelt._fetch_gdelt_sentiment([])` — patching `_fetch_gdelt_sentiment` in tests propagates into the section, preserving the test seam.
+
+Payload carries `tone_score`, `corpus` (ranked articles), and `events` (mapped from corpus to legacy shape `{title, domain, seendate}` for render compatibility — AC-5). When corpus is empty but GDELT has events, falls back to `gdelt_result["events"]`.
+
+**Impact on `advisors/lens_gdelt.py`:** `_GDELT_ARTLIST_URL` `maxrecords` bumped from 10 to 50 — the multi-source corpus fetches up to 50 GDELT articles to feed the scoring pipeline.
+
+**New dependency:** `feedparser>=6.0` added to `requirements.txt`.
+
+**Scope boundary — warehouse persistence:** ~~SUPERSEDED by DE-NC-001-C1 below.~~ The cycle-2 fix restored `lens_warehouse.persist_lens_snapshot` on both the unavailable and success paths of `_build_sentiment_section` (DW-1 is wired, not deferred).
+
+**Files changed (initial GREEN b93b724):** `advisors/news_corpus.py` (new), `advisors/lens_gdelt.py` (`_GDELT_ARTLIST_URL` maxrecords=50), `ai_advisor.py` (`_build_sentiment_section` two-path + payload restructure), `requirements.txt` (feedparser>=6.0).
+
+**Status:** GREEN at b93b724. 107/107 tests pass.
+
+---
+
+### DE-NC-001-C1: Cycle-2 corrections — single-spaced GDELT path (BLOCK 1) + warehouse persistence restored (BLOCK 2) (2026-06-18)
+
+Branch: `feat/lens-news-events` | HEAD: 5e2a830
+
+**Supersedes:** The “deferred DW-1” paragraph in DE-NC-001 (commit 732a8e3). Both reviewer BLOCKs were resolved in this cycle before merge.
+
+**BLOCK 1 — Single-spaced GDELT path:**
+
+`news_corpus.build_news_corpus()` now makes exactly ONE `lens_gdelt._fetch_gdelt_sentiment([])` call for both Facet A (tone) and GDELT artlist articles. The result supplies:
+- `tone` from `result["tone"]`
+- GDELT corpus articles from `result["sources"]` via `_normalize_gdelt_articles()` (new pure normalizer — converts GDELT `{url, seendate, title, domain}` records to the common article shape with `source_feed="gdelt_artlist"`).
+
+`_fetch_gdelt_artlist()` is deleted. `_fetch_all_feeds()` is now RSS-only (no direct GDELT GETs). `_fetch_gdelt_tone()` is retained as an internal helper but delegates to `lens_gdelt._fetch_gdelt_sentiment` — it is not called separately from `build_news_corpus` (the single top-level call covers both facets).
+
+Result: ≤2 spaced GDELT GETs per `_build_sentiment_section` call. The two GETs are timelinetone + artlist, already spaced by `_GDELT_INTER_REQUEST_S=6.0s` inside `lens_gdelt._fetch_gdelt_sentiment`.
+
+`ai_advisor._build_sentiment_section` no longer calls `lens_gdelt._fetch_gdelt_sentiment` directly. `news_corpus.build_news_corpus()` is the sole entry point. The GDELT test seam is preserved: `build_news_corpus` delegates to `_fetch_gdelt_sentiment` internally, so patching `_fetch_gdelt_sentiment` propagates into the section.
+
+**BLOCK 2 — Warehouse persistence restored (sentiment only; macro was never dropped):**
+
+`ai_advisor._build_sentiment_section` now calls `lens_warehouse.persist_lens_snapshot` on both paths:
+- **Unavailable path** (`corpus_result["available"] == False`): persists `{lens="sentiment", source="news_corpus", available=False, raw_payload={"reason": reason}}`.
+- **Success path**: persists `{lens="sentiment", source="news_corpus", available=True, raw_payload={"tone_score": tone_score, "corpus_size": len(corpus)}}`.
+
+Both calls are CC-2 lazy imports, wrapped in `try/except` with `pass` — warehouse errors never surface to callers (D-1).
+
+**Additional cycle-2 changes:**
+- `sources[]` in the return dict now populated: `build_citation({title, url, published, lens})` called per corpus article; `None` returns filtered.
+- `article_count: len(corpus)` added to payload dict.
+- `utcnow()` replaced with `datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)` (Python 3.12+ deprecation guard).
+
+**Files changed:** `advisors/news_corpus.py` (single GDELT call, `_fetch_gdelt_artlist` deleted, `_normalize_gdelt_articles` added, `_fetch_all_feeds` RSS-only, `utcnow` replaced); `ai_advisor.py` (`_build_sentiment_section`: warehouse persistence restored on both paths, sources built from corpus via `build_citation`, `article_count` added to payload).
+
+**Status:** GREEN at 5e2a830. 166/166 tests pass.
+
+---
+
+### DE-NC-001-STALE-TESTS: Stale Phase-2 warehouse-wiring tests — fixed in cycle-2 (2026-06-18)
+
+**Background:** `tests/ai_advisor/test_lens_warehouse_wiring.py::TestSentimentSectionWarehouseWiring`
+contained three tests that patched the old `advisors.lens_gdelt._fetch_gdelt_sentiment` +
+`ai_advisor._fetch_with_backoff` seams from the Phase-2 interim architecture. After
+the cycle-2 restructure those seams were no longer the correct mock targets, causing
+live RSS HTTP calls in the default suite and a non-deterministic `available=False`
+vs `available=True` assertion failure. This was classified as a merge-gate break
+(not deferred) and fixed in the same cycle.
+
+**Fix (HEAD bed4afb):**
+
+1. **Dead code deleted.** `_fetch_gdelt_tone()` (`advisors/news_corpus.py`) had
+   no production caller — `build_news_corpus` calls `lens_gdelt._fetch_gdelt_sentiment`
+   directly inline. The helper was deleted. A tombstone test
+   `test_fetch_gdelt_tone_is_removed_dead_code` asserts `not hasattr(news_corpus, "_fetch_gdelt_tone")`.
+
+2. **Stale live-HTTP tests deleted.** Three tests in `TestSentimentSectionWarehouseWiring`
+   that patched wrong seams and made live HTTP calls were removed:
+   `test_persist_called_after_successful_gdelt_fetch`,
+   `test_persist_called_with_available_false_when_gdelt_down`,
+   `test_persist_payload_is_not_fabricated_when_down`.
+   The remaining test in that class (`test_persist_lens_snapshot_is_lazy_imported_in_sentiment`)
+   is a pure `hasattr` attribute check with zero HTTP.
+
+3. **Authoritative hermetic coverage in `TestWarehousePersistence`** (`test_news_corpus.py`):
+   patches `news_corpus_mod.build_news_corpus` (the correct seam); covers
+   `available=True`, `available=False`, and payload shape paths. CC-2 lazy-import guard retained.
+
+4. **<=2-GETs invariant** still carried by `test_build_sentiment_section_total_gdelt_gets_at_most_two`
+   (`test_news_corpus.py:1627`), which patches `requests.get` through the real production path.
+
+**Status:** Fixed at bed4afb. Reviewer delta-APPROVE confirmed all four checks pass.

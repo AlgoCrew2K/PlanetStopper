@@ -1,0 +1,47 @@
+{
+  "_provenance": "Schema-derived-with-runtime-validator — GDELT DOC API artlist endpoint with English-language filter. Live capture attempted 2026-06-18 but rate-limited (nightly daemon holds the IP window). Shape derived from GDELT 2.0 DOC API JSONFeed spec (https://blog.gdeltproject.org/gdelt-doc-2-0-api-supports-jsonfeed/) and the real response structure documented in .claude/gdelt-diagnosis.md. Values are sentinels; envelope structure is production-accurate. Runtime validator (validate_artlist_events_shape) asserts: articles list present, each article carries url/title/seendate/domain/language; language values are 'English' for all entries. Honest fallback per AC-1 fixture provenance rule.",
+  "_api_url": "https://api.gdeltproject.org/api/v2/doc/doc?query=stock+market+finance+sourcelang:eng&mode=artlist&format=json&maxrecords=10",
+  "_note": "All articles are English-language. language field is 'English' for each (GDELT uses this exact string). The sourcelang:eng query filter should yield only English articles; this fixture represents the expected filtered shape. Tests assert structure/presence/language field value, never hardcoded headline text or numeric tone.",
+  "articles": [
+    {
+      "url": "https://www.reuters.com/markets/us-equities-outlook-2026",
+      "title": "US Equity Markets Signal Caution Ahead of Fed Rate Decision",
+      "seendate": "20260618T120000Z",
+      "language": "English",
+      "domain": "reuters.com",
+      "sourcecountry": "United States"
+    },
+    {
+      "url": "https://www.bloomberg.com/news/market-volatility-watch-2026",
+      "title": "Volatility Index Climbs as Investors Weigh Growth Outlook",
+      "seendate": "20260618T110000Z",
+      "language": "English",
+      "domain": "bloomberg.com",
+      "sourcecountry": "United States"
+    },
+    {
+      "url": "https://www.ft.com/content/stock-market-finance-sector-update",
+      "title": "Finance Sector Stocks Recover on Strong Earnings Beat",
+      "seendate": "20260618T100000Z",
+      "language": "English",
+      "domain": "ft.com",
+      "sourcecountry": "United Kingdom"
+    },
+    {
+      "url": "https://www.cnbc.com/market-pulse-june-2026",
+      "title": "Market Pulse: Stocks Mixed as Trade Talks Continue",
+      "seendate": "20260618T090000Z",
+      "language": "English",
+      "domain": "cnbc.com",
+      "sourcecountry": "United States"
+    },
+    {
+      "url": "https://www.wsj.com/articles/bond-market-update-2026",
+      "title": "Bond Market Signals Easing Inflation Pressure",
+      "seendate": "20260618T080000Z",
+      "language": "English",
+      "domain": "wsj.com",
+      "sourcecountry": "United States"
+    }
+  ]
+}

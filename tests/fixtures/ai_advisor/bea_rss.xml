@@ -1,0 +1,1273 @@
+<?xml version="1.0" encoding="us-ascii"?>
+<rss version="2.0">
+  <channel>
+    <title>U.S. Bureau of Economic Analysis</title>
+    <link>https://www.bea.gov</link>
+    <description>U.S. Bureau of Economic Analysis</description>
+    <pubDate>Wed, 10 Jun 2026 08:30:00 EDT</pubDate>
+    <lastBuildDate>Wed, 10 Jun 2026 08:30:00 EDT</lastBuildDate>
+    <image>
+      <url>https://www.bea.gov/favicon.ico</url>
+      <title>BEA - Bureau of Economic Analysis</title>
+      <link>https://www.bea.gov</link>
+      <width>88</width>
+      <height>31</height>
+    </image>
+    <language>en-us</language>
+    <ttl>17</ttl>
+    <item name="New Foreign Direct Investment in the United States">
+      <dbId>
+      </dbId>
+      <title>New Foreign Direct Investment in the United States, 2025</title>
+      <link>https://www.bea.gov/news/2026/new-foreign-direct-investment-united-states-2025</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2026/new-foreign-direct-investment-united-states-2025</guid>
+      <description>Expenditures by foreign direct investors to acquire, establish, or expand U.S. businesses totaled $232.2 billion in 2025, according to preliminary statistics released today by the U.S. Bureau of Economic Analysis. Expenditures increased $76.8 billion, or 49.5 percent, from 2024 levels.  As in previous years, acquisitions of existing U.S. businesses accounted for most of the expenditures. Acquisition expenditures in 2025 were $218.4 billion, expenditures to establish new U.S. businesses were $4.6 billion, and expenditures to expand existing foreign-owned businesses were $9.2 billion. Planned total expenditures, which include both first-year and planned future expenditures, were $284.5 billion.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2026/new-foreign-direct-investment-united-states-2025'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>2025</infoDate>
+            <percentChange>
+            </percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>2024</infoDate>
+            <percentChange>
+            </percentChange>
+          </previous>
+        </main>
+      </data>
+      <NextReleaseDate>June 2027</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2026-06/fdi0626.pdf</pdf>
+      <pubDate>Wed, 10 Jun 2026 08:30:00 EDT</pubDate>
+    </item>
+    <item name="U.S. International Trade in Goods and Services">
+      <dbId>102</dbId>
+      <title>U.S. International Trade in Goods and Services, April 2026</title>
+      <link>https://www.bea.gov/news/2026/us-international-trade-goods-and-services-april-2026</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2026/us-international-trade-goods-and-services-april-2026</guid>
+      <description>The U.S. monthly international trade deficit decreased in April 2026 according to the U.S. Bureau of Economic Analysis and the U.S. Census Bureau. The deficit decreased from $56.6 billion in March (revised) to $55.9 billion in April, as exports increased more than imports. The goods deficit decreased $2.4 billion in April to $83.7 billion. The services surplus decreased $1.7 billion in April to $27.8 billion.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2026/us-international-trade-goods-and-services-april-2026'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>April 2026</infoDate>
+            <percentChange>-$55.9 billion</percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>March 2026</infoDate>
+            <percentChange>-$56.6 billion</percentChange>
+          </previous>
+        </main>
+      </data>
+      <NextReleaseDate>July 7, 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2026-06/trad0426.pdf</pdf>
+      <pubDate>Tue, 09 Jun 2026 08:30:00 EDT</pubDate>
+    </item>
+    <item name="GDP">
+      <dbId>101</dbId>
+      <title>GDP (Second Estimate) and Corporate Profits, 1st Quarter 2026</title>
+      <link>https://www.bea.gov/news/2026/gdp-second-estimate-and-corporate-profits-1st-quarter-2026</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2026/gdp-second-estimate-and-corporate-profits-1st-quarter-2026</guid>
+      <description>Real gross domestic product (GDP) increased at an annual rate of 1.6 percent in the first quarter of 2026 (January, February, and March), according to the second estimate released today by the U.S. Bureau of Economic Analysis. In the fourth quarter of 2025, real GDP increased 0.5 percent. The contributors to the increase in real GDP in the first quarter were exports, investment, consumer spending, and government spending. Imports, which are a subtraction in the calculation of GDP, increased.   &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2026/gdp-second-estimate-and-corporate-profits-1st-quarter-2026'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <vintage>2nd</vintage>
+      <data>
+        <main>
+          <current>
+            <infoDate>Q1 2026 (2nd)</infoDate>
+            <percentChange>+1.6</percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>Q4 2025</infoDate>
+            <percentChange>+0.5</percentChange>
+          </previous>
+        </main>
+      </data>
+      <NextReleaseDate>June 25, 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2026-05/gdp1q26-2nd.pdf</pdf>
+      <pubDate>Thu, 28 May 2026 08:30:00 EDT</pubDate>
+    </item>
+    <item name="Personal Income and Outlays">
+      <dbId>100</dbId>
+      <title>Personal Income and Outlays, April 2026</title>
+      <link>https://www.bea.gov/news/2026/personal-income-and-outlays-april-2026</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2026/personal-income-and-outlays-april-2026</guid>
+      <description>Personal income decreased less than $0.1 billion (less than 0.1 percent at a monthly rate) in April, according to estimates released today by the U.S. Bureau of Economic Analysis (BEA). Disposable personal income (DPI)-personal income less personal current taxes-decreased $19.9 billion (0.1 percent), and personal consumption expenditures (PCE) increased $111.1 billion (0.5 percent). Personal outlays-the sum of PCE, personal interest payments, and personal current transfer payments-increased $114.0 billion in April. Personal saving was $611.7 billion in April, and the personal saving rate-personal saving as a percentage of DPI-was 2.6 percent.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2026/personal-income-and-outlays-april-2026'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>April 2026</infoDate>
+            <percentChange>+0.0%</percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>March 2026</infoDate>
+            <percentChange>+0.5%</percentChange>
+          </previous>
+        </main>
+        <supplemental name="Personal Consumption Expenditures">
+          <current>
+            <percentChange>0.5</percentChange>
+            <rateChange>111.1</rateChange>
+          </current>
+        </supplemental>
+      </data>
+      <NextReleaseDate>June 25, 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2026-05/pi0426.pdf</pdf>
+      <pubDate>Thu, 28 May 2026 08:30:00 EDT</pubDate>
+    </item>
+    <item name="U.S. International Transactions and Investment Position">
+      <dbId>
+      </dbId>
+      <title>U.S. International Transactions and Investment Position, 4th Quarter and Year 2025</title>
+      <link>https://www.bea.gov</link>
+      <guid isPermaLink="true">https://www.bea.gov</guid>
+      <description>The U.S. current-account deficit resulting from international economic transactions narrowed by $48.4 billion, or 20.2 percent, to $190.7 billion in the fourth quarter of 2025, according to statistics released today by the U.S. Bureau of Economic Analysis. The revised third-quarter deficit was $239.1 billion. The fourth-quarter deficit was 2.4 percent of current-dollar gross domestic product, down from 3.1 percent in the third quarter.The U.S. net international investment position, the difference between U.S. residents' foreign financial assets and liabilities, was -$27.54 trillion at the end of the fourth quarter of 2025. Assets totaled $42.96 trillion, and liabilities totaled $70.49 trillion. At the end of the third quarter, the net investment position was -$27.55 trillion (revised).    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>Q4 2025</infoDate>
+            <percentChange>-$190.7 B</percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>Q3 2025</infoDate>
+            <percentChange>-$239.1 B</percentChange>
+          </previous>
+        </main>
+      </data>
+      <NextReleaseDate>June 24, 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2026-03/ita-iip425.pdf</pdf>
+      <pubDate>Wed, 25 Mar 2026 08:30:00 EDT</pubDate>
+    </item>
+    <item name="Personal Income and Outlays">
+      <dbId>100</dbId>
+      <title>Personal Income and Outlays, January 2026</title>
+      <link>https://www.bea.gov/news/2026/personal-income-and-outlays-january-2026</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2026/personal-income-and-outlays-january-2026</guid>
+      <description>Personal income increased $113.8 billion (0.4 percent at a monthly rate) in January, according to estimates released today by the U.S. Bureau of Economic Analysis. Disposable personal income (DPI)-personal income less personal current taxes-increased $219.9 billion (0.9 percent), and personal consumption expenditures (PCE) increased $81.1 billion (0.4 percent). Personal outlays-the sum of PCE, personal interest payments, and personal current transfer payments-increased $85.8 billion in January. Personal saving was $1.05 trillion in January, and the personal saving rate-personal saving as a percentage of disposable personal income-was 4.5 percent.
+                    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2026/personal-income-and-outlays-january-2026'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>January 2026</infoDate>
+            <percentChange>+0.4</percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>December 2025</infoDate>
+            <percentChange>+0.3</percentChange>
+          </previous>
+        </main>
+        <supplemental name="Personal Consumption Expenditures">
+          <current>
+            <percentChange>0.4</percentChange>
+            <rateChange>81.1</rateChange>
+          </current>
+        </supplemental>
+      </data>
+      <NextReleaseDate>April 09 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2026-03/pi0126.pdf</pdf>
+      <pubDate>Fri, 13 Mar 2026 08:31:00 EDT</pubDate>
+    </item>
+    <item name="Outdoor Recreation Economic Statistics">
+      <dbId>
+      </dbId>
+      <title>Outdoor Recreation Economic Statistics, U.S. and States, 2024</title>
+      <link>https://www.bea.gov/news/2026/outdoor-recreation-economic-statistics-us-and-states-2024</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2026/outdoor-recreation-economic-statistics-us-and-states-2024</guid>
+      <description>The value added of the outdoor recreation economy accounted for 2.4 percent ($696.7 billion) of current-dollar gross domestic product (GDP) for the nation in 2024. Across states and the District of Columbia, value added for outdoor recreation as a share of state GDP ranged from 6.1 percent in Hawaii to 1.0 percent in the District of Columbia.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2026/outdoor-recreation-economic-statistics-us-and-states-2024'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>U.S. and States, 2024</infoDate>
+            <percentChange>
+            </percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>U.S. and States, 2023</infoDate>
+            <percentChange>
+            </percentChange>
+          </previous>
+        </main>
+      </data>
+      <NextReleaseDate>Fall 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2026-03/ores0326.pdf</pdf>
+      <pubDate>Thu, 05 Mar 2026 10:00:00 EST</pubDate>
+    </item>
+    <item name="Personal Income and Outlays">
+      <dbId>
+      </dbId>
+      <title>Personal Income and Outlays, December 2025</title>
+      <link>https://www.bea.gov/news/2026/personal-income-and-outlays-december-2025</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2026/personal-income-and-outlays-december-2025</guid>
+      <description>Personal income increased $86.2 billion (0.3 percent at a monthly rate) in December, according to estimates released today by the U.S. Bureau of Economic Analysis. Disposable personal income (DPI)-personal income less personal current taxes-increased $75.7 billion (0.3 percent), and personal consumption expenditures (PCE) increased $91.0 billion (0.4 percent). Personal outlays-the sum of PCE, personal interest payments, and personal current transfer payments-increased $90.2 billion in December. Personal saving was $830.8 billion in December, and the personal saving rate-personal saving as a percentage of disposable personal income-was 3.6 percent.   &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2026/personal-income-and-outlays-december-2025'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>December 2025</infoDate>
+            <percentChange>+0.3</percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>November 2025</infoDate>
+            <percentChange>+0.4</percentChange>
+          </previous>
+        </main>
+        <supplemental name="Personal Consumption Expenditures">
+          <current>
+            <percentChange>0.4</percentChange>
+            <rateChange>91.0</rateChange>
+          </current>
+        </supplemental>
+      </data>
+      <NextReleaseDate>March 13, 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2026-02/pi1225.pdf</pdf>
+      <pubDate>Fri, 20 Feb 2026 08:30:00 EST</pubDate>
+    </item>
+    <item name="GDP (Advance Estimate)">
+      <dbId>
+      </dbId>
+      <title>GDP (Advance Estimate), 4th Quarter and Year 2025</title>
+      <link>www.bea.gov/news/2026/gdp-advance-estimate-4th-quarter-and-year-2025</link>
+      <guid isPermaLink="true">www.bea.gov/news/2026/gdp-advance-estimate-4th-quarter-and-year-2025</guid>
+      <description>Real gross domestic product (GDP) increased at an annual rate of 1.4 percent in the fourth quarter of 2025 (October, November, and December), according to the advance estimate released today by the U.S. Bureau of Economic Analysis. In the third quarter, real GDP increased 4.4 percent. The contributors to the increase in real GDP in the fourth quarter were increases in consumer spending and investment. These movements were partly offset by decreases in government spending and exports. Imports, which are a subtraction in the calculation of GDP, decreased.     &lt;!--Full Text Link--&gt;&lt;a href='www.bea.gov/news/2026/gdp-advance-estimate-4th-quarter-and-year-2025'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <vintage>
+      </vintage>
+      <data>
+        <main>
+          <current>
+            <infoDate>Q4 2025</infoDate>
+            <percentChange>+1.4</percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>Q3 2025</infoDate>
+            <percentChange>+4.4</percentChange>
+          </previous>
+        </main>
+      </data>
+      <NextReleaseDate>March 13, 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2026-02/gdp4q25-adv.pdf</pdf>
+      <pubDate>Fri, 20 Feb 2026 08:30:00 EST</pubDate>
+    </item>
+    <item name="Real Personal Consumption Expenditures by State and Real Personal Income by State">
+      <dbId>118</dbId>
+      <title>Real Personal Consumption Expenditures by State and Real Personal Income by State, 2024</title>
+      <link>https://www.bea.gov/news/2026/real-personal-consumption-expenditures-state-and-real-personal-income-state-2024</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2026/real-personal-consumption-expenditures-state-and-real-personal-income-state-2024</guid>
+      <description>Real personal consumption expenditures (PCE) by state increased in 48 states and the District of Columbia in 2024, with the percent change ranging from 5.3 percent in Massachusetts to -0.2 percent in Montana. Real PCE for the nation increased 2.9 percent in 2024. Real personal income increased in 46 states and the District of Columbia in 2024, with the percent change ranging from 5.5 percent in California to -2.2 percent in North Dakota. Real personal income for the nation increased 2.9 percent in 2024.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2026/real-personal-consumption-expenditures-state-and-real-personal-income-state-2024'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>2024</infoDate>
+            <percentChange>
+            </percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>2023</infoDate>
+            <percentChange>
+            </percentChange>
+          </previous>
+        </main>
+      </data>
+      <NextReleaseDate>December 10, 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2026-02/rpp0226.pdf</pdf>
+      <pubDate>Thu, 19 Feb 2026 08:30:00 EST</pubDate>
+    </item>
+    <item name="Gross Domestic Product by County and Personal Income by County">
+      <dbId>
+      </dbId>
+      <title>Gross Domestic Product by County and Personal Income by County, 2024</title>
+      <link>https://www.bea.gov/news/2026/gross-domestic-product-county-and-personal-income-county-2024</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2026/gross-domestic-product-county-and-personal-income-county-2024</guid>
+      <description>Real gross domestic product (GDP) increased in 2,273 counties, decreased in 809 counties, and was unchanged in 24 counties in 2024. County-level changes ranged from a 76.6 percent increase in Carter County, MT, to a 46.3 percent decline in Baca County, CO.
+                    
+                    Personal income, in current dollars, increased in 2,768 counties, decreased in 331, and was unchanged in 7 counties in 2024. County-level changes ranged from a 22.6 percent increase in Harding County, SD, to a 23.3 percent decline in Issaquena County, MS.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2026/gross-domestic-product-county-and-personal-income-county-2024'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>2024</infoDate>
+            <percentChange>
+            </percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>2023</infoDate>
+            <percentChange>
+            </percentChange>
+          </previous>
+        </main>
+      </data>
+      <NextReleaseDate>December 2, 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2026-02/lagdppi0226.pdf</pdf>
+      <pubDate>Thu, 05 Feb 2026 08:30:00 EST</pubDate>
+    </item>
+    <item name="Gross Domestic Product by State and Personal Income by State">
+      <dbId>114</dbId>
+      <title>Gross Domestic Product by State and Personal Income by State, 3rd Quarter 2025</title>
+      <link>https://www.bea.gov/news/2026/gross-domestic-product-state-and-personal-income-state-3rd-quarter-2025</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2026/gross-domestic-product-state-and-personal-income-state-3rd-quarter-2025</guid>
+      <description>Real gross domestic product (GDP) increased in all 50 states and the District of Columbia in the third quarter of 2025. State-level changes ranged from a 6.5 percent increase in Kansas to a 0.4 percent increase in North Dakota. Personal income increased in all 50 states and the District of Columbia in the third quarter of 2025. State-level changes ranged from a 6.3 percent increase in Kansas to a 0.1 percent increase in Louisiana.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2026/gross-domestic-product-state-and-personal-income-state-3rd-quarter-2025'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>3rd Quarter 2025</infoDate>
+            <percentChange>
+            </percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>2nd Quarter 2025</infoDate>
+            <percentChange>
+            </percentChange>
+          </previous>
+        </main>
+      </data>
+      <NextReleaseDate>April 9, 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2026-01/stgdppi3q25.pdf</pdf>
+      <pubDate>Fri, 23 Jan 2026 08:30:00 EST</pubDate>
+    </item>
+    <item name="U.S. International Investment Position">
+      <dbId>103</dbId>
+      <title>U.S. International Investment Position, 3rd Quarter 2025</title>
+      <link>https://www.bea.gov/news/2026/us-international-investment-position-3rd-quarter-2025</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2026/us-international-investment-position-3rd-quarter-2025</guid>
+      <description>The U.S. net international investment position, the difference between U.S. residents' foreign financial assets and liabilities, was -$27.61 trillion at the end of the third quarter of 2025, according to statistics released today by the U.S. Bureau of Economic Analysis. Assets totaled $41.27 trillion, and liabilities were $68.89 trillion. At the end of the second quarter, the net investment position was -$26.16 trillion (revised).    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2026/us-international-investment-position-3rd-quarter-2025'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>3rd Quarter 2025</infoDate>
+            <percentChange>-$27.61 trillion</percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>2nd Quarter 2025</infoDate>
+            <percentChange>-$26.16 trillion</percentChange>
+          </previous>
+        </main>
+      </data>
+      <NextReleaseDate>March 25, 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2026-01/intinv325.pdf</pdf>
+      <pubDate>Fri, 16 Jan 2026 10:00:00 EST</pubDate>
+    </item>
+    <item name="U.S. International Transactions">
+      <dbId>105</dbId>
+      <title>U.S. International Transactions, 3rd Quarter 2025</title>
+      <link>https://www.bea.gov/news/2026/us-international-transactions-3rd-quarter-2025</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2026/us-international-transactions-3rd-quarter-2025</guid>
+      <description>The U.S. current-account deficit narrowed by $22.8 billion, or 9.2 percent, to $226.4 billion in the third quarter of 2025, according to statistics released today by BEA. The revised second-quarter deficit was $249.2 billion. The third-quarter deficit was 2.9 percent of current-dollar gross domestic product, down from 3.3 percent in the second quarter.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2026/us-international-transactions-3rd-quarter-2025'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>3rd quarter 2025</infoDate>
+            <percentChange>-226.4</percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>2nd quarter 2025</infoDate>
+            <percentChange>-249.2</percentChange>
+          </previous>
+        </main>
+      </data>
+      <NextReleaseDate>March 25, 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2026-01/trans325.pdf</pdf>
+      <pubDate>Wed, 14 Jan 2026 08:30:00 EST</pubDate>
+    </item>
+    <item name="Activities of U.S. Affiliates of Foreign Multinational Enterprises">
+      <dbId>
+      </dbId>
+      <title>Activities of U.S. Affiliates of Foreign Multinational Enterprises, 2023</title>
+      <link>https://www.bea.gov/news/2025/activities-us-affiliates-foreign-multinational-enterprises-2023</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2025/activities-us-affiliates-foreign-multinational-enterprises-2023</guid>
+      <description>Majority-owned U.S. affiliates of foreign multinational enterprises employed 8.66 million workers in the United States in 2023, a 1.9 percent increase from 8.5 million workers in 2022, according to the U.S. Bureau of Economic Analysis. These affiliates accounted for 6.2 percent of total private-industry employment in the United States in 2023.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2025/activities-us-affiliates-foreign-multinational-enterprises-2023'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>2023</infoDate>
+            <percentChange>
+            </percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>2022</infoDate>
+            <percentChange>
+            </percentChange>
+          </previous>
+        </main>
+      </data>
+      <NextReleaseDate>July 10, 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2025-12/imne1225-main.pdf</pdf>
+      <pubDate>Fri, 05 Dec 2025 08:30:00 EST</pubDate>
+    </item>
+    <item name="Gross Domestic Product for Puerto Rico">
+      <dbId>
+      </dbId>
+      <title>Gross Domestic Product for Puerto Rico, 2023</title>
+      <link>https://www.bea.gov/news/2025/gross-domestic-product-puerto-rico-2023</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2025/gross-domestic-product-puerto-rico-2023</guid>
+      <description>Real gross domestic product for Puerto Rico increased 3.0 percent in 2023 after decreasing 2.1 percent in 2022. The increase in real gross domestic product (GDP) in 2023 primarily reflected an increase in exports. Personal consumption expenditures, government spending, and private fixed investment also increased. These increases were partly offset by a decrease in private inventory investment. Imports, which are a subtraction in the calculation of GDP, increased.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2025/gross-domestic-product-puerto-rico-2023'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>2023</infoDate>
+            <percentChange>
+            </percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>2022</infoDate>
+            <percentChange>
+            </percentChange>
+          </previous>
+        </main>
+      </data>
+      <NextReleaseDate>
+      </NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2025-09/prgdp0925.pdf</pdf>
+      <pubDate>Tue, 16 Sep 2025 10:00:00 EDT</pubDate>
+    </item>
+    <item name="Activities of U.S. Multinational Enterprises">
+      <dbId>
+      </dbId>
+      <title>Activities of U.S. Multinational Enterprises, 2023</title>
+      <link>https://www.bea.gov/news/2025/activities-us-multinational-enterprises-2023</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2025/activities-us-multinational-enterprises-2023</guid>
+      <description>Worldwide employment by U.S. multinational enterprises decreased 0.4 percent to 43.9 million workers in 2023 (preliminary) from 44.1 million workers in 2022 (revised), according to statistics released today by the U.S. Bureau of Economic Analysis on the operations and finances of U.S. parent companies and their foreign affiliates.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2025/activities-us-multinational-enterprises-2023'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>2023</infoDate>
+            <percentChange>
+            </percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>2022</infoDate>
+            <percentChange>
+            </percentChange>
+          </previous>
+        </main>
+      </data>
+      <NextReleaseDate>November 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2025-08/usmne0825.pdf</pdf>
+      <pubDate>Fri, 22 Aug 2025 08:30:00 EDT</pubDate>
+    </item>
+    <item name="Direct Investment by Country and Industry">
+      <dbId>
+      </dbId>
+      <title>Direct Investment by Country and Industry, 2024</title>
+      <link>https://www.bea.gov/news/2025/direct-investment-country-and-industry-2024</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2025/direct-investment-country-and-industry-2024</guid>
+      <description>The U.S. direct investment abroad position, or cumulative level of investment, increased $206.3 billion to $6.83 trillion at the end of 2024, according to statistics released today by the U.S. Bureau of Economic Analysis. The increase was led by an $88.4 billion increase in the position in Europe, primarily in Luxembourg and Germany. By industry, manufacturing affiliates had the largest increase, led by manufacturing of computers and electronic products. The foreign direct investment in the United States position increased $332.1 billion to $5.71 trillion at the end of 2024. The increase was led by a $204.7 billion increase in the position from Europe, which reflected a $52.9 billion increase from the United Kingdom and a $39.7 billion increase from Germany. By industry, affiliates in manufacturing increased the most.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2025/direct-investment-country-and-industry-2024'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>2024</infoDate>
+            <percentChange>
+            </percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>2023</infoDate>
+            <percentChange>
+            </percentChange>
+          </previous>
+        </main>
+      </data>
+      <NextReleaseDate>July 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2025-07/dici0725.pdf</pdf>
+      <pubDate>Tue, 22 Jul 2025 08:30:00 EDT</pubDate>
+    </item>
+    <item name="Marine Economy Satellite Account">
+      <dbId>
+      </dbId>
+      <title>Marine Economy Satellite Account, 2023</title>
+      <link>https://www.bea.gov/news/2025/marine-economy-satellite-account-2023</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2025/marine-economy-satellite-account-2023</guid>
+      <description>The Marine Economy Satellite Account statistics released today by the U.S. Bureau of Economic Analysis show the marine economy accounted for $511.0 billion, or 1.8 percent, of current-dollar U.S. gross domestic product in 2023, an increase from $482.4 billion in 2022. The marine economy accounted for $826.6 billion, or 1.7 percent, of current-dollar gross output in 2023. &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2025/marine-economy-satellite-account-2023'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>2023</infoDate>
+            <percentChange>
+            </percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>2022</infoDate>
+            <percentChange>
+            </percentChange>
+          </previous>
+        </main>
+      </data>
+      <NextReleaseDate>Spring 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/system/files/2025-06/mesa0625.pdf</pdf>
+      <pubDate>Thu, 05 Jun 2025 10:00:00 EDT</pubDate>
+    </item>
+    <item name="Arts and Cultural Production Satellite Account">
+      <dbId>108</dbId>
+      <title>Arts and Cultural Production Satellite Account, U.S. and States, 2023</title>
+      <link>https://www.bea.gov/news/2025/arts-and-cultural-production-satellite-account-us-and-states-2023</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2025/arts-and-cultural-production-satellite-account-us-and-states-2023</guid>
+      <description>The Arts and Cultural Production Satellite Account released by the U.S. Bureau of Economic Analysis shows that arts and cultural economic activity, adjusted for inflation, increased 6.6 percent in 2023 after increasing 3.8 percent in 2022. By comparison, the broader economy, as measured by real gross domestic product (GDP), increased 2.9 percent in 2023 after increasing 2.5 percent in 2022. Arts and cultural economic activity accounted for 4.2 percent of GDP, or $1.17 trillion, in 2023.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2025/arts-and-cultural-production-satellite-account-us-and-states-2023'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <data>
+        <main>
+          <current>
+            <infoDate>U.S. and States, 2023</infoDate>
+            <percentChange>
+            </percentChange>
+            <rateChange>
+            </rateChange>
+          </current>
+          <previous>
+            <infoDate>U.S. and States, 2022</infoDate>
+            <percentChange>
+            </percentChange>
+          </previous>
+        </main>
+      </data>
+      <NextReleaseDate>March 2026</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2025-04/acpsa0425.pdf</pdf>
+      <pubDate>Wed, 02 Apr 2025 10:00:00 EDT</pubDate>
+    </item>
+    <item name="Real Personal Consumption Expenditures by State and Real Personal Income by State and Metropolitan Area">
+      <dbId>118</dbId>
+      <title>Real Personal Consumption Expenditures by State and Real Personal Income by State and Metropolitan Area, 2023</title>
+      <link>https://www.bea.gov/news/2024/real-personal-consumption-expenditures-state-and-real-personal-income-state-and</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2024/real-personal-consumption-expenditures-state-and-real-personal-income-state-and</guid>
+      <description>Real personal consumption expenditures (PCE) by state increased in 48 states and the District of Columbia in 2023, with the percent change ranging from 7.3 percent in Maine to -0.6 percent in Alabama. Real PCE for the nation increased 2.5 percent in 2023.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2024/real-personal-consumption-expenditures-state-and-real-personal-income-state-and'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2023</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <infoDatePrevious>2022</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>December 11, 2025</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2024-12/rpp1224.pdf</pdf>
+      <pubDate>Thu, 12 Dec 2024 08:30:00 EST</pubDate>
+    </item>
+    <item name="Gross Domestic Product by County and Metropolitan Area">
+      <dbId>112</dbId>
+      <title>Gross Domestic Product by County and Metropolitan Area, 2023</title>
+      <link>https://www.bea.gov/news/2024/gross-domestic-product-county-and-metropolitan-area-2023</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2024/gross-domestic-product-county-and-metropolitan-area-2023</guid>
+      <description>In 2023, real gross domestic product (GDP) increased in 2,357 counties, decreased in 734 counties, and was unchanged in 23 counties. The percent change in real GDP ranged from 125.8 percent in Throckmorton County, TX, to -39.6 percent in Lincoln County, WA.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2024/gross-domestic-product-county-and-metropolitan-area-2023'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2023</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <infoDatePrevious>2022</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>December 3, 2025</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2024-12/lagdp1224.pdf</pdf>
+      <pubDate>Wed, 04 Dec 2024 08:30:00 EST</pubDate>
+    </item>
+    <item name="Gross Domestic Product for the Commonwealth of the Northern Mariana Islands">
+      <dbId>111</dbId>
+      <title>Gross Domestic Product for the Commonwealth of the Northern Mariana Islands, 2021 and 2022</title>
+      <link>https://www.bea.gov/news/2024/gross-domestic-product-commonwealth-northern-mariana-islands-2021-and-2022</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2024/gross-domestic-product-commonwealth-northern-mariana-islands-2021-and-2022</guid>
+      <description>Real gross domestic product (GDP) for the Commonwealth of the Northern Mariana Islands increased 16.7 percent in 2022 and 5.1 percent in 2021 after decreasing 29.1 percent in 2020. The growth in real GDP from 2021 to 2022 reflected increases in exports, government spending, and private fixed investment. These increases were partly offset by a decrease in personal consumption expenditures. Imports, a subtraction item in the calculation of GDP, increased.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2024/gross-domestic-product-commonwealth-northern-mariana-islands-2021-and-2022'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2021</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <infoDatePrevious>2020</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>
+      </NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2024-11/cngdp1124.pdf</pdf>
+      <pubDate>Thu, 21 Nov 2024 18:00:00 EST</pubDate>
+    </item>
+    <item name="Outdoor Recreation Satellite Account">
+      <dbId>
+      </dbId>
+      <title>Outdoor Recreation Satellite Account, U.S. and States, 2023</title>
+      <link>https://www.bea.gov/news/2024/outdoor-recreation-satellite-account-us-and-states-2023</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2024/outdoor-recreation-satellite-account-us-and-states-2023</guid>
+      <description>The U.S. Bureau of Economic Analysis released statistics today measuring the outdoor recreation economy for the nation, all 50 states, and the District of Columbia. The new U.S. data show that the value added of the outdoor recreation economy accounted for 2.3 percent ($639.5 billion) of current-dollar gross domestic product (GDP) for the nation in 2023. At the state level, value added for outdoor recreation as a share of state GDP ranged from 6.3 percent in Hawaii to 1.6 percent in Delaware, Connecticut, and New York. The share was 0.8 percent in the District of Columbia.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2024/outdoor-recreation-satellite-account-us-and-states-2023'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>U.S. and States, 2023</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <infoDatePrevious>U.S. and States, 2022</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>Fall 2025</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2024-11/orsa1124_0.pdf</pdf>
+      <pubDate>Wed, 20 Nov 2024 10:00:00 EST</pubDate>
+    </item>
+    <item name="Personal Income by County and Metropolitan Area">
+      <dbId>109</dbId>
+      <title>Personal Income by County and Metropolitan Area, 2023</title>
+      <link>https://www.bea.gov/news/2024/personal-income-county-and-metropolitan-area-2023</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2024/personal-income-county-and-metropolitan-area-2023</guid>
+      <description>In 2023, personal income, in current dollars, increased in 2,814 counties, decreased in 295, and was unchanged in five counties in 2023. Personal income increased 6.0 percent in the metropolitan portion of the United States and 4.7 percent in the nonmetropolitan portion.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2024/personal-income-county-and-metropolitan-area-2023'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2023</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <infoDatePrevious>2022</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>December 3, 2025</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2024-11/lapi1124.pdf</pdf>
+      <pubDate>Thu, 14 Nov 2024 08:30:00 EST</pubDate>
+    </item>
+    <item name="Personal Consumption Expenditures by State">
+      <dbId>116</dbId>
+      <title>Personal Consumption Expenditures by State, 2023</title>
+      <link>https://www.bea.gov/news/2024/personal-consumption-expenditures-state-2023</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2024/personal-consumption-expenditures-state-2023</guid>
+      <description>Personal consumption expenditures (PCE) increased in all 50 states and the District of Columbia in 2023. The percent change ranged from 8.1 percent in Florida to 4.7 percent in Iowa. Nationally, current-dollar PCE increased 6.4 percent in 2023 after increasing 9.8 percent in 2022.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2024/personal-consumption-expenditures-state-2023'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2023</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>October 2023</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>September 26, 2025</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2024-10/pce1024.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Thu, 03 Oct 2024 08:30:00 EDT</pubDate>
+    </item>
+    <item name="Gross Domestic Product for the U.S. Virgin Islands">
+      <dbId>115</dbId>
+      <title>Gross Domestic Product for the U.S. Virgin Islands, 2022</title>
+      <link>https://www.bea.gov/news/2024/gross-domestic-product-us-virgin-islands-2022</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2024/gross-domestic-product-us-virgin-islands-2022</guid>
+      <description>Real gross domestic product (GDP) for the U.S. Virgin Islands decreased 1.3 percent in 2022 after increasing 3.7 percent in 2021. The decrease in real GDP reflected declines in exports, private fixed investment, government spending, and personal consumption expenditures that were partly offset by an increase in inventory investment. Imports, a subtraction item in the calculation of GDP, decreased.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2024/gross-domestic-product-us-virgin-islands-2022'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2022</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>2021</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>June 17, 2025</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2024-06/vigdp0624.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Mon, 17 Jun 2024 10:00:00 EDT</pubDate>
+    </item>
+    <item name="Gross Domestic Product for Guam">
+      <dbId>110</dbId>
+      <title>Gross Domestic Product for Guam, 2022</title>
+      <link>https://www.bea.gov/news/2024/gross-domestic-product-guam-2022</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2024/gross-domestic-product-guam-2022</guid>
+      <description>Real gross domestic product (GDP) for Guam increased 5.1 percent in 2022 after increasing 2.1 percent in 2021. The increase in real GDP reflected increases in exports, private fixed investment, government spending, and personal consumption expenditures. Imports, a subtraction item in the calculation of GDP, increased.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2024/gross-domestic-product-guam-2022'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2022</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>2021</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>
+      </NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2024-04/gugdp0424.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Mon, 15 Apr 2024 19:00:00 EDT</pubDate>
+    </item>
+    <item name="Gross Domestic Product by State">
+      <dbId>114</dbId>
+      <title>Gross Domestic Product by State, 2nd Quarter 2023 and Comprehensive Update</title>
+      <link>https://www.bea.gov/news/2023/gross-domestic-product-state-2nd-quarter-2023-and-comprehensive-update</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2023/gross-domestic-product-state-2nd-quarter-2023-and-comprehensive-update</guid>
+      <description>Real gross domestic product (GDP) increased in 44 states and the District of Columbia in the second quarter of 2023, with the percent change ranging from 8.7 percent in Wyoming to -1.9 percent in Vermont.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2023/gross-domestic-product-state-2nd-quarter-2023-and-comprehensive-update'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2nd Quarter 2023</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>June 30, 2023</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>December 22, 2023</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2023-12/stgdp2q23.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Tue, 05 Dec 2023 10:00:00 EST</pubDate>
+    </item>
+    <item name="Gross Domestic Product by Industry">
+      <dbId>107</dbId>
+      <title>Gross Domestic Product by Industry, 2nd Quarter 2023 and Comprehensive Update</title>
+      <link>https://www.bea.gov/news/2023/gross-domestic-product-industry-2nd-quarter-2023-and-comprehensive-update</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2023/gross-domestic-product-industry-2nd-quarter-2023-and-comprehensive-update</guid>
+      <description>In the second quarter, the value added of private goods-producing industries increased 7.7 percent, private services-producing industries increased 1.0 percent, and government increased 1.0 percent. Overall, 13 of 22 industry groups contributed to the 2.1 percent increase in second-quarter real GDP.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2023/gross-domestic-product-industry-2nd-quarter-2023-and-comprehensive-update'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2nd Quarter 2023</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>1st Quarter 2023</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>December 21, 2023</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2023-12/gdpind2q23.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Tue, 05 Dec 2023 08:30:00 EST</pubDate>
+    </item>
+    <item name="Gross Domestic Product for American Samoa">
+      <dbId>113</dbId>
+      <title>Gross Domestic Product for American Samoa, 2022</title>
+      <link>https://www.bea.gov/news/2023/gross-domestic-product-american-samoa-2022</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2023/gross-domestic-product-american-samoa-2022</guid>
+      <description>Real gross domestic product (GDP) for American Samoa increased 1.8 percent in 2022 after decreasing 0.8 percent in 2021. The increase in real GDP reflected increases in government spending and exports. Personal consumption expenditures, private fixed investment, and private inventory investment subtracted from growth. Imports, a subtraction item in the calculation of GDP, also decreased.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2023/gross-domestic-product-american-samoa-2022'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2022</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>2021</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>Fall 2024</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2023-10/asgdp1023.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Fri, 20 Oct 2023 15:30:00 EDT</pubDate>
+    </item>
+    <item name="Personal Income by State">
+      <dbId>114</dbId>
+      <title>Personal Income by State, 2nd Quarter 2023</title>
+      <link>https://www.bea.gov/news/2023/personal-income-state-2nd-quarter-2023</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2023/personal-income-state-2nd-quarter-2023</guid>
+      <description>Personal income, in current dollars, increased in 49 states and the District of Columbia in the second quarter of 2023, with the percent change ranging from 6.1 percent in New York and the District of Columbia to -2.7 percent in Maine.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2023/personal-income-state-2nd-quarter-2023'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2nd Quarter 2023</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>1st Quarter 2023</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>December 22, 2023</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2023-09/stgdppi2q23.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Fri, 29 Sep 2023 10:00:00 EDT</pubDate>
+    </item>
+    <item name="Gross Domestic Product by County">
+      <dbId>112</dbId>
+      <title>Gross Domestic Product by County, 2021</title>
+      <link>https://www.bea.gov/news/2022/gross-domestic-product-county-2021</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2022/gross-domestic-product-county-2021</guid>
+      <description>Real gross domestic product (GDP) increased in 2,404 counties, decreased in 691 counties, and was unchanged in 17 counties in 2021. The percent change in real GDP ranged from 81.8 percent in Coke County, TX, to -34.8 percent in Chouteau County, MT.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2022/gross-domestic-product-county-2021'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2021</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>2020</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>December 7, 2023</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2022-12/lagdp1222.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Thu, 08 Dec 2022 08:30:00 EST</pubDate>
+    </item>
+    <item name="Real Personal Consumption Expenditures and Personal Income by State">
+      <dbId>118</dbId>
+      <title>Real Personal Consumption Expenditures and Personal Income by State, 2020</title>
+      <link>https://www.bea.gov/news/2021/real-personal-consumption-expenditures-state-and-real-personal-income-state-and</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2021/real-personal-consumption-expenditures-state-and-real-personal-income-state-and</guid>
+      <description>Today, the U.S Bureau of Economic Analysis (BEA) released official statistics of real state personal consumption expenditures (PCE) for the first time. Real PCE decreased 3.8 percent in 2020 for the nation. Across states, the percent change ranged from 2.2 percent in Utah to -7.0 percent in Hawaii, Maryland, and New York; the percent change was -8.9 percent in the District of Columbia. Real state PCE is a state's current-dollar PCE adjusted by the state's regional price parity and the national PCE price index.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2021/real-personal-consumption-expenditures-state-and-real-personal-income-state-and'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2020</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>2019</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>December 15, 2022</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2021-12/rpp1221.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Tue, 14 Dec 2021 08:30:00 EST</pubDate>
+    </item>
+    <item name="Gross Domestic Product for the CNMI">
+      <dbId>
+      </dbId>
+      <title>Gross Domestic Product for the CNMI, 2019</title>
+      <link>https://www.bea.gov/news/2021/gross-domestic-product-cnmi-2019</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2021/gross-domestic-product-cnmi-2019</guid>
+      <description>The estimates of GDP for the CNMI show that real GDP-GDP adjusted to remove price changes-decreased 11.2 percent in 2019 after decreasing 19.3 percent in 2018. This release also includes the results of a comprehensive update of the territorial economic accounts.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2021/gross-domestic-product-cnmi-2019'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2019</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>2018</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>Fall 2021</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2021-04/cnmigdp-040621.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Tue, 06 Apr 2021 19:00:00 EDT</pubDate>
+    </item>
+    <item name="Real Personal Income by State and Metropolitan Area">
+      <dbId>118</dbId>
+      <title>Real Personal Income by State and Metropolitan Area, 2019</title>
+      <link>https://www.bea.gov/news/2020/real-personal-income-state-and-metropolitan-area-2019</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2020/real-personal-income-state-and-metropolitan-area-2019</guid>
+      <description>Real state personal income grew 2.4 percent in 2019 after increasing 3.1 percent in 2018, according to estimates released today by the Bureau of Economic Analysis (BEA). Real state personal income is a state's current-dollar personal income adjusted by the state's regional price parity and the national personal consumption expenditures price index. The percent change in real state personal income ranged from 4.1 percent in Maine to 0.7 percent in Hawaii, Wyoming, and Rhode Island. Across metropolitan areas, the percent change ranged from 7.6 percent in Hanford-Corcoran, CA, to -3.2 percent in Panama City, FL, and Wheeling, WV-OH.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2020/real-personal-income-state-and-metropolitan-area-2019'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2019</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>2018</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>December 14, 2021</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/sites/default/files/2020-12/rpp1220_0.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Tue, 15 Dec 2020 08:30:00 EST</pubDate>
+    </item>
+    <item name="State Quarterly Personal Income">
+      <dbId>104</dbId>
+      <title>State Quarterly Personal Income, 3rd quarter 2019</title>
+      <link>https://www.bea.gov/news/2019/state-personal-income-third-quarter-2019</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2019/state-personal-income-third-quarter-2019</guid>
+      <description>State personal income increased 3.8 percent at an annual rate in the third quarter of 2019, a deceleration from the 4.4 percent increase in the second quarter. The percent change in personal income across all states ranged from 15.2 percent in South Dakota to 1.9 percent in West Virginia and Wyoming.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2019/state-personal-income-third-quarter-2019'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>3rd quarter 2019</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>2nd quarter 2019</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>March 24, 2020</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/system/files/2019-12/spi1219_1.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Wed, 18 Dec 2019 08:30:00 EST</pubDate>
+    </item>
+    <item name="Local Area Gross Domestic Product">
+      <dbId>
+      </dbId>
+      <title>Local Area Gross Domestic Product, 2018</title>
+      <link>https://www.bea.gov/news/2019/local-area-gross-domestic-product-2018</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2019/local-area-gross-domestic-product-2018</guid>
+      <description>Real gross domestic product (GDP) increased in 2,375 counties, decreased in 717, and was unchanged in 21 in 2018, according to estimates released today by the U.S. Bureau of Economic Analysis (BEA). The percentage change in real GDP ranged from 86.5 percent in Jackson County, WV, to -44.0 percent in Grant County, ND.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2019/local-area-gross-domestic-product-2018'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2018</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>2012-2015</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>December 9, 2020</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/system/files/2019-12/lagdp1219.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Thu, 12 Dec 2019 08:30:00 EST</pubDate>
+    </item>
+    <item name="Gross Domestic Product for the Commonwealth of the Northern Mariana Islands (CNMI)">
+      <dbId>111</dbId>
+      <title>Gross Domestic Product for the Commonwealth of the Northern Mariana Islands (CNMI), 2018</title>
+      <link>https://www.bea.gov/news/2019/gross-domestic-product-commonwealth-northern-mariana-islands-cnmi-2018</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2019/gross-domestic-product-commonwealth-northern-mariana-islands-cnmi-2018</guid>
+      <description>The estimates of GDP for the CNMI show that real GDP-GDP adjusted to remove price changes-decreased 19.6 percent in 2018 after increasing 25.5 percent in 2017 (see Table 1.3). For comparison, real GDP for the United States (excluding the territories) increased 2.9 percent in 2018 after increasing 2.4 percent in 2017.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2019/gross-domestic-product-commonwealth-northern-mariana-islands-cnmi-2018'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2018</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>2017</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>Fall 2020</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/system/files/2019-11/cnmigdp-110619_0.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Wed, 06 Nov 2019 19:00:00 EST</pubDate>
+    </item>
+    <item name="Gross Domestic Product for U.S. Virgin Islands (USVI)">
+      <dbId>115</dbId>
+      <title>Gross Domestic Product for U.S. Virgin Islands (USVI), 2017</title>
+      <link>https://www.bea.gov/news/2018/us-virgin-islands-gdp-decreases-2017</link>
+      <guid isPermaLink="true">https://www.bea.gov/news/2018/us-virgin-islands-gdp-decreases-2017</guid>
+      <description>The estimates of GDP for the USVI show that real GDP - GDP adjusted to remove price changes - decreased 1.7 percent in 2017 after increasing 0.9 percent in 2016. For comparison, real GDP for the United States (excluding the territories) increased 2.2 percent in 2017 after increasing 1.6 percent in 2016.    &lt;!--Full Text Link--&gt;&lt;a href='https://www.bea.gov/news/2018/us-virgin-islands-gdp-decreases-2017'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2017</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>2016</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>
+      </NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://www.bea.gov/system/files/2018-12/vigdp-121718.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Mon, 17 Dec 2018 08:30:00 EST</pubDate>
+    </item>
+    <item name="Foreign Direct Investment by Country and Industry">
+      <dbId>
+      </dbId>
+      <title>Foreign Direct Investment by Country and Industry, 2017</title>
+      <link>https://apps.bea.gov/newsreleases/international/fdici/2018/fdici0718.htm</link>
+      <guid isPermaLink="true">https://apps.bea.gov/newsreleases/international/fdici/2018/fdici0718.htm</guid>
+      <description>In 2017, the U.S. direct investment abroad position increased to $6,013.3 billion and the foreign direct investment in the United States position increased to $4,025.5 billion, according to statistics released by the Bureau of Economic Analysis (BEA). The increases were mainly due to increased investment with countries in Europe.     &lt;!--Full Text Link--&gt;&lt;a href='https://apps.bea.gov/newsreleases/international/fdici/2018/fdici0718.htm'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2017</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>
+      </infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>July 2019</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://apps.bea.gov/newsreleases/international/fdici/2018/pdf/fdici0718.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Mon, 30 Jul 2018 08:30:00 EDT</pubDate>
+    </item>
+    <item name="Travel and Tourism Satellite Accounts">
+      <dbId>106</dbId>
+      <title>Travel and Tourism Satellite Accounts, 3rd quarter 2017</title>
+      <link>https://apps.bea.gov/newsreleases/industry/tourism/2017/tour317.htm</link>
+      <guid isPermaLink="true">https://apps.bea.gov/newsreleases/industry/tourism/2017/tour317.htm</guid>
+      <description>Real spending (output) on travel and tourism accelerated in the third quarter of 2017, growing at an annual rate of 6.6 percent after increasing 6.0 percent (revised) in the second quarter, according to new statistics released by the Bureau of Economic Analysis. Real gross domestic product (GDP) for the nation also accelerated, increasing 3.3 percent in the third quarter (second estimate) after increasing 3.1 percent in the second quarter of 2017.    &lt;!--Full Text Link--&gt;&lt;a href='https://apps.bea.gov/newsreleases/industry/tourism/2017/tour317.htm'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>3rd quarter 2017</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>2nd Quarter</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>xx</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://apps.bea.gov/newsreleases/industry/tourism/2017/pdf/tour317.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Wed, 13 Dec 2017 08:30:00 EST</pubDate>
+    </item>
+    <item name="Gross Domestic Product by Metropolitan Area">
+      <dbId>112</dbId>
+      <title>Gross Domestic Product by Metropolitan Area, 2016</title>
+      <link>https://apps.bea.gov/newsreleases/regional/gdp_metro/2017/gdp_metro0917.htm</link>
+      <guid isPermaLink="true">https://apps.bea.gov/newsreleases/regional/gdp_metro/2017/gdp_metro0917.htm</guid>
+      <description>Real gross domestic product (GDP) increased in 267 out of 382 metropolitan areas in 2016.  Real GDP by metropolitan area growth ranged from 8.1 percent in Lake Charles, LA and Bend-Redmond, OR to -13.3 percent in Odessa, TX. Real GDP for U.S. metropolitan areas grew 1.7 percent in 2016, led by growth in professional and business services; information services; and finance, insurance, real estate, rental, and leasing.    &lt;!--Full Text Link--&gt;&lt;a href='https://apps.bea.gov/newsreleases/regional/gdp_metro/2017/gdp_metro0917.htm'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <infoDate>2016</infoDate>
+      <percentChange>
+      </percentChange>
+      <rateChange>
+      </rateChange>
+      <displaySymbol>
+      </displaySymbol>
+      <infoDatePrevious>2015</infoDatePrevious>
+      <percentChangePrevious>
+      </percentChangePrevious>
+      <NextReleaseDate>September 2018</NextReleaseDate>
+      <unitsOfMeasure>BLN$</unitsOfMeasure>
+      <changeUnit>PCT</changeUnit>
+      <linkTimeSeries>
+      </linkTimeSeries>
+      <linkHistoric>https://apps.bea.gov/histdata/</linkHistoric>
+      <linkArchive>https://www.bea.gov/news/archive</linkArchive>
+      <pdf>https://apps.bea.gov/newsreleases/regional/gdp_metro/2017/pdf/Gdp_metro0917.pdf</pdf>
+      <iCalFile>
+      </iCalFile>
+      <pubDate>Wed, 20 Sep 2017 08:30:00 EDT</pubDate>
+    </item>
+    <item name="">
+      <title>Benchmark Input-Output Account of the U.S. Economy, 2007</title>
+      <link>https://apps.bea.gov/newsreleases/industry/io/2013/io1213.htm</link>
+      <guid isPermaLink="true">https://apps.bea.gov/newsreleases/industry/io/2013/io1213.htm</guid>
+      <description>The Bureau of Economic Analysis (BEA) today released its 2007 Benchmark Input-Output (I-O) Account of the U.S. Economy.  This widely used account--which provided the foundation for BEA's 2013 comprehensive revision of its gross domestic product (GDP) statistics--offers a comprehensive picture of the inner workings of the U.S. economy, showing production relationships among nearly 400 industries and commodities.     &lt;!--Full Text Link--&gt;&lt;a href='https://apps.bea.gov/newsreleases/industry/io/2013/io1213.htm'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <pubDate>Wed, 18 Dec 2013 10:30:00 EST</pubDate>
+    </item>
+    <item name="Summary Estimates for Multinational Companies">
+      <title>Summary Estimates for Multinational Companies, 2011</title>
+      <link>https://apps.bea.gov/newsreleases/international/mnc/2013/mnc2011.htm</link>
+      <guid isPermaLink="true">https://apps.bea.gov/newsreleases/international/mnc/2013/mnc2011.htm</guid>
+      <description>U.S. multinational companies: U.S. and foreign operations:  Worldwide employment by U.S. multinational companies (MNCs) increased 1.5 percent in 2011 to 34.5 million workers, with the increase primarily reflecting increases abroad.  Employment in the United States by majority-owned U.S. affiliates of foreign MNCs rose 3.3 percent in 2011, to 5.6 million workers, a rate of increase higher than the 1.8 percent increase in total U.S. private-industry employment in 2011.    &lt;!--Full Text Link--&gt;&lt;a href='https://apps.bea.gov/newsreleases/international/mnc/2013/mnc2011.htm'&gt;Full Text&lt;/a&gt;&lt;!--Full Text Link--&gt;</description>
+      <pubDate>Thu, 18 Apr 2013 08:30:00 EDT</pubDate>
+    </item>
+  </channel>
+</rss>
