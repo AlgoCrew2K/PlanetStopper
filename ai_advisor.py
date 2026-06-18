@@ -551,14 +551,16 @@ def _build_technicals_section(_data: object = None) -> dict:
 def _build_sentiment_section(_data: object = None) -> dict:
     """Sentiment / news lens block — multi-source two-facet producer (lens-news-events upgrade).
 
-    Two-path architecture:
-      Primary:  news_corpus.build_news_corpus() — multi-source corpus + GDELT tone.
-      Fallback: lens_gdelt._fetch_gdelt_sentiment() — GDELT-only path preserved for
-                backward compat (test seam: patching lens_gdelt._fetch_gdelt_sentiment
-                propagates into this function).
+    Single-path architecture:
+      news_corpus.build_news_corpus() — multi-source corpus (8 RSS/Atom feeds + GDELT artlist)
+      plus GDELT AvgTone scalar.  A single lens_gdelt._fetch_gdelt_sentiment() call inside
+      news_corpus delivers both tone and artlist articles (≤2 GDELT GETs total per run).
 
-    available=True iff news_corpus OR lens_gdelt produces data.
-    Payload carries: tone_score, corpus (Facet B), events (Facet A legacy shape).
+    available=True iff news_corpus returns tone or a non-empty corpus.
+    Payload carries: tone_score, corpus (Facet B ranked articles), events (Facet A legacy shape
+    for render compatibility), article_count.
+    sources: built from corpus via build_citation() — feeds lens_pipeline aggregation +
+    the Overview "Cited sources" block.
 
     GDELT is key-less; no env-var gate.  D-1: reason is type(exc).__name__ only.
     CC-2: all advisors modules imported lazily (never at module level).
