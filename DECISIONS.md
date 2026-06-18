@@ -1195,6 +1195,8 @@ Payload carries `tone_score`, `corpus` (ranked articles), and `events` (mapped f
 
 **New dependency:** `feedparser>=6.0` added to `requirements.txt`.
 
+**Scope boundary — warehouse persistence deferred:** The prior GDELT-only `_build_sentiment_section` called `lens_warehouse.persist_lens_snapshot` after each fetch. This call was intentionally removed in the multi-source restructure — `news_corpus` does not write to the warehouse directly. Warehouse coverage for the sentiment lens (DW-1) is deferred to a follow-on cycle. This is a deliberate scope boundary of AC-1..AC-7; it is not an oversight.
+
 **Files changed:** `advisors/news_corpus.py` (new), `advisors/lens_gdelt.py` (`_GDELT_ARTLIST_URL` maxrecords=50), `ai_advisor.py` (`_build_sentiment_section` two-path + payload restructure), `requirements.txt` (feedparser>=6.0).
 
 **Status:** GREEN at b93b724. 107/107 tests pass.
