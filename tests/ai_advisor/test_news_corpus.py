@@ -1646,6 +1646,79 @@ class TestSingleGdeltPath:
         )
 
 
+    def test_build_sentiment_section_total_gdelt_gets_at_most_two(
+        self, gdelt_timelinetone_fixture, fed_press_xml
+    ):
+        """_build_sentiment_section issues at most 2 GDELT GETs total per call.
+
+        BLOCK 1 — total-count guard: even after delegating tone-only to lens_gdelt,
+        a partial fix that still calls news_corpus._fetch_gdelt_artlist() would make:
+          - 1 timelinetone GET (via lens_gdelt._fetch_gdelt_sentiment)
+          - 1 artlist GET (via lens_gdelt._fetch_gdelt_sentiment)
+          - 1 EXTRA artlist GET (via news_corpus._fetch_gdelt_artlist → direct requests.get)
+        = 3 total GETs, still tripping the GDELT rate limit.
+
+        The correct fix: news_corpus must obtain BOTH tone AND artlist articles from
+        ONE lens_gdelt._fetch_gdelt_sentiment() call — no separate _fetch_gdelt_artlist()
+        GET. Net ≤2 GDELT GETs (1 timelinetone + 1 artlist), properly spaced inside
+        lens_gdelt.
+
+        FAILS on current code (4 GETs).
+        FAILS on a tone-only partial fix (3 GETs: 1 tone via lens_gdelt + 2 artlist).
+        PASSES only when news_corpus drops its own artlist GET and sources articles from
+        the lens_gdelt._fetch_gdelt_sentiment return value.
+        """
+        import ai_advisor
+
+        captured_urls: list[str] = []
+
+        def tracking_get(url, **kwargs):
+            captured_urls.append(url)
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.raise_for_status = MagicMock()
+            if "timelinetone" in url:
+                resp.json.return_value = gdelt_timelinetone_fixture
+                resp.content = json.dumps(gdelt_timelinetone_fixture).encode()
+            elif "artlist" in url:
+                resp.json.return_value = {"articles": []}
+                resp.content = b'{"articles":[]}'
+            else:
+                resp.content = fed_press_xml
+            return resp
+
+        with (
+            patch("requests.get", side_effect=tracking_get),
+            patch("time.sleep"),
+        ):
+            ai_advisor._build_sentiment_section()
+
+        # Bucket captured URLs by GDELT endpoint type
+        tone_calls = [u for u in captured_urls if "timelinetone" in u]
+        artlist_calls = [u for u in captured_urls if "artlist" in u]
+
+        assert len(tone_calls) <= 1, (
+            f"_build_sentiment_section made {len(tone_calls)} timelinetone GETs "
+            f"(must be ≤1). BLOCK 1: single GDELT path contract."
+        )
+        assert len(artlist_calls) <= 1, (
+            f"_build_sentiment_section made {len(artlist_calls)} artlist GETs "
+            f"(must be ≤1). "
+            f"BLOCK 1 total-count guard: a tone-only delegation fix still leaves "
+            f"news_corpus._fetch_gdelt_artlist() making its own artlist GET. "
+            f"Fix: news_corpus must source BOTH tone AND articles from ONE "
+            f"lens_gdelt._fetch_gdelt_sentiment() call — drop the direct artlist GET."
+        )
+        total_gdelt = len(tone_calls) + len(artlist_calls)
+        assert total_gdelt <= 2, (
+            f"Total GDELT GETs = {total_gdelt} (timelinetone={len(tone_calls)}, "
+            f"artlist={len(artlist_calls)}). Must be ≤2. "
+            f"Current code makes 4 GETs (2 tone + 2 artlist). "
+            f"A partial tone-only fix makes 3 GETs (1 tone + 2 artlist). "
+            f"Only the full fix (news_corpus sources both from lens_gdelt) achieves ≤2."
+        )
+
+
 # ---------------------------------------------------------------------------
 # BLOCK 2 — Warehouse persistence (DW-1): persist_lens_snapshot on both paths
 # ---------------------------------------------------------------------------
