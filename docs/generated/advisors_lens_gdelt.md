@@ -108,11 +108,11 @@ non-English and null-language articles to pass through).
 | Endpoint | URL constant |
 |----------|-------------|
 | Tone signal | `_GDELT_TONE_URL` — `timelinetone` mode |
-| Article citations + events | `_GDELT_ARTLIST_URL` — `artlist` mode, `maxrecords=10`, `timespan=1440` (last 24 hours) |
+| Article citations + events | `_GDELT_ARTLIST_URL` — `artlist` mode, `maxrecords=50`, `timespan=1440` (last 24 hours); bumped 10→50 in the multi-source upgrade to feed the `news_corpus` artlist fetch |
 
-`_GDELT_ARTLIST_URL` is also defined in `ai_advisor.py` (used by
-`_build_sentiment_section`'s own artlist fetch path, which is independent of
-the `lens_gdelt` producer call).
+`_GDELT_ARTLIST_URL` is consumed by `advisors/news_corpus._fetch_gdelt_artlist`
+(via a CC-2 lazy import of `lens_gdelt`) — the multi-source corpus builder reuses
+the pinned URL constant to ensure consistent query parameters.
 
 ## Design Invariants
 
@@ -169,19 +169,19 @@ values sets `tone=None` and continues to the artlist call.
 
 ## Wiring into `ai_advisor._build_sentiment_section`
 
-`_build_sentiment_section` lazy-imports `advisors.lens_gdelt` (CC-2 boundary)
-and calls `lens_gdelt._fetch_gdelt_sentiment([])`. On success, the returned
-`"events"` list is surfaced directly in the payload:
+`_build_sentiment_section` uses a two-path architecture (multi-source upgrade):
 
-```python
-"events": tone_result.get("events", []),  # ranked domain-deduped events from lens_gdelt
-```
+- **Primary:** lazy-imports `advisors.news_corpus` (CC-2) and calls
+  `news_corpus.build_news_corpus()` for the full two-facet result.
+- **Fallback / test seam:** lazy-imports `advisors.lens_gdelt` (CC-2) and calls
+  `lens_gdelt._fetch_gdelt_sentiment([])`. Patching `_fetch_gdelt_sentiment`
+  in tests propagates into `_build_sentiment_section`, preserving the test seam.
 
-The section also runs its own independent artlist fetch for citation building
-(using `ai_advisor._GDELT_ARTLIST_URL` which also includes `sourcelang:eng`).
-The two fetches are independent; the lens_gdelt events are the primary events
-signal. Warehouse persistence writes `article_count` and `tone_score` after a
-successful combined result.
+The `events` field in the payload is mapped from corpus articles when
+`news_corpus` produced a non-empty corpus (legacy shape for render compatibility,
+AC-5); falls back to `gdelt_result["events"]` when the corpus is empty but GDELT
+has events. The independent `_fetch_with_backoff` artlist call that existed in
+the GDELT-only interim version has been removed.
 
 ## Testing
 
@@ -208,6 +208,8 @@ successful combined result.
   (>= 6 s/ticker). Deferred to v2.
 - **No artlist retry.** Artlist failures yield `events=[]`, `sources=[]` silently.
   A future improvement could retry artlist on 429 with the same bounded-backoff logic.
-- **`_build_sentiment_section` dual-fetch.** The section currently runs its own
-  artlist fetch independently of the lens_gdelt artlist fetch. A future cleanup
-  could unify these into a single artlist call.
+- **Serial artlist + tone.** `_fetch_gdelt_tone` and `_fetch_gdelt_artlist`
+  (called from `news_corpus`) both hit GDELT endpoints, each with its own
+  `time.sleep` or inter-request delay. The combined delay is bounded by
+  `_GDELT_INTER_REQUEST_S` + the `requests.get` timeout. No retry on artlist;
+  tone retry is bounded by `_GDELT_MAX_ATTEMPTS`.

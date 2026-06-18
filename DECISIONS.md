@@ -1135,3 +1135,66 @@ Branch: `feat/lens-news-events` | HEAD: 2649229
 **Files changed:** `advisors/lens_gdelt.py` (constants, `_unavailable`, `_extract_events` new helper, tone-extraction step, artlist step, availability gate), `ai_advisor.py` (`_GDELT_ARTLIST_URL`, `_build_sentiment_section` payload).
 
 **Status:** GREEN at 2649229. 68/68 tests pass.
+
+
+---
+
+### DE-NC-001: Multi-source news corpus — two-facet design (Facet A: GDELT tone + Facet B: ranked RSS corpus) (2026-06-18)
+
+Branch: `feat/lens-news-events` | HEAD: b93b724
+
+**Decision:** Replace the GDELT-artlist-only interim corpus (2649229) with a production-grade multi-source news corpus builder in a dedicated `advisors/news_corpus.py` module.
+
+**Why the GDELT-artlist-only interim was insufficient:**
+
+1. **Single source.** GDELT artlist is one aggregator with limited coverage of primary sources (.gov data releases, wire services, domain-specific financial media). A single source is a single point of failure and biases coverage.
+
+2. **No scoring or ranking.** The interim design returned articles in GDELT's raw order with no recency/relevance/authority weighting. Articles from low-authority or off-topic sources ranked alongside primary data releases.
+
+3. **No cross-source deduplication.** Multiple sources covering the same story (e.g., a Fed decision reported by CNBC, Reuters, and MarketWatch) would appear as separate entries, consuming prompt budget and inflating apparent signal.
+
+4. **No topic tagging.** The Market Prism synthesizer had no structured signal about which articles were macro vs fundamentals vs technicals vs derivatives — all articles were treated as undifferentiated sentiment.
+
+**Two-facet design:**
+
+- **Facet A (GDELT tone):** Independent scalar. `_fetch_gdelt_tone()` hits `lens_gdelt._GDELT_TONE_URL` with `_UA_STD`. Tone failure does not abort the corpus fetch — the two facets are always attempted independently.
+
+- **Facet B (ranked corpus):** `_fetch_all_feeds()` fetches GDELT artlist (JSON, `maxrecords=50`) + 8 RSS/Atom feeds via `feedparser`:
+  - Commercial financial media (`_UA_STD`): Google News Business, CNBC Markets, MarketWatch Top Stories, Yahoo Finance.
+  - `.gov` primary data (`_UA_GOV = "PlanetStopper/1.0 paulmgreaney@gmail.com"` — required to avoid 403s): Fed press releases, BLS latest releases, BEA RSS, SEC 8-K filings.
+
+**Scoring formula (weights sum to 1.0, all named constants):**
+
+```
+score = W_RECENCY(0.40) * exp(-delta_hours / TAU_HOURS(24))
+      + W_RELEVANCE(0.35) * min(1.0, keyword_hits / 3)
+      + W_AUTHORITY(0.25) * SOURCE_AUTHORITY.get(domain, 0.4)
+```
+
+Recency defaults to 0.5 on unparseable dates. The `SOURCE_AUTHORITY` table ranges from 1.0 (.gov sources) to 0.4 (unknown domains).
+
+**Cross-source deduplication (three-step, applied before scoring):**
+
+1. URL canonical dedup (strip query + fragment via `_canonical_url`) — highest-authority article wins per canonical URL.
+2. Title Jaccard dedup (token-set, threshold `DEDUP_JACCARD_THRESHOLD=0.85`) — same-story duplicates across sources; highest-authority article is kept.
+3. Per-domain cap (`_PER_DOMAIN_CAP=3`) — no single source dominates the final corpus.
+
+**Topic tagging (`_tag_topics`):** Pure stdlib keyword matching across four topics (macro, fundamentals, technicals, derivatives). Multi-label. Defaults to `["broad-sentiment"]` when no keywords match.
+
+**Availability:** `available = tone is not None OR bool(corpus)`. `reason = "no_news_events"` only when both absent.
+
+**Impact on `ai_advisor._build_sentiment_section`:**
+
+The interim standalone `_fetch_with_backoff` artlist call has been removed. New two-path architecture:
+- Primary: `news_corpus.build_news_corpus()` — full two-facet result.
+- Fallback/test-seam: `lens_gdelt._fetch_gdelt_sentiment([])` — patching `_fetch_gdelt_sentiment` in tests propagates into the section, preserving the test seam.
+
+Payload carries `tone_score`, `corpus` (ranked articles), and `events` (mapped from corpus to legacy shape `{title, domain, seendate}` for render compatibility — AC-5). When corpus is empty but GDELT has events, falls back to `gdelt_result["events"]`.
+
+**Impact on `advisors/lens_gdelt.py`:** `_GDELT_ARTLIST_URL` `maxrecords` bumped from 10 to 50 — the multi-source corpus fetches up to 50 GDELT articles to feed the scoring pipeline.
+
+**New dependency:** `feedparser>=6.0` added to `requirements.txt`.
+
+**Files changed:** `advisors/news_corpus.py` (new), `advisors/lens_gdelt.py` (`_GDELT_ARTLIST_URL` maxrecords=50), `ai_advisor.py` (`_build_sentiment_section` two-path + payload restructure), `requirements.txt` (feedparser>=6.0).
+
+**Status:** GREEN at b93b724. 107/107 tests pass.
