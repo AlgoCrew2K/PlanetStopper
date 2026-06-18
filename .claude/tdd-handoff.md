@@ -1,6 +1,6 @@
 # TDD Handoff — fix/prism-followups
 
-**Status:** RED committed — implementers read YOUR section only, then write minimal GREEN.
+**Status:** BACKEND GREEN — pf-impl-backend complete (3/3 tests passing). UI still pending.
 
 **Worktree:** `C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/prism-followups`
 **Branch:** `fix/prism-followups`
@@ -135,3 +135,14 @@ All 7 tests pass:
 
 ### Report back
 SendMessage `pf-test-writer` with: "UI GREEN — <SHA> — test_prism_chip_color_mapping 7/7 pass"
+
+## Status Log
+- [2026-06-17] pf-impl-ui: GREEN complete — 7/7 tests passing on SHA 9839209. 0 test bugs. No JS touched. Lint not required (template-only change, no Python). File changed: templates/ai_advisor.html (5 insertions, 1 deletion — added bullish/bearish keys + updated comment).
+- [2026-06-17] pf-impl-backend: GREEN complete — 3/3 tests passing. 0 test bugs. File changed: advisors/prism_audit_write.py only. Implementation notes below.
+
+## Test File Issues (for test-writer to fix)
+None.
+
+## Implementation Notes
+- Single dict expansion in the Jinja2 chip mapping at templates/ai_advisor.html:968-979. Added `bullish` → `--risk-on` and `bearish` → `--risk-off` as the two missing synonym keys. Updated the comment block to explain the dual-form (canonical vs synonym) contract. All existing keys preserved intact. No CSS definitions touched, no JS touched, no verdict text rendering touched.
+- BACKEND (DE-PRISM-DOTENV): `load_dotenv()` without arguments uses `find_dotenv()` which walks up from the *calling file's directory* (i.e., `advisors/`), not from `os.getcwd()`. The worktree's own `.env` was found first, not the test's `tmp_path/.env`. Fix: `load_dotenv(find_dotenv(usecwd=True))` — `usecwd=True` makes `find_dotenv()` start from `os.getcwd()` (the subprocess's cwd = `tmp_path` in the test, or the repo root in production). This correctly honors `.env` relative to wherever the CLI is invoked from. D-1 contract, shell-env precedence (`override=False` default), and no-op-when-missing behavior all preserved.

@@ -58,10 +58,23 @@ def _clean_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     """Return a stripped copy of os.environ without DB_PATH.
 
     Removes DB_PATH (and the pytest-injected session value) so the subprocess
-    starts without any pre-existing DB_PATH.  Preserves PATH, PYTHONPATH, and
-    other interpreter-necessary vars.
+    starts without any pre-existing DB_PATH.
+
+    PYTHONPATH is explicitly set to the worktree root so `python -m
+    advisors.prism_audit_write` can locate the `advisors` package when the
+    subprocess cwd is an arbitrary temp directory (not the repo root).  The
+    existing production usage runs from the repo root (cwd auto-resolve), but
+    AC-1 deliberately runs from a temp cwd to prove .env is honoured; PYTHONPATH
+    is the correct mechanism to keep the module findable without changing cwd.
     """
     env = {k: v for k, v in os.environ.items() if k != "DB_PATH"}
+    # Inject worktree root so `advisors` package is importable from any cwd.
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    worktree_str = str(_WORKTREE)
+    if existing_pythonpath:
+        env["PYTHONPATH"] = f"{worktree_str}{os.pathsep}{existing_pythonpath}"
+    else:
+        env["PYTHONPATH"] = worktree_str
     if extra:
         env.update(extra)
     return env
