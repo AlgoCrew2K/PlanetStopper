@@ -316,7 +316,7 @@ _SEC_USER_AGENT: str = "PlanetStopper advisor contact@alphabotpm.example"
 # GDELT 2.0 DOC API — free, no key, artlist mode returning JSON.
 _GDELT_ARTLIST_URL: str = (
     "https://api.gdeltproject.org/api/v2/doc/doc"
-    "?query=stock+market+finance"
+    "?query=stock+market+finance+sourcelang:eng"
     "&mode=artlist"
     "&maxrecords=10"
     "&format=json"
@@ -664,6 +664,7 @@ def _build_sentiment_section(_data: object = None) -> dict:
             "article_count": len(articles),
             "tone_summary": None,
             "tone_score": tone_score,
+            "events": tone_result.get("events", []),  # ranked domain-deduped events from lens_gdelt
         },
         "sources": sources,
     }

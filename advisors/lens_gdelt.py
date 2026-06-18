@@ -76,13 +76,17 @@ _GDELT_INTER_REQUEST_S: float = 6.0
 
 _GDELT_TONE_URL: str = (
     "https://api.gdeltproject.org/api/v2/doc/doc"
-    "?query=stock+market+finance&mode=timelinetone&format=json"
+    "?query=stock+market+finance+sourcelang:eng&mode=timelinetone&format=json"
 )
 
 _GDELT_ARTLIST_URL: str = (
     "https://api.gdeltproject.org/api/v2/doc/doc"
-    "?query=stock+market+finance&mode=artlist&format=json&maxrecords=10"
+    "?query=stock+market+finance+sourcelang:eng&mode=artlist&format=json&maxrecords=10"
 )
+
+# Maximum number of events to surface from the artlist (named for prompt-budget control).
+# Source: feature-plans/lens-news-events-upgrade.md AC-2 — ~5-8 events.
+_GDELT_MAX_EVENTS: int = 7
 
 # Source citation string — always present in the return dict (contract §3).
 _GDELT_SOURCE: str = "GDELT 2.0 DOC API timelinetone — https://api.gdeltproject.org/"
@@ -102,7 +106,49 @@ def _unavailable(reason: str) -> dict[str, Any]:
         "source": _GDELT_SOURCE,
         "sources": None,
         "reason": reason,
+        "events": [],
     }
+
+
+def _extract_events(sources_raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Extract a ranked, domain-deduped list of English-language events.
+
+    Filters non-English articles (language != 'English'), deduplicates by domain
+    (most-recent per domain kept), sorts most-recent-first by seendate,
+    caps at _GDELT_MAX_EVENTS.
+
+    Parameters
+    ----------
+    sources_raw:
+        Raw article dicts from the GDELT artlist response.
+
+    Returns
+    -------
+    list of dicts, each with keys: title, domain, seendate.
+    Never raises.
+    """
+    # 1. Filter English-only
+    english = [a for a in sources_raw if a.get("language") == "English"]
+
+    # 2. Sort most-recent-first by seendate (GDELT format: YYYYMMDDTHHmmssZ —
+    #    lexicographic sort is correct for this zero-padded ISO-like format)
+    english.sort(key=lambda a: a.get("seendate", ""), reverse=True)
+
+    # 3. Deduplicate by domain — keep the most-recent article per domain
+    seen_domains: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for art in english:
+        domain = art.get("domain", "")
+        if domain and domain not in seen_domains:
+            seen_domains.add(domain)
+            deduped.append({
+                "title": art.get("title", ""),
+                "domain": domain,
+                "seendate": art.get("seendate", ""),
+            })
+
+    # 4. Cap at _GDELT_MAX_EVENTS
+    return deduped[:_GDELT_MAX_EVENTS]
 
 
 # ---------------------------------------------------------------------------
@@ -184,28 +230,40 @@ def _fetch_gdelt_sentiment(universe: list[str]) -> dict[str, Any]:
     # The prior bug read entry.get("value") from the series wrapper object
     # {series, data} — which has no "value" key at that level — so raw was
     # always empty and the producer returned available=True, tone=None (forbidden).
+    #
+    # NOTE: empty timeline / no numeric values -> tone=None but we do NOT return
+    # early.  We continue to Step 4 (artlist) because events-OR-tone availability
+    # means events alone can make available=True.  Only HTTP-level failures on the
+    # tone endpoint (rate_limited, gdelt_fetch_failed, exception) short-circuit.
+    #
+    # _tone_unavail_reason tracks the tone-side failure label; used in Step 5
+    # when events are also absent to preserve the 'no_tone_data' contract label
+    # (contract §4 requires this label for the empty-timeline path).
+    tone: float | None = None
+    _tone_unavail_reason: str = "no_news_events"  # overridden below on tone-side failure
     try:
         timeline = (tone_data or {}).get("timeline", [])
         if not timeline:
-            logger.debug("GDELT timelinetone: empty timeline list")
-            return _unavailable("no_tone_data")
+            logger.debug("GDELT timelinetone: empty timeline list — will check events")
+            _tone_unavail_reason = "no_tone_data"
+        else:
+            series = timeline[0]
+            points = series.get("data", [])
+            raw = [p["value"] for p in points if isinstance(p.get("value"), (int, float))]
 
-        series = timeline[0]
-        points = series.get("data", [])
-        raw = [p["value"] for p in points if isinstance(p.get("value"), (int, float))]
-
-        if not raw:
-            logger.debug("GDELT timelinetone: no numeric values in data")
-            return _unavailable("no_tone_data")
-
-        mean_tone = sum(raw) / len(raw)
-        # Normalize: GDELT AvgTone is [-100, 100]; divide by 100 then clamp.
-        tone = float(max(-1.0, min(1.0, mean_tone / 100.0)))
+            if not raw:
+                logger.debug("GDELT timelinetone: no numeric values in data — will check events")
+                _tone_unavail_reason = "no_tone_data"
+            else:
+                mean_tone = sum(raw) / len(raw)
+                # Normalize: GDELT AvgTone is [-100, 100]; divide by 100 then clamp.
+                tone = float(max(-1.0, min(1.0, mean_tone / 100.0)))
 
     except Exception as exc:
         exc_type = type(exc).__name__
-        logger.warning("GDELT tone extraction exception: %s", exc_type)
-        return _unavailable(exc_type)
+        logger.warning("GDELT tone extraction exception: %s — will check events", exc_type)
+        _tone_unavail_reason = exc_type
+        # tone remains None; continue to artlist
 
     # --- Step 3: Rate-limit spacing before the artlist GET ---
     # Tone and artlist share GDELT's per-IP window (1 req / 5s).
@@ -215,13 +273,19 @@ def _fetch_gdelt_sentiment(universe: list[str]) -> dict[str, Any]:
 
     # --- Step 4: Fetch sources from artlist endpoint (best-effort) ---
     # Artlist citations are best-effort — a failed artlist call does NOT
-    # invalidate the tone signal.  On failure: sources=[] (not None).
+    # invalidate the tone signal.  On failure: sources=[], events=[].
+    #
+    # When artlist is successfully fetched (HTTP 200, no exception), we update
+    # _tone_unavail_reason to 'no_news_events' — the artlist endpoint was reached,
+    # so a subsequent both-absent result means neither tone nor news events were
+    # available (not merely a tone-side parsing failure).
     sources: list[dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
     try:
         artlist_resp = requests.get(_GDELT_ARTLIST_URL, timeout=_GDELT_TIMEOUT_S)
         artlist_resp.raise_for_status()
         artlist_data = artlist_resp.json()
-        articles = artlist_data.get("articles", [])
+        articles_raw = artlist_data.get("articles", [])
         # Map each article to the §3 source shape: {url, seendate, title, domain}.
         # Drop language/sourcecountry — not needed by the lens (contract §3).
         sources = [
@@ -231,12 +295,20 @@ def _fetch_gdelt_sentiment(universe: list[str]) -> dict[str, Any]:
                 "title": art.get("title", ""),
                 "domain": art.get("domain", ""),
             }
-            for art in articles
+            for art in articles_raw
         ]
+        # Extract ranked, domain-deduped English events as a first-class field.
+        events = _extract_events(articles_raw)
+        # Artlist was reached and returned a genuine artlist payload (has the
+        # 'articles' key, even if empty).  If both signals are absent, report
+        # 'no_news_events' rather than the tone-side failure label.
+        if "articles" in artlist_data:
+            _tone_unavail_reason = "no_news_events"
         logger.info(
-            "GDELT artlist: HTTP %d, %d sources",
+            "GDELT artlist: HTTP %d, %d sources, %d events",
             artlist_resp.status_code,
             len(sources),
+            len(events),
         )
     except Exception as exc:
         logger.debug(
@@ -244,9 +316,35 @@ def _fetch_gdelt_sentiment(universe: list[str]) -> dict[str, Any]:
             type(exc).__name__,
         )
         sources = []
+        events = []
+        # _tone_unavail_reason keeps its Step-2 value (no_tone_data or exc type)
 
-    # --- Step 5: Return the successful result ---
-    # Invariant: available=True => tone is float in [-1,1], reason=None.
+    # --- Step 5: Return the result — events-OR-tone availability gate ---
+    # available=True iff at least one signal is present (events OR tone).
+    # Prevents the prior bug: available=True with tone=None and no events.
+    #
+    # Reason label when both signals absent:
+    # - 'no_tone_data'   — tone extraction failed (empty/non-numeric timeline),
+    #                      AND events also absent.  Preserves contract §4 label
+    #                      for the tone-side-only-failed path.
+    # - 'no_news_events' — both tone AND events explicitly exhausted
+    #                      (artlist was fetched, returned articles, but none
+    #                      survived the English filter or artlist was empty).
+    has_events = bool(events)
+    has_tone = tone is not None
+
+    if not has_events and not has_tone:
+        return {
+            "available": False,
+            "tone": None,
+            "per_ticker": None,
+            "source": _GDELT_SOURCE,
+            "sources": None,
+            "reason": _tone_unavail_reason,
+            "events": [],
+        }
+
+    # At least one signal present — return success with both.
     return {
         "available": True,
         "tone": tone,
@@ -254,4 +352,5 @@ def _fetch_gdelt_sentiment(universe: list[str]) -> dict[str, Any]:
         "source": _GDELT_SOURCE,
         "sources": sources,
         "reason": None,
+        "events": events,
     }
