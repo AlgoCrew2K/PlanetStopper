@@ -39,23 +39,41 @@ MAX_BUDGET_USD: float = 15.0
 
 # Prompt passed to the vanilla-primary headless claude session. The primary
 # spawns ALL 6 agents itself — prism-synthesizer has no Agent/spawn tool and
-# cannot spawn teammates. prism-synthesizer only coordinates the pre-spawned
-# analysts via SendMessage. The completion guard prevents the session from
-# returning before the MARKET_PRISM row is written.
+# cannot spawn teammates.
+#
+# Council 5/5 reliability directives (DE-PRISM-5OF5):
+#   (a) Generate the run_id BEFORE spawning so it can be embedded in each
+#       analyst's spawn prompt.
+#   (b) Embed the run_id + immediate-initial_read instruction in each analyst's
+#       spawn prompt (do NOT spawn then send a kickoff via SendMessage — that
+#       path caused 2/5 participation when dormant agents missed the message).
+#   (c) Capture each analyst's agentId at spawn; pass agentIds to the
+#       synthesizer so it can address analysts by agentId (not canonical name)
+#       during Q&A and debate.
+#   (d) Wait-barrier: synthesizer must not synthesize until 5 initial_read rows
+#       appear in the audit DB (or the barrier times out — graceful limited-inputs).
 PRISM_RUN_PROMPT: str = (
     "You are running the Market Prism nightly council. "
-    "Spawn all 6 agents: prism-synthesizer (team lead), "
+    "Step 1: Generate a run_id using datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00') "
+    "BEFORE spawning any agents — the run_id must be embedded in each analyst's spawn prompt. "
+    "Step 2: Spawn all 6 agents: prism-synthesizer (team lead), "
     "prism-technicals-analyst, prism-sentiment-analyst, "
     "prism-derivatives-analyst, prism-macro-analyst, "
     "prism-fundamentals-analyst. "
-    "prism-synthesizer coordinates the analyst agents: it messages each one "
-    "via SendMessage for their reads, runs Q&A and conditional debate "
-    "(up to 3 rounds), integrates all outputs into ONE MARKET_PRISM "
-    "observation, and writes it to the DB via prism_audit_write. "
-    "Do NOT return your final answer until prism-synthesizer confirms the "
-    "MARKET_PRISM row has been written to the DB. "
-    "This is fully unattended — complete the entire run without waiting for "
-    "any user input."
+    "For each of the 5 analyst agents, include the run_id and an instruction to produce "
+    "and file their initial_read IMMEDIATELY on their first turn in the spawn prompt itself "
+    "(embed it — do NOT rely on a subsequent SendMessage kickoff, which is unreliable for "
+    "dormant agents). "
+    "Capture each analyst's agentId at spawn. "
+    "Step 3: Spawn prism-synthesizer with: the run_id, the list of all 5 analyst agentIds "
+    "(so it can address analysts by agentId, not canonical name), and an instruction to "
+    "wait until 5 initial_read rows are present in the audit DB before synthesizing "
+    "(the audit-DB wait-barrier — query the DB directly, never rely on SendMessage inbox alone). "
+    "prism-synthesizer coordinates all five analysts: it queries the audit DB for "
+    "initial_read rows, runs Q&A and conditional debate (up to 3 rounds), integrates all "
+    "outputs into ONE MARKET_PRISM observation, and writes it to the DB via prism_audit_write. "
+    "Do not return your final answer until the MARKET_PRISM row has been written to the DB. "
+    "This is fully unattended — complete the entire run without waiting for any user input."
 )
 
 # Project root: the directory containing this script
