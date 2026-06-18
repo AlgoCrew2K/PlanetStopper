@@ -1449,6 +1449,453 @@ class TestGdeltArtlistMaxrecordsBump:
 
 
 # ---------------------------------------------------------------------------
+# BLOCK 1 — Single GDELT path: _build_sentiment_section must NOT double-fetch
+# ---------------------------------------------------------------------------
+
+
+class TestSingleGdeltPath:
+    """_build_sentiment_section must issue _GDELT_TONE_URL at most once per call.
+
+    BLOCK 1 (reviewer-2): the prior implementation called news_corpus.build_news_corpus()
+    (which hits _GDELT_TONE_URL + _GDELT_ARTLIST_URL) AND lens_gdelt._fetch_gdelt_sentiment()
+    (which also hits _GDELT_TONE_URL + _GDELT_ARTLIST_URL) unconditionally.
+    4 GDELT requests per nightly run with no inter-call sleep coordination trips the
+    1-req/5s rate limit in production.
+
+    Fix: news_corpus._fetch_gdelt_tone() must delegate to lens_gdelt._fetch_gdelt_sentiment()
+    to obtain both the tone scalar (Facet A) and the artlist articles (corpus input for Facet B),
+    and _build_sentiment_section must call ONLY news_corpus (drop the separate lens_gdelt call).
+    Net: ≤2 GDELT GETs per run (tone + artlist), properly spaced by _GDELT_INTER_REQUEST_S.
+
+    FAILS on current codebase (unconditional double-fetch).
+    """
+
+    def _count_gdelt_tone_calls(self, captured_urls: list[str]) -> int:
+        """Count how many calls targeted _GDELT_TONE_URL."""
+        from advisors import lens_gdelt
+        tone_url_base = lens_gdelt._GDELT_TONE_URL.split("?")[0]
+        return sum(1 for u in captured_urls if tone_url_base in u and "timelinetone" in u)
+
+    def test_build_sentiment_section_calls_gdelt_tone_url_at_most_once(
+        self, gdelt_timelinetone_fixture, fed_press_xml
+    ):
+        """_build_sentiment_section requests _GDELT_TONE_URL at most once per call.
+
+        Patches requests.get to count calls to the GDELT timelinetone endpoint.
+        FAILS on current code (called twice: once via news_corpus._fetch_gdelt_tone,
+        once via lens_gdelt._fetch_gdelt_sentiment).
+        """
+        import ai_advisor
+
+        captured_urls: list[str] = []
+
+        def tracking_get(url, **kwargs):
+            captured_urls.append(url)
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.raise_for_status = MagicMock()
+            if "timelinetone" in url:
+                resp.json.return_value = gdelt_timelinetone_fixture
+                resp.content = json.dumps(gdelt_timelinetone_fixture).encode()
+            elif "artlist" in url:
+                resp.json.return_value = {"articles": []}
+                resp.content = b'{"articles":[]}'
+            else:
+                resp.content = fed_press_xml
+            return resp
+
+        with (
+            patch("requests.get", side_effect=tracking_get),
+            patch("time.sleep"),
+        ):
+            ai_advisor._build_sentiment_section()
+
+        tone_call_count = self._count_gdelt_tone_calls(captured_urls)
+        assert tone_call_count <= 1, (
+            f"_build_sentiment_section made {tone_call_count} requests to _GDELT_TONE_URL "
+            f"(timelinetone endpoint) in a single call. Must be ≤1. "
+            f"BLOCK 1: double-fetch violates the 1-req/5s GDELT rate limit. "
+            f"Fix: news_corpus must source tone via lens_gdelt._fetch_gdelt_sentiment(); "
+            f"_build_sentiment_section must NOT make a separate lens_gdelt call."
+        )
+
+    def test_build_sentiment_section_no_unconditional_lens_gdelt_call(
+        self, gdelt_timelinetone_fixture, fed_press_xml
+    ):
+        """lens_gdelt._fetch_gdelt_sentiment is NOT called unconditionally from _build_sentiment_section.
+
+        The fix routes the single GDELT path through news_corpus only.
+        _build_sentiment_section must not import and call lens_gdelt._fetch_gdelt_sentiment
+        as an always-on second path.
+
+        FAILS on current code where lens_gdelt._fetch_gdelt_sentiment() is called
+        regardless of news_corpus success.
+        """
+        import ai_advisor
+
+        lens_gdelt_call_count = [0]
+        original_fetch = None
+
+        def tracking_get(url, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.raise_for_status = MagicMock()
+            if "timelinetone" in url:
+                resp.json.return_value = gdelt_timelinetone_fixture
+                resp.content = json.dumps(gdelt_timelinetone_fixture).encode()
+            elif "artlist" in url:
+                resp.json.return_value = {"articles": []}
+                resp.content = b'{"articles":[]}'
+            else:
+                resp.content = fed_press_xml
+            return resp
+
+        # Patch news_corpus to return a successful result, then verify lens_gdelt is NOT called
+        mock_corpus_result = {
+            "available": True,
+            "tone": 0.12,
+            "corpus": [],
+            "reason": None,
+        }
+
+        try:
+            import advisors.news_corpus as news_corpus_mod
+            original_build = news_corpus_mod.build_news_corpus
+            news_corpus_mod.build_news_corpus = lambda: mock_corpus_result
+        except ImportError:
+            pytest.skip("advisors.news_corpus not available")
+
+        try:
+            import advisors.lens_gdelt as lens_gdelt_mod
+            original_fetch_sentiment = lens_gdelt_mod._fetch_gdelt_sentiment
+
+            def counting_fetch_sentiment(universe):
+                lens_gdelt_call_count[0] += 1
+                return original_fetch_sentiment(universe)
+
+            lens_gdelt_mod._fetch_gdelt_sentiment = counting_fetch_sentiment
+
+            with (
+                patch("requests.get", side_effect=tracking_get),
+                patch("time.sleep"),
+            ):
+                ai_advisor._build_sentiment_section()
+
+        finally:
+            news_corpus_mod.build_news_corpus = original_build
+            lens_gdelt_mod._fetch_gdelt_sentiment = original_fetch_sentiment
+
+        assert lens_gdelt_call_count[0] == 0, (
+            f"lens_gdelt._fetch_gdelt_sentiment was called {lens_gdelt_call_count[0]} time(s) "
+            f"even though news_corpus.build_news_corpus() returned available=True. "
+            f"BLOCK 1: the lens_gdelt path must not run unconditionally. "
+            f"Fix: _build_sentiment_section calls ONLY news_corpus; drop the separate "
+            f"lens_gdelt._fetch_gdelt_sentiment() call."
+        )
+
+    def test_news_corpus_sources_gdelt_tone_via_lens_gdelt(self):
+        """news_corpus._fetch_gdelt_tone sources tone from lens_gdelt._fetch_gdelt_sentiment.
+
+        The consolidated single-GDELT-path design: news_corpus delegates to
+        lens_gdelt._fetch_gdelt_sentiment() to get both tone and artlist articles in one
+        properly-spaced sequence (_GDELT_INTER_REQUEST_S=6.0s between tone and artlist).
+
+        FAILS on current code where _fetch_gdelt_tone makes its own direct requests.get call
+        independent of lens_gdelt._fetch_gdelt_sentiment.
+        """
+        from advisors import news_corpus
+
+        # After the fix, _fetch_gdelt_tone must delegate to lens_gdelt._fetch_gdelt_sentiment.
+        # Verify by patching lens_gdelt._fetch_gdelt_sentiment and checking it is called.
+        sentiment_called = [False]
+
+        def mock_fetch_sentiment(universe):
+            sentiment_called[0] = True
+            return {
+                "available": True,
+                "tone": 0.05,
+                "events": [],
+                "per_ticker": None,
+                "source": "gdelt",
+                "sources": [],
+                "reason": None,
+            }
+
+        try:
+            import advisors.lens_gdelt as lens_gdelt_mod
+            original = lens_gdelt_mod._fetch_gdelt_sentiment
+            lens_gdelt_mod._fetch_gdelt_sentiment = mock_fetch_sentiment
+        except ImportError:
+            pytest.skip("advisors.lens_gdelt not available")
+
+        try:
+            with patch("time.sleep"):
+                tone = news_corpus._fetch_gdelt_tone()
+        finally:
+            lens_gdelt_mod._fetch_gdelt_sentiment = original
+
+        assert sentiment_called[0], (
+            "news_corpus._fetch_gdelt_tone() did not call lens_gdelt._fetch_gdelt_sentiment(). "
+            "BLOCK 1 fix: _fetch_gdelt_tone must delegate to lens_gdelt._fetch_gdelt_sentiment "
+            "so that both tone + artlist come from one properly-spaced GDELT call sequence. "
+            "FAILS on current code (direct requests.get call, independent of lens_gdelt)."
+        )
+        assert tone is not None and isinstance(tone, float), (
+            f"_fetch_gdelt_tone must return a float when lens_gdelt returns available=True. "
+            f"Got: {tone!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# BLOCK 2 — Warehouse persistence (DW-1): persist_lens_snapshot on both paths
+# ---------------------------------------------------------------------------
+
+
+class TestWarehousePersistence:
+    """_build_sentiment_section must call lens_warehouse.persist_lens_snapshot on
+    BOTH the success path and the all-unavailable path.
+
+    BLOCK 2 (reviewer-2, PM ruling Option A): the multi-source restructure silently
+    removed all lens_warehouse.persist_lens_snapshot() calls. The DW-1 contract
+    (lens_warehouse.py) states wired lenses persist their snapshots. Restore the calls.
+
+    FAILS on current codebase (no persist_lens_snapshot calls in _build_sentiment_section).
+    """
+
+    def test_persist_lens_snapshot_called_on_success_path(
+        self, gdelt_timelinetone_fixture, fed_press_xml
+    ):
+        """persist_lens_snapshot is called when _build_sentiment_section returns available=True.
+
+        DW-1: sentiment lens snapshots must land in alphabot_warehouse.db on the success path.
+        FAILS on current code (no persist call on success).
+        """
+        import ai_advisor
+
+        persist_calls: list[dict] = []
+
+        def mock_persist(**kwargs):
+            persist_calls.append(dict(kwargs))
+            return 1
+
+        mock_corpus_result = {
+            "available": True,
+            "tone": 0.08,
+            "corpus": [
+                {
+                    "url": "https://www.reuters.com/test",
+                    "title": "Test Article",
+                    "published": "20260618T120000Z",
+                    "domain": "reuters.com",
+                    "source_feed": "gdelt_artlist",
+                    "score": 0.75,
+                    "topics": ["macro"],
+                }
+            ],
+            "reason": None,
+        }
+
+        try:
+            import advisors.news_corpus as news_corpus_mod
+            original_build = news_corpus_mod.build_news_corpus
+            news_corpus_mod.build_news_corpus = lambda: mock_corpus_result
+        except ImportError:
+            pytest.skip("advisors.news_corpus not available")
+
+        try:
+            import advisors.lens_warehouse as lw_mod
+            original_persist = lw_mod.persist_lens_snapshot
+            lw_mod.persist_lens_snapshot = mock_persist
+
+            result = ai_advisor._build_sentiment_section()
+        finally:
+            news_corpus_mod.build_news_corpus = original_build
+            lw_mod.persist_lens_snapshot = original_persist
+
+        assert result.get("available") is True, (
+            f"Precondition: section must be available=True. Got: {result!r}"
+        )
+        assert len(persist_calls) >= 1, (
+            f"persist_lens_snapshot was NOT called on the success path. "
+            f"DW-1: sentiment lens snapshots must persist to warehouse on success. "
+            f"FAILS on current code. Restore the lens_warehouse.persist_lens_snapshot() "
+            f"call in _build_sentiment_section."
+        )
+        # The persist call must carry lens='sentiment' and available=True
+        success_persist = [c for c in persist_calls if c.get("available") is True]
+        assert success_persist, (
+            f"persist_lens_snapshot was called {len(persist_calls)} time(s) but none "
+            f"with available=True. Calls: {persist_calls}"
+        )
+        assert success_persist[0].get("lens") == "sentiment", (
+            f"persist_lens_snapshot call has wrong lens value: "
+            f"{success_persist[0].get('lens')!r}. Expected 'sentiment'."
+        )
+
+    def test_persist_lens_snapshot_called_on_unavailable_path(self):
+        """persist_lens_snapshot is called when _build_sentiment_section returns available=False.
+
+        DW-1: unavailability events must also be persisted so the warehouse records
+        when the sentiment lens was down.
+        FAILS on current code (no persist call on the unavailable path).
+        """
+        import ai_advisor
+        from requests.exceptions import Timeout
+
+        persist_calls: list[dict] = []
+
+        def mock_persist(**kwargs):
+            persist_calls.append(dict(kwargs))
+            return 1
+
+        # Fail all feeds so both paths return available=False
+        mock_unavailable = {
+            "available": False,
+            "tone": None,
+            "corpus": [],
+            "reason": "no_news_events",
+        }
+
+        try:
+            import advisors.news_corpus as news_corpus_mod
+            original_build = news_corpus_mod.build_news_corpus
+            news_corpus_mod.build_news_corpus = lambda: mock_unavailable
+        except ImportError:
+            pytest.skip("advisors.news_corpus not available")
+
+        try:
+            import advisors.lens_warehouse as lw_mod
+            original_persist = lw_mod.persist_lens_snapshot
+            lw_mod.persist_lens_snapshot = mock_persist
+
+            result = ai_advisor._build_sentiment_section()
+        finally:
+            news_corpus_mod.build_news_corpus = original_build
+            lw_mod.persist_lens_snapshot = original_persist
+
+        assert result.get("available") is False, (
+            f"Precondition: section must be available=False. Got: {result!r}"
+        )
+        assert len(persist_calls) >= 1, (
+            f"persist_lens_snapshot was NOT called on the unavailable path. "
+            f"DW-1: sentiment lens unavailability must be persisted to warehouse. "
+            f"FAILS on current code. Restore the lens_warehouse.persist_lens_snapshot() "
+            f"call in _build_sentiment_section for the unavailable path."
+        )
+        unavail_persist = [c for c in persist_calls if c.get("available") is False]
+        assert unavail_persist, (
+            f"persist_lens_snapshot called {len(persist_calls)} time(s) but none "
+            f"with available=False. Calls: {persist_calls}"
+        )
+
+    def test_persist_payload_contains_tone_and_corpus_summary(
+        self, gdelt_timelinetone_fixture
+    ):
+        """The warehouse payload on the success path carries tone_score and corpus_size.
+
+        DW-1: the raw_payload passed to persist_lens_snapshot must contain enough
+        context for warehouse consumers — at minimum tone_score and corpus_size.
+        FAILS on current code (no persist call at all).
+        """
+        import ai_advisor
+
+        persist_calls: list[dict] = []
+
+        def mock_persist(**kwargs):
+            persist_calls.append(dict(kwargs))
+            return 1
+
+        mock_corpus_result = {
+            "available": True,
+            "tone": 0.15,
+            "corpus": [
+                {
+                    "url": "https://www.cnbc.com/article",
+                    "title": "Markets Rise",
+                    "published": "20260618T140000Z",
+                    "domain": "cnbc.com",
+                    "source_feed": "cnbc_markets",
+                    "score": 0.65,
+                    "topics": ["broad-sentiment"],
+                }
+            ],
+            "reason": None,
+        }
+
+        try:
+            import advisors.news_corpus as news_corpus_mod
+            original_build = news_corpus_mod.build_news_corpus
+            news_corpus_mod.build_news_corpus = lambda: mock_corpus_result
+        except ImportError:
+            pytest.skip("advisors.news_corpus not available")
+
+        try:
+            import advisors.lens_warehouse as lw_mod
+            original_persist = lw_mod.persist_lens_snapshot
+            lw_mod.persist_lens_snapshot = mock_persist
+
+            ai_advisor._build_sentiment_section()
+        finally:
+            news_corpus_mod.build_news_corpus = original_build
+            lw_mod.persist_lens_snapshot = original_persist
+
+        if not persist_calls:
+            pytest.fail(
+                "persist_lens_snapshot was not called — DW-1 regression. "
+                "Cannot verify payload shape."
+            )
+
+        success_calls = [c for c in persist_calls if c.get("available") is True]
+        if not success_calls:
+            pytest.skip("No success-path persist call found — covered by other test")
+
+        raw_payload = success_calls[0].get("raw_payload", {})
+        assert isinstance(raw_payload, dict), (
+            f"raw_payload must be a dict. Got: {type(raw_payload)}"
+        )
+        assert "tone_score" in raw_payload or "tone" in raw_payload, (
+            f"raw_payload missing tone_score/tone key. "
+            f"Warehouse consumers need the tone value for historical trending. "
+            f"Got keys: {set(raw_payload.keys())}"
+        )
+        assert "corpus_size" in raw_payload or "article_count" in raw_payload or "corpus" in raw_payload, (
+            f"raw_payload missing corpus size indicator. "
+            f"Got keys: {set(raw_payload.keys())}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# NOTE — utcnow() deprecation: news_corpus.py should use tz-aware datetime
+# (non-blocking per reviewer; included here for completeness)
+# ---------------------------------------------------------------------------
+
+
+class TestUtcnowDeprecation:
+    """news_corpus.build_news_corpus must not use datetime.datetime.utcnow() (deprecated).
+
+    This generates 25 DeprecationWarnings per test run (Python 3.12+).
+    Fix: replace with datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).
+    Non-blocking per reviewer (no correctness bug — _recency strips tzinfo before compare).
+    """
+
+    def test_news_corpus_does_not_call_utcnow(self):
+        """news_corpus.py source does not contain datetime.utcnow().
+
+        FAILS if utcnow() is still present after the fix.
+        NOTE: non-blocking per reviewer; include in the same GREEN pass.
+        """
+        import pathlib
+        src = pathlib.Path(__file__).parents[2] / "advisors" / "news_corpus.py"
+        assert src.exists(), f"news_corpus.py not found at {src}"
+        content = src.read_text(encoding="utf-8")
+        assert "utcnow()" not in content, (
+            "news_corpus.py still calls datetime.utcnow() (deprecated in Python 3.12+). "
+            "Replace with datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None). "
+            "This eliminates the 25 DeprecationWarnings in the test suite."
+        )
+
+
+# ---------------------------------------------------------------------------
 # @pytest.mark.live — excluded from default run
 # ---------------------------------------------------------------------------
 
