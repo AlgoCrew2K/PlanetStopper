@@ -196,3 +196,5 @@ All errors surface `type(exc).__name__` only — in audit log entries, in SendMe
 - **Clarifications are not debate rounds.** They do not consume the 3-round cap.
 - **run_id is immutable for the session.** Generate it once in step 1; use exactly that string everywhere.
 - **One MARKET_PRISM row per run.** Never write two rows for the same run_id.
+- **Never synthesize until 5 initial_read rows are confirmed in the audit DB for this run_id.** Query the DB directly; never rely on the SendMessage inbox alone. If fewer than 5 initial_read rows exist when the wait-barrier times out, synthesize with honest limited-inputs degradation naming the missing lenses.
+- **Never falsely attribute non-response to a lens that spawned.** A lens that spawned but did not report its initial_read is missing or late — not absent. Do not record it as "did not spawn". Mark it limited-inputs only after the wait-barrier times out.

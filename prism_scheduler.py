@@ -52,10 +52,13 @@ MAX_BUDGET_USD: float = 15.0
 #       during Q&A and debate.
 #   (d) Wait-barrier: synthesizer must not synthesize until 5 initial_read rows
 #       appear in the audit DB (or the barrier times out — graceful limited-inputs).
+# Static preamble — does NOT instruct the council to mint its own run_id.
+# _run_prism() appends the scheduler-generated run_id at call time so the
+# council uses exactly the uuid4 that _persist_spend will log against.
 PRISM_RUN_PROMPT: str = (
     "You are running the Market Prism nightly council. "
-    "Step 1: Generate a run_id using datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00') "
-    "BEFORE spawning any agents — the run_id must be embedded in each analyst's spawn prompt. "
+    "Step 1: Use the run_id provided at the end of this prompt — do NOT generate "
+    "a new run_id; use exactly the string given. "
     "Step 2: Spawn all 6 agents: prism-synthesizer (team lead), "
     "prism-technicals-analyst, prism-sentiment-analyst, "
     "prism-derivatives-analyst, prism-macro-analyst, "
@@ -150,6 +153,14 @@ def _run_prism(run_id: str = "unknown") -> bool:
     the MARKET_PRISM row. Returns True on success (returncode == 0), False on failure.
     Raises no exceptions — all errors are logged as type-only (D-1).
     """
+    # Build the prompt dynamically so the scheduler-generated run_id is the
+    # single authoritative id for all audit rows and _persist_spend logging.
+    prompt = (
+        PRISM_RUN_PROMPT
+        + f" The run_id for this session is: {run_id}."
+        " Use this exact string as the run_id for ALL audit rows and the"
+        " MARKET_PRISM observation. Do not generate a new run_id."
+    )
     cmd = [
         "claude",
         "-p",
@@ -160,7 +171,7 @@ def _run_prism(run_id: str = "unknown") -> bool:
         str(MAX_BUDGET_USD),
         "--output-format",
         "json",
-        PRISM_RUN_PROMPT,
+        prompt,
     ]
     try:
         result = subprocess.run(
