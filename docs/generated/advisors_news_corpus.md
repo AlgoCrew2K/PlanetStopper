@@ -87,7 +87,7 @@ via `feedparser`.
 | Feed name | URL | UA |
 |-----------|-----|----|
 | `gdelt_artlist` | Via `lens_gdelt._fetch_gdelt_sentiment` (maxrecords=50, sourcelang:eng) | Handled by `lens_gdelt` |
-| `google_news_business` | `https://news.google.com/rss/headlines/section/topic/BUSINESS` | `_UA_STD` |
+| `google_news_business` | `https://news.google.com/rss/headlines/section/topic/BUSINESS` | `_UA_STD` — domain resolved via `entry.source.href` (publisher URL); falls back to link domain for feeds without a source href |
 | `cnbc_markets` | `https://www.cnbc.com/id/10000664/device/rss/rss.html` | `_UA_STD` |
 | `marketwatch_top` | `https://feeds.marketwatch.com/marketwatch/topstories/` | `_UA_STD` |
 | `yahoo_finance` | `https://finance.yahoo.com/news/rssindex` | `_UA_STD` |
@@ -179,7 +179,7 @@ Recency defaults to `0.5` on unparseable dates. Timestamps computed with
 | `_jaccard(title_a, title_b)` | Token-set Jaccard similarity |
 | `_dedup(articles)` | Three-step cross-source dedup pipeline |
 | `_normalize_gdelt_articles(sources_raw)` | Pure normalizer: converts GDELT `sources` field records `{url, seendate, title, domain}` to the common article shape; `source_feed="gdelt_artlist"` |
-| `_fetch_rss_feed(name, url, ua)` | Fetch + normalize one RSS/Atom feed via `feedparser`; per-feed isolation |
+| `_fetch_rss_feed(name, url, ua)` | Fetch + normalize one RSS/Atom feed via `feedparser`; per-feed isolation. Published date sourced from `entry.published_parsed` (feedparser struct_time) via `calendar.timegm` + tz-aware `datetime.fromtimestamp` → ISO `%Y-%m-%dT%H:%M:%S` string, making recency decay functional across all feeds; falls back to raw `published`/`updated` string when `published_parsed` is absent. Domain resolved via `entry.source.href` when present (Google News wrapper→publisher); falls through to `_extract_domain(link)` for other feeds. |
 | `_fetch_all_feeds()` | Orchestrates all RSS/Atom feeds (RSS-only; no direct GDELT GETs here) |
 
 ## Design Invariants
@@ -251,4 +251,4 @@ in `try/except` — warehouse errors never surface to callers):
 - **Warehouse persistence tests (cycle-2):** Assert `persist_lens_snapshot` is called
   with `lens="sentiment"` on both the success and unavailable paths; assert payload
   shape carries `tone` and `corpus_size` keys (no hardcoded values).
-- **Total suite:** GREEN at bed4afb (dead-code + stale-seam fix commit).
+- **Total suite:** GREEN at fdf33df (AC-3 recency + Google News domain fix; 177 passed / 0 failed).
