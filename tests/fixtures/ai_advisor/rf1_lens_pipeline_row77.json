@@ -1,0 +1,54 @@
+{
+  "_provenance": "Captured read-only from live production DB advisor_observations id=77, created 2026-06-18 09:03:18, advisor_role=MARKET_PRISM. This is the lens_pipeline producer shape — per_lens_digest summaries are raw structured JSON strings, NOT prose. Used as the primary RED-state fixture for RF-1 prose-render tests.",
+  "id": 77,
+  "advisor_role": "MARKET_PRISM",
+  "created_at": "2026-06-18 09:03:18",
+  "per_lens_digest": {
+    "technicals": {
+      "available": true,
+      "summary": "{\"ma_posture\": {\"XLI\": {\"above_sma50\": true, \"above_sma200\": null}, \"IWM\": {\"above_sma50\": true, \"above_sma200\": null}, \"SPY\": {\"above_sma50\": true, \"above_sma200\": null}, \"XLF\": {\"above_sma50\": true, \"above_sma200\": null}, \"XLV\": {\"above_sma50\": true, \"above_sma200\": null}, \"AGG\": {\"above_sma50\": false, \"above_sma200\": null}, \"EFA\": {\"above_sma50\": true, \"above_sma200\": null}, \"GLD\": {\"above_sma50\": false, \"above_sma200\": null}, \"QQQ\": {\"above_sma50\": true, \"above_sma200\": null}, \"XLE\": {\"above_sma50\": false, \"above_sma200\": null}}, \"breadth\": 0.7, \"momentum\": {\"XLI\": 0.06451326122388513, \"IWM\": 0.06186359973628322, \"SPY\": 0.009839193240665069, \"XLF\": 0.05761518145358506, \"XLV\": 0.022807493890849944, \"AGG\": 0.009882738491474254, \"EFA\": 0.017949975478175558, \"GLD\": -0.055647356143079266, \"QQQ\": 0.029877979245067906, \"XLE\": -0.1073935041619064}}",
+      "sources": []
+    },
+    "sentiment": {
+      "available": true,
+      "summary": "{\"article_count\": 10, \"tone_summary\": null, \"tone_score\": null}",
+      "sources": [
+        {
+          "title": "Market article 1",
+          "url": "https://example.com/article1",
+          "published": "20260617T094500Z",
+          "lens": "sentiment"
+        }
+      ]
+    },
+    "derivatives": {
+      "available": true,
+      "summary": "{\"vix_level\": 16.41, \"vix_term_structure\": {\"spot\": 16.41, \"term_3m\": 19.53, \"ratio\": 0.8402457757296466, \"spread\": -3.120000000000001, \"regime\": \"contango\"}, \"risk_read\": \"neutral\", \"as_of_date\": \"2026-06-16\"}",
+      "sources": [
+        {
+          "title": "VIXCLS / VXVCLS (CBOE Vol Index)",
+          "url": "https://fred.stlouisfed.org/series/VIXCLS",
+          "published": "2026-06-16",
+          "lens": "derivatives"
+        }
+      ]
+    },
+    "macro": {
+      "available": true,
+      "summary": "{\"series\": {\"DGS10\": {\"label\": \"10-Year Treasury Constant Maturity Rate\", \"value\": \"4.43\", \"date\": \"2026-06-16\"}, \"UNRATE\": {\"label\": \"Unemployment Rate\", \"value\": \"4.3\", \"date\": \"2026-05-01\"}, \"CPIAUCSL\": {\"label\": \"Consumer Price Index (CPI-U)\", \"value\": \"333.979\", \"date\": \"2026-05-01\"}, \"FEDFUNDS\": {\"label\": \"Federal Funds Effective Rate\", \"value\": \"3.63\", \"date\": \"2026-05-01\"}}}",
+      "sources": [
+        {
+          "title": "10-Year Treasury Constant Maturity Rate",
+          "url": "https://fred.stlouisfed.org/series/DGS10",
+          "published": "2026-06-16",
+          "lens": "macro"
+        }
+      ]
+    },
+    "fundamentals": {
+      "available": true,
+      "summary": "{\"tickers\": {\"AAPL\": {\"entity_name\": \"Apple Inc.\", \"cik\": 320193, \"key_facts\": {\"Revenues\": {\"label\": \"Revenue\", \"value\": 416161000000, \"unit\": \"USD\", \"end\": \"2025-09-27\", \"filed\": \"2025-10-31\", \"form\": \"10-K\"}, \"NetIncomeLoss\": {\"label\": \"Net Income / Loss\", \"value\": 112010000000, \"unit\": \"USD\", \"end\": \"2025-09-27\", \"filed\": \"2025-10-31\", \"form\": \"10-K\"}, \"Assets\": {\"label\": \"Total Assets\", \"value\": 359241000000, \"unit\": \"USD\", \"end\": \"2025-09-27\", \"filed\": \"2025-10-31\", \"form\": \"10-K\"}}}, \"AMZN\": {\"entity_name\": \"AMAZON COM INC\", \"cik\": 1018724, \"key_facts\": {\"Revenues\": {\"label\": \"Revenue\", \"value\": 716924000000, \"unit\": \"USD\", \"end\": \"2025-12-31\", \"filed\": \"2026-02-06\", \"form\": \"10-K\"}, \"NetIncomeLoss\": {\"label\": \"Net Income / Loss\", \"value\": 77670000000, \"unit\": \"USD\", \"end\": \"2025-12-31\", \"filed\": \"2026-02-06\", \"form\": \"10-K\"}}}}}",
+      "sources": []
+    }
+  }
+}
