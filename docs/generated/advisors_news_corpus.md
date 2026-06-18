@@ -178,7 +178,6 @@ Recency defaults to `0.5` on unparseable dates. Timestamps computed with
 | `_canonical_url(url)` | Strip query + fragment for dedup comparison |
 | `_jaccard(title_a, title_b)` | Token-set Jaccard similarity |
 | `_dedup(articles)` | Three-step cross-source dedup pipeline |
-| `_fetch_gdelt_tone()` | Standalone helper: delegates to `lens_gdelt._fetch_gdelt_sentiment`; returns `float \| None`. NOT called from `build_news_corpus` — the main function calls `_fetch_gdelt_sentiment` directly inline. Used by tests that call `_fetch_gdelt_tone()` as an isolated unit. |
 | `_normalize_gdelt_articles(sources_raw)` | Pure normalizer: converts GDELT `sources` field records `{url, seendate, title, domain}` to the common article shape; `source_feed="gdelt_artlist"` |
 | `_fetch_rss_feed(name, url, ua)` | Fetch + normalize one RSS/Atom feed via `feedparser`; per-feed isolation |
 | `_fetch_all_feeds()` | Orchestrates all RSS/Atom feeds (RSS-only; no direct GDELT GETs here) |
@@ -245,8 +244,11 @@ in `try/except` — warehouse errors never surface to callers):
 - **Single-GDELT-path tests (cycle-2):** Assert `_fetch_gdelt_sentiment` is called
   at most once per `_build_sentiment_section` call; assert `_fetch_gdelt_sentiment`
   is NOT called directly from `_build_sentiment_section` when `news_corpus` is
-  available; assert `_fetch_gdelt_tone` delegates to `_fetch_gdelt_sentiment`.
+  available; `test_build_sentiment_section_total_gdelt_gets_at_most_two` asserts
+  total GDELT GETs <=2 through the real production path; tombstone test
+  `test_fetch_gdelt_tone_is_removed_dead_code` asserts `_fetch_gdelt_tone` no
+  longer exists in the module.
 - **Warehouse persistence tests (cycle-2):** Assert `persist_lens_snapshot` is called
   with `lens="sentiment"` on both the success and unavailable paths; assert payload
   shape carries `tone` and `corpus_size` keys (no hardcoded values).
-- **Total suite:** 166 passed / 0 failed at GREEN commit 5e2a830.
+- **Total suite:** GREEN at bed4afb (dead-code + stale-seam fix commit).

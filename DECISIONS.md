@@ -1240,22 +1240,36 @@ Both calls are CC-2 lazy imports, wrapped in `try/except` with `pass` — wareho
 
 ---
 
-### DE-NC-001-STALE-TESTS: Stale Phase-2 warehouse-wiring tests (non-blocking, cleanup deferred)
+### DE-NC-001-STALE-TESTS: Stale Phase-2 warehouse-wiring tests — fixed in cycle-2 (2026-06-18)
 
-**Known issue (reviewer observation, 2026-06-18):**
-
-`tests/ai_advisor/test_lens_warehouse_wiring.py::TestSentimentSectionWarehouseWiring`
-(lines 76–209) patches the old `advisors.lens_gdelt._fetch_gdelt_sentiment` +
+**Background:** `tests/ai_advisor/test_lens_warehouse_wiring.py::TestSentimentSectionWarehouseWiring`
+contained three tests that patched the old `advisors.lens_gdelt._fetch_gdelt_sentiment` +
 `ai_advisor._fetch_with_backoff` seams from the Phase-2 interim architecture. After
-the cycle-2 restructure those seams are no longer the correct mock targets — the
-tests will make live RSS HTTP calls when run because the patches no longer intercept
-the actual production path (`news_corpus.build_news_corpus`).
+the cycle-2 restructure those seams were no longer the correct mock targets, causing
+live RSS HTTP calls in the default suite and a non-deterministic `available=False`
+vs `available=True` assertion failure. This was classified as a merge-gate break
+(not deferred) and fixed in the same cycle.
 
-**Classification:** Test quality issue (stale seams), not a code defect. The tests
-do not gate on wrong behavior — they fail to isolate properly, meaning they test a
-path that no longer exists. No production code is wrong.
+**Fix (HEAD bed4afb):**
 
-**Status:** Deferred cleanup. A future cycle should repoint these tests to patch
-`news_corpus.build_news_corpus` (the correct seam post-cycle-2). The enforcement
-tests in `tests/ai_advisor/test_news_corpus.py::TestWarehousePersistence` (cycle-2
-additions) are the authoritative coverage for the restored DW-1 wiring.
+1. **Dead code deleted.** `_fetch_gdelt_tone()` (`advisors/news_corpus.py`) had
+   no production caller — `build_news_corpus` calls `lens_gdelt._fetch_gdelt_sentiment`
+   directly inline. The helper was deleted. A tombstone test
+   `test_fetch_gdelt_tone_is_removed_dead_code` asserts `not hasattr(news_corpus, "_fetch_gdelt_tone")`.
+
+2. **Stale live-HTTP tests deleted.** Three tests in `TestSentimentSectionWarehouseWiring`
+   that patched wrong seams and made live HTTP calls were removed:
+   `test_persist_called_after_successful_gdelt_fetch`,
+   `test_persist_called_with_available_false_when_gdelt_down`,
+   `test_persist_payload_is_not_fabricated_when_down`.
+   The remaining test in that class (`test_persist_lens_snapshot_is_lazy_imported_in_sentiment`)
+   is a pure `hasattr` attribute check with zero HTTP.
+
+3. **Authoritative hermetic coverage in `TestWarehousePersistence`** (`test_news_corpus.py`):
+   patches `news_corpus_mod.build_news_corpus` (the correct seam); covers
+   `available=True`, `available=False`, and payload shape paths. CC-2 lazy-import guard retained.
+
+4. **<=2-GETs invariant** still carried by `test_build_sentiment_section_total_gdelt_gets_at_most_two`
+   (`test_news_corpus.py:1627`), which patches `requests.get` through the real production path.
+
+**Status:** Fixed at bed4afb. Reviewer delta-APPROVE confirmed all four checks pass.
