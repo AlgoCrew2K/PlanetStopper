@@ -4,6 +4,43 @@ This file records binding architectural decisions made during Planet Stopper dev
 
 ---
 
+## DE-SCHEMA-001 — Composer /backtest live-required fields: root.description + wt-inverse-vol.window-days (2026-06-18)
+
+Branch: feat/symphony-schema-required-fields | Base: origin/main 26196e8
+
+### Root cause
+
+The live Composer `POST /api/v0.1/backtest` API now enforces two fields that `advisors/symphony_schema.py` constructors were not emitting:
+
+1. **`root.description` (string)** — every real `/score` response carries `description: ""` on the root node; the live API returns HTTP 400 when the field is absent.
+2. **`wt-inverse-vol.window-days` (int)** — the API returns HTTP 422 ("unknown-function-parameter") without it. The Composer UI default and the value carried by `sample_score_large.json` (VERIFIED-LOCAL) is 30.
+
+This caused EVERY Strategy Builder candidate tree (T1–T7 across all 3 objectives), every `asset_swap_engine` inline backtest, and every `logic_change_engine` inline backtest to fail at the API layer (400/422) — BEFORE reaching the FDR gate. The symptom was "Strategy Builder never produced a survivor." The root cause was the API enforcement of these two fields, NOT the `raw_value` request wrapper (which was always correct and is unchanged).
+
+Diagnosis: empirical live verification matrix (`composer-encode-spike`) — T1 equal_weight + `description=""` → HTTP 200 (was 400); T3 inverse_vol + `description=""` + `window-days=30` → HTTP 200 (was 422).
+
+### Fix
+
+Two additive one-line changes in `advisors/symphony_schema.py`:
+- `make_root` return dict += `"description": ""`
+- `make_inverse_vol` return dict += `"window-days": 30`
+
+**NOT changed:** `composer_backtest_client.py` request wrapper (correct as-is), T1–T7 template builders in `strategy_builder_engine.py` (they consume the constructors — auto-fixed upstream), response-parser.
+
+### Grammar doc correction
+
+`feature-plans/strategy-builder-composer-grammar.md` OQ-8 ("No params observed; omit" for `wt-inverse-vol`) is closed and superseded. `window-days` is LIVE-REQUIRED. `sample_score_large.json` already carried `window-days` on its `wt-inverse-vol` nodes — the OQ-8 note was based on a misread of the fixture. `root.description` is added to §3.1 as LIVE-REQUIRED.
+
+### Fixture note
+
+`tests/fixtures/symphony_logic/sample_score_large.json` already carries `window-days` on its `wt-inverse-vol` node — it was never stale. No fixture update needed for this file. Tests asserting `make_inverse_vol` output shape were updated as part of AC-4 (additive key, stale-by-intent).
+
+### Live re-verify result
+
+PM live re-verification confirmed all 13 Strategy Builder candidate trees (T1–T7 across all 3 objectives: diversify / cut_drawdown / lift_risk_adjusted) backtest HTTP 200 after the fix. The FDR gate ran successfully and produced 0 survivors — this is the expected outcome of the intentionally strict CRRA-EU + Harvey-Liu gate, not a defect. The fix unblocks the gate from running at all; it does not change the gate's accept/reject criteria.
+
+---
+
 ## ARCH-REM-001 — Carried pre-existing test failures remediated (2026-06-16)
 
 Branch: fix/carried-preexisting-failures | HEAD: 526c242

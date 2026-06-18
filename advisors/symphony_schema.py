@@ -787,6 +787,7 @@ def make_root(name: str, rebalance: str, children: list) -> dict:
         "step": "root",
         "name": name,
         "rebalance": rebalance,
+        "description": "",  # required by live Composer /backtest API (was HTTP 400)
         "id": _fresh_id(),
         "children": [copy.deepcopy(child) for child in children],
     }
@@ -824,6 +825,7 @@ def make_inverse_vol(children: list) -> dict:
     """Build a wt-inverse-vol allocation node (grammar doc §3.8)."""
     return {
         "step": "wt-inverse-vol",
+        "window-days": 30,  # required by live Composer /backtest API (was HTTP 422)
         "id": _fresh_id(),
         "children": [copy.deepcopy(child) for child in children],
     }
