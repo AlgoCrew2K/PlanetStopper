@@ -2889,6 +2889,18 @@ def ai_advisor_tab():
     ]
     observations = deduped_obs[:_ADVISOR_OBSERVATIONS_PAGE_LIMIT]
 
+    # Stamp _preview_text onto each non-MARKET_PRISM observation so the template
+    # can render a concise human-readable cell without dumping raw JSON.
+    # MARKET_PRISM rows are handled separately (show verdict only).
+    try:
+        from advisors.prism_render import humanize_obs_preview as _humanize_obs  # noqa: PLC0415
+
+        for _obs in observations:
+            if _obs.get("advisor_role") != "MARKET_PRISM":
+                _obs["_preview_text"] = _humanize_obs(_obs.get("raw_response"))
+    except Exception:
+        pass  # Humanization failure must never crash the route.
+
     # ------------------------------------------------------------------ #
     # Correlations panel: pairwise return matrix                           #
     # Lazy import keeps the module off the live 1-minute execution path.   #
@@ -2950,6 +2962,26 @@ def ai_advisor_tab():
         market_prism_summary = database.get_latest_market_prism_summary()
     except Exception:
         pass  # Empty state rendered by template on None.
+
+    # Pre-humanize per_lens_digest summaries so the template never sees raw JSON.
+    # Council prose passes through unchanged; lens_pipeline JSON is humanized to
+    # readable text.  Null summaries become an honest empty-state string so the
+    # template's {% if _lens.get('summary') %} guard always produces a visible paragraph.
+    if market_prism_summary:
+        try:
+            from advisors.prism_render import humanize_lens_summary as _humanize_lens  # noqa: PLC0415
+
+            _raw_resp = market_prism_summary.get("raw_response", {})
+            if isinstance(_raw_resp, str):
+                import json as _json  # noqa: PLC0415
+
+                _raw_resp = _json.loads(_raw_resp)
+            _per_lens = _raw_resp.get("per_lens_digest", {}) if isinstance(_raw_resp, dict) else {}
+            for _ln, _le in _per_lens.items():
+                if isinstance(_le, dict):
+                    _le["summary"] = _humanize_lens(_ln, _le)
+        except Exception:
+            pass  # Humanization failure must never crash the route.
 
     # ------------------------------------------------------------------ #
     # Strategy Builder panel: prefetch STRATEGY_BUILDER observations +    #

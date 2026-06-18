@@ -1,0 +1,43 @@
+{
+  "_provenance": "Captured read-only from temp DB C:/Users/paulm/AppData/Local/Temp/pc_f4_live.db advisor_observations id=78, created 2026-06-18 20:01:30, advisor_role=MARKET_PRISM. This is the council (prism-synthesizer) producer shape — per_lens_digest summaries are already PROSE strings, not JSON. The RF-1 prose passthrough requirement means these strings must be returned unchanged by humanize_lens_summary().",
+  "id": 78,
+  "advisor_role": "MARKET_PRISM",
+  "created_at": "2026-06-18 20:01:30",
+  "per_lens_digest": {
+    "technicals": {
+      "available": true,
+      "summary": "BULLISH. Breadth 0.70 (7/10 above 50d SMA); risk-on cyclical leadership (IWM +5.6%, XLI +6.2%, QQQ +3.9%, XLF +3.8%), defensives/commodities lag (XLE -10.1%, GLD -7.3%) — healthy broadening, not a narrow melt-up. Caveat: above_sma200 null (50d/momentum read only, long-term trend unconfirmed).",
+      "sources": ["Alpaca daily bars (270-day window): QQQ, SPY, XLF, XLI, EFA, IWM, XLV, XLE, AGG, GLD"]
+    },
+    "sentiment": {
+      "available": true,
+      "summary": "NEUTRAL with constructive tilt (firmed to constructive after Q&A). Risk-on relief tape (Iran de-escalation, Hormuz reopened, gas <$4, Treasuries rebounding) vs a Fed-policy news overhang; macro hard data deflates the hike fear to a two-sided narrative risk. Caveat: GDELT AvgTone scalar UNAVAILABLE (corpus-narrative-derived, not tone-quantified).",
+      "sources": [
+        "GDELT 2.0 (AvgTone unavailable this run)",
+        "25-article ranked news corpus (WSJ, Bloomberg, CNN, MarketWatch)"
+      ]
+    },
+    "derivatives": {
+      "available": true,
+      "summary": "NEUTRAL, mild constructive tilt. VIX spot 18.44 (below ~20 average, above sub-14 complacency) in healthy CONTANGO (3m 20.62 > spot, spread -2.18, ratio 0.894) — orderly risk-on vol surface, no backwardation/stress flag. Caveat: VIX level + term structure only (no put/call, skew, dealer gamma, OI).",
+      "sources": ["VIX spot 18.44", "VIX 3-month 20.62 (term structure)"]
+    },
+    "macro": {
+      "available": true,
+      "summary": "NEUTRAL-to-mildly-BULLISH; mid-to-late-cycle soft landing. Fed funds 3.63% ~80bp BELOW 10Y 4.43% (normalizing/disinverting curve, easing off prior peak); unemployment 4.3% drifting up but not breaking. Modest tailwind, BUT 4.43% 10Y keeps real-rate / high-multiple valuation sensitivity ELEVATED. Caveat: UNRATE/FEDFUNDS/CPI dated 2026-05-01 vs 10Y 2026-06-16; CPI is a level not YoY (no inflation-trajectory call).",
+      "sources": [
+        "FRED: FEDFUNDS 3.63% (2026-05-01)",
+        "FRED: DGS10 4.43% (2026-06-16)",
+        "FRED: UNRATE 4.3% (2026-05-01)",
+        "FRED: CPIAUCSL 333.979 (2026-05-01)"
+      ]
+    },
+    "fundamentals": {
+      "available": true,
+      "summary": "BULLISH on fundamental support for current prices. Coverage 6/8 proxy mega-caps (AAPL, AMZN, GOOGL, JPM, MSFT, NVDA) on fresh 10-Ks. Robust profitability (net margins NVDA 55.6%, MSFT 36.1%, GOOGL 32.8%, AAPL 26.9%, AMZN 10.8%, JPM 31.3%; high ROE) and conservative leader balance sheets (GOOGL 0.43x, NVDA 0.31x, MSFT 0.80x). Caveat: single-period snapshot, no YoY — absolute health, NOT a verified earnings-acceleration trend; valuation-vs-rates out of scope.",
+      "sources": [
+        "SEC EDGAR companyfacts 10-K filings (most filed Feb 2026): AAPL, AMZN, GOOGL, JPM, MSFT, NVDA"
+      ]
+    }
+  }
+}

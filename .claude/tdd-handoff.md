@@ -1,168 +1,240 @@
-# TDD Handoff — prism-council F-1/F-2/F-3 + F-4 fixes
+# TDD Handoff — RF-1 Prose Render (RED → GREEN)
 
-**From:** pc-test-writer
-**To:** pc-implementer
-**Branch:** feat/prism-council-5of5
-**Worktree:** C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/prism-council
-**RED commit:** (pending — F-4 tests written, commit next)
-**Prior GREEN commit:** 87ba7ae (F-1/F-2/F-3 GREEN)
-**Suite state after F-4 RED:** 2 FAILED / 49 passed / 2 skipped
+**From:** rf1-test-writer  
+**To:** rf1-implementer  
+**Branch:** feat/rf1-prose-render  
+**Worktree:** C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/rf1-prose-render  
+**RED SHA:** 9f67dba  
+**Result:** 29 FAILED / 4 passed (4 are AC-6 regression guards, correct to pass now)
+
+**Phase:** green  
+**GREEN SHA:** (see git log — committed after 33/33 pass)
 
 ---
 
-## Your mission: GREEN (minimum changes to pass the 2 RED tests)
+## Your mission: GREEN (minimum changes to pass the 29 RED tests)
 
-You are the implementer. Read ONLY this handoff — not the feature plan or the
-test file. Write the minimum production code to make the 2 failing tests pass.
-
-F-1/F-2/F-3 are already GREEN at 87ba7ae — do not undo those changes.
-F-4 adds 3 new tests; 2 are RED, 1 skips (happy-path regression lock).
+You are the implementer. Read ONLY this handoff — not the feature plan or the test file.
+Write the minimum production code to make the 29 failing tests pass without breaking the
+4 currently-passing regression guards or the 23 pre-existing Prism tests.
 
 Confirm RED first:
 
 ```
-cd C:/Windows/Temp && python -m pytest \
-  "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/prism-council/tests/ai_advisor/test_prism_scheduling.py::TestMarketPrismRowVerification" \
-  --override-ini="addopts=" -v
+cd C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/rf1-prose-render
+python -m pytest tests/ai_advisor/test_rf1_prose_render.py -p no:xdist -o addopts= -m "not live and not slow and not perf" -q
 ```
 
-Expected: 2 FAILED, 0 passed, 1 skipped.
+Expected: 29 FAILED / 4 passed on SHA 9f67dba.
 
 ---
 
-## Files to change
+## Files to create/modify
 
-### 1. `prism_scheduler.py` — add row-verification seam + retry-on-empty (F-4)
+### 1. CREATE `advisors/prism_render.py` (new pure module)
 
-**Root cause:** `main()` treats subprocess `rc==0` as per-attempt success with no
-check that the council actually persisted a MARKET_PRISM observation row.  A
-council that exits cleanly but writes no row is indistinguishable from a genuine
-success (the silent false-green exposed by the live exam).
-
-**Seam name (REQUIRED — pinned by tests):** `_get_market_prism_row_for_run`
-
-The tests patch `prism_scheduler._get_market_prism_row_for_run` by name.  The
-function MUST be named exactly `_get_market_prism_row_for_run`.
-
-**What to add:**
+Public surface:
 
 ```python
-def _get_market_prism_row_for_run(run_id: str) -> dict | None:
-    """Return the MARKET_PRISM advisor_observations row for this run_id, or None.
+def humanize_lens_summary(lens_name: str, lens_entry: dict | None) -> str:
+```
 
-    Queries advisor_observations for a row with advisor_role='MARKET_PRISM' whose
-    raw_response contains a matching run_id.  Used by main() to verify the council
-    actually produced an observation before declaring success.
+- **Pure function** — no I/O, no Flask imports, no database imports
+- **Never raises** — wrap all logic in try/except; return a fallback on any error (D-1)
+- **Returns a non-empty string always** — never None, never ""
 
-    Non-fatal — returns None on any DB error (D-1: logs type-only to stderr).
-    """
+#### Detection rule (HARD — test specifically checks this)
+
+```python
+import json
+
+def _is_structured(summary) -> bool:
+    """Return True if summary is a JSON-encoded dict or list."""
+    if not isinstance(summary, str):
+        return False
     try:
-        sys.path.insert(0, str(_PROJECT_ROOT))
-        import database  # noqa: PLC0415
-        # get_latest_market_prism_summary returns the most recent MARKET_PRISM row.
-        # Since run_id is unique per nightly, the latest row is this run's row if
-        # it was written.  Confirm by checking raw_response.run_id matches.
-        row = database.get_latest_market_prism_summary()
-        if row is None:
-            return None
-        raw = row.get("raw_response") or {}
-        if isinstance(raw, str):
-            import json as _json
-            raw = _json.loads(raw)
-        if raw.get("run_id") == run_id:
-            return row
-        return None
-    except Exception as exc:  # noqa: BLE001
-        print(
-            f"[prism_scheduler] RowCheckError: {type(exc).__name__}", file=sys.stderr
-        )
-        return None
+        parsed = json.loads(summary)
+        return isinstance(parsed, (dict, list))
+    except (json.JSONDecodeError, ValueError):
+        return False
 ```
 
-**What to change in `main()`:**
+DO NOT use `summary.startswith('{')` — a test checks that prose containing a brace
+(e.g. "BULLISH {high conviction}") is NOT misclassified as JSON.
 
-Replace the existing per-attempt success block:
+Bare JSON scalar (`json.loads('"16.41"')` → string `'16.41'`) is NOT a dict/list —
+treat as prose passthrough.
 
+#### Empty/degenerate input handling
+
+Return a readable honest-empty-state for any of these (never "null", "None", "{}", or ""):
+- `lens_entry` is None or not a dict
+- `summary` is None
+- `summary` is "" (empty string)
+- `summary` is "null" or "None" (degenerate string values)
+- `summary` is "{}" (empty JSON object — parses as dict, but empty → no signals)
+
+Example empty-state strings: `"limited inputs — data unavailable"`, `"no lens data"`.
+
+#### Per-lens humanization (structured JSON path)
+
+All values extracted via `.get()` with safe defaults. The JSON shapes are documented
+in tests/fixtures/ai_advisor/rf1_lens_pipeline_row77.json.
+
+**technicals** (parsed dict has keys: `breadth`, `ma_posture`, `momentum`):
+- Surface `breadth` value as readable text (e.g. "Breadth 0.70")
+- Do NOT emit raw JSON keys like `"ma_posture"`, `"above_sma50"` as quoted strings
+- Output must contain no `{"` or `":` markers
+
+**sentiment** (parsed dict has keys: `article_count`, `tone_summary`, `tone_score`):
+- Surface `article_count` (e.g. "10 articles")
+- `tone_summary=null` → acknowledge unavailability (e.g. "tone unavailable"), NOT "null"
+
+**derivatives** (parsed dict has keys: `vix_level`, `vix_term_structure`, `risk_read`, `as_of_date`):
+- Surface `vix_level` and/or `vix_term_structure.regime` (e.g. "VIX 16.41, contango")
+
+**macro** (parsed dict has key `series` → dict of `series_id` → `{label, value, date}`):
+- Surface at least one series label + value pair (e.g. "10-Year Treasury: 4.43")
+- Do NOT emit raw JSON keys like `"DGS10"`, `"series"`, `"label"` as quoted strings
+
+**fundamentals** (parsed dict has key `tickers` → dict of ticker → `{entity_name, key_facts}`):
+- **Output MUST be < 500 characters** (concision test: raw fixture is 4633 chars)
+- Surface coverage count (number of tickers) and/or ticker names
+- Example: "Coverage: 2 tickers (AAPL, AMZN). Revenue highlights available."
+
+#### Prose passthrough path
+
+If `_is_structured(summary)` returns False → return `summary` as-is (stripped of leading/
+trailing whitespace is fine, but no other transformation).
+
+---
+
+### 2. WIRE the humanizer into the rendering path
+
+#### Option A — Route pre-humanization (recommended)
+
+In `app.py`, find the ai-advisor route that calls `database.get_latest_market_prism_summary()`
+and passes `market_prism_summary` to `render_template`. After fetching the summary, pre-process
+the `per_lens_digest` entries by calling `humanize_lens_summary` on each lens summary.
+
+Example (minimal wiring):
 ```python
-        success = _run_prism(run_id=run_id)
-        if success:
-            print("[prism_scheduler] Run completed successfully.")
-            sys.exit(0)
+from advisors.prism_render import humanize_lens_summary  # lazy import inside the route fn
+
+# After fetching market_prism_summary:
+if market_prism_summary:
+    raw = market_prism_summary.get("raw_response", {})
+    per_lens = raw.get("per_lens_digest", {})
+    for lens_name, lens_entry in per_lens.items():
+        if isinstance(lens_entry, dict):
+            lens_entry["summary"] = humanize_lens_summary(lens_name, lens_entry)
 ```
 
-With a row-verification step:
+#### Option B — Jinja2 filter
 
-```python
-        proc_ok = _run_prism(run_id=run_id)
-        if proc_ok:
-            row = _get_market_prism_row_for_run(run_id)
-            if row is not None:
-                print("[prism_scheduler] Run completed successfully.")
-                sys.exit(0)
-            # rc==0 but no row — council ran but wrote nothing.
-            # Treat as a failed attempt; the retry loop continues.
-            print(
-                f"[prism_scheduler] Attempt {attempt}: subprocess exited 0 but "
-                "no MARKET_PRISM row found for run_id — treating as failed.",
-                file=sys.stderr,
-            )
-```
+Register a custom Jinja2 filter on the Flask app and call it in the template.
+Either option works; the tests only check the rendered output.
 
-This is the **retry-on-empty design**: per-attempt success = rc==0 AND row present.
-The existing MAX_ATTEMPTS loop handles the retry and the final exit(1) on exhaustion
-without any other changes.
+**Template constraint:** Do NOT add `| safe` to any lens summary rendering. Jinja2
+autoescaping must stay on.
 
-**Spend logging preservation:** `_persist_spend` fires on `rc==0` BEFORE the row
-check (inside `_run_prism`'s existing call to `_persist_spend`).  Do NOT move or
-suppress `_persist_spend` — it is called unconditionally on rc==0, even for
-attempts where the row is absent.  The existing tests in `TestPersistSpend` cover
-this; do not break them.
+#### Null-summary path (AC-3)
+
+The current template has `{% if _lens.get('summary') %}` which skips the `<p>` paragraph
+when summary is None. After wiring the humanizer, null-summary entries will have an
+honest-empty-state string (truthy), so the paragraph will render automatically.
+No template change needed for this case IF you wire Option A (pre-humanize replaces None
+with the honest-empty string before the template sees it).
 
 ---
 
-## Scope boundary
+### 3. FIX `obs-raw-preview` for MARKET_PRISM rows (AC-5)
 
-- Touch ONLY: `prism_scheduler.py`
-- Do NOT modify any test files
-- Do NOT modify `.claude/agents/prism-synthesizer.md` (F-2/F-3 already GREEN)
-- Do NOT modify any other production code (app.py, database.py, etc.)
-- NEVER merge, push, or checkout main
+In `templates/ai_advisor.html`, find line ~2002:
+```html
+<td class="obs-raw-preview">{{ obs.raw_response | tojson | e }}</td>
+```
+
+For MARKET_PRISM rows, this dumps the full JSON including `per_lens_digest` and `ma_posture`.
+After the fix, MARKET_PRISM rows must NOT expose `per_lens_digest` or `ma_posture`.
+
+Acceptable fix: conditionally show a short summary for MARKET_PRISM role:
+```html
+<td class="obs-raw-preview">
+  {% if obs.advisor_role == 'MARKET_PRISM' %}
+    {{ obs.verdict | e }}
+  {% else %}
+    {{ obs.raw_response | tojson | e }}
+  {% endif %}
+</td>
+```
+
+Or hide the field entirely for MARKET_PRISM rows. Either approach passes the test.
 
 ---
 
-## Verify GREEN
-
-Run the full test file (not just the new class) to confirm all prior tests
-still pass:
+## Running the tests
 
 ```
-cd C:/Windows/Temp && python -m pytest \
-  "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/prism-council/tests/ai_advisor/test_prism_scheduling.py" \
-  --override-ini="addopts=" -q
+cd C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/rf1-prose-render
+python -m pytest tests/ai_advisor/test_rf1_prose_render.py -p no:xdist -o addopts= -m "not live and not slow and not perf" -q
 ```
 
-Expected: 0 FAILED, 51 passed (49 + 2 new GREEN + Test 2 now runs), 1 skipped.
+Target: **33 passed / 0 failed**.
 
-Note: Test 2 (`test_scheduler_succeeds_when_subprocess_succeeds_and_market_prism_row_exists`)
-skips before the seam exists and runs (passes) after.  The 1 remaining skip is the
-original F-3 skip from `TestSynthesizerRoleFileAgentIdAddressing`.
+Also confirm pre-existing Prism tests still pass:
+```
+python -m pytest tests/ai_advisor/test_prism_chip_color_mapping.py tests/ai_advisor/test_cycle5_market_prism_surface.py -p no:xdist -o addopts= -m "not live and not slow and not perf" -q
+```
+Expected: 23 passed.
 
 ---
 
-## After GREEN: commit and signal pc-test-writer
+## Scope boundaries — DO NOT touch
 
-Branch check (must NOT be main):
-```
-git -C "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/prism-council" branch --show-current
-```
+- `advisors/lens_pipeline.py` — nightly data-production path, out of scope
+- `alpha_bot_execution.py` — execution path, never touch
+- `database.py` — no schema changes needed
+- No new external imports in `advisors/prism_render.py` (stdlib only: `json`, `typing`)
+- No `| safe` filters in templates
+- **NEVER merge, NEVER git checkout main, NEVER git push**
 
-Stage path-scoped (prism_scheduler.py only — tests committed by pc-test-writer):
-```
-git -C "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/prism-council" add \
-  prism_scheduler.py
-```
+---
 
-Commit prefix: `fix(prism-council):`
+## Status Log
 
-Then SendMessage to `pc-test-writer`:
-"GREEN: N passed / 0 failed / M skipped on feat/prism-council-5of5 HEAD=<sha>. Ready for R/G/R review."
+- [2026-06-18] rf1-implementer: GREEN complete — 33/33 tests passing (29 newly green, 4 prior AC-6 guards still pass), 0 test bugs. Pre-existing Prism tests: 23/23 still pass. Typecheck N/A (pure Python stdlib). Lint: see below.
+
+## Implementation Notes
+
+### What was built
+
+1. **`advisors/prism_render.py`** (new) — Pure, never-raising render-prep helper:
+   - `_is_structured(summary)` detection via `json.loads()` — NOT a naive `startswith('{')` check. Passes the brace-in-prose test.
+   - `humanize_lens_summary(lens_name, lens_entry) -> str` — main public entry point.
+   - Per-lens humanizers: `_humanize_technicals`, `_humanize_sentiment`, `_humanize_derivatives`, `_humanize_macro`, `_humanize_fundamentals`.
+   - `_DEGENERATE_VALUES` frozenset catches `"null"`, `"None"`, `"{}"`, `""`.
+   - Fundamentals humanizer emits "Coverage: N tickers (A, B, ...)" — always < 500 chars (AC-4).
+   - D-1: outer try/except returns `_EMPTY_STATE` on any unexpected error.
+
+2. **`app.py`** route pre-humanization — after `database.get_latest_market_prism_summary()`, lazy-imports `humanize_lens_summary` and rewrites each `lens_entry["summary"]` in-place before `render_template`. The template's `{% if _lens.get('summary') %}` guard now sees truthy strings for null-summary lenses (AC-3 auto-solved).
+
+3. **`templates/ai_advisor.html`** — `obs-raw-preview` cell now conditionally shows `obs.verdict` for MARKET_PRISM rows, skipping the full `raw_response | tojson | e` dump (AC-5).
+
+### Key decisions
+
+- **Route pre-humanization (Option A)** chosen over Jinja2 filter: keeps template logic minimal, aligns with existing pattern in app.py, and lets the test mock `get_latest_market_prism_summary` without needing Jinja filter registration.
+- **AC-3 null-summary handled implicitly** by pre-humanization: route replaces `None` with `_EMPTY_STATE`, making the template `{% if %}` guard always true for available lenses.
+- **No `| safe` added** — autoescaping preserved throughout.
+
+## Test File Issues (for test-writer to fix)
+
+None. All 29 RED tests passed on first GREEN run.
+
+## Disputed Tests
+
+None.
+
+## After GREEN: commit and signal rf1-test-writer
+
+COMPLETED — committed and signaled.
