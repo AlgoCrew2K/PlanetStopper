@@ -317,26 +317,6 @@ def _dedup(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return capped
 
 
-def _fetch_gdelt_tone() -> float | None:
-    """Fetch GDELT aggregate tone by delegating to lens_gdelt._fetch_gdelt_sentiment.
-
-    Delegates to lens_gdelt so that a single properly-spaced GDELT request sequence
-    (timelinetone + artlist, _GDELT_INTER_REQUEST_S=6.0s apart) is used — avoids
-    news_corpus making its own direct GDELT requests.
-
-    Returns normalised AvgTone in [-1, 1] or None on any failure.
-    Never raises — D-1.
-    """
-    try:
-        from advisors import lens_gdelt  # CC-2: lazy import
-
-        result = lens_gdelt._fetch_gdelt_sentiment([])
-        tone = result.get("tone")
-        return float(tone) if tone is not None else None
-    except Exception as exc:
-        _log.warning("gdelt tone via lens_gdelt failed: %s", type(exc).__name__)
-        return None
-
 
 def _normalize_gdelt_articles(sources_raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Normalize raw GDELT artlist records from lens_gdelt into the common article shape.
