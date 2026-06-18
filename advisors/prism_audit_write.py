@@ -21,6 +21,10 @@ status code so callers can detect failure reliably.
 
 from __future__ import annotations
 
+from dotenv import find_dotenv, load_dotenv
+
+load_dotenv(find_dotenv(usecwd=True))  # populate DB_PATH (and other env vars) from .env before _db_file() resolves
+
 import argparse
 import sys
 
