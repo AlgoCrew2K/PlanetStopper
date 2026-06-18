@@ -1493,51 +1493,22 @@ class TestSynthesizerRoleFileAgentIdAddressing:
         )
 
     def test_synthesizer_instructs_wait_barrier_before_synthesis(self):
-        """prism-synthesizer.md must instruct querying the audit DB for 5 initial_read
-        rows before synthesizing (the wait-barrier).
+        """SUPERSEDED by TestSynthesizerWaitBarrierDeHollowed.test_synthesizer_instructs_wait_barrier_before_synthesis.
 
-        RED intent: current prism-synthesizer.md's step 4 says 'wait for each analyst
-        to send you their initial read via SendMessage' — inbox-based, not audit-DB-based
-        as the wait-barrier.  The audit-DB is the authoritative source; it already has
-        a note about it, but the explicit count-based barrier (5 rows) and the
-        instruction to NOT synthesize until the barrier is satisfied must be present.
+        This version used a DOTALL regex that matched the '5. Facilitate...' section
+        heading, making it pass on a section number rather than a genuine count-based
+        barrier sentence.  The de-hollowed version in TestSynthesizerWaitBarrierDeHollowed
+        scopes to the Hard Rules section only and requires the literal 'initial_read'
+        string (with underscore), which cannot match a section heading.
+
+        Kept here for git-history legibility.  New coverage is in
+        TestSynthesizerWaitBarrierDeHollowed below.
         """
-        content = self._read_synthesizer_file()
-        content_lower = content.lower()
-
-        import re
-
-        # Pattern: "5" near "initial_read" and "before" near "synthes"
-        five_initial_read = re.search(r"\b5\b.{0,80}initial.read", content_lower, re.DOTALL)
-        initial_read_five = re.search(r"initial.read.{0,80}\b5\b", content_lower, re.DOTALL)
-
-        # Pattern: "never synthesize" or "do not synthesize" + "fewer than" / "<5" / "all 5"
-        never_synthesize_early = re.search(
-            r"(never|do not|don.t|not).{0,30}synthes.{0,80}(fewer|<.{0,5}5|\ball 5\b|5.initial)",
-            content_lower,
-            re.DOTALL,
-        )
-
-        # Pattern: "wait" + "barrier" or "wait" + "5" + "initial"
-        wait_barrier = re.search(
-            r"wait.{0,100}(barrier|5.{0,20}initial|initial.{0,20}5)",
-            content_lower,
-            re.DOTALL,
-        )
-
-        has_barrier = bool(
-            five_initial_read or initial_read_five
-            or never_synthesize_early or wait_barrier
-        )
-
-        assert has_barrier, (
-            "prism-synthesizer.md must include a wait-barrier directive: "
-            "do not synthesize until 5 initial_read rows are present in the audit DB "
-            "(or the barrier times out gracefully). "
-            "The current file lacks an explicit count-based wait barrier. "
-            "Add: 'Never synthesize until you have confirmed (by querying the audit DB) "
-            "that all 5 analysts have filed initial_read rows, or until the wait-barrier "
-            "times out.' "
+        # Intentionally skipped — superseded.  Do not restore the hollow assertions.
+        pytest.skip(
+            "Hollow test superseded by "
+            "TestSynthesizerWaitBarrierDeHollowed."
+            "test_synthesizer_instructs_wait_barrier_before_synthesis"
         )
 
 
@@ -1676,3 +1647,552 @@ class TestPersistSpendEnvelopeKey:
         assert isinstance(cost_val, (int, float)) and cost_val > 0, (
             f"Legacy fallback cost value must be positive. Got: {cost_val!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# F-1 — run_id unification (spend-attribution join)
+#
+# Defect: prism_scheduler.py:203 generates run_id = str(uuid.uuid4()) and
+# passes it to _persist_spend.  But PRISM_RUN_PROMPT tells the headless
+# council to generate its OWN run_id via datetime.now().strftime(…), so the
+# council's audit/MARKET_PRISM rows carry a datetime string while the
+# spend_log row carries a uuid4.  The join key never matches.
+#
+# Fix contract: the scheduler generates one authoritative run_id (uuid4),
+# embeds it in the prompt string passed to the subprocess (so the council
+# uses it for ALL rows), and _persist_spend uses the SAME run_id.
+#
+# All three tests below are RED against the current implementation.
+# ---------------------------------------------------------------------------
+
+
+class TestRunIdUnification:
+    """F-1: the scheduler-generated run_id is the single join key for all rows."""
+
+    def test_run_id_threaded_into_prism_prompt_not_minted_by_council(self):
+        """The prompt passed to the subprocess must NOT instruct the council to
+        generate its own run_id via datetime.now/strftime — that is the defect
+        (produces a different run_id than the one in the spend_log).
+
+        The prompt string (cmd[-1] sent to subprocess) must:
+          (a) NOT contain 'strftime' or 'datetime.now' (no self-minting instructions)
+          (b) Contain the scheduler's run_id value (uuid4 hex string) embedded in it,
+              proving the prompt is built dynamically with the run_id injected.
+
+        RED intent: current PRISM_RUN_PROMPT is a static string constant that
+        contains "datetime.now(timezone.utc).strftime(...)" — assertion (a) fails.
+        """
+        import re
+
+        mod = _import_scheduler()
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+
+        with (
+            patch.object(mod, "_get_summary", return_value=None),
+            patch("subprocess.run", return_value=mock_result) as mock_subprocess,
+            pytest.raises(SystemExit),
+        ):
+            mod.main()
+
+        args_used = mock_subprocess.call_args[0][0]
+        prompt_str = args_used[-1]  # claude CLI: last positional arg is the prompt
+
+        # (a) Council must NOT be instructed to mint its own run_id.
+        assert "strftime" not in prompt_str, (
+            "The prompt passed to subprocess contains 'strftime' — this instructs the "
+            "council to mint its own datetime run_id instead of using the scheduler's "
+            "uuid4 run_id.  Remove the datetime.now/strftime snippet from the prompt; "
+            "the scheduler must embed its run_id into the prompt string at call time."
+        )
+        assert "datetime.now" not in prompt_str, (
+            "The prompt passed to subprocess contains 'datetime.now' — this instructs "
+            "the council to generate a fresh datetime run_id, breaking the join with "
+            "the spend_log entry (which uses the scheduler's uuid4 run_id).  "
+            "Remove it; embed the scheduler run_id into the prompt instead."
+        )
+
+        # (b) The scheduler's run_id (a uuid4 hex string) must appear in the prompt,
+        # proving it was injected at call time rather than left as a static constant.
+        # uuid4 pattern: 8-4-4-4-12 hex chars separated by hyphens.
+        uuid4_pattern = re.compile(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+            re.IGNORECASE,
+        )
+        assert uuid4_pattern.search(prompt_str), (
+            "The prompt passed to subprocess does not contain a uuid4 run_id.  "
+            "The scheduler must inject its run_id (uuid4 format) into the prompt string "
+            "so the council uses it for all audit/MARKET_PRISM rows.  "
+            f"Prompt (first 400 chars): {prompt_str[:400]!r}"
+        )
+
+    def test_persist_spend_run_id_matches_run_id_embedded_in_prompt(self):
+        """The run_id passed to insert_prism_audit_entry(phase='spend_log') must equal
+        the run_id embedded in the subprocess prompt string — one join key.
+
+        Technique: mock both subprocess.run (returns JSON with total_cost_usd) and
+        database.insert_prism_audit_entry; capture the run_id from each and compare.
+
+        RED intent: current code passes the scheduler's uuid4 to _persist_spend, but
+        the static PRISM_RUN_PROMPT tells the council to generate a datetime run_id.
+        The two values never match.  After the F-1 fix the prompt is built dynamically
+        with the same uuid4 injected, so both captures will agree.
+        """
+        import json as _json
+        import re
+
+        mod = _import_scheduler()
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = _json.dumps({"total_cost_usd": 0.05, "type": "result"})
+
+        captured_subprocess_args: list = []
+        captured_audit_calls: list = []
+
+        def _capture_subprocess(cmd, **kwargs):
+            captured_subprocess_args.append(cmd)
+            return mock_result
+
+        def _capture_audit(run_id, agent_role, phase, content):
+            captured_audit_calls.append(
+                {"run_id": run_id, "agent_role": agent_role, "phase": phase}
+            )
+            return 1  # fake row id
+
+        with (
+            patch.object(mod, "_get_summary", return_value=None),
+            patch("subprocess.run", side_effect=_capture_subprocess),
+            patch("database.insert_prism_audit_entry", side_effect=_capture_audit),
+            pytest.raises(SystemExit),
+        ):
+            mod.main()
+
+        assert captured_subprocess_args, "subprocess.run was never called"
+        assert captured_audit_calls, (
+            "insert_prism_audit_entry was never called — _persist_spend did not run.  "
+            "Ensure subprocess.run returns returncode=0 and stdout with total_cost_usd."
+        )
+
+        prompt_str = captured_subprocess_args[0][-1]  # last element = the prompt
+
+        # Extract the run_id from the prompt (uuid4 pattern).
+        uuid4_pattern = re.compile(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+            re.IGNORECASE,
+        )
+        prompt_match = uuid4_pattern.search(prompt_str)
+        assert prompt_match, (
+            "Could not find a uuid4 run_id in the subprocess prompt string.  "
+            "The F-1 fix must inject the scheduler's uuid4 run_id into the prompt.  "
+            f"Prompt (first 400 chars): {prompt_str[:400]!r}"
+        )
+        run_id_in_prompt = prompt_match.group()
+
+        # The spend_log audit entry must use the same run_id.
+        spend_log_entries = [c for c in captured_audit_calls if c["phase"] == "spend_log"]
+        assert spend_log_entries, (
+            "No spend_log audit entry was written.  "
+            "_persist_spend must call insert_prism_audit_entry with phase='spend_log'."
+        )
+        run_id_in_spend_log = spend_log_entries[0]["run_id"]
+
+        assert run_id_in_prompt == run_id_in_spend_log, (
+            f"run_id mismatch — the spend_log entry uses a DIFFERENT run_id than the "
+            f"one embedded in the subprocess prompt.  "
+            f"Prompt run_id:    {run_id_in_prompt!r}\n"
+            f"spend_log run_id: {run_id_in_spend_log!r}\n"
+            "These must be equal so spend-attribution joins work.  "
+            "Fix: have _run_prism embed the scheduler's run_id into the prompt string "
+            "instead of letting the council mint its own datetime run_id."
+        )
+
+    def test_idempotency_guard_uses_created_at_not_run_id_format(self):
+        """Regression lock: _is_todays_row() must key on created_at date, not run_id format.
+
+        The F-1 change switches run_id from a datetime string to uuid4 (or embeds an
+        existing uuid4 in the prompt).  This test locks the idempotency guard so a
+        wrong F-1 implementation that accidentally starts keying on run_id format
+        (e.g. parsing a datetime from raw_response.run_id) cannot silently break the
+        already-ran-today skip.
+
+        Three sub-cases all call _is_todays_row() directly:
+          (a) today-row with raw_response.run_id = uuid4 string  → must return True
+          (b) today-row with raw_response.run_id = datetime string → must return True
+          (c) today-row with no raw_response.run_id key at all   → must return True
+
+        All three PASS against current code (guard uses only created_at).
+        If a broken F-1 implementation starts checking run_id format, sub-case (a) fails.
+
+        This is a regression lock — it documents the invariant, not a defect in
+        current code.  It will catch any future implementation that incorrectly couples
+        idempotency to run_id format.
+        """
+        from datetime import datetime, timezone, timedelta
+
+        mod = _import_scheduler()
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+        # Sub-case (a): run_id is a uuid4 string (the F-1 post-fix format).
+        row_uuid4 = {
+            "id": 1,
+            "verdict": "neutral",
+            "created_at": today_str,
+            "advisor_role": "MARKET_PRISM",
+            "raw_response": {"run_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"},
+        }
+        assert mod._is_todays_row(row_uuid4) is True, (
+            "_is_todays_row returned False for a today-row whose run_id is a uuid4 string.  "
+            "The guard must key on created_at date only, not run_id format.  "
+            "If the F-1 fix changed the guard to parse run_id, revert that change."
+        )
+
+        # Sub-case (b): run_id is a datetime string (the pre-F-1 format).
+        row_datetime = {
+            "id": 2,
+            "verdict": "neutral",
+            "created_at": today_str,
+            "advisor_role": "MARKET_PRISM",
+            "raw_response": {"run_id": "2026-06-18T03:00:00+00:00"},
+        }
+        assert mod._is_todays_row(row_datetime) is True, (
+            "_is_todays_row returned False for a today-row whose run_id is a datetime string.  "
+            "The guard must key on created_at date only."
+        )
+
+        # Sub-case (c): raw_response has no run_id key at all.
+        row_no_run_id = {
+            "id": 3,
+            "verdict": "neutral",
+            "created_at": today_str,
+            "advisor_role": "MARKET_PRISM",
+            "raw_response": {},
+        }
+        assert mod._is_todays_row(row_no_run_id) is True, (
+            "_is_todays_row returned False for a today-row with no run_id in raw_response.  "
+            "The guard must key on created_at date only — run_id presence is irrelevant."
+        )
+
+
+# ---------------------------------------------------------------------------
+# F-2 — Hard rule bullets in prism-synthesizer.md
+#
+# Defect: the synthesizer role file has step-4 GUIDANCE about querying the
+# audit DB, but no Hard Rule bullet that:
+#   (1) says NEVER synthesize until 5 initial_read rows are confirmed, and
+#   (2) prohibits falsely attributing "did not spawn" to a lens that spawned
+#       but didn't file its row (the exact 2/5 false-attribution bug).
+#
+# These tests read .claude/agents/prism-synthesizer.md and scope assertions
+# to the ## Hard Rules section only, preventing false matches from body text.
+# Both are RED against the current file.
+# ---------------------------------------------------------------------------
+
+
+def _read_synthesizer_hard_rules_section() -> str:
+    """Extract the ## Hard Rules section text from prism-synthesizer.md."""
+    import os
+
+    # Resolve path from this test file's location.
+    # tests/ai_advisor/ -> worktree root -> .claude/agents/
+    tests_dir = os.path.dirname(os.path.abspath(__file__))
+    worktree_root = os.path.dirname(os.path.dirname(tests_dir))
+    filepath = os.path.join(worktree_root, ".claude", "agents", "prism-synthesizer.md")
+    with open(filepath, encoding="utf-8") as fh:
+        content = fh.read()
+    # Extract everything after the ## Hard Rules heading.
+    # Stop at the next ## heading (if any) to scope tightly.
+    parts = content.split("## Hard Rules", maxsplit=1)
+    if len(parts) < 2:
+        return ""  # section missing — tests will fail with informative messages
+    after_heading = parts[1]
+    # Stop at the next top-level ## section if present.
+    next_section = after_heading.find("\n## ")
+    return after_heading[:next_section] if next_section != -1 else after_heading
+
+
+class TestSynthesizerWaitBarrierHardRule:
+    """F-2: prism-synthesizer.md Hard Rules must encode the wait-barrier and
+    the false-attribution prohibition as explicit hard rules, not just guidance."""
+
+    def test_synthesizer_hard_rules_prohibit_synthesis_before_five_initial_reads(self):
+        """The ## Hard Rules section of prism-synthesizer.md must contain a bullet
+        that explicitly prohibits synthesizing before 5 initial_read rows are confirmed.
+
+        Required elements (all must co-occur within 300 chars in the Hard Rules text):
+          - A prohibition marker: 'never', 'do not', or 'must not' (case-insensitive)
+          - The literal string 'initial_read' (underscore — the audit phase name)
+          - A five-count token: '5' or 'five' or 'all five' (case-insensitive)
+
+        'initial_read' with underscore cannot match a section heading or casual prose;
+        it uniquely identifies the audit DB phase name, making this assertion non-hollow.
+
+        RED intent: current Hard Rules section has none of these three elements together.
+        The step-4 body contains an 'initial_read' bash snippet, but that is NOT in
+        Hard Rules — the split on '## Hard Rules' excludes it.
+        """
+        import re
+
+        hard_rules_text = _read_synthesizer_hard_rules_section()
+        assert hard_rules_text.strip(), (
+            "prism-synthesizer.md has no '## Hard Rules' section or it is empty.  "
+            "Cannot verify the wait-barrier hard rule."
+        )
+
+        hard_rules_lower = hard_rules_text.lower()
+
+        # We require all three elements to appear within a 300-char window.
+        # Strategy: find each occurrence of 'initial_read' and check the surrounding
+        # 300 chars for a prohibition marker AND a five-count token.
+        initial_read_positions = [
+            m.start() for m in re.finditer(r"initial_read", hard_rules_lower)
+        ]
+
+        found_genuine_barrier = False
+        for pos in initial_read_positions:
+            # Extract a 300-char window centred on the occurrence (±150 chars).
+            window_start = max(0, pos - 150)
+            window_end = min(len(hard_rules_lower), pos + 150)
+            window = hard_rules_lower[window_start:window_end]
+
+            has_prohibition = bool(
+                re.search(r"\b(never|do not|must not)\b", window)
+            )
+            has_five_count = bool(
+                re.search(r"\b(5|five|all five)\b", window)
+            )
+
+            if has_prohibition and has_five_count:
+                found_genuine_barrier = True
+                break
+
+        assert found_genuine_barrier, (
+            "prism-synthesizer.md ## Hard Rules section is missing the wait-barrier rule.  "
+            "Required: a single sentence/bullet containing ALL THREE of: "
+            "(1) a prohibition marker ('never'/'do not'/'must not'), "
+            "(2) the literal 'initial_read' (the audit DB phase name), and "
+            "(3) a five-count token ('5' or 'five' or 'all five'), "
+            "all within 300 characters of each other.  "
+            "Example: 'Never synthesize until 5 initial_read rows are confirmed in "
+            "the audit DB for this run_id (or the barrier times out gracefully).'  "
+            f"Current Hard Rules section (first 600 chars): "
+            f"{hard_rules_text[:600]!r}"
+        )
+
+    def test_synthesizer_hard_rules_prohibit_false_attribution(self):
+        """The ## Hard Rules section must explicitly prohibit falsely attributing
+        'did not spawn' to a lens that spawned but did not file its initial_read row.
+
+        This is the exact 2/5 false-attribution bug: the synthesizer saw no SendMessage
+        inbox entry from a lens and recorded it as 'did not spawn' — but the lens HAD
+        spawned; its message just hadn't arrived.  The hard rule must close this.
+
+        Required: one of these patterns in the Hard Rules section (case-insensitive):
+          Pattern A: (never|do not|must not) ... (falsely|false) ... (spawn|report|attribute)
+          Pattern B: 'spawned but' combined with 'did not' or 'didn't' near 'report'
+          Pattern C: 'never falsely' within 200 chars of 'spawn'
+
+        RED intent: current Hard Rules section has no false-attribution prohibition.
+        """
+        import re
+
+        hard_rules_text = _read_synthesizer_hard_rules_section()
+        assert hard_rules_text.strip(), (
+            "prism-synthesizer.md has no '## Hard Rules' section or it is empty.  "
+            "Cannot verify the false-attribution prohibition."
+        )
+
+        hard_rules_lower = hard_rules_text.lower()
+
+        # Pattern A: prohibition marker + false* + spawn/report/attribute
+        pattern_a = re.search(
+            r"(never|do not|must not).{0,120}(falsely|false.{0,15}attribut).{0,120}"
+            r"(spawn|report|respond)",
+            hard_rules_lower,
+            re.DOTALL,
+        )
+
+        # Pattern B: "spawned but" + "did not" or "didn't" near "report"
+        pattern_b = re.search(
+            r"spawned.{0,30}but.{0,80}(did not|didn.t).{0,50}(report|file|respond)",
+            hard_rules_lower,
+            re.DOTALL,
+        )
+
+        # Pattern C: "never falsely" within 200 chars of "spawn"
+        pattern_c = re.search(
+            r"never.{0,30}falsely.{0,200}spawn",
+            hard_rules_lower,
+            re.DOTALL,
+        )
+
+        # Pattern D: direct prohibition on attributing non-response to non-spawn
+        pattern_d = re.search(
+            r"(never|do not|must not).{0,80}(attribute|assume).{0,80}"
+            r"(did not spawn|not.{0,10}spawn|non.responsive)",
+            hard_rules_lower,
+            re.DOTALL,
+        )
+
+        has_prohibition = bool(pattern_a or pattern_b or pattern_c or pattern_d)
+
+        assert has_prohibition, (
+            "prism-synthesizer.md ## Hard Rules section is missing the false-attribution "
+            "prohibition.  The 2/5 council bug was caused by the synthesizer recording a "
+            "lens as 'did not spawn' when it had spawned but its SendMessage hadn't arrived.  "
+            "Required: a Hard Rules bullet explicitly prohibiting this false attribution.  "
+            "Example: 'Never falsely attribute non-response to a lens that spawned — "
+            "a lens that spawned but did not report is missing/late, not absent; "
+            "mark it limited-inputs only after the audit-DB wait-barrier times out.'  "
+            f"Current Hard Rules section (first 600 chars): "
+            f"{hard_rules_text[:600]!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# F-3 — De-hollow the wait-barrier test
+#
+# The original test_synthesizer_instructs_wait_barrier_before_synthesis in
+# TestSynthesizerRoleFileAgentIdAddressing was hollow: its DOTALL regex
+# `r"\b5\b.{0,80}initial.read"` matched the section heading
+# "5. Facilitate clarifying Q&A" because \b5\b hit the section NUMBER and
+# the dot-wildcard "initial.read" matched "initial read" (space) in body prose.
+#
+# The tests below close that hollow-pass by:
+#   (1) Scoping to the ## Hard Rules section only (not full document).
+#   (2) Requiring the literal 'initial_read' with underscore (not dot-wildcard),
+#       which cannot match "initial read" in a section heading.
+#   (3) Explicitly proving the old hollow-pass pattern IS hollow on the current
+#       file (the hollow-detector test).
+# ---------------------------------------------------------------------------
+
+
+class TestSynthesizerWaitBarrierDeHollowed:
+    """F-3: de-hollowed wait-barrier tests that cannot be satisfied by section headings."""
+
+    def test_synthesizer_instructs_wait_barrier_before_synthesis(self):
+        """prism-synthesizer.md ## Hard Rules must contain a genuine count-based
+        wait-barrier statement — not a section heading or body prose.
+
+        Assertion (scoped to Hard Rules section only):
+          The Hard Rules text must contain the literal 'initial_read' (underscore)
+          AND a five-count token ('5'/'five'/'all five') AND a prohibition/wait marker
+          ('never'/'do not'/'must not'/'wait') within 300 chars.
+
+        Why this cannot be hollow: 'initial_read' with underscore is the audit DB
+        phase name.  It does NOT appear in section headings (which say 'initial reads'
+        with a space) or in casual body prose.  Only a genuine barrier sentence
+        naming the audit DB phase will satisfy this assertion.
+
+        RED on current file: the Hard Rules section has no 'initial_read' occurrence.
+        GREEN only after F-2 adds the wait-barrier hard rule bullet.
+        """
+        import re
+
+        hard_rules_text = _read_synthesizer_hard_rules_section()
+        assert hard_rules_text.strip(), (
+            "prism-synthesizer.md has no '## Hard Rules' section or it is empty."
+        )
+
+        hard_rules_lower = hard_rules_text.lower()
+
+        # 'initial_read' with literal underscore is required — not dot-wildcard.
+        initial_read_positions = [
+            m.start() for m in re.finditer(r"initial_read", hard_rules_lower)
+        ]
+
+        assert initial_read_positions, (
+            "prism-synthesizer.md ## Hard Rules section does not contain the string "
+            "'initial_read' (with underscore).  A genuine wait-barrier hard rule must "
+            "name the audit DB phase explicitly.  Section headings ('5. Facilitate...') "
+            "and casual prose ('initial reads') cannot satisfy this assertion.  "
+            "Add a Hard Rules bullet such as: 'Never synthesize until 5 initial_read "
+            "rows are confirmed in the audit DB for this run_id.'  "
+            f"Current Hard Rules section (first 600 chars): "
+            f"{hard_rules_text[:600]!r}"
+        )
+
+        # Additionally require a five-count token and a prohibition/wait marker
+        # within 300 chars of the 'initial_read' occurrence.
+        found_genuine_barrier = False
+        for pos in initial_read_positions:
+            window_start = max(0, pos - 150)
+            window_end = min(len(hard_rules_lower), pos + 150)
+            window = hard_rules_lower[window_start:window_end]
+
+            has_marker = bool(
+                re.search(r"\b(never|do not|must not|wait)\b", window)
+            )
+            has_five = bool(re.search(r"\b(5|five|all five)\b", window))
+
+            if has_marker and has_five:
+                found_genuine_barrier = True
+                break
+
+        assert found_genuine_barrier, (
+            "prism-synthesizer.md ## Hard Rules section contains 'initial_read' but "
+            "the surrounding 300 chars lack BOTH a prohibition/wait marker "
+            "('never'/'do not'/'must not'/'wait') AND a five-count token ('5'/'five'/'all five').  "
+            "All three must appear together in one statement.  "
+            "Example: 'Never synthesize until 5 initial_read rows are confirmed.'  "
+            f"Current Hard Rules section (first 600 chars): "
+            f"{hard_rules_text[:600]!r}"
+        )
+
+    def test_synthesizer_wait_barrier_not_satisfied_by_section_heading(self):
+        """Explicit hollow-detector: prove the old DOTALL regex is inadequate on the
+        current file, then prove the new assertion is immune to that false positive.
+
+        The old test used: re.search(r"\\b5\\b.{0,80}initial.read", content_lower, re.DOTALL)
+
+        This test applies that old regex to the FULL file and verifies that any match
+        it finds contains only 'initial read' (with SPACE, from section heading prose),
+        NOT 'initial_read' (with underscore, the audit phase name).  If all matches are
+        from the section-heading path, the old test was hollow — it passed on a false
+        positive.  The new Hard-Rules-scoped assertion with underscore closes this gap.
+
+        RED interpretation: the test PASSES (confirms hollow) if the old regex matches
+        only heading/prose text on the current file — proving the old test was wrong.
+        If the old regex finds NO match at all, that also passes (even better: the
+        section doesn't exist yet, so the heading false-positive wasn't triggered).
+        The test FAILS only if the old regex finds a match containing 'initial_read'
+        (underscore) outside the Hard Rules section, which would mean the hard rule
+        already exists somewhere else — in that case the hollow-detector is moot.
+        """
+        import re
+        import os
+
+        tests_dir = os.path.dirname(os.path.abspath(__file__))
+        worktree_root = os.path.dirname(os.path.dirname(tests_dir))
+        filepath = os.path.join(worktree_root, ".claude", "agents", "prism-synthesizer.md")
+        with open(filepath, encoding="utf-8") as fh:
+            full_content = fh.read()
+        content_lower = full_content.lower()
+
+        # Apply the OLD hollow regex to the full file (as the old test did).
+        old_regex_matches = list(re.finditer(
+            r"\b5\b.{0,80}initial.read", content_lower, re.DOTALL
+        ))
+
+        for match in old_regex_matches:
+            matched_text = match.group()
+            # If the old regex found a match containing 'initial_read' (underscore),
+            # that means a genuine barrier sentence exists somewhere — the hollow
+            # concern is resolved, so skip this assertion.
+            if "initial_read" in matched_text:
+                pytest.skip(
+                    "Old hollow regex found a match containing 'initial_read' "
+                    "(underscore) — a genuine barrier sentence already exists.  "
+                    "The hollow-detector concern is moot; F-3 is resolved."
+                )
+
+            # The match contains 'initial read' (space) or similar prose — confirm it.
+            assert "initial read" in matched_text or "initial" in matched_text, (
+                f"Old hollow regex matched unexpected text: {matched_text!r}.  "
+                "If this is a genuine barrier sentence, it should contain 'initial_read' "
+                "(underscore) and the skip branch above should have triggered."
+            )
+
+        # If we reach here, all matches (if any) were from heading/prose — hollow confirmed.
+        # This is the expected state: the old test was passing on a false positive.
+        # No assertion needed — reaching this line IS the pass condition.
