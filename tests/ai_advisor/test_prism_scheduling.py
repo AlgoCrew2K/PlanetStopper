@@ -412,19 +412,26 @@ class TestVanillaPrimaryShape:
         )
 
     def test_prism_run_prompt_is_last_cmd_element(self):
-        """The PRISM_RUN_PROMPT constant must be the last element in the subprocess cmd list.
+        """The prompt (built from PRISM_RUN_PROMPT template) must be the last element
+        in the subprocess cmd list.
 
         The claude CLI treats the final positional arg as the prompt to execute.
         Putting the prompt anywhere other than last means it is ignored or misinterpreted.
 
+        NOTE: After the F-1 run_id-unification fix, the last cmd element is a
+        runtime-built prompt string (the template with the scheduler's run_id injected),
+        NOT the bare static PRISM_RUN_PROMPT constant.  This test therefore asserts
+        that cmd[-1] is a non-empty string that CONTAINS the template's content — not
+        exact equality — which remains valid whether PRISM_RUN_PROMPT is a static
+        constant or a template.
+
         RED intent: current _run_prism uses a hardcoded literal string as the last
-        element, not the PRISM_RUN_PROMPT constant → the assertion on the constant
-        fails (AttributeError before reaching the cmd check).
+        element, not referencing PRISM_RUN_PROMPT at all → the hasattr assertion fails.
         """
         mod = _import_scheduler()
 
         assert hasattr(mod, "PRISM_RUN_PROMPT"), (
-            "PRISM_RUN_PROMPT constant missing — cannot verify it is last in cmd."
+            "PRISM_RUN_PROMPT constant missing — cannot verify the prompt is last in cmd."
         )
 
         mock_result = MagicMock()
@@ -438,9 +445,22 @@ class TestVanillaPrimaryShape:
             mod.main()
 
         args_used = mock_run.call_args[0][0]
-        assert args_used[-1] == mod.PRISM_RUN_PROMPT, (
-            f"The last cmd element must be PRISM_RUN_PROMPT. "
-            f"Got: {args_used[-1]!r}. "
+        last_elem = args_used[-1]
+
+        # The last element must be a non-empty string (the prompt).
+        assert isinstance(last_elem, str) and len(last_elem) > 0, (
+            f"The last cmd element must be a non-empty string (the prompt). "
+            f"Got: {last_elem!r}"
+        )
+
+        # The last element must contain at least the first 30 chars of PRISM_RUN_PROMPT,
+        # confirming the prompt derives from the template (not an unrelated string).
+        # After F-1, it will be template + injected run_id — both are valid.
+        template_prefix = mod.PRISM_RUN_PROMPT[:30]
+        assert template_prefix in last_elem, (
+            f"The last cmd element does not appear to derive from PRISM_RUN_PROMPT. "
+            f"Expected the template prefix {template_prefix!r} to appear in cmd[-1]. "
+            f"Got: {last_elem[:80]!r}. "
             f"The prompt must be the final positional arg to the claude CLI."
         )
 
@@ -2140,24 +2160,31 @@ class TestSynthesizerWaitBarrierDeHollowed:
         )
 
     def test_synthesizer_wait_barrier_not_satisfied_by_section_heading(self):
-        """Explicit hollow-detector: prove the old DOTALL regex is inadequate on the
-        current file, then prove the new assertion is immune to that false positive.
+        """Explicit hollow-detector: prove the old DOTALL regex was inadequate, then
+        assert the new Hard-Rules-scoped assertion is immune to that false positive.
 
         The old test used: re.search(r"\\b5\\b.{0,80}initial.read", content_lower, re.DOTALL)
 
-        This test applies that old regex to the FULL file and verifies that any match
-        it finds contains only 'initial read' (with SPACE, from section heading prose),
-        NOT 'initial_read' (with underscore, the audit phase name).  If all matches are
-        from the section-heading path, the old test was hollow — it passed on a false
-        positive.  The new Hard-Rules-scoped assertion with underscore closes this gap.
+        That regex matched the "5. Facilitate clarifying Q&A" section heading because
+        \\b5\\b hit the section NUMBER and the dot-wildcard "initial.read" reached
+        "initial read" (space) in the body prose — not a genuine barrier sentence.
 
-        RED interpretation: the test PASSES (confirms hollow) if the old regex matches
-        only heading/prose text on the current file — proving the old test was wrong.
-        If the old regex finds NO match at all, that also passes (even better: the
-        section doesn't exist yet, so the heading false-positive wasn't triggered).
-        The test FAILS only if the old regex finds a match containing 'initial_read'
-        (underscore) outside the Hard Rules section, which would mean the hard rule
-        already exists somewhere else — in that case the hollow-detector is moot.
+        This test asserts that the FULL FILE (including after the F-2 fix) contains
+        at least one OLD-REGEX match that carries 'initial_read' WITH UNDERSCORE
+        — meaning a genuine barrier sentence now exists that satisfies the old regex
+        on substance (not just on a heading).
+
+        GREEN condition (after F-2 fix): the old regex finds ≥1 match containing
+        'initial_read' (underscore) — the new Hard Rules bullet provides it.
+
+        RED condition (current file, before F-2 fix): the old regex finds only matches
+        containing 'initial read' (space) from the section heading — zero genuine
+        underscore matches.  This proves the old test was hollow.
+
+        NOTE: The step-5 heading's 'initial reads' (space) match will STILL exist
+        after the F-2 fix — this test does NOT require ALL matches to have underscores
+        (that would keep it RED forever).  It only requires AT LEAST ONE match to
+        contain the underscore form, meaning the genuine barrier sentence is now present.
         """
         import re
         import os
@@ -2169,30 +2196,27 @@ class TestSynthesizerWaitBarrierDeHollowed:
             full_content = fh.read()
         content_lower = full_content.lower()
 
-        # Apply the OLD hollow regex to the full file (as the old test did).
+        # Apply the OLD hollow regex to the full file.
         old_regex_matches = list(re.finditer(
             r"\b5\b.{0,80}initial.read", content_lower, re.DOTALL
         ))
 
-        for match in old_regex_matches:
-            matched_text = match.group()
-            # If the old regex found a match containing 'initial_read' (underscore),
-            # that means a genuine barrier sentence exists somewhere — the hollow
-            # concern is resolved, so skip this assertion.
-            if "initial_read" in matched_text:
-                pytest.skip(
-                    "Old hollow regex found a match containing 'initial_read' "
-                    "(underscore) — a genuine barrier sentence already exists.  "
-                    "The hollow-detector concern is moot; F-3 is resolved."
-                )
+        # Count how many matches contain 'initial_read' (underscore) — genuine barriers.
+        genuine_barrier_matches = [
+            m for m in old_regex_matches if "initial_read" in m.group()
+        ]
 
-            # The match contains 'initial read' (space) or similar prose — confirm it.
-            assert "initial read" in matched_text or "initial" in matched_text, (
-                f"Old hollow regex matched unexpected text: {matched_text!r}.  "
-                "If this is a genuine barrier sentence, it should contain 'initial_read' "
-                "(underscore) and the skip branch above should have triggered."
-            )
-
-        # If we reach here, all matches (if any) were from heading/prose — hollow confirmed.
-        # This is the expected state: the old test was passing on a false positive.
-        # No assertion needed — reaching this line IS the pass condition.
+        # On the CURRENT FILE (before F-2): zero genuine underscore matches exist.
+        # The old regex only matched the heading/prose path — hollow confirmed.
+        # After F-2: ≥1 genuine underscore match from the new Hard Rules bullet.
+        assert len(genuine_barrier_matches) >= 1, (
+            "The prism-synthesizer.md file has no match for the old barrier regex "
+            r"(r'\b5\b.{0,80}initial.read') that contains 'initial_read' (underscore). "
+            "This means the old test was hollow — it passed on the section heading "
+            "'5. Facilitate...' prose ('initial read' with space), not a genuine "
+            "count-based barrier sentence. "
+            "After the F-2 fix, the new Hard Rules bullet must contain 'initial_read' "
+            "(underscore) + '5' in close proximity, satisfying this assertion. "
+            f"All old-regex matches found: "
+            f"{[m.group() for m in old_regex_matches]!r}"
+        )
