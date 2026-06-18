@@ -142,6 +142,17 @@ EXPECTED_CLAUDE_ARGS = [
     "--max-budget-usd",
 ]
 
+# Minimal MARKET_PRISM row dict used by F-4 tests and pre-existing happy-path tests
+# to satisfy the _get_market_prism_row_for_run seam.  Shape only — no computed values.
+_SAMPLE_MARKET_PRISM_ROW: dict = {
+    "id": 99,
+    "advisor_role": "MARKET_PRISM",
+    "verdict": "risk-on",
+    "rationale": "Synthetic test row — not a real council output.",
+    "created_at": "2026-06-18 03:00:00",
+    "raw_response": {"run_id": "placeholder"},
+}
+
 
 class TestSubprocessInvocation:
     def test_no_row_invokes_claude_subprocess(self):
@@ -160,6 +171,13 @@ class TestSubprocessInvocation:
         with (
             patch.object(mod, "_get_summary", return_value=None),
             patch("subprocess.run", return_value=mock_result) as mock_run,
+            # F-4: row-verification seam — this test verifies cmd shape, not the row
+            # check; patch the seam so the happy path exits 0 as expected.
+            patch.object(
+                mod,
+                "_get_market_prism_row_for_run",
+                return_value=_SAMPLE_MARKET_PRISM_ROW,
+            ),
             pytest.raises(SystemExit) as exc_info,
         ):
             mod.main()
@@ -686,6 +704,13 @@ class TestRetrySuccess:
             patch.object(mod, "_get_summary", return_value=None),
             patch("subprocess.run", side_effect=results) as mock_run,
             patch("time.sleep"),
+            # F-4: row-verification seam — only called after rc==0 (attempt 2);
+            # return a valid row so the retry succeeds as expected.
+            patch.object(
+                mod,
+                "_get_market_prism_row_for_run",
+                return_value=_SAMPLE_MARKET_PRISM_ROW,
+            ),
             pytest.raises(SystemExit) as exc_info,
         ):
             mod.main()
@@ -709,6 +734,13 @@ class TestYesterdayRow:
         with (
             patch.object(mod, "_get_summary", return_value=yesterday_row),
             patch("subprocess.run", return_value=mock_result) as mock_run,
+            # F-4: row-verification seam — this test verifies idempotency bypass,
+            # not the row check; patch the seam so the run exits 0 as expected.
+            patch.object(
+                mod,
+                "_get_market_prism_row_for_run",
+                return_value=_SAMPLE_MARKET_PRISM_ROW,
+            ),
             pytest.raises(SystemExit) as exc_info,
         ):
             mod.main()
@@ -725,6 +757,13 @@ class TestYesterdayRow:
         with (
             patch.object(mod, "_get_summary", return_value=None),
             patch("subprocess.run", return_value=mock_result) as mock_run,
+            # F-4: row-verification seam — this test verifies idempotency bypass,
+            # not the row check; patch the seam so the run exits 0 as expected.
+            patch.object(
+                mod,
+                "_get_market_prism_row_for_run",
+                return_value=_SAMPLE_MARKET_PRISM_ROW,
+            ),
             pytest.raises(SystemExit) as exc_info,
         ):
             mod.main()
@@ -802,6 +841,13 @@ class TestD1Contract:
             # _run_prism returns True so main() exits 0 — confirming DB failure is
             # treated as 'no row' and does NOT abort the run
             patch.object(mod, "_run_prism", return_value=True),
+            # F-4: row-verification seam — _run_prism is mocked True above; also patch
+            # the row check so the D-1 path still exits 0 as the test asserts.
+            patch.object(
+                mod,
+                "_get_market_prism_row_for_run",
+                return_value=_SAMPLE_MARKET_PRISM_ROW,
+            ),
             # Suppress _load_env's dotenv import; it swallows exceptions, but patch
             # it here so the test is fully hermetic regardless of the environment
             patch.object(mod, "_load_env"),
@@ -998,6 +1044,13 @@ class TestSpendLogging:
         with (
             patch.object(mod, "_get_summary", return_value=None),
             patch("subprocess.run", return_value=mock_result),
+            # F-4: row-verification seam — this test verifies spend logging, not
+            # the row check; patch the seam so the happy path exits 0 as expected.
+            patch.object(
+                mod,
+                "_get_market_prism_row_for_run",
+                return_value=_SAMPLE_MARKET_PRISM_ROW,
+            ),
             pytest.raises(SystemExit) as exc_info,
         ):
             mod.main()
@@ -2250,17 +2303,6 @@ class TestSynthesizerWaitBarrierDeHollowed:
 #   Test 3 — RED: rc==0 + no row on attempt 1, then rc==0 + row on attempt 2 →
 #            subprocess called TWICE (retry happened) and exit 0.
 # ---------------------------------------------------------------------------
-
-# Minimal MARKET_PRISM row dict — shape only, no computed values.
-_SAMPLE_MARKET_PRISM_ROW: dict = {
-    "id": 99,
-    "advisor_role": "MARKET_PRISM",
-    "verdict": "risk-on",
-    "rationale": "Synthetic test row — not a real council output.",
-    "created_at": "2026-06-18 03:00:00",
-    "raw_response": {"run_id": "placeholder"},
-}
-
 
 class TestMarketPrismRowVerification:
     """F-4: scheduler must verify a MARKET_PRISM row exists before declaring success.
