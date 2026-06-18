@@ -5,7 +5,7 @@
 **Branch:** feat/symphony-schema-required-fields
 **Worktree:** C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/symphony-fields
 **Plan:** feature-plans/symphony-schema-required-fields.md (AC-1..AC-6)
-**Phase:** red
+**Phase:** green
 
 ---
 
@@ -129,6 +129,18 @@ Expected: 210 passed.
 
 None. `advisors/symphony_schema.py` already exists — the fix only adds keys to existing constructors.
 
+## Test File Issues (for test-writer to fix)
+
+None. All 15 RED tests were implementation bugs (missing constructor fields), not test bugs.
+
+## Implementation Notes
+
+- `make_root`: added `"description": ""` between `"rebalance"` and `"id"` — one additive line.
+- `make_inverse_vol`: added `"window-days": 30` between `"step"` and `"id"` — one additive line.
+- No other files touched. `composer_backtest_client.py` and `strategy_builder_engine.py` untouched.
+- Staged path-scoped (`git add advisors/symphony_schema.py` only) — doc WIP (DECISIONS.md, docs/generated/*, feature-plans/*) not included.
+
 ## Status Log
 
 - [2026-06-18] sf-test-writer: RED phase complete — 15 FAILED / 5 passed on RED SHA (committed below)
+- [2026-06-18] sf-implementer: GREEN complete — 20/20 tests passing (new file) + 210/210 pre-existing tests passing. 0 test bugs documented. Typecheck N/A (stdlib only). Lint pending commit.
