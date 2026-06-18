@@ -1339,3 +1339,44 @@ Queries `advisor_observations` for a MARKET_PRISM row whose `raw_response["run_i
 **Tests:** `tests/ai_advisor/test_prism_scheduling.py` — `TestMarketPrismRowVerification` class (3 tests): (1) rc==0 + no row -> all MAX_ATTEMPTS exhausted -> non-zero exit + no "Run completed successfully" in stdout (RED gate); (2) rc==0 + row present -> exit 0 + success message (happy-path regression lock, skips pre-GREEN); (3) rc==0 + no row on attempt 1, rc==0 + row on attempt 2 -> subprocess called twice + exit 0 (retry-on-empty RED gate). Pre-existing happy-path tests patched to supply `_get_market_prism_row_for_run=_SAMPLE_MARKET_PRISM_ROW` so prior expectations are preserved. GREEN at 9de5f71.
 
 **Status:** GREEN at 9de5f71. Pending pc-reviewer APPROVE.
+---
+
+## RF-1 — Overview Market Prism prose render guard (feat/rf1-prose-render, 2026-06-18)
+
+### DE-RF1-PROSE-RENDER: render-layer humanization — structured JSON digests converted to prose at render time
+
+Branch: `feat/rf1-prose-render`
+
+**Problem verified in production (E2E program item #3):** The AI Advisor Overview's Market Prism per-lens digest rendered raw JSON strings verbatim whenever the producer was the nightly `lens_pipeline` (the current live producer). `per_lens_digest[lens]["summary"]` for `lens_pipeline` rows holds structured payloads — e.g. technicals as `{"ma_posture": {...}, "breadth": 0.7, "momentum": {...}}`, fundamentals as a multi-ticker 10-K facts dump. The Jinja2 template at `templates/ai_advisor.html:999` passed these strings through `| e` and rendered them directly in `.prism-lens-text`. Operators saw raw JSON in the per-lens digest, not readable prose. Separately, the `obs-raw-preview` table cell (line 2002) dumped the full `raw_response` as JSON via `| tojson`.
+
+By contrast, the **council** producer (item #4) writes clean prose summaries that already render correctly, as verified in live run 637c719f.
+
+**Decision — render-layer guard, producer-agnostic:**
+
+A new pure helper module `advisors/prism_render.py` is added with two public functions:
+
+- `humanize_lens_summary(lens_name, lens_entry) -> str` — detects structured vs prose using `json.loads(summary)` result shape (not a naive `startswith("{")` check; prose containing braces is always a passthrough); applies lens-aware key extraction for structured digests; degrades to honest empty-state for null/missing inputs. Never raises.
+- `prepare_prism_block(raw_response) -> dict` — prepares the full Market Prism render context for the template, calling `humanize_lens_summary` per lens. Returns a dict with `available`, `verdict`, `rationale`, `run_ts`, `sources`, `lens_texts` (per-lens humanized strings), and `lens_available` (per-lens boolean). Never raises.
+
+**Why render-layer and not producer-layer:**
+
+1. **Low risk.** `lens_pipeline.py` and the Prism council (the two MARKET_PRISM producers) are not modified. No nightly data-production path changes.
+2. **Producer-agnostic.** The guard is correct for both producers: council prose passes through unchanged; `lens_pipeline` structured JSON is humanized. Future producers that write prose will also pass through without changes.
+3. **Defensive.** The guard stays correct and safe even after the council supersedes `lens_pipeline` in E2E item #4 — no code to remove.
+4. **Testable at the render boundary.** Unit tests can verify humanization over captured-from-producer fixtures without mocking the nightly scheduler or council.
+
+**Detection invariant:** `json.loads(summary)` result type determines the path. A `dict` or `list` result → structured → humanize. Anything else (bare scalar, parse error) → prose passthrough. This correctly handles: prose with braces, council prose with numbers/symbols, `$416B`-style values, and bare numeric strings like `"16.41"`.
+
+**Empty-state invariant (AC-3):** Null/empty summaries (`None`, `""`, `"null"`, `"None"`) and missing-key cases return an honest empty-state string, never `"null"`, `"{}"`, `"None"`, or raw JSON. Sentiment degrades to `"limited inputs — tone unavailable"`; others to `"limited inputs — no lens data"`.
+
+**`obs-raw-preview` fix (AC-5):** The `obs-raw-preview` table cell (previously `{{ obs.raw_response | tojson | e }}`) is humanized or removed from the operator-facing Overview view to prevent raw JSON exposure.
+
+**XSS contract:** Humanized text is `str`, rendered by the template with standard Jinja2 autoescaping (`{{ ... | e }}`). The `| safe` filter is never applied to humanized output. The helper produces no HTML.
+
+**Template change:** `templates/ai_advisor.html` — `ai_advisor_tab()` calls `prepare_prism_block(market_prism_summary)` and passes the result as `prism` to the template. The per-lens loop reads `prism.lens_texts[_lens_name]` (humanized string) instead of `_lens.get('summary')` directly.
+
+**Files changed:** `advisors/prism_render.py` (new), `app.py` (call `prepare_prism_block` in `ai_advisor_tab()`), `templates/ai_advisor.html` (per-lens text source, `obs-raw-preview` fix).
+
+**Tests:** Unit tests in `tests/advisors/test_prism_render.py` cover: prose passthrough (council-style fixture), JSON→readable for each of the 5 lens shapes (captured from live `lens_pipeline` row 77), null/empty→empty-state (AC-3), `$416B`-prose not misclassified (AC-1), fundamentals concision (AC-4), never-raises sweep over junk inputs (AC-7). Route/render test: GET /ai-advisor renders the Market Prism block with a fixture row; asserts no raw-JSON markers (`{"`, `":`) in per-lens text; asserts council prose passthrough; asserts empty-state for null-summary lens. Mock DB only; real template rendered. Visual gate (ux-expert): port 8091 daemon with seeded fixture row confirms no raw JSON + readable prose + chip/rationale/sources intact.
+
+**Status:** Implementation pending (feat/rf1-prose-render branch).

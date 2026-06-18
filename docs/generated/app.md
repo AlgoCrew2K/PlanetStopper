@@ -3,7 +3,7 @@
 > Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
 **Source:** `app.py`
-**Last updated:** 2026-06-13
+**Last updated:** 2026-06-18
 
 ## Overview
 
@@ -166,8 +166,11 @@ Unified single-page render for all 6 in-place tab panels. Server-side assembles 
 | `sb_observations` | `database.get_advisor_observations_for_role("STRATEGY_BUILDER")`, reversed (oldest-first); empty list on error | Strategy Builder |
 | `sb_card_artifacts` | dict keyed by `obs["id"]`; each value is an M6 `strategy_proposal` artifact dict for the Discuss/Chat affordance; built from `raw_response` fields per observation | Strategy Builder |
 | `market_prism_summary` | `database.get_latest_market_prism_summary()`; `dict` or `None`; wrapped in `try/except` — `None` on failure renders an informative empty state | Overview (Market Prism block) |
+| `prism` | `advisors.prism_render.prepare_prism_block(market_prism_summary)` — prose-safe render context dict; contains `available`, `verdict`, `rationale`, `run_ts`, `sources`, `lens_texts` (per-lens humanized strings), `lens_available` (per-lens booleans); never raises; replaces direct rendering of raw `summary` strings from `per_lens_digest` (RF-1, DE-RF1-PROSE-RENDER) | Overview (Market Prism block) |
 
 The Correlations, API-key, Symphonies, Strategy Builder, and Market Prism data assembly sections are wrapped in `try/except` — if those panels' data fails, the others still render. The Overview observations loop is not wrapped.
+
+**RF-1 (prose render guard):** `ai_advisor_tab()` calls `advisors.prism_render.prepare_prism_block(market_prism_summary)` to convert structured JSON per-lens summaries (written by `lens_pipeline`) to readable prose before passing context to the template. Council-produced prose passes through unchanged. The template reads `prism.lens_texts[lens_name]` in the per-lens digest loop instead of raw `summary` strings. See `DE-RF1-PROSE-RENDER` in `DECISIONS.md` and [advisors/prism_render](advisors_prism_render.md).
 
 #### `GET /ai-advisor/correlations` → 302 redirect to `/ai-advisor`
 #### `GET /ai-advisor/asset-swaps` → 302 redirect to `/ai-advisor`
