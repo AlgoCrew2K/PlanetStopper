@@ -1282,30 +1282,13 @@ def test_route_regression_as_of_datetime_still_renders_for_pipeline_row(client, 
 def test_obs_raw_preview_does_not_emit_raw_json_for_market_prism_rows(client, monkeypatch):
     """The obs-raw-preview table cell must not show raw JSON for MARKET_PRISM observations.
 
-    Current state (RED): line 2002 of templates/ai_advisor.html renders
-    `{{ obs.raw_response | tojson | e }}` verbatim for ALL advisor_observations rows,
-    including MARKET_PRISM rows — exposing the full raw JSON dump to the operator-facing
-    Overview page.
+    After the implementer's fix: MARKET_PRISM rows show `{{ obs.verdict | e }}` instead of
+    `{{ obs.raw_response | tojson | e }}`. This test verifies the MARKET_PRISM cell
+    fix is preserved (regression guard) — per_lens_digest and ma_posture must not appear.
 
-    After the fix (GREEN): MARKET_PRISM rows must be humanized or hidden in the
-    obs-raw-preview cell. The operator must NOT see per_lens_digest raw JSON there.
-
-    Mocking strategy: inject a MARKET_PRISM observation into
-    database.get_advisor_observations_for_role, then check that obs-raw-preview
-    does not expose the nested JSON structure.
-
-    NOTE ON ESCAPING: the template uses `| tojson | e`, which:
-      1. `tojson`: serializes the Python dict to a JSON string, using \\\" for inner quotes
-      2. `| e`: HTML-escapes the result, turning & < > " into entities but NOT backslashes
-    The raw HTML therefore contains e.g. `{&quot;overall_sentiment&quot;` or
-    `{\"overall_sentiment\"` (backslash-escaped inner quotes from tojson).
-    After html.unescape(), inner quotes appear as `\"` (backslash-quote), NOT `"`.
-    We therefore check for `{\\"overall_sentiment` (backslash-escaped) OR the
-    HTML-entity form in the raw HTML — both indicate raw JSON in the cell.
-
-    Simpler check: the cell must NOT contain `per_lens_digest` or `ma_posture`
-    (internal JSON keys that the operator should never see). These appear whether
-    the escaping produces `\"` or `&quot;` forms.
+    This test is a REGRESSION GUARD for the already-fixed MARKET_PRISM path.
+    The new AC-5 gap (symphony-level rows) is covered by
+    test_obs_raw_preview_does_not_emit_raw_json_for_symphony_level_rows below.
     """
     import app as app_module
     import database
@@ -1362,7 +1345,6 @@ def test_obs_raw_preview_does_not_emit_raw_json_for_market_prism_rows(client, mo
         re.DOTALL,
     )
 
-    # Check in both the raw HTML (for HTML-escaped forms) and the cell content directly.
     # 'per_lens_digest' and 'ma_posture' are internal JSON key names that must NOT appear
     # in the operator-facing obs-raw-preview cell for MARKET_PRISM rows.
     # They appear as-is regardless of the double-escaping (`| tojson | e`).
@@ -1382,3 +1364,273 @@ def test_obs_raw_preview_does_not_emit_raw_json_for_market_prism_rows(client, mo
             "Either humanize the display or hide per-lens details. AC-5. "
             f"Cell content (first 300 chars): {cell_content[:300]!r}"
         )
+
+
+# ===========================================================================
+# AC-5 (CORRECTED): obs-raw-preview — symphony-level rows must NOT emit raw JSON
+#
+# The implementer fixed MARKET_PRISM cells (show obs.verdict — preserved above).
+# The AC-5 gap: NON-MARKET_PRISM (symphony-level) obs-raw-preview cells still render
+# `{{ obs.raw_response | tojson | e }}` verbatim (template line 2006).
+#
+# FIXTURE PROVENANCE (captured-from-producer, read-only live DB):
+#   OVERFITTING_CONSCIENCE id=58, created 2026-06-05 21:05:58:
+#     {"s_count": 0, "backtest_selection_count": 0, "n_effective": 500, "n_optuna": 500,
+#      "drift_signal_available": false,
+#      "note": "no BACKTEST_SELECTION facets; N_effective equals N_optuna"}
+#   SPEC_CRITIC id=37, created 2026-06-05 20:00:09:
+#     {"note": "all 3 facets present, all THEORY, frozen<90d"}
+#
+# The `note` key is present in both rows and already contains readable prose.
+# AC-5 requires the implementer to surface the `note` field (if present) instead
+# of dumping the full raw_response JSON.
+# ===========================================================================
+
+# Symphony-level obs fixtures — captured from live DB, provenance above.
+# raw_response is stored as JSON in DB but database.py deserializes it to a dict
+# before returning rows (see database.py:1046-1047). Fixtures must match
+# the dict form the route actually receives.
+_OC_OBS_RAW_RESPONSE = {
+    "s_count": 0,
+    "backtest_selection_count": 0,
+    "n_effective": 500,
+    "n_optuna": 500,
+    "drift_signal_available": False,
+    "note": "no BACKTEST_SELECTION facets; N_effective equals N_optuna",
+}
+
+_SC_OBS_RAW_RESPONSE = {
+    "note": "all 3 facets present, all THEORY, frozen<90d",
+}
+
+
+def test_obs_raw_preview_does_not_emit_raw_json_for_symphony_level_rows(client, monkeypatch):
+    """The obs-raw-preview cell must NOT show raw JSON for symphony-level observations.
+
+    Current state (RED): template line 2006 renders
+      `{{ obs.raw_response | tojson | e }}`
+    for all rows where advisor_role != 'MARKET_PRISM' (OVERFITTING_CONSCIENCE, SPEC_CRITIC,
+    DIVERGENCE_EXPLAINER, ASSET_SWAP, LOGIC_CHANGE, etc.).
+
+    This produces output like:
+      {"backtest_selection_count": 0, "drift_signal_available": false, "n_effective": 500,
+       "n_optuna": 500, "note": "...", "s_count": 0}
+    visible to the operator — raw JSON object syntax in the UI.
+
+    After the fix (GREEN): symphony-level cells must show the `note` field from raw_response
+    (if present — it's already prose), or a concise human summary of key fields, or an
+    honest empty-state. No raw JSON object syntax (`{` + `"key":`) in the cell.
+
+    The fix must REUSE or EXTEND advisors/prism_render — not introduce a second humanizer.
+
+    Fixture provenance: OVERFITTING_CONSCIENCE id=58 + SPEC_CRITIC id=37 from live DB.
+    """
+    import app as app_module
+    import database
+    import re
+    import html as html_module
+
+    # Two symphony-level obs rows shaped like real live-DB rows
+    symphony_obs_list = [
+        {
+            "id": 58,
+            "advisor_role": "OVERFITTING_CONSCIENCE",
+            "symphony_id": "some-symphony-hash",
+            "subject_id": "some-symphony-hash",
+            "subject_type": "symphony",
+            "verdict": "no_backtest_selection",
+            "created_at": "2026-06-05 21:05:58",
+            "raw_response": _OC_OBS_RAW_RESPONSE,
+        },
+        {
+            "id": 37,
+            "advisor_role": "SPEC_CRITIC",
+            "symphony_id": "some-symphony-hash",
+            "subject_id": "some-symphony-hash",
+            "subject_type": "symphony",
+            "verdict": "ok",
+            "created_at": "2026-06-05 20:00:09",
+            "raw_response": _SC_OBS_RAW_RESPONSE,
+        },
+    ]
+
+    def _fake_get_observations(role, *args, **kwargs):
+        if role == "MARKET_PRISM":
+            return []
+        return symphony_obs_list
+
+    monkeypatch.setattr(database, "get_latest_market_prism_summary", lambda: None)
+    monkeypatch.setattr(database, "get_advisor_observations_for_role", _fake_get_observations)
+
+    mock_analytics = MagicMock()
+    mock_analytics.get_history_with_cache_invalidation.return_value = {}
+    mock_analytics.list_available_symphonies.return_value = []
+    mock_analytics.compute_per_symphony_returns.return_value = ([], [], [])
+    monkeypatch.setattr(app_module, "analytics", mock_analytics)
+
+    fake_corr_mod = MagicMock()
+    fake_corr_mod.compute_pairwise_correlations.return_value = []
+    fake_corr_mod.CRISIS_CAVEAT = ""
+    monkeypatch.setitem(sys.modules, "advisors.correlation_diagnostic", fake_corr_mod)
+
+    resp = client.get("/ai-advisor")
+    assert resp.status_code == 200
+
+    html_text = resp.data.decode("utf-8", errors="replace")
+
+    obs_preview_cells = re.findall(
+        r'<td[^>]*class="[^"]*obs-raw-preview[^"]*"[^>]*>(.*?)</td>',
+        html_text,
+        re.DOTALL,
+    )
+
+    # We must find at least one cell for the symphony-level rows we injected.
+    assert len(obs_preview_cells) >= 1, (
+        "No obs-raw-preview cells found in rendered HTML. "
+        "The template must render an obs-raw-preview cell for each advisor_observation row. "
+        f"Injected {len(symphony_obs_list)} rows. AC-5."
+    )
+
+    for cell_content in obs_preview_cells:
+        decoded = html_module.unescape(cell_content)
+
+        # The `| tojson | e` escaping produces backslash-escaped inner quotes.
+        # After html.unescape(), the cell contains e.g. `{\"backtest_selection_count\": 0`.
+        # We check for the backslash-escaped JSON object opening OR the literal form.
+        # The key marker of raw JSON dump: a `{` followed by `"` (or `\"` after tojson).
+        # In the raw HTML (before unescape), the tojson form is: `{\"key\":`.
+        # After unescape, it's: `{\"key\":` (backslashes survive unescape).
+        # We check for `{\\"` in decoded (Python repr of `{\"`) and `{"` (literal form).
+        raw_json_present = (
+            '{\\"' in decoded  # backslash-escaped form from | tojson
+            or '{"' in decoded  # literal JSON object marker
+        )
+        assert not raw_json_present, (
+            f"obs-raw-preview cell for a symphony-level row emits raw JSON object syntax. "
+            f"Current state: `{{{{ obs.raw_response | tojson | e }}}}` renders a JSON object "
+            f"starting with '{{\\\"' or '{{\"'. After the fix, this cell must show the "
+            f"`note` field prose (if present) or a concise human summary — no raw JSON. "
+            f"Decoded cell content (first 400 chars): {decoded[:400]!r}. AC-5."
+        )
+
+        # The cell must not be empty — it must show *something* readable.
+        assert len(decoded.strip()) > 0, (
+            "obs-raw-preview cell must not be empty after stripping. "
+            "Show the 'note' field or a concise summary. AC-5."
+        )
+
+
+def test_obs_raw_preview_symphony_rows_surface_note_field_prose(client, monkeypatch):
+    """obs-raw-preview for symphony-level rows must surface the 'note' field prose.
+
+    The OVERFITTING_CONSCIENCE and SPEC_CRITIC raw_response dicts both contain a
+    `note` key with already-readable prose. The fix must prefer this field over
+    emitting the full raw JSON dump.
+
+    After GREEN: the OVERFITTING_CONSCIENCE cell must contain (some form of)
+    'no BACKTEST_SELECTION facets' and the SPEC_CRITIC cell must contain
+    'all 3 facets present'.
+
+    ADVERSARIAL BAR: the current template emits the full JSON dump which contains
+    these note strings INSIDE the JSON — but also with surrounding JSON syntax.
+    The test asserts BOTH that the note text is present AND that raw JSON markers
+    are absent, requiring genuine note-extraction, not merely a substring check.
+
+    Fixture provenance: OC id=58, SC id=37, live DB, 2026-06-05.
+    """
+    import app as app_module
+    import database
+    import re
+    import html as html_module
+
+    symphony_obs_list = [
+        {
+            "id": 58,
+            "advisor_role": "OVERFITTING_CONSCIENCE",
+            "symphony_id": "some-symphony-hash",
+            "subject_id": "some-symphony-hash",
+            "subject_type": "symphony",
+            "verdict": "no_backtest_selection",
+            "created_at": "2026-06-05 21:05:58",
+            "raw_response": _OC_OBS_RAW_RESPONSE,
+        },
+        {
+            "id": 37,
+            "advisor_role": "SPEC_CRITIC",
+            "symphony_id": "some-symphony-hash",
+            "subject_id": "some-symphony-hash",
+            "subject_type": "symphony",
+            "verdict": "ok",
+            "created_at": "2026-06-05 20:00:09",
+            "raw_response": _SC_OBS_RAW_RESPONSE,
+        },
+    ]
+
+    def _fake_get_observations(role, *args, **kwargs):
+        if role == "MARKET_PRISM":
+            return []
+        return symphony_obs_list
+
+    monkeypatch.setattr(database, "get_latest_market_prism_summary", lambda: None)
+    monkeypatch.setattr(database, "get_advisor_observations_for_role", _fake_get_observations)
+
+    mock_analytics = MagicMock()
+    mock_analytics.get_history_with_cache_invalidation.return_value = {}
+    mock_analytics.list_available_symphonies.return_value = []
+    mock_analytics.compute_per_symphony_returns.return_value = ([], [], [])
+    monkeypatch.setattr(app_module, "analytics", mock_analytics)
+
+    fake_corr_mod = MagicMock()
+    fake_corr_mod.compute_pairwise_correlations.return_value = []
+    fake_corr_mod.CRISIS_CAVEAT = ""
+    monkeypatch.setitem(sys.modules, "advisors.correlation_diagnostic", fake_corr_mod)
+
+    resp = client.get("/ai-advisor")
+    assert resp.status_code == 200
+
+    html_text = resp.data.decode("utf-8", errors="replace")
+
+    obs_preview_cells = re.findall(
+        r'<td[^>]*class="[^"]*obs-raw-preview[^"]*"[^>]*>(.*?)</td>',
+        html_text,
+        re.DOTALL,
+    )
+
+    assert len(obs_preview_cells) >= 2, (
+        f"Expected at least 2 obs-raw-preview cells (one per injected row). "
+        f"Got {len(obs_preview_cells)}. AC-5."
+    )
+
+    # Collect decoded cell contents for inspection
+    decoded_cells = [html_module.unescape(c) for c in obs_preview_cells]
+    all_decoded = " ".join(decoded_cells)
+
+    # The OC note prose must appear in some cell (without surrounding JSON syntax)
+    oc_note_present = "no BACKTEST_SELECTION facets" in all_decoded
+    sc_note_present = "all 3 facets present" in all_decoded
+
+    # These strings appear in the raw JSON dump too (inside the "note" value) — but when
+    # the full JSON is dumped, raw JSON markers also appear. We verify the note is present
+    # AND that the dump's surrounding JSON object markers are absent.
+    oc_has_raw_json = any(
+        '{\\"' in html_module.unescape(c) or '{"' in html_module.unescape(c)
+        for c in obs_preview_cells
+    )
+
+    assert oc_note_present, (
+        "The OVERFITTING_CONSCIENCE 'note' prose must appear in the obs-raw-preview cell. "
+        "Expected 'no BACKTEST_SELECTION facets' to appear in the rendered cell. "
+        "The fix must extract the 'note' field and show it as the cell content. "
+        f"Decoded cell contents: {decoded_cells!r}. AC-5."
+    )
+    assert sc_note_present, (
+        "The SPEC_CRITIC 'note' prose must appear in the obs-raw-preview cell. "
+        "Expected 'all 3 facets present' to appear in the rendered cell. "
+        f"Decoded cell contents: {decoded_cells!r}. AC-5."
+    )
+    assert not oc_has_raw_json, (
+        "obs-raw-preview cells contain raw JSON object markers ('{\\'\"' or '{\"') even "
+        "though note prose is present — this means the full JSON dump is shown with the "
+        "note inside it, which is NOT the fix. The cell must show ONLY the note prose "
+        "(or a concise human summary), not the full raw_response JSON. AC-5."
+    )
