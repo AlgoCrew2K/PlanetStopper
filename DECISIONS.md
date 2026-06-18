@@ -1097,3 +1097,44 @@ Branch: `fix/prism-followups` | HEAD: 8e59305
 **Files changed:** `templates/ai_advisor.html` (lines 967–977: comment + two new dict entries).
 
 **Status:** GREEN at 8e59305. 7/7 AC-2 chip-mapping tests pass.
+
+---
+
+## Market Prism Phase 4 — Unattended Nightly Scheduling (2026-06-18)
+
+Branch: `feat/prism-phase4-scheduling` | HEAD: 4166ac0
+
+### DE-PRISM-004: Option B adopted — OS-level Task Scheduler, daemon-decoupled
+
+**Decision:** Market Prism Phase 4 is implemented as Option B: a standalone `prism_scheduler.py` invoked by Windows Task Scheduler, fully decoupled from the Flask daemon. Option A (daemon-driven headless `claude` via `app.py` scheduler slot) was prototyped by the team but abandoned due to a production defect (`--max-turns 40` — a flag the `claude` CLI does not support, invisible to mocked tests). Option B, previously reviewed and GREEN at 27e9434, was adopted as the base and hardened with three guards (HC-1, HC-2, HC-3).
+
+**Key design insight — collaboration team, not dev team:** The Prism council is a Claude Agent Team running a *collaboration* composition (multi-analyst deliberation + synthesizer). Collaboration teams require no plan-approval ceremony — that ceremony belongs to *dev teams* building code. This distinction is what makes unattended operation feasible: the nightly invocation spins up a fresh short-lived collaboration team per run with no human in the loop. Each run produces a clean `MARKET_PRISM` row without needing a PM to approve the team's plan before it can act.
+
+**Three guards:**
+
+1. **Idempotency guard (AC-3):** Before invoking the subprocess, `_is_todays_row()` compares the most recent `MARKET_PRISM` row's `created_at` (UTC date) against today. If a row already exists for today, the script exits 0 without invoking the agent. Prevents duplicate conflicting reports when two Task Scheduler triggers fire in the same window (e.g. a restart overlap).
+
+2. **Bounded retry (AC-2 / security hard rule):** The retry loop is `range(1, MAX_ATTEMPTS + 1)` with `MAX_ATTEMPTS=3`. Between attempts: `min(BACKOFF_BASE_SECONDS * 2^(attempt-1), BACKOFF_CAP_SECONDS)` sleep (30 s / 60 s cap). After exhaustion, exits 1 and produces a clear failure state. `while True` is structurally absent — the persistent-429 infinite-loop that caused prior PC crashes cannot recur.
+
+3. **D-1 error contract:** All exception paths log `type(exc).__name__` only — never `str(exc)`, raw messages, file paths, or stack frames. Applies to `.env` load, DB check, subprocess invocation, and spend-log parse/write.
+
+**Hardening (HC-1 / HC-2 / HC-3):**
+
+- **HC-1 — Spend cap:** `MAX_BUDGET_USD = 5.0` constant. Passed as `--max-budget-usd 5.0` to the subprocess. Makes per-run Opus spend runaway observable and bounded before it becomes a problem (AC-4).
+- **HC-2 — Spend logging:** `--output-format json` added to the subprocess command. On `returncode == 0`, `_persist_spend(run_id, stdout)` parses `cost_usd` from the JSON stdout and writes one `prism_audit_log` entry (`agent_role="LAUNCHER"`, `phase="spend_log"`). The `run_id` is a fresh `uuid4` generated in `main()` and threaded through to `_run_prism()` and `_persist_spend()`. Non-fatal — spend-log failure does not fail the run.
+- **HC-3 — Model pin:** `--model claude-opus-4-8` (fully qualified, pinned). Replaces the bare alias `"opus"` from the original Option B baseline to prevent drift if the alias is reassigned.
+
+**Why daemon-decoupled (Option B over A):**
+
+- No change to `app.py` — the 03:00 scheduler slot continues to run `advisors/lens_pipeline.py` (the data layer) unchanged. The Prism council is a separate concern.
+- Portability: decoupled scheduling is compatible with the planned DO droplet (`167.99.3.130 :8090`) migration; Option A would couple the Claude subprocess lifecycle to the Flask process.
+- Failure isolation: a crashed Task Scheduler invocation does not affect the live Flask daemon or the execution path.
+
+**Files added:**
+- `prism_scheduler.py` — standalone scheduler wrapper (183 lines)
+- `schedule_prism.ps1` — Task Scheduler registration script; `$ProjectRoot` derived from `$PSScriptRoot` (no hardcoded paths)
+- `tests/ai_advisor/test_prism_scheduling.py` — 23 tests covering AC-1–AC-8 + HC-1/HC-2/HC-3
+
+**Files unchanged:** `app.py`, `advisors/lens_pipeline.py`, all other production modules.
+
+**Status:** GREEN at 4166ac0. 23/23 tests pass.

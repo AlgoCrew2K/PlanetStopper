@@ -1,6 +1,6 @@
 # Planet Stopper -- Generated Module Reference Index
 
-**Last regenerated:** 2026-06-17 (advisor-synthesis-model-config — ADVISOR_SYNTHESIS_MODEL env var at 3 call sites; default claude-opus-4-8; DE-SYNTH-001)
+**Last regenerated:** 2026-06-18 (prism-phase4 — prism_scheduler.py Option B hardened with HC-1 spend cap + HC-2 spend logging + HC-3 model pin; 23/23 tests GREEN; DE-PRISM-004)
 
 All pages in this directory are auto-generated from source. Do not hand-edit generated sections. Sections marked `<!-- manual -->` are preserved across regenerations.
 
@@ -26,7 +26,7 @@ All pages in this directory are auto-generated from source. Do not hand-edit gen
 | `database` | [database.md](database.md) | SQLite state management: schema, 31 migrations (001–031), all read/write accessors, and pytest sentinel guard in _db_file() that structurally prevents tests from writing to the production DB | 2026-06-10 |
 | `engine/exit_authority` | [engine_exit_authority.md](engine_exit_authority.md) | Display helpers for the exit-authority badge and restart-notice context (decision-path functions removed in Sprint 3 SITE-C1) | 2026-05-27 |
 | `math_engine` | [math_engine.md](math_engine.md) | Pure risk-math primitives: trailing-stop mechanics, sqrt-time squeeze (1-sqrt(1-t)), CRRA-EU utility, CVaR diagnostics, PBO (CSCV), regime-match guard, Monte Carlo gating, VWAP signals, 6-layer exit resolver | 2026-06-02 |
-| `prism_scheduler` | [prism_scheduler.md](prism_scheduler.md) | Nightly Market Prism scheduler wrapper — invokes the prism-synthesizer Claude agent via Windows Task Scheduler (Option B, daemon-decoupled); idempotency guard, bounded retry (MAX_ATTEMPTS=3, 30s/60s-cap backoff), D-1 error contract | 2026-06-13 |
+| `prism_scheduler` | [prism_scheduler.md](prism_scheduler.md) | Nightly Market Prism scheduler wrapper — invokes the prism-synthesizer Claude agent via Windows Task Scheduler (Option B, daemon-decoupled); idempotency guard, bounded retry (MAX_ATTEMPTS=3, 30s/60s-cap backoff), D-1 error contract; HC-1 spend cap (MAX_BUDGET_USD=5.0), HC-2 spend logging (_persist_spend to prism_audit_log), HC-3 model pin (claude-opus-4-8) | 2026-06-18 |
 | `reporting` | [reporting.md](reporting.md) | Discord webhook notifications and QuickChart-embedded EOD post-mortem generation | 2026-05-27 |
 | `synthetic_history` | [synthetic_history.md](synthetic_history.md) | 250-day Alpaca historical fetcher with parallel download, file cache, and eligibility guards -- feeds the autotuner replay | 2026-06-02 |
 | `advisors/advisor_chat` | [advisors_advisor_chat.md](advisors_advisor_chat.md) | Explain-only chat backend (M5): scopes client artifacts to the known M1-M4 allowlist (with Cycle-1 ADD_CANDIDATE + citation fields), calls Claude (model via ADVISOR_SYNTHESIS_MODEL env var, default claude-opus-4-8) to explain a surfaced artifact, enforces hard boundary against any write/trade/config-mutation path | 2026-06-17 |
