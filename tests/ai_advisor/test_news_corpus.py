@@ -1945,6 +1945,36 @@ class TestUtcnowDeprecation:
             "This eliminates the 25 DeprecationWarnings in the test suite."
         )
 
+    def test_news_corpus_does_not_call_utcfromtimestamp(self):
+        """news_corpus.py source does not contain datetime.utcfromtimestamp() (deprecated).
+
+        The published_parsed fix for RFC-822 dates introduced utcfromtimestamp() in
+        _fetch_rss_feed, generating 2782 DeprecationWarnings per test run (Python 3.12+)
+        — one per feed entry parsed.
+
+        Fix: replace datetime.datetime.utcfromtimestamp(calendar.timegm(_pp)) with the
+        timezone-aware equivalent:
+          datetime.datetime.fromtimestamp(calendar.timegm(_pp), tz=datetime.timezone.utc)
+                           .replace(tzinfo=None)
+        or equivalently:
+          datetime.datetime(*(pp[:6]))  — direct struct_time field extraction (UTC)
+
+        RED: fails while utcfromtimestamp() is present in news_corpus.py.
+        GREEN: implementer replaces it with the tz-aware form.
+        """
+        import pathlib
+        src = pathlib.Path(__file__).parents[2] / "advisors" / "news_corpus.py"
+        assert src.exists(), f"news_corpus.py not found at {src}"
+        content = src.read_text(encoding="utf-8")
+        assert "utcfromtimestamp" not in content, (
+            "news_corpus.py calls datetime.utcfromtimestamp() (deprecated in Python 3.12+). "
+            "The published_parsed fix in _fetch_rss_feed introduced this call, generating "
+            "2782 DeprecationWarnings per test run. "
+            "Replace with: datetime.datetime.fromtimestamp("
+            "calendar.timegm(_pp), tz=datetime.timezone.utc).replace(tzinfo=None)"
+            ".strftime('%Y-%m-%dT%H:%M:%S')"
+        )
+
 
 # ---------------------------------------------------------------------------
 # AC-3 Deviation 1 — recency factor inert for RSS (published_parsed fix)
