@@ -365,12 +365,12 @@ def _fetch_rss_feed(name: str, url: str, ua: str) -> list[dict[str, Any]]:
             # Prefer published_parsed (time.struct_time feedparser always provides);
             # fall back to updated_parsed, then raw string as last resort.
             # RFC-822 strings (e.g. "Thu, 18 Jun 2026 12:01:05 GMT") cannot be parsed
-            # by datetime.fromisoformat — use calendar.timegm + utcfromtimestamp instead.
+            # by datetime.fromisoformat — use calendar.timegm + tz-aware fromtimestamp instead.
             _pp = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
             if _pp is not None:
-                published = datetime.datetime.utcfromtimestamp(calendar.timegm(_pp)).strftime(
-                    "%Y-%m-%dT%H:%M:%S"
-                )
+                published = datetime.datetime.fromtimestamp(
+                    calendar.timegm(_pp), tz=datetime.timezone.utc
+                ).replace(tzinfo=None).strftime("%Y-%m-%dT%H:%M:%S")
             else:
                 published = getattr(entry, "published", None) or getattr(entry, "updated", None) or ""
             # Prefer entry.source.href (publisher URL) when present — Google News wraps
