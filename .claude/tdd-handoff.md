@@ -1,126 +1,97 @@
-# TDD Handoff — Market Prism Phase 4 Hardening (Option B gap closure)
+# TDD Handoff — p4fix cycle (_persist_spend cost key regression fix)
 
-**Branch:** feat/prism-phase4-scheduling
-**Worktree:** C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/prism-phase4
-**Test file:** tests/ai_advisor/test_prism_scheduling.py
-**RED state:** 18 passed / 5 FAILED (as of this handoff)
-**Implementer:** p4-impl-launcher → prism_scheduler.py
+**Branch:** feat/prism-phase4-scheduling  
+**Worktree:** C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/prism-phase4  
+**Test file:** tests/ai_advisor/test_prism_scheduling.py  
+**RED state:** 2 FAILED / 23 passed (as of this handoff)  
+**For:** p4fix-implementer (you are BLIND to the test code — do NOT read the test file)
 
 ---
 
-## Context
+## GREEN Target
 
-Option B is adopted. prism_scheduler.py (at project root) is the standalone
-nightly scheduler invoked by Windows Task Scheduler. The 18 existing tests
-pass. Three gaps remain unaddressed (HC-1, HC-2, HC-3).
+Fix ONE function in ONE file.
 
-## IMPLEMENTER SECTION — p4-impl-launcher
+**File:** `prism_scheduler.py` (project root of the shared worktree)  
+**Function:** `_persist_spend(run_id, stdout)`
 
-**File to modify:** `prism_scheduler.py` (project root — NOT under advisors/)
-
-### HC-1: Spend cap — add `MAX_BUDGET_USD` constant + `--max-budget-usd` flag
-
-1. Add a named constant at the top of the module (with the other constants):
-   ```python
-   MAX_BUDGET_USD: float = 5.0   # Per-run Opus spend cap — adjust as needed
-   ```
-
-2. In `_run_prism()`, add `"--max-budget-usd", str(MAX_BUDGET_USD)` to the `cmd` list.
-
-The test `test_claude_command_includes_max_budget_usd_flag` asserts:
-- `"--max-budget-usd"` is in the args list
-- The value after it is numeric AND equals `float(MAX_BUDGET_USD)` (not a magic number)
-
-### HC-2: Spend logging — `--output-format json` + persist spend to prism_audit_log
-
-1. Add `"--output-format", "json"` to the `cmd` list in `_run_prism()`.
-
-2. Capture `stdout` from the subprocess call:
-   - Add `capture_output=True, text=True` to `subprocess.run(...)`.
-   - After a successful run (returncode == 0), parse `result.stdout` as JSON and
-     extract the cost. Persist it via `database.insert_prism_audit_entry`.
-
-3. The spend log entry must use:
-   - `agent_role="LAUNCHER"` (or similar — whatever identifies the scheduler)
-   - `phase="spend_log"` (exact string — the test queries for this)
-   - `content=json.dumps({"cost_usd": <parsed_value>})`
-   - `run_id` — use a stable run ID (e.g. today's UTC ISO date string, or
-     generate a UUID at the start of `main()` and thread it through to `_run_prism`)
-
-4. `database` import: add `sys.path.insert(0, str(_PROJECT_ROOT))` then
-   `import database` inside the persistence helper (the pattern already used
-   by `_get_summary()`). Or import at the top of `_run_prism` after the path insert.
-
-5. D-1: if stdout parsing fails (malformed JSON, missing key), catch the exception
-   and log only `type(exc).__name__` — never the raw message. This is non-fatal;
-   the run already succeeded.
-
-The test `test_successful_run_persists_spend_log_audit_entry`:
-- Mocks `subprocess.run` to return `returncode=0` with `stdout='{"cost_usd": 1.23}'`
-- Queries `prism_audit_log` for rows with `phase='spend_log'`
-- Asserts a row exists with a positive float cost value under `cost_usd`/`cost`/`spend_usd`
-
-### HC-3: Model pin — `claude-opus-4-8` not `opus`
-
-In `_run_prism()`, change:
-```python
-"--model", "opus",
-```
-to:
-```python
-"--model", "claude-opus-4-8",
-```
-
-The test `test_claude_command_uses_pinned_model_not_alias` asserts:
-- `"claude-opus-4-8"` is in the args list
-- The value after `"--model"` is NOT the bare alias `"opus"`
-
-### Note on existing tests
-
-The existing `EXPECTED_CLAUDE_ARGS` at the top of the test file still includes
-`"opus"` as the expected model value. After your HC-3 fix, `test_no_row_invokes_claude_subprocess`
-will FAIL because `"opus"` is no longer in the command. You must ALSO update
-`EXPECTED_CLAUDE_ARGS` to replace `"opus"` with `"claude-opus-4-8"`.
+### What it currently does (broken)
 
 ```python
-# Before (in test file — you update this):
-EXPECTED_CLAUDE_ARGS = [
-    "claude",
-    "-p",
-    "--agent",
-    "prism-synthesizer",
-    "--dangerously-skip-permissions",
-    "--model",
-    "opus",          # <-- change this
-]
-
-# After:
-EXPECTED_CLAUDE_ARGS = [
-    "claude",
-    "-p",
-    "--agent",
-    "prism-synthesizer",
-    "--dangerously-skip-permissions",
-    "--model",
-    "claude-opus-4-8",   # <-- pinned
-]
+parsed = json.loads(stdout)
+cost = parsed.get("cost_usd")   # BUG: real CC envelope uses total_cost_usd
+if cost is not None:
+    ...  # DB write — never reached on a real CC run
 ```
 
-This is a legitimate test update — the test was asserting the wrong (pre-fix) value.
-The test-writer (p4-test-writer) authorises this update as part of HC-3 GREEN.
+### What GREEN looks like
+
+`_persist_spend` must read `total_cost_usd` as the primary key from the parsed JSON.
+It MUST also tolerate a legacy `cost_usd`-only envelope (fallback) so old/local CC builds still log.
+
+Minimal correct logic (pseudocode — implement as you see fit):
+
+```python
+cost = parsed.get("total_cost_usd") or parsed.get("cost_usd")
+```
+
+The persisted `content` JSON must include `total_cost_usd` as the key name
+(not `cost_usd`) when the source envelope had `total_cost_usd`.
+
+### Provenance (do not alter this contract)
+
+PM-captured from live `claude -p --output-format json` (CC 2.1.181):
+```json
+{"total_cost_usd": 0.0728568, "type": "result", "subtype": "...", "usage": {...}, ...}
+```
+No `"cost_usd"` key is present in the real envelope.
+
+---
+
+## D-1 contract (MUST preserve)
+
+`_persist_spend` is non-fatal. The existing `try/except Exception` that logs
+`type(exc).__name__` only to stderr MUST remain intact. Never let a parse or
+DB failure propagate.
+
+---
+
+## Scope boundary
+
+- Touch ONLY `prism_scheduler.py`, the `_persist_spend` function.
+- Do NOT touch the test file.
+- Do NOT change any other function signature or behaviour.
+- Do NOT add new constants.
+- Stage path-scoped: `git add prism_scheduler.py` only.
 
 ---
 
 ## Verification
 
-After all changes:
+After your change, run:
 
 ```
-python -m pytest tests/ai_advisor/test_prism_scheduling.py -p no:xdist --override-ini="addopts=" -q
+cd C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/prism-phase4
+python -m pytest tests/ai_advisor/test_prism_scheduling.py -o addopts= -p no:cacheprovider -q
 ```
 
-Expected: **23 passed / 0 failed / 0 errors** (18 existing + 5 new).
+Expected: **25 passed, 0 failed** (or 24 passed + 1 skipped if you implement primary
+key only and omit the legacy fallback — see note below). The two RED tests from
+this fix cycle must now be GREEN.
 
-Quote the HEAD SHA. Then SendMessage `p4-test-writer`: `GREEN: <SHA> — 23/23 passed`
+### Skip note
 
-Do NOT merge to main. Do NOT push. PM gates with full-tree verifier + /review + live run.
+`TestPersistSpendEnvelopeKey::test_persist_spend_tolerant_fallback_legacy_cost_usd`
+will SKIP (not fail) if your implementation does not handle the legacy `cost_usd`-only
+envelope. That is acceptable — the primary RED gate is
+`test_persist_spend_writes_row_when_only_total_cost_usd_present`.
+
+---
+
+## Commit instruction
+
+After GREEN:
+1. `git -C <worktree> add prism_scheduler.py`
+2. Commit with prefix `fix(prism-scheduler):` on branch `feat/prism-phase4-scheduling`
+3. Do NOT merge to main. Do NOT push to origin.
+4. Quote the SHA + pass/fail count in your SendMessage to p4fix-test-writer.

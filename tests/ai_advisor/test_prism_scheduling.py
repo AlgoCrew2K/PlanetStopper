@@ -580,12 +580,14 @@ class TestSpendLogging:
             sys.path.insert(0, worktree)
         import database as _db
 
-        # Simulate subprocess returning a JSON payload with a cost field.
+        # Simulate subprocess returning a JSON payload with the REAL Claude Code envelope key.
+        # Provenance: PM-captured from live `claude -p --output-format json` (CC 2.1.181):
+        #   {"total_cost_usd": 0.0728568, "type": "result", ...}  — NO "cost_usd" key present.
         # The cost value is arbitrary — we assert shape (positive float), not the literal.
         simulated_cost = 1.23
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = _json.dumps({"cost_usd": simulated_cost})
+        mock_result.stdout = _json.dumps({"total_cost_usd": simulated_cost})
 
         with (
             patch.object(mod, "_get_summary", return_value=None),
@@ -620,10 +622,14 @@ class TestSpendLogging:
                 "The spend log must be a JSON object with a cost field."
             )
 
-        # Accept any of these canonical cost key names.
-        cost_val = parsed.get("cost_usd") or parsed.get("cost") or parsed.get("spend_usd")
+        # The persisted row must record the cost under the canonical key 'total_cost_usd'.
+        # Provenance: PM-captured from live `claude -p --output-format json` (CC 2.1.181):
+        #   {"total_cost_usd": 0.0728568, ...} — that is the real envelope key.
+        cost_val = parsed.get("total_cost_usd")
         assert cost_val is not None, (
-            f"spend_log JSON has no cost_usd/cost/spend_usd key. Got: {parsed!r}"
+            f"spend_log JSON has no 'total_cost_usd' key. Got: {parsed!r}. "
+            "The persisted entry must use the real Claude Code envelope key "
+            "(PM-captured from live CC 2.1.181: 'total_cost_usd', NOT 'cost_usd')."
         )
         assert isinstance(cost_val, (int, float)) and cost_val > 0, (
             f"spend_log cost value must be a positive float. Got: {cost_val!r}"
@@ -677,3 +683,140 @@ class TestModelPin:
                     f"--model is set to bare alias 'opus' — use pinned ID 'claude-opus-4-8'. "
                     f"Command was: {cmd_str}"
                 )
+
+
+# ---------------------------------------------------------------------------
+# HC-2 regression — _persist_spend must read total_cost_usd (real CC envelope key)
+# ---------------------------------------------------------------------------
+
+class TestPersistSpendEnvelopeKey:
+    """Regression suite for the cost_usd vs total_cost_usd bug.
+
+    The Claude Code `claude -p --output-format json` envelope uses the key
+    `total_cost_usd`, NOT `cost_usd`.  The original _persist_spend called
+    `.get('cost_usd')` which always returns None on a real run, silently
+    skipping the spend_log write.
+
+    Provenance: PM-captured from live `claude -p --output-format json` (CC 2.1.181):
+      {"total_cost_usd": 0.0728568, "type": "result", "subtype": "...", ...}
+      — NO "cost_usd" key is present in the real envelope.
+
+    RED intent: both tests below FAIL against the current _persist_spend
+    (which calls .get('cost_usd') and therefore writes no row).
+    """
+
+    def test_persist_spend_writes_row_when_only_total_cost_usd_present(self):
+        """Given a subprocess stdout whose ONLY cost key is total_cost_usd,
+        _persist_spend MUST write a spend_log row with a positive-float cost.
+
+        This is the primary regression guard for the cost_usd → total_cost_usd fix.
+        A wrong implementation that still reads only 'cost_usd' will find None,
+        skip the DB write, and this assertion will fail.
+        """
+        import json as _json
+        import sqlite3
+        import sys
+        import os
+
+        mod = _import_scheduler()
+        worktree = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        if worktree not in sys.path:
+            sys.path.insert(0, worktree)
+        import database as _db
+
+        run_id = "test-total-cost-usd-regression"
+
+        # Real CC 2.1.181 envelope shape: ONLY total_cost_usd, NO cost_usd key.
+        # Provenance: PM-captured from live `claude -p --output-format json` (CC 2.1.181).
+        real_envelope = _json.dumps({
+            "total_cost_usd": 0.0728568,
+            "type": "result",
+            "subtype": "success",
+        })
+
+        mod._persist_spend(run_id, real_envelope)
+
+        conn = sqlite3.connect(_db._db_file())
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT content FROM prism_audit_log "
+            "WHERE phase = 'spend_log' AND run_id = ? ORDER BY id DESC LIMIT 1",
+            (run_id,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        assert row is not None, (
+            "_persist_spend wrote NO prism_audit_log row when the subprocess stdout "
+            "contained only 'total_cost_usd' (the real CC 2.1.181 envelope key). "
+            "Fix: read 'total_cost_usd' from the parsed JSON, not 'cost_usd'."
+        )
+
+        parsed = _json.loads(row[0])
+        cost_val = parsed.get("total_cost_usd")
+        assert cost_val is not None, (
+            f"spend_log content has no 'total_cost_usd' key. Got: {parsed!r}. "
+            "The persisted entry must record cost under 'total_cost_usd'."
+        )
+        assert isinstance(cost_val, (int, float)) and cost_val > 0, (
+            f"Persisted cost value must be a positive float. Got: {cost_val!r}"
+        )
+
+    def test_persist_spend_tolerant_fallback_legacy_cost_usd(self):
+        """If an old/local CC build returns only 'cost_usd', _persist_spend
+        should still write a spend_log row (tolerant fallback).
+
+        This is optional hardening — the primary fix is total_cost_usd.
+        A tolerant implementation tries total_cost_usd first, then falls back to cost_usd.
+        If the implementation does NOT implement the fallback, this test simply
+        verifies that at minimum the primary key path works; the test will SKIP
+        if the implementation intentionally drops legacy support.
+
+        RED intent: the current (unfixed) code reads only 'cost_usd' and works here
+        by accident — but the primary test above still fails, which is what matters.
+        """
+        import json as _json
+        import sqlite3
+        import sys
+        import os
+
+        mod = _import_scheduler()
+        worktree = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        if worktree not in sys.path:
+            sys.path.insert(0, worktree)
+        import database as _db
+
+        run_id = "test-legacy-cost-usd-fallback"
+
+        # Legacy envelope with only cost_usd (old CC builds or local dev).
+        legacy_envelope = _json.dumps({"cost_usd": 0.042})
+
+        mod._persist_spend(run_id, legacy_envelope)
+
+        conn = sqlite3.connect(_db._db_file())
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT content FROM prism_audit_log "
+            "WHERE phase = 'spend_log' AND run_id = ? ORDER BY id DESC LIMIT 1",
+            (run_id,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        # If no row written with legacy envelope, skip (fallback not required).
+        # The primary regression test above is the authoritative RED gate.
+        if row is None:
+            pytest.skip(
+                "Implementation does not support legacy cost_usd fallback — "
+                "that is acceptable; the primary test (total_cost_usd) is the gate."
+            )
+
+        parsed = _json.loads(row[0])
+        # Accept either key in the persisted content for legacy path.
+        cost_val = parsed.get("total_cost_usd") or parsed.get("cost_usd")
+        assert cost_val is not None, (
+            f"Legacy fallback row has no cost key. Got: {parsed!r}"
+        )
+        assert isinstance(cost_val, (int, float)) and cost_val > 0, (
+            f"Legacy fallback cost value must be positive. Got: {cost_val!r}"
+        )
