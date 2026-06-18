@@ -1,49 +1,60 @@
-# Feature: News-Events Sentiment Lens (replace thin aggregate-tone with real news events)
+# Feature: Multi-Source Market-News Lens (GDELT tone facet + ranked/topic-tagged article corpus)
 Status: ready
-Created: 2026-06-18
+Created: 2026-06-18 (re-scoped from GDELT-only after operator directive: multi-source, GDELT two-facet)
 
 ## Summary
 
-The Market Prism "sentiment" lens currently consumes only a single GDELT **aggregate
-tone scalar** (`timelinetone` mean AvgTone), throws the actual articles away as mere
-citation URLs, and uses an unfiltered `query=stock+market+finance` that pulls
-**foreign-language / irrelevant news** (observed: Chinese-language articles in the live
-nightly row 77, with `tone_score=null`). The operator's intent: the council must consume
-**actual market-relevant news EVENTS** (headlines/stories) — not a near-zero tone number —
-to produce a human-consumable sentiment read.
+The Market Prism "sentiment" lens is the softest, most subjective, and (per operator) most
+crucial lens. Today it is GDELT-only: a single aggregate tone scalar, with an unfiltered query
+that pulled foreign-language noise (live row 77: Chinese articles, `tone_score=null`) and threw
+the actual articles away as citation URLs. This rebuilds it into a **two-facet, multi-source**
+lens:
 
-This upgrades `advisors/lens_gdelt.py` (+ its consumer `ai_advisor._build_sentiment_section`
-and the `lens_pipeline` mapping) so the sentiment lens surfaces a ranked set of real,
-English/market-relevant **news events** (title, source domain, date) as its PRIMARY signal,
-with aggregate tone retained as a SECONDARY corroborating signal, and honest availability.
+- **Facet A — GDELT aggregate TONE (independent, ALWAYS-VALID, NEVER ranked):** the existing
+  `timelinetone` mean-AvgTone normalized [-100,100]→[-1,1], with the existing bounded-429
+  backoff. The un-killable floor: even if every article feed fails, the lens still emits this.
+- **Facet B — a single ranked, deduped, topic-tagged ARTICLE CORPUS** drawn from MANY free,
+  keyless sources (GDELT `artlist` + Google News RSS + CNBC + MarketWatch + Yahoo + Fed + BLS +
+  BEA + SEC). GDELT's articles are just ONE input feed here — validated/deduped/scored/tagged
+  identically to the RSS feeds (no special treatment). The corpus is topic-tagged
+  (macro/fundamentals/technicals/derivatives/broad-sentiment) so it can be routed as **cross-lens
+  context** to the other analysts during Q&A/debate (that consumption = the council cycle, NOT
+  this cycle).
+
+Grounding (researcher, 2026-06-18, cited): `feedparser` is NOT a dep; `requests~=2.32.5` is.
+`advisors/lens_gdelt.py` already fetches `artlist` per-article `{url,seendate,title,domain}` —
+those objects just need to become a corpus input instead of citations.
 
 ## Acceptance Criteria
 
-- [ ] AC-1: The GDELT query is filtered to **English-language, market-relevant** news (e.g. a `sourcelang:eng`-equivalent operator + a market query). A live fetch returns NO foreign-language articles. (No hardcoded headline assertions — assert the query string carries the language/relevance filter + that returned article languages, when present in the response, are English.)
-- [ ] AC-2: The lens output surfaces actual **news events** — a ranked list of the top-N (N a named constant, ~5–8) relevant articles, each with `title`, `domain`, `seendate`, deduped by domain — as a first-class `events` field, NOT just citation URLs.
-- [ ] AC-3: Aggregate `tone` is retained as a SECONDARY field. **Honest availability:** `available=True` iff at least one real signal is present (events OR tone); never `available=True` with all-null signals (the row-77 `tone_score=null`+`available=True` defect is fixed end-to-end through `_build_sentiment_section` and the `lens_pipeline` per-lens mapping).
-- [ ] AC-4: Existing invariants preserved — bounded retry (`_GDELT_MAX_ATTEMPTS`, backoff), D-1 (`reason = type(exc).__name__` only), off-execution-path (no module-level import on the engine path), never-raises.
-- [ ] AC-5: The `per_lens_digest.sentiment.summary` consumed by the Overview render carries the events in a structured, render-ready shape (so the downstream render cycle can show headlines, not raw JSON). The `prism-sentiment-analyst` reasons over the events (lens data carries them).
-- [ ] AC-6: Honest degradation — GDELT 429 / empty / foreign-only result → `available=False` with a named reason (`rate_limited` / `no_news_events` / etc.), never a half-populated row.
+- [ ] AC-1 (multi-source fetch): the lens pulls the recommended free/keyless feed set (below) via `requests` with an **explicit descriptive `User-Agent`** and a per-feed timeout. A single feed failing (403/timeout/parse) degrades THAT feed only — never the whole lens. [LOAD-BEARING: SEC/CNBC/Fed/BLS return 403 to a default UA — UA is mandatory; for `.gov` use the descriptive contact UA `PlanetStopper/1.0 paulmgreaney@gmail.com`.]
+- [ ] AC-2 (GDELT tone facet): emitted as an INDEPENDENT, always-valid, UNRANKED facet (kept exactly as `lens_gdelt.py` does timelinetone today). Present even when all article feeds fail.
+- [ ] AC-3 (ranked corpus): every article feed (incl. GDELT `artlist`) is normalized to a common record `{url,title,published,domain,source_feed}`, then **cross-source deduped** (canonical-URL after stripping utm_*/fragments + resolving Google News wrapper URLs to the publisher URL; title token-set Jaccard ≥ 0.85; ≤ N-per-domain cap), **scored** `score = W_RECENCY·recency + W_RELEVANCE·relevance + W_AUTHORITY·authority` (recency = exp(-Δt_h/τ), τ named; relevance = market-keyword hits; authority = `SOURCE_AUTHORITY[publisher_domain]` table), sorted desc, top-K kept. ALL weights/τ/K/dedup-threshold are NAMED CONSTANTS with source comments (no magic numbers).
+- [ ] AC-4 (topic-tagging): each corpus article is tagged with topic(s) via a keyword→topic map (pure stdlib regex/string): macro / fundamentals / technicals / derivatives / broad-sentiment. Enables Phase-B cross-lens routing.
+- [ ] AC-5 (honest availability + D-1): `available=True` iff (tone facet present OR corpus non-empty); the row-77 `available=True`+all-null defect is fixed end-to-end through `_build_sentiment_section` + the `lens_pipeline` per-lens mapping. Per-feed errors logged type-only (D-1); never-raises; off-execution-path (CC-2 lazy import).
+- [ ] AC-6 (consumer + persistence): `ai_advisor._build_sentiment_section` surfaces BOTH facets (tone + the ranked, topic-tagged corpus) in a structured, render-ready shape; warehouse persistence (`lens_warehouse`) preserved.
+- [ ] AC-7 (ingestion): add `feedparser` to `requirements.txt`; fetch with `requests` (UA + timeout) then `feedparser.parse(resp.content)` (do NOT let feedparser fetch — it can't set UA/timeout). Bounded/never-raising per existing lens discipline.
 
 ## Architecture
-
-- `advisors/lens_gdelt.py`: extend `_fetch_gdelt_sentiment` (or add `_extract_events`) — add the language/relevance filter to `_GDELT_*_URL`; parse `artlist` articles into a ranked, domain-deduped `events` list (title/domain/seendate); keep `timelinetone` → `tone` as secondary; recompute `available` from (events OR tone). Keep the two-GET rate-limit spacing.
-- `ai_advisor._build_sentiment_section`: consume the new `events` + `tone`; emit a structured summary `{events:[...], tone, article_count, ...}`; fix any place that set `available=True` with null tone.
-- `advisors/lens_pipeline.py`: ensure the sentiment per-lens mapping carries `events` into `per_lens_digest`.
+- Keep GDELT tone (Facet A) in `advisors/lens_gdelt.py` (timelinetone). 
+- New module (implementer's call on name, e.g. `advisors/news_corpus.py`): the multi-source corpus builder — fetch feeds (UA+timeout, per-feed isolation) → normalize → cross-source dedup → score → topic-tag → ranked top-K corpus. GDELT `artlist` is one input feed.
+- `ai_advisor._build_sentiment_section` orchestrates Facet A + Facet B into the sentiment lens output.
+- **Recommended feed set (~11, all keyless, pull serially w/ UA, GDELT-tone first as the floor):** GDELT timelinetone (tone facet) · GDELT artlist (corpus) · Google News RSS search `markets OR "stock market" OR "federal reserve" when:24h` (Reuters/AP proxy) · CNBC Markets + Economy (verify IDs live) · MarketWatch topstories · Yahoo Finance rssindex (best-effort) · Fed `press_all.xml` · BLS `bls_latest.rss` · BEA `rss.xml` · SEC `getcurrent&type=8-K&output=atom` (≤10 req/s) · Google News topic BUSINESS (fallback). Exact endpoints in DECISIONS / the researcher report.
+- `SOURCE_AUTHORITY` (named): Fed/SEC/BLS/BEA=1.0, Reuters/AP=0.9, CNBC/MarketWatch=0.7, Yahoo/Nasdaq=0.6, unknown=0.4. Weights `W_RECENCY=0.4, W_RELEVANCE=0.35, W_AUTHORITY=0.25`; τ=24h; top-K≈25; ≤3/domain. [PM-ASSUMED tunables — named + commented.]
 
 ## Edge Cases
-- GDELT `timelinetone` empty/flaky → tone=None but events present → still `available=True` (events carry it). Both empty → `available=False`, reason `no_news_events`.
-- artlist returns foreign-language despite filter → drop non-English entries; if none remain → degrade honestly.
-- 429 storm → bounded retry then `rate_limited` (existing).
+- Feed 403 → the UA fix prevents it; if still 403/timeout → that feed yields 0 articles, lens continues. Reuters/AP direct RSS is DEAD → only via Google News proxy. SEC 10 req/s hard cap (+~10-min IP block on excess) → bounded, spaced. GDELT 429 → existing backoff. All article feeds fail but tone OK → `available=True` (tone facet). Tone AND corpus both empty → `available=False`, named reason.
 
 ## Security Considerations
-- D-1 everywhere (type-only reasons). No secrets (GDELT is keyless). Off-execution-path. Never-raises. No SSRF (fixed GDELT host).
+- Explicit `User-Agent` on every fetch; descriptive contact UA for `.gov`. D-1 (type-only reasons). Feed hosts are a FIXED allowlist (no user input → no SSRF). Bounded per-feed timeout + overall bound; never-raises; off-execution-path; advisory-only.
 
 ## Testing Strategy
-- `tests/ai_advisor/test_lens_gdelt.py` + a new events test: **fixture captured from a REAL GDELT artlist response** (provenance: captured-from-producer, committed as a fixture) — assert events are extracted (shape: title/domain/seendate present, domain-deduped, ≤N), language filter is in the query, honest availability (events-only / tone-only / both-null cases), D-1 reason on failure. NO hardcoded headline text or tone values — assert shape/presence/structure only.
-- Consumer test: `_build_sentiment_section` surfaces events; `available=True` never with all-null.
+- Fixtures **captured from REAL feed pulls** (provenance-labeled; GDELT + ≥2 RSS + 1 .gov + Google News), committed under `tests/fixtures/`. Honest fallback: schema-derived-with-runtime-validator, labeled, if a feed is unreachable at capture time.
+- Assert SHAPE/STRUCTURE/PRESENCE — NEVER hardcode headline text, tone values, or specific articles. Tests: multi-feed fetch sets UA; per-feed failure isolated; GDELT tone facet independent + always-valid; cross-source dedup collapses a GDELT+GoogleNews duplicate of the same publisher URL to one (keeping higher authority); score uses named constants; topic-tagging routes by keyword; honest availability (tone-only / corpus-only / both-null) end-to-end; D-1 type-only on feed failure.
 
 ## Scope Boundaries
-- IN: the GDELT lens producer + its consumer/mapping so the lens DATA carries real news events.
-- OUT (separate cycles): the Overview prose RENDER (RF-1), the council 5/5 coordination fix, making the council the live nightly producer. This cycle makes the sentiment lens *produce* real events; rendering them human-consumably is the next cycle.
+- IN: the two-facet lens DATA (GDELT tone facet + ranked/deduped/topic-tagged multi-source corpus) + the consumer surfacing both + warehouse persistence + `feedparser` dep.
+- OUT (separate cycles): **Phase B** — the council's OTHER analysts (macro/fundamentals/technicals/derivatives) consuming the topic-tagged corpus as context during Q&A/debate (= the council 5/5 cycle). The Overview PROSE render of the news events (= RF-1 render cycle).
+
+## Open questions [PM-ASSUMED defaults — non-blocking]
+- CNBC numeric IDs / Yahoo / Nasdaq paths: live-curl-verify at wiring (RED fixture captured from a real pull). GDELT artlist `maxrecords`: bump 10→~50 for a richer corpus (one call, rate-spaced). Universe-level (no per-ticker fan-out) for v1. Google News wrapper URLs: best-effort resolve for dedup/authority, hash-fallback if not.
