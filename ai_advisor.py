@@ -581,27 +581,23 @@ def _build_sentiment_section(_data: object = None) -> dict:
     except Exception as exc:
         logger.debug("news_corpus.build_news_corpus failed: %s", type(exc).__name__)
 
-    # --- Fallback / events path: lens_gdelt producer (CC-2: lazy import) ---
-    # This preserves the test seam: patching lens_gdelt._fetch_gdelt_sentiment
-    # propagates into this function so tests can control the events field.
-    gdelt_result: dict = {"available": False, "tone": None, "events": [], "reason": None}
-    try:
-        from advisors import lens_gdelt  # noqa: PLC0415
-
-        gdelt_result = lens_gdelt._fetch_gdelt_sentiment([])
-    except Exception as exc:
-        logger.debug("lens_gdelt._fetch_gdelt_sentiment failed: %s", type(exc).__name__)
-
-    # --- Merge: available=True if either source produced data ---
     corpus_available = bool(corpus_result.get("available"))
-    gdelt_available = bool(gdelt_result.get("available"))
 
-    if not corpus_available and not gdelt_available:
-        reason = (
-            corpus_result.get("reason")
-            or gdelt_result.get("reason")
-            or "no_news_events"
-        )
+    if not corpus_available:
+        reason = corpus_result.get("reason") or "no_news_events"
+        # DW-1: persist unavailability event to warehouse (lazy import, CC-2).
+        try:
+            from advisors import lens_warehouse  # noqa: PLC0415
+
+            lens_warehouse.persist_lens_snapshot(
+                lens="sentiment",
+                symbol=None,
+                source="news_corpus",
+                available=False,
+                raw_payload={"reason": reason},
+            )
+        except Exception:  # noqa: BLE001
+            pass  # D-1: warehouse errors never surface to callers
         return {
             "lens": _lens,
             "available": False,
@@ -610,12 +606,10 @@ def _build_sentiment_section(_data: object = None) -> dict:
             "reason": reason,
         }
 
-    # Prefer corpus tone; fall back to gdelt tone
-    tone_score = corpus_result.get("tone") if corpus_available else gdelt_result.get("tone")
-    corpus = corpus_result.get("corpus", []) if corpus_available else []
+    tone_score = corpus_result.get("tone")
+    corpus = corpus_result.get("corpus", [])
 
-    # events: from corpus (mapped to legacy shape) when corpus available;
-    # from gdelt_result.events when corpus empty but gdelt has events.
+    # events: legacy shape mapped from corpus articles for render compatibility (AC-5)
     if corpus:
         events = [
             {
@@ -626,7 +620,7 @@ def _build_sentiment_section(_data: object = None) -> dict:
             for art in corpus
         ]
     else:
-        events = gdelt_result.get("events", [])
+        events = []
 
     logger.info(
         "multi-source sentiment: tone=%s corpus_size=%d events=%d",
@@ -634,6 +628,20 @@ def _build_sentiment_section(_data: object = None) -> dict:
         len(corpus),
         len(events),
     )
+
+    # DW-1: persist this lens snapshot to the warehouse (lazy import, CC-2).
+    try:
+        from advisors import lens_warehouse  # noqa: PLC0415
+
+        lens_warehouse.persist_lens_snapshot(
+            lens="sentiment",
+            symbol=None,
+            source="news_corpus",
+            available=True,
+            raw_payload={"tone_score": tone_score, "corpus_size": len(corpus)},
+        )
+    except Exception:  # noqa: BLE001
+        pass  # D-1: warehouse errors never surface to callers
 
     return {
         "lens": _lens,

@@ -108,9 +108,9 @@ _UA_STD: str = "PlanetStopper/1.0 (market-news lens; paulmgreaney@gmail.com)"
 # ---------------------------------------------------------------------------
 
 _FEEDS: list[tuple[str, str, str]] = [
-    # GDELT artlist — JSON, not RSS; handled separately in _fetch_gdelt_artlist()
-    # (listed conceptually; actual fetching bypasses feedparser for JSON)
-    # RSS/Atom feeds parsed via feedparser
+    # RSS/Atom feeds parsed via feedparser.
+    # GDELT artlist articles are sourced via lens_gdelt._fetch_gdelt_sentiment in
+    # build_news_corpus (not fetched here — no direct GDELT GET in this list).
     (
         "google_news_business",
         "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en",
@@ -318,10 +318,11 @@ def _dedup(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _fetch_gdelt_tone() -> float | None:
-    """Fetch GDELT aggregate tone from the timelinetone endpoint directly.
+    """Fetch GDELT aggregate tone by delegating to lens_gdelt._fetch_gdelt_sentiment.
 
-    Makes its own UA-headed request (independent of lens_gdelt._fetch_gdelt_sentiment
-    so that news_corpus UA contract is satisfied).
+    Delegates to lens_gdelt so that a single properly-spaced GDELT request sequence
+    (timelinetone + artlist, _GDELT_INTER_REQUEST_S=6.0s apart) is used — avoids
+    news_corpus making its own direct GDELT requests.
 
     Returns normalised AvgTone in [-1, 1] or None on any failure.
     Never raises — D-1.
@@ -329,66 +330,40 @@ def _fetch_gdelt_tone() -> float | None:
     try:
         from advisors import lens_gdelt  # CC-2: lazy import
 
-        resp = requests.get(
-            lens_gdelt._GDELT_TONE_URL,
-            headers={"User-Agent": _UA_STD},
-            timeout=12,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        timeline = data.get("timeline", []) or []
-        if not timeline:
-            return None
-        # Each entry in timeline[0]["data"] has a "value" key (AvgTone).
-        points = timeline[0].get("data", []) if isinstance(timeline[0], dict) else []
-        values = [
-            float(e["value"])
-            for e in points
-            if isinstance(e, dict) and "value" in e and isinstance(e["value"], (int, float))
-        ]
-        return sum(values) / len(values) if values else None
+        result = lens_gdelt._fetch_gdelt_sentiment([])
+        tone = result.get("tone")
+        return float(tone) if tone is not None else None
     except Exception as exc:
-        _log.warning("gdelt tone failed: %s", type(exc).__name__)
+        _log.warning("gdelt tone via lens_gdelt failed: %s", type(exc).__name__)
         return None
 
 
-def _fetch_gdelt_artlist() -> list[dict[str, Any]]:
-    """Fetch GDELT artlist JSON and normalize entries to the common article shape.
+def _normalize_gdelt_articles(sources_raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize raw GDELT artlist records from lens_gdelt into the common article shape.
 
-    Returns a list of normalized article dicts (empty list on failure).
-    Never raises — D-1.
+    Accepts the ``sources`` field from lens_gdelt._fetch_gdelt_sentiment's return dict —
+    each record has {url, seendate, title, domain}. Converts seendate → published and
+    assigns source_feed="gdelt_artlist". Pure function — no HTTP.
+
+    Returns a list of normalized article dicts (empty list when sources_raw is empty).
     """
-    try:
-        from advisors import lens_gdelt  # CC-2: lazy import
-
-        resp = requests.get(
-            lens_gdelt._GDELT_ARTLIST_URL,
-            headers={"User-Agent": _UA_STD},
-            timeout=12,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        articles_raw = data.get("articles", []) or []
-        normalized: list[dict[str, Any]] = []
-        for art in articles_raw:
-            url = art.get("url", "")
-            domain = art.get("domain", "") or _extract_domain(url)
-            title = art.get("title", "")
-            published = art.get("seendate", "")
-            normalized.append({
-                "url": url,
-                "title": title,
-                "published": published,
-                "domain": domain,
-                "source_feed": "gdelt_artlist",
-                "topics": _tag_topics(title),
-                "score": 0.0,  # assigned later
-            })
-        _log.info("gdelt_artlist: fetched %d articles", len(normalized))
-        return normalized
-    except Exception as exc:
-        _log.warning("gdelt_artlist failed: %s", type(exc).__name__)
-        return []
+    normalized: list[dict[str, Any]] = []
+    for src in sources_raw:
+        url = src.get("url", "")
+        domain = src.get("domain", "") or _extract_domain(url)
+        title = src.get("title", "")
+        published = src.get("seendate", "")
+        normalized.append({
+            "url": url,
+            "title": title,
+            "published": published,
+            "domain": domain,
+            "source_feed": "gdelt_artlist",
+            "topics": _tag_topics(title),
+            "score": 0.0,  # assigned later by _score_article
+        })
+    _log.info("gdelt_artlist: normalized %d articles from lens_gdelt", len(normalized))
+    return normalized
 
 
 def _fetch_rss_feed(name: str, url: str, ua: str) -> list[dict[str, Any]]:
@@ -430,13 +405,14 @@ def _fetch_rss_feed(name: str, url: str, ua: str) -> list[dict[str, Any]]:
 
 
 def _fetch_all_feeds() -> list[dict[str, Any]]:
-    """Fetch GDELT artlist + all RSS feeds. Per-feed isolation — never raises."""
+    """Fetch all RSS/Atom feeds. Per-feed isolation — never raises.
+
+    GDELT artlist articles are sourced separately via lens_gdelt._fetch_gdelt_sentiment
+    in build_news_corpus (single call for both tone + artlist — no direct GDELT GET here).
+    """
     articles: list[dict[str, Any]] = []
 
-    # GDELT artlist (JSON, not RSS)
-    articles.extend(_fetch_gdelt_artlist())
-
-    # RSS/Atom feeds
+    # RSS/Atom feeds only — GDELT artlist is handled in build_news_corpus
     for name, url, ua in _FEEDS:
         articles.extend(_fetch_rss_feed(name, url, ua))
 
@@ -451,6 +427,12 @@ def _fetch_all_feeds() -> list[dict[str, Any]]:
 def build_news_corpus() -> dict[str, Any]:
     """Fetch multi-source news corpus + GDELT tone. Never raises.
 
+    Makes a single lens_gdelt._fetch_gdelt_sentiment call for both:
+      Facet A — GDELT aggregate tone scalar (from result["tone"])
+      GDELT corpus input — artlist articles (from result["sources"])
+    This produces exactly 2 GDELT GETs (timelinetone + artlist, properly spaced
+    by _GDELT_INTER_REQUEST_S inside lens_gdelt). No direct GDELT requests here.
+
     Returns
     -------
     dict with keys: available, tone, corpus, reason.
@@ -459,15 +441,27 @@ def build_news_corpus() -> dict[str, Any]:
       corpus:    ranked, deduped, topic-tagged articles; [] when none fetched.
       reason:    D-1 named reason when available=False; None on success.
     """
-    # Facet A: GDELT tone (independent — always attempted; tone failure does not
-    # abort the article corpus fetch)
-    tone = _fetch_gdelt_tone()
+    # Single lens_gdelt call — 2 spaced GETs (timelinetone + artlist) inside.
+    # Facet A: tone scalar; Facet B input: artlist articles via sources field.
+    tone: float | None = None
+    gdelt_articles: list[dict[str, Any]] = []
+    try:
+        from advisors import lens_gdelt  # CC-2: lazy import
 
-    # Facet B: multi-source article corpus
-    articles = _fetch_all_feeds()
-    articles = _dedup(articles)
+        gdelt_result = lens_gdelt._fetch_gdelt_sentiment([])
+        raw_tone = gdelt_result.get("tone")
+        tone = float(raw_tone) if raw_tone is not None else None
+        gdelt_articles = _normalize_gdelt_articles(gdelt_result.get("sources") or [])
+    except Exception as exc:
+        _log.warning("gdelt sentiment via lens_gdelt failed: %s", type(exc).__name__)
 
-    now = datetime.datetime.utcnow()
+    # RSS/Atom feeds (no GDELT GETs)
+    rss_articles = _fetch_all_feeds()
+
+    articles = _dedup(gdelt_articles + rss_articles)
+
+    # Use timezone-aware now to avoid DeprecationWarning (Python 3.12+)
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     for art in articles:
         art["score"] = _score_article(art, now)
     articles.sort(key=lambda a: a["score"], reverse=True)
