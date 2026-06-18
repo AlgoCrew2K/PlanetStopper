@@ -1603,56 +1603,24 @@ class TestSingleGdeltPath:
             f"lens_gdelt._fetch_gdelt_sentiment() call."
         )
 
-    def test_news_corpus_sources_gdelt_tone_via_lens_gdelt(self):
-        """news_corpus._fetch_gdelt_tone sources tone from lens_gdelt._fetch_gdelt_sentiment.
+    def test_fetch_gdelt_tone_is_removed_dead_code(self):
+        """_fetch_gdelt_tone must NOT exist on news_corpus — it is dead code with no caller.
 
-        The consolidated single-GDELT-path design: news_corpus delegates to
-        lens_gdelt._fetch_gdelt_sentiment() to get both tone and artlist articles in one
-        properly-spaced sequence (_GDELT_INTER_REQUEST_S=6.0s between tone and artlist).
+        build_news_corpus() calls lens_gdelt._fetch_gdelt_sentiment([]) inline (news_corpus.py:451)
+        and pulls tone + artlist sources from that single result.  _fetch_gdelt_tone() was an
+        earlier helper that duplicated that delegation; it has no production caller.
 
-        FAILS on current code where _fetch_gdelt_tone makes its own direct requests.get call
-        independent of lens_gdelt._fetch_gdelt_sentiment.
+        Project standard: "if something is unused, delete it."  (CLAUDE.md §Coding Standards)
+
+        RED: fails while _fetch_gdelt_tone still exists.
+        GREEN: implementer deletes the function from advisors/news_corpus.py.
         """
         from advisors import news_corpus
 
-        # After the fix, _fetch_gdelt_tone must delegate to lens_gdelt._fetch_gdelt_sentiment.
-        # Verify by patching lens_gdelt._fetch_gdelt_sentiment and checking it is called.
-        sentiment_called = [False]
-
-        def mock_fetch_sentiment(universe):
-            sentiment_called[0] = True
-            return {
-                "available": True,
-                "tone": 0.05,
-                "events": [],
-                "per_ticker": None,
-                "source": "gdelt",
-                "sources": [],
-                "reason": None,
-            }
-
-        try:
-            import advisors.lens_gdelt as lens_gdelt_mod
-            original = lens_gdelt_mod._fetch_gdelt_sentiment
-            lens_gdelt_mod._fetch_gdelt_sentiment = mock_fetch_sentiment
-        except ImportError:
-            pytest.skip("advisors.lens_gdelt not available")
-
-        try:
-            with patch("time.sleep"):
-                tone = news_corpus._fetch_gdelt_tone()
-        finally:
-            lens_gdelt_mod._fetch_gdelt_sentiment = original
-
-        assert sentiment_called[0], (
-            "news_corpus._fetch_gdelt_tone() did not call lens_gdelt._fetch_gdelt_sentiment(). "
-            "BLOCK 1 fix: _fetch_gdelt_tone must delegate to lens_gdelt._fetch_gdelt_sentiment "
-            "so that both tone + artlist come from one properly-spaced GDELT call sequence. "
-            "FAILS on current code (direct requests.get call, independent of lens_gdelt)."
-        )
-        assert tone is not None and isinstance(tone, float), (
-            f"_fetch_gdelt_tone must return a float when lens_gdelt returns available=True. "
-            f"Got: {tone!r}"
+        assert not hasattr(news_corpus, "_fetch_gdelt_tone"), (
+            "news_corpus._fetch_gdelt_tone() still exists but has no production caller. "
+            "build_news_corpus() calls lens_gdelt._fetch_gdelt_sentiment([]) inline; "
+            "_fetch_gdelt_tone is dead code. Delete it from advisors/news_corpus.py."
         )
 
 
