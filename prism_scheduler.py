@@ -75,13 +75,16 @@ def _is_todays_row(row: dict | None) -> bool:
 
 
 def _persist_spend(run_id: str, stdout: str) -> None:
-    """Parse subprocess JSON stdout for cost_usd and persist to prism_audit_log.
+    """Parse subprocess JSON stdout for total_cost_usd and persist to prism_audit_log.
+
+    Reads total_cost_usd (CC 2.1.181+ envelope) with a tolerant fallback to the
+    legacy cost_usd key so older/local CC builds still log.
 
     Non-fatal — a parse or DB failure is logged as type-only (D-1) and swallowed.
     """
     try:
         parsed = json.loads(stdout)
-        cost = parsed.get("cost_usd")
+        cost = parsed.get("total_cost_usd") or parsed.get("cost_usd")
         if cost is not None:
             sys.path.insert(0, str(_PROJECT_ROOT))
             import database  # noqa: PLC0415
@@ -89,7 +92,7 @@ def _persist_spend(run_id: str, stdout: str) -> None:
                 run_id=run_id,
                 agent_role="LAUNCHER",
                 phase="spend_log",
-                content=json.dumps({"cost_usd": cost}),
+                content=json.dumps({"total_cost_usd": cost}),
             )
     except Exception as exc:  # noqa: BLE001
         # D-1: log type only — never exc message or path
