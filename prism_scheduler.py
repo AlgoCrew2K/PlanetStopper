@@ -144,6 +144,38 @@ def _persist_spend(run_id: str, stdout: str) -> None:
         print(f"[prism_scheduler] SpendLogError: {type(exc).__name__}", file=sys.stderr)
 
 
+def _get_market_prism_row_for_run(run_id: str) -> dict | None:
+    """Return the MARKET_PRISM advisor_observations row for this run_id, or None.
+
+    Queries advisor_observations for a row with advisor_role='MARKET_PRISM' whose
+    raw_response contains a matching run_id.  Used by main() to verify the council
+    actually produced an observation before declaring success.
+
+    Non-fatal — returns None on any DB error (D-1: logs type-only to stderr).
+    """
+    try:
+        sys.path.insert(0, str(_PROJECT_ROOT))
+        import database  # noqa: PLC0415
+        # get_latest_market_prism_summary returns the most recent MARKET_PRISM row.
+        # Since run_id is unique per nightly, the latest row is this run's row if
+        # it was written.  Confirm by checking raw_response.run_id matches.
+        row = database.get_latest_market_prism_summary()
+        if row is None:
+            return None
+        raw = row.get("raw_response") or {}
+        if isinstance(raw, str):
+            import json as _json  # noqa: PLC0415
+            raw = _json.loads(raw)
+        if raw.get("run_id") == run_id:
+            return row
+        return None
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[prism_scheduler] RowCheckError: {type(exc).__name__}", file=sys.stderr
+        )
+        return None
+
+
 def _run_prism(run_id: str = "unknown") -> bool:
     """
     Invoke the 6-agent Prism council via a vanilla headless `claude -p` subprocess.
@@ -216,10 +248,19 @@ def main() -> None:
     # --- Bounded retry loop ---
     for attempt in range(1, MAX_ATTEMPTS + 1):
         print(f"[prism_scheduler] Attempt {attempt}/{MAX_ATTEMPTS}")
-        success = _run_prism(run_id=run_id)
-        if success:
-            print("[prism_scheduler] Run completed successfully.")
-            sys.exit(0)
+        proc_ok = _run_prism(run_id=run_id)
+        if proc_ok:
+            row = _get_market_prism_row_for_run(run_id)
+            if row is not None:
+                print("[prism_scheduler] Run completed successfully.")
+                sys.exit(0)
+            # rc==0 but no row — council ran but wrote nothing.
+            # Treat as a failed attempt; the retry loop continues.
+            print(
+                f"[prism_scheduler] Attempt {attempt}: subprocess exited 0 but "
+                "no MARKET_PRISM row found for run_id — treating as failed.",
+                file=sys.stderr,
+            )
 
         # Failure — log attempt and backoff before next try
         print(
