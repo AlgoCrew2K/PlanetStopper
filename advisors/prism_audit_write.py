@@ -21,6 +21,10 @@ status code so callers can detect failure reliably.
 
 from __future__ import annotations
 
+from dotenv import find_dotenv, load_dotenv
+
+load_dotenv(find_dotenv(usecwd=True))  # populate DB_PATH (and other env vars) from .env before _db_file() resolves
+
 import argparse
 import sys
 
@@ -65,7 +69,7 @@ def _main(argv: list[str] | None = None) -> int:
 
     # Insert into the state DB via the canonical accessor.
     try:
-        import database  # lazy import — not on the hot path; DB_PATH must be set
+        import database  # lazy import — not on the hot path; DB_PATH resolved by load_dotenv above
 
         row_id = database.insert_prism_audit_entry(
             run_id=args.run_id,

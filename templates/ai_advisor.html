@@ -964,9 +964,13 @@
 
             {% if market_prism_summary %}
 
-                {# Sentiment chip — maps overall_sentiment to semantic CSS modifier #}
+                {# Sentiment chip — maps overall_sentiment to semantic CSS modifier.
+                   Both canonical (risk-on/risk-off) and synonym (bullish/bearish) forms
+                   are emitted by the lens_pipeline synthesizer; both sets must map. #}
                 {% set _chip_class = {
+                    'bullish':        'prism-sentiment-chip--risk-on',
                     'risk-on':        'prism-sentiment-chip--risk-on',
+                    'bearish':        'prism-sentiment-chip--risk-off',
                     'risk-off':       'prism-sentiment-chip--risk-off',
                     'neutral':        'prism-sentiment-chip--neutral',
                     'limited-inputs': 'prism-sentiment-chip--limited-inputs',

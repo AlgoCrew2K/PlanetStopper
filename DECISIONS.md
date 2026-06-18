@@ -1060,3 +1060,40 @@ Branch: `fix/community-strats-atlas-timeout` | HEAD: 55b00ea
 **Route behavior:** On a SRV/DNS hang, the route now degrades to template-only within ~12 s instead of hanging indefinitely. `reason="AtlasFetchTimeout"` is logged at WARNING level by the route's `try/except`. The Strategy Builder response is template-only; HTTP status and JSON shape are unchanged.
 
 **Status:** GREEN at 55b00ea. 14/14 tests GREEN (AC-1 through AC-5).
+
+---
+
+## Prism Follow-ups — dotenv hardening + chip-color mapping (2026-06-18)
+
+Branch: `fix/prism-followups` | HEAD: 8e59305
+
+### DE-PRISM-DOTENV: `load_dotenv(find_dotenv(usecwd=True))` added to `prism_audit_write.py`
+
+**Decision:** `advisors/prism_audit_write.py` now calls `load_dotenv(find_dotenv(usecwd=True))` at module import — before any `import database` and before any call to `database._db_file()`.
+
+**Root cause:** The CLI writer was invoked by capstone analysts from arbitrary working directories. Without `load_dotenv`, the `DB_PATH` value defined in the project `.env` was invisible to the process unless it happened to be in the shell environment. When `DB_PATH` was absent from the shell env, `database._db_file()` fell back to the cwd-relative `alphabot_state.db` — silently writing the audit row to a DIFFERENT database than the project's live state DB. This is a silent split-brain: the analyst thinks the row landed in the canonical DB; it actually landed in a cwd-local file. The capstone W3 run hit this.
+
+**Why `find_dotenv(usecwd=True)` rather than plain `load_dotenv()`:**
+`find_dotenv()` without `usecwd=True` walks upward from the calling file's `__file__` directory, which for a `-m` invocation is the package directory (`advisors/`). `find_dotenv(usecwd=True)` starts the upward walk from `os.getcwd()` — the shell's working directory at invocation time. Both the production cwd (repo root, where `.env` lives) and arbitrary test cwds (e.g. `tmp_path`) resolve correctly. `load_dotenv` is a no-op when `.env` is absent; shell env wins by default (`override=False`).
+
+**Scope:** Single file change (`advisors/prism_audit_write.py`). No change to `database.py` resolution logic. The D-1 error contract is preserved. The nightly daemon path is unaffected — the daemon already has `DB_PATH` in its environment.
+
+**Files changed:** `advisors/prism_audit_write.py` (line 24–26: `from dotenv import find_dotenv, load_dotenv`; `load_dotenv(find_dotenv(usecwd=True))` before `import argparse`).
+
+**Status:** GREEN at 8e59305. 3/3 AC-1 tests pass.
+
+---
+
+### RF-1-chip: Market Prism chip modifier now maps `bullish`/`bearish` synonym forms
+
+**Decision:** The verdict→CSS-modifier dict in `templates/ai_advisor.html` (lines 970–977) is extended to map the synonym forms `'bullish'` and `'bearish'` explicitly, in addition to the canonical `'risk-on'` and `'risk-off'` forms already present.
+
+**Root cause:** The lens pipeline synthesizer (`advisors/lens_pipeline.py`) can emit either the canonical `risk-on`/`risk-off` form or the natural-language synonym `bullish`/`bearish` as the `overall_sentiment` verdict — both forms appear in the W3 capstone DB rows. The chip mapping dict only contained `'risk-on'` and `'risk-off'`; a `bullish` verdict hit `.get(_sentiment, 'prism-sentiment-chip--neutral')` and fell through to the neutral-gray default. The chip rendered neutral-gray even when the synthesizer was expressing a bullish market read. The verdict text rendered correctly throughout — the bug was in the modifier class only.
+
+**Fix:** Added `'bullish': 'prism-sentiment-chip--risk-on'` and `'bearish': 'prism-sentiment-chip--risk-off'` as explicit entries in the dict, above the canonical forms, with an explanatory Jinja2 comment. The dict.get fallback (`--neutral`) remains for unknown values. The `limited-inputs` key is unchanged.
+
+**Scope boundary:** The original RF-1 premise ("lens cards render raw JSON") was verified NOT to reproduce — the cards render readable prose digests from `per_lens_digest`. Card rework is out of scope for this cycle.
+
+**Files changed:** `templates/ai_advisor.html` (lines 967–977: comment + two new dict entries).
+
+**Status:** GREEN at 8e59305. 7/7 AC-2 chip-mapping tests pass.
