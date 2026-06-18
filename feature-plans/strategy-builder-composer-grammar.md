@@ -71,6 +71,7 @@ Optional top-level fields observed in prior research (2026-05-31 swagger):
   "step": "root",
   "name": <string>,
   "rebalance": <rebalance-value>,
+  "description": <string>,          -- LIVE-REQUIRED (2026-06-18): POST /backtest returns HTTP 400 when absent. Default "".
   "id": <uuid-string>,
   "children": [<child-node>, ...]
 }
@@ -174,12 +175,13 @@ Children of `wt-cash-specified` each have a `weight` field; see Section 5. VERIF
 ```
 {
   "step": "wt-inverse-vol",
+  "window-days": <int>,             -- LIVE-REQUIRED (2026-06-18): POST /backtest returns HTTP 422 when absent. Default 30 (Composer UI default). VERIFIED-LOCAL: sample_score_large.json carries window-days on wt-inverse-vol nodes.
   "id": <uuid-string>,
   "children": [<child-node>, ...]
 }
 ```
 
-VERIFIED-LOCAL (`sample_score_large.json`). No additional params observed. The volatility window is likely implicit or fixed by Composer.
+VERIFIED-LOCAL (`sample_score_large.json`). `window-days` (int) is a live-required param confirmed by empirical spike (composer-encode-spike, 2026-06-18). The prior OQ-8 "no params observed; omit" note is SUPERSEDED.
 
 ### 3.9 `asset`
 
@@ -399,7 +401,7 @@ Whether `GET /symphonies/{id}/score` works for symphonies NOT owned by the calle
 | OQ-5 | What are valid `rebalance` values beyond daily/weekly/monthly/none? | Restrict to confirmed 4 values |
 | OQ-6 | What does `backtest_version` v1 vs v2 change? | Default to `"v2"` (project convention); no switching logic yet |
 | OQ-7 | What is the payload size limit for POST /backtest? | Unknown; keep synthetic trees < 500 nodes as a conservative bound |
-| OQ-8 | Does `wt-inverse-vol` accept any params (volatility window)? | No params observed; omit |
+| OQ-8 | ~~Does `wt-inverse-vol` accept any params (volatility window)?~~ **CLOSED 2026-06-18** — `window-days` (int) is LIVE-REQUIRED. API 422s without it. Default 30. `make_inverse_vol` now emits `"window-days": 30`. VERIFIED-LOCAL: `sample_score_large.json` already carries this field. | Fixed in `feat/symphony-schema-required-fields` |
 | OQ-9 | Does `"exponential-moving-average-price"` work as an indicator string? | UNVERIFIED; do not generate until confirmed |
 | OQ-10 | What does `rebalance-corridor-width` control? | UNVERIFIED; omit from constructed trees |
 | OQ-11 | Does GET /score work for non-owned public symphonies? | Assume user-owned only |

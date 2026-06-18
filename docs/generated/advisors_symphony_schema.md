@@ -3,7 +3,7 @@
 > Pure-stdlib Composer decision-tree schema layer: 16 constructors, 4 read-only inspection functions, and a grammar-pinned vocabulary that builds and validates synthetic ``raw_value`` trees for the Planet Stopper Strategy Builder.
 
 **Source:** `advisors/symphony_schema.py`
-**Last updated:** 2026-06-14
+**Last updated:** 2026-06-18
 
 ## Overview
 
@@ -162,11 +162,18 @@ Build a leaf asset node.
 
 Build the root node of a symphony tree.
 
+**Live-required fields (2026-06-18):** The output now includes `"description": ""`. The live Composer `POST /api/v0.1/backtest` API enforces this field and returns HTTP 400 when it is absent. The default empty string is the value present in every real `/score` response.
+
 | Param | Type | Description |
 |-------|------|-------------|
 | `name` | `str` | Symphony display name. |
 | `rebalance` | `str` | Rebalance cadence — must be in `KNOWN_REBALANCE`. |
 | `children` | `list` | Child nodes (deep-copied). |
+
+**Output includes:**
+- `"step": "root"`
+- `"name"`, `"rebalance"`, `"id"` (fresh uuid4), `"children"` (deep-copied)
+- `"description": ""` (additive default; live-required by Composer /backtest as of 2026-06-18)
 
 ---
 
@@ -189,6 +196,17 @@ Build a `wt-cash-specified` node with explicit numeric weights.
 #### `make_inverse_vol(children) → dict`
 
 Build a `wt-inverse-vol` node (inverse-volatility weight across children).
+
+**Live-required fields (2026-06-18):** The output now includes `"window-days": 30`. The live Composer `POST /api/v0.1/backtest` API enforces this field and returns HTTP 422 ("unknown-function-parameter") when it is absent. 30 is the Composer UI default and the value carried by real `/score` fixtures (`sample_score_large.json` — VERIFIED-LOCAL). The prior grammar doc OQ-8 note "no params observed; omit" is superseded.
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `children` | `list` | Child asset or allocation nodes (deep-copied). |
+
+**Output includes:**
+- `"step": "wt-inverse-vol"`
+- `"id"` (fresh uuid4), `"children"` (deep-copied)
+- `"window-days": 30` (additive default; live-required by Composer /backtest as of 2026-06-18)
 
 ---
 
