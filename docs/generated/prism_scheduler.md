@@ -3,7 +3,7 @@
 > Nightly Market Prism scheduler wrapper — invokes the Market Prism council via a vanilla-primary headless Claude session, triggered by Windows Task Scheduler (Option B, daemon-decoupled).
 
 **Source:** `prism_scheduler.py`
-**Last updated:** 2026-06-18 (post-fix: F-1 scheduler-generated run_id, F-2 synthesizer Hard Rules)
+**Last updated:** 2026-06-18 (post-fix: F-1 run_id unification, F-2 synthesizer Hard Rules, F-4 row-verification + retry-on-empty)
 
 ## Overview
 
@@ -43,7 +43,9 @@ The full prompt passed as the final positional argument to `claude -p`. It encod
 
 ### `main() -> None`
 
-Main entry point. Exits 0 on success (row already exists today, or subprocess succeeded). Exits 1 if all `MAX_ATTEMPTS` are exhausted without a successful run.
+Main entry point. Exits 0 on success (row already exists today, or subprocess completed with a confirmed MARKET_PRISM row). Exits 1 if all `MAX_ATTEMPTS` are exhausted without a confirmed row.
+
+**Per-attempt success criterion (F-4):** `_run_prism(run_id)` returns `True` (subprocess `rc==0`) AND `_get_market_prism_row_for_run(run_id)` returns a non-None dict. `rc==0` without a matching MARKET_PRISM row is classified as a failed attempt — the loop prints a diagnostic to stderr and retries. Spend logging (`_persist_spend`) fires on `rc==0` before the row check and is not skipped on an empty-row attempt.
 
 **Behavior:**
 1. Loads `.env` from project root via `_load_env()`
@@ -51,7 +53,8 @@ Main entry point. Exits 0 on success (row already exists today, or subprocess su
 3. Calls `_get_summary()` → `database.get_latest_market_prism_summary()`
 4. If today's row exists (UTC date comparison) → prints skip message and `sys.exit(0)`
 5. Otherwise: attempts `_run_prism(run_id)` up to `MAX_ATTEMPTS` times with exponential backoff
-6. On first success → `sys.exit(0)`; on exhaustion → `sys.exit(1)`
+6. For each `_run_prism` call that returns `True` (rc==0): calls `_get_market_prism_row_for_run(run_id)`. If the row is present → `sys.exit(0)`. If absent → logs diagnostic to stderr, continues retry loop.
+7. On exhaustion of all `MAX_ATTEMPTS` without a confirmed row → `sys.exit(1)`
 
 ### `_load_env() -> None`
 
@@ -68,6 +71,14 @@ Returns `True` if `row["created_at"]` (format `"YYYY-MM-DD HH:MM:SS"`, UTC) matc
 ### `_persist_spend(run_id: str, stdout: str) -> None`
 
 Parses the subprocess JSON stdout for `total_cost_usd` (CC 2.1.181+ envelope) with a tolerant fallback to the legacy `cost_usd` key, and writes a `prism_audit_log` row via `database.insert_prism_audit_entry` with `agent_role="LAUNCHER"` and `phase="spend_log"`. The persisted `content` JSON uses `total_cost_usd` as the key name. Non-fatal — a parse or DB failure is logged as `type(exc).__name__` only (D-1) and swallowed. Called only on `returncode == 0`.
+
+### `_get_market_prism_row_for_run(run_id: str) -> dict | None`
+
+Row-verification seam (F-4). Returns the MARKET_PRISM `advisor_observations` row for this `run_id`, or `None`.
+
+Calls `database.get_latest_market_prism_summary()` and confirms `raw_response["run_id"] == run_id`. Since the scheduler's `run_id` is a unique uuid4, the latest row is this run's row iff it was written by the council. Non-fatal — returns `None` on any DB query failure or JSON parse error; logs `type(exc).__name__` only to stderr (D-1). Never raises.
+
+Patchable in tests as `patch.object(mod, "_get_market_prism_row_for_run", ...)`. Pre-existing happy-path tests supply a `_SAMPLE_MARKET_PRISM_ROW` fixture; `TestMarketPrismRowVerification` tests exercise the `None` path (false-green kill) and the retry-on-empty path.
 
 ### `_run_prism(run_id: str = "unknown") -> bool`
 
@@ -138,7 +149,7 @@ All error paths surface `type(exc).__name__` only — no raw exception messages,
 
 ## Internal Dependencies
 
-- `database` — `get_latest_market_prism_summary()` (idempotency check) + `insert_prism_audit_entry()` (spend logging); both lazy-imported inside their respective wrappers
+- `database` — `get_latest_market_prism_summary()` (idempotency check + F-4 row verification in `_get_market_prism_row_for_run`) + `insert_prism_audit_entry()` (spend logging); both lazy-imported inside their respective wrappers
 - `dotenv` — `.env` loading (lazy import inside `_load_env()`)
 - `subprocess` — headless `claude` invocation
 - `uuid` — `uuid4()` run_id generation in `main()`
@@ -146,4 +157,4 @@ All error paths surface `type(exc).__name__` only — no raw exception messages,
 
 ## Tests
 
-`tests/ai_advisor/test_prism_scheduling.py` — 43 tests covering AC-1 through AC-8, HC-1 (spend cap), HC-2 (spend logging), HC-3 (model pin), the Phase-4 invocation shape (vanilla `-p`, no `--agent` pin, `PRISM_RUN_PROMPT` as positional arg, `MAX_BUDGET_USD=15.0`), the council architecture (primary spawns all 6; `prism-synthesizer` coordinates only via SendMessage), and the 5/5 orchestration directives (DE-PRISM-5OF5): run_id generated before spawning, kickoff embedded in analyst spawn prompts, agentIds captured and passed to synthesizer, wait-barrier before synthesis. All tests mock `subprocess.run`, `time.sleep`, and `_get_summary()` — no real DB calls, no real subprocess invocations.
+`tests/ai_advisor/test_prism_scheduling.py` — 53 tests (43 pre-F-4 + 10 F-4 additions) covering AC-1 through AC-8, HC-1 (spend cap), HC-2 (spend logging), HC-3 (model pin), the Phase-4 invocation shape (vanilla `-p`, no `--agent` pin, `PRISM_RUN_PROMPT` as positional arg, `MAX_BUDGET_USD=15.0`), the council architecture (primary spawns all 6; `prism-synthesizer` coordinates only via SendMessage), the 5/5 orchestration directives (DE-PRISM-5OF5): run_id generated before spawning, kickoff embedded in analyst spawn prompts, agentIds captured and passed to synthesizer, wait-barrier before synthesis, and **F-4 row-verification** (`TestMarketPrismRowVerification`): (1) rc==0 + no row — all MAX_ATTEMPTS exhausted — non-zero exit (RED gate); (2) rc==0 + row — exit 0 (happy-path regression lock, skips pre-GREEN); (3) rc==0 + no row on attempt 1, rc==0 + row on attempt 2 — subprocess called twice + exit 0 (retry-on-empty RED gate). All tests mock `subprocess.run`, `time.sleep`, `_get_summary()`, and `_get_market_prism_row_for_run()` — no real DB calls, no real subprocess invocations.

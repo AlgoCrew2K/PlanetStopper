@@ -1310,4 +1310,32 @@ Branch: `feat/prism-council-5of5` | GREEN at 87ba7ae (delta-APPROVE)
 
 **Note on scheduling:** `schedule_prism.ps1` (Windows Task Scheduler registration) is retained only for test-green purposes. The production nightly trigger will move to droplet cron/systemd when the deployment environment is provisioned.
 
-**Status:** GREEN at 87ba7ae. pc-reviewer delta-APPROVE confirmed all 3 findings resolved (F-1, F-2, F-3).
+**Status (F-1/F-2/F-3):** GREEN at 87ba7ae. pc-reviewer delta-APPROVE confirmed all 3 findings resolved.
+
+---
+
+### DE-PRISM-COUNCIL-F4: row-verification + retry-on-empty — scheduler false-green eliminated (prism-council-5of5 cycle, 2026-06-18)
+
+Branch: `feat/prism-council-5of5`
+
+**Problem:** `main()` declared success ("Run completed successfully", exit 0) whenever `_run_prism()` returned True (subprocess `returncode == 0`). A council run that exits cleanly but writes no MARKET_PRISM row — e.g., due to a synthesizer failure, budget exhaustion mid-run, or a write error — produced a silent false-green. Unattended nightly: the operator had no way to know the council produced nothing.
+
+**Decision — per-attempt success = rc==0 AND row-exists:**
+
+The retry loop now applies a two-part success test on each attempt:
+1. `_run_prism(run_id)` returns `True` (subprocess `rc==0`).
+2. `_get_market_prism_row_for_run(run_id)` returns a non-None dict — the MARKET_PRISM `advisor_observations` row for this `run_id` is confirmed present.
+
+If `rc==0` but no row exists, the attempt is classified as failed, a diagnostic message is written to stderr, and the retry loop continues to the next attempt (up to `MAX_ATTEMPTS`). After all attempts are exhausted without a confirmed row, `main()` exits 1.
+
+**New seam — `_get_market_prism_row_for_run(run_id: str) -> dict | None`:**
+
+Queries `advisor_observations` for a MARKET_PRISM row whose `raw_response["run_id"]` matches the scheduler-generated `run_id`. Implementation: calls `database.get_latest_market_prism_summary()` (existing seam) and confirms `raw_response["run_id"] == run_id`. Since the scheduler's `run_id` is a unique uuid4, the latest row is this run's row iff it was written. Non-fatal — returns `None` on any DB or parse error; logs `type(exc).__name__` only (D-1). Never raises.
+
+**Spend logging preserved on rc==0:** `_persist_spend` fires on `returncode == 0` *before* the row check. An attempt that exits 0 but writes no row still logs its spend. This preserves the existing spend-logging contract and avoids lost billing data on partially-successful attempts.
+
+**Files changed:** `prism_scheduler.py` — `_get_market_prism_row_for_run(run_id)` added as a patchable seam; `main()` retry loop updated: a `proc_ok=True` outcome now calls `_get_market_prism_row_for_run(run_id)` and treats a `None` return as a failed attempt before logging and sleeping.
+
+**Tests:** `tests/ai_advisor/test_prism_scheduling.py` — `TestMarketPrismRowVerification` class (3 tests): (1) rc==0 + no row -> all MAX_ATTEMPTS exhausted -> non-zero exit + no "Run completed successfully" in stdout (RED gate); (2) rc==0 + row present -> exit 0 + success message (happy-path regression lock, skips pre-GREEN); (3) rc==0 + no row on attempt 1, rc==0 + row on attempt 2 -> subprocess called twice + exit 0 (retry-on-empty RED gate). Pre-existing happy-path tests patched to supply `_get_market_prism_row_for_run=_SAMPLE_MARKET_PRISM_ROW` so prior expectations are preserved. GREEN at 9de5f71.
+
+**Status:** GREEN at 9de5f71. Pending pc-reviewer APPROVE.
