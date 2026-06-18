@@ -31,6 +31,7 @@ Contract reference: feature-plans/lens-news-events-upgrade.md AC-1..AC-7.
 
 from __future__ import annotations
 
+import calendar
 import datetime
 import logging
 import math
@@ -361,13 +362,22 @@ def _fetch_rss_feed(name: str, url: str, ua: str) -> list[dict[str, Any]]:
         for entry in parsed.entries:
             link = getattr(entry, "link", "") or ""
             title = getattr(entry, "title", "") or ""
-            # Best-effort published date: prefer published, fall back to updated
-            published = (
-                getattr(entry, "published", None)
-                or getattr(entry, "updated", None)
-                or ""
-            )
-            domain = _extract_domain(link)
+            # Prefer published_parsed (time.struct_time feedparser always provides);
+            # fall back to updated_parsed, then raw string as last resort.
+            # RFC-822 strings (e.g. "Thu, 18 Jun 2026 12:01:05 GMT") cannot be parsed
+            # by datetime.fromisoformat — use calendar.timegm + utcfromtimestamp instead.
+            _pp = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
+            if _pp is not None:
+                published = datetime.datetime.utcfromtimestamp(calendar.timegm(_pp)).strftime(
+                    "%Y-%m-%dT%H:%M:%S"
+                )
+            else:
+                published = getattr(entry, "published", None) or getattr(entry, "updated", None) or ""
+            # Prefer entry.source.href (publisher URL) when present — Google News wraps
+            # all article links in news.google.com/rss/articles/... wrapper URLs whose
+            # domain is meaningless for authority scoring and cross-source dedup.
+            _src_href = getattr(getattr(entry, "source", None), "href", None) or ""
+            domain = _extract_domain(_src_href) if _src_href else _extract_domain(link)
             normalized.append({
                 "url": link,
                 "title": title,
