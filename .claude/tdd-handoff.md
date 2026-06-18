@@ -1,148 +1,126 @@
-# TDD Handoff — fix/prism-followups
+# TDD Handoff — Market Prism Phase 4 Hardening (Option B gap closure)
 
-**Status:** BACKEND GREEN — pf-impl-backend complete (3/3 tests passing). UI still pending.
-
-**Worktree:** `C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/prism-followups`
-**Branch:** `fix/prism-followups`
+**Branch:** feat/prism-phase4-scheduling
+**Worktree:** C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/prism-phase4
+**Test file:** tests/ai_advisor/test_prism_scheduling.py
+**RED state:** 18 passed / 5 FAILED (as of this handoff)
+**Implementer:** p4-impl-launcher → prism_scheduler.py
 
 ---
 
-## BACKEND — pf-impl-backend (advisors/prism_audit_write.py ONLY)
+## Context
 
-### Failing tests
-`tests/advisors/test_prism_dotenv_hardening.py` — 3 tests
+Option B is adopted. prism_scheduler.py (at project root) is the standalone
+nightly scheduler invoked by Windows Task Scheduler. The 18 existing tests
+pass. Three gaps remain unaddressed (HC-1, HC-2, HC-3).
 
-Run to verify RED:
+## IMPLEMENTER SECTION — p4-impl-launcher
+
+**File to modify:** `prism_scheduler.py` (project root — NOT under advisors/)
+
+### HC-1: Spend cap — add `MAX_BUDGET_USD` constant + `--max-budget-usd` flag
+
+1. Add a named constant at the top of the module (with the other constants):
+   ```python
+   MAX_BUDGET_USD: float = 5.0   # Per-run Opus spend cap — adjust as needed
+   ```
+
+2. In `_run_prism()`, add `"--max-budget-usd", str(MAX_BUDGET_USD)` to the `cmd` list.
+
+The test `test_claude_command_includes_max_budget_usd_flag` asserts:
+- `"--max-budget-usd"` is in the args list
+- The value after it is numeric AND equals `float(MAX_BUDGET_USD)` (not a magic number)
+
+### HC-2: Spend logging — `--output-format json` + persist spend to prism_audit_log
+
+1. Add `"--output-format", "json"` to the `cmd` list in `_run_prism()`.
+
+2. Capture `stdout` from the subprocess call:
+   - Add `capture_output=True, text=True` to `subprocess.run(...)`.
+   - After a successful run (returncode == 0), parse `result.stdout` as JSON and
+     extract the cost. Persist it via `database.insert_prism_audit_entry`.
+
+3. The spend log entry must use:
+   - `agent_role="LAUNCHER"` (or similar — whatever identifies the scheduler)
+   - `phase="spend_log"` (exact string — the test queries for this)
+   - `content=json.dumps({"cost_usd": <parsed_value>})`
+   - `run_id` — use a stable run ID (e.g. today's UTC ISO date string, or
+     generate a UUID at the start of `main()` and thread it through to `_run_prism`)
+
+4. `database` import: add `sys.path.insert(0, str(_PROJECT_ROOT))` then
+   `import database` inside the persistence helper (the pattern already used
+   by `_get_summary()`). Or import at the top of `_run_prism` after the path insert.
+
+5. D-1: if stdout parsing fails (malformed JSON, missing key), catch the exception
+   and log only `type(exc).__name__` — never the raw message. This is non-fatal;
+   the run already succeeded.
+
+The test `test_successful_run_persists_spend_log_audit_entry`:
+- Mocks `subprocess.run` to return `returncode=0` with `stdout='{"cost_usd": 1.23}'`
+- Queries `prism_audit_log` for rows with `phase='spend_log'`
+- Asserts a row exists with a positive float cost value under `cost_usd`/`cost`/`spend_usd`
+
+### HC-3: Model pin — `claude-opus-4-8` not `opus`
+
+In `_run_prism()`, change:
+```python
+"--model", "opus",
 ```
-python -m pytest "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/prism-followups/tests/advisors/test_prism_dotenv_hardening.py" -v -n0
+to:
+```python
+"--model", "claude-opus-4-8",
 ```
 
-### Root cause
-`advisors/prism_audit_write.py` does not call `load_dotenv()`.  The `import database`
-is lazy (inside `_main()`), but `database._db_file()` reads `os.environ["DB_PATH"]` at
-call time.  When the CLI is invoked from a non-primary cwd without `DB_PATH` in the
-shell env, `_db_file()` resolves to the cwd-relative `alphabot_state.db` — a silent
-split-brain write.
+The test `test_claude_command_uses_pinned_model_not_alias` asserts:
+- `"claude-opus-4-8"` is in the args list
+- The value after `"--model"` is NOT the bare alias `"opus"`
 
-### Exact minimal change — ONE file only
+### Note on existing tests
 
-**File:** `advisors/prism_audit_write.py`
-
-Add `load_dotenv()` at module level, after `from __future__ import annotations` and
-before the argparse imports.  This ensures `DB_PATH` from `.env` is in `os.environ`
-before `_main()` lazily imports `database` and `_db_file()` fires.
+The existing `EXPECTED_CLAUDE_ARGS` at the top of the test file still includes
+`"opus"` as the expected model value. After your HC-3 fix, `test_no_row_invokes_claude_subprocess`
+will FAIL because `"opus"` is no longer in the command. You must ALSO update
+`EXPECTED_CLAUDE_ARGS` to replace `"opus"` with `"claude-opus-4-8"`.
 
 ```python
-# Before (current lines 1-26):
-from __future__ import annotations
+# Before (in test file — you update this):
+EXPECTED_CLAUDE_ARGS = [
+    "claude",
+    "-p",
+    "--agent",
+    "prism-synthesizer",
+    "--dangerously-skip-permissions",
+    "--model",
+    "opus",          # <-- change this
+]
 
-import argparse
-import sys
-
-# After (add these two lines after the __future__ import):
-from __future__ import annotations
-
-from dotenv import load_dotenv
-
-load_dotenv()  # populate DB_PATH (and other env vars) from .env before _db_file() resolves
-
-import argparse
-import sys
+# After:
+EXPECTED_CLAUDE_ARGS = [
+    "claude",
+    "-p",
+    "--agent",
+    "prism-synthesizer",
+    "--dangerously-skip-permissions",
+    "--model",
+    "claude-opus-4-8",   # <-- pinned
+]
 ```
 
-**Rules:**
-- Do NOT change `database.py` resolution logic.
-- Do NOT add `load_dotenv()` to any other file.
-- Do NOT change the D-1 error contract (type(exc).__name__ only).
-- The comment near "DB_PATH must be set" stays — it is now satisfied by load_dotenv().
-
-### Expected GREEN
-All 3 tests pass:
-- `test_cli_honors_dotenv_db_path_when_not_in_shell_env` — exit 0, row in temp DB
-- `test_cli_shell_env_wins_over_dotenv` — shell env wins over .env (load_dotenv default)
-- `test_cli_missing_dotenv_does_not_crash` — no ImportError/AttributeError when no .env
-
-### Report back
-SendMessage `pf-test-writer` with: "BACKEND GREEN — <SHA> — test_prism_dotenv_hardening 3/3 pass"
+This is a legitimate test update — the test was asserting the wrong (pre-fix) value.
+The test-writer (p4-test-writer) authorises this update as part of HC-3 GREEN.
 
 ---
 
-## UI — pf-impl-ui (templates/ai_advisor.html chip mapping ONLY)
+## Verification
 
-### Failing tests
-`tests/ai_advisor/test_prism_chip_color_mapping.py` — 2 tests fail in RED state
-(the bullish and bearish assertions); 5 pass as regression/meta guards.
+After all changes:
 
-Run to verify RED:
 ```
-python -m pytest "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claire/worktrees/prism-followups/tests/ai_advisor/test_prism_chip_color_mapping.py" -v -n0
+python -m pytest tests/ai_advisor/test_prism_scheduling.py -p no:xdist --override-ini="addopts=" -q
 ```
 
-Correct path:
-```
-python -m pytest "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/prism-followups/tests/ai_advisor/test_prism_chip_color_mapping.py" -v -n0
-```
+Expected: **23 passed / 0 failed / 0 errors** (18 existing + 5 new).
 
-### Root cause
-`templates/ai_advisor.html` lines 968-973 — the Jinja2 dict mapping `_sentiment`
-to CSS modifier class:
+Quote the HEAD SHA. Then SendMessage `p4-test-writer`: `GREEN: <SHA> — 23/23 passed`
 
-```jinja2
-{% set _chip_class = {
-    'risk-on':        'prism-sentiment-chip--risk-on',
-    'risk-off':       'prism-sentiment-chip--risk-off',
-    'neutral':        'prism-sentiment-chip--neutral',
-    'limited-inputs': 'prism-sentiment-chip--limited-inputs',
-}.get(_sentiment, 'prism-sentiment-chip--neutral') %}
-```
-
-Missing keys: `bullish` and `bearish`.  The lens_pipeline synthesizer can produce
-either canonical (`risk-on`/`risk-off`) or synonym (`bullish`/`bearish`) verdicts.
-Both synonyms fall through to `--neutral` (wrong color).
-
-### Exact minimal change — ONE file only
-
-**File:** `templates/ai_advisor.html`, lines 968-973
-
-Add two keys to the mapping dict:
-
-```jinja2
-{% set _chip_class = {
-    'bullish':        'prism-sentiment-chip--risk-on',
-    'risk-on':        'prism-sentiment-chip--risk-on',
-    'bearish':        'prism-sentiment-chip--risk-off',
-    'risk-off':       'prism-sentiment-chip--risk-off',
-    'neutral':        'prism-sentiment-chip--neutral',
-    'limited-inputs': 'prism-sentiment-chip--limited-inputs',
-}.get(_sentiment, 'prism-sentiment-chip--neutral') %}
-```
-
-**Rules:**
-- Do NOT change the verdict TEXT rendering (line 976: `{{ _sentiment | e }}`).
-- Do NOT change the CSS class DEFINITIONS (lines 706-724 in the `<style>` block).
-- Do NOT touch any JS files — chip mapping is template-only.
-- Keep ALL existing keys intact (regression guard tests cover them).
-
-### Expected GREEN
-All 7 tests pass:
-- `test_bullish_verdict_yields_risk_on_chip_class` — bullish -> --risk-on, NOT --neutral
-- `test_bearish_verdict_yields_risk_off_chip_class` — bearish -> --risk-off, NOT --neutral
-- `test_risk_on_verdict_yields_risk_on_chip_class` — regression guard
-- `test_risk_off_verdict_yields_risk_off_chip_class` — regression guard
-- `test_neutral_verdict_yields_neutral_chip_class` — regression guard
-- `test_unknown_verdict_falls_back_to_neutral_chip_class` — safe default preserved
-- `test_chip_color_assertions_are_class_based_not_rgb` — meta-guard
-
-### Report back
-SendMessage `pf-test-writer` with: "UI GREEN — <SHA> — test_prism_chip_color_mapping 7/7 pass"
-
-## Status Log
-- [2026-06-17] pf-impl-ui: GREEN complete — 7/7 tests passing on SHA 9839209. 0 test bugs. No JS touched. Lint not required (template-only change, no Python). File changed: templates/ai_advisor.html (5 insertions, 1 deletion — added bullish/bearish keys + updated comment).
-- [2026-06-17] pf-impl-backend: GREEN complete — 3/3 tests passing. 0 test bugs. File changed: advisors/prism_audit_write.py only. Implementation notes below.
-
-## Test File Issues (for test-writer to fix)
-None.
-
-## Implementation Notes
-- Single dict expansion in the Jinja2 chip mapping at templates/ai_advisor.html:968-979. Added `bullish` → `--risk-on` and `bearish` → `--risk-off` as the two missing synonym keys. Updated the comment block to explain the dual-form (canonical vs synonym) contract. All existing keys preserved intact. No CSS definitions touched, no JS touched, no verdict text rendering touched.
-- BACKEND (DE-PRISM-DOTENV): `load_dotenv()` without arguments uses `find_dotenv()` which walks up from the *calling file's directory* (i.e., `advisors/`), not from `os.getcwd()`. The worktree's own `.env` was found first, not the test's `tmp_path/.env`. Fix: `load_dotenv(find_dotenv(usecwd=True))` — `usecwd=True` makes `find_dotenv()` start from `os.getcwd()` (the subprocess's cwd = `tmp_path` in the test, or the repo root in production). This correctly honors `.env` relative to wherever the CLI is invoked from. D-1 contract, shell-env precedence (`override=False` default), and no-op-when-missing behavior all preserved.
+Do NOT merge to main. Do NOT push. PM gates with full-tree verifier + /review + live run.
