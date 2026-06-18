@@ -1097,3 +1097,41 @@ Branch: `fix/prism-followups` | HEAD: 8e59305
 **Files changed:** `templates/ai_advisor.html` (lines 967–977: comment + two new dict entries).
 
 **Status:** GREEN at 8e59305. 7/7 AC-2 chip-mapping tests pass.
+
+
+---
+
+### DE-GDELT-005: News-events upgrade — sourcelang:eng filter, _extract_events, events-OR-tone availability gate (2026-06-18)
+
+Branch: `feat/lens-news-events` | HEAD: 2649229
+
+**Decision:** Upgrade `advisors/lens_gdelt.py` from aggregate-tone-only to real English-language market news events as the primary signal, with tone secondary.
+
+**Why the prior design was insufficient:**
+
+1. **No language filter.** The artlist query had no `sourcelang:eng` constraint, so GDELT returned articles in any language (including non-English and articles with a null `language` field). Non-English headlines are not useful to English-language operators and add noise to the Market Prism synthesis prompt.
+
+2. **Tone-only availability gate allowed a forbidden state.** The prior gate set `available=True` as soon as the tone endpoint returned HTTP 200 — even when tone extraction yielded `None` (empty timeline, no numeric data). `available=True, tone=None` is explicitly forbidden by the honest-availability contract (§4). The fix changes the gate to `available = bool(events) OR tone is not None`, so availability is tied to a real signal.
+
+3. **No first-class events field.** The return dict had no `events` key; the artlist payload was buried in `sources` as raw citation dicts. The Market Prism synthesizer could not directly access ranked news headlines without re-parsing citations.
+
+**What changed in `advisors/lens_gdelt.py`:**
+
+- `sourcelang:eng` added to both `_GDELT_TONE_URL` and `_GDELT_ARTLIST_URL` (server-side pre-filter).
+- `_GDELT_MAX_EVENTS: int = 7` constant added (feature plan AC-2 pin — ~5-8 events for prompt-budget control).
+- `_extract_events(sources_raw)` helper added: filters `language == "English"` (client-side defense-in-depth), sorts most-recent-first by seendate (lexicographic on `YYYYMMDDTHHmmssZ`), deduplicates by domain (most-recent per domain), caps at `_GDELT_MAX_EVENTS`. Returns `list[dict]` with keys `title`, `domain`, `seendate`. Never raises.
+- Availability gate changed: tone-extraction failures (`tone=None`) no longer short-circuit before the artlist call. Only HTTP-level tone failures (rate_limited, gdelt_fetch_failed, exception) return early. An empty timeline sets `tone=None` but continues to artlist — if events are found, `available=True` with `tone=None` is a valid result.
+- `events` key added to ALL return paths: the success path returns `_extract_events(articles_raw)`; all unavailable/failure paths return `[]`.
+- `_unavailable()` helper updated to include `events: []`.
+- `_tone_unavail_reason` internal variable tracks whether the final `no_news_events` or `no_tone_data` label is appropriate when both signals are absent (artlist-reached vs tone-side-only failure distinction preserved per contract §4).
+
+**What changed in `ai_advisor.py`:**
+
+- `_GDELT_ARTLIST_URL` updated to include `sourcelang:eng` in the query string.
+- `_build_sentiment_section` success-path payload updated: `events: tone_result.get("events", [])` surfaces the ranked domain-deduped events list from the lens_gdelt producer call.
+
+**Scope boundary:** No changes to `lens_pipeline.py`, `lens_warehouse.py`, `tests/` fixture schemas (the artlist fixture already contains `language` fields; existing tests updated to cover the new behavior), or any template. The `sources` field in the return dict is unchanged.
+
+**Files changed:** `advisors/lens_gdelt.py` (constants, `_unavailable`, `_extract_events` new helper, tone-extraction step, artlist step, availability gate), `ai_advisor.py` (`_GDELT_ARTLIST_URL`, `_build_sentiment_section` payload).
+
+**Status:** GREEN at 2649229. 68/68 tests pass.
