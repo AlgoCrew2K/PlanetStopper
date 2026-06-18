@@ -1999,7 +1999,13 @@
                             advisory only
                         </span>
                     </td>
-                    <td class="obs-raw-preview">{{ obs.raw_response | tojson | e }}</td>
+                    <td class="obs-raw-preview">
+                        {%- if obs.advisor_role == 'MARKET_PRISM' -%}
+                            {{ obs.verdict | e }}
+                        {%- else -%}
+                            {{ obs.raw_response | tojson | e }}
+                        {%- endif -%}
+                    </td>
                 </tr>
             {% endfor %}
             </tbody>
