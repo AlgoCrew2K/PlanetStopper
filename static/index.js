@@ -1317,10 +1317,40 @@
             .catch(function (err) { console.error('windowed strip load failed', err); });
     }
 
+    // AC-1: fetch /api/guard-alpha-summary and populate the dollar-saved panel.
+    // Called once on page load — the aggregate changes only when a new guard event fires,
+    // so continuous polling is unnecessary (post_mortem files are written at EOD).
+    // Uses dollar-saved-headline — NOT guard-alpha-headline (that carries the windowed
+    // % guard alpha from /api/strip/<window> and must not be clobbered).
+    function fetchGuardAlphaSummary() {
+        fetch('/api/guard-alpha-summary')
+            .then(function (response) {
+                if (!response.ok) return;
+                return response.json();
+            })
+            .then(function (data) {
+                if (!data) return;
+                var headlineEl = document.getElementById('dollar-saved-headline');
+                var countEl = document.getElementById('guard-event-count');
+                var labelEl = document.getElementById('dollar-saved-basis-label');
+                if (data.guard_event_count === 0) {
+                    if (headlineEl) headlineEl.textContent = 'No guard events yet';
+                    if (countEl) countEl.textContent = '0';
+                    if (labelEl) labelEl.textContent = data.basis_label || '';
+                } else {
+                    if (headlineEl) headlineEl.textContent = '$' + data.cumulative_saved_dollars.toFixed(2);
+                    if (countEl) countEl.textContent = data.guard_event_count;
+                    if (labelEl) labelEl.textContent = data.basis_label || '';
+                }
+            })
+            .catch(function (err) { console.error('guard-alpha-summary load failed', err); });
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
         // Poll floor is 15 s — matches the engine's minute cadence (see POLL_INTERVAL_MS).
         loadState();
         setInterval(loadState, POLL_INTERVAL_MS);
+        fetchGuardAlphaSummary();
 
         // AC-3: each picker button maps to a lowercase URL window token. The SAME
         // token drives BOTH /api/strip/<token> (re-windows the hero VALUE + vs-rows

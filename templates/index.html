@@ -1021,6 +1021,18 @@
       </div><!-- /.hero-grid -->
     </section>
 
+    <!-- ======================== DOLLAR-SAVED PANEL ======================== -->
+    <!-- AC-1: cumulative $-saved headline from /api/guard-alpha-summary (snapshot-time basis).
+         Populated on page load by fetchGuardAlphaSummary() in static/index.js.
+         Reuses .hero-section light card-UI CSS — no dark/foreign theme. -->
+    <div data-testid="dollar-saved-panel" class="hero-section" style="text-align:center;">
+      <span data-testid="dollar-saved-headline" id="dollar-saved-headline" style="font-size:2em;font-weight:700;color:var(--studio-pos);">&mdash;</span>
+      <span style="font-size:1.1em;color:var(--studio-ink);"> saved across </span>
+      <span data-testid="guard-event-count" id="guard-event-count" style="font-size:1.1em;font-weight:600;color:var(--studio-ink);">&mdash;</span>
+      <span style="font-size:1.1em;color:var(--studio-ink);"> exits</span>
+      <div data-testid="dollar-saved-basis-label" id="dollar-saved-basis-label" style="font-size:11px;color:var(--studio-ink-dim);margin-top:6px;"></div>
+    </div>
+
     <!-- ======================== ACTIVE SECTION ======================== -->
     <section data-testid="active-section">
       <div class="section-header" style="display:flex;align-items:center;gap:8px;">
