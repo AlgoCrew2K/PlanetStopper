@@ -1,5 +1,5 @@
 # Feature: Guard Alpha Value Panel
-Status: ready
+Status: partial — route shipped, panel markup/JS pending next cycle
 Created: 2026-06-19
 
 ## ⚠️ SCOPE NARROWED (PM, post-verification 2026-06-19)
@@ -13,14 +13,14 @@ A dashboard surface that QUANTIFIES Planet Stopper's value-add, filling two real
 The existing hero Bot-vs-Held cumulative chart (`templates/index.html:829`, `static/index.js:69`) + comparison rows (`templates/index.html:887-903`) + `/api/strip/<window>` windowed portfolio guard-alpha (`app.py:2127`) are REUSED, NOT rebuilt. All Guard-Alpha math already lives in `analytics.py` (`get_symphony_cumulative_return:754`, `compute_windowed_symphony_guard_alpha:1396`, `compute_windowed_portfolio_strip:1422`). Read-only, advisory; no new DB tables/migrations.
 
 ## Acceptance Criteria
-- [ ] AC-1: A "Guard Alpha" panel renders **cumulative dollar-saved** (Σ `saved_dollars` across `post_mortems/*.json`) + **guard-event count** + the **date range covered**, with the basis labeled ("snapshot-time, since <earliest post_mortem date>").
-- [ ] AC-2: Every symphony card shows a **running guard-alpha %** for UNTRIGGERED symphonies (live shadow-vs-held divergence from the analytics running computation), not just post-trigger. Triggered-card behavior unchanged.
+- [x] AC-1: A "Guard Alpha" panel renders **cumulative dollar-saved** (Σ `saved_dollars` across `post_mortems/*.json`) + **guard-event count** + the **date range covered**, with the basis labeled ("snapshot-time, since <earliest post_mortem date>").
+- [ ] AC-2: Every symphony card shows a **running guard-alpha %** for UNTRIGGERED symphonies (live shadow-vs-held divergence from the analytics running computation), not just post-trigger. Triggered-card behavior unchanged. (**DROPPED — already built on main**)
 - [ ] AC-3: The panel reuses `/api/strip/<window>`'s portfolio `guard_alpha` for any windowed figure; the existing hero `cum-chart` is NOT duplicated or rebuilt.
-- [ ] AC-4: Dollar-saved data is served via a NEW read-only route `GET /api/guard-alpha-summary` (SQLite `mode=ro` per the established `analytics.py:1142` pattern); no engine re-run; no `LIVE_EXECUTION` interaction; NOT added to `_SETTINGS_WRITE_ALLOWLIST`.
-- [ ] AC-5: **Honest empty-state** — no `post_mortem` files / zero guard events → "No guard events yet" (or $0 / 0 events), never a crash, NaN, or `None` leak into the template.
-- [ ] AC-6: **Malformed/missing post_mortem file resilience** — a corrupt or unreadable `post_mortem_*.json` is skipped + logged (no secret leak), never crashes the route or the dashboard.
+- [x] AC-4: Dollar-saved data is served via a NEW read-only route `GET /api/guard-alpha-summary` (SQLite `mode=ro` per the established `analytics.py:1142` pattern); no engine re-run; no `LIVE_EXECUTION` interaction; NOT added to `_SETTINGS_WRITE_ALLOWLIST`.
+- [x] AC-5: **Honest empty-state** — no `post_mortem` files / zero guard events → "No guard events yet" (or $0 / 0 events), never a crash, NaN, or `None` leak into the template.
+- [x] AC-6: **Malformed/missing post_mortem file resilience** — a corrupt or unreadable `post_mortem_*.json` is skipped + logged (no secret leak), never crashes the route or the dashboard.
 - [ ] AC-7: If a NEW Chart.js visualization is added, it uses the **active CDN Chart.js version's** API (the CDN load at `templates/index.html:11` is unpinned and the codebase mixes v2/v3 syntax — the implementer confirms the active major version before using `scales`/options). Prefer reusing the existing chart; add a new canvas only if the panel genuinely needs one.
-- [ ] AC-8: The new route + panel sit behind the existing auth gate (DE-AUTH-001) like all routes; GET, read-only; the per-card running guard-alpha population does not alter any write path or the execution path.
+- [x] AC-8: The new route + panel sit behind the existing auth gate (DE-AUTH-001) like all routes; GET, read-only; the per-card running guard-alpha population does not alter any write path or the execution path.
 
 ## Architecture
 - **`app.py`** — new `GET /api/guard-alpha-summary` route: reads + aggregates `post_mortems/*.json` (`saved_dollars`, `saved_pct_guard_alpha`, dates) and the guard-event count (from `database.get_triggers()` / `exit_triggers`); returns `{cumulative_saved_dollars, guard_event_count, date_range, ...}` JSON. Thin aggregator; all compute delegates to `analytics.py`. mode=ro / no writes.
@@ -55,6 +55,16 @@ The existing hero Bot-vs-Held cumulative chart (`templates/index.html:829`, `sta
 - **IN:** `/api/guard-alpha-summary` route + the dollar-saved aggregator; per-card running guard-alpha population in `get_api_state_dict()`; the panel markup + JS; empty-state + malformed-file resilience; the full test suite above.
 - **OUT:** rebuilding the hero Bot-vs-Held chart or `/api/strip` (already exist — reuse); any new DB table/migration (none needed); fixing the `/perf-snapshot` skill schema mismatch (`would_have_held_until`/`position_size` don't exist — separate); mark-to-market dollar recomputation (use post_mortem snapshot-time, labeled); the "historical analysis" roadmap item (separate); pinning the Chart.js CDN version repo-wide (a separate tech-debt item — this cycle only audits the active version before using options).
 
+## What shipped this cycle (guard-alpha-panel, HEAD 87fd96c)
+
+- `GET /api/guard-alpha-summary` route in `app.py` (65 lines after `get_windowed_strip`): globs `analytics._POST_MORTEMS_DIR` for `post_mortem_*.json`, aggregates `saved_dollars` and trigger count, extracts date range from filename, returns `{cumulative_saved_dollars, guard_event_count, date_range, basis_label}`. Auth-gated (global `_auth_before_request`). No DB writes. Not in `_SETTINGS_WRITE_ALLOWLIST`.
+- `tests/app/test_guard_alpha_summary_route.py` — route test suite (AC-1/AC-4/AC-5/AC-6/AC-8).
+- `tests/fixtures/app/guard_alpha_summary/` — `post_mortem_2026-06-10.json`, `post_mortem_2026-06-11.json`, `post_mortem_corrupt.json`.
+
+## Pending next cycle
+- AC-3: Panel markup in `templates/index.html` + JS fetch in `static/index.js` to consume `/api/guard-alpha-summary` and render the headline.
+- AC-7: Chart.js version audit if a new canvas is added.
+
 ## Decisions ([PM-ASSUMED] per the project autonomy directive — scoping confirmed the existing build)
 | Decision | Rationale |
 |----------|-----------|
@@ -62,3 +72,4 @@ The existing hero Bot-vs-Held cumulative chart (`templates/index.html:829`, `sta
 | Per-card running guard alpha from existing `analytics.py` running computation | Math already live + epoch-aware; fills Gap 1 without new compute |
 | Reuse the existing hero chart + `/api/strip` | Already built (scoping §2); rebuilding = duplication |
 | New read-only route for the $-saved aggregate | post_mortem JSON aggregation isn't currently exposed; keeps the panel a thin read-only consumer |
+| AC-2 dropped — per-card divergence basis already covers untriggered symphonies | `app.py:937,1016` populates `card_alpha = cr_bot − cr_held` for ALL symphonies; the gap was a misread of the template condition |

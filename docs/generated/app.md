@@ -3,7 +3,7 @@
 > Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
 **Source:** `app.py`
-**Last updated:** 2026-06-19
+**Last updated:** 2026-06-19 (guard-alpha-panel)
 
 ## Overview
 
@@ -168,6 +168,26 @@ Returns paginated autotune run history via `database.get_all_autotune_runs`. Res
 
 #### `GET /api/advisor-observations`
 Returns `advisor_observations` rows for a symphony. Accepts `?symphony_id=` query parameter.
+
+#### `GET /api/guard-alpha-summary` -- `guard_alpha_summary()`
+
+Returns cumulative dollar-saved aggregate and guard-event count from post_mortem JSON files on disk.
+
+**Response shape:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `cumulative_saved_dollars` | float | Sum of `saved_dollars` across all `triggers` in all `post_mortem_*.json` files. Zero when no files exist. |
+| `guard_event_count` | int | Total number of trigger entries across all post_mortem files. Zero when no files exist. |
+| `date_range` | dict | `{earliest, latest}` ISO date strings (YYYY-MM-DD) from filenames; null values when no files exist. |
+| `basis_label` | str | "snapshot-time basis, since <earliest>" when files exist; "no guard events yet" for empty-state. |
+
+**Key properties:**
+- **Read-only.** Globs `analytics._POST_MORTEMS_DIR` for `post_mortem_*.json` via bounded `glob.glob`; no DB reads, no DB writes, not in `_SETTINGS_WRITE_ALLOWLIST`. Dollar figures are snapshot-time (computed by `reporting.py:71` at exit), labeled explicitly -- not mark-to-market.
+- **Malformed-file resilient (AC-6).** Each file is wrapped in `try/except (OSError, json.JSONDecodeError)`; failures log the basename only (no file content) and skip the file. Always returns 200.
+- **Honest empty-state (AC-5).** No post_mortem files yields `cumulative_saved_dollars=0.0`, `guard_event_count=0`, null date_range, basis_label="no guard events yet". Never returns NaN or None in numeric fields.
+- **Auth-gated (AC-8).** Covered by the global `_auth_before_request` hook (DE-AUTH-001); unauthenticated XHR receives 401.
+
+See `DE-GAP-001` in `DECISIONS.md`.
 
 ---
 
