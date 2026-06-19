@@ -1,5 +1,5 @@
 # Feature: Guard Alpha Value Panel
-Status: partial — route shipped, panel markup/JS pending next cycle
+Status: ready
 Created: 2026-06-19
 
 ## ⚠️ SCOPE NARROWED (PM, post-verification 2026-06-19)
@@ -13,7 +13,7 @@ A dashboard surface that QUANTIFIES Planet Stopper's value-add, filling two real
 The existing hero Bot-vs-Held cumulative chart (`templates/index.html:829`, `static/index.js:69`) + comparison rows (`templates/index.html:887-903`) + `/api/strip/<window>` windowed portfolio guard-alpha (`app.py:2127`) are REUSED, NOT rebuilt. All Guard-Alpha math already lives in `analytics.py` (`get_symphony_cumulative_return:754`, `compute_windowed_symphony_guard_alpha:1396`, `compute_windowed_portfolio_strip:1422`). Read-only, advisory; no new DB tables/migrations.
 
 ## Acceptance Criteria
-- [x] AC-1: A "Guard Alpha" panel renders **cumulative dollar-saved** (Σ `saved_dollars` across `post_mortems/*.json`) + **guard-event count** + the **date range covered**, with the basis labeled ("snapshot-time, since <earliest post_mortem date>").
+- [ ] AC-1: A "Guard Alpha" panel renders **cumulative dollar-saved** (Σ `saved_dollars` across `post_mortems/*.json`) + **guard-event count** + the **date range covered**, with the basis labeled ("snapshot-time, since <earliest post_mortem date>").
 - [ ] AC-2: Every symphony card shows a **running guard-alpha %** for UNTRIGGERED symphonies (live shadow-vs-held divergence from the analytics running computation), not just post-trigger. Triggered-card behavior unchanged. (**DROPPED — already built on main**)
 - [ ] AC-3: The panel reuses `/api/strip/<window>`'s portfolio `guard_alpha` for any windowed figure; the existing hero `cum-chart` is NOT duplicated or rebuilt.
 - [x] AC-4: Dollar-saved data is served via a NEW read-only route `GET /api/guard-alpha-summary` (SQLite `mode=ro` per the established `analytics.py:1142` pattern); no engine re-run; no `LIVE_EXECUTION` interaction; NOT added to `_SETTINGS_WRITE_ALLOWLIST`.
