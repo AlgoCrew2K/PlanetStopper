@@ -1,0 +1,105 @@
+{
+  "_comment": "Fixture for calibration-sweep RED tests. Encodes a minimal completed study for 3 symphonies. All assertion values must be DERIVED from this fixture — no hardcoded producer outputs. Provenance: hand-authored to exercise all 7 ACs.",
+  "symphonies": {
+    "SYM-ALPHA": {
+      "history_days": 180,
+      "current_params": {
+        "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+        "VWAP_CROSS_HWM_PCT": 1.0,
+        "VWAP_BREAK_CONFIRM_TICKS": 3,
+        "VWAP_BLEED_ARM_MIN": -3.0,
+        "VWAP_BLEED_ARM_MAX": -0.5
+      },
+      "best_params": {
+        "PARABOLIC_VELOCITY_THRESHOLD": 1.5,
+        "VWAP_CROSS_HWM_PCT": 0.8,
+        "VWAP_BREAK_CONFIRM_TICKS": 2,
+        "VWAP_BLEED_ARM_MIN": -4.0,
+        "VWAP_BLEED_ARM_MAX": -0.3
+      },
+      "haircut_outcome": "cleared",
+      "pbo_veto_status": false,
+      "current_trigger_count": 5,
+      "proposed_trigger_count": 6,
+      "study_name_suffix": "__calsweep"
+    },
+    "SYM-BETA": {
+      "history_days": 200,
+      "current_params": {
+        "PARABOLIC_VELOCITY_THRESHOLD": 3.0,
+        "VWAP_CROSS_HWM_PCT": 1.5,
+        "VWAP_BREAK_CONFIRM_TICKS": 3,
+        "VWAP_BLEED_ARM_MIN": -3.0,
+        "VWAP_BLEED_ARM_MAX": -0.5
+      },
+      "best_params": {
+        "PARABOLIC_VELOCITY_THRESHOLD": 2.5,
+        "VWAP_CROSS_HWM_PCT": 1.2,
+        "VWAP_BREAK_CONFIRM_TICKS": 4,
+        "VWAP_BLEED_ARM_MIN": -2.5,
+        "VWAP_BLEED_ARM_MAX": -0.8
+      },
+      "haircut_outcome": "no_trial_cleared",
+      "pbo_veto_status": true,
+      "current_trigger_count": 5,
+      "proposed_trigger_count": 11,
+      "study_name_suffix": "__calsweep",
+      "_note": "proposed_trigger_count / current_trigger_count = 11/5 = 2.2 > 2x — triggers flag_for_operator_review"
+    },
+    "SYM-GAMMA": {
+      "history_days": 130,
+      "current_params": {
+        "PARABOLIC_VELOCITY_THRESHOLD": 2.5,
+        "VWAP_CROSS_HWM_PCT": 1.0,
+        "VWAP_BREAK_CONFIRM_TICKS": 3,
+        "VWAP_BLEED_ARM_MIN": -3.0,
+        "VWAP_BLEED_ARM_MAX": -0.5
+      },
+      "best_params": {
+        "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+        "VWAP_CROSS_HWM_PCT": 0.9,
+        "VWAP_BREAK_CONFIRM_TICKS": 3,
+        "VWAP_BLEED_ARM_MIN": -3.5,
+        "VWAP_BLEED_ARM_MAX": -0.4
+      },
+      "haircut_outcome": "not_run",
+      "pbo_veto_status": false,
+      "current_trigger_count": 8,
+      "proposed_trigger_count": 9,
+      "study_name_suffix": "__calsweep",
+      "_note": "proposed/current = 9/8 = 1.125 — does NOT trigger flag_for_operator_review"
+    }
+  },
+  "short_history_symphony": {
+    "SYM-SHORT": {
+      "history_days": 50,
+      "_note": "Below the 125-day threshold — must be skipped cleanly with a warning"
+    }
+  },
+  "required_report_row_keys": [
+    "symphony_id",
+    "param_name",
+    "current_value",
+    "proposed_value",
+    "expected_trigger_freq_change",
+    "pbo_veto_status",
+    "flag_for_operator_review",
+    "haircut_outcome",
+    "study_name"
+  ],
+  "required_search_space_keys": [
+    "PARABOLIC_VELOCITY_THRESHOLD",
+    "VWAP_CROSS_HWM_PCT",
+    "VWAP_BREAK_CONFIRM_TICKS",
+    "VWAP_BLEED_ARM_MIN",
+    "VWAP_BLEED_ARM_MAX"
+  ],
+  "search_space_bounds": {
+    "VWAP_BLEED_ARM_MIN": {"low": -5.0, "high": -1.0, "_note": "both endpoints negative; low is the most-negative allowed suggest value"},
+    "VWAP_BLEED_ARM_MAX": {"low": -1.0, "high": -0.1, "_note": "both endpoints negative; high is the least-negative allowed suggest value"},
+    "VWAP_BREAK_CONFIRM_TICKS": {"low": 1, "high": 5, "type": "int"}
+  },
+  "study_name_regex": "^\\d{8}T\\d+Z__[^_].*__calsweep$",
+  "min_history_days": 125,
+  "trigger_freq_flip_threshold": 2.0
+}
