@@ -50,6 +50,7 @@ _TEST_SECRET_KEY = "test-secret-key-xyz789"
 # via the hashed-credential path, not just a non-error result.
 try:
     from werkzeug.security import generate_password_hash as _gph
+
     _TEST_PASSWORD_HASH = _gph(_TEST_PASSWORD)
 except Exception:
     # Fallback: sha256 hex (implementation will treat as plaintext, test
@@ -182,9 +183,7 @@ class TestUnauthenticatedAccess:
         resp = auth_client.get("/api/state")
         assert resp.status_code == 401
         ct = resp.content_type or ""
-        assert "application/json" in ct, (
-            f"API 401 must be JSON content-type, got '{ct}'"
-        )
+        assert "application/json" in ct, f"API 401 must be JSON content-type, got '{ct}'"
 
     def test_unauthenticated_xhr_request_returns_401(self, auth_client):
         """AC-2: XHR (X-Requested-With: XMLHttpRequest) unauthenticated → 401."""
@@ -218,8 +217,10 @@ class TestUnauthenticatedAccess:
         assert resp.status_code == 200
         body = resp.get_data(as_text=True)
         # Form must have an action pointing to /login (or no action = same page)
-        assert 'action="/login"' in body or "action='/login'" in body or (
-            "<form" in body and 'method="post"' in body.lower()
+        assert (
+            'action="/login"' in body
+            or "action='/login'" in body
+            or ("<form" in body and 'method="post"' in body.lower())
         ), "Login page must contain a form that posts to /login"
 
     def test_unauthenticated_write_path_settings_denied(self, auth_client):
@@ -301,9 +302,9 @@ class TestLoginFlow:
         body = resp.get_data(as_text=True)
         # Must show a generic error — NOT revealing whether the password is
         # "too short", "wrong user", etc.  "Incorrect password" is the spec.
-        assert "incorrect" in body.lower() or "wrong" in body.lower() or "invalid" in body.lower(), (
-            "Wrong password response must include a generic error message"
-        )
+        assert (
+            "incorrect" in body.lower() or "wrong" in body.lower() or "invalid" in body.lower()
+        ), "Wrong password response must include a generic error message"
 
     def test_wrong_password_does_not_set_session(self, auth_client):
         """AC-5: Wrong password must not set session['authenticated']."""
@@ -345,17 +346,13 @@ class TestLogout:
         assert resp.status_code in (302, 303), (
             f"GET /logout must redirect (302/303), got {resp.status_code}"
         )
-        assert "/login" in resp.headers.get("Location", ""), (
-            "GET /logout must redirect to /login"
-        )
+        assert "/login" in resp.headers.get("Location", ""), "GET /logout must redirect to /login"
 
     def test_after_logout_protected_route_redirects_again(self, auth_client_authed):
         """AC-11: After logout, subsequent protected request → 302 to /login."""
         auth_client_authed.get("/logout", follow_redirects=True)
         resp = auth_client_authed.get("/", follow_redirects=False)
-        assert resp.status_code == 302, (
-            "After logout, GET / must redirect to /login again"
-        )
+        assert resp.status_code == 302, "After logout, GET / must redirect to /login again"
 
 
 # ---------------------------------------------------------------------------
@@ -585,9 +582,7 @@ class TestSecurity:
         # Must NOT redirect to dashboard
         if resp.status_code in (301, 302, 303):
             location = resp.headers.get("Location", "")
-            assert "/login" in location, (
-                "Missing-password login must not redirect to the dashboard"
-            )
+            assert "/login" in location, "Missing-password login must not redirect to the dashboard"
 
     def test_fail_closed_missing_secret_key_denies_all(self, monkeypatch):
         """AC-8: When SECRET_KEY is missing/empty, ALL routes are denied."""
@@ -643,11 +638,7 @@ class TestSecurity:
         assert resp.status_code == 200
         body = resp.get_data(as_text=True)
         # The login form must include a CSRF token field or meta tag
-        assert (
-            "csrf" in body.lower()
-            or "X-CSRF-Token" in body
-            or "_csrf" in body
-        ), (
+        assert "csrf" in body.lower() or "X-CSRF-Token" in body or "_csrf" in body, (
             "GET /login must include a CSRF token in the response (form field or meta)"
         )
 
@@ -683,6 +674,7 @@ class TestSecurity:
             # Scrape the csrf_token value from the rendered form field.
             body = get_resp.get_data(as_text=True)
             import re
+
             match = re.search(
                 r'<input[^>]+name=["\']csrf_token["\'][^>]+value=["\']([^"\']+)["\']',
                 body,
@@ -789,8 +781,7 @@ class TestSecurity:
 
         # Assert the login route exists — without it the test is tautological
         login_route_exists = any(
-            str(rule.rule) == "/login"
-            for rule in app_module.app.url_map.iter_rules()
+            str(rule.rule) == "/login" for rule in app_module.app.url_map.iter_rules()
         )
         assert login_route_exists, (
             "/login route does not exist yet — this test is not meaningful until "
@@ -813,9 +804,7 @@ class TestSecurity:
 
         all_log_text = caplog.text
         # The actual submitted password values must never appear in logs
-        assert _TEST_PASSWORD not in all_log_text, (
-            "Correct password must not appear in log output"
-        )
+        assert _TEST_PASSWORD not in all_log_text, "Correct password must not appear in log output"
         assert "a-wrong-password-do-not-log" not in all_log_text, (
             "Wrong password must not appear in log output"
         )
@@ -1101,8 +1090,7 @@ class TestSecurity:
             body_b = resp_b.get_data(as_text=True).lower()
             # IP B should get the standard wrong-password response, not a lockout.
             assert not (
-                resp_b.status_code == 429
-                or any(kw in body_b for kw in ("too many", "locked"))
+                resp_b.status_code == 429 or any(kw in body_b for kw in ("too many", "locked"))
             ), (
                 "IP 10.0.0.2 must NOT be locked out when only IP 10.0.0.1 exceeded "
                 "the threshold — throttle buckets must be per-client IP. "
@@ -1240,8 +1228,7 @@ class TestSecurity:
             )
             body_b = resp_b.get_data(as_text=True).lower()
             assert not (
-                resp_b.status_code == 429
-                or any(kw in body_b for kw in ("too many", "locked"))
+                resp_b.status_code == 429 or any(kw in body_b for kw in ("too many", "locked"))
             ), (
                 "With TRUST_PROXY set: XFF 2.2.2.2 must NOT be locked when only "
                 "XFF 1.1.1.1 was exhausted — per-XFF keying required. "
@@ -1434,9 +1421,7 @@ class TestSecurity:
     # -- REGRESSION (full-tree gate): _validate_csrf must NOT trigger form-body
     # parsing on JSON/XHR requests (guard-ordering invariant with test_m5) --
 
-    def test_validate_csrf_json_post_without_token_returns_403_not_413(
-        self, monkeypatch
-    ):
+    def test_validate_csrf_json_post_without_token_returns_403_not_413(self, monkeypatch):
         """Guard ordering: CSRF check fires BEFORE body-size enforcement on JSON POSTs.
 
         CONFIRMED REGRESSION (introduced ab0d370, caught by full-tree gate at 89efdb1):
@@ -1478,9 +1463,7 @@ class TestSecurity:
         # Build a body that will exceed MAX_CONTENT_LENGTH if Werkzeug parses it.
         # We use a modest size (128 KB) — enough to trigger any form-parsing size
         # guard, but not so large it causes memory issues in the test process.
-        large_json_body = (
-            b'{"message": "' + b"A" * 131072 + b'"}'
-        )
+        large_json_body = b'{"message": "' + b"A" * 131072 + b'"}'
 
         with app_module.app.test_client() as client:
             # POST to the login route with application/json content-type and NO
