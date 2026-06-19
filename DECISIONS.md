@@ -1732,3 +1732,49 @@ Reversing this order — registering the timer before setting the flag — risks
 
 - `app.py` — `_run_lens_pipeline()` lines 686–688: 4-line env guard inserted before thread spawn
 - `tests/app/test_lens_pipeline_gate.py` — 4 new tests (RED at 7c38075, GREEN at 3de3a31, sufficiency pinned at 5bbc030)
+
+---
+
+## DE-PRISM-SUB-AUTH-001 — Council subprocess pops ANTHROPIC_API_KEY to force subscription billing (2026-06-19)
+
+Branch: feat/prism-council-sub-auth
+
+### Context
+
+`prism_scheduler._run_prism()` previously built the subprocess environment with `os.environ.copy()`, which passes every env var — including `ANTHROPIC_API_KEY` — to the `claude -p` child process. Claude Code's auth precedence puts `ANTHROPIC_API_KEY` **above** `CLAUDE_CODE_OAUTH_TOKEN`: when both are present, the CLI uses the metered API key and ignores the subscription token. On the DO droplet, the nightly council was therefore billed against the metered API key even though `CLAUDE_CODE_OAUTH_TOKEN` (the subscription credential) was available.
+
+### Decision
+
+Pop `ANTHROPIC_API_KEY` from the copied env before passing it to `subprocess.run`. The subprocess receives all other env vars unchanged; only the metered key is removed so `claude -p` falls through to `CLAUDE_CODE_OAUTH_TOKEN`.
+
+Implementation in `_run_prism()` (`prism_scheduler.py`):
+
+```python
+_council_env = os.environ.copy()
+_council_env.pop("ANTHROPIC_API_KEY", None)  # council uses CLAUDE_CODE_OAUTH_TOKEN, not the metered key
+result = subprocess.run(
+    cmd,
+    cwd=str(_PROJECT_ROOT),
+    env=_council_env,
+    capture_output=True,
+    text=True,
+)
+```
+
+### Rationale
+
+- **Claude Code auth precedence:** API key beats OAuth token. Removing the key is the only reliable way to force the subscription path without deleting it from the daemon's `.env` (where it is still needed by the on-demand dashboard advisor that uses `ai_advisor.py` via the HTTP routes).
+- **Surgical removal only:** All other env vars (DB_PATH, PATH, CLAUDE_CODE_OAUTH_TOKEN, etc.) pass through unchanged. An allowlist approach would be fragile and require maintenance whenever new vars are added.
+- **On-demand advisor unaffected:** `app.py` (the Flask daemon) uses `ANTHROPIC_API_KEY` directly via the Anthropic SDK client — it never spawns a `claude -p` subprocess. The pop only applies to the nightly `prism_scheduler` subprocess path.
+
+### Deployment note
+
+The DO droplet runs the daemon and will run the council as the non-root `planetstopper` user (UID 997) from `/opt/planetstopper`. `DISABLE_DAEMON_LENS_PIPELINE=1` is already set in the droplet `.env` so the daemon's 03:00 slot is silenced and the council is the sole nightly `MARKET_PRISM` producer (DE-PRISM-GATE-001 transition order already completed).
+
+The council systemd timer (PM-deployed, not in this PR) sets `CLAUDE_CODE_OAUTH_TOKEN` in the service unit's environment. With this code change, `_run_prism()` pops `ANTHROPIC_API_KEY` before the subprocess call so `claude -p` falls back to `CLAUDE_CODE_OAUTH_TOKEN` (subscription). `ANTHROPIC_API_KEY` remains in `/opt/planetstopper/.env` for the on-demand dashboard advisor (`app.py` Flask routes call the Anthropic SDK directly -- never via a subprocess -- so the pop does not affect them).
+
+### Files changed
+
+- `prism_scheduler.py` — `_run_prism()`: `env=os.environ.copy()` replaced with `_council_env = os.environ.copy(); _council_env.pop("ANTHROPIC_API_KEY", None); env=_council_env`
+- `tests/prism_scheduler/test_council_sub_auth.py` — 3 new tests (AC-1: key excluded, AC-2: OAuth token passes through, AC-3: other env vars preserved)
+- `docs/generated/prism_scheduler.md` — `_run_prism` subprocess options updated

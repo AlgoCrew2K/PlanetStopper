@@ -105,3 +105,19 @@ N/A — backend feature, no UI surface. (All 10 are backend/infra; the Cycle-5 M
 - Register the council systemd timer (or equivalent cron) on the droplet.
 - PM spot-check ≥3 unattended runs (AC-5).
 - Confirm AC-1 (fresh `MARKET_PRISM` row + full audit trail per run), AC-3 (no double-row per night), AC-4 (Opus spend logged).
+
+---
+
+## Sub-task shipped: Council subprocess ANTHROPIC_API_KEY exclusion (2026-06-19)
+
+**Status: SHIPPED** on branch `feat/prism-council-sub-auth` (RED: d85aa94, GREEN: pending).
+
+**What shipped:** In `_run_prism()`, the subprocess env build changed from `env=os.environ.copy()` to `env={k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}`. The council subprocess now falls back to `CLAUDE_CODE_OAUTH_TOKEN` (subscription) instead of billing against the metered API key. 3 new tests in `tests/prism_scheduler/test_council_sub_auth.py` (AC-1: key excluded; AC-2: OAuth token passes through; AC-3: other vars preserved).
+
+**Why:** Claude Code auth precedence puts `ANTHROPIC_API_KEY` above `CLAUDE_CODE_OAUTH_TOKEN`. Without the pop, nightly council runs were billed against the metered key even when a subscription token was present. The on-demand dashboard advisor (Flask HTTP routes) is unaffected — it calls the Anthropic SDK directly, not via a `claude -p` subprocess.
+
+**Remaining open items (PM handles deployment) — unchanged from previous sub-task:**
+- Set `DISABLE_DAEMON_LENS_PIPELINE=1` on the droplet before registering the council systemd timer (DE-PRISM-GATE-001 safe transition order).
+- Register the council systemd timer.
+- PM spot-check ≥3 unattended runs (AC-5).
+- Confirm AC-1, AC-3, AC-4 on real droplet runs.

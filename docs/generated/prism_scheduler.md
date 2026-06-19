@@ -3,7 +3,7 @@
 > Nightly Market Prism scheduler wrapper — invokes the Market Prism council via a vanilla-primary headless Claude session, triggered by Windows Task Scheduler (Option B, daemon-decoupled).
 
 **Source:** `prism_scheduler.py`
-**Last updated:** 2026-06-18 (post-fix: F-1 run_id unification, F-2 synthesizer Hard Rules, F-4 row-verification + retry-on-empty)
+**Last updated:** 2026-06-19 (DE-PRISM-SUB-AUTH-001: subprocess pops ANTHROPIC_API_KEY to force subscription billing)
 
 ## Overview
 
@@ -99,7 +99,7 @@ The final positional argument is `PRISM_RUN_PROMPT + f" The run_id for this sess
 
 **Subprocess options:**
 - `cwd=str(_PROJECT_ROOT)` — project root, not caller's cwd
-- `env=os.environ.copy()` — inherits `ANTHROPIC_API_KEY` from loaded `.env`
+- `env=_council_env` where `_council_env = os.environ.copy()` then `_council_env.pop("ANTHROPIC_API_KEY", None)` — passes all env vars except the metered API key so `claude -p` falls back to `CLAUDE_CODE_OAUTH_TOKEN` (subscription billing); see DE-PRISM-SUB-AUTH-001
 - `capture_output=True, text=True` — captures stdout for spend logging
 - `shell=False` — no shell injection risk
 
@@ -158,3 +158,5 @@ All error paths surface `type(exc).__name__` only — no raw exception messages,
 ## Tests
 
 `tests/ai_advisor/test_prism_scheduling.py` — 53 tests (43 pre-F-4 + 10 F-4 additions) covering AC-1 through AC-8, HC-1 (spend cap), HC-2 (spend logging), HC-3 (model pin), the Phase-4 invocation shape (vanilla `-p`, no `--agent` pin, `PRISM_RUN_PROMPT` as positional arg, `MAX_BUDGET_USD=15.0`), the council architecture (primary spawns all 6; `prism-synthesizer` coordinates only via SendMessage), the 5/5 orchestration directives (DE-PRISM-5OF5): run_id generated before spawning, kickoff embedded in analyst spawn prompts, agentIds captured and passed to synthesizer, wait-barrier before synthesis, and **F-4 row-verification** (`TestMarketPrismRowVerification`): (1) rc==0 + no row — all MAX_ATTEMPTS exhausted — non-zero exit (RED gate); (2) rc==0 + row — exit 0 (happy-path regression lock, skips pre-GREEN); (3) rc==0 + no row on attempt 1, rc==0 + row on attempt 2 — subprocess called twice + exit 0 (retry-on-empty RED gate). All tests mock `subprocess.run`, `time.sleep`, `_get_summary()`, and `_get_market_prism_row_for_run()` — no real DB calls, no real subprocess invocations.
+
+`tests/prism_scheduler/test_council_sub_auth.py` — 3 tests (DE-PRISM-SUB-AUTH-001): AC-1 (`ANTHROPIC_API_KEY` excluded from subprocess env), AC-2 (`CLAUDE_CODE_OAUTH_TOKEN` passes through unchanged), AC-3 (all other env vars including `DB_PATH` preserved — surgical removal, not an allowlist). Tests use `monkeypatch.setenv` and patch `prism_scheduler.subprocess.run` to inspect the `env` kwarg.
