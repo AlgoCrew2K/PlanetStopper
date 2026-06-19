@@ -1535,3 +1535,55 @@ Both wiring blocks are wrapped in `except Exception: pass` -- humanization failu
 
 **Affected symbol:** `autotuner.run_calibration_sweep` (commit `b35d14c`). No callers broken — all existing callers use the default. See `docs/generated/autotuner.md` §AC-4 and the parameters table for the public-API update.
 
+
+---
+
+## DE-AUTH-001 — Dashboard password-auth gate: single-password Flask signed-session gate, fail-closed (2026-06-19)
+
+Branch: feat/dashboard-auth | Base: origin/main 43c8160
+
+### Context
+
+Planet Stopper is being deployed to a public DigitalOcean droplet (`104.248.7.101`). Before deploy, the entire Flask surface (dashboard, AI Advisor SPA, all `/api/*` routes) must be protected behind an auth gate. Without one, anyone who discovers the IP can read live positions, trigger execution, or modify settings.
+
+### Decision
+
+Single shared password, checked constant-time, stored in env. Flask signed-session cookie carries the auth flag. The gate is implemented entirely in `app.py`; no new pip dependencies beyond `werkzeug` (already in requirements).
+
+**Key decisions and rationale:**
+
+| Decision | Rationale |
+|----------|-----------|
+| Single shared password, not per-user accounts | Single-operator use case. Minimal surface. No user-management plumbing needed. |
+| Flask signed-session (cookie) gate, not HTTP Basic | Operator wants a login PAGE as the only visible surface pre-auth; signed-session supports logout and a proper form UX. HTTP Basic pops a browser dialog and has no logout flow. |
+| `DASHBOARD_PASSWORD_HASH` preferred over `DASHBOARD_PASSWORD` | `.env` does not need to hold the plaintext password; operator can store a werkzeug hash. |
+| `hmac.compare_digest` for plaintext; `werkzeug.security.check_password_hash` for hashed | Constant-time compare in all paths. Hash detection by prefix (`pbkdf2:`, `scrypt:`, `bcrypt:`). No timing leak. |
+| Fail-closed on misconfig | The catastrophic failure mode is serving the dashboard OPEN on a public IP. Missing `DASHBOARD_PASSWORD`(+hash) OR `SECRET_KEY`/`FLASK_SECRET_KEY` → all requests denied; never fail open. Logged loudly at startup. |
+| In-memory throttle (no DB) | Single-process daemon; reset on restart is an acceptable brute-force speed-bump for a single-operator tool. SQLite throttle table would add a write on every login failure — too heavy. |
+| `/api/*` and XHR → 401 JSON; HTML routes → 302 `/login` | SPA JS can react to 401 cleanly without a page reload. HTML routes follow the standard redirect-to-login pattern browsers expect. |
+| `_AUTH_EXEMPT_ENDPOINTS` explicit frozenset | `login`, `logout`, `static`, `get_csrf_token`, `health` — exact-minimal allowlist; no glob/prefix matching to avoid accidental exemptions. |
+| `SESSION_COOKIE_SECURE` env-gated | The `Secure` flag makes sense only behind TLS. Gated on `SESSION_COOKIE_SECURE=1/true/yes` so the same code runs locally (HTTP) and on the public droplet (HTTPS via reverse proxy). |
+| `TRUST_PROXY` opt-in for X-Forwarded-For keying | Trusting XFF unconditionally on a direct-bind daemon would allow IP spoofing. `TRUST_PROXY` must be set explicitly when behind a trusted reverse proxy. |
+| TLS/tunnel deferred to the droplet deploy | Transport security is a deployment concern, not app logic. The session cookie is signed (integrity) but plaintext (confidentiality) over HTTP — the deployment MUST add Caddy/nginx TLS or SSH tunnel. Tracked in the droplet-deploy phase. |
+| `_auth_check_enabled` module flag + `_disable_auth_for_tests` autouse fixture | Mirrors the `_csrf_check_enabled` / `_disable_csrf_for_tests` pattern established earlier. Keeps all ~7000 existing route tests passing without injecting credentials. Auth gate tests re-enable the flag per-fixture. `_AUTH_FAILED_ATTEMPTS.clear()` called on every test teardown to prevent throttle bleed-through. |
+| `login()` calls `session.clear()` before setting `authenticated` | Session-fixation prevention (AC-4). Clears any attacker-planted session values before the session is promoted to authenticated. |
+| CSRF on login POST | Reuses existing `_validate_csrf()` / `_csrf_before_request` infra. The login form embeds the CSRF token in a hidden field (`csrf_token`), which is now the second acceptance channel for `_validate_csrf` (dual-channel fix at 8a34de6). The form-field channel is content-type-gated: `request.form` is accessed only when `Content-Type` is `application/x-www-form-urlencoded` or `multipart/form-data` (dc6b8c7) — accessing it on JSON POSTs triggers Werkzeug body parsing, which enforces `MAX_CONTENT_LENGTH` before the CSRF 403 can fire. |
+
+### Security findings resolved in this cycle
+
+| Severity | Finding | Fix |
+|----------|---------|-----|
+| HIGH | CSRF: login form POST could not pass the CSRF token via a form field (the prior implementation only accepted the `X-CSRF-Token` header, which a native browser form cannot set) | `_validate_csrf()` extended to accept `csrf_token` form field as a second channel; docstring updated at 8a34de6. Form-field channel subsequently content-type-gated (dc6b8c7) to prevent 413-before-403 guard-ordering regression on JSON POSTs. |
+| MEDIUM | XFF keying: trusting `X-Forwarded-For` unconditionally on the throttle allows IP spoofing | `TRUST_PROXY` opt-in env var; remote addr used by default |
+| LOW | Misconfig log: `DASHBOARD_PASSWORD` absence was not logged loudly at startup | Loud `_daemon_log.warning` added in `_auth_before_request` misconfig path |
+
+### Acceptance criteria shipped (AC-1..AC-13)
+
+AC-1 through AC-13 as specified in `feature-plans/dashboard-auth.md`. 46/46 tests GREEN at commit `55e95cc`.
+
+### Files changed
+
+- `app.py` — auth gate: `_auth_check_enabled`, `_AUTH_EXEMPT_ENDPOINTS`, `_AUTH_FAILED_ATTEMPTS`, `_AUTH_MAX_ATTEMPTS`, `_AUTH_LOCKOUT_SECONDS`, `_resolve_dashboard_credential`, `_secret_key_configured`, `_check_throttle`, `_record_failed_attempt`, `_clear_failed_attempts`, `_is_api_or_xhr`, `_auth_before_request`, `login`, `logout`; `SESSION_COOKIE_*` config; `app.secret_key`; CSRF dual-channel fix (`_validate_csrf` docstring); CSRF form-field content-type gating (`_validate_csrf` implementation + docstring, dc6b8c7)
+- `templates/login.html` — minimal login form (light card UI, CSRF hidden field, error slot)
+- `tests/conftest.py` — `_disable_auth_for_tests` autouse fixture; `_AUTH_FAILED_ATTEMPTS.clear()` between tests
+- `tests/app/test_dashboard_auth.py` — 46 RED→GREEN tests covering AC-1..AC-13

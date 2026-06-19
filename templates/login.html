@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Planet Stopper — Sign In</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
+  <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='layout.css') }}">
+  <style>
+    body {
+      background: var(--studio-bg);
+      color: var(--studio-ink);
+      font-family: var(--studio-sans, Manrope, sans-serif);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .login-card {
+      background: var(--studio-paper);
+      border: 1px solid var(--studio-rule);
+      border-radius: 14px;
+      padding: 40px 44px;
+      width: 100%;
+      max-width: 360px;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+    }
+
+    .login-wordmark {
+      font-weight: 700;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+      color: var(--studio-ink);
+      margin-bottom: 6px;
+    }
+
+    .login-wordmark span {
+      color: var(--studio-accent);
+      font-weight: 500;
+      font-size: 13px;
+      font-style: italic;
+      margin-left: 6px;
+    }
+
+    .login-subtitle {
+      font-size: 12px;
+      color: var(--studio-ink-dim);
+      margin-bottom: 28px;
+    }
+
+    .login-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--studio-ink-dim);
+      letter-spacing: 0.03em;
+      margin-bottom: 6px;
+    }
+
+    .login-input {
+      width: 100%;
+      padding: 9px 11px;
+      border: 1px solid var(--studio-rule-hi);
+      border-radius: 7px;
+      background: var(--studio-bg);
+      color: var(--studio-ink);
+      font-size: 14px;
+      font-family: var(--studio-sans, Manrope, sans-serif);
+      box-sizing: border-box;
+      margin-bottom: 18px;
+    }
+
+    .login-input:focus {
+      outline: none;
+      border-color: var(--studio-accent);
+    }
+
+    .login-error {
+      background: rgba(220, 53, 69, 0.08);
+      border: 1px solid rgba(220, 53, 69, 0.3);
+      border-radius: 7px;
+      padding: 9px 12px;
+      font-size: 12.5px;
+      color: var(--studio-neg, #dc3545);
+      margin-bottom: 16px;
+    }
+
+    .login-btn {
+      width: 100%;
+      padding: 10px 0;
+      background: var(--studio-accent);
+      color: var(--studio-white, #fff);
+      border: none;
+      border-radius: 7px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: var(--studio-sans, Manrope, sans-serif);
+      letter-spacing: 0.01em;
+    }
+
+    .login-btn:hover {
+      opacity: 0.92;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="login-wordmark">
+      Planet Stopper
+      <span>guard</span>
+    </div>
+    <div class="login-subtitle">Sign in to continue</div>
+
+    {% if error %}
+    <div class="login-error" role="alert">{{ error }}</div>
+    {% endif %}
+
+    <form action="/login" method="post">
+      {# CSRF token — required by the existing CSRF gate on all POSTs #}
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <meta name="csrf-token" content="{{ csrf_token }}">
+
+      <label class="login-label" for="password">Password</label>
+      <input
+        class="login-input"
+        type="password"
+        id="password"
+        name="password"
+        autocomplete="current-password"
+        autofocus
+      >
+
+      <button class="login-btn" type="submit">Sign in</button>
+    </form>
+  </div>
+</body>
+</html>
