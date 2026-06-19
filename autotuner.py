@@ -282,6 +282,33 @@ _SS_MAX_PARA_SQUEEZE_MAX = 0.8
 _SS_VWAP_CROSS_HWM_V1_MIN = 0.3
 _SS_VWAP_CROSS_HWM_V1_MAX = 2.0
 
+# VWAP_BLEED_ARM_MIN bounds: arm threshold is always negative.
+# LOW is the most-negative allowed value; HIGH is the least-negative.
+# Range [-5.0, -1.0]: gives the sweep room below the production hand-set default
+# (~-3.0) without allowing implausibly deep thresholds. Not in OPTUNA_SEARCH_SPACE_KEYS
+# (V1 methodology decision: hand-set param); bounds documented here for future review.
+_SS_VWAP_BLEED_ARM_MIN_LOW = -5.0
+_SS_VWAP_BLEED_ARM_MIN_HIGH = -1.0
+
+# VWAP_BLEED_ARM_MAX bounds: max arm threshold is also always negative.
+# Range [-1.0, -0.1]: max must stay above min; upper wall at -0.1 prevents
+# the threshold from approaching zero (bleed arm would never fire). Not in
+# OPTUNA_SEARCH_SPACE_KEYS (V1 hand-set); documented for future review.
+_SS_VWAP_BLEED_ARM_MAX_LOW = -1.0
+_SS_VWAP_BLEED_ARM_MAX_HIGH = -0.1
+
+# VWAP_BREAK_CONFIRM_TICKS bounds: tick count must be a positive integer.
+# Range [1, 5]: allows tightening (1 = immediate) or loosening (5 = longer
+# confirmation) relative to the production default of 3. Not in
+# OPTUNA_SEARCH_SPACE_KEYS (V1 hand-set); documented for future review.
+_SS_VWAP_BREAK_CONFIRM_TICKS_LOW = 1
+_SS_VWAP_BREAK_CONFIRM_TICKS_HIGH = 5
+
+# Minimum history days required before running the calibration sweep for a symphony.
+# Below this threshold the fold partitioning produces validation windows too small
+# to give the Sortino objective meaningful signal.
+_CALSWEEP_MIN_HISTORY_DAYS = 125
+
 # --- run_simulation_sortino_legacy objective: loss-averse utility penalty constants ---
 # (audit H-10 — AC-4 remediation). The run_simulation_sortino_legacy objective is an
 # explicit LOSS-AVERSE utility: it weights downside outcomes (negative guard-alpha,
@@ -2971,8 +2998,23 @@ def run_calibration_sweep(
     symphony_ids = list(history_data.keys())
 
     for sym_id in symphony_ids:
+        # AC-4: skip symphonies with insufficient history — fold partitioning
+        # on <_CALSWEEP_MIN_HISTORY_DAYS produces validation windows too small
+        # for the Sortino objective to yield meaningful signal.
+        sym_days = len(history_data.get(sym_id, {}))
+        if sym_days < _CALSWEEP_MIN_HISTORY_DAYS:
+            logging.warning(
+                "run_calibration_sweep: skipping %s — only %d days (< %d required)",
+                sym_id,
+                sym_days,
+                _CALSWEEP_MIN_HISTORY_DAYS,
+            )
+            continue
+
         study_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        study_name = f"{study_timestamp}__{sym_id}"
+        # AC-6: append __calsweep suffix so sweep studies are identifiable at a
+        # glance and never collide with production run_autotuner study names.
+        study_name = f"{study_timestamp}__{sym_id}__calsweep"
 
         base_p = current_params.copy()
 
@@ -3013,11 +3055,57 @@ def run_calibration_sweep(
         logging.debug(
             "run_calibration_sweep: n_jobs=%s (env key=%s)", _sweep_n_jobs, _OPTUNA_N_JOBS_ENV
         )
-        study.optimize(objective, n_trials=OPTUNA_N_TRIALS_CALIBRATION, n_jobs=_sweep_n_jobs)
+        # catch=(Exception,): per-trial exceptions are converted to FAILED state
+        # and logged (Optuna default is no catch — TypeError / ValueError in the
+        # objective would propagate and crash the sweep). The calibration sweep
+        # is advisory-only; any individual trial crash should degrade to
+        # no_completed_trials rather than aborting the entire symphony sweep.
+        study.optimize(
+            objective,
+            n_trials=OPTUNA_N_TRIALS_CALIBRATION,
+            n_jobs=_sweep_n_jobs,
+            catch=(Exception,),
+        )
+
+        n_trials = len([t for t in study.trials if t.value is not None])
+
+        # Guard: if every trial failed (n_trials == 0) there is no best trial.
+        # Emit a degraded row set using current_params so the report surface can
+        # display an honest "no_completed_trials" outcome without crashing.
+        if n_trials == 0:
+            logging.warning(
+                "run_calibration_sweep: all trials failed for %s — "
+                "emitting degraded rows with haircut_outcome=no_completed_trials",
+                sym_id,
+            )
+            for param_name in ("PARABOLIC_VELOCITY_THRESHOLD", "VWAP_CROSS_HWM_PCT"):
+                current_value = float(current_params.get(param_name, 0.0))
+                report_rows.append(
+                    {
+                        "symphony_id": sym_id,
+                        "param_name": param_name,
+                        "current_value": current_value,
+                        "proposed_value": current_value,
+                        "delta_pct": 0.0,
+                        "expected_trigger_freq_change": 0.0,
+                        "frozen_eval_alpha": None,
+                        "naive_sharpe": None,
+                        "selection_tstat": None,
+                        "haircut_outcome": "no_completed_trials",
+                        "pbo_veto_status": True,
+                        "flag_for_operator_review": False,
+                        "sortino": None,
+                        "n_trials": 0,
+                        "study_name": study_name,
+                        "trading_day_start": trading_day_start,
+                        "trading_day_end": trading_day_end,
+                        "cycle_id": run_timestamp,
+                    }
+                )
+            continue
 
         naive_sharpe_value: float | None = study.best_value
         best_params = study.best_params
-        n_trials = len([t for t in study.trials if t.value is not None])
 
         # --- HARVEY & LIU SELECTION HAIRCUT ---
         # Same multiple-testing correction as run_autotuner: re-rank the completed
@@ -3084,6 +3172,18 @@ def run_calibration_sweep(
         proposed_trigger_count = _count_triggers(best_p, [sym_id], history_validation)
         expected_trigger_freq_change = float(proposed_trigger_count - current_trigger_count)
 
+        # AC-5: PBO veto status — a haircut that found no qualified winner is
+        # treated as a veto signal; the naive Optuna winner is not a certified
+        # recommendation.
+        pbo_veto_status = haircut_outcome == "no_trial_cleared"
+
+        # AC-7: flag when proposed trigger frequency is >2× the current count
+        # so the operator must review before any per-symphony deploy.
+        flag_for_operator_review = (
+            current_trigger_count > 0
+            and proposed_trigger_count / current_trigger_count > 2.0
+        )
+
         # Emit one row per tuned param
         for param_name in ("PARABOLIC_VELOCITY_THRESHOLD", "VWAP_CROSS_HWM_PCT"):
             current_value = float(current_params.get(param_name, best_p.get(param_name, 0.0)))
@@ -3105,6 +3205,8 @@ def run_calibration_sweep(
                     "naive_sharpe": naive_sharpe_value,
                     "selection_tstat": selection_tstat_value,
                     "haircut_outcome": haircut_outcome,
+                    "pbo_veto_status": pbo_veto_status,
+                    "flag_for_operator_review": flag_for_operator_review,
                     "sortino": sortino_value,
                     "n_trials": n_trials,
                     "study_name": study_name,
