@@ -1,6 +1,7 @@
 # Feature: Tech-Debt Cleanups (Grouped Small Items)
-Status: ready
+Status: partial-complete
 Created: 2026-06-13
+Last updated: 2026-06-19 (C3b + C3c complete on chore/tech-debt-c3bc; C3a PM-handled separately)
 
 ## Summary
 
@@ -9,6 +10,8 @@ Three independently dispatchable cleanup items grouped into one feature plan bec
 ---
 
 ## C3a — Reconcile `stash@{0}` Cycle-2-SEC WIP
+
+**[PM-HANDLED SEPARATELY — dangling calibration-sweep stashes; not dispatched to this team cycle]**
 
 ### Acceptance Criteria
 
@@ -31,11 +34,15 @@ Three independently dispatchable cleanup items grouped into one feature plan bec
 
 ## C3b — Route Self-Skip Cleanup
 
+**[COMPLETE — 2026-06-19, commit 406735a on chore/tech-debt-c3bc]**
+
+**Outcome:** Self-skip branch confirmed absent from codebase (verified at HEAD/47f0eb5 + fresh inspection). AC-4b and AC-6b are closed as not applicable — the unified SPA consolidation (Cycle 4) had already removed any such branch before this cycle was dispatched. AC-5b implemented in full: route-level producer guard test suite added.
+
 ### Acceptance Criteria
 
-- [ ] AC-4b: The self-skip branch in the AI Advisor route layer (`app.py` advisor routes) is located, confirmed dead/redundant against the current unified SPA routing, and removed.
-- [ ] AC-5b: A route-level RED test is written BEFORE the removal that hits the affected route with the REAL producer module (not a fully-mocked module) and asserts the route returns a valid response (not a 500). This test is GREEN after removal.
-- [ ] AC-6b: No live behavior change: the route still handles all valid request patterns correctly after the self-skip is removed.
+- [x] AC-4b: The self-skip branch in the AI Advisor route layer (`app.py` advisor routes) is located, confirmed dead/redundant against the current unified SPA routing, and removed. **Outcome: confirmed absent — no removal needed; see DE-TD-C3B-001.**
+- [x] AC-5b: A route-level RED test is written BEFORE the removal that hits the affected route with the REAL producer module (not a fully-mocked module) and asserts the route returns a valid response (not a 500). This test is GREEN after removal. **Outcome: 7 tests in `tests/ai_advisor/test_advisor_route_producer_guard.py` — 2 route smoke tests + 5 hasattr existence guards covering `correlation_diagnostic`, `backtest_gate_engine`, `prism_render`, `ai_advisor`.**
+- [x] AC-6b: No live behavior change: the route still handles all valid request patterns correctly after the self-skip is removed. **Outcome: N/A (no code removal); route smoke tests confirm GET /ai-advisor returns 200 + text/html.**
 
 ### Architecture
 
@@ -52,12 +59,16 @@ Three independently dispatchable cleanup items grouped into one feature plan bec
 
 ## C3c — Dead `higher_is_better` Param in `_apply_lens_blend`
 
+**[COMPLETE — 2026-06-19, commit c6f2b4d on chore/tech-debt-c3bc]**
+
+**Outcome:** Parameter removed from `_apply_lens_blend` signature and all 4 callers. Behavior-preserving — runtime output byte-identical. 1 new AST-inspection pin test added; 35 existing asset-swap tests remain GREEN.
+
 ### Acceptance Criteria
 
-- [ ] AC-7c: Confirm no caller passes `higher_is_better` meaningfully (inspect all call sites in `advisors/asset_swap_engine.py` and `tests/`).
-- [ ] AC-8c: Remove the `higher_is_better` parameter and any dead branch it guarded from `_apply_lens_blend`. Update all callers to match the new signature.
-- [ ] AC-9c: The asset-swap test suite passes GREEN after removal with no new failures (behavior-preserving refactor).
-- [ ] AC-10c: No change-history naming appears in the refactor — identifiers describe runtime behavior, not the fact that something was removed.
+- [x] AC-7c: Confirm no caller passes `higher_is_better` meaningfully (inspect all call sites in `advisors/asset_swap_engine.py` and `tests/`). **Outcome: confirmed — all 4 callers passed a constant (False/False/True/True); the docstring explicitly stated the param was unused; the blend is position-based and direction-agnostic.**
+- [x] AC-8c: Remove the `higher_is_better` parameter and any dead branch it guarded from `_apply_lens_blend`. Update all callers to match the new signature. **Outcome: param + 3-line docstring entry removed from signature; `higher_is_better=...` kwarg removed from all 4 callers; directional rationale comments preserved as standalone lines.**
+- [x] AC-9c: The asset-swap test suite passes GREEN after removal with no new failures (behavior-preserving refactor). **Outcome: 35/35 existing tests GREEN + 1 new pin test GREEN at c6f2b4d.**
+- [x] AC-10c: No change-history naming appears in the refactor — identifiers describe runtime behavior, not the fact that something was removed. **Outcome: no `removed*`/`legacy*` names introduced; directional comments at call sites name the sorting direction, not the change history.**
 
 ### Architecture
 
@@ -110,6 +121,7 @@ See per-sub-item edge cases above. Shared: all three items are behavior-preservi
 | C3c requires no Toxic Pair (covered-path refactor) | Behavior-preserving param removal on a path already covered by the asset-swap suite; no new codepath introduced |
 | Naming rule enforced on C3c | Per project rule: identifiers describe runtime behavior, not change history; no `removed*` or `legacy*` names |
 | Each sub-item is independently dispatchable | They share no code surface; can be run as one cleanup branch or three micro-dispatches |
+| C3b self-skip confirmed absent — AC-5b pivot | No self-skip branch found at HEAD; team pivoted AC-5b to route-level producer guard tests covering the bare-except class of silent-500 bug (see DE-TD-C3B-001) |
 
 ## Scope Boundaries
 

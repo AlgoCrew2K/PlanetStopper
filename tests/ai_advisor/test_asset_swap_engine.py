@@ -1453,3 +1453,72 @@ class TestEngineDelegatesToM2:
                         "the batch-wide BHY FDR correction. "
                         "Use evaluate_candidate_batch from backtest_gate_engine exclusively."
                     )
+
+
+# ===========================================================================
+# Section C3c — Dead-param removal guard (tech-debt-cleanups C3c)
+#
+# _apply_lens_blend had a `higher_is_better: bool` parameter that is documented
+# in its own docstring as "Unused parameter preserved for call-site documentation
+# clarity (the blend is position-based, so direction doesn't affect the math)."
+# The math never references the parameter; all 4 callers pass it but with no
+# effect on output.
+#
+# This AST-inspection test asserts the parameter does NOT appear in
+# _apply_lens_blend's signature after the tech-debt removal.
+#
+# RED state: parameter is present (current code) → test FAILS.
+# GREEN state: parameter is removed (implementer's change) → test PASSES.
+# ===========================================================================
+
+
+class TestApplyLensBlendHasNoHigherIsBetterParam:
+    """_apply_lens_blend must not have a higher_is_better parameter (C3c).
+
+    The parameter was documented as unused by its own docstring; the blend is
+    position-based so direction does not affect the math.  Removing it makes
+    the signature honest and removes dead conditional branches at call sites.
+
+    Adversarial: this test is RED while the parameter exists and GREEN only
+    after the implementer removes it from the function signature and all callers.
+    """
+
+    def test_apply_lens_blend_signature_has_no_higher_is_better_param(self):
+        """_apply_lens_blend must not declare higher_is_better in its signature.
+
+        The parameter is documented as unused in the function's own docstring
+        (advisors/asset_swap_engine.py:401-403).  Keeping it is misleading — it
+        implies directional control that the position-based blend math ignores.
+
+        RED while the parameter exists; GREEN after removal.
+        """
+        engine_path = _REPO_ROOT / "advisors" / "asset_swap_engine.py"
+        assert engine_path.exists(), f"advisors/asset_swap_engine.py not found at {engine_path}"
+
+        tree = ast.parse(engine_path.read_text(encoding="utf-8"))
+
+        # Find the _apply_lens_blend function definition via AST.
+        blend_fn = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_apply_lens_blend":
+                blend_fn = node
+                break
+
+        assert blend_fn is not None, (
+            "_apply_lens_blend function not found in advisors/asset_swap_engine.py. "
+            "The function must exist for the lens-blend ranking to work."
+        )
+
+        # Collect all parameter names from the function signature.
+        param_names = [arg.arg for arg in blend_fn.args.args]
+        # Include keyword-only and positional-or-keyword-with-defaults.
+        param_names += [arg.arg for arg in blend_fn.args.kwonlyargs]
+
+        assert "higher_is_better" not in param_names, (
+            f"_apply_lens_blend still has 'higher_is_better' in its signature: {param_names}. "
+            "This parameter is documented as unused (docstring lines 401-403: 'the blend is "
+            "position-based, so direction doesn't affect the math'). "
+            "Remove it from the function signature and all 4 callers "
+            "(asset_swap_engine.py lines ~548, ~572, ~597, ~606) to make the API honest. "
+            "C3c tech-debt cleanup."
+        )
