@@ -171,9 +171,7 @@ class TestMacroSectionWarehouseWiring:
                 "when FRED key is absent (no fetch occurred, no fabrication)"
             )
 
-    def test_persist_called_with_available_false_when_all_fred_series_fail(
-        self, monkeypatch
-    ):
+    def test_persist_called_with_available_false_when_all_fred_series_fail(self, monkeypatch):
         """When FRED_API_KEY is set but all series fetches raise, persist must
         be called with available=False — honest unavailability, not suppressed.
 

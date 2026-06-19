@@ -107,9 +107,8 @@ def _mock_resp(json_data: dict, status_code: int = 200) -> MagicMock:
     m.raise_for_status = MagicMock()
     if status_code >= 400:
         from requests.exceptions import HTTPError
-        m.raise_for_status.side_effect = HTTPError(
-            f"HTTP {status_code}", response=m
-        )
+
+        m.raise_for_status.side_effect = HTTPError(f"HTTP {status_code}", response=m)
     return m
 
 
@@ -119,9 +118,7 @@ def _empty_holdings_state() -> dict:
 
 def _holdings_state(tickers: list[str]) -> dict:
     return {
-        "test_symphony": {
-            "logic_holdings": {t: {"weight": 1.0 / len(tickers)} for t in tickers}
-        }
+        "test_symphony": {"logic_holdings": {t: {"weight": 1.0 / len(tickers)} for t in tickers}}
     }
 
 
@@ -149,9 +146,7 @@ class TestModeB:
         cf = fx["companyfacts"]
 
         # Derive the expected answer from the fixture itself (no hardcoding).
-        revenues_entries = (
-            cf["facts"]["us-gaap"]["Revenues"]["units"]["USD"]
-        )
+        revenues_entries = cf["facts"]["us-gaap"]["Revenues"]["units"]["USD"]
         max_end = max(e["end"] for e in revenues_entries)
 
         import ai_advisor
@@ -190,9 +185,7 @@ class TestModeB:
         revenues_entries = cf["facts"]["us-gaap"]["Revenues"]["units"]["USD"]
         max_end = max(e["end"] for e in revenues_entries)
         # Find the entry at max_end and read its val from the fixture.
-        expected_val = next(
-            e["val"] for e in revenues_entries if e["end"] == max_end
-        )
+        expected_val = next(e["val"] for e in revenues_entries if e["end"] == max_end)
 
         import ai_advisor
 
@@ -225,9 +218,7 @@ class TestModeB:
         with patch("requests.get", return_value=_mock_resp(cf)):
             result = ai_advisor._fetch_fundamentals_for_ticker("JPM")
 
-        assert result.get("available") is True, (
-            f"available=False. reason={result.get('reason')!r}"
-        )
+        assert result.get("available") is True, f"available=False. reason={result.get('reason')!r}"
         key_facts = result["payload"]["key_facts"]
 
         for concept in _EXPECTED_KEY_FACTS_KEYS:
@@ -237,8 +228,7 @@ class TestModeB:
             max_end = max(e["end"] for e in entries)
 
             assert concept in key_facts, (
-                f"key_facts is missing concept '{concept}' but the fixture "
-                "has entries for it."
+                f"key_facts is missing concept '{concept}' but the fixture has entries for it."
             )
             selected_end = key_facts[concept]["end"]
             assert selected_end == max_end, (
@@ -282,9 +272,7 @@ class TestModeA:
         with patch("requests.get", return_value=_mock_resp(cf)):
             result = ai_advisor._fetch_fundamentals_for_ticker("MSFT")
 
-        assert result.get("available") is True, (
-            f"available=False. reason={result.get('reason')!r}"
-        )
+        assert result.get("available") is True, f"available=False. reason={result.get('reason')!r}"
         key_facts = result["payload"]["key_facts"]
         assert "Revenues" in key_facts, (
             "key_facts is missing 'Revenues' concept. Fixture has revenue tags."
@@ -322,9 +310,7 @@ class TestModeA:
         with patch("requests.get", return_value=_mock_resp(cf)):
             result = ai_advisor._fetch_fundamentals_for_ticker("MSFT")
 
-        assert result.get("available") is True, (
-            f"available=False. reason={result.get('reason')!r}"
-        )
+        assert result.get("available") is True, f"available=False. reason={result.get('reason')!r}"
         selected_val = result["payload"]["key_facts"]["Revenues"]["value"]
         assert selected_val != frozen_val, (
             f"Mode A defect: producer returned the frozen legacy value={frozen_val!r}. "
@@ -368,9 +354,7 @@ class TestCrossTag:
         # Use a ticker not in the CIK cache to force the tickers-JSON slow path.
         # We mock requests.get to return the tickers-JSON first, then companyfacts.
         cik = cf["cik"]
-        tickers_json = {
-            "0": {"ticker": "CRST", "cik_str": str(cik), "title": "CrossTag Test Corp"}
-        }
+        tickers_json = {"0": {"ticker": "CRST", "cik_str": str(cik), "title": "CrossTag Test Corp"}}
 
         responses = iter([_mock_resp(tickers_json), _mock_resp(cf)])
 
@@ -423,15 +407,11 @@ class TestCrossTag:
             if tag_data:
                 for unit_entries in tag_data.get("units", {}).values():
                     if isinstance(unit_entries, list):
-                        all_ends.extend(
-                            e["end"] for e in unit_entries if "end" in e
-                        )
+                        all_ends.extend(e["end"] for e in unit_entries if "end" in e)
         true_max_end = max(all_ends)
 
         cik = cf["cik"]
-        tickers_json = {
-            "0": {"ticker": "CRST", "cik_str": str(cik), "title": "CrossTag Test Corp"}
-        }
+        tickers_json = {"0": {"ticker": "CRST", "cik_str": str(cik), "title": "CrossTag Test Corp"}}
         responses = iter([_mock_resp(tickers_json), _mock_resp(cf)])
 
         import ai_advisor
@@ -441,8 +421,7 @@ class TestCrossTag:
 
         if not result.get("available"):
             pytest.skip(
-                f"available=False — cannot verify cross-tag union. "
-                f"reason={result.get('reason')!r}"
+                f"available=False — cannot verify cross-tag union. reason={result.get('reason')!r}"
             )
         selected_end = result["payload"]["key_facts"]["Revenues"]["end"]
         assert selected_end == true_max_end, (
@@ -477,9 +456,7 @@ class TestPayloadShape:
         with patch("requests.get", return_value=_mock_resp(cf)):
             result = ai_advisor._fetch_fundamentals_for_ticker("JPM")
 
-        assert result.get("available") is True, (
-            f"available=False. reason={result.get('reason')!r}"
-        )
+        assert result.get("available") is True, f"available=False. reason={result.get('reason')!r}"
         actual_keys = set(result["payload"]["key_facts"].keys())
         # The fixture has all 5 concepts so we expect exactly the full set.
         assert actual_keys == _EXPECTED_KEY_FACTS_KEYS, (
@@ -503,9 +480,7 @@ class TestPayloadShape:
         with patch("requests.get", return_value=_mock_resp(cf)):
             result = ai_advisor._fetch_fundamentals_for_ticker("JPM")
 
-        assert result.get("available") is True, (
-            f"available=False. reason={result.get('reason')!r}"
-        )
+        assert result.get("available") is True, f"available=False. reason={result.get('reason')!r}"
         key_facts = result["payload"]["key_facts"]
         for concept, entry in key_facts.items():
             actual_fields = set(entry.keys())
@@ -530,17 +505,11 @@ class TestPayloadShape:
         with patch("requests.get", return_value=_mock_resp(cf)):
             result = ai_advisor._fetch_fundamentals_for_ticker("JPM")
 
-        assert result.get("available") is True, (
-            f"available=False. reason={result.get('reason')!r}"
-        )
+        assert result.get("available") is True, f"available=False. reason={result.get('reason')!r}"
         sources = result.get("sources", [])
-        assert isinstance(sources, list), (
-            f"sources must be a list, got {type(sources).__name__}"
-        )
+        assert isinstance(sources, list), f"sources must be a list, got {type(sources).__name__}"
         for i, src in enumerate(sources):
-            assert isinstance(src, dict), (
-                f"sources[{i}] must be a dict, got {type(src).__name__}"
-            )
+            assert isinstance(src, dict), f"sources[{i}] must be a dict, got {type(src).__name__}"
             for field in ("title", "url", "published", "lens"):
                 assert field in src, (
                     f"sources[{i}] missing field '{field}'. "
@@ -601,9 +570,7 @@ class TestHonestDegradation:
         }
 
         # Use a CIK-cache miss ticker so we need a tickers-JSON response first.
-        tickers_json = {
-            "0": {"ticker": "NREV", "cik_str": "1111111", "title": "NoRevenue Corp"}
-        }
+        tickers_json = {"0": {"ticker": "NREV", "cik_str": "1111111", "title": "NoRevenue Corp"}}
         responses = iter([_mock_resp(tickers_json), _mock_resp(cf)])
 
         import ai_advisor
@@ -642,8 +609,7 @@ class TestHonestDegradation:
             result = ai_advisor._fetch_fundamentals_for_ticker("JPM")
 
         assert result.get("available") is False, (
-            "fetch failure must return available=False. "
-            f"Got available={result.get('available')!r}"
+            f"fetch failure must return available=False. Got available={result.get('available')!r}"
         )
         reason = result.get("reason", "")
         assert isinstance(reason, str) and reason.strip(), (
@@ -770,9 +736,7 @@ class TestNeverRaising:
         import ai_advisor
 
         cik = companyfacts_data.get("cik", 9999999)
-        tickers_json = {
-            "0": {"ticker": "MALF", "cik_str": str(cik), "title": "Malformed Corp"}
-        }
+        tickers_json = {"0": {"ticker": "MALF", "cik_str": str(cik), "title": "Malformed Corp"}}
         responses = iter([_mock_resp(tickers_json), _mock_resp(companyfacts_data)])
         with patch("requests.get", side_effect=lambda *a, **k: next(responses)):
             return ai_advisor._fetch_fundamentals_for_ticker("MALF")
@@ -783,13 +747,9 @@ class TestNeverRaising:
         case = next(c for c in cases if c["label"] == "missing_units_key")
         result = self._call_for_malformed(case["companyfacts"])
         # Result must be a dict with an 'available' bool key — no exception.
-        assert isinstance(result, dict), (
-            "Producer must return a dict even for malformed input."
-        )
+        assert isinstance(result, dict), "Producer must return a dict even for malformed input."
         assert "available" in result, "Result must have 'available' key."
-        assert isinstance(result["available"], bool), (
-            "result['available'] must be bool."
-        )
+        assert isinstance(result["available"], bool), "result['available'] must be bool."
 
     def test_nonlist_unit_entries_does_not_raise(self):
         """AC-7: units value is a dict instead of a list — no exception."""
@@ -902,9 +862,7 @@ class TestEdgeCases:
         expected_max_end = max(e["end"] for e in all_entries)
         expected_val = next(e["val"] for e in all_entries if e["end"] == expected_max_end)
 
-        tickers_json = {
-            "0": {"ticker": "TQOC", "cik_str": "2222222", "title": "10Q Only Corp"}
-        }
+        tickers_json = {"0": {"ticker": "TQOC", "cik_str": "2222222", "title": "10Q Only Corp"}}
         responses = iter([_mock_resp(tickers_json), _mock_resp(cf)])
 
         import ai_advisor
@@ -976,9 +934,7 @@ class TestEdgeCases:
         max_filed = max(e["filed"] for e in entries)
         expected_val = next(e["val"] for e in entries if e["filed"] == max_filed)
 
-        tickers_json = {
-            "0": {"ticker": "REST", "cik_str": "3333333", "title": "Restatement Corp"}
-        }
+        tickers_json = {"0": {"ticker": "REST", "cik_str": "3333333", "title": "Restatement Corp"}}
         responses = iter([_mock_resp(tickers_json), _mock_resp(cf)])
 
         import ai_advisor
@@ -987,8 +943,7 @@ class TestEdgeCases:
             result = ai_advisor._fetch_fundamentals_for_ticker("REST")
 
         assert result.get("available") is True, (
-            f"Restatement fixture should return available=True. "
-            f"Got: {result.get('reason')!r}"
+            f"Restatement fixture should return available=True. Got: {result.get('reason')!r}"
         )
         kf = result["payload"]["key_facts"]
         assert "Revenues" in kf

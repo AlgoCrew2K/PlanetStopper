@@ -117,6 +117,7 @@ def isolated_cache_db(tmp_path, monkeypatch):
     monkeypatch.setenv("ATLAS_CACHE_DB_PATH", db_path)
     # Init the schema
     from advisors import atlas_cache as ac
+
     ac.init_atlas_cache()
     return db_path
 
@@ -232,9 +233,7 @@ class TestHangIsBounded:
             result = mod.load_community_strategies()
             elapsed = time.monotonic() - t0
 
-        assert result["available"] is False, (
-            "Timed-out fetch must return available=False"
-        )
+        assert result["available"] is False, "Timed-out fetch must return available=False"
         assert elapsed < _BOUND + _MARGIN_S, (
             f"AC-3 FAIL: load_community_strategies took {elapsed:.2f}s when the worker "
             f"sleeps {sleep_secs:.0f}s. Expected < {_BOUND + _MARGIN_S:.1f}s. "
@@ -347,7 +346,10 @@ class TestNeverRaisingAndD1:
                 "advisors.atlas_cache.cached_pull",
                 side_effect=lambda col, fn, **kw: fn(),
             ),
-            patch("pymongo.MongoClient", side_effect=lambda *a, **kw: (time.sleep(_BOUND * 3), None)[1]),
+            patch(
+                "pymongo.MongoClient",
+                side_effect=lambda *a, **kw: (time.sleep(_BOUND * 3), None)[1],
+            ),
         ):
             result = mod.load_community_strategies()
 
@@ -368,9 +370,7 @@ class TestNeverRaisingAndD1:
             "Use a hardcoded string, not type(exc).__name__."
         )
 
-    def test_raising_mongo_returns_available_false_no_raise_no_secret_leak(
-        self, mod, monkeypatch
-    ):
+    def test_raising_mongo_returns_available_false_no_raise_no_secret_leak(self, mod, monkeypatch):
         """AC-5: when MongoClient raises with a credential-containing message,
         load_community_strategies must:
         1. NOT raise (never-raising contract).
@@ -451,9 +451,15 @@ class TestNeverRaisingAndD1:
 
         scenarios = [
             # cached_pull returns None (documented sentinel for "fetch failed, no stale row")
-            ("cached_pull returns None", patch("advisors.atlas_cache.cached_pull", return_value=None)),
+            (
+                "cached_pull returns None",
+                patch("advisors.atlas_cache.cached_pull", return_value=None),
+            ),
             # cached_pull raises
-            ("cached_pull raises", patch("advisors.atlas_cache.cached_pull", side_effect=RuntimeError("db gone"))),
+            (
+                "cached_pull raises",
+                patch("advisors.atlas_cache.cached_pull", side_effect=RuntimeError("db gone")),
+            ),
             # cached_pull returns garbage
             ("cached_pull returns int", patch("advisors.atlas_cache.cached_pull", return_value=42)),
         ]
@@ -501,7 +507,9 @@ class TestCachePathIntact:
 
         def _should_not_be_called(*args, **kwargs):
             mongo_call_count["n"] += 1
-            raise AssertionError("MongoClient called on cache HIT — timeout wrapper ran unnecessarily")
+            raise AssertionError(
+                "MongoClient called on cache HIT — timeout wrapper ran unnecessarily"
+            )
 
         with patch("pymongo.MongoClient", side_effect=_should_not_be_called):
             result = mod.load_community_strategies(force_refresh=False)
@@ -675,6 +683,7 @@ class TestRouteDegradesTemplateOnly:
     def flask_client(self):
         """Flask test client without the tests/app autouse community stub."""
         import app as app_module
+
         app_module.app.config["TESTING"] = True
         with app_module.app.test_client() as c:
             yield c
@@ -749,9 +758,7 @@ class TestRouteDegradesTemplateOnly:
             "The wall-clock timeout wrapper must prevent this."
         )
 
-    def test_post_run_with_timeout_response_has_expected_shape(
-        self, flask_client, monkeypatch
-    ):
+    def test_post_run_with_timeout_response_has_expected_shape(self, flask_client, monkeypatch):
         """AC-2: template-only degradation when Atlas times out — response shape is preserved.
 
         When community candidates are unavailable (Atlas timeout), the route degrades

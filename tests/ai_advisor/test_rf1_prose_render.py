@@ -233,9 +233,7 @@ def test_council_derivatives_prose_passes_through_unchanged():
     assert "VIX" in result, (
         f"Council derivatives prose must pass through. Expected 'VIX'. Got: {result!r}"
     )
-    assert "CONTANGO" in result, (
-        f"Council prose passthrough — 'CONTANGO' missing. Got: {result!r}"
-    )
+    assert "CONTANGO" in result, f"Council prose passthrough — 'CONTANGO' missing. Got: {result!r}"
     _assert_no_raw_json(result, "derivatives")
 
 
@@ -398,9 +396,7 @@ def test_derivatives_json_humanized_no_raw_json_markers():
     assert any(
         token in result.lower()
         for token in ("contango", "backwardation", "term structure", "neutral", "regime")
-    ), (
-        f"Humanized derivatives must include regime/term-structure signal. Got: {result!r}."
-    )
+    ), f"Humanized derivatives must include regime/term-structure signal. Got: {result!r}."
 
     assert len(result.strip()) > 0, "humanize_lens_summary must not return empty string."
 
@@ -567,26 +563,40 @@ def test_fundamentals_humanized_references_coverage_count():
     humanize = _import_humanize()
 
     # Minimal 2-ticker fundamentals JSON (trimmed from the full row 77 fixture)
-    minimal_fund_json = json.dumps({
-        "tickers": {
-            "AAPL": {
-                "entity_name": "Apple Inc.",
-                "cik": 320193,
-                "key_facts": {
-                    "Revenues": {"label": "Revenue", "value": 416161000000, "unit": "USD",
-                                 "end": "2025-09-27", "filed": "2025-10-31", "form": "10-K"}
-                }
-            },
-            "AMZN": {
-                "entity_name": "AMAZON COM INC",
-                "cik": 1018724,
-                "key_facts": {
-                    "Revenues": {"label": "Revenue", "value": 716924000000, "unit": "USD",
-                                 "end": "2025-12-31", "filed": "2026-02-06", "form": "10-K"}
-                }
+    minimal_fund_json = json.dumps(
+        {
+            "tickers": {
+                "AAPL": {
+                    "entity_name": "Apple Inc.",
+                    "cik": 320193,
+                    "key_facts": {
+                        "Revenues": {
+                            "label": "Revenue",
+                            "value": 416161000000,
+                            "unit": "USD",
+                            "end": "2025-09-27",
+                            "filed": "2025-10-31",
+                            "form": "10-K",
+                        }
+                    },
+                },
+                "AMZN": {
+                    "entity_name": "AMAZON COM INC",
+                    "cik": 1018724,
+                    "key_facts": {
+                        "Revenues": {
+                            "label": "Revenue",
+                            "value": 716924000000,
+                            "unit": "USD",
+                            "end": "2025-12-31",
+                            "filed": "2026-02-06",
+                            "form": "10-K",
+                        }
+                    },
+                },
             }
         }
-    })
+    )
 
     entry = {"available": True, "summary": minimal_fund_json, "sources": []}
     result = humanize("fundamentals", entry)
@@ -776,12 +786,12 @@ def test_humanize_never_raises_on_non_string_summary():
 
     # Unexpected types that must not cause a crash
     junk_inputs = [
-        42,           # int
-        3.14,         # float
-        [1, 2, 3],    # list
-        {"a": "b"},   # already-parsed dict (not a string)
-        True,         # bool
-        b"bytes",     # bytes
+        42,  # int
+        3.14,  # float
+        [1, 2, 3],  # list
+        {"a": "b"},  # already-parsed dict (not a string)
+        True,  # bool
+        b"bytes",  # bytes
     ]
 
     for junk in junk_inputs:
@@ -1085,6 +1095,7 @@ def test_route_renders_no_generic_json_markers_in_prism_lenses(client, monkeypat
     for lens_text in lens_texts:
         # Unescape HTML entities to get the actual rendered string
         import html as html_module
+
         decoded = html_module.unescape(lens_text)
         assert '{"' not in decoded, (
             f"Raw JSON object marker '{{\"' found in a prism-lens-text paragraph. "
@@ -1302,15 +1313,17 @@ def test_obs_raw_preview_does_not_emit_raw_json_for_market_prism_rows(client, mo
         "subject_type": "global",
         "verdict": "neutral",
         "created_at": "2026-06-18 09:03:18",
-        "raw_response": json.dumps({
-            "overall_sentiment": "neutral",
-            "per_lens_digest": {
-                "technicals": {
-                    "available": True,
-                    "summary": _TECH_JSON_SUMMARY,
-                }
+        "raw_response": json.dumps(
+            {
+                "overall_sentiment": "neutral",
+                "per_lens_digest": {
+                    "technicals": {
+                        "available": True,
+                        "summary": _TECH_JSON_SUMMARY,
+                    }
+                },
             }
-        }),
+        ),
     }
 
     def _fake_get_observations(role, *args, **kwargs):

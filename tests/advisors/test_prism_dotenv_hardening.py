@@ -103,9 +103,7 @@ def _init_db_at(db_path: pathlib.Path) -> None:
         text=True,
         timeout=30,
     )
-    assert result.returncode == 0, (
-        f"init_db helper failed: stderr={result.stderr!r}"
-    )
+    assert result.returncode == 0, f"init_db helper failed: stderr={result.stderr!r}"
 
 
 # ===========================================================================
@@ -144,15 +142,20 @@ def test_cli_honors_dotenv_db_path_when_not_in_shell_env(tmp_path):
 
     result = subprocess.run(
         [
-            _PYTHON, "-m", "advisors.prism_audit_write",
-            "--run-id", "dotenv-test-run-001",
-            "--role", "test-agent",
-            "--phase", "test-phase",
+            _PYTHON,
+            "-m",
+            "advisors.prism_audit_write",
+            "--run-id",
+            "dotenv-test-run-001",
+            "--role",
+            "test-agent",
+            "--phase",
+            "test-phase",
         ],
         input="test content from AC-1 dotenv hardening",
         capture_output=True,
         text=True,
-        cwd=str(tmp_path),      # cwd = tmp_path, where .env lives
+        cwd=str(tmp_path),  # cwd = tmp_path, where .env lives
         env=env,
         timeout=30,
     )
@@ -221,10 +224,15 @@ def test_cli_shell_env_wins_over_dotenv(tmp_path):
 
     result = subprocess.run(
         [
-            _PYTHON, "-m", "advisors.prism_audit_write",
-            "--run-id", "shell-env-wins-run-001",
-            "--role", "test-shell-agent",
-            "--phase", "test-shell-phase",
+            _PYTHON,
+            "-m",
+            "advisors.prism_audit_write",
+            "--run-id",
+            "shell-env-wins-run-001",
+            "--role",
+            "test-shell-agent",
+            "--phase",
+            "test-shell-phase",
         ],
         input="shell-env-wins test content",
         capture_output=True,
@@ -302,10 +310,15 @@ def test_cli_missing_dotenv_does_not_crash(tmp_path):
 
     result = subprocess.run(
         [
-            _PYTHON, "-m", "advisors.prism_audit_write",
-            "--run-id", "nodotenv-test-run-001",
-            "--role", "test-nodotenv",
-            "--phase", "test-phase",
+            _PYTHON,
+            "-m",
+            "advisors.prism_audit_write",
+            "--run-id",
+            "nodotenv-test-run-001",
+            "--role",
+            "test-nodotenv",
+            "--phase",
+            "test-phase",
         ],
         input="no dotenv test content",
         capture_output=True,
@@ -346,6 +359,5 @@ def test_cli_missing_dotenv_does_not_crash(tmp_path):
         finally:
             con.close()
         assert len(rows) == 1, (
-            "CLI exited 0 but row not found in DB. "
-            f"DB: {db_path}. stdout: {result.stdout!r}"
+            f"CLI exited 0 but row not found in DB. DB: {db_path}. stdout: {result.stdout!r}"
         )

@@ -720,9 +720,7 @@ class TestPhase2GdeltToneWiring:
             f"Got {tone_score}."
         )
 
-    def test_tone_score_none_when_tone_unavailable_but_artlist_ok(
-        self, gdelt_shape_fixture: dict
-    ):
+    def test_tone_score_none_when_tone_unavailable_but_artlist_ok(self, gdelt_shape_fixture: dict):
         """When tone is unavailable but corpus has articles: available=True, tone_score=None.
 
         Per-source isolation: a failed tone signal must NOT invalidate corpus citations.
@@ -752,7 +750,7 @@ class TestPhase2GdeltToneWiring:
         # tone=None but corpus has articles → available=True (corpus availability wins)
         corpus_result = {
             "available": True,  # articles make it available even without tone
-            "tone": None,       # tone path failed
+            "tone": None,  # tone path failed
             "corpus": corpus_articles,
             "reason": None,
         }
@@ -811,8 +809,7 @@ class TestPhase2GdeltToneWiring:
         )
         sources = block.get("sources", [])
         assert sources == [], (
-            f"sources must be [] when artlist failed (no citations to emit). "
-            f"Got {sources!r}."
+            f"sources must be [] when artlist failed (no citations to emit). Got {sources!r}."
         )
 
     def test_both_fail_returns_available_false_with_reason(self):
@@ -835,8 +832,7 @@ class TestPhase2GdeltToneWiring:
             block = ai_advisor._build_sentiment_section()
 
         assert block.get("available") is False, (
-            "When both tone and artlist fail, available must be False. "
-            f"Got: {block!r}"
+            f"When both tone and artlist fail, available must be False. Got: {block!r}"
         )
         reason = block.get("reason", "")
         assert isinstance(reason, str) and reason.strip(), (
@@ -1010,8 +1006,7 @@ class TestPhase2GdeltToneWiring:
             block = ai_advisor._build_sentiment_section()
 
         assert block.get("available") is True, (
-            f"Combined path (tone ok + corpus ok) must return available=True. "
-            f"Got: {block!r}"
+            f"Combined path (tone ok + corpus ok) must return available=True. Got: {block!r}"
         )
         payload = block.get("payload") or {}
         tone_score = payload.get("tone_score")

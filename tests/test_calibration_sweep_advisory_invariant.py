@@ -32,6 +32,7 @@ _REPORT_SCRIPT = _WORKTREE / "scripts" / "vwap-calibration-report.py"
 # Helper: load the report script as a module without executing __main__
 # ---------------------------------------------------------------------------
 
+
 def _load_report_module():
     """Import scripts/vwap-calibration-report.py as a module.
 
@@ -44,9 +45,7 @@ def _load_report_module():
             f"scripts/vwap-calibration-report.py does not exist at "
             f"{_REPORT_SCRIPT}. Implementer must create it. (AC-3 / AC-2)"
         )
-    spec = importlib.util.spec_from_file_location(
-        "vwap_calibration_report", _REPORT_SCRIPT
-    )
+    spec = importlib.util.spec_from_file_location("vwap_calibration_report", _REPORT_SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -81,12 +80,14 @@ class _DatabaseWriteSentinel(types.ModuleType):
 
     def __getattr__(self, name):
         if name in _DB_WRITE_SYMBOLS:
+
             def _raiser(*args, **kwargs):
                 raise AssertionError(
                     f"AC-3 VIOLATION: vwap-calibration-report.py called "
                     f"database.{name}() — the report is advisory-only and "
                     f"must NEVER write to the state DB."
                 )
+
             return _raiser
         # Pass through read-only / non-mutating symbols without raising
         return super().__getattribute__(name)
@@ -155,6 +156,7 @@ def test_report_generator_does_not_write_to_database(monkeypatch):
 # AC-3.2 — Import-walk: no database write symbols at module level
 # ---------------------------------------------------------------------------
 
+
 def test_report_module_does_not_import_database_write_path_at_module_level():
     """The report script must not import database write-path symbols.
 
@@ -177,6 +179,7 @@ def test_report_module_does_not_import_database_write_path_at_module_level():
 # ---------------------------------------------------------------------------
 # AC-3.3 — (Secondary) alpha_bot_execution not imported at module level
 # ---------------------------------------------------------------------------
+
 
 def test_report_module_does_not_import_alpha_bot_execution():
     """The report script must not import alpha_bot_execution (the live engine).
@@ -208,6 +211,7 @@ def test_report_module_does_not_import_alpha_bot_execution():
 # AC-3.4 — run_calibration_sweep return value has no write-confirmation keys
 # ---------------------------------------------------------------------------
 
+
 def test_run_calibration_sweep_return_has_no_write_confirmation_keys():
     """run_calibration_sweep return dicts must not contain write-confirmation keys.
 
@@ -238,7 +242,7 @@ def test_run_calibration_sweep_return_has_no_write_confirmation_keys():
         "save_autotune_run",
         "init_db(",
         "get_connection(",
-        ".execute(",          # raw SQL execute
+        ".execute(",  # raw SQL execute
         "bot_state",
     ]
 

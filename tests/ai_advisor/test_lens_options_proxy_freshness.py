@@ -75,6 +75,7 @@ _SENTINEL_API_KEY = "TEST_FRED_KEY_NOT_REAL"
 # is NOT a test of the production code, it is a test of the fixture itself.
 # ---------------------------------------------------------------------------
 
+
 def _validate_fred_observations_shape(data: dict, fixture_path: pathlib.Path) -> None:
     """Assert the fixture matches the FRED observations API response schema.
 
@@ -86,9 +87,19 @@ def _validate_fred_observations_shape(data: dict, fixture_path: pathlib.Path) ->
     Each observation must carry: realtime_start, realtime_end, date, value.
     """
     top_level_required = {
-        "realtime_start", "realtime_end", "observation_start", "observation_end",
-        "units", "output_type", "file_type", "order_by", "sort_order",
-        "count", "offset", "limit", "observations",
+        "realtime_start",
+        "realtime_end",
+        "observation_start",
+        "observation_end",
+        "units",
+        "output_type",
+        "file_type",
+        "order_by",
+        "sort_order",
+        "count",
+        "offset",
+        "limit",
+        "observations",
     }
     for field in top_level_required:
         assert field in data, (
@@ -301,9 +312,7 @@ class TestRecentWindowFetch:
         assert isinstance(returned_value, float), (
             f"_parse_latest_observation must return a float value, got {type(returned_value)}"
         )
-        assert returned_value > 0, (
-            f"VIX values are strictly positive, got {returned_value!r}"
-        )
+        assert returned_value > 0, f"VIX values are strictly positive, got {returned_value!r}"
 
     def test_skips_dot_value_observations(self, fresh_fred_fixture):
         """_parse_latest_observation skips observations with value='.'.
@@ -364,8 +373,12 @@ class TestRecentWindowFetch:
             m.raise_for_status = MagicMock()
             m.json.return_value = {
                 "observations": [
-                    {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16",
-                     "date": "2026-06-10", "value": "15.0"}
+                    {
+                        "realtime_start": "2026-06-16",
+                        "realtime_end": "2026-06-16",
+                        "date": "2026-06-10",
+                        "value": "15.0",
+                    }
                 ]
             }
             return m
@@ -385,11 +398,7 @@ class TestRecentWindowFetch:
 
             # The stale-bug combination: asc + 2020-01-01 start + limit=100.
             # Any one of these constraints changing breaks the stale-batch pattern.
-            stale_bug_present = (
-                obs_start == "2020-01-01"
-                and sort_order == "asc"
-                and limit == 100
-            )
+            stale_bug_present = obs_start == "2020-01-01" and sort_order == "asc" and limit == 100
             assert not stale_bug_present, (
                 f"_fetch_fred_series uses the stale-batch query combination "
                 f"(sort_order='asc', limit=100, observation_start='2020-01-01'). "
@@ -407,10 +416,18 @@ class TestRecentWindowFetch:
 
         all_dot_data = {
             "observations": [
-                {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16",
-                 "date": "2026-06-10", "value": "."},
-                {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16",
-                 "date": "2026-06-11", "value": "."},
+                {
+                    "realtime_start": "2026-06-16",
+                    "realtime_end": "2026-06-16",
+                    "date": "2026-06-10",
+                    "value": ".",
+                },
+                {
+                    "realtime_start": "2026-06-16",
+                    "realtime_end": "2026-06-16",
+                    "date": "2026-06-11",
+                    "value": ".",
+                },
             ]
         }
         result = _proxy._parse_latest_observation(all_dot_data)
@@ -425,8 +442,7 @@ class TestRecentWindowFetch:
 
         result = _proxy._parse_latest_observation({"observations": []})
         assert result is None, (
-            "_parse_latest_observation must return None on empty observations list, "
-            f"got {result!r}"
+            f"_parse_latest_observation must return None on empty observations list, got {result!r}"
         )
 
 
@@ -531,8 +547,7 @@ class TestFreshnessGuard:
             result = _proxy._fetch_options_proxy()
 
         assert "risk_read" not in result, (
-            f"Stale data result must NOT carry risk_read. "
-            f"Got result keys: {list(result.keys())!r}."
+            f"Stale data result must NOT carry risk_read. Got result keys: {list(result.keys())!r}."
         )
 
     def test_stale_obs_returns_no_as_of_date(self, stale_fred_fixture):
@@ -762,9 +777,7 @@ class TestAsOfDateTruthful:
         try:
             parsed = datetime.date.fromisoformat(as_of)
         except (ValueError, TypeError) as exc:
-            pytest.fail(
-                f"as_of_date={as_of!r} is not a valid ISO date: {exc!r}"
-            )
+            pytest.fail(f"as_of_date={as_of!r} is not a valid ISO date: {exc!r}")
         # Must be in the past (or present) relative to _TODAY_SENTINEL.
         assert parsed <= _TODAY_SENTINEL, (
             f"as_of_date {parsed} must be <= _today() sentinel {_TODAY_SENTINEL} "
@@ -800,9 +813,7 @@ class TestHonestAvailabilityPreserved:
         ):
             result = _proxy._fetch_options_proxy()
 
-        assert result.get("available") is False, (
-            "ConnectionError must return available=False"
-        )
+        assert result.get("available") is False, "ConnectionError must return available=False"
         assert result.get("reason") == "ConnectionError", (
             f"D-1: reason must be 'ConnectionError', got {result.get('reason')!r}"
         )
@@ -846,9 +857,7 @@ class TestHonestAvailabilityPreserved:
         ):
             result = _proxy._fetch_options_proxy()
 
-        assert result.get("available") is False, (
-            "Exhausted 429 retries must return available=False"
-        )
+        assert result.get("available") is False, "Exhausted 429 retries must return available=False"
         reason = result.get("reason", "")
         assert isinstance(reason, str) and reason, "reason must be a non-empty string"
         # D-1: reason is type(exc).__name__ — HTTPError
@@ -865,8 +874,12 @@ class TestHonestAvailabilityPreserved:
 
         all_dots = {
             "observations": [
-                {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16",
-                 "date": "2026-06-10", "value": "."},
+                {
+                    "realtime_start": "2026-06-16",
+                    "realtime_end": "2026-06-16",
+                    "date": "2026-06-10",
+                    "value": ".",
+                },
             ]
         }
         # Second call (VXVCLS) won't be reached because VIXCLS fails first.
@@ -961,8 +974,7 @@ class TestRunDateInjectable:
 
         # Walk the module body (top-level only) for a FunctionDef named _today.
         today_fn_defined = any(
-            isinstance(node, ast.FunctionDef) and node.name == "_today"
-            for node in tree.body
+            isinstance(node, ast.FunctionDef) and node.name == "_today" for node in tree.body
         )
         assert today_fn_defined, (
             "advisors/lens_options_proxy.py must define '_today' as a module-level "
@@ -1090,9 +1102,7 @@ class TestBoundedRetryPreserved:
             "_OPTIONS_PROXY_MAX_ATTEMPTS must still exist after the fix"
         )
         assert isinstance(_proxy._OPTIONS_PROXY_MAX_ATTEMPTS, int)
-        assert _proxy._OPTIONS_PROXY_MAX_ATTEMPTS >= 1, (
-            "_OPTIONS_PROXY_MAX_ATTEMPTS must be >= 1"
-        )
+        assert _proxy._OPTIONS_PROXY_MAX_ATTEMPTS >= 1, "_OPTIONS_PROXY_MAX_ATTEMPTS must be >= 1"
 
     def test_backoff_cap_constant_present(self):
         """_OPTIONS_PROXY_BACKOFF_CAP_S still exists and is a positive float."""
@@ -1218,10 +1228,18 @@ class TestWeekendHolidayEdgeCase:
 
         near_fresh_response = {
             "observations": [
-                {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16",
-                 "date": "2026-06-10", "value": "."},
-                {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16",
-                 "date": obs_date_str, "value": "16.45"},
+                {
+                    "realtime_start": "2026-06-16",
+                    "realtime_end": "2026-06-16",
+                    "date": "2026-06-10",
+                    "value": ".",
+                },
+                {
+                    "realtime_start": "2026-06-16",
+                    "realtime_end": "2026-06-16",
+                    "date": obs_date_str,
+                    "value": "16.45",
+                },
             ]
         }
 
@@ -1251,8 +1269,12 @@ class TestWeekendHolidayEdgeCase:
 
         four_day_old_response = {
             "observations": [
-                {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16",
-                 "date": obs_date_str, "value": "17.11"},
+                {
+                    "realtime_start": "2026-06-16",
+                    "realtime_end": "2026-06-16",
+                    "date": obs_date_str,
+                    "value": "17.11",
+                },
             ]
         }
 
@@ -1287,8 +1309,12 @@ class TestWeekendHolidayEdgeCase:
 
         stale_response = {
             "observations": [
-                {"realtime_start": "2026-06-16", "realtime_end": "2026-06-16",
-                 "date": stale_date.isoformat(), "value": "21.00"},
+                {
+                    "realtime_start": "2026-06-16",
+                    "realtime_end": "2026-06-16",
+                    "date": stale_date.isoformat(),
+                    "value": "21.00",
+                },
             ]
         }
 
@@ -1351,6 +1377,4 @@ class TestSourceCitationAlwaysPresent:
         ):
             result = _proxy._fetch_options_proxy()
 
-        assert "source" in result, (
-            "source must always be present even on network failure"
-        )
+        assert "source" in result, "source must always be present even on network failure"

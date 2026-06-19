@@ -26,6 +26,7 @@ _REPORT_SCRIPT = pathlib.Path(__file__).parent.parent / "scripts" / "vwap-calibr
 # Fixture loading
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def fixture():
     return json.loads(_FIXTURE_PATH.read_text())
@@ -34,6 +35,7 @@ def fixture():
 # ---------------------------------------------------------------------------
 # Helper: build fixture-derived report rows (what the expanded sweep emits)
 # ---------------------------------------------------------------------------
+
 
 def _build_fixture_rows(fixture: dict) -> list[dict]:
     """Construct report rows from the fixture — no hardcoded producer values."""
@@ -47,26 +49,26 @@ def _build_fixture_rows(fixture: dict) -> list[dict]:
         flag = (proposed_tc / current_tc) > flip_threshold if current_tc > 0 else False
 
         for param_name in fixture["required_search_space_keys"]:
-            rows.append({
-                "symphony_id": sym_id,
-                "param_name": param_name,
-                "current_value": current[param_name],
-                "proposed_value": proposed[param_name],
-                "expected_trigger_freq_change": float(proposed_tc - current_tc),
-                "pbo_veto_status": sym_data["pbo_veto_status"],
-                "flag_for_operator_review": flag,
-                "haircut_outcome": sym_data["haircut_outcome"],
-                "study_name": (
-                    f"20260618T000000Z__{sym_id}"
-                    + sym_data["study_name_suffix"]
-                ),
-            })
+            rows.append(
+                {
+                    "symphony_id": sym_id,
+                    "param_name": param_name,
+                    "current_value": current[param_name],
+                    "proposed_value": proposed[param_name],
+                    "expected_trigger_freq_change": float(proposed_tc - current_tc),
+                    "pbo_veto_status": sym_data["pbo_veto_status"],
+                    "flag_for_operator_review": flag,
+                    "haircut_outcome": sym_data["haircut_outcome"],
+                    "study_name": (f"20260618T000000Z__{sym_id}" + sym_data["study_name_suffix"]),
+                }
+            )
     return rows
 
 
 # ---------------------------------------------------------------------------
 # Helper: load the report module
 # ---------------------------------------------------------------------------
+
 
 def _load_report_module():
     if not _REPORT_SCRIPT.exists():
@@ -83,6 +85,7 @@ def _load_report_module():
 # ---------------------------------------------------------------------------
 # AC-2.1 — report entry point exists and is callable
 # ---------------------------------------------------------------------------
+
 
 def test_report_script_exposes_callable_entry_point():
     """scripts/vwap-calibration-report.py must expose generate_report, render_report,
@@ -105,6 +108,7 @@ def test_report_script_exposes_callable_entry_point():
 # ---------------------------------------------------------------------------
 # AC-2.2 — report output contains all required per-symphony fields
 # ---------------------------------------------------------------------------
+
 
 def test_report_contains_required_row_keys(fixture):
     """Each report row must include the required fields listed in the fixture.
@@ -151,6 +155,7 @@ def test_report_contains_required_row_keys(fixture):
 # AC-2.3 — report covers each symphony from the fixture (not fewer)
 # ---------------------------------------------------------------------------
 
+
 def test_report_covers_all_fixture_symphonies(fixture):
     """The report must produce output for each symphony in the input rows.
 
@@ -186,6 +191,7 @@ def test_report_covers_all_fixture_symphonies(fixture):
 # AC-5.1 — pbo_veto_status key present in every report row
 # ---------------------------------------------------------------------------
 
+
 def test_pbo_veto_status_key_present_in_all_rows(fixture):
     """Every report row must include pbo_veto_status.
 
@@ -193,9 +199,7 @@ def test_pbo_veto_status_key_present_in_all_rows(fixture):
     """
     import autotuner
 
-    assert hasattr(autotuner, "run_calibration_sweep"), (
-        "autotuner.run_calibration_sweep not found"
-    )
+    assert hasattr(autotuner, "run_calibration_sweep"), "autotuner.run_calibration_sweep not found"
     # We cannot call the real sweep (too slow); inspect the return via source
     # or trust AC-2.2 tests for the shape. This test asserts the fixture's
     # required_report_row_keys includes pbo_veto_status (fixture integrity).
@@ -205,9 +209,7 @@ def test_pbo_veto_status_key_present_in_all_rows(fixture):
 
     # Also assert pbo_veto_status is present in the fixture symphonies themselves
     for sym_id, sym_data in fixture["symphonies"].items():
-        assert "pbo_veto_status" in sym_data, (
-            f"Fixture error: {sym_id} missing pbo_veto_status"
-        )
+        assert "pbo_veto_status" in sym_data, f"Fixture error: {sym_id} missing pbo_veto_status"
 
 
 def test_pbo_vetoed_symphony_is_flagged_not_recommended(fixture):
@@ -247,7 +249,7 @@ def test_pbo_vetoed_symphony_is_flagged_not_recommended(fixture):
         assert vetoed_sym in result, f"{vetoed_sym} not mentioned in markdown report"
         # Look for the marker near the symphony mention — we don't hardcode exact text
         sym_idx = result.index(vetoed_sym)
-        context = result[max(0, sym_idx - 50): sym_idx + 200]
+        context = result[max(0, sym_idx - 50) : sym_idx + 200]
         assert any(term in context.lower() for term in ("pbo", "veto", "vetoed")), (
             f"PBO veto status for {vetoed_sym} not surfaced in report. "
             f"Context around symphony mention: {context!r}"
@@ -257,6 +259,7 @@ def test_pbo_vetoed_symphony_is_flagged_not_recommended(fixture):
 # ---------------------------------------------------------------------------
 # AC-6.1 — study names match the required pattern
 # ---------------------------------------------------------------------------
+
 
 def test_study_names_match_calsweep_pattern(fixture):
     """Study names emitted by the sweep must end with __calsweep.
@@ -282,7 +285,11 @@ def test_study_names_are_unique_across_symphonies(fixture):
     Fails RED until run_calibration_sweep generates per-symphony unique names.
     """
     rows = _build_fixture_rows(fixture)
-    study_names = [row["study_name"] for row in rows if row.get("param_name") == fixture["required_search_space_keys"][0]]
+    study_names = [
+        row["study_name"]
+        for row in rows
+        if row.get("param_name") == fixture["required_search_space_keys"][0]
+    ]
     # One study name per symphony (the first param row is the de-dup key)
     assert len(study_names) == len(set(study_names)), (
         f"Duplicate study names detected: {[n for n in study_names if study_names.count(n) > 1]}"
@@ -292,6 +299,7 @@ def test_study_names_are_unique_across_symphonies(fixture):
 # ---------------------------------------------------------------------------
 # AC-7.1 — >2x trigger flip flagged for operator review
 # ---------------------------------------------------------------------------
+
 
 def test_greater_than_2x_trigger_flip_is_flagged(fixture):
     """A symphony whose proposed trigger count exceeds 2x current is flagged.
@@ -314,7 +322,8 @@ def test_greater_than_2x_trigger_flip_is_flagged(fixture):
 
     # Derive which symphonies should be flagged from fixture (not hardcoded sym names)
     expected_flagged = {
-        sid for sid, sd in fixture["symphonies"].items()
+        sid
+        for sid, sd in fixture["symphonies"].items()
         if sd["current_trigger_count"] > 0
         and (sd["proposed_trigger_count"] / sd["current_trigger_count"]) > flip_threshold
     }
@@ -333,10 +342,10 @@ def test_greater_than_2x_trigger_flip_is_flagged(fixture):
         for sym_id in expected_flagged:
             assert sym_id in result, f"Expected-flagged symphony {sym_id} not in report"
             sym_idx = result.index(sym_id)
-            context = result[max(0, sym_idx - 50): sym_idx + 300]
-            assert any(term in context.lower() for term in ("flag", "review", "operator", "2x", ">2")), (
-                f"No operator-review flag found for {sym_id} in report. Context: {context!r}"
-            )
+            context = result[max(0, sym_idx - 50) : sym_idx + 300]
+            assert any(
+                term in context.lower() for term in ("flag", "review", "operator", "2x", ">2")
+            ), f"No operator-review flag found for {sym_id} in report. Context: {context!r}"
 
 
 def test_below_2x_trigger_flip_is_not_flagged(fixture):
@@ -359,7 +368,8 @@ def test_below_2x_trigger_flip_is_not_flagged(fixture):
 
     # Derive which symphonies should NOT be flagged
     expected_not_flagged = {
-        sid for sid, sd in fixture["symphonies"].items()
+        sid
+        for sid, sd in fixture["symphonies"].items()
         if sd["current_trigger_count"] > 0
         and (sd["proposed_trigger_count"] / sd["current_trigger_count"]) <= flip_threshold
     }

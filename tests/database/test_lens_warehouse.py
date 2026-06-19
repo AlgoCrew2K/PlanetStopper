@@ -171,9 +171,7 @@ def _index_names_for_table(conn: sqlite3.Connection, table_name: str) -> set[str
     return {row[0] for row in rows}
 
 
-def _index_covers_columns(
-    conn: sqlite3.Connection, index_name: str, columns: list[str]
-) -> bool:
+def _index_covers_columns(conn: sqlite3.Connection, index_name: str, columns: list[str]) -> bool:
     """Return True if the index covers ALL of the named columns."""
     rows = conn.execute(f"PRAGMA index_info({index_name})").fetchall()
     indexed_cols = {row[2] for row in rows}
@@ -217,9 +215,7 @@ class TestWarehouseInit:
         try:
             cols = _column_names(conn, "lens_snapshots")
             missing = _REQUIRED_COLUMNS - cols
-            assert not missing, (
-                f"lens_snapshots is missing columns: {sorted(missing)}"
-            )
+            assert not missing, f"lens_snapshots is missing columns: {sorted(missing)}"
         finally:
             conn.close()
 
@@ -271,9 +267,7 @@ class TestPersistLensSnapshot:
         assert isinstance(row_id, int), (
             f"persist_lens_snapshot must return int; got {type(row_id).__name__}"
         )
-        assert row_id > 0, (
-            f"persist_lens_snapshot must return a positive row id; got {row_id}"
-        )
+        assert row_id > 0, f"persist_lens_snapshot must return a positive row id; got {row_id}"
 
     def test_returned_id_matches_actual_rowid(self, initialized_warehouse):
         row_id = wh_module.persist_lens_snapshot(
@@ -286,14 +280,10 @@ class TestPersistLensSnapshot:
         )
         conn = _open_wh(initialized_warehouse)
         try:
-            row = conn.execute(
-                "SELECT id FROM lens_snapshots WHERE id = ?", (row_id,)
-            ).fetchone()
+            row = conn.execute("SELECT id FROM lens_snapshots WHERE id = ?", (row_id,)).fetchone()
         finally:
             conn.close()
-        assert row is not None, (
-            f"Row id={row_id} returned by persist_lens_snapshot not found in DB"
-        )
+        assert row is not None, f"Row id={row_id} returned by persist_lens_snapshot not found in DB"
         assert row[0] == row_id
 
     def test_raw_json_is_json_deserializable(self, initialized_warehouse):
@@ -387,15 +377,11 @@ class TestPersistLensSnapshot:
         )
         conn = _open_wh(initialized_warehouse)
         try:
-            row = conn.execute(
-                "SELECT symbol FROM lens_snapshots WHERE id=?", (row_id,)
-            ).fetchone()
+            row = conn.execute("SELECT symbol FROM lens_snapshots WHERE id=?", (row_id,)).fetchone()
         finally:
             conn.close()
         assert row is not None
-        assert row[0] is None, (
-            f"symbol=None must be stored as SQL NULL; got {row[0]!r}"
-        )
+        assert row[0] is None, f"symbol=None must be stored as SQL NULL; got {row[0]!r}"
 
     def test_fetch_ts_stored_verbatim(self, initialized_warehouse):
         ts = "2026-06-16T03:00:00Z"
@@ -416,14 +402,10 @@ class TestPersistLensSnapshot:
         finally:
             conn.close()
         assert row is not None
-        assert row[0] == ts, (
-            f"fetch_ts not stored verbatim; expected {ts!r}, got {row[0]!r}"
-        )
+        assert row[0] == ts, f"fetch_ts not stored verbatim; expected {ts!r}, got {row[0]!r}"
 
     @pytest.mark.parametrize("secret_key", _SECRET_KEY_NAMES)
-    def test_secret_key_stripped_from_stored_json(
-        self, initialized_warehouse, secret_key
-    ):
+    def test_secret_key_stripped_from_stored_json(self, initialized_warehouse, secret_key):
         # A payload containing a secret key must have that key removed in storage.
         payload = {secret_key: "SUPERSECRET_VALUE", "safe_key": "visible_data"}
         row_id = wh_module.persist_lens_snapshot(
@@ -553,9 +535,7 @@ class TestPersistLensSnapshot:
                 raw_payload={"reason": "no_data"},
             )
         except Exception as exc:
-            pytest.fail(
-                f"persist_lens_snapshot raised unexpectedly: {type(exc).__name__}: {exc}"
-            )
+            pytest.fail(f"persist_lens_snapshot raised unexpectedly: {type(exc).__name__}: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -573,9 +553,7 @@ class TestGetLensSnapshots:
         result = wh_module.get_lens_snapshots(
             db_path=initialized_warehouse, lens="nonexistent_lens"
         )
-        assert result == [], (
-            "get_lens_snapshots must return [] for an unknown lens (no raise)"
-        )
+        assert result == [], "get_lens_snapshots must return [] for an unknown lens (no raise)"
 
     def test_returns_list_of_dicts(self, initialized_warehouse):
         wh_module.persist_lens_snapshot(
@@ -586,9 +564,7 @@ class TestGetLensSnapshots:
             available=True,
             raw_payload={"items": 2},
         )
-        result = wh_module.get_lens_snapshots(
-            db_path=initialized_warehouse, lens="gdelt"
-        )
+        result = wh_module.get_lens_snapshots(db_path=initialized_warehouse, lens="gdelt")
         assert isinstance(result, list), "get_lens_snapshots must return a list"
         assert len(result) >= 1
         assert isinstance(result[0], dict), "Each entry must be a dict"
@@ -602,9 +578,7 @@ class TestGetLensSnapshots:
             available=True,
             raw_payload={"ok": True},
         )
-        result = wh_module.get_lens_snapshots(
-            db_path=initialized_warehouse, lens="fred_macro"
-        )
+        result = wh_module.get_lens_snapshots(db_path=initialized_warehouse, lens="fred_macro")
         assert result, "Expected at least one entry"
         entry = result[0]
         missing = _REQUIRED_COLUMNS - set(entry.keys())
@@ -649,9 +623,7 @@ class TestGetLensSnapshots:
                 available=True,
                 raw_payload={"sym": str(sym)},
             )
-        result = wh_module.get_lens_snapshots(
-            db_path=initialized_warehouse, lens="gdelt"
-        )
+        result = wh_module.get_lens_snapshots(db_path=initialized_warehouse, lens="gdelt")
         assert len(result) == 3, (
             f"Without symbol filter, all 3 rows should be returned; got {len(result)}"
         )
@@ -669,14 +641,10 @@ class TestGetLensSnapshots:
         result = wh_module.get_lens_snapshots(
             db_path=initialized_warehouse, lens="gdelt", symbol="SPY"
         )
-        assert len(result) == 1, (
-            f"symbol='SPY' filter should return 1 row; got {len(result)}"
-        )
+        assert len(result) == 1, f"symbol='SPY' filter should return 1 row; got {len(result)}"
         assert result[0]["symbol"] == "SPY"
 
-    def test_since_filter_includes_rows_at_and_after_threshold(
-        self, initialized_warehouse
-    ):
+    def test_since_filter_includes_rows_at_and_after_threshold(self, initialized_warehouse):
         old_ts = "2026-06-01T03:00:00Z"
         new_ts = "2026-06-16T03:00:00Z"
         for ts in (old_ts, new_ts):
@@ -766,9 +734,7 @@ class TestSeparateDbIsolation:
             "warehouse manages its own schema via init_warehouse_db()"
         )
 
-    def test_persist_uses_warehouse_path_not_state_db(
-        self, initialized_warehouse, tmp_path
-    ):
+    def test_persist_uses_warehouse_path_not_state_db(self, initialized_warehouse, tmp_path):
         # After a persist call, the state DB (at a separate path) must NOT
         # contain a lens_snapshots table — writes went to the warehouse path only.
         state_db_path = tmp_path / "check_state.db"
@@ -784,8 +750,7 @@ class TestSeparateDbIsolation:
         )
         # The state-DB path was never touched by the persist call.
         assert not state_db_path.exists(), (
-            "persist_lens_snapshot must write to the warehouse path only, "
-            "not to any other DB path"
+            "persist_lens_snapshot must write to the warehouse path only, not to any other DB path"
         )
 
 
@@ -931,9 +896,7 @@ class TestAppendOnlyAndHonestAvailability:
         finally:
             conn.close()
         assert row is not None
-        assert row[0] == 0, (
-            f"available=False must be stored as integer 0; got {row[0]!r}"
-        )
+        assert row[0] == 0, f"available=False must be stored as integer 0; got {row[0]!r}"
 
     def test_available_false_payload_stored_verbatim(self, initialized_warehouse):
         # For a down source, the reason payload must be stored as-is — no
@@ -957,20 +920,16 @@ class TestAppendOnlyAndHonestAvailability:
         assert row is not None
         stored = json.loads(row[0])
         assert stored.get("reason") == "ConnectionError", (
-            "Reason string must be stored verbatim in raw_json; "
-            f"got: {stored!r}"
+            f"Reason string must be stored verbatim in raw_json; got: {stored!r}"
         )
-        assert "source_down" in stored, (
-            "Payload keys must be preserved for an available=False row"
-        )
+        assert "source_down" in stored, "Payload keys must be preserved for an available=False row"
 
     def test_no_update_lens_snapshot_exported(self):
         update_symbols = [
             name for name in dir(wh_module) if name.startswith("update_lens_snapshot")
         ]
         assert not update_symbols, (
-            "lens_warehouse must be append-only; "
-            f"found update symbols: {update_symbols}"
+            f"lens_warehouse must be append-only; found update symbols: {update_symbols}"
         )
 
     def test_no_delete_lens_snapshot_exported(self):
@@ -978,8 +937,7 @@ class TestAppendOnlyAndHonestAvailability:
             name for name in dir(wh_module) if name.startswith("delete_lens_snapshot")
         ]
         assert not delete_symbols, (
-            "lens_warehouse must be append-only; "
-            f"found delete symbols: {delete_symbols}"
+            f"lens_warehouse must be append-only; found delete symbols: {delete_symbols}"
         )
 
     @pytest.mark.parametrize(
@@ -991,9 +949,7 @@ class TestAppendOnlyAndHonestAvailability:
         ],
         ids=["sql_injection", "json_injection", "mixed_quotes"],
     )
-    def test_sql_injection_shaped_payload_stored_verbatim(
-        self, initialized_warehouse, content
-    ):
+    def test_sql_injection_shaped_payload_stored_verbatim(self, initialized_warehouse, content):
         # Parameterized writes: injection-shaped strings must round-trip safely.
         payload = {"dangerous_input": content, "safe_key": "ok"}
         row_id = wh_module.persist_lens_snapshot(

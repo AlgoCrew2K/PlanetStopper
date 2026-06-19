@@ -3172,7 +3172,8 @@ def run_calibration_sweep(
         # so the operator must review before any per-symphony deploy.
         flag_for_operator_review = (
             current_trigger_count > 0
-            and proposed_trigger_count / current_trigger_count > _CALSWEEP_TRIGGER_FREQ_FLAG_MULTIPLIER
+            and proposed_trigger_count / current_trigger_count
+            > _CALSWEEP_TRIGGER_FREQ_FLAG_MULTIPLIER
         )
 
         # Emit one row per tuned param

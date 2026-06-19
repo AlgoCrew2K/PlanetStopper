@@ -158,9 +158,7 @@ def _patch_all(
     community_result = _make_community_result(
         n_candidates=n_community_candidates, available=available
     )
-    adapter_output = _make_fake_candidate_infos(
-        n_community_candidates if available else 0
-    )
+    adapter_output = _make_fake_candidate_infos(n_community_candidates if available else 0)
     fake_run = _make_fake_proposal_run(error=propose_error)
 
     load_mock = MagicMock(return_value=community_result)
@@ -192,9 +190,7 @@ def _patch_all(
 class TestAC1CommunityKwargForwarding:
     """AC-1: the route must call propose_strategies(community_candidates=<adapter_output>)."""
 
-    def test_community_candidates_kwarg_forwarded_to_propose_strategies(
-        self, sb_client
-    ):
+    def test_community_candidates_kwarg_forwarded_to_propose_strategies(self, sb_client):
         """AC-1: community_candidates kwarg passed to propose_strategies equals adapter output.
 
         RED: currently the route calls propose_strategies() without community_candidates.
@@ -212,18 +208,14 @@ class TestAC1CommunityKwargForwarding:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
 
         assert resp.status_code == 200
 
-        assert propose_mock.called, (
-            "propose_strategies must be called; it was not called at all"
-        )
+        assert propose_mock.called, "propose_strategies must be called; it was not called at all"
 
         _, kwargs = propose_mock.call_args
         assert "community_candidates" in kwargs, (
@@ -253,9 +245,7 @@ class TestAC1CommunityKwargForwarding:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             _post_run(sb_client)
@@ -286,9 +276,7 @@ class TestAC1CommunityKwargForwarding:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             _post_run(sb_client)
@@ -299,9 +287,7 @@ class TestAC1CommunityKwargForwarding:
             f"community_candidates must be a list; got {type(forwarded).__name__}"
         )
 
-    def test_community_candidate_infos_called_with_load_result_and_max_cap(
-        self, sb_client
-    ):
+    def test_community_candidate_infos_called_with_load_result_and_max_cap(self, sb_client):
         """AC-1: adapter called with the community_result from load AND max_candidates kwarg.
 
         RED: currently community_candidate_infos is never called from this route.
@@ -316,16 +302,12 @@ class TestAC1CommunityKwargForwarding:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             _post_run(sb_client)
 
-        assert adapter_mock.called, (
-            "community_candidate_infos must be called; it was not called"
-        )
+        assert adapter_mock.called, "community_candidate_infos must be called; it was not called"
 
         _, adapter_kwargs = adapter_mock.call_args
         # First positional arg must be the community_result dict from load
@@ -342,9 +324,7 @@ class TestAC1CommunityKwargForwarding:
             "community_candidate_infos must be called with max_candidates= kwarg; "
             f"actual kwargs: {list(adapter_kwargs.keys())}"
         )
-        assert adapter_kwargs["max_candidates"] > 0, (
-            "max_candidates must be a positive integer cap"
-        )
+        assert adapter_kwargs["max_candidates"] > 0, "max_candidates must be a positive integer cap"
 
 
 # ===========================================================================
@@ -372,16 +352,13 @@ class TestAC2TemplateDegradation:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
 
         assert resp.status_code == 200, (
-            "route must return 200 when community load has no candidates; "
-            f"got {resp.status_code}"
+            f"route must return 200 when community load has no candidates; got {resp.status_code}"
         )
 
     def test_available_false_route_completes(self, sb_client):
@@ -400,9 +377,7 @@ class TestAC2TemplateDegradation:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
@@ -423,9 +398,7 @@ class TestAC2TemplateDegradation:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
@@ -450,9 +423,7 @@ class TestAC2TemplateDegradation:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
@@ -461,8 +432,7 @@ class TestAC2TemplateDegradation:
         required = {"survivors", "rejected", "n_candidates", "fdr_adjusted_threshold"}
         missing = required - body.keys()
         assert not missing, (
-            f"response must have keys {required} even when available=False; "
-            f"missing: {missing}"
+            f"response must have keys {required} even when available=False; missing: {missing}"
         )
 
     def test_empty_community_propose_still_called(self, sb_client):
@@ -480,9 +450,7 @@ class TestAC2TemplateDegradation:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             _post_run(sb_client)
@@ -501,9 +469,7 @@ class TestAC2TemplateDegradation:
 class TestAC3BillProtection:
     """AC-3: load_community_strategies must never be called with force_refresh=True."""
 
-    def test_load_community_strategies_called_without_force_refresh_true(
-        self, sb_client
-    ):
+    def test_load_community_strategies_called_without_force_refresh_true(self, sb_client):
         """AC-3: route must not pass force_refresh=True to load_community_strategies.
 
         RED: currently load_community_strategies is never called from the route,
@@ -519,9 +485,7 @@ class TestAC3BillProtection:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             _post_run(sb_client)
@@ -556,9 +520,7 @@ class TestAC3BillProtection:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             _post_run(sb_client)
@@ -594,9 +556,7 @@ class TestAC4NeverRaisingD1:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
@@ -606,9 +566,7 @@ class TestAC4NeverRaisingD1:
             f"got {resp.status_code}. Community load must be best-effort."
         )
 
-    def test_community_load_raises_response_does_not_leak_exception_str(
-        self, sb_client
-    ):
+    def test_community_load_raises_response_does_not_leak_exception_str(self, sb_client):
         """AC-4 / D-1: exception message must not appear in the response body.
 
         The exception could contain a MONGO_URI or credential path. The D-1
@@ -623,9 +581,7 @@ class TestAC4NeverRaisingD1:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
@@ -636,9 +592,7 @@ class TestAC4NeverRaisingD1:
             "The message could contain credentials/paths. Log only the class name."
         )
 
-    def test_propose_strategies_still_called_when_community_load_raises(
-        self, sb_client
-    ):
+    def test_propose_strategies_still_called_when_community_load_raises(self, sb_client):
         """AC-4: when community load raises, propose_strategies must still be called.
 
         The route must degrade to template-only (community_candidates=[]) and
@@ -652,9 +606,7 @@ class TestAC4NeverRaisingD1:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             _post_run(sb_client)
@@ -679,9 +631,7 @@ class TestAC4NeverRaisingD1:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
@@ -695,8 +645,7 @@ class TestAC4NeverRaisingD1:
             f"got keys: {list(body.keys())}"
         )
         assert body["error"] == "ConnectionError", (
-            f"error must be the exception class name 'ConnectionError'; "
-            f"got {body['error']!r}"
+            f"error must be the exception class name 'ConnectionError'; got {body['error']!r}"
         )
 
     def test_propose_strategies_raises_body_has_no_exception_str(self, sb_client):
@@ -711,9 +660,7 @@ class TestAC4NeverRaisingD1:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
@@ -735,9 +682,7 @@ class TestAC4NeverRaisingD1:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
@@ -755,9 +700,7 @@ class TestAC4NeverRaisingD1:
         assert "/" not in error_val, (
             f"error value must be bare class name (no slash); got {error_val!r}"
         )
-        assert error_val == "TypeError", (
-            f"error value must be 'TypeError'; got {error_val!r}"
-        )
+        assert error_val == "TypeError", f"error value must be 'TypeError'; got {error_val!r}"
 
 
 # ===========================================================================
@@ -899,9 +842,7 @@ class TestAC5BoundaryPreserved:
 class TestAC6NoRegression:
     """AC-6: with community wiring producing [], template-only response shape is unchanged."""
 
-    def test_empty_community_and_raise_both_produce_same_response_keys(
-        self, sb_client
-    ):
+    def test_empty_community_and_raise_both_produce_same_response_keys(self, sb_client):
         """AC-6: both empty-load and load-raises paths return identical response key sets.
 
         This guards against a scenario where community wiring changes the
@@ -931,9 +872,7 @@ class TestAC6NoRegression:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock_raise),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock_2
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock_2),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock_2),
         ):
             resp2 = _post_run(sb_client)
@@ -962,9 +901,7 @@ class TestAC6NoRegression:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
@@ -1070,9 +1007,7 @@ class TestSecurityBoundary:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             _post_run(sb_client)
@@ -1095,9 +1030,7 @@ class TestSecurityBoundary:
 
         with (
             patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos", adapter_mock
-            ),
+            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)

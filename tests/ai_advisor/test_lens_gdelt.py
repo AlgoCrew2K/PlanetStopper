@@ -1649,7 +1649,9 @@ def test_live_gdelt_sources_carry_url_and_seendate():
 #   provenance rule).
 # ---------------------------------------------------------------------------
 
-_EVENTS_FIXTURE = pathlib.Path(__file__).parents[1] / "fixtures" / "math" / "gdelt_artlist_events_captured.json"
+_EVENTS_FIXTURE = (
+    pathlib.Path(__file__).parents[1] / "fixtures" / "math" / "gdelt_artlist_events_captured.json"
+)
 
 
 def validate_artlist_events_shape(data: dict) -> None:
@@ -1884,9 +1886,7 @@ class TestEventsFirstClassField:
             "Expected at least one event to be extracted."
         )
         for i, ev in enumerate(events):
-            assert isinstance(ev, dict), (
-                f"events[{i}] must be a dict, got {type(ev)}"
-            )
+            assert isinstance(ev, dict), f"events[{i}] must be a dict, got {type(ev)}"
             for field in ("title", "domain", "seendate"):
                 assert field in ev, (
                     f"events[{i}] missing '{field}'. "
@@ -1894,8 +1894,7 @@ class TestEventsFirstClassField:
                     f"Got keys: {set(ev.keys())}"
                 )
                 assert isinstance(ev[field], str) and ev[field].strip(), (
-                    f"events[{i}]['{field}'] must be a non-empty string. "
-                    f"Got: {ev[field]!r}"
+                    f"events[{i}]['{field}'] must be a non-empty string. Got: {ev[field]!r}"
                 )
 
     def test_events_are_domain_deduped(self, timelinetone_fixture: dict):
@@ -2166,9 +2165,7 @@ class TestHonestAvailabilityNewsEvents:
         """
         from advisors import lens_gdelt
 
-        empty_tone = _make_mock_http_response(
-            {"query_details": {}, "timeline": []}
-        )
+        empty_tone = _make_mock_http_response({"query_details": {}, "timeline": []})
         empty_artlist = _make_mock_http_response({"articles": []})
 
         with (
@@ -2273,8 +2270,7 @@ class TestHonestDegradationNewsEvents:
             "Persistent 429 must still return available=False after events refactor."
         )
         assert result.get("reason") == "rate_limited", (
-            f"Persistent 429 reason must still be 'rate_limited'. "
-            f"Got: {result.get('reason')!r}"
+            f"Persistent 429 reason must still be 'rate_limited'. Got: {result.get('reason')!r}"
         )
 
 
@@ -2320,6 +2316,7 @@ class TestBuildSentimentSectionNewsEvents:
 
         # Patch the producer inside the consumer's lazy import path
         import advisors.lens_gdelt as lens_gdelt_mod
+
         original_fn = lens_gdelt_mod._fetch_gdelt_sentiment
         lens_gdelt_mod._fetch_gdelt_sentiment = lambda _universe: events_result
         try:
@@ -2332,9 +2329,7 @@ class TestBuildSentimentSectionNewsEvents:
             f"Got: {section!r}"
         )
         payload = section.get("payload")
-        assert payload is not None, (
-            "payload must not be None when events are present."
-        )
+        assert payload is not None, "payload must not be None when events are present."
         assert "events" in payload, (
             f"_build_sentiment_section payload is missing 'events' key. "
             f"AC-5: the sentiment section must carry events so the render cycle "
@@ -2364,6 +2359,7 @@ class TestBuildSentimentSectionNewsEvents:
         }
 
         import advisors.lens_gdelt as lens_gdelt_mod
+
         original_fn = lens_gdelt_mod._fetch_gdelt_sentiment
         lens_gdelt_mod._fetch_gdelt_sentiment = lambda _universe: all_null_result
         try:

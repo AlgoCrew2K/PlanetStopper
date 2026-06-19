@@ -40,8 +40,9 @@ import pytest
 _FIXTURES_DIR = pathlib.Path(__file__).parents[1] / "fixtures" / "math"
 
 # Known ETF tickers that MUST NOT appear in the proxy constant (no companyfacts)
-_KNOWN_ETFS = frozenset({"SPY", "QQQ", "IWM", "GLD", "TLT", "EFA", "AGG",
-                          "XLF", "XLE", "XLV", "XLI", "SHY", "BIL"})
+_KNOWN_ETFS = frozenset(
+    {"SPY", "QQQ", "IWM", "GLD", "TLT", "EFA", "AGG", "XLF", "XLE", "XLV", "XLI", "SHY", "BIL"}
+)
 
 
 @pytest.fixture
@@ -64,16 +65,19 @@ def _make_mock_response(json_data: dict, status_code: int = 200) -> MagicMock:
     mock_resp.raise_for_status = MagicMock()
     if status_code >= 400:
         from requests.exceptions import HTTPError
+
         mock_resp.raise_for_status.side_effect = HTTPError(
             f"HTTP {status_code}", response=mock_resp
         )
     return mock_resp
 
 
-def _make_companyfacts_response(ticker: str = "AAPL",
-                                 cik: int = 320193,
-                                 entity_name: str | None = None,
-                                 with_revenues: bool = True) -> dict:
+def _make_companyfacts_response(
+    ticker: str = "AAPL",
+    cik: int = 320193,
+    entity_name: str | None = None,
+    with_revenues: bool = True,
+) -> dict:
     """Build a minimal companyfacts-shaped dict for a given ticker.
 
     Values are test sentinels — NOT hardcoded producer outputs.
@@ -121,15 +125,14 @@ def _make_empty_holdings_state() -> dict:
 def _make_holdings_state(tickers: list[str]) -> dict:
     """Simulate database.load_state() with holdings containing given tickers."""
     return {
-        "symphony_alpha": {
-            "logic_holdings": {t: {"weight": 1.0 / len(tickers)} for t in tickers}
-        }
+        "symphony_alpha": {"logic_holdings": {t: {"weight": 1.0 / len(tickers)} for t in tickers}}
     }
 
 
 # ---------------------------------------------------------------------------
 # Runtime validator: verify fixture shape is usable by the producer
 # ---------------------------------------------------------------------------
+
 
 def _validate_fixture_companyfacts_shape(shape: dict) -> None:
     """Assert the fixture has the keys the producer will actually consume.
@@ -319,7 +322,9 @@ class TestPortfolioFanout:
         assert isinstance(coverage["available"], int) and coverage["available"] >= 1, (
             f"coverage['available'] must be a positive int, got {coverage['available']!r}"
         )
-        assert isinstance(coverage["universe"], int) and coverage["universe"] >= coverage["available"], (
+        assert (
+            isinstance(coverage["universe"], int) and coverage["universe"] >= coverage["available"]
+        ), (
             f"coverage['universe'] ({coverage['universe']!r}) must be >= coverage['available'] "
             f"({coverage['available']!r})"
         )
@@ -350,10 +355,17 @@ class TestPortfolioFanout:
 
         # Synthetic/composite ratio keys that must NOT appear at portfolio level
         forbidden_ratio_keys = {
-            "pe_ratio", "price_to_earnings", "debt_to_equity",
-            "revenue_growth", "return_on_equity", "roe",
-            "return_on_assets", "roa", "ebitda_margin",
-            "current_ratio", "quick_ratio",
+            "pe_ratio",
+            "price_to_earnings",
+            "debt_to_equity",
+            "revenue_growth",
+            "return_on_equity",
+            "roe",
+            "return_on_assets",
+            "roa",
+            "ebitda_margin",
+            "current_ratio",
+            "quick_ratio",
         }
         for ticker_block in payload.get("tickers", {}).values():
             if isinstance(ticker_block, dict):
@@ -419,8 +431,9 @@ class TestUniverseDerivation:
         # NFLX is not in the standard proxy basket; add it via holdings
         holdings_state = _make_holdings_state([extra_ticker])
         companyfacts_resp = _make_mock_response(
-            _make_companyfacts_response(ticker=extra_ticker, cik=1065280,
-                                        entity_name="Netflix Inc.")
+            _make_companyfacts_response(
+                ticker=extra_ticker, cik=1065280, entity_name="Netflix Inc."
+            )
         )
 
         with (
@@ -469,8 +482,7 @@ class TestSingleTickerPathPreserved:
             block = ai_advisor._build_fundamentals_section(ticker="AAPL")
 
         assert block.get("lens") == "fundamentals", (
-            f"single-ticker block['lens'] must equal 'fundamentals', "
-            f"got {block.get('lens')!r}"
+            f"single-ticker block['lens'] must equal 'fundamentals', got {block.get('lens')!r}"
         )
         assert isinstance(block.get("available"), bool), (
             "single-ticker block['available'] must be bool"
@@ -560,14 +572,13 @@ class TestPerTickerDegradation:
         if len(proxy_list) < 2:
             pytest.skip("Proxy universe has < 2 tickers — cannot run 1-fail/1-pass test")
 
-        ticker_fail = proxy_list[0]   # first alphabetically — will get 404
-        ticker_pass = proxy_list[1]   # second — will succeed
+        ticker_fail = proxy_list[0]  # first alphabetically — will get 404
+        ticker_pass = proxy_list[1]  # second — will succeed
 
         # Build a universe with exactly these two tickers by mocking load_state
         # to return empty (proxy floor provides them) — we control via the mock responses.
         pass_response = _make_mock_response(
-            _make_companyfacts_response(ticker=ticker_pass, cik=789019,
-                                        entity_name="Test Corp")
+            _make_companyfacts_response(ticker=ticker_pass, cik=789019, entity_name="Test Corp")
         )
         fail_response = _make_mock_response({}, status_code=404)
 
@@ -753,9 +764,7 @@ class TestNoTickerPortfolioPathRegression:
     un-mocked network call.
     """
 
-    def test_no_ticker_does_not_return_ticker_symbol_required_reason(
-        self, sec_shape_fixture: dict
-    ):
+    def test_no_ticker_does_not_return_ticker_symbol_required_reason(self, sec_shape_fixture: dict):
         """_build_fundamentals_section() (no ticker) must NOT return the pre-fix
         short-circuit reason 'ticker symbol required...'.
 
@@ -786,9 +795,7 @@ class TestNoTickerPortfolioPathRegression:
             "If this test fails, the fix was reverted or the guard was re-introduced."
         )
 
-    def test_no_ticker_routes_to_portfolio_path_not_error_path(
-        self, sec_shape_fixture: dict
-    ):
+    def test_no_ticker_routes_to_portfolio_path_not_error_path(self, sec_shape_fixture: dict):
         """_build_fundamentals_section() without ticker makes at least 1 SEC call.
 
         Pre-fix: made 0 HTTP calls (short-circuited before any network access).

@@ -31,6 +31,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _today_row(offset_days: int = 0) -> dict:
     """Return a fake MARKET_PRISM summary row whose created_at is today+offset_days UTC."""
     ts = datetime.now(timezone.utc) + timedelta(days=offset_days)
@@ -50,16 +51,19 @@ def _import_scheduler():
     # The scheduler lives at the project root which is on sys.path in the worktree env;
     # if not, add the worktree root explicitly.
     import os
+
     worktree = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     if worktree not in sys.path:
         sys.path.insert(0, worktree)
     import prism_scheduler  # noqa: PLC0415
+
     return prism_scheduler
 
 
 # ---------------------------------------------------------------------------
 # AC-6 — named constant sanity (import-level, no mocking needed)
 # ---------------------------------------------------------------------------
+
 
 class TestConstants:
     def test_max_attempts_is_named_constant(self):
@@ -83,6 +87,7 @@ class TestConstants:
 # ---------------------------------------------------------------------------
 # AC-1 — Idempotency: today's row exists → no subprocess, exit 0
 # ---------------------------------------------------------------------------
+
 
 class TestIdempotency:
     def test_today_row_skips_subprocess(self):
@@ -217,6 +222,7 @@ class TestSubprocessInvocation:
         kwargs = mock_run.call_args[1]
         assert "cwd" in kwargs, "subprocess.run must set cwd explicitly"
         import os
+
         assert os.path.isabs(kwargs["cwd"]), "cwd must be an absolute path"
 
     def test_subprocess_not_shell_true(self):
@@ -238,6 +244,7 @@ class TestSubprocessInvocation:
     def test_api_key_not_in_subprocess_args(self):
         """ANTHROPIC_API_KEY must not appear in the subprocess args list."""
         import os
+
         os.environ["ANTHROPIC_API_KEY"] = "sk-ant-TEST-SENTINEL-VALUE"
         mod = _import_scheduler()
         mock_result = MagicMock()
@@ -265,6 +272,7 @@ class TestSubprocessInvocation:
 # the current (broken) prism_scheduler.py, which still has "--agent" in the cmd
 # and lacks the PRISM_RUN_PROMPT module-level constant.
 # ---------------------------------------------------------------------------
+
 
 class TestVanillaPrimaryShape:
     def test_cmd_contains_no_agent_flag(self):
@@ -333,8 +341,7 @@ class TestVanillaPrimaryShape:
         ]
         for flag in required:
             assert flag in args_used, (
-                f"Required vanilla-primary flag '{flag}' is missing from cmd. "
-                f"Full cmd: {args_used}"
+                f"Required vanilla-primary flag '{flag}' is missing from cmd. Full cmd: {args_used}"
             )
 
         # '--agent' and 'prism-synthesizer' as a flag value must be absent.
@@ -467,8 +474,7 @@ class TestVanillaPrimaryShape:
 
         # The last element must be a non-empty string (the prompt).
         assert isinstance(last_elem, str) and len(last_elem) > 0, (
-            f"The last cmd element must be a non-empty string (the prompt). "
-            f"Got: {last_elem!r}"
+            f"The last cmd element must be a non-empty string (the prompt). Got: {last_elem!r}"
         )
 
         # The last element must contain at least the first 30 chars of PRISM_RUN_PROMPT,
@@ -523,6 +529,7 @@ class TestVanillaPrimaryShape:
         # impersonation anti-pattern — it means the primary pretends to be the synthesizer
         # instead of spawning it. Flag this specific pattern.
         import re
+
         # Match 'act as' with optional whitespace then 'prism-synthesizer'
         impersonation = re.search(r"act\s+as\s+prism-synthesizer", prompt_lower)
         assert impersonation is None, (
@@ -623,6 +630,7 @@ class TestVanillaPrimaryShape:
 # AC-3 — Bounded retry on persistent subprocess failure
 # ---------------------------------------------------------------------------
 
+
 class TestBoundedRetry:
     def test_retries_exactly_max_attempts_times(self):
         """On persistent subprocess failure, retries exactly MAX_ATTEMPTS times."""
@@ -694,6 +702,7 @@ class TestBoundedRetry:
 # AC-4 — Retry succeeds on 2nd attempt
 # ---------------------------------------------------------------------------
 
+
 class TestRetrySuccess:
     def test_retry_succeeds_on_second_attempt(self):
         """First call fails, second succeeds → exit 0, called twice."""
@@ -722,6 +731,7 @@ class TestRetrySuccess:
 # ---------------------------------------------------------------------------
 # AC-5 — Yesterday's row does NOT trigger idempotency
 # ---------------------------------------------------------------------------
+
 
 class TestYesterdayRow:
     def test_yesterday_row_triggers_run(self):
@@ -776,6 +786,7 @@ class TestYesterdayRow:
 # AC-7 — Backoff cap: sleep values must not exceed cap even with exponential growth
 # ---------------------------------------------------------------------------
 
+
 class TestBackoffCap:
     def test_exponential_backoff_capped(self):
         """With many retries (if MAX_ATTEMPTS were large), sleep never exceeds cap."""
@@ -800,6 +811,7 @@ class TestBackoffCap:
 # ---------------------------------------------------------------------------
 # AC-8 — D-1 contract: no raw exception text in outputs
 # ---------------------------------------------------------------------------
+
 
 class TestD1Contract:
     def test_exception_in_subprocess_does_not_propagate_raw(self):
@@ -882,6 +894,7 @@ class TestD1Contract:
 # ---------------------------------------------------------------------------
 # HC-1 — Spend cap: --max-budget-usd with named constant MAX_BUDGET_USD
 # ---------------------------------------------------------------------------
+
 
 class TestSpendCap:
     def test_max_budget_usd_constant_exists_and_is_positive(self):
@@ -975,6 +988,7 @@ class TestSpendCap:
 # HC-2 — Spend logging: --output-format json + prism_audit_log persistence
 # ---------------------------------------------------------------------------
 
+
 class TestSpendLogging:
     def test_claude_command_includes_output_format_json(self):
         """The claude command must include --output-format json so cost can be parsed.
@@ -999,8 +1013,7 @@ class TestSpendLogging:
         cmd_str = " ".join(str(a) for a in args_used)
 
         assert "--output-format" in args_used, (
-            "--output-format is missing from the claude command. "
-            f"Command was: {cmd_str}"
+            f"--output-format is missing from the claude command. Command was: {cmd_str}"
         )
         fmt_idx = args_used.index("--output-format")
         assert fmt_idx + 1 < len(args_used), "--output-format must be followed by a value"
@@ -1098,6 +1111,7 @@ class TestSpendLogging:
 # ---------------------------------------------------------------------------
 # HC-3 — Model pin: 'claude-opus-4-8' (pinned), not bare 'opus' (alias)
 # ---------------------------------------------------------------------------
+
 
 class TestModelPin:
     def test_claude_command_uses_pinned_model_not_alias(self):
@@ -1289,10 +1303,8 @@ class TestCouncil5of5OrchestrationDirectives:
             "id.*spawn",
         ]
         import re
-        has_agent_id = any(
-            re.search(p, prompt_lower)
-            for p in agent_id_phrases
-        )
+
+        has_agent_id = any(re.search(p, prompt_lower) for p in agent_id_phrases)
 
         assert has_agent_id, (
             "PRISM_RUN_PROMPT must instruct the primary to capture each analyst's "
@@ -1425,9 +1437,8 @@ class TestAnalystRoleFilesImmediateInitialRead:
     def _read_analyst_file(filename: str) -> str:
         """Read an analyst role file from .claude/agents/."""
         import os
-        worktree = os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        )
+
+        worktree = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         agents_dir = os.path.join(worktree, ".claude", "agents")
         filepath = os.path.join(agents_dir, filename)
         with open(filepath, encoding="utf-8") as f:
@@ -1436,9 +1447,8 @@ class TestAnalystRoleFilesImmediateInitialRead:
     def test_analyst_role_files_exist(self):
         """All 5 analyst role files must exist in .claude/agents/."""
         import os
-        worktree = os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        )
+
+        worktree = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         agents_dir = os.path.join(worktree, ".claude", "agents")
         for filename in self._ANALYST_FILES:
             filepath = os.path.join(agents_dir, filename)
@@ -1535,9 +1545,8 @@ class TestSynthesizerRoleFileAgentIdAddressing:
     @staticmethod
     def _read_synthesizer_file() -> str:
         import os
-        worktree = os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        )
+
+        worktree = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         filepath = os.path.join(worktree, ".claude", "agents", "prism-synthesizer.md")
         with open(filepath, encoding="utf-8") as f:
             return f.read()
@@ -1589,6 +1598,7 @@ class TestSynthesizerRoleFileAgentIdAddressing:
 # HC-2 regression — _persist_spend must read total_cost_usd (real CC envelope key)
 # ---------------------------------------------------------------------------
 
+
 class TestPersistSpendEnvelopeKey:
     """Regression suite for the cost_usd vs total_cost_usd bug.
 
@@ -1628,11 +1638,13 @@ class TestPersistSpendEnvelopeKey:
 
         # Real CC 2.1.181 envelope shape: ONLY total_cost_usd, NO cost_usd key.
         # Provenance: PM-captured from live `claude -p --output-format json` (CC 2.1.181).
-        real_envelope = _json.dumps({
-            "total_cost_usd": 0.0728568,
-            "type": "result",
-            "subtype": "success",
-        })
+        real_envelope = _json.dumps(
+            {
+                "total_cost_usd": 0.0728568,
+                "type": "result",
+                "subtype": "success",
+            }
+        )
 
         mod._persist_spend(run_id, real_envelope)
 
@@ -1714,9 +1726,7 @@ class TestPersistSpendEnvelopeKey:
         parsed = _json.loads(row[0])
         # Accept either key in the persisted content for legacy path.
         cost_val = parsed.get("total_cost_usd") or parsed.get("cost_usd")
-        assert cost_val is not None, (
-            f"Legacy fallback row has no cost key. Got: {parsed!r}"
-        )
+        assert cost_val is not None, f"Legacy fallback row has no cost key. Got: {parsed!r}"
         assert isinstance(cost_val, (int, float)) and cost_val > 0, (
             f"Legacy fallback cost value must be positive. Got: {cost_val!r}"
         )
@@ -2017,9 +2027,7 @@ class TestSynthesizerWaitBarrierHardRule:
         # We require all three elements to appear within a 300-char window.
         # Strategy: find each occurrence of 'initial_read' and check the surrounding
         # 300 chars for a prohibition marker AND a five-count token.
-        initial_read_positions = [
-            m.start() for m in re.finditer(r"initial_read", hard_rules_lower)
-        ]
+        initial_read_positions = [m.start() for m in re.finditer(r"initial_read", hard_rules_lower)]
 
         found_genuine_barrier = False
         for pos in initial_read_positions:
@@ -2028,12 +2036,8 @@ class TestSynthesizerWaitBarrierHardRule:
             window_end = min(len(hard_rules_lower), pos + 150)
             window = hard_rules_lower[window_start:window_end]
 
-            has_prohibition = bool(
-                re.search(r"\b(never|do not|must not)\b", window)
-            )
-            has_five_count = bool(
-                re.search(r"\b(5|five|all five)\b", window)
-            )
+            has_prohibition = bool(re.search(r"\b(never|do not|must not)\b", window))
+            has_five_count = bool(re.search(r"\b(5|five|all five)\b", window))
 
             if has_prohibition and has_five_count:
                 found_genuine_barrier = True
@@ -2170,9 +2174,7 @@ class TestSynthesizerWaitBarrierDeHollowed:
         hard_rules_lower = hard_rules_text.lower()
 
         # 'initial_read' with literal underscore is required — not dot-wildcard.
-        initial_read_positions = [
-            m.start() for m in re.finditer(r"initial_read", hard_rules_lower)
-        ]
+        initial_read_positions = [m.start() for m in re.finditer(r"initial_read", hard_rules_lower)]
 
         assert initial_read_positions, (
             "prism-synthesizer.md ## Hard Rules section does not contain the string "
@@ -2193,9 +2195,7 @@ class TestSynthesizerWaitBarrierDeHollowed:
             window_end = min(len(hard_rules_lower), pos + 150)
             window = hard_rules_lower[window_start:window_end]
 
-            has_marker = bool(
-                re.search(r"\b(never|do not|must not|wait)\b", window)
-            )
+            has_marker = bool(re.search(r"\b(never|do not|must not|wait)\b", window))
             has_five = bool(re.search(r"\b(5|five|all five)\b", window))
 
             if has_marker and has_five:
@@ -2250,14 +2250,10 @@ class TestSynthesizerWaitBarrierDeHollowed:
         content_lower = full_content.lower()
 
         # Apply the OLD hollow regex to the full file.
-        old_regex_matches = list(re.finditer(
-            r"\b5\b.{0,80}initial.read", content_lower, re.DOTALL
-        ))
+        old_regex_matches = list(re.finditer(r"\b5\b.{0,80}initial.read", content_lower, re.DOTALL))
 
         # Count how many matches contain 'initial_read' (underscore) — genuine barriers.
-        genuine_barrier_matches = [
-            m for m in old_regex_matches if "initial_read" in m.group()
-        ]
+        genuine_barrier_matches = [m for m in old_regex_matches if "initial_read" in m.group()]
 
         # On the CURRENT FILE (before F-2): zero genuine underscore matches exist.
         # The old regex only matched the heading/prose path — hollow confirmed.
@@ -2304,6 +2300,7 @@ class TestSynthesizerWaitBarrierDeHollowed:
 #            subprocess called TWICE (retry happened) and exit 0.
 # ---------------------------------------------------------------------------
 
+
 class TestMarketPrismRowVerification:
     """F-4: scheduler must verify a MARKET_PRISM row exists before declaring success.
 
@@ -2311,9 +2308,7 @@ class TestMarketPrismRowVerification:
     returns a non-None dict.  Silent false-green on an empty council run is the bug.
     """
 
-    def test_scheduler_fails_when_subprocess_succeeds_but_no_market_prism_row(
-        self, capsys
-    ):
+    def test_scheduler_fails_when_subprocess_succeeds_but_no_market_prism_row(self, capsys):
         """rc==0 + no MARKET_PRISM row → all MAX_ATTEMPTS exhausted → exit non-zero
         + no 'Run completed successfully' in stdout.
 
@@ -2365,9 +2360,7 @@ class TestMarketPrismRowVerification:
             "the row is confirmed present."
         )
 
-    def test_scheduler_succeeds_when_subprocess_succeeds_and_market_prism_row_exists(
-        self, capsys
-    ):
+    def test_scheduler_succeeds_when_subprocess_succeeds_and_market_prism_row_exists(self, capsys):
         """Happy-path regression lock: rc==0 + row present → exit 0 + success message.
 
         This test SKIPS (not fails) when _get_market_prism_row_for_run is absent from
@@ -2396,9 +2389,7 @@ class TestMarketPrismRowVerification:
         with (
             patch.object(mod, "_get_summary", return_value=None),
             patch("subprocess.run", return_value=mock_subprocess_result),
-            patch.object(
-                mod, "_get_market_prism_row_for_run", return_value=sample_row
-            ),
+            patch.object(mod, "_get_market_prism_row_for_run", return_value=sample_row),
             patch.object(mod, "_persist_spend"),  # suppress audit write side-effect
         ):
             with pytest.raises(SystemExit) as exc_info:

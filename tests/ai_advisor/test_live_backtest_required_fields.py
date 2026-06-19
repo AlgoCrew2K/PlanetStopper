@@ -106,9 +106,7 @@ def _build_template_trees(sbe) -> list[tuple[str, dict]]:
         ("T1_equal_weight_basket", sbe.equal_weight_basket(universe, name="AC3 T1")),
         (
             "T2_specified_weight_basket",
-            sbe.specified_weight_basket(
-                [("SPY", 60.0), ("AGG", 40.0)], name="AC3 T2"
-            ),
+            sbe.specified_weight_basket([("SPY", 60.0), ("AGG", 40.0)], name="AC3 T2"),
         ),
         (
             "T3_inverse_vol_basket",
@@ -167,9 +165,7 @@ class TestLiveBacktestRequiredFields:
         The stats (CAGR, Sharpe) are producer-computed and must not be hardcoded.
         """
         if not _has_composer_key():
-            pytest.skip(
-                "COMPOSER_API_KEY not set in environment — skipping live backtest test"
-            )
+            pytest.skip("COMPOSER_API_KEY not set in environment — skipping live backtest test")
 
         trees = _build_template_trees(sbe)
         failures: list[str] = []
@@ -180,9 +176,7 @@ class TestLiveBacktestRequiredFields:
                 # Rate limiting: 1 request/second (Composer enforces this)
                 time.sleep(1.0)
             except Exception as exc:
-                failures.append(
-                    f"{label}: run_backtest raised {type(exc).__name__}: {exc}"
-                )
+                failures.append(f"{label}: run_backtest raised {type(exc).__name__}: {exc}")
                 continue
 
             # A BacktestResult with .error set means a non-200 HTTP response

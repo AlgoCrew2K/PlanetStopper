@@ -29,9 +29,9 @@ from pathlib import Path
 # Named constants — no magic numbers
 # ---------------------------------------------------------------------------
 
-MAX_ATTEMPTS: int = 3           # Max subprocess invocations per run
+MAX_ATTEMPTS: int = 3  # Max subprocess invocations per run
 BACKOFF_BASE_SECONDS: int = 30  # First retry wait
-BACKOFF_CAP_SECONDS: int = 60   # Maximum wait between retries
+BACKOFF_CAP_SECONDS: int = 60  # Maximum wait between retries
 # A full 6-agent Opus council (synthesizer + 5 analysts, multi-round Q&A +
 # conditional debate) realistically costs $5-10 per run. 15.0 is a
 # runaway-prevention ceiling, not a target.
@@ -91,6 +91,7 @@ def _load_env() -> None:
     """Load .env from the project root into os.environ using python-dotenv."""
     try:
         from dotenv import load_dotenv  # noqa: PLC0415
+
         load_dotenv(dotenv_path=_PROJECT_ROOT / ".env", override=False)
     except Exception:  # noqa: BLE001
         # dotenv missing or unreadable — silent fallback (no logging, to avoid
@@ -102,6 +103,7 @@ def _get_summary() -> dict | None:
     """Return the most recent MARKET_PRISM summary row, or None."""
     sys.path.insert(0, str(_PROJECT_ROOT))
     import database  # noqa: PLC0415
+
     return database.get_latest_market_prism_summary()
 
 
@@ -133,6 +135,7 @@ def _persist_spend(run_id: str, stdout: str) -> None:
         if cost is not None:
             sys.path.insert(0, str(_PROJECT_ROOT))
             import database  # noqa: PLC0415
+
             database.insert_prism_audit_entry(
                 run_id=run_id,
                 agent_role="LAUNCHER",
@@ -156,6 +159,7 @@ def _get_market_prism_row_for_run(run_id: str) -> dict | None:
     try:
         sys.path.insert(0, str(_PROJECT_ROOT))
         import database  # noqa: PLC0415
+
         # get_latest_market_prism_summary returns the most recent MARKET_PRISM row.
         # Since run_id is unique per nightly, the latest row is this run's row if
         # it was written.  Confirm by checking raw_response.run_id matches.
@@ -165,14 +169,13 @@ def _get_market_prism_row_for_run(run_id: str) -> dict | None:
         raw = row.get("raw_response") or {}
         if isinstance(raw, str):
             import json as _json  # noqa: PLC0415
+
             raw = _json.loads(raw)
         if raw.get("run_id") == run_id:
             return row
         return None
     except Exception as exc:  # noqa: BLE001
-        print(
-            f"[prism_scheduler] RowCheckError: {type(exc).__name__}", file=sys.stderr
-        )
+        print(f"[prism_scheduler] RowCheckError: {type(exc).__name__}", file=sys.stderr)
         return None
 
 
@@ -188,8 +191,7 @@ def _run_prism(run_id: str = "unknown") -> bool:
     # Build the prompt dynamically so the scheduler-generated run_id is the
     # single authoritative id for all audit rows and _persist_spend logging.
     prompt = (
-        PRISM_RUN_PROMPT
-        + f" The run_id for this session is: {run_id}."
+        PRISM_RUN_PROMPT + f" The run_id for this session is: {run_id}."
         " Use this exact string as the run_id for ALL audit rows and the"
         " MARKET_PRISM observation. Do not generate a new run_id."
     )
