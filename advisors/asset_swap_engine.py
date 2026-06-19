@@ -372,7 +372,6 @@ def extract_tickers(raw_value: dict) -> set:
 def _apply_lens_blend(
     candidates: list,
     lens_scores: dict | None,
-    higher_is_better: bool,
 ) -> list:
     """Re-rank an already-sorted candidate list by blending in lens evidence.
 
@@ -398,9 +397,6 @@ def _apply_lens_blend(
         lens_scores:
             ``{ticker: {lens_name: score, ...}}`` as returned by
             ``extract_lens_scores``.  None or empty → no reranking.
-        higher_is_better:
-            Unused parameter preserved for call-site documentation clarity
-            (the blend is position-based, so direction doesn't affect the math).
 
     Returns:
         Re-ordered candidate list.  All input candidates are preserved (lens
@@ -542,10 +538,10 @@ def generate_objective_directed_candidates(
 
         # Sort ascending by absolute correlation: lowest first = most de-correlated.
         scored.sort(key=lambda t: t[1])
+        # lower absolute correlation = better
         return _apply_lens_blend(
             [{"ticker": asset, "score": corr} for asset, corr in scored],
             lens_scores=lens_scores,
-            higher_is_better=False,  # lower absolute correlation = better
         )
 
     # ---------------------------------------------------------------------------
@@ -566,10 +562,10 @@ def generate_objective_directed_candidates(
 
         # Sort ascending by variance: lowest variance = most defensive.
         scored.sort(key=lambda t: t[1])
+        # lower variance = better
         return _apply_lens_blend(
             [{"ticker": asset, "score": v} for asset, v in scored],
             lens_scores=lens_scores,
-            higher_is_better=False,  # lower variance = better
         )
 
     # ---------------------------------------------------------------------------
@@ -591,10 +587,10 @@ def generate_objective_directed_candidates(
 
         # Sort descending by pseudo-Sharpe: highest risk-adjusted return first.
         scored.sort(key=lambda t: t[1], reverse=True)
+        # higher Sharpe = better
         return _apply_lens_blend(
             [{"ticker": asset, "score": s} for asset, s in scored],
             lens_scores=lens_scores,
-            higher_is_better=True,  # higher Sharpe = better
         )
 
     # ---------------------------------------------------------------------------
@@ -603,7 +599,6 @@ def generate_objective_directed_candidates(
     return _apply_lens_blend(
         [{"ticker": t} for t in available_assets],
         lens_scores=lens_scores,
-        higher_is_better=True,
     )
 
 
