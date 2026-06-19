@@ -915,3 +915,428 @@ class TestSecurity:
             f"_auth_before_request must be registered as a before_request handler; "
             f"registered handlers: {fn_names}"
         )
+
+    # -- Sufficiency Gap 1: hash path login actually succeeds (AC-6) --
+
+    def test_hash_path_login_actually_succeeds_with_correct_plaintext(self, monkeypatch):
+        """AC-6: DASHBOARD_PASSWORD_HASH (werkzeug format) logs in the operator.
+
+        The existing test_hash_takes_precedence_over_plaintext only verifies that
+        _resolve_dashboard_credential() returns the hash value — it does NOT POST
+        to /login.  A broken implementation could return the hash string from
+        _resolve_dashboard_credential but then compare it with hmac.compare_digest
+        (hash string != submitted password → always denies).  This test proves the
+        check_password_hash CODE PATH actually fires and grants a 302 redirect.
+        """
+        monkeypatch.setenv("DASHBOARD_PASSWORD_HASH", _TEST_PASSWORD_HASH)
+        monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+        monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        app_module.app.config["TESTING"] = True
+
+        is_werkzeug_hash = _TEST_PASSWORD_HASH.startswith(("pbkdf2:", "scrypt:", "bcrypt:"))
+
+        with app_module.app.test_client() as client:
+            # Correct plaintext against the hash must succeed.
+            resp_ok = client.post(
+                "/login",
+                data={"password": _TEST_PASSWORD},
+                follow_redirects=False,
+            )
+            # Wrong plaintext against the hash must be denied.
+            resp_bad = client.post(
+                "/login",
+                data={"password": "this-is-wrong"},
+                follow_redirects=False,
+            )
+
+        if is_werkzeug_hash:
+            assert resp_ok.status_code in (302, 303), (
+                f"DASHBOARD_PASSWORD_HASH (werkzeug format) with correct plaintext must "
+                f"redirect (302/303); got {resp_ok.status_code}. "
+                f"The check_password_hash path may not be firing."
+            )
+            assert resp_bad.status_code not in (302, 303), (
+                f"Wrong plaintext against DASHBOARD_PASSWORD_HASH must NOT redirect; "
+                f"got {resp_bad.status_code}."
+            )
+        else:
+            # Degraded: sha256 hex treated as plaintext path — shape-only check.
+            assert resp_ok.status_code not in (500, 503), (
+                "DASHBOARD_PASSWORD_HASH login path must not produce a server error"
+            )
+
+    # -- Sufficiency Gap 2: session.clear() fires before setting authenticated (AC-4) --
+
+    def test_session_is_cleared_on_login_prevents_fixation(self, monkeypatch):
+        """AC-4: session.clear() must be called before session['authenticated']=True.
+
+        Session fixation: if an attacker plants a known session ID (e.g. via a
+        subdomain cookie injection), and the server only sets session['authenticated']=True
+        without clearing, the attacker's session becomes authenticated.
+
+        We prove the fix by seeding a canary key into the session before login,
+        then asserting it is absent after a successful login.  A broken impl that
+        skips session.clear() would leave the canary present.
+
+        Note: Flask test client sessions require using the session_transaction() context
+        manager to inspect/mutate the session outside a request context.
+        """
+        monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
+        monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        app_module.app.config["TESTING"] = True
+
+        with app_module.app.test_client() as client:
+            # Plant a canary key in the session before login.
+            with client.session_transaction() as pre_sess:
+                pre_sess["fixation_canary"] = "attacker-controlled-value"
+
+            # Perform a successful login.
+            client.post(
+                "/login",
+                data={"password": _TEST_PASSWORD},
+                follow_redirects=False,
+            )
+
+            # The canary must be gone — session.clear() must have fired.
+            with client.session_transaction() as post_sess:
+                assert "fixation_canary" not in post_sess, (
+                    "session.clear() must be called before session['authenticated']=True "
+                    "on login to prevent session-fixation attacks. "
+                    "Found 'fixation_canary' in post-login session — clear() was skipped."
+                )
+                assert post_sess.get("authenticated") is True, (
+                    "After successful login, session['authenticated'] must be True"
+                )
+
+    # -- Sufficiency Gap 3: lockout WINDOW blocks subsequent requests (AC-9) --
+
+    def test_throttle_window_blocks_subsequent_requests(self, auth_client):
+        """AC-9: After lockout, requests BEYOND the threshold are ALSO blocked.
+
+        Existing test_throttle_increments_on_wrong_password checks that the Nth+1
+        response shows a lockout message.  A broken impl could show the error on the
+        Nth response but reset the window on the next, letting the N+2 request through.
+        This test sends 2 additional requests after crossing the threshold and asserts
+        both remain blocked.
+        """
+        max_attempts = app_module._AUTH_MAX_ATTEMPTS
+        # Cross the threshold.
+        for _ in range(max_attempts + 1):
+            auth_client.post(
+                "/login",
+                data={"password": "wrong"},
+                follow_redirects=False,
+            )
+        # Two additional requests — both must still be blocked.
+        for extra in range(2):
+            resp = auth_client.post(
+                "/login",
+                data={"password": "wrong"},
+                follow_redirects=False,
+            )
+            assert resp.status_code in (200, 429), (
+                f"Extra request #{extra + 1} after lockout must still be blocked "
+                f"(429 or login page with lockout message); got {resp.status_code}"
+            )
+            if resp.status_code == 200:
+                body = resp.get_data(as_text=True).lower()
+                assert "too many" in body or "locked" in body or "attempts" in body, (
+                    f"Extra request #{extra + 1} after lockout: login page must show "
+                    f"lockout message, not a fresh login form. "
+                    f"Body snippet: {body[:300]!r}"
+                )
+
+    # -- Sufficiency Gap 4: throttle is per-client IP (AC-9) --
+
+    def test_throttle_is_per_client_ip(self, monkeypatch):
+        """AC-9: Each client IP has an independent throttle bucket.
+
+        A global (non-keyed) lockout counter would lock out ALL clients when any
+        one client exceeds the threshold — including the legitimate operator.
+        This test exhausts lockout for IP A and asserts IP B (different remote_addr)
+        is unaffected and still sees the standard wrong-password response.
+        """
+        monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
+        monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        app_module.app.config["TESTING"] = True
+        max_attempts = app_module._AUTH_MAX_ATTEMPTS
+
+        with app_module.app.test_client() as client:
+            # Exhaust lockout for IP A (10.0.0.1).
+            for _ in range(max_attempts + 1):
+                client.post(
+                    "/login",
+                    data={"password": "wrong"},
+                    follow_redirects=False,
+                    environ_base={"REMOTE_ADDR": "10.0.0.1"},
+                )
+
+            # IP A must now be locked out.
+            resp_a = client.post(
+                "/login",
+                data={"password": "wrong"},
+                follow_redirects=False,
+                environ_base={"REMOTE_ADDR": "10.0.0.1"},
+            )
+            locked_a = resp_a.status_code == 429 or (
+                resp_a.status_code == 200
+                and any(
+                    kw in resp_a.get_data(as_text=True).lower()
+                    for kw in ("too many", "locked", "attempts")
+                )
+            )
+            assert locked_a, (
+                f"IP 10.0.0.1 must be locked after {max_attempts + 1} wrong attempts; "
+                f"got status {resp_a.status_code} with body: "
+                f"{resp_a.get_data(as_text=True)[:200]!r}"
+            )
+
+            # IP B (10.0.0.2) must NOT be locked — independent bucket.
+            resp_b = client.post(
+                "/login",
+                data={"password": "wrong"},
+                follow_redirects=False,
+                environ_base={"REMOTE_ADDR": "10.0.0.2"},
+            )
+            body_b = resp_b.get_data(as_text=True).lower()
+            # IP B should get the standard wrong-password response, not a lockout.
+            assert not (
+                resp_b.status_code == 429
+                or any(kw in body_b for kw in ("too many", "locked"))
+            ), (
+                "IP 10.0.0.2 must NOT be locked out when only IP 10.0.0.1 exceeded "
+                "the threshold — throttle buckets must be per-client IP. "
+                f"Got status {resp_b.status_code}, body: {body_b[:200]!r}"
+            )
+            # IP B must see the standard incorrect-password message (not locked).
+            assert "incorrect" in body_b or "wrong" in body_b or "invalid" in body_b, (
+                f"IP B must receive the standard wrong-password error; got: {body_b[:200]!r}"
+            )
+
+    # -- Sufficiency Gap 5: API /api/* returns JSON (not HTML) on misconfig (AC-8) --
+
+    def test_fail_closed_missing_password_api_route_returns_json(self, monkeypatch):
+        """AC-8: When DASHBOARD_PASSWORD is missing, /api/* returns JSON (not 302 HTML).
+
+        The _auth_before_request implementation returns
+        jsonify({'error':'misconfigured'}), 503 for API routes on misconfig,
+        but no existing test covers this.  A broken impl could accidentally return
+        302 to /login for /api/* on misconfig, which breaks the SPA (JS can't
+        follow the redirect to get a login page — it just sees opaque HTML).
+        """
+        monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+        monkeypatch.delenv("DASHBOARD_PASSWORD_HASH", raising=False)
+        monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        app_module.app.config["TESTING"] = True
+
+        with app_module.app.test_client() as client:
+            resp = client.get("/api/state", follow_redirects=False)
+
+        # Must NOT be a redirect (302/301/303 would send the browser to HTML /login).
+        assert resp.status_code not in (301, 302, 303), (
+            f"Misconfigured app must NOT redirect /api/* to /login (got {resp.status_code}); "
+            "the SPA cannot handle a redirect — it needs a JSON error response."
+        )
+        # Must be a JSON response (application/json content-type).
+        ct = resp.content_type or ""
+        assert "application/json" in ct, (
+            f"Misconfigured app /api/* must return JSON content-type; got {ct!r}. "
+            f"Status: {resp.status_code}"
+        )
+        data = resp.get_json()
+        assert data is not None and ("error" in data or "message" in data), (
+            f"Misconfigured /api/* JSON body must contain 'error' or 'message'; got {data}"
+        )
+
+    # -- Sufficiency Gap 6: exempt set is exactly the intended minimal members (AC-1/AC-3) --
+
+    def test_auth_exempt_endpoints_is_exactly_minimal_set(self, monkeypatch):
+        """AC-1/AC-3/security: _AUTH_EXEMPT_ENDPOINTS must equal the exact minimal set.
+
+        Any accidental addition (e.g. 'dashboard', 'api_state', 'index') would
+        bypass the auth gate for that endpoint without a test catching it.  This
+        pins the membership contract so any future change requires an explicit
+        test update.
+        """
+        monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
+        monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        expected = frozenset({"login", "logout", "static", "get_csrf_token", "health"})
+        actual = app_module._AUTH_EXEMPT_ENDPOINTS
+        assert actual == expected, (
+            f"_AUTH_EXEMPT_ENDPOINTS must be exactly {expected!r}; "
+            f"got {actual!r}. "
+            f"Extra members bypass the auth gate: {actual - expected!r}. "
+            f"Missing members would break the login flow: {expected - actual!r}."
+        )
+
+    # -- MEDIUM (da2-security): throttle proxy-awareness / TRUST_PROXY / XFF (AC-9) --
+
+    def test_throttle_keys_on_forwarded_for_when_trust_proxy_set(self, monkeypatch):
+        """AC-9 / security: when TRUST_PROXY is truthy, throttle keys on X-Forwarded-For.
+
+        Behind a reverse proxy (Caddy, per the droplet deploy), request.remote_addr
+        is the proxy's IP for every request.  Without XFF-keying, locking out one
+        client locks out ALL clients (including the legitimate operator).
+
+        Feature-plan §Architecture (line 31) specified:
+          'client_key = remote addr (behind a proxy, honor a configured trusted
+           X-Forwarded-For only if TRUST_PROXY set — else remote addr)'.
+
+        This test is RED because the current implementation uses only
+        request.remote_addr (app.py:226: client_ip = request.remote_addr or 'unknown')
+        with no TRUST_PROXY / XFF handling.
+        """
+        monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
+        monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        monkeypatch.setenv("TRUST_PROXY", "1")
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        app_module.app.config["TESTING"] = True
+        max_attempts = app_module._AUTH_MAX_ATTEMPTS
+
+        with app_module.app.test_client() as client:
+            # Exhaust lockout for XFF client A (1.1.1.1), from proxy remote_addr 127.0.0.1.
+            for _ in range(max_attempts + 1):
+                client.post(
+                    "/login",
+                    data={"password": "wrong"},
+                    follow_redirects=False,
+                    environ_base={"REMOTE_ADDR": "127.0.0.1"},
+                    headers={"X-Forwarded-For": "1.1.1.1"},
+                )
+
+            # XFF client A must now be locked.
+            resp_a = client.post(
+                "/login",
+                data={"password": "wrong"},
+                follow_redirects=False,
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+                headers={"X-Forwarded-For": "1.1.1.1"},
+            )
+            locked_a = resp_a.status_code == 429 or (
+                resp_a.status_code == 200
+                and any(
+                    kw in resp_a.get_data(as_text=True).lower()
+                    for kw in ("too many", "locked", "attempts")
+                )
+            )
+            assert locked_a, (
+                f"With TRUST_PROXY set: XFF 1.1.1.1 must be locked after "
+                f"{max_attempts + 1} wrong attempts; "
+                f"got {resp_a.status_code}. "
+                "The implementation must key on the leftmost X-Forwarded-For entry "
+                "when TRUST_PROXY is set (app.py:226 uses only remote_addr — RED)."
+            )
+
+            # XFF client B (2.2.2.2) — same proxy remote_addr, different XFF — must NOT be locked.
+            resp_b = client.post(
+                "/login",
+                data={"password": "wrong"},
+                follow_redirects=False,
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+                headers={"X-Forwarded-For": "2.2.2.2"},
+            )
+            body_b = resp_b.get_data(as_text=True).lower()
+            assert not (
+                resp_b.status_code == 429
+                or any(kw in body_b for kw in ("too many", "locked"))
+            ), (
+                "With TRUST_PROXY set: XFF 2.2.2.2 must NOT be locked when only "
+                "XFF 1.1.1.1 was exhausted — per-XFF keying required. "
+                f"Got status {resp_b.status_code}, body: {body_b[:200]!r}"
+            )
+
+    def test_throttle_ignores_forwarded_for_when_trust_proxy_unset(self, monkeypatch):
+        """AC-9 / security: when TRUST_PROXY is NOT set, X-Forwarded-For is IGNORED.
+
+        If XFF is honored unconditionally, an attacker can rotate
+        X-Forwarded-For on every request to evade the lockout entirely
+        (new XFF = new bucket = zero failed attempts).  Only trust XFF when
+        the operator has explicitly configured TRUST_PROXY.
+        """
+        monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
+        monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        monkeypatch.delenv("TRUST_PROXY", raising=False)
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        app_module.app.config["TESTING"] = True
+        max_attempts = app_module._AUTH_MAX_ATTEMPTS
+
+        with app_module.app.test_client() as client:
+            # Lock out remote_addr 10.1.1.1 (TRUST_PROXY off — XFF must be ignored).
+            for _ in range(max_attempts + 1):
+                client.post(
+                    "/login",
+                    data={"password": "wrong"},
+                    follow_redirects=False,
+                    environ_base={"REMOTE_ADDR": "10.1.1.1"},
+                    # Vary XFF on every request — must NOT create separate buckets.
+                    headers={"X-Forwarded-For": "192.168.1.1"},
+                )
+
+            # Same remote_addr with a different XFF — must still be locked.
+            resp = client.post(
+                "/login",
+                data={"password": "wrong"},
+                follow_redirects=False,
+                environ_base={"REMOTE_ADDR": "10.1.1.1"},
+                headers={"X-Forwarded-For": "192.168.99.99"},  # Different XFF
+            )
+            still_locked = resp.status_code == 429 or (
+                resp.status_code == 200
+                and any(
+                    kw in resp.get_data(as_text=True).lower()
+                    for kw in ("too many", "locked", "attempts")
+                )
+            )
+            assert still_locked, (
+                "With TRUST_PROXY unset: changing X-Forwarded-For must NOT reset the "
+                "lockout bucket — XFF must be IGNORED and throttle must key only on "
+                f"remote_addr. Got {resp.status_code}. "
+                "If this fails, an attacker can evade lockout by spoofing XFF."
+            )
+
+    # -- LOW (PM scope ruling): misconfig is logged loudly (AC-8) --
+
+    def test_misconfig_is_logged_loudly_on_deny(self, monkeypatch, caplog):
+        """AC-8: Missing DASHBOARD_PASSWORD triggers a loud log on the FIRST denied request.
+
+        AC-8 specifies 'logged loudly at startup' for misconfig.  The implementation
+        currently silently redirects/503s with no log (confirmed: no startup
+        validation call in app.py; _auth_before_request redirects silently).
+        A silent fail-closed means the operator has NO indication why the site is
+        inaccessible.  This test is RED until the implementation adds a WARNING or
+        ERROR log entry when misconfig is detected.
+
+        Acceptable: either a startup-time validation that fires before any request,
+        or a first-request log at WARNING/ERROR level naming the missing variable.
+        """
+        monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+        monkeypatch.delenv("DASHBOARD_PASSWORD_HASH", raising=False)
+        monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        app_module.app.config["TESTING"] = True
+
+        with caplog.at_level(logging.WARNING):
+            with app_module.app.test_client() as client:
+                client.get("/", follow_redirects=False)
+
+        # Must emit at least one WARNING or ERROR mentioning misconfig / missing password.
+        log_text = caplog.text.lower()
+        assert any(
+            kw in log_text
+            for kw in ("misconfig", "dashboard_password", "missing", "no credential", "no password")
+        ), (
+            "When DASHBOARD_PASSWORD is missing, the app must log a WARNING or ERROR "
+            "naming the misconfiguration so the operator knows why the site is inaccessible. "
+            f"Log captured: {caplog.text!r}"
+        )
