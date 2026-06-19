@@ -162,10 +162,10 @@ Returns `(is_nn1_honest, violations)`. Checks spec_facets discipline (must all b
 
 See `DE-CALSWEEP-001` in `DECISIONS.md` and `.claude/calibration-methodology-verdict.md` for the full research basis.
 
-#### `run_calibration_sweep(history_data, current_params, current_date_str, deviation_dict, random_state) → list[dict]`
+#### `run_calibration_sweep(history_data, current_params, current_date_str, deviation_dict, random_state, *, min_history_days: int = _CALSWEEP_MIN_HISTORY_DAYS) → list[dict]`
 V1 calibration sweep over `PARABOLIC_VELOCITY_THRESHOLD` and `VWAP_CROSS_HWM_PCT` only. Applies identical fold methodology to `run_autotuner` (60/20/20 split with O1 purge+embargo) but search space is limited to 2 params. Does NOT persist anything to the DB (read-only; operator-gated rollout).
 
-**AC-4 — insufficient-history skip:** Symphonies with fewer than `_CALSWEEP_MIN_HISTORY_DAYS` (125) days of history are skipped with a warning log. Below this threshold the fold partitioning produces validation windows too small for the Sortino objective to yield meaningful signal.
+**AC-4 — insufficient-history skip:** Symphonies with fewer than `min_history_days` days of history are skipped with a warning log. The production default is `_CALSWEEP_MIN_HISTORY_DAYS` (125) — production behavior is unchanged. Below this threshold the fold partitioning produces validation windows too small for the Sortino objective to yield meaningful signal. The param is injectable so test suites can pass `min_history_days=0` to exercise contracts on short fixtures without weakening the production floor (see DE-CALSWEEP-002).
 
 **AC-5 — PBO veto surfaced per symphony:** When the BHY haircut finds no trial that clears the FDR gate, `pbo_veto_status=True` is set on every report row for that symphony. This is surfaced prominently in the advisory report so the operator knows the proposed value is the naive Optuna winner and is NOT statistically qualified.
 
@@ -183,6 +183,7 @@ V1 calibration sweep over `PARABOLIC_VELOCITY_THRESHOLD` and `VWAP_CROSS_HWM_PCT
 | `current_date_str` | `str` | ISO-8601 date string for today |
 | `deviation_dict` | `dict` | Execution-deviation penalties from `calculate_historical_deviation` |
 | `random_state` | `int` | TPE sampler seed for reproducibility |
+| `min_history_days` | `int` | History floor (days) below which a symphony is skipped (AC-4). Default: `_CALSWEEP_MIN_HISTORY_DAYS` = 125 — production-unchanged. Pass a lower value (e.g. 0) in test suites to exercise contracts on short fixtures (DE-CALSWEEP-002). |
 
 **Returns:** `list[dict]` — one dict per (symphony, param_name) pair. Keys:
 | Key | Type | Description |

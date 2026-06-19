@@ -1461,3 +1461,14 @@ Both wiring blocks are wrapped in `except Exception: pass` -- humanization failu
 **Report script:** `scripts/vwap-calibration-report.py` provides `generate_report(rows) -> list[dict]` (programmatic) and `_format_markdown(rows) -> str` (Markdown rendering with PBO-veto and operator-review banners). Advisory-only; no DB writes, no live-engine imports, no constant application. CLI: `python scripts/vwap-calibration-report.py --rows-json <path> [--out <path>]`.
 
 **Status:** Implementation complete on `feat/calibration-sweep` at 477aa86. See `docs/generated/autotuner.md` §Calibration Sweep and `docs/generated/scripts_vwap_calibration_report.md`.
+
+### DE-CALSWEEP-002: AC-4 history floor made injectable via `min_history_days` — production default unchanged
+
+**Context:** The v1 test suite (`tests/test_v1_calibration_sweep.py`) uses 40-day fixtures — well below the AC-4 production floor of `_CALSWEEP_MIN_HISTORY_DAYS` = 125. After AC-4 was added in the initial sweep implementation, 11 of 43 suite tests failed because every fixture symphony was skipped before the sweep could exercise any contract.
+
+**Decision:** Make the history floor injectable via a new keyword parameter `min_history_days: int = _CALSWEEP_MIN_HISTORY_DAYS` on `run_calibration_sweep`. The module constant `_CALSWEEP_MIN_HISTORY_DAYS` is UNCHANGED at 125; the production default is byte-identical to the original hard-coded check. Test suites pass `min_history_days=0` to bypass the skip on short fixtures and exercise the E1-velocity, haircut-outcome, frozen-eval, and report-schema contracts.
+
+**Why not lower the constant?** Lowering `_CALSWEEP_MIN_HISTORY_DAYS` would weaken production behaviour: fewer than 125 days genuinely produce validation windows too small for the Sortino objective to yield meaningful signal (López de Prado 2018 purge+embargo on 60/20/20 folds). The injectable param pattern is the standard testability seam — it preserves the production guarantee while eliminating the false AC-4 skip in test fixtures.
+
+**Affected symbol:** `autotuner.run_calibration_sweep` (commit `b35d14c`). No callers broken — all existing callers use the default. See `docs/generated/autotuner.md` §AC-4 and the parameters table for the public-API update.
+
