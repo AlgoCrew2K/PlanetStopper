@@ -1567,13 +1567,13 @@ Single shared password, checked constant-time, stored in env. Flask signed-sessi
 | TLS/tunnel deferred to the droplet deploy | Transport security is a deployment concern, not app logic. The session cookie is signed (integrity) but plaintext (confidentiality) over HTTP — the deployment MUST add Caddy/nginx TLS or SSH tunnel. Tracked in the droplet-deploy phase. |
 | `_auth_check_enabled` module flag + `_disable_auth_for_tests` autouse fixture | Mirrors the `_csrf_check_enabled` / `_disable_csrf_for_tests` pattern established earlier. Keeps all ~7000 existing route tests passing without injecting credentials. Auth gate tests re-enable the flag per-fixture. `_AUTH_FAILED_ATTEMPTS.clear()` called on every test teardown to prevent throttle bleed-through. |
 | `login()` calls `session.clear()` before setting `authenticated` | Session-fixation prevention (AC-4). Clears any attacker-planted session values before the session is promoted to authenticated. |
-| CSRF on login POST | Reuses existing `_validate_csrf()` / `_csrf_before_request` infra. The login form embeds the CSRF token in a hidden field (`csrf_token`), which is now the second acceptance channel for `_validate_csrf` (dual-channel fix at 8a34de6). |
+| CSRF on login POST | Reuses existing `_validate_csrf()` / `_csrf_before_request` infra. The login form embeds the CSRF token in a hidden field (`csrf_token`), which is now the second acceptance channel for `_validate_csrf` (dual-channel fix at 8a34de6). The form-field channel is content-type-gated: `request.form` is accessed only when `Content-Type` is `application/x-www-form-urlencoded` or `multipart/form-data` (dc6b8c7) — accessing it on JSON POSTs triggers Werkzeug body parsing, which enforces `MAX_CONTENT_LENGTH` before the CSRF 403 can fire. |
 
 ### Security findings resolved in this cycle
 
 | Severity | Finding | Fix |
 |----------|---------|-----|
-| HIGH | CSRF: login form POST could not pass the CSRF token via a form field (the prior implementation only accepted the `X-CSRF-Token` header, which a native browser form cannot set) | `_validate_csrf()` extended to accept `csrf_token` form field as a second channel; docstring updated at 8a34de6 |
+| HIGH | CSRF: login form POST could not pass the CSRF token via a form field (the prior implementation only accepted the `X-CSRF-Token` header, which a native browser form cannot set) | `_validate_csrf()` extended to accept `csrf_token` form field as a second channel; docstring updated at 8a34de6. Form-field channel subsequently content-type-gated (dc6b8c7) to prevent 413-before-403 guard-ordering regression on JSON POSTs. |
 | MEDIUM | XFF keying: trusting `X-Forwarded-For` unconditionally on the throttle allows IP spoofing | `TRUST_PROXY` opt-in env var; remote addr used by default |
 | LOW | Misconfig log: `DASHBOARD_PASSWORD` absence was not logged loudly at startup | Loud `_daemon_log.warning` added in `_auth_before_request` misconfig path |
 
@@ -1583,7 +1583,7 @@ AC-1 through AC-13 as specified in `feature-plans/dashboard-auth.md`. 46/46 test
 
 ### Files changed
 
-- `app.py` — auth gate: `_auth_check_enabled`, `_AUTH_EXEMPT_ENDPOINTS`, `_AUTH_FAILED_ATTEMPTS`, `_AUTH_MAX_ATTEMPTS`, `_AUTH_LOCKOUT_SECONDS`, `_resolve_dashboard_credential`, `_secret_key_configured`, `_check_throttle`, `_record_failed_attempt`, `_clear_failed_attempts`, `_is_api_or_xhr`, `_auth_before_request`, `login`, `logout`; `SESSION_COOKIE_*` config; `app.secret_key`; CSRF dual-channel fix (`_validate_csrf` docstring)
+- `app.py` — auth gate: `_auth_check_enabled`, `_AUTH_EXEMPT_ENDPOINTS`, `_AUTH_FAILED_ATTEMPTS`, `_AUTH_MAX_ATTEMPTS`, `_AUTH_LOCKOUT_SECONDS`, `_resolve_dashboard_credential`, `_secret_key_configured`, `_check_throttle`, `_record_failed_attempt`, `_clear_failed_attempts`, `_is_api_or_xhr`, `_auth_before_request`, `login`, `logout`; `SESSION_COOKIE_*` config; `app.secret_key`; CSRF dual-channel fix (`_validate_csrf` docstring); CSRF form-field content-type gating (`_validate_csrf` implementation + docstring, dc6b8c7)
 - `templates/login.html` — minimal login form (light card UI, CSRF hidden field, error slot)
 - `tests/conftest.py` — `_disable_auth_for_tests` autouse fixture; `_AUTH_FAILED_ATTEMPTS.clear()` between tests
 - `tests/app/test_dashboard_auth.py` — 46 RED→GREEN tests covering AC-1..AC-13
