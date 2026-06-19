@@ -1424,3 +1424,51 @@ Both wiring blocks are wrapped in `except Exception: pass` -- humanization failu
 **Tests:** `tests/ai_advisor/test_rf1_prose_render.py` -- AC-1..AC-7 across two RED/GREEN rounds. R1: prose passthrough (council fixture row 78), JSON->readable for each of the 5 lens shapes (lens_pipeline fixture row 77), null/empty->empty-state (AC-3), brace-prose not misclassified (AC-1), fundamentals concision (AC-4), never-raises sweep over junk inputs (AC-7), route/render test asserting no raw-JSON markers in per-lens text. R2: AC-5 symphony-level obs-raw-preview cell no longer emits raw JSON. Fixtures captured from live DB; provenance recorded in fixture files.
 
 **Status:** GREEN at ac072f3. reviewer APPROVE + ux-expert visual PASS.
+
+---
+
+## Calibration Sweep — V1 2-Param VWAP Walk-Forward (2026-06-19)
+
+### DE-CALSWEEP-001: 2-param calibration sweep methodology — PBO + Harvey-Liu; DSR excluded; bleed-arm clamps and CONFIRM_TICKS hand-set
+
+**Research basis:** `.claude/calibration-methodology-verdict.md` (2026-06-19) — synthesized by cm-synthesizer from cm-risk-researcher (Q1 search-space scope) + cm-optuna-researcher (Q2 overfitting control). All material claims verified at `file:line` or named external citation. Contradictions resolved adversarially at source.
+
+**Decision: sweep exactly 2 params.** `run_calibration_sweep` sweeps `PARABOLIC_VELOCITY_THRESHOLD` ([1.0, 4.0]) and `VWAP_CROSS_HWM_PCT` ([0.3, 2.0] V1 asymmetric bounds) only. Three candidate params were evaluated and excluded:
+
+1. **`VWAP_BLEED_ARM_MIN` / `VWAP_BLEED_ARM_MAX` — permanently hand-set (guardrails, not alpha params).** These are output clamps on `compute_vwap_bleed_arm_threshold`; the signal-bearing knob (`VWAP_BLEED_MULTIPLIER`) is already in the production sweep. The trailing-stop literature establishes that guardrail threshold response is flat across a wide range — no fittable optimum exists for a historical optimizer to find:
+   - Kaminski & Lo (2014), "When Do Stop-Loss Rules Stop Losses?", *J. Financial Markets* 18:234-254, SSRN 968338 — stop value governed by regime, not fine-tuning; optimizing on ~1yr window fits that window's realized regime.
+   - Dai, B., Marshall, B. R., Nguyen, N. H. & Visaltanachoti, N. (2021), "Risk Reduction Using Trailing Stop-Loss Rules," *International Review of Finance* 21(4):1334-1352, DOI 10.1111/irfi.12328 — grid of fixed thresholds 1%-20% shows downside-risk reduction robust across the whole range; flat response is the empirical signature of a guardrail vs. an alpha parameter.
+   The "category error" framing (origin: `docs/research/dashboard/optuna-tuning-audit.md:112-113, 237`) is interpretation-grade but now externally corroborated by both papers. Supersedes the W2 plan's "sweep them" stance (which carried no methodological justification).
+
+2. **`VWAP_BREAK_CONFIRM_TICKS` — excluded this cycle on data-sufficiency grounds (future operator-gated add).** Adding it moves the dedicated sweep 2-D → 3-D at the 100-trial floor. Grid-equivalent density: `100^(1/3) ≈ 4.6` levels/axis vs `100^(1/2) = 10` for 2-D — a >2x density drop. Restoring 2-D density at 3-D requires ~1,000 trials (`10^3`). **If ever added: `OPTUNA_N_TRIALS_CALIBRATION` must first be raised to ~1,000 — sweeping at the current 100-trial floor would be a methodologically dishonest 3-D-at-a-2-D-budget exploration.** Secondary: the param ranks in the higher-overfit-exposure tier (`math-engine-methodology-review.md §11`); integer range is marginal. The "defensible either way" stance in the audit (`optuna-tuning-audit.md:115, 236`) is the not the operative default — data-sufficiency is the decisive tie-breaker.
+
+**Decision: overfitting controls — PBO (CSCV) + Harvey-Liu/BHY haircut.** Same methodology as the production walk-forward. DSR (Deflated Sharpe Ratio) is NOT used on the selection path (Decision D3, carried from `walk-forward-overhaul.completed.md`):
+- **PBO and BHY are orthogonal guards** (`math_engine.py:1958-1961`, verified): BHY = multiplicity axis; PBO = sample-robustness axis. They address different failure modes.
+- **Removing DSR is defensible here:** PBO (CSCV) covers the selection-generalization failure mode more directly than DSR's analytic False-Strategy-Theorem approximation. BHY covers the multiplicity failure mode. The CRRA-EU objective + bootstrap SE t-stat captures non-normality empirically via resampling. DSR's remaining non-redundant residual (analytic effective-N via trial-correlation clustering) errs conservative in its absence — additive `N_effective` over-counts, producing a stronger haircut, which is the safe direction.
+- **D3 category error (original removal rationale, from `walk-forward-overhaul.completed.md:17-18`):** deflating a CRRA-EU/Sortino objective with a Sharpe sampling distribution is a D3 category error. DSR-reporting-only (not on the selection path) remains a possible future operator decision requiring a logged D3 amendment; it is NOT in scope for this cycle.
+- Bailey, D. H. & López de Prado, M. (2014). "The Probability of Backtest Overfitting." *J. Computational Finance.* SSRN 2326253. [High]
+- Harvey, C. R. & Liu, Y. (2015). "Backtesting." *J. Portfolio Management.* SSRN 2345489. [High]
+- Harvey, C. R., Liu, Y. & Zhu, H. (2016). "...and the Cross-Section of Expected Returns." *RFS.* NBER w20592. [High]
+
+**Acceptance criteria implemented:**
+- **AC-4:** Symphonies with `< _CALSWEEP_MIN_HISTORY_DAYS` (125) days skipped with warning log.
+- **AC-5:** `pbo_veto_status` surfaced per symphony when haircut finds no qualified winner.
+- **AC-6:** Study name = `{timestamp}__{symphony_id}__calsweep` — never collides with production study names.
+- **AC-7:** `flag_for_operator_review=True` when proposed trigger frequency exceeds `_CALSWEEP_TRIGGER_FREQ_FLAG_MULTIPLIER` (2.0x) current count on validation fold.
+
+**Advisory-only, operator-gated rollout:** `run_calibration_sweep` does NOT persist to the state DB (AC-V1.3). No auto-apply. No fleet flip. The operator reviews per-symphony proposals from `scripts/vwap-calibration-report.py` and decides whether to apply any change.
+
+**Report script:** `scripts/vwap-calibration-report.py` provides `generate_report(rows) -> list[dict]` (programmatic) and `_format_markdown(rows) -> str` (Markdown rendering with PBO-veto and operator-review banners). Advisory-only; no DB writes, no live-engine imports, no constant application. CLI: `python scripts/vwap-calibration-report.py --rows-json <path> [--out <path>]`.
+
+**Status:** Implementation complete on `feat/calibration-sweep` at 477aa86. See `docs/generated/autotuner.md` §Calibration Sweep and `docs/generated/scripts_vwap_calibration_report.md`.
+
+### DE-CALSWEEP-002: AC-4 history floor made injectable via `min_history_days` — production default unchanged
+
+**Context:** The v1 test suite (`tests/test_v1_calibration_sweep.py`) uses 40-day fixtures — well below the AC-4 production floor of `_CALSWEEP_MIN_HISTORY_DAYS` = 125. After AC-4 was added in the initial sweep implementation, 11 of 43 suite tests failed because every fixture symphony was skipped before the sweep could exercise any contract.
+
+**Decision:** Make the history floor injectable via a new keyword parameter `min_history_days: int = _CALSWEEP_MIN_HISTORY_DAYS` on `run_calibration_sweep`. The module constant `_CALSWEEP_MIN_HISTORY_DAYS` is UNCHANGED at 125; the production default is byte-identical to the original hard-coded check. Test suites pass `min_history_days=0` to bypass the skip on short fixtures and exercise the E1-velocity, haircut-outcome, frozen-eval, and report-schema contracts.
+
+**Why not lower the constant?** Lowering `_CALSWEEP_MIN_HISTORY_DAYS` would weaken production behaviour: fewer than 125 days genuinely produce validation windows too small for the Sortino objective to yield meaningful signal (López de Prado 2018 purge+embargo on 60/20/20 folds). The injectable param pattern is the standard testability seam — it preserves the production guarantee while eliminating the false AC-4 skip in test fixtures.
+
+**Affected symbol:** `autotuner.run_calibration_sweep` (commit `b35d14c`). No callers broken — all existing callers use the default. See `docs/generated/autotuner.md` §AC-4 and the parameters table for the public-API update.
+

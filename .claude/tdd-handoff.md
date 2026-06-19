@@ -1,146 +1,104 @@
-# TDD Handoff — symphony-schema required-fields fix (RED → GREEN)
+# TDD Handoff -- calibration-sweep RED phase (2-param, CORRECTED)
 
-**From:** sf-test-writer
-**To:** sf-implementer
-**Branch:** feat/symphony-schema-required-fields
-**Worktree:** C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/symphony-fields
-**Plan:** feature-plans/symphony-schema-required-fields.md (AC-1..AC-6)
-**Phase:** green
+**From:** cs-test-writer (LEAD)
+**To:** cs-implementer
+**Branch:** feat/calibration-sweep
+**Worktree:** C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/calibration-sweep
 
 ---
 
-## Your mission: GREEN (minimum changes to pass the 15 RED tests)
+## Current state after RED reconciliation
 
-You are the implementer. Read ONLY this handoff — not the feature plan.
-Write the MINIMUM production code to make the 15 failing tests pass.
-Do NOT touch composer_backtest_client.py (the raw_value wrapper is correct).
+Run these 4 files first to confirm the RED profile:
 
-Confirm RED first:
+    cd C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/calibration-sweep
+    python -m pytest tests/test_calibration_sweep_search_space.py tests/test_calibration_sweep_report.py tests/test_calibration_sweep_advisory_invariant.py tests/test_calibration_sweep_insufficient_history.py -v -p no:xdist -o addopts= --timeout=60
 
-```
-cd C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/symphony-fields
-python -m pytest tests/advisors/test_symphony_schema_required_fields.py -p no:xdist -o addopts= -m "not live and not slow and not perf" -q
-```
-
-Expected: 15 FAILED / 5 passed.
+Expected: **3 FAILED / 25 passed**
 
 ---
 
-## Files to modify
+## What is failing and why (ONLY 3 tests)
 
-### ONLY change: `advisors/symphony_schema.py`
+### AC-1 violation -- wrong params in OPTUNA_SEARCH_SPACE_KEYS (autotuner.py:123-135)
 
-Two one-line additions:
+    FAILED test_calibration_sweep_search_space.py::test_vwap_bleed_arm_min_not_in_search_space
+    FAILED test_calibration_sweep_search_space.py::test_vwap_bleed_arm_max_not_in_search_space
+    FAILED test_calibration_sweep_search_space.py::test_vwap_break_confirm_ticks_not_in_search_space
 
-**1. `make_root` (line ~784)**
+The current OPTUNA_SEARCH_SPACE_KEYS frozenset contains 3 params that must NOT be there:
 
-Current output dict:
-```python
-{
-    "step": "root",
-    "name": name,
-    "rebalance": rebalance,
-    "id": _fresh_id(),
-    "children": [copy.deepcopy(child) for child in children],
-}
-```
+    "VWAP_BREAK_CONFIRM_TICKS",   # WRONG -- hand-set, must be REMOVED
+    "VWAP_BLEED_ARM_MIN",          # WRONG -- hand-set, must be REMOVED
+    "VWAP_BLEED_ARM_MAX",          # WRONG -- hand-set, must be REMOVED
 
-Required output dict (add `"description": ""`):
-```python
-{
-    "step": "root",
-    "name": name,
-    "rebalance": rebalance,
-    "description": "",        # required by live Composer /backtest API (was HTTP 400)
-    "id": _fresh_id(),
-    "children": [copy.deepcopy(child) for child in children],
-}
-```
-
-**2. `make_inverse_vol` (line ~823)**
-
-Current output dict:
-```python
-{
-    "step": "wt-inverse-vol",
-    "id": _fresh_id(),
-    "children": [copy.deepcopy(child) for child in children],
-}
-```
-
-Required output dict (add `"window-days": 30`):
-```python
-{
-    "step": "wt-inverse-vol",
-    "window-days": 30,        # required by live Composer /backtest API (was HTTP 422)
-    "id": _fresh_id(),
-    "children": [copy.deepcopy(child) for child in children],
-}
-```
-
-That is the ENTIRE implementation. Two additive lines. Nothing else.
+These were added by a stale prior-team cycle (superseded by AC-1 plan correction
+2026-06-19). They are intentionally hand-set per V1 methodology review.
+**Remove them from OPTUNA_SEARCH_SPACE_KEYS.** That is the ENTIRE implementation change.
 
 ---
 
-## Running the tests
+## What is already complete (DO NOT undo or rewrite)
 
-```
-python -m pytest tests/advisors/test_symphony_schema_required_fields.py -p no:xdist -o addopts= -m "not live and not slow and not perf" -q
-```
-
-Target: **20 passed / 0 failed** (15 newly GREEN + 5 already passing).
-
-Also confirm the existing 210 symphony_schema tests still pass:
-```
-python -m pytest tests/advisors/test_symphony_schema.py -p no:xdist -o addopts= -m "not live and not slow and not perf" -q
-```
-
-Expected: 210 passed.
+- scripts/vwap-calibration-report.py -- EXISTS, all 9 report + 4 advisory tests GREEN
+- run_calibration_sweep -- AC-4 skip gate, AC-5 pbo_veto_status, AC-6 __calsweep
+  study-name suffix, AC-7 flag_for_operator_review -- all 4 history tests GREEN
 
 ---
 
-## Scope boundaries — DO NOT touch
+## Your one implementation change
 
-- `advisors/composer_backtest_client.py` — the raw_value wrapper is correct, out of scope
-- `advisors/strategy_builder_engine.py` — the T1–T7 template builders consume the constructors, no change needed
-- Any other file — this is a two-line fix in symphony_schema.py only
-- **NEVER merge, NEVER git checkout main, NEVER git push**
+File: autotuner.py:123-135
+
+Remove these 3 keys from OPTUNA_SEARCH_SPACE_KEYS:
+- VWAP_BREAK_CONFIRM_TICKS
+- VWAP_BLEED_ARM_MIN
+- VWAP_BLEED_ARM_MAX
+
+Also remove any orphaned named bound constants added ONLY for these params
+(_SS_VWAP_BLEED_ARM_MIN_LOW/HIGH, _SS_VWAP_BLEED_ARM_MAX_LOW/HIGH,
+_SS_VWAP_BREAK_CONFIRM_TICKS_LOW/HIGH) if they appear around lines 285-315.
+Also remove their trial.suggest_* calls from run_calibration_sweep's objective()
+closure -- the sweep is 2-param only.
+
+DO NOT touch _CALSWEEP_MIN_HISTORY_DAYS, AC-4 skip gate, AC-5/AC-6/AC-7 fields,
+or the report script.
 
 ---
 
-## Test Files Written (for reference)
+## After your change, verify GREEN
 
-- `tests/advisors/test_symphony_schema_required_fields.py` — 20 tests (15 RED, 5 already passing)
-- `tests/ai_advisor/test_live_backtest_required_fields.py` — 1 LIVE test (excluded from default gate, opt-in with -m live)
+    python -m pytest tests/test_calibration_sweep_search_space.py tests/test_calibration_sweep_report.py tests/test_calibration_sweep_advisory_invariant.py tests/test_calibration_sweep_insufficient_history.py -v -p no:xdist -o addopts= --timeout=60
+
+Expected: **28 passed / 0 failed**
+
+Also confirm NN1 still passes after removing keys (should be fine -- none are theory-frozen).
 
 ---
 
-## A/C Coverage Matrix
+## Stash reference (treat as reference, not trusted truth)
 
-| A/C ID | Description | Test File | Test Name(s) | Status |
-|--------|-------------|-----------|--------------|--------|
-| AC-1 | `make_root` output includes `"description"` defaulting to `""` | test_symphony_schema_required_fields.py | TestMakeRootDescriptionField (5 tests) | RED |
-| AC-2 | `make_inverse_vol` output includes `"window-days"` defaulting to `30` | test_symphony_schema_required_fields.py | TestMakeInverseVolWindowDaysField (5 tests) | RED |
-| AC-3 | Every T1–T7 template tree backtests HTTP 200 (live) | test_live_backtest_required_fields.py | test_all_strategy_builder_templates_backtest_200 | RED (LIVE only) |
-| AC-4 | Additive backward compat: new keys don't break existing assertions | test_symphony_schema_required_fields.py | TestAdditiveKeysBackwardCompatibility (4 tests, 2 RED/2 pass) | RED |
-| AC-5 | validate_tree/lint_tree accept trees with the new fields | test_symphony_schema_required_fields.py | TestNewFieldsPassValidation (6 tests, 3 RED/3 pass) | RED |
+stash@{0} contains the prior team's WIP.
+- The stash autotuner diff ADDS the 3 wrong params -- do NOT apply stash to autotuner.
+- scripts/vwap-calibration-report.py in the stash matches the live file.
+- DO NOT git stash pop -- it would re-introduce the wrong autotuner expansion.
 
-## Import Stubs Created
+---
 
-None. `advisors/symphony_schema.py` already exists — the fix only adds keys to existing constructors.
+## Scope boundaries -- DO NOT touch
 
-## Test File Issues (for test-writer to fix)
+- tests/ -- implementer writes no test code
+- scripts/vwap-calibration-report.py -- already complete, do not modify
+- run_calibration_sweep AC-4/AC-5/AC-6/AC-7 additions -- leave them
+- TAKE_PROFIT_MC_PCT, VWAP_CROSS_HWM_PCT, VWAP_BLEED_MULTIPLIER, VWAP_BLEED_TICKS,
+  PARABOLIC_VELOCITY_THRESHOLD, MAX_PARABOLIC_SQUEEZE -- stay in the frozenset
+- NEVER merge to main. NEVER git checkout main. NEVER git push.
 
-None. All 15 RED tests were implementation bugs (missing constructor fields), not test bugs.
+---
 
-## Implementation Notes
+## When GREEN
 
-- `make_root`: added `"description": ""` between `"rebalance"` and `"id"` — one additive line.
-- `make_inverse_vol`: added `"window-days": 30` between `"step"` and `"id"` — one additive line.
-- No other files touched. `composer_backtest_client.py` and `strategy_builder_engine.py` untouched.
-- Staged path-scoped (`git add advisors/symphony_schema.py` only) — doc WIP (DECISIONS.md, docs/generated/*, feature-plans/*) not included.
+Commit path-scoped (git add autotuner.py only or minimal set touched).
+Commit prefix: fix(calibration-sweep):
 
-## Status Log
-
-- [2026-06-18] sf-test-writer: RED phase complete — 15 FAILED / 5 passed on RED SHA (committed below)
-- [2026-06-18] sf-implementer: GREEN complete — 20/20 tests passing (new file) + 210/210 pre-existing tests passing. 0 test bugs documented. Typecheck N/A (stdlib only). Lint pending commit.
+Then SendMessage cs-test-writer: "GREEN: 28 passed / 0 failed on <sha>"

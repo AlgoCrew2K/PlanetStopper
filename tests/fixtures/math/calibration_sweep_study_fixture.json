@@ -1,0 +1,92 @@
+{
+  "_comment": "Fixture for calibration-sweep RED tests. Encodes a minimal completed study for 3 symphonies. All assertion values must be DERIVED from this fixture -- no hardcoded producer outputs. Provenance: hand-authored to exercise all 7 ACs.",
+  "symphonies": {
+    "SYM-ALPHA": {
+      "history_days": 180,
+      "current_params": {
+        "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+        "VWAP_CROSS_HWM_PCT": 1.0
+      },
+      "best_params": {
+        "PARABOLIC_VELOCITY_THRESHOLD": 1.5,
+        "VWAP_CROSS_HWM_PCT": 0.8
+      },
+      "haircut_outcome": "cleared",
+      "pbo_veto_status": false,
+      "current_trigger_count": 5,
+      "proposed_trigger_count": 6,
+      "study_name_suffix": "__calsweep"
+    },
+    "SYM-BETA": {
+      "history_days": 200,
+      "current_params": {
+        "PARABOLIC_VELOCITY_THRESHOLD": 3.0,
+        "VWAP_CROSS_HWM_PCT": 1.5
+      },
+      "best_params": {
+        "PARABOLIC_VELOCITY_THRESHOLD": 2.5,
+        "VWAP_CROSS_HWM_PCT": 1.2
+      },
+      "haircut_outcome": "no_trial_cleared",
+      "pbo_veto_status": true,
+      "current_trigger_count": 5,
+      "proposed_trigger_count": 11,
+      "study_name_suffix": "__calsweep",
+      "_note": "proposed/current = 11/5 = 2.2 > 2x -- triggers flag_for_operator_review"
+    },
+    "SYM-GAMMA": {
+      "history_days": 130,
+      "current_params": {
+        "PARABOLIC_VELOCITY_THRESHOLD": 2.5,
+        "VWAP_CROSS_HWM_PCT": 1.0
+      },
+      "best_params": {
+        "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+        "VWAP_CROSS_HWM_PCT": 0.9
+      },
+      "haircut_outcome": "not_run",
+      "pbo_veto_status": false,
+      "current_trigger_count": 8,
+      "proposed_trigger_count": 9,
+      "study_name_suffix": "__calsweep",
+      "_note": "proposed/current = 9/8 = 1.125 -- does NOT trigger flag_for_operator_review"
+    }
+  },
+  "short_history_symphony": {
+    "SYM-SHORT": {
+      "history_days": 50,
+      "_note": "Below 125-day threshold -- must be skipped cleanly with a warning"
+    }
+  },
+  "required_report_row_keys": [
+    "symphony_id",
+    "param_name",
+    "current_value",
+    "proposed_value",
+    "expected_trigger_freq_change",
+    "pbo_veto_status",
+    "flag_for_operator_review",
+    "haircut_outcome",
+    "study_name"
+  ],
+  "required_search_space_keys": [
+    "PARABOLIC_VELOCITY_THRESHOLD",
+    "VWAP_CROSS_HWM_PCT"
+  ],
+  "_note_search_space": "AC-1 corrected 2026-06-19: V1 sweep covers only these 2 params. VWAP_BREAK_CONFIRM_TICKS / VWAP_BLEED_ARM_MIN / VWAP_BLEED_ARM_MAX are hand-set per V1 methodology review.",
+  "search_space_bounds": {
+    "PARABOLIC_VELOCITY_THRESHOLD": {
+      "low": 1.0,
+      "high": 4.0,
+      "_note": "_SS_PARA_VEL_MIN/_MAX in autotuner.py"
+    },
+    "VWAP_CROSS_HWM_PCT": {
+      "v1_low": 0.3,
+      "v1_high": 2.0,
+      "_note": "_SS_VWAP_CROSS_HWM_V1_MIN/_MAX (asymmetric vs production bounds)"
+    }
+  },
+  "study_name_regex": "^\\d{8}T\\d+Z__[^_].*__calsweep$",
+  "min_history_days": 125,
+  "trigger_freq_flip_threshold": 2.0
+}

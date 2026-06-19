@@ -187,6 +187,7 @@ class TestCalibrationSweepInterface:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         assert isinstance(result, list), (
             f"run_calibration_sweep must return list, got {type(result)}"
@@ -260,6 +261,7 @@ class TestCalibrationSearchSpace:
                 current_date_str="2024-03-01",
                 deviation_dict=deviation_dict,
                 random_state=42,
+                min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
             )
         finally:
             monkeypatch_target.optuna.create_study = original_create
@@ -291,6 +293,7 @@ class TestCalibrationSearchSpace:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         reported_params = {row["param_name"] for row in result}
         prohibited = set(calibration_report_schema["prohibited_params"])
@@ -352,6 +355,7 @@ class TestPurgeEmbargoO1:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         assert isinstance(result, list) and len(result) > 0
         for row in result:
@@ -399,6 +403,7 @@ class TestSortinoObjectiveO5:
                 current_date_str="2024-03-01",
                 deviation_dict=deviation_dict,
                 random_state=42,
+                min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
             )
         finally:
             autotuner_module.compute_sortino_ratio = orig_sortino
@@ -428,6 +433,7 @@ class TestStudyNamingO3:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         ts_pattern = re.compile(r"^\d{8}T\d{6}")
         for row in result:
@@ -451,6 +457,7 @@ class TestStudyNamingO3:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         result_2 = autotuner_module.run_calibration_sweep(
             history_data=single_sym_history,
@@ -458,6 +465,7 @@ class TestStudyNamingO3:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         names_1 = {r["study_name"] for r in result_1}
         names_2 = {r["study_name"] for r in result_2}
@@ -502,6 +510,7 @@ class TestHarveyLiuHaircutD3:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         for row in result:
             assert "selection_tstat" in row, f"Row missing selection_tstat: {row}"
@@ -543,6 +552,7 @@ class TestHarveyLiuHaircutD3:
                 current_date_str="2024-03-01",
                 deviation_dict=deviation_dict,
                 random_state=42,
+                min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
             )
         finally:
             autotuner_module.benjamini_hochberg_adjust = orig_bhy
@@ -593,6 +603,7 @@ class TestHaircutOutcomeSurfacing:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
 
     def test_every_report_row_carries_an_explicit_haircut_outcome(
@@ -753,6 +764,7 @@ class TestFrozenEvalO6:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         assert result, "run_calibration_sweep returned empty list"
         for row in result:
@@ -833,6 +845,7 @@ class TestFrozenEvalO6:
                 current_date_str="2024-03-01",
                 deviation_dict=deviation_dict,
                 random_state=42,
+                min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
             )
         finally:
             autotuner_module._collect_sim_returns = orig_collect
@@ -925,6 +938,7 @@ class TestE1VelocityContract:
                 current_date_str="2024-03-01",
                 deviation_dict=deviation_dict,
                 random_state=42,
+                min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
             )
         finally:
             _me.compute_para_arm_decision = orig_para
@@ -957,6 +971,7 @@ class TestReportSchema:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         assert result, "run_calibration_sweep returned empty list"
         required = set(calibration_report_schema["required_fields"])
@@ -974,6 +989,7 @@ class TestReportSchema:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         for row in result:
             assert isinstance(row["n_trials"], int), "n_trials must be int"
@@ -992,6 +1008,7 @@ class TestReportSchema:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         for row in result:
             cur = row["current_value"]
@@ -1016,6 +1033,7 @@ class TestReportSchema:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         for row in result:
             assert isinstance(row["symphony_id"], str) and row["symphony_id"], (
@@ -1032,6 +1050,7 @@ class TestReportSchema:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         allowed = {p["name"] for p in search_space_contract["tuned_params"]}
         for row in result:
@@ -1049,6 +1068,7 @@ class TestReportSchema:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         for row in result:
             assert isinstance(row.get("cycle_id"), str) and row["cycle_id"], (
@@ -1086,6 +1106,7 @@ class TestNoFleetWideFlipACV13:
                 current_date_str="2024-03-01",
                 deviation_dict=deviation_dict,
                 random_state=42,
+                min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
             )
         finally:
             _db.save_symphony_strategy = orig_save
@@ -1110,6 +1131,7 @@ class TestNoFleetWideFlipACV13:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         assert current_params == params_before, (
             f"run_calibration_sweep mutated current_params: "
@@ -1137,6 +1159,7 @@ class TestDeterminism:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=seed,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         result_2 = autotuner_module.run_calibration_sweep(
             history_data=single_sym_history,
@@ -1144,6 +1167,7 @@ class TestDeterminism:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=seed,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         assert len(result_1) == len(result_2), (
             "Determinism broken: different number of rows across identical runs"
@@ -1173,6 +1197,7 @@ class TestDeterminism:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=1,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         result_seed_2 = autotuner_module.run_calibration_sweep(
             history_data=single_sym_history,
@@ -1180,6 +1205,7 @@ class TestDeterminism:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=999,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         all_same = all(
             r1["proposed_value"] == pytest.approx(r2["proposed_value"], rel=1e-9)
@@ -1224,6 +1250,7 @@ class TestReviseR1:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         for row in result:
             pv = row["proposed_value"]
@@ -1252,6 +1279,7 @@ class TestReviseR1:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         for row in result:
             freq_change = row["expected_trigger_freq_change"]
@@ -1313,6 +1341,7 @@ class TestReviseR1:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # h has 40 days; bypass AC-4 floor to exercise contracts
         )
         # High threshold: less likely to trigger System A (safe_hwm may not reach 2.0)
         result_high = autotuner_module.run_calibration_sweep(
@@ -1321,6 +1350,7 @@ class TestReviseR1:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # h has 40 days; bypass AC-4 floor to exercise contracts
         )
 
         freq_changes_low = [r["expected_trigger_freq_change"] for r in result_low]
@@ -1363,6 +1393,7 @@ class TestReviseR1:
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
+            min_history_days=0,  # fixture has 40 days; bypass AC-4 floor to exercise contracts
         )
         for row in result:
             # Both fields must be present (already covered by schema test)

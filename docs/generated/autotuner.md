@@ -1,9 +1,9 @@
 # autotuner
 
-> Optuna walk-forward optimizer: runs 500 trials per symphony over a 250-day sliding window, selects the best trial via the CRRA-EU objective + Harvey & Liu BHY haircut + CSCV PBO acceptance gate, and enforces NN1 spec-freeze discipline throughout.
+> Optuna walk-forward optimizer: runs 500 trials per symphony over a 250-day sliding window, selects the best trial via the CRRA-EU objective + Harvey & Liu BHY haircut + CSCV PBO acceptance gate, and enforces NN1 spec-freeze discipline throughout. Also provides `run_calibration_sweep` — a separate, advisory-only 2-param sweep over `PARABOLIC_VELOCITY_THRESHOLD` and `VWAP_CROSS_HWM_PCT`.
 
 **Source:** `autotuner.py`
-**Last updated:** 2026-06-02
+**Last updated:** 2026-06-19
 
 ## Overview
 
@@ -154,10 +154,64 @@ Returns `(is_nn1_honest, violations)`. Checks spec_facets discipline (must all b
 
 ### Calibration Sweep
 
-#### `run_calibration_sweep(history_data, current_params, current_date_str, deviation_dict, random_state) → list[dict]`
-V1 calibration sweep over `PARABOLIC_VELOCITY_THRESHOLD` and `VWAP_CROSS_HWM_PCT` only. Uses same O1 purge+embargo and Harvey & Liu haircut methodology as `run_autotuner` but search space is limited. Does NOT persist anything to the DB (AC-V1.3: read-only). Uses asymmetric VWAP_CROSS_HWM_PCT bounds (`_SS_VWAP_CROSS_HWM_V1_MIN=0.3`, `_SS_VWAP_CROSS_HWM_V1_MAX=2.0`).
+`run_calibration_sweep` is a standalone advisory function — separate from the production walk-forward. It sweeps exactly 2 parameters (`PARABOLIC_VELOCITY_THRESHOLD` and `VWAP_CROSS_HWM_PCT`) per symphony, applies the same overfitting controls as `run_autotuner` (Harvey & Liu BHY haircut, PBO veto), and returns report rows for the operator. It never writes to the state DB, never applies any parameter to live settings, and is not on the execution path.
 
-**Returns:** list of report dicts, one per tuned param per symphony in `history_data`.
+**Search-space scope (2-param, research-verified):** Three candidates were evaluated and excluded:
+- `VWAP_BLEED_ARM_MIN` / `VWAP_BLEED_ARM_MAX` — output clamps on the already-swept `VWAP_BLEED_MULTIPLIER`; the trailing-stop literature (Kaminski & Lo 2014; Dai et al. 2021) shows guardrail threshold response is flat across a wide range — no fittable optimum exists for an optimizer to find.
+- `VWAP_BREAK_CONFIRM_TICKS` — excluded this cycle on data-sufficiency grounds: adding it moves the dedicated sweep 2-D → 3-D at the 100-trial floor (`100^(1/3) ≈ 4.6` levels/axis, a >2x density drop vs. 2-D); requires ~1,000-trial floor raise before inclusion.
+
+See `DE-CALSWEEP-001` in `DECISIONS.md` and `.claude/calibration-methodology-verdict.md` for the full research basis.
+
+#### `run_calibration_sweep(history_data, current_params, current_date_str, deviation_dict, random_state, *, min_history_days: int = _CALSWEEP_MIN_HISTORY_DAYS) → list[dict]`
+V1 calibration sweep over `PARABOLIC_VELOCITY_THRESHOLD` and `VWAP_CROSS_HWM_PCT` only. Applies identical fold methodology to `run_autotuner` (60/20/20 split with O1 purge+embargo) but search space is limited to 2 params. Does NOT persist anything to the DB (read-only; operator-gated rollout).
+
+**AC-4 — insufficient-history skip:** Symphonies with fewer than `min_history_days` days of history are skipped with a warning log. The production default is `_CALSWEEP_MIN_HISTORY_DAYS` (125) — production behavior is unchanged. Below this threshold the fold partitioning produces validation windows too small for the Sortino objective to yield meaningful signal. The param is injectable so test suites can pass `min_history_days=0` to exercise contracts on short fixtures without weakening the production floor (see DE-CALSWEEP-002).
+
+**AC-5 — PBO veto surfaced per symphony:** When the BHY haircut finds no trial that clears the FDR gate, `pbo_veto_status=True` is set on every report row for that symphony. This is surfaced prominently in the advisory report so the operator knows the proposed value is the naive Optuna winner and is NOT statistically qualified.
+
+**AC-6 — timestamped study-name with `__calsweep` suffix:** Each symphony's study name is `{timestamp}__{symphony_id}__calsweep` — identifiable at a glance and guaranteed never to collide with production `run_autotuner` study names.
+
+**AC-7 — trigger-frequency operator-review flag:** When the proposed params would cause trigger frequency to exceed `_CALSWEEP_TRIGGER_FREQ_FLAG_MULTIPLIER` (2.0×) the current count on the validation fold, `flag_for_operator_review=True` is set. The operator must review before any per-symphony deploy.
+
+**VWAP_CROSS_HWM_PCT bounds asymmetry:** The V1 calibration sweep uses asymmetric bounds (`_SS_VWAP_CROSS_HWM_V1_MIN=0.3`, `_SS_VWAP_CROSS_HWM_V1_MAX=2.0`) vs. the production walk-forward bounds (0.5, 2.5). The lower bound expands below production (3-tick confirm gate behaviour at low values); the upper bound narrows (above ~2.0, System A is effectively disabled for normal sessions). A proposed value in `[0.3, 0.5)` falls outside the production walk-forward search space — treat such proposals as informational only.
+
+**Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| `history_data` | `dict` | Per-symphony tick-history dict (same format as `run_autotuner`) |
+| `current_params` | `dict` | Current live parameter dict for delta/frequency comparison |
+| `current_date_str` | `str` | ISO-8601 date string for today |
+| `deviation_dict` | `dict` | Execution-deviation penalties from `calculate_historical_deviation` |
+| `random_state` | `int` | TPE sampler seed for reproducibility |
+| `min_history_days` | `int` | History floor (days) below which a symphony is skipped (AC-4). Default: `_CALSWEEP_MIN_HISTORY_DAYS` = 125 — production-unchanged. Pass a lower value (e.g. 0) in test suites to exercise contracts on short fixtures (DE-CALSWEEP-002). |
+
+**Returns:** `list[dict]` — one dict per (symphony, param_name) pair. Keys:
+| Key | Type | Description |
+|-----|------|-------------|
+| `symphony_id` | `str` | Symphony identifier |
+| `param_name` | `str` | `"PARABOLIC_VELOCITY_THRESHOLD"` or `"VWAP_CROSS_HWM_PCT"` |
+| `current_value` | `float` | Current live value of the param |
+| `proposed_value` | `float` | Best haircut-selected value (or naive winner if haircut found no cleared trial) |
+| `delta_pct` | `float` | `(proposed - current) / abs(current) * 100` |
+| `expected_trigger_freq_change` | `float` | Proposed minus current trigger count on validation fold |
+| `frozen_eval_alpha` | `float \| None` | Sortino on the 20% frozen-eval fold with proposed params |
+| `naive_sharpe` | `float \| None` | Optuna best-value (Sortino) before haircut selection |
+| `selection_tstat` | `float \| None` | BHY haircut t-stat of the winner; `None` when no trial cleared the gate |
+| `haircut_outcome` | `str` | `"cleared"`, `"no_trial_cleared"`, `"not_run"`, or `"no_completed_trials"` |
+| `pbo_veto_status` | `bool` | True when haircut found no qualified winner (AC-5) |
+| `flag_for_operator_review` | `bool` | True when proposed trigger frequency >2x current (AC-7) |
+| `sortino` | `float \| None` | Sortino of best-params on validation fold |
+| `n_trials` | `int` | Number of completed Optuna trials |
+| `study_name` | `str` | `{timestamp}__{symphony_id}__calsweep` (AC-6) |
+| `trading_day_start` | `str` | First date in the history window |
+| `trading_day_end` | `str` | Last date before the frozen-eval boundary |
+| `cycle_id` | `str` | UTC ISO-8601 timestamp identifying this sweep run |
+
+**Overfitting controls (same methodology as production):**
+- Harvey & Liu BHY haircut (`_haircut_select`) — multiplicity axis
+- `compute_n_effective` wired via `lambda: []` (no prior-run ledger for the calibration context; NEFF-001 fix — ledger returns empty, so `n_eff == len(haircut_trials)`, byte-identical to pre-wiring behavior)
+- `filter_sortino_sentinels` removes zero-downside and partial-sentinel trials before the haircut
+- PBO veto status exposed but NOT applied as a hard veto here (the advisory report surfaces it; the operator decides)
 
 ---
 
@@ -231,7 +285,7 @@ Scans `post_mortem_*.json` files (last 45 days). Returns average execution-devia
 | `SORTINO_TARGET_RETURN` | 0.0 | Sortino denominator target (operator decision PA-5) |
 | `RETURN_PCT_TO_FRACTION` | 100.0 | Percent-to-decimal unit conversion for CRRA |
 | `OPTUNA_N_TRIALS_PRODUCTION` | 500 | Production walk-forward main study; 5x the 100-trial stability floor |
-| `OPTUNA_N_TRIALS_CALIBRATION` | 100 | Calibration sweep; equals the statistical-stability floor |
+| `OPTUNA_N_TRIALS_CALIBRATION` | 100 | Calibration sweep; equals the statistical-stability floor exactly |
 | `ACTIVE_OPTUNA_PRUNER_FAMILY` | `"NOP"` | Explicit NOP pruner — prevents silent MedianPruner activation |
 
 ### CPCV Constants (Phase 2)
@@ -243,11 +297,24 @@ Scans `post_mortem_*.json` files (last 45 days). Returns average execution-devia
 | `_CPCV_N_SPLITS` | 15 | `C(6,2)` total splits |
 | `_CPCV_N_PATHS` | 5 | `φ[6,2] = (2/6)·15 = 5` complete OOS backtest paths |
 
+### Calibration Sweep Constants
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `_CALSWEEP_MIN_HISTORY_DAYS` | 125 | AC-4: minimum days before running the sweep for a symphony |
+| `_CALSWEEP_TRIGGER_FREQ_FLAG_MULTIPLIER` | 2.0 | AC-7: proposed/current trigger count ratio above which operator review is required |
+| `_SS_VWAP_CROSS_HWM_V1_MIN` | 0.3 | V1 calibration lower bound — expands below production 0.5 (3-tick confirm gate) |
+| `_SS_VWAP_CROSS_HWM_V1_MAX` | 2.0 | V1 calibration upper bound — narrows below production 2.5 (~2sigma reliability limit) |
+| `_SS_PARA_VEL_MIN` | 1.0 | Shared with production walk-forward |
+| `_SS_PARA_VEL_MAX` | 4.0 | Shared with production walk-forward |
+
 ### Optuna Search Space
 
 `OPTUNA_SEARCH_SPACE_KEYS` = `{"TAKE_PROFIT_MC_PCT", "VWAP_CROSS_HWM_PCT", "VWAP_BLEED_MULTIPLIER", "VWAP_BLEED_TICKS", "PARABOLIC_VELOCITY_THRESHOLD", "MAX_PARABOLIC_SQUEEZE"}`
 
 NN1-frozen facets that must NEVER appear in the search space: `gamma`, `utility_family`, `wealth_argument`, `generator_family`, `horizon_convention`, `lambda`.
+
+The calibration sweep uses a SEPARATE, narrower 2-key space (`PARABOLIC_VELOCITY_THRESHOLD`, `VWAP_CROSS_HWM_PCT`) — it does NOT modify `OPTUNA_SEARCH_SPACE_KEYS`.
 
 ## Internal Dependencies
 
