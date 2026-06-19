@@ -1,8 +1,124 @@
-# TDD Handoff — symphony-schema required-fields fix (RED → GREEN)
+# TDD Handoff — calibration-sweep RED phase
 
-**From:** sf-test-writer
-**To:** sf-implementer
-**Branch:** feat/symphony-schema-required-fields
+**From:** cs-test-writer (LEAD)
+**To:** cs-implementer
+**Branch:** feat/calibration-sweep  
+**RED commit:** ac39e3c  
+**Result:** 21 failed / 5 passed on ac39e3c
+
+---
+
+## For the implementer (cs-implementer)
+
+Read this file, NOT the feature plan. Your job is to make 21 failing tests go GREEN with the minimum code required.
+
+## What is failing and why
+
+### AC-1 — Search space expansion (8 tests in test_calibration_sweep_search_space.py)
+
+`OPTUNA_SEARCH_SPACE_KEYS` in `autotuner.py:123-132` is missing 3 keys:
+- `VWAP_BREAK_CONFIRM_TICKS`
+- `VWAP_BLEED_ARM_MIN`
+- `VWAP_BLEED_ARM_MAX`
+
+You must also add named bound constants (no magic numbers — project rule):
+- `_SS_VWAP_BLEED_ARM_MIN_LOW = -5.0`  (most-negative allowed)
+- `_SS_VWAP_BLEED_ARM_MIN_HIGH = -1.0`
+- `_SS_VWAP_BLEED_ARM_MAX_LOW = -1.0`
+- `_SS_VWAP_BLEED_ARM_MAX_HIGH = -0.1`
+- `_SS_VWAP_BREAK_CONFIRM_TICKS_LOW = <int>`  (suggest as int, not float)
+- `_SS_VWAP_BREAK_CONFIRM_TICKS_HIGH = <int>`
+
+Wire the 3 new params into the `objective()` closure inside `run_calibration_sweep` the same way the existing 2 params are wired (`trial.suggest_float` / `trial.suggest_int`).
+
+Also wire them into the main `run_autotuner` objective closure at `autotuner.py:2264-2289` — AC-1 says the walk-forward search space is expanded (not just the calibration sweep).
+
+The `validate_search_space_nn1()` check at `autotuner.py:1843` must still pass — none of the new keys are theory-frozen facets, so this should not require any change there.
+
+### AC-2 — Report script (tests in test_calibration_sweep_report.py)
+
+Create `scripts/vwap-calibration-report.py`. It must expose a callable named `generate_report`, `render_report`, or `build_report` that accepts a list of report row dicts (the same shape `run_calibration_sweep` returns) and returns either:
+- A list of enriched row dicts, OR
+- A markdown string
+
+Required row keys: `symphony_id`, `param_name`, `current_value`, `proposed_value`, `expected_trigger_freq_change`, `pbo_veto_status`, `flag_for_operator_review`, `haircut_outcome`, `study_name`.
+
+The script must NOT import `database` write-path symbols (insert_advisor_observation, set_symphony_live_mode, save_autotune_run, init_db, get_connection, etc.).
+
+The script must NOT import `alpha_bot_execution` at module level.
+
+### AC-3 — Advisory invariant (tests in test_calibration_sweep_advisory_invariant.py)
+
+The 3 import-level tests fail because `scripts/vwap-calibration-report.py` does not exist. Once you create the script, make sure:
+1. No database write-path symbols are imported or called.
+2. `alpha_bot_execution` is not imported at module level.
+3. `run_calibration_sweep` source must not contain: `insert_advisor_observation`, `set_symphony_live_mode`, `save_autotune_run`, `init_db(`, `get_connection(`, `.execute(`, `bot_state`.
+
+The 4th advisory test (`test_run_calibration_sweep_return_has_no_write_confirmation_keys`) already passes — do not break it.
+
+### AC-4 — Insufficient history skip (tests in test_calibration_sweep_insufficient_history.py)
+
+`run_calibration_sweep` must skip symphonies with fewer than 125 trading days.
+
+Add a named constant: `_CALSWEEP_MIN_HISTORY_DAYS = 125`
+
+Add at the top of the per-symphony loop (before creating the Optuna study):
+```python
+if len(history_data.get(sym_id, {})) < _CALSWEEP_MIN_HISTORY_DAYS:
+    logging.warning("run_calibration_sweep: skipping %s — only %d days (< %d required)",
+                    sym_id, len(history_data.get(sym_id, {})), _CALSWEEP_MIN_HISTORY_DAYS)
+    continue
+```
+
+### AC-5 — PBO veto status (tests in test_calibration_sweep_report.py)
+
+Add `pbo_veto_status` key to each row appended in `run_calibration_sweep`. Use `haircut_outcome == "no_trial_cleared"` as the proxy, or a dedicated PBO check. The flag must be present on every row.
+
+### AC-6 — Study name hygiene (tests in test_calibration_sweep_report.py)
+
+Study names at `autotuner.py:2974-2975` currently use `f"{study_timestamp}__{sym_id}"`. For the calibration sweep, change to `f"{study_timestamp}__{sym_id}__calsweep"`.
+
+The study_name regex expected: `r'^\d{8}T\d+Z__[^_].*__calsweep$'`
+
+Only change the calibration sweep study names — do NOT alter `run_autotuner`'s production study name format.
+
+### AC-7 — >2x trigger flip flag (tests in test_calibration_sweep_report.py)
+
+Add `flag_for_operator_review` key to each row:
+```python
+flag_for_operator_review = (
+    current_trigger_count > 0 and
+    proposed_trigger_count / current_trigger_count > 2.0
+)
+```
+
+## Tests that already pass — do not break them
+
+- `test_nn1_validation_passes_after_search_space_expansion` — passes today; must still pass after you add keys
+- `test_run_calibration_sweep_return_has_no_write_confirmation_keys` — passes today; do not add DB write calls
+- `test_pbo_veto_status_key_present_in_all_rows` — fixture integrity; not affected by your changes
+- `test_study_names_match_calsweep_pattern` — passes against fixture rows
+- `test_study_names_are_unique_across_symphonies` — fixture uniqueness check
+
+## Key files to touch
+
+| File | What to change |
+|------|---------------|
+| `autotuner.py:123-132` | Add 3 keys to `OPTUNA_SEARCH_SPACE_KEYS` |
+| `autotuner.py:262-283` | Add 6 named bound constants |
+| `autotuner.py:2264-2289` | Wire 3 new params into `run_autotuner` objective |
+| `autotuner.py:2970-2975` | Add `__calsweep` suffix to study name |
+| `autotuner.py:2979-2993` | Wire 3 new params into `run_calibration_sweep` objective |
+| `autotuner.py:3096-3114` | Add `pbo_veto_status` and `flag_for_operator_review` to each row; add skip gate above |
+| `scripts/vwap-calibration-report.py` | CREATE: advisory-only report generator |
+
+## Hard constraints (absolute — non-negotiable)
+
+- NEVER merge to main. NEVER run `git merge`, `git checkout main`.
+- Commit only to `feat/calibration-sweep`.
+- Do NOT run the full test tree — run only the 4 target files with `-n0`.
+- Do NOT write test code — only production code.
+- When GREEN, signal `cs-test-writer` with: "GREEN: N passed / M failed on <sha>"
 **Worktree:** C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/symphony-fields
 **Plan:** feature-plans/symphony-schema-required-fields.md (AC-1..AC-6)
 **Phase:** green
