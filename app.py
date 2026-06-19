@@ -192,6 +192,10 @@ def _auth_before_request():
     # Without a secret key Flask cannot sign the session cookie, and the
     # operator misconfigured the deployment.
     if not _secret_key_configured():
+        _daemon_log.warning(
+            "Auth misconfig: SECRET_KEY / FLASK_SECRET_KEY is not set"
+            " — all requests denied until a secret key is configured"
+        )
         if _is_api_or_xhr():
             return jsonify({"error": "misconfigured"}), 503
         return redirect(url_for("login"))
@@ -235,6 +239,10 @@ def login():
     )
 
     # Fail-closed: misconfig → cannot authenticate.
+    if not _secret_key_configured():
+        return render_template(
+            "login.html", csrf_token=_CSRF_TOKEN, error="Service misconfigured."
+        ), 503
     credential = _resolve_dashboard_credential()
     if credential is None:
         return render_template(
