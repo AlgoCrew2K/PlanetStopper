@@ -1430,3 +1430,79 @@ class TestSecurity:
             assert not sess.get("authenticated"), (
                 "session['authenticated'] must NOT be set when SECRET_KEY is missing"
             )
+
+    # -- REGRESSION (full-tree gate): _validate_csrf must NOT trigger form-body
+    # parsing on JSON/XHR requests (guard-ordering invariant with test_m5) --
+
+    def test_validate_csrf_json_post_without_token_returns_403_not_413(
+        self, monkeypatch
+    ):
+        """Guard ordering: CSRF check fires BEFORE body-size enforcement on JSON POSTs.
+
+        CONFIRMED REGRESSION (introduced ab0d370, caught by full-tree gate at 89efdb1):
+        The H1 fix added `... or request.form.get("csrf_token", "")` to _validate_csrf().
+        On a JSON/XHR POST, accessing request.form triggers Werkzeug's form-data
+        loading, which enforces MAX_CONTENT_LENGTH.  When the body exceeds the limit,
+        Werkzeug raises 413 DURING the CSRF check — before the check can return 403.
+
+        This breaks the guard-ordering invariant documented in
+        test_m5_chat_hardening.py::TestGuardOrdering::
+            test_oversized_body_without_csrf_token_returns_403_not_413:
+          CSRF must fire before the body-size guard so a token-less attacker
+          ALWAYS gets 403, never 413 (an oversized flood bypassing CSRF).
+
+        The fix must satisfy BOTH invariants simultaneously:
+          1. JSON/XHR POST without token → 403 (not 413), even if body is large.
+             → this test
+          2. Login form POST with csrf_token form field + valid token → 302 redirect.
+             → test_login_post_with_form_field_csrf_token_succeeds (must stay GREEN)
+
+        Likely minimal fix: in _validate_csrf(), only access request.form when the
+        request content-type is application/x-www-form-urlencoded or multipart/form-data
+        (i.e. the login form); for all other content types, check only the header.
+
+        This test is RED on 89efdb1 because the test_m5 guard (which hits
+        /ai-advisor/chat/send with a large JSON body) fails with 413 — confirming
+        that `request.form` access on a JSON POST triggers the size guard early.
+
+        We replicate the same pattern here directly in the auth test file so the
+        regression guard lives alongside the auth tests for clarity.
+        """
+        monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
+        monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+        app_module.app.config["TESTING"] = True
+
+        # Build a body that will exceed MAX_CONTENT_LENGTH if Werkzeug parses it.
+        # We use a modest size (128 KB) — enough to trigger any form-parsing size
+        # guard, but not so large it causes memory issues in the test process.
+        large_json_body = (
+            b'{"message": "' + b"A" * 131072 + b'"}'
+        )
+
+        with app_module.app.test_client() as client:
+            # POST to the login route with application/json content-type and NO
+            # CSRF token (neither header nor form field).  The auth gate's CSRF
+            # check (_validate_csrf) fires first as a before_request hook.
+            # A correct implementation checks only the X-CSRF-Token header for
+            # application/json and returns 403 immediately without parsing the body.
+            resp = client.post(
+                "/login",
+                data=large_json_body,
+                content_type="application/json",
+                # Deliberately NO X-CSRF-Token header — CSRF check must fire first.
+            )
+
+        # CSRF must fire BEFORE body-size enforcement → 403 always wins over 413.
+        assert resp.status_code == 403, (
+            f"A large application/json POST to /login with no CSRF token must return "
+            f"403 (CSRF guard fires first, before any body parsing). "
+            f"Got {resp.status_code}. "
+            f"If 413: _validate_csrf() accessed request.form on a JSON request, "
+            f"triggering Werkzeug's form-data size guard BEFORE the CSRF check could "
+            f"return 403 — fix: only fall back to request.form when content-type is "
+            f"application/x-www-form-urlencoded or multipart/form-data. "
+            f"Body: {resp.get_data(as_text=True)[:200]!r}"
+        )
