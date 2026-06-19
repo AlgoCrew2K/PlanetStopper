@@ -3,7 +3,7 @@
 > Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
 **Source:** `app.py`
-**Last updated:** 2026-06-18
+**Last updated:** 2026-06-19
 
 ## Overview
 
@@ -14,6 +14,7 @@
 - **Dashboard routes** — operator UI routes. Two CSRF-protected write paths exist: `POST /api/settings` (allowlisted .env keys) and `POST /api/symphony-settings/<name>` (per-symphony live-mode toggle). Templates open SQLite read-only; the dashboard is NOT a live-trade-action surface.
 - **AI Advisor routes** — unified single-page SPA at `GET /ai-advisor` renders all 6 tabs in one server-side render; GET sub-routes for all 5 old per-tab pages now 302-redirect to `/ai-advisor`; POST action routes (suggest, evaluate, accept, reject, chat/send, strategy-builder/run) are unchanged.
 - **CSRF infrastructure** — `_validate_csrf()` hook; `_csrf_before_request` before-request handler; `GET /api/csrf-token` token endpoint; `_SETTINGS_WRITE_ALLOWLIST` restricts which .env keys the settings write path can touch.
+- **Dashboard auth gate** — single-password Flask signed-session gate protecting the entire Flask surface (AC-1..AC-13). `_auth_before_request` before-request hook registered before CSRF; `_AUTH_EXEMPT_ENDPOINTS` frozenset allowlist (`login`, `logout`, `static`, `get_csrf_token`, `health`); `_resolve_dashboard_credential()` for hash-preferred credential resolution (`DASHBOARD_PASSWORD_HASH` over `DASHBOARD_PASSWORD`); `_is_api_or_xhr()` dispatches 401 JSON vs 302 redirect; in-memory throttle `_AUTH_FAILED_ATTEMPTS`; **fail-closed**: missing credential or `SECRET_KEY` denies ALL requests.
 
 Module-level thread-safety constructs:
 
@@ -21,12 +22,58 @@ Module-level thread-safety constructs:
 - `_FLUSH_STATE_LOCK` — `threading.Lock()` serializing `flush_resync` background writes against engine `save_state` writes.
 - `_CHAT_RATE_LIMITER` — per-IP rate-limiter for AI Advisor chat endpoint (cost-DoS guard; max `CHAT_RATE_LIMITER_MAX_TRACKED_IPS` IPs).
 
+## Environment Variables
+
+### Auth gate
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DASHBOARD_PASSWORD_HASH` | preferred | Werkzeug hash of the dashboard password (`pbkdf2:`, `scrypt:`, or `bcrypt:` prefix). Takes precedence over `DASHBOARD_PASSWORD`. |
+| `DASHBOARD_PASSWORD` | fallback | Plaintext dashboard password. Used only when `DASHBOARD_PASSWORD_HASH` is absent. Never written to logs. |
+| `SECRET_KEY` | required | Flask session signing key. If absent/empty, all requests are denied (fail-closed). Fallback env name: `FLASK_SECRET_KEY`. |
+| `SESSION_COOKIE_SECURE` | optional | Set to `1`, `true`, or `yes` to add `Secure` flag to the session cookie (enable when TLS terminates at a reverse proxy). |
+| `TRUST_PROXY` | optional | When truthy, the login handler reads the real client IP from `X-Forwarded-For` (first entry) for throttle keying. Leave unset when not behind a trusted proxy. |
+| `_AUTH_MAX_ATTEMPTS` | optional | Max consecutive wrong-password attempts before lockout. Default: `10`. |
+| `_AUTH_LOCKOUT_SECONDS` | optional | Lockout duration in seconds after exceeding `_AUTH_MAX_ATTEMPTS`. Default: `300` (5 minutes). |
+
 ## API Reference
 
-### Daemon Singleton
+### Dashboard Auth Gate
 
-#### `_acquire_daemon_singleton(pidfile: str) → None`
-Enforces one-process invariant at startup. Reads the pidfile (if present), checks whether the stored PID refers to a live Planet Stopper process. Live → exit(1). Stale → take ownership. Registers atexit handler and SIGTERM handler to remove the pidfile on clean shutdown.
+#### `_resolve_dashboard_credential() → str | None`
+Returns the configured dashboard credential. Prefers `DASHBOARD_PASSWORD_HASH`; falls back to `DASHBOARD_PASSWORD`. Returns `None` when neither is set — callers treat `None` as a misconfig → fail-closed.
+
+#### `_secret_key_configured() → bool`
+Returns `True` when a non-empty `SECRET_KEY` or `FLASK_SECRET_KEY` env var is present. Used by `_auth_before_request` for the fail-closed misconfig check.
+
+#### `_auth_before_request() → Response | None`
+Flask `before_request` hook (registered before `_csrf_before_request`). Enforces the auth gate on every request (AC-1/AC-2/AC-8):
+- Bypassed when `_auth_check_enabled` is `False` (test contexts).
+- Exempt endpoints (`_AUTH_EXEMPT_ENDPOINTS`) pass through unconditionally.
+- Fail-closed: missing `SECRET_KEY` or missing credential → 503 JSON / redirect to `/login`.
+- Authenticated session (`session['authenticated']`) → pass through.
+- Unauthenticated: `/api/*` or XHR → 401 JSON; HTML routes → 302 `/login`.
+
+#### `_is_api_or_xhr() → bool`
+Returns `True` when the request path starts with `/api/` or carries `X-Requested-With: XMLHttpRequest`. Used by `_auth_before_request` and `login()` to decide 401-vs-302 response.
+
+#### `_check_throttle(client_ip: str) → bool`
+Returns `True` if the client is currently locked out (fail-count >= `_AUTH_MAX_ATTEMPTS` and lockout window has not expired). Clears expired entries on check.
+
+#### `_record_failed_attempt(client_ip: str) → int`
+Increments the failed-attempt counter for `client_ip` in `_AUTH_FAILED_ATTEMPTS`; sets `lockout_until` when the count reaches `_AUTH_MAX_ATTEMPTS`. Returns the new count.
+
+#### `_clear_failed_attempts(client_ip: str) → None`
+Resets the throttle counter for a client on successful login.
+
+#### `GET /login` / `POST /login` — `login()`
+Login page (AC-3 through AC-9, AC-13).
+
+- **GET:** Renders `templates/login.html` with the process-lifetime CSRF token. If the session is already authenticated, redirects to the dashboard (AC-13).
+- **POST:** Throttle-check → credential resolution → constant-time compare (`hmac.compare_digest` for plaintext; `werkzeug.security.check_password_hash` for hashed credentials with `pbkdf2:`/`scrypt:`/`bcrypt:` prefix) → on success: `session.clear()` + `session['authenticated'] = True` + redirect (AC-4, session-fixation prevention); on failure: increment throttle + re-render with generic "Incorrect password." error (AC-5, AC-9). Client IP resolved via `X-Forwarded-For` when `TRUST_PROXY` is set.
+
+#### `GET /logout` — `logout()`
+Clears the session and redirects to `/login` (AC-11).
 
 ---
 
@@ -36,10 +83,14 @@ Enforces one-process invariant at startup. Reads the pidfile (if present), check
 Returns a fresh CSRF token for the current session. Required for all CSRF-protected write endpoints.
 
 #### `_validate_csrf() → None`
-Validates the `X-CSRF-Token` header against the session token. Raises `403` on mismatch. Called at the top of every CSRF-protected route.
+Validates the CSRF token from two acceptance channels:
+- **`X-CSRF-Token` request header** — used by `fetch()`/XHR callers (JSON POSTs from dashboard JS). Browsers block cross-site scripts from setting arbitrary request headers, so the header itself provides same-origin enforcement.
+- **`csrf_token` form field** — used by the native browser form POST on the login page (which cannot set custom headers). The form embeds the server-minted token in a hidden input; a cross-site page cannot read or guess it.
+
+Raises `403` when neither channel provides the correct token. Called at the top of every CSRF-protected route. See `8a34de6` for the docstring update that corrected the earlier header-only claim.
 
 #### `_csrf_before_request`
-Flask `before_request` hook. Injects CSRF enforcement for the two guarded write paths.
+Flask `before_request` hook. Injects CSRF enforcement for the two guarded write paths (`POST /api/settings`, `POST /api/symphony-settings/<name>`).
 
 ---
 
@@ -246,3 +297,4 @@ Normalizes an `autotune_runs` DB row for the `/api/autotune-runs` JSON response.
 - `advisors.advisor_chat` — `explain_artifact`, `CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS`
 - `advisors.strategy_builder_engine` — `propose_strategies`, `Objective`, `ScreenConfig` (lazy import)
 - `symphony_logic` — `fetch_symphony_score`
+- `werkzeug.security` — `check_password_hash` for `DASHBOARD_PASSWORD_HASH` verification

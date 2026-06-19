@@ -1,9 +1,10 @@
 """
-RED tests for dashboard password-auth gate — AC-1 through AC-13.
+Tests for dashboard password-auth gate — AC-1 through AC-13.
 
-The auth gate (`_auth_before_request`, `/login`, `/logout`, `_resolve_dashboard_credential`)
-does NOT exist in app.py yet.  Every test in this file is expected to FAIL (RED)
-until the implementer ships the feature.
+46/46 GREEN at commit 55e95cc.
+
+The auth gate (`_auth_before_request`, `/login`, `/logout`, `_resolve_dashboard_credential`,
+plus throttle helpers) is implemented in `app.py`.
 
 CI-runnability: all tests inject DASHBOARD_PASSWORD and SECRET_KEY via
 monkeypatch.setenv so they run on CI without a real .env file.  Test values
@@ -11,18 +12,11 @@ are synthetic constants — NOT real secrets.
 
 ** ISOLATION CONTRACT (mirrors _disable_csrf_for_tests pattern) **
 
-The implementer MUST add:
-  1. A module-level flag in app.py:
-       _auth_check_enabled: bool = True
-  2. A new autouse fixture in tests/conftest.py:
-       @pytest.fixture(autouse=True)
-       def _disable_auth_for_tests(monkeypatch):
-           import app as _app_module
-           monkeypatch.setattr(_app_module, "_auth_check_enabled", False)
-     This keeps all ~7000 EXISTING route tests working (they hit protected
-     routes unauthenticated — the gate must be off by default in tests).
-  3. The `_auth_before_request` hook checks `_auth_check_enabled` before
-     enforcing the gate (same pattern as `_csrf_before_request` / `_csrf_check_enabled`).
+`tests/conftest.py` provides an autouse fixture `_disable_auth_for_tests` that:
+  1. Sets `app._auth_check_enabled = False` via monkeypatch so the ~7000 existing
+     route tests hit protected routes without being redirected to /login.
+  2. Calls `app._AUTH_FAILED_ATTEMPTS.clear()` so throttle state from one test
+     does not bleed into the next.
 
 Tests in THIS FILE that need the real gate (all of them) re-enable it via:
     monkeypatch.setattr(app_module, "_auth_check_enabled", True)

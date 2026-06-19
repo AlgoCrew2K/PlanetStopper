@@ -1,5 +1,5 @@
 # Feature: Dashboard Password-Auth Gate
-Status: ready
+Status: shipped at 55e95cc (2026-06-19)
 Created: 2026-06-19
 
 ## Summary
