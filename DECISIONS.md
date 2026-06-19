@@ -1687,3 +1687,48 @@ No change-history language introduced. All identifiers continue to describe runt
 
 - `advisors/asset_swap_engine.py` — 3 insertions / 8 deletions (signature + docstring + 4 caller sites)
 - `tests/ai_advisor/test_asset_swap_engine.py` — 1 new test class (commit 406735a)
+
+---
+
+## DE-PRISM-GATE-001 — DISABLE_DAEMON_LENS_PIPELINE env guard (2026-06-19)
+
+Branch: feat/prism-nightly-producer-gate
+
+### Context
+
+With `prism_scheduler.py` (Option B) now running the full Market Prism council as the nightly producer on the DO droplet, the daemon's existing 03:00 `_run_lens_pipeline()` slot becomes a conflict: both paths write a `MARKET_PRISM` `advisor_observations` row and neither has an idempotency guard against the other. Running both produces two `MARKET_PRISM` rows for the same logical night — the Overview tab reads the most-recent row, so the second write silently overwrites the council's considered verdict with the simpler lens-pipeline output.
+
+### Decision
+
+Add a 4-line env guard at the top of `_run_lens_pipeline()` (`app.py:686–688`):
+
+```python
+if os.environ.get("DISABLE_DAEMON_LENS_PIPELINE"):
+    _daemon_log.info("Lens pipeline skipped (DISABLE_DAEMON_LENS_PIPELINE set).")
+    return
+```
+
+When the env var is set to any non-empty value, `_run_lens_pipeline()` logs one INFO line and returns immediately. The scheduler still registers the slot at 03:00 — no scheduler change needed. No other files were changed.
+
+### Falsy-semantics choice: `os.environ.get` vs `"..." in os.environ`
+
+`os.environ.get("DISABLE_DAEMON_LENS_PIPELINE")` returns `None` (falsy) when the var is absent and a non-empty string (truthy) when set. This means:
+- Setting the var to any non-empty value (e.g. `DISABLE_DAEMON_LENS_PIPELINE=1`, `=true`, `=yes`) silences the daemon slot.
+- Setting it to an empty string (`DISABLE_DAEMON_LENS_PIPELINE=`) leaves the slot active (empty string is falsy).
+
+The `in os.environ` alternative would also trigger on an empty-string assignment, which is a footgun for operators who set `VAR=` to "clear" a flag. `os.environ.get` is the safer operator-facing semantic.
+
+### SAFE TRANSITION ORDER — MANDATORY on the droplet
+
+**The flag MUST be set BEFORE registering the council systemd timer.** The daemon's 03:00 slot has no idempotency guard against a concurrent council run. If both are active simultaneously on the droplet, both write a `MARKET_PRISM` row on the same night. Deploy order:
+
+1. Set `DISABLE_DAEMON_LENS_PIPELINE=1` in the droplet `.env` and restart the daemon — verify the INFO log fires at 03:00 and no `MARKET_PRISM` row is written by the daemon.
+2. Register and enable the council systemd timer (or cron job via `schedule_prism.ps1` equivalent).
+3. Confirm the council's first unattended run produces exactly one `MARKET_PRISM` row per night (AC-1, AC-3).
+
+Reversing this order — registering the timer before setting the flag — risks a two-row night.
+
+### Files changed
+
+- `app.py` — `_run_lens_pipeline()` lines 686–688: 4-line env guard inserted before thread spawn
+- `tests/app/test_lens_pipeline_gate.py` — 4 new tests (RED at 7c38075, GREEN at 3de3a31, sufficiency pinned at 5bbc030)

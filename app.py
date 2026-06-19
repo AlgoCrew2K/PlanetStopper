@@ -683,6 +683,10 @@ def _run_lens_pipeline() -> None:
     Spawns a daemon thread so the scheduler thread returns immediately —
     the pipeline never blocks the 1-minute execution path (arch constraint 1).
     """
+    if os.environ.get("DISABLE_DAEMON_LENS_PIPELINE"):
+        _daemon_log.info("Lens pipeline skipped (DISABLE_DAEMON_LENS_PIPELINE set).")
+        return
+
     import threading
 
     t = threading.Thread(target=_lens_pipeline_worker, daemon=True, name="lens-pipeline")

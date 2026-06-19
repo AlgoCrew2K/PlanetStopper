@@ -89,3 +89,19 @@ N/A — backend feature, no UI surface. (All 10 are backend/infra; the Cycle-5 M
 **Dependencies:** Phase 3 operator sign-off. Deploy target (future) = shared DO droplet `167.99.3.130` on `:8090` — relevant if scheduling moves off the local box.
 
 **Hard rules:** bounded retries only (finite `max_attempts` + exponential backoff cap); off-execution-path, advisory-only; nightly live-functional verification by PM is the acceptance bar before "trusted."
+
+---
+
+## Sub-task shipped: DISABLE_DAEMON_LENS_PIPELINE env guard (2026-06-19)
+
+**Status: SHIPPED** on branch `feat/prism-nightly-producer-gate` (commits 7c38075 → 3de3a31 → 5bbc030). Pending PM end-gate + PR to origin.
+
+**What shipped:** A 4-line env guard at the top of `_run_lens_pipeline()` (`app.py:686–688`) that silences the daemon's 03:00 lens-pipeline slot when `DISABLE_DAEMON_LENS_PIPELINE` is set to any non-empty value. 4 tests GREEN (`tests/app/test_lens_pipeline_gate.py`).
+
+**Why:** Option B (`prism_scheduler.py`) is the confirmed scheduling mechanism. With the council as the sole nightly producer on the DO droplet, the daemon's 03:00 slot would write a competing `MARKET_PRISM` row on the same night — no idempotency guard exists between the two paths. The env guard lets the operator silence the daemon slot without touching the scheduler registration.
+
+**Remaining open items (PM handles deployment):**
+- Set `DISABLE_DAEMON_LENS_PIPELINE=1` on the droplet **before** registering the council systemd timer (see DE-PRISM-GATE-001 safe transition order).
+- Register the council systemd timer (or equivalent cron) on the droplet.
+- PM spot-check ≥3 unattended runs (AC-5).
+- Confirm AC-1 (fresh `MARKET_PRISM` row + full audit trail per run), AC-3 (no double-row per night), AC-4 (Opus spend logged).
