@@ -17,7 +17,7 @@ honest-unavailable shape the route already degrades on (AC-4 / AC-6).
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 

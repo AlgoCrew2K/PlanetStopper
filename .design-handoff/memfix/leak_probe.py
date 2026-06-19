@@ -30,8 +30,9 @@ from job_cap_harness import install_cap  # noqa: E402
 CAP_GB = float(os.environ.get("CAP_GB", "3"))
 install_cap(int(CAP_GB * 1024 * 1024 * 1024))
 
-import ai_advisor  # noqa: E402
 import time as _time  # noqa: E402
+
+import ai_advisor  # noqa: E402
 
 # Optionally load .env so FRED/network keys match the pytest environment.
 if os.environ.get("LOAD_ENV") == "1":

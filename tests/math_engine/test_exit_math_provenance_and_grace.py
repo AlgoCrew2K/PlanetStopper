@@ -41,12 +41,11 @@ from __future__ import annotations
 import ast
 import inspect
 import pathlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
 import math_engine
-
 
 try:
     from zoneinfo import ZoneInfo
@@ -55,7 +54,7 @@ try:
 except Exception:  # pragma: no cover - zoneinfo always present on 3.12
     _ET = timezone(timedelta(hours=-4))
 
-_UTC = timezone.utc
+_UTC = UTC
 
 
 # ===========================================================================

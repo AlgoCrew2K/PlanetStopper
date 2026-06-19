@@ -40,7 +40,6 @@ import pytest
 import ai_advisor
 import app as app_module
 
-
 # ---------------------------------------------------------------------------
 # Fixtures — mirror tests/app/test_ai_advisor_tab.py (no cross-file coupling).
 # ---------------------------------------------------------------------------

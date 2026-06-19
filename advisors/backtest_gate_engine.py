@@ -49,7 +49,10 @@ Harvey & Liu 2015 (BHY/Yekutieli FDR, DOI 10.3905/jpm.2015.42.1.013).
 from __future__ import annotations
 
 import math
-from typing import NamedTuple, Sequence
+from collections.abc import Sequence
+from typing import NamedTuple
+
+from acceptance_gate import AcceptanceVerdict, evaluate_acceptance_gate
 
 # ---------------------------------------------------------------------------
 # Walk-forward fold constants — IMPORTED from autotuner (single source of truth).
@@ -61,16 +64,15 @@ from typing import NamedTuple, Sequence
 # These names are the canonical autotuner module-level constants; import by name
 # so any operator amendment to those constants propagates here automatically.
 from autotuner import (  # noqa: E402
-    TRAIN_RATIO,
-    VALIDATION_RATIO,
-    PURGE_DAYS,
     EMBARGO_DAYS,
     HARVEY_LIU_FDR_Q,
-    compute_sortino_tstat,
-    compute_haircut_pvalue,
+    PURGE_DAYS,
+    TRAIN_RATIO,
+    VALIDATION_RATIO,
     benjamini_hochberg_adjust,
+    compute_haircut_pvalue,
+    compute_sortino_tstat,
 )
-from acceptance_gate import evaluate_acceptance_gate, AcceptanceVerdict
 
 # ---------------------------------------------------------------------------
 # Module-level constants (named; no magic numbers per project coding standard).
@@ -209,7 +211,7 @@ class CandidateGateResult(NamedTuple):
     validation_days: int
     oos_alpha: float
     caveats: list  # list[str]
-    winner_p_adj: "float | None"
+    winner_p_adj: float | None
 
 
 class GatedBatch(NamedTuple):
@@ -421,7 +423,7 @@ def _fold_transform_single(daily_returns_pct: list) -> _FoldResult:
     frozen_start_idx = int(n * (TRAIN_RATIO + VALIDATION_RATIO))
 
     # Boundary 1 — train | validation: purge + embargo on the train side.
-    # Identical to autotuner.py:1813: effective_train_cutoff = max(0, val_start_idx - PURGE_DAYS - EMBARGO_DAYS)
+    # Identical to autotuner.py:1813: effective_train_cutoff = max(0, val_start_idx - PURGE_DAYS - EMBARGO_DAYS)  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
     effective_train_cutoff = max(0, val_start_idx - PURGE_DAYS - EMBARGO_DAYS)
 
     # Purge integrity: did the purge window actually fit inside the training fold?
@@ -575,8 +577,8 @@ def evaluate_candidate_batch(
         i for i in range(n) if fold_results[i].purge_integrity_ok and candidates[i].nn1_compliant
     ]
 
-    winner_idx: "int | None" = None
-    winner_p_adj_value: "float | None" = None
+    winner_idx: int | None = None
+    winner_p_adj_value: float | None = None
     if veto_eligible_indices:
         # argmin p_adj over veto-eligible candidates only.
         best_i = min(veto_eligible_indices, key=lambda i: p_adj[i])

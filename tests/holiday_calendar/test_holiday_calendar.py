@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import copy
 import json
-import math
 import pathlib
 from datetime import datetime, timedelta
 from datetime import time as dt_time
@@ -308,7 +307,8 @@ class TestSessionTimesGoldenFixtures:
         session_close must return a datetime.time object, not a string like "13:00"
         or "16:00". Downstream comparison is via dt_time objects.
         """
-        from datetime import date as dt_date, time as dt_time_cls
+        from datetime import date as dt_date
+        from datetime import time as dt_time_cls
 
         result = market_calendar.session_close(dt_date(2025, 5, 14))
         assert isinstance(result, dt_time_cls), (
@@ -545,9 +545,9 @@ class TestEngineSkipsOnHoliday:
         market_calendar is explicitly patched to is_trading_day=False for the
         test date to isolate from lru_cache state across workers.
         """
-        import alpha_bot_execution
-        import market_calendar as _real_mc
         from datetime import time as dt_time
+
+        import alpha_bot_execution
 
         # Patch market_calendar on alpha_bot_execution to isolate from real cache state.
         # is_trading_day(holiday) = False; session_close = standard 16:00 (irrelevant
@@ -694,7 +694,6 @@ class TestHalfDayTimeShifts:
 
         Patches: get_current_et, database, Composer/Alpaca fetches, math_engine.
         """
-        import copy
         import alpha_bot_execution
 
         _SYM_ID = "sym-halfday-test-001"
@@ -852,7 +851,7 @@ class TestHalfDayTimeShifts:
         assert captured_ratios, (
             "compute_time_squeeze_decay must be called on a half-day at 11:30 ET "
             "(action phase is open at 11:30 with EXECUTION_START_TIME=10:31); "
-            f"no time_ratio was captured — the action phase did not run"
+            "no time_ratio was captured — the action phase did not run"
         )
 
         # Derived midpoint threshold: halfway between correct (13:00) and wrong (16:00) ratio
@@ -906,7 +905,7 @@ class TestHalfDayTimeShifts:
             "compute_time_squeeze_decay must be called at 12:50 ET on Black Friday 2024; "
             "12:50 is inside the action phase (EXECUTION_START_TIME=10:31, "
             "rebalance blackout starts 12:53 on half-day). "
-            f"No time_ratio captured — the action phase did not run."
+            "No time_ratio captured — the action phase did not run."
         )
         representative_ratio = max(captured_ratios)
         # 0.7 threshold: correct is ~0.933, wrong is ~0.423; 0.7 cleanly separates them.
@@ -1064,7 +1063,6 @@ class TestExecutionStartTimeGatePreservedOnHalfDays:
         change if the implementer preserves the gate. We mark it RED as a contract
         assertion that the implementer MUST NOT break.
         """
-        import copy
         import alpha_bot_execution
 
         pre_gate_on_half_day = _et_datetime(2024, 11, 29, 9, 45)
@@ -1291,8 +1289,9 @@ class TestSqueezeDocstringNoLongerClaimsMarketOpen:
 
         RED: the current docstring says "0.0 = market open".
         """
-        import math_engine
         import inspect
+
+        import math_engine
 
         source = inspect.getsource(math_engine.compute_time_squeeze_decay)
         # The phrase "0.0 = market open" (in the context of time_ratio) must be absent
@@ -1314,8 +1313,9 @@ class TestSqueezeDocstringNoLongerClaimsMarketOpen:
 
         RED: the current docstring contains none of these phrases.
         """
-        import math_engine
         import inspect
+
+        import math_engine
 
         source = inspect.getsource(math_engine.compute_time_squeeze_decay)
         acceptable_phrases = [

@@ -44,19 +44,15 @@ enumeration does not generate false positives in future behavioral spy tests.
 from __future__ import annotations
 
 import ast
-import importlib
 import inspect
-import sys
 import threading
-import types
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 import app as app_module
 import database as database_module
-
 
 # ---------------------------------------------------------------------------
 # Denylist: database mutator symbols forbidden in route call paths

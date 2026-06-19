@@ -54,14 +54,12 @@ in the cycle handoff by reverting the caller to the ``-timedelta(hours=4)`` form
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
 
 import alpha_bot_execution
-
 
 try:
     from zoneinfo import ZoneInfo
@@ -222,7 +220,7 @@ def test_shadow_ts_et_uses_est_wall_clock_during_est() -> None:
     the real 09:45 ET). Post-fix it uses ``current_et`` directly → 09:45.
     """
     frozen_et = datetime(2026, 1, 15, 9, 45, 0, tzinfo=_ET)  # EST, data window
-    utc_instant = datetime(2026, 1, 15, 14, 45, 0, tzinfo=timezone.utc)  # = 09:45 EST
+    utc_instant = datetime(2026, 1, 15, 14, 45, 0, tzinfo=UTC)  # = 09:45 EST
 
     # Expected ts_et is DERIVED from the frozen ET (the clock the fix must use),
     # not a hardcoded literal.
@@ -263,7 +261,7 @@ def test_shadow_ts_et_unchanged_during_edt_summer() -> None:
     (EDT = UTC-4). Here current_et and ``UTC - 4h`` agree at 09:45.
     """
     frozen_et = datetime(2026, 7, 10, 9, 45, 0, tzinfo=_ET)  # EDT, data window
-    utc_instant = datetime(2026, 7, 10, 13, 45, 0, tzinfo=timezone.utc)  # = 09:45 EDT
+    utc_instant = datetime(2026, 7, 10, 13, 45, 0, tzinfo=UTC)  # = 09:45 EDT
 
     expected_ts_et = frozen_et.strftime("%Y-%m-%dT%H:%M:%S")
     # In summer the old -4h form coincides with current_et.

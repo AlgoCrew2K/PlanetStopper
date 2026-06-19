@@ -37,16 +37,16 @@ from __future__ import annotations
 import copy
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import database
 from advisors.backtest_gate_engine import (
-    BacktestCandidate,
-    GatedBatch,
-    CandidateGateResult,
-    evaluate_candidate_batch,
-    _fold_transform_single,
     SURVIVOR_OVERFITTING_CAVEAT,
+    BacktestCandidate,
+    CandidateGateResult,
+    GatedBatch,
+    _fold_transform_single,
+    evaluate_candidate_batch,
 )
 from advisors.composer_backtest_client import run_backtest
 
@@ -183,7 +183,7 @@ class SwapObjective:
     """
 
     objective_type: str
-    target_pair: Optional[Tuple[str, str]]
+    target_pair: tuple[str, str] | None
     measured_value: float
 
 
@@ -238,16 +238,16 @@ class SwapProposalResult:
     objective: SwapObjective
     objective_rationale: str
 
-    gate_result: Optional[CandidateGateResult] = None
-    baseline_stats: Optional[dict] = None
-    variant_stats: Optional[dict] = None
+    gate_result: CandidateGateResult | None = None
+    baseline_stats: dict | None = None
+    variant_stats: dict | None = None
 
     # Caveats surfaced to the operator — always non-empty for ADOPT_CANDIDATE survivors
     # (SURVIVOR_OVERFITTING_CAVEAT is mandatory per AC-3.3).  Populated from
     # gate_result.caveats after gating; may also be set directly by callers/tests.
     caveats: list = field(default_factory=list)
     apply_guidance: str = ""
-    backtest_error: Optional[str] = None
+    backtest_error: str | None = None
     data_warnings: list = field(default_factory=list)
 
 
@@ -290,9 +290,9 @@ class SwapRunResult:
     survivors: list = field(default_factory=list)
     rejected_candidates: list = field(default_factory=list)
     message: str = ""
-    objective: Optional[SwapObjective] = None
+    objective: SwapObjective | None = None
     no_api_key: bool = False
-    persistence_error: Optional[str] = None
+    persistence_error: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -515,7 +515,7 @@ def generate_objective_directed_candidates(
             return [{"ticker": t, "score": 0.5} for t in available_assets]
 
         def _pearson_corr(xs: list, ys: list) -> float:
-            """Pearson correlation between two equal-length series.  Returns 0.0 on degenerate input."""
+            """Pearson correlation between two equal-length series.  Returns 0.0 on degenerate input."""  # noqa: E501  # un-wrappable long line
             n = min(len(xs), len(ys))
             if n < 2:
                 return 0.0
@@ -618,7 +618,7 @@ def _build_objective_rationale(
     objective: SwapObjective,
     lens_scores: dict | None = None,
 ) -> str:
-    """Build a human-readable rationale string explaining why this candidate addresses the objective.
+    """Build a human-readable rationale string explaining why this candidate addresses the objective.  # noqa: E501  # un-wrappable long line
 
     When ``lens_scores`` is provided and contains evidence for ``candidate_asset``,
     a lens evidence summary is appended to the rationale (Cycle-3 AC-5).
@@ -805,7 +805,7 @@ def _evaluate_single_variant(
     symphony_name: str = "",
     lens_scores: dict | None = None,
 ) -> tuple:
-    """Backtest a single swap variant.  Returns (BacktestCandidate | None, SwapProposalResult, baseline_stats).
+    """Backtest a single swap variant.  Returns (BacktestCandidate | None, SwapProposalResult, baseline_stats).  # noqa: E501  # un-wrappable long line
 
     Returns (candidate, proposal_shell, baseline_stats) where:
     - candidate is None when the variant backtest failed (AC-X5)
@@ -1168,7 +1168,7 @@ def suggest_swaps(
     proposal_shells = []
 
     for candidate_entry in candidates_ranked:
-        # candidates_ranked contains dicts with "ticker" key (per generate_objective_directed_candidates).
+        # candidates_ranked contains dicts with "ticker" key (per generate_objective_directed_candidates).  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
         candidate_asset = (
             candidate_entry["ticker"] if isinstance(candidate_entry, dict) else candidate_entry
         )

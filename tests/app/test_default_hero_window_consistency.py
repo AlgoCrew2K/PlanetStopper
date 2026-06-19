@@ -36,7 +36,6 @@ from unittest.mock import patch
 import pytest
 
 import app as app_module
-import database as _db
 
 # The picker's default window (templates/index.html active button + label).
 _DEFAULT_WINDOW = "30d"

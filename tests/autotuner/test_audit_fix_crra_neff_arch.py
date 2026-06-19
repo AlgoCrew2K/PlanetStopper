@@ -51,10 +51,8 @@ from __future__ import annotations
 import contextlib
 import io
 import json
-import math
 import pathlib
-import statistics
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -521,14 +519,13 @@ class TestNEffectiveWiredIntoAutotunerRun:
         spec_bundle_id = _make_phase1_theory_bundle()
 
         buf = io.StringIO()
-        with self._patched_autotuner_run() as mocks:
-            with contextlib.redirect_stdout(buf):
-                autotuner.run_autotuner(
-                    bot_state,
-                    "2026-05-10",
-                    ["acc-1"],
-                    spec_bundle_id=spec_bundle_id,
-                )
+        with self._patched_autotuner_run() as mocks, contextlib.redirect_stdout(buf):
+            autotuner.run_autotuner(
+                bot_state,
+                "2026-05-10",
+                ["acc-1"],
+                spec_bundle_id=spec_bundle_id,
+            )
 
         mock_n_effective = mocks["mock_n_effective"]
         assert mock_n_effective.call_count >= 1, (
@@ -678,14 +675,14 @@ class TestNEffectiveWiredIntoAutotunerRun:
                 side_effect=lambda **kw: (0, 0, False, False),
             ),
             patch("autotuner._haircut_select", mock_haircut),
+            contextlib.redirect_stdout(buf),
         ):
-            with contextlib.redirect_stdout(buf):
-                autotuner.run_autotuner(
-                    bot_state,
-                    "2026-05-10",
-                    ["acc-1"],
-                    spec_bundle_id=spec_bundle_id,
-                )
+            autotuner.run_autotuner(
+                bot_state,
+                "2026-05-10",
+                ["acc-1"],
+                spec_bundle_id=spec_bundle_id,
+            )
 
         assert mock_haircut.call_count >= 1, "Expected _haircut_select to be called at least once."
 
@@ -815,6 +812,7 @@ class TestArchSaveAutotuneRunEutColumns:
         spec_bundle_id parameter. This test is RED until the signature is extended.
         """
         import inspect
+
         import database as db_module
 
         sig = inspect.signature(db_module.save_autotune_run)
@@ -827,6 +825,7 @@ class TestArchSaveAutotuneRunEutColumns:
     def test_save_autotune_run_accepts_n_effective_parameter(self):
         """save_autotune_run must accept n_effective as a keyword argument."""
         import inspect
+
         import database as db_module
 
         sig = inspect.signature(db_module.save_autotune_run)
@@ -838,6 +837,7 @@ class TestArchSaveAutotuneRunEutColumns:
     def test_save_autotune_run_accepts_gamma_parameter(self):
         """save_autotune_run must accept gamma as a keyword argument."""
         import inspect
+
         import database as db_module
 
         sig = inspect.signature(db_module.save_autotune_run)
@@ -849,6 +849,7 @@ class TestArchSaveAutotuneRunEutColumns:
     def test_save_autotune_run_accepts_overfitting_verdict_parameter(self):
         """save_autotune_run must accept overfitting_verdict as a keyword argument."""
         import inspect
+
         import database as db_module
 
         sig = inspect.signature(db_module.save_autotune_run)
@@ -865,7 +866,6 @@ class TestArchSaveAutotuneRunEutColumns:
         include the new columns. This test reads the row back from the DB and
         asserts each EUT column is non-NULL.
         """
-        import sqlite3
         import database as db_module
 
         self._call_save_autotune_run_with_eut_values(db_module)
@@ -1033,14 +1033,14 @@ class TestEndToEndAutotunerEutAuditTrail:
                 "autotuner.math_engine.compute_vwap_breakdown_update",
                 side_effect=lambda **kw: (0, 0, False, False),
             ),
+            contextlib.redirect_stdout(buf),
         ):
-            with contextlib.redirect_stdout(buf):
-                autotuner.run_autotuner(
-                    bot_state,
-                    "2026-05-10",
-                    ["acc-1"],
-                    spec_bundle_id=spec_bundle_id,
-                )
+            autotuner.run_autotuner(
+                bot_state,
+                "2026-05-10",
+                ["acc-1"],
+                spec_bundle_id=spec_bundle_id,
+            )
 
         # Read the autotune_runs row back.
         conn = db_module.get_connection()

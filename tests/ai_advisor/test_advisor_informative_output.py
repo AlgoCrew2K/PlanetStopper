@@ -71,7 +71,6 @@ from __future__ import annotations
 import json
 import pathlib
 import subprocess
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -922,7 +921,7 @@ class TestAC6SecurityContracts:
 
         assert secret_payload not in raw_response, (
             "D-1 security contract violated: the raw exception string (containing "
-            f"a synthetic secret payload) was echoed in the route response. "
+            "a synthetic secret payload) was echoed in the route response. "
             "Only the exception class name is permitted in the JSON error field."
         )
 

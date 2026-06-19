@@ -28,11 +28,8 @@ import ast
 import importlib
 import inspect
 import pathlib
-import sqlite3
-import textwrap
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Module-level helpers — parse autotuner.py once per collection run.

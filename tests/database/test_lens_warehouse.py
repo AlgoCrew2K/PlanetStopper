@@ -93,7 +93,6 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -101,7 +100,6 @@ import pytest
 # ---------------------------------------------------------------------------
 # Import the module under test (fails until stub exists)
 # ---------------------------------------------------------------------------
-
 import advisors.lens_warehouse as wh_module
 
 # ---------------------------------------------------------------------------

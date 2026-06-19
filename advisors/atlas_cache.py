@@ -33,7 +33,7 @@ import json
 import logging
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ _DEFAULT_TTL_DAYS = 7
 
 
 def _atlas_cache_db() -> str:
-    """Resolve the cache DB file path from ATLAS_CACHE_DB_PATH env (default alphabot_atlas_cache.db)."""
+    """Resolve the cache DB file path from ATLAS_CACHE_DB_PATH env (default alphabot_atlas_cache.db)."""  # noqa: E501  # un-wrappable long line
     return os.environ.get("ATLAS_CACHE_DB_PATH", "alphabot_atlas_cache.db")
 
 
@@ -140,10 +140,10 @@ def cached_pull(
         try:
             fetched_at = datetime.fromisoformat(fetched_at_str)
             # Normalise to UTC-aware for comparison.
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             if fetched_at.tzinfo is None:
                 # Stored without timezone info — treat as UTC.
-                fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+                fetched_at = fetched_at.replace(tzinfo=UTC)
             age_seconds = (now - fetched_at).total_seconds()
             is_fresh = age_seconds < ttl_seconds  # strict: < is fresh, >= is stale
         except Exception:
@@ -174,7 +174,7 @@ def cached_pull(
 
     # --- Upsert the freshly fetched payload ---
     try:
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         serialised = json.dumps(fetched_payload)
         conn = sqlite3.connect(db_path)
         try:

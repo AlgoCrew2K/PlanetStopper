@@ -31,7 +31,6 @@ of math functions — the classifier is tested directly.
 from __future__ import annotations
 
 import ast
-import importlib
 import inspect
 import json
 import pathlib
@@ -43,7 +42,6 @@ import pytest
 # ---------------------------------------------------------------------------
 # The module does not exist yet — this import WILL fail until the implementer
 # provides it, making all tests in this file RED. That is the expected state.
-
 import regime_classifier  # noqa: E402  (imported after test docstring)
 
 # ---------------------------------------------------------------------------

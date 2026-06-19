@@ -130,7 +130,7 @@ def test_alpha_bot_daily_bars_url_pins_feed_iex():
         "Daily-bars Alpaca URL(s) in alpha_bot_execution.py do not pin "
         "`feed=iex`. The live execution path will default to SIP, creating "
         "a training/execution feed mismatch against IEX-calibrated math "
-        f"layers. Offending lines:\n  " + "\n  ".join(missing)
+        "layers. Offending lines:\n  " + "\n  ".join(missing)
     )
 
 
@@ -163,7 +163,7 @@ def test_alpha_bot_minute_bars_url_pins_feed_iex():
         "do not pin `feed=iex`. On Basic-tier accounts this causes silent "
         "VWAP failure (SIP -> 403 -> empty live_vwaps). On Algo Trader "
         "Plus accounts it creates a training/execution distribution "
-        f"mismatch. Offending lines:\n  " + "\n  ".join(missing)
+        "mismatch. Offending lines:\n  " + "\n  ".join(missing)
     )
 
 

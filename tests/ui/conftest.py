@@ -11,9 +11,7 @@ tests that need deterministic DB data (FIX-1 through FIX-4 hist array assertions
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
-import tempfile
 from unittest.mock import patch
 
 import pytest

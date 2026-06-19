@@ -47,7 +47,6 @@ import autotuner
 import synthetic_history
 from tests.autotuner.conftest import make_phase1_theory_bundle
 
-
 # ---------------------------------------------------------------------------
 # Shared harness (mirrors tests/autotuner/test_o6_frozen_eval.py — the
 # pattern the audit said to back-port).

@@ -78,9 +78,6 @@ import pathlib
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -616,14 +613,13 @@ class TestOptimizationResultsExposesEvalWindowDays:
         bot_state = {"sym-A": {"name": "OPTUNA-4 Path B Test", "account_uuid": "acc-1"}}
 
         buf = io.StringIO()
-        with _autotuner_patches(params, history):
-            with contextlib.redirect_stdout(buf):
-                result = _import_autotuner().run_autotuner(
-                    bot_state,
-                    "2026-05-10",
-                    ["acc-1"],
-                    **_spec_bundle_kwarg(),
-                )
+        with _autotuner_patches(params, history), contextlib.redirect_stdout(buf):
+            result = _import_autotuner().run_autotuner(
+                bot_state,
+                "2026-05-10",
+                ["acc-1"],
+                **_spec_bundle_kwarg(),
+            )
 
         assert isinstance(result, dict) and result, (
             f"run_autotuner must return a non-empty optimization_results dict. Got: {result!r}"
@@ -677,14 +673,13 @@ class TestOptimizationResultsExposesEvalWindowDays:
         bot_state = {"sym-A": {"name": "OPTUNA-4 Arithmetic Test", "account_uuid": "acc-1"}}
 
         buf = io.StringIO()
-        with _autotuner_patches(params, history):
-            with contextlib.redirect_stdout(buf):
-                result = _import_autotuner().run_autotuner(
-                    bot_state,
-                    "2026-05-10",
-                    ["acc-1"],
-                    **_spec_bundle_kwarg(),
-                )
+        with _autotuner_patches(params, history), contextlib.redirect_stdout(buf):
+            result = _import_autotuner().run_autotuner(
+                bot_state,
+                "2026-05-10",
+                ["acc-1"],
+                **_spec_bundle_kwarg(),
+            )
 
         autotuner = _import_autotuner()
 

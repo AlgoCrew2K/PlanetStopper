@@ -9,7 +9,6 @@ All tests written against REQUIRED behaviour per the design spec.
 Tests are intentionally RED until impl delivers the Performance template rewrite.
 """
 
-import json
 import re
 from pathlib import Path
 from unittest.mock import patch
@@ -72,6 +71,7 @@ _SYMPHONIES_LIST = ["sym_paragons", "sym_momentum", "sym_defensivo"]
 def _patch_analytics(history=None, aggregate=None, symphony=None, symphonies=None):
     """Context manager stacking all analytics patches needed for perf tests."""
     import contextlib
+
     import app as app_module
 
     history = history or [(d, 0.0, 0.0) for d in _DATES]
@@ -81,26 +81,26 @@ def _patch_analytics(history=None, aggregate=None, symphony=None, symphonies=Non
 
     @contextlib.contextmanager
     def _ctx():
-        with patch.object(
-            app_module.analytics, "get_history_with_cache_invalidation", return_value=history
+        with (
+            patch.object(
+                app_module.analytics, "get_history_with_cache_invalidation", return_value=history
+            ),
+            patch.object(app_module.analytics, "compute_aggregate_returns", return_value=aggregate),
+            patch.object(
+                app_module.analytics, "compute_per_symphony_returns", return_value=symphony
+            ),
+            patch.object(
+                app_module.analytics,
+                "compute_quantstats_metrics",
+                side_effect=[_LIVE_METRICS, _SHADOW_METRICS],
+            ),
+            patch.object(
+                app_module.analytics,
+                "list_available_symphonies",
+                return_value=symphonies,
+            ),
         ):
-            with patch.object(
-                app_module.analytics, "compute_aggregate_returns", return_value=aggregate
-            ):
-                with patch.object(
-                    app_module.analytics, "compute_per_symphony_returns", return_value=symphony
-                ):
-                    with patch.object(
-                        app_module.analytics,
-                        "compute_quantstats_metrics",
-                        side_effect=[_LIVE_METRICS, _SHADOW_METRICS],
-                    ):
-                        with patch.object(
-                            app_module.analytics,
-                            "list_available_symphonies",
-                            return_value=symphonies,
-                        ):
-                            yield
+            yield
 
     return _ctx()
 

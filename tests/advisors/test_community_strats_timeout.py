@@ -38,7 +38,7 @@ import importlib
 import json
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -126,7 +126,7 @@ def _seed_cache(db_path: str, docs: list) -> None:
     """Pre-seed the atlas cache with fresh docs so the next call is a cache HIT."""
     conn = sqlite3.connect(db_path)
     try:
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         conn.execute(
             "INSERT OR REPLACE INTO atlas_cache (collection, fetched_at, payload) VALUES (?, ?, ?)",
             ("captplanet.strategies", now_iso, json.dumps(docs)),

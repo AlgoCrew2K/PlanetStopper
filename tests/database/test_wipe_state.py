@@ -20,8 +20,6 @@ dict transformer.  No DB isolation fixture is needed for these tests.
 
 from __future__ import annotations
 
-import pytest
-
 from database import wipe_transient_state
 
 # ---------------------------------------------------------------------------

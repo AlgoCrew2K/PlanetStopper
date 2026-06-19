@@ -43,8 +43,8 @@ import inspect
 import json
 import pathlib
 import sqlite3
-from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch, call
+from datetime import datetime
+from unittest.mock import patch
 
 import pytest
 
@@ -940,6 +940,7 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
         dashboard-side-effect-ban cycle — arch constraint 2.
         """
         import concurrent.futures as _cf
+
         import app as flask_app
 
         submitted_callables: list = []
@@ -997,8 +998,9 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
         This is the dual of the request-thread test: handler -> no write; closure() -> write.
         Fixture: dismiss_race_isolation.json expected_calls_to_write_fleet_alert_or_similar == 1.
         """
-        import app as flask_app
         import concurrent.futures as _cf
+
+        import app as flask_app
 
         fixture = _load("dismiss_race_isolation.json")
         expected_write_calls = fixture["invariants"]["dismiss_never_touches_bot_state"][
@@ -1053,8 +1055,9 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
         disk full, etc.).  The closure wraps the write in a try/except that calls logging.error.
         This test verifies that contract deterministically — no timing, no thread scheduling.
         """
-        import app as flask_app
         import concurrent.futures as _cf
+
+        import app as flask_app
 
         submitted_callables: list = []
 
@@ -1107,8 +1110,9 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
         This test verifies the executor is invoked per-request, not once globally.
         Both requests must return 200 and each must result in exactly one submit call.
         """
-        import app as flask_app
         import concurrent.futures as _cf
+
+        import app as flask_app
 
         submit_call_count = 0
 

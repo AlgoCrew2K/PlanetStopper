@@ -54,7 +54,7 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _SYNTH_PATH = _REPO_ROOT / "synthetic_history.py"
 
 _ET = ZoneInfo("America/New_York")
-_UTC = _dt.timezone.utc
+_UTC = _dt.UTC
 
 # Reference instants. Each is a UTC datetime; the independent zoneinfo
 # reference tells us what ET offset / wall clock it must resolve to.
@@ -254,13 +254,15 @@ def test_source_no_longer_hardcodes_a_utc_offset_via_timedelta_hours() -> None:
             val = kw.value
             # `hours=-4` parses as a UnaryOp(USub, Constant(4)).
             if (
-                isinstance(val, ast.UnaryOp)
-                and isinstance(val.op, ast.USub)
-                and isinstance(val.operand, ast.Constant)
-                and val.operand.value in (4, 5)
+                (
+                    isinstance(val, ast.UnaryOp)
+                    and isinstance(val.op, ast.USub)
+                    and isinstance(val.operand, ast.Constant)
+                    and val.operand.value in (4, 5)
+                )
+                or isinstance(val, ast.Constant)
+                and val.value in (-4, -5, 4, 5)
             ):
-                offenders.append(node.lineno)
-            elif isinstance(val, ast.Constant) and val.value in (-4, -5, 4, 5):
                 offenders.append(node.lineno)
 
     assert not offenders, (

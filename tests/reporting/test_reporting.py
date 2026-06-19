@@ -27,14 +27,11 @@ No live network calls are made. No ``@pytest.mark.live`` tests in this file.
 """
 
 import json
-import os
-import tempfile
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 import reporting
-
 
 # ---------------------------------------------------------------------------
 # Sentinel webhook / chart URLs — sentinel strings that must never reach a
@@ -153,7 +150,7 @@ def test_guard_alpha_calculation_sign_matches_scenario(
         )
 
     assert report_file.exists(), "Stage 1 snapshot file was not created"
-    with open(report_file, "r", encoding="utf-8") as fh:
+    with open(report_file, encoding="utf-8") as fh:
         snapshot = json.load(fh)
 
     assert len(snapshot["triggers"]) == 1, "Expected exactly one trigger record"
@@ -245,7 +242,7 @@ def test_shadow_return_uses_frozen_triggered_at_return_not_current(tmp_path, mon
         )
 
     assert report_file.exists()
-    with open(report_file, "r", encoding="utf-8") as fh:
+    with open(report_file, encoding="utf-8") as fh:
         snapshot = json.load(fh)
 
     assert len(snapshot["triggers"]) == 1
@@ -872,7 +869,7 @@ def test_generate_eod_snapshot_stage1_idempotent(tmp_path, monkeypatch):
             live_prices=None,
         )
 
-    with open(report_file, "r", encoding="utf-8") as fh:
+    with open(report_file, encoding="utf-8") as fh:
         content = json.load(fh)
 
     assert content.get("sentinel") is True, (

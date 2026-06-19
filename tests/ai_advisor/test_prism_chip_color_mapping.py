@@ -47,7 +47,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers shared across all tests in this module
 # ---------------------------------------------------------------------------

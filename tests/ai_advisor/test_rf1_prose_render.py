@@ -1020,8 +1020,8 @@ def test_route_renders_no_raw_json_in_per_lens_text_for_pipeline_row(client, mon
 
     Fixture: lens_pipeline row 77 shape, injected via mock DB.
     """
-    import re
     import html as html_module
+    import re
 
     _mock_route_deps(monkeypatch, _PIPELINE_PRISM_SUMMARY)
 
@@ -1117,7 +1117,6 @@ def test_route_renders_council_prose_passthrough_in_prism_lenses(client, monkeyp
 
     Fixture: council row 78 shape, injected via mock DB.
     """
-    import re
 
     _mock_route_deps(monkeypatch, _COUNCIL_PRISM_SUMMARY)
 
@@ -1156,7 +1155,6 @@ def test_route_renders_honest_empty_state_for_null_summary_lens(client, monkeypa
     and that its text is a non-empty honest message (not 'null'/'None'/'{}'/'').
     """
     import re
-    import html as html_module
 
     _mock_route_deps(monkeypatch, _NULL_SUMMARY_PRISM_SUMMARY)
 
@@ -1438,10 +1436,11 @@ def test_obs_raw_preview_does_not_emit_raw_json_for_symphony_level_rows(client, 
 
     Fixture provenance: OVERFITTING_CONSCIENCE id=58 + SPEC_CRITIC id=37 from live DB.
     """
+    import html as html_module
+    import re
+
     import app as app_module
     import database
-    import re
-    import html as html_module
 
     # Two symphony-level obs rows shaped like real live-DB rows
     symphony_obs_list = [
@@ -1551,10 +1550,11 @@ def test_obs_raw_preview_symphony_rows_surface_note_field_prose(client, monkeypa
 
     Fixture provenance: OC id=58, SC id=37, live DB, 2026-06-05.
     """
+    import html as html_module
+    import re
+
     import app as app_module
     import database
-    import re
-    import html as html_module
 
     symphony_obs_list = [
         {

@@ -62,6 +62,7 @@ def index_client():
 def _patch_analytics_phase2():
     """Context manager patching analytics to provide Phase 2 metrics including volatility."""
     import contextlib
+
     import app as app_module
 
     _dates = ["2026-01-01", "2026-02-01", "2026-03-01"]
@@ -92,30 +93,32 @@ def _patch_analytics_phase2():
 
     @contextlib.contextmanager
     def _ctx():
-        with patch.object(
-            app_module.analytics, "get_history_with_cache_invalidation", return_value={}
-        ):
-            with patch.object(
+        with (
+            patch.object(
+                app_module.analytics, "get_history_with_cache_invalidation", return_value={}
+            ),
+            patch.object(
                 app_module.analytics,
                 "compute_aggregate_returns",
                 return_value=(_dates, _live_returns, _shadow_returns),
-            ):
-                with patch.object(
-                    app_module.analytics,
-                    "compute_per_symphony_returns",
-                    return_value=(_dates, _live_returns, _shadow_returns),
-                ):
-                    with patch.object(
-                        app_module.analytics,
-                        "compute_quantstats_metrics",
-                        side_effect=[_live_metrics, _shadow_metrics],
-                    ):
-                        with patch.object(
-                            app_module.analytics,
-                            "list_available_symphonies",
-                            return_value=["sym-A", "sym-B"],
-                        ):
-                            yield
+            ),
+            patch.object(
+                app_module.analytics,
+                "compute_per_symphony_returns",
+                return_value=(_dates, _live_returns, _shadow_returns),
+            ),
+            patch.object(
+                app_module.analytics,
+                "compute_quantstats_metrics",
+                side_effect=[_live_metrics, _shadow_metrics],
+            ),
+            patch.object(
+                app_module.analytics,
+                "list_available_symphonies",
+                return_value=["sym-A", "sym-B"],
+            ),
+        ):
+            yield
 
     return _ctx()
 
@@ -137,9 +140,8 @@ def test_performance_headline_has_sharpe_delta_stat():
     import app as app_module
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as client:
-        with _patch_analytics_phase2():
-            html = client.get("/performance").data.decode("utf-8")
+    with app_module.app.test_client() as client, _patch_analytics_phase2():
+        html = client.get("/performance").data.decode("utf-8")
     assert 'data-testid="sharpe-delta-stat"' in html, (
         "performance.html Phase 2 headline strip must include "
         'data-testid="sharpe-delta-stat". '
@@ -159,9 +161,8 @@ def test_performance_headline_has_mdd_reduction_stat():
     import app as app_module
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as client:
-        with _patch_analytics_phase2():
-            html = client.get("/performance").data.decode("utf-8")
+    with app_module.app.test_client() as client, _patch_analytics_phase2():
+        html = client.get("/performance").data.decode("utf-8")
     assert 'data-testid="mdd-reduction-stat"' in html, (
         'performance.html Phase 2 headline strip must include data-testid="mdd-reduction-stat".'
     )
@@ -176,9 +177,8 @@ def test_performance_headline_has_sortino_delta_stat():
     import app as app_module
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as client:
-        with _patch_analytics_phase2():
-            html = client.get("/performance").data.decode("utf-8")
+    with app_module.app.test_client() as client, _patch_analytics_phase2():
+        html = client.get("/performance").data.decode("utf-8")
     assert 'data-testid="sortino-delta-stat"' in html, (
         'performance.html Phase 2 headline strip must include data-testid="sortino-delta-stat".'
     )
@@ -195,9 +195,8 @@ def test_performance_headline_has_observation_caption():
     import app as app_module
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as client:
-        with _patch_analytics_phase2():
-            html = client.get("/performance").data.decode("utf-8")
+    with app_module.app.test_client() as client, _patch_analytics_phase2():
+        html = client.get("/performance").data.decode("utf-8")
     assert 'data-testid="obs-caption"' in html, (
         'performance.html Phase 2 must include data-testid="obs-caption" '
         "for the observation count (moved out of the headline strip)."
@@ -220,9 +219,8 @@ def test_performance_metrics_table_has_volatility_row():
     import app as app_module
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as client:
-        with _patch_analytics_phase2():
-            html = client.get("/performance").data.decode("utf-8")
+    with app_module.app.test_client() as client, _patch_analytics_phase2():
+        html = client.get("/performance").data.decode("utf-8")
     # Loose match: the label text must appear somewhere in the rendered body.
     has_vol_label = (
         "annualized volatility" in html.lower()
@@ -246,9 +244,8 @@ def test_performance_metrics_table_has_max_drawdown_reduction_row():
     import app as app_module
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as client:
-        with _patch_analytics_phase2():
-            html = client.get("/performance").data.decode("utf-8")
+    with app_module.app.test_client() as client, _patch_analytics_phase2():
+        html = client.get("/performance").data.decode("utf-8")
     has_mdd_reduction = (
         "max dd reduction" in html.lower()
         or "mdd reduction" in html.lower()
@@ -270,9 +267,8 @@ def test_performance_metrics_table_has_volatility_reduction_row():
     import app as app_module
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as client:
-        with _patch_analytics_phase2():
-            html = client.get("/performance").data.decode("utf-8")
+    with app_module.app.test_client() as client, _patch_analytics_phase2():
+        html = client.get("/performance").data.decode("utf-8")
     has_vol_reduction = "volatility reduction" in html.lower() or "vol reduction" in html.lower()
     assert has_vol_reduction, (
         "Phase 2 metrics table must include a 'Volatility reduction' row. "
@@ -296,9 +292,8 @@ def test_performance_metrics_table_has_spy_tqqq_placeholder_rows():
     import app as app_module
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as client:
-        with _patch_analytics_phase2():
-            html = client.get("/performance").data.decode("utf-8")
+    with app_module.app.test_client() as client, _patch_analytics_phase2():
+        html = client.get("/performance").data.decode("utf-8")
     assert 'data-unavail="true"' in html, (
         "Phase 2 performance.html must render Tier 2 placeholder rows with "
         'data-unavail="true" so they are distinguishable from live data rows. '
@@ -322,9 +317,8 @@ def test_performance_placeholder_rows_do_not_show_fake_numbers():
     import app as app_module
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as client:
-        with _patch_analytics_phase2():
-            html = client.get("/performance").data.decode("utf-8")
+    with app_module.app.test_client() as client, _patch_analytics_phase2():
+        html = client.get("/performance").data.decode("utf-8")
 
     # The placeholder must include either metric-unavail class or a dash character
     # near the 'capture' label text.
@@ -363,9 +357,8 @@ def test_performance_metrics_table_phase2_has_more_than_seven_rows():
     import app as app_module
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as client:
-        with _patch_analytics_phase2():
-            html = client.get("/performance").data.decode("utf-8")
+    with app_module.app.test_client() as client, _patch_analytics_phase2():
+        html = client.get("/performance").data.decode("utf-8")
 
     row_count = html.count('data-testid="metric-row"')
     assert row_count > 7, (
@@ -393,9 +386,8 @@ def test_performance_metrics_table_has_updated_column_headers():
     import app as app_module
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as client:
-        with _patch_analytics_phase2():
-            html = client.get("/performance").data.decode("utf-8")
+    with app_module.app.test_client() as client, _patch_analytics_phase2():
+        html = client.get("/performance").data.decode("utf-8")
     # Accept either the exact design wording or reasonable paraphrases.
     has_held_header = "if-held baseline" in html.lower() or "if held baseline" in html.lower()
     has_bot_header = "bot (planet stopper)" in html.lower() or "planet stopper" in html.lower()
@@ -428,9 +420,8 @@ def test_performance_metrics_table_has_caption():
     import app as app_module
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as client:
-        with _patch_analytics_phase2():
-            html = client.get("/performance").data.decode("utf-8")
+    with app_module.app.test_client() as client, _patch_analytics_phase2():
+        html = client.get("/performance").data.decode("utf-8")
     has_caption = (
         "metrics-caption" in html
         or "positive deltas" in html.lower()

@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 import pathlib
 from typing import Any
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -647,8 +647,8 @@ class TestAllTickersFailPath:
         FAILS on the current implementation because the reason is "ticker symbol
         required" (pre-fix short-circuit), not a genuine all-fail reason.
         """
+
         import ai_advisor
-        from requests.exceptions import HTTPError
 
         # All fetches return 404 — no ticker resolves
         fail_resp = _make_mock_response({}, status_code=404)

@@ -37,10 +37,9 @@ from __future__ import annotations
 
 import inspect
 import json
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers — fake objects returned by mocked collaborators
@@ -127,7 +126,7 @@ def sb_client():
         yield c
 
 
-def _post_run(client, body: dict | None = None) -> "flask.wrappers.Response":  # type: ignore[name-defined]  # noqa: F821
+def _post_run(client, body: dict | None = None) -> flask.wrappers.Response:  # type: ignore[name-defined]  # noqa: F821
     """POST /ai-advisor/strategy-builder/run with a JSON body."""
     payload = body or {"objective": "diversify", "universe": ["SPY", "QQQ"]}
     return client.post(
@@ -769,6 +768,7 @@ class TestAC5BoundaryPreserved:
         """
         import ast
         import textwrap
+
         import app as app_module
 
         raw_src = inspect.getsource(app_module.ai_advisor_strategy_builder_run)
@@ -947,6 +947,7 @@ class TestSecurityBoundary:
         """
         import ast
         import textwrap
+
         import app as app_module
 
         raw_src = inspect.getsource(app_module.ai_advisor_strategy_builder_run)

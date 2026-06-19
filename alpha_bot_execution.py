@@ -180,7 +180,7 @@ def fetch_symphony_stats(account_id):
         if response.status_code == 200:
             try:
                 return response.json().get("symphonies", [])
-            except ValueError as e:
+            except ValueError:
                 print(f"Error parsing Composer response JSON: HTTP {response.status_code}")
                 return []
         print(f"Error fetching symphony stats: HTTP {response.status_code}")
@@ -260,7 +260,7 @@ def _persist_composer_fields_to_bot_state(bot_state: dict, symphony_id: str, sym
 
 
 def execute_sell_to_cash(actual_symphony_id, account_id):
-    url = f"{COMPOSER_BASE_URL}/deploy/accounts/{account_id}/symphonies/{actual_symphony_id}/go-to-cash"
+    url = f"{COMPOSER_BASE_URL}/deploy/accounts/{account_id}/symphonies/{actual_symphony_id}/go-to-cash"  # noqa: E501  # un-wrappable long line
     backoff_intervals = [1, 2, 4, 10]
 
     for attempt in range(len(backoff_intervals) + 1):
@@ -327,7 +327,7 @@ def fetch_alpaca_history(tickers, current_date_str):
 
         page_token = None
         while True:
-            url = f"{ALPACA_BASE_URL}/stocks/bars?symbols={symbol_string}&timeframe=1Day&start={start_date}&limit=10000&adjustment=split&feed=iex"
+            url = f"{ALPACA_BASE_URL}/stocks/bars?symbols={symbol_string}&timeframe=1Day&start={start_date}&limit=10000&adjustment=split&feed=iex"  # noqa: E501  # un-wrappable long line
             if page_token:
                 url += f"&page_token={page_token}"
 
@@ -340,7 +340,7 @@ def fetch_alpaca_history(tickers, current_date_str):
                         success = True
                         break
                     print(
-                        f"Alpaca API Error on batch (attempt {attempt + 1}/{max_retries}): HTTP {response.status_code}"
+                        f"Alpaca API Error on batch (attempt {attempt + 1}/{max_retries}): HTTP {response.status_code}"  # noqa: E501  # un-wrappable long line
                     )
                 except requests.RequestException as e:
                     print(
@@ -354,7 +354,7 @@ def fetch_alpaca_history(tickers, current_date_str):
 
             try:
                 data = response.json()
-            except ValueError as e:
+            except ValueError:
                 print(f"Error parsing Alpaca response JSON: HTTP {response.status_code}")
                 break
             if "bars" in data:
@@ -411,7 +411,7 @@ def fetch_intraday_vwaps(tickers, headers, current_et):
     for i in range(0, len(tickers_list), batch_size):
         batch = tickers_list[i : i + batch_size]
         symbol_string = ",".join(batch)
-        url = f"{ALPACA_BASE_URL}/stocks/bars?symbols={symbol_string}&timeframe=1Min&start={start_utc_str}&limit=1000&feed=iex"
+        url = f"{ALPACA_BASE_URL}/stocks/bars?symbols={symbol_string}&timeframe=1Min&start={start_utc_str}&limit=1000&feed=iex"  # noqa: E501  # un-wrappable long line
 
         try:
             response = requests.get(url, headers=headers, timeout=15)
@@ -636,7 +636,7 @@ def main():
         if not is_trading or current_time > post_mortem_cutoff or current_time < REAL_MARKET_OPEN:
             if not force_run:
                 print(
-                    f"  -> Market closed or in Grace Period (ET: {current_et.strftime('%a %H:%M')}). Sleeping..."
+                    f"  -> Market closed or in Grace Period (ET: {current_et.strftime('%a %H:%M')}). Sleeping..."  # noqa: E501  # un-wrappable long line
                 )
                 _closed_bot_state = database.load_state()
                 if not _is_weekday_holiday:
@@ -677,7 +677,7 @@ def main():
 
             if not force_run:
                 print(
-                    f"  -> 🛑 COMPOSER REBALANCE BLACKOUT (ET: {current_et.strftime('%H:%M')}). Pausing..."
+                    f"  -> 🛑 COMPOSER REBALANCE BLACKOUT (ET: {current_et.strftime('%H:%M')}). Pausing..."  # noqa: E501  # un-wrappable long line
                 )
                 return
             print("  -> Rebalance blackout active, but --force flag detected! Bypassing...")
@@ -697,7 +697,7 @@ def main():
         state_changed = False
         if prev_live_execution is not None and prev_live_execution != LIVE_EXECUTION:
             print(
-                f"  -> Execution mode toggle detected ({prev_live_execution} -> {LIVE_EXECUTION}). Wiping transient state."
+                f"  -> Execution mode toggle detected ({prev_live_execution} -> {LIVE_EXECUTION}). Wiping transient state."  # noqa: E501  # un-wrappable long line
             )
             database.wipe_transient_state(bot_state)
             state_changed = True
@@ -708,7 +708,7 @@ def main():
 
         if bot_state.get("date") != current_date_str:
             print(
-                f"  -> New trading day detected ({current_date_str} ET). Wiping transient state keys and chart memory."
+                f"  -> New trading day detected ({current_date_str} ET). Wiping transient state keys and chart memory."  # noqa: E501  # un-wrappable long line
             )
             bot_state["date"] = current_date_str
             database.wipe_transient_state(bot_state)
@@ -1104,7 +1104,7 @@ def main():
             autotuner_changes = None
             if current_et.weekday() >= 4 or force_run:  # 4=Fri, 5=Sat, 6=Sun
                 print(
-                    f"  -> {'Weekend/Force' if current_et.weekday() >= 5 else 'Friday'} Detected. Starting autotune..."
+                    f"  -> {'Weekend/Force' if current_et.weekday() >= 5 else 'Friday'} Detected. Starting autotune..."  # noqa: E501  # un-wrappable long line
                 )
                 autotuner_changes = autotuner.run_autotuner(
                     bot_state,
@@ -1203,8 +1203,8 @@ def main():
                     current_return = f_ret + (post_trigger_move * 100.0)
                 # -----------------------------------
 
-                # Pre-calculate True VWAP difference unconditionally so it can be logged in the chart history
-                # First normalize ticker fields (working_ticker fallback) — data prep, stays in caller
+                # Pre-calculate True VWAP difference unconditionally so it can be logged in the chart history  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
+                # First normalize ticker fields (working_ticker fallback) — data prep, stays in caller  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
                 for h in holdings:
                     h["ticker"] = h.get("working_ticker", h.get("ticker"))
                 weighted_vwap_diff, valid_vwap_weight = math_engine.compute_vwap_signals(
@@ -1453,11 +1453,11 @@ def main():
                 if bot_state[symphony_id]["armed"] and not bot_state[symphony_id]["triggered"]:
                     if new_below_stop_count > _prev_below_stop_count and new_below_stop_count == 1:
                         print(
-                            f"  ⚠️ {symphony_name[:35]} dipped below stop. Awaiting 3-tick confirmation..."
+                            f"  ⚠️ {symphony_name[:35]} dipped below stop. Awaiting 3-tick confirmation..."  # noqa: E501  # un-wrappable long line
                         )
                     elif new_below_stop_count == 0 and _prev_below_stop_count > 0:
                         print(
-                            f"  ✅ {symphony_name[:35]} recovered or sanity check passed. Confirmation reset."
+                            f"  ✅ {symphony_name[:35]} recovered or sanity check passed. Confirmation reset."  # noqa: E501  # un-wrappable long line
                         )
 
                 # Check 2: Take Profit
@@ -1488,17 +1488,17 @@ def main():
                 # Transition prints/logs — driven by the pre/post state delta.
                 if new_tp_armed and not prev_tp_armed:
                     print(
-                        f"  *** {symphony_name} TP-ARMED (Exceptional Gain: MC Prob {prob_underperforming:.1f}% < {acc_TAKE_PROFIT_MC_PCT}%) ***"
+                        f"  *** {symphony_name} TP-ARMED (Exceptional Gain: MC Prob {prob_underperforming:.1f}% < {acc_TAKE_PROFIT_MC_PCT}%) ***"  # noqa: E501  # un-wrappable long line
                     )
                     database.log_symphony_event(
                         symphony_id,
-                        f"{symphony_name} TP-ARMED (Exceptional Gain: MC Prob {prob_underperforming:.1f}% < {acc_TAKE_PROFIT_MC_PCT}%)",
+                        f"{symphony_name} TP-ARMED (Exceptional Gain: MC Prob {prob_underperforming:.1f}% < {acc_TAKE_PROFIT_MC_PCT}%)",  # noqa: E501  # un-wrappable long line
                         "tp-armed",
                     )
                 elif prev_tp_armed and new_tp_armed:
                     if new_above_tp_count == 1 and prev_above_tp_count == 0:
                         print(
-                            f"  ⚠️ {symphony_name[:35]} TP signal flashed. Awaiting 2nd tick confirmation..."
+                            f"  ⚠️ {symphony_name[:35]} TP signal flashed. Awaiting 2nd tick confirmation..."  # noqa: E501  # un-wrappable long line
                         )
                     elif new_above_tp_count == 0 and prev_above_tp_count > 0:
                         print(f"  📉 {symphony_name[:35]} TP signal vanished. Still cranking.")
@@ -1532,7 +1532,7 @@ def main():
 
                 if is_vwap_broken:
                     print(
-                        f"  📉 {symphony_name[:35]} Portfolio VWAP broken. Forcing exit to protect gains."
+                        f"  📉 {symphony_name[:35]} Portfolio VWAP broken. Forcing exit to protect gains."  # noqa: E501  # un-wrappable long line
                     )
                 if is_vwap_bleed_broken:
                     print(f"  🩸 {symphony_name[:35]} VWAP Bleed Limit Reached. Forcing exit.")
@@ -1540,7 +1540,7 @@ def main():
                 safe_name = symphony_name[:35].encode("ascii", "ignore").decode("ascii")
                 arm_prob_str = f"{prob_underperforming:.1f}%" if mc_available else "N/A"
                 print(
-                    f"  -> {safe_name}: Ret: {current_return:.2f}% | HWM: {high_water_mark:.2f}% | Stop Dist: {active_trailing_stop:.2f}% | ArmProb: {arm_prob_str}"
+                    f"  -> {safe_name}: Ret: {current_return:.2f}% | HWM: {high_water_mark:.2f}% | Stop Dist: {active_trailing_stop:.2f}% | ArmProb: {arm_prob_str}"  # noqa: E501  # un-wrappable long line
                 )
 
                 bot_state[symphony_id]["name"] = symphony_name
@@ -1659,7 +1659,7 @@ def main():
                     or is_vwap_broken
                     or is_vwap_bleed_broken
                 ):
-                    # R3b: shared resolver enforces canonical priority (VWAP Breakdown > Take-Profit >
+                    # R3b: shared resolver enforces canonical priority (VWAP Breakdown > Take-Profit >  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
                     # VWAP Bleed Cut > Trailing Stop) at both live and replay call sites.
                     reason, also_true = math_engine.resolve_trigger_priority(
                         is_vwap_broken=is_vwap_broken,
@@ -1740,10 +1740,10 @@ def main():
                         # arm (LIVE_EXECUTION) AND the per-symphony gate (live_mode)
                         # are set.  Either alone is dry-run (arch rule 4).
                         print(
-                            f"  -> [LIVE EXECUTION] Sending sell-to-cash command for {item['symphony_name']}..."
+                            f"  -> [LIVE EXECUTION] Sending sell-to-cash command for {item['symphony_name']}..."  # noqa: E501  # un-wrappable long line
                         )
                         # B1-FU1.1: narrow try/except around the live executor.
-                        # Rationale: an unhandled exception from execute_sell_to_cash (e.g. transient
+                        # Rationale: an unhandled exception from execute_sell_to_cash (e.g. transient  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
                         # HTTP failure to Composer) used to unwind out of the chunk loop, skipping
                         # database.save_state(). That rolled back every successful iteration's
                         # in-memory triggered=True, producing a next-tick double-charge for any
@@ -1774,7 +1774,7 @@ def main():
                         ) as exc:
                             err_msg = f"EXECUTOR EXCEPTION: {type(exc).__name__}: {exc}"
                             print(
-                                f"     !!! [EXECUTOR EXCEPTION] {sym_id}: {type(exc).__name__}: {exc}"
+                                f"     !!! [EXECUTOR EXCEPTION] {sym_id}: {type(exc).__name__}: {exc}"  # noqa: E501  # un-wrappable long line
                             )
                             try:
                                 database.log_symphony_event(sym_id, err_msg, "error")
@@ -1786,8 +1786,8 @@ def main():
                                 AttributeError,
                             ) as log_exc:
                                 # Never let a logging failure escape and re-trigger the original
-                                # state-preservation bug. Narrow union covers JSON-file I/O (OSError)
-                                # + json.dumps encoding failures (TypeError, ValueError) + sentinel /
+                                # state-preservation bug. Narrow union covers JSON-file I/O (OSError)  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
+                                # + json.dumps encoding failures (TypeError, ValueError) + sentinel /  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
                                 # None attribute access (AttributeError) + RuntimeError from any
                                 # unforeseen writer path. NOTE: log_symphony_event is a JSON-file
                                 # writer, NOT SQLite — no sqlite3 exceptions reach this site.
@@ -1795,7 +1795,7 @@ def main():
                                 # the daemon supervisor restarts; silently swallowing every
                                 # conceivable log failure is itself a Concern #28 violation.
                                 print(
-                                    f"     !!! [LOGGING FAILURE] {sym_id}: {type(log_exc).__name__}: {log_exc}"
+                                    f"     !!! [LOGGING FAILURE] {sym_id}: {type(log_exc).__name__}: {log_exc}"  # noqa: E501  # log message string
                                 )
                             success = False
                     else:
@@ -1872,7 +1872,7 @@ def main():
                         )
                     else:
                         print(
-                            f"     !!! EXECUTION FAILED FOR {item['symphony_name']}. Skipping state update !!!"
+                            f"     !!! EXECUTION FAILED FOR {item['symphony_name']}. Skipping state update !!!"  # noqa: E501  # un-wrappable long line
                         )
 
         bot_state["last_successful_cycle_at"] = current_et.isoformat()

@@ -7,7 +7,7 @@ Implements Option B (OS-level scheduling, daemon-decoupled) per DE-PRISM-004.
 Responsibilities:
   1. Load .env from the project root (credentials for Claude + DB)
   2. Idempotency guard: skip if today's MARKET_PRISM row already exists in the DB
-  3. Spawn all 6 Prism agents (prism-synthesizer + 5 analysts) via headless vanilla `claude -p` subprocess
+  3. Spawn all 6 Prism agents (prism-synthesizer + 5 analysts) via headless vanilla `claude -p` subprocess  # noqa: E501  # un-wrappable long line
   4. Bounded retry: up to MAX_ATTEMPTS attempts with capped exponential backoff
   5. D-1 error contract: only type(exc).__name__ is logged — never raw messages or paths
 
@@ -22,7 +22,7 @@ import subprocess
 import sys
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -115,7 +115,7 @@ def _is_todays_row(row: dict | None) -> bool:
     try:
         # created_at is stored as "YYYY-MM-DD HH:MM:SS" (UTC)
         row_date = datetime.strptime(created_at_str[:10], "%Y-%m-%d").date()
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(UTC).date()
         return row_date == today
     except Exception:  # noqa: BLE001
         return False

@@ -31,10 +31,8 @@ Expected state: RED for missing patterns until .gitignore is updated.
 from __future__ import annotations
 
 import pathlib
-import re
 
 import pytest
-
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 GITIGNORE_PATH = REPO_ROOT / ".gitignore"

@@ -1,22 +1,24 @@
-import os
-import time
-import math
-import itertools
 import functools
-import statistics
+import glob
+import itertools
+import json
 import logging
-import optuna
+import math
+import os
+import statistics
+import time
+from datetime import UTC, datetime, timedelta
+
 import numpy as np
-from datetime import datetime, timedelta, timezone
+import optuna
+
+import acceptance_gate as _acceptance_gate
 import database
 import math_engine
 import synthetic_history
-import acceptance_gate as _acceptance_gate
-import glob
-import json
+from advisors import divergence_explainer as _de
 from advisors import overfitting_conscience as _oc
 from advisors import spec_critic as _sc
-from advisors import divergence_explainer as _de
 
 # PERF-007: absolute default for the post-mortem search directory — anchored
 # to this file's parent so the glob is CWD-independent. Operators may
@@ -263,7 +265,7 @@ def _resolve_optuna_n_jobs_from_env() -> int:
 # optuna-compare without re-parsing logs, and to satisfy the no-magic-numbers rule.
 _SS_TAKE_PROFIT_MC_MIN = 2.0
 _SS_TAKE_PROFIT_MC_MAX = 10.0
-_SS_VWAP_CROSS_HWM_MIN = 0.5  # production walk-forward bounds; see _SS_VWAP_CROSS_HWM_V1_MIN below for the narrower V1 calibration sweep bounds and asymmetry rationale
+_SS_VWAP_CROSS_HWM_MIN = 0.5  # production walk-forward bounds; see _SS_VWAP_CROSS_HWM_V1_MIN below for the narrower V1 calibration sweep bounds and asymmetry rationale  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
 _SS_VWAP_CROSS_HWM_MAX = 2.5
 _SS_VWAP_BLEED_MULT_MIN = 0.5
 _SS_VWAP_BLEED_MULT_MAX = 3.0
@@ -274,10 +276,10 @@ _SS_PARA_VEL_MAX = 4.0
 _SS_MAX_PARA_SQUEEZE_MIN = 0.1
 _SS_MAX_PARA_SQUEEZE_MAX = 0.8
 
-# V1 calibration sweep — asymmetric VWAP_CROSS_HWM_PCT bounds (lower expands below production; upper narrows below production).
+# V1 calibration sweep — asymmetric VWAP_CROSS_HWM_PCT bounds (lower expands below production; upper narrows below production).  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
 # Lower: 0.3 (vs production 0.5) — 3-tick confirm gate (math_engine.py) prevents spurious
 # single-tick exits at this level; gives the sweep more room to find the true optimum.
-# Upper: 2.0 (vs production 2.5; ~2σ typical daily return) — above this System A is effectively disabled
+# Upper: 2.0 (vs production 2.5; ~2σ typical daily return) — above this System A is effectively disabled  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
 # for normal sessions, making calibration unreliable.
 _SS_VWAP_CROSS_HWM_V1_MIN = 0.3
 _SS_VWAP_CROSS_HWM_V1_MAX = 2.0
@@ -910,7 +912,7 @@ def compute_haircut_pvalue(t_stat: float) -> float:
     return min(max(p, _HAIRCUT_PVALUE_EPSILON), 1.0 - _HAIRCUT_PVALUE_EPSILON)
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _yekutieli_c_n(n: int) -> float:
     """Yekutieli arbitrary-dependence factor c(N) = sum_{j=1}^{N} 1/j.
 
@@ -1036,8 +1038,8 @@ def calculate_historical_deviation(current_date_str):
         "VWAP Bleed Cut": -0.25,
     }
 
-    deviation_sums = {k: 0.0 for k in deviation_dict.keys()}
-    deviation_counts = {k: 0 for k in deviation_dict.keys()}
+    deviation_sums = {k: 0.0 for k in deviation_dict}
+    deviation_counts = {k: 0 for k in deviation_dict}
 
     try:
         current_dt = datetime.strptime(current_date_str, "%Y-%m-%d")
@@ -1067,7 +1069,7 @@ def calculate_historical_deviation(current_date_str):
                 if file_dt < lookback_dt or file_dt >= current_dt:
                     continue
 
-                with open(f_path, "r", encoding="utf-8") as f:
+                with open(f_path, encoding="utf-8") as f:
                     data = json.load(f)
                     triggers = data.get("triggers", [])
                     for t in triggers:
@@ -1095,7 +1097,7 @@ def calculate_historical_deviation(current_date_str):
                 )
                 continue
 
-        for reason in deviation_dict.keys():
+        for reason in deviation_dict:
             if deviation_counts[reason] > 0:
                 deviation_dict[reason] = round(deviation_sums[reason] / deviation_counts[reason], 3)
     except Exception as e:
@@ -1822,8 +1824,8 @@ def _apply_optuna_archive_migration_if_needed():
     Safe to call on every startup — the SQL is idempotent.
     """
     import os
-    import sqlite3 as _sqlite3
     import pathlib as _pathlib
+    import sqlite3 as _sqlite3
 
     db_path = "optuna_studies.db"
     if not os.path.exists(db_path):
@@ -1839,7 +1841,7 @@ def _apply_optuna_archive_migration_if_needed():
         conn = _sqlite3.connect(db_path)
         # Check for any legacy (non-prefixed) studies
         rows = conn.execute(
-            "SELECT COUNT(*) FROM studies WHERE study_name NOT LIKE 'LEGACY__%' AND INSTR(study_name, '__') = 0"
+            "SELECT COUNT(*) FROM studies WHERE study_name NOT LIKE 'LEGACY__%' AND INSTR(study_name, '__') = 0"  # noqa: E501  # un-wrappable long line
         ).fetchone()
         needs_migration = rows and rows[0] > 0
         if needs_migration:
@@ -1968,7 +1970,7 @@ def validate_nn1_compliance(spec_bundle_id: int) -> "tuple[bool, list[str]]":
         if ledger_row.get("evidence_source") == "OOS":
             facet_name = ledger_row.get("facet_name", "unknown")
             violations.append(
-                f"{facet_name}: OOS evidence_source (frozen-eval peek — stricter than BACKTEST_SELECTION)"
+                f"{facet_name}: OOS evidence_source (frozen-eval peek — stricter than BACKTEST_SELECTION)"  # noqa: E501  # un-wrappable long line
             )
 
     is_honest = len(violations) == 0
@@ -2133,7 +2135,7 @@ def run_autotuner(
     _apply_optuna_archive_migration_if_needed()
 
     print(
-        f"  -> Starting EOD Autotune (250-day WFA: 60% Train / 20% Validation / 20% Frozen-Eval per Symphony)..."
+        "  -> Starting EOD Autotune (250-day WFA: 60% Train / 20% Validation / 20% Frozen-Eval per Symphony)..."  # noqa: E501  # un-wrappable long line
     )
 
     # 0. Calculate Historical Execution Deviation
@@ -2233,7 +2235,7 @@ def run_autotuner(
 
     # Single timestamp shared across all symphonies in this run — groups all
     # per-symphony rows from one invocation into a logical "run" for Claude context-assembly.
-    run_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    run_timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
     for normalized_name in symphony_names:
         print(f"     Optimizing Symphony: {normalized_name}")
@@ -2366,7 +2368,7 @@ def run_autotuner(
             # through the active gamma. Raw percent (T5 provenance contract — not U values).
             trial.set_user_attr("daily_returns", list(daily_date_returns.values()))
             # Persist the date-labeled union for the Phase-3 CSCV PBO gate.
-            # Keys are date strings within the CPCV-eligible window (sorted_dates[:frozen_start_idx]).
+            # Keys are date strings within the CPCV-eligible window (sorted_dates[:frozen_start_idx]).  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
             # Values are DECIMAL guard_alpha returns (raw percent / RETURN_PCT_TO_FRACTION,
             # applied at the store site above — C1 fix). This matches compute_pbo's
             # decimal contract; it does NOT share daily_returns's raw-percent contract.
@@ -2392,7 +2394,7 @@ def run_autotuner(
         storage = optuna.storages.RDBStorage(
             url=db_url, engine_kwargs={"connect_args": {"timeout": 60}}
         )
-        study_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        study_timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
         # Source sampler seed + parallelism from env (OPTUNA-1 / OPTUNA-6 audit fix).
         # Named constants _OPTUNA_SAMPLER_SEED_ENV / _OPTUNA_N_JOBS_ENV carry the
         # canonical string values; the literals appear here so the env dependency
@@ -2513,7 +2515,7 @@ def run_autotuner(
         # across all CSCV date-partitions? It is the sample-robustness axis, ORTHOGONAL
         # to the BHY multiplicity axis (n_effective / _haircut_select unchanged).
         # Reference: Bailey & López de Prado 2014, DOI 10.21314/JCF.2014.005.
-        _pbo_value: "float | None" = None
+        _pbo_value: float | None = None
         if haircut_trials:
             # Sort by raw Optuna value descending, take top _CSCV_TOP_K pre-BHY.
             _top_k_trials = sorted(
@@ -2641,7 +2643,7 @@ def run_autotuner(
         )
 
         # Validation-fold metric (selection truth — what Optuna actually optimized against).
-        # For CRRA-EU bundles, the Sortino ratio is not the selection metric — compute_crra_eu_objective
+        # For CRRA-EU bundles, the Sortino ratio is not the selection metric — compute_crra_eu_objective  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
         # was used. Sortino is suppressed (None) for CRRA-EU to avoid misleading reporting.
         validation_returns = _collect_sim_returns(
             best_p,
@@ -2742,11 +2744,11 @@ def run_autotuner(
         if oos_alpha > fallback_oos_alpha and oos_alpha > default_oos_alpha:
             if oos_alpha > 0:
                 print(
-                    f"       OOS validation passed! OOS Guard Alpha: +{oos_alpha:.2f}% (Average: {avg_oos_alpha:.2f}%)"
+                    f"       OOS validation passed! OOS Guard Alpha: +{oos_alpha:.2f}% (Average: {avg_oos_alpha:.2f}%)"  # noqa: E501  # un-wrappable long line
                 )
             else:
                 print(
-                    f"       OOS validation passed (Beat Baselines)! OOS Guard Alpha: {oos_alpha:.2f}% (Avg: {avg_oos_alpha:.2f}%) vs Fallback: {fallback_oos_alpha:.2f}% / Default: {default_oos_alpha:.2f}%"
+                    f"       OOS validation passed (Beat Baselines)! OOS Guard Alpha: {oos_alpha:.2f}% (Avg: {avg_oos_alpha:.2f}%) vs Fallback: {fallback_oos_alpha:.2f}% / Default: {default_oos_alpha:.2f}%"  # noqa: E501  # un-wrappable long line
                 )
             for name, val in best_params.items():
                 if name not in locked_vars:
@@ -2754,7 +2756,7 @@ def run_autotuner(
             baseline_decision = "Adopted AI"
         elif fallback_oos_alpha >= default_oos_alpha:
             print(
-                f"       OOS validation failed (AI: {oos_alpha:.2f}%). Reverting to Fallback parameters (Fallback: {fallback_oos_alpha:.2f}% vs Default: {default_oos_alpha:.2f}%)."
+                f"       OOS validation failed (AI: {oos_alpha:.2f}%). Reverting to Fallback parameters (Fallback: {fallback_oos_alpha:.2f}% vs Default: {default_oos_alpha:.2f}%)."  # noqa: E501  # un-wrappable long line
             )
             for k, v in fallback_params.items():
                 if k not in locked_vars:
@@ -2762,7 +2764,7 @@ def run_autotuner(
             baseline_decision = "Reverted to Fallback"
         else:
             print(
-                f"       OOS validation & Fallback failed. Resetting to Global Default (Default: {default_oos_alpha:.2f}% vs AI: {oos_alpha:.2f}%, Fallback: {fallback_oos_alpha:.2f}%)."
+                f"       OOS validation & Fallback failed. Resetting to Global Default (Default: {default_oos_alpha:.2f}% vs AI: {oos_alpha:.2f}%, Fallback: {fallback_oos_alpha:.2f}%)."  # noqa: E501  # un-wrappable long line
             )
             for k, v in default_params.items():
                 if k not in locked_vars:
@@ -2790,12 +2792,12 @@ def run_autotuner(
 
         elapsed = time.time() - start_time
         haircut_log = (
-            f" | Haircut t-stat: {selection_tstat_value:.4f} (naive Sortino: {naive_sharpe_value:.4f})"
+            f" | Haircut t-stat: {selection_tstat_value:.4f} (naive Sortino: {naive_sharpe_value:.4f})"  # noqa: E501  # un-wrappable long line
             if selection_tstat_value is not None and naive_sharpe_value is not None
             else " | Haircut: N/A"
         )
         print(
-            f"       Optimization completed in {elapsed:.2f}s. Train Sortino: {best_alpha_train:+.4f} (train days: {train_days_count}){haircut_log}"
+            f"       Optimization completed in {elapsed:.2f}s. Train Sortino: {best_alpha_train:+.4f} (train days: {train_days_count}){haircut_log}"  # noqa: E501  # log message string
         )
 
         database.save_symphony_strategy(normalized_name, current_params, locked_vars)
@@ -2939,7 +2941,7 @@ def run_calibration_sweep(
     """
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-    run_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    run_timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
     # --- Fold partitioning (same O1 logic as run_autotuner) ---
     all_dates: set[str] = set()
@@ -3002,7 +3004,7 @@ def run_calibration_sweep(
             )
             continue
 
-        study_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        study_timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
         # AC-6: append __calsweep suffix so sweep studies are identifiable at a
         # glance and never collide with production run_autotuner study names.
         study_name = f"{study_timestamp}__{sym_id}__calsweep"

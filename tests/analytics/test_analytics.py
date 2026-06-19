@@ -69,7 +69,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers — build fixture post-mortem files matching the producer schema
 # ---------------------------------------------------------------------------

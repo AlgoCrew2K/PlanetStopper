@@ -21,16 +21,15 @@ are asserted; we assert structural/behavioural properties only.
 
 from __future__ import annotations
 
-import sqlite3
-import inspect
 import ast
+import inspect
 import pathlib
+import sqlite3
 from unittest.mock import patch
 
 import pytest
 
 import database as db
-
 
 # ---------------------------------------------------------------------------
 # Helpers

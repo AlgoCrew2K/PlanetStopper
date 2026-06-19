@@ -51,7 +51,6 @@ import pathlib
 
 import math_engine
 
-
 # Path to the math_engine source on disk -- the tests read the source file
 # directly to assert provenance-comment textual content. There is no
 # runtime arithmetic change in this cycle so no behavioral test is added

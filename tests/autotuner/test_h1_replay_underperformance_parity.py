@@ -40,10 +40,7 @@ discrete categorical outcomes — exact equality applies, no float tolerance.
 
 from __future__ import annotations
 
-import pytest
-
 import autotuner
-import math_engine
 
 
 # Replay state keys (from _replay_exit_tick): a mutable per-position dict carried

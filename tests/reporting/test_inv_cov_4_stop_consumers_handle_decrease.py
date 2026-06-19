@@ -35,7 +35,6 @@ import pytest
 
 import reporting
 
-
 # ---------------------------------------------------------------------------
 # 1 — Discord alert: stop_trigger_level renders correctly when lower.
 # ---------------------------------------------------------------------------
@@ -201,8 +200,9 @@ class TestTemplateRendersDecreasingStop:
         """Render the template with a stop_trigger of 2.10 (after a
         hypothetical 3.50 prior) and assert the rendered cell text
         contains `2.10%` — the verbatim formatted current value."""
-        from jinja2 import Environment, FileSystemLoader
         import pathlib
+
+        from jinja2 import Environment, FileSystemLoader
 
         templates_dir = pathlib.Path(__file__).resolve().parent.parent.parent / "templates"
         env = Environment(loader=FileSystemLoader(templates_dir))

@@ -59,14 +59,12 @@ Tests #2 and #3 are GREEN now and must STAY green after the fix (regression).
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-
 from unittest.mock import patch
 
 import pytest
 
 import alpha_bot_execution
 import math_engine
-
 
 # ---------------------------------------------------------------------------
 # Fixed clock — a regular-hours weekday so the time / blackout gates are bypassed.

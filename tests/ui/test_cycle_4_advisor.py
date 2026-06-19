@@ -498,8 +498,8 @@ def test_suggest_response_oos_status(adv_client):
     body = json.loads(resp.data)
     for s in body.get("suggestions", []):
         assert "oos_status" in s, (
-            f"oos_status missing from suggestion JSON. Current ConfigSuggestion model "
-            f"does not include oos_status — impl must extend it."
+            "oos_status missing from suggestion JSON. Current ConfigSuggestion model "
+            "does not include oos_status — impl must extend it."
         )
         assert s["oos_status"] in ("passed", "rejected", "pending"), (
             f"oos_status must be passed/rejected/pending, got: {s['oos_status']!r}"

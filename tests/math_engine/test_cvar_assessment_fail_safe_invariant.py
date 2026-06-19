@@ -38,7 +38,7 @@ from __future__ import annotations
 import pytest
 
 try:
-    from hypothesis import given, settings, HealthCheck
+    from hypothesis import HealthCheck, given, settings
     from hypothesis import strategies as st
 
     _HYPOTHESIS_AVAILABLE = True

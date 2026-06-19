@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import json
 import pathlib
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -599,8 +598,9 @@ class TestHonestDegradation:
         available=False with a D-1 reason (type(exc).__name__ only — no stack
         trace, no URL, no message detail).
         """
-        import ai_advisor
         from requests.exceptions import ConnectionError as ReqConnErr
+
+        import ai_advisor
 
         with patch(
             "ai_advisor._fetch_with_backoff",

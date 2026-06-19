@@ -47,7 +47,6 @@ import pytest
 
 import autotuner
 
-
 # ---------------------------------------------------------------------------
 # Oracle fixtures. Series + (Sortino, SE, t, p) numerics come verbatim from
 # scripts/derive_h1_bootstrap_fixture.py at seed=20260522, B=2000.

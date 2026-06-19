@@ -28,9 +28,8 @@ Rules:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from datetime import date, timedelta
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -136,8 +135,8 @@ def _make_gated_batch_with_survivors(candidate_ids: list[str]):
       panel_breakdown: dict
       decision: str  (one of DECISION_ADOPT_CANDIDATE / DECISION_KEEP_INCUMBENT / DECISION_REJECT_VETO_FAILED)
     """
-    from advisors.backtest_gate_engine import GatedBatch, CandidateGateResult, HARVEY_LIU_FDR_Q
-    from acceptance_gate import AcceptanceVerdict, DECISION_ADOPT_CANDIDATE
+    from acceptance_gate import DECISION_ADOPT_CANDIDATE, AcceptanceVerdict
+    from advisors.backtest_gate_engine import HARVEY_LIU_FDR_Q, CandidateGateResult, GatedBatch
 
     results = []
     survivors = []
@@ -169,7 +168,7 @@ def _make_gated_batch_with_survivors(candidate_ids: list[str]):
 
 def _make_empty_gated_batch():
     """GatedBatch with no survivors (all withheld)."""
-    from advisors.backtest_gate_engine import GatedBatch, HARVEY_LIU_FDR_Q
+    from advisors.backtest_gate_engine import HARVEY_LIU_FDR_Q, GatedBatch
 
     return GatedBatch(results=[], survivors=[], n_candidates=0, fdr_q=HARVEY_LIU_FDR_Q)
 

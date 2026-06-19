@@ -29,7 +29,6 @@ import pytest
 
 import autotuner
 
-
 _FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "autotuner" / "replay_parity"
 _AUTOTUNER_TREE = ast.parse(pathlib.Path(autotuner.__file__).read_text(encoding="utf-8"))
 

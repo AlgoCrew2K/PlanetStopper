@@ -1,19 +1,19 @@
+import datetime as _dt
+import json
 import logging
 import os
-import json
 import time
-import datetime as _dt
-import requests
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from json import JSONDecodeError
 from zoneinfo import ZoneInfo
+
+import numpy as np
+import pandas as pd
+import requests
+from dotenv import load_dotenv
 from joblib import Parallel, delayed
 
 import math_engine
-
-from dotenv import load_dotenv
 
 load_dotenv()
 ALPACA_KEY = os.getenv("ALPACA_KEY")
@@ -171,7 +171,7 @@ def utc_to_eastern(utc_dt):
     A naive input is assumed to be UTC. Returns a tz-aware ET datetime.
     """
     if utc_dt.tzinfo is None:
-        utc_dt = utc_dt.replace(tzinfo=timezone.utc)
+        utc_dt = utc_dt.replace(tzinfo=_dt.UTC)
     return utc_dt.astimezone(_US_EASTERN)
 
 
@@ -231,7 +231,7 @@ def fetch_daily_bars_with_floor(fetch_fn, end_date=None):
     Returns the first fetch_bars-shaped payload that clears the floor.
     """
     if end_date is None:
-        end_date = utc_to_eastern(datetime.now(timezone.utc)).date()
+        end_date = utc_to_eastern(datetime.now(_dt.UTC)).date()
     window_start = compute_fetch_window_start(end_date)
 
     for attempt in range(_MAX_FETCH_WIDEN_ATTEMPTS):
@@ -268,7 +268,7 @@ def load_cached_history(cache_file):
     cache file and the exception detail, then returns None.
     """
     try:
-        with open(cache_file, "r") as f:
+        with open(cache_file) as f:
             return json.load(f)
     except (OSError, JSONDecodeError, ValueError, UnicodeDecodeError) as e:
         logging.warning(
@@ -309,12 +309,12 @@ def fetch_bars(tickers_list, start_str, end_str, timeframe="1Day"):
         batch = tickers_list[i : i + batch_size]
         symbol_string = ",".join(batch)
         print(
-            f"      -> Fetching {timeframe} bars batch {i // batch_size + 1}/{len(tickers_list) // batch_size + 1}..."
+            f"      -> Fetching {timeframe} bars batch {i // batch_size + 1}/{len(tickers_list) // batch_size + 1}..."  # noqa: E501  # un-wrappable long line
         )
 
         page_token = None
         while True:
-            url = f"{ALPACA_BASE_URL}/stocks/bars?symbols={symbol_string}&timeframe={timeframe}&start={start_str}&end={end_str}&limit=10000&adjustment=split&feed=iex"
+            url = f"{ALPACA_BASE_URL}/stocks/bars?symbols={symbol_string}&timeframe={timeframe}&start={start_str}&end={end_str}&limit=10000&adjustment=split&feed=iex"  # noqa: E501  # un-wrappable long line
             if page_token:
                 url += f"&page_token={page_token}"
 
@@ -327,11 +327,11 @@ def fetch_bars(tickers_list, start_str, end_str, timeframe="1Day"):
                         break
                     elif response.status_code == 429:
                         print(
-                            f"      -> Rate limit hit (429). Sleeping for 15s... (Attempt {attempt + 1}/10)"
+                            f"      -> Rate limit hit (429). Sleeping for 15s... (Attempt {attempt + 1}/10)"  # noqa: E501  # un-wrappable long line
                         )
                         time.sleep(15)
                     else:
-                        # Log status code only; omit response.text to avoid leaking payload in logs (cycle-#27 hardening)
+                        # Log status code only; omit response.text to avoid leaking payload in logs (cycle-#27 hardening)  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
                         logging.warning(
                             "fetch_bars: HTTP %s for batch %d (attempt %d/10)",
                             response.status_code,
@@ -340,7 +340,7 @@ def fetch_bars(tickers_list, start_str, end_str, timeframe="1Day"):
                         )
                         time.sleep(5)
                 except requests.RequestException as e:
-                    # Narrow to transport/connection errors raised by requests; re-raise unexpected errors upstream
+                    # Narrow to transport/connection errors raised by requests; re-raise unexpected errors upstream  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
                     logging.error("fetch_bars: request failed on attempt %d/10: %s", attempt + 1, e)
                     time.sleep(5)
 
@@ -514,7 +514,7 @@ def generate_synthetic_history(bot_state, current_date_str):
     end_date = datetime.strptime(current_date_str, "%Y-%m-%d")
 
     # Use UTC to prevent local timezone (e.g. Japan) from messing up the 'today' comparison.
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(_dt.UTC)
     # If the requested end_date is today (or in the future) relative to US market
     # hours, cap it to yesterday. Resolve "today in US markets" with a DST-aware
     # ET conversion so the day boundary is correct in both EST and EDT.
@@ -618,7 +618,7 @@ def generate_synthetic_history(bot_state, current_date_str):
             "running the autotuner on a degenerate replay window"
         )
 
-    history_125d = {sym_id: {} for sym_id in symphony_holdings.keys()}
+    history_125d = {sym_id: {} for sym_id in symphony_holdings}
 
     def process_day(date_str):
         day_history = {}
@@ -662,7 +662,7 @@ def generate_synthetic_history(bot_state, current_date_str):
         return date_str, day_history
 
     print(
-        f"  -> Simulating {len(intraday_dates)} days of Intraday Tick Data using Parallel Processing..."
+        f"  -> Simulating {len(intraday_dates)} days of Intraday Tick Data using Parallel Processing..."  # noqa: E501  # un-wrappable long line
     )
     # n_jobs is env-bounded (ALPHABOT_MAX_JOBS, default -1 = all cores in prod;
     # set to 1 by tests/conftest.py to neutralize the xdist x cores fan-out that

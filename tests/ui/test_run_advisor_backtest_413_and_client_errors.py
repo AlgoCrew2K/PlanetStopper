@@ -41,7 +41,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _STATIC = _REPO_ROOT / "static"
 

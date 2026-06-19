@@ -130,7 +130,7 @@ class AcceptanceVerdict(NamedTuple):
     """
 
     vetoes_passed: bool
-    panel_score: "float | None"
+    panel_score: float | None
     panel_breakdown: dict
     decision: str
 
@@ -147,7 +147,7 @@ def _compute_panel_score(stability_score: float, prior_anchor_score: float) -> f
 def evaluate_acceptance_gate(
     *,
     winner_trial_is_none: bool,
-    winner_p_adj: "float | None",
+    winner_p_adj: float | None,
     nn1_compliant: bool,
     purge_integrity_ok: bool,
     oos_alpha: float,
@@ -157,7 +157,7 @@ def evaluate_acceptance_gate(
     candidate_prior_anchor_score: float,
     incumbent_stability_score: float,
     incumbent_prior_anchor_score: float,
-    pbo: "float | None" = None,
+    pbo: float | None = None,
 ) -> AcceptanceVerdict:
     """Evaluate the democratized OFFLINE acceptance gate for one candidate.
 

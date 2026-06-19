@@ -38,7 +38,6 @@ import pytest
 import autotuner
 import math_engine
 
-
 _AUTOTUNER_PATH = pathlib.Path(autotuner.__file__)
 _AUTOTUNER_SRC = _AUTOTUNER_PATH.read_text(encoding="utf-8")
 _AUTOTUNER_TREE = ast.parse(_AUTOTUNER_SRC)

@@ -73,7 +73,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Fixture: isolated, fresh SQLite DB per test
 # Mirrors the pattern in tests/database/test_chart_aggregates.py.
@@ -214,8 +213,6 @@ def _make_phase1_spec_bundle() -> int:
     bundle_hash = _db.hash_facets_json(canonical_json)
     _db.insert_spec_bundle(bundle_hash=bundle_hash, facets_json=canonical_json)
 
-    import sqlite3
-
     conn = _db.get_connection()
     bundle_id = conn.execute(
         "SELECT id FROM spec_bundles WHERE bundle_hash = ?", (bundle_hash,)
@@ -239,8 +236,9 @@ def _run_autotuner_via_patches(best_params, fallback, vwap_side_effect=None):
     Creates a minimal all-THEORY spec bundle so the NN1 spec-freeze guard
     (spec_bundle_id required, BACKTEST_SELECTION → hard fail) is satisfied.
     """
-    import autotuner  # lazy import
     import inspect
+
+    import autotuner  # lazy import
 
     bot_state = _build_bot_state()
     spec_bundle_id = _make_phase1_spec_bundle()

@@ -41,7 +41,6 @@ from pathlib import Path
 import app as app_mod
 from app import api_advisor_observations
 
-
 # ---------------------------------------------------------------------------
 # Source-text helpers
 # ---------------------------------------------------------------------------

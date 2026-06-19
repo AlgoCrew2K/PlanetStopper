@@ -62,7 +62,6 @@ acceptance check for actual DOM movement.
 
 from __future__ import annotations
 
-import json
 import pathlib
 import re
 import shutil

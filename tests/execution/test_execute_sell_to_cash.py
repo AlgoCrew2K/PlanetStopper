@@ -43,7 +43,6 @@ import requests
 
 import alpha_bot_execution
 
-
 # Backoff sequence is read from the function body (a named constant in scope).
 # We import it indirectly by assertion against the live module's behaviour
 # rather than redefining a literal — the test pins THE function's constant.

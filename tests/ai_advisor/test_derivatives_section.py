@@ -30,7 +30,7 @@ real _fetch_options_proxy call.
 from __future__ import annotations
 
 import sys
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -39,7 +39,6 @@ import pytest
 # pre-importing here doesn't violate CC-2 — it just ensures the test-side patch
 # target is resolvable before the function is called.
 import advisors.lens_options_proxy  # noqa: F401
-
 
 # ---------------------------------------------------------------------------
 # Fixtures — proxy return shapes (from spec, never hardcoded computed values)
@@ -625,10 +624,10 @@ class TestDerivativesSectionLazyImport:
             import ai_advisor  # noqa: F401 (re-import)
 
             assert proxy_key not in sys.modules, (
-                f"advisors.lens_options_proxy was imported at ai_advisor module "
-                f"load time — CC-2 violation. The import must be lazy (inside "
-                f"_build_derivatives_section body only). "
-                f"FAILING if _build_derivatives_section has a module-level import."
+                "advisors.lens_options_proxy was imported at ai_advisor module "
+                "load time — CC-2 violation. The import must be lazy (inside "
+                "_build_derivatives_section body only). "
+                "FAILING if _build_derivatives_section has a module-level import."
             )
         finally:
             # Restore sys.modules to original state
@@ -753,8 +752,9 @@ class TestDerivativesSectionMissingFredKey:
         FAILS on the stub if the stub raises unexpectedly (it does not,
         so this test passes on the stub — pairing with reason test for RED coverage).
         """
-        import ai_advisor
         import os
+
+        import ai_advisor
 
         env_without_fred = {k: v for k, v in os.environ.items() if k != "FRED_API_KEY"}
 
@@ -788,8 +788,9 @@ class TestDerivativesSectionMissingFredKey:
 
         FAILS on the stub (returns available=False regardless of proxy result).
         """
-        import ai_advisor
         import os
+
+        import ai_advisor
 
         # Simulate env without FRED_API_KEY but proxy says available=True
         # (e.g., the proxy used a cached result or a different mechanism).
@@ -968,12 +969,12 @@ class TestAssembleAdvisorContextCallSiteGuard:
 
         all_guarded = all(_is_inside_try(c) for c in derivatives_calls)
         assert all_guarded, (
-            f"_build_derivatives_section is called inside assemble_advisor_context "
-            f"but NOT inside a try/except block. "
-            f"A proxy failure would propagate unguarded to the caller. "
-            f"The implementer must wrap the lens-section block in try/except. "
-            f"RED: fails until the guard is added (feature plan §Architecture / "
-            f"Call-site risk)."
+            "_build_derivatives_section is called inside assemble_advisor_context "
+            "but NOT inside a try/except block. "
+            "A proxy failure would propagate unguarded to the caller. "
+            "The implementer must wrap the lens-section block in try/except. "
+            "RED: fails until the guard is added (feature plan §Architecture / "
+            "Call-site risk)."
         )
 
     def test_assemble_advisor_context_does_not_propagate_proxy_exception_at_runtime(

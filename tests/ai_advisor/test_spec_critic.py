@@ -70,11 +70,10 @@ from __future__ import annotations
 import importlib
 import json
 import pathlib
-from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -101,7 +100,7 @@ def _import_spec_critic():
 
 # Reference date used to compute fresh / stale frozen_at values in tests.
 # Using a fixed past date keeps tests deterministic regardless of wall-clock.
-_REFERENCE_NOW = datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+_REFERENCE_NOW = datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC)
 
 
 def _fresh_frozen_at() -> str:
@@ -222,7 +221,6 @@ def test_compute_spec_critic_observation_exists():
         "advisors.spec_critic.compute_spec_critic_observation not found. "
         "The function must exist per the dispatch brief contract."
     )
-    import inspect
 
     assert callable(mod.compute_spec_critic_observation), (
         "compute_spec_critic_observation must be callable"

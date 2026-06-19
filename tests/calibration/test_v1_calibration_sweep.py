@@ -13,14 +13,12 @@ No mock of the math engine. No live API calls. No hardcoded producer-computed va
 
 from __future__ import annotations
 
-import importlib
 import inspect
 import json
 import math
 import pathlib
 import re
 import sys
-import types
 
 import optuna
 import pytest
@@ -252,7 +250,7 @@ class TestCalibrationSearchSpace:
         monkeypatch_target = sys.modules.get("autotuner")
         assert monkeypatch_target is not None
 
-        original_create = getattr(optuna, "create_study")
+        original_create = optuna.create_study
         monkeypatch_target.optuna.create_study = _capturing_study
         try:
             autotuner_module.run_calibration_sweep(

@@ -32,8 +32,6 @@ import io
 import pathlib
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
 
 # Per-trial return-series user-attr key — matches the D3 set_user_attr mechanism.
@@ -150,6 +148,7 @@ def test_run_autotuner_invokes_the_benjamini_hochberg_haircut():
     }
 
     import inspect as _inspect
+
     from tests.autotuner.conftest import make_phase1_theory_bundle as _make_bundle
 
     _spec_id = _make_bundle()
@@ -307,6 +306,7 @@ def test_persisted_deflated_sharpe_is_higher_is_better_oriented():
         }
 
         import inspect as _inspect2
+
         from tests.autotuner.conftest import make_phase1_theory_bundle as _make_bundle2
 
         _spec_id2 = _make_bundle2()

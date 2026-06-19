@@ -13,12 +13,9 @@ These tests are RED on the original code (hash passed as-is → autotune_run=Non
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 import ai_advisor
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

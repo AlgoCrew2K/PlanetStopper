@@ -52,17 +52,17 @@ from __future__ import annotations
 import copy
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import database
 from advisors.backtest_gate_engine import (
-    BacktestCandidate,
-    GatedBatch,
-    CandidateGateResult,
-    evaluate_candidate_batch,
-    _fold_transform_single,
-    SURVIVOR_OVERFITTING_CAVEAT,
     HARVEY_LIU_FDR_Q,
+    SURVIVOR_OVERFITTING_CAVEAT,
+    BacktestCandidate,
+    CandidateGateResult,
+    GatedBatch,
+    _fold_transform_single,
+    evaluate_candidate_batch,
 )
 from advisors.composer_backtest_client import run_backtest
 
@@ -262,16 +262,16 @@ class LogicChangeProposalResult:
 
     candidate_id: str
     symphony_id: str
-    tweak: Optional[LogicTweak]
+    tweak: LogicTweak | None
     objective: LogicChangeObjective
     objective_rationale: str
 
-    gate_result: Optional[CandidateGateResult] = None
-    baseline_stats: Optional[dict] = None
-    variant_stats: Optional[dict] = None
+    gate_result: CandidateGateResult | None = None
+    baseline_stats: dict | None = None
+    variant_stats: dict | None = None
     caveats: list = field(default_factory=list)
     apply_guidance: str = ""
-    backtest_error: Optional[str] = None
+    backtest_error: str | None = None
     data_warnings: list = field(default_factory=list)
 
 
@@ -318,9 +318,9 @@ class LogicChangeRunResult:
     survivors: list = field(default_factory=list)
     rejected_candidates: list = field(default_factory=list)
     message: str = ""
-    objective: Optional[LogicChangeObjective] = None
+    objective: LogicChangeObjective | None = None
     no_api_key: bool = False
-    persistence_error: Optional[str] = None
+    persistence_error: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +370,7 @@ def _navigate_to_node(raw_value: dict, node_path: list) -> Any:
     return node
 
 
-def apply_logic_tweak(raw_value: dict, tweak: LogicTweak) -> Optional[dict]:
+def apply_logic_tweak(raw_value: dict, tweak: LogicTweak) -> dict | None:
     """Deep-copy ``raw_value`` and apply ``tweak``.
 
     Verifies that the current value at the target node matches ``tweak.old_value``
@@ -457,7 +457,7 @@ def generate_objective_directed_logic_candidates(
     score_tree: dict,
     objective: LogicChangeObjective,
     *,
-    baseline_stats: Optional[dict] = None,
+    baseline_stats: dict | None = None,
 ) -> list:
     """Generate a bounded set of OBJECTIVE-DIRECTED candidates as annotated dicts.
 
@@ -533,7 +533,7 @@ def generate_objective_directed_candidates(
     raw_value: dict,
     objective: LogicChangeObjective,
     *,
-    baseline_stats: Optional[dict] = None,
+    baseline_stats: dict | None = None,
 ) -> list:
     """Generate a bounded set of OBJECTIVE-DIRECTED ``LogicTweak`` candidates.
 
@@ -975,7 +975,7 @@ def _evaluate_single_variant(
 
 def _parse_change_description_to_tweak(
     raw_value: dict, change_description: str
-) -> Optional[LogicTweak]:
+) -> LogicTweak | None:
     """Parse a plain-text change description into a ``LogicTweak``.
 
     Attempts to find a numeric parameter in the tree that matches the description
@@ -1138,10 +1138,10 @@ def _backtest_returns_from_tree(raw_value: dict, symphony_id: str) -> list:
 def propose_operator_logic_change(
     symphony_id: str,
     score_tree: dict,
-    tweak: Optional[LogicTweak] = None,
-    objective: Optional[LogicChangeObjective] = None,
+    tweak: LogicTweak | None = None,
+    objective: LogicChangeObjective | None = None,
     *,
-    change_description: Optional[str] = None,
+    change_description: str | None = None,
     incumbent_oos_alpha: float | None = None,
     default_oos_alpha: float = 0.0,
 ) -> LogicChangeRunResult:
@@ -1231,7 +1231,7 @@ def propose_operator_logic_change(
             objective=objective,
             objective_rationale="",
             apply_guidance=f"To apply: open {symphony_name} in Composer and manually apply: {desc}",
-            backtest_error="could not backtest this variant: change description could not be parsed into a tree tweak",
+            backtest_error="could not backtest this variant: change description could not be parsed into a tree tweak",  # noqa: E501  # un-wrappable long line
         )
         return LogicChangeRunResult(
             gate_batch=_empty_gate_batch(),
@@ -1335,7 +1335,7 @@ def suggest_logic_changes(
     *,
     incumbent_oos_alpha: float | None = None,
     default_oos_alpha: float = 0.0,
-    baseline_stats: Optional[dict] = None,
+    baseline_stats: dict | None = None,
 ) -> LogicChangeRunResult:
     """Evaluate advisor-suggested objective-directed logic-change candidates (AC-3.1 + AC-3.2).
 

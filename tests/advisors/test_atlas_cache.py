@@ -35,8 +35,7 @@ import os
 import pathlib
 import sqlite3
 import sys
-import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -85,7 +84,7 @@ def _seed_row(db_path: str, collection: str, payload: object, age_seconds: int) 
     Uses the real schema expected by init_atlas_cache() so the implementer cannot
     satisfy these tests with a different schema shape.
     """
-    fetched_at = (datetime.now(timezone.utc) - timedelta(seconds=age_seconds)).isoformat()
+    fetched_at = (datetime.now(UTC) - timedelta(seconds=age_seconds)).isoformat()
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(
@@ -375,7 +374,7 @@ class TestNeverRaises:
         # Inject a row with a non-JSON payload to simulate corruption.
         conn = sqlite3.connect(atlas_cache_db)
         try:
-            fetched_at = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+            fetched_at = (datetime.now(UTC) - timedelta(seconds=60)).isoformat()
             conn.execute(
                 "INSERT INTO atlas_cache (collection, fetched_at, payload) VALUES (?, ?, ?)",
                 ("community_strats", fetched_at, "NOT_VALID_JSON{{{{"),

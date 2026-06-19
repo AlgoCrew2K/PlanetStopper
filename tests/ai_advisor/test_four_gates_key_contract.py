@@ -35,7 +35,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # The canonical gate keys, in their canonical order.
 # Source of truth: static/ai_advisor.js GATE_LABELS — anything Python emits

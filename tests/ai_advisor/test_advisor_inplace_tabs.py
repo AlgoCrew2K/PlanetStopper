@@ -26,11 +26,9 @@ Assert structure/behavior, never computed values.
 from __future__ import annotations
 
 import subprocess
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

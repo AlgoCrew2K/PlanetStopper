@@ -21,12 +21,9 @@ no producer-computed quant values.
 from __future__ import annotations
 
 import sqlite3
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import patch
 
 import database as db_module
-
 
 # ---------------------------------------------------------------------------
 # Helper: sentinel that blows up if called
@@ -177,7 +174,6 @@ def test_get_spec_bundle_source_uses_ro_connection():
     as the advisor wall-integrity tests. Fails immediately if the wrong
     connection function is still in the source.
     """
-    import pathlib
     import inspect
 
     source = inspect.getsource(db_module.get_spec_bundle)

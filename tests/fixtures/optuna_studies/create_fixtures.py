@@ -6,8 +6,8 @@ The fixtures are committed to the repo so pytest never calls live APIs or
 the Optuna storage layer.  Provenance is documented in provenance.json.
 """
 
-import sqlite3
 import os
+import sqlite3
 
 FIXTURES_DIR = os.path.dirname(os.path.abspath(__file__))
 

@@ -18,7 +18,6 @@ import math
 
 import pytest
 
-
 pytestmark = pytest.mark.live
 
 
@@ -37,6 +36,7 @@ def test_live_symphony_stats_meta_has_required_per_symphony_fields():
       time_weighted_return  -> float  (fallback CR for net_deposits==0 case)
     """
     import os
+
     import requests
 
     composer_token = os.environ.get("COMPOSER_API_TOKEN") or os.environ.get("COMPOSER_TOKEN")

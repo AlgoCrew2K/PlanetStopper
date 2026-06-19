@@ -74,7 +74,7 @@ def _import_database():
 # ---------------------------------------------------------------------------
 
 
-def _make_all_theory_bundle(db, facets: "list[dict] | None" = None) -> tuple[str, int]:
+def _make_all_theory_bundle(db, facets: list[dict] | None = None) -> tuple[str, int]:
     """Insert a spec_bundle + three all-THEORY Phase-1 facets.
 
     Returns (bundle_hash, bundle_id) where bundle_id is the rowid from
@@ -97,7 +97,6 @@ def _make_all_theory_bundle(db, facets: "list[dict] | None" = None) -> tuple[str
     row = _db.get_spec_bundle(bundle_hash)
     # The rowid of the inserted spec_bundles row — used as spec_bundle_id.
     # Fetched by re-querying since insert_spec_bundle returns None.
-    import sqlite3
 
     conn = _db.get_connection()
     bundle_id = conn.execute(
@@ -141,7 +140,6 @@ def _make_single_backtest_selection_bundle(db) -> tuple[str, int]:
         bundle_hash=bundle_hash,
         facets_json=canonical_json,
     )
-    import sqlite3
 
     conn = _db.get_connection()
     bundle_id = conn.execute(
@@ -187,7 +185,6 @@ def _make_mixed_violation_bundle(db) -> tuple[str, int]:
         bundle_hash=bundle_hash,
         facets_json=canonical_json,
     )
-    import sqlite3
 
     conn = _db.get_connection()
     bundle_id = conn.execute(
@@ -434,8 +431,6 @@ def test_validate_nn1_compliance_unknown_discipline_is_treated_as_violation():
     bundle_hash = _db.hash_facets_json(canonical_json)
     _db.insert_spec_bundle(bundle_hash=bundle_hash, facets_json=canonical_json)
 
-    import sqlite3
-
     conn = _db.get_connection()
     bundle_id = conn.execute(
         "SELECT id FROM spec_bundles WHERE bundle_hash = ?", (bundle_hash,)
@@ -661,8 +656,8 @@ def test_spec_facets_has_no_update_accessor_in_database():
     A future maintainer must not be able to silently modify a frozen facet.
     This test is a static inspection of database's public surface.
     """
+
     import database as _db
-    import inspect
 
     # Any function whose name contains 'update' AND 'facet' would be a
     # write-guard violation. We check for the most likely naming patterns.
@@ -754,6 +749,7 @@ def test_run_autotuner_refuses_to_start_on_bundle_hash_mismatch():
     record. The system must refuse, not silently proceed.
     """
     import inspect
+
     import database as _db
 
     at = _import_autotuner()
@@ -810,6 +806,7 @@ def test_run_autotuner_refuses_to_start_when_bundle_contains_backtest_selection_
     This is NOT a soft warning — it is a hard fail (team-lead binding directive).
     """
     import inspect
+
     import database as _db
 
     at = _import_autotuner()
@@ -922,20 +919,20 @@ def test_run_autotuner_calls_validate_search_space_nn1_before_create_study():
 
     import optuna as _optuna
 
-    with patch.object(
-        at.synthetic_history, "generate_synthetic_history", return_value=_stub_history
+    with (
+        patch.object(
+            at.synthetic_history, "generate_synthetic_history", return_value=_stub_history
+        ),
+        patch.object(at, "validate_search_space_nn1", _recording_validate),
+        patch.object(
+            at.database, "get_symphony_strategy", return_value={"params": {}, "locked_vars": []}
+        ),
+        patch.object(at.database, "load_chart_history", return_value={}),
     ):
-        with patch.object(at, "validate_search_space_nn1", _recording_validate):
-            with patch.object(
-                at.database, "get_symphony_strategy", return_value={"params": {}, "locked_vars": []}
-            ):
-                with patch.object(at.database, "load_chart_history", return_value={}):
-                    with patch.object(_optuna.storages, "RDBStorage", return_value=MagicMock()):
-                        with patch.object(_optuna, "create_study", side_effect=_abort_create_study):
-                            with pytest.raises(
-                                (StopIteration, RuntimeError, ValueError, TypeError)
-                            ):
-                                at.run_autotuner(**call_kwargs)
+        with patch.object(_optuna.storages, "RDBStorage", return_value=MagicMock()):
+            with patch.object(_optuna, "create_study", side_effect=_abort_create_study):
+                with pytest.raises((StopIteration, RuntimeError, ValueError, TypeError)):
+                    at.run_autotuner(**call_kwargs)
 
     # validate_search_space_nn1 must have been called before create_study.
     if "validate_search_space_nn1" in call_log and "create_study" in call_log:
@@ -1075,7 +1072,6 @@ def test_alpha_bot_execution_run_autotuner_call_does_not_pass_none_spec_bundle_i
     at the run_autotuner call site.
     """
     import pathlib  # noqa: PLC0415
-    import re  # noqa: PLC0415
 
     src_path = pathlib.Path(__file__).parents[2] / "alpha_bot_execution.py"
     assert src_path.is_file(), f"alpha_bot_execution.py not found at {src_path}"

@@ -18,8 +18,6 @@ synthetic history (130 stub-day dict, 1 symphony) directly in the test body.
 
 import types
 
-import pytest
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -69,7 +69,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Network hermeticity — module-scoped autouse.
 #

@@ -21,10 +21,8 @@ from __future__ import annotations
 
 import pathlib
 from datetime import time as dt_time
-from unittest.mock import patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Test 1: Index route passes session_close_display to render_template

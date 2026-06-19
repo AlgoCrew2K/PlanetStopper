@@ -10,6 +10,7 @@
 
 import json
 import pathlib
+
 import pytest
 
 _FIXTURE_PATH = (

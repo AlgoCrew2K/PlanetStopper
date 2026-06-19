@@ -23,7 +23,6 @@ import time
 
 import requests
 import requests.exceptions
-
 from pydantic import BaseModel
 
 import database
@@ -1066,7 +1065,7 @@ def _fetch_fundamentals_for_ticker(ticker: str) -> dict:
                 filed_date = latest_entry.get("filed", "")
                 citation = build_citation(
                     {
-                        "title": f"{entity_name} {latest_entry.get('form', 'Filing')} ({filed_date})",
+                        "title": f"{entity_name} {latest_entry.get('form', 'Filing')} ({filed_date})",  # noqa: E501  # un-wrappable long line
                         "url": filing_url,
                         "published": filed_date,
                         "lens": _lens,

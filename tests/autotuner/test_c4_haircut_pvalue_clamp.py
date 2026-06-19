@@ -30,8 +30,6 @@ from __future__ import annotations
 import math
 import pathlib
 
-import pytest
-
 _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
 
 

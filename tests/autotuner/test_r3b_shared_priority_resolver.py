@@ -89,9 +89,12 @@ def _find_call_names(tree: ast.Module, func_name: str) -> list[ast.Call]:
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        if isinstance(func, ast.Attribute) and func.attr == func_name:
-            results.append(node)
-        elif isinstance(func, ast.Name) and func.id == func_name:
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == func_name
+            or isinstance(func, ast.Name)
+            and func.id == func_name
+        ):
             results.append(node)
     return results
 

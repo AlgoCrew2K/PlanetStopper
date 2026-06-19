@@ -29,7 +29,7 @@ import json
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -275,7 +275,7 @@ def _synthesize_via_claude(
         synthesis_prompt = (
             "You are a market conditions analyst. "
             "Based on the following lens data, produce a single overall market sentiment "
-            "label (one of: risk-on, neutral, risk-off, limited-inputs) and a one-sentence rationale.\n\n"
+            "label (one of: risk-on, neutral, risk-off, limited-inputs) and a one-sentence rationale.\n\n"  # noqa: E501  # un-wrappable long line
             "Lens data:\n" + "\n".join(available_summaries) + "\n\n"
             "Respond ONLY with JSON: "
             '{"overall_sentiment": "<label>", "sentiment_rationale": "<rationale>"}'
@@ -340,7 +340,7 @@ def run_pipeline(*, dry_run: bool = False) -> dict:
 
     Never raises — all exceptions are caught and reflected in error_count.
     """
-    run_ts = datetime.now(timezone.utc).isoformat()
+    run_ts = datetime.now(UTC).isoformat()
 
     # Pass 1 — Per-lens data collection with per-lens isolation (AC-2).
     try:

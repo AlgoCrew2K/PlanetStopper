@@ -41,12 +41,10 @@ Test run command:
 from __future__ import annotations
 
 import datetime
-import importlib
 import json
 import pathlib
-import sys
 from typing import Any
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests.exceptions
@@ -965,7 +963,6 @@ class TestRunDateInjectable:
         runtime attribute (which could be the test fixture's synthetic lambda).
         """
         import ast
-        import importlib
         import pathlib
 
         proxy_path = pathlib.Path(__file__).parents[2] / "advisors" / "lens_options_proxy.py"

@@ -135,7 +135,7 @@ def test_fixture_constants_match_sut_constants():
         "(W-H2 unit-conversion boundary; critic C-1 blocker)."
     )
     fixture_rptf = fixture["selected_wealth_argument_formula"]["unit_conversion_constant"]["value"]
-    assert autotuner.RETURN_PCT_TO_FRACTION == pytest.approx(fixture_rptf, rel=1e-12), (
+    assert pytest.approx(fixture_rptf, rel=1e-12) == autotuner.RETURN_PCT_TO_FRACTION, (
         f"autotuner.RETURN_PCT_TO_FRACTION = {autotuner.RETURN_PCT_TO_FRACTION!r} differs "
         f"from the W-H2 fixture value {fixture_rptf!r}."
     )
@@ -185,7 +185,7 @@ def test_wealth_argument_matches_design_formula():
         # (not percent); W = 1 + r_policy_fraction.
         W = autotuner.derive_wealth_argument(r_policy_pct)
 
-        assert W == pytest.approx(expected_W_raw, rel=1e-12), (
+        assert pytest.approx(expected_W_raw, rel=1e-12) == W, (
             f"Wealth argument mismatch for fixture example {ex['id']!r}.\n"
             f"  r_policy (decimal-fraction) = {r_policy_pct!r}\n"
             f"  expected W_raw = {expected_W_raw!r}\n"
@@ -316,7 +316,6 @@ def test_crra_tstat_is_finite_with_floor_hitting_day():
     This proves the floor short-circuited the H-1 NaN-poisoning path.
     """
     autotuner = _import_autotuner()
-    import math_engine
 
     fixture = _load_wh2_fixture()
 

@@ -43,7 +43,6 @@ Set $env:DB_PATH before pytest.
 
 from __future__ import annotations
 
-import ast
 import pathlib
 import re
 import subprocess
@@ -454,7 +453,7 @@ class TestAC3RouteRedirect:
             resp = client.get("/ai-advisor/strategy-builder")
 
         assert resp.status_code != 200, (
-            f"GET /ai-advisor/strategy-builder returned 200. "
+            "GET /ai-advisor/strategy-builder returned 200. "
             "After SPA-port, this route must be a redirect — returning 200 with the "
             "standalone page is the DEFECT we are eliminating. "
             "Convert the GET handler in app.py to return redirect('/ai-advisor') (AC3)."

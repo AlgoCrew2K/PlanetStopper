@@ -33,7 +33,6 @@ import pytest
 
 import ai_advisor
 
-
 _SYM_A = "(invest) lqd + eyeg 5 ways full market"
 _SYM_B = "corporate chaos 5 ways"
 

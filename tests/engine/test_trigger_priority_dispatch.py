@@ -37,8 +37,8 @@ from __future__ import annotations
 
 import json
 import pathlib
-from datetime import datetime, timezone, timedelta
-from unittest.mock import MagicMock, call, patch
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 
 import pytest
 

@@ -37,8 +37,6 @@ import pathlib
 import sqlite3
 from unittest.mock import patch
 
-import pytest
-
 import database as _db
 
 _MIGRATIONS = pathlib.Path(__file__).parent.parent.parent / "migrations"
@@ -78,7 +76,7 @@ class TestRecordCvarDiagnosticCoercesNoneTailToZero:
 
     def _write_via_record_cvar_diagnostic(
         self, conn: sqlite3.Connection, cvar_n_tail_value
-    ) -> "dict | None":
+    ) -> dict | None:
         """
         Patch write_telemetry_row to use the provided in-memory connection,
         then call record_cvar_diagnostic with the given cvar_n_tail value.

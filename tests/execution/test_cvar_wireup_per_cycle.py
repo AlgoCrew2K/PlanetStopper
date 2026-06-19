@@ -54,14 +54,13 @@ from __future__ import annotations
 
 import pathlib
 import re
-from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, MagicMock
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import pytest
 
 import alpha_bot_execution
 import math_engine
-
 
 # ---------------------------------------------------------------------------
 # Shared fixture helpers (template borrowed from test_main_pipeline.py)

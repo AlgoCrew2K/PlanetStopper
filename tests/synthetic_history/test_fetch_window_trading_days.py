@@ -60,7 +60,6 @@ import pytest
 
 import math_engine
 
-
 # ---------------------------------------------------------------------------
 # Independently-derived required floor — from named constants, never a literal.
 # ---------------------------------------------------------------------------
@@ -208,8 +207,8 @@ def test_required_floor_is_derived_from_named_constants_not_a_literal() -> None:
     explicitly rather than letting the window tests drift silently.
     """
     expected_warmup = math_engine.MC_MIN_HISTORY_DAYS + math_engine.MC_VOL_WINDOW_DAYS - 1
-    assert _MC_WARMUP_TRADING_DAYS == expected_warmup
-    assert _MIN_REQUIRED_TRADING_DAYS == _WALK_FORWARD_TRADING_DAYS + expected_warmup
+    assert expected_warmup == _MC_WARMUP_TRADING_DAYS
+    assert _WALK_FORWARD_TRADING_DAYS + expected_warmup == _MIN_REQUIRED_TRADING_DAYS
     # The whole point of the fix: the floor exceeds the old 180-calendar-day
     # window's worst-case trading-day yield (~119-123). 125 + 39 = 164 trading
     # days, which 180 calendar days (~128 weekdays) cannot possibly cover.
@@ -416,9 +415,12 @@ def test_generate_synthetic_history_calls_the_window_helper() -> None:
     for node in _ast.walk(gen):
         if isinstance(node, _ast.Call):
             f = node.func
-            if isinstance(f, _ast.Name) and f.id in helper_names:
-                called = True
-            elif isinstance(f, _ast.Attribute) and f.attr in helper_names:
+            if (
+                isinstance(f, _ast.Name)
+                and f.id in helper_names
+                or isinstance(f, _ast.Attribute)
+                and f.attr in helper_names
+            ):
                 called = True
     assert called, (
         "generate_synthetic_history does not call the trading-day fetch-window "

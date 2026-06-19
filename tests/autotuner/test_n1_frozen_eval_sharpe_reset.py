@@ -41,7 +41,6 @@ import pytest
 
 import autotuner
 
-
 # ---------------------------------------------------------------------------
 # Stand-in Optuna trial objects sufficient for the haircut + cascade.
 # autotuner._haircut_select reads t.value, t.user_attrs["daily_returns"],

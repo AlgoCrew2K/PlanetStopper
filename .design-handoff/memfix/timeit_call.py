@@ -1,6 +1,8 @@
 """Time ONE assemble_advisor_context call with network mocked; time each sub-call."""
 
-import os, sys, time
+import os
+import sys
+import time
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(__file__))

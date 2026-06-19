@@ -25,7 +25,6 @@ import pytest
 
 import analytics
 
-
 _FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "composer" / "account-basis"
 _V3_AUDIT_DIR = Path(__file__).parent.parent / "fixtures" / "composer" / "v3-audit"
 
@@ -342,8 +341,9 @@ class TestComputePortfolioStripAccountBasis:
         This is the most important invariant: zero guard effect → zero guard alpha
         on the account basis too.
         """
+        from unittest.mock import patch
+
         import app as app_module
-        from unittest.mock import patch, MagicMock
 
         acct_val = total_stats_fixture["portfolio_value"]
         acct_cr = total_stats_fixture["simple_return"] * 100.0
@@ -401,8 +401,9 @@ class TestComputePortfolioStripAccountBasis:
         The cumulative_return.if_held must be the cached portfolio_cr (Composer
         simple_return * 100) regardless of per-symphony data.
         """
-        import app as app_module
         from unittest.mock import patch
+
+        import app as app_module
 
         acct_val = total_stats_fixture["portfolio_value"]
         acct_cr = total_stats_fixture["simple_return"] * 100.0

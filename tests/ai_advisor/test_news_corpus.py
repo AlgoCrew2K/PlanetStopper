@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import json
 import pathlib
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -1131,8 +1131,8 @@ class TestTopicTagging:
             pytest.skip("corpus empty")
         topics = corpus[0].get("topics", [])
         assert len(topics) >= 1, (
-            f"Article with no keyword matches must default to 'broad-sentiment'. "
-            f"Got empty topics list."
+            "Article with no keyword matches must default to 'broad-sentiment'. "
+            "Got empty topics list."
         )
         assert "broad-sentiment" in topics, (
             f"Default topic must be 'broad-sentiment'. Got: {topics!r}"
@@ -1414,9 +1414,9 @@ class TestFeedparserDependency:
             if not line.strip().startswith("#")
         )
         assert has_feedparser, (
-            f"feedparser is not listed in requirements.txt. "
-            f"AC-7: feedparser must be added as a project dependency. "
-            f"Add 'feedparser>=6.0' to requirements.txt."
+            "feedparser is not listed in requirements.txt. "
+            "AC-7: feedparser must be added as a project dependency. "
+            "Add 'feedparser>=6.0' to requirements.txt."
         )
 
 
@@ -1766,10 +1766,10 @@ class TestWarehousePersistence:
             f"Precondition: section must be available=True. Got: {result!r}"
         )
         assert len(persist_calls) >= 1, (
-            f"persist_lens_snapshot was NOT called on the success path. "
-            f"DW-1: sentiment lens snapshots must persist to warehouse on success. "
-            f"FAILS on current code. Restore the lens_warehouse.persist_lens_snapshot() "
-            f"call in _build_sentiment_section."
+            "persist_lens_snapshot was NOT called on the success path. "
+            "DW-1: sentiment lens snapshots must persist to warehouse on success. "
+            "FAILS on current code. Restore the lens_warehouse.persist_lens_snapshot() "
+            "call in _build_sentiment_section."
         )
         # The persist call must carry lens='sentiment' and available=True
         success_persist = [c for c in persist_calls if c.get("available") is True]
@@ -1789,8 +1789,8 @@ class TestWarehousePersistence:
         when the sentiment lens was down.
         FAILS on current code (no persist call on the unavailable path).
         """
+
         import ai_advisor
-        from requests.exceptions import Timeout
 
         persist_calls: list[dict] = []
 
@@ -1829,10 +1829,10 @@ class TestWarehousePersistence:
             f"Precondition: section must be available=False. Got: {result!r}"
         )
         assert len(persist_calls) >= 1, (
-            f"persist_lens_snapshot was NOT called on the unavailable path. "
-            f"DW-1: sentiment lens unavailability must be persisted to warehouse. "
-            f"FAILS on current code. Restore the lens_warehouse.persist_lens_snapshot() "
-            f"call in _build_sentiment_section for the unavailable path."
+            "persist_lens_snapshot was NOT called on the unavailable path. "
+            "DW-1: sentiment lens unavailability must be persisted to warehouse. "
+            "FAILS on current code. Restore the lens_warehouse.persist_lens_snapshot() "
+            "call in _build_sentiment_section for the unavailable path."
         )
         unavail_persist = [c for c in persist_calls if c.get("available") is False]
         assert unavail_persist, (
@@ -2015,7 +2015,7 @@ class TestRssRecencyFromPublishedParsed:
         """
         import datetime
 
-        from advisors.news_corpus import _recency, _fetch_rss_feed
+        from advisors.news_corpus import _fetch_rss_feed, _recency
 
         articles = []
         with patch("requests.get", return_value=_make_xml_response(fed_press_xml)):
@@ -2027,7 +2027,7 @@ class TestRssRecencyFromPublishedParsed:
 
         assert articles, "fed_press fixture must yield at least one article"
 
-        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
         recency_vals = [_recency(art["published"], now) for art in articles]
 
         non_default = [v for v in recency_vals if v != 0.5]
@@ -2053,7 +2053,7 @@ class TestRssRecencyFromPublishedParsed:
         """
         import datetime
 
-        from advisors.news_corpus import _recency, _fetch_rss_feed, TAU_HOURS
+        from advisors.news_corpus import TAU_HOURS, _fetch_rss_feed, _recency
 
         articles = []
         with patch("requests.get", return_value=_make_xml_response(fed_press_xml)):
@@ -2065,7 +2065,7 @@ class TestRssRecencyFromPublishedParsed:
 
         assert len(articles) >= 2, "fed_press fixture must yield at least 2 articles"
 
-        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
         recency_vals = [_recency(art["published"], now) for art in articles]
 
         spread = max(recency_vals) - min(recency_vals)
@@ -2150,7 +2150,7 @@ class TestGoogleNewsPublisherDomain:
         RED: fails while domain is stuck at 'news.google.com' (authority 0.4 always).
         GREEN: at least one article has a domain with authority > 0.4.
         """
-        from advisors.news_corpus import _fetch_rss_feed, _authority
+        from advisors.news_corpus import _authority, _fetch_rss_feed
 
         with patch("requests.get", return_value=_make_xml_response(google_news_xml)):
             articles = _fetch_rss_feed(

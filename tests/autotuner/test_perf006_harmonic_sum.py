@@ -93,7 +93,6 @@ import pytest
 
 import autotuner
 
-
 _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
 _BHY_FIXTURE_PATH = _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "bhy_byte_identical_pin.json"
 

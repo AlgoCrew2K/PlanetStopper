@@ -392,7 +392,7 @@ def submit_backtest(
                 time.sleep(backoff)
                 continue
             raise requests.RequestException(
-                f"submit_backtest: transport failure after {len(_BACKOFF_INTERVALS) + 1} attempts — {exc}"
+                f"submit_backtest: transport failure after {len(_BACKOFF_INTERVALS) + 1} attempts — {exc}"  # noqa: E501  # un-wrappable long line
             ) from exc
 
     # Should be unreachable, but satisfies type checkers.

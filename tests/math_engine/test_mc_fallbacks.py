@@ -56,7 +56,6 @@ import math
 import pathlib
 from typing import Any
 
-import numpy as np
 import pytest
 
 import math_engine
@@ -274,7 +273,7 @@ def test_long_history_result_differs_from_short_history_sentinel() -> None:
         f"15-day history must return the insufficient sentinel (None); got {short_result!r}."
     )
     assert long_result is not None, (
-        f"50-day history must return a real MC probability, not the insufficient sentinel."
+        "50-day history must return a real MC probability, not the insufficient sentinel."
     )
     assert short_result != long_result, (
         f"Short-history sentinel ({short_result!r}) equals long-history MC "

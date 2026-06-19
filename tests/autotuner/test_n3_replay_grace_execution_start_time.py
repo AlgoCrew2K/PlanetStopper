@@ -44,12 +44,9 @@ helper.
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 import pytest
 
 import autotuner
-
 
 # ---------------------------------------------------------------------------
 # 1 — Pure helper exists.
@@ -226,7 +223,6 @@ class TestReplayCallSiteReadsExecutionStartTime:
         #   (a) a new _replay_execution_start_time() returning str;
         #   (b) _replay_grace_minutes returning a tuple (start_hhmm, mins);
         #   (c) a combined _replay_grace_context() returning a dict/namespace.
-        import alpha_bot_execution
 
         a = hasattr(autotuner, "_replay_execution_start_time")
         b = False

@@ -23,11 +23,9 @@ are mocked to isolate routing logic from analytics correctness.
 
 from __future__ import annotations
 
-import json
 import pathlib
 import re
 import subprocess
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest

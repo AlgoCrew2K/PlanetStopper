@@ -450,7 +450,7 @@ def test_no_render_template_calls_for_orphaned_templates():
     for template_name in _ORPHANED_TEMPLATES:
         # A render_template call using the orphaned template would look like:
         # render_template("ai_advisor_correlations.html", ...)
-        pattern = rf'render_template\s*\(\s*["\']' + _re.escape(template_name)
+        pattern = r'render_template\s*\(\s*["\']' + _re.escape(template_name)
         assert not _re.search(pattern, app_source), (
             f"app.py contains render_template({template_name!r}) — "
             "this orphaned template must never be rendered; "
@@ -661,7 +661,6 @@ def test_d1_logic_changes_evaluate_import_error_does_not_leak_exception_text(fla
     Fix: return `f"advisor unavailable: {type(_ie).__name__}"` only.
     """
     import builtins
-    import importlib
 
     original_import = builtins.__import__
 

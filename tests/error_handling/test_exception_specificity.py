@@ -84,7 +84,6 @@ from __future__ import annotations
 import ast
 import pathlib
 
-
 # ---------------------------------------------------------------------------
 # Source-file path. Resolved once at import time.
 # ---------------------------------------------------------------------------

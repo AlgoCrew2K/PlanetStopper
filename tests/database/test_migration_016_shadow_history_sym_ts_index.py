@@ -37,7 +37,6 @@ import sqlite3
 
 import pytest
 
-
 MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "migrations"
 MIGRATION_FILE = MIGRATIONS_DIR / "031_shadow_history_sym_ts_index.sql"
 EXPECTED_INDEX_NAME = "idx_shadow_history_sym_ts"

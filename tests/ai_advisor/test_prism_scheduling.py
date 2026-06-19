@@ -18,14 +18,11 @@ Hardening additions (Phase 4 gap closure — RED before GREEN):
   HC-3  Model pin: cmd contains 'claude-opus-4-8' (pinned), NOT bare 'opus' (alias)
 """
 
-import importlib
 import sys
-import types
-from datetime import datetime, timezone, timedelta
-from unittest.mock import MagicMock, patch, call
+from datetime import UTC, datetime, timedelta
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -34,7 +31,7 @@ import pytest
 
 def _today_row(offset_days: int = 0) -> dict:
     """Return a fake MARKET_PRISM summary row whose created_at is today+offset_days UTC."""
-    ts = datetime.now(timezone.utc) + timedelta(days=offset_days)
+    ts = datetime.now(UTC) + timedelta(days=offset_days)
     return {
         "id": 68 - offset_days,
         "verdict": "limited-inputs",
@@ -109,7 +106,7 @@ class TestIdempotency:
         """created_at comparison must use UTC date, not local time."""
         mod = _import_scheduler()
         # Create a row with an explicit UTC datetime string
-        utc_now = datetime.now(timezone.utc)
+        utc_now = datetime.now(UTC)
         row = {
             "id": 99,
             "verdict": "limited-inputs",
@@ -1034,9 +1031,9 @@ class TestSpendLogging:
         RED intent: _run_prism() does not call insert_prism_audit_entry → no row → fails.
         """
         import json as _json
+        import os
         import sqlite3
         import sys
-        import os
 
         # Ensure the project root (where database.py lives) is importable.
         mod = _import_scheduler()
@@ -1504,7 +1501,6 @@ class TestAnalystRoleFilesImmediateInitialRead:
         RED intent: current analyst files do not contain any 'immediately on spawn'
         or 'first turn' instruction — analysts only know to wait for the synthesizer.
         """
-        import re
 
         immediate_phrases = [
             "immediately",
@@ -1624,9 +1620,9 @@ class TestPersistSpendEnvelopeKey:
         skip the DB write, and this assertion will fail.
         """
         import json as _json
+        import os
         import sqlite3
         import sys
-        import os
 
         mod = _import_scheduler()
         worktree = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -1688,9 +1684,9 @@ class TestPersistSpendEnvelopeKey:
         by accident — but the primary test above still fails, which is what matters.
         """
         import json as _json
+        import os
         import sqlite3
         import sys
-        import os
 
         mod = _import_scheduler()
         worktree = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -1911,10 +1907,10 @@ class TestRunIdUnification:
         current code.  It will catch any future implementation that incorrectly couples
         idempotency to run_id format.
         """
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime
 
         mod = _import_scheduler()
-        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        today_str = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
         # Sub-case (a): run_id is a uuid4 string (the F-1 post-fix format).
         row_uuid4 = {
@@ -2239,8 +2235,8 @@ class TestSynthesizerWaitBarrierDeHollowed:
         (that would keep it RED forever).  It only requires AT LEAST ONE match to
         contain the underscore form, meaning the genuine barrier sentence is now present.
         """
-        import re
         import os
+        import re
 
         tests_dir = os.path.dirname(os.path.abspath(__file__))
         worktree_root = os.path.dirname(os.path.dirname(tests_dir))

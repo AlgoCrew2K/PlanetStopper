@@ -44,7 +44,6 @@ from hypothesis import strategies as st
 
 import math_engine
 
-
 # ---------------------------------------------------------------------------
 # History builder for property tests
 # ---------------------------------------------------------------------------

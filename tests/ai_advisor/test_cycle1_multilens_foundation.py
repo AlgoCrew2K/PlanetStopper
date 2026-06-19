@@ -42,14 +42,11 @@ No module-level mutable state — every fixture is function-scoped.
 
 from __future__ import annotations
 
-import importlib
 import json
 import pathlib
-import sys
 from unittest.mock import patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -510,8 +507,8 @@ def test_citation_url_truncation_must_not_corrupt_url(citation_helper):
                 assert returned_url == long_url or (
                     returned_url.startswith("https://") and not returned_url.endswith("x" * 50)
                 ), (
-                    f"citation_helper silently truncated URL mid-value. "
-                    f"A truncated URL is worse than a rejected citation (CC-4)."
+                    "citation_helper silently truncated URL mid-value. "
+                    "A truncated URL is worse than a rejected citation (CC-4)."
                 )
     except (ValueError, TypeError):
         pass  # Full rejection of oversized URLs is also acceptable
@@ -707,7 +704,7 @@ def test_citation_sources_survive_validate_artifact_round_trip():
     reconciled so citations are not silently stripped or truncated mid-URL.
     FAILS until cycle-1 impl extends allowlist and reconciles depth-2 (RED).
     """
-    from advisors.advisor_chat import validate_artifact, CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS
+    from advisors.advisor_chat import validate_artifact
 
     artifact = {
         "artifact_type": "add_candidate",
@@ -806,8 +803,9 @@ def test_assemble_advisor_context_docstring_says_7_item_not_9():
     (6 Optuna keys + MAX_SQUEEZE_FLOOR). This test enforces the fix.
     FAILS until cycle-1 impl updates the docstring (RED).
     """
-    import ai_advisor
     import inspect
+
+    import ai_advisor
 
     doc = inspect.getdoc(ai_advisor.assemble_advisor_context) or ""
     assert "9-item" not in doc, (
@@ -912,8 +910,8 @@ def test_caller_cannot_override_is_advisory_only_for_new_roles():
     both MARKET_PRISM and ADD_CANDIDATE by inspecting the persisted row,
     NOT by trusting the return value.
     """
+
     import database
-    import json as _json
 
     for role in ("MARKET_PRISM", "ADD_CANDIDATE"):
         # Attempt to override with is_advisory_only=0 — this must be silently
@@ -1016,7 +1014,7 @@ def test_citation_sources_inner_oversized_values_are_not_silently_truncated_to_b
     If a future impl adds inner-string truncation, the URL must be dropped rather
     than truncated mid-value.
     """
-    from advisors.advisor_chat import validate_artifact, CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS
+    from advisors.advisor_chat import CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS, validate_artifact
 
     # A long but valid URL
     long_url = "https://api.gdeltproject.org/api/v2/doc/doc?query=markets&output=artlist&" + (
@@ -1089,9 +1087,9 @@ def test_build_citation_rejects_xss_javascript_url():
     }
     result = ai_advisor.build_citation(xss_citation)
     assert result is None, (
-        f"build_citation accepted a javascript: URL — a stored XSS vector. "
-        f"This URL would execute JS in the operator's browser if rendered as "
-        f"<a href='javascript:...'> in static/ai_advisor.js."
+        "build_citation accepted a javascript: URL — a stored XSS vector. "
+        "This URL would execute JS in the operator's browser if rendered as "
+        "<a href='javascript:...'> in static/ai_advisor.js."
     )
 
 

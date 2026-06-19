@@ -28,7 +28,6 @@ import pytest
 
 import app as app_module
 
-
 # ---------------------------------------------------------------------------
 # Routes that are mutating and must be CSRF-protected
 # ---------------------------------------------------------------------------

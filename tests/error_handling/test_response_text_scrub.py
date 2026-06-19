@@ -56,7 +56,6 @@ import re
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Source-file path. Resolved once at import time; tests read fresh each run.
 # ---------------------------------------------------------------------------

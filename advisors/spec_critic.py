@@ -96,7 +96,7 @@ _ACCEPTABLE_DISCIPLINES: frozenset = frozenset(
 def compute_spec_critic_observation(
     spec_bundle_id: str,
     spec_facets_rows: list[dict],
-    _now: "datetime.datetime | None" = None,
+    _now: datetime.datetime | None = None,
 ) -> dict:
     """Return an AdvisorObservation dict critiquing the Phase-1 spec bundle.
 
@@ -116,7 +116,7 @@ def compute_spec_critic_observation(
         deterministic boundary behaviour.
     """
     if _now is None:
-        _now = datetime.datetime.now(datetime.timezone.utc)
+        _now = datetime.datetime.now(datetime.UTC)
     reference_date = _now.date() if hasattr(_now, "date") else _now
 
     # Normalise rows: sqlite3.Row supports key access but not .get();
@@ -213,7 +213,7 @@ def compute_spec_critic_observation(
 def run_spec_critic(
     spec_bundle_id: str,
     spec_facets_rows: list[dict],
-    _now: "datetime.datetime | None" = None,
+    _now: datetime.datetime | None = None,
     symphony_id: str | None = None,
 ) -> int:
     """Compute the spec observation and persist it via insert_advisor_observation.

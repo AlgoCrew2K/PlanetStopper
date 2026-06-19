@@ -27,14 +27,11 @@ import inspect
 import re
 from pathlib import Path
 
-import pytest
-
 import advisors.spec_critic as spec_critic_mod
 from advisors.spec_critic import (
     _ACCEPTABLE_DISCIPLINES,
     compute_spec_critic_observation,
 )
-
 
 # ---------------------------------------------------------------------------
 # Source-text helpers

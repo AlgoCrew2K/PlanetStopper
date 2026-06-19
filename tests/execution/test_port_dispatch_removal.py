@@ -31,10 +31,8 @@ Mocking philosophy mirrors test_main_pipeline.py:
 from __future__ import annotations
 
 import ast
-import importlib
 import inspect
-import textwrap
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -43,8 +41,6 @@ import alpha_bot_execution
 # Reuse the shared harness from the B1 pipeline tests — same shape fixtures,
 # same patch infrastructure.
 from tests.execution.test_main_pipeline import (
-    _ACCOUNT_ID,
-    _FIXED_ET,
     _SYMPHONY_ID,
     _TICKER,
     _make_symphony_payload,
@@ -52,7 +48,6 @@ from tests.execution.test_main_pipeline import (
     _seed_state,
     patched_environment,  # noqa: F401  (re-exported pytest fixture)
 )
-
 
 # ---------------------------------------------------------------------------
 # Helper: get the parsed AST of the current alpha_bot_execution source.
@@ -74,10 +69,7 @@ def _ast_names_in_import(tree: ast.Module) -> set[str]:
     """Return every name imported at module level (top-level import / from-import)."""
     names: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                names.add(alias.asname or alias.name)
-        elif isinstance(node, ast.Import):
+        if isinstance(node, ast.ImportFrom) or isinstance(node, ast.Import):
             for alias in node.names:
                 names.add(alias.asname or alias.name)
     return names

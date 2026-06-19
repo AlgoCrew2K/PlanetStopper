@@ -57,8 +57,7 @@ import json
 import logging
 import pathlib
 import sys
-from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -419,11 +418,11 @@ class TestPerLensIsolation:
 
         raw_str = json.dumps(raw)
         assert secret_message not in raw_str, (
-            f"D-1 violation: raw exception message leaked into raw_response. "
-            f"Secret message was found in persisted output."
+            "D-1 violation: raw exception message leaked into raw_response. "
+            "Secret message was found in persisted output."
         )
         assert "ConnectionRefusedError" in raw_str, (
-            f"D-1: type(exc).__name__ = 'ConnectionRefusedError' must appear in per_lens_digest reason"
+            "D-1: type(exc).__name__ = 'ConnectionRefusedError' must appear in per_lens_digest reason"
         )
 
     def test_all_lenses_failing_still_writes_observation(self):
@@ -813,29 +812,29 @@ class TestD1ErrorContract:
         def _exploding_macro(_data=None):
             raise ValueError(secret_details)
 
-        with caplog.at_level(logging.WARNING):
-            with (
-                patch(
-                    "ai_advisor._build_technicals_section",
-                    return_value=_stub_lens_unavailable("technicals"),
-                ),
-                patch(
-                    "ai_advisor._build_sentiment_section",
-                    return_value=_stub_lens_unavailable("sentiment"),
-                ),
-                patch(
-                    "ai_advisor._build_derivatives_section",
-                    return_value=_stub_lens_unavailable("derivatives"),
-                ),
-                patch("ai_advisor._build_macro_section", side_effect=_exploding_macro),
-                patch(
-                    "ai_advisor._build_fundamentals_section",
-                    return_value=_stub_lens_unavailable("fundamentals"),
-                ),
-                patch("ai_advisor._build_client", return_value=MagicMock()),
-                patch("database.insert_advisor_observation", return_value=400),
-            ):
-                pipeline.run_pipeline(dry_run=False)
+        with (
+            caplog.at_level(logging.WARNING),
+            patch(
+                "ai_advisor._build_technicals_section",
+                return_value=_stub_lens_unavailable("technicals"),
+            ),
+            patch(
+                "ai_advisor._build_sentiment_section",
+                return_value=_stub_lens_unavailable("sentiment"),
+            ),
+            patch(
+                "ai_advisor._build_derivatives_section",
+                return_value=_stub_lens_unavailable("derivatives"),
+            ),
+            patch("ai_advisor._build_macro_section", side_effect=_exploding_macro),
+            patch(
+                "ai_advisor._build_fundamentals_section",
+                return_value=_stub_lens_unavailable("fundamentals"),
+            ),
+            patch("ai_advisor._build_client", return_value=MagicMock()),
+            patch("database.insert_advisor_observation", return_value=400),
+        ):
+            pipeline.run_pipeline(dry_run=False)
 
         warning_plus_text = " ".join(
             r.message for r in caplog.records if r.levelno >= logging.WARNING
@@ -917,7 +916,6 @@ class TestSchedulerWiring:
         """Static scan: _run_lens_pipeline wrapper must spawn a daemon=True Thread."""
         source_path = _REPO_ROOT / "app.py"
         source = source_path.read_text(encoding="utf-8")
-        import re
 
         # Find the _run_lens_pipeline function body and check for daemon=True
         # Look for threading.Thread with daemon=True near the _run_lens_pipeline context
@@ -930,7 +928,6 @@ class TestSchedulerWiring:
         """Static scan: app.py must not have a module-level 'from advisors.lens_pipeline import'."""
         source_path = _REPO_ROOT / "app.py"
         source = source_path.read_text(encoding="utf-8")
-        import re
 
         # Module-level import = not inside a function (this is a heuristic; check for
         # the import being inside a function body via indentation check)

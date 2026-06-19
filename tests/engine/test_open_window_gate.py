@@ -33,11 +33,11 @@ PA-19: explicit APPROVE from quant-code-reviewer required before merge.
 
 from __future__ import annotations
 
-import importlib
 import json
 import pathlib
-from datetime import date, datetime, time as dt_time, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from datetime import date, datetime, timedelta, timezone
+from datetime import time as dt_time
+from unittest.mock import patch
 
 import pytest
 
@@ -381,8 +381,6 @@ class TestTpAndTrailingStopNotSuppressedInGrace:
 
     def test_take_profit_fires_inside_grace_window(self):
         """TP fires inside the grace window when its conditions are met."""
-        import math_engine
-
         # TP is controlled by compute_exit_confirmation + above_tp_count state machine.
         # We test compute_exit_confirmation directly: it must not consult the grace window.
         # Grace window is purely a VWAP-layer concern.
@@ -390,6 +388,8 @@ class TestTpAndTrailingStopNotSuppressedInGrace:
         # We verify this structurally: compute_exit_confirmation's signature must NOT
         # include any time or grace parameter — it has no business knowing about grace.
         import inspect
+
+        import math_engine
 
         sig = inspect.signature(math_engine.compute_exit_confirmation)
         param_names = set(sig.parameters.keys())
@@ -405,8 +405,9 @@ class TestTpAndTrailingStopNotSuppressedInGrace:
 
     def test_trailing_stop_not_suppressed_by_grace_structurally(self):
         """Trailing Stop function signature must not include grace-window parameters."""
-        import math_engine
         import inspect
+
+        import math_engine
 
         sig = inspect.signature(math_engine.compute_exit_confirmation)
         # Trailing stop fires via compute_exit_confirmation — same structural check
@@ -423,8 +424,9 @@ class TestTpAndTrailingStopNotSuppressedInGrace:
         """is_in_open_window_grace must NOT be called from within compute_vwap_breakdown_update itself."""
         # The grace gate must live at the CALLER (engine dispatch site), not inside the pure
         # math function. This preserves the purity of compute_vwap_breakdown_update.
-        import math_engine
         import inspect
+
+        import math_engine
 
         src = inspect.getsource(math_engine.compute_vwap_breakdown_update)
         assert "is_in_open_window_grace" not in src, (

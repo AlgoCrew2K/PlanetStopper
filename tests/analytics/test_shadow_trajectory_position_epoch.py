@@ -69,7 +69,6 @@ from analytics import (
     get_symphony_max_drawdown,
 )
 
-
 # --- Fixtured per-day shadow_return series for two distinct position epochs ---
 # Position A: a 5-day run. Position B: a later, separate 5-day run, same
 # symphony_id. The two series are deliberately different so a spliced

@@ -6,7 +6,6 @@ import io
 import logging
 import os
 import secrets
-import shutil
 import signal
 import subprocess
 import sys
@@ -345,7 +344,7 @@ def _run_trigger_retention():
     shadow_deleted = database.prune_old_shadow_history(shadow_retention_days)
     if shadow_deleted:
         print(
-            f"[retention] pruned {shadow_deleted} old shadow_history rows (>{shadow_retention_days}d)"
+            f"[retention] pruned {shadow_deleted} old shadow_history rows (>{shadow_retention_days}d)"  # noqa: E501  # un-wrappable long line
         )
 
 
@@ -2039,7 +2038,7 @@ def force_eod():
 
         def run_eod_tasks():
             print(
-                f"[{datetime.now().strftime('%H:%M:%S')}] Forcing EOD Analysis for {prev_date_str}..."
+                f"[{datetime.now().strftime('%H:%M:%S')}] Forcing EOD Analysis for {prev_date_str}..."  # noqa: E501  # un-wrappable long line
             )
             import autotuner
             import reporting
@@ -2095,7 +2094,7 @@ def resend_discord():
 
         def run_discord_push():
             print(
-                f"[{datetime.now().strftime('%H:%M:%S')}] Resending Discord Report for {prev_date_str}..."
+                f"[{datetime.now().strftime('%H:%M:%S')}] Resending Discord Report for {prev_date_str}..."  # noqa: E501  # un-wrappable long line
             )
             import reporting
 
@@ -2268,7 +2267,7 @@ def perform_account_liquidation(account_id, key, secret, live_mode):
         if resp.status_code == 200:
             for sym in resp.json().get("symphonies", []):
                 if live_mode:
-                    sell_url = f"{COMPOSER_BASE_URL}/deploy/accounts/{account_id}/symphonies/{sym.get('symphony_id') or sym.get('id')}/go-to-cash"
+                    sell_url = f"{COMPOSER_BASE_URL}/deploy/accounts/{account_id}/symphonies/{sym.get('symphony_id') or sym.get('id')}/go-to-cash"  # noqa: E501  # un-wrappable long line
                     sell_resp = requests.post(sell_url, headers=headers, json={}, timeout=10)
                     print(f"Liquidated {sym.get('name')} (HTTP {sell_resp.status_code})")
                     time.sleep(1.5)
@@ -2312,7 +2311,7 @@ def sell_account():
             requests.post(
                 discord_url,
                 json={
-                    "content": f"EMERGENCY LIQUIDATION TRIGGERED on {account_id} at {ts_et} ET (live={live_mode})"
+                    "content": f"EMERGENCY LIQUIDATION TRIGGERED on {account_id} at {ts_et} ET (live={live_mode})"  # noqa: E501  # un-wrappable long line
                 },
                 timeout=5,
             )
@@ -2400,7 +2399,7 @@ def _mask_secret(value: str | None) -> str:
 # Drives the Algorithm parameters section of the Settings screen.
 _ALGO_PARAM_META = {
     "TRIGGER_THRESHOLD_PCT": {
-        "help": "Monte Carlo threshold for arming the trailing stop. Lower = bot waits longer before defending.",
+        "help": "Monte Carlo threshold for arming the trailing stop. Lower = bot waits longer before defending.",  # noqa: E501  # un-wrappable long line
         "unit": "%",
         "kind": "pct",
     },
@@ -2556,7 +2555,7 @@ def save_settings():
 
 @app.route("/api/symphony-settings/<symphony_name>", methods=["GET"])
 def get_symphony_settings(symphony_name: str):
-    """Return per-symphony modal state: live_mode, global_live, parameters, locked_vars, advisor observations.
+    """Return per-symphony modal state: live_mode, global_live, parameters, locked_vars, advisor observations.  # noqa: E501  # un-wrappable long line
 
     Consumes the read-only DB path for parameters/locked_vars/live_mode and
     the env for the global master-switch flag.  Never writes; never reruns the engine.
@@ -2628,7 +2627,7 @@ def save_symphony_settings(symphony_name: str):
                 return jsonify(
                     {
                         "status": "error",
-                        "message": "live_mode must be a boolean (true/false), not a string or other type.",
+                        "message": "live_mode must be a boolean (true/false), not a string or other type.",  # noqa: E501  # un-wrappable long line
                     }
                 ), 400
             # isinstance(True, int) is True in Python so bool is already covered above;
@@ -2796,7 +2795,7 @@ def flush_resync():
         errors.append(f"resync: {exc}")
 
     _daemon_log.info(
-        "flush_resync: deleted %d synthetic files, kept %d real, reset %d symphonies, resync_ok=%s, errors=%d",
+        "flush_resync: deleted %d synthetic files, kept %d real, reset %d symphonies, resync_ok=%s, errors=%d",  # noqa: E501  # un-wrappable long line
         len(deleted),
         len(kept),
         len(symphonies_reset),
@@ -2969,7 +2968,9 @@ def ai_advisor_tab():
     # template's {% if _lens.get('summary') %} guard always produces a visible paragraph.
     if market_prism_summary:
         try:
-            from advisors.prism_render import humanize_lens_summary as _humanize_lens  # noqa: PLC0415
+            from advisors.prism_render import (
+                humanize_lens_summary as _humanize_lens,  # noqa: PLC0415
+            )
 
             _raw_resp = market_prism_summary.get("raw_response", {})
             if isinstance(_raw_resp, str):
@@ -2999,7 +3000,9 @@ def ai_advisor_tab():
 
     if sb_observations:
         try:
-            from advisors.advisor_chat import CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS as _sb_chat_max  # noqa: PLC0415
+            from advisors.advisor_chat import (
+                CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS as _sb_chat_max,  # noqa: PLC0415
+            )
         except Exception:
             _sb_chat_max = 500
         for _obs in sb_observations:
@@ -3087,9 +3090,9 @@ def ai_advisor_asset_swaps_evaluate():
     """
     # Lazy imports (AC-X2 — keep asset_swap_engine off the live execution path).
     from advisors.asset_swap_engine import (  # noqa: PLC0415
-        propose_operator_swap,
         SwapObjective,
         _has_composer_key,
+        propose_operator_swap,
     )
     from symphony_logic import fetch_symphony_score  # noqa: PLC0415
 
@@ -3127,7 +3130,7 @@ def ai_advisor_asset_swaps_evaluate():
     if composer_hash is None:
         return jsonify(
             {
-                "error": f"could not resolve name to a Composer hash: {symphony_id!r} not found in active symphonies"
+                "error": f"could not resolve name to a Composer hash: {symphony_id!r} not found in active symphonies"  # noqa: E501  # un-wrappable long line
             }
         ), 200
 
@@ -3236,11 +3239,9 @@ def ai_advisor_logic_changes_evaluate():
     # Lazy imports (AC-X2 — keep logic_change_engine off the live execution path).
     try:
         from advisors.logic_change_engine import (  # noqa: PLC0415
-            propose_operator_logic_change,
-            LogicTweak,
             LogicChangeObjective,
             _has_composer_key,
-            NO_SURVIVORS_MESSAGE,
+            propose_operator_logic_change,
         )
         from symphony_logic import fetch_symphony_score  # noqa: PLC0415
     except ImportError as _ie:
@@ -3273,7 +3274,7 @@ def ai_advisor_logic_changes_evaluate():
     if composer_hash is None:
         return jsonify(
             {
-                "error": f"could not resolve name to a Composer hash: {symphony_id!r} not found in active symphonies"
+                "error": f"could not resolve name to a Composer hash: {symphony_id!r} not found in active symphonies"  # noqa: E501  # un-wrappable long line
             }
         ), 200
 
@@ -3321,8 +3322,6 @@ def ai_advisor_logic_changes_evaluate():
     # gate_batch.fdr_q when c(n) is not directly available.
     fdr_adjusted_threshold: float | None = None
     if gate_batch is not None:
-        import math as _math  # noqa: PLC0415
-
         n = gate_batch.n_candidates or 1
         # Yekutieli c(n) = sum(1/k for k in 1..n) — same formula as autotuner._c_yekutieli.
         c_n = sum(1.0 / k for k in range(1, n + 1))
@@ -3389,7 +3388,7 @@ def ai_advisor_logic_changes_evaluate():
                 "n_candidates": gate_batch.n_candidates if gate_batch else None,
                 "fdr_q": gate_batch.fdr_q if gate_batch else None,
                 "fdr_adjusted_threshold": fdr_adjusted_threshold,
-                # Caveats + guidance from the primary proposal (operator-initiated = single candidate)
+                # Caveats + guidance from the primary proposal (operator-initiated = single candidate)  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
                 "caveats": proposal.caveats if proposal else [],
                 "apply_guidance": proposal.apply_guidance if proposal else "",
                 "backtest_error": _translate_backtest_error(proposal.backtest_error)
@@ -3443,6 +3442,7 @@ def ai_advisor_strategy_builder_run():
     here would be intercepted before the mock in unit tests, breaking C-10.
     """
     # Lazy imports keep strategy_builder_engine off the live 1-minute execution path (AC-X2).
+    from advisors.community_strats import load_community_strategies  # noqa: PLC0415
     from advisors.strategy_builder_engine import (  # noqa: PLC0415
         MAX_COMMUNITY_CANDIDATES_PER_RUN,
         Objective,
@@ -3450,7 +3450,6 @@ def ai_advisor_strategy_builder_run():
         community_candidate_infos,
         propose_strategies,
     )
-    from advisors.community_strats import load_community_strategies  # noqa: PLC0415
 
     body = request.get_json(silent=True) or {}
     objective_str = str(body.get("objective", "diversify")).strip()
@@ -3651,7 +3650,7 @@ _DEV_ADVISOR_FIXTURE = [
         "confidence": "low",
         "data_sufficiency": "marginal",
         "oos_status": "rejected",
-        "oos_reason": "OOS Sharpe degraded -0.11 in 2 of 4 windows; insufficient walk-forward support.",
+        "oos_reason": "OOS Sharpe degraded -0.11 in 2 of 4 windows; insufficient walk-forward support.",  # noqa: E501  # un-wrappable long line
         "impact": {"before": 1.42, "after": 1.31, "metric": "sharpe"},
         "four_gates_verdict": {
             "allowlist": True,

@@ -45,10 +45,7 @@ from __future__ import annotations
 import json
 import pathlib
 
-import pytest
-
 import database
-
 
 _FIXTURE_PATH = (
     pathlib.Path(__file__).parent.parent / "fixtures" / "math" / "m3_provenance_facets.json"
@@ -105,7 +102,7 @@ def _resolve_m3_bundle_hash() -> str:
     return row["bundle_hash"]
 
 
-def _get_facet_by_name(bundle_hash: str, facet_name: str) -> "dict | None":
+def _get_facet_by_name(bundle_hash: str, facet_name: str) -> dict | None:
     facets = database.get_spec_facets_for_bundle(bundle_hash)
     for f in facets:
         if f["facet_name"] == facet_name:

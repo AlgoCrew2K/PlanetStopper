@@ -62,7 +62,7 @@ def _reject_non_finite_in_records(records, *field_names):
 # ---------------------------------------------------------------------------
 
 LOOKBACK_DAYS = 20  # 20-day realized-volatility window — Planet Stopper risk-sizing standard
-ATR_LOOKBACK_DAYS = 15  # 14-day true-range window (standard ATR period) + 1 prior close required to compute the first TR; matches Planet Stopper's risk-sizing assumption
+ATR_LOOKBACK_DAYS = 15  # 14-day true-range window (standard ATR period) + 1 prior close required to compute the first TR; matches Planet Stopper's risk-sizing assumption  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
 PCT_SCALAR = 100.0  # decimal return -> percentage points (math layer normalizes to pct)
 
 # ---------------------------------------------------------------------------
@@ -146,14 +146,14 @@ CVAR_MIN_TAIL_OBS = 1  # require at least 1 genuine below-VaR (or atom) observat
 
 
 # kNN historical regime-match result (Phase-1; the forward-path co-signal was REJECTED
-# per decision-science council — see docs/audit/vision-audit-2026-05-27/SYNTHESIS.md CVaR-divergence wall).
+# per decision-science council — see docs/audit/vision-audit-2026-05-27/SYNTHESIS.md CVaR-divergence wall).  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
 # Phase-1 rule: ZERO production consumers permitted — tests only.
 # Fail-safe invariant: cvar_pct is None IMPLIES breach is False.
 # Enforcement: __post_init__ raises ValueError on the illegal combination.
 @dataclasses.dataclass(frozen=True)
 class CVaRAssessment:
     """Typed result for the kNN historical regime-match (Phase-1; the forward-path
-    co-signal was REJECTED per decision-science council — see docs/audit/vision-audit-2026-05-27/SYNTHESIS.md
+    co-signal was REJECTED per decision-science council — see docs/audit/vision-audit-2026-05-27/SYNTHESIS.md  # noqa: E501  # un-wrappable long line
     CVaR-divergence wall).
 
     cvar_pct: 5th-percentile CVaR as a percentage (negative = loss).
@@ -260,7 +260,7 @@ MULT_OPEN = 1.5  # dynamic_multiplier at market open (loosest stop)
 MULT_CLOSE = 0.5  # dynamic_multiplier at market close (tightest)
 MIN_STOP_OPEN = 0.3  # min stop floor at market open, in percentage points
 MIN_STOP_CLOSE = 0.15  # min stop floor at market close, in percentage points
-VOL_FALLBACK = 1.0  # neutral fallback for safe_vol when symphony_vol <= 0 (preserves vol-scale arithmetic in the degenerate-vol case)
+VOL_FALLBACK = 1.0  # neutral fallback for safe_vol when symphony_vol <= 0 (preserves vol-scale arithmetic in the degenerate-vol case)  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
 
 # Breakeven-lock constants (drives HWM-hold-based stop tightening)
 BREAKEVEN_ACTIVATION_MIN = (
@@ -401,9 +401,9 @@ def compute_breakeven_update(
           new_hold_ticks = current_hold_ticks + 1
       else:
           new_hold_ticks = 0
-      new_breakeven_locked = currently_breakeven_locked or (new_hold_ticks >= HWM_HOLD_TICKS_THRESHOLD)
+      new_breakeven_locked = currently_breakeven_locked or (new_hold_ticks >= HWM_HOLD_TICKS_THRESHOLD)  # noqa: E501  # un-wrappable long line
       if new_breakeven_locked:
-          stop_trigger_level = max(base_stop_level, 0.0)   # 0.0 is structural — semantic anchor "breakeven = no worse than zero loss"
+          stop_trigger_level = max(base_stop_level, 0.0)   # 0.0 is structural — semantic anchor "breakeven = no worse than zero loss"  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
       else:
           stop_trigger_level = base_stop_level
       if is_triggered:
@@ -459,7 +459,7 @@ def compute_breakeven_update(
 
 
 # Exit-confirmation constants (gates trailing-stop trigger)
-MAGNITUDE_FLOOR_PCT = 0.10  # return must drop at least this far BELOW stop_trigger_level to count toward exit confirmation
+MAGNITUDE_FLOOR_PCT = 0.10  # return must drop at least this far BELOW stop_trigger_level to count toward exit confirmation  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
 # MC underperformance fraction (run_monte_carlo output) AT OR ABOVE this value
 # confirms a regime breakdown -> the protective stop is ALLOWED to fire; BELOW it
 # the MC second opinion vetoes a capitulation ("the analog distribution says today
@@ -820,7 +820,7 @@ def compute_vwap_bleed_arm_threshold(
 
 
 # VWAP breakdown constants (gates the VWAP exit state machine)
-VWAP_WEIGHT_THRESHOLD = 0.5  # minimum allocation coverage to evaluate VWAP signals; below this, the weighted diff is too unreliable
+VWAP_WEIGHT_THRESHOLD = 0.5  # minimum allocation coverage to evaluate VWAP signals; below this, the weighted diff is too unreliable  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
 VWAP_BREAK_CONFIRM_TICKS = (
     3  # consecutive qualifying ticks for System A (profit-protection break) to flip is_vwap_broken
 )
@@ -1373,7 +1373,7 @@ class CVaREstimate:
     Distinct from CVaRAssessment: carries .stderr (H-2 binding) and is the return
     type of the pure-math kNN-pool estimator. CVaRAssessment is the typed result
     for the kNN historical regime-match (Phase-1; the forward-path co-signal was REJECTED
-    per decision-science council — see docs/audit/vision-audit-2026-05-27/SYNTHESIS.md CVaR-divergence wall).
+    per decision-science council — see docs/audit/vision-audit-2026-05-27/SYNTHESIS.md CVaR-divergence wall).  # noqa: E501  # un-wrappable long line
 
     cvar_pct: Rockafellar-Uryasev general-distribution CVaR. None when the pool
               is empty or has fewer than CVAR_MIN_TAIL_OBS genuine tail observations.
@@ -1470,7 +1470,7 @@ def compute_cvar_5pct_general_distribution(
     Raises ValueError on non-finite inputs (A-2 closure).
 
     Source: Rockafellar & Uryasev (2002), Optimization of Conditional Value-at-Risk;
-            Acerbi & Tasche (2002), On the coherence of expected shortfall — atom-contribution discipline;
+            Acerbi & Tasche (2002), On the coherence of expected shortfall — atom-contribution discipline;  # noqa: E501  # un-wrappable long line
             decision-science-council-synthesis.md §2.6; plan §Deliverables Code.
     """
     if not returns:

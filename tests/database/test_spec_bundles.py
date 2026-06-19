@@ -465,7 +465,6 @@ def test_fixture_db_has_seed_bundle_and_facet_after_migrations(migrated_db):
     The test expects the rows to be present on a freshly migrated DB; how
     they get there is the implementer's choice.
     """
-    from database import get_spec_bundle, insert_spec_bundle, insert_spec_bundle_facet  # noqa: PLC0415
 
     # If the implementer chose to seed via accessors, this is a no-op.
     # If they chose to seed via the migration SQL, these are already present.

@@ -63,7 +63,7 @@ combination of fixture-controlled inputs (``triggered_at_return``,
 fixture values rather than hardcoding the resulting number.
 """
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
@@ -72,18 +72,13 @@ import alpha_bot_execution
 
 # Reuse B1's harness verbatim. Duplicating the fixture / helpers would drift.
 from tests.execution.test_main_pipeline import (
-    patched_environment,  # noqa: F401  (re-exported pytest fixture)
-    _seed_state,
+    _SYMPHONY_ID,
+    _TICKER,
     _make_symphony_payload,
     _make_vwap_payload,
-    _SYMPHONY_ID,
-    _ACTUAL_SYMPHONY_ID,
-    _ACCOUNT_ID,
-    _SYMPHONY_NAME,
-    _TICKER,
-    _FIXED_ET,
+    _seed_state,
+    patched_environment,  # noqa: F401  (re-exported pytest fixture)
 )
-
 
 # ZoneInfo for the EOD fixed clocks. Mirrors test_main_pipeline.py's fallback.
 try:

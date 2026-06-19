@@ -25,14 +25,12 @@ from __future__ import annotations
 
 import ast
 import importlib
-import inspect
 import json
 import logging
 import os
 import tempfile
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # AX-3: rebase_port_state_on_composition_change must be REMOVED

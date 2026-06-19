@@ -45,10 +45,7 @@ import pathlib
 import sqlite3
 import subprocess
 import sys
-import tempfile
 import textwrap
-
-import pytest
 
 _WORKTREE = pathlib.Path(__file__).resolve().parent.parent.parent
 _PYTHON = sys.executable

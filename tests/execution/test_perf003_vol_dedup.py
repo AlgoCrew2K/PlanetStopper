@@ -65,7 +65,6 @@ import pytest
 
 import alpha_bot_execution
 
-
 # ---------------------------------------------------------------------------
 # Time helpers — only post-gate matters for PERF-003 (both phases run, so the
 # double-call surface area is real). Pre-gate already calls calculate_20d_vol

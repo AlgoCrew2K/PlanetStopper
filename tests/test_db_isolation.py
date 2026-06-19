@@ -21,8 +21,6 @@ import os
 import pathlib
 import sqlite3
 
-import pytest
-
 # Absolute path of the live production DB — must never be touched by tests.
 _PROJECT_ROOT = pathlib.Path(__file__).parents[1]
 _LIVE_DB = _PROJECT_ROOT / "alphabot_state.db"

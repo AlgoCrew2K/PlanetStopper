@@ -466,7 +466,7 @@ class TestAdversarialIdMatching:
         if "simple_return" in bot_state[stored_key]:
             # Name match may have fired — that's fine. Verify the correct values landed.
             assert bot_state[stored_key]["simple_return"] == sym.get("simple_return"), (
-                f"if name-match fires on short ID, the values must be from the correct sym."
+                "if name-match fires on short ID, the values must be from the correct sym."
             )
         # If no fields written, that's also fine — no assertion needed.
 

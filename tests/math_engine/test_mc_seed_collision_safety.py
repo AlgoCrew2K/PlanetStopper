@@ -54,8 +54,6 @@ import json
 import pathlib
 from typing import Any
 
-import pytest
-
 import math_engine
 
 FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "mc_rng_seeding"

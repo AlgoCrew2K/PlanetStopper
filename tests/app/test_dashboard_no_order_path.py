@@ -22,14 +22,12 @@ from __future__ import annotations
 
 import ast
 import inspect
-import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 import app as app_module
-
 
 # ---------------------------------------------------------------------------
 # Broker-order denylist

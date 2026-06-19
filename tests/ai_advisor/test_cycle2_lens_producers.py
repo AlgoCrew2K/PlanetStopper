@@ -74,7 +74,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 try:
-    from hypothesis import given, settings, assume
+    from hypothesis import assume, given, settings
     from hypothesis import strategies as st
 
     _HYPOTHESIS_AVAILABLE = True
@@ -538,8 +538,8 @@ class TestGdeltSentimentProducer:
         A 429 or 503 from GDELT should degrade to available=False gracefully.
         Phase 2: tone also mocked as unavailable so the combined result is False.
         """
+
         import ai_advisor
-        from requests.exceptions import HTTPError
 
         mock_resp = _make_mock_response({}, status_code=429)
         tone_result = _make_tone_result(available=False, tone=None, reason="rate_limited")
@@ -785,8 +785,9 @@ class TestPhase2GdeltToneWiring:
 
         FAILS if artlist failure degrades available to False.
         """
-        import ai_advisor
         from requests.exceptions import Timeout
+
+        import ai_advisor
 
         tone_result = _make_tone_result(available=True, tone=0.22)
 
@@ -820,8 +821,9 @@ class TestPhase2GdeltToneWiring:
 
         FAILS if available=True is returned with no usable data (fabrication).
         """
-        import ai_advisor
         from requests.exceptions import Timeout
+
+        import ai_advisor
 
         tone_result = _make_tone_result(available=False, tone=None, reason="Timeout")
 
@@ -1146,8 +1148,8 @@ class TestSecEdgarFundamentalsProducer:
 
         The producer must catch the 403 and degrade gracefully, not raise.
         """
+
         import ai_advisor
-        from requests.exceptions import HTTPError
 
         mock_resp = _make_mock_response({}, status_code=403)
 
@@ -1161,8 +1163,8 @@ class TestSecEdgarFundamentalsProducer:
 
         D-1: reason must not expose str(exc) detail (may contain host/path).
         """
+
         import ai_advisor
-        from requests.exceptions import HTTPError
 
         mock_resp = _make_mock_response({}, status_code=429)
 
@@ -1178,8 +1180,9 @@ class TestSecEdgarFundamentalsProducer:
 
     def test_fundamentals_timeout_returns_available_false_exc_class_only(self):
         """A network timeout returns available=False + exc class name only (D-1)."""
-        import ai_advisor
         from requests.exceptions import Timeout
+
+        import ai_advisor
 
         timeout_exc = Timeout("Connection to data.sec.gov timed out after 30s")
 
@@ -1386,8 +1389,9 @@ class TestFredMacroProducer:
         FRED requests include the API key as a query param — leaking the URL
         leaks the key.
         """
-        import ai_advisor
         from requests.exceptions import Timeout
+
+        import ai_advisor
 
         timeout_exc = Timeout("Connection to api.stlouisfed.org timed out: key=secretAPIkey123")
 
@@ -1411,8 +1415,8 @@ class TestFredMacroProducer:
 
     def test_macro_fred_429_returns_available_false(self):
         """FRED 429 (rate limit) -> available=False + exc class only reason."""
+
         import ai_advisor
-        from requests.exceptions import HTTPError
 
         mock_resp = _make_mock_response({}, status_code=429)
 
@@ -1521,8 +1525,9 @@ class TestD1ErrorContract:
 
         FAILS for any producer that leaks str(exc) detail into 'reason'.
         """
-        import ai_advisor
         from requests.exceptions import ConnectionError as ReqConnError
+
+        import ai_advisor
 
         # Embed a hostname in the exc that must NOT appear in the reason
         conn_exc = ReqConnError("Failed to establish connection to secret-internal.example.com:443")

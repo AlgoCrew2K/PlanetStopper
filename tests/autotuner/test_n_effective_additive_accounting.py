@@ -42,7 +42,6 @@ References:
 from __future__ import annotations
 
 import json
-import math
 import pathlib
 
 import pytest
@@ -517,7 +516,6 @@ class TestConservativeUpperBoundProperty:
 
         # Fixed 20-trial p-vector for reproducibility: evenly spaced [0.01, 0.99].
         # Not derived from Sortinos — just a representative spread of raw p-values.
-        import math as _math
 
         n = 20
         p_values = [0.01 + (0.98 / (n - 1)) * i for i in range(n)]
@@ -661,7 +659,7 @@ class TestHaircutSelectNEffectiveParameter:
 
         assert winner_legacy is winner_explicit, (
             "_haircut_select default n_effective must equal len(trials): "
-            f"legacy winner != explicit winner."
+            "legacy winner != explicit winner."
         )
         if p_adj_legacy is not None and p_adj_explicit is not None:
             assert p_adj_explicit == pytest.approx(p_adj_legacy, abs=_BHY_TOL), (
@@ -685,6 +683,7 @@ class TestPersistenceWriteback:
         so the persistence write-back can record the additive accounting result.
         """
         import sqlite3
+
         import database as db_module
 
         db_path = str(tmp_path / "test_neff_schema.db")

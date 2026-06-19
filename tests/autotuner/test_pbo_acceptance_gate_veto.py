@@ -325,7 +325,6 @@ class TestAutotunerPboWiring:
         PBO is on the sample-robustness axis; BHY/n_effective is on the multiplicity
         axis. Adding PBO must NOT change how compute_n_effective works.
         """
-        import ast
 
         src = _autotuner_src()
         tree = ast.parse(src)

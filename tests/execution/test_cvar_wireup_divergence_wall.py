@@ -25,9 +25,6 @@ from __future__ import annotations
 import pathlib
 import re
 
-import pytest
-
-
 _WORKTREE_ROOT = pathlib.Path(__file__).parents[2]
 _ALPHA_BOT_PATH = _WORKTREE_ROOT / "alpha_bot_execution.py"
 _MATH_ENGINE_PATH = _WORKTREE_ROOT / "math_engine.py"

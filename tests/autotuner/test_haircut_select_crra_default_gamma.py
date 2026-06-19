@@ -31,10 +31,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-import pytest
-
 import database
-
 
 # ---------------------------------------------------------------------------
 # Constants derived from the authoritative source — never hardcoded here.
@@ -154,7 +151,6 @@ def test_haircut_select_gamma_none_equals_phase1_gamma_value():
     (optuna/joblib import-collision guard; see test_ai_advisor_safety.py:939).
     """
     import importlib
-    import math as _math
 
     autotuner = importlib.import_module("autotuner")
 

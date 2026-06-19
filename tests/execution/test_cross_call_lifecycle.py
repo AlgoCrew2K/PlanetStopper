@@ -62,13 +62,12 @@ the engine produced. Magnitudes that flow through the live math layers
 """
 
 from contextlib import contextmanager
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import alpha_bot_execution
-
 
 # --------------------------------------------------------------------------- #
 # Shared constants (mirror test_main_pipeline.py's shape-only identifiers)    #

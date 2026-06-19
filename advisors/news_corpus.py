@@ -35,7 +35,6 @@ import calendar
 import datetime
 import logging
 import math
-import re
 import urllib.parse
 from typing import Any
 
@@ -247,7 +246,7 @@ def _relevance(title: str) -> float:
 
 
 def _score_article(article: dict[str, Any], now: datetime.datetime) -> float:
-    """Compute composite score = W_RECENCY*recency + W_RELEVANCE*relevance + W_AUTHORITY*authority."""
+    """Compute composite score = W_RECENCY*recency + W_RELEVANCE*relevance + W_AUTHORITY*authority."""  # noqa: E501  # un-wrappable long line
     return (
         W_RECENCY * _recency(article.get("published", ""), now)
         + W_RELEVANCE * _relevance(article.get("title", ""))
@@ -406,7 +405,7 @@ def _fetch_rss_feed(name: str, url: str, ua: str) -> list[dict[str, Any]]:
             _pp = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
             if _pp is not None:
                 published = (
-                    datetime.datetime.fromtimestamp(calendar.timegm(_pp), tz=datetime.timezone.utc)
+                    datetime.datetime.fromtimestamp(calendar.timegm(_pp), tz=datetime.UTC)
                     .replace(tzinfo=None)
                     .strftime("%Y-%m-%dT%H:%M:%S")
                 )
@@ -494,7 +493,7 @@ def build_news_corpus() -> dict[str, Any]:
     articles = _dedup(gdelt_articles + rss_articles)
 
     # Use timezone-aware now to avoid DeprecationWarning (Python 3.12+)
-    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
     for art in articles:
         art["score"] = _score_article(art, now)
     articles.sort(key=lambda a: a["score"], reverse=True)

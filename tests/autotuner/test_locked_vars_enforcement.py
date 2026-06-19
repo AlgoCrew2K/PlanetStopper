@@ -244,8 +244,9 @@ def _invoke_run_autotuner(
     current_params, locked_vars, ai_best_params, default_params, vwap_side_effect
 ):
     """Run run_autotuner with all patches in place; return (stdout, save_calls)."""
-    import autotuner
     import inspect
+
+    import autotuner
     from tests.autotuner.conftest import make_phase1_theory_bundle
 
     spec_bundle_id = make_phase1_theory_bundle()
@@ -565,6 +566,7 @@ def test_locked_var_excluded_from_optuna_suggest_calls(golden):
         save_calls.append((symphony_name, dict(params), list(lv)))
 
     import inspect
+
     from tests.autotuner.conftest import make_phase1_theory_bundle
 
     spec_bundle_id = make_phase1_theory_bundle()
@@ -594,11 +596,11 @@ def test_locked_var_excluded_from_optuna_suggest_calls(golden):
     # the spy shim did not fire — likely because optimize was not called with
     # the objective. The test cannot be meaningful if the objective never ran.
     assert suggested_keys, (
-        f"AC-1(a) precondition failed: no suggest_* calls were recorded. "
-        f"The spy shim's optimize replacement must have been called with the "
-        f"objective closure. Check that patch('autotuner.optuna.create_study') "
-        f"is returning the fake_study and that fake_study.optimize is being "
-        f"invoked by run_autotuner."
+        "AC-1(a) precondition failed: no suggest_* calls were recorded. "
+        "The spy shim's optimize replacement must have been called with the "
+        "objective closure. Check that patch('autotuner.optuna.create_study') "
+        "is returning the fake_study and that fake_study.optimize is being "
+        "invoked by run_autotuner."
     )
 
     assert locked_key not in suggested_keys, (
@@ -1047,8 +1049,9 @@ def test_locked_var_injection_does_not_mutate_original_best_params_dict(golden):
         broken_for_markers={default_hwm, UNLOCKED_INITIAL},
     )
 
-    import autotuner as _autotuner
     import inspect
+
+    import autotuner as _autotuner
     from tests.autotuner.conftest import make_phase1_theory_bundle
 
     history = _build_history_5d()

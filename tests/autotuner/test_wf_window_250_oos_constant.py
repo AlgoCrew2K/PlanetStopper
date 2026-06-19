@@ -33,11 +33,10 @@ PURGE_DAYS, EMBARGO_DAYS) applied to the new history_length = 250.
 from __future__ import annotations
 
 import ast as _ast
-import pathlib
 import json
+import pathlib
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -365,8 +364,9 @@ class TestNoStale125InAutotuner:
         confuses the next reader and misleads operators in the Discord
         EOD report.
         """
-        import autotuner
         import re
+
+        import autotuner
 
         doc = autotuner.run_autotuner.__doc__ or ""
         # Find every bare '125' (word-boundary) that appears before 'day'

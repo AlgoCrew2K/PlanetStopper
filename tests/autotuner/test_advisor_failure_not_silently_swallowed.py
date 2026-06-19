@@ -28,9 +28,6 @@ import logging
 import sqlite3
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Local harness — mirrors test_audit_fix_advisor_wiring.py (no cross-file coupling).
 # ---------------------------------------------------------------------------
@@ -154,6 +151,7 @@ def _run_autotuner(symphony_name: str = "DefensiveAlpha"):
 
 def _fetch_autotune_runs_for_symphony(symphony_name: str) -> list[tuple]:
     import os
+
     import database as _db
 
     db_path = os.environ["DB_PATH"]

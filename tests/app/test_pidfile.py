@@ -19,15 +19,12 @@ and fast.
 
 from __future__ import annotations
 
-import atexit
 import os
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import app as app_module
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -41,7 +38,7 @@ def _write_pid(path: str, pid: int) -> None:
 
 def _read_pid(path: str) -> int | None:
     try:
-        with open(path, "r", encoding="ascii") as fh:
+        with open(path, encoding="ascii") as fh:
             return int(fh.read().strip())
     except (OSError, ValueError):
         return None

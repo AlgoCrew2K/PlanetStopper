@@ -19,7 +19,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # In-memory DB helper — includes both migration 009 base schema and 013 column
 # ---------------------------------------------------------------------------
@@ -124,7 +123,6 @@ class TestTrippedSymphonieRoundTrip:
 
     def _patched_helpers(self, conn):
         """Return (write_fn, read_fn) backed by the given in-memory conn."""
-        import database
 
         def _write(payload):
             dismissed_at_et = payload.get("dismissed_at_et")

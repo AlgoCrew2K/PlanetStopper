@@ -30,7 +30,6 @@ import pytest
 
 import database as db
 
-
 # ---------------------------------------------------------------------------
 # Fixture — isolated DB with fold-partitioned table and four fold_role rows
 # ---------------------------------------------------------------------------
@@ -306,7 +305,7 @@ def test_advisor_module_uses_only_advisor_ro_query_for_db_access():
         "Advisor code paths must use advisor_ro_query() exclusively. "
         "Direct calls to get_connection() or get_ro_connection() bypass the "
         "COALESCE guard and the wall-breach tripwire (structural side door). "
-        f"Violations found:\n" + "\n".join(violations)
+        "Violations found:\n" + "\n".join(violations)
     )
 
 
@@ -558,7 +557,7 @@ def test_migration_file_targets_state_db_only():
     migration_path = migrations_dir / "019_fold_role_columns.sql"
 
     assert migration_path.exists(), (
-        f"migrations/019_fold_role_columns.sql does not exist — cannot check R-3."
+        "migrations/019_fold_role_columns.sql does not exist — cannot check R-3."
     )
 
     sql_text = migration_path.read_text(encoding="utf-8").upper()
@@ -988,7 +987,8 @@ def test_tripwire_fires_when_first_row_lacks_fold_role_but_second_row_is_frozen_
 
         # Approach: patch the connection to return a controlled result set.
         import sqlite3 as _sqlite3
-        from unittest.mock import MagicMock, patch as _patch
+        from unittest.mock import MagicMock
+        from unittest.mock import patch as _patch
 
         mock_row_no_fold_role = MagicMock(spec=_sqlite3.Row)
         mock_row_no_fold_role.__getitem__ = MagicMock(side_effect=KeyError("fold_role"))

@@ -46,7 +46,6 @@ import re
 
 import pytest
 
-
 _REPO_ROOT = pathlib.Path(__file__).parents[2]
 
 # Planning-doc surfaces named in the LOGIC-L-1 brief, plus README/DECISIONS

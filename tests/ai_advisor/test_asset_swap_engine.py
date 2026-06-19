@@ -42,13 +42,12 @@ from __future__ import annotations
 import ast
 import importlib
 import json
-import math
 import pathlib
 import random
 import sys
 import types
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -288,7 +287,6 @@ class TestObjectiveDirectedCandidateGeneration:
         # We don't run the full pipeline here; we check the result type carries objective.
         result_type = engine.SwapProposalResult
         # The result type must have an `objective` field.
-        import inspect
 
         sig_fields = None
         if hasattr(result_type, "_fields"):  # NamedTuple
@@ -319,8 +317,6 @@ class TestObjectiveDirectedCandidateGeneration:
         """
         engine = _import_engine()
         result_type = engine.SwapProposalResult
-
-        import inspect
 
         if hasattr(result_type, "_fields"):
             sig_fields = result_type._fields
@@ -546,8 +542,6 @@ class TestOperatorInitiatedSwap:
         engine = _import_engine()
         result_type = engine.SwapProposalResult
 
-        import inspect
-
         if hasattr(result_type, "_fields"):
             sig_fields = set(result_type._fields)
         elif hasattr(result_type, "__dataclass_fields__"):
@@ -730,8 +724,6 @@ class TestAdvisorSuggestedMode:
         engine = _import_engine()
         run_result_type = engine.SwapRunResult
 
-        import inspect
-
         if hasattr(run_result_type, "_fields"):
             sig_fields = set(run_result_type._fields)
         elif hasattr(run_result_type, "__dataclass_fields__"):
@@ -811,8 +803,6 @@ class TestInvalidVariantTreeHandling:
         """
         engine = _import_engine()
         run_result_type = engine.SwapRunResult
-
-        import inspect
 
         if hasattr(run_result_type, "_fields"):
             sig_fields = set(run_result_type._fields)

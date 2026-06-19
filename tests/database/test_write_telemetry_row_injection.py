@@ -25,7 +25,6 @@ import pytest
 
 import database as db
 
-
 # ---------------------------------------------------------------------------
 # Helpers: minimal DB + cvar_diagnostics table for success-path tests
 # ---------------------------------------------------------------------------

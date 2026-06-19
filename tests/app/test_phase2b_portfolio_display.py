@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -491,30 +491,30 @@ def test_api_performance_response_includes_volatility_in_live_and_shadow_metrics
         "volatility": 0.031,  # Phase 2 key — must be present
     }
 
-    with app_module.app.test_client() as client:
-        with patch.object(
+    with (
+        app_module.app.test_client() as client,
+        patch.object(
             app_module.analytics,
             "get_history_with_cache_invalidation",
             return_value={},
-        ):
-            with patch.object(
-                app_module.analytics,
-                "compute_per_symphony_returns",
-                return_value=(["2026-01-01", "2026-02-01"], [0.1, -0.05], [0.12, -0.04]),
-            ):
-                with patch.object(
-                    app_module.analytics,
-                    "compute_quantstats_metrics",
-                    side_effect=[_metrics_with_vol, _metrics_with_vol],
-                ):
-                    with patch.object(
-                        app_module.analytics,
-                        "list_available_symphonies",
-                        return_value=["sym-A"],
-                    ):
-                        resp = client.get(
-                            "/api/performance?scope=symphony&symphony_id=sym-A&days=60"
-                        )
+        ),
+        patch.object(
+            app_module.analytics,
+            "compute_per_symphony_returns",
+            return_value=(["2026-01-01", "2026-02-01"], [0.1, -0.05], [0.12, -0.04]),
+        ),
+        patch.object(
+            app_module.analytics,
+            "compute_quantstats_metrics",
+            side_effect=[_metrics_with_vol, _metrics_with_vol],
+        ),
+        patch.object(
+            app_module.analytics,
+            "list_available_symphonies",
+            return_value=["sym-A"],
+        ),
+    ):
+        resp = client.get("/api/performance?scope=symphony&symphony_id=sym-A&days=60")
 
     assert resp.status_code == 200, f"/api/performance must return 200; got {resp.status_code}"
     data = resp.get_json()
@@ -563,30 +563,30 @@ def test_api_performance_volatility_value_is_fraction_scale_not_percent():
         "volatility": 0.031,  # fraction scale; must NOT be multiplied by 100 again
     }
 
-    with app_module.app.test_client() as client:
-        with patch.object(
+    with (
+        app_module.app.test_client() as client,
+        patch.object(
             app_module.analytics,
             "get_history_with_cache_invalidation",
             return_value={},
-        ):
-            with patch.object(
-                app_module.analytics,
-                "compute_per_symphony_returns",
-                return_value=(["2026-01-01"] * 5, [0.1] * 5, [0.12] * 5),
-            ):
-                with patch.object(
-                    app_module.analytics,
-                    "compute_quantstats_metrics",
-                    side_effect=[_metrics_fraction_scale, _metrics_fraction_scale],
-                ):
-                    with patch.object(
-                        app_module.analytics,
-                        "list_available_symphonies",
-                        return_value=["sym-A"],
-                    ):
-                        resp = client.get(
-                            "/api/performance?scope=symphony&symphony_id=sym-A&days=60"
-                        )
+        ),
+        patch.object(
+            app_module.analytics,
+            "compute_per_symphony_returns",
+            return_value=(["2026-01-01"] * 5, [0.1] * 5, [0.12] * 5),
+        ),
+        patch.object(
+            app_module.analytics,
+            "compute_quantstats_metrics",
+            side_effect=[_metrics_fraction_scale, _metrics_fraction_scale],
+        ),
+        patch.object(
+            app_module.analytics,
+            "list_available_symphonies",
+            return_value=["sym-A"],
+        ),
+    ):
+        resp = client.get("/api/performance?scope=symphony&symphony_id=sym-A&days=60")
 
     data = resp.get_json()
     shadow_vol = (data.get("shadow_metrics") or {}).get("volatility")

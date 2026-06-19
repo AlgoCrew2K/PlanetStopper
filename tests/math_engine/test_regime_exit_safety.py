@@ -488,10 +488,10 @@ def test_regime_adjustment_constants_not_in_optuna_spec() -> None:
                     violations.append(f"line {node.lineno}: {src_lines[node.lineno - 1].strip()}")
 
     assert not violations, (
-        f"REQ-BUDGET-2 VIOLATED: Phase 3c regime constants found in Optuna "
-        f"suggest_* calls in autotuner.py. These constants must be FIXED "
-        f"theory-anchored values, NOT tuned by Optuna (that would exceed the "
-        f"≈1-knob budget per 00-ADAPTIVE-RECOMMENDATION.md §1A). Violations: "
+        "REQ-BUDGET-2 VIOLATED: Phase 3c regime constants found in Optuna "
+        "suggest_* calls in autotuner.py. These constants must be FIXED "
+        "theory-anchored values, NOT tuned by Optuna (that would exceed the "
+        "≈1-knob budget per 00-ADAPTIVE-RECOMMENDATION.md §1A). Violations: "
         + "\n".join(violations)
     )
 
@@ -568,9 +568,12 @@ def test_apply_regime_exit_adjustment_base_ticks_is_named_constant_not_state() -
             continue
         func = node.func
         # Match both math_engine.apply_regime_exit_adjustment and direct name
-        if isinstance(func, ast.Attribute) and func.attr == "apply_regime_exit_adjustment":
-            calls.append(node)
-        elif isinstance(func, ast.Name) and func.id == "apply_regime_exit_adjustment":
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "apply_regime_exit_adjustment"
+            or isinstance(func, ast.Name)
+            and func.id == "apply_regime_exit_adjustment"
+        ):
             calls.append(node)
 
     assert calls, (

@@ -45,13 +45,11 @@ expectation and are retired alongside this rewrite.
 from __future__ import annotations
 
 import ast
-import pathlib
-
 import inspect
+import pathlib
 
 import alpha_bot_execution
 import math_engine
-
 
 _PROJECT_ROOT = pathlib.Path(alpha_bot_execution.__file__).parent
 

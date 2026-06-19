@@ -173,8 +173,8 @@ def _insert_dof_row_direct(
     evidence_source: str,
     n_configs_searched: int = 1,
     touched_frozen_eval: int = 0,
-    spec_bundle_id: "str | None" = None,
-    justification: "str | None" = None,
+    spec_bundle_id: str | None = None,
+    justification: str | None = None,
 ) -> int:
     """Insert directly via sqlite3, bypassing application-layer guards.
 

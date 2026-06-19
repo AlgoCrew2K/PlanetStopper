@@ -45,9 +45,6 @@ import io
 import sqlite3
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Re-usable helpers — mirror tests/autotuner/test_autotune_runs_persistence.py
 # but copied locally to avoid cross-file fixture coupling (project memory:
@@ -332,12 +329,12 @@ def test_oc_prior_runs_supplied_so_drift_indicator_can_fire():
       monotonic".  Asserting at the producer call boundary tests the wiring
       contract directly and is robust to OC's internal indicator algebra.
     """
-    import advisors.overfitting_conscience as oc_mod
-
     # Seed 2 prior autotune_runs rows for the same (normalised) symphony with
     # distinct s_count values, so the autotuner's prior_runs SELECT can return
     # them and we can verify they reach the producer.
     import os
+
+    import advisors.overfitting_conscience as oc_mod
 
     db_path = os.environ["DB_PATH"]
     conn = sqlite3.connect(db_path)

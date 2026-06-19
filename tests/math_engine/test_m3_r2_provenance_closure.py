@@ -49,7 +49,6 @@ import pytest
 
 import math_engine
 
-
 # Path to the math_engine source on disk -- the tests read the source file
 # directly to assert provenance-comment textual content. Behavior tests live
 # in tests/math_engine/test_vwap_breakdown.py and pass byte-identical
