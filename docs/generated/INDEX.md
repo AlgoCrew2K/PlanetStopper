@@ -1,6 +1,6 @@
 # Planet Stopper -- Generated Module Reference Index
 
-**Last regenerated:** 2026-06-19 (guard-alpha-panel: GET /api/guard-alpha-summary added to app.md + DECISIONS.md DE-GAP-001/DE-GAP-002; feature-plans/guard-alpha-panel.md AC-2 dropped, AC-1/4/5/6/8 checked; prior note: dashboard-auth — app.md updated for auth gate surface + auth-gate Architecture Note added; INDEX.md app row updated; tests/conftest.py _disable_auth_for_tests noted; DECISIONS.md DE-AUTH-001 added)
+**Last regenerated:** 2026-06-19 (session-sweep: app.md + DISABLE_DAEMON_LENS_PIPELINE env var section added; docs/DEPLOYMENT.md created; .env.example created; DECISIONS.md DE-DEPLOY-001 added; README.md updated — six-tab AI Advisor, Market Prism council §6.4, deployment pointer, CI harness shipped note; CLAUDE.md synced for PRs #56/#59/#60; 8 feature-plans archived to .completed.md; BACKLOG.md refreshed; prior: guard-alpha-panel + dashboard-auth cycles)
 
 All pages in this directory are auto-generated from source. Do not hand-edit generated sections. Sections marked `<!-- manual -->` are preserved across regenerations.
 

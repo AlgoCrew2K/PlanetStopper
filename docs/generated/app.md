@@ -36,6 +36,14 @@ Module-level thread-safety constructs:
 | `_AUTH_MAX_ATTEMPTS` | optional | Max consecutive wrong-password attempts before lockout. Default: `10`. |
 | `_AUTH_LOCKOUT_SECONDS` | optional | Lockout duration in seconds after exceeding `_AUTH_MAX_ATTEMPTS`. Default: `300` (5 minutes). |
 
+### Scheduler / Production
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DISABLE_DAEMON_LENS_PIPELINE` | optional | When set to any non-empty value, `_run_lens_pipeline()` returns immediately without running. Set to `1` on the production droplet so `prism_scheduler.py` is the SOLE nightly `MARKET_PRISM` producer. Set BEFORE registering the council systemd timer (no idempotency guard between the two paths). See DE-PRISM-GATE-001. |
+| `PORT` | optional | Flask listen port. Default: `5000`. Set to `8090` on the production droplet (behind a reverse proxy). |
+| `ADVISOR_SYNTHESIS_MODEL` | optional | Claude model for AI Advisor synthesis calls. Default: `claude-opus-4-8`. Overridable at runtime without a code change. |
+
 ## API Reference
 
 ### Dashboard Auth Gate
