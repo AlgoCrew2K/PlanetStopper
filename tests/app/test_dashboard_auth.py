@@ -9,14 +9,27 @@ CI-runnability: all tests inject DASHBOARD_PASSWORD and SECRET_KEY via
 monkeypatch.setenv so they run on CI without a real .env file.  Test values
 are synthetic constants — NOT real secrets.
 
-Design notes:
-- The global `_disable_csrf_for_tests` autouse fixture (conftest.py) disables
-  CSRF globally.  Security tests that verify CSRF enforcement re-enable it
-  via `monkeypatch.setattr(app_module, "_csrf_check_enabled", True)` for the
-  duration of that individual test.
-- `auth_client` and `auth_client_authed` fixtures set the two required env
-  vars before constructing the Flask test client so the app boots with auth
-  configured.
+** ISOLATION CONTRACT (mirrors _disable_csrf_for_tests pattern) **
+
+The implementer MUST add:
+  1. A module-level flag in app.py:
+       _auth_check_enabled: bool = True
+  2. A new autouse fixture in tests/conftest.py:
+       @pytest.fixture(autouse=True)
+       def _disable_auth_for_tests(monkeypatch):
+           import app as _app_module
+           monkeypatch.setattr(_app_module, "_auth_check_enabled", False)
+     This keeps all ~7000 EXISTING route tests working (they hit protected
+     routes unauthenticated — the gate must be off by default in tests).
+  3. The `_auth_before_request` hook checks `_auth_check_enabled` before
+     enforcing the gate (same pattern as `_csrf_before_request` / `_csrf_check_enabled`).
+
+Tests in THIS FILE that need the real gate (all of them) re-enable it via:
+    monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+Both `auth_client` and `auth_client_authed` fixtures do this automatically.
+
+Security tests that also need CSRF enforcement call:
+    monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
 """
 
 from __future__ import annotations
@@ -36,12 +49,18 @@ import app as app_module
 # ---------------------------------------------------------------------------
 _TEST_PASSWORD = "test-pass-abc123"
 _TEST_SECRET_KEY = "test-secret-key-xyz789"
-# bcrypt-style hash constant used for AC-6 hash-precedence tests.
-# We use a salted SHA-256 hex digest as a stand-in; the implementation is
-# expected to use werkzeug's check_password_hash / generate_password_hash or
-# an equivalent (exact algorithm is implementer's choice).  These tests
-# verify shape + success/failure, not the algorithm bytes.
-_TEST_PASSWORD_HASH = hashlib.sha256(_TEST_PASSWORD.encode()).hexdigest()
+# Werkzeug-format hash for AC-6 hash-precedence tests.
+# The implementation uses werkzeug.security.check_password_hash with prefix
+# detection (pbkdf2:/scrypt:/bcrypt:).  We generate a real werkzeug hash here
+# so test_hashed_password_authenticates_successfully verifies a true login
+# via the hashed-credential path, not just a non-error result.
+try:
+    from werkzeug.security import generate_password_hash as _gph
+    _TEST_PASSWORD_HASH = _gph(_TEST_PASSWORD)
+except Exception:
+    # Fallback: sha256 hex (implementation will treat as plaintext, test
+    # degrades to shape-only assertion — acceptable if werkzeug unavailable).
+    _TEST_PASSWORD_HASH = hashlib.sha256(_TEST_PASSWORD.encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -49,17 +68,47 @@ _TEST_PASSWORD_HASH = hashlib.sha256(_TEST_PASSWORD.encode()).hexdigest()
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _reset_auth_throttle():
+    """Clear the in-memory auth throttle store before and after EVERY test in
+    this file (autouse=True, file-local scope via placement in this module).
+
+    The throttle store (_AUTH_FAILED_ATTEMPTS) is a module-level dict that
+    persists between tests in the same process.  Tests that hit the lockout
+    threshold (test_throttle_increments_on_wrong_password) would otherwise
+    poison subsequent tests that expect a clean slate.
+
+    autouse=True means every test in this file gets a fresh throttle, without
+    each test needing to request this fixture by name.
+    """
+    if hasattr(app_module, "_AUTH_FAILED_ATTEMPTS"):
+        app_module._AUTH_FAILED_ATTEMPTS.clear()
+    yield
+    if hasattr(app_module, "_AUTH_FAILED_ATTEMPTS"):
+        app_module._AUTH_FAILED_ATTEMPTS.clear()
+
+
 @pytest.fixture()
 def auth_client(monkeypatch):
-    """Flask test client with DASHBOARD_PASSWORD + SECRET_KEY injected via env.
+    """Flask test client with DASHBOARD_PASSWORD + SECRET_KEY injected via env,
+    and the auth gate ENABLED (overriding the autouse _disable_auth_for_tests
+    fixture that conftest sets globally to protect the existing test suite).
 
     Provides a fresh unauthenticated session per test.
     """
     monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
     monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
-    # Force the app to re-read config from the patched env.
-    # The implementation must read from os.environ at request time or reload
-    # the credential on each before_request invocation.
+    # Re-enable the auth gate for this test.  The conftest autouse fixture
+    # _disable_auth_for_tests sets _auth_check_enabled=False globally; we
+    # override it here so these tests exercise the real gate.
+    if not hasattr(app_module, "_auth_check_enabled"):
+        pytest.fail(
+            "app.py must expose _auth_check_enabled (bool) so the test suite can "
+            "enable/disable the auth gate per-test without breaking the ~7000 existing "
+            "route tests (which rely on _disable_auth_for_tests autouse in conftest). "
+            "Implementation not present yet — RED."
+        )
+    monkeypatch.setattr(app_module, "_auth_check_enabled", True)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
         yield client
@@ -67,13 +116,22 @@ def auth_client(monkeypatch):
 
 @pytest.fixture()
 def auth_client_authed(monkeypatch):
-    """Flask test client that has already completed a successful login.
+    """Flask test client that has already completed a successful login,
+    with the auth gate ENABLED.
 
     Logs in by POSTing to /login with the correct password before yielding,
     so that the session cookie is present for subsequent requests.
     """
     monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
     monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+    if not hasattr(app_module, "_auth_check_enabled"):
+        pytest.fail(
+            "app.py must expose _auth_check_enabled (bool) so the test suite can "
+            "enable/disable the auth gate per-test without breaking the ~7000 existing "
+            "route tests (which rely on _disable_auth_for_tests autouse in conftest). "
+            "Implementation not present yet — RED."
+        )
+    monkeypatch.setattr(app_module, "_auth_check_enabled", True)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
         # Perform the login once so subsequent requests are authenticated.
@@ -349,6 +407,8 @@ class TestCookieFlags:
         monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
         monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
         monkeypatch.setenv("SESSION_COOKIE_SECURE", "true")
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
         app_module.app.config["TESTING"] = True
         # Reload the cookie flag from env (implementation must honour this at runtime)
         app_module.app.config["SESSION_COOKIE_SECURE"] = True
@@ -423,18 +483,18 @@ class TestHashedPassword:
     """AC-6: DASHBOARD_PASSWORD_HASH form works and takes precedence over plaintext."""
 
     def test_hashed_password_authenticates_successfully(self, monkeypatch):
-        """AC-6: When DASHBOARD_PASSWORD_HASH is set, correct password logs in."""
-        # The implementation uses werkzeug.security.generate_password_hash or
-        # similar.  We test the LOGIN path: if the hash resolves to this password,
-        # POST /login with the plaintext must succeed.
-        # For this RED test we set DASHBOARD_PASSWORD_HASH to a placeholder that
-        # the (yet to be written) _resolve_dashboard_credential must handle.
-        # The test asserts that the feature EXISTS and follows the fail-closed
-        # contract (the implementer decides the exact hash algorithm).
+        """AC-6: When DASHBOARD_PASSWORD_HASH is set, correct password logs in.
+
+        Uses a real werkzeug-format hash (pbkdf2:...) generated at test-module
+        import time so the implementation's check_password_hash path is exercised.
+        Asserts actual login success (302 redirect) when the hash is werkzeug-format.
+        """
         monkeypatch.setenv("DASHBOARD_PASSWORD_HASH", _TEST_PASSWORD_HASH)
         # Explicitly unset the plaintext env to prove hash takes over.
         monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
         monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
         app_module.app.config["TESTING"] = True
         with app_module.app.test_client() as client:
             resp = client.post(
@@ -442,14 +502,20 @@ class TestHashedPassword:
                 data={"password": _TEST_PASSWORD},
                 follow_redirects=False,
             )
-        # Must succeed (redirect) — hash path must work
-        assert resp.status_code in (200, 302, 303), (
-            f"DASHBOARD_PASSWORD_HASH path must allow login; got {resp.status_code}"
-        )
-        # Specifically it must NOT be a deny-all 503/500
-        assert resp.status_code not in (500, 503), (
-            "DASHBOARD_PASSWORD_HASH path must NOT produce server error"
-        )
+        # If _TEST_PASSWORD_HASH is a werkzeug-format hash, login must succeed (302).
+        # If it fell back to sha256 hex (werkzeug import failed), shape-only check.
+        is_werkzeug_hash = _TEST_PASSWORD_HASH.startswith(("pbkdf2:", "scrypt:", "bcrypt:"))
+        if is_werkzeug_hash:
+            assert resp.status_code in (302, 303), (
+                f"DASHBOARD_PASSWORD_HASH (werkzeug format) must authenticate and redirect; "
+                f"got {resp.status_code}. The hash-compare path in login() may be broken."
+            )
+        else:
+            # Degraded: sha256 hex treated as plaintext, login fails (200 re-render)
+            # but must not error.
+            assert resp.status_code not in (500, 503), (
+                "DASHBOARD_PASSWORD_HASH path must not produce server error"
+            )
 
     def test_hash_takes_precedence_over_plaintext(self, monkeypatch):
         """AC-6: When both DASHBOARD_PASSWORD_HASH and DASHBOARD_PASSWORD are set,
@@ -458,6 +524,8 @@ class TestHashedPassword:
         monkeypatch.setenv("DASHBOARD_PASSWORD_HASH", _TEST_PASSWORD_HASH)
         monkeypatch.setenv("DASHBOARD_PASSWORD", "different-plaintext-password")
         monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
         app_module.app.config["TESTING"] = True
         with app_module.app.test_client() as client:
             # _resolve_dashboard_credential must return the HASH not the plaintext
@@ -489,6 +557,8 @@ class TestSecurity:
         monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
         monkeypatch.delenv("DASHBOARD_PASSWORD_HASH", raising=False)
         monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
         app_module.app.config["TESTING"] = True
         with app_module.app.test_client() as client:
             resp = client.get("/", follow_redirects=False)
@@ -504,6 +574,8 @@ class TestSecurity:
         monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
         monkeypatch.delenv("DASHBOARD_PASSWORD_HASH", raising=False)
         monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
         app_module.app.config["TESTING"] = True
         with app_module.app.test_client() as client:
             resp = client.post(
@@ -528,6 +600,8 @@ class TestSecurity:
         monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
         monkeypatch.delenv("SECRET_KEY", raising=False)
         monkeypatch.delenv("FLASK_SECRET_KEY", raising=False)
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
         app_module.app.config["TESTING"] = True
         with app_module.app.test_client() as client:
             resp = client.get("/", follow_redirects=False)
@@ -540,6 +614,8 @@ class TestSecurity:
         """AC-8: When SECRET_KEY is an empty string, ALL routes are denied."""
         monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
         monkeypatch.setenv("SECRET_KEY", "")
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
         app_module.app.config["TESTING"] = True
         with app_module.app.test_client() as client:
             resp = client.get("/", follow_redirects=False)
@@ -619,6 +695,8 @@ class TestSecurity:
         """
         monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
         monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
         app_module.app.config["TESTING"] = True
 
         # Assert the login route exists — without it the test is tautological
