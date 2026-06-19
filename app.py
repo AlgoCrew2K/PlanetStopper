@@ -334,14 +334,25 @@ def _validate_csrf() -> None:
       page, which cannot set custom headers.  The form embeds the server-minted
       token in a hidden input; same-origin enforcement is provided by the
       synchronizer-token pattern (token is not guessable by a cross-site page).
+      The form-field channel is ONLY activated for form-encoded content types
+      (application/x-www-form-urlencoded, multipart/form-data).  Accessing
+      request.form on a JSON POST triggers Werkzeug body parsing, which enforces
+      MAX_CONTENT_LENGTH before this CSRF check can fire — breaking the
+      CSRF-before-body-size guard ordering invariant.
 
     No new pip dependencies required.
     """
     if not _csrf_check_enabled:
         return
-    # Accept the token from the X-CSRF-Token header (fetch/XHR path) OR from
-    # the csrf_token form field (native browser form POST path — login page).
-    token = request.headers.get("X-CSRF-Token", "") or request.form.get("csrf_token", "")
+    # Header channel: fetch()/XHR callers set X-CSRF-Token.
+    token = request.headers.get("X-CSRF-Token", "")
+    # Form-field channel: native browser form POST (login page).  Gate on
+    # content-type so we never touch request.form on JSON requests — that
+    # would trigger body parsing and fire 413 before we can return 403.
+    if not token:
+        ct = request.content_type or ""
+        if "application/x-www-form-urlencoded" in ct or "multipart/form-data" in ct:
+            token = request.form.get("csrf_token", "")
     if not secrets.compare_digest(token, _CSRF_TOKEN):
         _daemon_log.warning(
             "CSRF check failed on %s %s (token absent or incorrect)",
