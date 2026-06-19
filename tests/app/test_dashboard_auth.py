@@ -1,7 +1,7 @@
 """
 Tests for dashboard password-auth gate — AC-1 through AC-13.
 
-46/46 GREEN at commit 55e95cc.
+48/48 GREEN at commit dca78fa.
 
 The auth gate (`_auth_before_request`, `/login`, `/logout`, `_resolve_dashboard_credential`,
 plus throttle helpers) is implemented in `app.py`.
