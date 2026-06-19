@@ -1778,3 +1778,26 @@ The council systemd timer (PM-deployed, not in this PR) sets `CLAUDE_CODE_OAUTH_
 - `prism_scheduler.py` — `_run_prism()`: `env=os.environ.copy()` replaced with `_council_env = os.environ.copy(); _council_env.pop("ANTHROPIC_API_KEY", None); env=_council_env`
 - `tests/prism_scheduler/test_council_sub_auth.py` — 3 new tests (AC-1: key excluded, AC-2: OAuth token passes through, AC-3: other env vars preserved)
 - `docs/generated/prism_scheduler.md` — `_run_prism` subprocess options updated
+
+---
+
+## DE-DEPLOY-001 — Production deployment: non-root service user, systemd units, Caddy TLS, council-as-sole-nightly-producer (2026-06-19)
+
+### Context
+
+Planet Stopper is deployed to a public Linux VPS. The deployment architecture was decided across several PRs (#55 auth gate, #59 DISABLE_DAEMON_LENS_PIPELINE, #60 council sub-auth) and consolidated here as a binding operations decision.
+
+### Key decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Non-root service user (`planetstopper`) from `/opt/planetstopper` | Root cannot run headless `claude -p` — `--dangerously-skip-permissions` is blocked for root. All daemon and council processes run as the service user. |
+| Flask daemon binds `localhost:8090` only; Caddy reverse proxy terminates TLS on 443 | Port 8090 is blocked by cloud firewall from external access. Caddy obtains and renews Let's Encrypt certificates. This keeps TLS concerns in the proxy layer, not application code. |
+| `LIVE_EXECUTION='False'` on the droplet permanently | The droplet is shadow/advisory only. No live trading, ever. |
+| Council (`prism_scheduler.py`) is the SOLE nightly `MARKET_PRISM` producer on the droplet | `DISABLE_DAEMON_LENS_PIPELINE=1` silences the daemon's 03:00 `_run_lens_pipeline()` slot (DE-PRISM-GATE-001). The council systemd oneshot + timer at 03:00 America/New_York (`Persistent=true`) is the only MARKET_PRISM writer. Safe transition order: set flag + restart daemon BEFORE registering the timer. |
+| Council authenticates via `CLAUDE_CODE_OAUTH_TOKEN` (subscription), not `ANTHROPIC_API_KEY` (metered) | `prism_scheduler._run_prism()` pops `ANTHROPIC_API_KEY` from the subprocess env so `claude -p` falls back to the OAuth token (DE-PRISM-SUB-AUTH-001). `ANTHROPIC_API_KEY` stays in `.env` for the on-demand Flask advisor SDK path. |
+| `CLAUDE_CODE_OAUTH_TOKEN` stored in a root-600 systemd `EnvironmentFile` | The OAuth token is not stored in the application `.env` (which is owned by the service user). A separate `/etc/planetstopper/council-env` root-600 file is injected into the council systemd unit only. This limits exposure. |
+
+### Status
+
+Architecture deployed. Runbook at `docs/DEPLOYMENT.md`. `.env.example` template committed at repo root.

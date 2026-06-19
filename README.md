@@ -153,6 +153,8 @@ This is the end-to-end walkthrough of what happens each minute during market hou
 
 The dashboard is a Flask web UI on `http://localhost:5000` (overridable via the `PORT` env var). **It is an observability surface, not a live-trade-action surface.** It has no button that places, cancels, or modifies a trade, and it cannot spawn the engine — the scheduler is the only legal engine spawner.
 
+**Dashboard auth gate:** when deployed publicly, the entire Flask surface (dashboard, AI Advisor, all `/api/*` routes) is protected by a single-password Flask signed-session gate. The gate is fail-closed: if `SECRET_KEY` or `DASHBOARD_PASSWORD` / `DASHBOARD_PASSWORD_HASH` are absent, all requests are denied. A login page at `/login` is the only public surface before authentication. See `docs/DEPLOYMENT.md` for setup.
+
 The dashboard has two guarded operator-config write paths:
 
 1. **Settings panel** () — writes allowlisted algorithm parameters to . Credential keys and  are excluded from the allowlist. Webhook URLs are masked and cannot be written.
@@ -203,7 +205,19 @@ The pieces, in order of the loop:
 
 - **Explain-only chat** (`advisor_chat.py`) — a contextual "chat about this" backend. You point it at a *specific* surfaced artifact (a gate verdict, a correlation result, a swap or logic-change proposal, an observation) and it explains that artifact in plain language. It is a **hard boundary**: chat cannot issue trade directives, cannot propose/apply/accept any change, cannot generate new unvalidated recommendations, and has no write path. The boundary is enforced both by the system prompt and structurally — the module imports no write, trade, or config-mutation surface. Like the rest of the AI surface it never raises; with no LLM key it returns a clear "chat unavailable" message.
 
-The suite is surfaced on the **AI Advisor single-page app** at `/ai-advisor` as five in-place tabs: **Overview**, **Correlations**, **Asset Swaps**, **Logic Changes**, and **Chat** (always-in-DOM slide-in panel). Each tab is a read-only surface; the "evaluate" endpoints run the offline backtest-and-gate pipeline and render the gated results. Old per-tab URLs (`/ai-advisor/correlations`, etc.) 302-redirect to `/ai-advisor`.
+The suite is surfaced on the **AI Advisor single-page app** at `/ai-advisor` as six in-place tabs: **Overview**, **Correlations**, **Asset Swaps**, **Logic Changes**, **Chat**, and **Strategy Builder**. Each tab is a read-only surface; the "evaluate" endpoints run the offline backtest-and-gate pipeline and render the gated results. Old per-tab URLs (`/ai-advisor/correlations`, etc.) 302-redirect to `/ai-advisor`.
+
+### 6.4 The nightly Market Prism council
+
+Each night at 03:00 America/New_York, a standalone council of six Claude agents (five lens analysts + a synthesizer) produces a structured market overview stored as a `MARKET_PRISM` row in the state DB and rendered on the AI Advisor Overview tab. The council runs via `prism_scheduler.py`, invoked by a systemd oneshot timer on the production droplet. It authenticates via the operator's Claude subscription (`CLAUDE_CODE_OAUTH_TOKEN`), not the metered API key — nightly council runs do not accrue per-token costs against `ANTHROPIC_API_KEY`.
+
+The five lens analysts each independently read market data (technicals, sentiment/news, derivatives/VIX, macro/FRED, fundamentals/SEC EDGAR) and file an `initial_read` audit entry. The synthesizer waits for all five entries to appear in the audit DB before conducting Q&A and optional debate rounds. On the dashboard Overview tab, the most recent nightly verdict renders with a sentiment chip, rationale, per-lens digest, and cited sources; an informative empty state is shown when the council has not yet run.
+
+### 6.4 The nightly Market Prism council
+
+Each night at 03:00, a standalone council of six Claude agents (five lens analysts + a synthesizer) produces a structured market overview stored as a `MARKET_PRISM` row in the state DB and rendered on the AI Advisor Overview tab. The council runs as a systemd oneshot service on the production droplet, invoked by `prism_scheduler.py`. It authenticates via the operator's Claude subscription (`CLAUDE_CODE_OAUTH_TOKEN`), not the metered API key, so nightly council runs do not accrue per-token costs against `ANTHROPIC_API_KEY`.
+
+The five lens analysts each independently read market data (technicals, sentiment/news, derivatives/VIX, macro/FRED, fundamentals/SEC EDGAR) and file an `initial_read` audit entry. The synthesizer waits for all five entries to appear in the audit DB, then conducts a structured Q&A and optional debate round before writing the final verdict. The Overview tab always renders either the most recent nightly output or an informative empty state when the council has not yet run.
 
 ### 6.2 The config advisor (`ai_advisor.py`)
 
@@ -386,6 +400,8 @@ What the state DB holds, at a glance:
 
 ## 11. Running it
 
+> **Production deployment:** See `docs/DEPLOYMENT.md` for the full runbook covering the non-root service user, systemd units, Caddy TLS reverse proxy, dashboard auth gate, and the nightly Market Prism council timer.
+
 ### Prerequisites
 
 - Python 3.12 (the project targets 3.12; 3.11+ should work).
@@ -485,7 +501,7 @@ Tests live under `tests/`, organized by surface (`engine`, `math_engine`, `autot
 
 Math-layer changes are held to a hard standard: every change to a math layer requires a golden-fixture test, every API call must be reproducible from a fixture, and several invariants are pinned — the exit-priority resolver's output for every flag combination, the Monte-Carlo seed determinism across restarts, the haircut output for a canonical search, and the advisor read-only wall.
 
-The repository uses `pyproject.toml` for the `ruff` and `pytest` configuration. (A GitHub Actions test harness is on the roadmap.)
+The repository uses `pyproject.toml` for the `ruff` and `pytest` configuration. A GitHub Actions `tests` workflow runs `ruff format --check`, `ruff check`, and `pytest` on every push and pull request (behavior-neutral green; see `DE-CIGREEN-001` in `DECISIONS.md`).
 
 ---
 
