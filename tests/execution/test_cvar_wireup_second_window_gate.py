@@ -40,14 +40,13 @@ to observe call patterns; patch the database wholesale to inspect writes.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, MagicMock
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import pytest
 
 import alpha_bot_execution
 import math_engine
-
 
 # ---------------------------------------------------------------------------
 # Shared fixture (cloned from test_cvar_wireup_per_cycle.py)
@@ -116,7 +115,7 @@ def patched_env_factory():
     set environment-flag values before main() runs.
     """
 
-    def _enter(second_window_flag: "str | None"):
+    def _enter(second_window_flag: str | None):
         cm = _PatchedEnv(second_window_flag)
         return cm
 
@@ -124,7 +123,7 @@ def patched_env_factory():
 
 
 class _PatchedEnv:
-    def __init__(self, second_window_flag: "str | None"):
+    def __init__(self, second_window_flag: str | None):
         self._second_window_flag = second_window_flag
         self._patches: list = []
         self.env: dict = {}

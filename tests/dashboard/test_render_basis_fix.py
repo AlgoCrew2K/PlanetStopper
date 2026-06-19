@@ -37,7 +37,6 @@ These tests catch the client wiring contract; the ux-expert visual gate catches 
 
 from __future__ import annotations
 
-import json
 import pathlib
 import re
 import shutil

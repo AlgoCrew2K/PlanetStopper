@@ -36,12 +36,11 @@ PA-19: explicit APPROVE from quant-code-reviewer required before merge.
 
 from __future__ import annotations
 
-import importlib
 import inspect
 import json
 import pathlib
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -801,7 +800,7 @@ class TestFleetCorrelationConfigurableThresholds:
         import alpha_bot_execution
 
         with patch.object(alpha_bot_execution, "FLEET_CORRELATION_PCT", 0.75):
-            assert alpha_bot_execution.FLEET_CORRELATION_PCT == pytest.approx(0.75, abs=1e-9)
+            assert pytest.approx(0.75, abs=1e-9) == alpha_bot_execution.FLEET_CORRELATION_PCT
         with patch.object(alpha_bot_execution, "FLEET_CORRELATION_WINDOW_MINUTES", 5):
             assert alpha_bot_execution.FLEET_CORRELATION_WINDOW_MINUTES == 5
         with patch.object(alpha_bot_execution, "FLEET_CORRELATION_CLEAR_MINUTES", 15):
@@ -857,15 +856,15 @@ class TestFleetAlertAutoClear:
             patch("database.read_fleet_alert", return_value=stale_alert),
             patch("database.clear_fleet_alert") as mock_clear,
             patch("database.write_fleet_alert"),
-        ):
-            with patch.object(
+            patch.object(
                 alpha_bot_execution, "FLEET_CORRELATION_CLEAR_MINUTES", fixture["clear_minutes"]
-            ):
-                alpha_bot_execution.check_fleet_correlation_and_update_state(
-                    bot_state=bot_state,
-                    active_symphony_count=10,
-                    now_et=check_time,
-                )
+            ),
+        ):
+            alpha_bot_execution.check_fleet_correlation_and_update_state(
+                bot_state=bot_state,
+                active_symphony_count=10,
+                now_et=check_time,
+            )
 
         assert mock_clear.called, (
             f"Case '{case['label']}': database.clear_fleet_alert() must be called after "
@@ -898,15 +897,17 @@ class TestFleetAlertAutoClear:
 
         check_time = _et_at(case["check_time_et"])
 
-        with patch("database.get_triggers", return_value=[]):
-            with patch.object(
+        with (
+            patch("database.get_triggers", return_value=[]),
+            patch.object(
                 alpha_bot_execution, "FLEET_CORRELATION_CLEAR_MINUTES", fixture["clear_minutes"]
-            ):
-                alpha_bot_execution.check_fleet_correlation_and_update_state(
-                    bot_state=bot_state,
-                    active_symphony_count=10,
-                    now_et=check_time,
-                )
+            ),
+        ):
+            alpha_bot_execution.check_fleet_correlation_and_update_state(
+                bot_state=bot_state,
+                active_symphony_count=10,
+                now_et=check_time,
+            )
 
         assert "fleet_correlation_alert" in bot_state, (
             f"Case '{case['label']}': alert must persist when < {fixture['clear_minutes']} min elapsed. "

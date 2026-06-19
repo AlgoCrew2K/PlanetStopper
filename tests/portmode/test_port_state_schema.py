@@ -17,16 +17,14 @@ All tests use in-memory SQLite (not file-based) to avoid test pollution.
 
 from __future__ import annotations
 
-import sqlite3
-
 import pytest
 
 # These imports WILL FAIL until database.py is extended (RED intent)
 from database import (  # noqa: F401
-    read_port_state,
-    write_port_state,
     clear_port_state,
+    read_port_state,
     wipe_transient_state,
+    write_port_state,
 )
 
 

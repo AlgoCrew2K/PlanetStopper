@@ -48,12 +48,11 @@ structural facts independent of math.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 import database
-
 
 # ---------------------------------------------------------------------------
 # Shared state factories — produce schema-correct bot_state shapes the live

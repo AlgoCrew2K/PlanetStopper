@@ -41,6 +41,16 @@ def pytest_configure(config):
         session_db = os.path.join(_SESSION_TEMP_DIR.name, "session_alphabot_state.db")
         os.environ["DB_PATH"] = session_db
 
+    # Route the Atlas cache DB to a session-temp path so tests never read a
+    # stale production cache (alphabot_atlas_cache.db in the project root).
+    # This ensures tests that mock MongoClient see a cold cache, not a live
+    # cached result from a previous operator run with real credentials.
+    if "ATLAS_CACHE_DB_PATH" not in os.environ:
+        if _SESSION_TEMP_DIR is None:
+            _SESSION_TEMP_DIR = tempfile.TemporaryDirectory(prefix="pytest_session_db_")
+        atlas_cache_db = os.path.join(_SESSION_TEMP_DIR.name, "session_atlas_cache.db")
+        os.environ["ATLAS_CACHE_DB_PATH"] = atlas_cache_db
+
     # ---------------------------------------------------------------------
     # Bound nested parallelism in the TEST ENVIRONMENT ONLY (memory-blowup
     # mitigation; companion to the "-n 2" xdist cap in pyproject.toml addopts).

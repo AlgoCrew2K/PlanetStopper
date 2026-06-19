@@ -155,7 +155,6 @@ class TestCscvDateReturnsStoredInDecimalUnits:
         _collect_sim_returns_dated (RAW PERCENT guard-alpha per date).
         """
         import autotuner
-        import math_engine
 
         # Flat returns for the inline path-score path (not under test here).
         flat_returns_pct = [v for (_d, v) in dated_returns_pct]
@@ -318,7 +317,6 @@ class TestCscvDateReturnsStoredInDecimalUnits:
         objective actually persisted for a -1% day and run it through the same
         utility compute_pbo uses. Decimal -> finite, > -1.0; raw -> -999 collapse.
         """
-        import autotuner
         import math_engine
 
         raw_minus_one = units_fixture["scenarios"]["sub_one_percent_day_raw_vs_decimal"][

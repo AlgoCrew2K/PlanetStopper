@@ -1,11 +1,13 @@
+import glob
+import json
 import logging
 import os
-import json
 import time
+from datetime import datetime
+
 import requests
+
 import database
-import glob
-from datetime import datetime, timedelta
 
 # Canonical post-mortem directory — anchored to project root regardless of CWD.
 _POST_MORTEMS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "post_mortems")
@@ -113,14 +115,14 @@ def generate_eod_snapshot(
             print("  -> Warning: Stage 1 snapshot missing. Cannot inject new holdings.")
             return
 
-        with open(report_file, "r", encoding="utf-8") as f:
+        with open(report_file, encoding="utf-8") as f:
             report = json.load(f)
 
         if "STATUS" not in report.get("tomorrow_target_holdings", {}):
             return
 
         print(
-            f"  -> Generating Stage 2 Post-Mortem (Injecting Holdings & Correcting EOD Alpha): {report_file}"
+            f"  -> Generating Stage 2 Post-Mortem (Injecting Holdings & Correcting EOD Alpha): {report_file}"  # noqa: E501  # un-wrappable long line
         )
 
         portfolio_holdings_summary = {}
@@ -162,7 +164,7 @@ def generate_eod_snapshot(
 
 
 def send_eod_discord_post(current_date_str, report_file, optimization_results, discord_webhook_url):
-    """Sends the finalized EOD report to Discord, including a multi-timeframe summary, historical chart, and optimization changes."""
+    """Sends the finalized EOD report to Discord, including a multi-timeframe summary, historical chart, and optimization changes."""  # noqa: E501  # un-wrappable long line
     if not discord_webhook_url:
         return
 
@@ -172,7 +174,7 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
             print(f"  -> Error: Report file {report_file} not found.")
             return
 
-        with open(report_file, "r", encoding="utf-8") as f:
+        with open(report_file, encoding="utf-8") as f:
             report = json.load(f)
 
         total_monitored = report.get("summary", {}).get("total_monitored", 0)
@@ -192,7 +194,7 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
         for f_path in chart_files:
             try:
                 d_str = os.path.basename(f_path).replace("post_mortem_", "").replace(".json", "")
-                with open(f_path, "r", encoding="utf-8") as f:
+                with open(f_path, encoding="utf-8") as f:
                     day_data = json.load(f)
 
                 day_triggers = day_data.get("triggers", [])
@@ -321,7 +323,7 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
                     if not active_windows:
                         continue
 
-                    with open(f_path, "r", encoding="utf-8") as f:
+                    with open(f_path, encoding="utf-8") as f:
                         data = json.load(f)
 
                     for t in data.get("triggers", []):
@@ -359,7 +361,7 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
                 except (OSError, json.JSONDecodeError, ValueError):
                     continue
         except ValueError as e:
-            # datetime.strptime on current_date_str raises ValueError; inner per-file errors caught above
+            # datetime.strptime on current_date_str raises ValueError; inner per-file errors caught above  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
             logging.warning(
                 "send_eod_discord_post: history stats parse error, stats will be zeroed: %s", e
             )
@@ -508,7 +510,7 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
         print("  -> Discord Push Complete.")
 
     except (OSError, ValueError, requests.RequestException, TypeError) as e:
-        # OSError: file I/O; ValueError: json.load/strptime/JSONDecodeError; RequestException: Discord POST; TypeError: json.dumps non-serializable
+        # OSError: file I/O; ValueError: json.load/strptime/JSONDecodeError; RequestException: Discord POST; TypeError: json.dumps non-serializable  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
         logging.error("send_eod_discord_post: failed to send EOD webhook: %s", e)
 
 

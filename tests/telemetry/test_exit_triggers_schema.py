@@ -27,7 +27,6 @@ import logging
 import pathlib
 import sqlite3
 import threading
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -657,10 +656,9 @@ def test_api_triggers_route_returns_200_with_array(monkeypatch):
     mock_rows = [{k: v for k, v in r.items() if k != "account_id"} for r in fixture["rows"]]
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        with patch.object(app_module, "database") as db_mock:
-            db_mock.get_triggers = MagicMock(return_value=mock_rows)
-            resp = c.get("/api/triggers")
+    with app_module.app.test_client() as c, patch.object(app_module, "database") as db_mock:
+        db_mock.get_triggers = MagicMock(return_value=mock_rows)
+        resp = c.get("/api/triggers")
 
     assert resp.status_code == 200
     body = resp.get_json()
@@ -676,16 +674,15 @@ def test_api_triggers_route_passes_since_param_to_db(monkeypatch):
     GET /api/triggers?since=<ts> must forward the since param to database.get_triggers().
     """
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        with patch.object(app_module, "database") as db_mock:
-            db_mock.get_triggers = MagicMock(return_value=[])
-            resp = c.get("/api/triggers?since=2026-05-15T14:00:00Z")
-            assert resp.status_code == 200, (
-                f"/api/triggers route does not exist yet (got {resp.status_code}); "
-                "implementer must add the route"
-            )
-            assert db_mock.get_triggers.called, "database.get_triggers() was not called"
-            call_kwargs = db_mock.get_triggers.call_args[1]
+    with app_module.app.test_client() as c, patch.object(app_module, "database") as db_mock:
+        db_mock.get_triggers = MagicMock(return_value=[])
+        resp = c.get("/api/triggers?since=2026-05-15T14:00:00Z")
+        assert resp.status_code == 200, (
+            f"/api/triggers route does not exist yet (got {resp.status_code}); "
+            "implementer must add the route"
+        )
+        assert db_mock.get_triggers.called, "database.get_triggers() was not called"
+        call_kwargs = db_mock.get_triggers.call_args[1]
 
     assert "since" in call_kwargs, "since param must be forwarded to database.get_triggers()"
     assert "2026-05-15" in call_kwargs["since"]
@@ -694,16 +691,15 @@ def test_api_triggers_route_passes_since_param_to_db(monkeypatch):
 def test_api_triggers_route_passes_symphony_id_param(monkeypatch):
     """GET /api/triggers?symphony_id=X must forward symphony_id to database.get_triggers()."""
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        with patch.object(app_module, "database") as db_mock:
-            db_mock.get_triggers = MagicMock(return_value=[])
-            resp = c.get("/api/triggers?symphony_id=SYM_A")
-            assert resp.status_code == 200, (
-                f"/api/triggers route does not exist yet (got {resp.status_code}); "
-                "implementer must add the route"
-            )
-            assert db_mock.get_triggers.called
-            call_kwargs = db_mock.get_triggers.call_args[1]
+    with app_module.app.test_client() as c, patch.object(app_module, "database") as db_mock:
+        db_mock.get_triggers = MagicMock(return_value=[])
+        resp = c.get("/api/triggers?symphony_id=SYM_A")
+        assert resp.status_code == 200, (
+            f"/api/triggers route does not exist yet (got {resp.status_code}); "
+            "implementer must add the route"
+        )
+        assert db_mock.get_triggers.called
+        call_kwargs = db_mock.get_triggers.call_args[1]
 
     assert call_kwargs.get("symphony_id") == "SYM_A"
 
@@ -714,16 +710,15 @@ def test_api_triggers_route_clamps_limit_at_500(monkeypatch):
     Server-side clamp is enforced at the route layer, not just in DB.
     """
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        with patch.object(app_module, "database") as db_mock:
-            db_mock.get_triggers = MagicMock(return_value=[])
-            resp = c.get("/api/triggers?limit=10000")
-            assert resp.status_code == 200, (
-                f"/api/triggers route does not exist yet (got {resp.status_code}); "
-                "implementer must add the route"
-            )
-            assert db_mock.get_triggers.called
-            call_kwargs = db_mock.get_triggers.call_args[1]
+    with app_module.app.test_client() as c, patch.object(app_module, "database") as db_mock:
+        db_mock.get_triggers = MagicMock(return_value=[])
+        resp = c.get("/api/triggers?limit=10000")
+        assert resp.status_code == 200, (
+            f"/api/triggers route does not exist yet (got {resp.status_code}); "
+            "implementer must add the route"
+        )
+        assert db_mock.get_triggers.called
+        call_kwargs = db_mock.get_triggers.call_args[1]
 
     effective_limit = call_kwargs.get("limit", 100)
     assert effective_limit <= 500, (
@@ -734,10 +729,9 @@ def test_api_triggers_route_clamps_limit_at_500(monkeypatch):
 def test_api_triggers_route_returns_500_on_db_error(monkeypatch):
     """Database failure must yield 500 with error envelope, not a 500 traceback page."""
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        with patch.object(app_module, "database") as db_mock:
-            db_mock.get_triggers = MagicMock(side_effect=RuntimeError("db down"))
-            resp = c.get("/api/triggers")
+    with app_module.app.test_client() as c, patch.object(app_module, "database") as db_mock:
+        db_mock.get_triggers = MagicMock(side_effect=RuntimeError("db down"))
+        resp = c.get("/api/triggers")
 
     assert resp.status_code == 500
     body = resp.get_json()

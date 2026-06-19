@@ -224,9 +224,9 @@ def test_twenty_raw_days_returns_sentinel_not_old_in_band_100() -> None:
         f"the sentinel must be returned here."
     )
     assert result != 100.0, (
-        f"run_monte_carlo with 20 raw days returned 100.0 — this is the pre-fix "
-        f"fail-dangerous in-band value. The sentinel (None) must be returned. "
-        f"A 100.0 return makes the MC sanity gate veto the protective stop forever."
+        "run_monte_carlo with 20 raw days returned 100.0 — this is the pre-fix "
+        "fail-dangerous in-band value. The sentinel (None) must be returned. "
+        "A 100.0 return makes the MC sanity gate veto the protective stop forever."
     )
 
 
@@ -302,8 +302,8 @@ def test_tp_confirmation_does_not_confirm_exit_when_mc_unavailable() -> None:
         above_tp_count=1,  # one tick into a 2-tick confirmation
     )
     assert is_tp_hit is False, (
-        f"compute_tp_confirmation(mc_available=False, tp_armed=True, above_tp_count=1) "
-        f"set is_tp_hit=True. An absent MC opinion must not confirm a TP exit."
+        "compute_tp_confirmation(mc_available=False, tp_armed=True, above_tp_count=1) "
+        "set is_tp_hit=True. An absent MC opinion must not confirm a TP exit."
     )
     assert new_above_tp_count == 0, (
         f"compute_tp_confirmation(mc_available=False, tp_armed=True, above_tp_count=1) "
@@ -680,9 +680,9 @@ def test_exit_confirmation_mc_sentinel_does_not_suppress_stop_when_low_value_wou
         current_below_stop_count=math_engine.EXIT_CONFIRM_TICKS - 1,  # one tick from firing
     )
     assert sentinel_fires is True, (
-        f"compute_exit_confirmation(prob_underperforming=None) at "
-        f"EXIT_CONFIRM_TICKS-1 returned is_trailing_stop_hit=False. The MC "
-        f"sentinel must FAIL OPEN, not suppress: None → mc_breakdown_ok=True → "
-        f"stop fires on magnitude alone. A real low prob_underperforming would "
-        f"have suppressed; None must not recapitulate that suppression."
+        "compute_exit_confirmation(prob_underperforming=None) at "
+        "EXIT_CONFIRM_TICKS-1 returned is_trailing_stop_hit=False. The MC "
+        "sentinel must FAIL OPEN, not suppress: None → mc_breakdown_ok=True → "
+        "stop fires on magnitude alone. A real low prob_underperforming would "
+        "have suppressed; None must not recapitulate that suppression."
     )

@@ -30,13 +30,10 @@ from __future__ import annotations
 import ast as _ast
 import datetime as _dt
 import pathlib
-import json
-import os
 
 import pytest
 
 import math_engine
-
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -331,7 +328,6 @@ class TestCacheMarkerBumpedV4:
         """
         import hashlib
         import json as _json
-        import synthetic_history as sh
 
         # Reconstruct the cache filename using the same logic as the production
         # code: holdings hash + date + version marker. We assert the MARKER

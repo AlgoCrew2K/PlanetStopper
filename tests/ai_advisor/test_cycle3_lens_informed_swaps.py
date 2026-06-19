@@ -39,7 +39,6 @@ from __future__ import annotations
 import importlib
 import pathlib
 import sys
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -231,7 +230,7 @@ class TestExtractLensScores:
         fn = getattr(engine, "extract_lens_scores", None)
         if fn is None:
             ai = _import_ai_advisor()
-            fn = getattr(ai, "extract_lens_scores")
+            fn = ai.extract_lens_scores
 
         result = fn(_ADVISOR_CONTEXT_WITH_LENSES)
 
@@ -248,7 +247,7 @@ class TestExtractLensScores:
         fn = getattr(engine, "extract_lens_scores", None)
         if fn is None:
             ai = _import_ai_advisor()
-            fn = getattr(ai, "extract_lens_scores")
+            fn = ai.extract_lens_scores
 
         result = fn(_ADVISOR_CONTEXT_WITH_LENSES)
 
@@ -270,7 +269,7 @@ class TestExtractLensScores:
         fn = getattr(engine, "extract_lens_scores", None)
         if fn is None:
             ai = _import_ai_advisor()
-            fn = getattr(ai, "extract_lens_scores")
+            fn = ai.extract_lens_scores
 
         result = fn(_ADVISOR_CONTEXT_ALL_UNAVAILABLE)
         assert result == {}, f"All-unavailable context must return empty dict; got {result!r}"
@@ -281,7 +280,7 @@ class TestExtractLensScores:
         fn = getattr(engine, "extract_lens_scores", None)
         if fn is None:
             ai = _import_ai_advisor()
-            fn = getattr(ai, "extract_lens_scores")
+            fn = ai.extract_lens_scores
 
         result = fn(_ADVISOR_CONTEXT_WITH_LENSES)
         assert isinstance(result, dict), "extract_lens_scores must return a dict"
@@ -300,7 +299,7 @@ class TestExtractLensScores:
         fn = getattr(engine, "extract_lens_scores", None)
         if fn is None:
             ai = _import_ai_advisor()
-            fn = getattr(ai, "extract_lens_scores")
+            fn = ai.extract_lens_scores
 
         sparse_context = {
             "scope": "symphony",
@@ -766,7 +765,7 @@ class TestSafetyContracts:
         fn = getattr(engine, "extract_lens_scores", None)
         if fn is None:
             ai = _import_ai_advisor()
-            fn = getattr(ai, "extract_lens_scores")
+            fn = ai.extract_lens_scores
 
         # Context where only technicals is "available" but has no ticker_scores payload.
         # The ticker "XYZ" appears only in an unavailable macro lens — must not be fabricated.
@@ -819,7 +818,7 @@ class TestSafetyContracts:
         fn = getattr(engine, "extract_lens_scores", None)
         if fn is None:
             ai = _import_ai_advisor()
-            fn = getattr(ai, "extract_lens_scores")
+            fn = ai.extract_lens_scores
 
         bad_contexts = [
             {},
@@ -937,7 +936,7 @@ class TestFixtureBackedContract:
         fn = getattr(engine, "extract_lens_scores", None)
         if fn is None:
             ai = _import_ai_advisor()
-            fn = getattr(ai, "extract_lens_scores")
+            fn = ai.extract_lens_scores
 
         fixture_path = (
             _REPO_ROOT

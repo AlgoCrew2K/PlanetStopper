@@ -30,8 +30,6 @@ import inspect
 import json
 import pathlib
 
-import pytest
-
 _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
 _HAIRCUT_FIXTURE = _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "harvey_liu_haircut.json"
 

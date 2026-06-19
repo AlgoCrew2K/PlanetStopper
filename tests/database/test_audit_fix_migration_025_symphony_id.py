@@ -30,10 +30,7 @@ import inspect
 import sqlite3
 from pathlib import Path
 
-import pytest
-
 import database as db_module
-
 
 _MIGRATION_FILENAME = "025_advisor_observations_symphony_id.sql"
 _MIGRATION_PATH = Path(__file__).parents[2] / "migrations" / _MIGRATION_FILENAME

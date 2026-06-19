@@ -209,7 +209,6 @@ class TestOptunaSearchSpaceExcludesLockedVars:
         OPTUNA_SEARCH_SPACE_KEYS must not contain TRIGGER_THRESHOLD_PCT.
         RED: currently it does (autotuner.py:20-24).
         """
-        import sys
 
         # Importing autotuner has optuna side effects — read via AST instead.
         src = _autotuner_source()
@@ -343,7 +342,10 @@ class TestAIAdvisorRejectsLockedVarSuggestions:
         to the rejected partition. RED: currently it lands in allowed because
         _SUGGESTIBLE_ALLOWLIST still contains TRIGGER_THRESHOLD_PCT.
         """
-        from ai_advisor import ConfigSuggestion, enforce_suggestion_allowlist  # type: ignore[import]
+        from ai_advisor import (  # type: ignore[import]
+            ConfigSuggestion,
+            enforce_suggestion_allowlist,
+        )
 
         # Shape derived from fixture — the float value is schema-representative,
         # not a producer-computed output.
@@ -380,7 +382,10 @@ class TestAIAdvisorRejectsLockedVarSuggestions:
         Parametrized: for every var in DEFAULT_LOCKED_VARS, a suggestion with that
         config_key must land in the rejected partition. AC-O4.2 / AC-O4.3.
         """
-        from ai_advisor import ConfigSuggestion, enforce_suggestion_allowlist  # type: ignore[import]
+        from ai_advisor import (  # type: ignore[import]
+            ConfigSuggestion,
+            enforce_suggestion_allowlist,
+        )
 
         suggestion = ConfigSuggestion(
             config_key=locked_var,
@@ -409,7 +414,10 @@ class TestAIAdvisorRejectsLockedVarSuggestions:
         Counter-test: non-locked, suggestible vars must still land in allowed.
         The fix must not blanket-reject everything.
         """
-        from ai_advisor import ConfigSuggestion, enforce_suggestion_allowlist  # type: ignore[import]
+        from ai_advisor import (  # type: ignore[import]
+            ConfigSuggestion,
+            enforce_suggestion_allowlist,
+        )
 
         suggestion = ConfigSuggestion(
             config_key=non_locked_var,
@@ -511,7 +519,10 @@ class TestLockedVarFilterDeterminism:
         """
         Two calls with identical inputs must produce identical partition results.
         """
-        from ai_advisor import ConfigSuggestion, enforce_suggestion_allowlist  # type: ignore[import]
+        from ai_advisor import (  # type: ignore[import]
+            ConfigSuggestion,
+            enforce_suggestion_allowlist,
+        )
 
         fix = _load_fixture("ai_advisor_locked_suggestion_fixture.json")
         locked_example = fix["suggestions_with_locked_var"][0]
@@ -554,7 +565,10 @@ class TestLockedVarFilterDeterminism:
         """
         Every input suggestion must appear in exactly one partition (no drop, no dup).
         """
-        from ai_advisor import ConfigSuggestion, enforce_suggestion_allowlist  # type: ignore[import]
+        from ai_advisor import (  # type: ignore[import]
+            ConfigSuggestion,
+            enforce_suggestion_allowlist,
+        )
 
         fix = _load_fixture("ai_advisor_locked_suggestion_fixture.json")
         locked_example = fix["suggestions_with_locked_var"][0]

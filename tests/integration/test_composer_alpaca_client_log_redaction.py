@@ -42,7 +42,6 @@ import sys
 from io import StringIO
 from unittest.mock import MagicMock, patch
 
-import pytest
 import requests
 
 import alpha_bot_execution as abe
@@ -76,8 +75,6 @@ def _capture_stdout_stderr_and_logs(caplog, func, *args, **kwargs):
     sys.stdout = StringIO()
     sys.stderr = StringIO()
     try:
-        import logging
-
         func(*args, **kwargs)
         stdout_text = sys.stdout.getvalue()
         stderr_text = sys.stderr.getvalue()
@@ -119,9 +116,8 @@ def test_fetch_symphony_stats_error_does_not_print_account_id(capsys, caplog):
 
     import logging
 
-    with patch("requests.get", return_value=mock_response):
-        with caplog.at_level(logging.DEBUG):
-            abe.fetch_symphony_stats(test_account_id)
+    with patch("requests.get", return_value=mock_response), caplog.at_level(logging.DEBUG):
+        abe.fetch_symphony_stats(test_account_id)
 
     captured = capsys.readouterr()
     all_output = _all_output(
@@ -260,10 +256,9 @@ def test_execute_sell_to_cash_4xx_response_body_does_not_appear_in_output(capsys
 
     import logging
 
-    with patch("requests.post", return_value=mock_response):
-        with patch("time.sleep"):
-            with caplog.at_level(logging.DEBUG):
-                abe.execute_sell_to_cash(test_symphony_id, test_account_id)
+    with patch("requests.post", return_value=mock_response), patch("time.sleep"):
+        with caplog.at_level(logging.DEBUG):
+            abe.execute_sell_to_cash(test_symphony_id, test_account_id)
 
     captured = capsys.readouterr()
     all_output = _all_output(
@@ -317,10 +312,9 @@ def test_fetch_alpaca_history_json_parse_error_does_not_print_response_body(caps
 
     import logging
 
-    with patch("requests.get", return_value=mock_response):
-        with caplog.at_level(logging.DEBUG):
-            # fetch_alpaca_history requires tickers and a date string
-            abe.fetch_alpaca_history(["SPY"], "2026-05-24")
+    with patch("requests.get", return_value=mock_response), caplog.at_level(logging.DEBUG):
+        # fetch_alpaca_history requires tickers and a date string
+        abe.fetch_alpaca_history(["SPY"], "2026-05-24")
 
     captured = capsys.readouterr()
     all_output = _all_output(
@@ -430,9 +424,8 @@ def test_fetch_symphony_stats_json_parse_error_does_not_print_exception_message(
 
     import logging
 
-    with patch("requests.get", return_value=mock_response):
-        with caplog.at_level(logging.DEBUG):
-            abe.fetch_symphony_stats("ACCT_S7_TEST")
+    with patch("requests.get", return_value=mock_response), caplog.at_level(logging.DEBUG):
+        abe.fetch_symphony_stats("ACCT_S7_TEST")
 
     captured = capsys.readouterr()
     all_output = _all_output(

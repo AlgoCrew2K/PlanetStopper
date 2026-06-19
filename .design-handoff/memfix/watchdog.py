@@ -12,6 +12,7 @@ Usage:
 The cap defaults to 8 GB (8e9 bytes) aggregate across the process tree.
 Exit code 137 indicates the watchdog killed the tree for exceeding the cap.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -90,10 +91,10 @@ def main() -> int:
         rss = _tree_rss(proc)
         if rss > peak:
             peak = rss
-            print(f"watchdog: tree RSS peak {peak/1e9:.2f} GB", flush=True)
+            print(f"watchdog: tree RSS peak {peak / 1e9:.2f} GB", flush=True)
         if rss > cap_bytes:
             print(
-                f"watchdog: TREE RSS {rss/1e9:.2f} GB EXCEEDED CAP "
+                f"watchdog: TREE RSS {rss / 1e9:.2f} GB EXCEEDED CAP "
                 f"{args.cap_gb} GB — KILLING TREE",
                 file=sys.stderr,
                 flush=True,
@@ -104,7 +105,7 @@ def main() -> int:
         time.sleep(POLL_INTERVAL_S)
 
     rc = child.wait()
-    print(f"watchdog: peak tree RSS {peak/1e9:.2f} GB; child rc={rc}", flush=True)
+    print(f"watchdog: peak tree RSS {peak / 1e9:.2f} GB; child rc={rc}", flush=True)
     if killed:
         return 137
     return rc

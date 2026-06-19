@@ -24,13 +24,9 @@ no producer-computed quant values.
 
 from __future__ import annotations
 
-import sqlite3
 from unittest.mock import patch
 
-import pytest
-
 import database as db_module
-
 
 # ---------------------------------------------------------------------------
 # Helper: sentinel that blows up if called

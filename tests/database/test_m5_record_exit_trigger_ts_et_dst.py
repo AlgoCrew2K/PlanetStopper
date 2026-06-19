@@ -31,7 +31,7 @@ Fixture: no external fixture file; UTC/ET instants are embedded constants.
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
@@ -39,7 +39,6 @@ import pytest
 
 import database as db_module
 from database import init_db, run_migrations
-
 
 # ---------------------------------------------------------------------------
 # DB isolation fixture

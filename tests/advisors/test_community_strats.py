@@ -39,23 +39,22 @@ from __future__ import annotations
 import ast
 import importlib
 import json
-import os
 import sqlite3
 import sys
-import textwrap
 from collections import Counter
+from datetime import UTC
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import patch
 
 import pytest
+
+from advisors import atlas_cache as ac
 
 # ---------------------------------------------------------------------------
 # Helpers: build minimal valid trees via symphony_schema constructors.
 # Never hand-roll trees — the schema module is the oracle.
 # ---------------------------------------------------------------------------
-
 from advisors import symphony_schema as ss
-from advisors import atlas_cache as ac
 
 
 def _make_minimal_tree(name: str = "Test Strategy", ticker: str = "SPY") -> dict:
@@ -196,11 +195,11 @@ class TestCacheRoutingHitMiss:
 
         # Pre-populate the cache directly so the second call is a guaranteed HIT.
         import json as _json
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         conn = sqlite3.connect(isolated_atlas_cache_db)
         try:
-            now_iso = datetime.now(timezone.utc).isoformat()
+            now_iso = datetime.now(UTC).isoformat()
             conn.execute(
                 "INSERT OR REPLACE INTO atlas_cache (collection, fetched_at, payload) "
                 "VALUES (?, ?, ?)",
@@ -252,12 +251,12 @@ class TestForceRefresh:
         """Even when the cache row is fresh, force_refresh=True must invoke
         the fetch_fn (bypass the TTL gate entirely)."""
         import json as _json
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         # Pre-seed a fresh cache row.
         conn = sqlite3.connect(isolated_atlas_cache_db)
         try:
-            now_iso = datetime.now(timezone.utc).isoformat()
+            now_iso = datetime.now(UTC).isoformat()
             conn.execute(
                 "INSERT OR REPLACE INTO atlas_cache (collection, fetched_at, payload) "
                 "VALUES (?, ?, ?)",
@@ -1066,7 +1065,6 @@ class TestSignatureAndPlumbing:
         parameter. Inspect the signature to catch a missing parameter before
         any test even calls the function."""
         import inspect
-        import pathlib
 
         # Import the module under test (stub or real).
         if "advisors.community_strats" in sys.modules:
@@ -1162,12 +1160,12 @@ class TestCachePipelineIntegrity:
         """A cache-hit payload (pre-seeded row) must still be parsed and validated,
         producing structurally correct candidates, not raw Mongo docs."""
         import json as _json
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         # Pre-seed a fresh cache row with valid docs.
         conn = sqlite3.connect(isolated_atlas_cache_db)
         try:
-            now_iso = datetime.now(timezone.utc).isoformat()
+            now_iso = datetime.now(UTC).isoformat()
             conn.execute(
                 "INSERT OR REPLACE INTO atlas_cache (collection, fetched_at, payload) "
                 "VALUES (?, ?, ?)",

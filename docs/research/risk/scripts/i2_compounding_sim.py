@@ -117,8 +117,8 @@ def build_table(symphony_vol: float) -> str:
     ]
     rows = []
     rows.append(
-        f"| Time (ET) | time_ratio | decay | dyn_mult | min_stop | "
-        f"PARA-only dist | +breakeven dist | +time-sq dist | trigger (all 3) |"
+        "| Time (ET) | time_ratio | decay | dyn_mult | min_stop | "
+        "PARA-only dist | +breakeven dist | +time-sq dist | trigger (all 3) |"
     )
     rows.append("|---|---|---|---|---|---|---|---|---|")
     for t in times:
@@ -171,7 +171,6 @@ def daily_drag_estimate(symphony_vol: float) -> dict[str, float]:
     This is a CRUDE rule of thumb, not a formal Kaminski-Lo replication. It
     illustrates the COMPOUNDING SHAPE only.
     """
-    import statistics
 
     # 1-min realized vol scaling: daily vol -> per-minute vol = vol / sqrt(390)
     per_min_vol = symphony_vol / math.sqrt(390)
@@ -214,7 +213,7 @@ def daily_drag_estimate(symphony_vol: float) -> dict[str, float]:
 
 if __name__ == "__main__":
     print("=" * 80)
-    print(f"I2 stop-compounding simulation — date 2026-05-17")
+    print("I2 stop-compounding simulation — date 2026-05-17")
     print(
         f"Defaults: MAX_PARABOLIC_SQUEEZE={MAX_PARABOLIC_SQUEEZE}, HWM={HWM_PCT}%, current_return={CURRENT_RETURN_FLAT}%"
     )
@@ -227,7 +226,7 @@ if __name__ == "__main__":
         print(f"\n## symphony_vol = {vol} ({label})\n")
         print(build_table(vol))
         cum = daily_drag_estimate(vol)
-        print(f"\nApprox cumulative hazard (5-min-bucket sum of 1-min stop-touch p):")
+        print("\nApprox cumulative hazard (5-min-bucket sum of 1-min stop-touch p):")
         print(f"  PARA only            : {cum['para_only']:.3f}")
         print(f"  PARA + breakeven     : {cum['para_be']:.3f}")
         print(

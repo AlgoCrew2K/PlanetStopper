@@ -50,8 +50,8 @@ Notes
 
 from __future__ import annotations
 
-import io
 import contextlib
+import io
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -250,8 +250,9 @@ def _autotuner_patches(best_params: dict, fallback: dict, default: dict, vwap_si
 
 
 def _run_and_capture(best_params, fallback, default, vwap_side_effect):
-    import autotuner  # local import — see module docstring on lazy import.
     import inspect
+
+    import autotuner  # local import — see module docstring on lazy import.
     from tests.autotuner.conftest import make_phase1_theory_bundle
 
     bot_state = _build_bot_state()
@@ -478,8 +479,9 @@ def test_run_autotuner_aborts_cleanly_when_synthetic_history_empty():
             side_effect=lambda *a, **kw: captured.append(a),
         ),
     ):
-        import autotuner  # local import — see module docstring on lazy import.
         import inspect
+
+        import autotuner  # local import — see module docstring on lazy import.
         from tests.autotuner.conftest import make_phase1_theory_bundle
 
         _spec_id = make_phase1_theory_bundle()
@@ -762,8 +764,9 @@ def test_optuna_search_space_keys_match_autotuner_objective_source():
     closure (which is not externally importable). This is a contract pin,
     not a behavioral test.
     """
-    import autotuner
     import inspect
+
+    import autotuner
 
     source = inspect.getsource(autotuner.run_autotuner)
     for key in OPTUNA_SEARCH_SPACE_KEYS:

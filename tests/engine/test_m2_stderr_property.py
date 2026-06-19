@@ -21,7 +21,7 @@ import statistics
 import pytest
 
 try:
-    from hypothesis import given, settings, HealthCheck, assume
+    from hypothesis import HealthCheck, assume, given, settings
     from hypothesis import strategies as st
 
     _HYPOTHESIS_AVAILABLE = True

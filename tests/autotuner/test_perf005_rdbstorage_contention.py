@@ -46,13 +46,11 @@ import ast
 import importlib
 import inspect
 import json
-import os
 import pathlib
 import sys
 
 import optuna
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Fixture loading
@@ -133,9 +131,12 @@ def test_run_autotuner_storage_is_rdbstorage_over_sqlite(autotuner_ast, contract
         if not isinstance(node, ast.Call):
             continue
         f = node.func
-        if isinstance(f, ast.Attribute) and f.attr == expected_cls:
-            rdb_calls.append(node)
-        elif isinstance(f, ast.Name) and f.id == expected_cls:
+        if (
+            isinstance(f, ast.Attribute)
+            and f.attr == expected_cls
+            or isinstance(f, ast.Name)
+            and f.id == expected_cls
+        ):
             rdb_calls.append(node)
 
     assert rdb_calls, (

@@ -84,7 +84,7 @@ from __future__ import annotations
 import json
 import pathlib
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -593,8 +593,10 @@ def test_save_symphony_strategy_params_do_not_contain_live_mode():
     round-tripped through save_symphony_strategy / get_symphony_strategy do not
     include live_mode in the serialized JSON.
     """
+    import os
+    import tempfile
+
     import database as db_module
-    import os, tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
         test_db = os.path.join(tmp, "au2.db")
@@ -695,6 +697,7 @@ def test_resolve_trigger_priority_signature_unchanged():
     policy (live vs dry) belongs only in alpha_bot_execution.py.
     """
     import inspect
+
     import math_engine
 
     assert hasattr(math_engine, "resolve_trigger_priority"), (

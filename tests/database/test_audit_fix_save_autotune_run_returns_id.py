@@ -29,10 +29,7 @@ from __future__ import annotations
 
 import sqlite3
 
-import pytest
-
 import database as db_module
-
 
 # ---------------------------------------------------------------------------
 # Minimal seed helpers — no hardcoded producer values; values are arbitrary

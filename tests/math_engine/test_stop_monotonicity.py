@@ -56,7 +56,6 @@ import pytest
 
 import math_engine
 
-
 APPROX_REL = 1e-9
 APPROX_ABS = 1e-12
 

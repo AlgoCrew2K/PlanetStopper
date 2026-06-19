@@ -33,12 +33,11 @@ Binding refs:
 from __future__ import annotations
 
 import sqlite3
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
 import database as db
-
 
 # ---------------------------------------------------------------------------
 # Fixture: minimal valid cvar_diagnostics row (schema-derived, no producer values)

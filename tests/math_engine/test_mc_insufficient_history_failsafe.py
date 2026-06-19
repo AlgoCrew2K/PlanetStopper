@@ -58,8 +58,6 @@ import json
 import pathlib
 from typing import Any
 
-import pytest
-
 import math_engine
 
 FIXTURE_DIR = (

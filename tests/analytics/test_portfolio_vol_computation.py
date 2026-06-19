@@ -30,8 +30,6 @@ import json
 import math
 from pathlib import Path
 
-import pytest
-
 # ---------------------------------------------------------------------------
 # Fixture paths and constants
 # ---------------------------------------------------------------------------
@@ -361,8 +359,8 @@ def test_build_meta_portfolio_includes_vol_bot_and_vol_held():
     produce after Phase 2b implementation), then assert meta.portfolio
     carries them through.
     """
+
     import app as app_module
-    from unittest.mock import patch
 
     # Inject a portfolio_strip carrying the Phase 2b vol keys.
     # These are fraction-scale values — the implementer must NOT hardcode them.
@@ -432,8 +430,9 @@ def test_compute_portfolio_strip_includes_vol_bot_and_vol_held():
             vol_bot = analytics.compute_portfolio_annualized_vol(port_daily_returns)
         ...
     """
-    import app as app_module
     from unittest.mock import patch
+
+    import app as app_module
 
     # When get_portfolio_daily_returns_from_shadow returns None (no history),
     # vol_bot and vol_held should be None.
@@ -490,8 +489,9 @@ def test_vol_inversion_lower_vol_is_bot_win():
     Test is RED until index.html wires vol_bot/vol_held from meta.portfolio and
     applies the inverted winner logic.
     """
-    import app as app_module
     from unittest.mock import patch
+
+    import app as app_module
 
     # Build meta with bot calmer (vol_bot < vol_held).
     # These are fraction-scale values in the shape expected from _build_meta.
@@ -531,8 +531,9 @@ def test_vol_inversion_lower_vol_is_bot_win():
     }
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as client:
-        with patch.object(
+    with (
+        app_module.app.test_client() as client,
+        patch.object(
             app_module,
             "get_api_state_dict",
             return_value={
@@ -542,9 +543,10 @@ def test_vol_inversion_lower_vol_is_bot_win():
                 "exit_authority": {},
                 "daemon_started_at": None,
             },
-        ):
-            with patch.object(app_module, "_build_meta", return_value=stub_meta):
-                html = client.get("/").data.decode("utf-8")
+        ),
+        patch.object(app_module, "_build_meta", return_value=stub_meta),
+    ):
+        html = client.get("/").data.decode("utf-8")
 
     # Check that the vol-bot text is populated (not stub '--').
     # When vol_bot is provided, the template must render a real value, not '--'.
@@ -607,9 +609,10 @@ def test_vol_bar_width_is_wider_for_lower_vol_side():
 
     Test is RED until the inverted bar logic is implemented.
     """
-    import app as app_module
-    from unittest.mock import patch
     import re
+    from unittest.mock import patch
+
+    import app as app_module
 
     stub_portfolio = {
         "tc": 0.5,
@@ -646,8 +649,9 @@ def test_vol_bar_width_is_wider_for_lower_vol_side():
     }
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as client:
-        with patch.object(
+    with (
+        app_module.app.test_client() as client,
+        patch.object(
             app_module,
             "get_api_state_dict",
             return_value={
@@ -657,9 +661,10 @@ def test_vol_bar_width_is_wider_for_lower_vol_side():
                 "exit_authority": {},
                 "daemon_started_at": None,
             },
-        ):
-            with patch.object(app_module, "_build_meta", return_value=stub_meta):
-                html = client.get("/").data.decode("utf-8")
+        ),
+        patch.object(app_module, "_build_meta", return_value=stub_meta),
+    ):
+        html = client.get("/").data.decode("utf-8")
 
     # Extract bot and held bar widths for the vol row.
     # We look for comp-bar-vol-bot style="width:...%" pattern.

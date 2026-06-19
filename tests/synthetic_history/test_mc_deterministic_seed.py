@@ -44,11 +44,9 @@ Implementation note:
 from __future__ import annotations
 
 import ast
-import hashlib
 import json
 import math
 import pathlib
-import re
 from typing import Any
 
 import pytest

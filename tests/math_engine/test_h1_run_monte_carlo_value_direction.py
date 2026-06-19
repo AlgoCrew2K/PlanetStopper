@@ -47,10 +47,7 @@ producer value — forbidden by feedback_no_hardcoded_test_values).
 
 from __future__ import annotations
 
-import pytest
-
 import math_engine
-
 
 _SEED = 20260608  # fixed seed -> reproducible bootstrap CDF estimate
 _PATHS = 5000  # large path count -> faithful empirical CDF

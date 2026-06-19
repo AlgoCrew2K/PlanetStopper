@@ -26,11 +26,9 @@ from __future__ import annotations
 
 import ast
 import importlib
-import json
 import pathlib
 import sys
-import types
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -69,10 +67,10 @@ def _make_swap_run_result(survivors: bool = False, no_api_key: bool = False) -> 
     """Build a minimal SwapRunResult for use as a mock return value."""
     _ensure_repo_on_path()
     from advisors.asset_swap_engine import (
-        SwapRunResult,
-        SwapProposalResult,
-        SwapObjective,
         NO_SURVIVORS_MESSAGE,
+        SwapObjective,
+        SwapProposalResult,
+        SwapRunResult,
     )
     from advisors.backtest_gate_engine import HARVEY_LIU_FDR_Q, GatedBatch
 

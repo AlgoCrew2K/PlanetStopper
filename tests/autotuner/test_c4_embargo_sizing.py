@@ -30,11 +30,8 @@ Reference: López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4
 
 from __future__ import annotations
 
-import ast
 import pathlib
 import re
-
-import pytest
 
 _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
 _AUTOTUNER_SRC = _WORKTREE_ROOT / "autotuner.py"

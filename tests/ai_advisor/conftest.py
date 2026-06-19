@@ -115,9 +115,7 @@ def _stub_live_lens_seams():
         # Inner patches on requests.get in producer-body tests override this.
         patch(
             "requests.get",
-            side_effect=requests.exceptions.ConnectionError(
-                "unit-test-stub — offline"
-            ),
+            side_effect=requests.exceptions.ConnectionError("unit-test-stub — offline"),
         ),
         # No-op backoff sleeps on ai_advisor._fetch_with_backoff so retries
         # exhaust in < 1 ms instead of sleeping up to 8 s total.

@@ -57,7 +57,6 @@ Column names per plan §Deliverables #1:
 
 from __future__ import annotations
 
-import inspect
 import json
 import pathlib
 import sqlite3
@@ -147,22 +146,22 @@ def _insert_autotune_run_direct(
     run_timestamp: str = "2026-05-20T16:00:00",
     symphony_id: str = "test-symphony",
     # pre-020 columns
-    oos_alpha: "float | None" = None,
-    train_alpha: "float | None" = None,
-    baseline_decision: "str | None" = None,
-    fallback_oos_alpha: "float | None" = None,
-    default_oos_alpha: "float | None" = None,
-    selection_tstat: "float | None" = None,
+    oos_alpha: float | None = None,
+    train_alpha: float | None = None,
+    baseline_decision: str | None = None,
+    fallback_oos_alpha: float | None = None,
+    default_oos_alpha: float | None = None,
+    selection_tstat: float | None = None,
     # 020 EUT columns — default NULL (legacy-shape row)
-    spec_bundle_id: "str | None" = None,
-    d_spec: "int | None" = None,
-    n_effective: "int | None" = None,
-    ce_metric: "float | None" = None,
-    cvar_feasible: "int | None" = None,
-    gamma: "float | None" = None,
-    lambda_budget: "float | None" = None,
-    overfitting_verdict: "str | None" = None,
-    paired_heuristic_study_name: "str | None" = None,
+    spec_bundle_id: str | None = None,
+    d_spec: int | None = None,
+    n_effective: int | None = None,
+    ce_metric: float | None = None,
+    cvar_feasible: int | None = None,
+    gamma: float | None = None,
+    lambda_budget: float | None = None,
+    overfitting_verdict: str | None = None,
+    paired_heuristic_study_name: str | None = None,
 ) -> int:
     """Insert directly via sqlite3, bypassing application-layer guards.
 
@@ -660,7 +659,7 @@ def test_020_schema_validator_all_nine_columns_present_on_autotune_runs(migrated
 
     Fixture: tests/fixtures/database/autotune_runs_eut/autotune_runs_eut_schema.json
     """
-    assert _FIXTURE_PATH.is_file(), f"Fixture missing — run test_fixture_file_exists first."
+    assert _FIXTURE_PATH.is_file(), "Fixture missing — run test_fixture_file_exists first."
     fx = json.loads(_FIXTURE_PATH.read_text(encoding="utf-8"))
     expected_new_cols = {col["name"] for col in fx["new_columns"]}
 

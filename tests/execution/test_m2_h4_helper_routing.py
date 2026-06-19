@@ -26,12 +26,12 @@ from __future__ import annotations
 
 import ast
 import pathlib
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
-import math_engine
 import database as db
+import math_engine
 
 _WORKTREE_ROOT = pathlib.Path(__file__).parents[2]
 _MATH_ENGINE_PATH = _WORKTREE_ROOT / "math_engine.py"

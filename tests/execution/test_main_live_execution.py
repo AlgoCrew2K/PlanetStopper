@@ -96,17 +96,16 @@ import alpha_bot_execution
 # building blocks — duplicating them here would violate DRY and would mean
 # the two test modules drift apart over time.
 from tests.execution.test_main_pipeline import (
-    patched_environment,  # noqa: F401  (re-exported pytest fixture)
-    _seed_state,
+    _ACCOUNT_ID,
+    _ACTUAL_SYMPHONY_ID,
+    _FIXED_ET,
+    _SYMPHONY_ID,
+    _TICKER,
     _make_symphony_payload,
     _make_vwap_payload,
-    _SYMPHONY_ID,
-    _ACTUAL_SYMPHONY_ID,
-    _ACCOUNT_ID,
-    _TICKER,
-    _FIXED_ET,
+    _seed_state,
+    patched_environment,  # noqa: F401  (re-exported pytest fixture)
 )
-
 
 # Common scenario seed values — identical to B1 scenario 1 (trigger-fires
 # scenario) so any divergence between dry-run and live-run behaviour shows

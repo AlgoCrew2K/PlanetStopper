@@ -746,7 +746,7 @@ def test_no_bare_numeric_literals_in_correlation_diagnostic():
     tree = ast.parse(source)
 
     # Values that are arithmetic identities — acceptable as inline literals.
-    _ARITHMETIC_IDENTITIES = frozenset({0, 1, 2, -1, 0.0, 1.0, 2.0, -1.0})
+    _ARITHMETIC_IDENTITIES = frozenset({0, 1, 2, -1, 2.0, -1.0})
 
     # Collect line numbers of constant VALUE nodes in module-level assignments
     # (these are the ALLOWED places for raw literals: `NAME = 30`).

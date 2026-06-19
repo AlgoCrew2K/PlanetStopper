@@ -103,7 +103,6 @@ import json
 import pathlib
 from typing import Any
 
-import numpy as np
 import pytest
 
 import math_engine

@@ -43,7 +43,6 @@ import subprocess
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Common helpers — project-root resolution and AST scans
 # ---------------------------------------------------------------------------
@@ -424,7 +423,6 @@ class TestPortStateDisplaySurfaceUnchanged:
         code is gone.
         """
         import logging
-        import os
         import sqlite3
 
         db_path = tmp_path / "state.db"
@@ -459,7 +457,6 @@ class TestPortStateDisplaySurfaceUnchanged:
         (per feedback_no_hardcoded_test_values).
         """
         import logging
-        import os
 
         db_path = tmp_path / "state.db"
         monkeypatch.setenv("DB_PATH", str(db_path))

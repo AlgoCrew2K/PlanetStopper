@@ -1050,7 +1050,7 @@ class TestSurvivorCaveatsPresent:
                 f"Survivor '{proposal.candidate_id}' must have gate_result present."
             )
             assert proposal.gate_result.winner_p_adj is not None, (
-                f"Survivor gate_result.winner_p_adj must not be None (AC-3.3)."
+                "Survivor gate_result.winner_p_adj must not be None (AC-3.3)."
             )
             assert math.isfinite(proposal.gate_result.winner_p_adj), (
                 f"winner_p_adj={proposal.gate_result.winner_p_adj!r} must be finite."

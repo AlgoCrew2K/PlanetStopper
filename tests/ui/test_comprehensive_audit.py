@@ -27,10 +27,7 @@ import pathlib
 import re
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 import app as app_module
-import database
 
 _STATIC_DIR = pathlib.Path(__file__).parent.parent.parent / "static"
 _TEMPLATES_DIR = pathlib.Path(__file__).parent.parent.parent / "templates"

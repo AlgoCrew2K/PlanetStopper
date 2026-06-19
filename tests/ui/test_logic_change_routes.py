@@ -29,11 +29,9 @@ Fixture: tests/fixtures/ai_advisor/m4/logic_change_proposals_basic.json
 from __future__ import annotations
 
 import ast
-import importlib
-import json
 import pathlib
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -79,14 +77,14 @@ def _make_logic_change_run_result(
     All values are shape/structure-derived; no producer-computed literals.
     """
     _ensure_repo_on_path()
+    from advisors.backtest_gate_engine import HARVEY_LIU_FDR_Q, GatedBatch
     from advisors.logic_change_engine import (
+        NO_SURVIVORS_MESSAGE,
+        LogicChangeObjective,
         LogicChangeRunResult,
         LogicProposalResult,
-        LogicChangeObjective,
         LogicTweak,
-        NO_SURVIVORS_MESSAGE,
     )
-    from advisors.backtest_gate_engine import HARVEY_LIU_FDR_Q, GatedBatch
 
     gate_batch = GatedBatch(results=[], survivors=[], n_candidates=1, fdr_q=HARVEY_LIU_FDR_Q)
     objective = LogicChangeObjective(
@@ -961,7 +959,7 @@ class TestAcceptanceVerdictGateReason:
         self,
         vetoes_passed: bool,
         decision: str,
-        panel_score: "float | None" = None,
+        panel_score: float | None = None,
     ) -> object:
         """Build a LogicChangeRunResult whose proposal carries a real CandidateGateResult
         with a real AcceptanceVerdict (no .reason attribute).
@@ -971,11 +969,11 @@ class TestAcceptanceVerdictGateReason:
         """
         _ensure_repo_on_path()
         from acceptance_gate import AcceptanceVerdict
-        from advisors.backtest_gate_engine import CandidateGateResult, HARVEY_LIU_FDR_Q, GatedBatch
+        from advisors.backtest_gate_engine import HARVEY_LIU_FDR_Q, CandidateGateResult, GatedBatch
         from advisors.logic_change_engine import (
+            LogicChangeObjective,
             LogicChangeRunResult,
             LogicProposalResult,
-            LogicChangeObjective,
             LogicTweak,
         )
 

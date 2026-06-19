@@ -144,7 +144,7 @@ class TestMigrationListRegistration:
         db = _import_database()
         mf = db._MIGRATION_FILES
         assert _MIGRATION_FILE in mf, (
-            f"'028_autotune_runs_pbo.sql' must be present in _MIGRATION_FILES"
+            "'028_autotune_runs_pbo.sql' must be present in _MIGRATION_FILES"
         )
         idx_028 = mf.index(_MIGRATION_FILE)
 

@@ -110,8 +110,9 @@ class TestDefaultPageShowsAllProposals:
 
         RED: current /ai-advisor route does not prefetch strategy builder rows.
         """
-        import app as _am
         from unittest.mock import MagicMock, patch
+
+        import app as _am
 
         _am.app.config["TESTING"] = True
 
@@ -145,8 +146,9 @@ class TestDefaultPageShowsAllProposals:
         We verify the accessor call contract (not full-page HTML) to avoid false
         positives from legitimate OC/SC observations in the Overview panel.
         """
-        import app as _am
         from unittest.mock import MagicMock, patch
+
+        import app as _am
 
         _am.app.config["TESTING"] = True
 

@@ -25,7 +25,6 @@ Fixture provenance: schema-derived; no producer-computed values.
 
 from __future__ import annotations
 
-import ast
 import inspect
 import pathlib
 import sqlite3

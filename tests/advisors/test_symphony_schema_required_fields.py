@@ -159,9 +159,7 @@ class TestMakeRootDescriptionField:
         for i in range(3):
             asset = m.make_asset(f"TICK{i}")
             root = m.make_root(f"Symphony {i}", "daily", [m.make_weight_equal([asset])])
-            assert "description" in root, (
-                f'"description" absent from make_root call #{i}'
-            )
+            assert "description" in root, f'"description" absent from make_root call #{i}'
             assert root["description"] == "", (
                 f'"description" must be "" on call #{i}; got {root["description"]!r}'
             )
@@ -193,7 +191,7 @@ class TestMakeInverseVolWindowDaysField:
         assert "window-days" in node, (
             'make_inverse_vol output must include "window-days" key. '
             "Without it, Composer POST /backtest returns HTTP 422 "
-            "\"unknown-function-parameter\". "
+            '"unknown-function-parameter". '
             f"Actual keys: {list(node.keys())}"
         )
 
@@ -207,12 +205,9 @@ class TestMakeInverseVolWindowDaysField:
         m = _import_schema()
         spy = _minimal_asset(m)
         node = m.make_inverse_vol([spy])
-        assert "window-days" in node, (
-            '"window-days" key absent from make_inverse_vol output'
-        )
+        assert "window-days" in node, '"window-days" key absent from make_inverse_vol output'
         assert node["window-days"] == 30, (
-            f'make_inverse_vol "window-days" must default to 30; '
-            f"got {node['window-days']!r}"
+            f'make_inverse_vol "window-days" must default to 30; got {node["window-days"]!r}'
         )
 
     def test_make_inverse_vol_window_days_is_int(self):
@@ -348,9 +343,7 @@ class TestAdditiveKeysBackwardCompatibility:
         root = m.make_root("UUID Test", "daily", [m.make_weight_equal([_minimal_asset(m)])])
         assert "id" in root, '"id" missing after fix'
         parsed = uuid.UUID(root["id"])
-        assert parsed.version == 4, (
-            f'"id" must be UUID v4 after fix; got version {parsed.version}'
-        )
+        assert parsed.version == 4, f'"id" must be UUID v4 after fix; got version {parsed.version}'
 
     def test_make_root_children_are_deep_copies_with_new_keys(self):
         """Children isolation invariant must hold after the fix.
@@ -545,9 +538,7 @@ class TestNewFieldsPassValidation:
         # and confirm lint_tree returns a list (not raising)
         root = _minimal_inverse_vol_root(m)
         warnings = m.lint_tree(root)
-        assert isinstance(warnings, list), (
-            f"lint_tree must return a list; got {type(warnings)}"
-        )
+        assert isinstance(warnings, list), f"lint_tree must return a list; got {type(warnings)}"
         # No warning should specifically complain about "description" or "window-days"
         # being present (they are correct fields, not lint targets)
         for w in warnings:

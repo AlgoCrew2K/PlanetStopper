@@ -65,7 +65,7 @@ _FLAG_ENV_VAR = "SECOND_WINDOW_CVAR_ENABLED"
 
 def compute_divergence_explainer_observation(
     autotune_run: dict,
-    cvar_row: "dict | None",
+    cvar_row: dict | None,
     *,
     second_window_enabled: bool,
 ) -> dict:
@@ -95,7 +95,7 @@ def compute_divergence_explainer_observation(
     # Mandatory column access — KeyError is intentional on a missing 'id'.
     # A silent no-op would produce subject_id='None', corrupting the audit trail.
     run_id: int = autotune_run["id"]
-    spec_bundle_id: "str | None" = autotune_run.get("spec_bundle_id")
+    spec_bundle_id: str | None = autotune_run.get("spec_bundle_id")
 
     if not second_window_enabled:
         # §B is off: write a minimal NOT_APPLICABLE row for the audit trail.
@@ -149,9 +149,9 @@ def compute_divergence_explainer_observation(
 
 def run_divergence_explainer(
     autotune_run: dict,
-    cvar_row: "dict | None",
+    cvar_row: dict | None,
     *,
-    second_window_enabled: "bool | None" = None,
+    second_window_enabled: bool | None = None,
 ) -> int:
     """Compute the divergence-explainer observation and persist it.
 

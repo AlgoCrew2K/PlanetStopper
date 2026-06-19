@@ -40,8 +40,6 @@ import io
 import json
 import pathlib
 
-import pytest
-
 _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
 _AUTOTUNER_SRC = _WORKTREE_ROOT / "autotuner.py"
 _FIXTURE = _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "run_simulation_objective_ordering.json"

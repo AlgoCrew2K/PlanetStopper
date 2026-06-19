@@ -63,7 +63,6 @@ import pytest
 
 import math_engine
 
-
 # ---------------------------------------------------------------------------
 # Constant rename: MC_BREAKDOWN_THRESHOLD exists, value preserved at 60.0
 # ---------------------------------------------------------------------------

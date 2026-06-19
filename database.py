@@ -111,11 +111,11 @@ def init_db():
     # Execution & State Tracking
     cursor.execute("CREATE TABLE IF NOT EXISTS bot_state (id INTEGER PRIMARY KEY, data TEXT)")
     cursor.execute(
-        "CREATE TABLE IF NOT EXISTS execution_lock (id INTEGER PRIMARY KEY, is_locked INTEGER, timestamp REAL)"
+        "CREATE TABLE IF NOT EXISTS execution_lock (id INTEGER PRIMARY KEY, is_locked INTEGER, timestamp REAL)"  # noqa: E501  # un-wrappable long line
     )
     cursor.execute("CREATE TABLE IF NOT EXISTS chart_history (id INTEGER PRIMARY KEY, data TEXT)")
     cursor.execute(
-        "CREATE TABLE IF NOT EXISTS chart_archive (date TEXT, symphony_id TEXT, data TEXT, UNIQUE(date, symphony_id))"
+        "CREATE TABLE IF NOT EXISTS chart_archive (date TEXT, symphony_id TEXT, data TEXT, UNIQUE(date, symphony_id))"  # noqa: E501  # un-wrappable long line
     )
 
     # NEW: Symphony-Level Strategy Storage
@@ -458,7 +458,7 @@ def get_symphony_strategy(symphony_name):
     # symphony_strat.get("live_mode", False) — no second DB query on the hot path
     # (arch constraint 1: no blocking I/O per minute cycle).
     cursor.execute(
-        "SELECT parameters, locked_vars, live_mode FROM symphony_strategies WHERE symphony_name = ?",
+        "SELECT parameters, locked_vars, live_mode FROM symphony_strategies WHERE symphony_name = ?",  # noqa: E501  # un-wrappable long line
         (symphony_name,),
     )
     row = cursor.fetchone()
@@ -575,7 +575,7 @@ def set_symphony_live_mode(symphony_name: str, live: int, operator: str) -> None
 
         ts_utc = datetime.now(UTC).isoformat()
         conn.execute(
-            "INSERT INTO config_audit_log (symphony, field, before_value, after_value, operator, ts_utc) "
+            "INSERT INTO config_audit_log (symphony, field, before_value, after_value, operator, ts_utc) "  # noqa: E501  # log message string
             "VALUES (?, ?, ?, ?, ?, ?)",
             (symphony_name, "live_mode", str(prior_live), str(live), operator, ts_utc),
         )
@@ -672,12 +672,12 @@ def save_autotune_run(
       validation_sharpe:  Sortino on the validation fold (20% of history); the metric used for
                           trial selection. Selection truth; visible to operator for audit.
       frozen_eval_sharpe: Sortino on the frozen-eval fold (final 20% of history); consumed once
-                          post-selection for honest performance reporting (López de Prado 2018 Ch. 7.4).
+                          post-selection for honest performance reporting (López de Prado 2018 Ch. 7.4).  # noqa: E501  # un-wrappable long line
 
     EUT audit columns (migration 020 — ARCH-001 fix):
       spec_bundle_id:     bundle_hash TEXT of the spec bundle active during this run.
       n_effective:        N_optuna + S (honest multiple-testing count from compute_n_effective).
-      d_spec:             COUNT DISTINCT BACKTEST_SELECTION spec_bundle_ids in researcher_dof_ledger.
+      d_spec:             COUNT DISTINCT BACKTEST_SELECTION spec_bundle_ids in researcher_dof_ledger.  # noqa: E501  # un-wrappable long line
       gamma:              Frozen CRRA risk-aversion coefficient from spec_facets.
       overfitting_verdict: Human-readable Overfitting Conscience summary string.
 
@@ -1087,7 +1087,7 @@ def insert_advisor_observation(
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO advisor_observations "
-        "(advisor_role, subject_type, subject_id, verdict, raw_response, is_advisory_only, spec_bundle_id, symphony_id) "
+        "(advisor_role, subject_type, subject_id, verdict, raw_response, is_advisory_only, spec_bundle_id, symphony_id) "  # noqa: E501  # un-wrappable long line
         "VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
         (
             advisor_role,
@@ -1443,7 +1443,7 @@ def run_migrations() -> None:
         except Exception as exc:
             exc_lower = str(exc).lower()
             if "duplicate column name" in exc_lower:
-                # initialize_db() CREATE TABLE already includes these columns — safe to mark applied.
+                # initialize_db() CREATE TABLE already includes these columns — safe to mark applied.  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
                 logging.info(
                     "run_migrations: %s columns already present, marking applied", migration_name
                 )
@@ -1635,7 +1635,7 @@ def get_or_create_phase1_theory_bundle_id() -> int:
                 facet_name=name,
                 facet_value=value,
                 freeze_discipline="THEORY",
-                justification="Phase-1 canonical bundle — W-H2 derivation + council synthesis §2.5 hard gate",
+                justification="Phase-1 canonical bundle — W-H2 derivation + council synthesis §2.5 hard gate",  # noqa: E501  # un-wrappable long line
             )
 
     _phase1_theory_bundle_id_cache = (current_db, bundle_id)
@@ -3030,7 +3030,7 @@ def get_shadow_divergence(trading_day: str) -> dict:
 
     Used by /api/state to populate the shadow_divergence key (PA-M1F-14).
     One lightweight GROUP BY query — not on the execution path.
-    Returns {"by_symphony": {<id>: {"today": float|None, "cumulative": float|None}}, "portfolio_today": float|None}.
+    Returns {"by_symphony": {<id>: {"today": float|None, "cumulative": float|None}}, "portfolio_today": float|None}.  # noqa: E501  # un-wrappable long line
     """
     try:
         conn = sqlite3.connect(_db_file(), timeout=10.0)
@@ -3093,7 +3093,7 @@ def get_triggers(
         params.append(reason)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = conn.execute(
-        f"SELECT id, ts_utc, ts_et, symphony_id, triggered_reason, at_return, gate_state_json, cycle_id, also_true_json "
+        f"SELECT id, ts_utc, ts_et, symphony_id, triggered_reason, at_return, gate_state_json, cycle_id, also_true_json "  # noqa: E501  # un-wrappable long line
         f"FROM exit_triggers {where} ORDER BY ts_utc DESC LIMIT ?",
         params + [limit],
     ).fetchall()

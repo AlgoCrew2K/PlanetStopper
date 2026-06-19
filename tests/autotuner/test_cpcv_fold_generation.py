@@ -241,7 +241,7 @@ class TestAC1NamedConstants:
             "autotuner._CPCV_N_SPLITS not found — RED until implementer adds it."
         )
         expected = math.comb(autotuner._CPCV_N_GROUPS, autotuner._CPCV_K_TEST_GROUPS)
-        assert autotuner._CPCV_N_SPLITS == expected, (
+        assert expected == autotuner._CPCV_N_SPLITS, (
             f"_CPCV_N_SPLITS={autotuner._CPCV_N_SPLITS} but "
             f"math.comb({autotuner._CPCV_N_GROUPS},{autotuner._CPCV_K_TEST_GROUPS})={expected}."
         )
@@ -277,7 +277,7 @@ class TestAC1NamedConstants:
         expected = int(
             (autotuner._CPCV_K_TEST_GROUPS / autotuner._CPCV_N_GROUPS) * autotuner._CPCV_N_SPLITS
         )
-        assert autotuner._CPCV_N_PATHS == expected, (
+        assert expected == autotuner._CPCV_N_PATHS, (
             f"_CPCV_N_PATHS={autotuner._CPCV_N_PATHS}; expected "
             f"phi[{autotuner._CPCV_N_GROUPS},{autotuner._CPCV_K_TEST_GROUPS}]={expected}."
         )
@@ -310,7 +310,6 @@ class TestAC1NamedConstants:
             "autotuner must expose _generate_cpcv_folds(sorted_dates, n_groups, "
             "k_test, purge_days, embargo_days) (AC-1). RED until added."
         )
-        import inspect
 
         assert callable(autotuner._generate_cpcv_folds), "_generate_cpcv_folds must be callable."
 
@@ -1186,15 +1185,13 @@ class TestAC2CanonicalPathCompleteness:
                 missing = set(range(n_groups)) - groups_covered
                 extra = groups_covered - set(range(n_groups))
                 failures.append(
-                    "path {}: covers groups {}, "
-                    "missing={}, unexpected={}. "
-                    "Path has {} dates.".format(
-                        i, sorted(groups_covered), sorted(missing), sorted(extra), len(path_dates)
-                    )
+                    f"path {i}: covers groups {sorted(groups_covered)}, "
+                    f"missing={sorted(missing)}, unexpected={sorted(extra)}. "
+                    f"Path has {len(path_dates)} dates."
                 )
 
         assert not failures, (
-            "Path completeness FAILED on {} path(s):\n".format(len(failures))
+            f"Path completeness FAILED on {len(failures)} path(s):\n"
             + "\n".join(failures)
             + "\n\nEach CPCV backtest path must cover ALL N=6 groups exactly once "
             "(canonical mlfinlab _fill_backtest_paths per LdP Ch.7.4). "
@@ -1236,14 +1233,12 @@ class TestAC2CanonicalPathCompleteness:
             duplicated = {g: cnt for g, cnt in group_appearances.items() if cnt > group_size}
             if duplicated:
                 failures.append(
-                    "path {}: groups with duplicate appearances (>{} dates): "
-                    "{}. All 6 groups should appear exactly {} times each.".format(
-                        i, group_size, duplicated, group_size
-                    )
+                    f"path {i}: groups with duplicate appearances (>{group_size} dates): "
+                    f"{duplicated}. All 6 groups should appear exactly {group_size} times each."
                 )
 
         assert not failures, (
-            "Group duplication found in {} path(s):\n".format(len(failures))
+            f"Group duplication found in {len(failures)} path(s):\n"
             + "\n".join(failures)
             + "\nNo group may appear more than once within a single CPCV path. "
             "The modulo round-robin assigns splits with overlapping groups to the "
@@ -1272,13 +1267,11 @@ class TestAC2CanonicalPathCompleteness:
                     if path_dates[j] < path_dates[j - 1]
                 ][:3]
                 failures.append(
-                    "path {}: dates are NOT monotonically sorted. First violations: {}".format(
-                        i, out_of_order
-                    )
+                    f"path {i}: dates are NOT monotonically sorted. First violations: {out_of_order}"
                 )
 
         assert not failures, (
-            "Chronological monotonicity violated on {} path(s):\n".format(len(failures))
+            f"Chronological monotonicity violated on {len(failures)} path(s):\n"
             + "\n".join(failures)
             + "\n_aggregate_cpcv_paths must return dates sorted in chronological order "
             "within each path."
@@ -1330,21 +1323,19 @@ class TestAC2CanonicalPathCompleteness:
             expected_paths = canonical.get(test_groups)
             if expected_paths is None:
                 failures.append(
-                    "split {}: test_groups={} not in canonical map.".format(split_idx, test_groups)
+                    f"split {split_idx}: test_groups={test_groups} not in canonical map."
                 )
                 continue
             actual_pm = sorted(set(fold["path_membership"]))
             if actual_pm != expected_paths:
                 failures.append(
-                    "split {} (test_groups={}): "
-                    "path_membership={}, "
-                    "expected={} per canonical mlfinlab _fill_backtest_paths.".format(
-                        split_idx, test_groups, actual_pm, expected_paths
-                    )
+                    f"split {split_idx} (test_groups={test_groups}): "
+                    f"path_membership={actual_pm}, "
+                    f"expected={expected_paths} per canonical mlfinlab _fill_backtest_paths."
                 )
 
         assert not failures, (
-            "Canonical path membership mismatch on {} split(s):\n".format(len(failures))
+            f"Canonical path membership mismatch on {len(failures)} split(s):\n"
             + "\n".join(failures)
             + "\n\nThe fixture encodes the canonical mlfinlab _fill_backtest_paths "
             "assignment for N=6, k=2. Adjacent pairs (0,1),(1,2),(2,3),(3,4),(4,5) "
@@ -1391,9 +1382,10 @@ class TestAC2CanonicalPathCompleteness:
                         )
                     )
 
-        assert not failures, "Adjacent-pair single-membership violated on {} split(s):\n".format(
-            len(failures)
-        ) + "\n".join(failures)
+        assert not failures, (
+            f"Adjacent-pair single-membership violated on {len(failures)} split(s):\n"
+            + "\n".join(failures)
+        )
 
     def test_nonadjacent_combos_have_two_path_membership(self, folds_and_paths):
         """
@@ -1434,7 +1426,7 @@ class TestAC2CanonicalPathCompleteness:
                     )
 
         assert not failures, (
-            "Non-adjacent-pair two-path membership violated on {} split(s):\n".format(len(failures))
+            f"Non-adjacent-pair two-path membership violated on {len(failures)} split(s):\n"
             + "\n".join(failures)
         )
 
@@ -1467,19 +1459,15 @@ class TestAC2CanonicalPathCompleteness:
             count = path_combo_counts[p_idx]
             if count != expected_combos_per_path:
                 failures.append(
-                    "path {}: uses {} combos (expected {})".format(
-                        p_idx, count, expected_combos_per_path
-                    )
+                    f"path {p_idx}: uses {count} combos (expected {expected_combos_per_path})"
                 )
 
         assert not failures, (
             "Combos-per-path invariant FAILED:\n"
             + "\n".join(failures)
-            + "\nEach of the {} paths must receive contributions from "
-            "exactly N-1={} combinations. "
-            "Modulo round-robin gives 15/5=3 combos per path - wrong.".format(
-                n_paths_expected, expected_combos_per_path
-            )
+            + f"\nEach of the {n_paths_expected} paths must receive contributions from "
+            f"exactly N-1={expected_combos_per_path} combinations. "
+            "Modulo round-robin gives 15/5=3 combos per path - wrong."
         )
 
     def test_each_path_date_coverage_from_membership(self, folds_and_paths):
@@ -1510,13 +1498,11 @@ class TestAC2CanonicalPathCompleteness:
             missing = expected_dates - path_dates
             if extra or missing:
                 failures.append(
-                    "path {}: extra={} dates, missing={} dates. Expected {}, got {}.".format(
-                        path_idx, len(extra), len(missing), len(expected_dates), len(path_dates)
-                    )
+                    f"path {path_idx}: extra={len(extra)} dates, missing={len(missing)} dates. Expected {len(expected_dates)}, got {len(path_dates)}."
                 )
 
         assert not failures, (
-            "Path date coverage mismatch on {} path(s):\n".format(len(failures))
+            f"Path date coverage mismatch on {len(failures)} path(s):\n"
             + "\n".join(failures)
             + "\nEach path's dates must be the union of test_dates from all "
             "combinations in its path_membership."

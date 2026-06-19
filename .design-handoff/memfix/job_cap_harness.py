@@ -12,6 +12,7 @@ Usage:
 It installs the cap, then runs pytest IN-PROCESS so the MemoryError traceback
 points at the real allocation site inside the test.
 """
+
 from __future__ import annotations
 
 import ctypes
@@ -75,14 +76,16 @@ def install_cap(cap_bytes: int) -> None:
 
     info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
     info.BasicLimitInformation.LimitFlags = (
-        JOB_OBJECT_LIMIT_PROCESS_MEMORY
-        | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
+        JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
     )
     info.ProcessMemoryLimit = cap_bytes
 
     kernel32.SetInformationJobObject.restype = wintypes.BOOL
     kernel32.SetInformationJobObject.argtypes = [
-        wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD,
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
     ]
     ok = kernel32.SetInformationJobObject(
         job,
@@ -104,8 +107,10 @@ def install_cap(cap_bytes: int) -> None:
 
     # Keep the handle alive for the lifetime of the process.
     globals()["_JOB_HANDLE"] = job
-    print(f"[job-cap] committed-memory cap installed: {cap_bytes/1024/1024/1024:.2f} GB",
-          flush=True)
+    print(
+        f"[job-cap] committed-memory cap installed: {cap_bytes / 1024 / 1024 / 1024:.2f} GB",
+        flush=True,
+    )
 
 
 def _self_test(cap_bytes: int) -> int:
@@ -118,10 +123,13 @@ def _self_test(cap_bytes: int) -> int:
             b = bytearray(1024 * 1024 * 1024)
             b[::4096] = b"\x01" * (len(b) // 4096 + (1 if len(b) % 4096 else 0))
             chunks.append(b)
-            print(f"[self-test] committed ~{i+1} GiB", flush=True)
+            print(f"[self-test] committed ~{i + 1} GiB", flush=True)
     except MemoryError:
-        print(f"[self-test] PASS: MemoryError fired after ~{len(chunks)} GiB "
-              f"(cap={cap_bytes/1024/1024/1024:.2f} GB)", flush=True)
+        print(
+            f"[self-test] PASS: MemoryError fired after ~{len(chunks)} GiB "
+            f"(cap={cap_bytes / 1024 / 1024 / 1024:.2f} GB)",
+            flush=True,
+        )
         return 0
     print("[self-test] FAIL: no MemoryError — cap did NOT fire", flush=True)
     return 1
@@ -133,7 +141,7 @@ def main() -> int:
         return 2
     split = sys.argv.index("--")
     cap_gb = float(sys.argv[1])
-    rest = sys.argv[split + 1:]
+    rest = sys.argv[split + 1 :]
     cap_bytes = int(cap_gb * 1024 * 1024 * 1024)
 
     install_cap(cap_bytes)
@@ -142,6 +150,7 @@ def main() -> int:
         return _self_test(cap_bytes)
 
     import pytest
+
     print(f"[job-cap] running: pytest {' '.join(rest)}", flush=True)
     return pytest.main(rest)
 

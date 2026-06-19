@@ -53,7 +53,6 @@ from __future__ import annotations
 
 import autotuner
 
-
 # ---------------------------------------------------------------------------
 # Fixture builders — reused verbatim from the (deleted) obsolete suite; only
 # the assertions that consume them have been re-oriented.

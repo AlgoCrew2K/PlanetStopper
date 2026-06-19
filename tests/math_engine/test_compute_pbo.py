@@ -37,7 +37,6 @@ Fixture path: tests/fixtures/math/cscv_pbo_golden.json
 
 from __future__ import annotations
 
-import importlib
 import itertools
 import json
 import math
@@ -113,7 +112,7 @@ class TestComputePboConstants:
             "math_engine must expose PBO_REJECT_THRESHOLD = 0.5 "
             "(named constant; comment must cite Bailey&LdP 2014 and explain 0.5 = random-selection boundary)"
         )
-        assert me.PBO_REJECT_THRESHOLD == pytest.approx(0.5, abs=1e-12)
+        assert pytest.approx(0.5, abs=1e-12) == me.PBO_REJECT_THRESHOLD
 
     def test_pbo_reject_threshold_source_comment_in_source(self):
         """PBO_REJECT_THRESHOLD must have a sourced comment citing Bailey&LdP 2014."""
@@ -312,12 +311,12 @@ class TestComputePboEdgeCases:
         assert threshold == pytest.approx(0.5, abs=1e-12)
         # PBO=0.5 is right at the boundary — must not be rejected.
         # PBO > 0.5 is the reject zone. Verify the logic is strict inequality.
-        assert not (0.5 > threshold), (
+        assert not (threshold < 0.5), (
             "PBO=0.5 at threshold: accept condition is pbo <= threshold, "
             "so 0.5 must NOT trigger a reject veto"
         )
         # PBO=0.50001 > threshold must reject:
-        assert 0.50001 > threshold, "PBO=0.50001 must exceed threshold and trigger reject"
+        assert threshold < 0.50001, "PBO=0.50001 must exceed threshold and trigger reject"
 
 
 # ---------------------------------------------------------------------------
@@ -397,10 +396,7 @@ class TestComputePboOrthogonality:
         # Collect all imported names.
         imported_names: set[str] = set()
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                for alias in node.names:
-                    imported_names.add(alias.asname or alias.name)
-            elif isinstance(node, ast.Import):
+            if isinstance(node, ast.ImportFrom) or isinstance(node, ast.Import):
                 for alias in node.names:
                     imported_names.add(alias.asname or alias.name)
         pbo_symbols = {"compute_pbo", "PBO_REJECT_THRESHOLD", "_CSCV_TOP_K", "_CSCV_S"}

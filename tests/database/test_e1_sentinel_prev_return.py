@@ -20,14 +20,12 @@ Fixture provenance:
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-from typing import Optional
 
 import pytest
 
-from database import wipe_transient_state
 import math_engine
+from database import wipe_transient_state
 
 # ---------------------------------------------------------------------------
 # Fixture loading helpers
@@ -47,7 +45,7 @@ def _load(relative_path: str) -> dict:
 
 
 def _compute_velocity_with_sentinel(
-    prev_return: Optional[float],
+    prev_return: float | None,
     current_return: float,
     para_threshold: float,
     currently_armed: bool,
@@ -242,7 +240,7 @@ def test_autotuner_replay_mirrors_sentinel_cycle1_velocity_zero():
     exp = fx["expected"]
 
     # Replicate what the fixed autotuner.py replay loop does at tick_idx=0
-    prev_return: Optional[float] = inp["initial_prev_return"]  # must be None per fix
+    prev_return: float | None = inp["initial_prev_return"]  # must be None per fix
     tick_return: float = inp["tick_return"]
     para_threshold: float = inp["para_threshold"]
 

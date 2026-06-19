@@ -424,7 +424,10 @@ def test_observation_with_spec_bundle_id_references_existing_bundle():
     verifies that the column accepts the value and it survives the round-trip;
     referential integrity is the application's responsibility.
     """
-    from database import insert_advisor_observation, get_advisor_observations_for_subject  # noqa: PLC0415
+    from database import (  # noqa: PLC0415
+        get_advisor_observations_for_subject,
+        insert_advisor_observation,
+    )
 
     bundle_hash = "deadbeef1234567890abcdef"  # representative hash string
     row_id = insert_advisor_observation(**_computed_row_kwargs(spec_bundle_id=bundle_hash))
@@ -440,7 +443,10 @@ def test_observation_with_spec_bundle_id_references_existing_bundle():
 
 def test_observation_with_null_spec_bundle_id_is_legal():
     """spec_bundle_id=None is permitted (not all observations reference a bundle)."""
-    from database import insert_advisor_observation, get_advisor_observations_for_subject  # noqa: PLC0415
+    from database import (  # noqa: PLC0415
+        get_advisor_observations_for_subject,
+        insert_advisor_observation,
+    )
 
     insert_advisor_observation(**_computed_row_kwargs(spec_bundle_id=None))
     rows = get_advisor_observations_for_subject("autotune_run", "run-001")
@@ -506,7 +512,10 @@ def test_insert_advisor_observation_ids_are_monotonically_increasing():
 
 def test_is_advisory_only_stored_as_1_when_caller_omits_it():
     """When the caller does not supply is_advisory_only, it must default to 1."""
-    from database import insert_advisor_observation, get_advisor_observations_for_subject  # noqa: PLC0415
+    from database import (  # noqa: PLC0415
+        get_advisor_observations_for_subject,
+        insert_advisor_observation,
+    )
 
     insert_advisor_observation(**_computed_row_kwargs())
     rows = get_advisor_observations_for_subject("autotune_run", "run-001")
@@ -526,8 +535,12 @@ def test_is_advisory_only_cannot_be_set_to_0():
     hard-wires the column to 1. The accessor-level contract is that 0 stored is
     the failing case. Either an exception is raised or 1 is stored; never 0.
     """
-    from database import insert_advisor_observation, get_advisor_observations_for_subject  # noqa: PLC0415
     import os
+
+    from database import (  # noqa: PLC0415
+        get_advisor_observations_for_subject,
+        insert_advisor_observation,
+    )
 
     db_path = os.environ["DB_PATH"]
 
@@ -564,7 +577,10 @@ def test_computed_row_raw_response_empty_dict_round_trips():
     read so callers receive a Python dict — consistent with the llm_suggestions
     precedent for JSON-blob columns (database.py:660-676).
     """
-    from database import insert_advisor_observation, get_advisor_observations_for_subject  # noqa: PLC0415
+    from database import (  # noqa: PLC0415
+        get_advisor_observations_for_subject,
+        insert_advisor_observation,
+    )
 
     insert_advisor_observation(**_computed_row_kwargs())
     rows = get_advisor_observations_for_subject("autotune_run", "run-001")
@@ -595,8 +611,12 @@ def test_llm_authored_row_raw_response_payload_round_trips():
     raw_response with the full LLM JSON output.  The accessor must deserialise
     it on read so callers do not have to call json.loads themselves.
     """
-    from database import insert_advisor_observation, get_advisor_observations_for_subject  # noqa: PLC0415
     import json  # noqa: PLC0415
+
+    from database import (  # noqa: PLC0415
+        get_advisor_observations_for_subject,
+        insert_advisor_observation,
+    )
 
     kwargs = _llm_authored_row_kwargs(subject_id="run-llm-001")
     expected_payload = kwargs["raw_response"]
@@ -626,7 +646,10 @@ def test_get_advisor_observations_for_role_returns_only_matching_role():
     Rows inserted under a different advisor_role must be excluded — the role
     discriminator is the primary filter for the multi-role single-table layout.
     """
-    from database import insert_advisor_observation, get_advisor_observations_for_role  # noqa: PLC0415
+    from database import (  # noqa: PLC0415
+        get_advisor_observations_for_role,
+        insert_advisor_observation,
+    )
 
     # Insert one OVERFITTING_CONSCIENCE and two SPEC_CRITIC rows.
     insert_advisor_observation(**_computed_row_kwargs(subject_id="role-disc-oc"))
@@ -796,7 +819,10 @@ def test_get_advisor_observations_for_subject_filters_correctly():
     and vice versa.  A query that joins on only one dimension would return false
     positives — this test catches that.
     """
-    from database import insert_advisor_observation, get_advisor_observations_for_subject  # noqa: PLC0415
+    from database import (  # noqa: PLC0415
+        get_advisor_observations_for_subject,
+        insert_advisor_observation,
+    )
 
     # Three rows: two for the target (type=autotune_run, id=run-target),
     # one decoy with same type but different id, one decoy with different type.
@@ -837,7 +863,10 @@ def test_get_advisor_observations_for_subject_returns_all_expected_keys():
     This prevents the accessor from silently dropping fields (e.g. SELECT of a
     subset of columns instead of SELECT *).
     """
-    from database import insert_advisor_observation, get_advisor_observations_for_subject  # noqa: PLC0415
+    from database import (  # noqa: PLC0415
+        get_advisor_observations_for_subject,
+        insert_advisor_observation,
+    )
 
     insert_advisor_observation(**_computed_row_kwargs())
     rows = get_advisor_observations_for_subject("autotune_run", "run-001")
@@ -864,6 +893,7 @@ def test_raw_response_default_fires_when_omitted():
     """
     import json as _json  # noqa: PLC0415
     import os  # noqa: PLC0415
+
     from database import insert_advisor_observation  # noqa: PLC0415
 
     # Call with only the required positional fields — no raw_response.

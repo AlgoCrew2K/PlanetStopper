@@ -23,7 +23,6 @@ import time
 
 import requests
 import requests.exceptions
-
 from pydantic import BaseModel
 
 import database
@@ -367,9 +366,9 @@ _SEC_KEY_CONCEPTS: dict[str, tuple[str, tuple[str, ...]]] = {
             "Revenues",
         ),
     ),
-    "NetIncomeLoss":      ("Net Income / Loss",   ("NetIncomeLoss",)),
-    "Assets":             ("Total Assets",        ("Assets",)),
-    "Liabilities":        ("Total Liabilities",   ("Liabilities",)),
+    "NetIncomeLoss": ("Net Income / Loss", ("NetIncomeLoss",)),
+    "Assets": ("Total Assets", ("Assets",)),
+    "Liabilities": ("Total Liabilities", ("Liabilities",)),
     "StockholdersEquity": ("Stockholders Equity", ("StockholdersEquity",)),
 }
 
@@ -379,16 +378,18 @@ _SEC_KEY_CONCEPTS: dict[str, tuple[str, tuple[str, ...]]] = {
 # This basket guarantees a non-empty fundamentals universe at 03:00 / off-hours /
 # flat markets when logic_holdings is empty (mirrors _PROXY_UNIVERSE in lens_technicals).
 # Source: S&P 500 representative cross-sector companies (2024 large-cap constituents).
-_FUNDAMENTALS_PROXY_UNIVERSE: frozenset[str] = frozenset({
-    "AAPL",   # Apple Inc. — Technology
-    "MSFT",   # Microsoft Corp. — Technology
-    "GOOGL",  # Alphabet Inc. — Communication Services
-    "AMZN",   # Amazon.com Inc. — Consumer Discretionary
-    "NVDA",   # NVIDIA Corp. — Technology (semiconductors)
-    "JPM",    # JPMorgan Chase & Co. — Financials
-    "XOM",    # Exxon Mobil Corp. — Energy
-    "JNJ",    # Johnson & Johnson — Health Care
-})
+_FUNDAMENTALS_PROXY_UNIVERSE: frozenset[str] = frozenset(
+    {
+        "AAPL",  # Apple Inc. — Technology
+        "MSFT",  # Microsoft Corp. — Technology
+        "GOOGL",  # Alphabet Inc. — Communication Services
+        "AMZN",  # Amazon.com Inc. — Consumer Discretionary
+        "NVDA",  # NVIDIA Corp. — Technology (semiconductors)
+        "JPM",  # JPMorgan Chase & Co. — Financials
+        "XOM",  # Exxon Mobil Corp. — Energy
+        "JNJ",  # Johnson & Johnson — Health Care
+    }
+)
 
 
 def _fetch_with_backoff(
@@ -647,12 +648,14 @@ def _build_sentiment_section(_data: object = None) -> dict:
 
     sources: list[dict] = []
     for art in corpus:
-        citation = build_citation({
-            "title": art.get("title", ""),
-            "url": art.get("url", ""),
-            "published": art.get("published", ""),
-            "lens": _lens,
-        })
+        citation = build_citation(
+            {
+                "title": art.get("title", ""),
+                "url": art.get("url", ""),
+                "published": art.get("published", ""),
+                "lens": _lens,
+            }
+        )
         if citation is not None:
             sources.append(citation)
 
@@ -1062,7 +1065,7 @@ def _fetch_fundamentals_for_ticker(ticker: str) -> dict:
                 filed_date = latest_entry.get("filed", "")
                 citation = build_citation(
                     {
-                        "title": f"{entity_name} {latest_entry.get('form', 'Filing')} ({filed_date})",
+                        "title": f"{entity_name} {latest_entry.get('form', 'Filing')} ({filed_date})",  # noqa: E501  # un-wrappable long line
                         "url": filing_url,
                         "published": filed_date,
                         "lens": _lens,

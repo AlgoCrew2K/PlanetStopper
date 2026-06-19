@@ -45,11 +45,9 @@ import ast
 import importlib
 import json
 import pathlib
-import re
 import sys
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Fixture loading

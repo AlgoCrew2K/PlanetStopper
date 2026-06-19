@@ -51,13 +51,11 @@ from __future__ import annotations
 
 import json
 from datetime import date as _date
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import analytics as analytics_module
-
 
 # ---------------------------------------------------------------------------
 # AC-FM.1 — analytics module must have a database attribute at module scope

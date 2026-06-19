@@ -58,7 +58,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import app as app_module
-import database
 
 # ---------------------------------------------------------------------------
 # Helpers / constants
@@ -2115,12 +2114,14 @@ def test_api_history_daily_alpha_not_capped_when_db_has_more_data(client, monkey
     # Patch the analytics function that produces history data
     import analytics as analytics_module
 
-    with patch.object(
-        analytics_module, "get_history_summary", return_value=mock_history_response, create=True
+    with (
+        patch.object(
+            analytics_module, "get_history_summary", return_value=mock_history_response, create=True
+        ),
+        patch.object(app_module, "database") as db_mock,
     ):
-        with patch.object(app_module, "database") as db_mock:
-            db_mock.get_ro_connection.return_value = MagicMock()
-            resp = client.get("/api/history/30")
+        db_mock.get_ro_connection.return_value = MagicMock()
+        resp = client.get("/api/history/30")
 
     if resp.status_code == 404:
         pytest.skip("/api/history/30 route not registered — skip until route added")
@@ -3079,60 +3080,62 @@ def test_api_state_portfolio_strip_today_change_is_dict_not_float(monkeypatch):
     """
     import analytics as analytics_module
 
-    with patch.object(
-        app_module,
-        "get_api_state_dict",
-        return_value={
-            "bot_state": _BOT_STATE_STUB.copy(),
-            "is_locked": False,
-            "port_state": {},
-            "exit_authority": "per_symphony",
-            "daemon_started_at": "2026-05-19T00:00:00Z",
-            "portfolio_strip": {
-                "today_change": {"dry_run": 0.653, "if_held": 0.712},
-                "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
-                "max_drawdown": {"dry_run": -0.28, "if_held": -0.19},
-                "hist_dates": _THIRTY_FIVE_DAYS[:],
-                "hist_bot": [0.001 * (i + 1) for i in range(35)],
-                "hist_held": [0.0008 * (i + 1) for i in range(35)],
+    with (
+        patch.object(
+            app_module,
+            "get_api_state_dict",
+            return_value={
+                "bot_state": _BOT_STATE_STUB.copy(),
+                "is_locked": False,
+                "port_state": {},
+                "exit_authority": "per_symphony",
+                "daemon_started_at": "2026-05-19T00:00:00Z",
+                "portfolio_strip": {
+                    "today_change": {"dry_run": 0.653, "if_held": 0.712},
+                    "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
+                    "max_drawdown": {"dry_run": -0.28, "if_held": -0.19},
+                    "hist_dates": _THIRTY_FIVE_DAYS[:],
+                    "hist_bot": [0.001 * (i + 1) for i in range(35)],
+                    "hist_held": [0.0008 * (i + 1) for i in range(35)],
+                },
             },
-        },
+        ),
+        patch.object(app_module, "database") as db_mock,
     ):
-        with patch.object(app_module, "database") as db_mock:
-            db_mock.load_state.return_value = _BOT_STATE_STUB.copy()
-            db_mock.load_chart_history.return_value = _CHART_HISTORY_STUB.copy()
-            db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
-            db_mock.get_symphony_strategy.return_value = {"params": {}, "locked_vars": []}
-            db_mock.get_ro_connection.return_value = MagicMock()
-            db_mock.read_fleet_alert.return_value = None
-            db_mock.get_shadow_divergence.return_value = {
-                "by_symphony": {},
-                "portfolio_today": None,
-            }
-            db_mock.read_port_state.return_value = None
-            db_mock.get_guard_alpha_by_symphony.return_value = {}
-            with (
-                patch.object(
-                    analytics_module,
-                    "get_portfolio_today_change",
-                    return_value={"dry_run": 0.653, "if_held": 0.712},
-                ),
-                patch.object(
-                    analytics_module,
-                    "get_portfolio_cumulative_return",
-                    return_value={"dry_run": 1.41, "if_held": 68.6},
-                ),
-                patch.object(
-                    analytics_module,
-                    "get_portfolio_max_drawdown",
-                    return_value={"dry_run": -0.28, "if_held": -0.19},
-                ),
-            ):
-                app_module.app.config["TESTING"] = True
-                with app_module.app.test_client() as c:
-                    resp = c.get("/api/state")
-                    assert resp.status_code == 200
-                    data = json.loads(resp.data)
+        db_mock.load_state.return_value = _BOT_STATE_STUB.copy()
+        db_mock.load_chart_history.return_value = _CHART_HISTORY_STUB.copy()
+        db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
+        db_mock.get_symphony_strategy.return_value = {"params": {}, "locked_vars": []}
+        db_mock.get_ro_connection.return_value = MagicMock()
+        db_mock.read_fleet_alert.return_value = None
+        db_mock.get_shadow_divergence.return_value = {
+            "by_symphony": {},
+            "portfolio_today": None,
+        }
+        db_mock.read_port_state.return_value = None
+        db_mock.get_guard_alpha_by_symphony.return_value = {}
+        with (
+            patch.object(
+                analytics_module,
+                "get_portfolio_today_change",
+                return_value={"dry_run": 0.653, "if_held": 0.712},
+            ),
+            patch.object(
+                analytics_module,
+                "get_portfolio_cumulative_return",
+                return_value={"dry_run": 1.41, "if_held": 68.6},
+            ),
+            patch.object(
+                analytics_module,
+                "get_portfolio_max_drawdown",
+                return_value={"dry_run": -0.28, "if_held": -0.19},
+            ),
+        ):
+            app_module.app.config["TESTING"] = True
+            with app_module.app.test_client() as c:
+                resp = c.get("/api/state")
+                assert resp.status_code == 200
+                data = json.loads(resp.data)
 
     ps = data.get("portfolio_strip", {})
     today_change = ps.get("today_change")
@@ -3265,59 +3268,61 @@ def test_rendered_dashboard_card_spark_has_non_empty_data_sym_id(monkeypatch):
         }
     }
 
-    with patch.object(
-        app_module,
-        "get_api_state_dict",
-        return_value={
-            "bot_state": bot_state_no_id,
-            "is_locked": False,
-            "port_state": {},
-            "exit_authority": "per_symphony",
-            "daemon_started_at": "2026-05-19T00:00:00Z",
-            "portfolio_strip": {
-                "today_change": {"dry_run": 0.5, "if_held": 0.3},
-                "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
-                "max_drawdown": {"dry_run": -5.2, "if_held": -3.1},
-                "hist_dates": _THIRTY_FIVE_DAYS[:],
-                "hist_bot": [0.001 * (i + 1) for i in range(35)],
-                "hist_held": [0.0008 * (i + 1) for i in range(35)],
+    with (
+        patch.object(
+            app_module,
+            "get_api_state_dict",
+            return_value={
+                "bot_state": bot_state_no_id,
+                "is_locked": False,
+                "port_state": {},
+                "exit_authority": "per_symphony",
+                "daemon_started_at": "2026-05-19T00:00:00Z",
+                "portfolio_strip": {
+                    "today_change": {"dry_run": 0.5, "if_held": 0.3},
+                    "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
+                    "max_drawdown": {"dry_run": -5.2, "if_held": -3.1},
+                    "hist_dates": _THIRTY_FIVE_DAYS[:],
+                    "hist_bot": [0.001 * (i + 1) for i in range(35)],
+                    "hist_held": [0.0008 * (i + 1) for i in range(35)],
+                },
             },
-        },
+        ),
+        patch.object(app_module, "database") as db_mock,
     ):
-        with patch.object(app_module, "database") as db_mock:
-            db_mock.load_state.return_value = bot_state_no_id.copy()
-            db_mock.load_chart_history.return_value = _CHART_HISTORY_STUB.copy()
-            db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
-            db_mock.get_symphony_strategy.return_value = {"params": {}, "locked_vars": []}
-            db_mock.get_ro_connection.return_value = MagicMock()
-            db_mock.read_fleet_alert.return_value = None
-            db_mock.get_shadow_divergence.return_value = {
-                "by_symphony": {},
-                "portfolio_today": None,
-            }
-            db_mock.read_port_state.return_value = None
-            with (
-                patch.object(
-                    analytics_module,
-                    "get_portfolio_today_change",
-                    return_value={"dry_run": 0.5, "if_held": 0.3},
-                ),
-                patch.object(
-                    analytics_module,
-                    "get_portfolio_cumulative_return",
-                    return_value={"dry_run": 1.41, "if_held": 68.6},
-                ),
-                patch.object(
-                    analytics_module,
-                    "get_portfolio_max_drawdown",
-                    return_value={"dry_run": -5.2, "if_held": -3.1},
-                ),
-            ):
-                app_module.app.config["TESTING"] = True
-                with app_module.app.test_client() as c:
-                    resp = c.get("/")
-                    assert resp.status_code == 200
-                    html = resp.data.decode("utf-8")
+        db_mock.load_state.return_value = bot_state_no_id.copy()
+        db_mock.load_chart_history.return_value = _CHART_HISTORY_STUB.copy()
+        db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
+        db_mock.get_symphony_strategy.return_value = {"params": {}, "locked_vars": []}
+        db_mock.get_ro_connection.return_value = MagicMock()
+        db_mock.read_fleet_alert.return_value = None
+        db_mock.get_shadow_divergence.return_value = {
+            "by_symphony": {},
+            "portfolio_today": None,
+        }
+        db_mock.read_port_state.return_value = None
+        with (
+            patch.object(
+                analytics_module,
+                "get_portfolio_today_change",
+                return_value={"dry_run": 0.5, "if_held": 0.3},
+            ),
+            patch.object(
+                analytics_module,
+                "get_portfolio_cumulative_return",
+                return_value={"dry_run": 1.41, "if_held": 68.6},
+            ),
+            patch.object(
+                analytics_module,
+                "get_portfolio_max_drawdown",
+                return_value={"dry_run": -5.2, "if_held": -3.1},
+            ),
+        ):
+            app_module.app.config["TESTING"] = True
+            with app_module.app.test_client() as c:
+                resp = c.get("/")
+                assert resp.status_code == 200
+                html = resp.data.decode("utf-8")
 
     # Find all data-sym-id values on card-spark canvases
     sym_ids = re.findall(
@@ -3550,59 +3555,61 @@ def test_rendered_dashboard_triggered_card_cash_now_btn_has_disabled_attr(monkey
         }
     }
 
-    with patch.object(
-        app_module,
-        "get_api_state_dict",
-        return_value={
-            "bot_state": triggered_bot_state,
-            "is_locked": False,
-            "port_state": {},
-            "exit_authority": "per_symphony",
-            "daemon_started_at": "2026-05-19T00:00:00Z",
-            "portfolio_strip": {
-                "today_change": {"dry_run": 0.5, "if_held": 0.3},
-                "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
-                "max_drawdown": {"dry_run": -5.2, "if_held": -3.1},
-                "hist_dates": _THIRTY_FIVE_DAYS[:],
-                "hist_bot": [0.001 * (i + 1) for i in range(35)],
-                "hist_held": [0.0008 * (i + 1) for i in range(35)],
+    with (
+        patch.object(
+            app_module,
+            "get_api_state_dict",
+            return_value={
+                "bot_state": triggered_bot_state,
+                "is_locked": False,
+                "port_state": {},
+                "exit_authority": "per_symphony",
+                "daemon_started_at": "2026-05-19T00:00:00Z",
+                "portfolio_strip": {
+                    "today_change": {"dry_run": 0.5, "if_held": 0.3},
+                    "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
+                    "max_drawdown": {"dry_run": -5.2, "if_held": -3.1},
+                    "hist_dates": _THIRTY_FIVE_DAYS[:],
+                    "hist_bot": [0.001 * (i + 1) for i in range(35)],
+                    "hist_held": [0.0008 * (i + 1) for i in range(35)],
+                },
             },
-        },
+        ),
+        patch.object(app_module, "database") as db_mock,
     ):
-        with patch.object(app_module, "database") as db_mock:
-            db_mock.load_state.return_value = triggered_bot_state.copy()
-            db_mock.load_chart_history.return_value = _CHART_HISTORY_STUB.copy()
-            db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
-            db_mock.get_symphony_strategy.return_value = {"params": {}, "locked_vars": []}
-            db_mock.get_ro_connection.return_value = MagicMock()
-            db_mock.read_fleet_alert.return_value = None
-            db_mock.get_shadow_divergence.return_value = {
-                "by_symphony": {},
-                "portfolio_today": None,
-            }
-            db_mock.read_port_state.return_value = None
-            with (
-                patch.object(
-                    analytics_module,
-                    "get_portfolio_today_change",
-                    return_value={"dry_run": 0.5, "if_held": 0.3},
-                ),
-                patch.object(
-                    analytics_module,
-                    "get_portfolio_cumulative_return",
-                    return_value={"dry_run": 1.41, "if_held": 68.6},
-                ),
-                patch.object(
-                    analytics_module,
-                    "get_portfolio_max_drawdown",
-                    return_value={"dry_run": -5.2, "if_held": -3.1},
-                ),
-            ):
-                app_module.app.config["TESTING"] = True
-                with app_module.app.test_client() as c:
-                    resp = c.get("/")
-                    assert resp.status_code == 200
-                    html = resp.data.decode("utf-8")
+        db_mock.load_state.return_value = triggered_bot_state.copy()
+        db_mock.load_chart_history.return_value = _CHART_HISTORY_STUB.copy()
+        db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
+        db_mock.get_symphony_strategy.return_value = {"params": {}, "locked_vars": []}
+        db_mock.get_ro_connection.return_value = MagicMock()
+        db_mock.read_fleet_alert.return_value = None
+        db_mock.get_shadow_divergence.return_value = {
+            "by_symphony": {},
+            "portfolio_today": None,
+        }
+        db_mock.read_port_state.return_value = None
+        with (
+            patch.object(
+                analytics_module,
+                "get_portfolio_today_change",
+                return_value={"dry_run": 0.5, "if_held": 0.3},
+            ),
+            patch.object(
+                analytics_module,
+                "get_portfolio_cumulative_return",
+                return_value={"dry_run": 1.41, "if_held": 68.6},
+            ),
+            patch.object(
+                analytics_module,
+                "get_portfolio_max_drawdown",
+                return_value={"dry_run": -5.2, "if_held": -3.1},
+            ),
+        ):
+            app_module.app.config["TESTING"] = True
+            with app_module.app.test_client() as c:
+                resp = c.get("/")
+                assert resp.status_code == 200
+                html = resp.data.decode("utf-8")
 
     # Find all Cash Now buttons
     cash_now_buttons = re.findall(r'<button[^>]*data-testid=["\']cash-now-btn["\'][^>]*>', html)
@@ -3645,59 +3652,61 @@ def test_rendered_dashboard_armed_card_cash_now_btn_does_not_have_disabled_attr(
         }
     }
 
-    with patch.object(
-        app_module,
-        "get_api_state_dict",
-        return_value={
-            "bot_state": armed_bot_state,
-            "is_locked": False,
-            "port_state": {},
-            "exit_authority": "per_symphony",
-            "daemon_started_at": "2026-05-19T00:00:00Z",
-            "portfolio_strip": {
-                "today_change": {"dry_run": 0.5, "if_held": 0.3},
-                "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
-                "max_drawdown": {"dry_run": -5.2, "if_held": -3.1},
-                "hist_dates": _THIRTY_FIVE_DAYS[:],
-                "hist_bot": [0.001 * (i + 1) for i in range(35)],
-                "hist_held": [0.0008 * (i + 1) for i in range(35)],
+    with (
+        patch.object(
+            app_module,
+            "get_api_state_dict",
+            return_value={
+                "bot_state": armed_bot_state,
+                "is_locked": False,
+                "port_state": {},
+                "exit_authority": "per_symphony",
+                "daemon_started_at": "2026-05-19T00:00:00Z",
+                "portfolio_strip": {
+                    "today_change": {"dry_run": 0.5, "if_held": 0.3},
+                    "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
+                    "max_drawdown": {"dry_run": -5.2, "if_held": -3.1},
+                    "hist_dates": _THIRTY_FIVE_DAYS[:],
+                    "hist_bot": [0.001 * (i + 1) for i in range(35)],
+                    "hist_held": [0.0008 * (i + 1) for i in range(35)],
+                },
             },
-        },
+        ),
+        patch.object(app_module, "database") as db_mock,
     ):
-        with patch.object(app_module, "database") as db_mock:
-            db_mock.load_state.return_value = armed_bot_state.copy()
-            db_mock.load_chart_history.return_value = _CHART_HISTORY_STUB.copy()
-            db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
-            db_mock.get_symphony_strategy.return_value = {"params": {}, "locked_vars": []}
-            db_mock.get_ro_connection.return_value = MagicMock()
-            db_mock.read_fleet_alert.return_value = None
-            db_mock.get_shadow_divergence.return_value = {
-                "by_symphony": {},
-                "portfolio_today": None,
-            }
-            db_mock.read_port_state.return_value = None
-            with (
-                patch.object(
-                    analytics_module,
-                    "get_portfolio_today_change",
-                    return_value={"dry_run": 0.5, "if_held": 0.3},
-                ),
-                patch.object(
-                    analytics_module,
-                    "get_portfolio_cumulative_return",
-                    return_value={"dry_run": 1.41, "if_held": 68.6},
-                ),
-                patch.object(
-                    analytics_module,
-                    "get_portfolio_max_drawdown",
-                    return_value={"dry_run": -5.2, "if_held": -3.1},
-                ),
-            ):
-                app_module.app.config["TESTING"] = True
-                with app_module.app.test_client() as c:
-                    resp = c.get("/")
-                    assert resp.status_code == 200
-                    html = resp.data.decode("utf-8")
+        db_mock.load_state.return_value = armed_bot_state.copy()
+        db_mock.load_chart_history.return_value = _CHART_HISTORY_STUB.copy()
+        db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
+        db_mock.get_symphony_strategy.return_value = {"params": {}, "locked_vars": []}
+        db_mock.get_ro_connection.return_value = MagicMock()
+        db_mock.read_fleet_alert.return_value = None
+        db_mock.get_shadow_divergence.return_value = {
+            "by_symphony": {},
+            "portfolio_today": None,
+        }
+        db_mock.read_port_state.return_value = None
+        with (
+            patch.object(
+                analytics_module,
+                "get_portfolio_today_change",
+                return_value={"dry_run": 0.5, "if_held": 0.3},
+            ),
+            patch.object(
+                analytics_module,
+                "get_portfolio_cumulative_return",
+                return_value={"dry_run": 1.41, "if_held": 68.6},
+            ),
+            patch.object(
+                analytics_module,
+                "get_portfolio_max_drawdown",
+                return_value={"dry_run": -5.2, "if_held": -3.1},
+            ),
+        ):
+            app_module.app.config["TESTING"] = True
+            with app_module.app.test_client() as c:
+                resp = c.get("/")
+                assert resp.status_code == 200
+                html = resp.data.decode("utf-8")
 
     cash_now_buttons = re.findall(r'<button[^>]*data-testid=["\']cash-now-btn["\'][^>]*>', html)
     assert len(cash_now_buttons) > 0, (
@@ -3732,11 +3741,11 @@ def test_api_state_guard_alpha_populated_from_real_db_exit_triggers(tmp_path, mo
     - _triggered_ids list is empty (triggered flag not read from load_state)
     - setdefault overwrites a prior value of 0 (wrong logic)
     """
-    import sqlite3
     import json as _json
+    import sqlite3
 
-    import database as db_module
     import app as app_module
+    import database as db_module
 
     triggered_state = {
         "sym_beta": {
@@ -3891,59 +3900,61 @@ def test_rendered_dashboard_triggered_card_guard_alpha_absent_shows_degraded_not
         }
     }
 
-    with patch.object(
-        app_module,
-        "get_api_state_dict",
-        return_value={
-            "bot_state": triggered_no_ga,
-            "is_locked": False,
-            "port_state": {},
-            "exit_authority": "per_symphony",
-            "daemon_started_at": "2026-05-19T00:00:00Z",
-            "portfolio_strip": {
-                "today_change": {"dry_run": 0.5, "if_held": 0.3},
-                "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
-                "max_drawdown": {"dry_run": -5.2, "if_held": -3.1},
-                "hist_dates": _THIRTY_FIVE_DAYS[:],
-                "hist_bot": [0.001 * (i + 1) for i in range(35)],
-                "hist_held": [0.0008 * (i + 1) for i in range(35)],
+    with (
+        patch.object(
+            app_module,
+            "get_api_state_dict",
+            return_value={
+                "bot_state": triggered_no_ga,
+                "is_locked": False,
+                "port_state": {},
+                "exit_authority": "per_symphony",
+                "daemon_started_at": "2026-05-19T00:00:00Z",
+                "portfolio_strip": {
+                    "today_change": {"dry_run": 0.5, "if_held": 0.3},
+                    "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
+                    "max_drawdown": {"dry_run": -5.2, "if_held": -3.1},
+                    "hist_dates": _THIRTY_FIVE_DAYS[:],
+                    "hist_bot": [0.001 * (i + 1) for i in range(35)],
+                    "hist_held": [0.0008 * (i + 1) for i in range(35)],
+                },
             },
-        },
+        ),
+        patch.object(app_module, "database") as db_mock,
     ):
-        with patch.object(app_module, "database") as db_mock:
-            db_mock.load_state.return_value = triggered_no_ga.copy()
-            db_mock.load_chart_history.return_value = _CHART_HISTORY_STUB.copy()
-            db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
-            db_mock.get_symphony_strategy.return_value = {"params": {}, "locked_vars": []}
-            db_mock.get_ro_connection.return_value = MagicMock()
-            db_mock.read_fleet_alert.return_value = None
-            db_mock.get_shadow_divergence.return_value = {
-                "by_symphony": {},
-                "portfolio_today": None,
-            }
-            db_mock.read_port_state.return_value = None
-            with (
-                patch.object(
-                    analytics_module,
-                    "get_portfolio_today_change",
-                    return_value={"dry_run": 0.5, "if_held": 0.3},
-                ),
-                patch.object(
-                    analytics_module,
-                    "get_portfolio_cumulative_return",
-                    return_value={"dry_run": 1.41, "if_held": 68.6},
-                ),
-                patch.object(
-                    analytics_module,
-                    "get_portfolio_max_drawdown",
-                    return_value={"dry_run": -5.2, "if_held": -3.1},
-                ),
-            ):
-                app_module.app.config["TESTING"] = True
-                with app_module.app.test_client() as c:
-                    resp = c.get("/")
-                    assert resp.status_code == 200
-                    html = resp.data.decode("utf-8")
+        db_mock.load_state.return_value = triggered_no_ga.copy()
+        db_mock.load_chart_history.return_value = _CHART_HISTORY_STUB.copy()
+        db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
+        db_mock.get_symphony_strategy.return_value = {"params": {}, "locked_vars": []}
+        db_mock.get_ro_connection.return_value = MagicMock()
+        db_mock.read_fleet_alert.return_value = None
+        db_mock.get_shadow_divergence.return_value = {
+            "by_symphony": {},
+            "portfolio_today": None,
+        }
+        db_mock.read_port_state.return_value = None
+        with (
+            patch.object(
+                analytics_module,
+                "get_portfolio_today_change",
+                return_value={"dry_run": 0.5, "if_held": 0.3},
+            ),
+            patch.object(
+                analytics_module,
+                "get_portfolio_cumulative_return",
+                return_value={"dry_run": 1.41, "if_held": 68.6},
+            ),
+            patch.object(
+                analytics_module,
+                "get_portfolio_max_drawdown",
+                return_value={"dry_run": -5.2, "if_held": -3.1},
+            ),
+        ):
+            app_module.app.config["TESTING"] = True
+            with app_module.app.test_client() as c:
+                resp = c.get("/")
+                assert resp.status_code == 200
+                html = resp.data.decode("utf-8")
 
     # Must NOT render "0.0%α" or any numeric-zero-percent variant in the verdict area
     # Find the triggered-verdict section
@@ -3985,8 +3996,9 @@ def test_api_state_guard_alpha_absent_when_no_exit_triggers_returns_none_or_miss
 
     This test uses a real SQLite DB with no exit_triggers rows for the triggered symphony.
     """
-    import sqlite3
     import json as _json
+    import sqlite3
+
     import database as db_module
 
     triggered_state = {
@@ -4034,49 +4046,49 @@ def test_api_state_guard_alpha_absent_when_no_exit_triggers_returns_none_or_miss
     monkeypatch.setattr(db_module, "DB_FILE", db_path)
     monkeypatch.setenv("DB_PATH", db_path)
 
-    with patch.object(
-        app_module,
-        "get_api_state_dict",
-        return_value={
-            "bot_state": triggered_state,
-            "is_locked": False,
-            "port_state": {},
-            "exit_authority": "per_symphony",
-            "daemon_started_at": "2026-05-19T00:00:00Z",
-            "portfolio_strip": {
-                "today_change": {"dry_run": 0.0, "if_held": 0.0},
-                "cumulative_return": {"dry_run": 0.03, "if_held": 0.05},
-                "max_drawdown": {"dry_run": -0.01, "if_held": -0.01},
-                "hist_dates": _THIRTY_FIVE_DAYS[:],
-                "hist_bot": [0.001 * (i + 1) for i in range(35)],
-                "hist_held": [0.0008 * (i + 1) for i in range(35)],
+    with (
+        patch.object(
+            app_module,
+            "get_api_state_dict",
+            return_value={
+                "bot_state": triggered_state,
+                "is_locked": False,
+                "port_state": {},
+                "exit_authority": "per_symphony",
+                "daemon_started_at": "2026-05-19T00:00:00Z",
+                "portfolio_strip": {
+                    "today_change": {"dry_run": 0.0, "if_held": 0.0},
+                    "cumulative_return": {"dry_run": 0.03, "if_held": 0.05},
+                    "max_drawdown": {"dry_run": -0.01, "if_held": -0.01},
+                    "hist_dates": _THIRTY_FIVE_DAYS[:],
+                    "hist_bot": [0.001 * (i + 1) for i in range(35)],
+                    "hist_held": [0.0008 * (i + 1) for i in range(35)],
+                },
             },
-        },
+        ),
+        patch.object(db_module, "load_state", return_value=triggered_state),
+        patch.object(db_module, "load_chart_history", return_value={"symphonies": {}}),
+        patch.object(
+            db_module,
+            "normalize_name",
+            side_effect=lambda n: (n or "").lower().replace(" ", "_"),
+        ),
+        patch.object(
+            db_module, "get_symphony_strategy", return_value={"params": {}, "locked_vars": []}
+        ),
+        patch.object(db_module, "read_fleet_alert", return_value=None),
+        patch.object(
+            db_module,
+            "get_shadow_divergence",
+            return_value={"by_symphony": {}, "portfolio_today": None},
+        ),
+        patch.object(db_module, "read_port_state", return_value=None),
     ):
-        with (
-            patch.object(db_module, "load_state", return_value=triggered_state),
-            patch.object(db_module, "load_chart_history", return_value={"symphonies": {}}),
-            patch.object(
-                db_module,
-                "normalize_name",
-                side_effect=lambda n: (n or "").lower().replace(" ", "_"),
-            ),
-            patch.object(
-                db_module, "get_symphony_strategy", return_value={"params": {}, "locked_vars": []}
-            ),
-            patch.object(db_module, "read_fleet_alert", return_value=None),
-            patch.object(
-                db_module,
-                "get_shadow_divergence",
-                return_value={"by_symphony": {}, "portfolio_today": None},
-            ),
-            patch.object(db_module, "read_port_state", return_value=None),
-        ):
-            app_module.app.config["TESTING"] = True
-            with app_module.app.test_client() as c:
-                resp = c.get("/api/state")
-                assert resp.status_code == 200
-                data = json.loads(resp.data)
+        app_module.app.config["TESTING"] = True
+        with app_module.app.test_client() as c:
+            resp = c.get("/api/state")
+            assert resp.status_code == 200
+            data = json.loads(resp.data)
 
     bot_state = data.get("bot_state") or data.get("state") or {}
     sym_entry = bot_state.get("sym_no_trigger", {})

@@ -40,10 +40,8 @@ from pathlib import Path
 
 import pytest
 
-import analytics
 import database as _db
 from analytics import (
-    _value_weighted_portfolio,
     get_portfolio_cumulative_return,
     get_symphony_cumulative_return,
 )

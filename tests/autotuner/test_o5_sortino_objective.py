@@ -24,13 +24,10 @@ This is the standard Sortino formulation (Sortino & van der Meer 1994).
 from __future__ import annotations
 
 import ast
-import importlib
 import inspect as _inspect
 import json
 import math
 import pathlib
-import textwrap
-from typing import List
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -603,8 +600,8 @@ def test_named_constants_have_source_comments():
       SORTINO_TARGET_RETURN  — the target return (0.0); source: operator
                                decision PA-5, capital preservation baseline.
     """
-    import tokenize
     import io as _io
+    import tokenize
 
     autotuner_path = pathlib.Path(__file__).parent.parent.parent / "autotuner.py"
     source = autotuner_path.read_text(encoding="utf-8")

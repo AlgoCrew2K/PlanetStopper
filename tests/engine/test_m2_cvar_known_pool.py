@@ -28,9 +28,8 @@ Fixture provenance (D-2 ★ non-circular):
 from __future__ import annotations
 
 import json
-import math
 import pathlib
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -334,7 +333,6 @@ class TestM2DisplaySurfaceContainsFullS3FourPartContract:
     def _get_dashboard_html(self, client, cvar_row):
         """Render the dashboard HTML with a known cvar_diagnostics row."""
         import app as app_module
-        import database as _db
 
         state = {
             "sym-m2-test": {
@@ -784,8 +782,8 @@ class TestM2SecondWindowNullSemantics:
         This tests the database write path: record_cvar_diagnostic is called with
         cvar_5pct_long=None and the row must persist NULL (not 0.0).
         """
+
         import database as _db
-        import sqlite3
 
         # Insert a row with cvar_5pct_long=None explicitly
         _db.record_cvar_diagnostic(

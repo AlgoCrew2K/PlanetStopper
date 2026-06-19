@@ -44,7 +44,6 @@ from __future__ import annotations
 import ast
 import importlib
 import pathlib
-import types
 
 import pytest
 
@@ -323,10 +322,9 @@ class TestAppNoGetExitAuthorityImport:
         so as not to need a running DB.  Network and DB are mocked; only the
         return shape is asserted.
         """
+        import logging
         import os
         import tempfile
-        import logging
-        from unittest.mock import patch, MagicMock
 
         fd, db_path = tempfile.mkstemp(suffix=".db", prefix="test_getapistate_c1_")
         os.close(fd)

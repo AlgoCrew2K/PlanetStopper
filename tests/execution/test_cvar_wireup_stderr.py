@@ -68,14 +68,13 @@ from __future__ import annotations
 
 import math
 import pathlib
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
 
 import alpha_bot_execution
 import math_engine
-
 
 # ---------------------------------------------------------------------------
 # Shared fixture (cloned from test_cvar_wireup_per_cycle.py)

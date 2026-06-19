@@ -918,7 +918,7 @@ def test_validate_nn1_compliance_rejects_bundle_with_backtest_selection_facet(mi
     is_honest, violations = validate_nn1_compliance(bundle_id)
 
     assert is_honest is False, (
-        f"validate_nn1_compliance returned is_honest=True for a bundle with a "
+        "validate_nn1_compliance returned is_honest=True for a bundle with a "
         "BACKTEST_SELECTION facet. Guard 3 in run_autotuner would let this bundle "
         "through, silently allowing a spec-frozen facet to be P&L-selection-tainted."
     )

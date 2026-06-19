@@ -311,7 +311,7 @@ def test_get_strategy_builder_does_not_return_200_standalone(client):
 
     _assert_route_exists(resp, "GET /ai-advisor/strategy-builder")
     assert resp.status_code != 200, (
-        f"GET /ai-advisor/strategy-builder returned 200. "
+        "GET /ai-advisor/strategy-builder returned 200. "
         "After SPA-port this route must redirect — a 200 response means the standalone "
         "page is still being rendered, which is the defect being eliminated (AC3)."
     )
@@ -1062,6 +1062,7 @@ def test_get_route_filters_out_non_strategy_builder_observations(client):
     # accessor with "STRATEGY_BUILDER". Source inspection avoids needing to stub
     # the full correlation-diagnostic / history machinery around the prefetch call.
     import inspect
+
     import app as _app_mod
 
     source = inspect.getsource(_app_mod.ai_advisor_tab)
@@ -1149,7 +1150,7 @@ def test_post_run_missing_json_body_does_not_500(client):
         )
 
     assert resp.status_code != 500, (
-        f"POST /run with missing JSON body returned 500. "
+        "POST /run with missing JSON body returned 500. "
         "The route must handle a missing body gracefully — "
         "`request.get_json(silent=True) or {{}}` must default all fields rather than crash."
     )

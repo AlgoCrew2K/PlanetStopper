@@ -175,12 +175,12 @@ def test_alpha_bot_execution_does_not_call_write_telemetry_row_for_cvar():
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             # write_telemetry_row("cvar_diagnostics", ...)
-            if isinstance(node.func, ast.Name) and node.func.id == "write_telemetry_row":
-                if node.args and isinstance(node.args[0], ast.Constant):
-                    if "cvar_diagnostics" in str(node.args[0].value):
-                        bypass_calls.append(getattr(node, "lineno", -1))
-            # database.write_telemetry_row("cvar_diagnostics", ...)
-            elif isinstance(node.func, ast.Attribute) and node.func.attr == "write_telemetry_row":
+            if (
+                isinstance(node.func, ast.Name)
+                and node.func.id == "write_telemetry_row"
+                or isinstance(node.func, ast.Attribute)
+                and node.func.attr == "write_telemetry_row"
+            ):
                 if node.args and isinstance(node.args[0], ast.Constant):
                     if "cvar_diagnostics" in str(node.args[0].value):
                         bypass_calls.append(getattr(node, "lineno", -1))

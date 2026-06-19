@@ -188,7 +188,7 @@ class TestLensSourcesKwargOnProposeOperatorSwap:
             raw = call_kw.get("raw_response", {})
             sources = raw.get("sources")
             assert sources is not None, (
-                f"raw_response missing 'sources'. AC-4: sources must be persisted."
+                "raw_response missing 'sources'. AC-4: sources must be persisted."
             )
             assert isinstance(sources, list), (
                 f"sources must be a list, got {type(sources).__name__!r}."

@@ -33,7 +33,6 @@ do not exist yet.
 from __future__ import annotations
 
 import ast
-import importlib
 import pathlib
 
 import pytest

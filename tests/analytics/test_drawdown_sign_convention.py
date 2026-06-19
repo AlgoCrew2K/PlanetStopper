@@ -56,7 +56,6 @@ import analytics
 import app as app_module
 from analytics import compute_quantstats_metrics, get_symphony_max_drawdown
 
-
 # A single equity decline of exactly 20%: peak 100 -> trough 80.
 _PEAK = 100.0
 _TROUGH = 80.0

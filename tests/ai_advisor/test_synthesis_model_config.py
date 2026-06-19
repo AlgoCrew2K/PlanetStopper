@@ -73,7 +73,10 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 # Shared mock helpers
 # ---------------------------------------------------------------------------
 
-def _make_mock_client(response_json: str = '{"overall_sentiment": "neutral", "sentiment_rationale": "stub"}') -> MagicMock:
+
+def _make_mock_client(
+    response_json: str = '{"overall_sentiment": "neutral", "sentiment_rationale": "stub"}',
+) -> MagicMock:
     """Build a mock Anthropic client whose messages.create returns a stub response.
 
     The mock captures the model kwarg so tests can inspect which model was passed.
@@ -174,11 +177,7 @@ class TestLensPipelineSynthesisModelEnvVar:
         mock_client.messages.create.assert_called_once()
         # Extract the model kwarg robustly from call_args (positional or keyword).
         call_args = mock_client.messages.create.call_args
-        actual_model = (
-            call_args.kwargs.get("model")
-            if call_args.kwargs
-            else None
-        )
+        actual_model = call_args.kwargs.get("model") if call_args.kwargs else None
         assert actual_model == _EXPECTED_DEFAULT_MODEL, (
             f"When ADVISOR_SYNTHESIS_MODEL is not set, _synthesize_via_claude "
             f"must default to {_EXPECTED_DEFAULT_MODEL!r}. Got: {actual_model!r}. "
@@ -291,6 +290,7 @@ class TestExtractJsonObjectPreserved:
 
     def _extract(self, text: str) -> str:
         from advisors.lens_pipeline import _extract_json_object
+
         return _extract_json_object(text)
 
     def test_plain_json_passes_through(self):
@@ -307,6 +307,7 @@ class TestExtractJsonObjectPreserved:
         result = self._extract(fenced)
         # Must be parseable JSON without the fences.
         import json
+
         parsed = json.loads(result)
         assert parsed.get("overall_sentiment") == "risk-on", (
             "_extract_json_object must strip ``` json fences and return parseable JSON."
@@ -317,18 +318,20 @@ class TestExtractJsonObjectPreserved:
         fenced = '```\n{"overall_sentiment": "risk-off", "sentiment_rationale": "drop"}\n```'
         result = self._extract(fenced)
         import json
+
         parsed = json.loads(result)
         assert parsed.get("overall_sentiment") == "risk-off"
 
     def test_extracts_json_from_surrounding_prose(self):
         """Leading and trailing prose are tolerated; only the JSON block is returned."""
         prose_and_json = (
-            'Here is my analysis:\n'
+            "Here is my analysis:\n"
             '{"overall_sentiment": "neutral", "sentiment_rationale": "mixed signals"}\n'
-            'I hope this helps.'
+            "I hope this helps."
         )
         result = self._extract(prose_and_json)
         import json
+
         parsed = json.loads(result)
         assert parsed.get("overall_sentiment") == "neutral", (
             "_extract_json_object must extract the first balanced JSON object "
@@ -341,15 +344,14 @@ class TestExtractJsonObjectPreserved:
         result = self._extract(no_json)
         # Must not raise; must return the stripped text.
         assert isinstance(result, str), "_extract_json_object must always return a str."
-        assert "{" not in result, (
-            "With no JSON object, result should not contain '{'."
-        )
+        assert "{" not in result, "With no JSON object, result should not contain '{'."
 
     def test_nested_json_braces_handled_correctly(self):
         """Nested braces (depth > 1) are handled by the balanced-brace scanner."""
         nested = '{"outer": {"inner": 42}, "key": "value"}'
         result = self._extract(nested)
         import json
+
         parsed = json.loads(result)
         assert parsed.get("key") == "value", (
             "_extract_json_object must handle nested braces correctly."
@@ -360,6 +362,7 @@ class TestExtractJsonObjectPreserved:
         with_escape = r'{"rationale": "it\"s complex", "sentiment": "neutral"}'
         result = self._extract(with_escape)
         import json
+
         parsed = json.loads(result)
         assert parsed.get("sentiment") == "neutral", (
             "_extract_json_object must handle escaped quotes inside strings."
@@ -370,6 +373,7 @@ class TestExtractJsonObjectPreserved:
         fenced_upper = '```JSON\n{"overall_sentiment": "risk-on"}\n```'
         result = self._extract(fenced_upper)
         import json
+
         parsed = json.loads(result)
         assert "overall_sentiment" in parsed, (
             "Fence stripping must be case-insensitive for the language tag."
@@ -425,7 +429,11 @@ class TestAdvisorChatModelEnvVar:
         from advisors import advisor_chat
 
         with patch.object(ai_advisor, "_build_client", return_value=mock_client):
-            artifact = {"type": "config_suggestion", "config_key": "TAKE_PROFIT_MC_PCT", "value": 3.5}
+            artifact = {
+                "type": "config_suggestion",
+                "config_key": "TAKE_PROFIT_MC_PCT",
+                "value": 3.5,
+            }
             advisor_chat.explain_artifact(
                 question="Is this safe?",
                 artifact=artifact,
@@ -459,9 +467,7 @@ class TestAdvisorChatModelEnvVar:
             "When client construction fails, explain_artifact must return a "
             "ChatResponse(answer=None, error=...) not raise."
         )
-        assert result.answer is None, (
-            "On error, answer must be None."
-        )
+        assert result.answer is None, "On error, answer must be None."
 
 
 # ---------------------------------------------------------------------------
@@ -524,7 +530,9 @@ class TestRequestSuggestionsModelEnvVar:
         import ai_advisor
 
         # Simulate client construction failure.
-        with patch.object(ai_advisor, "_build_client", side_effect=RuntimeError("simulated failure")):
+        with patch.object(
+            ai_advisor, "_build_client", side_effect=RuntimeError("simulated failure")
+        ):
             result, error = ai_advisor.request_suggestions(context={"scope": "test"})
 
         assert result is None, "On client-construction failure, result must be None."
@@ -558,9 +566,7 @@ class TestNoHardcodedModelLiterals:
     # Pattern: a model= call-site kwarg that has a bare string literal
     # (NOT a variable or os.environ.get(...) call).
     # Matches: model="claude-anything" or model='claude-anything'
-    _HARDCODED_MODEL_RE = re.compile(
-        r'\bmodel\s*=\s*["\']claude-[^"\']+["\']'
-    )
+    _HARDCODED_MODEL_RE = re.compile(r'\bmodel\s*=\s*["\']claude-[^"\']+["\']')
 
     def _source(self, rel_path: str) -> str:
         return (_REPO_ROOT / rel_path).read_text(encoding="utf-8")
@@ -650,6 +656,7 @@ class TestSuiteOrderingRegression:
         This test must be order-independent — it relies on monkeypatch teardown.
         """
         import os
+
         # Phase 1: simulate a prior test that sets the env var.
         monkeypatch.setenv("ADVISOR_SYNTHESIS_MODEL", _TEST_MODEL_OVERRIDE)
         assert os.environ.get("ADVISOR_SYNTHESIS_MODEL") == _TEST_MODEL_OVERRIDE
@@ -659,6 +666,7 @@ class TestSuiteOrderingRegression:
         # that the env var is isolated to this call.
         mock_client = _make_mock_parse_client()
         import ai_advisor
+
         with patch.object(ai_advisor, "_build_client", return_value=mock_client):
             ai_advisor.request_suggestions(context={"scope": "order-test-1"})
         call_args = mock_client.messages.parse.call_args
@@ -679,6 +687,7 @@ class TestSuiteOrderingRegression:
         monkeypatch.delenv("ADVISOR_SYNTHESIS_MODEL", raising=False)
         mock_client = _make_mock_parse_client()
         import ai_advisor
+
         with patch.object(ai_advisor, "_build_client", return_value=mock_client):
             ai_advisor.request_suggestions(context={"scope": "order-test-2"})
         call_args = mock_client.messages.parse.call_args
@@ -698,6 +707,7 @@ class TestSuiteOrderingRegression:
         mock_client = _make_mock_client(response_json="stub answer")
         import ai_advisor
         from advisors import advisor_chat
+
         with patch.object(ai_advisor, "_build_client", return_value=mock_client):
             advisor_chat.explain_artifact(
                 question="order regression q",
@@ -720,6 +730,7 @@ class TestSuiteOrderingRegression:
         mock_client = _make_mock_client(response_json="default model answer")
         import ai_advisor
         from advisors import advisor_chat
+
         with patch.object(ai_advisor, "_build_client", return_value=mock_client):
             advisor_chat.explain_artifact(
                 question="isolation check",
@@ -865,18 +876,32 @@ class TestLensPipelineRunPipelineModelWiring:
         _unavailable = {"available": False, "sources": []}
         with (
             patch.object(ai_advisor, "_build_client", return_value=mock_client),
-            patch.object(ai_advisor, "_build_technicals_section",
-                         return_value={"lens": "technicals", **_unavailable}),
-            patch.object(ai_advisor, "_build_sentiment_section",
-                         return_value={"lens": "sentiment", **_unavailable}),
-            patch.object(ai_advisor, "_build_derivatives_section",
-                         return_value={"lens": "derivatives", **_unavailable}),
-            patch.object(ai_advisor, "_build_macro_section",
-                         return_value={"lens": "macro", **_unavailable}),
-            patch.object(ai_advisor, "_build_fundamentals_section",
-                         return_value={"lens": "fundamentals", **_unavailable}),
+            patch.object(
+                ai_advisor,
+                "_build_technicals_section",
+                return_value={"lens": "technicals", **_unavailable},
+            ),
+            patch.object(
+                ai_advisor,
+                "_build_sentiment_section",
+                return_value={"lens": "sentiment", **_unavailable},
+            ),
+            patch.object(
+                ai_advisor,
+                "_build_derivatives_section",
+                return_value={"lens": "derivatives", **_unavailable},
+            ),
+            patch.object(
+                ai_advisor, "_build_macro_section", return_value={"lens": "macro", **_unavailable}
+            ),
+            patch.object(
+                ai_advisor,
+                "_build_fundamentals_section",
+                return_value={"lens": "fundamentals", **_unavailable},
+            ),
         ):
             from advisors.lens_pipeline import run_pipeline
+
             run_result = run_pipeline(dry_run=True)
 
         mock_client.messages.create.assert_not_called()
@@ -896,16 +921,40 @@ class TestLensPipelineRunPipelineModelWiring:
 
         with (
             patch.object(ai_advisor, "_build_client", return_value=mock_client),
-            patch.object(ai_advisor, "_build_technicals_section", return_value={
-                "lens": "technicals", "available": True, "summary": "bullish", "sources": [],
-            }),
-            patch.object(ai_advisor, "_build_sentiment_section", return_value={"lens": "sentiment", "available": False, "sources": []}),
-            patch.object(ai_advisor, "_build_derivatives_section", return_value={"lens": "derivatives", "available": False, "sources": []}),
-            patch.object(ai_advisor, "_build_macro_section", return_value={"lens": "macro", "available": False, "sources": []}),
-            patch.object(ai_advisor, "_build_fundamentals_section", return_value={"lens": "fundamentals", "available": False, "sources": []}),
+            patch.object(
+                ai_advisor,
+                "_build_technicals_section",
+                return_value={
+                    "lens": "technicals",
+                    "available": True,
+                    "summary": "bullish",
+                    "sources": [],
+                },
+            ),
+            patch.object(
+                ai_advisor,
+                "_build_sentiment_section",
+                return_value={"lens": "sentiment", "available": False, "sources": []},
+            ),
+            patch.object(
+                ai_advisor,
+                "_build_derivatives_section",
+                return_value={"lens": "derivatives", "available": False, "sources": []},
+            ),
+            patch.object(
+                ai_advisor,
+                "_build_macro_section",
+                return_value={"lens": "macro", "available": False, "sources": []},
+            ),
+            patch.object(
+                ai_advisor,
+                "_build_fundamentals_section",
+                return_value={"lens": "fundamentals", "available": False, "sources": []},
+            ),
             patch.object(database, "insert_advisor_observation", return_value=99),
         ):
             from advisors.lens_pipeline import run_pipeline
+
             run_pipeline(dry_run=False)
 
         # The LLM call must have fired.
@@ -936,9 +985,7 @@ class TestNoExternalConstantReferences:
     """
 
     # Attribute-access patterns to search for in production code.
-    _DEAD_ATTR_RE = re.compile(
-        r'\bai_advisor\._CLAUDE_MODEL\b|\badvisor_chat\._CHAT_MODEL\b'
-    )
+    _DEAD_ATTR_RE = re.compile(r"\bai_advisor\._CLAUDE_MODEL\b|\badvisor_chat\._CHAT_MODEL\b")
 
     def _production_py_files(self):
         """Yield all .py files under the repo root, excluding tests/ and .claude/."""
@@ -1041,6 +1088,7 @@ class TestAppPyAdvisorRouteModelWiring:
         # Disable CSRF so POST requests work without a token.
         monkeypatch.setenv("TESTING", "1")
         import app as flask_app
+
         flask_app.app.config["TESTING"] = True
         flask_app.app.config["WTF_CSRF_ENABLED"] = False
         with flask_app.app.test_client() as client:
@@ -1099,7 +1147,9 @@ class TestAppPyAdvisorRouteModelWiring:
                 "revalidate_suggestion_oos",
                 return_value={"passed": True, "detail": "ok"},
             ),
-            patch.object(database, "get_symphony_strategy", return_value={"params": {}, "locked_vars": []}),
+            patch.object(
+                database, "get_symphony_strategy", return_value={"params": {}, "locked_vars": []}
+            ),
             patch.object(database, "save_symphony_strategy", return_value=None),
             patch.object(database, "normalize_name", side_effect=lambda x: x),
             patch.object(database, "record_llm_suggestion", return_value=None),
@@ -1147,7 +1197,9 @@ class TestAppPyAdvisorRouteModelWiring:
                 "revalidate_suggestion_oos",
                 return_value={"passed": True, "detail": "ok"},
             ),
-            patch.object(database, "get_symphony_strategy", return_value={"params": {}, "locked_vars": []}),
+            patch.object(
+                database, "get_symphony_strategy", return_value={"params": {}, "locked_vars": []}
+            ),
             patch.object(database, "save_symphony_strategy", return_value=None),
             patch.object(database, "normalize_name", side_effect=lambda x: x),
             patch.object(database, "record_llm_suggestion", side_effect=capture_record),
@@ -1197,9 +1249,7 @@ class TestAppPyAdvisorRouteModelWiring:
             "Migrate to ai_advisor.resolve_advisor_model() or inline os.environ.get(...)."
         )
 
-    def test_reject_route_records_env_resolved_model(
-        self, flask_client, monkeypatch
-    ):
+    def test_reject_route_records_env_resolved_model(self, flask_client, monkeypatch):
         """The model_id recorded by /ai-advisor/reject must be the env-resolved
         model, not a removed constant.
         """
@@ -1218,9 +1268,7 @@ class TestAppPyAdvisorRouteModelWiring:
         ):
             resp = self._post_reject(flask_client)
 
-        assert resp.status_code < 500, (
-            f"Reject route returned {resp.status_code}."
-        )
+        assert resp.status_code < 500, f"Reject route returned {resp.status_code}."
         assert len(recorded_model_ids) == 1, (
             f"Expected record_llm_suggestion called once; got {len(recorded_model_ids)}."
         )

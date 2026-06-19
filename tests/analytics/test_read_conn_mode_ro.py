@@ -14,7 +14,6 @@ Two test classes:
 
 from __future__ import annotations
 
-import re
 import sqlite3
 from pathlib import Path
 

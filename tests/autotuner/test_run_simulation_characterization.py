@@ -89,13 +89,10 @@ from __future__ import annotations
 
 import contextlib
 import io
-import math as _math
 import re
-from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Lazy autotuner/database imports — see test_oos_baseline_selection.py for
@@ -292,8 +289,9 @@ def _patches_for_run(
 
 def _run_capture(**kwargs):
     """Drive run_autotuner with the given patch parameters; capture stdout."""
-    import autotuner
     import inspect
+
+    import autotuner
     from tests.autotuner.conftest import make_phase1_theory_bundle
 
     bot_state = _build_bot_state()

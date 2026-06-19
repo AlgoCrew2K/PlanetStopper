@@ -39,16 +39,13 @@ from __future__ import annotations
 
 import copy
 import json
-import os
-from datetime import datetime, timezone, timedelta
-from pathlib import Path
-from unittest.mock import MagicMock, call, mock_open, patch
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
 import alpha_bot_execution
 import app as app_module
-
 
 # ---------------------------------------------------------------------------
 # Time helpers (shared with test_data_action_split.py)
@@ -260,9 +257,9 @@ class TestCachePoisonHardening:
         )
         # The cache file must NOT exist (or must not have been written this call)
         assert not cache_file.exists(), (
-            f"history_cache.json must NOT be written when historical_data=={{}};  "
-            f"writing an empty cache poisons all subsequent calls for the rest of the day. "
-            f"Fix: guard the json.dump with `if historical_data:` at line 222."
+            "history_cache.json must NOT be written when historical_data=={};  "
+            "writing an empty cache poisons all subsequent calls for the rest of the day. "
+            "Fix: guard the json.dump with `if historical_data:` at line 222."
         )
 
     # -----------------------------------------------------------------------
@@ -750,8 +747,6 @@ class TestApiStateExposesLastSuccessfulCycleAt:
         RED: the field doesn't exist in bot_state yet, and /api/state doesn't
         expose it. After the fix, both must be true.
         """
-        import analytics
-        from flask import json as flask_json
 
         timestamp = "2025-05-14T10:45:00-04:00"
         mock_state = {
@@ -798,7 +793,6 @@ class TestApiStateExposesLastSuccessfulCycleAt:
         This is a non-breaking contract: the field is optional in bot_state but
         the dashboard must handle its absence gracefully.
         """
-        from flask import json as flask_json
 
         mock_state = {
             "date": _DATE_STR,

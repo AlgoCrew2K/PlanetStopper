@@ -24,7 +24,6 @@ from __future__ import annotations
 import ast
 import pathlib
 
-
 # Required kwargs for the canonical helper (per cycle 10 signature):
 #   is_triggered, valid_vwap_weight, weighted_vwap_diff, safe_hwm,
 #   current_return, vwap_cross_hwm_pct, vwap_bleed_arm_pct,

@@ -74,27 +74,19 @@ the test docstring above quotes their source lines and the assertions name them
 explicitly.
 """
 
-from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, call
-
-import pytest
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import alpha_bot_execution
 
 # Reuse the B1 harness verbatim. Duplicating the fixture / helpers would drift.
 from tests.execution.test_main_pipeline import (
-    patched_environment,  # noqa: F401  (re-exported pytest fixture)
-    _seed_state,
-    _make_symphony_payload,
-    _make_vwap_payload,
-    _SYMPHONY_ID,
-    _ACTUAL_SYMPHONY_ID,
-    _ACCOUNT_ID,
-    _SYMPHONY_NAME,
-    _TICKER,
     _FIXED_ET,
+    _SYMPHONY_ID,
+    _TICKER,
+    _make_vwap_payload,
+    patched_environment,  # noqa: F401  (re-exported pytest fixture)
 )
-
 
 # Production constants pinned by this module. These are the literal values
 # being protected against regression; the docstring at the top of this file

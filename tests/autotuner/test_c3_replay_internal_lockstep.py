@@ -55,7 +55,6 @@ import pytest
 
 import autotuner
 
-
 _FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "autotuner" / "replay_parity"
 
 

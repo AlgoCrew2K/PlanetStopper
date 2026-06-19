@@ -31,12 +31,11 @@ from __future__ import annotations
 
 import json
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 import app as app_module
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -543,7 +542,6 @@ class TestAC2CostDoSGuards:
         re-initialise on the current request.
         """
         import collections
-        import time
 
         limiter = getattr(app_module, "_CHAT_RATE_LIMITER", None)
         if limiter is None:

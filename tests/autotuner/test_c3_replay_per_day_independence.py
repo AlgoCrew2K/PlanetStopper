@@ -39,7 +39,6 @@ import pytest
 
 import autotuner
 
-
 _AUTOTUNER_TREE = ast.parse(pathlib.Path(autotuner.__file__).read_text(encoding="utf-8"))
 
 # Per-position transient state names the replay must re-init each day.
@@ -178,7 +177,7 @@ def test_replay_reinitializes_per_day_state_inside_date_loop() -> None:
                 constructor_call_in_a_loop = True
         assigned_in_a_date_loop |= _names_assigned_in(loop)
 
-    legacy_complete = _PER_DAY_STATE_NAMES <= assigned_in_a_date_loop
+    legacy_complete = assigned_in_a_date_loop >= _PER_DAY_STATE_NAMES
     assert constructor_call_in_a_loop or legacy_complete, (
         "The replay does not re-initialize per-day transient state inside a "
         "`for date, ticks` loop. Expected either `day_state = "

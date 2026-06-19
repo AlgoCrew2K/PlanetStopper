@@ -39,7 +39,6 @@ import pathlib
 
 import pytest
 
-
 _README_PATH = pathlib.Path(__file__).parents[2] / "README.md"
 
 

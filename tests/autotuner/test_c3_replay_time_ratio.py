@@ -28,7 +28,6 @@ import pytest
 
 import autotuner
 
-
 _AUTOTUNER_PATH = pathlib.Path(autotuner.__file__)
 _AUTOTUNER_TREE = ast.parse(_AUTOTUNER_PATH.read_text(encoding="utf-8"))
 

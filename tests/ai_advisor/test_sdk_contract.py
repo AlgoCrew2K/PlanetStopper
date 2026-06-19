@@ -42,7 +42,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers — build genuine SDK return objects, not bare mocks.
 # ---------------------------------------------------------------------------

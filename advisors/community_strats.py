@@ -22,8 +22,7 @@ import logging
 import os
 from typing import Any
 
-from advisors import atlas_cache
-from advisors import symphony_schema
+from advisors import atlas_cache, symphony_schema
 
 logger = logging.getLogger(__name__)
 

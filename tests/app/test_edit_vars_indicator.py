@@ -73,9 +73,9 @@ def flask_client():
                 "daemon_started_at": None,
             },
         ),
+        app_module.app.test_client() as client,
     ):
-        with app_module.app.test_client() as client:
-            yield client, app_module
+        yield client, app_module
 
 
 def _make_db_mock_with_strategies(symphonies: dict) -> MagicMock:

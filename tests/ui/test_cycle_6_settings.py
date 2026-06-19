@@ -26,7 +26,6 @@ Surfaces covered:
 
 from __future__ import annotations
 
-import json
 import pathlib
 import re
 from unittest.mock import patch

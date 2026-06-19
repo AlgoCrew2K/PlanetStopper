@@ -74,7 +74,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 try:
-    from hypothesis import given, settings, assume
+    from hypothesis import assume, given, settings
     from hypothesis import strategies as st
 
     _HYPOTHESIS_AVAILABLE = True
@@ -538,8 +538,8 @@ class TestGdeltSentimentProducer:
         A 429 or 503 from GDELT should degrade to available=False gracefully.
         Phase 2: tone also mocked as unavailable so the combined result is False.
         """
+
         import ai_advisor
-        from requests.exceptions import HTTPError
 
         mock_resp = _make_mock_response({}, status_code=429)
         tone_result = _make_tone_result(available=False, tone=None, reason="rate_limited")
@@ -720,9 +720,7 @@ class TestPhase2GdeltToneWiring:
             f"Got {tone_score}."
         )
 
-    def test_tone_score_none_when_tone_unavailable_but_artlist_ok(
-        self, gdelt_shape_fixture: dict
-    ):
+    def test_tone_score_none_when_tone_unavailable_but_artlist_ok(self, gdelt_shape_fixture: dict):
         """When tone is unavailable but corpus has articles: available=True, tone_score=None.
 
         Per-source isolation: a failed tone signal must NOT invalidate corpus citations.
@@ -752,7 +750,7 @@ class TestPhase2GdeltToneWiring:
         # tone=None but corpus has articles → available=True (corpus availability wins)
         corpus_result = {
             "available": True,  # articles make it available even without tone
-            "tone": None,       # tone path failed
+            "tone": None,  # tone path failed
             "corpus": corpus_articles,
             "reason": None,
         }
@@ -787,8 +785,9 @@ class TestPhase2GdeltToneWiring:
 
         FAILS if artlist failure degrades available to False.
         """
-        import ai_advisor
         from requests.exceptions import Timeout
+
+        import ai_advisor
 
         tone_result = _make_tone_result(available=True, tone=0.22)
 
@@ -811,8 +810,7 @@ class TestPhase2GdeltToneWiring:
         )
         sources = block.get("sources", [])
         assert sources == [], (
-            f"sources must be [] when artlist failed (no citations to emit). "
-            f"Got {sources!r}."
+            f"sources must be [] when artlist failed (no citations to emit). Got {sources!r}."
         )
 
     def test_both_fail_returns_available_false_with_reason(self):
@@ -823,8 +821,9 @@ class TestPhase2GdeltToneWiring:
 
         FAILS if available=True is returned with no usable data (fabrication).
         """
-        import ai_advisor
         from requests.exceptions import Timeout
+
+        import ai_advisor
 
         tone_result = _make_tone_result(available=False, tone=None, reason="Timeout")
 
@@ -835,8 +834,7 @@ class TestPhase2GdeltToneWiring:
             block = ai_advisor._build_sentiment_section()
 
         assert block.get("available") is False, (
-            "When both tone and artlist fail, available must be False. "
-            f"Got: {block!r}"
+            f"When both tone and artlist fail, available must be False. Got: {block!r}"
         )
         reason = block.get("reason", "")
         assert isinstance(reason, str) and reason.strip(), (
@@ -1010,8 +1008,7 @@ class TestPhase2GdeltToneWiring:
             block = ai_advisor._build_sentiment_section()
 
         assert block.get("available") is True, (
-            f"Combined path (tone ok + corpus ok) must return available=True. "
-            f"Got: {block!r}"
+            f"Combined path (tone ok + corpus ok) must return available=True. Got: {block!r}"
         )
         payload = block.get("payload") or {}
         tone_score = payload.get("tone_score")
@@ -1151,8 +1148,8 @@ class TestSecEdgarFundamentalsProducer:
 
         The producer must catch the 403 and degrade gracefully, not raise.
         """
+
         import ai_advisor
-        from requests.exceptions import HTTPError
 
         mock_resp = _make_mock_response({}, status_code=403)
 
@@ -1166,8 +1163,8 @@ class TestSecEdgarFundamentalsProducer:
 
         D-1: reason must not expose str(exc) detail (may contain host/path).
         """
+
         import ai_advisor
-        from requests.exceptions import HTTPError
 
         mock_resp = _make_mock_response({}, status_code=429)
 
@@ -1183,8 +1180,9 @@ class TestSecEdgarFundamentalsProducer:
 
     def test_fundamentals_timeout_returns_available_false_exc_class_only(self):
         """A network timeout returns available=False + exc class name only (D-1)."""
-        import ai_advisor
         from requests.exceptions import Timeout
+
+        import ai_advisor
 
         timeout_exc = Timeout("Connection to data.sec.gov timed out after 30s")
 
@@ -1391,8 +1389,9 @@ class TestFredMacroProducer:
         FRED requests include the API key as a query param — leaking the URL
         leaks the key.
         """
-        import ai_advisor
         from requests.exceptions import Timeout
+
+        import ai_advisor
 
         timeout_exc = Timeout("Connection to api.stlouisfed.org timed out: key=secretAPIkey123")
 
@@ -1416,8 +1415,8 @@ class TestFredMacroProducer:
 
     def test_macro_fred_429_returns_available_false(self):
         """FRED 429 (rate limit) -> available=False + exc class only reason."""
+
         import ai_advisor
-        from requests.exceptions import HTTPError
 
         mock_resp = _make_mock_response({}, status_code=429)
 
@@ -1526,8 +1525,9 @@ class TestD1ErrorContract:
 
         FAILS for any producer that leaks str(exc) detail into 'reason'.
         """
-        import ai_advisor
         from requests.exceptions import ConnectionError as ReqConnError
+
+        import ai_advisor
 
         # Embed a hostname in the exc that must NOT appear in the reason
         conn_exc = ReqConnError("Failed to establish connection to secret-internal.example.com:443")

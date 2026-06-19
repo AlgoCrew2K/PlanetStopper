@@ -30,7 +30,6 @@ import statistics
 
 import numpy as np
 
-
 # Match autotuner.SORTINO_TARGET_RETURN — copied as a literal, not imported.
 _REFERENCE_SORTINO_TARGET = 0.0
 # Risk-engine's prescribed bootstrap count for the haircut p-value
@@ -268,7 +267,7 @@ def main() -> None:
     print(f"  empirical mean p    = {statistics.mean(sorted_p):.4f}")
     print(f"  empirical median p  = {statistics.median(sorted_p):.4f}")
     print(f"  KS distance to U[0,1] = {ks:.4f}")
-    print(f"  (test target: < 0.10 under H0)")
+    print("  (test target: < 0.10 under H0)")
 
 
 if __name__ == "__main__":

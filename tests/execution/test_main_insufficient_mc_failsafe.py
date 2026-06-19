@@ -65,7 +65,6 @@ import pytest
 import alpha_bot_execution
 import math_engine
 
-
 # ---------------------------------------------------------------------------
 # Fixed clock — a regular-hours weekday so the time / blackout gates are bypassed.
 # ---------------------------------------------------------------------------

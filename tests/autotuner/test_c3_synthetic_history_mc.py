@@ -36,7 +36,6 @@ import pytest
 import math_engine
 import synthetic_history
 
-
 _SYNTH_PATH = pathlib.Path(synthetic_history.__file__)
 _SYNTH_SRC = _SYNTH_PATH.read_text(encoding="utf-8")
 _SYNTH_TREE = ast.parse(_SYNTH_SRC)
@@ -213,9 +212,9 @@ def test_synthetic_history_insufficient_mc_does_not_become_inband_number(
     for t in ticks:
         mc = t.get("mc_prob")
         assert mc != 22.5, (
-            f"An insufficient-MC tick stored the fabricated value 22.5 as "
-            f"mc_prob. The replay must carry the production fail-safe (MC "
-            f"opinion absent), not a fabricated in-band probability."
+            "An insufficient-MC tick stored the fabricated value 22.5 as "
+            "mc_prob. The replay must carry the production fail-safe (MC "
+            "opinion absent), not a fabricated in-band probability."
         )
 
 

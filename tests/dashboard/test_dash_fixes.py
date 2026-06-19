@@ -29,8 +29,6 @@ Fixture provenance
 from __future__ import annotations
 
 import json
-import pathlib
-import re
 import sqlite3
 from pathlib import Path
 from unittest.mock import patch

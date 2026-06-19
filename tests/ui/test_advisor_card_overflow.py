@@ -14,9 +14,6 @@ will skip gracefully if the daemon is not reachable.
 
 from __future__ import annotations
 
-import json
-import re
-
 import pytest
 import requests
 

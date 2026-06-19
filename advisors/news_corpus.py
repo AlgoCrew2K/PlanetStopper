@@ -35,7 +35,6 @@ import calendar
 import datetime
 import logging
 import math
-import re
 import urllib.parse
 from typing import Any
 
@@ -159,21 +158,59 @@ _FEEDS: list[tuple[str, str, str]] = [
 # ---------------------------------------------------------------------------
 
 _TOPIC_KEYWORDS: dict[str, frozenset[str]] = {
-    "macro": frozenset({
-        "federal reserve", "fed", "fomc", "rate", "inflation", "cpi",
-        "ppi", "gdp", "jobs", "payroll", "treasury", "yield", "recession",
-    }),
-    "fundamentals": frozenset({
-        "earnings", "revenue", "guidance", "eps", "dividend", "buyback",
-        "8-k", "10-k", "10-q",
-    }),
-    "technicals": frozenset({
-        "rally", "selloff", "breakout", "support", "resistance",
-        "moving average", "volume", "breadth",
-    }),
-    "derivatives": frozenset({
-        "options", "vix", "futures", "gamma", "open interest", "expiry", "hedge",
-    }),
+    "macro": frozenset(
+        {
+            "federal reserve",
+            "fed",
+            "fomc",
+            "rate",
+            "inflation",
+            "cpi",
+            "ppi",
+            "gdp",
+            "jobs",
+            "payroll",
+            "treasury",
+            "yield",
+            "recession",
+        }
+    ),
+    "fundamentals": frozenset(
+        {
+            "earnings",
+            "revenue",
+            "guidance",
+            "eps",
+            "dividend",
+            "buyback",
+            "8-k",
+            "10-k",
+            "10-q",
+        }
+    ),
+    "technicals": frozenset(
+        {
+            "rally",
+            "selloff",
+            "breakout",
+            "support",
+            "resistance",
+            "moving average",
+            "volume",
+            "breadth",
+        }
+    ),
+    "derivatives": frozenset(
+        {
+            "options",
+            "vix",
+            "futures",
+            "gamma",
+            "open interest",
+            "expiry",
+            "hedge",
+        }
+    ),
 }
 
 # Combined keyword set used for relevance scoring
@@ -194,9 +231,7 @@ def _authority(domain: str) -> float:
 def _recency(published_str: str, now: datetime.datetime) -> float:
     """exp(-Δt_hours / TAU_HOURS); defaults to 0.5 on unparseable date."""
     try:
-        pub = datetime.datetime.fromisoformat(
-            published_str.replace("Z", "+00:00")
-        )
+        pub = datetime.datetime.fromisoformat(published_str.replace("Z", "+00:00"))
         delta_h = (now - pub.replace(tzinfo=None)).total_seconds() / 3600
         return math.exp(-max(0.0, delta_h) / TAU_HOURS)
     except Exception:
@@ -211,7 +246,7 @@ def _relevance(title: str) -> float:
 
 
 def _score_article(article: dict[str, Any], now: datetime.datetime) -> float:
-    """Compute composite score = W_RECENCY*recency + W_RELEVANCE*relevance + W_AUTHORITY*authority."""
+    """Compute composite score = W_RECENCY*recency + W_RELEVANCE*relevance + W_AUTHORITY*authority."""  # noqa: E501  # un-wrappable long line
     return (
         W_RECENCY * _recency(article.get("published", ""), now)
         + W_RELEVANCE * _relevance(article.get("title", ""))
@@ -318,7 +353,6 @@ def _dedup(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return capped
 
 
-
 def _normalize_gdelt_articles(sources_raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Normalize raw GDELT artlist records from lens_gdelt into the common article shape.
 
@@ -334,15 +368,17 @@ def _normalize_gdelt_articles(sources_raw: list[dict[str, Any]]) -> list[dict[st
         domain = src.get("domain", "") or _extract_domain(url)
         title = src.get("title", "")
         published = src.get("seendate", "")
-        normalized.append({
-            "url": url,
-            "title": title,
-            "published": published,
-            "domain": domain,
-            "source_feed": "gdelt_artlist",
-            "topics": _tag_topics(title),
-            "score": 0.0,  # assigned later by _score_article
-        })
+        normalized.append(
+            {
+                "url": url,
+                "title": title,
+                "published": published,
+                "domain": domain,
+                "source_feed": "gdelt_artlist",
+                "topics": _tag_topics(title),
+                "score": 0.0,  # assigned later by _score_article
+            }
+        )
     _log.info("gdelt_artlist: normalized %d articles from lens_gdelt", len(normalized))
     return normalized
 
@@ -368,25 +404,31 @@ def _fetch_rss_feed(name: str, url: str, ua: str) -> list[dict[str, Any]]:
             # by datetime.fromisoformat — use calendar.timegm + tz-aware fromtimestamp instead.
             _pp = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
             if _pp is not None:
-                published = datetime.datetime.fromtimestamp(
-                    calendar.timegm(_pp), tz=datetime.timezone.utc
-                ).replace(tzinfo=None).strftime("%Y-%m-%dT%H:%M:%S")
+                published = (
+                    datetime.datetime.fromtimestamp(calendar.timegm(_pp), tz=datetime.UTC)
+                    .replace(tzinfo=None)
+                    .strftime("%Y-%m-%dT%H:%M:%S")
+                )
             else:
-                published = getattr(entry, "published", None) or getattr(entry, "updated", None) or ""
+                published = (
+                    getattr(entry, "published", None) or getattr(entry, "updated", None) or ""
+                )
             # Prefer entry.source.href (publisher URL) when present — Google News wraps
             # all article links in news.google.com/rss/articles/... wrapper URLs whose
             # domain is meaningless for authority scoring and cross-source dedup.
             _src_href = getattr(getattr(entry, "source", None), "href", None) or ""
             domain = _extract_domain(_src_href) if _src_href else _extract_domain(link)
-            normalized.append({
-                "url": link,
-                "title": title,
-                "published": str(published),
-                "domain": domain,
-                "source_feed": name,
-                "topics": _tag_topics(title),
-                "score": 0.0,  # assigned later
-            })
+            normalized.append(
+                {
+                    "url": link,
+                    "title": title,
+                    "published": str(published),
+                    "domain": domain,
+                    "source_feed": name,
+                    "topics": _tag_topics(title),
+                    "score": 0.0,  # assigned later
+                }
+            )
         _log.info("feed %s: fetched %d entries", name, len(normalized))
         return normalized
     except Exception as exc:
@@ -451,7 +493,7 @@ def build_news_corpus() -> dict[str, Any]:
     articles = _dedup(gdelt_articles + rss_articles)
 
     # Use timezone-aware now to avoid DeprecationWarning (Python 3.12+)
-    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
     for art in articles:
         art["score"] = _score_article(art, now)
     articles.sort(key=lambda a: a["score"], reverse=True)

@@ -44,7 +44,6 @@ import pytest
 
 import math_engine
 
-
 FIXTURE = (
     pathlib.Path(__file__).parent.parent
     / "fixtures"

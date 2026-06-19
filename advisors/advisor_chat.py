@@ -46,7 +46,6 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional
 
 import ai_advisor
 
@@ -244,8 +243,8 @@ class ChatResponse:
     directive, never a new recommendation (AC-4.1).
     """
 
-    answer: Optional[str]
-    error: Optional[str]
+    answer: str | None
+    error: str | None
 
 
 # ---------------------------------------------------------------------------

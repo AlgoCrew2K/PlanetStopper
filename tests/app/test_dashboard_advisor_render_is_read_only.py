@@ -25,13 +25,12 @@ no API mutation must be reachable from any of these routes.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 import app as app_module
 import database as database_module
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures

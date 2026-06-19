@@ -59,7 +59,6 @@ import pytest
 
 import math_engine
 
-
 FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "math" / "hwm_anchored_stop"
 
 APPROX_REL = 1e-9

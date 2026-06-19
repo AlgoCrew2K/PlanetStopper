@@ -53,13 +53,12 @@ fixture this test seeds — NEVER from literal expectations of math the engine
 produced.
 """
 
-from datetime import datetime, timezone, timedelta
-from unittest.mock import MagicMock, patch
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import pytest
 
 import alpha_bot_execution
-
 
 # Try ZoneInfo for the fixed clock; fall back to a naive UTC-offset construction
 # on systems that lack tzdata. The bot's time gates only care about wall-clock

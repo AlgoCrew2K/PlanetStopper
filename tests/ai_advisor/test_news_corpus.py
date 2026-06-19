@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import json
 import pathlib
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -43,7 +43,9 @@ import pytest
 # feedparser guard — whole file skips if not installed
 # (GREEN requires pip install feedparser in the worktree env)
 # ---------------------------------------------------------------------------
-feedparser = pytest.importorskip("feedparser", reason="feedparser not installed — pip install feedparser")
+feedparser = pytest.importorskip(
+    "feedparser", reason="feedparser not installed — pip install feedparser"
+)
 
 # ---------------------------------------------------------------------------
 # Fixture paths
@@ -85,13 +87,17 @@ def sec_8k_xml() -> bytes:
 @pytest.fixture
 def gdelt_artlist_json() -> dict:
     """GDELT artlist schema-derived fixture (live capture rate-limited 2026-06-18)."""
-    return json.loads((_FIXTURE_DIR / "gdelt_artlist_maxrecords50.json").read_text(encoding="utf-8"))
+    return json.loads(
+        (_FIXTURE_DIR / "gdelt_artlist_maxrecords50.json").read_text(encoding="utf-8")
+    )
 
 
 @pytest.fixture
 def gdelt_timelinetone_fixture() -> dict:
     """Existing GDELT timelinetone fixture (from prior cycle)."""
-    return json.loads((_MATH_FIXTURE_DIR / "gdelt_timelinetone_response.json").read_text(encoding="utf-8"))
+    return json.loads(
+        (_MATH_FIXTURE_DIR / "gdelt_timelinetone_response.json").read_text(encoding="utf-8")
+    )
 
 
 def _make_xml_response(content: bytes, status: int = 200) -> MagicMock:
@@ -103,6 +109,7 @@ def _make_xml_response(content: bytes, status: int = 200) -> MagicMock:
     mock.raise_for_status = MagicMock()
     if status >= 400:
         from requests.exceptions import HTTPError
+
         mock.raise_for_status.side_effect = HTTPError(f"HTTP {status}")
     return mock
 
@@ -126,6 +133,7 @@ def _make_json_response(data: dict, status: int = 200) -> MagicMock:
 def validate_rss_feed_shape(xml_bytes: bytes, name: str) -> None:
     """Assert RSS/Atom fixture has parseable structure with at least one item."""
     import xml.etree.ElementTree as ET
+
     content = xml_bytes
     if content.startswith(b"\xef\xbb\xbf"):
         content = content[3:]
@@ -144,9 +152,7 @@ def validate_rss_feed_shape(xml_bytes: bytes, name: str) -> None:
         or root.findall("{http://www.w3.org/2005/Atom}entry")
         or root.findall("entry")
     )
-    assert len(items) >= 1, (
-        f"{name} fixture must have at least one item/entry, got 0."
-    )
+    assert len(items) >= 1, f"{name} fixture must have at least one item/entry, got 0."
 
 
 class TestFixtureShapeValidity:
@@ -210,9 +216,7 @@ class TestNewsCorpusModuleExists:
             "advisors.news_corpus.build_news_corpus() is missing. "
             "This is the public entry point for the corpus builder."
         )
-        assert callable(news_corpus.build_news_corpus), (
-            "build_news_corpus must be callable."
-        )
+        assert callable(news_corpus.build_news_corpus), "build_news_corpus must be callable."
 
 
 # ---------------------------------------------------------------------------
@@ -304,9 +308,7 @@ class TestUserAgentAndPerFeedIsolation:
                 f"SEC requires a descriptive contact UA."
             )
 
-    def test_single_feed_403_does_not_fail_whole_corpus(
-        self, fed_press_xml, google_news_xml
-    ):
+    def test_single_feed_403_does_not_fail_whole_corpus(self, fed_press_xml, google_news_xml):
         """One feed returning 403 degrades that feed only — corpus still available.
 
         AC-1: per-feed failure isolation. FAILS if any single feed 403 crashes the lens.
@@ -478,9 +480,7 @@ class TestGdeltToneFacetIndependence:
             f"Got keys: {set(result.keys()) if result else 'None'}"
         )
 
-    def test_gdelt_tone_present_when_all_article_feeds_fail(
-        self, gdelt_timelinetone_fixture
-    ):
+    def test_gdelt_tone_present_when_all_article_feeds_fail(self, gdelt_timelinetone_fixture):
         """GDELT tone is returned even when all article feeds fail.
 
         AC-2: tone facet is the always-valid floor. available=True when tone present
@@ -514,9 +514,7 @@ class TestGdeltToneFacetIndependence:
             f"tone must be a float when GDELT timelinetone succeeds. Got: {tone!r}"
         )
 
-    def test_tone_facet_is_scalar_not_in_corpus(
-        self, gdelt_timelinetone_fixture, fed_press_xml
-    ):
+    def test_tone_facet_is_scalar_not_in_corpus(self, gdelt_timelinetone_fixture, fed_press_xml):
         """Tone is a scalar float in result['tone'], not an article in result['corpus'].
 
         AC-2: GDELT tone is UNRANKED — it must not appear as an entry in the corpus list.
@@ -586,12 +584,8 @@ class TestRankedCorpusContracts:
                 f"No magic numbers — every weight/threshold must be a named constant."
             )
             val = getattr(news_corpus, name)
-            assert isinstance(val, (int, float)), (
-                f"{name} must be numeric, got {type(val)}"
-            )
-            assert lo <= val <= hi, (
-                f"{name}={val} is outside expected range [{lo}, {hi}]."
-            )
+            assert isinstance(val, (int, float)), f"{name} must be numeric, got {type(val)}"
+            assert lo <= val <= hi, f"{name}={val} is outside expected range [{lo}, {hi}]."
 
         # Weights should sum to ~1.0 (±0.05 tolerance — rounding is fine)
         w_sum = news_corpus.W_RECENCY + news_corpus.W_RELEVANCE + news_corpus.W_AUTHORITY
@@ -611,9 +605,7 @@ class TestRankedCorpusContracts:
             "advisors.news_corpus.SOURCE_AUTHORITY dict is missing."
         )
         table = news_corpus.SOURCE_AUTHORITY
-        assert isinstance(table, dict), (
-            f"SOURCE_AUTHORITY must be a dict, got {type(table)}"
-        )
+        assert isinstance(table, dict), f"SOURCE_AUTHORITY must be a dict, got {type(table)}"
         required_domains = [
             "federalreserve.gov",
             "sec.gov",
@@ -877,7 +869,8 @@ class TestRankedCorpusContracts:
         corpus = result.get("corpus", [])
         # Both titles are near-identical — after dedup at most 1 should remain
         matching = [
-            art for art in corpus
+            art
+            for art in corpus
             if "Federal Reserve Holds Interest Rates Steady" in art.get("title", "")
         ]
         assert len(matching) <= 1, (
@@ -896,8 +889,7 @@ class TestRankedCorpusContracts:
 
         # The GDELT artlist fixture has 4 reuters.com entries — the cap should drop to 3
         reuters_count_in_fixture = sum(
-            1 for art in gdelt_artlist_json["articles"]
-            if art.get("domain") == "reuters.com"
+            1 for art in gdelt_artlist_json["articles"] if art.get("domain") == "reuters.com"
         )
         assert reuters_count_in_fixture >= 4, (
             "Precondition: GDELT artlist fixture must have >= 4 reuters.com articles "
@@ -974,7 +966,7 @@ class TestRankedCorpusContracts:
         for i in range(len(scores_present) - 1):
             assert scores_present[i] >= scores_present[i + 1], (
                 f"corpus is not sorted descending by score. "
-                f"corpus[{i}].score={scores_present[i]} < corpus[{i+1}].score={scores_present[i+1]}. "
+                f"corpus[{i}].score={scores_present[i]} < corpus[{i + 1}].score={scores_present[i + 1]}. "
                 f"AC-3: sort desc, highest score first."
             )
 
@@ -992,14 +984,16 @@ class TestRankedCorpusContracts:
         # Build a fixture with TOP_K + 10 unique articles
         many_articles = []
         for i in range(top_k + 10):
-            many_articles.append({
-                "url": f"https://www.site-{i}.com/article",
-                "title": f"Market News Article Number {i} Unique Content Here",
-                "seendate": f"20260618T{(i % 24):02d}0000Z",
-                "language": "English",
-                "domain": f"site-{i}.com",
-                "sourcecountry": "United States",
-            })
+            many_articles.append(
+                {
+                    "url": f"https://www.site-{i}.com/article",
+                    "title": f"Market News Article Number {i} Unique Content Here",
+                    "seendate": f"20260618T{(i % 24):02d}0000Z",
+                    "language": "English",
+                    "domain": f"site-{i}.com",
+                    "sourcecountry": "United States",
+                }
+            )
         big_artlist = {"articles": many_articles}
 
         def route_response(url, **kwargs):
@@ -1038,7 +1032,9 @@ class TestRankedCorpusContracts:
 class TestTopicTagging:
     """Topic-tagging routes articles to macro/fundamentals/technicals/derivatives/broad-sentiment."""
 
-    _KNOWN_TOPICS = frozenset({"macro", "fundamentals", "technicals", "derivatives", "broad-sentiment"})
+    _KNOWN_TOPICS = frozenset(
+        {"macro", "fundamentals", "technicals", "derivatives", "broad-sentiment"}
+    )
 
     def _make_single_article_artlist(self, title: str) -> dict:
         return {
@@ -1135,8 +1131,8 @@ class TestTopicTagging:
             pytest.skip("corpus empty")
         topics = corpus[0].get("topics", [])
         assert len(topics) >= 1, (
-            f"Article with no keyword matches must default to 'broad-sentiment'. "
-            f"Got empty topics list."
+            "Article with no keyword matches must default to 'broad-sentiment'. "
+            "Got empty topics list."
         )
         assert "broad-sentiment" in topics, (
             f"Default topic must be 'broad-sentiment'. Got: {topics!r}"
@@ -1274,8 +1270,7 @@ class TestHonestAvailabilityMultiSource:
         corpus = result.get("corpus", [])
         if corpus:
             assert result.get("available") is True, (
-                f"Corpus articles present + tone failed → available must be True. "
-                f"Got: {result!r}"
+                f"Corpus articles present + tone failed → available must be True. Got: {result!r}"
             )
 
 
@@ -1315,6 +1310,7 @@ class TestBuildSentimentSectionMultiSource:
         # Patch build_news_corpus inside ai_advisor's lazy import
         try:
             import advisors.news_corpus as news_corpus_mod
+
             original = news_corpus_mod.build_news_corpus
             news_corpus_mod.build_news_corpus = lambda: mock_corpus_result
         except ImportError:
@@ -1370,6 +1366,7 @@ class TestBuildSentimentSectionMultiSource:
 
         try:
             import advisors.news_corpus as news_corpus_mod
+
             original = news_corpus_mod.build_news_corpus
             news_corpus_mod.build_news_corpus = lambda: mock_corpus_result
         except ImportError:
@@ -1417,9 +1414,9 @@ class TestFeedparserDependency:
             if not line.strip().startswith("#")
         )
         assert has_feedparser, (
-            f"feedparser is not listed in requirements.txt. "
-            f"AC-7: feedparser must be added as a project dependency. "
-            f"Add 'feedparser>=6.0' to requirements.txt."
+            "feedparser is not listed in requirements.txt. "
+            "AC-7: feedparser must be added as a project dependency. "
+            "Add 'feedparser>=6.0' to requirements.txt."
         )
 
 
@@ -1445,11 +1442,9 @@ class TestGdeltArtlistMaxrecordsBump:
 
         url = lens_gdelt._GDELT_ARTLIST_URL
         import re
+
         match = re.search(r"maxrecords=(\d+)", url)
-        assert match is not None, (
-            f"_GDELT_ARTLIST_URL has no maxrecords parameter. "
-            f"URL: {url!r}"
-        )
+        assert match is not None, f"_GDELT_ARTLIST_URL has no maxrecords parameter. URL: {url!r}"
         maxrecords = int(match.group(1))
         assert maxrecords >= 50, (
             f"_GDELT_ARTLIST_URL has maxrecords={maxrecords} but must be >= 50. "
@@ -1483,6 +1478,7 @@ class TestSingleGdeltPath:
     def _count_gdelt_tone_calls(self, captured_urls: list[str]) -> int:
         """Count how many calls targeted _GDELT_TONE_URL."""
         from advisors import lens_gdelt
+
         tone_url_base = lens_gdelt._GDELT_TONE_URL.split("?")[0]
         return sum(1 for u in captured_urls if tone_url_base in u and "timelinetone" in u)
 
@@ -1570,6 +1566,7 @@ class TestSingleGdeltPath:
 
         try:
             import advisors.news_corpus as news_corpus_mod
+
             original_build = news_corpus_mod.build_news_corpus
             news_corpus_mod.build_news_corpus = lambda: mock_corpus_result
         except ImportError:
@@ -1577,6 +1574,7 @@ class TestSingleGdeltPath:
 
         try:
             import advisors.lens_gdelt as lens_gdelt_mod
+
             original_fetch_sentiment = lens_gdelt_mod._fetch_gdelt_sentiment
 
             def counting_fetch_sentiment(universe):
@@ -1622,7 +1620,6 @@ class TestSingleGdeltPath:
             "build_news_corpus() calls lens_gdelt._fetch_gdelt_sentiment([]) inline; "
             "_fetch_gdelt_tone is dead code. Delete it from advisors/news_corpus.py."
         )
-
 
     def test_build_sentiment_section_total_gdelt_gets_at_most_two(
         self, gdelt_timelinetone_fixture, fed_press_xml
@@ -1748,6 +1745,7 @@ class TestWarehousePersistence:
 
         try:
             import advisors.news_corpus as news_corpus_mod
+
             original_build = news_corpus_mod.build_news_corpus
             news_corpus_mod.build_news_corpus = lambda: mock_corpus_result
         except ImportError:
@@ -1755,6 +1753,7 @@ class TestWarehousePersistence:
 
         try:
             import advisors.lens_warehouse as lw_mod
+
             original_persist = lw_mod.persist_lens_snapshot
             lw_mod.persist_lens_snapshot = mock_persist
 
@@ -1767,10 +1766,10 @@ class TestWarehousePersistence:
             f"Precondition: section must be available=True. Got: {result!r}"
         )
         assert len(persist_calls) >= 1, (
-            f"persist_lens_snapshot was NOT called on the success path. "
-            f"DW-1: sentiment lens snapshots must persist to warehouse on success. "
-            f"FAILS on current code. Restore the lens_warehouse.persist_lens_snapshot() "
-            f"call in _build_sentiment_section."
+            "persist_lens_snapshot was NOT called on the success path. "
+            "DW-1: sentiment lens snapshots must persist to warehouse on success. "
+            "FAILS on current code. Restore the lens_warehouse.persist_lens_snapshot() "
+            "call in _build_sentiment_section."
         )
         # The persist call must carry lens='sentiment' and available=True
         success_persist = [c for c in persist_calls if c.get("available") is True]
@@ -1790,8 +1789,8 @@ class TestWarehousePersistence:
         when the sentiment lens was down.
         FAILS on current code (no persist call on the unavailable path).
         """
+
         import ai_advisor
-        from requests.exceptions import Timeout
 
         persist_calls: list[dict] = []
 
@@ -1809,6 +1808,7 @@ class TestWarehousePersistence:
 
         try:
             import advisors.news_corpus as news_corpus_mod
+
             original_build = news_corpus_mod.build_news_corpus
             news_corpus_mod.build_news_corpus = lambda: mock_unavailable
         except ImportError:
@@ -1816,6 +1816,7 @@ class TestWarehousePersistence:
 
         try:
             import advisors.lens_warehouse as lw_mod
+
             original_persist = lw_mod.persist_lens_snapshot
             lw_mod.persist_lens_snapshot = mock_persist
 
@@ -1828,10 +1829,10 @@ class TestWarehousePersistence:
             f"Precondition: section must be available=False. Got: {result!r}"
         )
         assert len(persist_calls) >= 1, (
-            f"persist_lens_snapshot was NOT called on the unavailable path. "
-            f"DW-1: sentiment lens unavailability must be persisted to warehouse. "
-            f"FAILS on current code. Restore the lens_warehouse.persist_lens_snapshot() "
-            f"call in _build_sentiment_section for the unavailable path."
+            "persist_lens_snapshot was NOT called on the unavailable path. "
+            "DW-1: sentiment lens unavailability must be persisted to warehouse. "
+            "FAILS on current code. Restore the lens_warehouse.persist_lens_snapshot() "
+            "call in _build_sentiment_section for the unavailable path."
         )
         unavail_persist = [c for c in persist_calls if c.get("available") is False]
         assert unavail_persist, (
@@ -1839,9 +1840,7 @@ class TestWarehousePersistence:
             f"with available=False. Calls: {persist_calls}"
         )
 
-    def test_persist_payload_contains_tone_and_corpus_summary(
-        self, gdelt_timelinetone_fixture
-    ):
+    def test_persist_payload_contains_tone_and_corpus_summary(self, gdelt_timelinetone_fixture):
         """The warehouse payload on the success path carries tone_score and corpus_size.
 
         DW-1: the raw_payload passed to persist_lens_snapshot must contain enough
@@ -1875,6 +1874,7 @@ class TestWarehousePersistence:
 
         try:
             import advisors.news_corpus as news_corpus_mod
+
             original_build = news_corpus_mod.build_news_corpus
             news_corpus_mod.build_news_corpus = lambda: mock_corpus_result
         except ImportError:
@@ -1882,6 +1882,7 @@ class TestWarehousePersistence:
 
         try:
             import advisors.lens_warehouse as lw_mod
+
             original_persist = lw_mod.persist_lens_snapshot
             lw_mod.persist_lens_snapshot = mock_persist
 
@@ -1909,10 +1910,11 @@ class TestWarehousePersistence:
             f"Warehouse consumers need the tone value for historical trending. "
             f"Got keys: {set(raw_payload.keys())}"
         )
-        assert "corpus_size" in raw_payload or "article_count" in raw_payload or "corpus" in raw_payload, (
-            f"raw_payload missing corpus size indicator. "
-            f"Got keys: {set(raw_payload.keys())}"
-        )
+        assert (
+            "corpus_size" in raw_payload
+            or "article_count" in raw_payload
+            or "corpus" in raw_payload
+        ), f"raw_payload missing corpus size indicator. Got keys: {set(raw_payload.keys())}"
 
 
 # ---------------------------------------------------------------------------
@@ -1936,6 +1938,7 @@ class TestUtcnowDeprecation:
         NOTE: non-blocking per reviewer; include in the same GREEN pass.
         """
         import pathlib
+
         src = pathlib.Path(__file__).parents[2] / "advisors" / "news_corpus.py"
         assert src.exists(), f"news_corpus.py not found at {src}"
         content = src.read_text(encoding="utf-8")
@@ -1963,6 +1966,7 @@ class TestUtcnowDeprecation:
         GREEN: implementer replaces it with the tz-aware form.
         """
         import pathlib
+
         src = pathlib.Path(__file__).parents[2] / "advisors" / "news_corpus.py"
         assert src.exists(), f"news_corpus.py not found at {src}"
         content = src.read_text(encoding="utf-8")
@@ -2011,7 +2015,7 @@ class TestRssRecencyFromPublishedParsed:
         """
         import datetime
 
-        from advisors.news_corpus import _recency, _fetch_rss_feed
+        from advisors.news_corpus import _fetch_rss_feed, _recency
 
         articles = []
         with patch("requests.get", return_value=_make_xml_response(fed_press_xml)):
@@ -2023,7 +2027,7 @@ class TestRssRecencyFromPublishedParsed:
 
         assert articles, "fed_press fixture must yield at least one article"
 
-        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
         recency_vals = [_recency(art["published"], now) for art in articles]
 
         non_default = [v for v in recency_vals if v != 0.5]
@@ -2049,7 +2053,7 @@ class TestRssRecencyFromPublishedParsed:
         """
         import datetime
 
-        from advisors.news_corpus import _recency, _fetch_rss_feed, TAU_HOURS
+        from advisors.news_corpus import TAU_HOURS, _fetch_rss_feed, _recency
 
         articles = []
         with patch("requests.get", return_value=_make_xml_response(fed_press_xml)):
@@ -2061,7 +2065,7 @@ class TestRssRecencyFromPublishedParsed:
 
         assert len(articles) >= 2, "fed_press fixture must yield at least 2 articles"
 
-        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
         recency_vals = [_recency(art["published"], now) for art in articles]
 
         spread = max(recency_vals) - min(recency_vals)
@@ -2146,7 +2150,7 @@ class TestGoogleNewsPublisherDomain:
         RED: fails while domain is stuck at 'news.google.com' (authority 0.4 always).
         GREEN: at least one article has a domain with authority > 0.4.
         """
-        from advisors.news_corpus import _fetch_rss_feed, _authority
+        from advisors.news_corpus import _authority, _fetch_rss_feed
 
         with patch("requests.get", return_value=_make_xml_response(google_news_xml)):
             articles = _fetch_rss_feed(
@@ -2157,9 +2161,7 @@ class TestGoogleNewsPublisherDomain:
 
         assert articles, "google_news_business.xml fixture must yield at least one article"
 
-        high_authority = [
-            a for a in articles if _authority(a.get("domain", "")) > 0.4
-        ]
+        high_authority = [a for a in articles if _authority(a.get("domain", "")) > 0.4]
         assert high_authority, (
             f"No Google News article has authority > 0.4 (the unknown-domain default). "
             f"The fixture contains articles from known publishers (cnbc.com, cnn.com, "

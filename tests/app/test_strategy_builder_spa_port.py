@@ -43,7 +43,7 @@ Set $env:DB_PATH before pytest.
 
 from __future__ import annotations
 
-import ast
+import os
 import pathlib
 import re
 import subprocess
@@ -250,6 +250,11 @@ class TestAC2StrategyBuilderPanelContent:
             "The risk banner must be ported from the standalone template (AC2)."
         )
 
+    @pytest.mark.skipif(
+        not os.environ.get("COMPOSER_KEY_ID"),
+        reason="strategy-builder-controls/sb-run-btn only render when COMPOSER_KEY_ID "
+        "is set (template guard: {% if not no_api_key %}) — credential-gated",
+    )
     def test_spa_strategy_builder_panel_contains_run_controls(self, advisor_page_html):
         """AC2-B: The strategy-builder panel must contain the run controls section.
 
@@ -454,7 +459,7 @@ class TestAC3RouteRedirect:
             resp = client.get("/ai-advisor/strategy-builder")
 
         assert resp.status_code != 200, (
-            f"GET /ai-advisor/strategy-builder returned 200. "
+            "GET /ai-advisor/strategy-builder returned 200. "
             "After SPA-port, this route must be a redirect — returning 200 with the "
             "standalone page is the DEFECT we are eliminating. "
             "Convert the GET handler in app.py to return redirect('/ai-advisor') (AC3)."

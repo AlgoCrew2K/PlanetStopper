@@ -18,7 +18,7 @@ symphony_logs.json is ever touched by the test suite.
 from __future__ import annotations
 
 import json
-from unittest.mock import patch, mock_open, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -28,7 +28,6 @@ from database import (
     get_symphony_logs,
     log_symphony_event,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixture: isolated log file path per test
@@ -70,7 +69,7 @@ def test_log_symphony_event_writes_three_entries(isolated_log_file):
     for msg in messages:
         log_symphony_event(symphony_id, msg, event_type="info")
 
-    with open(isolated_log_file, "r", encoding="utf-8") as f:
+    with open(isolated_log_file, encoding="utf-8") as f:
         logs = json.load(f)
 
     assert symphony_id in logs, (
@@ -106,7 +105,7 @@ def test_log_symphony_event_preserves_event_type(isolated_log_file):
     log_symphony_event("sym-etype", "stop hit", event_type="warning")
     log_symphony_event("sym-etype", "exit confirmed", event_type="critical")
 
-    with open(isolated_log_file, "r", encoding="utf-8") as f:
+    with open(isolated_log_file, encoding="utf-8") as f:
         logs = json.load(f)
 
     entries = logs["sym-etype"]
@@ -167,7 +166,8 @@ def test_get_symphony_logs_returns_empty_list_when_file_absent():
 
     Uses a monkeypatch pointing to a path that was never written.
     """
-    import tempfile, os
+    import os
+    import tempfile
 
     with tempfile.TemporaryDirectory() as td:
         nonexistent = os.path.join(td, "does_not_exist.json")
@@ -209,7 +209,7 @@ def test_clear_symphony_logs_empties_all_entries(isolated_log_file):
     )
 
     # File must still be valid JSON (not deleted, not corrupted)
-    with open(isolated_log_file, "r", encoding="utf-8") as f:
+    with open(isolated_log_file, encoding="utf-8") as f:
         content = json.load(f)
     assert content == {}, f"Log file content after clear must be {{}}; got {content!r}"
 
@@ -245,7 +245,7 @@ def test_log_symphony_event_swallows_oserror_on_write(isolated_log_file):
     # Pre-seed the log file so the read path works correctly
     log_symphony_event("sym-oserr", "seed event", event_type="info")
 
-    original_open = open  # noqa: builtin reference
+    original_open = open  # noqa: A001  # shadow builtin for monkeypatching
 
     def _open_raiser(path, mode="r", **kwargs):
         if str(path) == isolated_log_file and "w" in mode:
@@ -266,16 +266,15 @@ def test_log_symphony_event_does_not_swallow_keyboard_interrupt(isolated_log_fil
     This test guards against a future broadening of the except clause to
     'except BaseException' which would make the engine un-interruptible.
     """
-    original_open = open  # noqa: builtin reference
+    original_open = open  # noqa: A001  # shadow builtin for monkeypatching
 
     def _open_ki_raiser(path, mode="r", **kwargs):
         if str(path) == isolated_log_file and "w" in mode:
             raise KeyboardInterrupt("simulated ctrl-c during write")
         return original_open(path, mode, **kwargs)
 
-    with pytest.raises(KeyboardInterrupt):
-        with patch("builtins.open", side_effect=_open_ki_raiser):
-            log_symphony_event("sym-ki", "should propagate", event_type="info")
+    with pytest.raises(KeyboardInterrupt), patch("builtins.open", side_effect=_open_ki_raiser):
+        log_symphony_event("sym-ki", "should propagate", event_type="info")
 
 
 # ---------------------------------------------------------------------------

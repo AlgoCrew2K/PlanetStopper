@@ -37,7 +37,7 @@ import ast
 import inspect
 import pathlib
 import sqlite3
-from unittest.mock import call, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -396,7 +396,7 @@ def test_record_cvar_diagnostic_calls_write_telemetry_row(tmp_path, monkeypatch)
 
     assert mock_write.called, (
         "record_cvar_diagnostic must call write_telemetry_row on its write path. "
-        f"write_telemetry_row was not called. "
+        "write_telemetry_row was not called. "
         "Check that the wrapper delegates rather than implementing a second path."
     )
 

@@ -606,7 +606,7 @@ def test_helper_source_contains_zero_magic_numbers() -> None:
     """
     import ast as _ast
 
-    structural_whitelist = {0, 1, -1, 0.0, 2}
+    structural_whitelist = {0, 1, -1, 2}
     src_path = pathlib.Path(math_engine.__file__)
     source = src_path.read_text(encoding="utf-8")
     tree = _ast.parse(source)

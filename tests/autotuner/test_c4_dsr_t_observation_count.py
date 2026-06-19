@@ -33,8 +33,6 @@ from __future__ import annotations
 import ast
 import pathlib
 
-import pytest
-
 _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
 _AUTOTUNER_SRC = _WORKTREE_ROOT / "autotuner.py"
 _PORTMODE_TEST = _WORKTREE_ROOT / "tests" / "portmode" / "test_autotuner_portmode.py"

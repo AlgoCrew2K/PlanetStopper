@@ -28,13 +28,11 @@ from __future__ import annotations
 import json
 import subprocess
 import threading
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import app as app_module
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -538,7 +536,7 @@ def test_post_settings_returns_500_on_save_failure(
     D-1 security fix: the error message must be generic, NOT the raw exception text.
     """
     monkeypatch.setattr(
-        app_module, "set_key", lambda *_a, **_kw: (_ for _ in ()).throw(IOError("disk"))
+        app_module, "set_key", lambda *_a, **_kw: (_ for _ in ()).throw(OSError("disk"))
     )
     # Use an allowlisted key so we reach the set_key exception path.
     resp = client.post(

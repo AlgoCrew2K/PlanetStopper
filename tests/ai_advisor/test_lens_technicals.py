@@ -1541,8 +1541,7 @@ class TestProxyUniverseGuard:
         )
         for ticker in proxy:
             assert isinstance(ticker, str) and ticker, (
-                f"Every entry in _PROXY_UNIVERSE must be a non-empty string. "
-                f"Found: {ticker!r}"
+                f"Every entry in _PROXY_UNIVERSE must be a non-empty string. Found: {ticker!r}"
             )
 
     def test_proxy_universe_tickers_reach_get_bars_when_logic_holdings_empty(self):

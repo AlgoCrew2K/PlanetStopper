@@ -66,10 +66,7 @@ import pathlib
 from datetime import datetime
 from unittest.mock import patch
 
-import pytest
-
 import database
-
 
 # The six per-position transient fields the audit's C-2 finding names.
 _TRANSIENT_INT_FIELDS = (

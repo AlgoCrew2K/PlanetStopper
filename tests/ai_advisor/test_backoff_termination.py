@@ -12,12 +12,10 @@ Safety: all tests patch requests.get — no live network I/O ever.
 
 from __future__ import annotations
 
-import threading
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests as requests_lib
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -120,9 +118,9 @@ def test_backoff_connection_error_terminates_within_max_attempts():
     with (
         patch("ai_advisor.requests.get", side_effect=always_conn_error),
         patch("ai_advisor.time.sleep"),
+        pytest.raises(requests_lib.exceptions.ConnectionError),
     ):
-        with pytest.raises(requests_lib.exceptions.ConnectionError):
-            ai_advisor._fetch_with_backoff("https://test.example/")
+        ai_advisor._fetch_with_backoff("https://test.example/")
 
     assert call_count <= ai_advisor._FETCH_MAX_ATTEMPTS, (
         f"requests.get was called {call_count} times on persistent ConnectionError; "
@@ -146,9 +144,9 @@ def test_backoff_timeout_error_terminates_within_max_attempts():
     with (
         patch("ai_advisor.requests.get", side_effect=always_timeout),
         patch("ai_advisor.time.sleep"),
+        pytest.raises(requests_lib.exceptions.Timeout),
     ):
-        with pytest.raises(requests_lib.exceptions.Timeout):
-            ai_advisor._fetch_with_backoff("https://test.example/")
+        ai_advisor._fetch_with_backoff("https://test.example/")
 
     assert call_count <= ai_advisor._FETCH_MAX_ATTEMPTS, (
         f"requests.get was called {call_count} times on persistent Timeout; "

@@ -141,11 +141,13 @@ def _extract_events(sources_raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
         domain = art.get("domain", "")
         if domain and domain not in seen_domains:
             seen_domains.add(domain)
-            deduped.append({
-                "title": art.get("title", ""),
-                "domain": domain,
-                "seendate": art.get("seendate", ""),
-            })
+            deduped.append(
+                {
+                    "title": art.get("title", ""),
+                    "domain": domain,
+                    "seendate": art.get("seendate", ""),
+                }
+            )
 
     # 4. Cap at _GDELT_MAX_EVENTS
     return deduped[:_GDELT_MAX_EVENTS]

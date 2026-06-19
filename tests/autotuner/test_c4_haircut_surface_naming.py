@@ -40,8 +40,6 @@ from __future__ import annotations
 
 import pathlib
 
-import pytest
-
 _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
 _REPORTING_SRC = _WORKTREE_ROOT / "reporting.py"
 _ALPHA_BOT_SRC = _WORKTREE_ROOT / "alpha_bot_execution.py"

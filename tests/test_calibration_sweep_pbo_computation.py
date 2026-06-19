@@ -18,8 +18,6 @@ synthetic history (130 stub-day dict, 1 symphony) directly in the test body.
 
 import types
 
-import pytest
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -40,12 +38,7 @@ def _make_stub_history(n_days: int = _WORKTREE_DAYS) -> dict:
 
     start = date(2025, 1, 1)
     ticks = [{"return": 0.0, "close": 100.0}]
-    return {
-        "SYM-X": {
-            (start + timedelta(days=i)).isoformat(): ticks
-            for i in range(n_days)
-        }
-    }
+    return {"SYM-X": {(start + timedelta(days=i)).isoformat(): ticks for i in range(n_days)}}
 
 
 def _make_current_params() -> dict:
@@ -107,7 +100,9 @@ def test_pbo_veto_status_is_true_when_no_trial_cleared_haircut_gate(monkeypatch)
 
     monkeypatch.setattr(autotuner, "_collect_sim_returns", lambda *a, **kw: [])
     monkeypatch.setattr(autotuner, "filter_sortino_sentinels", lambda trials: [_stub_trial])
-    monkeypatch.setattr(autotuner, "_haircut_select", lambda trials, n_effective: (None, None, None))
+    monkeypatch.setattr(
+        autotuner, "_haircut_select", lambda trials, n_effective: (None, None, None)
+    )
 
     rows = autotuner.run_calibration_sweep(
         history_data=_make_stub_history(),

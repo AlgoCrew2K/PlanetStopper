@@ -21,14 +21,13 @@ get_ro_connection (or removed from the route).
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch, call
 import sqlite3
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 import app as app_module
 import database as database_module
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -120,7 +119,7 @@ class TestReadRoutesDontOpenRWConnection:
             resp = client.get("/api/logs/sym-001")
 
         assert rw_connection_spy.call_count == 0, (
-            f"/api/logs opened a read-write DB connection. "
+            "/api/logs opened a read-write DB connection. "
             "Routes must use database.get_ro_connection() exclusively."
         )
 
@@ -134,7 +133,7 @@ class TestReadRoutesDontOpenRWConnection:
             resp = client.get("/api/triggers")
 
         assert rw_connection_spy.call_count == 0, (
-            f"/api/triggers opened a read-write DB connection. "
+            "/api/triggers opened a read-write DB connection. "
             "Routes must use database.get_ro_connection() exclusively."
         )
 
@@ -150,7 +149,7 @@ class TestReadRoutesDontOpenRWConnection:
             resp = client.get("/api/chart/sym-001")
 
         assert rw_connection_spy.call_count == 0, (
-            f"/api/chart opened a read-write DB connection. "
+            "/api/chart opened a read-write DB connection. "
             "Routes must use database.get_ro_connection() exclusively."
         )
 
@@ -166,7 +165,7 @@ class TestReadRoutesDontOpenRWConnection:
             resp = client.get("/api/settings")
 
         assert rw_connection_spy.call_count == 0, (
-            f"GET /api/settings opened a read-write DB connection. "
+            "GET /api/settings opened a read-write DB connection. "
             "Read routes must use get_ro_connection() exclusively."
         )
 
@@ -180,7 +179,7 @@ class TestReadRoutesDontOpenRWConnection:
             resp = client.get("/api/autotune-runs")
 
         assert rw_connection_spy.call_count == 0, (
-            f"/api/autotune-runs opened a read-write DB connection. "
+            "/api/autotune-runs opened a read-write DB connection. "
             "Routes must use database.get_ro_connection() exclusively."
         )
 

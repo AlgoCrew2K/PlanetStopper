@@ -28,7 +28,6 @@ import ast
 import json
 import math
 import pathlib
-import sqlite3
 import statistics
 from unittest.mock import MagicMock, patch
 
@@ -200,7 +199,6 @@ def test_gamma_read_from_spec_bundles_not_module_constant():
     not from a module constant — this test's monkeypatch will enforce that.
     """
     math_engine = _import_math_engine()
-    import autotuner
 
     # Two facet sets with different gammas: what get_spec_facets_for_bundle returns.
     def _make_facets(gamma_val):
@@ -389,7 +387,7 @@ def test_compute_crra_utility_log_utility_branch_at_gamma_equals_1():
     else:
         module_with_tol = math_engine
 
-    gamma_tol = getattr(module_with_tol, "CRRA_LOG_UTILITY_GAMMA_TOL")
+    gamma_tol = module_with_tol.CRRA_LOG_UTILITY_GAMMA_TOL
 
     for W_test in [0.99, 1.0, 1.01, 1.05]:
         expected_log = math.log(W_test)
@@ -733,7 +731,6 @@ def test_run_simulation_crra_eu_calls_compute_crra_eu_objective():
     """
     import autotuner
     import math_engine
-    from unittest.mock import patch
 
     test_returns_pct = [0.5, -0.25, 1.0, -0.5, 0.75, 0.4, -0.15]  # percent-frame
     sentinel_return = -0.12345
@@ -798,7 +795,6 @@ def test_objective_kind_crra_eu_routes_to_crra_not_sortino():
     """
     import autotuner
     import math_engine
-    from unittest.mock import patch, MagicMock
 
     test_returns_pct = [0.5, -0.25, 1.0, -0.5, 0.75, 0.4, -0.15]
     sentinel_crra_result = -0.444

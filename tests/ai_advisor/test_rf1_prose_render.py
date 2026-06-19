@@ -233,9 +233,7 @@ def test_council_derivatives_prose_passes_through_unchanged():
     assert "VIX" in result, (
         f"Council derivatives prose must pass through. Expected 'VIX'. Got: {result!r}"
     )
-    assert "CONTANGO" in result, (
-        f"Council prose passthrough — 'CONTANGO' missing. Got: {result!r}"
-    )
+    assert "CONTANGO" in result, f"Council prose passthrough — 'CONTANGO' missing. Got: {result!r}"
     _assert_no_raw_json(result, "derivatives")
 
 
@@ -398,9 +396,7 @@ def test_derivatives_json_humanized_no_raw_json_markers():
     assert any(
         token in result.lower()
         for token in ("contango", "backwardation", "term structure", "neutral", "regime")
-    ), (
-        f"Humanized derivatives must include regime/term-structure signal. Got: {result!r}."
-    )
+    ), f"Humanized derivatives must include regime/term-structure signal. Got: {result!r}."
 
     assert len(result.strip()) > 0, "humanize_lens_summary must not return empty string."
 
@@ -567,26 +563,40 @@ def test_fundamentals_humanized_references_coverage_count():
     humanize = _import_humanize()
 
     # Minimal 2-ticker fundamentals JSON (trimmed from the full row 77 fixture)
-    minimal_fund_json = json.dumps({
-        "tickers": {
-            "AAPL": {
-                "entity_name": "Apple Inc.",
-                "cik": 320193,
-                "key_facts": {
-                    "Revenues": {"label": "Revenue", "value": 416161000000, "unit": "USD",
-                                 "end": "2025-09-27", "filed": "2025-10-31", "form": "10-K"}
-                }
-            },
-            "AMZN": {
-                "entity_name": "AMAZON COM INC",
-                "cik": 1018724,
-                "key_facts": {
-                    "Revenues": {"label": "Revenue", "value": 716924000000, "unit": "USD",
-                                 "end": "2025-12-31", "filed": "2026-02-06", "form": "10-K"}
-                }
+    minimal_fund_json = json.dumps(
+        {
+            "tickers": {
+                "AAPL": {
+                    "entity_name": "Apple Inc.",
+                    "cik": 320193,
+                    "key_facts": {
+                        "Revenues": {
+                            "label": "Revenue",
+                            "value": 416161000000,
+                            "unit": "USD",
+                            "end": "2025-09-27",
+                            "filed": "2025-10-31",
+                            "form": "10-K",
+                        }
+                    },
+                },
+                "AMZN": {
+                    "entity_name": "AMAZON COM INC",
+                    "cik": 1018724,
+                    "key_facts": {
+                        "Revenues": {
+                            "label": "Revenue",
+                            "value": 716924000000,
+                            "unit": "USD",
+                            "end": "2025-12-31",
+                            "filed": "2026-02-06",
+                            "form": "10-K",
+                        }
+                    },
+                },
             }
         }
-    })
+    )
 
     entry = {"available": True, "summary": minimal_fund_json, "sources": []}
     result = humanize("fundamentals", entry)
@@ -776,12 +786,12 @@ def test_humanize_never_raises_on_non_string_summary():
 
     # Unexpected types that must not cause a crash
     junk_inputs = [
-        42,           # int
-        3.14,         # float
-        [1, 2, 3],    # list
-        {"a": "b"},   # already-parsed dict (not a string)
-        True,         # bool
-        b"bytes",     # bytes
+        42,  # int
+        3.14,  # float
+        [1, 2, 3],  # list
+        {"a": "b"},  # already-parsed dict (not a string)
+        True,  # bool
+        b"bytes",  # bytes
     ]
 
     for junk in junk_inputs:
@@ -1010,8 +1020,8 @@ def test_route_renders_no_raw_json_in_per_lens_text_for_pipeline_row(client, mon
 
     Fixture: lens_pipeline row 77 shape, injected via mock DB.
     """
-    import re
     import html as html_module
+    import re
 
     _mock_route_deps(monkeypatch, _PIPELINE_PRISM_SUMMARY)
 
@@ -1085,6 +1095,7 @@ def test_route_renders_no_generic_json_markers_in_prism_lenses(client, monkeypat
     for lens_text in lens_texts:
         # Unescape HTML entities to get the actual rendered string
         import html as html_module
+
         decoded = html_module.unescape(lens_text)
         assert '{"' not in decoded, (
             f"Raw JSON object marker '{{\"' found in a prism-lens-text paragraph. "
@@ -1106,7 +1117,6 @@ def test_route_renders_council_prose_passthrough_in_prism_lenses(client, monkeyp
 
     Fixture: council row 78 shape, injected via mock DB.
     """
-    import re
 
     _mock_route_deps(monkeypatch, _COUNCIL_PRISM_SUMMARY)
 
@@ -1145,7 +1155,6 @@ def test_route_renders_honest_empty_state_for_null_summary_lens(client, monkeypa
     and that its text is a non-empty honest message (not 'null'/'None'/'{}'/'').
     """
     import re
-    import html as html_module
 
     _mock_route_deps(monkeypatch, _NULL_SUMMARY_PRISM_SUMMARY)
 
@@ -1302,15 +1311,17 @@ def test_obs_raw_preview_does_not_emit_raw_json_for_market_prism_rows(client, mo
         "subject_type": "global",
         "verdict": "neutral",
         "created_at": "2026-06-18 09:03:18",
-        "raw_response": json.dumps({
-            "overall_sentiment": "neutral",
-            "per_lens_digest": {
-                "technicals": {
-                    "available": True,
-                    "summary": _TECH_JSON_SUMMARY,
-                }
+        "raw_response": json.dumps(
+            {
+                "overall_sentiment": "neutral",
+                "per_lens_digest": {
+                    "technicals": {
+                        "available": True,
+                        "summary": _TECH_JSON_SUMMARY,
+                    }
+                },
             }
-        }),
+        ),
     }
 
     def _fake_get_observations(role, *args, **kwargs):
@@ -1425,10 +1436,11 @@ def test_obs_raw_preview_does_not_emit_raw_json_for_symphony_level_rows(client, 
 
     Fixture provenance: OVERFITTING_CONSCIENCE id=58 + SPEC_CRITIC id=37 from live DB.
     """
+    import html as html_module
+    import re
+
     import app as app_module
     import database
-    import re
-    import html as html_module
 
     # Two symphony-level obs rows shaped like real live-DB rows
     symphony_obs_list = [
@@ -1538,10 +1550,11 @@ def test_obs_raw_preview_symphony_rows_surface_note_field_prose(client, monkeypa
 
     Fixture provenance: OC id=58, SC id=37, live DB, 2026-06-05.
     """
+    import html as html_module
+    import re
+
     import app as app_module
     import database
-    import re
-    import html as html_module
 
     symphony_obs_list = [
         {

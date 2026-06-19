@@ -19,6 +19,7 @@ _FIXTURE_PATH = (
 # Fixture loading
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def fixture():
     return json.loads(_FIXTURE_PATH.read_text())
@@ -27,6 +28,7 @@ def fixture():
 # ---------------------------------------------------------------------------
 # Helpers to build minimal history_data dicts
 # ---------------------------------------------------------------------------
+
 
 def _make_tick() -> dict:
     """Build a minimal valid tick dict matching synthetic_history.fetch_bars shape.
@@ -72,6 +74,7 @@ def _make_history_data(n_days: int, sym_id: str = "SYM-TEST") -> dict:
 # AC-4.1 — short-history symphony produces no report rows
 # ---------------------------------------------------------------------------
 
+
 def test_symphony_below_history_threshold_produces_no_report_rows(fixture):
     """A symphony with <125 trading days must be skipped; result is an empty list.
 
@@ -116,6 +119,7 @@ def test_symphony_below_history_threshold_produces_no_report_rows(fixture):
 # AC-4.2 — skip is logged as a warning (not silently dropped)
 # ---------------------------------------------------------------------------
 
+
 def test_symphony_below_history_threshold_emits_warning(fixture, caplog):
     """A skipped symphony must produce a log warning (not silent omission).
 
@@ -146,11 +150,11 @@ def test_symphony_below_history_threshold_emits_warning(fixture, caplog):
             random_state=42,
         )
 
-    warning_messages = [
-        r.message for r in caplog.records if r.levelno >= logging.WARNING
-    ]
-    assert any("SYM-SHORT" in m or "insufficient" in m.lower() or "skip" in m.lower()
-               for m in warning_messages), (
+    warning_messages = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any(
+        "SYM-SHORT" in m or "insufficient" in m.lower() or "skip" in m.lower()
+        for m in warning_messages
+    ), (
         f"Expected a WARNING mentioning the skipped symphony or 'insufficient' / "
         f"'skip'. Got warning messages: {warning_messages}"
     )
@@ -159,6 +163,7 @@ def test_symphony_below_history_threshold_emits_warning(fixture, caplog):
 # ---------------------------------------------------------------------------
 # AC-4.3 — symphony AT or ABOVE threshold is NOT skipped
 # ---------------------------------------------------------------------------
+
 
 def test_symphony_at_history_threshold_is_not_skipped(fixture):
     """A symphony with exactly the minimum days must NOT be skipped.
@@ -197,6 +202,7 @@ def test_symphony_at_history_threshold_is_not_skipped(fixture):
 # ---------------------------------------------------------------------------
 # AC-4.4 — mixed history: short skipped, adequate proceeds
 # ---------------------------------------------------------------------------
+
 
 def test_mixed_history_short_skipped_adequate_proceeds(fixture):
     """Short symphony is skipped; adequate symphony proceeds in the same call.

@@ -52,7 +52,6 @@ import pytest
 
 import math_engine
 
-
 HWM_HOLD_TICKS_THRESHOLD: int = math_engine.HWM_HOLD_TICKS_THRESHOLD
 
 APPROX_REL = 1e-9

@@ -48,8 +48,6 @@ applies throughout. No pytest.approx needed.
 
 from __future__ import annotations
 
-import pytest
-
 import math_engine
 
 

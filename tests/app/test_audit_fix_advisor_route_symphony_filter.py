@@ -32,7 +32,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Flask test-client fixture — mirrors tests/ai_advisor/test_advisor_observations_ui.py.
 # ---------------------------------------------------------------------------

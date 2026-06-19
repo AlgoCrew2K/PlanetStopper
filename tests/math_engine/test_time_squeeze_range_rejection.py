@@ -45,7 +45,6 @@ import pytest
 
 import math_engine
 
-
 FIXTURE = (
     pathlib.Path(__file__).parent.parent
     / "fixtures"
@@ -115,7 +114,7 @@ def test_negative_time_ratio_raises_value_error_not_math_domain_error() -> None:
         math_engine.compute_time_squeeze_decay(-0.5)
 
     message = str(exc_info.value).lower()
-    assert "math domain error" != message, (
+    assert message != "math domain error", (
         "compute_time_squeeze_decay let math.log10 crash with the opaque "
         "'math domain error' message. AC-6 requires an explicit range "
         "validation that raises a clear ValueError BEFORE the log10 call."

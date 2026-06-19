@@ -25,10 +25,7 @@ ALL tests in this file MUST FAIL until the wiring is implemented.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
-
-import pytest
-
+from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # Helpers — canned producer return shapes (shape/presence only, no literals)
@@ -80,7 +77,6 @@ class TestSentimentSectionWarehouseWiring:
 
         FAILS if the implementer adds a top-level import instead of a lazy one.
         """
-        import importlib
         import ai_advisor as ai_mod
 
         # If lens_warehouse is already in the ai_advisor module namespace as a
@@ -171,9 +167,7 @@ class TestMacroSectionWarehouseWiring:
                 "when FRED key is absent (no fetch occurred, no fabrication)"
             )
 
-    def test_persist_called_with_available_false_when_all_fred_series_fail(
-        self, monkeypatch
-    ):
+    def test_persist_called_with_available_false_when_all_fred_series_fail(self, monkeypatch):
         """When FRED_API_KEY is set but all series fetches raise, persist must
         be called with available=False — honest unavailability, not suppressed.
 

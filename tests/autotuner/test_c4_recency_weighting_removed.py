@@ -128,7 +128,7 @@ def test_days_ago_decay_weight_is_not_applied_to_guard_alpha():
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
             names = {s.id.lower() for s in (node.left, node.right) if isinstance(s, ast.Name)}
             has_weight = any("weight" in n for n in names)
-            has_alpha = any("guard_alpha" in n or "alpha" == n for n in names)
+            has_alpha = any("guard_alpha" in n or n == "alpha" for n in names)
             if has_weight and has_alpha:
                 offending.append(f"line {getattr(node, 'lineno', '?')}: guard-alpha × weight")
 

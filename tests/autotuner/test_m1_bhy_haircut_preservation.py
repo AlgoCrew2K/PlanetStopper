@@ -28,11 +28,9 @@ Fixtures:
 
 from __future__ import annotations
 
-import ast
 import json
 import math
 import pathlib
-from typing import Sequence
 from unittest.mock import MagicMock
 
 import pytest

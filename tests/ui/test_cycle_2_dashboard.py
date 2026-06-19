@@ -11,8 +11,9 @@ Tests are intentionally RED until impl delivers the Dashboard template rewrite.
 
 import re
 from pathlib import Path
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 

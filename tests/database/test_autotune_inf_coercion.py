@@ -33,9 +33,7 @@ Fixture provenance:
 from __future__ import annotations
 
 import json
-import math
 import pathlib
-from unittest.mock import MagicMock, patch
 
 import pytest
 

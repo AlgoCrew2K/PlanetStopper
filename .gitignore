@@ -53,3 +53,6 @@ ux-*.png
 # Playwright MCP cache
 .playwright-mcp/
 .claude/settings.local.json
+
+# TDD cycle handoff file (per-cycle, never committed — recreated by test-writer)
+.claude/tdd-handoff.md

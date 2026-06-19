@@ -52,7 +52,6 @@ import pytest
 
 import app as app_module
 
-
 # ---------------------------------------------------------------------------
 # Module stub injection helpers
 # ---------------------------------------------------------------------------
@@ -125,7 +124,7 @@ def _make_pair_result(
     n_obs: int = 35,
     correlation: float = 0.42,
     thin_data: bool = False,
-    window: "tuple[str, str] | None" = ("2026-01-02", "2026-05-30"),
+    window: tuple[str, str] | None = ("2026-01-02", "2026-05-30"),
 ) -> SimpleNamespace:
     """Build a PairResult-like object matching the contract from
     advisors.correlation_diagnostic.

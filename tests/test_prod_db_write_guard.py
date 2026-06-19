@@ -31,7 +31,6 @@ import os
 import pathlib
 import sqlite3
 import sys
-import types
 
 import pytest
 
@@ -91,7 +90,6 @@ class TestProdDbWriteGuardFires:
         We temporarily unset DB_PATH to force the fallback to the default.
         monkeypatch ensures cleanup after the test.
         """
-        import importlib
 
         import database as db_module
 
@@ -209,7 +207,6 @@ class TestAdvisorProducersDoNotWriteProductionDb:
 
     def test_run_divergence_explainer_does_not_write_to_prod_db(self, tmp_path, monkeypatch):
         """run_divergence_explainer must write to the temp DB, never to prod."""
-        import database as db_module
         from advisors.divergence_explainer import run_divergence_explainer
 
         before_count = self._advisor_obs_count_in_prod()
@@ -232,7 +229,6 @@ class TestAdvisorProducersDoNotWriteProductionDb:
 
     def test_run_spec_critic_does_not_write_to_prod_db(self, tmp_path, monkeypatch):
         """run_spec_critic must write to the temp DB, never to prod."""
-        import database as db_module
         from advisors.spec_critic import run_spec_critic
 
         before_count = self._advisor_obs_count_in_prod()
@@ -388,8 +384,6 @@ class TestSessionScopedDbPathIsAlwaysSet:
         context using importlib — if DB_PATH is set, the captured DB_FILE
         will NOT be the production default.
         """
-        import importlib
-        import database as db_module
 
         # Simulate what happens when a subprocess starts with no DB_PATH:
         # if the session fixture has already set it, os.environ will have it.
