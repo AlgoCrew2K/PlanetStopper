@@ -1340,3 +1340,99 @@ class TestSecurity:
             "naming the misconfiguration so the operator knows why the site is inaccessible. "
             f"Log captured: {caplog.text!r}"
         )
+
+    # -- L1b (da2-security LOW): missing-SECRET_KEY misconfig is SILENT (AC-8) --
+
+    def test_misconfig_missing_secret_key_is_logged_loudly(self, monkeypatch, caplog):
+        """AC-8: Missing SECRET_KEY misconfig must log loudly, symmetric with the
+        missing-credential branch which already logs (app.py:201-204).
+
+        The missing-SECRET_KEY branch in _auth_before_request (app.py:194-197)
+        currently denies silently with no log entry.  AC-8 requires BOTH misconfig
+        conditions to be 'logged loudly' so the operator can diagnose why the site
+        is inaccessible.
+
+        This test is RED against the current implementation — the SECRET_KEY branch
+        adds no log call (confirmed by reading app.py:191-197).
+        """
+        monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
+        monkeypatch.delenv("SECRET_KEY", raising=False)
+        monkeypatch.delenv("FLASK_SECRET_KEY", raising=False)
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        app_module.app.config["TESTING"] = True
+
+        with caplog.at_level(logging.WARNING):
+            with app_module.app.test_client() as client:
+                client.get("/", follow_redirects=False)
+
+        log_text = caplog.text.lower()
+        # Must emit WARNING+ naming the missing SECRET_KEY (not any secret value).
+        assert any(
+            kw in log_text
+            for kw in ("secret_key", "flask_secret_key", "secret key", "misconfig", "missing")
+        ), (
+            "When SECRET_KEY is missing, _auth_before_request must log a WARNING or ERROR "
+            "naming the missing key so the operator can diagnose the lockout. "
+            "The credential-missing branch already does this (app.py:201-204); "
+            "the SECRET_KEY branch must be symmetric. "
+            f"Log captured: {caplog.text!r}"
+        )
+        # No secret value must appear in the log — only the env var name.
+        assert _TEST_PASSWORD not in caplog.text, (
+            "The password value must NEVER appear in log output, even in a misconfig log"
+        )
+
+    # -- L2 (da2-security LOW): POST /login must block when SECRET_KEY is missing (AC-8) --
+
+    def test_login_post_denied_when_secret_key_missing(self, monkeypatch):
+        """AC-8: POST /login with correct password must NOT succeed when SECRET_KEY is absent.
+
+        CONFIRMED BUG (da2-security, L2): login() POST (app.py:228-285) checks
+        _resolve_dashboard_credential() (credential missing → 503) but does NOT
+        check _secret_key_configured().  Result with SECRET_KEY absent + DASHBOARD_PASSWORD
+        set:
+          1. Protected route → _auth_before_request denies (_secret_key_configured()=False)
+             → redirect to /login.
+          2. Correct password POST → login() does NOT detect misconfig → sets
+             session['authenticated']=True (signed with the import-time ephemeral fallback
+             key, app.py:302-304) → 302 to dashboard.
+          3. Next protected request → _auth_before_request STILL denies (SECRET_KEY still
+             absent) → redirect loop.
+
+        The gate is fail-CLOSED (no serve-open) but the loop is a broken operator
+        experience and inconsistent with AC-8's 'fail-closed on misconfig' intent:
+        login POST should also refuse to authenticate when misconfigured.
+
+        This test is RED — login() POST currently returns 302 when SECRET_KEY is missing
+        but DASHBOARD_PASSWORD is set (the gate misses the SECRET_KEY guard).
+        """
+        monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
+        monkeypatch.delenv("SECRET_KEY", raising=False)
+        monkeypatch.delenv("FLASK_SECRET_KEY", raising=False)
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        app_module.app.config["TESTING"] = True
+
+        with app_module.app.test_client() as client:
+            resp = client.post(
+                "/login",
+                data={"password": _TEST_PASSWORD},
+                follow_redirects=False,
+            )
+
+        # Must NOT redirect to dashboard — login cannot succeed when SECRET_KEY is missing.
+        # Acceptable outcomes: 503 "Service misconfigured" (matching the credential-missing
+        # branch) or a 200 re-render with an error message.
+        assert resp.status_code not in (302, 303), (
+            f"POST /login with correct password must NOT redirect (302/303) to the dashboard "
+            f"when SECRET_KEY is missing — got {resp.status_code}. "
+            "The session cookie cannot be trusted without a proper secret key. "
+            "login() POST must check _secret_key_configured() and return a misconfig "
+            "error (503 or re-render) when it is False, matching the credential-missing branch."
+        )
+        # Must explicitly NOT set authenticated session.
+        with client.session_transaction() as sess:
+            assert not sess.get("authenticated"), (
+                "session['authenticated'] must NOT be set when SECRET_KEY is missing"
+            )
