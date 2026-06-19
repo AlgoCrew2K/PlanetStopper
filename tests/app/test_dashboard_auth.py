@@ -657,6 +657,100 @@ class TestSecurity:
             "GET /login must include a CSRF token in the response (form field or meta)"
         )
 
+    def test_login_post_with_form_field_csrf_token_succeeds(self, monkeypatch):
+        """AC-7 / security: browser form POST with csrf_token form field must succeed.
+
+        The login page is a plain HTML form (no JS) that submits the CSRF token
+        as a form field (name='csrf_token').  Browser native form POSTs cannot
+        set arbitrary headers, so the CSRF gate MUST accept the token from
+        request.form['csrf_token'] — NOT only from the X-CSRF-Token header.
+
+        Without this fix, a real operator login POST arrives with no X-CSRF-Token
+        header, _validate_csrf() compares '' vs _CSRF_TOKEN, returns 403, and
+        the operator can NEVER log in in production (deploy-blocker).
+
+        This test is RED against the current implementation which reads only the
+        header (app.py:318: request.headers.get('X-CSRF-Token', '')).  It will
+        go GREEN when _validate_csrf() also accepts request.form.get('csrf_token').
+        """
+        monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
+        monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        # Enable CSRF enforcement — this is what production always has.
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+        app_module.app.config["TESTING"] = True
+        with app_module.app.test_client() as client:
+            # Step 1: GET /login to obtain the CSRF token from the form field.
+            get_resp = client.get("/login")
+            assert get_resp.status_code == 200, (
+                f"GET /login must be reachable pre-auth, got {get_resp.status_code}"
+            )
+            # Scrape the csrf_token value from the rendered form field.
+            body = get_resp.get_data(as_text=True)
+            import re
+            match = re.search(
+                r'<input[^>]+name=["\']csrf_token["\'][^>]+value=["\']([^"\']+)["\']',
+                body,
+            ) or re.search(
+                r'<input[^>]+value=["\']([^"\']+)["\'][^>]+name=["\']csrf_token["\']',
+                body,
+            )
+            assert match, (
+                "GET /login must render a hidden csrf_token input field; "
+                "could not find it in the response body. "
+                "Body snippet: " + body[:500]
+            )
+            scraped_token = match.group(1)
+
+            # Step 2: POST /login with the token as a FORM FIELD (no X-CSRF-Token header).
+            # This is exactly what a browser sends when a native <form method="post"> submits.
+            post_resp = client.post(
+                "/login",
+                data={"password": _TEST_PASSWORD, "csrf_token": scraped_token},
+                # Deliberately NO X-CSRF-Token header — browser form POSTs cannot set it.
+                follow_redirects=False,
+            )
+
+        # Must redirect to dashboard (login succeeds), NOT 403.
+        assert post_resp.status_code != 403, (
+            "Browser form POST with valid csrf_token FORM FIELD must not be rejected "
+            "with 403. _validate_csrf() currently reads only the X-CSRF-Token HEADER "
+            "(app.py:318), so a native form submit always gets 403 in production. "
+            "Fix: also accept token from request.form.get('csrf_token')."
+        )
+        assert post_resp.status_code in (302, 303), (
+            f"Browser form POST with correct password + valid form-field CSRF token "
+            f"must redirect (302/303), got {post_resp.status_code}. "
+            f"If 403: CSRF gate rejects form-field token channel. "
+            f"If 200: password comparison failed despite correct credentials."
+        )
+
+    def test_login_post_header_csrf_token_still_works(self, monkeypatch):
+        """AC-7: X-CSRF-Token HEADER path must still work for JS/fetch callers.
+
+        After fixing the form-field channel, the header path must remain intact.
+        A regression that dropped header support would break any JS callers.
+        """
+        monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
+        monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        if hasattr(app_module, "_auth_check_enabled"):
+            monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+        app_module.app.config["TESTING"] = True
+        with app_module.app.test_client() as client:
+            resp = client.post(
+                "/login",
+                data={"password": _TEST_PASSWORD},
+                headers={"X-CSRF-Token": app_module._CSRF_TOKEN},
+                follow_redirects=False,
+            )
+        assert resp.status_code in (302, 303), (
+            f"Login POST with valid X-CSRF-Token header must still redirect (302/303), "
+            f"got {resp.status_code}. The header path must remain intact alongside the "
+            f"form-field path."
+        )
+
     # -- AC-6: Constant-time compare and no password in logs --
 
     def test_constant_time_compare_function_used(self, monkeypatch):
