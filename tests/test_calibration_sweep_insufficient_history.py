@@ -28,26 +28,44 @@ def fixture():
 # Helpers to build minimal history_data dicts
 # ---------------------------------------------------------------------------
 
-def _make_history_data(n_days: int, sym_id: str = "SYM-TEST") -> dict:
-    """Build a minimal history_data dict with n_days of fake tick data.
+def _make_tick() -> dict:
+    """Build a minimal valid tick dict matching synthetic_history.fetch_bars shape.
 
-    tick values are 1.0 throughout — the skip gate fires before the objective
-    runs, so the content does not matter.
+    run_calibration_sweep passes these to _collect_sim_returns, which calls
+    ticks[-1]["return"] (autotuner.py:1402) so the tick must be a dict. Other
+    keys consumed by _replay_exit_tick are included to avoid KeyError.
     """
-    base_dates = [f"2025-01-{str(i+1).zfill(2)}" for i in range(min(n_days, 31))]
-    # For >31 days, extend with February onwards using a simple offset
+    return {
+        "time": "09:30",
+        "return": 0.0,
+        "mc_prob": None,
+        "vol": 0.01,
+        "vwap_diff": 0.0,
+        "base_atr_pct": 0.01,
+        "valid_vwap_weight": 1.0,
+    }
+
+
+def _make_history_data(n_days: int, sym_id: str = "SYM-TEST") -> dict:
+    """Build a minimal history_data dict with n_days of fake daily tick lists.
+
+    Each date maps to one minimal tick dict. The tick content is inert (zero
+    return) -- we only need valid structure for the objective to run without
+    crashing on a KeyError. AC-4 skip gate fires before the objective for short
+    symphonies. For AC-4.3/4.4 the objective runs but we only assert row presence.
+    """
     all_dates = []
     year, month, day = 2025, 1, 1
     for _ in range(n_days):
         all_dates.append(f"{year}-{str(month).zfill(2)}-{str(day).zfill(2)}")
         day += 1
-        if day > 28:  # simplified: stop at 28 for all months
+        if day > 28:  # simplified: 28-day months to avoid date arithmetic
             day = 1
             month += 1
             if month > 12:
                 month = 1
                 year += 1
-    return {sym_id: {d: [1.0] for d in all_dates}}
+    return {sym_id: {d: [_make_tick()] for d in all_dates}}
 
 
 # ---------------------------------------------------------------------------
