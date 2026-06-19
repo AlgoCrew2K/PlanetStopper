@@ -208,10 +208,12 @@ def _run_prism(run_id: str = "unknown") -> bool:
         prompt,
     ]
     try:
+        _council_env = os.environ.copy()
+        _council_env.pop("ANTHROPIC_API_KEY", None)  # council uses the Claude subscription (CLAUDE_CODE_OAUTH_TOKEN), not the metered API key
         result = subprocess.run(
             cmd,
             cwd=str(_PROJECT_ROOT),
-            env=os.environ.copy(),
+            env=_council_env,
             capture_output=True,
             text=True,
         )
