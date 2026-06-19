@@ -2182,6 +2182,15 @@ def guard_alpha_summary():
 
     Auth: covered by the global _auth_before_request before_request hook (AC-8) —
     no additional decorator needed; unauthenticated XHR requests receive 401.
+
+    Returns JSON:
+        cumulative_saved_dollars (float): Sum of saved_dollars across all trigger
+            entries in all post_mortem_*.json files. 0.0 when no files exist.
+        guard_event_count (int): Total trigger count across all files. 0 when none.
+        date_range (dict): {"earliest": str|None, "latest": str|None} — YYYY-MM-DD
+            strings extracted from filenames; both None when no files exist.
+        basis_label (str): "snapshot-time basis, since <earliest>" when files exist;
+            "no guard events yet" for empty-state.
     """
     import glob as _glob
     import json as _json  # noqa: PLC0415 — stdlib, lazy for locality
