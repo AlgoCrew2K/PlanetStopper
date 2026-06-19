@@ -2908,6 +2908,7 @@ def run_calibration_sweep(
     current_date_str: str,
     deviation_dict: dict,
     random_state: int,
+    min_history_days: int = _CALSWEEP_MIN_HISTORY_DAYS,
 ) -> list[dict]:
     """V1 calibration sweep over PARABOLIC_VELOCITY_THRESHOLD and VWAP_CROSS_HWM_PCT only.
 
@@ -2915,6 +2916,10 @@ def run_calibration_sweep(
     study names, O5 Sortino objective, O6 frozen-eval fold — same methodology as
     run_autotuner but search space is limited to the two V1 parameters. Does NOT
     persist anything to the DB (AC-V1.3: read-only, operator-gated rollout).
+
+    ``min_history_days`` is injectable for testing (pass 0 to bypass the AC-4
+    history floor on short fixtures); production callers should use the default
+    ``_CALSWEEP_MIN_HISTORY_DAYS``.
 
     Note: the VWAP_CROSS_HWM_PCT bounds used here (via ``_SS_VWAP_CROSS_HWM_V1_MIN``
     / ``_SS_VWAP_CROSS_HWM_V1_MAX``) are asymmetric relative to the production
@@ -2984,15 +2989,16 @@ def run_calibration_sweep(
 
     for sym_id in symphony_ids:
         # AC-4: skip symphonies with insufficient history — fold partitioning
-        # on <_CALSWEEP_MIN_HISTORY_DAYS produces validation windows too small
-        # for the Sortino objective to yield meaningful signal.
+        # on <min_history_days produces validation windows too small for the
+        # Sortino objective to yield meaningful signal.  The floor is injectable
+        # via the min_history_days param (default: _CALSWEEP_MIN_HISTORY_DAYS).
         sym_days = len(history_data.get(sym_id, {}))
-        if sym_days < _CALSWEEP_MIN_HISTORY_DAYS:
+        if sym_days < min_history_days:
             logging.warning(
                 "run_calibration_sweep: skipping %s — only %d days (< %d required)",
                 sym_id,
                 sym_days,
-                _CALSWEEP_MIN_HISTORY_DAYS,
+                min_history_days,
             )
             continue
 
