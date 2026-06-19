@@ -3,7 +3,7 @@
 > Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
 **Source:** `app.py`
-**Last updated:** 2026-06-19 (guard-alpha-panel)
+**Last updated:** 2026-06-19 (guard-alpha-panel d0fb04c — UI layer added)
 
 ## Overview
 
@@ -188,6 +188,16 @@ Returns cumulative dollar-saved aggregate and guard-event count from post_mortem
 - **Auth-gated (AC-8).** Covered by the global `_auth_before_request` hook (DE-AUTH-001); unauthenticated XHR receives 401.
 
 See `DE-GAP-001` in `DECISIONS.md`.
+
+**Consumed by:** `fetchGuardAlphaSummary()` in `static/index.js` (called once on
+`DOMContentLoaded` — aggregate changes only at EOD when a new post_mortem file is
+written, so continuous polling is unnecessary). Populates three DOM elements in
+`templates/index.html:1028-1034` (`data-testid="dollar-saved-panel"`):
+- `#dollar-saved-headline` — formatted as `$N.NN` when events exist; `"No guard events yet"` on empty-state.
+- `#guard-event-count` — integer exit count.
+- `#dollar-saved-basis-label` — `basis_label` string from the route response.
+Uses `.hero-section` light card-UI CSS; does not clobber `#guard-alpha-headline`
+(that element carries the windowed % guard alpha from `/api/strip/<window>`).
 
 ---
 
