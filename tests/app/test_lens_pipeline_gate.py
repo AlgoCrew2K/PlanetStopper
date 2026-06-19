@@ -22,7 +22,7 @@ where it is imported from.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -107,4 +107,33 @@ class TestLensPipelineGate:
             "Empty string is falsy; the guard must use truthiness "
             "(os.environ.get(FLAG)) not presence (FLAG in os.environ) "
             "so that an empty-string value is treated as not set."
+        )
+
+    def test_gate_logs_skip_when_disable_flag_is_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Flag set — _daemon_log.info must be called with a message containing
+        'DISABLE_DAEMON_LENS_PIPELINE' so a droplet operator can confirm from
+        logs that the 03:00 slot is gated without a thread dump.
+
+        The exact message text is not pinned (implementation-detail), but the
+        flag name must appear so grep-ability on the droplet is guaranteed.
+        """
+        import app
+
+        monkeypatch.setenv("DISABLE_DAEMON_LENS_PIPELINE", "1")
+
+        with patch("threading.Thread"), patch.object(
+            app._daemon_log, "info"
+        ) as mock_info:
+            app._run_lens_pipeline()
+
+        logged_messages = [str(c.args[0]) for c in mock_info.call_args_list]
+        assert any(
+            "DISABLE_DAEMON_LENS_PIPELINE" in msg for msg in logged_messages
+        ), (
+            "_run_lens_pipeline() did not log a message containing "
+            "'DISABLE_DAEMON_LENS_PIPELINE' when the flag was set. "
+            "The skip log line is the only observability signal on the droplet; "
+            "it must name the flag so operators can confirm the gate is active."
         )
