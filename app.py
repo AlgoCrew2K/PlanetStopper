@@ -315,7 +315,9 @@ def _validate_csrf() -> None:
     """
     if not _csrf_check_enabled:
         return
-    token = request.headers.get("X-CSRF-Token", "")
+    # Accept the token from the X-CSRF-Token header (fetch/XHR path) OR from
+    # the csrf_token form field (native browser form POST path — login page).
+    token = request.headers.get("X-CSRF-Token", "") or request.form.get("csrf_token", "")
     if not secrets.compare_digest(token, _CSRF_TOKEN):
         _daemon_log.warning(
             "CSRF check failed on %s %s (token absent or incorrect)",
