@@ -282,32 +282,17 @@ _SS_MAX_PARA_SQUEEZE_MAX = 0.8
 _SS_VWAP_CROSS_HWM_V1_MIN = 0.3
 _SS_VWAP_CROSS_HWM_V1_MAX = 2.0
 
-# VWAP_BLEED_ARM_MIN bounds: arm threshold is always negative.
-# LOW is the most-negative allowed value; HIGH is the least-negative.
-# Range [-5.0, -1.0]: gives the sweep room below the production hand-set default
-# (~-3.0) without allowing implausibly deep thresholds. Not in OPTUNA_SEARCH_SPACE_KEYS
-# (V1 methodology decision: hand-set param); bounds documented here for future review.
-_SS_VWAP_BLEED_ARM_MIN_LOW = -5.0
-_SS_VWAP_BLEED_ARM_MIN_HIGH = -1.0
-
-# VWAP_BLEED_ARM_MAX bounds: max arm threshold is also always negative.
-# Range [-1.0, -0.1]: max must stay above min; upper wall at -0.1 prevents
-# the threshold from approaching zero (bleed arm would never fire). Not in
-# OPTUNA_SEARCH_SPACE_KEYS (V1 hand-set); documented for future review.
-_SS_VWAP_BLEED_ARM_MAX_LOW = -1.0
-_SS_VWAP_BLEED_ARM_MAX_HIGH = -0.1
-
-# VWAP_BREAK_CONFIRM_TICKS bounds: tick count must be a positive integer.
-# Range [1, 5]: allows tightening (1 = immediate) or loosening (5 = longer
-# confirmation) relative to the production default of 3. Not in
-# OPTUNA_SEARCH_SPACE_KEYS (V1 hand-set); documented for future review.
-_SS_VWAP_BREAK_CONFIRM_TICKS_LOW = 1
-_SS_VWAP_BREAK_CONFIRM_TICKS_HIGH = 5
-
 # Minimum history days required before running the calibration sweep for a symphony.
 # Below this threshold the fold partitioning produces validation windows too small
 # to give the Sortino objective meaningful signal.
 _CALSWEEP_MIN_HISTORY_DAYS = 125
+
+# Trigger-frequency flag multiplier for the AC-7 operator review gate.
+# A proposed parameter set that fires System A exits more than this multiple of
+# the current deployment rate is flagged for manual review before any per-symphony
+# deploy. Threshold is operator-stated (>2× sensitivity boundary). Source: PM
+# methodology directive, calibration-sweep contract AC-7.
+_CALSWEEP_TRIGGER_FREQ_FLAG_MULTIPLIER = 2.0
 
 # --- run_simulation_sortino_legacy objective: loss-averse utility penalty constants ---
 # (audit H-10 — AC-4 remediation). The run_simulation_sortino_legacy objective is an
@@ -3181,7 +3166,7 @@ def run_calibration_sweep(
         # so the operator must review before any per-symphony deploy.
         flag_for_operator_review = (
             current_trigger_count > 0
-            and proposed_trigger_count / current_trigger_count > 2.0
+            and proposed_trigger_count / current_trigger_count > _CALSWEEP_TRIGGER_FREQ_FLAG_MULTIPLIER
         )
 
         # Emit one row per tuned param
