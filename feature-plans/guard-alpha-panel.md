@@ -2,6 +2,9 @@
 Status: ready
 Created: 2026-06-19
 
+## ⚠️ SCOPE NARROWED (PM, post-verification 2026-06-19)
+ga-implementer + PM verification found **AC-2 (per-card running guard-alpha for untriggered symphonies) is ALREADY BUILT** on origin/main: cards render `card_alpha = cr_bot − cr_held` (the divergence gap, populated for ALL symphonies regardless of trigger — `app.py:937,1016`), covered by `tests/dashboard/test_card_guard_alpha_basis.py::test_card_cumulative_alpha_reconciles_with_divergence_gap`. gax-scope's "Gap 1" conflated that running value with the post-trigger exit-snapshot verdict badge. **AC-2 is DROPPED from this cycle.** The sole genuinely-new surface is **AC-1/AC-4/AC-5/AC-6/AC-8: the `GET /api/guard-alpha-summary` route (cumulative $-saved aggregate) + a $-saved headline that consumes it.** Ignore AC-2/AC-3/AC-7's per-card + chart-reuse framing except as "don't rebuild what exists."
+
 ## Summary
 A dashboard surface that QUANTIFIES Planet Stopper's value-add, filling two real gaps the existing UI does not cover (scoping: gax-scope 2026-06-19):
 1. **Cumulative dollar-saved headline** — the "$X saved across N early exits" number. The per-exit `saved_dollars` / `saved_pct_guard_alpha` exist only in per-day `post_mortems/post_mortem_YYYY-MM-DD.json` files (`reporting.py:68-71,99-100`); they are NOT aggregated anywhere on the dashboard.
