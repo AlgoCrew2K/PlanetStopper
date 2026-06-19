@@ -198,6 +198,10 @@ def _auth_before_request():
 
     # Fail-closed: if no credential is configured, deny ALL requests.
     if _resolve_dashboard_credential() is None:
+        _daemon_log.warning(
+            "Auth misconfig: DASHBOARD_PASSWORD / DASHBOARD_PASSWORD_HASH is not set"
+            " — all requests denied until a credential is configured"
+        )
         if _is_api_or_xhr():
             return jsonify({"error": "misconfigured"}), 503
         return redirect(url_for("login"))
@@ -215,15 +219,20 @@ def _auth_before_request():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     """Login page: GET renders the form; POST processes the credential."""
-    # Already authenticated — send to dashboard.
-    if session.get("authenticated"):
-        return redirect(url_for("dashboard"))
-
     if request.method == "GET":
+        # Already authenticated — send to dashboard (AC-13).
+        if session.get("authenticated"):
+            return redirect(url_for("dashboard"))
         return render_template("login.html", csrf_token=_CSRF_TOKEN, error=None)
 
-    # POST — process the login attempt.
-    client_ip = request.remote_addr or "unknown"
+    # POST — process the login attempt.  Do NOT short-circuit on an authenticated
+    # session here: the credential must be re-verified so a wrong-password POST
+    # is always denied, even if a prior request set the session.
+    client_ip = (
+        request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        if os.environ.get("TRUST_PROXY") and request.headers.get("X-Forwarded-For")
+        else request.remote_addr or "unknown"
+    )
 
     # Fail-closed: misconfig → cannot authenticate.
     credential = _resolve_dashboard_credential()
