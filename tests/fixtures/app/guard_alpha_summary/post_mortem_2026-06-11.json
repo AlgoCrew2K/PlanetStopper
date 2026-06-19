@@ -1,0 +1,27 @@
+{
+    "date": "2026-06-11",
+    "summary": {
+        "total_monitored": 5,
+        "total_triggered": 1,
+        "positive_guard_alpha_count": 1
+    },
+    "triggers": [
+        {
+            "symphony_name": "Symphony Gamma",
+            "symphony_value": 15000.0,
+            "account_id": "ACC-1",
+            "exit_reason": "Trailing Stop",
+            "exit_return": -1.8,
+            "attempted_trigger_level": -1.5,
+            "shadow_return": -3.9,
+            "shadow_hwm": 2.5,
+            "saved_pct_guard_alpha": 2.1,
+            "saved_dollars": 315.0,
+            "hwm_at_trigger": 2.5,
+            "time_triggered": "13:10:00",
+            "symphony_vol": 0.21,
+            "strategy_params": {},
+            "next_day_holdings": ["IEF"]
+        }
+    ]
+}
