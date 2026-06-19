@@ -306,12 +306,19 @@ _CSRF_TOKEN: str = secrets.token_hex(32)
 
 
 def _validate_csrf() -> None:
-    """Reject POST requests that lack the correct X-CSRF-Token header.
+    """Reject POST requests that lack the correct CSRF token.
 
-    Why a header rather than a form field: the dashboard POSTs JSON via
-    fetch(); headers are same-origin only (browsers block cross-site JS from
-    setting arbitrary request headers), so this is equivalent security to a
-    synchronizer token for a localhost UI.  No new pip dependencies required.
+    Two acceptance channels (both must be same-origin):
+    - X-CSRF-Token request header — used by fetch()/XHR callers (JSON POSTs
+      from the dashboard JS).  Browsers block cross-site scripts from setting
+      arbitrary request headers, so the header itself acts as the synchronizer
+      token for those callers.
+    - csrf_token form field — used by the native browser form POST on the login
+      page, which cannot set custom headers.  The form embeds the server-minted
+      token in a hidden input; same-origin enforcement is provided by the
+      synchronizer-token pattern (token is not guessable by a cross-site page).
+
+    No new pip dependencies required.
     """
     if not _csrf_check_enabled:
         return
