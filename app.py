@@ -2,6 +2,7 @@
 
 import atexit
 import concurrent.futures
+import hmac
 import io
 import logging
 import os
@@ -19,7 +20,8 @@ import psutil
 import requests
 import schedule
 from dotenv import dotenv_values, load_dotenv, set_key
-from flask import Flask, abort, jsonify, redirect, render_template, request, url_for
+from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
+from werkzeug.security import check_password_hash
 
 import ai_advisor
 import analytics
@@ -67,13 +69,230 @@ app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
 
 # ---------------------------------------------------------------------------
+# Session cookie hardening (AC-10)
+# ---------------------------------------------------------------------------
+# These flags are set at startup; Flask honours them when writing the session
+# cookie after each response.  SESSION_COOKIE_SECURE is env-driven so the
+# operator can enable it when terminating TLS in a reverse proxy.
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+# ---------------------------------------------------------------------------
+# Dashboard auth gate — must be declared before CSRF so its @before_request
+# hook registers first (auth runs before CSRF; CSRF guard is irrelevant when
+# auth already denies the request).
+# ---------------------------------------------------------------------------
+
+# Module-level flag — test suite sets this to False via the _disable_auth_for_tests
+# autouse fixture in tests/conftest.py so existing route tests hit protected routes
+# without being redirected.  Mirrors the _csrf_check_enabled pattern.  Never set
+# False in production code.
+_auth_check_enabled: bool = True
+
+# Minimal set of endpoints exempt from the auth gate.  'static' must be
+# included so the login page renders its CSS/JS; 'login' and 'logout' are the
+# auth-flow routes themselves; 'get_csrf_token' is safe (no sensitive data).
+_AUTH_EXEMPT_ENDPOINTS: frozenset[str] = frozenset(
+    {"login", "logout", "static", "get_csrf_token", "health"}
+)
+
+# In-memory throttle: maps client IP -> (fail_count, lockout_until_timestamp).
+# Reset per-process; intentionally simple — single-operator dashboard.
+_AUTH_FAILED_ATTEMPTS: dict[str, tuple[int, float]] = {}
+
+# Maximum consecutive wrong-password attempts before a lockout is imposed.
+_AUTH_MAX_ATTEMPTS: int = 10
+
+# How long (seconds) a client is locked out after exceeding _AUTH_MAX_ATTEMPTS.
+_AUTH_LOCKOUT_SECONDS: int = 300  # 5 minutes
+
+
+def _resolve_dashboard_credential() -> str | None:
+    """Return the dashboard credential from environment, preferring the hash.
+
+    DASHBOARD_PASSWORD_HASH takes precedence over DASHBOARD_PASSWORD.  Returns
+    None when neither is configured (misconfig → fail-closed).
+    """
+    hashed = os.environ.get("DASHBOARD_PASSWORD_HASH", "").strip()
+    if hashed:
+        return hashed
+    plain = os.environ.get("DASHBOARD_PASSWORD", "").strip()
+    if plain:
+        return plain
+    return None
+
+
+def _secret_key_configured() -> bool:
+    """Return True when a non-empty secret key is present in the environment."""
+    return bool(
+        os.environ.get("SECRET_KEY", "").strip() or os.environ.get("FLASK_SECRET_KEY", "").strip()
+    )
+
+
+def _check_throttle(client_ip: str) -> bool:
+    """Return True if the client is currently locked out."""
+    entry = _AUTH_FAILED_ATTEMPTS.get(client_ip)
+    if entry is None:
+        return False
+    fail_count, lockout_until = entry
+    if fail_count < _AUTH_MAX_ATTEMPTS:
+        # Not yet locked out; let the request through.
+        return False
+    # Locked out — check whether the lockout window has expired.
+    if time.time() < lockout_until:
+        return True
+    # Lockout has expired — clear so a fresh attempt window starts.
+    _AUTH_FAILED_ATTEMPTS.pop(client_ip, None)
+    return False
+
+
+def _record_failed_attempt(client_ip: str) -> int:
+    """Increment the failed-attempt counter; return the new count."""
+    entry = _AUTH_FAILED_ATTEMPTS.get(client_ip, (0, 0.0))
+    new_count = entry[0] + 1
+    lockout_until = time.time() + _AUTH_LOCKOUT_SECONDS if new_count >= _AUTH_MAX_ATTEMPTS else 0.0
+    _AUTH_FAILED_ATTEMPTS[client_ip] = (new_count, lockout_until)
+    return new_count
+
+
+def _clear_failed_attempts(client_ip: str) -> None:
+    """Reset the throttle counter for a client on successful login."""
+    _AUTH_FAILED_ATTEMPTS.pop(client_ip, None)
+
+
+def _is_api_or_xhr() -> bool:
+    """Return True when the request looks like a JSON/XHR API call."""
+    return (
+        request.path.startswith("/api/")
+        or request.headers.get("X-Requested-With", "") == "XMLHttpRequest"
+    )
+
+
+@app.before_request
+def _auth_before_request():
+    """Enforce dashboard password auth on every request (AC-1/AC-2/AC-8).
+
+    Registered BEFORE _csrf_before_request so auth runs first; a denied
+    request never reaches the CSRF gate.
+    """
+    # Bypass in test contexts — see _disable_auth_for_tests in tests/conftest.py.
+    if not _auth_check_enabled:
+        return None
+
+    # Exempt login/logout/static so those routes remain reachable pre-auth.
+    if request.endpoint in _AUTH_EXEMPT_ENDPOINTS:
+        return None
+
+    # Fail-closed: if the secret key is missing/empty, deny ALL requests.
+    # Without a secret key Flask cannot sign the session cookie, and the
+    # operator misconfigured the deployment.
+    if not _secret_key_configured():
+        if _is_api_or_xhr():
+            return jsonify({"error": "misconfigured"}), 503
+        return redirect(url_for("login"))
+
+    # Fail-closed: if no credential is configured, deny ALL requests.
+    if _resolve_dashboard_credential() is None:
+        if _is_api_or_xhr():
+            return jsonify({"error": "misconfigured"}), 503
+        return redirect(url_for("login"))
+
+    # Authenticated session — let the request through.
+    if session.get("authenticated"):
+        return None
+
+    # Not authenticated — redirect HTML requests to login, 401 for API/XHR.
+    if _is_api_or_xhr():
+        return jsonify({"error": "unauthenticated"}), 401
+    return redirect(url_for("login"))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    """Login page: GET renders the form; POST processes the credential."""
+    # Already authenticated — send to dashboard.
+    if session.get("authenticated"):
+        return redirect(url_for("dashboard"))
+
+    if request.method == "GET":
+        return render_template("login.html", csrf_token=_CSRF_TOKEN, error=None)
+
+    # POST — process the login attempt.
+    client_ip = request.remote_addr or "unknown"
+
+    # Fail-closed: misconfig → cannot authenticate.
+    credential = _resolve_dashboard_credential()
+    if credential is None:
+        return render_template(
+            "login.html", csrf_token=_CSRF_TOKEN, error="Service misconfigured."
+        ), 503
+
+    # Throttle check.
+    if _check_throttle(client_ip):
+        return render_template(
+            "login.html",
+            csrf_token=_CSRF_TOKEN,
+            error="Too many failed attempts. Please wait before trying again.",
+        ), 429
+
+    submitted = request.form.get("password", "")
+
+    # Constant-time comparison to guard against timing attacks.
+    # If the stored credential looks like a werkzeug hash, use its verifier;
+    # otherwise compare as plaintext with hmac.compare_digest.
+    is_hashed = credential.startswith(("pbkdf2:", "scrypt:", "bcrypt:"))
+    if is_hashed:
+        try:
+            match = check_password_hash(credential, submitted)
+        except Exception:
+            match = False
+    else:
+        match = hmac.compare_digest(credential.encode(), submitted.encode())
+
+    if not match:
+        fail_count = _record_failed_attempt(client_ip)
+        if fail_count >= _AUTH_MAX_ATTEMPTS:
+            return render_template(
+                "login.html",
+                csrf_token=_CSRF_TOKEN,
+                error="Too many failed attempts. Please wait before trying again.",
+            ), 429
+        return render_template(
+            "login.html",
+            csrf_token=_CSRF_TOKEN,
+            error="Incorrect password.",
+        ), 200
+
+    # Successful login — clear any prior session data before setting auth flag
+    # to prevent session-fixation attacks.
+    _clear_failed_attempts(client_ip)
+    session.clear()
+    session["authenticated"] = True
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/logout", methods=["GET"])
+def logout():
+    """Clear the session and redirect to the login page."""
+    session.clear()
+    return redirect(url_for("login"))
+
+
+# ---------------------------------------------------------------------------
 # CSRF protection (A-3)
 # ---------------------------------------------------------------------------
 # Per-daemon-startup secret key.  Each process restart rotates the token,
 # which is fine — the operator refreshes the dashboard naturally.
 # TESTING mode skips enforcement so test_client() POST calls work without
 # injecting a token header (tests use monkeypatch on _csrf_check_enabled).
-app.secret_key = secrets.token_hex(32)
+app.secret_key = (
+    os.environ.get("SECRET_KEY") or os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
+)
 
 # Module-level flag — test suite sets this to False via monkeypatch to bypass
 # CSRF checks on the test client.  Never set False in production code.

@@ -126,6 +126,26 @@ def _disable_csrf_for_tests(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _disable_auth_for_tests(monkeypatch):
+    """Disable the dashboard auth gate for the entire test suite (AC-1/AC-8).
+
+    The auth gate (app._auth_check_enabled) is bypassable in test contexts so
+    the ~7000 existing route tests can hit protected routes without being
+    redirected to /login.
+
+    Auth gate tests in tests/app/test_dashboard_auth.py that need the real gate
+    re-enable it via monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+    in their per-test auth_client / auth_client_authed fixtures.
+    """
+    import app as _app_module
+
+    monkeypatch.setattr(_app_module, "_auth_check_enabled", False)
+    # Reset the in-memory throttle dict between tests so failed-attempt counts
+    # from one test do not bleed into the next.
+    _app_module._AUTH_FAILED_ATTEMPTS.clear()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_db(tmp_path, monkeypatch):
     """Redirect DB_PATH to a per-test temp file for every test in the suite.
 
