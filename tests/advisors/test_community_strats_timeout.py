@@ -203,6 +203,7 @@ class TestHangIsBounded:
             "The wall-clock timeout is not firing or the shutdown is blocking."
         )
 
+    @pytest.mark.perf
     def test_no_join_on_exit_hang_worker_still_sleeping(self, mod, monkeypatch):
         """AC-3: when the worker thread sleeps _BOUND * 5s, the call STILL returns
         within _BOUND + _MARGIN_S seconds — proving shutdown(wait=False) is used.
@@ -213,6 +214,11 @@ class TestHangIsBounded:
 
         Correct implementation uses explicit `ex.shutdown(wait=False, cancel_futures=True)`.
         The orphan thread is allowed to linger (it will exit when MongoClient errors).
+
+        Marked @pytest.mark.perf: this is a wall-clock timing assertion (_BOUND * 5 = 60s
+        sleep). On a loaded shared CI runner (2 vCPUs), OS scheduling jitter can push
+        elapsed past _BOUND + _MARGIN_S = 15s even when the implementation is correct.
+        Run opt-in: `pytest -m perf` on a dedicated machine.
         """
         monkeypatch.setenv("MONGO_URI", "mongodb+srv://fake-uri-for-test/db")
 

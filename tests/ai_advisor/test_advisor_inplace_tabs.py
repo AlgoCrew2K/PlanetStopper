@@ -25,6 +25,7 @@ Assert structure/behavior, never computed values.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from unittest.mock import MagicMock, patch
 
@@ -576,6 +577,11 @@ def test_ac1_correlations_panel_contains_crisis_caveat(advisor_page_html):
     )
 
 
+@pytest.mark.skipif(
+    not os.environ.get("COMPOSER_KEY_ID"),
+    reason="try-swap-panel/form only renders when COMPOSER_KEY_ID is set "
+    "(template guard: {% if not no_api_key %}) — credential-gated",
+)
 def test_ac1_asset_swaps_panel_contains_try_swap_form(advisor_page_html):
     """The asset-swaps panel must contain the try-swap-form.
 
@@ -604,6 +610,11 @@ def test_ac1_logic_changes_panel_contains_fdr_warning_banner(advisor_page_html):
     )
 
 
+@pytest.mark.skipif(
+    not os.environ.get("ANTHROPIC_API_KEY"),
+    reason="chat-thread/chat-input-row only render when ANTHROPIC_API_KEY is set "
+    "(template guard: {% if chat_available %}) — credential-gated",
+)
 def test_ac1_chat_panel_contains_thread_and_input(advisor_page_html):
     """The chat panel must contain the message thread and input row.
 

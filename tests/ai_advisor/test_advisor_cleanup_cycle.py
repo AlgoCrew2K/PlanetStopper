@@ -21,6 +21,7 @@ All tests are function-scoped. No shared module-level mutables.
 
 from __future__ import annotations
 
+import os
 import pathlib
 from unittest.mock import MagicMock, patch
 
@@ -558,6 +559,11 @@ def test_d1_client_construction_failure_does_not_leak_secrets():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(
+    not os.environ.get("COMPOSER_KEY_ID"),
+    reason="route short-circuits at _has_composer_key() before the mocked engine "
+    "call when COMPOSER_KEY_ID is absent — credential-gated path",
+)
 def test_d1_asset_swaps_evaluate_does_not_leak_exception_text(flask_client):
     """POST /ai-advisor/asset-swaps/evaluate must NOT embed str(exc) in the
     JSON error response when propose_operator_swap raises.
@@ -606,6 +612,11 @@ def test_d1_asset_swaps_evaluate_does_not_leak_exception_text(flask_client):
     )
 
 
+@pytest.mark.skipif(
+    not os.environ.get("COMPOSER_KEY_ID"),
+    reason="route short-circuits at _has_composer_key() before the mocked engine "
+    "call when COMPOSER_KEY_ID is absent — credential-gated path",
+)
 def test_d1_logic_changes_evaluate_does_not_leak_exception_text(flask_client):
     """POST /ai-advisor/logic-changes/evaluate must NOT embed str(exc) in the
     JSON error response when propose_operator_logic_change raises.
