@@ -2169,6 +2169,80 @@ def get_windowed_strip(window):
         return jsonify({"error": "An internal error occurred"}), 500
 
 
+@app.route("/api/guard-alpha-summary")
+def guard_alpha_summary():
+    """Return cumulative dollar-saved + guard-event count from post_mortem JSON files.
+
+    AC-1: aggregates Σ saved_dollars and trigger count across all post_mortem_*.json
+    files in analytics._POST_MORTEMS_DIR (the same directory constant used by every
+    other route that reads post_mortems). Read-only — no DB writes, not in
+    _SETTINGS_WRITE_ALLOWLIST, no LIVE_EXECUTION interaction (AC-4). Malformed or
+    unreadable files are skipped and logged without surfacing file contents (AC-6).
+    Honest empty-state when no files exist (AC-5).
+
+    Auth: covered by the global _auth_before_request before_request hook (AC-8) —
+    no additional decorator needed; unauthenticated XHR requests receive 401.
+
+    Returns JSON:
+        cumulative_saved_dollars (float): Sum of saved_dollars across all trigger
+            entries in all post_mortem_*.json files. 0.0 when no files exist.
+        guard_event_count (int): Total trigger count across all files. 0 when none.
+        date_range (dict): {"earliest": str|None, "latest": str|None} — YYYY-MM-DD
+            strings extracted from filenames; both None when no files exist.
+        basis_label (str): "snapshot-time basis, since <earliest>" when files exist;
+            "no guard events yet" for empty-state.
+    """
+    import glob as _glob
+    import json as _json  # noqa: PLC0415 — stdlib, lazy for locality
+
+    pm_dir = analytics._POST_MORTEMS_DIR
+    pattern = os.path.join(pm_dir, "post_mortem_*.json")
+    files = sorted(_glob.glob(pattern))
+
+    cumulative_saved_dollars = 0.0
+    guard_event_count = 0
+    dates: list[str] = []
+
+    for fpath in files:
+        try:
+            with open(fpath, encoding="utf-8") as fh:
+                pm = _json.load(fh)
+        except (OSError, _json.JSONDecodeError):
+            _daemon_log.warning(
+                "guard_alpha_summary: skipping unreadable file %s", os.path.basename(fpath)
+            )
+            continue
+
+        triggers = pm.get("triggers", [])
+        for t in triggers:
+            cumulative_saved_dollars += float(t.get("saved_dollars", 0.0))
+        guard_event_count += len(triggers)
+
+        # Extract YYYY-MM-DD from filename post_mortem_YYYY-MM-DD.json
+        basename = os.path.basename(fpath)
+        date_str = basename[len("post_mortem_") : len("post_mortem_") + 10]
+        if len(date_str) == 10:
+            dates.append(date_str)
+
+    if dates:
+        earliest = min(dates)
+        latest = max(dates)
+        date_range = {"earliest": earliest, "latest": latest}
+        basis_label = f"snapshot-time basis, since {earliest}"
+    else:
+        date_range = {"earliest": None, "latest": None}
+        basis_label = "no guard events yet"
+
+    return jsonify(
+        {
+            "cumulative_saved_dollars": cumulative_saved_dollars,
+            "guard_event_count": guard_event_count,
+            "date_range": date_range,
+            "basis_label": basis_label,
+        }
+    )
+
+
 @app.route("/api/chart/<symphony_id>")
 def get_chart_data(symphony_id):
     _ro_conn = database.get_ro_connection()

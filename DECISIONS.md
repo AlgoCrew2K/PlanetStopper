@@ -1587,3 +1587,43 @@ AC-1 through AC-13 as specified in `feature-plans/dashboard-auth.md`. 46/46 test
 - `templates/login.html` — minimal login form (light card UI, CSRF hidden field, error slot)
 - `tests/conftest.py` — `_disable_auth_for_tests` autouse fixture; `_AUTH_FAILED_ATTEMPTS.clear()` between tests
 - `tests/app/test_dashboard_auth.py` — 46 RED→GREEN tests covering AC-1..AC-13
+
+
+---
+
+## Guard Alpha Value Panel — Route shipped (guard-alpha-panel cycle, 2026-06-19)
+
+Branch: feat/guard-alpha-panel | Base: origin/main (43c8160)
+
+### DE-GAP-001: GET /api/guard-alpha-summary — post_mortem-snapshot-basis aggregation route
+
+**Decision:** The cumulative dollar-saved aggregate is exposed as a new read-only `GET /api/guard-alpha-summary` route in `app.py`. It globs `analytics._POST_MORTEMS_DIR` for `post_mortem_*.json` files, sums `saved_dollars` across all `triggers` entries, counts total guard events, and derives the date range from filenames. Returns `{cumulative_saved_dollars, guard_event_count, date_range: {earliest, latest}, basis_label}`.
+
+**Dollar-saved basis is snapshot-time, not mark-to-market.** `reporting.py:71` computes `saved_dollars = symphony_value * saved_pct_guard_alpha / 100` at exit time. The post_mortem file captures this value at the moment of the guard-alpha exit. The route's `basis_label` field makes this explicit ("snapshot-time basis, since <earliest date>"). Do not present these figures as current mark-to-market values.
+
+**No new DB table or migration.** The route reads post_mortem JSON files on disk (bounded glob from the fixed `analytics._POST_MORTEMS_DIR` constant) and does not interact with SQLite. This keeps it off all write paths and eliminates migration risk.
+
+**Malformed-file resilience (AC-6).** Each file is wrapped in `try/except (OSError, json.JSONDecodeError)`: failures log the basename only (no file content, no secret leak) and skip the file. The aggregate continues from remaining valid files. Route always returns 200.
+
+**Auth gate (AC-8).** The route is covered by the global `_auth_before_request` before_request hook established in DE-AUTH-001. No additional decorator is needed; unauthenticated XHR receives 401.
+
+**Not in `_SETTINGS_WRITE_ALLOWLIST`.** The route is GET-only and makes no DB writes. It was explicitly excluded from the write-allowlist enumeration.
+
+### DE-GAP-002: AC-2 dropped — per-card running guard-alpha already exists on main
+
+**Decision:** AC-2 (populate `guard_alpha` for untriggered symphonies in `get_api_state_dict()`) is DROPPED from this cycle as pre-existing built behavior.
+
+**Root cause of the gap analysis misread.** The scoping analysis (gax-scope, 2026-06-19) identified "untriggered cards show no live guard-alpha" from `templates/index.html:1082` (`'guard_alpha' in sym` condition). Post-verification confirmed that `app.py:937,1016` populates `card_alpha = cr_bot − cr_held` for ALL symphonies via `get_api_state_dict()` — the divergence gap is the running guard-alpha for untriggered cards. The template condition governs the post-trigger exit-snapshot badge, not the running value. The two are distinct UI surfaces; "Gap 1" conflated them.
+
+**Test coverage already exists.** `tests/dashboard/test_card_guard_alpha_basis.py::test_card_cumulative_alpha_reconciles_with_divergence_gap` verifies the per-card running guard-alpha basis on origin/main.
+
+**AC-2 is not deferred — it is closed as already built.** Future work: the panel markup and JS to consume `/api/guard-alpha-summary` on the dashboard (AC-3 / next cycle).
+
+### Files changed (guard-alpha-panel, 87fd96c)
+
+- `app.py` — `guard_alpha_summary()` route at `app.py:2172` (+65 lines after `get_windowed_strip`)
+- `tests/app/test_guard_alpha_summary_route.py` — route test suite (AC-1/AC-4/AC-5/AC-6/AC-8)
+- `tests/fixtures/app/guard_alpha_summary/post_mortem_2026-06-10.json` — 2-trigger fixture
+- `tests/fixtures/app/guard_alpha_summary/post_mortem_2026-06-11.json` — 1-trigger fixture
+- `tests/fixtures/app/guard_alpha_summary/post_mortem_corrupt.json` — malformed fixture (AC-6)
+- `feature-plans/guard-alpha-panel.md` — Status updated to "partial"; AC-1/4/5/6/8 checked; AC-2 annotated dropped

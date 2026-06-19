@@ -1,7 +1,110 @@
-# TDD Handoff
-Plan: feature-plans/dashboard-auth.md
-Branch: feat/dashboard-auth
-Phase: green
+# TDD Handoff — Guard Alpha Value Panel (UI layer)
+
+**Written by:** ga-test-writer
+**Branch:** feat/guard-alpha-panel
+**Status:** UI RED (5 failing) — route already GREEN at 87fd96c
+
+---
+
+## Context
+
+The route `GET /api/guard-alpha-summary` is already BUILT and GREEN (87fd96c).
+This handoff is for the UI layer only: the visible "$X saved across N exits"
+headline that renders on the dashboard (AC-1 visible requirement).
+
+**DO NOT read the feature plan.** Everything you need is in this handoff.
+
+---
+
+## Failing tests to make GREEN
+
+**File:** `tests/app/test_guard_alpha_panel_ui.py`
+
+Run with:
+```
+python -m pytest tests/app/test_guard_alpha_panel_ui.py -p no:xdist -o addopts= -q
+```
+
+5 tests fail RED. 1 already passes (node --check baseline — keep it GREEN).
+3 skip until panel/fetch exist (they will activate as you add the markup).
+
+---
+
+## What to build (minimum — GREEN only, no gold-plating)
+
+### 1. Panel markup in `templates/index.html`
+
+Add a `<div data-testid="dollar-saved-panel">` section below the `#portfolio-strip`
+vs-rows (after the Ann. Vol row and before the card grid). The panel needs:
+
+```html
+<div data-testid="dollar-saved-panel" class="hero-section" style="...reuse existing light CSS...">
+  <span data-testid="dollar-saved-headline" id="dollar-saved-headline">—</span>
+  <span> saved across </span>
+  <span data-testid="guard-event-count" id="guard-event-count">—</span>
+  <span> exits</span>
+  <div data-testid="dollar-saved-basis-label" id="dollar-saved-basis-label"></div>
+</div>
+```
+
+HARD RULES for the panel:
+- Reuse existing light-theme CSS classes (`.hero-section`, `--studio-*` variables).
+- NO dark/foreign CSS classes (`bg-dark`, `dark-card`, `theme-dark`).
+- NO inline `background:#...` that bypasses the design system.
+- The `data-testid` attributes above are exactly what the tests assert — spelling matters.
+
+### 2. Fetch + render in `static/index.js`
+
+Add a `fetchGuardAlphaSummary()` function that:
+- Fetches `GET /api/guard-alpha-summary`
+- Guards against non-OK responses: `if (!response.ok) return;` (handles 401)
+- On success, populates:
+  - `document.getElementById('dollar-saved-headline')` with the dollar amount
+    (e.g. `'$' + data.cumulative_saved_dollars.toFixed(2)`)
+  - `document.getElementById('guard-event-count')` with `data.guard_event_count`
+  - `document.getElementById('dollar-saved-basis-label')` with `data.basis_label`
+- Handles the empty-state: when `guard_event_count === 0`, render "No guard events yet"
+  instead of "$0.00 saved across 0 exits"
+
+Wire `fetchGuardAlphaSummary()` to be called once on page load (inside the
+`DOMContentLoaded` listener or equivalent — wherever other one-shot fetches live).
+
+HARD RULES for the JS:
+- Use `dollar-saved-headline` as the DOM target — NEVER write to `guard-alpha-headline`
+  (that element carries the windowed % guard alpha from a DIFFERENT source).
+- Include `if (!response.ok) return;` or a `.catch()` for the 401 path.
+- `node --check static/index.js` must still exit 0 after your changes.
+
+### 3. That is it
+
+No new route, no DB changes, no new CSS files. Reuse what's there.
+
+---
+
+## Test assertions (what exactly the tests check)
+
+- `'data-testid="dollar-saved-panel"'` in `templates/index.html` source
+- `'data-testid="dollar-saved-headline"'` in `templates/index.html` source
+- `'data-testid="guard-event-count"'` in `templates/index.html` source
+- `'data-testid="dollar-saved-basis-label"'` in `templates/index.html` source
+- `'fetchGuardAlphaSummary' in static/index.js` OR `'guard-alpha-summary' in static/index.js`
+- `'dollar-saved-headline' in static/index.js` (DOM target must be distinct from guard-alpha-headline)
+- `response.ok` OR `.catch(` OR `response.status` in static/index.js (401 guard)
+- `node --check static/index.js` exits 0 (no syntax errors)
+
+---
+
+## Files to touch
+
+- `templates/index.html` — add panel markup with correct data-testid attributes
+- `static/index.js` — add fetchGuardAlphaSummary function
+
+## Files NOT to touch
+
+- `app.py` — route already built
+- `analytics.py` — no changes
+- `database.py` — no changes
+- Any test file
 
 ## Test Files
 - `tests/app/test_dashboard_auth.py` — 35 tests (34 failing RED, 1 pre-existing GREEN guard)
