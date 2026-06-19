@@ -1493,9 +1493,7 @@ class TestApplyLensBlendHasNoHigherIsBetterParam:
         RED while the parameter exists; GREEN after removal.
         """
         engine_path = _REPO_ROOT / "advisors" / "asset_swap_engine.py"
-        assert engine_path.exists(), (
-            f"advisors/asset_swap_engine.py not found at {engine_path}"
-        )
+        assert engine_path.exists(), f"advisors/asset_swap_engine.py not found at {engine_path}"
 
         tree = ast.parse(engine_path.read_text(encoding="utf-8"))
 

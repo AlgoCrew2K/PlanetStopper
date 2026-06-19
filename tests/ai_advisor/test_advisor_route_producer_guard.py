@@ -43,17 +43,15 @@ No live API calls. No live DB writes. All tests are function-scoped.
 from __future__ import annotations
 
 import importlib
-import sys
-from unittest.mock import MagicMock, patch
-
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # Repo path helper
 # ---------------------------------------------------------------------------
-
 import pathlib
+import sys
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
