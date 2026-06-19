@@ -781,13 +781,10 @@ def compute_vwap_signals(
     return float(weighted_vwap_diff), float(valid_vwap_weight)
 
 
-# VWAP bleed-arm constants (dynamic exit threshold for VWAP-bleed system; always negative)
-VWAP_BLEED_ARM_MIN = (
-    -3.0
-)  # most-negative clamp; deepest bleed threshold allowed (further drops do not arm any sooner)
-VWAP_BLEED_ARM_MAX = (
-    -0.5
-)  # least-negative clamp; arm threshold must be at least this deep (shallower drops never arm)
+# VWAP bleed-arm constants (dynamic exit threshold for VWAP-bleed system; always negative).
+# Further drops beyond MIN do not arm any sooner; shallower drops above MAX never arm.
+VWAP_BLEED_ARM_MIN = -3.0  # most-negative clamp; deepest bleed threshold allowed
+VWAP_BLEED_ARM_MAX = -0.5  # least-negative clamp; arm threshold must be at least this deep
 
 
 def compute_vwap_bleed_arm_threshold(
@@ -821,9 +818,8 @@ def compute_vwap_bleed_arm_threshold(
 
 # VWAP breakdown constants (gates the VWAP exit state machine)
 VWAP_WEIGHT_THRESHOLD = 0.5  # minimum allocation coverage to evaluate VWAP signals; below this, the weighted diff is too unreliable  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
-VWAP_BREAK_CONFIRM_TICKS = (
-    3  # consecutive qualifying ticks for System A (profit-protection break) to flip is_vwap_broken
-)
+# Consecutive qualifying ticks for System A (profit-protection break) to flip is_vwap_broken.
+VWAP_BREAK_CONFIRM_TICKS = 3  # tick count gate for VWAP breakdown confirmation (System A)
 
 
 def compute_vwap_breakdown_update(
