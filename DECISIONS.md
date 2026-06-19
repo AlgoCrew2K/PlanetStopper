@@ -4,6 +4,69 @@ This file records binding architectural decisions made during Planet Stopper dev
 
 ---
 
+## DE-CIGREEN-001 — CI harness greened behavior-neutrally; ruff pinned; B023/F841 deferred; atlas-cache test isolation (2026-06-19)
+
+Branch: feat/ci-green | Base: 56ec9ce
+
+### Root cause
+
+The GitHub Actions `tests` workflow (`.github/workflows/tests.yml`, introduced at `1658b18`) has been RED since inception. Every PR through #53 was merged via `--admin` bypass. Three blocking steps all fail on origin/main:
+
+1. `ruff format --check .` — 34 Python files are not formatted per ruff 0.15.11.
+2. `ruff check .` — 6,929 lint violations under the `select=[E,F,I,B,UP,SIM]` ruleset.
+3. `pytest` — never reached because step 2 fails.
+
+Additionally `ruff` is unpinned in `requirements-dev.txt`, so CI and local can silently disagree on the format/lint target.
+
+### Fix
+
+Behavior-neutral only — zero logic/behavior change. Three change categories:
+
+1. **Repo-wide format + safe lint auto-fix.** `ruff format .` applied repo-wide. `ruff check --fix .` (safe fixes only; `--unsafe-fixes` forbidden) applied for the remainder. No `--unsafe-fixes` at any point.
+
+2. **Documented `per-file-ignores` for residual violations.** Every added suppression carries an inline justification comment. No global `ignore` widening; no real bugs silenced.
+
+3. **Credential-gated test `skipif` markers.** Tests that hard-require live credentials now `pytest.mark.skipif` on the absent env var — they SKIP (not fail) on secret-less CI runners.
+
+### Ruff pin
+
+`ruff==0.15.11` added to `requirements-dev.txt`. This is the version used during this cycle; CI and local now target identical format/lint output.
+
+### Key per-file-ignores decisions
+
+**B023 — deferred (autotuner.py):** `B023` (loop variable captured by closure) fires on Optuna trial-factory patterns. Fixing requires restructuring the closures — a behavior-affecting Optuna refactor out of scope for this cycle. **Deferred, not masked.** The `per-file-ignores` entry carries an explanatory comment; the issue is tracked for a future Optuna refactor.
+
+**F841 preservation (autotuner.py):** `split_idx` and `raw_train_dates` are unused at runtime but intentionally retained because source-scan tests assert these names exist via AST/grep. Removing them would break those tests. Suppressed with an inline comment explaining the constraint.
+
+**B006/B008 (similar files):** Mutable-default-argument and function-call-in-default-argument findings in non-test modules — stylistic/deferred with inline comments.
+
+**E501 via `per-file-ignores` (not `noqa`):** ruff 0.15.11 does not honor `# noqa: E501` inside triple-quoted docstring literals. All E501 suppressions for un-wrappable docstring and long comment lines are expressed as `per-file-ignores` entries rather than inline `noqa` directives.
+
+**`advisors/prism_audit_write.py` E402:** `load_dotenv()` must precede all imports by design (DE-PRISM-DOTENV). The E402 (module-level import not at top of file) suppression is by design.
+
+### ATLAS_CACHE_DB_PATH test isolation (conftest.py)
+
+**Finding:** Four `test_community_strats_timeout` tests were returning `available=True` with empty candidates instead of the expected `available=False` timeout behavior on clean CI runners. Root cause: a stale `alphabot_atlas_cache.db` in the project root from a previous operator run with real credentials contained a cached `available=True` Atlas result. The tests mock MongoClient but not the atlas cache layer; on a developer machine with a warm cache, the mock was never invoked and the cache returned the stale result.
+
+**Fix:** `tests/conftest.py:pytest_configure()` now routes `ATLAS_CACHE_DB_PATH` to a session-temp directory alongside the existing `DB_PATH` routing. Every test run sees a cold Atlas cache. No production behavior change.
+
+**Binding rule:** Any test that mocks an Atlas fetch must run against an isolated (cold) `ATLAS_CACHE_DB_PATH`. Stale production `alphabot_atlas_cache.db` values are structurally excluded by the conftest guard.
+
+### Files changed
+
+- `requirements-dev.txt` — `ruff==0.15.11` pin added
+- `pyproject.toml` — `[tool.ruff.lint.per-file-ignores]` block added with all suppressions + justifications
+- `tests/conftest.py` — `ATLAS_CACHE_DB_PATH` session-temp routing added to `pytest_configure()`
+- Repo-wide `*.py` — ruff format + safe auto-fix (mechanical; no logic change)
+- Specific test files — `pytest.mark.skipif` markers on credential-gated tests
+- `.gitignore` — `.claude/tdd-handoff.md` added; `git rm --cached` applied
+
+### Status
+
+Implementation complete at HEAD 3b85913 (feat/ci-green). Under review by cg-reviewer. PR to origin pending PM gate.
+
+---
+
 ## DE-SCHEMA-001 — Composer /backtest live-required fields: root.description + wt-inverse-vol.window-days (2026-06-18)
 
 Branch: feat/symphony-schema-required-fields | Base: origin/main 26196e8

@@ -1,6 +1,6 @@
 # Feature Plan: Green the CI `tests` harness
 
-Status: ready
+Status: implemented
 
 ## Summary
 The GitHub Actions `tests` workflow (`.github/workflows/tests.yml`, added in `1658b18`) has been **RED since inception** and gates nothing — PRs #50–#53 all `--admin`'d past it. Root cause: the workflow runs `ruff format --check .` → `ruff check .` → `pytest` as three blocking steps; origin/main carries 34 un-ruff-formatted files + 6929 lint violations of the (already-sane) `select=[E,F,I,B,UP,SIM]` ruleset, so the format step fails and pytest never runs. Additionally `ruff` is **unpinned** in `requirements-dev.txt`, so CI and local can disagree on the format/lint target.
@@ -42,3 +42,25 @@ None — pure tooling/config/test-infra. No new external input, no execution-pat
 ## Scope Boundaries
 - IN: ruff format, safe lint auto-fixes + documented targeted ignores, ruff pin, credential-gated test skipif, gitignore tdd-handoff, the CI yaml only if required.
 - OUT: ANY logic/behavior change; new features; `--unsafe-fixes`; adding GitHub secrets; touching the live execution path; broadening `ignore` to mask real bugs; reformatting `templates/`/`static/` (already excluded in `[tool.ruff].exclude`).
+
+## Implementation Notes
+
+### ruff version
+
+Pinned at `ruff==0.15.11`.
+
+### Per-file-ignores approach (not inline `# noqa`)
+
+`noqa` comments are ineffective inside triple-quoted docstrings in ruff 0.15.11 for the E501 rule — ruff does not parse `noqa` directives embedded inside string literals. All E501 suppressions for un-wrappable docstrings and long comment lines are expressed as `[tool.ruff.lint.per-file-ignores]` entries instead.
+
+### B023 deferral (autotuner.py)
+
+`B023` (loop variable captured by closure) fires on Optuna trial-factory patterns in `autotuner.py`. Fixing these requires restructuring the closures to use default-argument capture or factory functions — a behavior-affecting refactor out of scope for a behavior-neutral CI-green cycle. The finding is **deferred, not masked**: the `per-file-ignores` entry carries an explanatory comment and the issue is tracked for a future Optuna refactor cycle.
+
+### F841 preservation (autotuner.py)
+
+`split_idx` and `raw_train_dates` are unused in the Python runtime sense but are intentionally retained in `autotuner.py` because source-scan tests (`tests/autotuner/`) use `ast.parse` or grep to assert these names exist. Removing them would break those tests. The `F841` suppression carries an inline comment pointing to this constraint.
+
+### ATLAS_CACHE_DB_PATH isolation (conftest.py)
+
+Four `test_community_strats_timeout` tests were returning `available=True` with empty candidates instead of the expected `available=False` timeout behavior. Root cause: a stale `alphabot_atlas_cache.db` in the project root from a previous operator run had a cached `available=True` Atlas result; the tests mocked the MongoClient but not the cache layer, so the mock was never reached. Fix: `tests/conftest.py:pytest_configure()` now routes `ATLAS_CACHE_DB_PATH` to a session-temp directory (alongside the existing `DB_PATH` routing), ensuring all test runs start with a cold Atlas cache. This is a test-isolation fix only — no production behavior change.
