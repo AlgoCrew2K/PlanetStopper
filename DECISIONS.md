@@ -1627,3 +1627,63 @@ Branch: feat/guard-alpha-panel | Base: origin/main (43c8160)
 - `tests/fixtures/app/guard_alpha_summary/post_mortem_2026-06-11.json` — 1-trigger fixture
 - `tests/fixtures/app/guard_alpha_summary/post_mortem_corrupt.json` — malformed fixture (AC-6)
 - `feature-plans/guard-alpha-panel.md` — Status updated to "partial"; AC-1/4/5/6/8 checked; AC-2 annotated dropped
+
+---
+
+## DE-TD-C3B-001 — Route producer-guard tests added for GET /ai-advisor (2026-06-19)
+
+Branch: chore/tech-debt-c3bc | Commits: 406735a (tests), c6f2b4d (C3c impl)
+
+### Finding
+
+Sub-item C3b (tech-debt-cleanups feature plan) tasked the team with locating and removing a dead self-skip branch in the AI Advisor route layer. Fresh inspection of `app.py` at HEAD (confirmed against commit 47f0eb5) found **no self-skip branch present**. The unified SPA consolidation (Cycle 4) had already removed any such branch before this cycle was dispatched. AC-4b and AC-6b are closed as "not applicable — confirmed absent."
+
+### Decision
+
+Rather than close C3b with no artifact, the team implemented AC-5b in full: a route-level producer guard test suite (`tests/ai_advisor/test_advisor_route_producer_guard.py`) that catches the class of live-500 bug that mocked-module tests miss.
+
+**Why this matters:** `ai_advisor_tab()` in `app.py` wraps several producer calls in bare `except Exception: pass` blocks. If a producer function is renamed or removed, the bare `except` swallows the `AttributeError` silently — Python unit tests with wholesale module mocks pass green while the live route 500s. The only reliable guard is a route-level test that imports the real producer modules and asserts the attributes the route calls actually exist.
+
+**7 new tests in `test_advisor_route_producer_guard.py`:**
+- 2 route smoke tests: `GET /ai-advisor` returns HTTP 200 + `text/html` with real producer modules loaded (mock only DB boundary, not the producer modules themselves).
+- 5 `hasattr` existence guards: `correlation_diagnostic.compute_pairwise_correlations`, `backtest_gate_engine.CRISIS_CAVEAT`, `prism_render.humanize_obs_preview`, `prism_render.humanize_lens_summary`, `ai_advisor._has_composer_key`. Each goes RED when the attribute is deleted and GREEN when restored (break-restore verified inline).
+
+### Reviewer INFO gap (noted, out of scope)
+
+`advisors.advisor_chat.CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS` is not covered by these guards because `sb_observations` is `[]` in the test fixture — the import at `app.py:3331` is behind `if sb_observations:` and is genuinely unreachable with an empty fixture. No action needed this cycle.
+
+### Files changed
+
+- `tests/ai_advisor/test_advisor_route_producer_guard.py` — 7 new tests (created in commit 406735a)
+
+---
+
+## DE-TD-C3C-001 — Dead higher_is_better param removed from _apply_lens_blend (2026-06-19)
+
+Branch: chore/tech-debt-c3bc | Commit: c6f2b4d
+
+### Decision
+
+Removed the dead `higher_is_better: bool` parameter from `advisors/asset_swap_engine._apply_lens_blend` and updated all 4 callers.
+
+### Evidence of dead code
+
+The parameter's own docstring stated it was unused: "Unused parameter preserved for call-site documentation clarity (the blend is position-based, so direction doesn't affect the math)." The blend formula `blended_key[i] = position[i] - LENS_BLEND_WEIGHT * mean_lens_score[i]` is position-based and direction-agnostic by design — `higher_is_better` was always ignored at runtime.
+
+### Scope
+
+- `advisors/asset_swap_engine.py` — `_apply_lens_blend` signature: `higher_is_better: bool` param removed; 3-line docstring entry for the param removed; `higher_is_better=...` kwarg removed from all 4 callers (lines ~538, ~562, ~587, ~599 pre-removal). Directional rationale comments preserved as standalone lines at each call site (e.g., `# lower absolute correlation = better`).
+- `tests/ai_advisor/test_asset_swap_engine.py` — 1 new AST-inspection test (`TestApplyLensBlendHasNoHigherIsBetterParam`) pinning the removal; baseline 35/35 existing tests confirmed GREEN before commit.
+
+### Behavior
+
+Runtime output is byte-identical. Removing an unused parameter from an internal function is purely structural. The `LENS_BLEND_WEIGHT = 0.25` constant and the blending formula are unchanged.
+
+### Naming
+
+No change-history language introduced. All identifiers continue to describe runtime behavior, not the change history of this cleanup.
+
+### Files changed
+
+- `advisors/asset_swap_engine.py` — 3 insertions / 8 deletions (signature + docstring + 4 caller sites)
+- `tests/ai_advisor/test_asset_swap_engine.py` — 1 new test class (commit 406735a)
