@@ -2165,3 +2165,49 @@ The real acceptance gate for this fix is a PM-run live exam: real Opus SDK call 
 - `advisors/build_plan_generator.py` — `_EXAMPLE_PLAN` + `_OBJECTIVE_SIGNATURES` constants; `_build_generation_prompt` seam; tightened `_EMIT_BUILD_PLANS_TOOL` schema; `_prune_node` unknown-kind -> None; `_validate_and_prune` zero-ticker guard; `generate_build_plans` calls `_build_generation_prompt`
 - `tests/advisors/test_build_plan_generator.py` — 25 new RED tests (prompt-seam content assertions, schema enum checks, unknown-kind rejection, zero-ticker rejection)
 - Total: 131 tests GREEN at 11caf3d (25 new C2-fix + 48 existing C2 + 38 C3 + atlas/property)
+
+---
+
+### DE-SB-GEN-DRIFT-FIX-R1 — Revise-1: if.condition string-label residual (2026-06-20)
+
+Branch: feat/strategy-builder-real | Revise-1 commit: 648c267
+
+#### Finding (PM live re-exam after C2-fix)
+
+The C2-fix (commit 11caf3d) addressed Opus emitting `kind:"weighted"` (node-vocabulary drift) and fixed the 0-admitted-plans failure. The PM's live re-exam confirmed that 8 of 12 plans compiled clean — but regime-gate (`if`-node) plans still dropped at the C3 compiler. Root cause: Opus emitted the `if.condition` field as a STRING LABEL (e.g. `"spy_above_200d_sma"`) rather than the structured dict the compiler expects (`{"lhs_fn": ..., "lhs_ticker": ..., "window": ..., "comparator": ..., "rhs": ...}`). This is a sub-grammar drift pattern: the C2-fix taught Opus the top-level `kind`/`scheme` node vocabulary but left the nested `condition` field undescribed in both the prompt and the schema — Opus defaulted to a human-readable string label it plausibly inferred from the DSL context.
+
+#### Root cause
+
+The original `_build_generation_prompt` section for `if` nodes stated: "Required fields: condition (DICT — see below), then (list), else (list)" — but "see below" referred to no concrete description. The `_EMIT_BUILD_PLANS_TOOL` schema had no `condition` property at all on the `if` node. The flat `lhs_fn`/`lhs_ticker`/`window`/`comparator`/`rhs` structure is non-obvious from context alone; without an explicit grammar section or worked example showing the dict form, Opus infers a string label.
+
+#### Three-part extension (Revise-1, commit 648c267)
+
+**Part 1 — Prompt-steer: `if.condition` grammar section in `_build_generation_prompt`.**
+
+A new `### if/if_compound condition shape` section is added to the prompt (injected for ALL four objective prompts, not only `cut_drawdown`). The section includes:
+- An explicit WRONG-vs-CORRECT contrast: `WRONG: condition = "spy_above_200d_sma"` / `CORRECT: condition = {...dict...}`.
+- All five required fields listed with descriptions (`lhs_fn`, `lhs_ticker`, `window`, `comparator`, `rhs`).
+- The two valid `rhs` shapes: `{"fixed": N}` for a numeric threshold, `{"fn": ..., "ticker": ..., "window": ...}` for a ticker comparison.
+- The `comparator` enum values: `gt`, `lt`, `gte`, `lte`.
+
+**Part 2 — Worked example: `_EXAMPLE_IF_PLAN`.**
+
+A new constant (`_EXAMPLE_IF_PLAN`) provides a concrete conforming `if`-node plan (cut_drawdown-shaped; condition dict: `lhs_fn="relative-strength-index"`, `lhs_ticker="SPY"`, `window=10`, `comparator="gt"`, `rhs={"fixed": 80}`; then: equal-weight sleeve; else: inverse_vol sleeve). Verified compiler-clean: `plan_tree_compiler.compile_plan` → `tree is not None` + `validate_tree==[]`. The `cut_drawdown` prompt uses it as its primary example; all other objective prompts include it as a supplementary DSL reference alongside `_EXAMPLE_PLAN`. Both examples now appear in every prompt so the condition dict shape is visible regardless of which objective is being generated.
+
+**Part 3 — Schema extension: `condition` property in `_EMIT_BUILD_PLANS_TOOL`.**
+
+The `if`/`if_compound` node entry in `_EMIT_BUILD_PLANS_TOOL` gains a `condition` property: typed `object`, with properties `lhs_fn` (string), `lhs_ticker` (string), `window` (integer), `comparator` (enum: `["gt","lt","gte","lte"]`), `rhs` (object); `required` list includes all five. This structurally prevents Opus from emitting a bare string condition at the JSON schema level.
+
+#### Known residual (documented, not a blocker)
+
+`if_compound` (compound/multi-condition regime gates with a `type`/`operator`/`conditions` union) is taught in the prompt text but has no separate worked compiling example, and its compound-condition union is not independently schema-constrained in `_EMIT_BUILD_PLANS_TOOL`. The `condition` property covers the flat single-condition shape only. The JSON schema is not recursive enough to express the compound-condition union without combinatorial complexity. The PM's live re-exam probes `if_compound` plans to determine whether the flat-condition teaching provides sufficient coverage, or whether a further Revise is needed.
+
+#### Live acceptance gate (PM-owned)
+
+A PM-run live exam with real Opus SDK call and no mocks, generating `cut_drawdown` plans and confirming that `if`-node plans compile clean through `advisors/plan_tree_compiler.compile_plan` (tree not None + `validate_tree==[]`). The broader re-exam also probes all 4 objectives to confirm no new regressions from the Revise-1 extension.
+
+#### Files changed
+
+- `advisors/build_plan_generator.py` — `_EXAMPLE_IF_PLAN` constant; `_build_generation_prompt` extended with condition grammar section + `_EXAMPLE_IF_PLAN` embedding; `_EMIT_BUILD_PLANS_TOOL` `condition` property added to `if`/`if_compound` node
+- `tests/advisors/test_build_plan_generator.py` — new RED tests for condition grammar in prompt, `_EXAMPLE_IF_PLAN` structure, schema `condition` property presence + required fields
+- Total: 142 tests GREEN at 648c267 across affected files; 640 passed / 2 skipped / 0 failures across tests/advisors
