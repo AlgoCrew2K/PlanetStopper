@@ -3,7 +3,7 @@
 > Opus Build-Plan Generator for the real Strategy Builder (Component 2 + 2b): uses the Anthropic SDK in structured tool-use mode to emit diverse objective-shaped build-plans expressed in a constrained strategy DSL, validates every proposed ticker against the tradeable membership set, and admits objective-matched Atlas community strategies alongside the generated plans.
 
 **Source:** `advisors/build_plan_generator.py`
-**Last updated:** 2026-06-20
+**Last updated:** 2026-06-20 (DE-SB-GEN-TRUNCATION: MAX_OUTPUT_TOKENS=16384 + MAX_GENERATION_ATTEMPTS=3 truncation-retry)
 
 ## Overview
 
@@ -248,6 +248,17 @@ Calls `_build_client()` → `_build_generation_prompt(objective, n_plans, member
 | `n_plans` | `int` | Number of plans to request. Defaults to `N_PLANS_PER_OBJECTIVE` (12). |
 
 **Returns:** `GeneratorResult`
+
+**SDK call budget (DE-SB-GEN-TRUNCATION):**
+
+Generating `N_PLANS_PER_OBJECTIVE=12` full-grammar build-plans requires substantially more than 4096 output tokens. The original `max_tokens=4096` literal truncated the JSON mid-payload, causing `tool_block.input.get("plans")` to return `{}` (`input_json_chars=2`) — a non-list value that hit the `InvalidToolUsePayload` degradation path and returned 0 plans. This was non-deterministic: which objectives truncated depended on plan complexity and token packing for that run (~3/4 objectives affected per run in live diagnosis).
+
+Fix: two changes in `advisors/build_plan_generator.py` (GREEN 2a1787e):
+
+- **`MAX_OUTPUT_TOKENS = 16384`** replaces the bare `4096` literal. Empirical calibration (2026-06-20, non-truncated run at `max_tokens=32000`): worst-case = 5,015 output tokens (`diversify` objective). 16,384 is ~3.3x that ceiling — generous headroom, robust to Opus output variance. `max_tokens` is a billing ceiling, not a billed quantity; a generous value carries no cost penalty.
+- **`MAX_GENERATION_ATTEMPTS = 3` bounded retry loop.** A `for _attempt in range(MAX_GENERATION_ATTEMPTS)` loop wraps the `messages.create` call. After each response, `stop_reason` is inspected: anything other than `"max_tokens"` breaks the loop and proceeds to parsing. A `"max_tokens"` response logs a warning and retries. After all attempts are exhausted, the loop's `else` clause returns `GeneratorResult(plans=[], reason="max_tokens: response truncated after all attempts")` — honest D-1 degradation, never a raise.
+
+See `DE-SB-GEN-TRUNCATION` in `DECISIONS.md`.
 
 **Admission pipeline order (fixed — AC-8 enforcement test pins this):**
 

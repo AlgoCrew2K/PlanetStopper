@@ -2500,3 +2500,50 @@ The old T1–T7 template IDs are gone from built-new candidates. `symphony_schem
 - `tests/advisors/test_strategy_builder_engine.py` — 10/10 integration tests GREEN (C1/C2/C3 seams mocked, blast-radius isolation)
 - `tests/advisors/test_strategy_builder_scheduler.py` — 4/4 scheduler tests GREEN
 - Full `tests/advisors/` 694 passed / 4 skipped / 0 fail; `tests/ui/` 713 passed / 15 skipped / 0 fail at HEAD a0aca12
+
+---
+
+## DE-SB-GEN-TRUNCATION — C2 generator `max_tokens` truncation: `stop_reason="max_tokens"` -> `InvalidToolUsePayload` -> 0 plans (2026-06-20)
+
+Branch: feat/strategy-builder-real
+
+### Finding (live exam)
+
+Post-C4 live diagnostic probes (`.claude/c4-trunc-probe-result.json`, `.claude/c4-gen-diag-result.json`, `.claude/c4-prod-exam-result.json`) revealed that the generator `messages.create` call capped output at `max_tokens=4096`. Generating `N_PLANS_PER_OBJECTIVE=12` full-grammar build-plans saturated this budget, truncating the JSON mid-payload. The truncated response caused `tool_block.input.get("plans")` to return either `{}` (empty dict, `input_json_chars=2`) or a malformed partial list — both non-list values — hitting the `InvalidToolUsePayload` degradation path and returning 0 plans.
+
+**Evidence from `.claude/c4-trunc-probe-result.json`:**
+- `diversify`: `stop_reason="max_tokens"`, `usage_output_tokens=4096`, `input_json_chars=2`, `plans_is_list=false`
+- `cut_drawdown`: same — `stop_reason="max_tokens"`, `usage_output_tokens=4096`, `input_json_chars=2`, `plans_is_list=false`
+
+**Evidence from `.claude/c4-gen-diag-result.json`:**
+- `diversify`: `reason="InvalidToolUsePayload"`, `n_plans=0`
+- `cut_drawdown`: `reason="InvalidToolUsePayload"`, `n_plans=0`
+- `lift_risk_adjusted`: `reason="InvalidToolUsePayload"`, `n_plans=0`
+- `volatility_mitigation`: `reason=null`, `n_plans=12` — only objective that fit within 4096 tokens for this particular run
+
+The non-determinism (which objectives truncate varies by run, depending on plan complexity and token packing) makes this a persistent latent defect that silently degrades ~3/4 of objectives per run while appearing to "work" for whichever objective happens to emit shorter JSON.
+
+**Root cause:** `max_tokens=4096` was a carry-over from `ai_advisor._build_client` call patterns where a single structured response is expected. `N_PLANS_PER_OBJECTIVE=12` full-grammar plans — each embedding multi-level DSL nodes, condition blocks, and tickers — easily exceed 4096 output tokens.
+
+### Fix
+
+Two changes to `advisors/build_plan_generator.py` (GREEN a2a678f; comment-truth recommit 2a1787e):
+
+1. **Raised `max_tokens` constant — `MAX_OUTPUT_TOKENS = 16384`.** The bare literal `max_tokens=4096` is replaced by the named constant `MAX_OUTPUT_TOKENS: int = 16384` (line ~110). Empirical calibration (2026-06-20, run at `max_tokens=32000`, `stop_reason=tool_use` confirmed non-truncated): `cut_drawdown` = 4,906 output tokens; `diversify` = 5,015 tokens (worst-case). `ceil(5015 * 1.25) = 6,269`; floored at the RED test minimum of 16,000. 16,384 = 16,000 floor + small buffer — approximately 3.3× the empirical worst-case, robust to Opus output variance for the weekly job. `max_tokens` is a billing CEILING (billing is by actual output tokens, not the ceiling), so a generous value carries no cost penalty.
+
+2. **Bounded truncation-retry loop — `MAX_GENERATION_ATTEMPTS = 3`.** A `for _attempt in range(MAX_GENERATION_ATTEMPTS)` loop wraps the `client.messages.create` call. After each response, `stop_reason` is inspected: any value other than `"max_tokens"` breaks the loop and proceeds to parsing (the normal path). A `stop_reason == "max_tokens"` response logs a warning and retries. After all `MAX_GENERATION_ATTEMPTS` return `"max_tokens"`, the loop falls through to its `else` clause and returns `GeneratorResult(plans=[], reason="max_tokens: response truncated after all attempts")` — an honest D-1 degradation, never a raise. The combined effect: `MAX_OUTPUT_TOKENS = 16384` makes truncation rare in practice; the retry loop makes it recoverable if it occurs anyway.
+
+### Design decisions
+
+**Why a named constant rather than a literal?** Consistent with the project rule (no magic numbers in advisor modules); the comment documents the derivation (12 plans * estimated tokens/plan). The constant is tunable when `N_PLANS_PER_OBJECTIVE` changes.
+
+**Why this is non-trivial to detect in tests.** The mocked-SDK test suite returns conforming plans regardless of `max_tokens`; the limit only fires against the real API. This is the same "tests-green-but-hollow" failure mode as DE-SB-GEN-DRIFT-FIX (vocabulary drift). Only a live exam with `usage_output_tokens` inspection reveals truncation.
+
+### Files changed
+
+- `advisors/build_plan_generator.py` — `MAX_OUTPUT_TOKENS: int = 16384` constant added (line ~110); `MAX_GENERATION_ATTEMPTS: int = 3` constant added (line ~114); `messages.create` call site updated to use `max_tokens=MAX_OUTPUT_TOKENS` inside a `for _attempt in range(MAX_GENERATION_ATTEMPTS)` retry loop (+36 lines / -7 lines, commit a2a678f; recommitted 2a1787e for comment-truth)
+- `tests/advisors/test_build_plan_generator_truncation.py` — 16 new RED tests (written by sbgen-test before the GREEN implementation): truncation retry fires on `stop_reason="max_tokens"`; exhaustion degrades honestly; non-truncated stop_reason does not retry; `MAX_OUTPUT_TOKENS >= 16000` assertion; `MAX_GENERATION_ATTEMPTS == 3` assertion
+
+### Status
+
+Unit-verified GREEN at HEAD 2a1787e. 16 new truncation tests GREEN; full `tests/advisors/` suite GREEN (counts to be confirmed by team-lead live re-exam). Production confirmation pending team-lead live re-exam (results reported separately).
