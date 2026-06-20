@@ -818,3 +818,207 @@ def test_string_condition_plan_does_not_silently_admit_as_compilable(bpg, compil
             assert compiled.tree is None, (
                 "a string-condition regime-gate plan must not compile to a usable tree"
             )
+
+
+# ===========================================================================
+# REVISE-2 — the if_compound COMPOUND-CONDITION union (FINAL grammar gap).
+#
+# Operator v1 directive: "compound conditions ALL in v1, no fast-follows." if_compound
+# IS compound conditions. The flat-if Revise (Revise-1) taught only the flat if.condition
+# dict + embedded a flat-if worked example + schema-constrained the flat condition. But
+# if_compound (compound / multi-condition regime gates) was taught in prompt TEXT only —
+# no worked compiling example, and its compound-condition UNION
+#   {type:"binary"|"binary_compound"|"compound", operator:"any"|"all", conditions:[...], tickers:[...]}
+# is NOT in the schema's condition constraint. That is the same under-exemplified-construct
+# pattern that dropped node-vocab and then if.condition — now one level deeper, and the LAST
+# grammar gap (the C3 compiler already handles the recursive condition union, 38/38 goldens).
+#
+# This Revise extends the SAME prompt-steer + schema-tighten to the compound union. The
+# embedded if_compound example must COMPILE CLEAN through the real C3 compiler (the
+# boundary-crossing oracle), proving the compound-condition shape end-to-end.
+# (Verified pre-RED: if_compound with binary / binary_compound / compound conditions all
+# compile validate_tree-clean through compile_plan.)
+# ===========================================================================
+
+
+def _binary_compound_cond(fn, tickers, comparator, const, window, operator="any"):
+    return {
+        "type": "binary_compound",
+        "fn": fn,
+        "tickers": list(tickers),
+        "comparator": comparator,
+        "rhs": {"const": const},
+        "window": window,
+        "operator": operator,
+    }
+
+
+def _compound_cond(operator, conditions):
+    return {"type": "compound", "operator": operator, "conditions": conditions}
+
+
+def _if_compound(condition, then, els):
+    return {"kind": "if_compound", "condition": condition, "then": then, "else": els}
+
+
+def _find_if_compound_node(node):
+    """Return the first kind=='if_compound' NODE in a DSL tree, or None."""
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if not isinstance(n, dict):
+            continue
+        if n.get("kind") == "if_compound":
+            return n
+        children = n.get("children")
+        if isinstance(children, list):
+            for c in children:
+                if isinstance(c, dict):
+                    stack.append(c.get("node") if "node" in c else c)
+        for branch in ("then", "else"):
+            b = n.get(branch)
+            if isinstance(b, list):
+                stack.extend(b)
+    return None
+
+
+# --- The prompt must TEACH the compound-condition union ----------------------
+
+
+@pytest.mark.parametrize("obj_name", _OBJECTIVE_NAMES)
+def test_prompt_teaches_if_compound_condition_union(bpg, obj_name):
+    """The prompt must teach the if_compound compound-condition union so Opus can
+    emit a multi-condition regime gate. It must name the condition 'type' tag and
+    the compound sub-grammar tokens (operator any/all, conditions, tickers)."""
+    prompt = _build_prompt(bpg, _objective(bpg, obj_name))
+    # The union is selected by a 'type' tag with these values.
+    assert "binary_compound" in prompt or "compound" in prompt, (
+        f"prompt for {obj_name} must teach the compound-condition union (type values)"
+    )
+    # The any/all operator and the conditions/tickers list fields must be named.
+    assert "operator" in prompt, "prompt must name the compound 'operator' (any/all) field"
+    assert "conditions" in prompt or "tickers" in prompt, (
+        "prompt must name the compound 'conditions'[] / 'tickers'[] fields"
+    )
+
+
+def test_prompt_names_if_compound_kind_and_condition_type_tag(bpg):
+    """The prompt must present kind='if_compound' and that its condition is a TYPED
+    union (a 'type' field), distinct from the flat-if condition shape."""
+    prompt = _build_prompt(bpg, _objective(bpg, "cut_drawdown"))
+    assert "if_compound" in prompt, "prompt must name the if_compound node kind"
+    assert "type" in prompt, "prompt must teach the condition 'type' discriminator"
+
+
+# --- The embedded if_compound example must COMPILE CLEAN ---------------------
+
+
+def test_prompt_embeds_an_if_compound_example_that_compiles_clean(bpg, compiler):
+    """ADVERSARIAL CORE of Revise-2: at least one embedded example must contain an
+    if_compound node whose condition is a proper typed union, AND that example must
+    COMPILE CLEAN through the real C3 compiler (tree not None + validate_tree==[]).
+    A prompt that merely describes the compound union in prose without a compiling
+    worked example is exactly what let if.condition drift — this closes it."""
+    found = False
+    for obj_name in _gate_objective_names():
+        prompt = _build_prompt(bpg, _objective(bpg, obj_name))
+        for example in _all_example_plans_in(prompt):
+            if _find_if_compound_node(example["root"]) is None:
+                continue
+            result = compiler.compile_plan(example)
+            if result.tree is not None and symphony_schema.validate_tree(result.tree) == []:
+                found = True
+                break
+        if found:
+            break
+    assert found, (
+        "no embedded if_compound example compiles clean through the C3 compiler; the "
+        "prompt must embed a worked compound-condition example whose condition is a typed "
+        "union that compile_plan accepts (tree not None + validate_tree==[])"
+    )
+
+
+def test_embedded_if_compound_example_condition_is_a_typed_union(bpg):
+    """The embedded if_compound example's condition must be a DICT carrying a 'type'
+    discriminator (binary / binary_compound / compound) — never a flat if-shape or a
+    string. Direct structural assertion."""
+    prompt = _build_prompt(bpg, _objective(bpg, "cut_drawdown"))
+    node = None
+    for example in _all_example_plans_in(prompt):
+        n = _find_if_compound_node(example["root"])
+        if n is not None:
+            node = n
+            break
+    assert node is not None, "cut_drawdown prompt must embed an if_compound example"
+    cond = node.get("condition")
+    assert isinstance(cond, dict), (
+        f"if_compound condition must be a dict, got {type(cond).__name__}"
+    )
+    assert cond.get("type") in ("binary", "binary_compound", "compound"), (
+        f"if_compound condition must carry a valid 'type' discriminator, got {cond.get('type')!r}"
+    )
+
+
+# --- The tool schema must accept the compound union for if_compound.condition -
+
+
+def test_tool_schema_condition_accepts_compound_union_fields(bpg):
+    """The tool schema's condition constraint must accommodate the compound union —
+    not ONLY the flat-if shape. Opus must be able to emit a typed compound condition
+    (type/operator/conditions/tickers) within the schema. We assert the schema's
+    condition constraint references the union discriminator/fields (so a compound
+    condition is schema-valid), not solely the flat lhs_fn shape."""
+    schema = bpg._EMIT_BUILD_PLANS_TOOL["input_schema"]
+    enum_values = _collect_enum_values(schema)
+    # Walk all condition-property schemas + the whole schema text for union tokens.
+    cond_schemas = _find_property_schemas(schema, "condition")
+    # The union is expressible if the schema enumerates the type discriminator values
+    # OR declares condition-union fields (operator/conditions/tickers/type) somewhere.
+    union_type_present = {"binary", "binary_compound", "compound"} & set(enum_values)
+    union_fields_present = bool(
+        _find_property_schemas(schema, "conditions")
+        or _find_property_schemas(schema, "operator")
+        or _find_property_schemas(schema, "type")
+    )
+    assert union_type_present or union_fields_present, (
+        "tool schema does not express the if_compound compound-condition union "
+        "(no type-discriminator enum and no operator/conditions/tickers fields) — "
+        "Opus cannot structurally emit a valid compound condition"
+    )
+    # And the condition is still object-typed (never a bare string), preserving Revise-1.
+    for cs in cond_schemas:
+        assert cs.get("type") != "string", "condition must not be schema-typed as a string"
+
+
+# --- A conforming-mock if_compound plan is admitted AND compiles clean -------
+
+
+def test_conforming_if_compound_plan_admitted_and_compiles_clean(bpg, compiler, monkeypatch):
+    """A CONFORMING mocked if_compound cut_drawdown plan (a typed compound condition)
+    is admitted AND its admitted form compiles clean through the C3 compiler — the
+    multi-condition regime-gate end-to-end contract the operator's v1 directive
+    requires. (compound = all-of-N broadcast conditions.)"""
+    universe = frozenset({"SPY", "QQQ", "UVXY", "TLT", "IEF"})
+    compound_root = _if_compound(
+        _compound_cond(
+            "all",
+            [
+                _binary_compound_cond("relative-strength-index", ["SPY"], "gt", 70, 14),
+                _binary_compound_cond("max-drawdown", ["QQQ"], "lt", 20, 30),
+            ],
+        ),
+        then=[_equal([_asset("UVXY")])],
+        els=[_inverse_vol([_asset("SPY"), _asset("IEF")])],
+    )
+    plan_in = _plan("cut_drawdown", compound_root, plan_id="cd-compound-1")
+    _patch_conforming_client(bpg, monkeypatch, [plan_in])
+    result = bpg.generate_build_plans(_objective(bpg, "cut_drawdown"), universe, n_plans=12)
+    assert result.plans, (
+        f"a conforming if_compound cut_drawdown plan must be admitted, reason={result.reason!r}"
+    )
+    admitted = result.plans[0]
+    compiled = compiler.compile_plan(admitted)
+    assert compiled.tree is not None, (
+        f"the admitted compound regime-gate plan must compile clean, reason={compiled.reason!r}"
+    )
+    assert symphony_schema.validate_tree(compiled.tree) == []
