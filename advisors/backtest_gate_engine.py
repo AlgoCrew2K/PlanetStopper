@@ -808,12 +808,13 @@ def evaluate_candidate_batch(
 
         # C5b operator-legibility: record WHY this candidate was culled (AC-24/25 mandate).
         # Distinguishable causes let the live-probe confirm each veto actually BITES.
-        # Priority order (most-specific first):
+        # Stage-order precedence (most-specific first):
         #   1. Survivor (ADOPT_CANDIDATE) → None (no rejection cause).
-        #   2. SPY-fold baseline not met (oos_alpha <= spy-fold default) → "below_spy_alpha".
-        #      Checked first when the spy seam is active so the alpha-gate cause is surfaced
-        #      even when other vetoes also fired (the operator asked for the SPY gate specifically).
-        #   3. PBO veto (batch pbo > PBO_REJECT_THRESHOLD) → "pbo_veto" (contains "pbo").
+        #   2. PBO veto (batch pbo > PBO_REJECT_THRESHOLD) → "pbo_veto" (contains "pbo").
+        #      Stage-1 hard veto — fires before SPY baseline so a candidate that is BOTH
+        #      high-PBO AND below-SPY reports the PBO reason (AC-24 stage order).
+        #   3. SPY-fold baseline not met (oos_alpha <= spy-fold default) → "below_spy_alpha".
+        #      Stage-2 gate — only reached when PBO did not veto.
         #   4. All other causes (BHY non-winner, nn1, purge) → "fdr_not_winner".
         # Source: feature-plans/strategy-builder-real.md §AC-24/AC-25; handoff §rejection_reason.
         _rejection_reason: str | None
@@ -821,16 +822,16 @@ def evaluate_candidate_batch(
 
         if verdict.decision == "ADOPT_CANDIDATE":
             _rejection_reason = None
-        elif spy_returns_fn is not None and fold.oos_alpha <= _effective_default_oos_alpha:
-            # SPY-fold baseline not met: the candidate's fold OOS alpha is at or below the
-            # SPY fold OOS alpha (or below float("-inf") for the unavailable case, which also
-            # means "did not beat the required baseline").
-            _rejection_reason = "below_spy_alpha"
         elif _batch_pbo is not None and _batch_pbo > _PBO_THRESH:
-            # PBO veto: the batch-level sample-robustness test fired.
+            # PBO veto: Stage-1 hard veto — the batch-level sample-robustness test fired.
             # The reason string deliberately contains "pbo" (lowercase) so the live-probe
             # can identify PBO culls via a case-insensitive substring check.
             _rejection_reason = "pbo_veto"
+        elif spy_returns_fn is not None and fold.oos_alpha <= _effective_default_oos_alpha:
+            # SPY-fold baseline not met: Stage-2 gate — the candidate's fold OOS alpha is at
+            # or below the SPY fold OOS alpha (or below float("-inf") for the unavailable
+            # case, which also means "did not beat the required baseline").
+            _rejection_reason = "below_spy_alpha"
         else:
             # Catch-all: BHY/Yekutieli FDR non-winner, or nn1/purge/thin-window failure.
             _rejection_reason = "fdr_not_winner"
