@@ -838,21 +838,31 @@ def test_ac8_enforce_filter_runs_after_prune_and_dedup(bpg):
 
 def test_ac9_off_universe_ticker_pruned_when_in_universe_siblings_remain(bpg):
     """AC-9 refinement A(a): an off-universe ticker is pruned when in-universe siblings
-    remain; the surviving plan keeps the in-universe tickers and drops the off-universe one."""
-    # ZZZZ is off-universe; SPY/QQQ are in-universe siblings.
-    root = _weight("equal", [_asset("SPY"), _asset("ZZZZ"), _asset("QQQ")])
+    remain; the surviving plan keeps the in-universe tickers and drops the off-universe one.
+
+    Uses a 2-sleeve diversify root so the plan also satisfies the AC-8 diversify
+    enforcement filter — ZZZZ is pruned from the first sleeve, both sleeves keep
+    in-universe siblings, so >=2 sleeves survive and the plan is admitted."""
+    # ZZZZ is off-universe; SPY/QQQ/IWM/TLT are in-universe siblings across two sleeves.
+    root = _group(
+        "g",
+        [
+            _weight("equal", [_asset("SPY"), _asset("ZZZZ"), _asset("QQQ")]),
+            _weight("equal", [_asset("IWM"), _asset("TLT")]),
+        ],
+    )
     plans_in = [_plan("diversify", root, plan_id="p")]
-    universe = frozenset({"SPY", "QQQ"})  # excludes ZZZZ
+    universe = frozenset({"SPY", "QQQ", "IWM", "TLT"})  # excludes ZZZZ
     client = _client_returning_plans(plans_in)
     with _patch_client(bpg, client):
         result = bpg.generate_build_plans(_objective(bpg, "diversify"), universe, n_plans=1)
-    # The plan survives (siblings remain) and ZZZZ is gone.
+    # The plan survives (siblings remain in both sleeves) and ZZZZ is gone.
     assert result.plans, "plan with in-universe siblings must survive the prune"
     surviving_tickers = set()
     for plan in result.plans:
         surviving_tickers |= bpg.plan_tickers(plan)
     assert "ZZZZ" not in surviving_tickers
-    assert {"SPY", "QQQ"} <= surviving_tickers
+    assert {"SPY", "QQQ", "IWM", "TLT"} <= surviving_tickers
 
 
 def test_ac9_degenerate_prune_rejects_plan_instead_of_emitting_broken(bpg):
@@ -949,10 +959,19 @@ def test_ac9_admitted_plan_does_not_alias_sdk_input_nodes(bpg):
     caller's input. The symphony_schema constructors deep-copy for exactly this reason.
 
     We assert the admitted plan's asset leaves are not the SAME objects as the input's,
-    by mutating an admitted asset and confirming the input plan is unchanged."""
+    by mutating an admitted asset and confirming the input plan is unchanged.
+
+    Uses a 2-sleeve diversify root so the plan also satisfies the AC-8 diversify
+    enforcement filter (the aliasing property is independent of the objective shape)."""
     in_asset_a = _asset("SPY")
     in_asset_b = _asset("QQQ")
-    root = _weight("equal", [in_asset_a, in_asset_b])
+    root = _group(
+        "g",
+        [
+            _weight("equal", [in_asset_a]),
+            _weight("equal", [in_asset_b]),
+        ],
+    )
     plan_in = _plan("diversify", root, plan_id="alias")
     plans_in = [plan_in]
     client = _client_returning_plans(plans_in)
@@ -1050,16 +1069,42 @@ def test_ac10_diversity_assertion_has_teeth_12_clones_are_not_diverse(bpg):
 
 def test_ac10_distinct_plans_are_not_collapsed(bpg):
     """AC-10: genuinely structurally-distinct plans are NOT over-deduped — three
-    distinct shapes survive as three plans."""
-    p1 = _plan("diversify", _weight("equal", [_asset("SPY"), _asset("QQQ")]), plan_id="a")
+    distinct shapes survive as three plans.
+
+    Each plan is a 2-sleeve diversify group (so all three pass the AC-8 diversify
+    enforcement filter), but the three differ in their second sleeve's scheme/shape,
+    so they remain structurally distinct and must NOT dedup."""
+    p1 = _plan(
+        "diversify",
+        _group(
+            "g",
+            [
+                _weight("equal", [_asset("SPY"), _asset("QQQ")]),
+                _weight("equal", [_asset("TLT"), _asset("AGG")]),
+            ],
+        ),
+        plan_id="a",
+    )
     p2 = _plan(
         "diversify",
-        _weight("inverse_vol", [_asset("TLT"), _asset("AGG")], window_days=30),
+        _group(
+            "g",
+            [
+                _weight("equal", [_asset("SPY"), _asset("QQQ")]),
+                _weight("inverse_vol", [_asset("TLT"), _asset("AGG")], window_days=30),
+            ],
+        ),
         plan_id="b",
     )
     p3 = _plan(
         "diversify",
-        _filter("top", 2, "cumulative-return", 63, [_asset("IWM"), _asset("EFA"), _asset("GLD")]),
+        _group(
+            "g",
+            [
+                _weight("equal", [_asset("SPY"), _asset("QQQ")]),
+                _filter("top", 2, "cumulative-return", 63, [_asset("IWM"), _asset("EFA")]),
+            ],
+        ),
         plan_id="c",
     )
     client = _client_returning_plans([p1, p2, p3])
@@ -1095,8 +1140,17 @@ def test_ac10_dedup_is_provenance_and_id_insensitive(bpg):
     """AC-10 gap (Revise): dedup keys on STRUCTURE only — two plans with identical root
     structure but different plan_id/name/provenance still collapse (the fingerprint must
     ignore volatile non-structural fields, else clones with different ids would survive
-    and pad the FDR batch)."""
-    clone_root = _weight("equal", [_asset("SPY"), _asset("QQQ"), _asset("IWM")])
+    and pad the FDR batch).
+
+    The clone root is a 2-sleeve diversify group so both clones pass the AC-8
+    enforcement filter; they then collapse to one on structure-only dedup."""
+    clone_root = _group(
+        "g",
+        [
+            _weight("equal", [_asset("SPY"), _asset("QQQ")]),
+            _weight("equal", [_asset("IWM"), _asset("TLT")]),
+        ],
+    )
     p_a = _plan("diversify", clone_root, plan_id="AAA", name="Name One")
     p_b = _plan("diversify", clone_root, plan_id="BBB", name="Name Two")
     client = _client_returning_plans([p_a, p_b])
@@ -1108,22 +1162,32 @@ def test_ac10_dedup_is_provenance_and_id_insensitive(bpg):
 def test_ac10_dedup_collapses_plans_differing_only_by_pruned_off_universe_ticker(bpg):
     """AC-10 + AC-9 interaction (Revise): two plans whose ONLY difference is an
     off-universe ticker that gets pruned away become structurally identical AFTER
-    pruning — so they must dedup. (Dedup runs on the pruned plan, not the raw one.)"""
-    base_children = [_asset("SPY"), _asset("QQQ")]
-    # plan_a has an extra off-universe ZZZZ that will be pruned, leaving SPY/QQQ.
-    root_a = _weight("equal", base_children + [_asset("ZZZZ")])
-    root_b = _weight("equal", list(base_children))  # already just SPY/QQQ
+    pruning — so they must dedup. (Dedup runs on the pruned plan, not the raw one.)
+
+    Both plans are 2-sleeve diversify groups so they pass the AC-8 enforcement filter
+    after pruning; plan_a's first sleeve carries an extra off-universe ZZZZ that is
+    pruned, leaving both plans with identical {SPY,QQQ}+{IWM,TLT} structure -> dedup."""
+    second_sleeve = _weight("equal", [_asset("IWM"), _asset("TLT")])
+    # plan_a's first sleeve has an extra off-universe ZZZZ that will be pruned away.
+    root_a = _group(
+        "g",
+        [_weight("equal", [_asset("SPY"), _asset("QQQ"), _asset("ZZZZ")]), second_sleeve],
+    )
+    root_b = _group(
+        "g",
+        [_weight("equal", [_asset("SPY"), _asset("QQQ")]), second_sleeve],
+    )
     plans_in = [
         _plan("diversify", root_a, plan_id="withzzz"),
         _plan("diversify", root_b, plan_id="without"),
     ]
-    universe = frozenset({"SPY", "QQQ"})  # excludes ZZZZ
+    universe = frozenset({"SPY", "QQQ", "IWM", "TLT"})  # excludes ZZZZ
     client = _client_returning_plans(plans_in)
     with _patch_client(bpg, client):
         result = bpg.generate_build_plans(_objective(bpg, "diversify"), universe, n_plans=12)
-    # After ZZZZ is pruned from plan_a, both roots are SPY/QQQ equal-weight -> dedup to 1.
+    # After ZZZZ is pruned from plan_a, both roots are identical 2-sleeve groups -> dedup to 1.
     assert len(result.plans) == 1
-    assert bpg.plan_tickers(result.plans[0]) == {"SPY", "QQQ"}
+    assert bpg.plan_tickers(result.plans[0]) == {"SPY", "QQQ", "IWM", "TLT"}
 
 
 # ===========================================================================
