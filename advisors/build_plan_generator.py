@@ -99,9 +99,14 @@ _LOW_VOL_SORTS: frozenset[str] = frozenset(
 )
 
 # Maximum output tokens for the Opus build-plan SDK call.  4096 (the old value) truncated
-# 12 full-grammar plans; this ceiling fits them with ~25% headroom.  max_tokens is a
-# BILLING CEILING — you pay for actual output, not the ceiling — so a generous value is
-# free.  Empirical floor: 12 full-grammar plans + ~25% headroom (2026-06-20).
+# 12 full-grammar plans; this ceiling fits them comfortably.  max_tokens is a BILLING
+# CEILING — you pay for actual output, not the ceiling — so a generous value is free.
+# Calibrated 2026-06-20 (streaming, max_tokens=32000, stop_reason=tool_use confirmed):
+#   cut_drawdown  4906 output tokens  (worst-case — regime-gate / if-node trees)
+#   diversify     5015 output tokens
+# ceil(5015 * 1.25) = 6269; floored at the RED test minimum of 16000.
+# 16384 = 16000 floor + small buffer, safely above both the calibrated worst-case
+# (5015 tokens) and the RED >= 16000 assertion.
 MAX_OUTPUT_TOKENS: int = 16384
 
 # Bounded retry limit for SDK calls that return stop_reason="max_tokens".  After this
