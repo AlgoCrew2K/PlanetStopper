@@ -1,0 +1,479 @@
+"""RED tests — Component 5b: overfitting-cull strengthening (AC-24/25/26).
+
+The ONE deliberate downstream gate change. Strengthens the AI-Advisor cull to
+autotuner-grade. Three surfaces, all in the gate/engine layer — the generator,
+compiler, universe_provider, symphony_schema, acceptance_gate, compute_pbo, and the
+autotuner are NOT touched (they are correct / out of scope):
+
+  AC-24 — PBO veto wired in. Today advisors/backtest_gate_engine.py calls
+    acceptance_gate.evaluate_acceptance_gate with NO `pbo` (defaults to None) so the
+    PBO veto is structurally disabled. After this AC a real batch PBO is computed
+    (math_engine.compute_pbo, Bailey & Lopez de Prado) over the N candidates'
+    date-keyed returns and passed into the gate; a candidate in a high-PBO batch
+    (pbo > PBO_REJECT_THRESHOLD) is VETOED; a low-PBO batch is not; pbo=None
+    (fewer than 2 date-keyed configs) passes unchanged (no false reject).
+
+  AC-25 — real SPY-OOS-over-the-fold baseline. Today default_oos_alpha is always
+    0.0 so a candidate clears on merely-positive OOS alpha. After this AC the
+    baseline is SPY's OOS alpha computed over the SAME validation fold (SPY series
+    aligned to the candidate's date span FIRST, then the IDENTICAL fold transform):
+    a positive-but-below-SPY-fold candidate is REJECTED; a beats-SPY-over-the-fold
+    candidate survives the alpha gate. SPY-unavailable -> conservative WITHHOLD.
+
+  AC-26 — Atlas parity. Atlas community candidates are culled IDENTICALLY to
+    built-new (same fold OOS, same FDR, same PBO veto, same SPY baseline). An Atlas
+    candidate and a built-new candidate with identical FRESH return series receive
+    the identical gate verdict; advertised community stats (oos_metrics) NEVER
+    influence any survival decision.
+
+CONTRACT GROUNDING (read from the existing code — empirical-before-TDD):
+  - math_engine.compute_pbo(configs_date_returns: list[dict[date->return]],
+    eligible_dates, gamma, S=None) -> float in [0,1]. CSCV reduced-N (S=8). A
+    per-block-overfit batch (each config spikes one chronological block) yields
+    pbo=1.0 (the IS-best on a combo is always OOS-mediocre); a consistent/monotone
+    batch yields pbo=0.0. (VERIFIED via the real compute_pbo before writing these.)
+  - acceptance_gate.evaluate_acceptance_gate already has the `pbo` param + the
+    Stage-1 veto (pbo > PBO_REJECT_THRESHOLD strict). The wiring gap is the CALL
+    SITE in backtest_gate_engine, which passes no pbo today.
+  - BacktestCandidate.daily_returns_pct is currently a date-LESS list, built from
+    result.daily_returns.values() (date keys dropped). The dates ARE available in
+    the Composer result; recovering them is the enabler for both PBO date-keying and
+    SPY-fold alignment — NO new endpoint.
+
+ADVERSARIAL FOCUS (the anti-hollow requirement, PM-mandated): the AC-24 high-PBO
+test must exercise the veto FIRING through the REAL compute_pbo on real fixture
+date-returns — NOT a vacuous pbo=None pass. compute_pbo / the math engine are NEVER
+mocked. SPY fetch is the only injectable seam. No hardcoded producer values — assert
+the VERDICT (vetoed / rejected / survives) and the RELATIONSHIP (below-SPY vs
+above-SPY), never a literal pbo or alpha.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+import acceptance_gate
+from math_engine import PBO_REJECT_THRESHOLD, compute_pbo
+
+# ---------------------------------------------------------------------------
+# Module-under-test imports. backtest_gate_engine + strategy_builder_engine are
+# the C5b surfaces. The new public arguments / seams these tests pin do not exist
+# yet — that is the RED.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def gate_engine():
+    import advisors.backtest_gate_engine as _g  # noqa: PLC0415
+
+    return _g
+
+
+# ---------------------------------------------------------------------------
+# Date-keyed return fixtures (we fully control these — no producer values).
+# ---------------------------------------------------------------------------
+
+# 80 trading-day-ish date strings across 8 months → 8 CSCV blocks of 10.
+_DATES = [f"2026-{m:02d}-{d:02d}" for m in range(1, 9) for d in range(1, 11)]
+
+
+def _per_block_overfit_configs() -> list[dict[str, float]]:
+    """K=8 configs, each spiking exactly ONE chronological block (+0.20) and
+    slightly negative (-0.01) elsewhere. The IS-best config on any CSCV combo has
+    its spike in the IS blocks and is mediocre on the OOS blocks → IS-best ranks
+    below the OOS median in every combo → pbo=1.0. VERIFIED via real compute_pbo."""
+    blocks = [_DATES[i * 10 : (i + 1) * 10] for i in range(8)]
+    configs: list[dict[str, float]] = []
+    for b in range(8):
+        cfg: dict[str, float] = {}
+        for i, blk in enumerate(blocks):
+            for d in blk:
+                cfg[d] = 0.20 if i == b else -0.01
+        configs.append(cfg)
+    return configs
+
+
+def _consistent_configs() -> list[dict[str, float]]:
+    """K=5 monotone-steady configs (each a flat positive level). The IS-best is
+    also the OOS-best in every combo → pbo=0.0. VERIFIED via real compute_pbo."""
+    return [{d: 0.001 * (j + 1) for d in _DATES} for j in range(5)]
+
+
+def _pbo_gamma() -> float:
+    """The CRRA gamma compute_pbo is called with. 1.0 is a valid risk-aversion
+    coefficient; the fixtures' PBO outcome (1.0 vs 0.0) is gamma-robust by
+    construction (the per-block spike dominates any reasonable CRRA utility)."""
+    return 1.0
+
+
+# ---------------------------------------------------------------------------
+# Self-guard: prove the fixtures actually drive compute_pbo across the threshold,
+# so the AC-24 veto tests are non-hollow (a real pbo>0.5 exists to veto on).
+# This exercises the REAL compute_pbo — never mocked.
+# ---------------------------------------------------------------------------
+
+
+def test_fixture_high_pbo_batch_exceeds_threshold_via_real_compute_pbo():
+    """The per-block-overfit batch yields pbo > PBO_REJECT_THRESHOLD through the
+    REAL compute_pbo — the veto HAS something real to fire on (anti-hollow)."""
+    pbo = compute_pbo(_per_block_overfit_configs(), _DATES, _pbo_gamma())
+    assert pbo > PBO_REJECT_THRESHOLD, (
+        f"high-PBO fixture must exceed the reject threshold via real compute_pbo; got {pbo}"
+    )
+
+
+def test_fixture_low_pbo_batch_is_below_threshold_via_real_compute_pbo():
+    """The consistent batch yields pbo <= PBO_REJECT_THRESHOLD — the low-PBO control."""
+    pbo = compute_pbo(_consistent_configs(), _DATES, _pbo_gamma())
+    assert pbo <= PBO_REJECT_THRESHOLD, (
+        f"low-PBO control fixture must be at/below the threshold; got {pbo}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Candidate builders. C5b threads DATE-KEYED returns through the candidate so the
+# gate can compute PBO and align SPY. The exact field/param name the impl adds is
+# resolved leniently (the tests pin BEHAVIOUR, not the name).
+# ---------------------------------------------------------------------------
+
+# Accepted names for the new date-keyed-returns field on the candidate, and for the
+# new compute-PBO toggle / SPY-baseline seam on evaluate_candidate_batch. The impl
+# picks names; the tests resolve from this small set so behaviour is what's pinned.
+_DATED_RETURNS_FIELDS = ("dated_returns", "daily_returns_by_date", "returns_by_date")
+_SPY_SEAM_KWARGS = ("spy_returns_fn", "spy_fold_alpha_fn", "spy_dated_returns")
+
+
+def _make_candidate(gate_engine, cid: str, dated_returns: dict[str, float], **extra):
+    """Build a BacktestCandidate carrying BOTH the legacy value-list AND the new
+    date-keyed returns (whichever field the impl adds). dated_returns maps date->pct.
+
+    The legacy daily_returns_pct is the chronologically-ordered value list (so the
+    existing fold transform still works); the date-keyed field is what AC-24's PBO
+    and AC-25's SPY alignment consume.
+    """
+    BacktestCandidate = gate_engine.BacktestCandidate
+    ordered_dates = sorted(dated_returns)
+    value_list = [dated_returns[d] for d in ordered_dates]
+    kwargs = dict(
+        candidate_id=cid,
+        daily_returns_pct=value_list,
+        candidate_params={},
+        incumbent_params={},
+        theory_prior_params={},
+        nn1_compliant=True,
+        purge_integrity_ok=True,
+    )
+    kwargs.update(extra)
+    cand = BacktestCandidate(**kwargs)
+    # Attach the date-keyed returns under whichever field the impl exposes. If the
+    # candidate is a NamedTuple with the new field, it must be passed at construction;
+    # we try that first, then fall back to a post-hoc attribute for dataclass impls.
+    for field in _DATED_RETURNS_FIELDS:
+        if field in getattr(BacktestCandidate, "_fields", ()):  # NamedTuple field
+            return cand._replace(**{field: dict(dated_returns)})
+    # Non-NamedTuple impl: set the attribute directly (the impl must read one of these).
+    for field in _DATED_RETURNS_FIELDS:
+        try:
+            object.__setattr__(cand, field, dict(dated_returns))
+        except Exception:
+            pass
+    return cand
+
+
+def _verdict_for(batch, cid: str):
+    for r in batch.results:
+        if r.candidate_id == cid:
+            return r.verdict.decision
+    raise AssertionError(f"no gate result for candidate {cid!r}")
+
+
+def _survivor_ids(batch) -> set[str]:
+    return {s.candidate_id for s in batch.survivors}
+
+
+# ===========================================================================
+# AC-24 — PBO veto wired into evaluate_candidate_batch.
+# ===========================================================================
+
+
+# Spy helper: capture the `pbo` value threaded into evaluate_acceptance_gate.
+# This is the NON-CONFOUNDED isolation of the PBO veto: the gate's own tests
+# (tests/acceptance_gate/) already prove pbo>threshold → REJECT_VETO_FAILED, so
+# proving the REAL high pbo reaches the gate completes the veto chain WITHOUT
+# depending on a candidate surviving the (intentionally strict) BHY baseline. We
+# do NOT mock compute_pbo (it runs for real on the fixture date-returns) — we only
+# observe the value handed to the gate.
+
+
+def _capture_gate_pbos(gate_engine, monkeypatch) -> list:
+    """Wrap acceptance_gate.evaluate_acceptance_gate to record every `pbo` kwarg it
+    receives (the real value the gate engine threaded in), returning the real verdict.
+    Returns the list that will be populated when evaluate_candidate_batch runs."""
+    import acceptance_gate as _ag
+
+    seen_pbos: list = []
+    real_gate = _ag.evaluate_acceptance_gate
+
+    def _spy(*args, **kwargs):
+        seen_pbos.append(kwargs.get("pbo"))
+        return real_gate(*args, **kwargs)
+
+    # backtest_gate_engine calls it via the module reference; patch on that module.
+    monkeypatch.setattr(gate_engine, "evaluate_acceptance_gate", _spy, raising=False)
+    monkeypatch.setattr(_ag, "evaluate_acceptance_gate", _spy)
+    return seen_pbos
+
+
+def test_ac24_high_pbo_batch_threads_real_pbo_above_threshold_into_gate(gate_engine, monkeypatch):
+    """ANTI-HOLLOW CORE: a per-block-overfit batch (real pbo>0.5 via the REAL
+    compute_pbo) must thread a pbo > PBO_REJECT_THRESHOLD into
+    evaluate_acceptance_gate. Combined with the acceptance-gate's own veto tests
+    (pbo>threshold → REJECT_VETO_FAILED), this proves the PBO veto FIRES on real
+    overfitting — not a vacuous None-pass. We isolate PBO at the gate boundary so the
+    proof does not depend on a candidate clearing the (intentionally strict) BHY
+    baseline, which would confound a survivor-count assertion."""
+    seen = _capture_gate_pbos(gate_engine, monkeypatch)
+    configs = _per_block_overfit_configs()
+    candidates = [_make_candidate(gate_engine, f"hpbo-{i}", c) for i, c in enumerate(configs)]
+    gate_engine.evaluate_candidate_batch(candidates)
+    non_none = [p for p in seen if p is not None]
+    assert non_none, "the gate must receive a non-None pbo for a >=2 date-keyed batch"
+    # Every gate call in this batch sees the SAME batch pbo (batch-level statistic),
+    # and it must exceed the reject threshold (real overfitting → veto fires).
+    assert all(p > PBO_REJECT_THRESHOLD for p in non_none), (
+        f"high-PBO batch must thread pbo>{PBO_REJECT_THRESHOLD} into the gate; got {non_none}"
+    )
+
+
+def test_ac24_low_pbo_batch_threads_pbo_at_or_below_threshold(gate_engine, monkeypatch):
+    """A consistent (low-PBO) batch must thread a pbo <= PBO_REJECT_THRESHOLD into
+    the gate — so the PBO veto does NOT fire on a non-overfit batch (no false reject
+    on the sample-robustness axis)."""
+    seen = _capture_gate_pbos(gate_engine, monkeypatch)
+    configs = _consistent_configs()
+    candidates = [_make_candidate(gate_engine, f"lpbo-{i}", c) for i, c in enumerate(configs)]
+    gate_engine.evaluate_candidate_batch(candidates)
+    non_none = [p for p in seen if p is not None]
+    assert non_none, "the gate must receive a non-None pbo for a >=2 date-keyed batch"
+    assert all(p <= PBO_REJECT_THRESHOLD for p in non_none), (
+        f"low-PBO batch must thread pbo<={PBO_REJECT_THRESHOLD} (no PBO veto); got {non_none}"
+    )
+
+
+def test_ac24_single_candidate_threads_pbo_none_no_veto(gate_engine, monkeypatch):
+    """K<2 date-keyed configs → compute_pbo cannot rank → the gate engine must thread
+    pbo=None (the no-false-reject edge case). The PBO veto cannot fire when pbo is
+    None (acceptance_gate: pbo is None → _pbo_veto_passed)."""
+    seen = _capture_gate_pbos(gate_engine, monkeypatch)
+    cand = _make_candidate(gate_engine, "solo", _consistent_configs()[0])
+    gate_engine.evaluate_candidate_batch([cand])
+    # Whatever the gate decided on other axes, the pbo it received must be None
+    # (fewer than 2 configs → no rankable CSCV → no PBO veto).
+    assert seen, "the gate must have been called for the single candidate"
+    assert all(p is None for p in seen), (
+        f"a single-candidate batch must thread pbo=None (no false PBO veto); got {seen}"
+    )
+
+
+def test_ac24_pbo_is_computed_via_real_compute_pbo_with_date_keyed_configs(
+    gate_engine, monkeypatch
+):
+    """WIRING proof: evaluate_candidate_batch must CALL math_engine.compute_pbo for a
+    >=2 date-keyed batch (today it never does). We wrap compute_pbo (the math runs for
+    REAL — result not replaced) and assert it received date-keyed config DICTS
+    recovered from the candidates' dated returns, not value lists."""
+    import math_engine
+
+    calls: list[tuple] = []
+    real_compute_pbo = math_engine.compute_pbo
+
+    def _spy(configs_date_returns, eligible_dates, gamma, S=None):
+        calls.append((configs_date_returns, eligible_dates, gamma))
+        return real_compute_pbo(configs_date_returns, eligible_dates, gamma, S)
+
+    monkeypatch.setattr(math_engine, "compute_pbo", _spy)
+
+    configs = _consistent_configs()
+    candidates = [_make_candidate(gate_engine, f"wire-{i}", c) for i, c in enumerate(configs)]
+    gate_engine.evaluate_candidate_batch(candidates)
+    assert calls, "evaluate_candidate_batch must call math_engine.compute_pbo for a >=2 batch"
+    configs_arg = calls[0][0]
+    assert len(configs_arg) >= 2
+    assert all(isinstance(c, dict) for c in configs_arg), (
+        "compute_pbo must receive date-keyed config dicts (recovered from the "
+        "candidate's dated returns), not value lists"
+    )
+
+
+# ===========================================================================
+# AC-25 — real SPY-OOS-over-the-fold baseline (replaces always-0.0).
+# ===========================================================================
+
+
+def _spy_seam_kwargs(gate_engine, spy_dated_returns):
+    """Build the kwarg that injects the SPY series/baseline into the gate call.
+
+    The impl exposes one of _SPY_SEAM_KWARGS. We supply a callable returning the
+    SPY date-keyed returns (the most general seam); if the impl wants a pre-fetched
+    series or a fold-alpha fn, the same data is provided. The test pins that SPY is
+    sourced over the candidate's dates and fold-transformed identically.
+    """
+    # Default: a callable seam returning SPY's date-keyed returns for a requested span.
+    return {"spy_returns_fn": lambda *a, **k: dict(spy_dated_returns)}
+
+
+def _candidate_with_fold_alpha(gate_engine, cid, *, beats: bool, spy_dated):
+    """Build a candidate whose validation-fold OOS alpha is ABOVE (beats=True) or
+    BELOW (beats=False) SPY's fold alpha over the SAME dates. Both series share the
+    SAME date span so the fold windows align (apples-to-apples)."""
+    # Candidate returns: a flat level scaled so the validation-fold sum is clearly
+    # above/below SPY's. We don't assert the literal alpha — only the relationship.
+    spy_level = spy_dated[_DATES[-1]]  # representative SPY level (we set it flat below)
+    cand_level = spy_level * (2.0 if beats else 0.25)
+    cand_dated = {d: cand_level for d in _DATES}
+    return _make_candidate(gate_engine, cid, cand_dated)
+
+
+def test_ac25_candidate_below_spy_fold_is_rejected(gate_engine):
+    """A candidate with POSITIVE OOS alpha that is nonetheless BELOW SPY's
+    OOS-alpha-over-the-same-fold must be REJECTED (KEEP_INCUMBENT) — beating zero is
+    no longer enough; it must beat SPY over the fold."""
+    spy_dated = {d: 0.02 for d in _DATES}  # SPY flat-positive over the span
+    cand = _candidate_with_fold_alpha(gate_engine, "below", beats=False, spy_dated=spy_dated)
+    # Need >=2 candidates for a meaningful gate batch; add an in-universe sibling.
+    sibling = _candidate_with_fold_alpha(gate_engine, "below2", beats=False, spy_dated=spy_dated)
+    batch = gate_engine.evaluate_candidate_batch(
+        [cand, sibling], **_spy_seam_kwargs(gate_engine, spy_dated)
+    )
+    assert _verdict_for(batch, "below") != acceptance_gate.DECISION_ADOPT_CANDIDATE, (
+        "a positive-but-below-SPY-fold candidate must not be adopted (must beat SPY, not zero)"
+    )
+    assert "below" not in _survivor_ids(batch)
+
+
+def test_ac25_candidate_above_spy_fold_survives_alpha_gate(gate_engine):
+    """A candidate whose OOS alpha BEATS SPY over the same fold survives the alpha
+    gate (it is not rejected on the SPY-baseline grounds — it may still be subject to
+    BHY/PBO, but the alpha branch passes)."""
+    spy_dated = {d: 0.01 for d in _DATES}
+    cand = _candidate_with_fold_alpha(gate_engine, "above", beats=True, spy_dated=spy_dated)
+    sibling = _candidate_with_fold_alpha(gate_engine, "above2", beats=True, spy_dated=spy_dated)
+    batch = gate_engine.evaluate_candidate_batch(
+        [cand, sibling], **_spy_seam_kwargs(gate_engine, spy_dated)
+    )
+    # Beats-SPY must clear the alpha branch: NOT KEEP_INCUMBENT-by-alpha for the winner.
+    # At least one of the beats-SPY candidates must be adoptable (the BHY winner).
+    decisions = {_verdict_for(batch, "above"), _verdict_for(batch, "above2")}
+    assert acceptance_gate.DECISION_ADOPT_CANDIDATE in decisions, (
+        "a beats-SPY-over-the-fold candidate must be able to survive the alpha gate"
+    )
+
+
+def test_ac25_spy_baseline_uses_same_fold_dates_not_positional(gate_engine):
+    """GUARD against a subtle bug: SPY must be aligned to the candidate's DATE SPAN
+    and fold-transformed over the SAME dates — not a positional fold of a
+    differently-dated SPY series. We give SPY a series whose date span is SHIFTED/
+    longer; a positional fold would compute SPY's alpha over the wrong window and
+    flip the verdict. The correct (date-aligned) implementation intersects on dates,
+    so the SPY fold covers the candidate's validation dates only."""
+    # SPY series covers the candidate dates PLUS extra later dates with huge returns.
+    # A positional fold over the longer series would land its validation window on the
+    # extra dates (huge) — wrongly inflating the SPY baseline. Date-alignment must
+    # restrict SPY to the candidate's dates, so the extra dates are ignored.
+    spy_dated = {d: 0.01 for d in _DATES}
+    extra_dates = [f"2026-09-{d:02d}" for d in range(1, 21)]
+    for d in extra_dates:
+        spy_dated[d] = 5.0  # absurd returns OUTSIDE the candidate's span
+    cand = _candidate_with_fold_alpha(
+        gate_engine, "aligned", beats=True, spy_dated={d: 0.01 for d in _DATES}
+    )
+    sibling = _candidate_with_fold_alpha(
+        gate_engine, "aligned2", beats=True, spy_dated={d: 0.01 for d in _DATES}
+    )
+    batch = gate_engine.evaluate_candidate_batch(
+        [cand, sibling], **_spy_seam_kwargs(gate_engine, spy_dated)
+    )
+    # With correct date-alignment the SPY baseline is ~0.01-level over the candidate
+    # dates (the 5.0 extras are out of span and ignored), so the beats-SPY candidate
+    # still clears. A positional fold over the longer series would set an absurd SPY
+    # baseline and wrongly reject.
+    decisions = {_verdict_for(batch, "aligned"), _verdict_for(batch, "aligned2")}
+    assert acceptance_gate.DECISION_ADOPT_CANDIDATE in decisions, (
+        "SPY must be date-aligned to the candidate span; out-of-span SPY dates must "
+        "not enter the fold (positional-fold bug guard)"
+    )
+
+
+def test_ac25_spy_unavailable_withholds_conservatively(gate_engine):
+    """SPY series unavailable for the fold → the alpha gate degrades CONSERVATIVELY
+    (baseline treated as unmet → WITHHOLD / no adopt), never a silent fall-back to
+    the old beats-zero behaviour."""
+    cand = _candidate_with_fold_alpha(
+        gate_engine, "nospy", beats=True, spy_dated={d: 0.01 for d in _DATES}
+    )
+    sibling = _candidate_with_fold_alpha(
+        gate_engine, "nospy2", beats=True, spy_dated={d: 0.01 for d in _DATES}
+    )
+    # SPY seam returns nothing (unavailable).
+    batch = gate_engine.evaluate_candidate_batch([cand, sibling], spy_returns_fn=lambda *a, **k: {})
+    # Conservative: no candidate is ADOPTED when the SPY baseline can't be established.
+    for cid in ("nospy", "nospy2"):
+        assert _verdict_for(batch, cid) != acceptance_gate.DECISION_ADOPT_CANDIDATE, (
+            "SPY-unavailable must withhold (no adopt), not silently beat-zero"
+        )
+
+
+# ===========================================================================
+# AC-26 — Atlas parity: identical fresh series → identical verdict; advertised
+# stats NEVER influence survival.
+# ===========================================================================
+
+
+def test_ac26_atlas_and_built_new_identical_series_identical_verdict(gate_engine):
+    """An Atlas-sourced candidate and a built-new candidate with IDENTICAL fresh
+    return series receive the IDENTICAL gate verdict — the cull treats provenance
+    irrelevantly (same fold OOS + FDR + PBO + SPY baseline)."""
+    spy_dated = {d: 0.01 for d in _DATES}
+    series = {d: 0.03 for d in _DATES}
+    built = _make_candidate(gate_engine, "built", series)
+    # Atlas candidate: SAME fresh series; provenance/advertised-stats differ but must
+    # not matter. Mark provenance via candidate_params (the gate must ignore it).
+    atlas = _make_candidate(
+        gate_engine, "atlas", series, candidate_params={"provenance": "atlas-suggested"}
+    )
+    batch = gate_engine.evaluate_candidate_batch(
+        [built, atlas], **_spy_seam_kwargs(gate_engine, spy_dated)
+    )
+    assert _verdict_for(batch, "built") == _verdict_for(batch, "atlas"), (
+        "identical fresh series must yield identical verdicts regardless of provenance"
+    )
+
+
+def test_ac26_advertised_community_stats_do_not_influence_survival(gate_engine):
+    """An Atlas candidate carrying FANTASTIC advertised oos_metrics but a MEDIOCRE
+    fresh series must be culled on the fresh series — the advertised stats never
+    enter the gate. Two Atlas candidates with identical fresh series but wildly
+    different advertised stats get the identical verdict."""
+    spy_dated = {d: 0.01 for d in _DATES}
+    mediocre = {d: 0.005 for d in _DATES}  # below SPY → should be culled on fresh series
+    great_advertised = _make_candidate(
+        gate_engine,
+        "adv-great",
+        mediocre,
+        candidate_params={"provenance": "atlas-suggested", "oos_metrics": {"sharpe": 9.9}},
+    )
+    poor_advertised = _make_candidate(
+        gate_engine,
+        "adv-poor",
+        mediocre,
+        candidate_params={"provenance": "atlas-suggested", "oos_metrics": {"sharpe": -1.0}},
+    )
+    batch = gate_engine.evaluate_candidate_batch(
+        [great_advertised, poor_advertised], **_spy_seam_kwargs(gate_engine, spy_dated)
+    )
+    assert _verdict_for(batch, "adv-great") == _verdict_for(batch, "adv-poor"), (
+        "advertised oos_metrics must not influence the verdict — identical fresh "
+        "series with different advertised stats must get the identical verdict"
+    )
+    # And neither survives (mediocre fresh series below SPY).
+    assert "adv-great" not in _survivor_ids(batch)
