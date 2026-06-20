@@ -139,6 +139,23 @@ def _if_fixed(lhs_fn: str, lhs_ticker: str, window: int, comparator: str, fixed,
     }
 
 
+def _if_ticker_cmp(lhs_fn, lhs_ticker, rhs_fn, rhs_ticker, window, comparator, then, els) -> dict:
+    """An `if` node whose condition compares an indicator on lhs_ticker against the
+    same/another indicator on rhs_ticker (the non-fixed ticker-comparison form)."""
+    return {
+        "kind": "if",
+        "condition": {
+            "lhs_fn": lhs_fn,
+            "lhs_ticker": lhs_ticker,
+            "window": window,
+            "comparator": comparator,
+            "rhs": {"ticker": rhs_ticker, "fn": rhs_fn, "window": window},
+        },
+        "then": then,
+        "else": els,
+    }
+
+
 def _plan(objective: str, root: dict, *, plan_id: str = "p", name: str = "Plan") -> dict:
     """Assemble a top-level build-plan dict by SHAPE (no producer values)."""
     return {
@@ -302,17 +319,47 @@ def _iter_nodes(node):
                 stack.append(child)
 
 
-def _root_sleeve_count(plan: dict) -> int:
-    """Count top-level allocation sleeves at the root node.
+# Allocation-CONTAINER kinds — a direct child of this kind is a distinct sleeve.
+# An `asset` leaf is NOT a container: assets inside a single filter/weight are
+# candidates within ONE sleeve, not separate sleeves. This is the distinction the
+# diversify signature needs (refinement: a lone filter over 3 assets = 1 sleeve,
+# not 3) so a single momentum filter never satisfies the >=2-sleeve signature.
+_ALLOCATION_CONTAINER_KINDS = {"group", "weight", "filter", "if", "if_compound"}
 
-    A multi-sleeve plan's root is a group/weight whose direct children are >=2
-    sub-allocations (the diversify signature). Returns the count of direct
-    children of the root container.
-    """
-    root = plan["root"]
+
+def _root_direct_children(root: dict) -> list:
+    """Return the root node's direct child NODE dicts (normalizing specified-weight)."""
+    if not isinstance(root, dict):
+        return []
     if root.get("kind") == "weight" and root.get("scheme") == "specified":
-        return len(root.get("children", []))
-    return len(root.get("children", []) or [])
+        return [e["node"] for e in root.get("children", []) if isinstance(e, dict) and "node" in e]
+    if root.get("kind") in ("if", "if_compound"):
+        return list(root.get("then", []) or []) + list(root.get("else", []) or [])
+    return [c for c in (root.get("children", []) or []) if isinstance(c, dict)]
+
+
+def _root_sleeve_count(plan: dict) -> int:
+    """Count top-level allocation SLEEVES at the root node.
+
+    A sleeve is a distinct allocation branch. The count is the number of the root's
+    direct children that are themselves ALLOCATION CONTAINERS (group/weight/filter/
+    if/if_compound). A root that is a single allocation node whose direct children
+    are only asset leaves (e.g. a lone filter over N assets, or a lone equal-weight
+    over N assets) is ONE sleeve, not N — the assets are candidates within one
+    sleeve. This is what makes the diversify (>=2 sleeve) signature distinguishable
+    from a single momentum filter (refinement B / mutual-distinguishability).
+    """
+    root = plan.get("root")
+    if not isinstance(root, dict):
+        return 0
+    container_children = [
+        c
+        for c in _root_direct_children(root)
+        if isinstance(c, dict) and c.get("kind") in _ALLOCATION_CONTAINER_KINDS
+    ]
+    # A root holding >=2 allocation-container children = that many sleeves.
+    # A root with no container children (only asset leaves, or empty) = 1 sleeve.
+    return len(container_children) if container_children else 1
 
 
 def _has_regime_gate(plan: dict) -> bool:
@@ -385,8 +432,12 @@ def test_provenance_constants_are_the_two_explicit_tags(bpg):
 
 
 def test_ac7_parses_tool_use_response_into_n_well_formed_plans(bpg):
-    """AC-7: a mocked tool-use response carrying N plan dicts yields N plan objects,
-    each conforming to the approved DSL shape."""
+    """AC-7: a mocked tool-use response carrying N STRUCTURALLY-DISTINCT plan dicts
+    yields N plan objects, each conforming to the approved DSL shape.
+
+    The three roots are deliberately distinct (different schemes/tickers/structure)
+    so the AC-10 dedup does NOT fire — AC-7 tests PARSING of N plans, not dedup; the
+    dedup behavior is covered by the dedicated AC-10 tests."""
     plans_in = [
         _plan(
             "diversify",
@@ -397,10 +448,33 @@ def test_ac7_parses_tool_use_response_into_n_well_formed_plans(bpg):
                     _weight("equal", [_asset("TLT"), _asset("GLD")]),
                 ],
             ),
-            plan_id=f"p{i}",
-            name=f"Plan {i}",
-        )
-        for i in range(3)
+            plan_id="p0",
+            name="Plan 0",
+        ),
+        _plan(
+            "diversify",
+            _group(
+                "sleeves",
+                [
+                    _weight("inverse_vol", [_asset("AGG"), _asset("TLT")], window_days=30),
+                    _weight("equal", [_asset("EFA"), _asset("IWM")]),
+                ],
+            ),
+            plan_id="p1",
+            name="Plan 1",
+        ),
+        _plan(
+            "diversify",
+            _group(
+                "sleeves",
+                [
+                    _filter("top", 2, "cumulative-return", 63, [_asset("SPY"), _asset("IWM")]),
+                    _weight("equal", [_asset("GLD"), _asset("AGG")]),
+                ],
+            ),
+            plan_id="p2",
+            name="Plan 2",
+        ),
     ]
     client = _client_returning_plans(plans_in)
     with _patch_client(bpg, client):
@@ -737,6 +811,86 @@ def test_ac9_off_universe_ticker_in_if_condition_pruned_or_plan_rejected(bpg):
         assert "ZZZZ" not in bpg.plan_tickers(plan)
 
 
+def test_ac9_off_universe_rhs_ticker_in_ticker_comparison_if_handled(bpg):
+    """AC-9 gap (Revise): an off-universe ticker as the RHS of a ticker-comparison
+    `if` condition (not the lhs signal, not a fixed value) is also handled — it never
+    survives in the admitted output. The condition signal is a reference that cannot
+    be safely repaired by pruning, so the plan is rejected."""
+    root = _if_ticker_cmp(
+        "moving-average-price",
+        "SPY",  # lhs in-universe
+        "moving-average-price",
+        "ZZZZ",  # rhs off-universe
+        50,
+        "gt",
+        then=[_weight("equal", [_asset("SPY"), _asset("QQQ")])],
+        els=[_weight("equal", [_asset("IWM"), _asset("EFA")])],
+    )
+    good = _plan(
+        "cut_drawdown",
+        _weight("inverse_vol", [_asset("TLT"), _asset("AGG")], window_days=30),
+        plan_id="good",
+    )
+    plans_in = [_plan("cut_drawdown", root, plan_id="rhscmp"), good]
+    universe = frozenset({"SPY", "QQQ", "IWM", "EFA", "TLT", "AGG"})  # excludes ZZZZ
+    client = _client_returning_plans(plans_in)
+    with _patch_client(bpg, client):
+        result = bpg.generate_build_plans(_objective(bpg, "cut_drawdown"), universe, n_plans=2)
+    plan_ids = {p["plan_id"] for p in result.plans}
+    assert "rhscmp" not in plan_ids, "off-universe rhs signal must reject the plan"
+    assert "good" in plan_ids
+    for plan in result.plans:
+        assert "ZZZZ" not in bpg.plan_tickers(plan)
+
+
+def test_ac9_admitted_plan_does_not_alias_sdk_input_nodes(bpg):
+    """AC-9 gap (Revise): the membership-validation step must NOT return admitted plans
+    that ALIAS the SDK input node objects. A later compile/repair step (Component 3)
+    mutates the admitted tree; if it aliased the SDK response, that would corrupt the
+    caller's input. The symphony_schema constructors deep-copy for exactly this reason.
+
+    We assert the admitted plan's asset leaves are not the SAME objects as the input's,
+    by mutating an admitted asset and confirming the input plan is unchanged."""
+    in_asset_a = _asset("SPY")
+    in_asset_b = _asset("QQQ")
+    root = _weight("equal", [in_asset_a, in_asset_b])
+    plan_in = _plan("diversify", root, plan_id="alias")
+    plans_in = [plan_in]
+    client = _client_returning_plans(plans_in)
+    with _patch_client(bpg, client):
+        result = bpg.generate_build_plans(
+            _objective(bpg, "diversify"), frozenset({"SPY", "QQQ"}), n_plans=1
+        )
+    assert result.plans, "in-universe plan must survive"
+    admitted = result.plans[0]
+    # Find an admitted asset leaf and mutate its ticker.
+    admitted_assets = [n for n in _iter_nodes(admitted["root"]) if n.get("kind") == "asset"]
+    assert admitted_assets, "expected at least one admitted asset leaf"
+    admitted_assets[0]["ticker"] = "MUTATED"
+    # The SDK input's asset objects must be untouched (no aliasing).
+    assert in_asset_a["ticker"] == "SPY"
+    assert in_asset_b["ticker"] == "QQQ"
+
+
+def test_ac9_in_universe_only_plan_passes_through_unchanged_in_structure(bpg):
+    """AC-9: a plan whose every ticker is in-universe is admitted with its structure
+    intact (no spurious pruning of valid tickers)."""
+    root = _group(
+        "g",
+        [
+            _weight("equal", [_asset("SPY"), _asset("QQQ")]),
+            _filter("top", 2, "cumulative-return", 63, [_asset("IWM"), _asset("EFA")]),
+        ],
+    )
+    plans_in = [_plan("diversify", root, plan_id="clean")]
+    universe = frozenset({"SPY", "QQQ", "IWM", "EFA"})
+    client = _client_returning_plans(plans_in)
+    with _patch_client(bpg, client):
+        result = bpg.generate_build_plans(_objective(bpg, "diversify"), universe, n_plans=1)
+    assert len(result.plans) == 1
+    assert bpg.plan_tickers(result.plans[0]) == {"SPY", "QQQ", "IWM", "EFA"}
+
+
 # ===========================================================================
 # SECTION 4 — AC-10: diversity guarantee + dedup (refinement C)
 # ===========================================================================
@@ -815,6 +969,64 @@ def test_ac10_distinct_plans_are_not_collapsed(bpg):
     assert len(result.plans) == 3
 
 
+def test_ac10_dedup_keeps_first_occurrence_deterministically(bpg):
+    """AC-10 gap (Revise): when structurally-identical plans collapse, the FIRST
+    occurrence is the representative kept (deterministic) — not an arbitrary one. We
+    feed clones with ordered plan_ids and assert the surviving plan is the first."""
+    clone_root = _group(
+        "g",
+        [
+            _weight("equal", [_asset("SPY"), _asset("QQQ")]),
+            _weight("equal", [_asset("TLT"), _asset("GLD")]),
+        ],
+    )
+    plans_in = [
+        _plan("diversify", clone_root, plan_id="first"),
+        _plan("diversify", clone_root, plan_id="second"),
+        _plan("diversify", clone_root, plan_id="third"),
+    ]
+    client = _client_returning_plans(plans_in)
+    with _patch_client(bpg, client):
+        result = bpg.generate_build_plans(_objective(bpg, "diversify"), _BIG_UNIVERSE, n_plans=12)
+    assert len(result.plans) == 1
+    assert result.plans[0]["plan_id"] == "first"
+
+
+def test_ac10_dedup_is_provenance_and_id_insensitive(bpg):
+    """AC-10 gap (Revise): dedup keys on STRUCTURE only — two plans with identical root
+    structure but different plan_id/name/provenance still collapse (the fingerprint must
+    ignore volatile non-structural fields, else clones with different ids would survive
+    and pad the FDR batch)."""
+    clone_root = _weight("equal", [_asset("SPY"), _asset("QQQ"), _asset("IWM")])
+    p_a = _plan("diversify", clone_root, plan_id="AAA", name="Name One")
+    p_b = _plan("diversify", clone_root, plan_id="BBB", name="Name Two")
+    client = _client_returning_plans([p_a, p_b])
+    with _patch_client(bpg, client):
+        result = bpg.generate_build_plans(_objective(bpg, "diversify"), _BIG_UNIVERSE, n_plans=12)
+    assert len(result.plans) == 1, "identical structure must dedup regardless of id/name"
+
+
+def test_ac10_dedup_collapses_plans_differing_only_by_pruned_off_universe_ticker(bpg):
+    """AC-10 + AC-9 interaction (Revise): two plans whose ONLY difference is an
+    off-universe ticker that gets pruned away become structurally identical AFTER
+    pruning — so they must dedup. (Dedup runs on the pruned plan, not the raw one.)"""
+    base_children = [_asset("SPY"), _asset("QQQ")]
+    # plan_a has an extra off-universe ZZZZ that will be pruned, leaving SPY/QQQ.
+    root_a = _weight("equal", base_children + [_asset("ZZZZ")])
+    root_b = _weight("equal", list(base_children))  # already just SPY/QQQ
+    plans_in = [
+        _plan("diversify", root_a, plan_id="withzzz"),
+        _plan("diversify", root_b, plan_id="without"),
+    ]
+    universe = frozenset({"SPY", "QQQ"})  # excludes ZZZZ
+    client = _client_returning_plans(plans_in)
+    with _patch_client(bpg, client):
+        result = bpg.generate_build_plans(_objective(bpg, "diversify"), universe, n_plans=12)
+    # After ZZZZ is pruned from plan_a, both roots are SPY/QQQ equal-weight -> dedup to 1.
+    assert len(result.plans) == 1
+    assert bpg.plan_tickers(result.plans[0]) == {"SPY", "QQQ"}
+
+
 # ===========================================================================
 # SECTION 5 — AC-11: D-1 honest degradation (never raises; no key/path leak)
 # ===========================================================================
@@ -836,10 +1048,13 @@ def test_ac11_reason_contains_only_exception_class_name_no_key_leak(bpg):
     """AC-11 / D-1 security: the reason string carries ONLY the exception class name —
     never the API key, never a file path, never the raw exception message."""
 
-    class _BoomWithSecret(Exception):
+    # The class name itself is the ONE thing D-1 permits in the reason, so it must
+    # not contain any of the forbidden substrings we assert against below (a class
+    # named *Secret* would self-sabotage the "secret" check).
+    class _BoomWithCredential(Exception):
         pass
 
-    boom = _BoomWithSecret(f"failed using key={_FAKE_KEY} at C:/Users/secret/path.py")
+    boom = _BoomWithCredential(f"failed using key={_FAKE_KEY} at C:/Users/leak/path.py")
     with patch.object(bpg, "_build_client", side_effect=boom):
         result = bpg.generate_build_plans(_objective(bpg, "diversify"), _BIG_UNIVERSE, n_plans=12)
     assert result.plans == []
@@ -847,7 +1062,7 @@ def test_ac11_reason_contains_only_exception_class_name_no_key_leak(bpg):
     assert "secret" not in result.reason.lower()
     assert "C:/Users" not in result.reason and "path.py" not in result.reason
     # The exception class name IS allowed (D-1 contract).
-    assert "_BoomWithSecret" in result.reason
+    assert "_BoomWithCredential" in result.reason
 
 
 def test_ac11_sdk_call_error_degrades_to_empty_plans(bpg):
