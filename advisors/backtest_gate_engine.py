@@ -824,11 +824,10 @@ def evaluate_candidate_batch(
         #   4. All other causes (BHY non-winner, nn1, purge) → "fdr_not_winner".
         # Source: feature-plans/strategy-builder-real.md §AC-24/AC-25; handoff §rejection_reason.
         _rejection_reason: str | None
-        from math_engine import PBO_REJECT_THRESHOLD as _PBO_THRESH
 
         if verdict.decision == "ADOPT_CANDIDATE":
             _rejection_reason = None
-        elif _batch_pbo is not None and _batch_pbo > _PBO_THRESH:
+        elif _batch_pbo is not None and _batch_pbo > _math_engine.PBO_REJECT_THRESHOLD:
             # PBO veto: Stage-1 hard veto — the batch-level sample-robustness test fired.
             # The reason string deliberately contains "pbo" (lowercase) so the live-probe
             # can identify PBO culls via a case-insensitive substring check.
