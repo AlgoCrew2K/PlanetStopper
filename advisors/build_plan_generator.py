@@ -86,6 +86,18 @@ PROVENANCE_ATLAS_SUGGESTED = "atlas-suggested"
 # plan_tickers() — it is a syntactic marker, not a real ticker (AC-9 invariant).
 _PCT_PLACEHOLDER = "%"
 
+# NODE kinds that are allocation containers (can hold sub-sleeves or sub-allocations).
+# Used by the diversify sleeve-count and the general _iter_all_nodes helper.
+_CONTAINER_KINDS: frozenset[str] = frozenset({"group", "weight", "filter", "if", "if_compound"})
+
+# Momentum/quality sort-by indicators satisfying the lift_risk_adjusted FILTER signature.
+_MOMENTUM_QUALITY_SORTS: frozenset[str] = frozenset({"cumulative-return", "moving-average-return"})
+
+# Low/min-vol sort-by indicators satisfying the volatility_mitigation FILTER signature.
+_LOW_VOL_SORTS: frozenset[str] = frozenset(
+    {"max-drawdown", "standard-deviation-return", "standard-deviation-price"}
+)
+
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -410,6 +422,135 @@ def _root_fingerprint(plan: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# AC-8 objective-signature predicate — single source of truth
+# ---------------------------------------------------------------------------
+
+
+def _iter_all_nodes(root: dict):
+    """Iterative DFS yielding every NODE dict in a plan's root tree.
+
+    Handles all DSL node kinds: asset, weight (equal/specified/inverse_vol/market_cap),
+    group, filter, if, if_compound. Never raises — skips non-dict entries.
+    """
+    stack: list[dict] = [root]
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, dict):
+            continue
+        yield node
+        kind = node.get("kind")
+        if kind == "weight" and node.get("scheme") == "specified":
+            for entry in node.get("children", []):
+                if isinstance(entry, dict) and "node" in entry:
+                    stack.append(entry["node"])
+        else:
+            for child in node.get("children", []) or []:
+                stack.append(child)
+        for branch in ("then", "else"):
+            for child in node.get(branch, []) or []:
+                stack.append(child)
+
+
+def _diversify_sleeve_count(root: dict) -> int:
+    """Count allocation-container sleeves that are direct children of the root.
+
+    A sleeve is a direct child of the root node whose kind is a container
+    (group / weight / filter / if / if_compound). Asset leaves do NOT count —
+    a lone weight/filter over N asset leaves is 1 sleeve, not N.
+
+    Special cases:
+    - if/if_compound root: direct children are then[] + else[] branches.
+    - specified-weight root: direct {node, pct} entries whose node is a container.
+    - All other container roots: direct children[] that are containers.
+    """
+    if not isinstance(root, dict):
+        return 0
+    kind = root.get("kind")
+
+    if kind in ("if", "if_compound"):
+        branches = list(root.get("then", []) or []) + list(root.get("else", []) or [])
+        return sum(1 for c in branches if isinstance(c, dict) and c.get("kind") in _CONTAINER_KINDS)
+
+    if kind == "weight" and root.get("scheme") == "specified":
+        return sum(
+            1
+            for entry in root.get("children", [])
+            if isinstance(entry, dict)
+            and isinstance(entry.get("node"), dict)
+            and entry["node"].get("kind") in _CONTAINER_KINDS
+        )
+
+    # group / weight(equal/inverse_vol/market_cap) / filter: count container children.
+    return sum(
+        1
+        for c in root.get("children", []) or []
+        if isinstance(c, dict) and c.get("kind") in _CONTAINER_KINDS
+    )
+
+
+def plan_matches_objective(plan: dict, objective) -> bool:
+    """Return True if plan's root structure satisfies the objective's AC-8 signature.
+
+    This is the SINGLE SOURCE OF TRUTH for the admission filter and the test
+    assertions — the generator calls this after prune+dedup; tests import and
+    delegate to it so the filter and the assertions cannot drift.
+
+    Per-objective signature (PM-approved, AC-8 decision B):
+      diversify          — root has >=2 allocation-container direct children (sleeves).
+                           Asset leaves do not count; a lone filter/weight over N assets
+                           = 1 sleeve. (Refinement: only container-typed children count.)
+      cut_drawdown       — anywhere in the tree: a regime gate (if/if_compound) OR an
+                           inverse_vol weight (kind=weight, scheme=inverse_vol).
+      lift_risk_adjusted — anywhere: a momentum/quality FILTER (filter whose sort_by_fn
+                           is in _MOMENTUM_QUALITY_SORTS). A bare basket does NOT match.
+      volatility_mitigation — anywhere: an inverse_vol weight OR a low/min-vol filter
+                              (filter whose sort_by_fn is in _LOW_VOL_SORTS).
+
+    Never raises (D-1). Returns False for any malformed input.
+    """
+    try:
+        obj_name = objective.value if isinstance(objective, Objective) else str(objective)
+        root = plan.get("root")
+        if not isinstance(root, dict):
+            return False
+
+        if obj_name == "diversify":
+            return _diversify_sleeve_count(root) >= 2
+
+        elif obj_name == "cut_drawdown":
+            for node in _iter_all_nodes(root):
+                if node.get("kind") in ("if", "if_compound"):
+                    return True
+                if node.get("kind") == "weight" and node.get("scheme") == "inverse_vol":
+                    return True
+            return False
+
+        elif obj_name == "lift_risk_adjusted":
+            for node in _iter_all_nodes(root):
+                if (
+                    node.get("kind") == "filter"
+                    and node.get("sort_by_fn") in _MOMENTUM_QUALITY_SORTS
+                ):
+                    return True
+            return False
+
+        elif obj_name == "volatility_mitigation":
+            for node in _iter_all_nodes(root):
+                if node.get("kind") == "weight" and node.get("scheme") == "inverse_vol":
+                    return True
+                if node.get("kind") == "filter" and node.get("sort_by_fn") in _LOW_VOL_SORTS:
+                    return True
+            return False
+
+        # Unknown objective — fail closed.
+        return False
+
+    except Exception:  # pragma: no cover - defensive; never-raises contract
+        logger.debug("plan_matches_objective: unexpected error", exc_info=True)
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Anthropic tool definition for structured build-plan emission
 # ---------------------------------------------------------------------------
 
@@ -503,7 +644,8 @@ def generate_build_plans(
         if not isinstance(raw_plans, list):
             return GeneratorResult(plans=[], reason="InvalidToolUsePayload")
 
-        # Validate, prune, tag, dedup, and accumulate up to n_plans.
+        # Validate, prune, tag, dedup, signature-filter, and accumulate up to n_plans.
+        # Order is fixed (AC-8 enforcement test pins it): prune -> dedup -> signature filter.
         seen_fingerprints: set[str] = set()
         admitted: list[dict] = []
 
@@ -516,14 +658,28 @@ def generate_build_plans(
                 continue
             # AC-13: tag provenance='built-new'.
             pruned["provenance"] = PROVENANCE_BUILT_NEW
-            # AC-10: dedup structurally-identical plans.
+            # AC-10: dedup structurally-identical plans (fingerprint on root only).
             fp = _root_fingerprint(pruned)
             if fp in seen_fingerprints:
                 continue
             seen_fingerprints.add(fp)
+            # AC-8 (B): signature filter — drop plans that don't satisfy the objective.
+            # Runs AFTER prune+dedup so a plan whose structure degrades below the
+            # signature threshold after pruning is correctly rejected here.
+            if not plan_matches_objective(pruned, objective):
+                continue
             admitted.append(pruned)
             if len(admitted) >= n_plans:
                 break
+
+        # AC-8 (B) + AC-11/AC-23: if the filter leaves zero plans, surface an honest
+        # reason — never silently return an empty list with reason=None (that would
+        # look like a parse failure rather than a signature-floor result).
+        if not admitted:
+            return GeneratorResult(
+                plans=[],
+                reason=f"no plans matched the {obj_name} signature after prune and dedup",
+            )
 
         return GeneratorResult(plans=admitted, reason=None)
 
