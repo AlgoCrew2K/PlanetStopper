@@ -202,11 +202,22 @@ class TestObjectiveEnum:
     def test_objective_lift_risk_adjusted_value(self, sbe):
         assert sbe.Objective.lift_risk_adjusted.value == "lift_risk_adjusted"
 
-    def test_objective_has_exactly_three_members(self, sbe):
+    def test_objective_volatility_mitigation_value(self, sbe):
+        """Q1-A (AC-8): the C4 fourth objective. Symmetric with the other per-value tests."""
+        assert sbe.Objective.volatility_mitigation.value == "volatility_mitigation"
+
+    def test_objective_has_exactly_four_members(self, sbe):
+        """Q1-A (AC-8) re-point: sbe.Objective is extended to FOUR members in C4 (adds
+        volatility_mitigation). This supersedes the pre-C4 three-member contract — a
+        stale-by-intent re-point, NOT a weakening: the exact-set assertion is stronger
+        (it also catches an accidental extra member)."""
         member_names = {m.name for m in sbe.Objective}
-        assert member_names == {"diversify", "cut_drawdown", "lift_risk_adjusted"}, (
-            f"Objective must have exactly 3 members; got {member_names}"
-        )
+        assert member_names == {
+            "diversify",
+            "cut_drawdown",
+            "lift_risk_adjusted",
+            "volatility_mitigation",
+        }, f"Objective must have exactly 4 members (Q1-A AC-8); got {member_names}"
 
 
 # ===========================================================================
