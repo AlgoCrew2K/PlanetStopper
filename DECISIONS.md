@@ -2211,3 +2211,52 @@ A PM-run live exam with real Opus SDK call and no mocks, generating `cut_drawdow
 - `advisors/build_plan_generator.py` — `_EXAMPLE_IF_PLAN` constant; `_build_generation_prompt` extended with condition grammar section + `_EXAMPLE_IF_PLAN` embedding; `_EMIT_BUILD_PLANS_TOOL` `condition` property added to `if`/`if_compound` node
 - `tests/advisors/test_build_plan_generator.py` — new RED tests for condition grammar in prompt, `_EXAMPLE_IF_PLAN` structure, schema `condition` property presence + required fields
 - Total: 142 tests GREEN at 648c267 across affected files; 640 passed / 2 skipped / 0 failures across tests/advisors
+
+---
+
+### DE-SB-GEN-DRIFT-FIX-R2 — Revise-2: if_compound compound-condition union (CLOSED) (2026-06-20)
+
+Branch: feat/strategy-builder-real | Revise-2 commit: 36beecd
+
+#### Finding (Revise-1 sufficiency review)
+
+After Revise-1 (commit 648c267), the flat `if`-node condition dict was fully generation-reachable and compiler-clean. Sufficiency review found the remaining gap: `if_compound` (compound/multi-condition regime gates) was taught in the prompt text but had no worked compiling example and its compound-condition union (`type`/`operator`/`conditions`) was not schema-constrained. The PM escalated this to a required fix under the operator v1 directive: "compound conditions ALL in v1, no fast-follows." The Revise-1 "known residual" note (recorded in DE-SB-GEN-DRIFT-FIX-R1 and docs at 16c14ad) is RESOLVED by this commit.
+
+#### Root cause
+
+The `condition` property added in Revise-1 covered the flat single-condition shape (`lhs_fn`/`lhs_ticker`/`window`/`comparator`/`rhs`). `if_compound` uses a compound-condition union with a `type` discriminator (`binary`/`binary_compound`/`compound`), `operator` (`any`/`all`), and `conditions[]` list of sub-conditions. Without a worked example or schema constraint for the union shape, Opus had no basis to emit the correct nested structure for compound gates.
+
+#### Three-part extension (Revise-2, commit 36beecd)
+
+**Part 1 — Worked example: `_EXAMPLE_IF_COMPOUND_PLAN`.**
+
+A new constant (`_EXAMPLE_IF_COMPOUND_PLAN`) provides a concrete conforming `if_compound` compound-gate plan: condition is `{type:"compound", operator:"all", conditions:[binary_compound(RSI SPY gt 70 w14), binary_compound(max-drawdown QQQ lt 20 w30)]}`; then: equal-weight UVXY/TLT; else: inverse_vol SPY/IEF. Verified compiler-clean: `plan_tree_compiler.compile_plan` → `tree is not None` + `validate_tree==[]`. Embedded in every objective prompt as the third worked example alongside `_EXAMPLE_PLAN` (diversify) and `_EXAMPLE_IF_PLAN` (flat-if cut_drawdown), so the full Composer condition grammar is generation-reachable from any objective's prompt.
+
+**Part 2 — Prompt-steer: compound-condition union section in `_build_generation_prompt`.**
+
+A new compound-condition section is added to every objective prompt, teaching the union shape: `type` discriminator values (`binary`, `binary_compound`, `compound`), `operator` values (`any`, `all`), `conditions[]` (list of sub-conditions), `tickers[]` broadcast, `rhs:{const}`. The same WRONG-vs-CORRECT contrast used for the flat condition is applied to the compound form. Every prompt now carries the full Composer condition grammar — flat `if` and compound `if_compound` — so the correct shape is visible regardless of which objective is being generated.
+
+**Part 3 — Schema extension: compound-union fields in `_EMIT_BUILD_PLANS_TOOL`.**
+
+The `condition` property in `_EMIT_BUILD_PLANS_TOOL` is extended with the union fields: `type` (enum: `["binary","binary_compound","compound"]`), `operator` (enum: `["any","all"]`), `conditions` (array), `tickers` (array), `fn` (string). The `condition` property remains `object`-typed — the Revise-1 no-string invariant is preserved. The compound-union fields are now schema-constrained at the same level as the flat-condition fields.
+
+#### Closure of Revise-1 residual
+
+The `if_compound` residual recorded in `DE-SB-GEN-DRIFT-FIX-R1` and the "Known residual" / "Known limitation" notes in the docs at `16c14ad` are CLOSED by this commit. The full Composer condition grammar — `binary`, `binary_compound`, and `compound` discriminators — is now:
+- Prompt-taught with WRONG-vs-CORRECT contrast in every objective prompt
+- Illustrated by a compiler-verified worked example (`_EXAMPLE_IF_COMPOUND_PLAN`)
+- Schema-constrained in `_EMIT_BUILD_PLANS_TOOL`
+
+#### Scope note (filter node)
+
+The `filter` node has no embedded worked example but is empirically proven generation-reachable from the signature text alone: the PM's live re-exam produced clean-compiling filter/momentum plans. No further worked-example extension is required for `filter`.
+
+#### Live acceptance gate (PM-owned)
+
+A PM-run targeted compound-gate live probe: generate `cut_drawdown` plans with real Opus SDK call (no mocks) and confirm that at least one `if_compound` plan compiles clean through `advisors/plan_tree_compiler.compile_plan` (tree not None + `validate_tree==[]`).
+
+#### Files changed
+
+- `advisors/build_plan_generator.py` — `_EXAMPLE_IF_COMPOUND_PLAN` constant; `_build_generation_prompt` extended with compound-condition union section + `_EXAMPLE_IF_COMPOUND_PLAN` embedding (three worked examples in every prompt); `_EMIT_BUILD_PLANS_TOOL` `condition` property extended with union fields (`type`/`operator`/`conditions`/`tickers`/`fn`)
+- `tests/advisors/test_build_plan_generator.py` — new RED tests for compound-condition grammar in prompt, `_EXAMPLE_IF_COMPOUND_PLAN` structure + compiler-clean assertion, schema union field presence
+- Total: 151 tests GREEN at 36beecd across affected files; 649 passed / 2 skipped / 0 failures across tests/advisors
