@@ -2323,3 +2323,17 @@ PM-run targeted compound-gate live probe: generate `cut_drawdown` plans (real Op
 - `advisors/symphony_schema.py` — `_collect_condition_tickers`: binary-leaf `lhs_ticker`/`rhs.ticker` collection
 - `tests/advisors/test_plan_tree_compiler.py` / `test_build_plan_generator.py` / `test_symphony_schema.py` — updated/new RED tests for canonical-flat binary read, mixed-compound example structure, extract_tickers binary operands
 - Total: 157 tests GREEN at 548a888 across affected files; 655 passed / 2 skipped / 0 failures across tests/advisors
+
+### DE-SB-BINARY-ENCODING-A9 — AC-9 generator-walker twin: _collect_condition_tickers binary branch reads flat lhs_ticker (2026-06-20)
+
+Branch: feat/strategy-builder-real | Fix commit: d000d64
+
+**Finding:** After the binary-encoding-fix (DE-SB-BINARY-ENCODING) unified the binary condition contract onto canonical-flat field names, a second ticker-walking path was found blind to the same flat shape. `plan_tickers` (the AC-9 membership walker) uses `_collect_condition_tickers` to descend into `condition` blocks and collect all tickers a plan references. The binary branch of `_collect_condition_tickers` read the legacy nested shape `cond["lhs"]["ticker"]` — which raises `KeyError` on a canonical-flat binary leaf (field is `lhs_ticker`, not `lhs`). Effect: an off-universe lhs operand in a compound binary leaf (e.g. gating on RSI of a delisted symbol) slipped membership validation un-pruned and was silently admitted, reaching the compiler and backtest.
+
+**Fix (d000d64):** `_collect_condition_tickers` binary branch reads `cond.get("lhs_ticker")` (canonical-flat) plus the ticker-comparison rhs ticker (`cond.get("rhs", {}).get("ticker")`), preserving the `%` skip. `binary_compound` and `compound` branches unchanged. 12 lines added / 6 removed in `advisors/build_plan_generator.py`.
+
+**Both ticker-walking paths now consistent on canonical-flat:**
+- PATH A: `plan_tickers` → `_collect_condition_tickers` (generator membership-prune, AC-9) — fixed here.
+- PATH B: `symphony_schema.extract_tickers` → `_collect_condition_tickers` (compiler repair-prune, AC-16) — fixed in bd3cbdb / 548a888.
+
+**AC-9 escape closed:** A plan with an off-universe lhs operand in a compound binary leaf is now rejected at membership validation (never admitted), not silently passed to the compiler. 3 RED tests GREEN at d000d64; broader tests/advisors 658 passed / 2 skipped / 0 failures.
