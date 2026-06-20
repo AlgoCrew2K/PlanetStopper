@@ -136,11 +136,42 @@ def _if_ticker_cmp(lhs_fn, lhs_ticker, rhs_fn, rhs_ticker, window, comparator, t
 
 
 def _binary_condition(lhs_fn, lhs_ticker, window, comparator, const) -> dict:
+    """A binary leaf condition in the CANONICAL-FLAT encoding.
+
+    Contract unification (binary-encoding-fix): the binary leaf inside a compound
+    uses the SAME flat field names as the flat-if condition (lhs_fn / lhs_ticker /
+    window, rhs constant key = `fixed`) — NOT the legacy nested `{lhs:{fn,ticker,
+    window}}` / `{const}` shape. This is the single canonical binary encoding so a
+    compound's binary leaves match what Opus emits (it learned the flat shape from
+    the live-proven flat-if example) and the if path. The compiler translates this
+    flat DSL leaf into the same Composer condition-type:binary block as before.
+    """
     return {
         "type": "binary",
-        "lhs": {"fn": lhs_fn, "ticker": lhs_ticker, "window": window},
+        "lhs_fn": lhs_fn,
+        "lhs_ticker": lhs_ticker,
+        "window": window,
         "comparator": comparator,
-        "rhs": {"const": const},
+        "rhs": {"fixed": const},
+    }
+
+
+def _binary_condition_ticker_cmp(
+    lhs_fn, lhs_ticker, rhs_fn, rhs_ticker, window, comparator
+) -> dict:
+    """A binary leaf with a ticker-comparison rhs in the canonical-flat encoding.
+
+    rhs is `{fn, ticker, window}` (compare an indicator on lhs_ticker against the
+    same/another indicator on rhs_ticker) — the form Opus emitted in the captured
+    live failure. Flat field names throughout.
+    """
+    return {
+        "type": "binary",
+        "lhs_fn": lhs_fn,
+        "lhs_ticker": lhs_ticker,
+        "window": window,
+        "comparator": comparator,
+        "rhs": {"fn": rhs_fn, "ticker": rhs_ticker, "window": window},
     }
 
 
@@ -537,6 +568,92 @@ def test_ac14_if_compound_compound_condition_compiles_nested(compiler):
     tree = _compiled_tree(compiler, plan)
     all_tickers = symphony_schema.extract_tickers(tree)
     assert {"NVDA", "AMD", "SPY", "TLT"} <= all_tickers
+    assert symphony_schema.validate_tree(tree) == []
+
+
+# --- Canonical-flat binary leaf (binary-encoding contract unification) -------
+# Contract-fix: the binary leaf inside a compound now uses the SAME flat encoding
+# as the flat-if condition (lhs_fn / lhs_ticker / window, rhs constant key=`fixed`).
+# The live compound-gate probe dropped 2/4 with a KeyError because the compiler's
+# binary leaf read the NESTED `cond["lhs"]` shape while Opus emitted the FLAT shape
+# it learned from the live-proven flat-if example. These tests pin the single
+# canonical (flat) binary encoding compiling clean — the regression of that drop.
+
+
+def test_compound_with_flat_binary_leaf_fixed_rhs_compiles_clean(compiler):
+    """A compound condition whose sub-condition is a FLAT binary leaf (fixed rhs)
+    compiles clean end-to-end. This is the exact live KeyError case: the binary leaf
+    carries lhs_fn/lhs_ticker/window + rhs:{fixed} (flat), NOT lhs:{...}/{const}."""
+    cond = _compound_condition(
+        "all",
+        [
+            _binary_condition("relative-strength-index", "SPY", 14, "gt", 70),
+            _binary_condition("max-drawdown", "QQQ", 30, "lt", 20),
+        ],
+    )
+    plan = _plan(
+        "cut_drawdown",
+        _if_compound(
+            cond,
+            then=[_weight("equal", [_asset("UVXY")])],
+            els=[_weight("inverse_vol", [_asset("SPY"), _asset("IEF")])],
+        ),
+    )
+    tree = _compiled_tree(compiler, plan)
+    assert symphony_schema.validate_tree(tree) == []
+    assert {"UVXY", "SPY", "IEF"} <= symphony_schema.extract_tickers(tree)
+
+
+def test_compound_with_flat_binary_leaf_ticker_cmp_rhs_compiles_clean(compiler):
+    """A compound whose binary leaf has a TICKER-COMPARISON rhs ({fn,ticker,window})
+    in the flat encoding compiles clean. This is the shape from the captured live
+    failure (moving-average-price SPY gt moving-average-price QQQ). The watched rhs
+    ticker survives."""
+    cond = _compound_condition(
+        "all",
+        [
+            _binary_condition_ticker_cmp(
+                "moving-average-price", "SPY", "moving-average-price", "QQQ", 200, "gt"
+            ),
+            _binary_condition("relative-strength-index", "IWM", 14, "lt", 30),
+        ],
+    )
+    plan = _plan(
+        "cut_drawdown",
+        _if_compound(
+            cond,
+            then=[_weight("equal", [_asset("UVXY")])],
+            els=[_weight("inverse_vol", [_asset("TLT"), _asset("IEF")])],
+        ),
+    )
+    tree = _compiled_tree(compiler, plan)
+    assert symphony_schema.validate_tree(tree) == []
+    # Both the lhs and the rhs-comparison tickers are referenced.
+    all_tickers = symphony_schema.extract_tickers(tree)
+    assert {"SPY", "QQQ", "IWM", "UVXY", "TLT", "IEF"} <= all_tickers
+
+
+def test_flat_binary_leaf_and_if_use_the_same_field_names(compiler):
+    """Contract invariant: the binary leaf and the flat-if condition read the SAME
+    flat field names — there is ONE canonical binary encoding. A nested-shape binary
+    leaf ({lhs:{...}}/{const}) is the LEGACY shape and is no longer the canonical
+    contract. We assert the flat leaf compiles AND that a compound built only from
+    flat leaves needs no nested keys to succeed."""
+    # The flat leaf has no 'lhs' dict and no 'const' key — only flat fields + 'fixed'.
+    leaf = _binary_condition("relative-strength-index", "SPY", 14, "gt", 70)
+    assert "lhs" not in leaf, "canonical binary leaf must not carry a nested 'lhs' dict"
+    assert leaf.get("lhs_fn") == "relative-strength-index"
+    assert leaf["rhs"].get("fixed") == 70 and "const" not in leaf["rhs"]
+    # And it compiles clean inside a compound.
+    plan = _plan(
+        "cut_drawdown",
+        _if_compound(
+            _compound_condition("any", [leaf]),
+            then=[_weight("equal", [_asset("UVXY")])],
+            els=[_weight("equal", [_asset("SPY")])],
+        ),
+    )
+    tree = _compiled_tree(compiler, plan)
     assert symphony_schema.validate_tree(tree) == []
 
 

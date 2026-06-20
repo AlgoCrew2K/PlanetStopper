@@ -1022,3 +1022,125 @@ def test_conforming_if_compound_plan_admitted_and_compiles_clean(bpg, compiler, 
         f"the admitted compound regime-gate plan must compile clean, reason={compiled.reason!r}"
     )
     assert symphony_schema.validate_tree(compiled.tree) == []
+
+
+# ===========================================================================
+# BINARY-ENCODING FIX — the compound's BINARY LEAF must use the canonical FLAT
+# shape (the live compound-gate probe dropped 2/4 with a KeyError here).
+#
+# The live failure: Opus, when it reaches for a plain `type:"binary"` sub-condition
+# inside a compound, emits it in the FLAT shape (lhs_fn/lhs_ticker/window + rhs:{fixed})
+# it learned from the live-proven flat-if example — but the compiler's compound
+# binary leaf read the NESTED `lhs:{...}`/{const} shape → cond["lhs"] KeyError. The
+# fix unifies onto the FLAT encoding everywhere. The generator must TEACH the flat
+# binary leaf inside a compound (a worked type:"binary" sub-condition), not only
+# binary_compound — otherwise Opus has no flat-binary-leaf example and falls back to
+# the if shape.
+# ===========================================================================
+
+
+def _binary_leaf_flat(lhs_fn, lhs_ticker, window, comparator, fixed):
+    """A FLAT binary leaf sub-condition (canonical encoding): flat lhs_fn/lhs_ticker/
+    window + rhs:{fixed} — the same field names as the flat-if condition."""
+    return {
+        "type": "binary",
+        "lhs_fn": lhs_fn,
+        "lhs_ticker": lhs_ticker,
+        "window": window,
+        "comparator": comparator,
+        "rhs": {"fixed": fixed},
+    }
+
+
+def test_prompt_teaches_flat_binary_leaf_sub_condition(bpg):
+    """The prompt must teach a type:"binary" sub-condition in the FLAT shape (lhs_fn
+    + rhs:{fixed}), so Opus emits a binary leaf inside a compound in the canonical
+    encoding rather than guessing. The prompt must present a 'binary' condition type
+    that uses the flat lhs_fn field (not a nested lhs:{...})."""
+    prompt = _build_prompt(bpg, _objective(bpg, "cut_drawdown"))
+    # The binary leaf type must be named as part of the union.
+    assert "binary" in prompt
+    # The flat field names the canonical binary leaf uses must be taught.
+    assert "lhs_fn" in prompt
+    # The prompt must NOT teach the legacy nested binary leaf shape lhs:{fn,ticker,...}
+    # as the canonical form (that's the discarded encoding).
+    normalized = prompt.replace(" ", "").replace("'", '"')
+    assert '"lhs":{"fn"' not in normalized, (
+        "prompt must not teach the legacy nested binary-leaf encoding lhs:{fn,...}"
+    )
+
+
+def test_embedded_compound_example_uses_flat_binary_leaf_that_compiles(bpg, compiler):
+    """At least one embedded compound example must contain a type:"binary" leaf in
+    the FLAT shape that COMPILES CLEAN through the C3 compiler. binary_compound alone
+    is not enough — the live drop was on a plain binary leaf. (If the example uses
+    only binary_compound leaves, Opus still has no flat-binary-leaf model.)"""
+    found_flat_binary = False
+    for obj_name in _gate_objective_names():
+        prompt = _build_prompt(bpg, _objective(bpg, obj_name))
+        for example in _all_example_plans_in(prompt):
+            # Look for a compound whose sub-conditions include a type:"binary" leaf.
+            if not _has_flat_binary_leaf(example):
+                continue
+            result = compiler.compile_plan(example)
+            if result.tree is not None and symphony_schema.validate_tree(result.tree) == []:
+                found_flat_binary = True
+                break
+        if found_flat_binary:
+            break
+    assert found_flat_binary, (
+        "no embedded example contains a flat type:'binary' leaf inside a compound that "
+        "compiles clean; Opus needs a worked flat-binary-leaf example or it falls back "
+        "to the if-shape and the compound KeyErrors"
+    )
+
+
+def _has_flat_binary_leaf(plan):
+    """True if the plan has a compound condition with a type:'binary' sub-condition
+    carrying the flat lhs_fn field."""
+    stack = [plan]
+    while stack:
+        n = stack.pop()
+        if isinstance(n, dict):
+            if n.get("type") == "compound":
+                for sub in n.get("conditions", []) or []:
+                    if isinstance(sub, dict) and sub.get("type") == "binary" and "lhs_fn" in sub:
+                        return True
+            for v in n.values():
+                if isinstance(v, (dict, list)):
+                    stack.append(v)
+        elif isinstance(n, list):
+            stack.extend(n)
+    return False
+
+
+def test_conforming_compound_with_flat_binary_leaf_admitted_and_compiles(
+    bpg, compiler, monkeypatch
+):
+    """A CONFORMING mocked compound plan whose leaf is a FLAT binary (the exact live
+    drop shape) is admitted AND compiles clean — the regression of the 2/4 KeyError.
+    This is the end-to-end generator→compiler contract for a flat binary leaf."""
+    universe = frozenset({"SPY", "QQQ", "UVXY", "TLT", "IEF"})
+    compound_root = _if_compound(
+        _compound_cond(
+            "all",
+            [
+                _binary_leaf_flat("relative-strength-index", "SPY", 14, "gt", 70),
+                _binary_leaf_flat("max-drawdown", "QQQ", 30, "lt", 20),
+            ],
+        ),
+        then=[_equal([_asset("UVXY")])],
+        els=[_inverse_vol([_asset("SPY"), _asset("IEF")])],
+    )
+    plan_in = _plan("cut_drawdown", compound_root, plan_id="cd-flatbin-1")
+    _patch_conforming_client(bpg, monkeypatch, [plan_in])
+    result = bpg.generate_build_plans(_objective(bpg, "cut_drawdown"), universe, n_plans=12)
+    assert result.plans, (
+        f"a conforming flat-binary-leaf compound must be admitted, reason={result.reason!r}"
+    )
+    admitted = result.plans[0]
+    compiled = compiler.compile_plan(admitted)
+    assert compiled.tree is not None, (
+        f"the admitted flat-binary-leaf compound must compile clean, reason={compiled.reason!r}"
+    )
+    assert symphony_schema.validate_tree(compiled.tree) == []
