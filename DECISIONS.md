@@ -2455,3 +2455,48 @@ The original edge-14 tests used `spy_returns_fn=None` (gate-engine level) to tri
 
 - `advisors/backtest_gate_engine.py` — `_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA` flipped to `float("+inf")`; four comment sites corrected
 - `tests/advisors/test_cull_strengthening.py` — 2 new edge-14 RED tests (empty-dict lambda, not None); 19/19 GREEN; 681 passed / 2 skipped / 0 regressions across `tests/advisors/`
+
+
+---
+
+## DE-SB-C4-001 — Component 4: real builder body swap + Q1-A enum + AC-18 scheduler (2026-06-20)
+
+Branch: feat/strategy-builder-real | Commits: 5ae6c8c (body swap + Q1-A) | 4867c1c (AC-18 scheduler) | HEAD: a0aca12
+
+### What C4 delivers
+
+**Body swap (5ae6c8c):** `_generate_candidate_trees` in `advisors/strategy_builder_engine.py` was the old 7-template stamper (T1–T7 via `symphony_schema` constructors with hardcoded parameter sweep loops). C4 replaces the entire body with the real C1→C2→C3 pipeline:
+
+1. **C1 — Universe (Q2-A):** non-empty `universe` argument → used as membership set as-is. Empty `[]` (the default for both the route and the scheduler) → self-source from `universe_provider.get_tradeable_set()`. This makes the builder use the real operator-curated universe rather than a caller-provided ticker list.
+
+2. **C2 — Plan generation:** `build_plan_generator.generate_build_plans(gen_objective, membership_set)` is called. `sbe.Objective` maps to `build_plan_generator.Objective` by `.value` (string-keyed, 4-way). Empty `result.plans` → `[]` (D-1 honest degradation, reason logged).
+
+3. **C3 — Compilation:** each plan from C2 is fed to `plan_tree_compiler.compile_plan(plan)`. Plans where `compile_result.tree is None` are dropped (e.g. `market_cap_scheme_deprecated`) and the run continues. Compiled candidates become `CandidateInfo` with `template_id=plan.get("provenance", "built-new")` — never `"T1"`–`"T7"`.
+
+The old T1–T7 template IDs are gone from built-new candidates. `symphony_schema` constructors are still used inside `plan_tree_compiler`, but are not called directly from `_generate_candidate_trees`.
+
+**Q1-A enum extension (5ae6c8c):** `sbe.Objective` extended from 3 to 4 values by adding `volatility_mitigation = "volatility_mitigation"`, matching `build_plan_generator.Objective`. The route parses the objective from the POST body string (unchanged); `volatility_mitigation` is now a reachable route value.
+
+**AC-18 weekly scheduler (4867c1c):** `advisors/strategy_builder_scheduler.py` (new standalone script). `run_weekly_build()` runs `propose_strategies` for all four objectives, guarded by `_already_ran_this_week()` (ISO-week idempotency via `get_advisor_observations_for_symphony(symphony_id="", advisor_role="STRATEGY_BUILDER", limit=50)` + ISO calendar year/week comparison). Per-objective bounded retry: `MAX_ATTEMPTS=3`, D-1 class-name-only logging, next objective continues on exhaustion. Never raises. `_already_ran_this_week` is a patchable seam for tests.
+
+**AC-19 (route) — zero route code change:** the route at `app.py:3816` was already structured to pass `universe=[]` and parse the objective from the POST body. C4 requires no route modification — the empty universe triggers the new Q2-A self-sourcing path, and `volatility_mitigation` parsing was latent (enum extension makes it reachable).
+
+**AC-20 (signature freeze):** `propose_strategies` public signature unchanged. Steps 2–5b (SPY sourcing, backtest loop, FDR gate, screens, persist) are byte-stable. Only `_generate_candidate_trees` (internal) was replaced.
+
+### Design decisions
+
+**Why replace the whole body, not extend?** The T1–T7 stamper was a placeholder that bypassed C1/C2/C3 entirely. Keeping it alongside the real pipeline would have created a mode-switching footgun. A clean body swap eliminates the dead code and leaves one code path.
+
+**Q2-A: universe-override is the caller's responsibility, not self-sourcing's.** The route and scheduler both pass `universe=[]`, triggering self-sourcing. A caller that wants a specific subset (e.g. a test or a future targeted run) passes a non-empty list — no new parameter needed.
+
+**Idempotency is ISO-week, not day.** One run per week per objective is sufficient freshness for the dashboard. Tighter granularity (daily) would over-consume Composer API quota without providing meaningfully fresher candidates.
+
+**The only production caller of `propose_strategies` is the route (app.py:3816).** The scheduler is the second caller. `autotuner.py` does NOT call `propose_strategies` or import `strategy_builder_engine` — any documentation claiming otherwise is stale (operator-flagged doc-debt; corrected in this cycle).
+
+### Files changed
+
+- `advisors/strategy_builder_engine.py` — `_generate_candidate_trees` body swap (~140 lines removed, ~80 added); `Objective` enum: 3→4 values (adds `volatility_mitigation`); `test_objective_has_exactly_three_members` renamed/updated to `test_objective_has_exactly_four_members`
+- `advisors/strategy_builder_scheduler.py` — NEW: `run_weekly_build()`, `_already_ran_this_week()`, `MAX_ATTEMPTS=3`
+- `tests/advisors/test_strategy_builder_engine.py` — 10/10 integration tests GREEN (C1/C2/C3 seams mocked, blast-radius isolation)
+- `tests/advisors/test_strategy_builder_scheduler.py` — 4/4 scheduler tests GREEN
+- Full `tests/advisors/` 694 passed / 4 skipped / 0 fail; `tests/ui/` 713 passed / 15 skipped / 0 fail at HEAD a0aca12

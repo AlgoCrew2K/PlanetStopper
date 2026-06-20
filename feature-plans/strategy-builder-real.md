@@ -74,7 +74,7 @@ milestone (AC-1)** - the build must not assume it.
 
 ### Replacement target
 - `advisors/strategy_builder_engine.py::_generate_candidate_trees(objective, universe)` (lines 392-543) is the **7-template stamper** to replace. It takes `universe[:10]` (line 403; hardcoded 10-ticker cap) and emits `CandidateInfo` objects from templates T1-T7 (`equal_weight_basket`, `specified_weight_basket`, `inverse_vol_basket`, `trend_switch`, `rsi_rotation`, `momentum_top_n`, `low_vol_floor`, lines 263-384).
-- `propose_strategies(...) -> ProposalRun` (lines 855-1061) is the **public entry point**. It calls `_generate_candidate_trees` at line 915, then backtests (Step 2), FDR-gates the **full batch** (Step 3, lines 964-969), screens survivors (Step 4), and persists (Steps 5/5b). **Public signature must be preserved** — callers are `app.py:3816` and (per project CLAUDE.md) `autotuner.py`.
+- `propose_strategies(...) -> ProposalRun` (lines 855-1061) is the **public entry point**. It calls `_generate_candidate_trees` at line 915, then backtests (Step 2), FDR-gates the **full batch** (Step 3, lines 964-969), screens survivors (Step 4), and persists (Steps 5/5b). **Public signature must be preserved** — the sole production callers are `app.py:3816` (the Strategy Builder route) and `advisors/strategy_builder_scheduler.py` (the weekly scheduler, AC-18). `autotuner.py` does NOT call `propose_strategies` — a prior doc claim to the contrary was stale (corrected in C4 doc pass, 2026-06-20).
 - `Objective` enum (lines 73-78): `diversify` / `cut_drawdown` / `lift_risk_adjusted`. `ScreenConfig` dataclass (lines 81-97). `MAX_CANDIDATES_PER_RUN = 30` (line 40).
 - `_has_composer_key()` (lines 181-187) gates the whole run; returns a `ProposalRun` with the no-key error when absent (lines 905-912).
 
@@ -161,7 +161,7 @@ milestone (AC-1)** - the build must not assume it.
 
 **AC-19 — On-demand parity.** The existing `POST /ai-advisor/strategy-builder/run` route (`app.py:3759`) is rewired to the real builder and produces the SAME class of result (survivors/rejected/FDR JSON) as the weekly run, sourcing the universe from the provider (Component 1) rather than an operator-supplied ticker list. A route test asserts the response JSON contract is preserved and the real builder path is exercised.
 
-**AC-20 — `propose_strategies` public signature preserved.** Replacing `_generate_candidate_trees` does NOT change the `propose_strategies(...)` public signature; existing callers (`app.py:3816`, `autotuner.py`) work unchanged. A test imports `propose_strategies` and asserts its signature is unchanged.
+**AC-20 — `propose_strategies` public signature preserved.** Replacing `_generate_candidate_trees` does NOT change the `propose_strategies(...)` public signature; existing callers (`app.py:3816` and `advisors/strategy_builder_scheduler.py`) work unchanged. `autotuner.py` does NOT call `propose_strategies`. A test imports `propose_strategies` and asserts its signature is unchanged.
 
 ### Component 5 — Downstream invariants (unchanged but guarded)
 
