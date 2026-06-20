@@ -62,37 +62,84 @@ class CompileResult:
 
 
 # ---------------------------------------------------------------------------
-# Ticker extraction from a 400 error envelope.
+# Ticker identification from a 400 error envelope.
 # The envelope text names the offending ticker in patterns like:
 #   "Asset SPY is not tradable"
 #   "Ticker NOPRICE not tradable on this venue"
 #   "node BADX references an untradable ticker"
-# We try a simple uppercase-ticker-shaped word extraction. If nothing matches
-# we return None (the caller drops cleanly rather than blind-pruning).
+#   "VENUE MARKET rejected order: BADX is not tradable"
+#   "Comparing SPY: QQQ is not tradable / no pricing data"
+#
+# The prune target MUST be an in-tree ticker (one in the compiled tree's real
+# ticker set). A leading non-ticker uppercase word (venue/market name) or an
+# off-tree ticker in the text is not a valid prune target — pruning it would
+# be a no-op that leaves the real offending ticker in place and wastes the
+# repair budget.
+#
+# When multiple in-tree tickers appear in the text, the one flagged as
+# untradable is the one immediately preceding the "not tradable" /
+# "untradable" signal phrase, so we pick the in-tree candidate whose last
+# position before the signal is closest.
 # ---------------------------------------------------------------------------
 
 _TICKER_PATTERN = re.compile(r"\b([A-Z][A-Z0-9]{0,9}(?:\.[A-Z]{1,2})?)\b")
 
+# Signal phrases that mark what immediately precedes them as the untradable asset.
+_UNTRADABLE_SIGNALS = re.compile(
+    r"\b(not\s+tradable|untradable|not\s+tradeable|untradeable|no\s+pricing)\b",
+    re.IGNORECASE,
+)
 
-def _extract_ticker_from_400_text(text: str) -> str | None:
-    """Return the first UPPERCASE ticker-shaped word from a 400 error text.
+# Words we know appear in the standard envelope text that are NOT tickers.
+_STOP_WORDS = frozenset(
+    {"HTTP", "ASSET", "TICKER", "NOT", "NO", "ON", "THIS", "NODE", "REFERENCES", "AN"}
+)
 
-    Heuristic: a ticker starts with an uppercase letter followed by up to 9
-    more uppercase letters or digits (covering synthetic test tickers like
-    NOPRICE as well as real US equity tickers up to ~5 chars, ETFs, etc.),
-    optionally followed by a dot and 1–2 more uppercase letters (e.g. BRK.B).
-    We skip common non-ticker words by checking against a small stop-set.
-    Returns None when no candidate found.
+
+def _find_prune_target(text: str, tree_tickers: set[str]) -> str | None:
+    """Return the in-tree ticker to prune from a 400 envelope text.
+
+    Cross-references extracted uppercase candidates against ``tree_tickers``
+    (the real ticker set from the current compiled tree). Returns None when no
+    in-tree candidate is found — signalling the caller to drop cleanly without
+    looping the repair budget on a no-op prune.
+
+    When multiple in-tree tickers appear in the text, prefers the one closest
+    and immediately before the first "not tradable" / "untradable" signal
+    phrase (the one Composer flagged). Falls back to the first in-tree
+    candidate found left-to-right when no signal phrase is present.
     """
-    # Words we know appear in the standard envelope text that are NOT tickers.
-    _STOP_WORDS = frozenset(
-        {"HTTP", "ASSET", "TICKER", "NOT", "NO", "ON", "THIS", "NODE", "REFERENCES", "AN"}
-    )
+    if not isinstance(text, str) or not tree_tickers:
+        return None
+
+    # Collect all uppercase candidates with their start positions.
+    candidates: list[tuple[int, str]] = []
     for match in _TICKER_PATTERN.finditer(text):
-        candidate = match.group(1)
-        if candidate.upper() not in _STOP_WORDS:
-            return candidate
-    return None
+        word = match.group(1)
+        if word.upper() not in _STOP_WORDS and word in tree_tickers:
+            candidates.append((match.start(), word))
+
+    if not candidates:
+        return None
+
+    # Find the first untradable signal phrase position in the text.
+    signal_match = _UNTRADABLE_SIGNALS.search(text)
+    if signal_match is None:
+        # No signal phrase found: return the first in-tree candidate left-to-right.
+        return candidates[0][1]
+
+    signal_pos = signal_match.start()
+
+    # Among candidates that appear before the signal, pick the one closest
+    # (highest start position still < signal_pos). This is the ticker
+    # Composer named as untradable.
+    before_signal = [(pos, word) for pos, word in candidates if pos < signal_pos]
+    if before_signal:
+        # The rightmost candidate before the signal is the flagged one.
+        return max(before_signal, key=lambda pw: pw[0])[1]
+
+    # All candidates appear after the signal (unusual): fall back to first.
+    return candidates[0][1]
 
 
 # ---------------------------------------------------------------------------
@@ -419,16 +466,19 @@ def compile_plan(plan, *, backtest_fn=None) -> CompileResult:
             status = _parse_envelope_status(envelope)
 
             if status == 400:
-                # Tradeability rejection: prune named ticker and retry.
+                # Tradeability rejection: prune named in-tree ticker and retry.
                 if attempts > MAX_REPAIR_ATTEMPTS:
                     return CompileResult(tree=None, reason="max_repair_attempts_exceeded")
 
                 text_after_status = _envelope_text(envelope)
-                ticker_to_prune = _extract_ticker_from_400_text(text_after_status)
+                tree_tickers = symphony_schema.extract_tickers(current_tree)
+                ticker_to_prune = _find_prune_target(text_after_status, tree_tickers)
 
                 if ticker_to_prune is None:
-                    # Cannot identify ticker to prune: drop cleanly.
-                    return CompileResult(tree=None, reason="ticker_not_identified_in_400")
+                    # No in-tree ticker identified: no productive prune possible.
+                    # Drop cleanly without burning the remaining repair budget on
+                    # no-op prunes (the ticker named is absent from the tree).
+                    return CompileResult(tree=None, reason="no_in_tree_ticker_in_400")
 
                 pruned = _prune_ticker_from_tree(current_tree, ticker_to_prune)
                 if pruned is None:
