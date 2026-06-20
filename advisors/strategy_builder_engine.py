@@ -71,11 +71,19 @@ SPARKLINE_TARGET_POINTS: int = 60
 
 
 class Objective(enum.Enum):
-    """Objective enum steering template selection and parameter ranges for a proposal run."""
+    """Objective enum steering template selection and parameter ranges for a proposal run.
+
+    Four values matching build_plan_generator.Objective (Q1-A, AC-8):
+      diversify             — multi-sleeve allocation (>=2 container children).
+      cut_drawdown          — regime gate or inverse-vol weight.
+      lift_risk_adjusted    — momentum/quality filter.
+      volatility_mitigation — inverse-vol weight or low/min-vol filter.
+    """
 
     diversify = "diversify"
     cut_drawdown = "cut_drawdown"
     lift_risk_adjusted = "lift_risk_adjusted"
+    volatility_mitigation = "volatility_mitigation"
 
 
 @dataclass
@@ -393,154 +401,85 @@ def _generate_candidate_trees(
     objective: Objective,
     universe: list[str],
 ) -> list[CandidateInfo]:
-    """Generate up to MAX_CANDIDATES_PER_RUN objective-directed candidates."""
-    candidates: list[CandidateInfo] = []
+    """Generate up to MAX_CANDIDATES_PER_RUN objective-directed candidates via the real builder.
 
-    if not universe:
+    C4 body swap: drives the real C1→C2→C3 pipeline instead of the old 7-template stamper.
+
+    Steps:
+      C1 self-source (Q2-A): non-empty `universe` → use it as the membership set; empty/
+        omitted → self-source from universe_provider.get_tradeable_set().
+      C2 generate: call build_plan_generator.generate_build_plans(objective, membership_set).
+        Maps sbe.Objective → build_plan_generator.Objective by .value (string-keyed, 4-way).
+      C3 compile: loop plans through plan_tree_compiler.compile_plan(plan). Keep compiled
+        trees (CompileResult.tree not None), drop uncompilable ones (e.g. market_cap-scheme
+        → reason="market_cap_scheme_deprecated"). Run continues on any drop.
+
+    Honest degradation: generator returns empty plans (D-1 reason) → returns [] cleanly.
+    D-1 never-raises: any internal exception degrades to [] with a logged class name only.
+    """
+    # CC-2 lazy imports — off-execution-path; never imported from alpha_bot_execution.py.
+    from advisors import build_plan_generator as _gen  # noqa: PLC0415
+    from advisors import plan_tree_compiler as _compiler  # noqa: PLC0415
+    from advisors import universe_provider as _up  # noqa: PLC0415
+
+    try:
+        # C1 — Q2-A: use non-empty universe override as-is; self-source when empty.
+        if universe:
+            membership_set: frozenset = frozenset(universe)
+        else:
+            membership_set = _up.get_tradeable_set()
+
+        # C2 — map sbe.Objective → build_plan_generator.Objective by .value (string-keyed).
+        gen_objective = _gen.Objective(objective.value)
+        result = _gen.generate_build_plans(gen_objective, membership_set)
+
+        if not result.plans:
+            # D-1 honest degradation: no plans from generator (SDK error, signature-floor, etc.)
+            logger.debug(
+                "_generate_candidate_trees: generator returned no plans (reason=%r)",
+                result.reason,
+            )
+            return []
+
+        # C3 — compile each plan; drop uncompilable ones, keep the run going.
+        candidates: list[CandidateInfo] = []
+        for plan in result.plans:
+            compile_result = _compiler.compile_plan(plan)
+            if compile_result.tree is None:
+                # Drop: market_cap-deprecated, validate_tree hard error, or other clean drop.
+                logger.debug(
+                    "_generate_candidate_trees: dropped plan %r (reason=%r)",
+                    plan.get("plan_id"),
+                    compile_result.reason,
+                )
+                continue
+
+            provenance = plan.get("provenance", "built-new")
+            candidates.append(
+                CandidateInfo(
+                    candidate_id=plan["plan_id"],
+                    tree=compile_result.tree,
+                    # template_id carries provenance, never T1-T7 (anti-hollow core).
+                    template_id=provenance,
+                    params={
+                        "plan_id": plan["plan_id"],
+                        "name": plan.get("name", ""),
+                        "objective": plan.get("objective", ""),
+                        "provenance": provenance,
+                    },
+                )
+            )
+            if len(candidates) >= MAX_CANDIDATES_PER_RUN:
+                break
+
         return candidates
 
-    # Use at most 10 tickers to keep tree sizes manageable
-    tickers = universe[:10]
-
-    if objective == Objective.diversify:
-        # T1 equal-weight, T3 inverse-vol, T6 momentum at multiple windows
-        candidates.append(
-            CandidateInfo(
-                candidate_id="diversify:T1:equal_weight",
-                tree=equal_weight_basket(tickers, name="Diversify Equal Weight"),
-                template_id="T1",
-                params={"tickers": tickers},
-            )
+    except Exception as exc:
+        # D-1: degrade cleanly — never propagate an exception from the generator path.
+        logger.debug(
+            "_generate_candidate_trees: unexpected error (%s)", type(exc).__name__, exc_info=True
         )
-        candidates.append(
-            CandidateInfo(
-                candidate_id="diversify:T3:inverse_vol",
-                tree=inverse_vol_basket(tickers, name="Diversify Inverse Vol"),
-                template_id="T3",
-                params={"tickers": tickers},
-            )
-        )
-        if len(tickers) >= 3:
-            for w in [63, 126]:
-                candidates.append(
-                    CandidateInfo(
-                        candidate_id=f"diversify:T6:momentum_w{w}",
-                        tree=momentum_top_n(
-                            tickers,
-                            n=max(2, len(tickers) // 2),
-                            window=w,
-                            name=f"Diversify Momentum {w}d",
-                        ),
-                        template_id="T6",
-                        params={
-                            "tickers": tickers,
-                            "n": max(2, len(tickers) // 2),
-                            "window": w,
-                        },
-                    )
-                )
-
-    elif objective == Objective.cut_drawdown:
-        # T7 low-vol, T3 inverse-vol, T4 trend-switch (if enough tickers)
-        candidates.append(
-            CandidateInfo(
-                candidate_id="cut_dd:T3:inverse_vol",
-                tree=inverse_vol_basket(tickers, name="Cut DD Inverse Vol"),
-                template_id="T3",
-                params={"tickers": tickers},
-            )
-        )
-        if len(tickers) >= 2:
-            n_low = max(1, len(tickers) // 3 + 1)
-            for w in [20, 60]:
-                candidates.append(
-                    CandidateInfo(
-                        candidate_id=f"cut_dd:T7:low_vol_w{w}",
-                        tree=low_vol_floor(
-                            tickers,
-                            n=n_low,
-                            window=w,
-                            name=f"Cut DD Low Vol {w}d",
-                        ),
-                        template_id="T7",
-                        params={"tickers": tickers, "n": n_low, "window": w},
-                    )
-                )
-        if len(tickers) >= 4:
-            mid = len(tickers) // 2
-            candidates.append(
-                CandidateInfo(
-                    candidate_id="cut_dd:T4:trend_switch_200",
-                    tree=trend_switch(
-                        tickers[0],
-                        ma_window=200,
-                        risk_on_tickers=tickers[:mid],
-                        risk_off_tickers=tickers[mid:],
-                        name="Cut DD Trend Switch 200d",
-                    ),
-                    template_id="T4",
-                    params={
-                        "signal_ticker": tickers[0],
-                        "ma_window": 200,
-                        "risk_on": tickers[:mid],
-                        "risk_off": tickers[mid:],
-                    },
-                )
-            )
-
-    elif objective == Objective.lift_risk_adjusted:
-        # T6 momentum, T5 RSI, T2 specified-weight top picks
-        if len(tickers) >= 3:
-            for w in [21, 63, 126]:
-                n_top = max(1, len(tickers) // 3)
-                candidates.append(
-                    CandidateInfo(
-                        candidate_id=f"lift_ra:T6:momentum_w{w}",
-                        tree=momentum_top_n(
-                            tickers,
-                            n=n_top,
-                            window=w,
-                            name=f"Lift RA Momentum {w}d",
-                        ),
-                        template_id="T6",
-                        params={"tickers": tickers, "n": n_top, "window": w},
-                    )
-                )
-        if len(tickers) >= 2:
-            candidates.append(
-                CandidateInfo(
-                    candidate_id="lift_ra:T5:rsi_rotation_14_70",
-                    tree=rsi_rotation(
-                        tickers[0],
-                        rsi_window=14,
-                        threshold=70.0,
-                        overbought_tickers=tickers[: len(tickers) // 2],
-                        neutral_tickers=tickers[len(tickers) // 2 :],
-                        name="Lift RA RSI Rotation",
-                    ),
-                    template_id="T5",
-                    params={
-                        "signal_ticker": tickers[0],
-                        "rsi_window": 14,
-                        "threshold": 70.0,
-                    },
-                )
-            )
-        # T2 specified-weight (equal split for simplicity)
-        n = len(tickers)
-        if n >= 2:
-            w_each = 100.0 / n
-            weighted = [(t, w_each) for t in tickers]
-            candidates.append(
-                CandidateInfo(
-                    candidate_id="lift_ra:T2:specified_weight",
-                    tree=specified_weight_basket(weighted, name="Lift RA Specified Weight"),
-                    template_id="T2",
-                    params={"tickers": tickers, "weights": [w_each] * n},
-                )
-            )
-
-    return candidates[:MAX_CANDIDATES_PER_RUN]
+        return []
 
 
 # ---------------------------------------------------------------------------

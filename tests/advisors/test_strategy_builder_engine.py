@@ -202,11 +202,15 @@ class TestObjectiveEnum:
     def test_objective_lift_risk_adjusted_value(self, sbe):
         assert sbe.Objective.lift_risk_adjusted.value == "lift_risk_adjusted"
 
-    def test_objective_has_exactly_three_members(self, sbe):
+    def test_objective_has_exactly_four_members(self, sbe):
+        """Q1-A (AC-8): sbe.Objective must have exactly 4 members after C4 extension."""
         member_names = {m.name for m in sbe.Objective}
-        assert member_names == {"diversify", "cut_drawdown", "lift_risk_adjusted"}, (
-            f"Objective must have exactly 3 members; got {member_names}"
-        )
+        assert member_names == {
+            "diversify",
+            "cut_drawdown",
+            "lift_risk_adjusted",
+            "volatility_mitigation",
+        }, f"Objective must have exactly 4 members (Q1-A); got {member_names}"
 
 
 # ===========================================================================
