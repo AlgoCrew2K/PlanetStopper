@@ -155,6 +155,21 @@ def _truncated_response() -> MagicMock:
     return response
 
 
+def _truncated_response_with_partial_plans(plans: list[dict]) -> MagicMock:
+    """A TRUNCATED response (stop_reason="max_tokens") that ALSO carries a partial,
+    superficially-valid `plans` LIST. A real truncation can cut the tool-JSON mid-array,
+    leaving a list that LOOKS parseable but is incomplete/unreliable. Truncation must be
+    judged by stop_reason, NOT by whether the payload happens to be a list — so this must
+    still be treated as a truncation (retry), never accepted as a complete result."""
+    response = MagicMock()
+    response.stop_reason = "max_tokens"
+    response.content = [_tool_use_block({"plans": plans})]  # partial but list-shaped
+    usage = MagicMock()
+    usage.output_tokens = 4096
+    response.usage = usage
+    return response
+
+
 def _client_with_create_returning(*responses) -> MagicMock:
     """A mock client whose messages.create yields the given responses in sequence
     (side_effect). A single response is repeated for every call (return_value)."""
@@ -360,6 +375,87 @@ def test_truncation_recovery_respects_dedup_and_n_plans_ceiling(bpg):
     # No structural duplicates among the admitted plans (dedup intact across recovery).
     fingerprints = [bpg._root_fingerprint(p) for p in result.plans]
     assert len(fingerprints) == len(set(fingerprints)), "admitted plans must be deduped"
+
+
+def test_truncation_with_partial_plans_list_is_still_retried_not_accepted(bpg):
+    """B7 (Revise gap): truncation is judged by stop_reason, NOT by whether the payload is
+    a list. A truncated response (stop_reason='max_tokens') that ALSO carries a partial,
+    list-shaped `plans` payload must STILL be treated as truncation and retried — it must
+    NOT be accepted as a complete result on the strength of the list being present. This
+    guards a tempting-but-wrong impl that only retries when the payload is empty/non-list.
+
+    We feed: a truncated response WITH a partial conforming-plan list, then a clean
+    success. The generator must retry (the partial-list truncation does not short-circuit)
+    and recover via the clean response."""
+    partial = [_conforming_diversify_plan("partial")]
+    good = [
+        _plan(
+            "diversify",
+            _group(
+                "g",
+                [
+                    _weight("equal", [_asset("SPY"), _asset("QQQ")]),
+                    _weight("inverse_vol", [_asset("TLT"), _asset("AGG")], window_days=30),
+                ],
+            ),
+            plan_id="recovered",
+        )
+    ]
+    client = _client_with_create_returning(
+        _truncated_response_with_partial_plans(partial), _full_response(good)
+    )
+    with _patch_client(bpg, client):
+        result = bpg.generate_build_plans(_objective(bpg, "diversify"), _BIG_UNIVERSE, n_plans=12)
+    assert client.messages.create.call_count > 1, (
+        "a stop_reason='max_tokens' response must be retried even when it carries a "
+        "list-shaped (partial) plans payload — truncation is judged by stop_reason"
+    )
+    assert result.plans, "recovery via the clean response must admit >=1 plan"
+    assert result.reason is None, "a clean recovery must not carry an error reason"
+
+
+def test_all_truncated_with_partial_lists_degrades_honestly_not_admits(bpg):
+    """B8 (Revise gap, adversarial): if EVERY attempt is truncated but each carries a
+    partial list-shaped payload, the generator must NOT admit any of those partial plans —
+    it exhausts the bounded retry and degrades with the honest truncation reason. (An impl
+    that accepts a truncated-but-list payload would wrongly admit unreliable plans.)"""
+    partial = [_conforming_diversify_plan("partial")]
+    client = MagicMock()
+    client.messages.create.side_effect = lambda *a, **k: _truncated_response_with_partial_plans(
+        partial
+    )
+    with _patch_client(bpg, client):
+        result = bpg.generate_build_plans(_objective(bpg, "diversify"), _BIG_UNIVERSE, n_plans=12)
+    assert client.messages.create.call_count == bpg.MAX_GENERATION_ATTEMPTS, (
+        "all-truncated (even with partial lists) must attempt exactly "
+        "MAX_GENERATION_ATTEMPTS times, then STOP"
+    )
+    assert result.plans == [], "partial truncated payloads must NOT be admitted"
+    reason_l = (result.reason or "").lower()
+    assert ("max_tokens" in reason_l) or ("truncat" in reason_l), (
+        f"must honestly name truncation; got {result.reason!r}"
+    )
+
+
+def test_retry_after_truncation_to_unparseable_response_degrades_cleanly(bpg):
+    """B9 (Revise gap): a truncated first response followed by a NON-truncated but
+    UNPARSEABLE response (no tool_use block) flows into the existing clean-degrade path —
+    the retry result is parsed by the same downstream logic, so it degrades to empty plans
+    with a reason, never raises, never returns garbage."""
+    text_block = MagicMock()
+    text_block.type = "text"
+    text_block.text = "I refuse to use the tool."
+    unparseable = MagicMock()
+    unparseable.stop_reason = "end_turn"  # NOT truncation, but no tool_use block
+    unparseable.content = [text_block]
+    unparseable.usage = MagicMock()
+    unparseable.usage.output_tokens = 20
+    client = _client_with_create_returning(_truncated_response(), unparseable)
+    with _patch_client(bpg, client):
+        result = bpg.generate_build_plans(_objective(bpg, "diversify"), _BIG_UNIVERSE, n_plans=12)
+    assert client.messages.create.call_count == 2, "must retry once after truncation"
+    assert result.plans == [], "an unparseable retry response degrades to empty plans"
+    assert isinstance(result.reason, str) and result.reason, "must surface a reason"
 
 
 # ===========================================================================
