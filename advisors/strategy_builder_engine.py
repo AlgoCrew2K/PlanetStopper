@@ -931,6 +931,30 @@ def propose_strategies(
 
         # Step 2: Backtest each candidate (sequential, 1 req/s via client pacing)
         # One failure never aborts the batch (AC-X5 pattern).
+
+        # Step 2a: Source SPY OOS series ONCE per run via the existing backtest path
+        # (AC-25). A 100%-SPY tree is the minimal valid Composer tree for a pure SPY
+        # backtest. The same run_backtest client is used for candidates — no new
+        # endpoint. On error or empty daily_returns, spy_returns_fn returns {} so the
+        # gate's conservative WITHHOLD fires (_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA).
+        # The SPY call uses the same symphony_id as candidates so the dvm_capital
+        # single-series fallback in _extract_returns works identically.
+        _spy_tree = symphony_schema.make_root(
+            "SPY Benchmark",
+            "daily",
+            [symphony_schema.make_weight_equal([symphony_schema.make_asset("SPY")])],
+        )
+        _spy_result = run_backtest(_spy_tree, symphony_id=symphony_id)
+        if _spy_result.error or not _spy_result.daily_returns:
+            # SPY unavailable — conservative WITHHOLD enforced by the gate engine.
+            _spy_returns_dict: dict[str, float] = {}
+        else:
+            # Pct-scale matches dated_returns on candidates (log × 100 → pct).
+            _spy_returns_dict = {
+                d: r * 100.0 for d, r in _spy_result.daily_returns.items()
+            }
+        _spy_returns_fn = lambda: _spy_returns_dict  # noqa: E731
+
         bt_candidates: list[BacktestCandidate] = []
         returns_by_id: dict[str, list[float]] = {}
 
@@ -941,8 +965,12 @@ def propose_strategies(
                     info.backtest_error = f"backtest failed: {result.error}"
                     info.data_warnings = result.data_warnings
                     continue
-                # Convert log returns → pct (EXACTLY as in asset_swap_engine.py:577)
+                # Convert log returns → pct (EXACTLY as in asset_swap_engine.py:577).
+                # Preserve the date keys in a parallel dict for the batch PBO (AC-24)
+                # and SPY date-alignment (AC-25). Both use the same ×100 pct scale so
+                # the fold transform receives identical values from either field.
                 returns_pct = [r * 100.0 for r in result.daily_returns.values()]
+                dated_returns_pct = {d: r * 100.0 for d, r in result.daily_returns.items()}
                 # Compute quantstats metrics (pct-scale in → fraction-scale out)
                 info.metrics = compute_quantstats_metrics(returns_pct)
                 info.data_warnings = result.data_warnings
@@ -956,16 +984,21 @@ def propose_strategies(
                         theory_prior_params={},
                         nn1_compliant=True,
                         purge_integrity_ok=True,
+                        dated_returns=dated_returns_pct,
                     )
                 )
             except Exception as exc:
                 info.backtest_error = str(exc)
 
-        # Step 3: FDR gate — full batch, no pre-filtering (AC-3.2)
+        # Step 3: FDR gate — full batch, no pre-filtering (AC-3.2).
+        # spy_returns_fn carries the SPY OOS series (AC-25); dated_returns on each
+        # candidate enables the batch PBO veto (AC-24). Both are wired here; the gate
+        # engine handles the SPY-unavailable degradation when spy_returns_fn returns {}.
         gate_batch = evaluate_candidate_batch(
             bt_candidates,
             incumbent_oos_alpha=incumbent_oos_alpha,
             default_oos_alpha=default_oos_alpha,
+            spy_returns_fn=_spy_returns_fn,
         )
 
         # Step 4: Screens apply to gate survivors ONLY (post-gate presentation filter)
