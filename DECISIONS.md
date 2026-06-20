@@ -2260,3 +2260,66 @@ A PM-run targeted compound-gate live probe: generate `cut_drawdown` plans with r
 - `advisors/build_plan_generator.py` — `_EXAMPLE_IF_COMPOUND_PLAN` constant; `_build_generation_prompt` extended with compound-condition union section + `_EXAMPLE_IF_COMPOUND_PLAN` embedding (three worked examples in every prompt); `_EMIT_BUILD_PLANS_TOOL` `condition` property extended with union fields (`type`/`operator`/`conditions`/`tickers`/`fn`)
 - `tests/advisors/test_build_plan_generator.py` — new RED tests for compound-condition grammar in prompt, `_EXAMPLE_IF_COMPOUND_PLAN` structure + compiler-clean assertion, schema union field presence
 - Total: 151 tests GREEN at 36beecd across affected files; 649 passed / 2 skipped / 0 failures across tests/advisors
+
+---
+
+## DE-SB-BINARY-ENCODING — Binary-condition encoding unification: canonical-flat contract across generator + compiler (2026-06-20)
+
+Branch: feat/strategy-builder-real | Fix commits: bd3cbdb (GREEN) + 548a888 (extract_tickers repoint)
+
+### Finding (PM compound-gate live probe after Revise-2)
+
+After Revise-2 (commit 36beecd), the PM's targeted compound-gate live probe generated `cut_drawdown` plans and ran them through `plan_tree_compiler.compile_plan`. Result: 4/5 if_compound plans compiled clean — but 2/4 plans that used `type:"binary"` leaves inside a compound dropped with `KeyError "lhs"`. This was a different, milder drop class than the prior Revise-2 string-condition `TypeError`: graceful via D-1 but still systematic for any compound-with-binary-leaf gate.
+
+### Root cause: dual binary encoding
+
+The contract for the `binary` condition type was inconsistent across the two components:
+
+| Component | Binary field encoding used |
+|-----------|---------------------------|
+| `_build_generation_prompt` + `_EXAMPLE_IF_PLAN` | Flat: `lhs_fn`, `lhs_ticker`, `window` (top-level keys on the condition dict); `rhs: {"fixed": N}` |
+| `_compile_condition` binary branch (pre-fix) | Nested: `cond["lhs"]["fn"]`, `cond["lhs"]["ticker"]`, `cond["lhs"]["window"]`; `rhs: {"const": N}` |
+
+When Opus generated a compound condition with binary leaves, it emitted the flat shape it had learned from `_EXAMPLE_IF_PLAN` and the flat-if condition grammar — because that was the only worked binary example. The compiler's binary leaf read the nested shape → `KeyError "lhs"`. The all-`binary_compound` `_EXAMPLE_IF_COMPOUND_PLAN` gave Opus no flat-binary model for compound leaves, so Opus defaulted to the encoding it had seen in the flat-if context.
+
+### Canonical-flat unification decision
+
+**One binary encoding, everywhere.** The canonical contract is the FLAT shape: `lhs_fn`, `lhs_ticker`, `window` as top-level condition-dict keys; `rhs: {"fixed": N}` for a numeric threshold, `rhs: {"fn": ..., "ticker": ..., "window": ...}` for a ticker comparison. This is consistent with the flat-if condition path and with all generator prompt teaching.
+
+The compiler's `_compile_condition` binary branch is updated to read the canonical-flat field names. `binary_compound` (which uses `fn`/`tickers`/`rhs:{const}` — a structurally distinct shape) and the flat-if path are untouched. The Composer output tree is byte-identical — only the input field names that `_compile_condition` reads changed.
+
+### Three production file changes (commits bd3cbdb + 548a888)
+
+**1. `advisors/plan_tree_compiler.py` — `_compile_condition` binary branch.**
+
+Reads canonical-flat: `cond["lhs_fn"]`, `cond["lhs_ticker"]`, `cond["window"]`. `rhs` shape: `{"fixed": N}` or `{"fn": ..., "ticker": ..., "window": ...}`. Removes the nested `cond["lhs"]["fn"]` / `rhs:{const}` read. The Composer output tree (built via `symphony_schema` constructors) is byte-identical to the pre-fix output.
+
+**2. `advisors/build_plan_generator.py` — `_EXAMPLE_IF_COMPOUND_PLAN` updated to a mixed compound.**
+
+The all-`binary_compound` example is replaced with a **mixed compound**: one `type:"binary"` leaf (flat `lhs_fn="relative-strength-index"`, `lhs_ticker="SPY"`, `window=14`, `rhs={"fixed": 70}`) and one `type:"binary_compound"` leaf (`fn="max-drawdown"`, `tickers=["QQQ"]`, `rhs={"const": 20}`). The mixed example explicitly teaches Opus both binary sub-shapes inside a single compound, eliminating the prior encoding ambiguity. Verified compiler-clean through the unified `_compile_condition`.
+
+**3. `advisors/symphony_schema.py` — `_collect_condition_tickers` extended to collect binary-leaf operand tickers.**
+
+`extract_tickers` descends into `binary` condition leaves to collect `lhs_ticker` and `rhs.ticker` (skipping `%`). Prior to this fix, `extract_tickers` collected `binary_compound`'s `tickers[]` list but not `binary`'s `lhs_fn`/`lhs_ticker` operands — a pre-existing blind spot. A strategy gating on RSI(PSR) references PSR in the binary condition; without this fix, `extract_tickers` returned an empty set for that operand, causing the generator's membership validator to fail to validate the referenced ticker. The test's reference walker was also repointed to match (commit 548a888).
+
+### This is the LAST grammar gap
+
+With this fix:
+- The flat `if` binary condition path: canonical-flat, worked example (`_EXAMPLE_IF_PLAN`), schema-constrained.
+- The `if_compound` binary leaf path: canonical-flat (same encoding), worked mixed example (`_EXAMPLE_IF_COMPOUND_PLAN`), schema-constrained.
+- The `if_compound` binary_compound leaf: own encoding (`fn`/`tickers`/`rhs:{const}`), worked mixed example, schema-constrained.
+- The compound union: compound/binary_compound/binary discriminators, prompt-taught, schema-constrained.
+
+The full Composer condition grammar is generation-reachable, compiler-clean, and has compiler-verified worked examples for every construct. No further grammar Revises are scoped.
+
+### Live acceptance gate (PM-owned)
+
+PM-run targeted compound-gate live probe: generate `cut_drawdown` plans (real Opus SDK, no mocks); confirm that compound-with-binary-leaf `if_compound` plans compile clean through `plan_tree_compiler.compile_plan` (tree not None + `validate_tree==[]`). The PM's prior probe found 2/4 drop as `KeyError "lhs"` — this fix eliminates that error class.
+
+### Files changed
+
+- `advisors/plan_tree_compiler.py` — `_compile_condition` binary branch: canonical-flat field read
+- `advisors/build_plan_generator.py` — `_EXAMPLE_IF_COMPOUND_PLAN`: mixed compound (flat-binary + binary_compound)
+- `advisors/symphony_schema.py` — `_collect_condition_tickers`: binary-leaf `lhs_ticker`/`rhs.ticker` collection
+- `tests/advisors/test_plan_tree_compiler.py` / `test_build_plan_generator.py` / `test_symphony_schema.py` — updated/new RED tests for canonical-flat binary read, mixed-compound example structure, extract_tickers binary operands
+- Total: 157 tests GREEN at 548a888 across affected files; 655 passed / 2 skipped / 0 failures across tests/advisors

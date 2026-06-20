@@ -952,6 +952,127 @@ def test_ac9_off_universe_rhs_ticker_in_ticker_comparison_if_handled(bpg):
         assert "ZZZZ" not in bpg.plan_tickers(plan)
 
 
+# --- AC-9 for the FLAT binary leaf inside a compound (binary-encoding-fix twin) ---
+# The canonical-flat binary leaf (lhs_fn/lhs_ticker/window + rhs:{fixed}|{fn,ticker,
+# window}) is the shape the compound binary leaf now uses. The generator's
+# condition-ticker walker (plan_tickers/_collect_condition_tickers) must read those
+# FLAT operand fields — otherwise an off-universe lhs_ticker inside a compound slips
+# membership-validation un-pruned (an AC-9 escape the compile-only probe can't see).
+
+
+def _compound_cond(operator, conditions):
+    return {"type": "compound", "operator": operator, "conditions": conditions}
+
+
+def _binary_leaf_flat(lhs_fn, lhs_ticker, window, comparator, fixed):
+    return {
+        "type": "binary",
+        "lhs_fn": lhs_fn,
+        "lhs_ticker": lhs_ticker,
+        "window": window,
+        "comparator": comparator,
+        "rhs": {"fixed": fixed},
+    }
+
+
+def _binary_leaf_flat_ticker_cmp(lhs_fn, lhs_ticker, rhs_fn, rhs_ticker, window, comparator):
+    return {
+        "type": "binary",
+        "lhs_fn": lhs_fn,
+        "lhs_ticker": lhs_ticker,
+        "window": window,
+        "comparator": comparator,
+        "rhs": {"fn": rhs_fn, "ticker": rhs_ticker, "window": window},
+    }
+
+
+def _if_compound(condition, then, els):
+    return {"kind": "if_compound", "condition": condition, "then": then, "else": els}
+
+
+def test_ac9_plan_tickers_collects_flat_binary_leaf_lhs_ticker(bpg):
+    """plan_tickers must reach the FLAT binary leaf's lhs_ticker inside a compound.
+    The walker previously read nested cond['lhs']['ticker'] (the legacy encoding) and
+    was BLIND to the canonical-flat lhs_ticker — so an off-universe lhs operand was
+    invisible to membership validation."""
+    root = _if_compound(
+        _compound_cond(
+            "all",
+            [
+                _binary_leaf_flat("relative-strength-index", "SPY", 14, "gt", 70),
+                _binary_leaf_flat("max-drawdown", "QQQ", 30, "lt", 20),
+            ],
+        ),
+        then=[_weight("equal", [_asset("UVXY")])],
+        els=[_weight("equal", [_asset("TLT")])],
+    )
+    plan = _plan("cut_drawdown", root, plan_id="cmp")
+    walked = bpg.plan_tickers(plan)
+    # The flat binary leaves' lhs_ticker values must be walked.
+    assert {"SPY", "QQQ"} <= walked, (
+        "plan_tickers must collect the flat binary leaf lhs_ticker inside a compound"
+    )
+
+
+def test_ac9_plan_tickers_collects_flat_binary_leaf_ticker_cmp_rhs(bpg):
+    """plan_tickers must reach BOTH operands (lhs_ticker + the ticker-comparison rhs
+    ticker) of a flat binary leaf inside a compound."""
+    root = _if_compound(
+        _compound_cond(
+            "any",
+            [
+                _binary_leaf_flat_ticker_cmp(
+                    "moving-average-price", "SPY", "moving-average-price", "QQQ", 200, "gt"
+                ),
+            ],
+        ),
+        then=[_weight("equal", [_asset("UVXY")])],
+        els=[_weight("equal", [_asset("TLT")])],
+    )
+    plan = _plan("cut_drawdown", root, plan_id="cmpcmp")
+    walked = bpg.plan_tickers(plan)
+    assert {"SPY", "QQQ"} <= walked, (
+        "plan_tickers must collect both lhs_ticker and the ticker-cmp rhs ticker of a "
+        "flat binary leaf inside a compound"
+    )
+
+
+def test_ac9_off_universe_lhs_in_compound_binary_leaf_never_admitted(bpg):
+    """AC-9 escape (the gap): an off-universe lhs_ticker in a flat binary leaf inside a
+    compound must NEVER survive in the admitted output — the condition signal is a
+    reference that cannot be safely repaired by pruning, so the plan is rejected. (If
+    plan_tickers is blind to the flat lhs_ticker, the off-universe operand slips through
+    membership validation and reaches the compiler/backtest.)"""
+    root = _if_compound(
+        _compound_cond(
+            "all",
+            [
+                # off-universe lhs operand inside the compound binary leaf
+                _binary_leaf_flat("relative-strength-index", "ZZZZ", 14, "gt", 70),
+            ],
+        ),
+        then=[_weight("equal", [_asset("SPY"), _asset("QQQ")])],
+        els=[_weight("equal", [_asset("IWM"), _asset("EFA")])],
+    )
+    good = _plan(
+        "cut_drawdown",
+        _weight("inverse_vol", [_asset("TLT"), _asset("AGG")], window_days=30),
+        plan_id="good",
+    )
+    plans_in = [_plan("cut_drawdown", root, plan_id="offlhs"), good]
+    universe = frozenset({"SPY", "QQQ", "IWM", "EFA", "TLT", "AGG"})  # excludes ZZZZ
+    client = _client_returning_plans(plans_in)
+    with _patch_client(bpg, client):
+        result = bpg.generate_build_plans(_objective(bpg, "cut_drawdown"), universe, n_plans=2)
+    plan_ids = {p["plan_id"] for p in result.plans}
+    assert "offlhs" not in plan_ids, (
+        "an off-universe lhs operand in a compound binary leaf must reject the plan"
+    )
+    assert "good" in plan_ids
+    for plan in result.plans:
+        assert "ZZZZ" not in bpg.plan_tickers(plan)
+
+
 def test_ac9_admitted_plan_does_not_alias_sdk_input_nodes(bpg):
     """AC-9 gap (Revise): the membership-validation step must NOT return admitted plans
     that ALIAS the SDK input node objects. A later compile/repair step (Component 3)

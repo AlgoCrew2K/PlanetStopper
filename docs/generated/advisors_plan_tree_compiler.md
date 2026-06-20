@@ -3,7 +3,7 @@
 > Plan-to-Tree Compiler — Component 3 of the real Strategy Builder: deterministically compiles a Component-2 build-plan DSL dict into a validated Composer `raw_value` tree using ONLY `symphony_schema` constructors, then runs a bounded validate-and-repair loop so only valid, tradeable trees reach the downstream pipeline.
 
 **Source:** `advisors/plan_tree_compiler.py`
-**Last updated:** 2026-06-20
+**Last updated:** 2026-06-20 (binary-encoding-fix: unified canonical-flat binary condition encoding in _compile_condition)
 
 ## Overview
 
@@ -116,11 +116,13 @@ The compiler is a pure dispatch table. Each DSL `kind`/`scheme` maps to exactly 
 
 ### CONDITION dispatch (for `if_compound` nodes)
 
-| DSL CONDITION type | `symphony_schema` constructor |
-|--------------------|-------------------------------|
-| `{type:"binary", lhs, comparator, rhs}` | `make_condition_operand` (lhs) + `make_constant_rhs` or `make_condition_operand` (rhs) + `make_binary_condition` |
-| `{type:"binary_compound", fn, tickers, comparator, rhs, window, operator}` | `make_constant_rhs` (rhs) + `make_binary_compound_condition` |
-| `{type:"compound", operator, conditions}` | recursive `_compile_condition` on each sub-condition + `make_compound_condition` |
+**Binary encoding contract:** All `binary` condition leaves use the **canonical-flat** field names (`lhs_fn`, `lhs_ticker`, `window`, `rhs:{fixed}`) — the same names used in the flat `if` condition path and in `_EXAMPLE_IF_PLAN`. This is a deliberate unification: one binary encoding for all contexts. `binary_compound` uses its own shape (`fn`, `tickers`, `rhs:{const}`) and is unchanged.
+
+| DSL CONDITION type | `symphony_schema` constructor | Binary field encoding |
+|--------------------|-------------------------------|----------------------|
+| `{type:"binary", lhs_fn, lhs_ticker, window, comparator, rhs}` | `make_condition_operand` (lhs) + `make_constant_rhs` or `make_condition_operand` (rhs) + `make_binary_condition` | **Canonical-flat:** reads `cond["lhs_fn"]`, `cond["lhs_ticker"]`, `cond["window"]` directly. `rhs` shape: `{"fixed": N}` (numeric threshold) or `{"fn": ..., "ticker": ..., "window": ...}` (ticker comparison). |
+| `{type:"binary_compound", fn, tickers, comparator, rhs, window, operator}` | `make_constant_rhs` (rhs) + `make_binary_compound_condition` | Unchanged from original. `rhs` uses `{"const": N}` (note: different key from binary's `{"fixed": N}`). |
+| `{type:"compound", operator, conditions}` | recursive `_compile_condition` on each sub-condition + `make_compound_condition` | Sub-conditions are dispatched recursively — each leaf uses its own type's encoding. |
 
 ## Repair Loop Detail
 
@@ -155,3 +157,4 @@ No imports from `database`, `autotuner`, `app`, `ai_advisor`, or any execution m
 - **market_cap pre-check is unconditional and early.** `_has_market_cap` scans the DSL NODE tree (not the compiled Composer tree) before any compilation work. This ensures Composer is never called for a market-cap plan, even if `backtest_fn` is provided.
 - **D-1 contract.** The outer `try/except` in `compile_plan` catches any unexpected internal error and returns `CompileResult(reason=type(exc).__name__)`. No key, path, or exception message body ever appears in a returned `reason` string.
 - **Advisory-only.** No `LIVE_EXECUTION` reference, no Composer write/deploy endpoint, no entry in `_SETTINGS_WRITE_ALLOWLIST`.
+- **Unified canonical-flat binary encoding (binary-encoding-fix, 2026-06-20).** The `binary` condition type in `_compile_condition` reads the same flat field names as the flat `if` path: `cond["lhs_fn"]`, `cond["lhs_ticker"]`, `cond["window"]`. Prior to this fix the binary-leaf branch of `_compile_condition` read a nested shape (`cond["lhs"]["fn"]`, `rhs:{const}`) — a different encoding than the flat-if path that Opus learned from `_EXAMPLE_IF_PLAN`. When Opus emitted flat field names inside a compound condition (blending the shape it learned from the worked flat-if example), the binary leaf raised `KeyError "lhs"` and the plan was dropped. The fix unifies onto ONE canonical binary encoding (flat) so generator and compiler share a single contract for all binary conditions, whether they appear as top-level flat-if conditions or as leaves inside compound conditions. The Composer output tree is byte-identical — only the input field names that `_compile_condition` reads changed. `binary_compound` and `flat-if` paths are untouched.
