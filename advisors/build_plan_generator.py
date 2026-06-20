@@ -378,8 +378,10 @@ def _prune_node(node: dict, membership: frozenset) -> dict | None:
             return None
         return {**node, "then": pruned_then, "else": pruned_else}
 
-    # Unknown kind — pass through unchanged (don't break unknown future nodes).
-    return node
+    # Unknown kind — reject the plan (e.g. "weighted", "node" from Opus drift).
+    # Passing through would silently admit a 0-ticker plan that plan_tickers()
+    # cannot walk and that the C3 compiler will reject anyway.
+    return None
 
 
 def _validate_and_prune(plan: dict, membership: frozenset) -> dict | None:
@@ -400,7 +402,14 @@ def _validate_and_prune(plan: dict, membership: frozenset) -> dict | None:
     if pruned_root is None:
         return None
     # Deep-copy the full plan so admitted nodes never alias SDK input objects.
-    return copy.deepcopy({**plan, "root": pruned_root})
+    validated = copy.deepcopy({**plan, "root": pruned_root})
+    # Reject zero-ticker plans: a plan with no extractable tickers cannot become
+    # a valid Composer tree (the C3 compiler would also reject it). This catches
+    # any drift-vocabulary plan that survived _prune_node's unknown-kind guard
+    # (e.g. a nested unknown kind inside a known outer kind).
+    if not plan_tickers(validated):
+        return None
+    return validated
 
 
 # ---------------------------------------------------------------------------
@@ -556,25 +565,232 @@ def plan_matches_objective(plan: dict, objective) -> bool:
 
 # The tool the SDK is asked to call. The generator reads the tool_use block's
 # .input['plans'] — a list of build-plan dicts conforming to the DSL.
+#
+# The input_schema is TIGHTENED (defense-in-depth against Opus vocabulary drift):
+# - NODE.kind is enum-constrained to the valid set (excludes "weighted"/"node").
+# - NODE.scheme for weight nodes is enum-constrained to {equal, specified, inverse_vol}.
+# - specified children carry {node, pct} — the 'pct' field is named explicitly.
+# This cannot fully prevent deep nesting drift, but forces the correct top-level tokens.
 _EMIT_BUILD_PLANS_TOOL = {
     "name": "emit_build_plans",
     "description": (
         "Emit a list of objective-shaped build-plan dicts conforming to the "
         "Planet Stopper build-plan DSL. Each plan is a JSON-serializable dict "
-        "with keys: plan_id, objective, name, rebalance, root (NODE)."
+        "with keys: plan_id, objective, name, rebalance, root (NODE). "
+        "NODE is a tagged union on 'kind': asset | weight | group | filter | if | if_compound. "
+        "weight nodes carry a 'scheme' field: equal | specified | inverse_vol. "
+        "specified children are {node: NODE, pct: number} entries."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
             "plans": {
                 "type": "array",
-                "description": "List of build-plan dicts.",
-                "items": {"type": "object"},
+                "description": "List of build-plan dicts in the Planet Stopper DSL.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "plan_id": {"type": "string"},
+                        "objective": {"type": "string"},
+                        "name": {"type": "string"},
+                        "rebalance": {
+                            "type": "string",
+                            "enum": ["daily", "weekly", "monthly", "quarterly", "yearly", "none"],
+                        },
+                        "root": {
+                            "type": "object",
+                            "description": (
+                                "A DSL NODE. kind must be one of: asset, weight, group, filter, "
+                                "if, if_compound. For weight nodes, scheme must be one of: "
+                                "equal, specified, inverse_vol."
+                            ),
+                            "properties": {
+                                "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                        "asset",
+                                        "weight",
+                                        "group",
+                                        "filter",
+                                        "if",
+                                        "if_compound",
+                                    ],
+                                },
+                                "scheme": {
+                                    "type": "string",
+                                    "enum": ["equal", "specified", "inverse_vol"],
+                                    "description": "Required when kind='weight'.",
+                                },
+                                "ticker": {
+                                    "type": "string",
+                                    "description": "Required when kind='asset'.",
+                                },
+                                "children": {
+                                    "type": "array",
+                                    "description": (
+                                        "Sub-nodes. For scheme='specified', each entry is "
+                                        "{node: NODE, pct: number}. For all other container "
+                                        "kinds, each entry is a NODE dict."
+                                    ),
+                                },
+                            },
+                            "required": ["kind"],
+                        },
+                    },
+                    "required": ["plan_id", "objective", "name", "rebalance", "root"],
+                },
             }
         },
         "required": ["plans"],
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# Prompt-builder seam — extracted so tests can inspect the sent instructions
+# without mocking the full SDK round-trip.
+# ---------------------------------------------------------------------------
+
+# Conforming DSL example embedded in every prompt (derived from the byte-exact
+# shapes accepted by the C3 compiler — see tests/advisors/test_plan_tree_compiler.py
+# DSL builders). This plan has plan_tickers>0 and matches the 'diversify' objective
+# (two container sleeves under a group). The embedded example teaches Opus the
+# exact field vocabulary without presenting drift tokens as valid.
+_EXAMPLE_PLAN: dict = {
+    "plan_id": "example-1",
+    "objective": "diversify",
+    "name": "Example Diversified Portfolio",
+    "rebalance": "daily",
+    "root": {
+        "kind": "group",
+        "name": "portfolio",
+        "children": [
+            {
+                "kind": "weight",
+                "scheme": "equal",
+                "children": [
+                    {"kind": "asset", "ticker": "SPY"},
+                    {"kind": "asset", "ticker": "QQQ"},
+                ],
+            },
+            {
+                "kind": "weight",
+                "scheme": "inverse_vol",
+                "children": [
+                    {"kind": "asset", "ticker": "TLT"},
+                    {"kind": "asset", "ticker": "GLD"},
+                ],
+            },
+        ],
+    },
+}
+
+# Per-objective structural signatures described in the prompt. Each entry is a
+# brief natural-language description of the required structure plus a hint at the
+# DSL construct that satisfies the AC-8 admission predicate.
+_OBJECTIVE_SIGNATURES: dict[str, str] = {
+    "diversify": (
+        "The plan's root must have AT LEAST 2 distinct allocation-container sleeves "
+        "(kind='group', kind='weight', or kind='filter' children). Use a group node "
+        "with two or more weight/filter children — for example, one equal-weight equity "
+        "sleeve and one inverse_vol bond sleeve. A lone weight node over N assets is "
+        "only 1 sleeve and does NOT satisfy the diversify signature."
+    ),
+    "cut_drawdown": (
+        "The plan must contain a regime gate (kind='if' or kind='if_compound') OR an "
+        "inverse-volatility weight (kind='weight', scheme='inverse_vol'). A typical "
+        "cut_drawdown plan uses a regime-triggered if node to switch between a risk-on "
+        "allocation and a defensive allocation, or an inverse_vol sleeve that "
+        "dynamically underweights high-volatility assets."
+    ),
+    "lift_risk_adjusted": (
+        "The plan must contain a momentum/quality FILTER node: kind='filter' with "
+        "sort_by_fn='cumulative-return' or sort_by_fn='moving-average-return'. The "
+        "filter selects the top-N performers from a broader asset pool, concentrating "
+        "into momentum leaders. A bare equal-weight basket does NOT satisfy this "
+        "signature — the filter construct is required."
+    ),
+    "volatility_mitigation": (
+        "The plan must contain an inverse-volatility weight (kind='weight', "
+        "scheme='inverse_vol') OR a low/min-vol filter (kind='filter' with "
+        "sort_by_fn='standard-deviation-return' or sort_by_fn='max-drawdown'). Both "
+        "constructs dynamically reduce exposure to high-volatility assets."
+    ),
+}
+
+
+def _build_generation_prompt(
+    objective,
+    n_plans: int = N_PLANS_PER_OBJECTIVE,
+    membership=None,
+) -> str:
+    """Build the SDK prompt for the given objective.
+
+    Embeds the FULL build-plan DSL grammar (kind/scheme vocabulary, the {node,pct}
+    specified-children shape), a CONCRETE conforming example plan (valid DSL,
+    plan_tickers>0, matches the diversify objective), and the per-objective
+    structural signature so Opus emits the right vocabulary.
+
+    Parameters
+    ----------
+    objective : Objective
+        The structural objective steering the SDK prompt.
+    n_plans : int
+        Number of distinct plans requested.
+    membership : frozenset | set | None
+        The valid ticker universe (included in prompt for reference).
+
+    Returns
+    -------
+    str
+        The full prompt string sent to the SDK.
+    """
+    obj_name = objective.value if isinstance(objective, Objective) else str(objective)
+    signature = _OBJECTIVE_SIGNATURES.get(obj_name, "")
+    example_json = json.dumps(_EXAMPLE_PLAN, indent=2)
+    universe_hint = ""
+    if membership:
+        sample = sorted(membership)[:20]
+        universe_hint = (
+            f"\n\nAVAILABLE TICKERS (use ONLY these — {len(membership)} total, "
+            f"sample): {', '.join(sample)}" + (" ..." if len(membership) > 20 else "")
+        )
+
+    return (
+        f"You are a quantitative strategy designer for the Planet Stopper risk engine.\n\n"
+        f"TASK: Generate exactly {n_plans} DISTINCT build-plans for objective='{obj_name}'.\n\n"
+        f"CRITICAL — USE THE EXACT DSL GRAMMAR BELOW. Do NOT invent new field names.\n\n"
+        f"## Build-Plan DSL Grammar\n\n"
+        f"Every plan is a JSON dict with keys: plan_id, objective, name, rebalance, root.\n"
+        f"'root' is a NODE. Every NODE is a dict with a 'kind' field.\n\n"
+        f"### Valid NODE kinds (ONLY these — never use 'weighted' or any other value):\n"
+        f"- kind='asset'        — leaf holding one ticker.  Required field: ticker (string).\n"
+        f"- kind='weight'       — allocation container.     Required field: scheme.\n"
+        f"- kind='group'        — named grouping container. Required field: name (string).\n"
+        f"- kind='filter'       — top-N selector.  "
+        f"Required fields: select_fn, select_n, sort_by_fn, window, children.\n"
+        f"- kind='if'           — regime gate.  "
+        f"Required fields: condition, then (list), else (list).\n"
+        f"- kind='if_compound'  — compound regime gate.  "
+        f"Required fields: condition, then (list), else (list).\n\n"
+        f"### Weight scheme values (the 'scheme' field on kind='weight' nodes — ONLY these):\n"
+        f"- scheme='equal'       — equal-weight all children.\n"
+        f"- scheme='specified'   — each child entry is "
+        f"{{\"node\": NODE, \"pct\": number}}  (note: 'pct', NOT 'weight')\n"
+        f"- scheme='inverse_vol' — inverse-volatility weight across children.\n\n"
+        f"### Specified-weight children shape (IMPORTANT — NOT a bare weight float):\n"
+        f"  WRONG shape (do not use): a child entry carrying a 'weight' float directly\n"
+        f'  CORRECT shape: each child entry is {{"node": {{...NODE...}}, "pct": 60}}\n'
+        f"  The fields are 'node' (the sub-NODE dict) and 'pct' (numeric percentage).\n\n"
+        f"## CONCRETE CONFORMING EXAMPLE (valid DSL — copy this structure, vary content):\n\n"
+        f"```json\n{example_json}\n```\n\n"
+        f"## Structural Requirement for objective='{obj_name}':\n\n"
+        f"{signature}\n"
+        f"{universe_hint}\n\n"
+        f"Emit exactly {n_plans} distinct plans using the emit_build_plans tool. "
+        f"Every plan must satisfy the '{obj_name}' structural requirement above. "
+        f"Use diverse asset combinations across plans."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -614,13 +830,7 @@ def generate_build_plans(
         # Build the SDK client (patched in tests via the _build_client seam).
         client = _build_client()
 
-        prompt = (
-            f"You are a quantitative strategy designer for the Planet Stopper risk engine. "
-            f"Generate exactly {n_plans} distinct build-plans for objective='{obj_name}'. "
-            f"Each plan must use the emit_build_plans tool. "
-            f"Plans must conform to the approved build-plan DSL (kind-tagged NODE union). "
-            f"Use the provided tickers from the tradeable universe only."
-        )
+        prompt = _build_generation_prompt(objective, n_plans, membership)
 
         response = client.messages.create(
             model="claude-opus-4-8",
