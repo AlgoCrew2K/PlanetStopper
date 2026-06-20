@@ -474,7 +474,14 @@ def test_ac25_spy_baseline_uses_same_fold_dates_not_positional(gate_engine, monk
 def test_ac25_spy_unavailable_withholds_conservatively(gate_engine):
     """SPY series unavailable for the fold → the alpha gate degrades CONSERVATIVELY
     (baseline treated as unmet → WITHHOLD / no adopt), never a silent fall-back to
-    the old beats-zero behaviour."""
+    the old beats-zero behaviour.
+
+    NOTE (kept as a basic smoke check): this test is CONFOUNDED on its own — its
+    identical-flat candidates fail FDR/panel anyway, so it passes whether the
+    SPY-unavailable sentinel is conservative (+inf) OR permissive (-inf). The
+    NON-CONFOUNDED proof lives in the two tests below
+    (test_ac25_spy_unavailable_*_non_confounded), which fail on the permissive sentinel
+    and pass only on the conservative one."""
     cand = _candidate_with_fold_alpha(
         gate_engine, "nospy", beats=True, spy_dated={d: 0.01 for d in _DATES}
     )
@@ -487,6 +494,94 @@ def test_ac25_spy_unavailable_withholds_conservatively(gate_engine):
     for cid in ("nospy", "nospy2"):
         assert _verdict_for(batch, cid) != acceptance_gate.DECISION_ADOPT_CANDIDATE, (
             "SPY-unavailable must withhold (no adopt), not silently beat-zero"
+        )
+
+
+def test_ac25_spy_unavailable_threads_conservative_baseline_not_permissive(
+    gate_engine, monkeypatch
+):
+    """EDGE-14 NON-CONFOUNDED (mechanism, gate-boundary): when SPY is unavailable, the
+    default_oos_alpha threaded into evaluate_acceptance_gate must be the CONSERVATIVE
+    sentinel that makes the gate's ``oos_alpha <= default_oos_alpha`` withhold-clause
+    ALWAYS TRUE — i.e. it must be >= every finite candidate oos_alpha, so NO finite
+    candidate can clear the SPY baseline (acceptance_gate.py:257 KEEP_INCUMBENT).
+
+    A PERMISSIVE sentinel (a very-negative value like -inf) makes that clause ALWAYS
+    FALSE, collapsing the withhold to the fallback (incumbent, default 0.0) = the
+    beats-zero behaviour edge-14 explicitly forbids. This assertion is immune to the
+    FDR/panel confound because it pins the BASELINE VALUE handed to the gate, not a
+    survivor count. It FAILS on the permissive sentinel and PASSES only on the
+    conservative one. Source: feature-plans/strategy-builder-real.md §Edge Cases #14."""
+    seen = _capture_gate_baselines(gate_engine, monkeypatch)
+    cand = _make_candidate(gate_engine, "nospy_m", {d: 0.02 for d in _DATES})
+    sibling = _make_candidate(gate_engine, "nospy_m2", {d: 0.01 for d in _DATES})
+    # SPY unavailable: the seam returns an empty series.
+    gate_engine.evaluate_candidate_batch([cand, sibling], spy_returns_fn=lambda *a, **k: {})
+    defaults = [d for (_o, d) in seen if d is not None]
+    assert defaults, "gate must have been called with a default_oos_alpha"
+    # The candidates' fold oos_alphas are finite; the conservative sentinel must be
+    # >= every one of them so the withhold-clause fires. We pin the RELATIONSHIP
+    # (baseline dominates every finite candidate alpha), not a literal sentinel value.
+    cand_oos = [o for (o, _d) in seen if o is not None]
+    assert cand_oos, "gate must have been called with candidate oos_alpha values"
+    for d in defaults:
+        assert all(o <= d for o in cand_oos), (
+            "EDGE-14 BUG: SPY-unavailable baseline must be CONSERVATIVE (>= every finite "
+            "candidate oos_alpha so oos_alpha<=default always withholds). A permissive "
+            f"(very-negative) sentinel lets candidates clear on beats-zero. baseline={d}, "
+            f"candidate oos_alphas={cand_oos}"
+        )
+
+
+def test_ac25_spy_unavailable_blocks_an_otherwise_adopting_candidate_non_confounded(
+    gate_engine, monkeypatch
+):
+    """EDGE-14 NON-CONFOUNDED (behavioural): a candidate that WOULD be ADOPTED absent
+    the SPY-unavailable degradation must be WITHHELD when SPY is unavailable. We remove
+    the FDR/panel confound by spying evaluate_acceptance_gate so the candidate clears
+    BHY + panel for real on every axis EXCEPT the SPY-baseline alpha branch — which is
+    exactly the branch under test. Concretely the spy passes through to the REAL gate
+    but guarantees a winning FDR p_adj and a dominant panel, leaving the
+    oos_alpha<=default_oos_alpha SPY clause as the only thing that can withhold.
+
+    On the PERMISSIVE sentinel (-inf) the SPY clause never fires → the candidate ADOPTS
+    on beats-zero (the bug). On the CONSERVATIVE sentinel (+inf) the SPY clause always
+    fires → KEEP_INCUMBENT. So this test FAILS on the bug and PASSES on the fix."""
+    import acceptance_gate as _ag
+
+    real_gate = _ag.evaluate_acceptance_gate
+
+    def _adopt_friendly_gate(*args, **kwargs):
+        # Force the non-SPY axes to favour adoption: a winning (tiny) FDR p_adj and a
+        # dominant candidate panel. The SPY-baseline alpha comparison is left to the
+        # REAL gate logic (oos_alpha vs default_oos_alpha), so SPY-unavailable is the
+        # ONLY remaining thing that can block adoption.
+        kwargs["winner_trial_is_none"] = False
+        kwargs["winner_p_adj"] = 1e-6
+        kwargs["nn1_compliant"] = True
+        kwargs["purge_integrity_ok"] = True
+        kwargs["candidate_stability_score"] = 1.0
+        kwargs["candidate_prior_anchor_score"] = 1.0
+        kwargs["incumbent_stability_score"] = 0.0
+        kwargs["incumbent_prior_anchor_score"] = 0.0
+        kwargs["pbo"] = None  # no PBO veto in this isolation
+        return real_gate(*args, **kwargs)
+
+    monkeypatch.setattr(gate_engine, "evaluate_acceptance_gate", _adopt_friendly_gate, raising=False)
+    monkeypatch.setattr(_ag, "evaluate_acceptance_gate", _adopt_friendly_gate)
+
+    # Candidates with clearly-positive fold oos_alpha (would beat the 0.0 fallback).
+    cand = _make_candidate(gate_engine, "would_adopt", {d: 0.03 for d in _DATES})
+    sibling = _make_candidate(gate_engine, "would_adopt2", {d: 0.025 for d in _DATES})
+    # SPY unavailable.
+    batch = gate_engine.evaluate_candidate_batch(
+        [cand, sibling], spy_returns_fn=lambda *a, **k: {}
+    )
+    for cid in ("would_adopt", "would_adopt2"):
+        assert _verdict_for(batch, cid) != acceptance_gate.DECISION_ADOPT_CANDIDATE, (
+            "EDGE-14 BUG: a candidate that clears BHY+panel and beats the 0.0 fallback "
+            "was ADOPTED while SPY was unavailable — the permissive (-inf) sentinel let "
+            "it clear on beats-zero. SPY-unavailable must force KEEP_INCUMBENT."
         )
 
 
