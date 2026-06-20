@@ -1,30 +1,99 @@
-"""Stub — implementation pending (TDD RED phase). Component 2 + 2b.
+"""Opus Build-Plan Generator — Component 2 + 2b of the real Strategy Builder.
 
-advisors/build_plan_generator.py — the Opus Build-Plan Generator. This is an inert
-RED-phase stub: it exposes the public surface the tests resolve (the four-value
-Objective enum, named constants, the _build_client seam, and the generate/admit/pool
-functions) but contains NO real logic. The implementer (sb2-impl) fills these in to
-turn the RED tests GREEN per .claude/tdd-handoff.md and the canonical build-plan DSL.
+Calls the Anthropic SDK (structured tool-use) to generate objective-shaped
+build-plan dicts in the canonical DSL, validates ticker membership, deduplicates
+structurally-identical plans, and admits community (Atlas) candidates ranked by
+objective-matched OOS metrics.
+
+Public surface
+--------------
+Objective : enum
+    Four-value objective enum (diversify / cut_drawdown / lift_risk_adjusted /
+    volatility_mitigation). Extends the three-value enum in strategy_builder_engine.
+
+N_PLANS_PER_OBJECTIVE : int = 12
+    Named tunable constant for the requested plan count per SDK call.
+
+PROVENANCE_BUILT_NEW : str = "built-new"
+PROVENANCE_ATLAS_SUGGESTED : str = "atlas-suggested"
+    Explicit provenance tags carried on every plan / candidate.
+
+GeneratorResult : dataclass
+    Container returned by generate_build_plans. Fields: .plans (list[dict]),
+    .reason (str | None).
+
+_build_client() -> anthropic.Anthropic
+    SDK factory seam — patched by tests.
+
+plan_tickers(plan) -> set[str]
+    Deterministic walk over the DSL returning every ticker referenced in a plan.
+    Excludes the '%' placeholder. Never raises.
+
+generate_build_plans(objective, membership_set, *, n_plans) -> GeneratorResult
+    AC-7/8/9/10/11. Calls _build_client() -> tool-use -> parse build-plans.
+    Prunes off-universe tickers; rejects degenerate plans; deduplicates.
+    D-1 never-raises — on any failure returns empty .plans + .reason.
+
+admit_community_candidates(community_result, objective, *, max_candidates) -> list
+    AC-12. Ranks community candidates by the objective OOS stat; missing-stat
+    docs kept-last; bounded; each tagged provenance='atlas-suggested'. Never raises.
+
+load_atlas_candidates(objective, *, max_candidates) -> list
+    Wraps load_community_strategies(force_refresh=False) then admit_community_candidates.
+
+pool_candidates(built_new, atlas_suggested) -> list
+    Pool the two provenance sources, preserving each item's tag.
+
+Design constraints
+------------------
+- D-1 contract: reason strings carry ONLY type(exc).__name__ — no key/path/message leak.
+- Advisory-only: no LIVE_EXECUTION, no Composer write call, no _SETTINGS_WRITE_ALLOWLIST.
+- SDK lazy-import: anthropic is imported only inside _build_client (CC-2).
+- Off-execution-path: not imported from alpha_bot_execution.py.
+- bill-protection: Atlas loaded with force_refresh=False (weekly cache).
 """
 
 from __future__ import annotations
 
+import copy
 import enum
+import hashlib
+import json
+import logging
+import os
+from dataclasses import dataclass, field
 
-# Reuse the existing community cap so the bound is single-sourced (the engine already
-# defines MAX_COMMUNITY_CANDIDATES_PER_RUN); re-export here for the AC-12 bound tests.
-from advisors.strategy_builder_engine import MAX_COMMUNITY_CANDIDATES_PER_RUN  # noqa: F401
+# Re-export so the AC-12 bound tests can resolve it from this module.
+from advisors.strategy_builder_engine import (  # noqa: F401
+    MAX_COMMUNITY_CANDIDATES_PER_RUN,
+    CandidateInfo,
+)
 
-# AC-10 named tunable constant.
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Named constants (no magic numbers)
+# ---------------------------------------------------------------------------
+
+# Number of build-plans requested from the SDK per objective call (AC-10 named constant).
 N_PLANS_PER_OBJECTIVE: int = 12
 
-# AC-13 explicit provenance tags.
+# Explicit provenance tags (AC-13).
 PROVENANCE_BUILT_NEW = "built-new"
 PROVENANCE_ATLAS_SUGGESTED = "atlas-suggested"
 
+# The '%' placeholder used inside binary-compound tickers[] is excluded from
+# plan_tickers() — it is a syntactic marker, not a real ticker (AC-9 invariant).
+_PCT_PLACEHOLDER = "%"
+
+
+# ---------------------------------------------------------------------------
+# Public types
+# ---------------------------------------------------------------------------
+
 
 class Objective(enum.Enum):
-    """Four-value objective enum (AC-8). Stub — values pinned, logic pending."""
+    """Four-value objective enum steering structure and admission ranking (AC-8)."""
 
     diversify = "diversify"
     cut_drawdown = "cut_drawdown"
@@ -32,31 +101,647 @@ class Objective(enum.Enum):
     volatility_mitigation = "volatility_mitigation"
 
 
-def _build_client():  # pragma: no cover - stub
-    """SDK factory seam (mirrors ai_advisor._build_client). Stub — patched in tests."""
-    raise NotImplementedError("build_plan_generator._build_client")
+@dataclass
+class GeneratorResult:
+    """Container returned by generate_build_plans. Never None.
+
+    Fields
+    ------
+    plans : list[dict]
+        Admitted build-plan dicts (may be empty on failure or full degenerate-prune).
+    reason : str | None
+        On failure: type(exc).__name__ only (D-1 contract, no key/path/message leak).
+        None on success.
+    """
+
+    plans: list[dict] = field(default_factory=list)
+    reason: str | None = None
 
 
-def plan_tickers(plan):  # pragma: no cover - stub
-    """Walk a build-plan and return every referenced ticker. Stub."""
-    raise NotImplementedError("plan_tickers")
+# ---------------------------------------------------------------------------
+# SDK client factory seam
+# ---------------------------------------------------------------------------
 
 
-def generate_build_plans(objective, membership_set, *, n_plans=N_PLANS_PER_OBJECTIVE):  # noqa: ARG001
-    """Generate N objective-shaped build-plans. Stub — returns a trivially-wrong result."""
-    raise NotImplementedError("generate_build_plans")
+def _build_client():
+    """Construct the Anthropic SDK client.
+
+    Factory seam: tests patch ``advisors.build_plan_generator._build_client``.
+    Mirrors ai_advisor._build_client (ai_advisor.py:1590).
+
+    Raises
+    ------
+    RuntimeError
+        If ANTHROPIC_API_KEY is absent or the anthropic SDK is not installed.
+    """
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is not set — the build-plan generator is "
+            "unavailable until an API key is configured."
+        )
+    try:
+        import anthropic  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover - SDK is a declared dep
+        raise RuntimeError(f"the anthropic SDK is not installed: {exc}") from exc
+    return anthropic.Anthropic(api_key=api_key)
 
 
-def admit_community_candidates(community_result, objective, *, max_candidates=None):  # noqa: ARG001
-    """Objective-matched Atlas admission. Stub."""
-    raise NotImplementedError("admit_community_candidates")
+# ---------------------------------------------------------------------------
+# plan_tickers — deterministic walk over the DSL
+# ---------------------------------------------------------------------------
 
 
-def load_atlas_candidates(objective, *, max_candidates=None):  # noqa: ARG001
-    """Load + admit community strategies via the weekly cache. Stub."""
-    raise NotImplementedError("load_atlas_candidates")
+def _collect_condition_tickers(cond: dict, out: set) -> None:
+    """Collect every real ticker referenced in a CONDITION block (recursive)."""
+    if not isinstance(cond, dict):
+        return
+    ctype = cond.get("type")
+    if ctype == "binary":
+        lhs = cond.get("lhs", {})
+        if isinstance(lhs, dict):
+            t = lhs.get("ticker")
+            if t and t != _PCT_PLACEHOLDER:
+                out.add(t)
+        rhs = cond.get("rhs", {})
+        if isinstance(rhs, dict):
+            t = rhs.get("ticker")
+            if t and t != _PCT_PLACEHOLDER:
+                out.add(t)
+    elif ctype == "binary_compound":
+        for t in cond.get("tickers", []):
+            if t and t != _PCT_PLACEHOLDER:
+                out.add(t)
+    elif ctype == "compound":
+        for sub in cond.get("conditions", []):
+            _collect_condition_tickers(sub, out)
 
 
-def pool_candidates(built_new, atlas_suggested):  # noqa: ARG001
-    """Pool built-new + atlas-suggested into one provenance-preserving list. Stub."""
-    raise NotImplementedError("pool_candidates")
+def plan_tickers(plan: dict) -> set[str]:
+    """Return every ticker referenced anywhere in a build-plan (DSL walk).
+
+    Walks the full DSL NODE tree from plan['root'] and collects:
+    - asset: node['ticker']
+    - weight/equal/inverse_vol/market_cap: recurse children
+    - weight/specified: recurse entry['node'] for each entry in children
+    - group: recurse children
+    - filter: recurse children (asset leaves)
+    - if: condition lhs_ticker + rhs ticker (if present); recurse then/else
+    - if_compound: recurse condition block (binary/binary_compound/compound);
+      recurse then/else
+
+    Excludes the '%' placeholder (binary-compound syntactic marker).
+    Never raises — returns empty set on any malformed input.
+    """
+    out: set[str] = set()
+    try:
+        root = plan.get("root")
+        if not isinstance(root, dict):
+            return out
+        # Iterative DFS: stack entries are NODE dicts.
+        stack: list[dict] = [root]
+        while stack:
+            node = stack.pop()
+            if not isinstance(node, dict):
+                continue
+            kind = node.get("kind")
+
+            if kind == "asset":
+                t = node.get("ticker")
+                if t and t != _PCT_PLACEHOLDER:
+                    out.add(t)
+
+            elif kind == "weight":
+                scheme = node.get("scheme")
+                if scheme == "specified":
+                    for entry in node.get("children", []):
+                        if isinstance(entry, dict) and "node" in entry:
+                            stack.append(entry["node"])
+                else:
+                    # equal / inverse_vol / market_cap
+                    for child in node.get("children", []):
+                        stack.append(child)
+
+            elif kind in ("group", "filter"):
+                for child in node.get("children", []):
+                    stack.append(child)
+
+            elif kind == "if":
+                # Condition: lhs_ticker + rhs ticker (if present, not fixed).
+                cond = node.get("condition", {})
+                if isinstance(cond, dict):
+                    lhs_t = cond.get("lhs_ticker")
+                    if lhs_t and lhs_t != _PCT_PLACEHOLDER:
+                        out.add(lhs_t)
+                    rhs = cond.get("rhs", {})
+                    if isinstance(rhs, dict):
+                        rhs_t = rhs.get("ticker")
+                        if rhs_t and rhs_t != _PCT_PLACEHOLDER:
+                            out.add(rhs_t)
+                for child in node.get("then", []) or []:
+                    stack.append(child)
+                for child in node.get("else", []) or []:
+                    stack.append(child)
+
+            elif kind == "if_compound":
+                cond = node.get("condition", {})
+                _collect_condition_tickers(cond, out)
+                for child in node.get("then", []) or []:
+                    stack.append(child)
+                for child in node.get("else", []) or []:
+                    stack.append(child)
+    except Exception:  # pragma: no cover - defensive; never raises contract
+        logger.debug("plan_tickers: unexpected error", exc_info=True)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# AC-9: membership-validation prune / reject
+# ---------------------------------------------------------------------------
+
+
+def _prune_node(node: dict, membership: frozenset) -> dict | None:
+    """Recursively prune off-universe asset children from a NODE.
+
+    Returns the pruned node dict, or None if pruning would leave the node
+    empty/degenerate (caller should reject the containing plan).
+
+    Condition tickers (lhs_ticker / rhs ticker in 'if' nodes; tickers[] in
+    binary_compound) are SIGNAL references that cannot be safely repaired by
+    pruning — if any such ticker is off-universe the function returns None
+    to signal a degenerate prune (caller rejects the plan).
+    """
+    if not isinstance(node, dict):
+        return None
+    kind = node.get("kind")
+
+    if kind == "asset":
+        t = node.get("ticker", "")
+        return node if t in membership else None
+
+    elif kind == "weight":
+        scheme = node.get("scheme")
+        if scheme == "specified":
+            pruned_children = []
+            for entry in node.get("children", []):
+                if not isinstance(entry, dict) or "node" not in entry:
+                    continue
+                pruned_child = _prune_node(entry["node"], membership)
+                if pruned_child is not None:
+                    pruned_children.append({"node": pruned_child, "pct": entry.get("pct")})
+            if not pruned_children:
+                return None
+            return {**node, "children": pruned_children}
+        else:
+            # equal / inverse_vol / market_cap
+            pruned_children = []
+            for child in node.get("children", []):
+                pruned = _prune_node(child, membership)
+                if pruned is not None:
+                    pruned_children.append(pruned)
+            if not pruned_children:
+                return None
+            return {**node, "children": pruned_children}
+
+    elif kind == "group" or kind == "filter":
+        pruned_children = []
+        for child in node.get("children", []):
+            pruned = _prune_node(child, membership)
+            if pruned is not None:
+                pruned_children.append(pruned)
+        if not pruned_children:
+            return None
+        return {**node, "children": pruned_children}
+
+    elif kind == "if":
+        # Condition signal tickers — reject the plan if any are off-universe.
+        cond = node.get("condition", {})
+        if isinstance(cond, dict):
+            lhs_t = cond.get("lhs_ticker")
+            if lhs_t and lhs_t not in membership:
+                return None  # signal ticker off-universe -> reject plan
+            rhs = cond.get("rhs", {})
+            if isinstance(rhs, dict) and "ticker" in rhs:
+                rhs_t = rhs["ticker"]
+                if rhs_t and rhs_t not in membership:
+                    return None  # rhs ticker off-universe -> reject plan
+
+        pruned_then = []
+        for child in node.get("then", []) or []:
+            pruned = _prune_node(child, membership)
+            if pruned is not None:
+                pruned_then.append(pruned)
+        pruned_else = []
+        for child in node.get("else", []) or []:
+            pruned = _prune_node(child, membership)
+            if pruned is not None:
+                pruned_else.append(pruned)
+
+        # Both branches must remain non-empty for the if-node to be valid.
+        if not pruned_then or not pruned_else:
+            return None
+        return {**node, "then": pruned_then, "else": pruned_else}
+
+    elif kind == "if_compound":
+        # For compound conditions, collect all tickers referenced and reject if any
+        # are off-universe (condition logic cannot be safely repaired by pruning).
+        cond = node.get("condition", {})
+        cond_tickers: set[str] = set()
+        _collect_condition_tickers(cond, cond_tickers)
+        if cond_tickers - membership:
+            return None  # off-universe condition ticker -> reject plan
+
+        pruned_then = []
+        for child in node.get("then", []) or []:
+            pruned = _prune_node(child, membership)
+            if pruned is not None:
+                pruned_then.append(pruned)
+        pruned_else = []
+        for child in node.get("else", []) or []:
+            pruned = _prune_node(child, membership)
+            if pruned is not None:
+                pruned_else.append(pruned)
+
+        if not pruned_then or not pruned_else:
+            return None
+        return {**node, "then": pruned_then, "else": pruned_else}
+
+    # Unknown kind — pass through unchanged (don't break unknown future nodes).
+    return node
+
+
+def _validate_and_prune(plan: dict, membership: frozenset) -> dict | None:
+    """Return a membership-validated (pruned) deep-copy of plan, or None if degenerate.
+
+    Operates on the 'root' NODE only. Non-root fields (plan_id, name, objective,
+    rebalance, provenance) are preserved unchanged.
+
+    The returned plan is a deep-copy — it does not alias any node objects from the
+    SDK input. Component 3 mutates admitted trees during compilation; aliasing the
+    SDK response would corrupt the caller's input (the symphony_schema constructors
+    deep-copy for exactly this reason).
+    """
+    root = plan.get("root")
+    if not isinstance(root, dict):
+        return None
+    pruned_root = _prune_node(root, membership)
+    if pruned_root is None:
+        return None
+    # Deep-copy the full plan so admitted nodes never alias SDK input objects.
+    return copy.deepcopy({**plan, "root": pruned_root})
+
+
+# ---------------------------------------------------------------------------
+# Structural deduplication
+# ---------------------------------------------------------------------------
+
+
+def _root_fingerprint(plan: dict) -> str:
+    """Compute a structural fingerprint over the plan's 'root' node only.
+
+    Deterministic: sorts keys, strips plan_id/name/provenance (volatile fields
+    that differ between clones but do not affect structure). Two plans with
+    identical root structures produce identical fingerprints regardless of their
+    plan_id or name.
+    """
+    root = plan.get("root", {})
+    canonical = json.dumps(root, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Anthropic tool definition for structured build-plan emission
+# ---------------------------------------------------------------------------
+
+# The tool the SDK is asked to call. The generator reads the tool_use block's
+# .input['plans'] — a list of build-plan dicts conforming to the DSL.
+_EMIT_BUILD_PLANS_TOOL = {
+    "name": "emit_build_plans",
+    "description": (
+        "Emit a list of objective-shaped build-plan dicts conforming to the "
+        "Planet Stopper build-plan DSL. Each plan is a JSON-serializable dict "
+        "with keys: plan_id, objective, name, rebalance, root (NODE)."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "plans": {
+                "type": "array",
+                "description": "List of build-plan dicts.",
+                "items": {"type": "object"},
+            }
+        },
+        "required": ["plans"],
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# generate_build_plans — AC-7/8/9/10/11
+# ---------------------------------------------------------------------------
+
+
+def generate_build_plans(
+    objective,
+    membership_set,
+    *,
+    n_plans: int = N_PLANS_PER_OBJECTIVE,
+) -> GeneratorResult:
+    """Generate N objective-shaped build-plans via the Anthropic SDK (tool-use).
+
+    Parameters
+    ----------
+    objective : Objective
+        The structural objective steering the SDK prompt.
+    membership_set : frozenset | set
+        The valid ticker universe (AC-9 membership validation).
+    n_plans : int
+        Maximum number of structurally-distinct admitted plans to return.
+
+    Returns
+    -------
+    GeneratorResult
+        .plans — list of validated, tagged, deduped build-plan dicts.
+        .reason — type(exc).__name__ on failure; None on success (D-1 contract).
+
+    Never raises (AC-11). On any failure: empty .plans + .reason.
+    """
+    try:
+        membership = frozenset(membership_set) if membership_set else frozenset()
+        obj_name = objective.value if isinstance(objective, Objective) else str(objective)
+
+        # Build the SDK client (patched in tests via the _build_client seam).
+        client = _build_client()
+
+        prompt = (
+            f"You are a quantitative strategy designer for the Planet Stopper risk engine. "
+            f"Generate exactly {n_plans} distinct build-plans for objective='{obj_name}'. "
+            f"Each plan must use the emit_build_plans tool. "
+            f"Plans must conform to the approved build-plan DSL (kind-tagged NODE union). "
+            f"Use the provided tickers from the tradeable universe only."
+        )
+
+        response = client.messages.create(
+            model="claude-opus-4-8",
+            max_tokens=4096,
+            tools=[_EMIT_BUILD_PLANS_TOOL],
+            tool_choice={"type": "tool", "name": "emit_build_plans"},
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        # Find the tool_use block in the response.
+        tool_block = None
+        for block in response.content or []:
+            if getattr(block, "type", None) == "tool_use":
+                tool_block = block
+                break
+
+        if tool_block is None:
+            return GeneratorResult(plans=[], reason="NoToolUseBlock")
+
+        raw_plans = tool_block.input.get("plans") if isinstance(tool_block.input, dict) else None
+        if not isinstance(raw_plans, list):
+            return GeneratorResult(plans=[], reason="InvalidToolUsePayload")
+
+        # Validate, prune, tag, dedup, and accumulate up to n_plans.
+        seen_fingerprints: set[str] = set()
+        admitted: list[dict] = []
+
+        for raw in raw_plans:
+            if not isinstance(raw, dict):
+                continue
+            # AC-9: prune off-universe tickers; reject degenerate plans.
+            pruned = _validate_and_prune(raw, membership)
+            if pruned is None:
+                continue
+            # AC-13: tag provenance='built-new'.
+            pruned["provenance"] = PROVENANCE_BUILT_NEW
+            # AC-10: dedup structurally-identical plans.
+            fp = _root_fingerprint(pruned)
+            if fp in seen_fingerprints:
+                continue
+            seen_fingerprints.add(fp)
+            admitted.append(pruned)
+            if len(admitted) >= n_plans:
+                break
+
+        return GeneratorResult(plans=admitted, reason=None)
+
+    except Exception as exc:
+        # D-1: reason contains ONLY the exception class name — no key/path/message.
+        logger.debug("generate_build_plans: error", exc_info=True)
+        return GeneratorResult(plans=[], reason=type(exc).__name__)
+
+
+# ---------------------------------------------------------------------------
+# admit_community_candidates — AC-12 objective-matched admission
+# ---------------------------------------------------------------------------
+
+
+def _extract_tickers_from_tree(tree: dict) -> set[str]:
+    """Walk a community candidate's tree dict and return referenced ticker strings.
+
+    Community candidate trees may be DSL-shaped or legacy Composer raw_value trees.
+    This is a best-effort walk that collects string values from 'ticker' keys at
+    any depth (iterative, never raises). Used for Jaccard-based diversify ranking.
+    """
+    out: set[str] = set()
+    try:
+        stack: list = [tree]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, dict):
+                t = node.get("ticker")
+                if isinstance(t, str) and t and t != _PCT_PLACEHOLDER:
+                    out.add(t)
+                for v in node.values():
+                    if isinstance(v, (dict, list)):
+                        stack.append(v)
+            elif isinstance(node, list):
+                stack.extend(node)
+    except Exception:  # pragma: no cover - defensive
+        pass
+    return out
+
+
+def _jaccard_overlap(set_a: set, set_b: set) -> float:
+    """Return the Jaccard similarity (intersection / union) of two ticker sets.
+
+    Returns 0.0 when both sets are empty (no overlap), or 1.0 when both
+    are identical. Used as the diversify greedy-admission overlap metric.
+    """
+    union = set_a | set_b
+    if not union:
+        return 0.0
+    return len(set_a & set_b) / len(union)
+
+
+def admit_community_candidates(
+    community_result,
+    objective,
+    *,
+    max_candidates: int = MAX_COMMUNITY_CANDIDATES_PER_RUN,
+) -> list:
+    """Rank and admit community strategies by the objective OOS metric.
+
+    Ranking convention per objective (PM-approved):
+      cut_drawdown         — 'max_drawdown' descending (nearer zero = shallower, better)
+      volatility_mitigation— 'volatility' ascending (lowest first)
+      lift_risk_adjusted   — 'sharpe' descending (highest first)
+      diversify            — greedy low-ticker-overlap (Jaccard), deterministic+complete
+
+    Missing / unparseable stat docs are KEPT-LAST (admitted after all docs that have
+    the stat). The bound applies over the entire ranked list.
+
+    Each admitted candidate is a CandidateInfo tagged provenance='atlas-suggested'
+    in .params (AC-13).
+
+    Never raises (D-1). Malformed input degrades to empty list.
+    """
+    try:
+        if not isinstance(community_result, dict):
+            return []
+        if not community_result.get("available", False):
+            return []
+        raw = community_result.get("candidates")
+        if not raw or not isinstance(raw, list):
+            return []
+
+        obj_name = objective.value if isinstance(objective, Objective) else str(objective)
+
+        def _stat(doc: dict, key: str) -> float | None:
+            oos = doc.get("oos_metrics")
+            if not isinstance(oos, dict):
+                return None
+            val = oos.get(key)
+            if val is None:
+                return None
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                return None
+
+        if obj_name == "cut_drawdown":
+            # max_drawdown stored as a negative number; nearer zero = shallower = better.
+            # Sort descending: -0.10 > -0.30 > -0.55. Missing docs -> float("-inf") -> last.
+            keyed = [(_stat(d, "max_drawdown"), d) for d in raw]
+            keyed.sort(
+                key=lambda x: x[0] if x[0] is not None else float("-inf"),
+                reverse=True,
+            )
+            ranked_docs = [d for _, d in keyed]
+
+        elif obj_name == "volatility_mitigation":
+            # Lowest volatility first -> ascending. Missing -> float("+inf") -> last.
+            keyed = [(_stat(d, "volatility"), d) for d in raw]
+            keyed.sort(key=lambda x: x[0] if x[0] is not None else float("+inf"))
+            ranked_docs = [d for _, d in keyed]
+
+        elif obj_name == "lift_risk_adjusted":
+            # Highest sharpe first -> descending. Missing -> float("-inf") -> last.
+            keyed = [(_stat(d, "sharpe"), d) for d in raw]
+            keyed.sort(
+                key=lambda x: x[0] if x[0] is not None else float("-inf"),
+                reverse=True,
+            )
+            ranked_docs = [d for _, d in keyed]
+
+        else:
+            # diversify — greedy low-ticker-overlap selection (Jaccard).
+            # Tiebreaks resolved by sid sort (deterministic). Admits complete set
+            # bounded by max_candidates (greedy terminates when cap reached).
+            sorted_pool = sorted(raw, key=lambda d: d.get("sid", ""))
+            ranked_docs = []
+            admitted_tickers: set[str] = set()
+            remaining = list(sorted_pool)
+            while remaining:
+                # Pick the candidate with the lowest Jaccard overlap vs admitted tickers.
+                best_idx = 0
+                best_overlap = float("+inf")
+                for idx, doc in enumerate(remaining):
+                    doc_tickers = _extract_tickers_from_tree(doc.get("tree", {}))
+                    overlap = _jaccard_overlap(doc_tickers, admitted_tickers)
+                    if overlap < best_overlap:
+                        best_overlap = overlap
+                        best_idx = idx
+                chosen = remaining.pop(best_idx)
+                ranked_docs.append(chosen)
+                chosen_tickers = _extract_tickers_from_tree(chosen.get("tree", {}))
+                admitted_tickers |= chosen_tickers
+            # ranked_docs now contains all docs in greedy-diversify order.
+
+        # Apply cap and tag each admitted candidate as provenance='atlas-suggested'.
+        admitted: list[CandidateInfo] = []
+        for doc in ranked_docs[:max_candidates]:
+            try:
+                sid = doc.get("sid") or doc.get("candidate_id", "")
+                admitted.append(
+                    CandidateInfo(
+                        candidate_id=sid,
+                        tree=doc.get("tree", {}),
+                        template_id="community",
+                        params={
+                            "sid": sid,
+                            "name": doc.get("name", ""),
+                            "composition_hash": doc.get("composition_hash", ""),
+                            "provenance": PROVENANCE_ATLAS_SUGGESTED,
+                        },
+                        metrics={},
+                        backtest_error=None,
+                    )
+                )
+            except Exception:
+                logger.debug("admit_community_candidates: skipping malformed doc", exc_info=True)
+                continue
+
+        return admitted
+
+    except Exception:
+        logger.debug("admit_community_candidates: unexpected error", exc_info=True)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# load_atlas_candidates — wraps community_strats with bill-protection
+# ---------------------------------------------------------------------------
+
+
+def load_atlas_candidates(
+    objective,
+    *,
+    max_candidates: int = MAX_COMMUNITY_CANDIDATES_PER_RUN,
+) -> list:
+    """Load and admit community strategies from the Atlas weekly cache.
+
+    Passes force_refresh=False unconditionally (operator bill-protection directive —
+    Atlas is a third-party provider; weekly cache minimizes reads).
+
+    Never raises (D-1). On any failure: returns [].
+    """
+    try:
+        from advisors import community_strats  # noqa: PLC0415 - CC-2 lazy import
+
+        community_result = community_strats.load_community_strategies(force_refresh=False)
+        return admit_community_candidates(
+            community_result, objective, max_candidates=max_candidates
+        )
+    except Exception:
+        logger.debug("load_atlas_candidates: unexpected error", exc_info=True)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# pool_candidates — AC-13 provenance-preserving pool
+# ---------------------------------------------------------------------------
+
+
+def pool_candidates(built_new: list, atlas_suggested: list) -> list:
+    """Pool built-new and atlas-suggested candidates into one provenance-preserving list.
+
+    Each item's existing provenance tag is preserved unchanged. This is the C2/2b
+    slice of AC-13 — the 'both through SAME FDR gate' end-to-end assertion is
+    deferred to C3/C5 (compiler + route, forward-AC).
+
+    Never raises.
+    """
+    return list(built_new) + list(atlas_suggested)
