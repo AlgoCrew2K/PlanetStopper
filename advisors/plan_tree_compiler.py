@@ -256,13 +256,17 @@ def _compile_condition(cond: dict):
     cond_type = cond.get("type")
 
     if cond_type == "binary":
-        lhs = cond["lhs"]
+        # Canonical-flat encoding (binary-encoding-fix): reads the SAME field names
+        # as the flat-if condition so both paths share one encoding.
+        # lhs: lhs_fn / lhs_ticker / window (NOT nested cond["lhs"]["fn"]).
+        # rhs constant: rhs["fixed"] (NOT rhs["const"]).
+        # rhs ticker-comparison: rhs = {"fn", "ticker", "window"} (unchanged).
         lhs_op = symphony_schema.make_condition_operand(
-            lhs["fn"], lhs["ticker"], window=lhs["window"]
+            cond["lhs_fn"], cond["lhs_ticker"], window=cond["window"]
         )
         rhs = cond["rhs"]
-        if "const" in rhs:
-            rhs_val = symphony_schema.make_constant_rhs(rhs["const"])
+        if "fixed" in rhs:
+            rhs_val = symphony_schema.make_constant_rhs(rhs["fixed"])
         else:
             rhs_val = symphony_schema.make_condition_operand(
                 rhs["fn"], rhs["ticker"], window=rhs["window"]

@@ -616,14 +616,23 @@ def extract_tickers(tree) -> set[str]:
 def _collect_condition_tickers(condition: dict, tickers: set) -> None:
     """Walk a compound condition block and collect real tickers into ``tickers``.
 
-    Skips the '%' placeholder. Handles binary, binary-compound, and nested
-    compound blocks. Iterative (explicit stack) to avoid recursion depth limits.
+    Skips the '%' placeholder. Handles binary (lhs/rhs operands), binary-compound
+    (broadcast tickers list), and nested compound blocks. Iterative to avoid
+    recursion depth limits.
     """
     stack: list = [condition]
     while stack:
         cond = stack.pop()
         if not isinstance(cond, dict):
             continue
+        # binary: collect from lhs.ticker and rhs.ticker (ticker-comparison rhs).
+        # The '%' placeholder used by binary_compound lhs is excluded.
+        for operand_key in ("lhs", "rhs"):
+            operand = cond.get(operand_key)
+            if isinstance(operand, dict):
+                t = operand.get("ticker")
+                if isinstance(t, str) and t and t != "%":
+                    tickers.add(t)
         # binary-compound: collect from the top-level tickers list (real tickers)
         # and skip the lhs ticker which is '%'.
         for t in cond.get("tickers") or []:

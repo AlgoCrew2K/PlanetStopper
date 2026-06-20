@@ -798,7 +798,9 @@ _EXAMPLE_IF_PLAN: dict = {
 # Conforming if_compound DSL example — a compound all-of-N regime gate verified
 # to compile clean through the C3 compiler (tree not None, validate_tree == []).
 # The condition uses the typed union shape: {type, operator, conditions[]}, with
-# binary_compound sub-conditions carrying {type, fn, tickers, comparator, rhs, window}.
+# a MIXED sub-condition list: one flat type:"binary" leaf (lhs_fn/lhs_ticker/window
+# + rhs:{fixed}) + one type:"binary_compound" broadcast leaf. This teaches Opus
+# both flat-binary and binary_compound shapes inside a compound.
 _EXAMPLE_IF_COMPOUND_PLAN: dict = {
     "plan_id": "example-ifc-1",
     "objective": "cut_drawdown",
@@ -811,12 +813,12 @@ _EXAMPLE_IF_COMPOUND_PLAN: dict = {
             "operator": "all",
             "conditions": [
                 {
-                    "type": "binary_compound",
-                    "fn": "relative-strength-index",
-                    "tickers": ["SPY"],
-                    "comparator": "gt",
-                    "rhs": {"const": 70},
+                    "type": "binary",
+                    "lhs_fn": "relative-strength-index",
+                    "lhs_ticker": "SPY",
                     "window": 14,
+                    "comparator": "gt",
+                    "rhs": {"fixed": 70},
                 },
                 {
                     "type": "binary_compound",
@@ -825,6 +827,7 @@ _EXAMPLE_IF_COMPOUND_PLAN: dict = {
                     "comparator": "lt",
                     "rhs": {"const": 20},
                     "window": 30,
+                    "operator": "any",
                 },
             ],
         },
