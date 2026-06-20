@@ -79,10 +79,18 @@ def _ref_collect_tickers(node: Any, out: set[str] | None = None) -> set[str]:
 
     Mirrors extract_tickers exactly: collects ``ticker`` from every node
     reachable via ``children`` (excluding the ``'%'`` binary-compound
-    placeholder), and also walks ``condition`` blocks to collect real tickers
-    from ``tickers[]`` lists (binary-compound) and nested compound sub-conditions
+    placeholder), and walks ``condition`` blocks to collect real tickers from:
+      * binary leaf operands — ``lhs.ticker`` / ``rhs.ticker`` (an indicator fn
+        applied to a real ticker, e.g. RSI(PSR)); a strategy that gates on
+        RSI(PSR) genuinely references PSR, so it MUST be extracted (membership
+        validation depends on it). The ``'%'`` binary-compound broadcast lhs is
+        excluded.
+      * ``tickers[]`` lists (binary-compound broadcast),
+      * nested compound sub-conditions,
     — the same traversal performed by ``_collect_condition_tickers`` in the
-    implementation.
+    implementation (binary-encoding-fix: the operand-ticker collection was added
+    to both the impl and this reference walker, which previously shared a blind
+    spot to binary-leaf operands).
 
     Used for exact-equality assertions in the golden-fixture extract_tickers
     tests and as a lower-bound for render_rules_text tests (render only covers
@@ -109,6 +117,13 @@ def _ref_collect_tickers(node: Any, out: set[str] | None = None) -> set[str]:
                 cond = cond_stack.pop()
                 if not isinstance(cond, dict):
                     continue
+                # binary leaf operands: lhs.ticker / rhs.ticker (skip '%').
+                for operand_key in ("lhs", "rhs"):
+                    operand = cond.get(operand_key)
+                    if isinstance(operand, dict):
+                        t = operand.get("ticker")
+                        if isinstance(t, str) and t and t != "%":
+                            out.add(t)
                 # binary-compound: collect from top-level tickers list.
                 for t in cond.get("tickers") or []:
                     if isinstance(t, str) and t and t != "%":
