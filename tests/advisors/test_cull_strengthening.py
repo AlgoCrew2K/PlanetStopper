@@ -609,9 +609,17 @@ def test_c5b_pbo_veto_reason_distinct_from_below_spy_and_fdr(gate_engine, monkey
     )
 
     # (b) below-SPY-fold: positive but below SPY → below-SPY reason (NOT a PBO reason).
+    # ISOLATION REQUIREMENT: this branch must reject ONLY on the below-SPY cause, so the
+    # batch must be LOW-PBO (the PBO veto, Stage-1, dominates the below-SPY cause, Stage-2,
+    # by precedence — see test_c5b_rejection_reason_precedence_pbo_dominates_below_spy). Two
+    # IDENTICAL flat configs yield pbo=1.0 (CSCV ranks the tied IS-best below the OOS median
+    # in every combo), which would fire the PBO veto and mask the below-SPY cause. So we give
+    # the two candidates DISTINCT positive levels (consistently ranked across all blocks →
+    # pbo=0.0), both well below SPY's 0.02 fold level. DO NOT collapse these to identical
+    # series — that re-introduces the high-PBO confound this fixture exists to avoid.
     spy_dated = {d: 0.02 for d in _DATES}
-    below = _candidate_with_fold_alpha(gate_engine, "r-below", beats=False, spy_dated=spy_dated)
-    below2 = _candidate_with_fold_alpha(gate_engine, "r-below2", beats=False, spy_dated=spy_dated)
+    below = _make_candidate(gate_engine, "r-below", {d: 0.001 for d in _DATES})
+    below2 = _make_candidate(gate_engine, "r-below2", {d: 0.0005 for d in _DATES})
     below_batch = gate_engine.evaluate_candidate_batch(
         [below, below2], **_spy_seam_kwargs(gate_engine, spy_dated)
     )
