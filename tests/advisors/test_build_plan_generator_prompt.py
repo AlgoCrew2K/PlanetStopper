@@ -558,3 +558,263 @@ def test_full_drift_response_yields_zero_admitted_plans_with_reason(bpg, monkeyp
     result = bpg.generate_build_plans(_objective(bpg, "diversify"), universe, n_plans=12)
     assert result.plans == [], "drift-vocabulary plans must not be admitted"
     assert isinstance(result.reason, str) and result.reason
+
+
+# ===========================================================================
+# REVISE-1 — the if.condition SUB-GRAMMAR (live re-exam residual).
+#
+# Live re-exam: the prompt/schema fix taught the node vocabulary, and 8/12 plans
+# compiled clean. But ALL 4 if/regime-gate plans dropped — the C2-fix never taught
+# the nested if.condition sub-grammar. Real Opus emits
+#   {"kind":"if","condition":"spy_above_200d_sma", ...}   (condition = a STRING label)
+# but the C3 compiler expects (plan_tree_compiler.py:348-351)
+#   condition = {lhs_fn, lhs_ticker, window, comparator, rhs:{fixed:num}|{fn,ticker,window}}
+# so cond_dsl["lhs_fn"] on a str -> TypeError -> D-1 clean-drops the plan, killing
+# cut_drawdown's defining regime-gate structure.
+#
+# The fix EXTENDS the same prompt-steer + schema-tighten to the condition sub-grammar
+# (generator-side; the C3 compiler is correct for valid condition DSL, 38/38, untouched).
+# The example must prove the CONDITION shape — i.e. it must COMPILE CLEAN through the
+# real C3 compiler (tree not None + validate_tree==[]), not merely parse.
+# ===========================================================================
+
+
+@pytest.fixture(scope="module")
+def compiler():
+    """The C3 plan_tree_compiler — used to prove the embedded if example COMPILES
+    clean (the gen<->compile contract crosses here). The compiler is NOT under test
+    in this file (it is proven 38/38); we use it as the conformance oracle."""
+    import advisors.plan_tree_compiler as _c  # noqa: PLC0415
+
+    return _c
+
+
+def _find_if_node(node):
+    """Return the first kind=='if' or kind=='if_compound' NODE found in a DSL tree,
+    or None. Iterative; handles weight/group/filter children, specified {node},
+    and then/else branches."""
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if not isinstance(n, dict):
+            continue
+        if n.get("kind") in ("if", "if_compound"):
+            return n
+        children = n.get("children")
+        if isinstance(children, list):
+            for c in children:
+                if isinstance(c, dict):
+                    stack.append(c.get("node") if "node" in c else c)
+        for branch in ("then", "else"):
+            b = n.get(branch)
+            if isinstance(b, list):
+                stack.extend(b)
+    return None
+
+
+def _all_example_plans_in(prompt: str) -> list:
+    """Return every build-plan-shaped JSON object embedded in the prompt (a plan has
+    a 'root' dict carrying a 'kind')."""
+    out = []
+    for obj in _find_json_objects(prompt):
+        if isinstance(obj, dict) and isinstance(obj.get("root"), dict) and "kind" in obj["root"]:
+            out.append(obj)
+    return out
+
+
+def _gate_objective_names():
+    """Objectives whose AC-8 signature is naturally satisfied by an if/regime gate.
+    cut_drawdown's signature is explicitly 'regime gate (if/if_compound) OR inverse-vol'."""
+    return ("cut_drawdown",)
+
+
+# --- The prompt must TEACH the condition dict shape (not a string) ----------
+
+
+@pytest.mark.parametrize("obj_name", _OBJECTIVE_NAMES)
+def test_prompt_teaches_if_condition_dict_field_names(bpg, obj_name):
+    """The prompt must name the if.condition dict sub-fields so Opus emits a dict,
+    not a string label. The drift was condition:'spy_above_200d_sma' (a string);
+    the compiler needs {lhs_fn, lhs_ticker, comparator, rhs}."""
+    prompt = _build_prompt(bpg, _objective(bpg, obj_name))
+    for field in ("lhs_fn", "lhs_ticker", "comparator", "rhs"):
+        assert field in prompt, (
+            f"prompt for {obj_name} must teach the if.condition field {field!r} "
+            f"(so Opus emits a condition DICT, not a string label)"
+        )
+
+
+def test_prompt_teaches_condition_rhs_fixed_and_ticker_forms(bpg):
+    """The condition rhs is a union {fixed: num} | {fn, ticker, window}. The prompt
+    must teach at least the 'fixed' fixed-value form (the simplest regime gate)."""
+    prompt = _build_prompt(bpg, _objective(bpg, "cut_drawdown"))
+    assert "fixed" in prompt, "prompt must teach the condition rhs {fixed: num} form"
+
+
+def test_prompt_warns_against_string_condition(bpg):
+    """NEGATIVE guard: the prompt must steer AWAY from a bare string condition — the
+    exact drift. It should not present a string-label condition as valid. We assert
+    the prompt does not contain the drift literal label and DOES contain the dict
+    shape signal (a 'condition' object with lhs_fn)."""
+    prompt = _build_prompt(bpg, _objective(bpg, "cut_drawdown"))
+    normalized = prompt.replace(" ", "").replace("'", '"')
+    # The known drift label must not be taught as a valid condition value.
+    assert '"condition":"spy_above_200d_sma"' not in normalized
+    # A string-valued condition example must not appear (condition mapped to a
+    # bare quoted scalar). The dict form pairs 'condition' with '{'.
+    assert "lhs_fn" in prompt, "the prompt must show the condition as a dict with lhs_fn"
+
+
+# --- The embedded if example must COMPILE CLEAN (proves the condition shape) -
+
+
+def test_prompt_embeds_an_if_example_that_compiles_clean(bpg, compiler):
+    """ADVERSARIAL CORE of the Revise: at least one embedded example must contain an
+    if/if_compound node whose CONDITION is a proper dict, AND that example must
+    COMPILE CLEAN through the real C3 compiler (tree not None + validate_tree==[]).
+    A prompt that teaches the condition grammar but embeds a non-compiling example
+    would still drift. The example must PROVE the condition shape end-to-end."""
+    # Search every embedded example across the gate-capable objectives for one
+    # carrying an if node that compiles clean.
+    found_compiling_if = False
+    for obj_name in _gate_objective_names():
+        prompt = _build_prompt(bpg, _objective(bpg, obj_name))
+        for example in _all_example_plans_in(prompt):
+            if _find_if_node(example["root"]) is None:
+                continue
+            result = compiler.compile_plan(example)
+            if result.tree is not None and symphony_schema.validate_tree(result.tree) == []:
+                found_compiling_if = True
+                break
+        if found_compiling_if:
+            break
+    assert found_compiling_if, (
+        "no embedded if/regime-gate example compiles clean through the C3 compiler; "
+        "the prompt must embed a conforming if example whose condition is a dict that "
+        "compile_plan accepts (tree not None + validate_tree==[])"
+    )
+
+
+def test_embedded_if_example_condition_is_a_dict_not_a_string(bpg):
+    """The embedded if example's condition must be a DICT (the compiler contract),
+    never a string label (the drift). Direct structural assertion on the example."""
+    prompt = _build_prompt(bpg, _objective(bpg, "cut_drawdown"))
+    if_example = None
+    for example in _all_example_plans_in(prompt):
+        node = _find_if_node(example["root"])
+        if node is not None:
+            if_example = node
+            break
+    assert if_example is not None, "cut_drawdown prompt must embed an if-node example"
+    cond = if_example.get("condition")
+    assert isinstance(cond, dict), (
+        f"the embedded if example's condition must be a dict, got {type(cond).__name__} "
+        f"({cond!r}) — a string condition is the live-exam drift"
+    )
+
+
+# --- The tool schema must constrain if.condition to an OBJECT ----------------
+
+
+def test_tool_schema_constrains_if_condition_to_object_not_string(bpg):
+    """_EMIT_BUILD_PLANS_TOOL must constrain a condition to an OBJECT so Opus cannot
+    structurally emit a bare string condition. We walk the schema for a 'condition'
+    property and assert its declared type is 'object' (or it carries object
+    sub-properties), and that it is NOT typed as a plain string."""
+    schema = bpg._EMIT_BUILD_PLANS_TOOL["input_schema"]
+    condition_schemas = _find_property_schemas(schema, "condition")
+    assert condition_schemas, (
+        "tool schema declares no 'condition' property constraint — Opus can emit any "
+        "condition shape (including the bare string that caused the live drift)"
+    )
+    for cs in condition_schemas:
+        declared_type = cs.get("type")
+        # The condition must be object-typed (or describe object sub-fields),
+        # never a bare string.
+        is_object = declared_type == "object" or "properties" in cs
+        assert is_object, (
+            f"a 'condition' schema entry is typed {declared_type!r}, not an object — "
+            f"it must constrain the condition to a dict, not allow a string label"
+        )
+        assert declared_type != "string", "condition must not be schema-typed as a string"
+
+
+def _find_property_schemas(schema, prop_name: str) -> list:
+    """Return every sub-schema declared under properties[prop_name] anywhere in the
+    schema tree (walks nested objects/arrays/items)."""
+    out = []
+    stack = [schema]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            props = node.get("properties")
+            if (
+                isinstance(props, dict)
+                and prop_name in props
+                and isinstance(props[prop_name], dict)
+            ):
+                out.append(props[prop_name])
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return out
+
+
+# --- A conforming-mock if-based plan is admitted AND compiles clean ----------
+
+
+def test_conforming_if_plan_admitted_and_compiles_clean(bpg, compiler, monkeypatch):
+    """A CONFORMING mocked if-based cut_drawdown plan (condition = a proper dict) is
+    admitted by generate_build_plans AND its admitted form compiles clean through the
+    C3 compiler. This is the end-to-end regime-gate contract the live exam checks:
+    a regime-gated symphony must reach a validate_tree-clean Composer tree."""
+    universe = frozenset({"SPY", "UVXY", "TLT", "IEF", "GLD"})
+    if_root = {
+        "kind": "if",
+        "condition": {
+            "lhs_fn": "relative-strength-index",
+            "lhs_ticker": "SPY",
+            "window": 10,
+            "comparator": "gt",
+            "rhs": {"fixed": 80},
+        },
+        "then": [_equal([_asset("UVXY"), _asset("TLT")])],
+        "else": [_inverse_vol([_asset("SPY"), _asset("IEF"), _asset("GLD")])],
+    }
+    plan_in = _plan("cut_drawdown", if_root, plan_id="cd-if-1")
+    _patch_conforming_client(bpg, monkeypatch, [plan_in])
+    result = bpg.generate_build_plans(_objective(bpg, "cut_drawdown"), universe, n_plans=12)
+    assert result.plans, (
+        f"a conforming if-based cut_drawdown plan must be admitted, reason={result.reason!r}"
+    )
+    admitted = result.plans[0]
+    compiled = compiler.compile_plan(admitted)
+    assert compiled.tree is not None, (
+        f"the admitted regime-gate plan must compile clean, got reason={compiled.reason!r}"
+    )
+    assert symphony_schema.validate_tree(compiled.tree) == []
+
+
+def test_string_condition_plan_does_not_silently_admit_as_compilable(bpg, compiler, monkeypatch):
+    """SECONDARY guard (steering is the primary fix): a plan whose if.condition is a
+    STRING (the drift) must NOT yield a clean-compiling admitted plan. Either it is
+    rejected at admission, or if admitted it fails to compile (tree None) — it must
+    never silently surface as a usable regime-gate symphony."""
+    universe = frozenset({"SPY", "UVXY", "TLT", "IEF"})
+    drift_root = {
+        "kind": "if",
+        "condition": "spy_above_200d_sma",  # drift: a string label, not a dict
+        "then": [_equal([_asset("UVXY")])],
+        "else": [_inverse_vol([_asset("SPY"), _asset("IEF")])],
+    }
+    plan_in = _plan("cut_drawdown", drift_root, plan_id="cd-drift-1")
+    _patch_conforming_client(bpg, monkeypatch, [plan_in])
+    result = bpg.generate_build_plans(_objective(bpg, "cut_drawdown"), universe, n_plans=12)
+    # If admitted at all, it must NOT compile clean (the string condition is invalid).
+    for admitted in result.plans:
+        node = _find_if_node(admitted.get("root", {}))
+        if node is not None and not isinstance(node.get("condition"), dict):
+            compiled = compiler.compile_plan(admitted)
+            assert compiled.tree is None, (
+                "a string-condition regime-gate plan must not compile to a usable tree"
+            )
