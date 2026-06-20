@@ -49,7 +49,7 @@ Harvey & Liu 2015 (BHY/Yekutieli FDR, DOI 10.3905/jpm.2015.42.1.013).
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
 from acceptance_gate import AcceptanceVerdict, evaluate_acceptance_gate
@@ -125,6 +125,44 @@ THIN_WINDOW_CAVEAT = (
     " BHY gate. The gate is therefore likely to WITHHOLD on thin series."
 )
 
+# ---------------------------------------------------------------------------
+# C5b — overfitting-cull strengthening constants
+# ---------------------------------------------------------------------------
+
+# CRRA risk-aversion coefficient passed to math_engine.compute_pbo.
+# Mirrors the autotuner's gamma (autotuner.py: GAMMA = 1.0, default CRRA parameter).
+# Source: Bailey & López de Prado 2014, §3 CSCV algorithm; autotuner.py module constant.
+_BATCH_PBO_GAMMA: float = 1.0
+
+# Minimum number of date-keyed configs required to compute a meaningful batch PBO.
+# compute_pbo with K=1 cannot rank the IS-best against other OOS configs (no ranking
+# is possible when there is only one config).  With K<2 we pass pbo=None so the PBO
+# veto correctly does NOT fire (no false reject).
+# Source: math_engine.compute_pbo docstring — K>=2 required for the CSCV ranking.
+_PBO_MIN_CONFIGS: int = 2
+
+# Minimum number of overlapping (intersection) dates between all candidates' date-keyed
+# returns needed to partition into meaningful CSCV blocks.  Below this floor the
+# eligible_dates list is too short to split into S=8 blocks of even 1 date each.
+# Source: math_engine.compute_pbo — n_blocks=8 minimum (S=_CSCV_S); each block needs
+# at least 1 date so we require at least 8 aligned dates.  Named for clarity.
+_PBO_MIN_ALIGNED_DATES: int = 8
+
+# Conservative default_oos_alpha used when the SPY benchmark series is unavailable.
+# A very large negative value ensures every candidate's oos_alpha fails the
+# "oos_alpha > default_oos_alpha" gate branch → WITHHOLD (KEEP_INCUMBENT), never adopt.
+# This is the conservative degradation required by AC-25 / edge case 14 in the feature
+# plan: if SPY cannot be established, we must not silently fall back to beats-zero.
+# Source: feature-plans/strategy-builder-real.md §Edge Cases #14; AC-25 contract.
+_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA: float = float("-inf")
+
+# SPY benchmark ticker — the US equity broad-market reference series.
+# SPY is the SPDR S&P 500 ETF, the canonical institutional benchmark for US equity
+# portfolios. The fold OOS alpha of each candidate is compared against SPY's OOS alpha
+# over the same fold window (AC-25). This constant isolates the ticker from the logic.
+# Source: feature-plans/strategy-builder-real.md §AC-25 (SPY-OOS-over-the-fold baseline).
+SPY_BENCHMARK_TICKER: str = "SPY"
+
 
 # ---------------------------------------------------------------------------
 # Input / output types
@@ -177,6 +215,14 @@ class BacktestCandidate(NamedTuple):
     theory_prior_params: dict
     nn1_compliant: bool = True
     purge_integrity_ok: bool = True
+    # C5b (AC-24/25): date-keyed returns dict (date_str -> pct) enabling batch PBO
+    # computation (math_engine.compute_pbo) and SPY date-alignment for the fold baseline.
+    # Optional — defaults to {} so existing callers that supply only daily_returns_pct
+    # continue to work.  When provided, dates are the source of truth for PBO partitioning
+    # and SPY intersection; daily_returns_pct (the chronologically ordered value list) is
+    # still used for the fold transform and BHY t-stat (unchanged from prior behaviour).
+    # Source: feature-plans/strategy-builder-real.md §AC-24, AC-25.
+    dated_returns: dict = {}  # dict[str, float]
 
 
 class CandidateGateResult(NamedTuple):
@@ -204,6 +250,17 @@ class CandidateGateResult(NamedTuple):
         A value > HARVEY_LIU_FDR_Q means this candidate did not clear the FDR
         gate on its own; the gate still uses the batch-wide winner selection,
         so this field is provided for operator audit trail only.
+    rejection_reason:
+        C5b operator-legibility field (AC-24/25/26 live-probe requirement).
+        A short string identifying WHY this candidate was culled, or None when
+        the candidate was adopted (ADOPT_CANDIDATE).  The three distinguishable
+        causes are:
+          - ``"pbo_veto"``         — batch pbo > PBO_REJECT_THRESHOLD fired
+          - ``"below_spy_alpha"``  — candidate oos_alpha <= SPY-fold baseline
+          - ``"fdr_not_winner"``   — BHY/Yekutieli FDR gate (winner_trial_is_none)
+        Populated after the full veto cascade so the deepest contributing cause
+        is recorded.  Survivor (ADOPT_CANDIDATE) → None.
+        Source: feature-plans/strategy-builder-real.md §5b; PM live-probe mandate.
     """
 
     candidate_id: str
@@ -212,6 +269,7 @@ class CandidateGateResult(NamedTuple):
     oos_alpha: float
     caveats: list  # list[str]
     winner_p_adj: float | None
+    rejection_reason: str | None = None  # C5b: set only on a cull (None for survivors)
 
 
 class GatedBatch(NamedTuple):
@@ -466,6 +524,7 @@ def evaluate_candidate_batch(
     *,
     incumbent_oos_alpha: float = 0.0,
     default_oos_alpha: float = 0.0,
+    spy_returns_fn: Callable[..., dict] | None = None,
 ) -> GatedBatch:
     """Fold-transform a batch of Composer backtest candidates and run them through the gate.
 
@@ -501,7 +560,22 @@ def evaluate_candidate_batch(
             does not strictly beat the incumbent.
         default_oos_alpha:
             The global-default params' OOS alpha.  Used as ``default_oos_alpha``
-            in the gate call.
+            in the gate call.  Overridden by the SPY-fold baseline when
+            ``spy_returns_fn`` supplies a non-empty series (AC-25).
+        spy_returns_fn:
+            C5b injectable seam for the SPY benchmark series (AC-25).  A callable
+            that returns SPY's date-keyed returns (dict[str, float]).  When
+            supplied and the returned series is non-empty, the SPY series is aligned
+            to each candidate's date span (intersection), fold-transformed via the
+            IDENTICAL ``_fold_transform_single`` used for candidates, and the
+            resulting validation-fold OOS alpha replaces ``default_oos_alpha``.
+            When None or the returned series is empty, the conservative
+            ``_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA`` (float("-inf")) is used, which
+            ensures no candidate can clear the SPY-alpha gate branch.  This prevents
+            a silent fallback to the old beats-zero baseline (AC-25 mandate).
+            Production callers wire this to a real SPY fetch; tests inject a
+            fixed fixture series.
+            Source: feature-plans/strategy-builder-real.md §AC-25.
 
     Returns:
         A ``GatedBatch`` with per-candidate verdicts and the survivor list.
@@ -519,6 +593,83 @@ def evaluate_candidate_batch(
         )
 
     n = len(candidates)
+
+    # --------------------------------------------------------------------------
+    # C5b Step 0a: Batch-level PBO computation (AC-24).
+    # Each candidate's dated_returns dict is one "config" in the CSCV sense.
+    # eligible_dates = sorted intersection of dates across all configs so that
+    # every config has a return on every eligible date (no missing-data bias).
+    # Mirrors autotuner.py:2518-2538 (pbo=None when K<2; one batch pbo applied to
+    # every candidate's evaluate_acceptance_gate call as a batch-level statistic).
+    # Source: Bailey & López de Prado 2014 §3.4; autotuner.py PBO wiring pattern.
+    # --------------------------------------------------------------------------
+    import math_engine as _math_engine  # local import — avoids circular import risk
+
+    _batch_pbo: float | None = None
+    _dated_configs: list[dict[str, float]] = [
+        dict(c.dated_returns) for c in candidates if c.dated_returns
+    ]
+    if len(_dated_configs) >= _PBO_MIN_CONFIGS:
+        # Intersection of all date keys: only dates present in every config.
+        # This ensures compute_pbo receives a consistent eligible_dates list
+        # (no candidate has a missing return on an eligible date).
+        _date_sets = [set(cfg.keys()) for cfg in _dated_configs]
+        _intersection_dates: list[str] = sorted(_date_sets[0].intersection(*_date_sets[1:]))
+        if len(_intersection_dates) >= _PBO_MIN_ALIGNED_DATES:
+            _batch_pbo = _math_engine.compute_pbo(
+                _dated_configs,
+                _intersection_dates,
+                _BATCH_PBO_GAMMA,
+            )
+        # else: insufficient aligned dates → pbo stays None (no false reject).
+    # else: K<2 date-keyed configs → pbo stays None (no false reject).
+
+    # --------------------------------------------------------------------------
+    # C5b Step 0b: SPY-fold baseline computation (AC-25).
+    # Align SPY to candidate date span FIRST (intersect on dates in the candidate
+    # series), then fold-transform the aligned series identically to the candidates.
+    # The resulting SPY validation-fold OOS alpha replaces default_oos_alpha.
+    # If SPY is unavailable (empty series), use _SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA
+    # (float("-inf")) so no candidate clears the alpha gate — conservative WITHHOLD.
+    # Source: feature-plans/strategy-builder-real.md §AC-25; handoff §AC-25.
+    # --------------------------------------------------------------------------
+    _effective_default_oos_alpha: float = default_oos_alpha
+    if spy_returns_fn is not None:
+        _spy_dated: dict[str, float] = {}
+        try:
+            _spy_dated = spy_returns_fn() or {}
+        except Exception:
+            _spy_dated = {}
+
+        if _spy_dated:
+            # Collect all dates that appear in any candidate's dated_returns.
+            # We align SPY to the union of candidate dates so the fold window
+            # is consistent with the candidate time span (not restricted to
+            # the PBO intersection, which may be narrower).
+            _all_candidate_dates: set[str] = set()
+            for c in candidates:
+                if c.dated_returns:
+                    _all_candidate_dates.update(c.dated_returns.keys())
+            if not _all_candidate_dates:
+                # No candidates have dated_returns; fall back to all SPY dates
+                # for the fold (the fold-transform will use the ordered value list).
+                _all_candidate_dates = set(_spy_dated.keys())
+
+            # Restrict SPY to the candidate date span (intersection).
+            # Extra SPY dates outside the candidate span are ignored — this is the
+            # guarded date-alignment (the positional-fold bug: if we did not intersect,
+            # a longer SPY series would have its fold window land on different dates).
+            _spy_aligned_dates = sorted(d for d in _spy_dated if d in _all_candidate_dates)
+            if _spy_aligned_dates:
+                _spy_value_list = [_spy_dated[d] for d in _spy_aligned_dates]
+                _spy_fold = _fold_transform_single(_spy_value_list)
+                _effective_default_oos_alpha = _spy_fold.oos_alpha
+            else:
+                # SPY has no dates overlapping the candidate span.
+                _effective_default_oos_alpha = _SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA
+        else:
+            # SPY series returned empty → conservative withhold.
+            _effective_default_oos_alpha = _SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA
 
     # --------------------------------------------------------------------------
     # Step 1: Fold-transform every candidate independently.
@@ -639,16 +790,50 @@ def evaluate_candidate_batch(
             purge_integrity_ok=effective_purge_ok,
             oos_alpha=fold.oos_alpha,
             fallback_oos_alpha=incumbent_oos_alpha,
-            default_oos_alpha=default_oos_alpha,
+            default_oos_alpha=_effective_default_oos_alpha,
             candidate_stability_score=cand_stability,
             candidate_prior_anchor_score=cand_prior_anchor,
             incumbent_stability_score=inc_stability,
             incumbent_prior_anchor_score=inc_prior_anchor,
+            # C5b AC-24: thread the REAL batch PBO into the gate (mirrors autotuner:2711).
+            # pbo=None when K<2 or insufficient aligned dates — veto does not fire.
+            # pbo>PBO_REJECT_THRESHOLD → Stage-1 REJECT_VETO_FAILED (acceptance_gate:208-213).
+            # Source: Bailey & López de Prado 2014; autotuner.py:2699-2711 wiring pattern.
+            pbo=_batch_pbo,
         )
 
         # Survivor overfitting caveat is MANDATORY for ADOPT_CANDIDATE (AC-3.3).
         if verdict.decision == "ADOPT_CANDIDATE":
             caveats.append(SURVIVOR_OVERFITTING_CAVEAT)
+
+        # C5b operator-legibility: record WHY this candidate was culled (AC-24/25 mandate).
+        # Distinguishable causes let the live-probe confirm each veto actually BITES.
+        # Priority order (most-specific first):
+        #   1. Survivor (ADOPT_CANDIDATE) → None (no rejection cause).
+        #   2. SPY-fold baseline not met (oos_alpha <= spy-fold default) → "below_spy_alpha".
+        #      Checked first when the spy seam is active so the alpha-gate cause is surfaced
+        #      even when other vetoes also fired (the operator asked for the SPY gate specifically).
+        #   3. PBO veto (batch pbo > PBO_REJECT_THRESHOLD) → "pbo_veto" (contains "pbo").
+        #   4. All other causes (BHY non-winner, nn1, purge) → "fdr_not_winner".
+        # Source: feature-plans/strategy-builder-real.md §AC-24/AC-25; handoff §rejection_reason.
+        _rejection_reason: str | None
+        from math_engine import PBO_REJECT_THRESHOLD as _PBO_THRESH
+
+        if verdict.decision == "ADOPT_CANDIDATE":
+            _rejection_reason = None
+        elif spy_returns_fn is not None and fold.oos_alpha <= _effective_default_oos_alpha:
+            # SPY-fold baseline not met: the candidate's fold OOS alpha is at or below the
+            # SPY fold OOS alpha (or below float("-inf") for the unavailable case, which also
+            # means "did not beat the required baseline").
+            _rejection_reason = "below_spy_alpha"
+        elif _batch_pbo is not None and _batch_pbo > _PBO_THRESH:
+            # PBO veto: the batch-level sample-robustness test fired.
+            # The reason string deliberately contains "pbo" (lowercase) so the live-probe
+            # can identify PBO culls via a case-insensitive substring check.
+            _rejection_reason = "pbo_veto"
+        else:
+            # Catch-all: BHY/Yekutieli FDR non-winner, or nn1/purge/thin-window failure.
+            _rejection_reason = "fdr_not_winner"
 
         results.append(
             CandidateGateResult(
@@ -658,6 +843,7 @@ def evaluate_candidate_batch(
                 oos_alpha=fold.oos_alpha,
                 caveats=caveats,
                 winner_p_adj=p_adj[idx],
+                rejection_reason=_rejection_reason,
             )
         )
 
