@@ -92,6 +92,15 @@ These private frozensets are the single source of truth for `plan_matches_object
 | `_MOMENTUM_QUALITY_SORTS` | `{"cumulative-return", "moving-average-return"}` | `plan_matches_objective` — a `filter` whose `sort_by_fn` is in this set satisfies the `lift_risk_adjusted` signature |
 | `_LOW_VOL_SORTS` | `{"max-drawdown", "standard-deviation-return", "standard-deviation-price"}` | `plan_matches_objective` — a `filter` whose `sort_by_fn` is in this set satisfies the `volatility_mitigation` signature |
 
+### Internal constants (prompt-steering)
+
+These are embedded into every SDK prompt by `_build_generation_prompt`.
+
+| Name | Type | Description |
+|------|------|-------------|
+| `_EXAMPLE_PLAN` | `dict` | A concrete conforming DSL example (diversify-shaped group with two weight sleeves: one `equal`, one `inverse_vol`; tickers SPY/QQQ/TLT/GLD). Derived byte-for-byte from shapes accepted by the C3 compiler. Embedded in every prompt to show Opus the exact field vocabulary without presenting drift tokens as valid. |
+| `_OBJECTIVE_SIGNATURES` | `dict[str, str]` | Per-objective natural-language descriptions of the required AC-8 structural signature, one entry per `Objective` value. Embedded in the prompt for the requested objective to steer Opus toward the correct DSL construct (e.g. `diversify` explicitly states "a lone weight node over N assets is only 1 sleeve and does NOT satisfy the diversify signature"). |
+
 ## Public Types
 
 ### `Objective` (enum)
@@ -148,6 +157,32 @@ SDK factory seam. Mirrors `ai_advisor._build_client` (`ai_advisor.py:1590`). Rea
 
 ---
 
+### `_build_generation_prompt(objective, n_plans=N_PLANS_PER_OBJECTIVE, membership=None) -> str`
+
+**Prompt-builder seam.** Builds the full SDK prompt for the given objective. Extracted from the old inline f-string to make the sent instructions independently testable without mocking a full SDK round-trip.
+
+The prompt embeds three pieces of steering content:
+
+1. **Full DSL grammar.** The valid `kind` vocabulary (`asset`, `weight`, `group`, `filter`, `if`, `if_compound`) is listed explicitly with the instruction "never use 'weighted' or any other value." The `scheme` field values (`equal`, `specified`, `inverse_vol`) and the `{node, pct}` specified-children shape are taught with a WRONG-vs-CORRECT contrast to prevent the most common Opus drift patterns.
+2. **`_EXAMPLE_PLAN`.** A concrete conforming DSL plan (diversify-shaped; two weight sleeves; `plan_tickers > 0`) is embedded verbatim. It shows Opus the exact field names and nesting without presenting drift tokens.
+3. **`_OBJECTIVE_SIGNATURES[obj_name]`.** The per-objective structural signature description is embedded for the requested objective, telling Opus which DSL construct is required (e.g. for `lift_risk_adjusted`: "A bare equal-weight basket does NOT satisfy this signature — the filter construct is required").
+
+A sample of up to 20 tickers from `membership` is appended as a universe hint when provided.
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `objective` | `Objective` | Steers the structural signature description embedded in the prompt |
+| `n_plans` | `int` | Number of plans requested; embedded in the prompt instruction |
+| `membership` | `frozenset \| set \| None` | When provided, a sample of up to 20 tickers is appended as a universe hint |
+
+**Returns:** `str` — the full prompt string sent to the SDK `messages.create` call.
+
+**Test seam:** tests can call `_build_generation_prompt(objective)` directly to assert the correct grammar instructions, example, and objective signature are present — without patching the SDK.
+
+---
+
 ### `plan_tickers(plan: dict) -> set[str]`
 
 Deterministic walk returning every ticker referenced anywhere in a build-plan.
@@ -198,7 +233,7 @@ Never raises (D-1). Returns `False` for any malformed input or unknown objective
 
 Generate up to `n_plans` objective-shaped build-plans. Never raises (AC-11).
 
-Calls `_build_client()` → structured tool-use SDK call → parses the `"emit_build_plans"` tool-use block's `.input["plans"]` list → membership-validates every ticker → deduplicates structurally-identical plans → enforces objective structural signature → returns admitted plans tagged `provenance="built-new"`.
+Calls `_build_client()` → `_build_generation_prompt(objective, n_plans, membership_set)` (embeds DSL grammar + `_EXAMPLE_PLAN` + per-objective signature) → structured tool-use SDK call → parses the `"emit_build_plans"` tool-use block's `.input["plans"]` list → membership-validates every ticker → deduplicates structurally-identical plans → enforces objective structural signature → returns admitted plans tagged `provenance="built-new"`.
 
 **Parameters:**
 
@@ -340,10 +375,11 @@ No imports from `database`, `autotuner`, `app`, or any execution module. Off-exe
 ## Design Notes
 
 - **DSL-not-raw-JSON.** Opus emits a strategy DSL, not a Composer `raw_value` tree. This decouples generation from compilation: the generator can be tested against the DSL contract without a live Composer endpoint; the compiler (C3) is a pure dispatch table; and the DSL makes the generator↔compiler contract legible and auditable. Prompt-injection is also bounded: a DSL node with an unexpected `kind` or `scheme` fails DSL shape validation before reaching the compiler.
-- **Structured tool-use, not free text.** The Anthropic SDK call uses tool-use mode (`"emit_build_plans"` tool with a JSON schema, `tool_choice={"type":"tool","name":"emit_build_plans"}`). The response is a structured `tool_use` block; free-text responses (`stop_reason="end_turn"`) are treated as failures and degrade to empty plans.
-- **SDK seam mirrors `ai_advisor._build_client`.** The `_build_client` factory is a module-level callable patched in tests (`advisors.build_plan_generator._build_client`) — the same pattern used by `ai_advisor.py:1590`. No live network is required in the test suite.
+- **Structured tool-use with tightened schema (defense-in-depth).** The Anthropic SDK call uses tool-use mode (`"emit_build_plans"` tool, `tool_choice={"type":"tool","name":"emit_build_plans"}`). The `_EMIT_BUILD_PLANS_TOOL` input schema is enum-constrained: `NODE.kind` is restricted to `{"asset","weight","group","filter","if","if_compound"}` (excludes the drift value `"weighted"`); `weight.scheme` is restricted to `{"equal","specified","inverse_vol"}`; plan-level fields (`plan_id`, `objective`, `name`, `rebalance`, `root`) are typed and required; `rebalance` is enum-constrained. This schema tightening cannot prevent all deep-nesting drift (the JSON schema is not recursive), but it forces the correct top-level tokens and is the first of three defense-in-depth layers. The response is a structured `tool_use` block; free-text responses (`stop_reason="end_turn"`) are treated as failures and degrade to empty plans.
+- **Two test seams: `_build_client` (SDK) and `_build_generation_prompt` (prompt content).** `_build_client` is a module-level callable patched in tests to intercept the SDK call entirely — the same pattern used by `ai_advisor.py:1590`. `_build_generation_prompt` is a standalone function that tests can call directly to assert the correct grammar instructions, `_EXAMPLE_PLAN`, and per-objective signature text are present in the prompt, without a full SDK mock. No live network is required in the unit suite.
 - **`plan_matches_objective` is the single source of truth for AC-8.** The enforcement filter in `generate_build_plans` and all test assertions that check objective structural compliance both call this public function. Neither reimplements the signature logic, so they cannot drift. The filter runs after prune+dedup — order pinned by AC-8 enforcement tests.
 - **Deep-copy on admission (AC-9 no-alias guarantee).** `_validate_and_prune` returns a `copy.deepcopy` of every admitted plan so no node aliases the SDK response object. This is required because the Component 3 compiler mutates tree nodes during compilation (the same reason `symphony_schema` constructors deep-copy their children).
+- **Robustness: unknown-kind nodes are rejected, not passed through.** Prior to the C2-fix, `_prune_node` passed unknown `kind` values through unchanged (to future-proof unknown node types). A live Opus run proved this was wrong: Opus emitted `kind:"weighted"` (a drift token absent from the DSL) which passed through `_prune_node` silently, survived to `plan_tickers()` with zero extractable tickers, and was blocked only by the downstream AC-8 signature filter — leaving 0 admitted plans across all 4 objectives. Fix: `_prune_node` now returns `None` for any unknown `kind`, rejecting the plan. Additionally, `_validate_and_prune` adds a post-prune zero-ticker check (`if not plan_tickers(validated): return None`) to catch any nested-unknown-kind case where an inner unknown-kind node is wrapped by a known outer kind and survives `_prune_node`.
 - **Structural dedup fingerprints the root node, not the full plan.** `_root_fingerprint` computes `sha256(json.dumps(plan["root"], sort_keys=True))` over the `root` NODE. Volatile top-level fields (`plan_id`, `name`, `provenance`) are excluded by operating only on the subtree — two plans with identical structure but different names hash identically.
 - **D-1 error contract.** `reason` strings contain `type(exc).__name__` only. No API key value, no file path, no exception message body ever appears in a returned reason string.
 - **Bill-protection on Atlas pulls.** `load_atlas_candidates` passes `force_refresh=False` unconditionally — Atlas reads are bounded to at most once per week per the operator directive (see `DE-ATLAS-001`).

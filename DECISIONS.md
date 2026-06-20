@@ -2095,3 +2095,73 @@ Two `compile_plan` calls on the same plan produce byte-identical trees except fo
 - `tests/advisors/test_plan_tree_compiler_repair.py` — RED tests (AC-15, AC-16, AC-17 disposition)
 - `tests/advisors/test_plan_tree_compiler_property.py` — property test (AC-15 invariant)
 - `tests/fixtures/strategy_builder/wt_marketcap_deprecated_envelope.json` — live producer evidence (commit 1010de3)
+
+---
+
+## DE-SB-GEN-DRIFT-FIX — C2 generator live-exam defect: Opus vocabulary drift -> 0 admitted plans all objectives (2026-06-20)
+
+Branch: feat/strategy-builder-real | Fix commit: 11caf3d
+
+### Finding (live exam)
+
+The 47 mocked-SDK unit tests for `advisors/build_plan_generator.py` were all GREEN. A PM-run live exam (real Opus SDK call, real `generate_build_plans`, real `_validate_and_prune` + `plan_matches_objective`) returned 0 admitted plans across ALL FOUR objectives. This is the "tests-green-but-hollow" failure mode: mocked SDK tests never catch vocabulary drift because the mock returns conforming DSL — only a real Opus call reveals what Opus actually emits.
+
+**Root cause:** Opus emitted `kind:"weighted"` (a drift token, not in the DSL grammar) and `{node: ..., weight: ...}` children (the field is `pct`, not `weight`) for specified-weight nodes. Two pre-existing code paths allowed these to survive further than they should:
+
+1. `_prune_node` had a catch-all `return node` for unknown `kind` values (intended to future-proof unknown DSL extensions). This silently passed `kind:"weighted"` nodes through unchanged. The surviving plan had 0 extractable tickers (because `plan_tickers()` cannot walk `kind:"weighted"` nodes) and was eventually rejected by the AC-8 signature filter or the zero-ticker prune — but only AFTER silently passing the membership-prune step, making the empty-reason path opaque.
+
+2. The prompt was a terse f-string ("Generate N build-plans... conform to the approved DSL") with no grammar specification, no kind vocabulary, no example, and no structural requirement description. Opus was expected to recall the DSL structure from the tool schema alone — the tool schema was a loose `items: {type: object}` passthrough that provided no enumerated constraints.
+
+### Three-part fix (commit 11caf3d)
+
+**Part 1 — Prompt-steer: `_build_generation_prompt` seam.**
+
+The old inline f-string prompt is replaced by a call to `_build_generation_prompt(objective, n_plans, membership)`. The new prompt embeds:
+- The FULL valid `kind` vocabulary listed explicitly with "never use 'weighted' or any other value."
+- The `scheme` field and its three valid values.
+- The `{node, pct}` specified-children shape taught as WRONG-vs-CORRECT contrast (the most frequent drift was `{..., weight: N}` instead of `{node: ..., pct: N}`).
+- `_EXAMPLE_PLAN` — a concrete conforming plan (diversify-shaped; two weight sleeves; `plan_tickers > 0`) embedded verbatim so Opus sees the exact field names and nesting.
+- `_OBJECTIVE_SIGNATURES[obj_name]` — a natural-language description of the structural requirement for the requested objective, with explicit negative examples (e.g. "A lone weight node over N assets is only 1 sleeve and does NOT satisfy the diversify signature").
+
+The seam is independently testable: tests call `_build_generation_prompt(objective)` directly to assert grammar, example, and signature content are present without mocking the SDK.
+
+**Part 2 — Schema-tighten: `_EMIT_BUILD_PLANS_TOOL` enum constraints (defense-in-depth).**
+
+The loose `items: {type: object}` passthrough schema is replaced with a structured schema:
+- `NODE.kind` is `enum`-constrained to `["asset","weight","group","filter","if","if_compound"]` — excludes `"weighted"` at the JSON schema level.
+- `weight.scheme` is `enum`-constrained to `["equal","specified","inverse_vol"]`.
+- Plan-level fields (`plan_id`, `objective`, `name`, `rebalance`, `root`) are typed and `required`.
+- `rebalance` is `enum`-constrained to the KNOWN_REBALANCE values.
+- `children` field description explicitly states the `{node: NODE, pct: number}` shape for specified scheme.
+
+This is the second layer after the prompt steer. It cannot prevent all deep-nesting drift (the schema is not recursive), but it forces the correct top-level tokens and makes a schema-validation violation visible in the SDK response rather than silently passing.
+
+**Part 3 — Robustness: unknown-kind reject + zero-ticker guard.**
+
+- `_prune_node` now returns `None` for any unknown `kind` (was `return node` pass-through). An unknown kind is an Opus drift token that `plan_tickers()` cannot walk and the C3 compiler will reject — passing it through only delays the inevitable rejection and makes the failure reason opaque.
+- `_validate_and_prune` adds a post-prune zero-ticker check: `if not plan_tickers(validated): return None`. This catches plans where a nested unknown-kind node (wrapped by a known outer kind) survives `_prune_node`'s check on the outer node but leaves the plan with 0 walkable tickers. Zero-ticker plans cannot become valid Composer trees.
+
+This is the third layer: even if prompt-steer and schema-tighten both fail to prevent a drift token, the admission pipeline now rejects it explicitly rather than silently passing it to the AC-8 signature filter.
+
+### Design principle: three-layer drift defense
+
+The fix establishes a layered vocabulary-guarantee:
+
+| Layer | Mechanism | What it catches |
+|-------|-----------|-----------------|
+| Prompt-steer | `_build_generation_prompt` embeds grammar + example + signature | Reduces probability of drift by showing Opus the correct vocabulary before generation |
+| Schema-tighten | `_EMIT_BUILD_PLANS_TOOL` kind/scheme enum constraints | Flags top-level drift tokens at the JSON schema level; caught by the SDK response parsing |
+| AC-8 enforcement | `plan_matches_objective` + filter in `generate_build_plans` | GUARANTEES the admission contract: even a schema-valid plan that doesn't satisfy the structural signature is dropped |
+| Robustness guards | `_prune_node` unknown-kind -> None; zero-ticker post-prune check | Catches residual drift that passed schema constraints but produces unkompilable plans |
+
+Steer toward the right vocabulary AND reject anything that drifts — both are required.
+
+### Live acceptance gate (PM-owned)
+
+The real acceptance gate for this fix is a PM-run live exam: real Opus SDK call (`ANTHROPIC_API_KEY` set, no mocks), `generate_build_plans` for each of the 4 objectives, compiled through `advisors/plan_tree_compiler.compile_plan` → `symphony_schema.validate_tree`. Gate passes when at least 1 `validate_tree`-clean symphony is produced per objective. The 25 new unit tests (25 + 131 total GREEN) guard the structural properties; the live exam is the end-to-end proof.
+
+### Files changed
+
+- `advisors/build_plan_generator.py` — `_EXAMPLE_PLAN` + `_OBJECTIVE_SIGNATURES` constants; `_build_generation_prompt` seam; tightened `_EMIT_BUILD_PLANS_TOOL` schema; `_prune_node` unknown-kind -> None; `_validate_and_prune` zero-ticker guard; `generate_build_plans` calls `_build_generation_prompt`
+- `tests/advisors/test_build_plan_generator.py` — 25 new RED tests (prompt-seam content assertions, schema enum checks, unknown-kind rejection, zero-ticker rejection)
+- Total: 131 tests GREEN at 11caf3d (25 new C2-fix + 48 existing C2 + 38 C3 + atlas/property)
