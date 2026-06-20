@@ -2386,3 +2386,72 @@ GREEN at ddcbb24. Math-adversarial sufficiency pass complete (3 mutation probes 
 - The `spy_returns_fn` seam is the ONLY path to supplying the SPY benchmark series; production callers must wire a real fetch, not pass `None`.
 - `BacktestCandidate.dated_returns` must be populated by callers who want PBO and SPY-fold alignment; callers passing only `daily_returns_pct` continue to work (PBO and SPY gates degrade safely to `pbo=None` and conservative WITHHOLD respectively).
 - The `rejection_reason` precedence order (`pbo_veto` before `below_spy_alpha`) is load-bearing for the operator live-probe; do not reorder without a new RED test + DECISIONS entry.
+
+---
+
+## DE-SB-CULL-001-ADDENDUM-A — C5b production-path wiring: propose_strategies now owns dated_returns + spy_returns_fn (2026-06-20)
+
+Branch: feat/strategy-builder-real | Commit: 5d6e04a | HEAD: f037c83
+
+**Supersedes binding rules in DE-SB-CULL-001:** The two binding rules that required callers to wire `spy_returns_fn` and populate `BacktestCandidate.dated_returns` are now internal implementation details of `propose_strategies`, not caller responsibilities.
+
+### Finding (production-path audit)
+
+After DE-SB-CULL-001 landed at ddcbb24, a production-path audit found that `propose_strategies` never fed the required inputs to `evaluate_candidate_batch`:
+
+- **`dated_returns` always `{}`:** The candidate backtest loop at `strategy_builder_engine.py:965` converted `result.daily_returns.values()` into a positional list (`returns_pct`) but discarded the date keys. `BacktestCandidate` was constructed with the default `dated_returns={}` → `_batch_pbo=None` on every run → PBO veto structurally inert in production.
+- **`spy_returns_fn` never passed:** `evaluate_candidate_batch` was called without `spy_returns_fn` → `default_oos_alpha=0.0` persisted → SPY-fold baseline structurally inert in production.
+
+### Fix (5d6e04a)
+
+`strategy_builder_engine.py` — 35 lines added, no signature change (AC-20):
+
+1. **Step 2a — SPY sourcing (before candidate loop):** `run_backtest` called on `make_root("SPY Benchmark", "daily", [make_weight_equal([make_asset("SPY")])])` with `symphony_id=symphony_id`. On success: `_spy_returns_dict = {d: r * 100.0 for d, r in result.daily_returns.items()}`. On error or empty: `_spy_returns_dict = {}`. Then `_spy_returns_fn = lambda: _spy_returns_dict`.
+2. **`dated_returns` population (inside candidate loop):** `dated_returns_pct = {d: r * 100.0 for d, r in result.daily_returns.items()}` — same scale as `daily_returns_pct` (both `r * 100.0`). Passed as `BacktestCandidate.dated_returns=dated_returns_pct`.
+3. **`spy_returns_fn` passed to gate:** `evaluate_candidate_batch(..., spy_returns_fn=_spy_returns_fn)`.
+
+### Revised binding rules
+
+- `propose_strategies` wires both C5b inputs internally; callers do NOT need to populate `dated_returns` or pass `spy_returns_fn`.
+- `BacktestCandidate.dated_returns` is still a first-class public field; direct callers of `evaluate_candidate_batch` (outside `propose_strategies`) must populate it if they want PBO gating.
+- The `rejection_reason` precedence order remains unchanged: `pbo_veto` → `below_spy_alpha` → `fdr_not_winner`.
+
+### Tests
+
+`tests/advisors/test_cull_production_wiring.py` — 2 new production-path end-to-end RED tests co-committed; 4/4 GREEN; 120/120 across `tests/advisors/` strategy-builder + gate-engine + production-wiring files at commit 5d6e04a.
+
+---
+
+## DE-SB-CULL-001-ADDENDUM-B — AC-25 edge-14: _SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA -inf → +inf inversion (2026-06-20)
+
+Branch: feat/strategy-builder-real | Commit: 4ccea92 | HEAD: f037c83
+
+### Bug
+
+`_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA` was initialized to `float("-inf")` in the initial C5b implementation. The withhold-clause in `acceptance_gate.evaluate_acceptance_gate` (acceptance_gate.py:257) is:
+
+```python
+if oos_alpha <= default_oos_alpha:
+    return KEEP_INCUMBENT  # conservative WITHHOLD
+```
+
+With `default_oas_alpha = float("-inf")`, the condition `oos_alpha <= -inf` is always-false for any finite `oos_alpha` — the clause never fires. The SPY-unavailable path silently fell through to the subsequent `oos_alpha > 0` beats-zero check, the exact behaviour AC-25 edge-14 requires to be prevented.
+
+### Empirical proof
+
+`acceptance_gate.py:257`: `if oos_alpha <= default_oos_alpha`. Python: `any_finite_float <= float("-inf")` evaluates to `False`; `any_finite_float <= float("+inf")` evaluates to `True`. No ambiguity at either sign for finite operands.
+
+### Fix (4ccea92)
+
+`_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA: float = float("+inf")` — now `oos_alpha <= +inf` is always-true for finite `oos_alpha` → KEEP_INCUMBENT (conservative WITHHOLD) for every candidate when SPY is unavailable. Withheld candidates carry `rejection_reason="below_spy_alpha"`. Happy path (SPY available and non-empty) is unaffected — the SPY-fold baseline is a finite value; `oos_alpha <= finite_spy_baseline` is a meaningful comparison.
+
+Four backwards comment sites in `backtest_gate_engine.py` were corrected: constant-definition block (lines 151-158), `evaluate_candidate_batch` docstring (line 573), and both assignment-site inline comments (lines 668-672). No logic changes outside the constant value.
+
+### Test redesign for non-confounded coverage
+
+The original edge-14 tests used `spy_returns_fn=None` (gate-engine level) to trigger the sentinel. The new tests (co-committed with 4ccea92) confirm the sentinel fires when `_spy_returns_dict={}` is returned by the lambda — the production-path representation of SPY-unavailable — rather than testing `spy_returns_fn=None` only. This ensures the test covers the actual code path rather than a distinct gate-skipping branch.
+
+### Files changed
+
+- `advisors/backtest_gate_engine.py` — `_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA` flipped to `float("+inf")`; four comment sites corrected
+- `tests/advisors/test_cull_strengthening.py` — 2 new edge-14 RED tests (empty-dict lambda, not None); 19/19 GREEN; 681 passed / 2 skipped / 0 regressions across `tests/advisors/`

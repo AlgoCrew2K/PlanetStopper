@@ -133,7 +133,7 @@ Propose new candidate symphonies from scratch. Never raises.
 | `live_returns` | `list[float]` | Chronological daily portfolio returns in percent scale; used for blended-drawdown and correlation screens; may be empty |
 | `symphony_id` | `str` | Composer symphony ID to key observations to; defaults to `""` |
 | `incumbent_oos_alpha` | `float` | OOS alpha of the incumbent strategy, passed to `evaluate_candidate_batch` |
-| `default_oos_alpha` | `float` | Fallback OOS alpha when no incumbent alpha is available; overridden by the C5b SPY-fold baseline when `spy_returns_fn` is wired at the call site |
+| `default_oos_alpha` | `float` | Fallback OOS alpha when no incumbent alpha is available. In production, the C5b SPY-fold baseline — sourced internally by `propose_strategies` via a `run_backtest` call before the candidate loop — overrides this value inside `evaluate_candidate_batch`. Callers do not need to wire the SPY baseline; it is automatic as of C5b (commit 5d6e04a). |
 | `community_candidates` | `list[CandidateInfo] \| None` | Optional pre-built `CandidateInfo` objects from `community_candidate_infos`. Appended to the template-generated list and flow through the **same single-batch FDR gate** (AC-2). Capped at `MAX_COMMUNITY_CANDIDATES_PER_RUN` internally (AC-3). `None` and `[]` are identical — no community candidates are injected (AC-6). |
 
 **Returns:** `ProposalRun` where:
@@ -150,9 +150,12 @@ Propose new candidate symphonies from scratch. Never raises.
 Step 1:  _generate_candidate_trees(objective, universe)    → template candidates
 Step 1b: extend with community_candidates[:MAX_COMMUNITY_CANDIDATES_PER_RUN]
          (no-op when community_candidates is None or [])
+Step 2a: run_backtest on 100%-SPY Benchmark tree (once per run) → _spy_returns_dict
+         On error or empty daily_returns: _spy_returns_dict = {} → conservative WITHHOLD in gate
 Step 2:  run_backtest per candidate — per-candidate try/except (backtest_error on failure)
-Step 3:  evaluate_candidate_batch(ALL backtested candidates)  ← full batch, FDR gate
-         C5b: + batch PBO veto + SPY-OOS-fold baseline (see "C5b Gate Strengthening" below)
+         Populate dated_returns from result.daily_returns (date keys preserved, pct-scaled ×100)
+Step 3:  evaluate_candidate_batch(ALL backtested candidates, spy_returns_fn=lambda: _spy_returns_dict)
+         C5b: + batch PBO veto (dated_returns) + SPY-OOS-fold baseline (spy_returns_fn)
 Step 4:  _passes_screens on gate survivors only
 Step 5:  persist survivors + rejected candidates
 ```
@@ -201,7 +204,21 @@ The `community_candidates` keyword argument on `propose_strategies` enables call
 
 **`rejection_reason` field.** Each `CandidateGateResult` now carries a `rejection_reason` string for the operator live-probe: `None` for survivors; `"pbo_veto"` (Stage-1, dominant) or `"below_spy_alpha"` (Stage-2) or `"fdr_not_winner"` (catch-all) for culled candidates. See `advisors_backtest_gate_engine.md` for the full precedence table and `DE-SB-CULL-001` in `DECISIONS.md` for the design rationale.
 
-**Caller contract for C5b:** Callers that want PBO and SPY-baseline gating active must populate `BacktestCandidate.dated_returns` (date-keyed returns dict) and pass a `spy_returns_fn` to `evaluate_candidate_batch`. Callers supplying only `daily_returns_pct` continue to work unchanged; PBO veto and SPY gate degrade safely (`pbo=None`, conservative `float("-inf")` default).
+### C5b Production Wiring (commit 5d6e04a, HEAD f037c83)
+
+The C5b gate-engine changes were initially hollow in production: `propose_strategies` never fed the required inputs to `evaluate_candidate_batch`, so `_batch_pbo` was always `None` (PBO veto inert) and `default_oos_alpha=0.0` persisted (SPY baseline inert). The production path was wired at commit 5d6e04a:
+
+**SPY benchmark sourcing (AC-25):** Before the candidate backtest loop, `propose_strategies` runs a single `run_backtest` call on a minimal 100%-SPY Composer tree (`make_root("SPY Benchmark", "daily", [make_weight_equal([make_asset("SPY")])])`) using the same `symphony_id` as candidates. If the call succeeds and `daily_returns` is non-empty, the results are pct-scaled (`r * 100.0`) and stored in `_spy_returns_dict`. On error or empty returns, `_spy_returns_dict = {}`. Then `spy_returns_fn=lambda: _spy_returns_dict` is passed to `evaluate_candidate_batch`.
+
+When `_spy_returns_dict` is empty (SPY unavailable), the gate engine uses `_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA = float("+inf")` — see edge-14 note in `advisors_backtest_gate_engine.md`. This makes the `oos_alpha <= default_oos_alpha` withhold-clause always-true for finite candidates → every candidate WITHHOLDS with `rejection_reason="below_spy_alpha"` (conservative, never silent fallback to beats-zero).
+
+**`dated_returns` population (AC-24):** Inside the candidate backtest loop, after each successful `run_backtest`, `propose_strategies` now preserves the date keys from `result.daily_returns` and pct-scales them: `dated_returns_pct = {d: r * 100.0 for d, r in result.daily_returns.items()}`. This dict is passed as `BacktestCandidate.dated_returns=dated_returns_pct`. The values are identical in scale to `daily_returns_pct` (the existing list field) because both use `r * 100.0` — the fold transform on either path receives the same numeric values.
+
+**Caller contract:** Callers of `propose_strategies` do not need to wire SPY or `dated_returns` — both are handled internally as of C5b. The public signature is unchanged (AC-20). The `default_oos_alpha` parameter is still accepted but is effectively overridden by the SPY-fold baseline in all non-error cases.
+
+### AC-25 Edge-14 Bug and Fix (commit 4ccea92)
+
+The initial C5b implementation set `_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA = float("-inf")`. In `acceptance_gate.py:257` the withhold check is `oos_alpha <= default_oas_alpha`. With `-inf`, `oos_alpha <= -inf` is always-false for any finite float — so the SPY-unavailable path collapsed to the beats-zero fallback, the exact behaviour AC-25 edge-14 forbids. Fixed to `float("+inf")` at commit 4ccea92 (part of HEAD f037c83): now `oos_alpha <= +inf` is always-true for finite floats → conservative WITHHOLD for every candidate when SPY is unavailable.
 
 ## Provenance Tags
 
@@ -216,7 +233,7 @@ The `community_candidates` keyword argument on `propose_strategies` enables call
 
 - `advisors.symphony_schema` — all 7 template constructors; `render_rules_text`
 - `advisors.backtest_gate_engine` — `evaluate_candidate_batch`, `BacktestCandidate`, `CandidateGateResult`, `GatedBatch`, `HARVEY_LIU_FDR_Q`, `SURVIVOR_OVERFITTING_CAVEAT`
-- `advisors.composer_backtest_client` — `run_backtest` (1 req/s pacing)
+- `advisors.composer_backtest_client` — `run_backtest` (1 req/s pacing); also used for SPY benchmark sourcing (Step 2a, AC-25)
 - `analytics` — `compute_quantstats_metrics`
 - `database` — `insert_advisor_observation`
 

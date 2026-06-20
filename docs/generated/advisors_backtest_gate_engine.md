@@ -11,7 +11,7 @@
 
 1. Receives `BacktestCandidate` objects — each carrying a Composer backtest return series plus optional date-keyed returns for C5b PBO/SPY computation.
 2. **C5b Step 0a:** Computes a batch-level PBO (`math_engine.compute_pbo`) over the intersection of all candidates' date-keyed returns, then threads it into every `evaluate_acceptance_gate` call as `pbo=_batch_pbo`.
-3. **C5b Step 0b:** Computes a real SPY-OOS baseline — aligns SPY's date-keyed returns to the candidate date span (intersection), fold-transforms via the same `_fold_transform_single`, and uses the resulting validation-fold OOS alpha as `default_oos_alpha`. SPY-unavailable degrades conservatively to `float("-inf")`.
+3. **C5b Step 0b:** Computes a real SPY-OOS baseline — aligns SPY's date-keyed returns to the candidate date span (intersection), fold-transforms via the same `_fold_transform_single`, and uses the resulting validation-fold OOS alpha as `default_oos_alpha`. SPY-unavailable degrades conservatively to `float("+inf")` — see edge-14 note below.
 4. Applies the fold-transform: slices every candidate's return series into the autotuner's walk-forward fold structure (60/20/20 TRAIN/VALIDATION/FROZEN-EVAL with PURGE_DAYS + EMBARGO_DAYS boundary purge).
 5. Runs BHY/Yekutieli FDR across the full candidate set (`n_effective = len(candidates)` — the honest multiple-testing count).
 6. Calls `acceptance_gate.evaluate_acceptance_gate` unchanged for each candidate, feeding fold-derived inputs and the batch PBO.
@@ -26,6 +26,7 @@ Off-execution-path: MUST NOT be imported or called from `alpha_bot_execution.py`
 - **Purge integrity:** fold-split respects `PURGE_DAYS` on the validation-fold boundary. Too-short series → WITHHOLD (never fabricate).
 - **NN1 compliance:** Composer backtest trees are not BACKTEST_SELECTION-spec facets; `nn1_compliant=True` is correct for all Composer backtest paths.
 - **C5b SPY date-alignment (not positional):** SPY is aligned to the candidate date span via date intersection BEFORE fold-transform; positional-only alignment would land the fold window on different calendar dates for a longer SPY series, producing a wrong baseline.
+- **C5b edge-14 (+inf, not -inf):** `_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA = float("+inf")`. Using `-inf` would make the `oos_alpha <= default_oos_alpha` withhold-clause in `acceptance_gate.py:257` always-false for finite candidates, collapsing to beats-zero — the exact behaviour AC-25 edge-14 forbids. With `+inf` the clause is always-true → KEEP_INCUMBENT (conservative WITHHOLD) for every finite candidate when SPY is unavailable.
 
 ## Constants
 
@@ -48,7 +49,7 @@ Off-execution-path: MUST NOT be imported or called from `alpha_bot_execution.py`
 | `_BATCH_PBO_GAMMA` | `1.0` | CRRA risk-aversion coefficient passed to `math_engine.compute_pbo`; mirrors `autotuner.GAMMA` |
 | `_PBO_MIN_CONFIGS` | `2` | Minimum number of date-keyed configs to compute a meaningful batch PBO; fewer → `pbo=None`, veto does not fire |
 | `_PBO_MIN_ALIGNED_DATES` | `8` | Minimum intersection dates across all configs; fewer → `pbo=None` (CSCV needs ≥1 date per block, S=8 blocks) |
-| `_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA` | `float("-inf")` | Conservative fallback when SPY is unavailable; ensures every candidate fails the alpha gate (WITHHOLD, never silent fallback to beats-zero) |
+| `_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA` | `float("+inf")` | Conservative SPY-unavailable sentinel. `+inf` makes `oos_alpha <= default_oas_alpha` always-true for every finite candidate → KEEP_INCUMBENT (conservative WITHHOLD). `-inf` would make it always-false → beats-zero fallback, which AC-25 edge-14 forbids. Withheld candidates carry `rejection_reason="below_spy_alpha"`. |
 | `SPY_BENCHMARK_TICKER` | `"SPY"` | US equity broad-market benchmark ticker (SPDR S&P 500 ETF) for the AC-25 OOS-fold baseline |
 
 ### Caveat constants
@@ -73,7 +74,7 @@ One advisor-proposed variant to be fold-transformed and gated.
 | `theory_prior_params` | `dict` | Theory-anchor parameter dict for prior-anchor scoring (D4) |
 | `nn1_compliant` | `bool` | Default `True` for all Composer backtest paths; override for audit |
 | `purge_integrity_ok` | `bool` | Default `True`; series-derived check wins over caller-supplied `True` |
-| `dated_returns` | `dict[str, float]` | **C5b (AC-24/25).** Date-keyed returns (`"YYYY-MM-DD" -> pct`). Enables batch PBO computation and SPY date-alignment. Default `{}` — existing callers without date keys continue to work unchanged; PBO veto and SPY baseline degrade gracefully when empty. |
+| `dated_returns` | `dict[str, float]` | **C5b (AC-24/25).** Date-keyed returns (`"YYYY-MM-DD" -> pct`). Enables batch PBO computation and SPY date-alignment. Default `{}` — callers that omit this field receive `pbo=None` (PBO veto does not fire) and the SPY-unavailable conservative WITHHOLD. In production `propose_strategies` populates this from `result.daily_returns` pct-scaled. |
 
 ### `CandidateGateResult` (NamedTuple)
 
@@ -87,9 +88,9 @@ Gate result for one candidate.
 | `oos_alpha` | `float` | Sum of validation-fold daily returns (percent) |
 | `caveats` | `list[str]` | Plain-text caveats; always non-empty for `ADOPT_CANDIDATE` |
 | `winner_p_adj` | `float \| None` | BHY-adjusted p-value for this candidate (audit trail) |
-| `rejection_reason` | `str \| None` | **C5b.** Why the candidate was culled, or `None` for survivors. Deterministic stage-order precedence — see below. |
+| `rejection_reason` | `str \| None` | **C5b.** Why the candidate was culled, or `None` for survivors. Deterministic stage-order precedence — see below. On SPY-unavailable, withheld candidates carry `"below_spy_alpha"` (the `+inf` sentinel makes the alpha-gate clause always-true). |
 
-#### `rejection_reason` stage-order precedence (C5b, shipped at f41b299)
+#### `rejection_reason` stage-order precedence (C5b, final at f037c83)
 
 The precedence ensures the most-specific cause is recorded. A candidate that triggers multiple gates reports the highest-priority cause:
 
@@ -97,7 +98,7 @@ The precedence ensures the most-specific cause is recorded. A candidate that tri
 |----------|-------|-----------|
 | 1 (survivor) | `None` | `verdict.decision == "ADOPT_CANDIDATE"` |
 | 2 (Stage-1) | `"pbo_veto"` | `_batch_pbo is not None and _batch_pbo > PBO_REJECT_THRESHOLD` |
-| 3 (Stage-2) | `"below_spy_alpha"` | `spy_returns_fn is not None and fold.oos_alpha <= _effective_default_oos_alpha` |
+| 3 (Stage-2) | `"below_spy_alpha"` | `spy_returns_fn is not None and fold.oos_alpha <= _effective_default_oos_alpha` — also fires on SPY-unavailable (sentinel is `+inf`, always-true for finite alpha) |
 | 4 (catch-all) | `"fdr_not_winner"` | BHY non-winner, nn1 failure, purge failure, or thin-window |
 
 PBO veto (`pbo_veto`) dominates `below_spy_alpha` because PBO is the `acceptance_gate` Stage-1 hard veto — a high-PBO batch is too sample-dependent to consider further, regardless of alpha. A candidate that is both high-PBO and below-SPY reports `"pbo_veto"` so the operator can see which gate fired first.
@@ -128,7 +129,7 @@ Fold-transform a batch of Composer backtest candidates and run them through the 
 | `candidates` | `Sequence[BacktestCandidate]` | — | Batch to gate; empty input returns an empty `GatedBatch` |
 | `incumbent_oos_alpha` | `float` | `0.0` | Live incumbent's OOS alpha; used as `fallback_oos_alpha` in the gate (KEEP_INCUMBENT when candidate does not beat it) |
 | `default_oos_alpha` | `float` | `0.0` | Global-default params' OOS alpha; overridden by the SPY-fold baseline when `spy_returns_fn` is supplied and non-empty |
-| `spy_returns_fn` | `Callable[..., dict] \| None` | `None` | **C5b (AC-25) injectable seam.** Returns SPY's date-keyed returns (`dict[str, float]`). When supplied and non-empty: SPY series is date-aligned to the candidate span, fold-transformed, and the resulting validation-fold OOS alpha replaces `default_oos_alpha`. When `None` or empty: `_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA` (`float("-inf")`) is used — ensures no candidate clears the alpha gate (conservative WITHHOLD, never silent fallback to beats-zero). Production callers inject a real SPY fetch; tests inject a fixed fixture series. |
+| `spy_returns_fn` | `Callable[..., dict] \| None` | `None` | **C5b (AC-25) injectable seam.** Returns SPY's date-keyed returns (`dict[str, float]`). When supplied and non-empty: SPY series is date-aligned to the candidate span (intersection, not positional), fold-transformed via `_fold_transform_single`, and the resulting validation-fold OOS alpha replaces `default_oos_alpha`. When `None` or the callable returns `{}`: `_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA` (`float("+inf")`) is used — the `oos_alpha <= default_oos_alpha` clause in `acceptance_gate.py:257` is always-true for finite candidates, so every candidate WITHHOLDS with `rejection_reason="below_spy_alpha"` (conservative, never silent fallback to beats-zero). In production `propose_strategies` passes `spy_returns_fn=lambda: _spy_returns_dict` where `_spy_returns_dict` is sourced via `run_backtest` on a 100%-SPY tree. Tests inject a fixed fixture dict. |
 
 **Returns:** `GatedBatch`
 
@@ -153,13 +154,15 @@ Step 5: evaluate_acceptance_gate per candidate (pbo=_batch_pbo, default_oos_alph
 - If `len(configs) >= _PBO_MIN_CONFIGS` (2) AND the intersection of all date keys has `>= _PBO_MIN_ALIGNED_DATES` (8) dates, `math_engine.compute_pbo` is called with the intersection dates and `_BATCH_PBO_GAMMA=1.0`.
 - Result is threaded into every `evaluate_acceptance_gate(pbo=_batch_pbo)` call.
 - If either condition is not met, `_batch_pbo` stays `None` — the veto correctly does NOT fire (no false reject on thin batches).
+- In production, `propose_strategies` populates `BacktestCandidate.dated_returns` from `result.daily_returns` with date keys preserved and values pct-scaled (`r * 100.0`), identical to the `daily_returns_pct` scale.
 - Mirrors `autotuner.py:2699-2711` wiring pattern.
 
-**C5b SPY-fold baseline details (AC-25):**
+**C5b SPY-fold baseline details (AC-25, edge-14):**
 
 - SPY dates are restricted to the union of candidate dates (intersection of SPY dates with candidate span) so the fold window lands on the same calendar dates as the candidates.
 - The aligned SPY value list is fed to the same `_fold_transform_single` used for candidates.
-- If SPY returns an empty series OR fails, `_effective_default_oos_alpha = _SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA = float("-inf")`, ensuring all candidates WITHHOLD rather than silently falling back to beats-zero.
+- SPY-unavailable (empty series or callable error): `_effective_default_oos_alpha = _SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA = float("+inf")`. The `+inf` sentinel makes `oos_alpha <= default_oos_alpha` always-true for every finite candidate → KEEP_INCUMBENT (conservative WITHHOLD). Withheld candidates carry `rejection_reason="below_spy_alpha"`.
+- **Edge-14 inversion (4ccea92):** the original implementation used `float("-inf")`, which made the withhold-clause always-false → collapsed to beats-zero. Fixed to `float("+inf")` at commit 4ccea92.
 
 **Atlas parity (AC-26):**
 
