@@ -1849,3 +1849,98 @@ All `reason` fields in the return dict contain only `type(exc).__name__`. No mes
 ### Files changed
 
 - `advisors/universe_provider.py` — new file, 226 lines
+
+---
+
+## DE-SB-GEN-001 — Strategy Builder Component 2 + 2b: Opus Build-Plan Generator + Atlas Objective-Matched Admission (2026-06-20)
+
+Branch: feat/strategy-builder-real | Commit: a3f8b12 (GREEN)
+
+### Context
+
+Components 2 and 2b of the real Opus-driven Strategy Builder (AC-7..AC-13 of the Gate-1 feature plan) introduce `advisors/build_plan_generator.py` — the Opus-backed generator that replaces the 7-template stamper. The engine rewire (`_generate_candidate_trees` replacement) and community_strats changes land in Component 3; this phase delivers the generator module and objective-matched Atlas admission as a standalone, fully-tested unit.
+
+### Key decisions
+
+**1. Build-plan DSL as the canonical generator/compiler contract**
+
+The generator emits build-plans expressed in a constrained strategy DSL (JSON-serializable dicts with a tagged-union NODE structure), NOT raw Composer `raw_value` JSON. This is the load-bearing architecture decision: the DSL is a thin 1:1 pre-image of the `symphony_schema` constructor API, so the Component 3 compiler is a pure dispatch table (`kind`/`scheme` to constructor call) with no interpretation. Benefits: (a) generation is testable against the DSL contract without a live Composer endpoint; (b) DSL shape validation gates every plan before it reaches the compiler, bounding prompt-injection blast radius; (c) the contract is legible and auditable in isolation.
+
+**2. Build-plan DSL schema (the generator/compiler field contract)**
+
+Top-level plan fields: `plan_id` (str), `objective` (str, echoed), `name` (str), `rebalance` (str in KNOWN_REBALANCE), `provenance` ("built-new"), `root` (NODE).
+
+NODE tagged union on `kind`:
+- `asset`: `{kind, ticker}`
+- `weight/equal`: `{kind, scheme:"equal", children:[NODE...]}`
+- `weight/specified`: `{kind, scheme:"specified", children:[{node:NODE, pct:number}...]}`
+- `weight/inverse_vol`: `{kind, scheme:"inverse_vol", children:[NODE...], window_days:int?}` -- default 30
+- `weight/market_cap`: `{kind, scheme:"market_cap", children:[NODE...]}` -- DSL carries it now; `make_weight_marketcap` constructor is Component 3 (AC-17)
+- `group`: `{kind, name:str, children:[NODE...]}`
+- `filter`: `{kind, select_fn:"top"|"bottom", select_n:int, sort_by_fn:str, window:int, children:[NODE...]}`
+- `if`: `{kind, condition:{lhs_fn,lhs_ticker,window,comparator,rhs:{fixed:num}|{ticker,fn,window}}, then:[NODE...], else:[NODE...]}`
+- `if_compound`: `{kind, condition:CONDITION, then:[NODE...], else:[NODE...]}`
+
+CONDITION recursive union on `type`:
+- `binary`: `{type, lhs:{fn,ticker,window}, comparator, rhs:{const:num}|{fn,ticker,window}}`
+- `binary_compound`: `{type, fn, tickers:[str...], comparator, rhs:{const:num}, window, operator:"any"|"all"}`
+- `compound`: `{type, operator:"any"|"all", conditions:[CONDITION...]}`
+
+Vocabulary constraints: `comparator` in KNOWN_COMPARATORS; `operator` in _KNOWN_OPERATORS; `scheme` in {equal,specified,inverse_vol,market_cap}; `rebalance` in KNOWN_REBALANCE. The `%` placeholder in `binary_compound.tickers` is excluded from the membership-validation walk (`plan_tickers` filters it).
+
+**3. Four-value Objective enum -- `volatility_mitigation` added (AC-8)**
+
+A fourth objective value `volatility_mitigation` is added to the existing three (`diversify`, `cut_drawdown`, `lift_risk_adjusted`). The enum is defined in `build_plan_generator.py` independently of `strategy_builder_engine.Objective` (which remains 3-value until the Component 3 engine rewire). Each objective hard-shapes plan structure via a mutually-distinguishable structural signature:
+
+| Objective | Required structural signature |
+|-----------|-------------------------------|
+| `diversify` | >= 2 sleeves at root container |
+| `cut_drawdown` | `if`/`if_compound` regime gate OR `scheme:"inverse_vol"` weight |
+| `lift_risk_adjusted` | A `filter` with `sort_by_fn` in momentum/quality indicators (e.g. `"cumulative-return"`, `"moving-average-return"`). Bare specified-weight baskets are rejected (refinement B). |
+| `volatility_mitigation` | `scheme:"inverse_vol"` weight OR `filter` with `sort_by_fn` in low/min-vol indicators (e.g. `"max-drawdown"`, `"standard-deviation-return"`) |
+
+Plans that fail the objective signature are dropped after membership validation, before the pool.
+
+**4. Structural deduplication fingerprint (AC-10 -- refinement C)**
+
+Plans are deduped by `json.dumps({k: v for k, v in plan.items() if k not in {"plan_id", "name", "provenance"}}, sort_keys=True)`. This captures shape + tickers + parameters while ignoring per-plan identity fields. Structurally-identical plans (including 12 clones with different `plan_id`/`name`) collapse to one representative.
+
+**5. AC-9 degenerate-prune guard (refinement A)**
+
+Off-universe tickers are pruned when in-universe siblings remain. If pruning would leave a node empty or degenerate, the entire plan is rejected -- never emitted broken. Off-universe tickers in `if`/`if_compound` conditions are handled with the same prune-or-reject logic. An empty membership set causes all plans to be rejected.
+
+**6. Provenance as an EXPLICIT top-level key (AC-13)**
+
+Provenance is a plain `["provenance"]` top-level key on every item in the pool -- `"built-new"` on generator plans, `"atlas-suggested"` on admitted community candidate dicts. It is NOT nested in `params`. This was a PM-decided contract point. The `pool_candidates` function preserves provenance by simple concatenation with no reshaping.
+
+`admit_community_candidates` returns plain dicts (not `CandidateInfo` objects) with the original community strategy fields plus the `provenance` key. The `template_id="community"` mechanism from the pre-C2 engine is internal to the engine; this module uses the explicit `provenance` field instead.
+
+**7. AC-12 objective-matched Atlas admission rules**
+
+Community strategies from `load_community_strategies` are ranked by objective-specific stats from `oos_metrics`. Ranking rules:
+- `cut_drawdown`: `max_drawdown` nearer zero first (shallowest = best defensive; quantstats values are <= 0)
+- `volatility_mitigation`: `volatility` lowest first
+- `lift_risk_adjusted`: `sharpe` highest first
+- `diversify`: low cross-correlation vs the admitted set; deterministic; no hardcoded stat value asserted
+
+Missing-stat docs (PM-decided: KEPT-LAST): a doc with `oos_metrics=None`, a missing key, or a non-numeric stat value is admitted after all docs with a valid numeric stat. Never pre-dropped. Rationale: the FDR gate, PBO veto, and SPY-OOS baseline in the downstream pipeline (Component 5b) are the real overfit guards (AC-26); pre-dropping on a missing stat would be premature.
+
+**8. AC-13 phase boundary -- FDR-end-to-end deferred to C3/C5**
+
+The C2/2b slice of AC-13 tests provenance tagging and pooling only: (1) generator output `provenance="built-new"`, (2) admitted community candidates `provenance="atlas-suggested"`, (3) `pool_candidates` tags and preserves both. The remaining AC-13 assertions -- both sources through the SAME single-batch FDR gate, gate count includes both, tag survives to persisted `advisor_observations.raw_response` and route/SPA JSON -- are DEFERRED to Component 3 (compiler + engine rewire) and Component 5 (route rewire). This is PM refinement D from the TDD handoff.
+
+**9. `strategy_builder_engine.py` and `community_strats.py` NOT modified in this phase**
+
+All objective-matching logic lives in `build_plan_generator.admit_community_candidates`. The engine existing 3-value `Objective` enum and 7-template `_generate_candidate_trees` are untouched. The engine rewire is Component 3 work.
+
+**10. `market_cap` scheme carried in DSL now; constructor is C3 forward-AC**
+
+The DSL specifies `scheme:"market_cap"` as a valid NODE scheme so the generator can emit market-cap-weighted plans. `make_weight_marketcap` in `symphony_schema` and its `KNOWN_STEPS` entry are Component 3 work (AC-17), requiring a real `/score` field capture first. A compiler receiving a `market_cap` node before C3 ships will error at compile time, not at generation time.
+
+### Files changed
+
+- `advisors/build_plan_generator.py` -- new file (Component 2 + 2b)
+- `tests/advisors/test_build_plan_generator.py` -- 25 RED tests (Component 2: AC-7..AC-11)
+- `tests/advisors/test_build_plan_atlas_admission.py` -- 20 RED tests (Component 2b: AC-12..AC-13 C2/2b slice)
+- `tests/advisors/test_build_plan_generator_property.py` -- 2 hypothesis property tests (AC-9 membership invariant + never-raises)
+- Total: 47 tests, 47 GREEN at commit a3f8b12
