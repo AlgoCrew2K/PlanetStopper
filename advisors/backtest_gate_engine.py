@@ -149,12 +149,15 @@ _PBO_MIN_CONFIGS: int = 2
 _PBO_MIN_ALIGNED_DATES: int = 8
 
 # Conservative default_oos_alpha used when the SPY benchmark series is unavailable.
-# A very large negative value ensures every candidate's oos_alpha fails the
-# "oos_alpha > default_oos_alpha" gate branch → WITHHOLD (KEEP_INCUMBENT), never adopt.
+# +inf guarantees that the withhold-clause in evaluate_acceptance_gate
+# (acceptance_gate.py:257) — ``oos_alpha <= default_oos_alpha`` — is ALWAYS TRUE for
+# every finite candidate oos_alpha → KEEP_INCUMBENT (conservative WITHHOLD) for all.
 # This is the conservative degradation required by AC-25 / edge case 14 in the feature
 # plan: if SPY cannot be established, we must not silently fall back to beats-zero.
+# Note: -inf would make that clause ALWAYS FALSE, collapsing the withhold to the fallback
+# (incumbent, 0.0) = beats-zero — the exact behaviour AC-25 edge-14 forbids.
 # Source: feature-plans/strategy-builder-real.md §Edge Cases #14; AC-25 contract.
-_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA: float = float("-inf")
+_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA: float = float("+inf")
 
 # SPY benchmark ticker — the US equity broad-market reference series.
 # SPY is the SPDR S&P 500 ETF, the canonical institutional benchmark for US equity
@@ -570,9 +573,10 @@ def evaluate_candidate_batch(
             IDENTICAL ``_fold_transform_single`` used for candidates, and the
             resulting validation-fold OOS alpha replaces ``default_oos_alpha``.
             When None or the returned series is empty, the conservative
-            ``_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA`` (float("-inf")) is used, which
-            ensures no candidate can clear the SPY-alpha gate branch.  This prevents
-            a silent fallback to the old beats-zero baseline (AC-25 mandate).
+            ``_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA`` (float("+inf")) is used, which
+            makes ``oos_alpha <= default_oos_alpha`` (acceptance_gate.py:257) always
+            TRUE → KEEP_INCUMBENT for every candidate (conservative WITHHOLD).  This
+            prevents a silent fallback to the old beats-zero baseline (AC-25 edge-14).
             Production callers wire this to a real SPY fetch; tests inject a
             fixed fixture series.
             Source: feature-plans/strategy-builder-real.md §AC-25.
@@ -630,7 +634,8 @@ def evaluate_candidate_batch(
     # series), then fold-transform the aligned series identically to the candidates.
     # The resulting SPY validation-fold OOS alpha replaces default_oos_alpha.
     # If SPY is unavailable (empty series), use _SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA
-    # (float("-inf")) so no candidate clears the alpha gate — conservative WITHHOLD.
+    # (float("+inf")) — makes ``oos_alpha <= default_oos_alpha`` always TRUE →
+    # KEEP_INCUMBENT for every candidate (conservative WITHHOLD, AC-25 edge-14).
     # Source: feature-plans/strategy-builder-real.md §AC-25; handoff §AC-25.
     # --------------------------------------------------------------------------
     _effective_default_oos_alpha: float = default_oos_alpha
@@ -665,10 +670,11 @@ def evaluate_candidate_batch(
                 _spy_fold = _fold_transform_single(_spy_value_list)
                 _effective_default_oos_alpha = _spy_fold.oos_alpha
             else:
-                # SPY has no dates overlapping the candidate span.
+                # SPY has no dates overlapping the candidate span → conservative WITHHOLD.
+                # +inf makes oos_alpha <= default_oos_alpha always TRUE → KEEP_INCUMBENT.
                 _effective_default_oos_alpha = _SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA
         else:
-            # SPY series returned empty → conservative withhold.
+            # SPY series returned empty → conservative WITHHOLD (+inf → KEEP_INCUMBENT).
             _effective_default_oos_alpha = _SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA
 
     # --------------------------------------------------------------------------
