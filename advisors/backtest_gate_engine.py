@@ -835,8 +835,10 @@ def evaluate_candidate_batch(
             _rejection_reason = "pbo_veto"
         elif spy_returns_fn is not None and fold.oos_alpha <= _effective_default_oos_alpha:
             # SPY-fold baseline not met: Stage-2 gate — the candidate's fold OOS alpha is at
-            # or below the SPY fold OOS alpha (or below float("-inf") for the unavailable
-            # case, which also means "did not beat the required baseline").
+            # or below the SPY fold OOS alpha. On SPY-unavailable the baseline is the
+            # conservative float("+inf") sentinel, so this clause is ALWAYS TRUE → every
+            # candidate is withheld with below_spy_alpha (the baseline could not be
+            # established — AC-25 edge-14 conservative WITHHOLD).
             _rejection_reason = "below_spy_alpha"
         else:
             # Catch-all: BHY/Yekutieli FDR non-winner, or nn1/purge/thin-window failure.
