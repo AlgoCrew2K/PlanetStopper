@@ -1,0 +1,24 @@
+{
+  "_provenance": "Captured live from Composer POST /api/v0.1/backtest on 2026-06-20 by sb3-testwriter (AC-17 empirical-before-TDD). RAW producer response, not invented.",
+  "_probe_summary": {
+    "wt-cash-equal_control": "HTTP 200 (harness valid)",
+    "wt-market-cap_hyphenated": "HTTP 400 (wrong token spelling)",
+    "wt-marketcap_canonical": "HTTP 422 node-type-not-supported -- DEPRECATED by producer"
+  },
+  "request_node_step": "wt-marketcap",
+  "response_status": 422,
+  "response_body": {
+    "errors": [
+      {
+        "status": 422,
+        "code": "node-type-not-supported",
+        "title": "Market cap weighting is no longer supported",
+        "meta": {
+          "symphony_id": "e2d4ed41-43aa-488b-a8d8-27b5b55c3ee7",
+          "user_id": null,
+          "node-type": "market cap weighting"
+        }
+      }
+    ]
+  }
+}
