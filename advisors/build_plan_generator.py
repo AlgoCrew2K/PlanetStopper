@@ -165,16 +165,22 @@ def _build_client():
 
 
 def _collect_condition_tickers(cond: dict, out: set) -> None:
-    """Collect every real ticker referenced in a CONDITION block (recursive)."""
+    """Collect every real ticker referenced in a CONDITION block (recursive).
+
+    Reads the CANONICAL-FLAT binary leaf encoding (binary-encoding-fix):
+    lhs_ticker (flat field, not nested cond["lhs"]["ticker"]).
+    rhs: {fixed: num} carries no ticker; {fn, ticker, window} (ticker-comparison)
+    carries rhs["ticker"] directly (flat, no nesting).
+    """
     if not isinstance(cond, dict):
         return
     ctype = cond.get("type")
     if ctype == "binary":
-        lhs = cond.get("lhs", {})
-        if isinstance(lhs, dict):
-            t = lhs.get("ticker")
-            if t and t != _PCT_PLACEHOLDER:
-                out.add(t)
+        # Flat lhs ticker (canonical-flat encoding).
+        t = cond.get("lhs_ticker")
+        if t and t != _PCT_PLACEHOLDER:
+            out.add(t)
+        # Ticker-comparison rhs: {fn, ticker, window}; fixed rhs has no ticker.
         rhs = cond.get("rhs", {})
         if isinstance(rhs, dict):
             t = rhs.get("ticker")
