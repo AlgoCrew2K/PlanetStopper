@@ -1944,3 +1944,47 @@ The DSL specifies `scheme:"market_cap"` as a valid NODE scheme so the generator 
 - `tests/advisors/test_build_plan_atlas_admission.py` -- 20 RED tests (Component 2b: AC-12..AC-13 C2/2b slice)
 - `tests/advisors/test_build_plan_generator_property.py` -- 2 hypothesis property tests (AC-9 membership invariant + never-raises)
 - Total: 47 tests, 47 GREEN at commit a3f8b12
+
+---
+
+### DE-SB-GEN-001 Revise amendment — AC-8 (B) objective-signature enforcement (2026-06-20)
+
+**Commit:** 249790b | **Branch:** feat/strategy-builder-real
+
+The original DE-SB-GEN-001 (commit a3f8b12) documented the four objective signatures and the stated intention that plans failing the signature would be dropped. The enforcement mechanism itself shipped in a later commit (249790b, after the Revise cycle for AC-8), adding three implementation artifacts that were not present in the initial doc sweep. This amendment closes that gap.
+
+**New constants (single source of truth for the predicate lookup tables):**
+
+- `_CONTAINER_KINDS: frozenset[str]` — `{"group", "weight", "filter", "if", "if_compound"}`. Identifies allocation-container node kinds for sleeve counting and tree traversal. Used by both `_diversify_sleeve_count` and `_iter_all_nodes`.
+- `_MOMENTUM_QUALITY_SORTS: frozenset[str]` — `{"cumulative-return", "moving-average-return"}`. Sort-by-fn values satisfying the `lift_risk_adjusted` FILTER signature.
+- `_LOW_VOL_SORTS: frozenset[str]` — `{"max-drawdown", "standard-deviation-return", "standard-deviation-price"}`. Sort-by-fn values satisfying the `volatility_mitigation` FILTER signature.
+
+**New internal helpers:**
+
+- `_iter_all_nodes(root: dict)` — iterative DFS (explicit stack; no recursion) yielding every NODE dict in a plan's root tree. Handles all DSL node kinds including `specified`-weight children (`{node, pct}` pairs) and `then`/`else` branches. Never raises; skips non-dict entries.
+- `_diversify_sleeve_count(root: dict) -> int` — counts allocation-container direct children of the root node. Asset leaves do not count. Special cases: `if`/`if_compound` roots count then+else branch children; `specified`-weight roots count `{node}` entries that are containers; all other containers count `children[]` entries that are containers.
+
+**New public function:**
+
+- `plan_matches_objective(plan: dict, objective) -> bool` — the SINGLE SOURCE OF TRUTH for AC-8 objective-signature compliance. Both `generate_build_plans` (enforcement filter) and all test assertions that check structural compliance import and call this function. Neither reimplements the check, so filter and assertions cannot drift. Per-objective logic:
+  - `diversify`: `_diversify_sleeve_count(root) >= 2`
+  - `cut_drawdown`: any node is `if`/`if_compound` OR `weight` with `scheme:"inverse_vol"`
+  - `lift_risk_adjusted`: any `filter` node has `sort_by_fn` in `_MOMENTUM_QUALITY_SORTS`; bare baskets return `False`
+  - `volatility_mitigation`: any `weight` with `scheme:"inverse_vol"` OR any `filter` with `sort_by_fn` in `_LOW_VOL_SORTS`
+  - Unknown objective or malformed input: returns `False` (fail-closed)
+  - Never raises (D-1).
+
+**Enforcement wiring in `generate_build_plans` — order is fixed:**
+
+The admission pipeline order (prune → tag → dedup → signature-filter) is pinned by the AC-8 enforcement tests; reordering these steps would break tests. The signature filter runs AFTER prune+dedup so a plan whose structure degrades below the threshold during pruning is correctly rejected here rather than silently admitted as passing a stale fingerprint.
+
+**New `GeneratorResult.reason` path:**
+
+When all remaining plans (after prune and dedup) fail the signature filter, `generate_build_plans` returns `GeneratorResult(plans=[], reason=f"no plans matched the {obj_name} signature after prune and dedup")`. This is distinct from `reason=None` (which signals an admission-empty result from membership/dedup filtering, not from a signature floor). The distinction lets callers and logs tell apart "Opus returned no plans matching the objective structure" from "Opus returned plans but they all had off-universe tickers."
+
+**Files added/changed in this Revise commit:**
+
+- `advisors/build_plan_generator.py` — added `_CONTAINER_KINDS`, `_MOMENTUM_QUALITY_SORTS`, `_LOW_VOL_SORTS`, `_iter_all_nodes`, `_diversify_sleeve_count`, `plan_matches_objective`; wired enforcement filter + honest empty-reason path into `generate_build_plans`
+- `tests/advisors/test_build_plan_generator.py` — 4 new RED→GREEN AC-8 enforcement tests (verify signature filter fires in generate_build_plans, order pinned, honest reason path)
+- `tests/advisors/test_build_plan_atlas_admission.py` — 1 updated test asserting `plan_matches_objective` is the shared predicate
+- Total after Revise: 52 tests GREEN at commit 249790b

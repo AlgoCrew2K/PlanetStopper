@@ -21,7 +21,7 @@ Off-execution-path. Advisory-only. Never raises — every function degrades hone
 
 ## The Build-Plan DSL (canonical generator↔compiler contract)
 
-A build-plan is a JSON-serializable `dict`. The generator produces these; the compiler (Component 3, `advisors/plan_compiler.py`) translates each into a valid Composer `raw_value` tree via `symphony_schema` constructors. The DSL is a thin 1:1 pre-image of the constructor API — each `kind`/`scheme` maps to exactly one constructor.
+A build-plan is a JSON-serializable `dict`. The generator produces these; the compiler (Component 3, `advisors/plan_tree_compiler.py`) translates each into a valid Composer `raw_value` tree via `symphony_schema` constructors. The DSL is a thin 1:1 pre-image of the constructor API — each `kind`/`scheme` maps to exactly one constructor.
 
 ### Top-level build-plan
 
@@ -81,6 +81,16 @@ Used in `if_compound` nodes:
 | `PROVENANCE_BUILT_NEW` | `"built-new"` | Explicit provenance tag stamped on every generator-produced plan as `plan["provenance"]` (AC-13). |
 | `PROVENANCE_ATLAS_SUGGESTED` | `"atlas-suggested"` | Explicit provenance tag stamped on every admitted Atlas community candidate in `CandidateInfo.params["provenance"]` (AC-13). |
 | `MAX_COMMUNITY_CANDIDATES_PER_RUN` | `20` | Re-exported from `strategy_builder_engine`; single-sourced cap on admitted community candidates. |
+
+### Internal constants (objective-signature lookup tables)
+
+These private frozensets are the single source of truth for `plan_matches_objective` — the generator and its tests both delegate to that function, so these tables cannot drift.
+
+| Name | Values | Used by |
+|------|--------|---------|
+| `_CONTAINER_KINDS` | `{"group", "weight", "filter", "if", "if_compound"}` | `_diversify_sleeve_count` (counts container-typed direct children) and `_iter_all_nodes` (classifies traversal targets) |
+| `_MOMENTUM_QUALITY_SORTS` | `{"cumulative-return", "moving-average-return"}` | `plan_matches_objective` — a `filter` whose `sort_by_fn` is in this set satisfies the `lift_risk_adjusted` signature |
+| `_LOW_VOL_SORTS` | `{"max-drawdown", "standard-deviation-return", "standard-deviation-price"}` | `plan_matches_objective` — a `filter` whose `sort_by_fn` is in this set satisfies the `volatility_mitigation` signature |
 
 ## Public Types
 
@@ -156,11 +166,39 @@ Excludes the `%` binary-compound placeholder. Never raises.
 
 ---
 
+### `plan_matches_objective(plan: dict, objective) -> bool`
+
+**Public function. Single source of truth for the AC-8 objective-signature admission filter.**
+
+Returns `True` if `plan`'s root structure satisfies the structural signature required by `objective`. Both `generate_build_plans` (the enforcement filter) and the test suite import and call this function directly — tests never reimplement the check, so the filter and assertions cannot drift.
+
+Per-objective logic (all checks are applied anywhere in the tree via `_iter_all_nodes`, except `diversify` which measures direct root children via `_diversify_sleeve_count`):
+
+| Objective | Passes when |
+|-----------|-------------|
+| `diversify` | `_diversify_sleeve_count(root) >= 2` — root has at least 2 container-typed direct children (sleeves). Asset leaves do not count. |
+| `cut_drawdown` | Any node in the tree is an `if`/`if_compound` (regime gate) OR a `weight` with `scheme:"inverse_vol"` |
+| `lift_risk_adjusted` | Any `filter` node has `sort_by_fn` in `_MOMENTUM_QUALITY_SORTS`. A bare specified-weight basket returns `False`. |
+| `volatility_mitigation` | Any `weight` node has `scheme:"inverse_vol"` OR any `filter` node has `sort_by_fn` in `_LOW_VOL_SORTS` |
+
+Never raises (D-1). Returns `False` for any malformed input or unknown objective.
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `plan` | `dict` | A top-level build-plan dict; `plan["root"]` is the traversal entry point |
+| `objective` | `Objective` | The objective whose signature to check; also accepts a string matching an `Objective.value` |
+
+**Returns:** `bool`
+
+---
+
 ### `generate_build_plans(objective, membership_set, *, n_plans=N_PLANS_PER_OBJECTIVE) -> GeneratorResult`
 
 Generate up to `n_plans` objective-shaped build-plans. Never raises (AC-11).
 
-Calls `_build_client()` → structured tool-use SDK call → parses the `"emit_build_plans"` tool-use block's `.input["plans"]` list → membership-validates every ticker → enforces objective structural signature → deduplicates structurally-identical plans → returns admitted plans tagged `provenance="built-new"`.
+Calls `_build_client()` → structured tool-use SDK call → parses the `"emit_build_plans"` tool-use block's `.input["plans"]` list → membership-validates every ticker → deduplicates structurally-identical plans → enforces objective structural signature → returns admitted plans tagged `provenance="built-new"`.
 
 **Parameters:**
 
@@ -172,25 +210,35 @@ Calls `_build_client()` → structured tool-use SDK call → parses the `"emit_b
 
 **Returns:** `GeneratorResult`
 
-**Membership validation (AC-9 — refinement A):**
+**Admission pipeline order (fixed — AC-8 enforcement test pins this):**
+
+For each raw plan from the SDK response, the following steps are applied in strict order. A plan is dropped at the first failing step; the run continues with the remaining plans.
+
+1. **Membership prune (AC-9):** `_validate_and_prune` checks every ticker. Off-universe tickers in sibling-safe nodes are pruned; degenerate/empty nodes or unpreable condition references reject the whole plan.
+2. **Provenance tag (AC-13):** `plan["provenance"] = "built-new"` stamped unconditionally on surviving plans.
+3. **Structural dedup (AC-10):** `_root_fingerprint` computes `sha256(json.dumps(plan["root"], sort_keys=True))`; plans with a seen fingerprint are dropped.
+4. **Objective signature filter (AC-8 B):** `plan_matches_objective(pruned, objective)` is called; plans failing the signature are dropped. This runs AFTER prune+dedup so a plan whose structure degrades below the threshold after pruning is correctly rejected here, not silently admitted.
+
+**Empty-result reason (AC-8 B + AC-11/AC-23):** If the signature filter eliminates all remaining plans (leaving `admitted == []`), `GeneratorResult` carries `reason=f"no plans matched the {obj_name} signature after prune and dedup"` — never `reason=None` (which would look like a parse failure rather than a signature-floor result).
+
+**Membership validation detail (AC-9 — refinement A):**
 - If a plan contains an off-universe ticker AND in-universe siblings remain in the same node, the off-universe ticker is pruned.
 - If pruning would leave a node empty or degenerate (no children), the entire plan is rejected — never emitted broken.
 - Off-universe tickers in `if`/`if_compound` condition signal references are not prunable; the plan is rejected outright.
 - An empty `membership_set` causes every ticker to be off-universe; all plans are rejected and `plans == []`.
 - Admitted plans are returned as `copy.deepcopy` objects — no node aliases the SDK response. This is required because Component 3 mutates admitted trees during compilation (the same reason `symphony_schema` constructors deep-copy their children).
 
-**Objective structural enforcement (AC-8):** Each plan is validated against the objective's structural signature after membership validation. Plans failing the signature are dropped before admission. The four signatures are mutually distinguishable.
-
-**Structural deduplication (AC-10 — refinement C):** Plans are fingerprinted via `_root_fingerprint`, which computes `sha256(json.dumps(plan["root"], sort_keys=True))` over the `root` NODE only. Volatile top-level fields (`plan_id`, `name`, `provenance`) are excluded by operating only on the root subtree. Structurally-identical plans (same shape + tickers, differing only in `plan_id`/`name`) are collapsed to one representative. Admitted count is always `<= n_plans`.
+**Structural deduplication detail (AC-10 — refinement C):** Plans are fingerprinted via `_root_fingerprint`, which computes `sha256(json.dumps(plan["root"], sort_keys=True))` over the `root` NODE only. Volatile top-level fields (`plan_id`, `name`, `provenance`) are excluded by operating only on the root subtree. Structurally-identical plans (same shape + tickers, differing only in `plan_id`/`name`) are collapsed to one representative. Admitted count is always `<= n_plans`.
 
 **Degradation paths (AC-11):**
 - `_build_client()` raises (missing key) → `GeneratorResult(plans=[], reason="RuntimeError")`
 - SDK `messages.create` raises → `GeneratorResult(plans=[], reason=type(exc).__name__)`
 - Tool-use block absent → `GeneratorResult(plans=[], reason="NoToolUseBlock")`
 - `plans` payload is not a list → `GeneratorResult(plans=[], reason="InvalidToolUsePayload")`
-- All plans rejected by membership validation, signature check, or dedup → `GeneratorResult(plans=[], reason=None)` (empty plans is not itself an error)
+- All plans filtered by signature (after prune and dedup) → `GeneratorResult(plans=[], reason="no plans matched the <obj> signature after prune and dedup")`
+- All plans rejected by membership validation or dedup only → `GeneratorResult(plans=[], reason=None)` (empty plans without a signature-filter cause is not itself an error)
 
-`reason` contains ONLY `type(exc).__name__` — never the API key, a file path, or any exception message body (D-1 contract).
+`reason` contains ONLY `type(exc).__name__` for exceptions — never the API key, a file path, or any exception message body (D-1 contract).
 
 **Example:**
 ```python
@@ -294,6 +342,7 @@ No imports from `database`, `autotuner`, `app`, or any execution module. Off-exe
 - **DSL-not-raw-JSON.** Opus emits a strategy DSL, not a Composer `raw_value` tree. This decouples generation from compilation: the generator can be tested against the DSL contract without a live Composer endpoint; the compiler (C3) is a pure dispatch table; and the DSL makes the generator↔compiler contract legible and auditable. Prompt-injection is also bounded: a DSL node with an unexpected `kind` or `scheme` fails DSL shape validation before reaching the compiler.
 - **Structured tool-use, not free text.** The Anthropic SDK call uses tool-use mode (`"emit_build_plans"` tool with a JSON schema, `tool_choice={"type":"tool","name":"emit_build_plans"}`). The response is a structured `tool_use` block; free-text responses (`stop_reason="end_turn"`) are treated as failures and degrade to empty plans.
 - **SDK seam mirrors `ai_advisor._build_client`.** The `_build_client` factory is a module-level callable patched in tests (`advisors.build_plan_generator._build_client`) — the same pattern used by `ai_advisor.py:1590`. No live network is required in the test suite.
+- **`plan_matches_objective` is the single source of truth for AC-8.** The enforcement filter in `generate_build_plans` and all test assertions that check objective structural compliance both call this public function. Neither reimplements the signature logic, so they cannot drift. The filter runs after prune+dedup — order pinned by AC-8 enforcement tests.
 - **Deep-copy on admission (AC-9 no-alias guarantee).** `_validate_and_prune` returns a `copy.deepcopy` of every admitted plan so no node aliases the SDK response object. This is required because the Component 3 compiler mutates tree nodes during compilation (the same reason `symphony_schema` constructors deep-copy their children).
 - **Structural dedup fingerprints the root node, not the full plan.** `_root_fingerprint` computes `sha256(json.dumps(plan["root"], sort_keys=True))` over the `root` NODE. Volatile top-level fields (`plan_id`, `name`, `provenance`) are excluded by operating only on the subtree — two plans with identical structure but different names hash identically.
 - **D-1 error contract.** `reason` strings contain `type(exc).__name__` only. No API key value, no file path, no exception message body ever appears in a returned reason string.
