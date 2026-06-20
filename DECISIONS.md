@@ -1801,3 +1801,51 @@ Planet Stopper is deployed to a public Linux VPS. The deployment architecture wa
 ### Status
 
 Architecture deployed. Runbook at `docs/DEPLOYMENT.md`. `.env.example` template committed at repo root.
+
+---
+
+## DE-SB-UNIV-001 — Strategy Builder Component 1: Tradeable Universe Provider design decisions (2026-06-20)
+
+Branch: feat/strategy-builder-real | Commit: 12aa6b2
+
+### Context
+
+Component 1 of the real Opus-driven Strategy Builder (AC-1..AC-6 of the Gate-1 feature plan) introduces `advisors/universe_provider.py` — the single authoritative source of the tradeable US-equity universe consumed by the Strategy Builder engine.
+
+### Key decisions
+
+**1. Alpaca PAPER host is the source (`ALPACA_TRADING_BASE_URL = "https://paper-api.alpaca.markets"`)**
+
+The project uses PAPER API keys. The live host `api.alpaca.markets` returns HTTP 401 with these credentials. The data host `data.alpaca.markets/v2` (used by `synthetic_history.py`) is a different service with different auth and a different endpoint shape; it cannot be used for asset enumeration. `ALPACA_TRADING_BASE_URL` is therefore a new constant in `universe_provider.py`, distinct from `synthetic_history.ALPACA_BASE_URL`, to make the host selection explicit and avoid confusion with the existing data client.
+
+**2. Single flat GET — no pagination**
+
+`GET /v2/assets?status=active&asset_class=us_equity` returns a single JSON array. No pagination loop is required or correct for this endpoint. One HTTP call per live fetch.
+
+**3. Membership-only / no ranking**
+
+The result is an unordered `frozenset[str]`. No dollar-volume, no top-N cap, no ranking criteria. ETFs, leveraged ETFs, and inverse ETFs are retained — no class-based exclusion. The Strategy Builder engine is responsible for any candidate filtering beyond membership; the universe provider's only job is to answer "is this ticker tradeable?"
+
+**4. `ALLOWED_EXCHANGES` exact-string filter**
+
+`frozenset({"NASDAQ", "NYSE", "ARCA", "BATS", "AMEX"})` with exact string matching. `"NYSE ARCA"` (the Alpaca representation of NYSE Arca for some assets, with a space) is NOT in this set. This is intentional: assets returned with the space variant are excluded from the universe. A future cycle may add it if real data evidence warrants inclusion.
+
+**5. Weekly cache via `atlas_cache.cached_pull` (bill-protection)**
+
+Following the global bill-protection directive (see `DE-ATLAS-001`), all live fetches route through the atlas_cache weekly TTL (`_CACHE_TTL_DAYS=7`). `atlas_cache.init_atlas_cache()` is called explicitly before `cached_pull` because `cached_pull` does not initialize the schema on a fresh DB. This is the same cache pattern used by `community_strats.py`.
+
+**6. Warehouse persistence after every live fetch (third-DB pattern)**
+
+Every successful live fetch writes a snapshot row to `advisors.lens_warehouse` (`alphabot_warehouse.db`, the third DB) with `lens="universe_provider"`, `source="alpaca_paper_assets"`, and `raw_payload={"symbols": sorted(symbols), "symbol_count": N}`. The sorted symbol list enables week-over-week diff history. No API key values are stored in the payload; `lens_warehouse._strip_secrets` provides defense-in-depth scrubbing.
+
+**7. D-1 error contract: exception class name only**
+
+All `reason` fields in the return dict contain only `type(exc).__name__`. No message body, no file path, no credential value. The `_last_fetch_exc_class` module-level slot captures the class name before `_live_fetch` re-raises so `fetch_universe` can surface the correct reason even when `atlas_cache` swallows the raw exception internally.
+
+**8. No state DB or optimization DB imports**
+
+`universe_provider.py` imports only `advisors.atlas_cache` and `advisors.lens_warehouse`. Importing `database` (state DB) or `autotuner`/`optuna` (optimization DB) is prohibited — the universe provider is off-execution-path and advisory-only. The two-DB pattern boundary is maintained.
+
+### Files changed
+
+- `advisors/universe_provider.py` — new file, 226 lines
