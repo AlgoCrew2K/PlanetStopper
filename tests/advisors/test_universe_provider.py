@@ -616,6 +616,65 @@ class TestMembershipLookup:
             f"  Got:      {sorted(result_set)}"
         )
 
+    def test_is_tradeable_force_refresh_triggers_new_http_call(
+        self, asset_fixture, isolated_cache, alpaca_env
+    ):
+        """is_tradeable(..., force_refresh=True) must fire a new HTTP call, not serve stale cache.
+
+        is_tradeable delegates to fetch_universe(force_refresh=...) — this test verifies
+        that force_refresh is wired through, not silently dropped.  A lazy implementation
+        that ignores force_refresh in is_tradeable would pass the cold-cache tests but
+        serve a stale membership set even when the caller explicitly demands a refresh.
+        """
+        from advisors import universe_provider
+
+        raw_assets = _fixture_asset_array(asset_fixture)
+        expected = _expected_symbols(asset_fixture)
+        a_survivor = next(iter(expected))
+
+        mock_resp = _make_mock_response(json_body=raw_assets)
+        with patch("requests.get", return_value=mock_resp) as mock_get:
+            # First call: populate cache.
+            universe_provider.fetch_universe()
+            assert mock_get.call_count == 1
+
+            # Second call via is_tradeable with force_refresh=True: must hit HTTP again.
+            result = universe_provider.is_tradeable(a_survivor, force_refresh=True)
+
+        assert mock_get.call_count == 2, (
+            f"Expected 2 HTTP calls (initial + is_tradeable force_refresh); "
+            f"got {mock_get.call_count}. "
+            "force_refresh=True must be threaded through is_tradeable -> fetch_universe."
+        )
+        # Result must still be the correct bool.
+        assert result is True, (
+            f"is_tradeable({a_survivor!r}, force_refresh=True) returned {result!r}; expected True"
+        )
+
+    def test_is_tradeable_never_raises_on_fetch_failure(self, isolated_cache, alpaca_env):
+        """is_tradeable must return False (not raise) when the underlying fetch fails.
+
+        is_tradeable is documented as 'never raises'.  A Timeout inside fetch_universe
+        must degrade to False, not propagate an exception to the caller.  This closes
+        the gap where fetch_universe returns available=False but is_tradeable might
+        naively try to access result['symbols'] on a failure dict that has an empty set.
+        """
+        import requests
+        from advisors import universe_provider
+
+        with patch("requests.get", side_effect=requests.Timeout("simulated timeout")):
+            try:
+                result = universe_provider.is_tradeable("AAPL")
+            except Exception as exc:
+                pytest.fail(
+                    f"is_tradeable raised {type(exc).__name__} on fetch failure — "
+                    "violates 'never raises' contract (AC-4 + D-1)"
+                )
+
+        assert result is False, (
+            f"is_tradeable must return False when fetch fails; got {result!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # AC-5: D-1 / never-raises — every failure mode degrades gracefully
