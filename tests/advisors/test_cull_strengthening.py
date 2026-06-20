@@ -658,3 +658,36 @@ def test_c5b_survivor_has_no_rejection_reason(gate_engine, monkeypatch):
             assert not _reason_for(batch, cid), (
                 "a survivor must not carry a rejection reason (reason is set only on a cull)"
             )
+
+
+def test_c5b_rejection_reason_precedence_pbo_dominates_below_spy(gate_engine):
+    """REASON PRECEDENCE (deterministic): a candidate that is BOTH high-PBO (a Stage-1
+    hard veto) AND below-SPY-fold (a Stage-2 alpha rejection) must carry the PBO reason
+    — the dominant cause — because the PBO veto fires FIRST (acceptance_gate Stage 1
+    precedes the oos_alpha/SPY comparison in Stage 2). If the reason instead reported
+    below-SPY, the live probe would misattribute the cull and the reason would be
+    non-deterministic. We construct a per-block-overfit batch (real pbo=1.0) whose
+    OVERALL level is far below a high SPY baseline, so both causes apply; the recorded
+    reason must be the PBO one (stage-order precedence)."""
+    # Per-block-overfit, LOW overall level → high PBO (stage-1) AND below SPY (stage-2).
+    blocks = [_DATES[i * 10 : (i + 1) * 10] for i in range(8)]
+    configs: list[dict[str, float]] = []
+    for b in range(8):
+        cfg = {d: (0.02 if i == b else 0.001) for i, blk in enumerate(blocks) for d in blk}
+        configs.append(cfg)
+    candidates = [_make_candidate(gate_engine, f"both-{i}", c) for i, c in enumerate(configs)]
+    # SPY far above each candidate's low level → below-SPY also true.
+    spy_dated = {d: 0.05 for d in _DATES}
+    batch = gate_engine.evaluate_candidate_batch(
+        candidates, **_spy_seam_kwargs(gate_engine, spy_dated)
+    )
+    reason = _reason_for(batch, "both-0")
+    assert reason, "a both-high-PBO-and-below-SPY candidate must carry a rejection reason"
+    # Stage-1 PBO veto dominates: the reason must be the PBO one, NOT the below-SPY one.
+    assert "pbo" in str(reason).lower(), (
+        f"a candidate that is BOTH high-PBO and below-SPY must report the Stage-1 PBO "
+        f"reason (precedence), not the Stage-2 below-SPY reason; got {reason!r}"
+    )
+    assert "spy" not in str(reason).lower(), (
+        f"PBO (Stage-1) must take precedence over below-SPY (Stage-2) in the reason; got {reason!r}"
+    )
