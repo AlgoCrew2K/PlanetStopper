@@ -136,3 +136,36 @@ def test_ac9_property_generator_never_raises_on_arbitrary_plans(bpg, plans):
         )
     assert isinstance(result.plans, list)
     assert result.reason is None or isinstance(result.reason, str)
+
+
+# All four objective names — resolved at call time from the module's Objective enum.
+_OBJECTIVE_NAMES = (
+    "diversify",
+    "cut_drawdown",
+    "lift_risk_adjusted",
+    "volatility_mitigation",
+)
+
+
+@settings(max_examples=80, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(
+    plans=st.lists(_plan_strategy(), min_size=1, max_size=6),
+    obj_name=st.sampled_from(_OBJECTIVE_NAMES),
+)
+def test_ac8_property_every_admitted_plan_matches_its_objective_signature(bpg, plans, obj_name):
+    """AC-8 (B) property: for ANY arbitrary generator output, EVERY admitted plan
+    satisfies its objective signature (the module's shared plan_matches_objective).
+
+    This is the provable admission-guarantee invariant the PM mandated under decision
+    (B): the generator's signature filter ensures nothing off-objective is ever
+    admitted, regardless of what the SDK returns. Asserted with the SAME predicate the
+    generator filters with (single source of truth)."""
+    objective = bpg.Objective[obj_name]
+    client = _client_returning(plans)
+    with patch.object(bpg, "_build_client", return_value=client):
+        result = bpg.generate_build_plans(objective, _IN_UNIVERSE, n_plans=len(plans))
+    assert isinstance(result.plans, list)
+    for plan in result.plans:
+        assert bpg.plan_matches_objective(plan, objective), (
+            f"admitted plan {plan.get('plan_id')!r} does not satisfy {obj_name} signature"
+        )

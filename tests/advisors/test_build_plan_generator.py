@@ -319,82 +319,23 @@ def _iter_nodes(node):
                 stack.append(child)
 
 
-# Allocation-CONTAINER kinds — a direct child of this kind is a distinct sleeve.
-# An `asset` leaf is NOT a container: assets inside a single filter/weight are
-# candidates within ONE sleeve, not separate sleeves. This is the distinction the
-# diversify signature needs (refinement: a lone filter over 3 assets = 1 sleeve,
-# not 3) so a single momentum filter never satisfies the >=2-sleeve signature.
-_ALLOCATION_CONTAINER_KINDS = {"group", "weight", "filter", "if", "if_compound"}
+# --- SINGLE SOURCE OF TRUTH (PM guardrail, AC-8 decision B) -----------------
+# The per-objective structural signature predicate is the MODULE's public
+# `plan_matches_objective(plan, objective) -> bool`. The generator filters with it
+# (admission floor) and these tests assert with it — they cannot drift. The
+# test-local _objective_signature factory was REMOVED; this thin wrapper delegates
+# to the module so the assertions and the filter are literally the same code.
+#
+# _MOMENTUM_QUALITY_SORTS / _LOW_VOL_SORTS above are kept ONLY for building test
+# fixtures (choosing a momentum vs low-vol sort_by_fn); the signature DECISION is
+# the module's, never re-implemented here.
 
 
-def _root_direct_children(root: dict) -> list:
-    """Return the root node's direct child NODE dicts (normalizing specified-weight)."""
-    if not isinstance(root, dict):
-        return []
-    if root.get("kind") == "weight" and root.get("scheme") == "specified":
-        return [e["node"] for e in root.get("children", []) if isinstance(e, dict) and "node" in e]
-    if root.get("kind") in ("if", "if_compound"):
-        return list(root.get("then", []) or []) + list(root.get("else", []) or [])
-    return [c for c in (root.get("children", []) or []) if isinstance(c, dict)]
-
-
-def _root_sleeve_count(plan: dict) -> int:
-    """Count top-level allocation SLEEVES at the root node.
-
-    A sleeve is a distinct allocation branch. The count is the number of the root's
-    direct children that are themselves ALLOCATION CONTAINERS (group/weight/filter/
-    if/if_compound). A root that is a single allocation node whose direct children
-    are only asset leaves (e.g. a lone filter over N assets, or a lone equal-weight
-    over N assets) is ONE sleeve, not N — the assets are candidates within one
-    sleeve. This is what makes the diversify (>=2 sleeve) signature distinguishable
-    from a single momentum filter (refinement B / mutual-distinguishability).
-    """
-    root = plan.get("root")
-    if not isinstance(root, dict):
-        return 0
-    container_children = [
-        c
-        for c in _root_direct_children(root)
-        if isinstance(c, dict) and c.get("kind") in _ALLOCATION_CONTAINER_KINDS
-    ]
-    # A root holding >=2 allocation-container children = that many sleeves.
-    # A root with no container children (only asset leaves, or empty) = 1 sleeve.
-    return len(container_children) if container_children else 1
-
-
-def _has_regime_gate(plan: dict) -> bool:
-    return any(n.get("kind") in ("if", "if_compound") for n in _iter_nodes(plan["root"]))
-
-
-def _has_inverse_vol(plan: dict) -> bool:
-    return any(
-        n.get("kind") == "weight" and n.get("scheme") == "inverse_vol"
-        for n in _iter_nodes(plan["root"])
-    )
-
-
-def _has_momentum_quality_filter(plan: dict) -> bool:
-    return any(
-        n.get("kind") == "filter" and n.get("sort_by_fn") in _MOMENTUM_QUALITY_SORTS
-        for n in _iter_nodes(plan["root"])
-    )
-
-
-def _has_low_vol_filter(plan: dict) -> bool:
-    return any(
-        n.get("kind") == "filter" and n.get("sort_by_fn") in _LOW_VOL_SORTS
-        for n in _iter_nodes(plan["root"])
-    )
-
-
-# Canonical objective-signature predicate map (the AC-8 contract, refinement B).
-def _objective_signature(name: str):
-    return {
-        "diversify": lambda p: _root_sleeve_count(p) >= 2,
-        "cut_drawdown": lambda p: _has_regime_gate(p) or _has_inverse_vol(p),
-        "lift_risk_adjusted": _has_momentum_quality_filter,  # refinement B: FILTER only
-        "volatility_mitigation": lambda p: _has_inverse_vol(p) or _has_low_vol_filter(p),
-    }[name]
+def _objective_signature(bpg, name: str):
+    """Return a predicate `plan -> bool` delegating to the module's shared
+    plan_matches_objective for the named objective (single source of truth)."""
+    objective = bpg.Objective[name]
+    return lambda plan: bpg.plan_matches_objective(plan, objective)
 
 
 # A large in-universe membership set used across happy-path tests.
@@ -599,7 +540,7 @@ def test_ac8_diversify_plans_have_at_least_two_sleeves(bpg):
     client = _client_returning_plans(plans_in)
     with _patch_client(bpg, client):
         result = bpg.generate_build_plans(_objective(bpg, "diversify"), _BIG_UNIVERSE, n_plans=3)
-    sig = _objective_signature("diversify")
+    sig = _objective_signature(bpg, "diversify")
     assert result.plans
     assert all(sig(p) for p in result.plans), "every diversify plan must show >=2 sleeves"
 
@@ -636,7 +577,7 @@ def test_ac8_cut_drawdown_plans_have_regime_gate_or_inverse_vol(bpg):
     client = _client_returning_plans(plans_in)
     with _patch_client(bpg, client):
         result = bpg.generate_build_plans(_objective(bpg, "cut_drawdown"), _BIG_UNIVERSE, n_plans=2)
-    sig = _objective_signature("cut_drawdown")
+    sig = _objective_signature(bpg, "cut_drawdown")
     assert result.plans
     assert all(sig(p) for p in result.plans)
 
@@ -666,7 +607,7 @@ def test_ac8_lift_risk_adjusted_requires_momentum_quality_filter_not_bare_basket
         result = bpg.generate_build_plans(
             _objective(bpg, "lift_risk_adjusted"), _BIG_UNIVERSE, n_plans=3
         )
-    sig = _objective_signature("lift_risk_adjusted")
+    sig = _objective_signature(bpg, "lift_risk_adjusted")
     assert result.plans
     assert all(sig(p) for p in result.plans)
 
@@ -696,7 +637,7 @@ def test_ac8_volatility_mitigation_requires_inverse_vol_or_low_vol_filter(bpg):
         result = bpg.generate_build_plans(
             _objective(bpg, "volatility_mitigation"), _BIG_UNIVERSE, n_plans=2
         )
-    sig = _objective_signature("volatility_mitigation")
+    sig = _objective_signature(bpg, "volatility_mitigation")
     assert result.plans
     assert all(sig(p) for p in result.plans)
 
@@ -714,7 +655,7 @@ def test_ac8_bare_specified_basket_does_not_satisfy_lift_risk_adjusted_signature
         _specified([(_asset("SPY"), 50.0), (_asset("QQQ"), 50.0)]),
         plan_id="bare",
     )
-    sig = _objective_signature("lift_risk_adjusted")
+    sig = _objective_signature(bpg, "lift_risk_adjusted")
     assert sig(bare) is False, "a bare specified-weight basket must NOT satisfy the signature"
 
 
@@ -728,8 +669,166 @@ def test_ac8_four_objective_signatures_are_mutually_distinguishable(bpg):
         _filter("top", 2, "cumulative-return", 63, [_asset("SPY"), _asset("QQQ"), _asset("IWM")]),
         plan_id="m",
     )
-    assert _objective_signature("lift_risk_adjusted")(mom_filter_plan) is True
-    assert _objective_signature("diversify")(mom_filter_plan) is False
+    assert _objective_signature(bpg, "lift_risk_adjusted")(mom_filter_plan) is True
+    assert _objective_signature(bpg, "diversify")(mom_filter_plan) is False
+
+
+# ===========================================================================
+# SECTION 2b — AC-8 ENFORCEMENT (PM decision B): the generator FILTERS by signature
+# ===========================================================================
+#
+# The generator does not merely PROMPT for objective-shaped plans — it ENFORCES the
+# objective signature as an admission guarantee: after prune + dedup, any plan that
+# does NOT satisfy plan_matches_objective(plan, objective) is DROPPED. The mocked SDK
+# lets us feed a deliberate MIX of conforming + non-conforming plans and assert the
+# generator admits ONLY the conforming ones. The signature predicate is the module's
+# shared plan_matches_objective (single source of truth) — the same code the tests
+# assert with, so the filter and the assertion cannot drift.
+
+
+def _conforming_plan(name_obj: str, plan_id: str) -> dict:
+    """Build a plan that DOES satisfy the named objective's signature."""
+    if name_obj == "diversify":
+        root = _group(
+            "s",
+            [
+                _weight("equal", [_asset("SPY"), _asset("QQQ")]),
+                _weight("equal", [_asset("TLT"), _asset("GLD")]),
+            ],
+        )
+    elif name_obj == "cut_drawdown":
+        root = _weight("inverse_vol", [_asset("TLT"), _asset("AGG")], window_days=30)
+    elif name_obj == "lift_risk_adjusted":
+        root = _filter(
+            "top", 2, "cumulative-return", 126, [_asset("SPY"), _asset("QQQ"), _asset("IWM")]
+        )
+    elif name_obj == "volatility_mitigation":
+        root = _weight("inverse_vol", [_asset("TLT"), _asset("AGG"), _asset("GLD")], window_days=30)
+    else:
+        raise ValueError(name_obj)
+    return _plan(name_obj, root, plan_id=plan_id)
+
+
+def _nonconforming_plan(name_obj: str, plan_id: str) -> dict:
+    """Build a well-formed plan that does NOT satisfy the named objective's signature.
+
+    Each is a structurally-valid DSL plan that fails ONLY the objective's signature:
+    - diversify: a single-sleeve equal-weight basket (1 sleeve, needs >=2)
+    - cut_drawdown: a plain equal-weight basket (no regime gate, no inverse-vol)
+    - lift_risk_adjusted: a plain equal-weight basket (no momentum/quality filter)
+    - volatility_mitigation: a plain equal-weight basket (no inverse-vol, no low-vol filter)
+    """
+    if name_obj == "diversify":
+        root = _weight("equal", [_asset("SPY"), _asset("QQQ"), _asset("IWM")])  # 1 sleeve
+    else:
+        # A plain equal-weight basket conforms to NONE of the other three signatures.
+        root = _weight("equal", [_asset("SPY"), _asset("QQQ"), _asset("IWM")])
+    return _plan(name_obj, root, plan_id=plan_id)
+
+
+@pytest.mark.parametrize("obj_name", _OBJECTIVE_NAMES)
+def test_ac8_enforce_nonconforming_plan_is_filtered_out(bpg, obj_name):
+    """AC-8 (B): a non-conforming plan is DROPPED by the generator; the conforming
+    sibling in the same batch is kept. Admission is a signature GUARANTEE, not faith
+    in the SDK prompt."""
+    conforming = _conforming_plan(obj_name, "keep")
+    nonconforming = _nonconforming_plan(obj_name, "drop")
+    client = _client_returning_plans([nonconforming, conforming])
+    with _patch_client(bpg, client):
+        result = bpg.generate_build_plans(_objective(bpg, obj_name), _BIG_UNIVERSE, n_plans=12)
+    admitted_ids = {p["plan_id"] for p in result.plans}
+    assert "drop" not in admitted_ids, f"{obj_name}: non-conforming plan must be filtered out"
+    assert "keep" in admitted_ids, f"{obj_name}: conforming plan must be admitted"
+
+
+@pytest.mark.parametrize("obj_name", _OBJECTIVE_NAMES)
+def test_ac8_enforce_every_admitted_plan_satisfies_its_objective_signature(bpg, obj_name):
+    """AC-8 (B) invariant: EVERY admitted plan satisfies its objective signature, even
+    when the SDK returns a mix of conforming + non-conforming plans."""
+    plans_in = [
+        _conforming_plan(obj_name, "c1"),
+        _nonconforming_plan(obj_name, "n1"),
+        _conforming_plan(obj_name, "c2"),  # distinct id; structure may dedup with c1
+        _nonconforming_plan(obj_name, "n2"),
+    ]
+    client = _client_returning_plans(plans_in)
+    with _patch_client(bpg, client):
+        result = bpg.generate_build_plans(_objective(bpg, obj_name), _BIG_UNIVERSE, n_plans=12)
+    sig = _objective_signature(bpg, obj_name)
+    assert result.plans, f"{obj_name}: at least one conforming plan must survive"
+    assert all(sig(p) for p in result.plans), (
+        f"{obj_name}: every admitted plan must satisfy its objective signature"
+    )
+
+
+def test_ac8_enforce_mutual_distinguishability_admit_under_x_filter_under_y(bpg):
+    """AC-8 (B) mutual-distinguishability: a plan conforming to objective X but NOT to a
+    structurally-distinct sibling Y is ADMITTED when the run targets X and FILTERED OUT
+    when the run targets Y. We use a single-sleeve momentum filter — it conforms to
+    lift_risk_adjusted (momentum filter) but NOT to diversify (needs >=2 sleeves)."""
+    mom_filter_root = _filter(
+        "top", 2, "cumulative-return", 63, [_asset("SPY"), _asset("QQQ"), _asset("IWM")]
+    )
+    # Admitted under lift_risk_adjusted.
+    plan_x = _plan("lift_risk_adjusted", mom_filter_root, plan_id="x")
+    client_x = _client_returning_plans([plan_x])
+    with _patch_client(bpg, client_x):
+        result_x = bpg.generate_build_plans(
+            _objective(bpg, "lift_risk_adjusted"), _BIG_UNIVERSE, n_plans=12
+        )
+    assert {p["plan_id"] for p in result_x.plans} == {"x"}, (
+        "must be admitted under lift_risk_adjusted"
+    )
+
+    # Same structure, filtered out under diversify (1 sleeve < 2).
+    plan_y = _plan("diversify", mom_filter_root, plan_id="y")
+    client_y = _client_returning_plans([plan_y])
+    with _patch_client(bpg, client_y):
+        result_y = bpg.generate_build_plans(_objective(bpg, "diversify"), _BIG_UNIVERSE, n_plans=12)
+    assert "y" not in {p["plan_id"] for p in result_y.plans}, "must be filtered out under diversify"
+
+
+@pytest.mark.parametrize("obj_name", _OBJECTIVE_NAMES)
+def test_ac8_enforce_all_nonconforming_degrades_to_honest_empty(bpg, obj_name):
+    """AC-8 (B) + AC-11/AC-23: when the SDK returns ONLY non-conforming plans, the
+    generator returns an honest empty result — never fabricates, never silently emits a
+    non-conforming plan. result.plans == [] and a reason is surfaced (limited result)."""
+    plans_in = [_nonconforming_plan(obj_name, f"n{i}") for i in range(5)]
+    client = _client_returning_plans(plans_in)
+    with _patch_client(bpg, client):
+        result = bpg.generate_build_plans(_objective(bpg, obj_name), _BIG_UNIVERSE, n_plans=12)
+    assert result.plans == [], f"{obj_name}: all-non-conforming must yield empty plans"
+    # Honest degradation: a non-None reason explains the empty/limited result.
+    assert isinstance(result.reason, str) and result.reason, (
+        f"{obj_name}: empty-after-filter must surface an honest reason (AC-11/AC-23)"
+    )
+
+
+def test_ac8_enforce_filter_runs_after_prune_and_dedup(bpg):
+    """AC-8 (B) ordering: the signature filter runs AFTER prune + dedup. A diversify plan
+    that has >=2 sleeves ONLY because of an off-universe sleeve is, after pruning that
+    sleeve away, single-sleeve and non-conforming — so it must be FILTERED OUT (not
+    admitted on its pre-prune shape)."""
+    # Root has 2 sleeves; one sleeve's only asset is off-universe and gets pruned,
+    # collapsing the plan to a single in-universe sleeve -> fails diversify >=2.
+    root = _group(
+        "s",
+        [
+            _weight("equal", [_asset("SPY"), _asset("QQQ")]),  # in-universe sleeve
+            _weight("equal", [_asset("ZZZZ")]),  # off-universe-only sleeve -> pruned away
+        ],
+    )
+    collapses = _plan("diversify", root, plan_id="collapses")
+    genuinely_two = _conforming_plan("diversify", "genuine")
+    universe = frozenset({"SPY", "QQQ", "TLT", "GLD"})  # excludes ZZZZ
+    client = _client_returning_plans([collapses, genuinely_two])
+    with _patch_client(bpg, client):
+        result = bpg.generate_build_plans(_objective(bpg, "diversify"), universe, n_plans=12)
+    admitted_ids = {p["plan_id"] for p in result.plans}
+    assert "collapses" not in admitted_ids, (
+        "a plan that collapses to 1 sleeve after prune must fail the post-prune signature filter"
+    )
+    assert "genuine" in admitted_ids
 
 
 # ===========================================================================
