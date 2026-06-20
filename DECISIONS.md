@@ -2337,3 +2337,52 @@ Branch: feat/strategy-builder-real | Fix commit: d000d64
 - PATH B: `symphony_schema.extract_tickers` → `_collect_condition_tickers` (compiler repair-prune, AC-16) — fixed in bd3cbdb / 548a888.
 
 **AC-9 escape closed:** A plan with an off-universe lhs operand in a compound binary leaf is now rejected at membership validation (never admitted), not silently passed to the compiler. 3 RED tests GREEN at d000d64; broader tests/advisors 658 passed / 2 skipped / 0 failures.
+
+---
+
+## DE-SB-CULL-001 — C5b overfitting-cull strengthened to autotuner-grade: PBO veto wired + real SPY-OOS baseline (2026-06-20)
+
+Branch: feat/strategy-builder-real | Commits: f13ea98 (RED) → 74bda68 (RED+) → 7a2d689 (fixture) → a610e49 (GREEN) → b145aa8 (RED precedence) → f41b299 (GREEN precedence) → ddcbb24 (fixture fix) | HEAD: ddcbb24
+
+### Root cause — two real gaps in the Advisor cull
+
+A trace of `backtest_gate_engine.evaluate_candidate_batch` before C5b confirmed the cull was already out-of-sample (20% validation fold via `_fold_transform_single`) and BHY/Yekutieli FDR-corrected — sound foundations. Two gaps remained:
+
+**Gap 1 — PBO veto structurally disabled.** `evaluate_candidate_batch` called `acceptance_gate.evaluate_acceptance_gate` without supplying `pbo`, so it defaulted to `None` (acceptance_gate.py:160,203-208 comment: "NO behavior change on the Advisor path"). The PBO veto (`PBO_REJECT_THRESHOLD=0.5` in `math_engine.py:79`) was wired in the autotuner since PHASE-3 but had never reached the Advisor gate.
+
+**Gap 2 — OOS-alpha baseline always beats zero.** `propose_strategies` defaulted `incumbent_oos_alpha=0.0` and `default_oos_alpha=0.0` (strategy_builder_engine.py:862-863); the route passed neither override. A candidate cleared the OOS-superiority gate by merely having positive validation-fold alpha — no benchmark comparison.
+
+### Design decisions
+
+**PBO is batch-level, not per-candidate.** `math_engine.compute_pbo` (Bailey & López de Prado 2014 CSCV algorithm) takes a set of return configs and an eligible-dates list; it outputs one probability-of-backtest-overfitting for the set as a whole. The Advisor gate treats every candidate's `dated_returns` as one config, computes the intersection of all candidate date keys, and passes the batch to `compute_pbo`. One `_batch_pbo` value is then threaded into every `evaluate_acceptance_gate` call. This mirrors the autotuner wiring at `autotuner.py:2699-2711` where PBO is computed over the full CSCV trial set before `_haircut_select`.
+
+**PBO veto does not fire on thin batches.** Two guards are named constants: `_PBO_MIN_CONFIGS=2` (fewer than 2 date-keyed configs → `pbo=None`) and `_PBO_MIN_ALIGNED_DATES=8` (fewer than 8 intersection dates → `pbo=None`). Both ensure the CSCV ranking has enough structure before the veto is applied — identical semantics to the autotuner's `K<2` guard.
+
+**SPY is date-aligned, not positionally sliced.** The SPY benchmark series is injected via a `spy_returns_fn` seam (testable; production callers wire a real Alpaca fetch). The series is restricted to dates that appear in the union of candidate `dated_returns` keys, then fed to the same `_fold_transform_single` used for candidates. This guarantees the SPY fold window covers the same calendar period as the candidates; a positional-only slice on a longer SPY series would land on different dates. SPY-unavailable (empty series or callable error) → `_effective_default_oos_alpha = float("-inf")` → every candidate WITHHOLDS (conservative, never silent fallback to the old beats-zero baseline).
+
+**`rejection_reason` stage-order precedence.** A new per-candidate `rejection_reason` field on `CandidateGateResult` records the dominant cause for the operator live-probe. Stage order (most-specific first):
+
+| Priority | Value | Condition |
+|----------|-------|-----------|
+| 1 | `None` | `ADOPT_CANDIDATE` (survivor) |
+| 2 | `"pbo_veto"` | `_batch_pbo > PBO_REJECT_THRESHOLD` (Stage-1 hard veto) |
+| 3 | `"below_spy_alpha"` | `fold.oos_alpha <= _effective_default_oos_alpha` (Stage-2 alpha gate) |
+| 4 | `"fdr_not_winner"` | BHY non-winner, nn1 failure, purge failure, or thin-window |
+
+PBO is Stage-1 in `acceptance_gate` and must dominate: a high-PBO batch is too sample-dependent to consider further regardless of alpha performance. The precedence-reorder was a dedicated RED/GREEN cycle (`b145aa8` RED, `f41b299` GREEN, `ddcbb24` fixture fix) after `a610e49` originally placed `below_spy_alpha` before `pbo_veto`.
+
+**Atlas parity is structural (AC-26).** Atlas community candidates and built-new (Opus) candidates enter the SAME `evaluate_candidate_batch` call. Batch PBO is computed over all candidates together; the same SPY baseline applies to all; the same BHY/Yekutieli FDR correction covers both provenance sources. Advertised community `oos_metrics` are used only for objective-matched admission ranking (AC-12), never for survival — the `metrics={}` assignment at the `BacktestCandidate` construction site ensures advertised stats cannot reach the fold-transform or gate inputs.
+
+### Files changed
+
+- `advisors/backtest_gate_engine.py` — C5b Step 0a (batch PBO, lines 598-625); C5b Step 0b (SPY-fold baseline, lines 628-672); `BacktestCandidate.dated_returns` field; `evaluate_candidate_batch` gains `spy_returns_fn` parameter; `CandidateGateResult.rejection_reason` field; `rejection_reason` cascade with PBO-before-SPY precedence (lines 811-837); five C5b constants (`_BATCH_PBO_GAMMA`, `_PBO_MIN_CONFIGS`, `_PBO_MIN_ALIGNED_DATES`, `_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA`, `SPY_BENCHMARK_TICKER`)
+- `tests/advisors/test_cull_strengthening.py` — 17 RED/GREEN/precedence tests; 675 passed / 2 skipped / 0 failed / 0 errors across `tests/advisors/` at HEAD ddcbb24
+
+### Status
+
+GREEN at ddcbb24. Math-adversarial sufficiency pass complete (3 mutation probes — positional-fold, pbo=None, precedence-reorder mutants each caught by the test suite). Cycle-complete pending PM merge gate.
+
+**Binding rules from this decision:**
+- The `spy_returns_fn` seam is the ONLY path to supplying the SPY benchmark series; production callers must wire a real fetch, not pass `None`.
+- `BacktestCandidate.dated_returns` must be populated by callers who want PBO and SPY-fold alignment; callers passing only `daily_returns_pct` continue to work (PBO and SPY gates degrade safely to `pbo=None` and conservative WITHHOLD respectively).
+- The `rejection_reason` precedence order (`pbo_veto` before `below_spy_alpha`) is load-bearing for the operator live-probe; do not reorder without a new RED test + DECISIONS entry.

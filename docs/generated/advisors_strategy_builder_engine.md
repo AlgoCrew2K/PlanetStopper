@@ -3,11 +3,11 @@
 > Phase-2 Strategy Builder proposal engine: builds candidate symphonies from templates and community-sourced strategies, backtests them, gates via Harvey-Liu FDR, and persists survivors as advisory observations.
 
 **Source:** `advisors/strategy_builder_engine.py`
-**Last updated:** 2026-06-14
+**Last updated:** 2026-06-20
 
 ## Overview
 
-`advisors/strategy_builder_engine.py` proposes new candidate symphonies from scratch (versus engines that mutate live ones). The pipeline is: generate candidate trees from the 7-template library and/or from caller-injected community strategies → backtest via `composer_backtest_client` (1 req/s) → gate the full batch via `backtest_gate_engine.evaluate_candidate_batch` (Harvey-Liu BHY FDR) → apply `ScreenConfig` post-gate presentation filters → persist survivors and rejected candidates as advisory observations.
+`advisors/strategy_builder_engine.py` proposes new candidate symphonies from scratch (versus engines that mutate live ones). The pipeline is: generate candidate trees from the 7-template library and/or from caller-injected community strategies → backtest via `composer_backtest_client` (1 req/s) → gate the full batch via `backtest_gate_engine.evaluate_candidate_batch` (Harvey-Liu BHY FDR, **C5b: + PBO veto + real SPY-OOS baseline**) → apply `ScreenConfig` post-gate presentation filters → persist survivors and rejected candidates as advisory observations.
 
 Off-execution-path (never imported from `alpha_bot_execution.py`). Advisory-only (`is_advisory_only=1` on all persisted observations). Never raises — all exceptions surface as `ProposalRun.error`.
 
@@ -133,7 +133,7 @@ Propose new candidate symphonies from scratch. Never raises.
 | `live_returns` | `list[float]` | Chronological daily portfolio returns in percent scale; used for blended-drawdown and correlation screens; may be empty |
 | `symphony_id` | `str` | Composer symphony ID to key observations to; defaults to `""` |
 | `incumbent_oos_alpha` | `float` | OOS alpha of the incumbent strategy, passed to `evaluate_candidate_batch` |
-| `default_oos_alpha` | `float` | Fallback OOS alpha when no incumbent alpha is available |
+| `default_oos_alpha` | `float` | Fallback OOS alpha when no incumbent alpha is available; overridden by the C5b SPY-fold baseline when `spy_returns_fn` is wired at the call site |
 | `community_candidates` | `list[CandidateInfo] \| None` | Optional pre-built `CandidateInfo` objects from `community_candidate_infos`. Appended to the template-generated list and flow through the **same single-batch FDR gate** (AC-2). Capped at `MAX_COMMUNITY_CANDIDATES_PER_RUN` internally (AC-3). `None` and `[]` are identical — no community candidates are injected (AC-6). |
 
 **Returns:** `ProposalRun` where:
@@ -152,6 +152,7 @@ Step 1b: extend with community_candidates[:MAX_COMMUNITY_CANDIDATES_PER_RUN]
          (no-op when community_candidates is None or [])
 Step 2:  run_backtest per candidate — per-candidate try/except (backtest_error on failure)
 Step 3:  evaluate_candidate_batch(ALL backtested candidates)  ← full batch, FDR gate
+         C5b: + batch PBO veto + SPY-OOS-fold baseline (see "C5b Gate Strengthening" below)
 Step 4:  _passes_screens on gate survivors only
 Step 5:  persist survivors + rejected candidates
 ```
@@ -187,6 +188,20 @@ The `community_candidates` keyword argument on `propose_strategies` enables call
 5. **No-regression guarantee (AC-6).** When `community_candidates` is `None` or `[]`, the `if community_candidates:` guard is false — the extend is skipped and the execution path is byte-for-byte identical to the pre-wiring code.
 
 6. **Rebuilt via Agent Team.** The prior wiring (ripped at `ad3a637`) was built by a solo agent. This version was built via the Toxic Pair TDD composition on `team/propose-strategies-wiring`. 39/39 GREEN at `4edbe92`.
+
+## C5b Gate Strengthening (2026-06-20)
+
+**Component 5b** (operator-approved, feat/strategy-builder-real) brings the Advisor cull to autotuner-grade by closing two gaps that existed before C5b:
+
+**Gap 1 — PBO veto was structurally disabled.** `evaluate_candidate_batch` was called without a `pbo` argument, so it defaulted to `None` and the acceptance gate's PBO veto never fired on the Advisor path. C5b wires `math_engine.compute_pbo` over the candidate batch's `dated_returns` intersection and threads the result into every gate call as `pbo=_batch_pbo`. See `backtest_gate_engine.py` C5b Step 0a.
+
+**Gap 2 — OOS-alpha baseline always beats zero.** The `default_oos_alpha=0.0` default meant a candidate cleared the alpha gate merely by having positive validation-fold alpha. C5b injects a `spy_returns_fn` seam into `evaluate_candidate_batch`; when wired, the gate uses a real SPY-OOS alpha computed over the same validation fold window as the candidates instead of zero.
+
+**Atlas parity is structural.** Atlas community candidates (`metrics={}` — advertised `oos_metrics` are structurally inert in the gate) and built-new (Opus) candidates flow through the same call and receive identical treatment: same batch PBO, same SPY baseline, same BHY/Yekutieli FDR. Identical fresh return series → identical gate verdict regardless of provenance.
+
+**`rejection_reason` field.** Each `CandidateGateResult` now carries a `rejection_reason` string for the operator live-probe: `None` for survivors; `"pbo_veto"` (Stage-1, dominant) or `"below_spy_alpha"` (Stage-2) or `"fdr_not_winner"` (catch-all) for culled candidates. See `advisors_backtest_gate_engine.md` for the full precedence table and `DE-SB-CULL-001` in `DECISIONS.md` for the design rationale.
+
+**Caller contract for C5b:** Callers that want PBO and SPY-baseline gating active must populate `BacktestCandidate.dated_returns` (date-keyed returns dict) and pass a `spy_returns_fn` to `evaluate_candidate_batch`. Callers supplying only `daily_returns_pct` continue to work unchanged; PBO veto and SPY gate degrade safely (`pbo=None`, conservative `float("-inf")` default).
 
 ## Provenance Tags
 
