@@ -65,6 +65,42 @@ def _make_error_backtest_result(reason: str = "network timeout"):
     return BacktestResult(stats=None, data_warnings=[], daily_returns={}, error=reason)
 
 
+def _patch_builder_generates(*, n_plans: int = 2):
+    """Patch build_plan_generator.generate_build_plans to return N valid built-new plans.
+
+    C4 (commit 5ae6c8c) replaced the 7-template stamper inside _generate_candidate_trees
+    with the real C1→C2→C3 pipeline, so 'template' (built-new) candidates now originate from
+    generate_build_plans → compile_plan instead of the old hardcoded templates. Tests that
+    assert built-new candidates reach the gate alongside community candidates must therefore
+    supply built-new plans through this seam (the conftest autouse guard otherwise neutralises
+    the live Opus call → empty plans). The plans compile to validate_tree-clean trees via the
+    REAL plan_tree_compiler — anti-hollow. Returns a patch() context manager."""
+    from advisors import build_plan_generator as _gen
+
+    plans = [
+        {
+            "plan_id": f"builtnew-{i}",
+            "objective": "diversify",
+            "name": f"Built New {i}",
+            "rebalance": "daily",
+            "root": {
+                "kind": "weight",
+                "scheme": "equal",
+                "children": [
+                    {"kind": "asset", "ticker": "SPY"},
+                    {"kind": "asset", "ticker": "AGG"},
+                ],
+            },
+        }
+        for i in range(n_plans)
+    ]
+    return patch.object(
+        _gen,
+        "generate_build_plans",
+        return_value=_gen.GeneratorResult(plans=plans, reason=None),
+    )
+
+
 def _make_community_result(n_candidates: int = 2, *, available: bool = True) -> dict:
     """Build a synthetic community_result dict matching load_community_strategies output.
 
@@ -446,6 +482,7 @@ class TestGateReceivesFullBatch:
             return _make_empty_gated_batch()
 
         with (
+            _patch_builder_generates(n_plans=2),
             patch("advisors.strategy_builder_engine.run_backtest", return_value=fake_result),
             patch(
                 "advisors.strategy_builder_engine.evaluate_candidate_batch",
@@ -646,6 +683,7 @@ class TestBacktestFailureIsolation:
             return _make_empty_gated_batch()
 
         with (
+            _patch_builder_generates(n_plans=2),
             patch("advisors.strategy_builder_engine.run_backtest", side_effect=_selective_run),
             patch(
                 "advisors.strategy_builder_engine.evaluate_candidate_batch",
