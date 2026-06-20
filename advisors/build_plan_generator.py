@@ -638,10 +638,13 @@ _EMIT_BUILD_PLANS_TOOL = {
                                     "description": (
                                         "Required for kind='if' and kind='if_compound'. "
                                         "MUST be a dict — NEVER a string label. "
-                                        "Fields: lhs_fn (string), lhs_ticker (string), "
-                                        "window (int), comparator (string: gt/lt/gte/lte), "
-                                        "rhs (object: {fixed: number} OR "
-                                        "{fn: string, ticker: string, window: int})."
+                                        "For kind='if' (flat): fields lhs_fn, lhs_ticker, "
+                                        "window, comparator, rhs. "
+                                        "For kind='if_compound' (typed union): use a 'type' "
+                                        "discriminator: binary / binary_compound / compound. "
+                                        "binary_compound: fn, tickers[], comparator, rhs, "
+                                        "window, operator (any/all). "
+                                        "compound: operator (all/any), conditions[]."
                                     ),
                                     "properties": {
                                         "lhs_fn": {"type": "string"},
@@ -652,14 +655,44 @@ _EMIT_BUILD_PLANS_TOOL = {
                                             "enum": ["gt", "lt", "gte", "lte"],
                                         },
                                         "rhs": {"type": "object"},
+                                        "type": {
+                                            "type": "string",
+                                            "enum": [
+                                                "binary",
+                                                "binary_compound",
+                                                "compound",
+                                            ],
+                                            "description": (
+                                                "Condition type for if_compound: binary, "
+                                                "binary_compound, or compound."
+                                            ),
+                                        },
+                                        "operator": {
+                                            "type": "string",
+                                            "enum": ["any", "all"],
+                                            "description": (
+                                                "For binary_compound: any/all over tickers. "
+                                                "For compound: any (OR) / all (AND)."
+                                            ),
+                                        },
+                                        "conditions": {
+                                            "type": "array",
+                                            "description": ("Sub-conditions for type='compound'."),
+                                        },
+                                        "tickers": {
+                                            "type": "array",
+                                            "description": (
+                                                "Tickers for type='binary_compound' broadcast."
+                                            ),
+                                            "items": {"type": "string"},
+                                        },
+                                        "fn": {
+                                            "type": "string",
+                                            "description": (
+                                                "Indicator function for binary_compound."
+                                            ),
+                                        },
                                     },
-                                    "required": [
-                                        "lhs_fn",
-                                        "lhs_ticker",
-                                        "window",
-                                        "comparator",
-                                        "rhs",
-                                    ],
                                 },
                                 "then": {
                                     "type": "array",
@@ -762,6 +795,62 @@ _EXAMPLE_IF_PLAN: dict = {
     },
 }
 
+# Conforming if_compound DSL example — a compound all-of-N regime gate verified
+# to compile clean through the C3 compiler (tree not None, validate_tree == []).
+# The condition uses the typed union shape: {type, operator, conditions[]}, with
+# binary_compound sub-conditions carrying {type, fn, tickers, comparator, rhs, window}.
+_EXAMPLE_IF_COMPOUND_PLAN: dict = {
+    "plan_id": "example-ifc-1",
+    "objective": "cut_drawdown",
+    "name": "Example Compound-Gate Portfolio",
+    "rebalance": "daily",
+    "root": {
+        "kind": "if_compound",
+        "condition": {
+            "type": "compound",
+            "operator": "all",
+            "conditions": [
+                {
+                    "type": "binary_compound",
+                    "fn": "relative-strength-index",
+                    "tickers": ["SPY"],
+                    "comparator": "gt",
+                    "rhs": {"const": 70},
+                    "window": 14,
+                },
+                {
+                    "type": "binary_compound",
+                    "fn": "max-drawdown",
+                    "tickers": ["QQQ"],
+                    "comparator": "lt",
+                    "rhs": {"const": 20},
+                    "window": 30,
+                },
+            ],
+        },
+        "then": [
+            {
+                "kind": "weight",
+                "scheme": "equal",
+                "children": [
+                    {"kind": "asset", "ticker": "UVXY"},
+                    {"kind": "asset", "ticker": "TLT"},
+                ],
+            }
+        ],
+        "else": [
+            {
+                "kind": "weight",
+                "scheme": "inverse_vol",
+                "children": [
+                    {"kind": "asset", "ticker": "SPY"},
+                    {"kind": "asset", "ticker": "IEF"},
+                ],
+            }
+        ],
+    },
+}
+
 # Per-objective structural signatures described in the prompt. Each entry is a
 # brief natural-language description of the required structure plus a hint at the
 # DSL construct that satisfies the AC-8 admission predicate.
@@ -826,9 +915,10 @@ def _build_generation_prompt(
     signature = _OBJECTIVE_SIGNATURES.get(obj_name, "")
     example_json = json.dumps(_EXAMPLE_PLAN, indent=2)
     # Embed the if-node example for the gate-capable objective (cut_drawdown).
-    # For all other objectives, include it as a supplementary DSL reference so
-    # every prompt contains lhs_fn/lhs_ticker/comparator/rhs.
+    # For all other objectives, include both examples as supplementary DSL references
+    # so every prompt teaches lhs_fn/lhs_ticker/comparator/rhs AND the compound union.
     if_example_json = json.dumps(_EXAMPLE_IF_PLAN, indent=2)
+    if_compound_example_json = json.dumps(_EXAMPLE_IF_COMPOUND_PLAN, indent=2)
     universe_hint = ""
     if membership:
         sample = sorted(membership)[:20]
@@ -863,9 +953,10 @@ def _build_generation_prompt(
         f"  WRONG shape (do not use): a child entry carrying a 'weight' float directly\n"
         f'  CORRECT shape: each child entry is {{"node": {{...NODE...}}, "pct": 60}}\n'
         f"  The fields are 'node' (the sub-NODE dict) and 'pct' (numeric percentage).\n\n"
-        f"### if/if_compound condition shape (CRITICAL — condition is a DICT, NOT a string):\n"
+        f"### if condition shape (CRITICAL — condition is a DICT, NOT a string):\n"
         f"  WRONG: condition = 'spy_above_200d_sma'  ← NEVER use a string label\n"
-        f"  CORRECT: condition = {{\n"
+        f"  CORRECT (flat binary condition for kind='if'):\n"
+        f"  condition = {{\n"
         f'    "lhs_fn": "<indicator>",   // e.g. "relative-strength-index"\n'
         f'    "lhs_ticker": "<TICKER>",  // e.g. "SPY"\n'
         f'    "window": <int>,           // lookback window in days\n'
@@ -874,12 +965,37 @@ def _build_generation_prompt(
         f"              // OR ticker-comparison rhs: "
         f'{{"fn": "<indicator>", "ticker": "<T>", "window": <int>}}\n'
         f"  }}\n"
-        f"  Fields: lhs_fn, lhs_ticker, window, comparator, rhs are ALL required.\n"
-        f"  The rhs dict uses the key 'fixed' for a numeric threshold.\n\n"
+        f"  Fields: lhs_fn, lhs_ticker, window, comparator, rhs are ALL required.\n\n"
+        f"### if_compound condition shape (compound typed union — for multi-condition gates):\n"
+        f"  kind='if_compound' uses a TYPED condition union selected by a 'type' field.\n"
+        f"  Three types:\n"
+        f"  1. type='binary' — same as the flat if condition (lhs_fn/lhs_ticker/window/"
+        f"comparator/rhs).\n"
+        f"  2. type='binary_compound' — broadcast one indicator over MULTIPLE tickers:\n"
+        f"     {{\n"
+        f'       "type": "binary_compound",\n'
+        f'       "fn": "<indicator>",       // e.g. "relative-strength-index"\n'
+        f'       "tickers": ["SPY", "QQQ"], // list of tickers (broadcast)\n'
+        f'       "comparator": "gt",        // one of: gt, lt, gte, lte\n'
+        f'       "rhs": {{"const": 70}},   // use key "const" (not "fixed") here\n'
+        f'       "window": 14,\n'
+        f'       "operator": "any"          // "any" = at least one ticker; "all" = all\n'
+        f"     }}\n"
+        f"  3. type='compound' — combine multiple conditions with AND/OR:\n"
+        f"     {{\n"
+        f'       "type": "compound",\n'
+        f'       "operator": "all",         // "all" = AND, "any" = OR\n'
+        f'       "conditions": [            // list of binary / binary_compound entries\n'
+        f'         {{"type": "binary_compound", "fn": "...", "tickers": [...], ...}},\n'
+        f"         ...\n"
+        f"       ]\n"
+        f"     }}\n\n"
         f"## CONCRETE CONFORMING EXAMPLE — diversify (copy this structure):\n\n"
         f"```json\n{example_json}\n```\n\n"
-        f"## CONCRETE CONFORMING EXAMPLE — cut_drawdown with regime gate (if node):\n\n"
+        f"## CONCRETE CONFORMING EXAMPLE — cut_drawdown with flat regime gate (if node):\n\n"
         f"```json\n{if_example_json}\n```\n\n"
+        f"## CONCRETE CONFORMING EXAMPLE — cut_drawdown with compound gate (if_compound):\n\n"
+        f"```json\n{if_compound_example_json}\n```\n\n"
         f"## Structural Requirement for objective='{obj_name}':\n\n"
         f"{signature}\n"
         f"{universe_hint}\n\n"
