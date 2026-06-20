@@ -849,6 +849,70 @@ class TestWarehousePersistence:
                 f"The warehouse write must apply _strip_secrets before persisting."
             )
 
+    def test_warehouse_snapshot_contains_symbol_set_for_drift_reconstruction(
+        self, asset_fixture, isolated_cache, alpaca_env, tmp_path
+    ):
+        """The warehouse raw_json must carry the full symbol set, not just a count.
+
+        Week-over-week drift (tickers added/removed) is only reconstructable if the
+        persisted payload contains the actual symbols.  A payload of {"symbol_count": N}
+        alone is insufficient — an operator cannot tell which symbols were present.
+
+        Contract (per PM directive): raw_payload must include at minimum:
+          {"symbols": <sorted list of symbol strings>, "symbol_count": <int>}
+
+        This test fetches the fixture universe, reads back the snapshot row, parses
+        raw_json, and asserts every expected survivor symbol is present in the stored
+        "symbols" list.  It is deliberately blind to list ordering (sorted or not) —
+        only membership matters for drift reconstruction.
+        """
+        from advisors import lens_warehouse, universe_provider
+
+        warehouse_path = str(tmp_path / "test_warehouse_drift.db")
+        expected = _expected_symbols(asset_fixture)
+        raw_assets = _fixture_asset_array(asset_fixture)
+
+        with patch("requests.get", return_value=_make_mock_response(json_body=raw_assets)):
+            universe_provider.fetch_universe(db_path=warehouse_path)
+
+        rows = lens_warehouse.get_lens_snapshots(
+            lens="universe_provider", db_path=warehouse_path
+        )
+        assert len(rows) >= 1, (
+            "No warehouse row written — cannot check drift-reconstruction payload"
+        )
+
+        raw_json_str = rows[0]["raw_json"]
+        try:
+            payload = json.loads(raw_json_str)
+        except json.JSONDecodeError as exc:
+            pytest.fail(
+                f"Warehouse raw_json is not valid JSON: {exc}\nraw_json={raw_json_str!r}"
+            )
+
+        assert "symbols" in payload, (
+            f"Warehouse payload is missing the 'symbols' key — drift reconstruction "
+            f"requires the full symbol set, not just a count. Got keys: {list(payload.keys())}"
+        )
+
+        stored_symbols = set(payload["symbols"])
+        missing_from_store = expected - stored_symbols
+        assert not missing_from_store, (
+            f"The following expected survivor symbols are absent from the warehouse "
+            f"snapshot's 'symbols' list — drift reconstruction is incomplete:\n"
+            f"  Missing: {sorted(missing_from_store)}\n"
+            f"  Stored:  {sorted(stored_symbols)}"
+        )
+
+        # symbol_count must agree with the stored list length (self-consistency).
+        assert "symbol_count" in payload, (
+            f"Warehouse payload is missing 'symbol_count'. Got keys: {list(payload.keys())}"
+        )
+        assert payload["symbol_count"] == len(stored_symbols), (
+            f"symbol_count={payload['symbol_count']} does not match "
+            f"len(symbols)={len(stored_symbols)} — payload is internally inconsistent"
+        )
+
     def test_module_does_not_import_database_at_ast_level(self):
         """advisors/universe_provider.py must NOT import database.py (no state-DB join).
 
