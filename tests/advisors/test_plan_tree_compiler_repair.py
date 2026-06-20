@@ -326,6 +326,83 @@ def test_ac16_envelope_reproduction_matches_client_format(compiler):
 
 
 # ===========================================================================
+# AC-16 (Revise-cycle 1): the pruned ticker MUST be one present in the tree.
+# Sufficiency gap found at GREEN a758e45: a naive "first uppercase word" extractor
+# prunes a non-ticker word (e.g. a venue/market name in the envelope) instead of
+# the offending ticker that is actually in the tree — a no-op that leaves the
+# untradable ticker in place and burns the repair budget. AC-16 says "prune the
+# OFFENDING ticker", so the prune target must cross-reference the tree's real
+# ticker set (symphony_schema.extract_tickers), not grab the first capitalized
+# token in the message.
+# ===========================================================================
+
+
+def test_ac16_prunes_the_in_tree_ticker_not_the_first_uppercase_word(compiler):
+    """A 400 envelope that leads with a NON-ticker uppercase word (a venue/market
+    name) and then names the real offending ticker (which IS in the tree) must
+    prune the IN-TREE ticker — not the leading uppercase word that is absent from
+    the tree. The retry tree must drop the real offending ticker."""
+    # 'VENUE' and 'MARKET' are uppercase words but NOT in the tree; BADX IS.
+    bt = _ScriptedBacktest(
+        [
+            _err_result(400, "VENUE MARKET rejected order: BADX is not tradable"),
+            _ok_result(),
+        ]
+    )
+    plan = _plan("diversify", _weight("equal", [_asset("BADX"), _asset("SPY"), _asset("QQQ")]))
+    result = compiler.compile_plan(plan, backtest_fn=bt)
+    assert result.reason is None, f"expected a successful repair, got reason={result.reason!r}"
+    assert isinstance(result.tree, dict)
+    final = _tickers_in(result.tree)
+    # The real offending in-tree ticker is gone; the leading non-ticker words never
+    # were tickers; the in-universe siblings survive.
+    assert "BADX" not in final, "the offending in-tree ticker must be pruned"
+    assert {"SPY", "QQQ"} <= final, "in-tree siblings must survive"
+    # The retry (2nd call) tree must already have BADX removed.
+    assert len(bt.calls) == 2
+    assert "BADX" not in _tickers_in(bt.calls[1])
+
+
+def test_ac16_400_naming_only_off_tree_tickers_drops_without_wasting_budget(compiler):
+    """A 400 envelope that names ONLY tickers absent from the tree cannot be
+    repaired by pruning (there is no in-tree ticker to remove). The compiler must
+    NOT burn the whole repair budget on no-op prunes — it recognizes there is no
+    in-tree prune target and drops cleanly after the initial attempt (one backtest
+    call, then a clean drop)."""
+    bt = _ScriptedBacktest([_err_result(400, "ZZZZ not tradable") for _ in range(20)])
+    plan = _plan("diversify", _weight("equal", [_asset("SPY"), _asset("QQQ")]))
+    result = compiler.compile_plan(plan, backtest_fn=bt)
+    assert result.tree is None
+    assert isinstance(result.reason, str) and result.reason
+    # No in-tree ticker named -> no productive prune -> drop without exhausting the
+    # bound on identical no-op prunes. One backtest call is enough to conclude it.
+    assert len(bt.calls) == 1, (
+        "a 400 naming only off-tree tickers must drop immediately, not loop the "
+        "full repair budget on no-op prunes"
+    )
+
+
+def test_ac16_prunes_correct_ticker_when_multiple_in_tree_tickers_appear(compiler):
+    """When the envelope text contains MULTIPLE in-tree ticker names but explicitly
+    names ONE as untradable, the compiler prunes the named one. (Guards against a
+    'prune the first in-tree ticker found' shortcut that could remove the wrong
+    in-tree ticker.) Here SPY and QQQ are both in the tree and both appear in the
+    text, but QQQ is the one flagged untradable."""
+    bt = _ScriptedBacktest(
+        [
+            _err_result(400, "Comparing SPY: QQQ is not tradable / no pricing data"),
+            _ok_result(),
+        ]
+    )
+    plan = _plan("diversify", _weight("equal", [_asset("SPY"), _asset("QQQ"), _asset("TLT")]))
+    result = compiler.compile_plan(plan, backtest_fn=bt)
+    assert result.reason is None
+    final = _tickers_in(result.tree)
+    assert "QQQ" not in final, "the flagged untradable ticker must be pruned"
+    assert {"SPY", "TLT"} <= final, "non-flagged in-tree tickers must survive"
+
+
+# ===========================================================================
 # AC-17 disposition (PM-recommended Option A): market_cap is producer-deprecated
 # -> unrepairable grammar drop, NEVER reaches backtest. Repoint if PM selects B/C.
 # ===========================================================================
