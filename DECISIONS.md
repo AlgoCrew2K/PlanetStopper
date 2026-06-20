@@ -1988,3 +1988,110 @@ When all remaining plans (after prune and dedup) fail the signature filter, `gen
 - `tests/advisors/test_build_plan_generator.py` — 4 new RED→GREEN AC-8 enforcement tests (verify signature filter fires in generate_build_plans, order pinned, honest reason path)
 - `tests/advisors/test_build_plan_atlas_admission.py` — 1 updated test asserting `plan_matches_objective` is the shared predicate
 - Total after Revise: 52 tests GREEN at commit 249790b
+
+---
+
+## DE-SB-MARKETCAP-DEPRECATED — `wt-marketcap` / market-cap weighting is producer-deprecated (2026-06-20)
+
+Branch: feat/strategy-builder-real | Evidence commit: 1010de3
+
+### Context
+
+AC-17 of the Gate-1 feature plan required the team to source a real market-cap-weighted Composer symphony to capture the `wt-marketcap` field contract before finalizing a `make_weight_marketcap` constructor and adding `"wt-marketcap"` to `symphony_schema.KNOWN_STEPS`. This was an internal engineering step (not an operator dependency).
+
+### Evidence
+
+`sb3-testwriter` probed `POST /api/v0.1/backtest` live (2026-06-20) with three node variants (passing `wt-cash-equal` control; hyphenated `wt-market-cap`; canonical `wt-marketcap`). Results:
+
+| Probe | HTTP status | Outcome |
+|-------|------------|---------|
+| `wt-cash-equal` (control) | 200 | Harness valid |
+| `wt-market-cap` (hyphenated) | 400 | Wrong token spelling |
+| `wt-marketcap` (canonical) | 422 `node-type-not-supported` | **Producer-deprecated** |
+
+HTTP 422 response body (verbatim from fixture):
+- `code`: `"node-type-not-supported"`
+- `title`: `"Market cap weighting is no longer supported"`
+- `meta.node-type`: `"market cap weighting"`
+
+Probe was deterministic (re-probed 2x with the wt-cash-equal control confirming harness validity). Evidence committed at `tests/fixtures/strategy_builder/wt_marketcap_deprecated_envelope.json` (commit 1010de3).
+
+### Decision (PM — Option A: adopt the provider contract)
+
+Do NOT add `make_weight_marketcap` to `advisors/symphony_schema.py` and do NOT add `"wt-marketcap"` to `KNOWN_STEPS`. Rationale:
+
+1. **Adopt existing contracts, never invent** (universal project rule): the Composer producer has retired this node type. Implementing a constructor that emits a guaranteed-422 tree is dead code violating the no-over-engineering constraint.
+2. **Honest drop over silent failure**: the compiler explicitly detects `scheme=="market_cap"` in the DSL before any compilation and drops the plan with `reason="market_cap_scheme_deprecated"` — never silently passing it to a backtest it cannot survive.
+3. `symphony_schema` constructor count stays at 16. The anticipated "16→17 constructors" reconcile from the C2/2b phase is resolved: count stays 16; the reason is producer deprecation, not a scope omission.
+
+### Runtime behavior
+
+In `advisors/plan_tree_compiler.py`:
+- `_has_market_cap(root_node)` (iterative DFS over the DSL NODE tree) detects any `{kind:"weight", scheme:"market_cap"}` node before compilation begins.
+- When found: `compile_plan` returns `CompileResult(tree=None, reason="market_cap_scheme_deprecated")`. `backtest_fn` is never called.
+- `_compile_node` also raises `ValueError` as a defensive guard if called with a `market_cap` scheme node via any path that bypasses the pre-check — the outer `except` catches it and degrades cleanly.
+
+The DSL (`advisors/build_plan_generator.py`) still carries `scheme:"market_cap"` as a recognized scheme value (forward-compat token; not removed). Plans with this scheme are dropped cleanly at compile time, not silently passed to backtest.
+
+### Files
+
+- `tests/fixtures/strategy_builder/wt_marketcap_deprecated_envelope.json` — live producer evidence (commit 1010de3)
+- `advisors/plan_tree_compiler.py` — `_has_market_cap` pre-check + `_compile_node` defensive guard
+- `feature-plans/strategy-builder-real.md` — AC-17 annotated REFRAMED (see that file)
+
+---
+
+## DE-SB-COMPILE-001 — Strategy Builder Component 3: Plan->Tree Compiler design decisions (2026-06-20)
+
+Branch: feat/strategy-builder-real | GREEN commit: 659435e (38/38 compiler tests; 604 passed / 0 failures / 2 skipped broader suite)
+
+### Context
+
+Component 3 of the real Opus-driven Strategy Builder (AC-14..AC-17 of the Gate-1 feature plan) introduces `advisors/plan_tree_compiler.py` — the deterministic bridge from the Component-2 build-plan DSL to Composer `raw_value` trees. The Toxic Pair cycled through one Revise round (RED -> GREEN -> Revise-1 RED -> GREEN) before converging.
+
+### Key decisions
+
+**1. Pure dispatch table: constructors only, no hand-built node dicts (AC-14)**
+
+The compiler never constructs a Composer node dict directly. Every output node is produced by a `symphony_schema` constructor call. This is a load-bearing design choice: constructors assign fresh `uuid4` ids, deep-copy children, and emit live-required fields (`make_root` emits `description: ""`, `make_inverse_vol` emits `window-days: 30`). A compiler that built dicts by hand would need to replicate all of those invariants — a second source of truth that can drift. By delegating entirely to constructors, the compiled tree is structurally sound before `validate_tree` even runs.
+
+**2. Bounded repair loop: validate_tree gate is pre-backtest and post-prune (AC-15)**
+
+`symphony_schema.validate_tree` is called on every tree before the first `backtest_fn` call, and again after every ticker prune. A HARD-error tree never reaches `backtest_fn`. `MAX_REPAIR_ATTEMPTS = 3` is a named constant (test-asserted to be in 1..10); the loop is never unbounded. Degenerate post-prune trees (empty children after pruning) are detected by `_prune_ticker_from_tree` returning `None` and dropped with `reason="prune_degenerated_tree"` rather than calling `validate_tree` on a known-broken structure.
+
+**3. Error-envelope split is STATUS-driven, not message-text-driven (AC-16)**
+
+Tradeability rejections (HTTP 400 -> prune + retry) vs grammar rejections (HTTP 422 -> drop immediately) are classified by parsing the numeric HTTP status code from the `composer_backtest_client` envelope format `"HTTP {status}: {text}"` (client line 360). Message text is consulted only for prune-target identification, not for error classification. This is robust to Composer changing human-readable error text.
+
+**4. Prune-target must be an in-tree ticker (AC-16 Revise-1)**
+
+The initial GREEN implementation extracted the first uppercase candidate from the 400 envelope text. The Revise-1 RED test demonstrated this is insufficient: a venue/market name (e.g. `NASDAQ`, `NYSE`) or an off-tree ticker appearing in the envelope could be selected, producing a no-op prune that wastes the repair budget without removing the actual offending ticker.
+
+`_find_prune_target` cross-references all uppercase candidates against `symphony_schema.extract_tickers(current_tree)` (the real in-tree ticker set) and selects only an in-tree match. Within in-tree matches it prefers the candidate immediately before the first untradable signal phrase (`"not tradable"`, `"untradable"`, `"no pricing"`) — the ticker Composer explicitly flagged. Returns `None` when no in-tree ticker is found; `compile_plan` drops with `reason="no_in_tree_ticker_in_400"` (clean give-up, no budget waste).
+
+**5. `backtest_fn` is an injected seam, not a module-level import (Component 5 boundary)**
+
+The compiler never imports `composer_backtest_client` or `run_backtest`. `backtest_fn` is a caller-supplied `callable | None`. In tests it is a mock; in the Component 5 engine rewire it will be `run_backtest`. This keeps the compiler independently testable with zero live network dependency and defers production wiring to Component 5.
+
+**6. `market_cap` scheme: producer-deprecated, detected before compilation (AC-17)**
+
+See `DE-SB-MARKETCAP-DEPRECATED` above. The compiler detects `scheme=="market_cap"` in the DSL tree via `_has_market_cap` (iterative DFS) before any `_compile_node` call. If found: `CompileResult(reason="market_cap_scheme_deprecated")`, `backtest_fn` never called. A defensive `raise ValueError` in `_compile_node` guards any path that bypasses the pre-check. `symphony_schema.KNOWN_STEPS` and the constructor count stay at 16.
+
+**7. Determinism modulo fresh uuids (AC-14)**
+
+Two `compile_plan` calls on the same plan produce byte-identical trees except for the `id` keys (each `symphony_schema` constructor assigns a fresh `uuid4`). Tests verify determinism by stripping `id` keys from both outputs before comparison. This is the same invariant the `symphony_schema` constructors already guarantee internally.
+
+### Test breakdown (38 tests, all GREEN at 659435e)
+
+- `tests/advisors/test_plan_tree_compiler.py` — AC-14 golden-fixture tests: one per grammar construct (asset, weight/equal, weight/specified, weight/inverse_vol, group, filter, if-flat, if_compound with binary/binary_compound/compound conditions); determinism tests; full-grammar plan round-trip; advisory-only grep guard
+- `tests/advisors/test_plan_tree_compiler_repair.py` — AC-15 (validate_tree gate, repair loop bound, clean give-up on unrepairable), AC-16 (400 tradeability->prune+retry, 422 grammar->drop, in-tree ticker cross-reference, no-signal-phrase fallback), AC-17 (market_cap_scheme_deprecated drop, both pre-check and defensive compile_node guard)
+- `tests/advisors/test_plan_tree_compiler_property.py` — AC-15 property: any admitted generator output compiles to a `validate_tree`-clean tree
+- Evidence fixture: `tests/fixtures/strategy_builder/wt_marketcap_deprecated_envelope.json` (commit 1010de3)
+
+### Files changed
+
+- `advisors/plan_tree_compiler.py` — new module (Component 3)
+- `tests/advisors/test_plan_tree_compiler.py` — RED tests (AC-14)
+- `tests/advisors/test_plan_tree_compiler_repair.py` — RED tests (AC-15, AC-16, AC-17 disposition)
+- `tests/advisors/test_plan_tree_compiler_property.py` — property test (AC-15 invariant)
+- `tests/fixtures/strategy_builder/wt_marketcap_deprecated_envelope.json` — live producer evidence (commit 1010de3)

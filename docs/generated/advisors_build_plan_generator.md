@@ -46,7 +46,7 @@ Each `kind`/`scheme` value maps 1:1 to one `symphony_schema` constructor:
 | `{kind:"weight", scheme:"equal", children:[NODE...]}` | `make_weight_equal` | |
 | `{kind:"weight", scheme:"specified", children:[{node:NODE, pct:number}...]}` | `make_weight_specified` | Children are `{node, pct}` pairs |
 | `{kind:"weight", scheme:"inverse_vol", children:[NODE...], window_days:int?}` | `make_inverse_vol` | `window_days` defaults to 30 |
-| `{kind:"weight", scheme:"market_cap", children:[NODE...]}` | `make_weight_marketcap` | Constructor lands in Component 3 (AC-17); DSL carries it now as forward-compat |
+| `{kind:"weight", scheme:"market_cap", children:[NODE...]}` | (producer-deprecated — no constructor added) | Composer retired market-cap weighting (HTTP 422 `node-type-not-supported`; 2026-06-20). The compiler drops any plan with this scheme via `_has_market_cap` before compilation (`reason="market_cap_scheme_deprecated"`). DSL carries the scheme as a forward-compat token; `symphony_schema.KNOWN_STEPS` stays at 16 entries. See `DE-SB-MARKETCAP-DEPRECATED`. |
 | `{kind:"group", name:str, children:[NODE...]}` | `make_group` | |
 | `{kind:"filter", select_fn:"top"\|"bottom", select_n:int, sort_by_fn:str, window:int, children:[NODE...]}` | `make_filter` | |
 | `{kind:"if", condition:{lhs_fn,lhs_ticker,window,comparator,rhs:{fixed:num}\|{ticker,fn,window}}, then:[NODE...], else:[NODE...]}` | `make_if` | Flat condition |
@@ -71,7 +71,7 @@ Used in `if_compound` nodes:
 - `rebalance` ∈ `symphony_schema.KNOWN_REBALANCE`
 - `sort_by_fn` and indicator `fn` values are indicator-fn strings from `symphony_schema.KNOWN_INDICATOR_FNS`
 - The `%` placeholder used by `binary_compound` conditions is excluded from the membership-validation walk (`plan_tickers` filters it out)
-- `scheme:"market_cap"` is carried in the DSL now as forward-compatibility; `make_weight_marketcap` in `symphony_schema` lands in Component 3 (AC-17)
+- `scheme:"market_cap"` is carried in the DSL as a forward-compat token; however, Composer retired market-cap weighting (HTTP 422 `node-type-not-supported`; 2026-06-20). Plans with this scheme are dropped at compile time by `advisors/plan_tree_compiler._has_market_cap` (`reason="market_cap_scheme_deprecated"`). No `make_weight_marketcap` constructor and no `wt-marketcap` in `KNOWN_STEPS` will be added. See `DE-SB-MARKETCAP-DEPRECATED`.
 
 ## Constants
 
@@ -349,4 +349,4 @@ No imports from `database`, `autotuner`, `app`, or any execution module. Off-exe
 - **Bill-protection on Atlas pulls.** `load_atlas_candidates` passes `force_refresh=False` unconditionally — Atlas reads are bounded to at most once per week per the operator directive (see `DE-ATLAS-001`).
 - **Heterogeneous pool.** `pool_candidates` returns a mixed-type list: `dict` items (built-new plans) and `CandidateInfo` items (atlas-suggested). The downstream FDR gate in `strategy_builder_engine.evaluate_candidate_batch` operates on `CandidateInfo` objects; the Component 3 engine rewire will normalize built-new dicts into `CandidateInfo` before calling the gate (deferred to C3).
 - **Independent `Objective` enum.** This module defines its own 4-value `Objective` enum. `strategy_builder_engine.Objective` remains the 3-value enum until Component 3 unifies them during the engine rewire.
-- **`market_cap` scheme is forward-compat.** The DSL carries `scheme:"market_cap"` now so plans involving market-cap weighting can be generated; `make_weight_marketcap` in `symphony_schema` and the `KNOWN_STEPS` entry land in Component 3 (AC-17). A compiler receiving a `market_cap` plan node before C3 ships will error at compile time, not at generation time.
+- **`market_cap` scheme is a forward-compat DSL token; the constructor was never added.** Composer retired market-cap weighting (HTTP 422 `node-type-not-supported` / "Market cap weighting is no longer supported"; captured 2026-06-20; evidence at `tests/fixtures/strategy_builder/wt_marketcap_deprecated_envelope.json`). Per PM Option A (adopt-the-provider-contract), no `make_weight_marketcap` constructor and no `wt-marketcap` entry in `KNOWN_STEPS` are added. The DSL retains `scheme:"market_cap"` as a recognized value so generator plans are structurally valid; `advisors/plan_tree_compiler._has_market_cap` detects and drops them before compilation. See `DE-SB-MARKETCAP-DEPRECATED`.

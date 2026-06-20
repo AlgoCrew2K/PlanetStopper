@@ -1,9 +1,9 @@
 # advisors/symphony_schema
 
-> Pure-stdlib Composer decision-tree schema layer: 16 constructors, 4 read-only inspection functions, and a grammar-pinned vocabulary that builds and validates synthetic ``raw_value`` trees for the Planet Stopper Strategy Builder.
+> Pure-stdlib Composer decision-tree schema layer: 16 constructors, 4 read-only inspection functions, and a grammar-pinned vocabulary that builds and validates synthetic ``raw_value`` trees for the Planet Stopper Strategy Builder. Constructor count stays at 16 — `make_weight_marketcap` was not added because Composer deprecated market-cap weighting (HTTP 422; 2026-06-20; see `DE-SB-MARKETCAP-DEPRECATED` in `DECISIONS.md`).
 
 **Source:** `advisors/symphony_schema.py`
-**Last updated:** 2026-06-18
+**Last updated:** 2026-06-20
 
 ## Overview
 
