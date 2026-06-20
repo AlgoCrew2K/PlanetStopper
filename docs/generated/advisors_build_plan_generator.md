@@ -11,9 +11,9 @@
 
 The module has two responsibilities:
 
-1. **Build-plan generation (AC-7..AC-11).** It calls the Anthropic SDK (`ANTHROPIC_API_KEY`) in structured tool-use mode and receives up to `N_PLANS_PER_OBJECTIVE` diverse build-plans expressed in the build-plan DSL — a JSON-serializable, constraint-typed intermediate representation. It is NOT raw Composer JSON; it is a 1:1 pre-image of the `symphony_schema` constructor API so the compiler in Component 3 is a pure dispatch table with no interpretation. Opus proposes tickers from its own market knowledge; every referenced ticker is then validated against the Alpaca-paper membership set (`universe_provider`) before a plan is admitted.
+1. **Build-plan generation (AC-7..AC-11).** It calls the Anthropic SDK (`ANTHROPIC_API_KEY`) in structured tool-use mode and receives up to `N_PLANS_PER_OBJECTIVE` diverse build-plans expressed in the build-plan DSL — a JSON-serializable, constraint-typed intermediate representation. It is NOT raw Composer JSON; it is a 1:1 pre-image of the `symphony_schema` constructor API so the compiler in Component 3 is a pure dispatch table with no interpretation. Opus proposes tickers from its own market knowledge; every referenced ticker is then validated against the caller-supplied `membership_set` (a `frozenset` from `universe_provider.get_tradeable_set()`) before a plan is admitted.
 
-2. **Objective-matched Atlas admission (AC-12..AC-13).** It ranks and admits existing Atlas community strategies by objective-relevance (not as an unfiltered top-20), tags them with explicit provenance, and pools them with the generated plans for the single downstream FDR gate.
+2. **Objective-matched Atlas admission (AC-12..AC-13).** It ranks and admits existing Atlas community strategies by objective-relevance (not as an unfiltered top-20), tags them with explicit provenance in `.params["provenance"]`, and pools them with the generated plans for the single downstream FDR gate.
 
 Off-execution-path. Advisory-only. Never raises — every function degrades honestly on failure.
 
@@ -78,8 +78,8 @@ Used in `if_compound` nodes:
 | Name | Value | Description |
 |------|-------|-------------|
 | `N_PLANS_PER_OBJECTIVE` | `12` | Named tunable constant for the default plan count per generation run (AC-10). Pass explicitly to override. |
-| `PROVENANCE_BUILT_NEW` | `"built-new"` | Explicit provenance tag stamped on every generator-produced plan (AC-13). |
-| `PROVENANCE_ATLAS_SUGGESTED` | `"atlas-suggested"` | Explicit provenance tag stamped on every admitted Atlas community candidate (AC-13). |
+| `PROVENANCE_BUILT_NEW` | `"built-new"` | Explicit provenance tag stamped on every generator-produced plan as `plan["provenance"]` (AC-13). |
+| `PROVENANCE_ATLAS_SUGGESTED` | `"atlas-suggested"` | Explicit provenance tag stamped on every admitted Atlas community candidate in `CandidateInfo.params["provenance"]` (AC-13). |
 | `MAX_COMMUNITY_CANDIDATES_PER_RUN` | `20` | Re-exported from `strategy_builder_engine`; single-sourced cap on admitted community candidates. |
 
 ## Public Types
@@ -108,21 +108,25 @@ class GeneratorResult:
 
 ### Admitted community candidate shape
 
-`admit_community_candidates` returns plain `dict` objects (not `CandidateInfo`). Each carries `provenance` as a top-level key alongside the original community strategy fields:
+`admit_community_candidates` returns `list[CandidateInfo]`. Each `CandidateInfo` carries the provenance tag in `.params["provenance"]`:
 
 ```python
-{
-    "sid":              str,
-    "name":             str,
-    "tree":             dict,
-    "tickers":          ...,
-    "oos_metrics":      dict | None,
-    "composition_hash": str,
-    "provenance":       "atlas-suggested",  # AC-13: top-level key, not in params
-}
+CandidateInfo(
+    candidate_id = sid,                      # community strategy sid
+    tree         = doc["tree"],              # the community strategy tree
+    template_id  = "community",
+    params       = {
+        "sid":              str,
+        "name":             str,
+        "composition_hash": str,
+        "provenance":       "atlas-suggested",  # AC-13: in params, not a top-level dict key
+    },
+    metrics      = {},
+    backtest_error = None,
+)
 ```
 
-`pool_candidates` works over plain dicts from both sources — every item in the pool carries `["provenance"]` as a top-level key.
+`pool_candidates` concatenates built-new `dict` items (from `generate_build_plans`) and `CandidateInfo` items (from `admit_community_candidates`) without reshaping — each item's provenance is accessible as `item["provenance"]` for dicts and `item.params["provenance"]` for `CandidateInfo` objects.
 
 ## API Reference
 
@@ -163,7 +167,7 @@ Calls `_build_client()` → structured tool-use SDK call → parses the `"emit_b
 | Name | Type | Description |
 |------|------|-------------|
 | `objective` | `Objective` | Steers the structural shape constraint applied to each plan |
-| `membership_set` | `frozenset[str]` | The tradeable universe from `universe_provider.get_tradeable_set()`. Every ticker in every plan is checked against this set. |
+| `membership_set` | `frozenset[str] \| set[str]` | The tradeable universe; typically `universe_provider.get_tradeable_set()`. Every ticker in every plan is checked against this set. |
 | `n_plans` | `int` | Number of plans to request. Defaults to `N_PLANS_PER_OBJECTIVE` (12). |
 
 **Returns:** `GeneratorResult`
@@ -171,19 +175,20 @@ Calls `_build_client()` → structured tool-use SDK call → parses the `"emit_b
 **Membership validation (AC-9 — refinement A):**
 - If a plan contains an off-universe ticker AND in-universe siblings remain in the same node, the off-universe ticker is pruned.
 - If pruning would leave a node empty or degenerate (no children), the entire plan is rejected — never emitted broken.
-- Off-universe tickers in `if`/`if_compound` conditions are handled the same way (plan pruned or rejected, never silently retained).
+- Off-universe tickers in `if`/`if_compound` condition signal references are not prunable; the plan is rejected outright.
 - An empty `membership_set` causes every ticker to be off-universe; all plans are rejected and `plans == []`.
+- Admitted plans are returned as `copy.deepcopy` objects — no node aliases the SDK response. This is required because Component 3 mutates admitted trees during compilation (the same reason `symphony_schema` constructors deep-copy their children).
 
 **Objective structural enforcement (AC-8):** Each plan is validated against the objective's structural signature after membership validation. Plans failing the signature are dropped before admission. The four signatures are mutually distinguishable.
 
-**Structural deduplication (AC-10 — refinement C):** Plans are fingerprinted by `json.dumps({k: v for k, v in plan.items() if k not in {"plan_id", "name", "provenance"}}, sort_keys=True)`. Structurally-identical plans (same shape + tickers + params, differing only in `plan_id`/`name`) are collapsed to one representative. Admitted count is always `<= n_plans`.
+**Structural deduplication (AC-10 — refinement C):** Plans are fingerprinted via `_root_fingerprint`, which computes `sha256(json.dumps(plan["root"], sort_keys=True))` over the `root` NODE only. Volatile top-level fields (`plan_id`, `name`, `provenance`) are excluded by operating only on the root subtree. Structurally-identical plans (same shape + tickers, differing only in `plan_id`/`name`) are collapsed to one representative. Admitted count is always `<= n_plans`.
 
 **Degradation paths (AC-11):**
 - `_build_client()` raises (missing key) → `GeneratorResult(plans=[], reason="RuntimeError")`
 - SDK `messages.create` raises → `GeneratorResult(plans=[], reason=type(exc).__name__)`
-- Tool-use block absent (stop_reason != "tool_use") → `GeneratorResult(plans=[], reason=...)`
-- `plans` payload is not a list → `GeneratorResult(plans=[], reason=...)`
-- All plans rejected by membership validation, signature check, or dedup → `GeneratorResult(plans=[], reason=...)`
+- Tool-use block absent → `GeneratorResult(plans=[], reason="NoToolUseBlock")`
+- `plans` payload is not a list → `GeneratorResult(plans=[], reason="InvalidToolUsePayload")`
+- All plans rejected by membership validation, signature check, or dedup → `GeneratorResult(plans=[], reason=None)` (empty plans is not itself an error)
 
 `reason` contains ONLY `type(exc).__name__` — never the API key, a file path, or any exception message body (D-1 contract).
 
@@ -207,7 +212,7 @@ else:
 
 Rank and admit Atlas community strategies by objective-relevance (AC-12). Never raises.
 
-Takes the dict returned by `advisors.community_strats.load_community_strategies` and returns a list of admitted candidate dicts ranked by the objective's named stat, each tagged `provenance="atlas-suggested"` as a top-level key.
+Takes the dict returned by `advisors.community_strats.load_community_strategies` and returns a list of `CandidateInfo` objects ranked by the objective's named stat, each tagged `provenance="atlas-suggested"` in `.params["provenance"]`.
 
 **Parameters:**
 
@@ -217,7 +222,7 @@ Takes the dict returned by `advisors.community_strats.load_community_strategies`
 | `objective` | `Objective` | Determines the ranking stat |
 | `max_candidates` | `int` | Hard cap. Defaults to `MAX_COMMUNITY_CANDIDATES_PER_RUN` (20). |
 
-**Returns:** `list[dict]` — admitted community candidate dicts, each carrying `provenance="atlas-suggested"`. Empty list on any failure.
+**Returns:** `list[CandidateInfo]` — admitted community candidates. Empty list on any failure.
 
 **Ranking per objective (AC-12):**
 
@@ -226,15 +231,13 @@ Takes the dict returned by `advisors.community_strats.load_community_strategies`
 | `cut_drawdown` | `oos_metrics["max_drawdown"]` | Nearer zero first (shallowest drawdown) | quantstats convention: values are <= 0 |
 | `volatility_mitigation` | `oos_metrics["volatility"]` | Lowest first | |
 | `lift_risk_adjusted` | `oos_metrics["sharpe"]` | Highest first | |
-| `diversify` | cross-correlation vs admitted set | Lowest cross-corr first | Deterministic; exact ordering is an internal detail |
+| `diversify` | Jaccard overlap vs already-admitted ticker set | Lowest overlap first (greedy) | Tiebreaks by `sid` sort; deterministic; complete set up to cap |
 
-**Missing-stat handling (AC-12 — PM-decided: KEPT-LAST):** A doc whose `oos_metrics` is `None`, lacks the key, or has a non-numeric value for the stat is admitted AFTER all docs that have a valid numeric stat. It is never pre-dropped. The FDR gate, PBO veto, and SPY-OOS baseline in the downstream pipeline are the real survival gates (AC-26).
-
-**Non-numeric stat values** (e.g. `"not-a-number"`) are treated as missing and placed at the tail — never crash the ranking.
+**Missing-stat handling (AC-12 — PM-decided: KEPT-LAST):** A doc whose `oos_metrics` is `None`, lacks the key, or has a non-numeric value for the stat is admitted AFTER all docs that have a valid numeric stat — never pre-dropped. The FDR gate, PBO veto, and SPY-OOS baseline in the downstream pipeline are the real survival gates.
 
 ---
 
-### `load_atlas_candidates(objective, *, max_candidates=None) -> list`
+### `load_atlas_candidates(objective, *, max_candidates=MAX_COMMUNITY_CANDIDATES_PER_RUN) -> list`
 
 Convenience wrapper: calls `advisors.community_strats.load_community_strategies(force_refresh=False)` then `admit_community_candidates`. Enforces the weekly-cache / bill-protection directive (`force_refresh=False` is mandatory — never a per-request forced refetch). Never raises.
 
@@ -243,9 +246,9 @@ Convenience wrapper: calls `advisors.community_strats.load_community_strategies(
 | Name | Type | Description |
 |------|------|-------------|
 | `objective` | `Objective` | Passed through to `admit_community_candidates` |
-| `max_candidates` | `int \| None` | Passed through; `None` uses the module default |
+| `max_candidates` | `int` | Hard cap; defaults to `MAX_COMMUNITY_CANDIDATES_PER_RUN` (20) |
 
-**Returns:** `list[dict]` — same shape as `admit_community_candidates`.
+**Returns:** `list[CandidateInfo]` — same shape as `admit_community_candidates`.
 
 ---
 
@@ -253,18 +256,18 @@ Convenience wrapper: calls `advisors.community_strats.load_community_strategies(
 
 Pool the two provenance sources into one list for the downstream FDR gate (AC-13 C2/2b slice). Never raises.
 
-Concatenates both lists preserving each item's `["provenance"]` top-level key. The resulting list is the future input to `strategy_builder_engine.propose_strategies`'s single-batch FDR gate (wiring deferred to Component 3/5 — see Forward-AC below).
+Concatenates both lists without reshaping. `built_new` items are `dict` objects (provenance at `item["provenance"]`); `atlas_suggested` items are `CandidateInfo` objects (provenance at `item.params["provenance"]`). Each item's existing provenance tag is preserved unchanged.
+
+The resulting pooled list is the future input to `strategy_builder_engine.propose_strategies`'s single-batch FDR gate (wiring deferred to Component 3/5 — see Forward-AC below).
 
 **Parameters:**
 
 | Name | Type | Description |
 |------|------|-------------|
-| `built_new` | `list` | Plans from `generate_build_plans` (each carries `provenance="built-new"`) |
-| `atlas_suggested` | `list` | Candidates from `admit_community_candidates` (each carries `provenance="atlas-suggested"`) |
+| `built_new` | `list[dict]` | Plans from `generate_build_plans` (each carries `plan["provenance"]="built-new"`) |
+| `atlas_suggested` | `list[CandidateInfo]` | Candidates from `admit_community_candidates` (each carries `.params["provenance"]="atlas-suggested"`) |
 
 **Returns:** `list` — pooled candidates; `len(result) == len(built_new) + len(atlas_suggested)`.
-
-**Empty sources:** Two empty sources yield `[]`. One empty source yields the other source intact.
 
 ## Forward-AC: C3/C5 boundary
 
@@ -279,8 +282,8 @@ These are forward-ACs; the C2/2b module provides the pooled list and provenance 
 
 ## Internal Dependencies
 
-- `advisors.community_strats` — `load_community_strategies` (called inside `load_atlas_candidates`)
-- `advisors.strategy_builder_engine` — `MAX_COMMUNITY_CANDIDATES_PER_RUN` re-export (single-sourced cap; the engine itself is NOT modified in this phase)
+- `advisors.community_strats` — `load_community_strategies` (called inside `load_atlas_candidates`, CC-2 lazy import)
+- `advisors.strategy_builder_engine` — `MAX_COMMUNITY_CANDIDATES_PER_RUN` and `CandidateInfo` re-exported (the engine itself is NOT modified in this phase)
 - `anthropic` — SDK client via `_build_client()` (lazy import inside the function, CC-2 boundary)
 - `advisors.symphony_schema` — `KNOWN_COMPARATORS`, `KNOWN_REBALANCE`, `_KNOWN_OPERATORS` (vocabulary constants for DSL validation)
 
@@ -289,10 +292,12 @@ No imports from `database`, `autotuner`, `app`, or any execution module. Off-exe
 ## Design Notes
 
 - **DSL-not-raw-JSON.** Opus emits a strategy DSL, not a Composer `raw_value` tree. This decouples generation from compilation: the generator can be tested against the DSL contract without a live Composer endpoint; the compiler (C3) is a pure dispatch table; and the DSL makes the generator↔compiler contract legible and auditable. Prompt-injection is also bounded: a DSL node with an unexpected `kind` or `scheme` fails DSL shape validation before reaching the compiler.
-- **Structured tool-use, not free text.** The Anthropic SDK call uses tool-use mode (`"emit_build_plans"` tool with a JSON schema). The response is a structured `tool_use` block; free-text responses (stop_reason `"end_turn"`) are treated as failures and degrade to empty plans.
-- **SDK seam mirrors `ai_advisor._build_client`.** The `_build_client` factory is a module-level callable patched in tests — the same pattern used by `ai_advisor.py:1590`. No live network is required in the test suite.
+- **Structured tool-use, not free text.** The Anthropic SDK call uses tool-use mode (`"emit_build_plans"` tool with a JSON schema, `tool_choice={"type":"tool","name":"emit_build_plans"}`). The response is a structured `tool_use` block; free-text responses (`stop_reason="end_turn"`) are treated as failures and degrade to empty plans.
+- **SDK seam mirrors `ai_advisor._build_client`.** The `_build_client` factory is a module-level callable patched in tests (`advisors.build_plan_generator._build_client`) — the same pattern used by `ai_advisor.py:1590`. No live network is required in the test suite.
+- **Deep-copy on admission (AC-9 no-alias guarantee).** `_validate_and_prune` returns a `copy.deepcopy` of every admitted plan so no node aliases the SDK response object. This is required because the Component 3 compiler mutates tree nodes during compilation (the same reason `symphony_schema` constructors deep-copy their children).
+- **Structural dedup fingerprints the root node, not the full plan.** `_root_fingerprint` computes `sha256(json.dumps(plan["root"], sort_keys=True))` over the `root` NODE. Volatile top-level fields (`plan_id`, `name`, `provenance`) are excluded by operating only on the subtree — two plans with identical structure but different names hash identically.
 - **D-1 error contract.** `reason` strings contain `type(exc).__name__` only. No API key value, no file path, no exception message body ever appears in a returned reason string.
 - **Bill-protection on Atlas pulls.** `load_atlas_candidates` passes `force_refresh=False` unconditionally — Atlas reads are bounded to at most once per week per the operator directive (see `DE-ATLAS-001`).
-- **Provenance is a top-level key on all items in the pool.** Both built-new plan dicts and admitted community candidate dicts carry `["provenance"]` at the top level — not nested in `params`. `pool_candidates` preserves this by simple concatenation with no reshaping.
-- **`market_cap` scheme is forward-compat.** The DSL carries `scheme:"market_cap"` now so plans involving market-cap weighting can be generated; `make_weight_marketcap` in `symphony_schema` and the `KNOWN_STEPS` entry land in Component 3 (AC-17). A compiler receiving a `market_cap` plan node before C3 ships will error at compile time, not at generation time.
+- **Heterogeneous pool.** `pool_candidates` returns a mixed-type list: `dict` items (built-new plans) and `CandidateInfo` items (atlas-suggested). The downstream FDR gate in `strategy_builder_engine.evaluate_candidate_batch` operates on `CandidateInfo` objects; the Component 3 engine rewire will normalize built-new dicts into `CandidateInfo` before calling the gate (deferred to C3).
 - **Independent `Objective` enum.** This module defines its own 4-value `Objective` enum. `strategy_builder_engine.Objective` remains the 3-value enum until Component 3 unifies them during the engine rewire.
+- **`market_cap` scheme is forward-compat.** The DSL carries `scheme:"market_cap"` now so plans involving market-cap weighting can be generated; `make_weight_marketcap` in `symphony_schema` and the `KNOWN_STEPS` entry land in Component 3 (AC-17). A compiler receiving a `market_cap` plan node before C3 ships will error at compile time, not at generation time.
