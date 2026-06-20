@@ -351,56 +351,123 @@ def test_ac25_candidate_below_spy_fold_is_rejected(gate_engine):
     assert "below" not in _survivor_ids(batch)
 
 
-def test_ac25_candidate_above_spy_fold_survives_alpha_gate(gate_engine):
-    """A candidate whose OOS alpha BEATS SPY over the same fold survives the alpha
-    gate (it is not rejected on the SPY-baseline grounds — it may still be subject to
-    BHY/PBO, but the alpha branch passes)."""
-    spy_dated = {d: 0.01 for d in _DATES}
-    cand = _candidate_with_fold_alpha(gate_engine, "above", beats=True, spy_dated=spy_dated)
-    sibling = _candidate_with_fold_alpha(gate_engine, "above2", beats=True, spy_dated=spy_dated)
-    batch = gate_engine.evaluate_candidate_batch(
+# SPY-baseline isolation note (same methodology as the AC-24 gate-boundary tests):
+# "survives the alpha gate" cannot be asserted via a full-gate ADOPT decision, because
+# the strict BHY/PBO Stage-1 vetoes are orthogonal to the SPY-baseline change and
+# pre-empt the alpha branch for synthetic batches (a constant series → t-stat 0 → BHY
+# fails; identical configs → pbo=1.0 → PBO veto). So we isolate AC-25's actual claim —
+# the SPY-fold alpha REPLACES the always-0.0 baseline — at the gate BOUNDARY: spy on
+# evaluate_acceptance_gate and assert the `default_oos_alpha` it receives is SPY's
+# fold alpha (NOT 0.0), and that the below/above-SPY relationship is what the gate sees.
+
+
+def _capture_gate_baselines(gate_engine, monkeypatch) -> list:
+    """Record the (oos_alpha, default_oos_alpha) the gate engine threads into each
+    evaluate_acceptance_gate call — the real values, real gate verdict returned."""
+    import acceptance_gate as _ag
+
+    seen: list = []
+    real_gate = _ag.evaluate_acceptance_gate
+
+    def _spy(*args, **kwargs):
+        seen.append((kwargs.get("oos_alpha"), kwargs.get("default_oos_alpha")))
+        return real_gate(*args, **kwargs)
+
+    monkeypatch.setattr(gate_engine, "evaluate_acceptance_gate", _spy, raising=False)
+    monkeypatch.setattr(_ag, "evaluate_acceptance_gate", _spy)
+    return seen
+
+
+def test_ac25_spy_fold_alpha_is_the_gate_baseline_not_zero(gate_engine, monkeypatch):
+    """AC-25 CORE: the gate's default_oos_alpha must be SPY's OOS-alpha over the SAME
+    validation fold — NOT the legacy always-0.0. We supply a clearly non-zero SPY
+    series, spy the gate boundary, and assert the threaded default_oos_alpha equals
+    SPY's fold-transformed alpha (non-zero) — proving the baseline was replaced. We
+    do NOT assert a literal alpha: we compute SPY's expected fold alpha via the SAME
+    _fold_transform_single the engine uses (the math runs for real), so the assertion
+    derives from the fixture, never a hardcoded producer value."""
+    spy_dated = {d: 0.03 for d in _DATES}
+    # Expected SPY fold alpha = the engine's own fold transform over SPY's value list
+    # ordered by date (same path the engine must take after date-alignment).
+    spy_values = [spy_dated[d] for d in sorted(spy_dated)]
+    expected_spy_fold_alpha = gate_engine._fold_transform_single(spy_values).oos_alpha
+    assert expected_spy_fold_alpha != 0.0, "fixture must produce a non-zero SPY fold alpha"
+
+    seen = _capture_gate_baselines(gate_engine, monkeypatch)
+    cand = _make_candidate(gate_engine, "c1", {d: 0.02 for d in _DATES})
+    sibling = _make_candidate(gate_engine, "c2", {d: 0.01 for d in _DATES})
+    gate_engine.evaluate_candidate_batch(
         [cand, sibling], **_spy_seam_kwargs(gate_engine, spy_dated)
     )
-    # Beats-SPY must clear the alpha branch: NOT KEEP_INCUMBENT-by-alpha for the winner.
-    # At least one of the beats-SPY candidates must be adoptable (the BHY winner).
-    decisions = {_verdict_for(batch, "above"), _verdict_for(batch, "above2")}
-    assert acceptance_gate.DECISION_ADOPT_CANDIDATE in decisions, (
-        "a beats-SPY-over-the-fold candidate must be able to survive the alpha gate"
+    defaults = [d for (_o, d) in seen if d is not None]
+    assert defaults, "gate must have been called with a default_oos_alpha"
+    # The baseline must be SPY's fold alpha (the math engine computed it for real),
+    # NOT the legacy 0.0.
+    assert all(abs(d - expected_spy_fold_alpha) < 1e-9 for d in defaults), (
+        f"gate default_oos_alpha must be SPY's fold alpha {expected_spy_fold_alpha}, "
+        f"not the legacy 0.0; got {defaults}"
+    )
+    assert all(d != 0.0 for d in defaults), "SPY-fold baseline must replace the always-0.0 default"
+
+
+def test_ac25_below_spy_relationship_holds_at_the_gate(gate_engine, monkeypatch):
+    """A candidate whose fold oos_alpha is positive but BELOW SPY's fold alpha must
+    reach the gate with oos_alpha <= default_oos_alpha (the SPY baseline) — so the
+    gate's KEEP_INCUMBENT/reject branch fires on the SPY comparison (beats-SPY, not
+    beats-zero). Asserted at the boundary so BHY/PBO don't confound the alpha claim."""
+    spy_dated = {d: 0.04 for d in _DATES}  # SPY strongly positive
+    seen = _capture_gate_baselines(gate_engine, monkeypatch)
+    # Candidate positive but clearly weaker than SPY over the fold.
+    below = _make_candidate(gate_engine, "below", {d: 0.01 for d in _DATES})
+    sibling = _make_candidate(gate_engine, "below_b", {d: 0.005 for d in _DATES})
+    gate_engine.evaluate_candidate_batch(
+        [below, sibling], **_spy_seam_kwargs(gate_engine, spy_dated)
+    )
+    # For every gate call the candidate's oos_alpha must be <= the SPY-fold baseline
+    # (positive-but-below-SPY → the alpha branch cannot adopt).
+    pairs = [(o, d) for (o, d) in seen if o is not None and d is not None]
+    assert pairs, "gate must have been called with both oos_alpha and default_oos_alpha"
+    assert all(o <= d for (o, d) in pairs), (
+        f"a below-SPY candidate must reach the gate with oos_alpha<=SPY-fold baseline; got {pairs}"
     )
 
 
-def test_ac25_spy_baseline_uses_same_fold_dates_not_positional(gate_engine):
-    """GUARD against a subtle bug: SPY must be aligned to the candidate's DATE SPAN
-    and fold-transformed over the SAME dates — not a positional fold of a
-    differently-dated SPY series. We give SPY a series whose date span is SHIFTED/
-    longer; a positional fold would compute SPY's alpha over the wrong window and
-    flip the verdict. The correct (date-aligned) implementation intersects on dates,
-    so the SPY fold covers the candidate's validation dates only."""
-    # SPY series covers the candidate dates PLUS extra later dates with huge returns.
-    # A positional fold over the longer series would land its validation window on the
-    # extra dates (huge) — wrongly inflating the SPY baseline. Date-alignment must
-    # restrict SPY to the candidate's dates, so the extra dates are ignored.
-    spy_dated = {d: 0.01 for d in _DATES}
-    extra_dates = [f"2026-09-{d:02d}" for d in range(1, 21)]
-    for d in extra_dates:
+def test_ac25_spy_baseline_uses_same_fold_dates_not_positional(gate_engine, monkeypatch):
+    """GUARD against a subtle bug: SPY must be DATE-ALIGNED to the candidate's span and
+    fold-transformed over the SAME dates — not a positional fold of a differently-dated
+    SPY series. We give SPY the candidate dates (modest returns) PLUS extra out-of-span
+    dates with absurd returns; a positional fold over the longer series would land its
+    validation window on the absurd extras and inflate the baseline. Date-alignment
+    (intersect on the candidate's dates) must IGNORE the extras — so the threaded
+    default_oos_alpha equals the fold alpha of the IN-SPAN SPY returns only."""
+    in_span = {d: 0.02 for d in _DATES}
+    spy_dated = dict(in_span)
+    for d in [f"2026-09-{x:02d}" for x in range(1, 21)]:
         spy_dated[d] = 5.0  # absurd returns OUTSIDE the candidate's span
-    cand = _candidate_with_fold_alpha(
-        gate_engine, "aligned", beats=True, spy_dated={d: 0.01 for d in _DATES}
+
+    # Correct (date-aligned) baseline = fold alpha of the IN-SPAN SPY returns only.
+    in_span_values = [in_span[d] for d in sorted(in_span)]
+    expected_aligned = gate_engine._fold_transform_single(in_span_values).oos_alpha
+    # A positional fold of the FULL (longer) series would produce a very different
+    # (inflated) alpha — the bug we guard against.
+    full_values = [spy_dated[d] for d in sorted(spy_dated)]
+    positional_buggy = gate_engine._fold_transform_single(full_values).oos_alpha
+    assert abs(expected_aligned - positional_buggy) > 1e-6, (
+        "fixture must make the aligned and positional-fold baselines differ"
     )
-    sibling = _candidate_with_fold_alpha(
-        gate_engine, "aligned2", beats=True, spy_dated={d: 0.01 for d in _DATES}
-    )
-    batch = gate_engine.evaluate_candidate_batch(
+
+    seen = _capture_gate_baselines(gate_engine, monkeypatch)
+    cand = _make_candidate(gate_engine, "aligned", {d: 0.02 for d in _DATES})
+    sibling = _make_candidate(gate_engine, "aligned2", {d: 0.01 for d in _DATES})
+    gate_engine.evaluate_candidate_batch(
         [cand, sibling], **_spy_seam_kwargs(gate_engine, spy_dated)
     )
-    # With correct date-alignment the SPY baseline is ~0.01-level over the candidate
-    # dates (the 5.0 extras are out of span and ignored), so the beats-SPY candidate
-    # still clears. A positional fold over the longer series would set an absurd SPY
-    # baseline and wrongly reject.
-    decisions = {_verdict_for(batch, "aligned"), _verdict_for(batch, "aligned2")}
-    assert acceptance_gate.DECISION_ADOPT_CANDIDATE in decisions, (
-        "SPY must be date-aligned to the candidate span; out-of-span SPY dates must "
-        "not enter the fold (positional-fold bug guard)"
+    defaults = [d for (_o, d) in seen if d is not None]
+    assert defaults, "gate must have been called with a default_oos_alpha"
+    # The threaded baseline must be the DATE-ALIGNED fold alpha, NOT the positional one.
+    assert all(abs(d - expected_aligned) < 1e-9 for d in defaults), (
+        f"SPY baseline must be the date-aligned fold alpha {expected_aligned} (in-span "
+        f"dates only), not the positional-fold value {positional_buggy}; got {defaults}"
     )
 
 
