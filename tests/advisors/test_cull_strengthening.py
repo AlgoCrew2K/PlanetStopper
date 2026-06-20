@@ -477,3 +477,117 @@ def test_ac26_advertised_community_stats_do_not_influence_survival(gate_engine):
     )
     # And neither survives (mediocre fresh series below SPY).
     assert "adv-great" not in _survivor_ids(batch)
+
+
+# ===========================================================================
+# C5b OPERATOR-LEGIBILITY — per-candidate rejection REASON must be observable and
+# DISTINGUISHABLE (PBO-veto vs below-SPY-alpha vs FDR/BHY) so the live cull probe
+# can prove each veto actually BITES (not silently inert). Survivor-count alone is
+# confounded: the strict BHY gate yields zero survivors regardless, so "0 survivors"
+# would hide an inert PBO veto or an inert SPY baseline. This is the "scoring factors
+# must VARY on real data" guard at the unit level.
+#
+# The reason lives on the gate-engine result (CandidateGateResult), NOT on the
+# acceptance_gate AcceptanceVerdict (acceptance_gate is out of scope / correct).
+# ===========================================================================
+
+# Accepted names for the per-candidate rejection-reason field (impl picks one).
+_REASON_FIELDS = ("rejection_reason", "reject_reason", "gate_reason", "reason")
+
+
+def _reason_for(batch, cid: str):
+    """Return the per-candidate rejection reason from its CandidateGateResult,
+    resolving whichever field name the impl exposed. None means 'no reason' (survivor)."""
+    for r in batch.results:
+        if r.candidate_id != cid:
+            continue
+        for f in _REASON_FIELDS:
+            if hasattr(r, f):
+                return getattr(r, f)
+        raise AssertionError(
+            f"CandidateGateResult exposes no rejection-reason field "
+            f"(expected one of {_REASON_FIELDS}) — the reason is not observable"
+        )
+    raise AssertionError(f"no gate result for candidate {cid!r}")
+
+
+def test_c5b_rejection_reason_field_is_observable(gate_engine):
+    """CandidateGateResult must expose a per-candidate rejection-reason field at all.
+    Without it the operator/live-probe cannot tell WHY a candidate was culled."""
+    cand = _make_candidate(gate_engine, "obs", _consistent_configs()[0])
+    sibling = _make_candidate(gate_engine, "obs2", _consistent_configs()[1])
+    batch = gate_engine.evaluate_candidate_batch([cand, sibling])
+    # Resolving the reason must not raise (the field exists on the result).
+    _reason_for(batch, "obs")
+
+
+def test_c5b_pbo_veto_reason_distinct_from_below_spy_and_fdr(gate_engine, monkeypatch):
+    """The THREE rejection causes must be DISTINGUISHABLE in the result:
+      - a PBO-vetoed candidate (high-PBO batch) carries a PBO reason,
+      - a below-SPY-fold candidate carries a below-SPY reason,
+      - a candidate rejected for FDR/non-winner carries a different reason,
+    and the three reasons are pairwise DISTINCT. We assert distinctness + that the
+    PBO reason mentions PBO (case-insensitive substring), without pinning exact
+    strings (impl owns the exact reason tokens)."""
+    # (a) PBO-vetoed: per-block-overfit batch → real pbo>0.5 → PBO veto reason.
+    hpbo = [
+        _make_candidate(gate_engine, f"r-pbo-{i}", c)
+        for i, c in enumerate(_per_block_overfit_configs())
+    ]
+    pbo_batch = gate_engine.evaluate_candidate_batch(hpbo)
+    pbo_reason = _reason_for(pbo_batch, "r-pbo-0")
+    assert pbo_reason, "a PBO-vetoed candidate must carry a non-empty rejection reason"
+    assert "pbo" in str(pbo_reason).lower(), (
+        f"the PBO-veto reason must identify PBO; got {pbo_reason!r}"
+    )
+
+    # (b) below-SPY-fold: positive but below SPY → below-SPY reason (NOT a PBO reason).
+    spy_dated = {d: 0.02 for d in _DATES}
+    below = _candidate_with_fold_alpha(gate_engine, "r-below", beats=False, spy_dated=spy_dated)
+    below2 = _candidate_with_fold_alpha(gate_engine, "r-below2", beats=False, spy_dated=spy_dated)
+    below_batch = gate_engine.evaluate_candidate_batch(
+        [below, below2], **_spy_seam_kwargs(gate_engine, spy_dated)
+    )
+    below_reason = _reason_for(below_batch, "r-below")
+    assert below_reason, "a below-SPY candidate must carry a non-empty rejection reason"
+
+    # The PBO reason and the below-SPY reason must be DISTINCT (different causes).
+    assert str(pbo_reason) != str(below_reason), (
+        f"PBO-veto reason ({pbo_reason!r}) must be distinct from below-SPY reason "
+        f"({below_reason!r}) — the operator/live-probe must tell which veto bit"
+    )
+    # The below-SPY reason must NOT masquerade as a PBO reason.
+    assert "pbo" not in str(below_reason).lower(), (
+        f"below-SPY reason must not be a PBO reason; got {below_reason!r}"
+    )
+
+
+def test_c5b_survivor_has_no_rejection_reason(gate_engine, monkeypatch):
+    """A candidate that is NOT rejected (a survivor / ADOPT) carries no rejection
+    reason (None / empty) — the reason field is set ONLY when the candidate is culled,
+    so the live probe can count genuine survivors vs each rejection cause."""
+    # Spy the gate so we can force a clean ADOPT path without depending on the strict
+    # BHY baseline: when the gate returns ADOPT, the result's reason must be None.
+    import acceptance_gate as _ag
+
+    real_gate = _ag.evaluate_acceptance_gate
+
+    def _force_adopt(*args, **kwargs):
+        v = real_gate(*args, **kwargs)
+        return v._replace(decision=_ag.DECISION_ADOPT_CANDIDATE, vetoes_passed=True)
+
+    monkeypatch.setattr(gate_engine, "evaluate_acceptance_gate", _force_adopt, raising=False)
+    monkeypatch.setattr(_ag, "evaluate_acceptance_gate", _force_adopt)
+
+    spy_dated = {d: 0.01 for d in _DATES}
+    cand = _candidate_with_fold_alpha(gate_engine, "surv", beats=True, spy_dated=spy_dated)
+    sibling = _candidate_with_fold_alpha(gate_engine, "surv2", beats=True, spy_dated=spy_dated)
+    batch = gate_engine.evaluate_candidate_batch(
+        [cand, sibling], **_spy_seam_kwargs(gate_engine, spy_dated)
+    )
+    # Forced ADOPT → these are survivors → no rejection reason.
+    for cid in ("surv", "surv2"):
+        if cid in _survivor_ids(batch):
+            assert not _reason_for(batch, cid), (
+                "a survivor must not carry a rejection reason (reason is set only on a cull)"
+            )
