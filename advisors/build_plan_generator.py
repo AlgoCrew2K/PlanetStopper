@@ -98,6 +98,16 @@ _LOW_VOL_SORTS: frozenset[str] = frozenset(
     {"max-drawdown", "standard-deviation-return", "standard-deviation-price"}
 )
 
+# Maximum output tokens for the Opus build-plan SDK call.  4096 (the old value) truncated
+# 12 full-grammar plans; this ceiling fits them with ~25% headroom.  max_tokens is a
+# BILLING CEILING — you pay for actual output, not the ceiling — so a generous value is
+# free.  Empirical floor: 12 full-grammar plans + ~25% headroom (2026-06-20).
+MAX_OUTPUT_TOKENS: int = 16384
+
+# Bounded retry limit for SDK calls that return stop_reason="max_tokens".  After this
+# many consecutive truncations the call degrades per D-1 (no infinite retry loop).
+MAX_GENERATION_ATTEMPTS: int = 3
+
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -1053,13 +1063,32 @@ def generate_build_plans(
 
         prompt = _build_generation_prompt(objective, n_plans, membership)
 
-        response = client.messages.create(
-            model="claude-opus-4-8",
-            max_tokens=4096,
-            tools=[_EMIT_BUILD_PLANS_TOOL],
-            tool_choice={"type": "tool", "name": "emit_build_plans"},
-            messages=[{"role": "user", "content": prompt}],
-        )
+        # Bounded retry on truncation (stop_reason="max_tokens").  The old bare literal
+        # max_tokens=4096 was too small for 12 full-grammar plans; MAX_OUTPUT_TOKENS fixes
+        # that, but we also retry in case the model still exceeds the ceiling.  Any other
+        # stop_reason (e.g. "tool_use") is NOT a truncation and does not retry.
+        response = None
+        for _attempt in range(MAX_GENERATION_ATTEMPTS):
+            response = client.messages.create(
+                model="claude-opus-4-8",
+                max_tokens=MAX_OUTPUT_TOKENS,
+                tools=[_EMIT_BUILD_PLANS_TOOL],
+                tool_choice={"type": "tool", "name": "emit_build_plans"},
+                messages=[{"role": "user", "content": prompt}],
+            )
+            if getattr(response, "stop_reason", None) != "max_tokens":
+                # Non-truncated response — proceed to parse below.
+                break
+            logger.warning(
+                "generate_build_plans: stop_reason=max_tokens on attempt %d/%d",
+                _attempt + 1,
+                MAX_GENERATION_ATTEMPTS,
+            )
+        else:
+            # All MAX_GENERATION_ATTEMPTS returned stop_reason="max_tokens".
+            return GeneratorResult(
+                plans=[], reason="max_tokens: response truncated after all attempts"
+            )
 
         # Find the tool_use block in the response.
         tool_block = None
