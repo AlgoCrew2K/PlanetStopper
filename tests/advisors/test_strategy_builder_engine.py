@@ -2087,11 +2087,38 @@ class TestAdversarialCycle4:
         )
         mock_gate = MagicMock(return_value=fake_gate_batch)
 
+        # C4 body swap: _generate_candidate_trees now drives the real C1→C2→C3 pipeline.
+        # For a candidate to REACH the gate, the generator must return a compilable plan
+        # (the autouse conftest default returns empty plans — safe, but starves this test).
+        # We override generate_build_plans with one valid equal-weight plan so a candidate
+        # flows through compile_plan to evaluate_candidate_batch. The Opus SDK is never live.
+        import advisors.build_plan_generator as _gen  # noqa: PLC0415
+
+        _valid_plan = {
+            "plan_id": "adv4-p1",
+            "objective": "diversify",
+            "name": "Adv4 Plan",
+            "rebalance": "daily",
+            "root": {
+                "kind": "weight",
+                "scheme": "equal",
+                "children": [
+                    {"kind": "asset", "ticker": "SPY"},
+                    {"kind": "asset", "ticker": "AGG"},
+                ],
+            },
+        }
+
         with (
             patch("advisors.strategy_builder_engine.run_backtest", return_value=fake),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database"),
             patch("advisors.strategy_builder_engine.evaluate_candidate_batch", mock_gate),
+            patch.object(
+                _gen,
+                "generate_build_plans",
+                return_value=_gen.GeneratorResult(plans=[_valid_plan], reason=None),
+            ),
         ):
             sbe.propose_strategies(
                 objective=sbe.Objective.diversify,
