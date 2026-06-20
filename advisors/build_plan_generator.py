@@ -633,6 +633,42 @@ _EMIT_BUILD_PLANS_TOOL = {
                                         "kinds, each entry is a NODE dict."
                                     ),
                                 },
+                                "condition": {
+                                    "type": "object",
+                                    "description": (
+                                        "Required for kind='if' and kind='if_compound'. "
+                                        "MUST be a dict — NEVER a string label. "
+                                        "Fields: lhs_fn (string), lhs_ticker (string), "
+                                        "window (int), comparator (string: gt/lt/gte/lte), "
+                                        "rhs (object: {fixed: number} OR "
+                                        "{fn: string, ticker: string, window: int})."
+                                    ),
+                                    "properties": {
+                                        "lhs_fn": {"type": "string"},
+                                        "lhs_ticker": {"type": "string"},
+                                        "window": {"type": "integer"},
+                                        "comparator": {
+                                            "type": "string",
+                                            "enum": ["gt", "lt", "gte", "lte"],
+                                        },
+                                        "rhs": {"type": "object"},
+                                    },
+                                    "required": [
+                                        "lhs_fn",
+                                        "lhs_ticker",
+                                        "window",
+                                        "comparator",
+                                        "rhs",
+                                    ],
+                                },
+                                "then": {
+                                    "type": "array",
+                                    "description": "if/if_compound true-branch list.",
+                                },
+                                "else": {
+                                    "type": "array",
+                                    "description": "if/if_compound false-branch list.",
+                                },
                             },
                             "required": ["kind"],
                         },
@@ -651,11 +687,9 @@ _EMIT_BUILD_PLANS_TOOL = {
 # without mocking the full SDK round-trip.
 # ---------------------------------------------------------------------------
 
-# Conforming DSL example embedded in every prompt (derived from the byte-exact
-# shapes accepted by the C3 compiler — see tests/advisors/test_plan_tree_compiler.py
-# DSL builders). This plan has plan_tickers>0 and matches the 'diversify' objective
-# (two container sleeves under a group). The embedded example teaches Opus the
-# exact field vocabulary without presenting drift tokens as valid.
+# Conforming DSL example embedded in the diversify prompt (derived from the
+# byte-exact shapes accepted by the C3 compiler). This plan has plan_tickers>0
+# and matches the 'diversify' objective (two container sleeves under a group).
 _EXAMPLE_PLAN: dict = {
     "plan_id": "example-1",
     "objective": "diversify",
@@ -681,6 +715,49 @@ _EXAMPLE_PLAN: dict = {
                     {"kind": "asset", "ticker": "GLD"},
                 ],
             },
+        ],
+    },
+}
+
+# Conforming if-node DSL example embedded in the cut_drawdown prompt. The
+# condition is a DICT (not a string label) — verified to compile clean through
+# the C3 compiler (plan_tree_compiler.compile_plan -> tree not None,
+# validate_tree == []). Derived from the byte-exact compiler-accepted shape
+# in tests/advisors/test_plan_tree_compiler.py.
+_EXAMPLE_IF_PLAN: dict = {
+    "plan_id": "example-cd-1",
+    "objective": "cut_drawdown",
+    "name": "Example Regime-Gate Portfolio",
+    "rebalance": "daily",
+    "root": {
+        "kind": "if",
+        "condition": {
+            "lhs_fn": "relative-strength-index",
+            "lhs_ticker": "SPY",
+            "window": 10,
+            "comparator": "gt",
+            "rhs": {"fixed": 80},
+        },
+        "then": [
+            {
+                "kind": "weight",
+                "scheme": "equal",
+                "children": [
+                    {"kind": "asset", "ticker": "UVXY"},
+                    {"kind": "asset", "ticker": "TLT"},
+                ],
+            }
+        ],
+        "else": [
+            {
+                "kind": "weight",
+                "scheme": "inverse_vol",
+                "children": [
+                    {"kind": "asset", "ticker": "SPY"},
+                    {"kind": "asset", "ticker": "IEF"},
+                    {"kind": "asset", "ticker": "GLD"},
+                ],
+            }
         ],
     },
 }
@@ -748,6 +825,10 @@ def _build_generation_prompt(
     obj_name = objective.value if isinstance(objective, Objective) else str(objective)
     signature = _OBJECTIVE_SIGNATURES.get(obj_name, "")
     example_json = json.dumps(_EXAMPLE_PLAN, indent=2)
+    # Embed the if-node example for the gate-capable objective (cut_drawdown).
+    # For all other objectives, include it as a supplementary DSL reference so
+    # every prompt contains lhs_fn/lhs_ticker/comparator/rhs.
+    if_example_json = json.dumps(_EXAMPLE_IF_PLAN, indent=2)
     universe_hint = ""
     if membership:
         sample = sorted(membership)[:20]
@@ -770,9 +851,9 @@ def _build_generation_prompt(
         f"- kind='filter'       — top-N selector.  "
         f"Required fields: select_fn, select_n, sort_by_fn, window, children.\n"
         f"- kind='if'           — regime gate.  "
-        f"Required fields: condition, then (list), else (list).\n"
+        f"Required fields: condition (DICT — see below), then (list), else (list).\n"
         f"- kind='if_compound'  — compound regime gate.  "
-        f"Required fields: condition, then (list), else (list).\n\n"
+        f"Required fields: condition (DICT — see below), then (list), else (list).\n\n"
         f"### Weight scheme values (the 'scheme' field on kind='weight' nodes — ONLY these):\n"
         f"- scheme='equal'       — equal-weight all children.\n"
         f"- scheme='specified'   — each child entry is "
@@ -782,8 +863,23 @@ def _build_generation_prompt(
         f"  WRONG shape (do not use): a child entry carrying a 'weight' float directly\n"
         f'  CORRECT shape: each child entry is {{"node": {{...NODE...}}, "pct": 60}}\n'
         f"  The fields are 'node' (the sub-NODE dict) and 'pct' (numeric percentage).\n\n"
-        f"## CONCRETE CONFORMING EXAMPLE (valid DSL — copy this structure, vary content):\n\n"
+        f"### if/if_compound condition shape (CRITICAL — condition is a DICT, NOT a string):\n"
+        f"  WRONG: condition = 'spy_above_200d_sma'  ← NEVER use a string label\n"
+        f"  CORRECT: condition = {{\n"
+        f'    "lhs_fn": "<indicator>",   // e.g. "relative-strength-index"\n'
+        f'    "lhs_ticker": "<TICKER>",  // e.g. "SPY"\n'
+        f'    "window": <int>,           // lookback window in days\n'
+        f'    "comparator": "<op>",      // one of: gt, lt, gte, lte\n'
+        f'    "rhs": {{"fixed": <num>}}  // fixed-value rhs: {{"fixed": 80}}\n'
+        f"              // OR ticker-comparison rhs: "
+        f'{{"fn": "<indicator>", "ticker": "<T>", "window": <int>}}\n'
+        f"  }}\n"
+        f"  Fields: lhs_fn, lhs_ticker, window, comparator, rhs are ALL required.\n"
+        f"  The rhs dict uses the key 'fixed' for a numeric threshold.\n\n"
+        f"## CONCRETE CONFORMING EXAMPLE — diversify (copy this structure):\n\n"
         f"```json\n{example_json}\n```\n\n"
+        f"## CONCRETE CONFORMING EXAMPLE — cut_drawdown with regime gate (if node):\n\n"
+        f"```json\n{if_example_json}\n```\n\n"
         f"## Structural Requirement for objective='{obj_name}':\n\n"
         f"{signature}\n"
         f"{universe_hint}\n\n"
