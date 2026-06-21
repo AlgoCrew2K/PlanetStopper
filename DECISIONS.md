@@ -2785,3 +2785,7 @@ The public `limit` parameter (caller-level, post-dedup) is a separate control an
 - `advisors/atlas_cache.py` — upsert `json.dumps` gains `default=str`
 - `tests/advisors/test_atlas_cache_populate.py` — RED + GREEN + sufficiency hardening (AC-4 ObjectId-bearing HIT, exact limit+sort assert, de-skip MONGO_URI-gated paths, D-1 defense-in-depth)
 - `feature-plans/atlas-cache-populate-fix.md` — cycle planning artifact (Status: ready)
+
+### Community-strategy source
+
+The `captplanet.strategies` Atlas collection is owned by **algo-db.com**, a third-party community-strategy database. `MONGO_URI` connects to algo-db.com's MongoDB Atlas instance; the collection is never modified by this project (read-only consumer).

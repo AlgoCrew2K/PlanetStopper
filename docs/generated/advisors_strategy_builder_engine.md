@@ -163,7 +163,7 @@ The old `_generate_candidate_trees` contained ~140 lines of T1–T7 `symphony_sc
 
 ## C5 — Dual-Mode Atlas Admission + Adapter Deletion (commits 1d5dd48, 147a181, 2026-06-20)
 
-**Component 5** unifies the community-candidate admission path across the route and the weekly scheduler onto `build_plan_generator.load_atlas_candidates(objective)`, and deletes the orphaned `community_candidate_infos` adapter.
+**Component 5** unifies the community-candidate admission path — sourcing strategies from **algo-db.com** (via `captplanet.strategies`) — across the route and the weekly scheduler onto `build_plan_generator.load_atlas_candidates(objective)`, and deletes the orphaned `community_candidate_infos` adapter.
 
 ### What changed
 
@@ -180,7 +180,7 @@ The old `_generate_candidate_trees` contained ~140 lines of T1–T7 `symphony_sc
 | Value | Source |
 |-------|--------|
 | `"built-new"` (or `plan.provenance`) | C4 real pipeline: C1→C2→C3 |
-| `"atlas-suggested"` | C5 objective-matched admission via `build_plan_generator.load_atlas_candidates` |
+| `"atlas-suggested"` | C5 objective-matched admission via `build_plan_generator.load_atlas_candidates` (source: **algo-db.com** `captplanet.strategies` collection) |
 
 **Note:** `"T1"`–`"T7"` no longer appear on built-new candidates (removed in C4). `"community"` no longer appears — the `community_candidate_infos` adapter that emitted it is deleted (C5, 147a181).
 
