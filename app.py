@@ -3776,12 +3776,10 @@ def ai_advisor_strategy_builder_run():
     here would be intercepted before the mock in unit tests, breaking C-10.
     """
     # Lazy imports keep strategy_builder_engine off the live 1-minute execution path (AC-X2).
-    from advisors.community_strats import load_community_strategies  # noqa: PLC0415
+    from advisors.build_plan_generator import load_atlas_candidates  # noqa: PLC0415
     from advisors.strategy_builder_engine import (  # noqa: PLC0415
-        MAX_COMMUNITY_CANDIDATES_PER_RUN,
         Objective,
         ScreenConfig,
-        community_candidate_infos,
         propose_strategies,
     )
 
@@ -3801,13 +3799,12 @@ def ai_advisor_strategy_builder_run():
     except ValueError:
         objective = Objective.diversify
 
-    # Load community candidates — best-effort; never block template-only run (AC-4).
+    # Load community candidates via the objective-matched admission path (AC-12/AC-13).
+    # load_atlas_candidates is D-1 (never-raises) and bill-protected (force_refresh=False
+    # inside). On any Atlas failure it returns [] so the template-only run proceeds (AC-4).
     community_candidates: list = []
     try:
-        _community = load_community_strategies(force_refresh=False)
-        community_candidates = community_candidate_infos(
-            _community, max_candidates=MAX_COMMUNITY_CANDIDATES_PER_RUN
-        )
+        community_candidates = load_atlas_candidates(objective)
     except Exception as exc:
         _daemon_log.warning("community-strats load skipped: %s", type(exc).__name__)
         community_candidates = []
@@ -3829,14 +3826,18 @@ def ai_advisor_strategy_builder_run():
         return jsonify({"error": type(exc).__name__}), 200
 
     # Surface top-level engine error (e.g. no API key, unexpected exception).
+    # AC-23/security: run.error is set by propose_strategies via str(exc), which can
+    # carry API keys or internal paths.  Surface only a safe token — same contract as
+    # the route's own outer except (type(exc).__name__ at app.py:3829).
     if run.error:
+        _daemon_log.warning("strategy_builder_engine returned error: %s", run.error)
         return jsonify(
             {
                 "survivors": [],
                 "rejected": [],
                 "n_candidates": 0,
                 "fdr_adjusted_threshold": None,
-                "error": run.error,
+                "error": "strategy-builder-error",
             }
         ), 200
 
