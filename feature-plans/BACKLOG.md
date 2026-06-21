@@ -29,6 +29,16 @@ Small; Tier 1.
 - **DEP-1:** tighten `anthropic~=0.85.0` and `feedparser>=6.0` to exact `==` pins in
   `requirements.txt` / `pyproject.toml`.
 
+### `test-reload-leak-remediation.md` — endemic `importlib.reload`-per-test memory leak
+Pre-existing C1 test-infra debt: `tests/advisors/` files call `importlib.reload(...)` per
+test → orphans heavy modules (`pymongo`/`atlas_cache`) → unbounded growth that OOMs
+single-process full-tree verification (`-p no:xdist`). Sites: `test_community_strats.py`
+(35), `test_atlas_cache.py` (1), `test_community_strats_timeout.py` (1). The
+`test_universe_provider.py` portion is already fixed (commit `e52e17c`, the reference
+pattern). Dedicated remediation cycle — own branch/team; the `community_strats` reloads are
+load-bearing for patch-visibility (real test-breakage risk). Discovered by the C5 full-tree
+gate, 2026-06-21.
+
 ---
 
 ## Deployment follow-on

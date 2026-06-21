@@ -202,11 +202,22 @@ class TestObjectiveEnum:
     def test_objective_lift_risk_adjusted_value(self, sbe):
         assert sbe.Objective.lift_risk_adjusted.value == "lift_risk_adjusted"
 
-    def test_objective_has_exactly_three_members(self, sbe):
+    def test_objective_volatility_mitigation_value(self, sbe):
+        """Q1-A (AC-8): the C4 fourth objective. Symmetric with the other per-value tests."""
+        assert sbe.Objective.volatility_mitigation.value == "volatility_mitigation"
+
+    def test_objective_has_exactly_four_members(self, sbe):
+        """Q1-A (AC-8) re-point: sbe.Objective is extended to FOUR members in C4 (adds
+        volatility_mitigation). This supersedes the pre-C4 three-member contract — a
+        stale-by-intent re-point, NOT a weakening: the exact-set assertion is stronger
+        (it also catches an accidental extra member)."""
         member_names = {m.name for m in sbe.Objective}
-        assert member_names == {"diversify", "cut_drawdown", "lift_risk_adjusted"}, (
-            f"Objective must have exactly 3 members; got {member_names}"
-        )
+        assert member_names == {
+            "diversify",
+            "cut_drawdown",
+            "lift_risk_adjusted",
+            "volatility_mitigation",
+        }, f"Objective must have exactly 4 members (Q1-A AC-8); got {member_names}"
 
 
 # ===========================================================================
@@ -2076,11 +2087,38 @@ class TestAdversarialCycle4:
         )
         mock_gate = MagicMock(return_value=fake_gate_batch)
 
+        # C4 body swap: _generate_candidate_trees now drives the real C1→C2→C3 pipeline.
+        # For a candidate to REACH the gate, the generator must return a compilable plan
+        # (the autouse conftest default returns empty plans — safe, but starves this test).
+        # We override generate_build_plans with one valid equal-weight plan so a candidate
+        # flows through compile_plan to evaluate_candidate_batch. The Opus SDK is never live.
+        import advisors.build_plan_generator as _gen  # noqa: PLC0415
+
+        _valid_plan = {
+            "plan_id": "adv4-p1",
+            "objective": "diversify",
+            "name": "Adv4 Plan",
+            "rebalance": "daily",
+            "root": {
+                "kind": "weight",
+                "scheme": "equal",
+                "children": [
+                    {"kind": "asset", "ticker": "SPY"},
+                    {"kind": "asset", "ticker": "AGG"},
+                ],
+            },
+        }
+
         with (
             patch("advisors.strategy_builder_engine.run_backtest", return_value=fake),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database"),
             patch("advisors.strategy_builder_engine.evaluate_candidate_batch", mock_gate),
+            patch.object(
+                _gen,
+                "generate_build_plans",
+                return_value=_gen.GeneratorResult(plans=[_valid_plan], reason=None),
+            ),
         ):
             sbe.propose_strategies(
                 objective=sbe.Objective.diversify,

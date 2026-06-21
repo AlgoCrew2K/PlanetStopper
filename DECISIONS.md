@@ -1801,3 +1801,808 @@ Planet Stopper is deployed to a public Linux VPS. The deployment architecture wa
 ### Status
 
 Architecture deployed. Runbook at `docs/DEPLOYMENT.md`. `.env.example` template committed at repo root.
+
+---
+
+## DE-SB-UNIV-001 — Strategy Builder Component 1: Tradeable Universe Provider design decisions (2026-06-20)
+
+Branch: feat/strategy-builder-real | Commit: 12aa6b2
+
+### Context
+
+Component 1 of the real Opus-driven Strategy Builder (AC-1..AC-6 of the Gate-1 feature plan) introduces `advisors/universe_provider.py` — the single authoritative source of the tradeable US-equity universe consumed by the Strategy Builder engine.
+
+### Key decisions
+
+**1. Alpaca PAPER host is the source (`ALPACA_TRADING_BASE_URL = "https://paper-api.alpaca.markets"`)**
+
+The project uses PAPER API keys. The live host `api.alpaca.markets` returns HTTP 401 with these credentials. The data host `data.alpaca.markets/v2` (used by `synthetic_history.py`) is a different service with different auth and a different endpoint shape; it cannot be used for asset enumeration. `ALPACA_TRADING_BASE_URL` is therefore a new constant in `universe_provider.py`, distinct from `synthetic_history.ALPACA_BASE_URL`, to make the host selection explicit and avoid confusion with the existing data client.
+
+**2. Single flat GET — no pagination**
+
+`GET /v2/assets?status=active&asset_class=us_equity` returns a single JSON array. No pagination loop is required or correct for this endpoint. One HTTP call per live fetch.
+
+**3. Membership-only / no ranking**
+
+The result is an unordered `frozenset[str]`. No dollar-volume, no top-N cap, no ranking criteria. ETFs, leveraged ETFs, and inverse ETFs are retained — no class-based exclusion. The Strategy Builder engine is responsible for any candidate filtering beyond membership; the universe provider's only job is to answer "is this ticker tradeable?"
+
+**4. `ALLOWED_EXCHANGES` exact-string filter**
+
+`frozenset({"NASDAQ", "NYSE", "ARCA", "BATS", "AMEX"})` with exact string matching. `"NYSE ARCA"` (the Alpaca representation of NYSE Arca for some assets, with a space) is NOT in this set. This is intentional: assets returned with the space variant are excluded from the universe. A future cycle may add it if real data evidence warrants inclusion.
+
+**5. Weekly cache via `atlas_cache.cached_pull` (bill-protection)**
+
+Following the global bill-protection directive (see `DE-ATLAS-001`), all live fetches route through the atlas_cache weekly TTL (`_CACHE_TTL_DAYS=7`). `atlas_cache.init_atlas_cache()` is called explicitly before `cached_pull` because `cached_pull` does not initialize the schema on a fresh DB. This is the same cache pattern used by `community_strats.py`.
+
+**6. Warehouse persistence after every live fetch (third-DB pattern)**
+
+Every successful live fetch writes a snapshot row to `advisors.lens_warehouse` (`alphabot_warehouse.db`, the third DB) with `lens="universe_provider"`, `source="alpaca_paper_assets"`, and `raw_payload={"symbols": sorted(symbols), "symbol_count": N}`. The sorted symbol list enables week-over-week diff history. No API key values are stored in the payload; `lens_warehouse._strip_secrets` provides defense-in-depth scrubbing.
+
+**7. D-1 error contract: exception class name only**
+
+All `reason` fields in the return dict contain only `type(exc).__name__`. No message body, no file path, no credential value. The `_last_fetch_exc_class` module-level slot captures the class name before `_live_fetch` re-raises so `fetch_universe` can surface the correct reason even when `atlas_cache` swallows the raw exception internally.
+
+**8. No state DB or optimization DB imports**
+
+`universe_provider.py` imports only `advisors.atlas_cache` and `advisors.lens_warehouse`. Importing `database` (state DB) or `autotuner`/`optuna` (optimization DB) is prohibited — the universe provider is off-execution-path and advisory-only. The two-DB pattern boundary is maintained.
+
+### Files changed
+
+- `advisors/universe_provider.py` — new file, 226 lines
+
+---
+
+## DE-SB-GEN-001 — Strategy Builder Component 2 + 2b: Opus Build-Plan Generator + Atlas Objective-Matched Admission (2026-06-20)
+
+Branch: feat/strategy-builder-real | Commit: a3f8b12 (GREEN)
+
+### Context
+
+Components 2 and 2b of the real Opus-driven Strategy Builder (AC-7..AC-13 of the Gate-1 feature plan) introduce `advisors/build_plan_generator.py` — the Opus-backed generator that replaces the 7-template stamper. The engine rewire (`_generate_candidate_trees` replacement) and community_strats changes land in Component 3; this phase delivers the generator module and objective-matched Atlas admission as a standalone, fully-tested unit.
+
+### Key decisions
+
+**1. Build-plan DSL as the canonical generator/compiler contract**
+
+The generator emits build-plans expressed in a constrained strategy DSL (JSON-serializable dicts with a tagged-union NODE structure), NOT raw Composer `raw_value` JSON. This is the load-bearing architecture decision: the DSL is a thin 1:1 pre-image of the `symphony_schema` constructor API, so the Component 3 compiler is a pure dispatch table (`kind`/`scheme` to constructor call) with no interpretation. Benefits: (a) generation is testable against the DSL contract without a live Composer endpoint; (b) DSL shape validation gates every plan before it reaches the compiler, bounding prompt-injection blast radius; (c) the contract is legible and auditable in isolation.
+
+**2. Build-plan DSL schema (the generator/compiler field contract)**
+
+Top-level plan fields: `plan_id` (str), `objective` (str, echoed), `name` (str), `rebalance` (str in KNOWN_REBALANCE), `provenance` ("built-new"), `root` (NODE).
+
+NODE tagged union on `kind`:
+- `asset`: `{kind, ticker}`
+- `weight/equal`: `{kind, scheme:"equal", children:[NODE...]}`
+- `weight/specified`: `{kind, scheme:"specified", children:[{node:NODE, pct:number}...]}`
+- `weight/inverse_vol`: `{kind, scheme:"inverse_vol", children:[NODE...], window_days:int?}` -- default 30
+- `weight/market_cap`: `{kind, scheme:"market_cap", children:[NODE...]}` -- DSL carries it now; `make_weight_marketcap` constructor is Component 3 (AC-17)
+- `group`: `{kind, name:str, children:[NODE...]}`
+- `filter`: `{kind, select_fn:"top"|"bottom", select_n:int, sort_by_fn:str, window:int, children:[NODE...]}`
+- `if`: `{kind, condition:{lhs_fn,lhs_ticker,window,comparator,rhs:{fixed:num}|{ticker,fn,window}}, then:[NODE...], else:[NODE...]}`
+- `if_compound`: `{kind, condition:CONDITION, then:[NODE...], else:[NODE...]}`
+
+CONDITION recursive union on `type`:
+- `binary`: `{type, lhs:{fn,ticker,window}, comparator, rhs:{const:num}|{fn,ticker,window}}`
+- `binary_compound`: `{type, fn, tickers:[str...], comparator, rhs:{const:num}, window, operator:"any"|"all"}`
+- `compound`: `{type, operator:"any"|"all", conditions:[CONDITION...]}`
+
+Vocabulary constraints: `comparator` in KNOWN_COMPARATORS; `operator` in _KNOWN_OPERATORS; `scheme` in {equal,specified,inverse_vol,market_cap}; `rebalance` in KNOWN_REBALANCE. The `%` placeholder in `binary_compound.tickers` is excluded from the membership-validation walk (`plan_tickers` filters it).
+
+**3. Four-value Objective enum -- `volatility_mitigation` added (AC-8)**
+
+A fourth objective value `volatility_mitigation` is added to the existing three (`diversify`, `cut_drawdown`, `lift_risk_adjusted`). The enum is defined in `build_plan_generator.py` independently of `strategy_builder_engine.Objective` (which remains 3-value until the Component 3 engine rewire). Each objective hard-shapes plan structure via a mutually-distinguishable structural signature:
+
+| Objective | Required structural signature |
+|-----------|-------------------------------|
+| `diversify` | >= 2 sleeves at root container |
+| `cut_drawdown` | `if`/`if_compound` regime gate OR `scheme:"inverse_vol"` weight |
+| `lift_risk_adjusted` | A `filter` with `sort_by_fn` in momentum/quality indicators (e.g. `"cumulative-return"`, `"moving-average-return"`). Bare specified-weight baskets are rejected (refinement B). |
+| `volatility_mitigation` | `scheme:"inverse_vol"` weight OR `filter` with `sort_by_fn` in low/min-vol indicators (e.g. `"max-drawdown"`, `"standard-deviation-return"`) |
+
+Plans that fail the objective signature are dropped after membership validation, before the pool.
+
+**4. Structural deduplication fingerprint (AC-10 -- refinement C)**
+
+Plans are deduped by `json.dumps({k: v for k, v in plan.items() if k not in {"plan_id", "name", "provenance"}}, sort_keys=True)`. This captures shape + tickers + parameters while ignoring per-plan identity fields. Structurally-identical plans (including 12 clones with different `plan_id`/`name`) collapse to one representative.
+
+**5. AC-9 degenerate-prune guard (refinement A)**
+
+Off-universe tickers are pruned when in-universe siblings remain. If pruning would leave a node empty or degenerate, the entire plan is rejected -- never emitted broken. Off-universe tickers in `if`/`if_compound` conditions are handled with the same prune-or-reject logic. An empty membership set causes all plans to be rejected.
+
+**6. Provenance as an EXPLICIT top-level key (AC-13)**
+
+Provenance is a plain `["provenance"]` top-level key on every item in the pool -- `"built-new"` on generator plans, `"atlas-suggested"` on admitted community candidate dicts. It is NOT nested in `params`. This was a PM-decided contract point. The `pool_candidates` function preserves provenance by simple concatenation with no reshaping.
+
+`admit_community_candidates` returns plain dicts (not `CandidateInfo` objects) with the original community strategy fields plus the `provenance` key. The `template_id="community"` mechanism from the pre-C2 engine is internal to the engine; this module uses the explicit `provenance` field instead.
+
+**7. AC-12 objective-matched Atlas admission rules**
+
+Community strategies from `load_community_strategies` are ranked by objective-specific stats from `oos_metrics`. Ranking rules:
+- `cut_drawdown`: `max_drawdown` nearer zero first (shallowest = best defensive; quantstats values are <= 0)
+- `volatility_mitigation`: `volatility` lowest first
+- `lift_risk_adjusted`: `sharpe` highest first
+- `diversify`: low cross-correlation vs the admitted set; deterministic; no hardcoded stat value asserted
+
+Missing-stat docs (PM-decided: KEPT-LAST): a doc with `oos_metrics=None`, a missing key, or a non-numeric stat value is admitted after all docs with a valid numeric stat. Never pre-dropped. Rationale: the FDR gate, PBO veto, and SPY-OOS baseline in the downstream pipeline (Component 5b) are the real overfit guards (AC-26); pre-dropping on a missing stat would be premature.
+
+**8. AC-13 phase boundary -- FDR-end-to-end deferred to C3/C5**
+
+The C2/2b slice of AC-13 tests provenance tagging and pooling only: (1) generator output `provenance="built-new"`, (2) admitted community candidates `provenance="atlas-suggested"`, (3) `pool_candidates` tags and preserves both. The remaining AC-13 assertions -- both sources through the SAME single-batch FDR gate, gate count includes both, tag survives to persisted `advisor_observations.raw_response` and route/SPA JSON -- are DEFERRED to Component 3 (compiler + engine rewire) and Component 5 (route rewire). This is PM refinement D from the TDD handoff.
+
+**9. `strategy_builder_engine.py` and `community_strats.py` NOT modified in this phase**
+
+All objective-matching logic lives in `build_plan_generator.admit_community_candidates`. The engine existing 3-value `Objective` enum and 7-template `_generate_candidate_trees` are untouched. The engine rewire is Component 3 work.
+
+**10. `market_cap` scheme carried in DSL now; constructor is C3 forward-AC**
+
+The DSL specifies `scheme:"market_cap"` as a valid NODE scheme so the generator can emit market-cap-weighted plans. `make_weight_marketcap` in `symphony_schema` and its `KNOWN_STEPS` entry are Component 3 work (AC-17), requiring a real `/score` field capture first. A compiler receiving a `market_cap` node before C3 ships will error at compile time, not at generation time.
+
+### Files changed
+
+- `advisors/build_plan_generator.py` -- new file (Component 2 + 2b)
+- `tests/advisors/test_build_plan_generator.py` -- 25 RED tests (Component 2: AC-7..AC-11)
+- `tests/advisors/test_build_plan_atlas_admission.py` -- 20 RED tests (Component 2b: AC-12..AC-13 C2/2b slice)
+- `tests/advisors/test_build_plan_generator_property.py` -- 2 hypothesis property tests (AC-9 membership invariant + never-raises)
+- Total: 47 tests, 47 GREEN at commit a3f8b12
+
+---
+
+### DE-SB-GEN-001 Revise amendment — AC-8 (B) objective-signature enforcement (2026-06-20)
+
+**Commit:** 249790b | **Branch:** feat/strategy-builder-real
+
+The original DE-SB-GEN-001 (commit a3f8b12) documented the four objective signatures and the stated intention that plans failing the signature would be dropped. The enforcement mechanism itself shipped in a later commit (249790b, after the Revise cycle for AC-8), adding three implementation artifacts that were not present in the initial doc sweep. This amendment closes that gap.
+
+**New constants (single source of truth for the predicate lookup tables):**
+
+- `_CONTAINER_KINDS: frozenset[str]` — `{"group", "weight", "filter", "if", "if_compound"}`. Identifies allocation-container node kinds for sleeve counting and tree traversal. Used by both `_diversify_sleeve_count` and `_iter_all_nodes`.
+- `_MOMENTUM_QUALITY_SORTS: frozenset[str]` — `{"cumulative-return", "moving-average-return"}`. Sort-by-fn values satisfying the `lift_risk_adjusted` FILTER signature.
+- `_LOW_VOL_SORTS: frozenset[str]` — `{"max-drawdown", "standard-deviation-return", "standard-deviation-price"}`. Sort-by-fn values satisfying the `volatility_mitigation` FILTER signature.
+
+**New internal helpers:**
+
+- `_iter_all_nodes(root: dict)` — iterative DFS (explicit stack; no recursion) yielding every NODE dict in a plan's root tree. Handles all DSL node kinds including `specified`-weight children (`{node, pct}` pairs) and `then`/`else` branches. Never raises; skips non-dict entries.
+- `_diversify_sleeve_count(root: dict) -> int` — counts allocation-container direct children of the root node. Asset leaves do not count. Special cases: `if`/`if_compound` roots count then+else branch children; `specified`-weight roots count `{node}` entries that are containers; all other containers count `children[]` entries that are containers.
+
+**New public function:**
+
+- `plan_matches_objective(plan: dict, objective) -> bool` — the SINGLE SOURCE OF TRUTH for AC-8 objective-signature compliance. Both `generate_build_plans` (enforcement filter) and all test assertions that check structural compliance import and call this function. Neither reimplements the check, so filter and assertions cannot drift. Per-objective logic:
+  - `diversify`: `_diversify_sleeve_count(root) >= 2`
+  - `cut_drawdown`: any node is `if`/`if_compound` OR `weight` with `scheme:"inverse_vol"`
+  - `lift_risk_adjusted`: any `filter` node has `sort_by_fn` in `_MOMENTUM_QUALITY_SORTS`; bare baskets return `False`
+  - `volatility_mitigation`: any `weight` with `scheme:"inverse_vol"` OR any `filter` with `sort_by_fn` in `_LOW_VOL_SORTS`
+  - Unknown objective or malformed input: returns `False` (fail-closed)
+  - Never raises (D-1).
+
+**Enforcement wiring in `generate_build_plans` — order is fixed:**
+
+The admission pipeline order (prune → tag → dedup → signature-filter) is pinned by the AC-8 enforcement tests; reordering these steps would break tests. The signature filter runs AFTER prune+dedup so a plan whose structure degrades below the threshold during pruning is correctly rejected here rather than silently admitted as passing a stale fingerprint.
+
+**New `GeneratorResult.reason` path:**
+
+When all remaining plans (after prune and dedup) fail the signature filter, `generate_build_plans` returns `GeneratorResult(plans=[], reason=f"no plans matched the {obj_name} signature after prune and dedup")`. This is distinct from `reason=None` (which signals an admission-empty result from membership/dedup filtering, not from a signature floor). The distinction lets callers and logs tell apart "Opus returned no plans matching the objective structure" from "Opus returned plans but they all had off-universe tickers."
+
+**Files added/changed in this Revise commit:**
+
+- `advisors/build_plan_generator.py` — added `_CONTAINER_KINDS`, `_MOMENTUM_QUALITY_SORTS`, `_LOW_VOL_SORTS`, `_iter_all_nodes`, `_diversify_sleeve_count`, `plan_matches_objective`; wired enforcement filter + honest empty-reason path into `generate_build_plans`
+- `tests/advisors/test_build_plan_generator.py` — 4 new RED→GREEN AC-8 enforcement tests (verify signature filter fires in generate_build_plans, order pinned, honest reason path)
+- `tests/advisors/test_build_plan_atlas_admission.py` — 1 updated test asserting `plan_matches_objective` is the shared predicate
+- Total after Revise: 52 tests GREEN at commit 249790b
+
+---
+
+## DE-SB-MARKETCAP-DEPRECATED — `wt-marketcap` / market-cap weighting is producer-deprecated (2026-06-20)
+
+Branch: feat/strategy-builder-real | Evidence commit: 1010de3
+
+### Context
+
+AC-17 of the Gate-1 feature plan required the team to source a real market-cap-weighted Composer symphony to capture the `wt-marketcap` field contract before finalizing a `make_weight_marketcap` constructor and adding `"wt-marketcap"` to `symphony_schema.KNOWN_STEPS`. This was an internal engineering step (not an operator dependency).
+
+### Evidence
+
+`sb3-testwriter` probed `POST /api/v0.1/backtest` live (2026-06-20) with three node variants (passing `wt-cash-equal` control; hyphenated `wt-market-cap`; canonical `wt-marketcap`). Results:
+
+| Probe | HTTP status | Outcome |
+|-------|------------|---------|
+| `wt-cash-equal` (control) | 200 | Harness valid |
+| `wt-market-cap` (hyphenated) | 400 | Wrong token spelling |
+| `wt-marketcap` (canonical) | 422 `node-type-not-supported` | **Producer-deprecated** |
+
+HTTP 422 response body (verbatim from fixture):
+- `code`: `"node-type-not-supported"`
+- `title`: `"Market cap weighting is no longer supported"`
+- `meta.node-type`: `"market cap weighting"`
+
+Probe was deterministic (re-probed 2x with the wt-cash-equal control confirming harness validity). Evidence committed at `tests/fixtures/strategy_builder/wt_marketcap_deprecated_envelope.json` (commit 1010de3).
+
+### Decision (PM — Option A: adopt the provider contract)
+
+Do NOT add `make_weight_marketcap` to `advisors/symphony_schema.py` and do NOT add `"wt-marketcap"` to `KNOWN_STEPS`. Rationale:
+
+1. **Adopt existing contracts, never invent** (universal project rule): the Composer producer has retired this node type. Implementing a constructor that emits a guaranteed-422 tree is dead code violating the no-over-engineering constraint.
+2. **Honest drop over silent failure**: the compiler explicitly detects `scheme=="market_cap"` in the DSL before any compilation and drops the plan with `reason="market_cap_scheme_deprecated"` — never silently passing it to a backtest it cannot survive.
+3. `symphony_schema` constructor count stays at 16. The anticipated "16→17 constructors" reconcile from the C2/2b phase is resolved: count stays 16; the reason is producer deprecation, not a scope omission.
+
+### Runtime behavior
+
+In `advisors/plan_tree_compiler.py`:
+- `_has_market_cap(root_node)` (iterative DFS over the DSL NODE tree) detects any `{kind:"weight", scheme:"market_cap"}` node before compilation begins.
+- When found: `compile_plan` returns `CompileResult(tree=None, reason="market_cap_scheme_deprecated")`. `backtest_fn` is never called.
+- `_compile_node` also raises `ValueError` as a defensive guard if called with a `market_cap` scheme node via any path that bypasses the pre-check — the outer `except` catches it and degrades cleanly.
+
+The DSL (`advisors/build_plan_generator.py`) still carries `scheme:"market_cap"` as a recognized scheme value (forward-compat token; not removed). Plans with this scheme are dropped cleanly at compile time, not silently passed to backtest.
+
+### Files
+
+- `tests/fixtures/strategy_builder/wt_marketcap_deprecated_envelope.json` — live producer evidence (commit 1010de3)
+- `advisors/plan_tree_compiler.py` — `_has_market_cap` pre-check + `_compile_node` defensive guard
+- `feature-plans/strategy-builder-real.md` — AC-17 annotated REFRAMED (see that file)
+
+---
+
+## DE-SB-COMPILE-001 — Strategy Builder Component 3: Plan->Tree Compiler design decisions (2026-06-20)
+
+Branch: feat/strategy-builder-real | GREEN commit: 659435e (38/38 compiler tests; 604 passed / 0 failures / 2 skipped broader suite)
+
+### Context
+
+Component 3 of the real Opus-driven Strategy Builder (AC-14..AC-17 of the Gate-1 feature plan) introduces `advisors/plan_tree_compiler.py` — the deterministic bridge from the Component-2 build-plan DSL to Composer `raw_value` trees. The Toxic Pair cycled through one Revise round (RED -> GREEN -> Revise-1 RED -> GREEN) before converging.
+
+### Key decisions
+
+**1. Pure dispatch table: constructors only, no hand-built node dicts (AC-14)**
+
+The compiler never constructs a Composer node dict directly. Every output node is produced by a `symphony_schema` constructor call. This is a load-bearing design choice: constructors assign fresh `uuid4` ids, deep-copy children, and emit live-required fields (`make_root` emits `description: ""`, `make_inverse_vol` emits `window-days: 30`). A compiler that built dicts by hand would need to replicate all of those invariants — a second source of truth that can drift. By delegating entirely to constructors, the compiled tree is structurally sound before `validate_tree` even runs.
+
+**2. Bounded repair loop: validate_tree gate is pre-backtest and post-prune (AC-15)**
+
+`symphony_schema.validate_tree` is called on every tree before the first `backtest_fn` call, and again after every ticker prune. A HARD-error tree never reaches `backtest_fn`. `MAX_REPAIR_ATTEMPTS = 3` is a named constant (test-asserted to be in 1..10); the loop is never unbounded. Degenerate post-prune trees (empty children after pruning) are detected by `_prune_ticker_from_tree` returning `None` and dropped with `reason="prune_degenerated_tree"` rather than calling `validate_tree` on a known-broken structure.
+
+**3. Error-envelope split is STATUS-driven, not message-text-driven (AC-16)**
+
+Tradeability rejections (HTTP 400 -> prune + retry) vs grammar rejections (HTTP 422 -> drop immediately) are classified by parsing the numeric HTTP status code from the `composer_backtest_client` envelope format `"HTTP {status}: {text}"` (client line 360). Message text is consulted only for prune-target identification, not for error classification. This is robust to Composer changing human-readable error text.
+
+**4. Prune-target must be an in-tree ticker (AC-16 Revise-1)**
+
+The initial GREEN implementation extracted the first uppercase candidate from the 400 envelope text. The Revise-1 RED test demonstrated this is insufficient: a venue/market name (e.g. `NASDAQ`, `NYSE`) or an off-tree ticker appearing in the envelope could be selected, producing a no-op prune that wastes the repair budget without removing the actual offending ticker.
+
+`_find_prune_target` cross-references all uppercase candidates against `symphony_schema.extract_tickers(current_tree)` (the real in-tree ticker set) and selects only an in-tree match. Within in-tree matches it prefers the candidate immediately before the first untradable signal phrase (`"not tradable"`, `"untradable"`, `"no pricing"`) — the ticker Composer explicitly flagged. Returns `None` when no in-tree ticker is found; `compile_plan` drops with `reason="no_in_tree_ticker_in_400"` (clean give-up, no budget waste).
+
+**5. `backtest_fn` is an injected seam, not a module-level import (Component 5 boundary)**
+
+The compiler never imports `composer_backtest_client` or `run_backtest`. `backtest_fn` is a caller-supplied `callable | None`. In tests it is a mock; in the Component 5 engine rewire it will be `run_backtest`. This keeps the compiler independently testable with zero live network dependency and defers production wiring to Component 5.
+
+**6. `market_cap` scheme: producer-deprecated, detected before compilation (AC-17)**
+
+See `DE-SB-MARKETCAP-DEPRECATED` above. The compiler detects `scheme=="market_cap"` in the DSL tree via `_has_market_cap` (iterative DFS) before any `_compile_node` call. If found: `CompileResult(reason="market_cap_scheme_deprecated")`, `backtest_fn` never called. A defensive `raise ValueError` in `_compile_node` guards any path that bypasses the pre-check. `symphony_schema.KNOWN_STEPS` and the constructor count stay at 16.
+
+**7. Determinism modulo fresh uuids (AC-14)**
+
+Two `compile_plan` calls on the same plan produce byte-identical trees except for the `id` keys (each `symphony_schema` constructor assigns a fresh `uuid4`). Tests verify determinism by stripping `id` keys from both outputs before comparison. This is the same invariant the `symphony_schema` constructors already guarantee internally.
+
+### Test breakdown (38 tests, all GREEN at 659435e)
+
+- `tests/advisors/test_plan_tree_compiler.py` — AC-14 golden-fixture tests: one per grammar construct (asset, weight/equal, weight/specified, weight/inverse_vol, group, filter, if-flat, if_compound with binary/binary_compound/compound conditions); determinism tests; full-grammar plan round-trip; advisory-only grep guard
+- `tests/advisors/test_plan_tree_compiler_repair.py` — AC-15 (validate_tree gate, repair loop bound, clean give-up on unrepairable), AC-16 (400 tradeability->prune+retry, 422 grammar->drop, in-tree ticker cross-reference, no-signal-phrase fallback), AC-17 (market_cap_scheme_deprecated drop, both pre-check and defensive compile_node guard)
+- `tests/advisors/test_plan_tree_compiler_property.py` — AC-15 property: any admitted generator output compiles to a `validate_tree`-clean tree
+- Evidence fixture: `tests/fixtures/strategy_builder/wt_marketcap_deprecated_envelope.json` (commit 1010de3)
+
+### Files changed
+
+- `advisors/plan_tree_compiler.py` — new module (Component 3)
+- `tests/advisors/test_plan_tree_compiler.py` — RED tests (AC-14)
+- `tests/advisors/test_plan_tree_compiler_repair.py` — RED tests (AC-15, AC-16, AC-17 disposition)
+- `tests/advisors/test_plan_tree_compiler_property.py` — property test (AC-15 invariant)
+- `tests/fixtures/strategy_builder/wt_marketcap_deprecated_envelope.json` — live producer evidence (commit 1010de3)
+
+---
+
+## DE-SB-GEN-DRIFT-FIX — C2 generator live-exam defect: Opus vocabulary drift -> 0 admitted plans all objectives (2026-06-20)
+
+Branch: feat/strategy-builder-real | Fix commit: 11caf3d
+
+### Finding (live exam)
+
+The 47 mocked-SDK unit tests for `advisors/build_plan_generator.py` were all GREEN. A PM-run live exam (real Opus SDK call, real `generate_build_plans`, real `_validate_and_prune` + `plan_matches_objective`) returned 0 admitted plans across ALL FOUR objectives. This is the "tests-green-but-hollow" failure mode: mocked SDK tests never catch vocabulary drift because the mock returns conforming DSL — only a real Opus call reveals what Opus actually emits.
+
+**Root cause:** Opus emitted `kind:"weighted"` (a drift token, not in the DSL grammar) and `{node: ..., weight: ...}` children (the field is `pct`, not `weight`) for specified-weight nodes. Two pre-existing code paths allowed these to survive further than they should:
+
+1. `_prune_node` had a catch-all `return node` for unknown `kind` values (intended to future-proof unknown DSL extensions). This silently passed `kind:"weighted"` nodes through unchanged. The surviving plan had 0 extractable tickers (because `plan_tickers()` cannot walk `kind:"weighted"` nodes) and was eventually rejected by the AC-8 signature filter or the zero-ticker prune — but only AFTER silently passing the membership-prune step, making the empty-reason path opaque.
+
+2. The prompt was a terse f-string ("Generate N build-plans... conform to the approved DSL") with no grammar specification, no kind vocabulary, no example, and no structural requirement description. Opus was expected to recall the DSL structure from the tool schema alone — the tool schema was a loose `items: {type: object}` passthrough that provided no enumerated constraints.
+
+### Three-part fix (commit 11caf3d)
+
+**Part 1 — Prompt-steer: `_build_generation_prompt` seam.**
+
+The old inline f-string prompt is replaced by a call to `_build_generation_prompt(objective, n_plans, membership)`. The new prompt embeds:
+- The FULL valid `kind` vocabulary listed explicitly with "never use 'weighted' or any other value."
+- The `scheme` field and its three valid values.
+- The `{node, pct}` specified-children shape taught as WRONG-vs-CORRECT contrast (the most frequent drift was `{..., weight: N}` instead of `{node: ..., pct: N}`).
+- `_EXAMPLE_PLAN` — a concrete conforming plan (diversify-shaped; two weight sleeves; `plan_tickers > 0`) embedded verbatim so Opus sees the exact field names and nesting.
+- `_OBJECTIVE_SIGNATURES[obj_name]` — a natural-language description of the structural requirement for the requested objective, with explicit negative examples (e.g. "A lone weight node over N assets is only 1 sleeve and does NOT satisfy the diversify signature").
+
+The seam is independently testable: tests call `_build_generation_prompt(objective)` directly to assert grammar, example, and signature content are present without mocking the SDK.
+
+**Part 2 — Schema-tighten: `_EMIT_BUILD_PLANS_TOOL` enum constraints (defense-in-depth).**
+
+The loose `items: {type: object}` passthrough schema is replaced with a structured schema:
+- `NODE.kind` is `enum`-constrained to `["asset","weight","group","filter","if","if_compound"]` — excludes `"weighted"` at the JSON schema level.
+- `weight.scheme` is `enum`-constrained to `["equal","specified","inverse_vol"]`.
+- Plan-level fields (`plan_id`, `objective`, `name`, `rebalance`, `root`) are typed and `required`.
+- `rebalance` is `enum`-constrained to the KNOWN_REBALANCE values.
+- `children` field description explicitly states the `{node: NODE, pct: number}` shape for specified scheme.
+
+This is the second layer after the prompt steer. It cannot prevent all deep-nesting drift (the schema is not recursive), but it forces the correct top-level tokens and makes a schema-validation violation visible in the SDK response rather than silently passing.
+
+**Part 3 — Robustness: unknown-kind reject + zero-ticker guard.**
+
+- `_prune_node` now returns `None` for any unknown `kind` (was `return node` pass-through). An unknown kind is an Opus drift token that `plan_tickers()` cannot walk and the C3 compiler will reject — passing it through only delays the inevitable rejection and makes the failure reason opaque.
+- `_validate_and_prune` adds a post-prune zero-ticker check: `if not plan_tickers(validated): return None`. This catches plans where a nested unknown-kind node (wrapped by a known outer kind) survives `_prune_node`'s check on the outer node but leaves the plan with 0 walkable tickers. Zero-ticker plans cannot become valid Composer trees.
+
+This is the third layer: even if prompt-steer and schema-tighten both fail to prevent a drift token, the admission pipeline now rejects it explicitly rather than silently passing it to the AC-8 signature filter.
+
+### Design principle: three-layer drift defense
+
+The fix establishes a layered vocabulary-guarantee:
+
+| Layer | Mechanism | What it catches |
+|-------|-----------|-----------------|
+| Prompt-steer | `_build_generation_prompt` embeds grammar + example + signature | Reduces probability of drift by showing Opus the correct vocabulary before generation |
+| Schema-tighten | `_EMIT_BUILD_PLANS_TOOL` kind/scheme enum constraints | Flags top-level drift tokens at the JSON schema level; caught by the SDK response parsing |
+| AC-8 enforcement | `plan_matches_objective` + filter in `generate_build_plans` | GUARANTEES the admission contract: even a schema-valid plan that doesn't satisfy the structural signature is dropped |
+| Robustness guards | `_prune_node` unknown-kind -> None; zero-ticker post-prune check | Catches residual drift that passed schema constraints but produces unkompilable plans |
+
+Steer toward the right vocabulary AND reject anything that drifts — both are required.
+
+### Live acceptance gate (PM-owned)
+
+The real acceptance gate for this fix is a PM-run live exam: real Opus SDK call (`ANTHROPIC_API_KEY` set, no mocks), `generate_build_plans` for each of the 4 objectives, compiled through `advisors/plan_tree_compiler.compile_plan` → `symphony_schema.validate_tree`. Gate passes when at least 1 `validate_tree`-clean symphony is produced per objective. The 25 new unit tests (25 + 131 total GREEN) guard the structural properties; the live exam is the end-to-end proof.
+
+### Files changed
+
+- `advisors/build_plan_generator.py` — `_EXAMPLE_PLAN` + `_OBJECTIVE_SIGNATURES` constants; `_build_generation_prompt` seam; tightened `_EMIT_BUILD_PLANS_TOOL` schema; `_prune_node` unknown-kind -> None; `_validate_and_prune` zero-ticker guard; `generate_build_plans` calls `_build_generation_prompt`
+- `tests/advisors/test_build_plan_generator.py` — 25 new RED tests (prompt-seam content assertions, schema enum checks, unknown-kind rejection, zero-ticker rejection)
+- Total: 131 tests GREEN at 11caf3d (25 new C2-fix + 48 existing C2 + 38 C3 + atlas/property)
+
+---
+
+### DE-SB-GEN-DRIFT-FIX-R1 — Revise-1: if.condition string-label residual (2026-06-20)
+
+Branch: feat/strategy-builder-real | Revise-1 commit: 648c267
+
+#### Finding (PM live re-exam after C2-fix)
+
+The C2-fix (commit 11caf3d) addressed Opus emitting `kind:"weighted"` (node-vocabulary drift) and fixed the 0-admitted-plans failure. The PM's live re-exam confirmed that 8 of 12 plans compiled clean — but regime-gate (`if`-node) plans still dropped at the C3 compiler. Root cause: Opus emitted the `if.condition` field as a STRING LABEL (e.g. `"spy_above_200d_sma"`) rather than the structured dict the compiler expects (`{"lhs_fn": ..., "lhs_ticker": ..., "window": ..., "comparator": ..., "rhs": ...}`). This is a sub-grammar drift pattern: the C2-fix taught Opus the top-level `kind`/`scheme` node vocabulary but left the nested `condition` field undescribed in both the prompt and the schema — Opus defaulted to a human-readable string label it plausibly inferred from the DSL context.
+
+#### Root cause
+
+The original `_build_generation_prompt` section for `if` nodes stated: "Required fields: condition (DICT — see below), then (list), else (list)" — but "see below" referred to no concrete description. The `_EMIT_BUILD_PLANS_TOOL` schema had no `condition` property at all on the `if` node. The flat `lhs_fn`/`lhs_ticker`/`window`/`comparator`/`rhs` structure is non-obvious from context alone; without an explicit grammar section or worked example showing the dict form, Opus infers a string label.
+
+#### Three-part extension (Revise-1, commit 648c267)
+
+**Part 1 — Prompt-steer: `if.condition` grammar section in `_build_generation_prompt`.**
+
+A new `### if/if_compound condition shape` section is added to the prompt (injected for ALL four objective prompts, not only `cut_drawdown`). The section includes:
+- An explicit WRONG-vs-CORRECT contrast: `WRONG: condition = "spy_above_200d_sma"` / `CORRECT: condition = {...dict...}`.
+- All five required fields listed with descriptions (`lhs_fn`, `lhs_ticker`, `window`, `comparator`, `rhs`).
+- The two valid `rhs` shapes: `{"fixed": N}` for a numeric threshold, `{"fn": ..., "ticker": ..., "window": ...}` for a ticker comparison.
+- The `comparator` enum values: `gt`, `lt`, `gte`, `lte`.
+
+**Part 2 — Worked example: `_EXAMPLE_IF_PLAN`.**
+
+A new constant (`_EXAMPLE_IF_PLAN`) provides a concrete conforming `if`-node plan (cut_drawdown-shaped; condition dict: `lhs_fn="relative-strength-index"`, `lhs_ticker="SPY"`, `window=10`, `comparator="gt"`, `rhs={"fixed": 80}`; then: equal-weight sleeve; else: inverse_vol sleeve). Verified compiler-clean: `plan_tree_compiler.compile_plan` → `tree is not None` + `validate_tree==[]`. The `cut_drawdown` prompt uses it as its primary example; all other objective prompts include it as a supplementary DSL reference alongside `_EXAMPLE_PLAN`. Both examples now appear in every prompt so the condition dict shape is visible regardless of which objective is being generated.
+
+**Part 3 — Schema extension: `condition` property in `_EMIT_BUILD_PLANS_TOOL`.**
+
+The `if`/`if_compound` node entry in `_EMIT_BUILD_PLANS_TOOL` gains a `condition` property: typed `object`, with properties `lhs_fn` (string), `lhs_ticker` (string), `window` (integer), `comparator` (enum: `["gt","lt","gte","lte"]`), `rhs` (object); `required` list includes all five. This structurally prevents Opus from emitting a bare string condition at the JSON schema level.
+
+#### Known residual (documented, not a blocker)
+
+`if_compound` (compound/multi-condition regime gates with a `type`/`operator`/`conditions` union) is taught in the prompt text but has no separate worked compiling example, and its compound-condition union is not independently schema-constrained in `_EMIT_BUILD_PLANS_TOOL`. The `condition` property covers the flat single-condition shape only. The JSON schema is not recursive enough to express the compound-condition union without combinatorial complexity. The PM's live re-exam probes `if_compound` plans to determine whether the flat-condition teaching provides sufficient coverage, or whether a further Revise is needed.
+
+#### Live acceptance gate (PM-owned)
+
+A PM-run live exam with real Opus SDK call and no mocks, generating `cut_drawdown` plans and confirming that `if`-node plans compile clean through `advisors/plan_tree_compiler.compile_plan` (tree not None + `validate_tree==[]`). The broader re-exam also probes all 4 objectives to confirm no new regressions from the Revise-1 extension.
+
+#### Files changed
+
+- `advisors/build_plan_generator.py` — `_EXAMPLE_IF_PLAN` constant; `_build_generation_prompt` extended with condition grammar section + `_EXAMPLE_IF_PLAN` embedding; `_EMIT_BUILD_PLANS_TOOL` `condition` property added to `if`/`if_compound` node
+- `tests/advisors/test_build_plan_generator.py` — new RED tests for condition grammar in prompt, `_EXAMPLE_IF_PLAN` structure, schema `condition` property presence + required fields
+- Total: 142 tests GREEN at 648c267 across affected files; 640 passed / 2 skipped / 0 failures across tests/advisors
+
+---
+
+### DE-SB-GEN-DRIFT-FIX-R2 — Revise-2: if_compound compound-condition union (CLOSED) (2026-06-20)
+
+Branch: feat/strategy-builder-real | Revise-2 commit: 36beecd
+
+#### Finding (Revise-1 sufficiency review)
+
+After Revise-1 (commit 648c267), the flat `if`-node condition dict was fully generation-reachable and compiler-clean. Sufficiency review found the remaining gap: `if_compound` (compound/multi-condition regime gates) was taught in the prompt text but had no worked compiling example and its compound-condition union (`type`/`operator`/`conditions`) was not schema-constrained. The PM escalated this to a required fix under the operator v1 directive: "compound conditions ALL in v1, no fast-follows." The Revise-1 "known residual" note (recorded in DE-SB-GEN-DRIFT-FIX-R1 and docs at 16c14ad) is RESOLVED by this commit.
+
+#### Root cause
+
+The `condition` property added in Revise-1 covered the flat single-condition shape (`lhs_fn`/`lhs_ticker`/`window`/`comparator`/`rhs`). `if_compound` uses a compound-condition union with a `type` discriminator (`binary`/`binary_compound`/`compound`), `operator` (`any`/`all`), and `conditions[]` list of sub-conditions. Without a worked example or schema constraint for the union shape, Opus had no basis to emit the correct nested structure for compound gates.
+
+#### Three-part extension (Revise-2, commit 36beecd)
+
+**Part 1 — Worked example: `_EXAMPLE_IF_COMPOUND_PLAN`.**
+
+A new constant (`_EXAMPLE_IF_COMPOUND_PLAN`) provides a concrete conforming `if_compound` compound-gate plan: condition is `{type:"compound", operator:"all", conditions:[binary_compound(RSI SPY gt 70 w14), binary_compound(max-drawdown QQQ lt 20 w30)]}`; then: equal-weight UVXY/TLT; else: inverse_vol SPY/IEF. Verified compiler-clean: `plan_tree_compiler.compile_plan` → `tree is not None` + `validate_tree==[]`. Embedded in every objective prompt as the third worked example alongside `_EXAMPLE_PLAN` (diversify) and `_EXAMPLE_IF_PLAN` (flat-if cut_drawdown), so the full Composer condition grammar is generation-reachable from any objective's prompt.
+
+**Part 2 — Prompt-steer: compound-condition union section in `_build_generation_prompt`.**
+
+A new compound-condition section is added to every objective prompt, teaching the union shape: `type` discriminator values (`binary`, `binary_compound`, `compound`), `operator` values (`any`, `all`), `conditions[]` (list of sub-conditions), `tickers[]` broadcast, `rhs:{const}`. The same WRONG-vs-CORRECT contrast used for the flat condition is applied to the compound form. Every prompt now carries the full Composer condition grammar — flat `if` and compound `if_compound` — so the correct shape is visible regardless of which objective is being generated.
+
+**Part 3 — Schema extension: compound-union fields in `_EMIT_BUILD_PLANS_TOOL`.**
+
+The `condition` property in `_EMIT_BUILD_PLANS_TOOL` is extended with the union fields: `type` (enum: `["binary","binary_compound","compound"]`), `operator` (enum: `["any","all"]`), `conditions` (array), `tickers` (array), `fn` (string). The `condition` property remains `object`-typed — the Revise-1 no-string invariant is preserved. The compound-union fields are now schema-constrained at the same level as the flat-condition fields.
+
+#### Closure of Revise-1 residual
+
+The `if_compound` residual recorded in `DE-SB-GEN-DRIFT-FIX-R1` and the "Known residual" / "Known limitation" notes in the docs at `16c14ad` are CLOSED by this commit. The full Composer condition grammar — `binary`, `binary_compound`, and `compound` discriminators — is now:
+- Prompt-taught with WRONG-vs-CORRECT contrast in every objective prompt
+- Illustrated by a compiler-verified worked example (`_EXAMPLE_IF_COMPOUND_PLAN`)
+- Schema-constrained in `_EMIT_BUILD_PLANS_TOOL`
+
+#### Scope note (filter node)
+
+The `filter` node has no embedded worked example but is empirically proven generation-reachable from the signature text alone: the PM's live re-exam produced clean-compiling filter/momentum plans. No further worked-example extension is required for `filter`.
+
+#### Live acceptance gate (PM-owned)
+
+A PM-run targeted compound-gate live probe: generate `cut_drawdown` plans with real Opus SDK call (no mocks) and confirm that at least one `if_compound` plan compiles clean through `advisors/plan_tree_compiler.compile_plan` (tree not None + `validate_tree==[]`).
+
+#### Files changed
+
+- `advisors/build_plan_generator.py` — `_EXAMPLE_IF_COMPOUND_PLAN` constant; `_build_generation_prompt` extended with compound-condition union section + `_EXAMPLE_IF_COMPOUND_PLAN` embedding (three worked examples in every prompt); `_EMIT_BUILD_PLANS_TOOL` `condition` property extended with union fields (`type`/`operator`/`conditions`/`tickers`/`fn`)
+- `tests/advisors/test_build_plan_generator.py` — new RED tests for compound-condition grammar in prompt, `_EXAMPLE_IF_COMPOUND_PLAN` structure + compiler-clean assertion, schema union field presence
+- Total: 151 tests GREEN at 36beecd across affected files; 649 passed / 2 skipped / 0 failures across tests/advisors
+
+---
+
+## DE-SB-BINARY-ENCODING — Binary-condition encoding unification: canonical-flat contract across generator + compiler (2026-06-20)
+
+Branch: feat/strategy-builder-real | Fix commits: bd3cbdb (GREEN) + 548a888 (extract_tickers repoint)
+
+### Finding (PM compound-gate live probe after Revise-2)
+
+After Revise-2 (commit 36beecd), the PM's targeted compound-gate live probe generated `cut_drawdown` plans and ran them through `plan_tree_compiler.compile_plan`. Result: 4/5 if_compound plans compiled clean — but 2/4 plans that used `type:"binary"` leaves inside a compound dropped with `KeyError "lhs"`. This was a different, milder drop class than the prior Revise-2 string-condition `TypeError`: graceful via D-1 but still systematic for any compound-with-binary-leaf gate.
+
+### Root cause: dual binary encoding
+
+The contract for the `binary` condition type was inconsistent across the two components:
+
+| Component | Binary field encoding used |
+|-----------|---------------------------|
+| `_build_generation_prompt` + `_EXAMPLE_IF_PLAN` | Flat: `lhs_fn`, `lhs_ticker`, `window` (top-level keys on the condition dict); `rhs: {"fixed": N}` |
+| `_compile_condition` binary branch (pre-fix) | Nested: `cond["lhs"]["fn"]`, `cond["lhs"]["ticker"]`, `cond["lhs"]["window"]`; `rhs: {"const": N}` |
+
+When Opus generated a compound condition with binary leaves, it emitted the flat shape it had learned from `_EXAMPLE_IF_PLAN` and the flat-if condition grammar — because that was the only worked binary example. The compiler's binary leaf read the nested shape → `KeyError "lhs"`. The all-`binary_compound` `_EXAMPLE_IF_COMPOUND_PLAN` gave Opus no flat-binary model for compound leaves, so Opus defaulted to the encoding it had seen in the flat-if context.
+
+### Canonical-flat unification decision
+
+**One binary encoding, everywhere.** The canonical contract is the FLAT shape: `lhs_fn`, `lhs_ticker`, `window` as top-level condition-dict keys; `rhs: {"fixed": N}` for a numeric threshold, `rhs: {"fn": ..., "ticker": ..., "window": ...}` for a ticker comparison. This is consistent with the flat-if condition path and with all generator prompt teaching.
+
+The compiler's `_compile_condition` binary branch is updated to read the canonical-flat field names. `binary_compound` (which uses `fn`/`tickers`/`rhs:{const}` — a structurally distinct shape) and the flat-if path are untouched. The Composer output tree is byte-identical — only the input field names that `_compile_condition` reads changed.
+
+### Three production file changes (commits bd3cbdb + 548a888)
+
+**1. `advisors/plan_tree_compiler.py` — `_compile_condition` binary branch.**
+
+Reads canonical-flat: `cond["lhs_fn"]`, `cond["lhs_ticker"]`, `cond["window"]`. `rhs` shape: `{"fixed": N}` or `{"fn": ..., "ticker": ..., "window": ...}`. Removes the nested `cond["lhs"]["fn"]` / `rhs:{const}` read. The Composer output tree (built via `symphony_schema` constructors) is byte-identical to the pre-fix output.
+
+**2. `advisors/build_plan_generator.py` — `_EXAMPLE_IF_COMPOUND_PLAN` updated to a mixed compound.**
+
+The all-`binary_compound` example is replaced with a **mixed compound**: one `type:"binary"` leaf (flat `lhs_fn="relative-strength-index"`, `lhs_ticker="SPY"`, `window=14`, `rhs={"fixed": 70}`) and one `type:"binary_compound"` leaf (`fn="max-drawdown"`, `tickers=["QQQ"]`, `rhs={"const": 20}`). The mixed example explicitly teaches Opus both binary sub-shapes inside a single compound, eliminating the prior encoding ambiguity. Verified compiler-clean through the unified `_compile_condition`.
+
+**3. `advisors/symphony_schema.py` — `_collect_condition_tickers` extended to collect binary-leaf operand tickers.**
+
+`extract_tickers` descends into `binary` condition leaves to collect `lhs_ticker` and `rhs.ticker` (skipping `%`). Prior to this fix, `extract_tickers` collected `binary_compound`'s `tickers[]` list but not `binary`'s `lhs_fn`/`lhs_ticker` operands — a pre-existing blind spot. A strategy gating on RSI(PSR) references PSR in the binary condition; without this fix, `extract_tickers` returned an empty set for that operand, causing the generator's membership validator to fail to validate the referenced ticker. The test's reference walker was also repointed to match (commit 548a888).
+
+### This is the LAST grammar gap
+
+With this fix:
+- The flat `if` binary condition path: canonical-flat, worked example (`_EXAMPLE_IF_PLAN`), schema-constrained.
+- The `if_compound` binary leaf path: canonical-flat (same encoding), worked mixed example (`_EXAMPLE_IF_COMPOUND_PLAN`), schema-constrained.
+- The `if_compound` binary_compound leaf: own encoding (`fn`/`tickers`/`rhs:{const}`), worked mixed example, schema-constrained.
+- The compound union: compound/binary_compound/binary discriminators, prompt-taught, schema-constrained.
+
+The full Composer condition grammar is generation-reachable, compiler-clean, and has compiler-verified worked examples for every construct. No further grammar Revises are scoped.
+
+### Live acceptance gate (PM-owned)
+
+PM-run targeted compound-gate live probe: generate `cut_drawdown` plans (real Opus SDK, no mocks); confirm that compound-with-binary-leaf `if_compound` plans compile clean through `plan_tree_compiler.compile_plan` (tree not None + `validate_tree==[]`). The PM's prior probe found 2/4 drop as `KeyError "lhs"` — this fix eliminates that error class.
+
+### Files changed
+
+- `advisors/plan_tree_compiler.py` — `_compile_condition` binary branch: canonical-flat field read
+- `advisors/build_plan_generator.py` — `_EXAMPLE_IF_COMPOUND_PLAN`: mixed compound (flat-binary + binary_compound)
+- `advisors/symphony_schema.py` — `_collect_condition_tickers`: binary-leaf `lhs_ticker`/`rhs.ticker` collection
+- `tests/advisors/test_plan_tree_compiler.py` / `test_build_plan_generator.py` / `test_symphony_schema.py` — updated/new RED tests for canonical-flat binary read, mixed-compound example structure, extract_tickers binary operands
+- Total: 157 tests GREEN at 548a888 across affected files; 655 passed / 2 skipped / 0 failures across tests/advisors
+
+### DE-SB-BINARY-ENCODING-A9 — AC-9 generator-walker twin: _collect_condition_tickers binary branch reads flat lhs_ticker (2026-06-20)
+
+Branch: feat/strategy-builder-real | Fix commit: d000d64
+
+**Finding:** After the binary-encoding-fix (DE-SB-BINARY-ENCODING) unified the binary condition contract onto canonical-flat field names, a second ticker-walking path was found blind to the same flat shape. `plan_tickers` (the AC-9 membership walker) uses `_collect_condition_tickers` to descend into `condition` blocks and collect all tickers a plan references. The binary branch of `_collect_condition_tickers` read the legacy nested shape `cond["lhs"]["ticker"]` — which raises `KeyError` on a canonical-flat binary leaf (field is `lhs_ticker`, not `lhs`). Effect: an off-universe lhs operand in a compound binary leaf (e.g. gating on RSI of a delisted symbol) slipped membership validation un-pruned and was silently admitted, reaching the compiler and backtest.
+
+**Fix (d000d64):** `_collect_condition_tickers` binary branch reads `cond.get("lhs_ticker")` (canonical-flat) plus the ticker-comparison rhs ticker (`cond.get("rhs", {}).get("ticker")`), preserving the `%` skip. `binary_compound` and `compound` branches unchanged. 12 lines added / 6 removed in `advisors/build_plan_generator.py`.
+
+**Both ticker-walking paths now consistent on canonical-flat:**
+- PATH A: `plan_tickers` → `_collect_condition_tickers` (generator membership-prune, AC-9) — fixed here.
+- PATH B: `symphony_schema.extract_tickers` → `_collect_condition_tickers` (compiler repair-prune, AC-16) — fixed in bd3cbdb / 548a888.
+
+**AC-9 escape closed:** A plan with an off-universe lhs operand in a compound binary leaf is now rejected at membership validation (never admitted), not silently passed to the compiler. 3 RED tests GREEN at d000d64; broader tests/advisors 658 passed / 2 skipped / 0 failures.
+
+---
+
+## DE-SB-CULL-001 — C5b overfitting-cull strengthened to autotuner-grade: PBO veto wired + real SPY-OOS baseline (2026-06-20)
+
+Branch: feat/strategy-builder-real | Commits: f13ea98 (RED) → 74bda68 (RED+) → 7a2d689 (fixture) → a610e49 (GREEN) → b145aa8 (RED precedence) → f41b299 (GREEN precedence) → ddcbb24 (fixture fix) | HEAD: ddcbb24
+
+### Root cause — two real gaps in the Advisor cull
+
+A trace of `backtest_gate_engine.evaluate_candidate_batch` before C5b confirmed the cull was already out-of-sample (20% validation fold via `_fold_transform_single`) and BHY/Yekutieli FDR-corrected — sound foundations. Two gaps remained:
+
+**Gap 1 — PBO veto structurally disabled.** `evaluate_candidate_batch` called `acceptance_gate.evaluate_acceptance_gate` without supplying `pbo`, so it defaulted to `None` (acceptance_gate.py:160,203-208 comment: "NO behavior change on the Advisor path"). The PBO veto (`PBO_REJECT_THRESHOLD=0.5` in `math_engine.py:79`) was wired in the autotuner since PHASE-3 but had never reached the Advisor gate.
+
+**Gap 2 — OOS-alpha baseline always beats zero.** `propose_strategies` defaulted `incumbent_oos_alpha=0.0` and `default_oos_alpha=0.0` (strategy_builder_engine.py:862-863); the route passed neither override. A candidate cleared the OOS-superiority gate by merely having positive validation-fold alpha — no benchmark comparison.
+
+### Design decisions
+
+**PBO is batch-level, not per-candidate.** `math_engine.compute_pbo` (Bailey & López de Prado 2014 CSCV algorithm) takes a set of return configs and an eligible-dates list; it outputs one probability-of-backtest-overfitting for the set as a whole. The Advisor gate treats every candidate's `dated_returns` as one config, computes the intersection of all candidate date keys, and passes the batch to `compute_pbo`. One `_batch_pbo` value is then threaded into every `evaluate_acceptance_gate` call. This mirrors the autotuner wiring at `autotuner.py:2699-2711` where PBO is computed over the full CSCV trial set before `_haircut_select`.
+
+**PBO veto does not fire on thin batches.** Two guards are named constants: `_PBO_MIN_CONFIGS=2` (fewer than 2 date-keyed configs → `pbo=None`) and `_PBO_MIN_ALIGNED_DATES=8` (fewer than 8 intersection dates → `pbo=None`). Both ensure the CSCV ranking has enough structure before the veto is applied — identical semantics to the autotuner's `K<2` guard.
+
+**SPY is date-aligned, not positionally sliced.** The SPY benchmark series is injected via a `spy_returns_fn` seam (testable; production callers wire a real Alpaca fetch). The series is restricted to dates that appear in the union of candidate `dated_returns` keys, then fed to the same `_fold_transform_single` used for candidates. This guarantees the SPY fold window covers the same calendar period as the candidates; a positional-only slice on a longer SPY series would land on different dates. SPY-unavailable (empty series or callable error) → `_effective_default_oos_alpha = float("-inf")` → every candidate WITHHOLDS (conservative, never silent fallback to the old beats-zero baseline).
+
+**`rejection_reason` stage-order precedence.** A new per-candidate `rejection_reason` field on `CandidateGateResult` records the dominant cause for the operator live-probe. Stage order (most-specific first):
+
+| Priority | Value | Condition |
+|----------|-------|-----------|
+| 1 | `None` | `ADOPT_CANDIDATE` (survivor) |
+| 2 | `"pbo_veto"` | `_batch_pbo > PBO_REJECT_THRESHOLD` (Stage-1 hard veto) |
+| 3 | `"below_spy_alpha"` | `fold.oos_alpha <= _effective_default_oos_alpha` (Stage-2 alpha gate) |
+| 4 | `"fdr_not_winner"` | BHY non-winner, nn1 failure, purge failure, or thin-window |
+
+PBO is Stage-1 in `acceptance_gate` and must dominate: a high-PBO batch is too sample-dependent to consider further regardless of alpha performance. The precedence-reorder was a dedicated RED/GREEN cycle (`b145aa8` RED, `f41b299` GREEN, `ddcbb24` fixture fix) after `a610e49` originally placed `below_spy_alpha` before `pbo_veto`.
+
+**Atlas parity is structural (AC-26).** Atlas community candidates and built-new (Opus) candidates enter the SAME `evaluate_candidate_batch` call. Batch PBO is computed over all candidates together; the same SPY baseline applies to all; the same BHY/Yekutieli FDR correction covers both provenance sources. Advertised community `oos_metrics` are used only for objective-matched admission ranking (AC-12), never for survival — the `metrics={}` assignment at the `BacktestCandidate` construction site ensures advertised stats cannot reach the fold-transform or gate inputs.
+
+### Files changed
+
+- `advisors/backtest_gate_engine.py` — C5b Step 0a (batch PBO, lines 598-625); C5b Step 0b (SPY-fold baseline, lines 628-672); `BacktestCandidate.dated_returns` field; `evaluate_candidate_batch` gains `spy_returns_fn` parameter; `CandidateGateResult.rejection_reason` field; `rejection_reason` cascade with PBO-before-SPY precedence (lines 811-837); five C5b constants (`_BATCH_PBO_GAMMA`, `_PBO_MIN_CONFIGS`, `_PBO_MIN_ALIGNED_DATES`, `_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA`, `SPY_BENCHMARK_TICKER`)
+- `tests/advisors/test_cull_strengthening.py` — 17 RED/GREEN/precedence tests; 675 passed / 2 skipped / 0 failed / 0 errors across `tests/advisors/` at HEAD ddcbb24
+
+### Status
+
+GREEN at ddcbb24. Math-adversarial sufficiency pass complete (3 mutation probes — positional-fold, pbo=None, precedence-reorder mutants each caught by the test suite). Cycle-complete pending PM merge gate.
+
+**Binding rules from this decision:**
+- The `spy_returns_fn` seam is the ONLY path to supplying the SPY benchmark series; production callers must wire a real fetch, not pass `None`.
+- `BacktestCandidate.dated_returns` must be populated by callers who want PBO and SPY-fold alignment; callers passing only `daily_returns_pct` continue to work (PBO and SPY gates degrade safely to `pbo=None` and conservative WITHHOLD respectively).
+- The `rejection_reason` precedence order (`pbo_veto` before `below_spy_alpha`) is load-bearing for the operator live-probe; do not reorder without a new RED test + DECISIONS entry.
+
+---
+
+## DE-SB-CULL-001-ADDENDUM-A — C5b production-path wiring: propose_strategies now owns dated_returns + spy_returns_fn (2026-06-20)
+
+Branch: feat/strategy-builder-real | Commit: 5d6e04a | HEAD: f037c83
+
+**Supersedes binding rules in DE-SB-CULL-001:** The two binding rules that required callers to wire `spy_returns_fn` and populate `BacktestCandidate.dated_returns` are now internal implementation details of `propose_strategies`, not caller responsibilities.
+
+### Finding (production-path audit)
+
+After DE-SB-CULL-001 landed at ddcbb24, a production-path audit found that `propose_strategies` never fed the required inputs to `evaluate_candidate_batch`:
+
+- **`dated_returns` always `{}`:** The candidate backtest loop at `strategy_builder_engine.py:965` converted `result.daily_returns.values()` into a positional list (`returns_pct`) but discarded the date keys. `BacktestCandidate` was constructed with the default `dated_returns={}` → `_batch_pbo=None` on every run → PBO veto structurally inert in production.
+- **`spy_returns_fn` never passed:** `evaluate_candidate_batch` was called without `spy_returns_fn` → `default_oos_alpha=0.0` persisted → SPY-fold baseline structurally inert in production.
+
+### Fix (5d6e04a)
+
+`strategy_builder_engine.py` — 35 lines added, no signature change (AC-20):
+
+1. **Step 2a — SPY sourcing (before candidate loop):** `run_backtest` called on `make_root("SPY Benchmark", "daily", [make_weight_equal([make_asset("SPY")])])` with `symphony_id=symphony_id`. On success: `_spy_returns_dict = {d: r * 100.0 for d, r in result.daily_returns.items()}`. On error or empty: `_spy_returns_dict = {}`. Then `_spy_returns_fn = lambda: _spy_returns_dict`.
+2. **`dated_returns` population (inside candidate loop):** `dated_returns_pct = {d: r * 100.0 for d, r in result.daily_returns.items()}` — same scale as `daily_returns_pct` (both `r * 100.0`). Passed as `BacktestCandidate.dated_returns=dated_returns_pct`.
+3. **`spy_returns_fn` passed to gate:** `evaluate_candidate_batch(..., spy_returns_fn=_spy_returns_fn)`.
+
+### Revised binding rules
+
+- `propose_strategies` wires both C5b inputs internally; callers do NOT need to populate `dated_returns` or pass `spy_returns_fn`.
+- `BacktestCandidate.dated_returns` is still a first-class public field; direct callers of `evaluate_candidate_batch` (outside `propose_strategies`) must populate it if they want PBO gating.
+- The `rejection_reason` precedence order remains unchanged: `pbo_veto` → `below_spy_alpha` → `fdr_not_winner`.
+
+### Tests
+
+`tests/advisors/test_cull_production_wiring.py` — 2 new production-path end-to-end RED tests co-committed; 4/4 GREEN; 120/120 across `tests/advisors/` strategy-builder + gate-engine + production-wiring files at commit 5d6e04a.
+
+---
+
+## DE-SB-CULL-001-ADDENDUM-B — AC-25 edge-14: _SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA -inf → +inf inversion (2026-06-20)
+
+Branch: feat/strategy-builder-real | Commit: 4ccea92 | HEAD: f037c83
+
+### Bug
+
+`_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA` was initialized to `float("-inf")` in the initial C5b implementation. The withhold-clause in `acceptance_gate.evaluate_acceptance_gate` (acceptance_gate.py:257) is:
+
+```python
+if oos_alpha <= default_oos_alpha:
+    return KEEP_INCUMBENT  # conservative WITHHOLD
+```
+
+With `default_oas_alpha = float("-inf")`, the condition `oos_alpha <= -inf` is always-false for any finite `oos_alpha` — the clause never fires. The SPY-unavailable path silently fell through to the subsequent `oos_alpha > 0` beats-zero check, the exact behaviour AC-25 edge-14 requires to be prevented.
+
+### Empirical proof
+
+`acceptance_gate.py:257`: `if oos_alpha <= default_oos_alpha`. Python: `any_finite_float <= float("-inf")` evaluates to `False`; `any_finite_float <= float("+inf")` evaluates to `True`. No ambiguity at either sign for finite operands.
+
+### Fix (4ccea92)
+
+`_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA: float = float("+inf")` — now `oos_alpha <= +inf` is always-true for finite `oos_alpha` → KEEP_INCUMBENT (conservative WITHHOLD) for every candidate when SPY is unavailable. Withheld candidates carry `rejection_reason="below_spy_alpha"`. Happy path (SPY available and non-empty) is unaffected — the SPY-fold baseline is a finite value; `oos_alpha <= finite_spy_baseline` is a meaningful comparison.
+
+Four backwards comment sites in `backtest_gate_engine.py` were corrected: constant-definition block (lines 151-158), `evaluate_candidate_batch` docstring (line 573), and both assignment-site inline comments (lines 668-672). No logic changes outside the constant value.
+
+### Test redesign for non-confounded coverage
+
+The original edge-14 tests used `spy_returns_fn=None` (gate-engine level) to trigger the sentinel. The new tests (co-committed with 4ccea92) confirm the sentinel fires when `_spy_returns_dict={}` is returned by the lambda — the production-path representation of SPY-unavailable — rather than testing `spy_returns_fn=None` only. This ensures the test covers the actual code path rather than a distinct gate-skipping branch.
+
+### Files changed
+
+- `advisors/backtest_gate_engine.py` — `_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA` flipped to `float("+inf")`; four comment sites corrected
+- `tests/advisors/test_cull_strengthening.py` — 2 new edge-14 RED tests (empty-dict lambda, not None); 19/19 GREEN; 681 passed / 2 skipped / 0 regressions across `tests/advisors/`
+
+
+---
+
+## DE-SB-C4-001 — Component 4: real builder body swap + Q1-A enum + AC-18 scheduler (2026-06-20)
+
+Branch: feat/strategy-builder-real | Commits: 5ae6c8c (body swap + Q1-A) | 4867c1c (AC-18 scheduler) | HEAD: a0aca12
+
+### What C4 delivers
+
+**Body swap (5ae6c8c):** `_generate_candidate_trees` in `advisors/strategy_builder_engine.py` was the old 7-template stamper (T1–T7 via `symphony_schema` constructors with hardcoded parameter sweep loops). C4 replaces the entire body with the real C1→C2→C3 pipeline:
+
+1. **C1 — Universe (Q2-A):** non-empty `universe` argument → used as membership set as-is. Empty `[]` (the default for both the route and the scheduler) → self-source from `universe_provider.get_tradeable_set()`. This makes the builder use the real operator-curated universe rather than a caller-provided ticker list.
+
+2. **C2 — Plan generation:** `build_plan_generator.generate_build_plans(gen_objective, membership_set)` is called. `sbe.Objective` maps to `build_plan_generator.Objective` by `.value` (string-keyed, 4-way). Empty `result.plans` → `[]` (D-1 honest degradation, reason logged).
+
+3. **C3 — Compilation:** each plan from C2 is fed to `plan_tree_compiler.compile_plan(plan)`. Plans where `compile_result.tree is None` are dropped (e.g. `market_cap_scheme_deprecated`) and the run continues. Compiled candidates become `CandidateInfo` with `template_id=plan.get("provenance", "built-new")` — never `"T1"`–`"T7"`.
+
+The old T1–T7 template IDs are gone from built-new candidates. `symphony_schema` constructors are still used inside `plan_tree_compiler`, but are not called directly from `_generate_candidate_trees`.
+
+**Q1-A enum extension (5ae6c8c):** `sbe.Objective` extended from 3 to 4 values by adding `volatility_mitigation = "volatility_mitigation"`, matching `build_plan_generator.Objective`. The route parses the objective from the POST body string (unchanged); `volatility_mitigation` is now a reachable route value.
+
+**AC-18 weekly scheduler (4867c1c):** `advisors/strategy_builder_scheduler.py` (new standalone script). `run_weekly_build()` runs `propose_strategies` for all four objectives, guarded by `_already_ran_this_week()` (ISO-week idempotency via `get_advisor_observations_for_symphony(symphony_id="", advisor_role="STRATEGY_BUILDER", limit=50)` + ISO calendar year/week comparison). Per-objective bounded retry: `MAX_ATTEMPTS=3`, D-1 class-name-only logging, next objective continues on exhaustion. Never raises. `_already_ran_this_week` is a patchable seam for tests.
+
+**AC-19 (route) — zero route code change:** the route at `app.py:3816` was already structured to pass `universe=[]` and parse the objective from the POST body. C4 requires no route modification — the empty universe triggers the new Q2-A self-sourcing path, and `volatility_mitigation` parsing was latent (enum extension makes it reachable).
+
+**AC-20 (signature freeze):** `propose_strategies` public signature unchanged. Steps 2–5b (SPY sourcing, backtest loop, FDR gate, screens, persist) are byte-stable. Only `_generate_candidate_trees` (internal) was replaced.
+
+### Design decisions
+
+**Why replace the whole body, not extend?** The T1–T7 stamper was a placeholder that bypassed C1/C2/C3 entirely. Keeping it alongside the real pipeline would have created a mode-switching footgun. A clean body swap eliminates the dead code and leaves one code path.
+
+**Q2-A: universe-override is the caller's responsibility, not self-sourcing's.** The route and scheduler both pass `universe=[]`, triggering self-sourcing. A caller that wants a specific subset (e.g. a test or a future targeted run) passes a non-empty list — no new parameter needed.
+
+**Idempotency is ISO-week, not day.** One run per week per objective is sufficient freshness for the dashboard. Tighter granularity (daily) would over-consume Composer API quota without providing meaningfully fresher candidates.
+
+**The only production caller of `propose_strategies` is the route (app.py:3816).** The scheduler is the second caller. `autotuner.py` does NOT call `propose_strategies` or import `strategy_builder_engine` — any documentation claiming otherwise is stale (operator-flagged doc-debt; corrected in this cycle).
+
+### Files changed
+
+- `advisors/strategy_builder_engine.py` — `_generate_candidate_trees` body swap (~140 lines removed, ~80 added); `Objective` enum: 3→4 values (adds `volatility_mitigation`); `test_objective_has_exactly_three_members` renamed/updated to `test_objective_has_exactly_four_members`
+- `advisors/strategy_builder_scheduler.py` — NEW: `run_weekly_build()`, `_already_ran_this_week()`, `MAX_ATTEMPTS=3`
+- `tests/advisors/test_strategy_builder_engine.py` — 10/10 integration tests GREEN (C1/C2/C3 seams mocked, blast-radius isolation)
+- `tests/advisors/test_strategy_builder_scheduler.py` — 4/4 scheduler tests GREEN
+- Full `tests/advisors/` 694 passed / 4 skipped / 0 fail; `tests/ui/` 713 passed / 15 skipped / 0 fail at HEAD a0aca12
+
+---
+
+## DE-SB-GEN-TRUNCATION — C2 generator `max_tokens` truncation: `stop_reason="max_tokens"` -> `InvalidToolUsePayload` -> 0 plans (2026-06-20)
+
+Branch: feat/strategy-builder-real
+
+### Finding (live exam)
+
+Post-C4 live diagnostic probes (`.claude/c4-trunc-probe-result.json`, `.claude/c4-gen-diag-result.json`, `.claude/c4-prod-exam-result.json`) revealed that the generator `messages.create` call capped output at `max_tokens=4096`. Generating `N_PLANS_PER_OBJECTIVE=12` full-grammar build-plans saturated this budget, truncating the JSON mid-payload. The truncated response caused `tool_block.input.get("plans")` to return either `{}` (empty dict, `input_json_chars=2`) or a malformed partial list — both non-list values — hitting the `InvalidToolUsePayload` degradation path and returning 0 plans.
+
+**Evidence from `.claude/c4-trunc-probe-result.json`:**
+- `diversify`: `stop_reason="max_tokens"`, `usage_output_tokens=4096`, `input_json_chars=2`, `plans_is_list=false`
+- `cut_drawdown`: same — `stop_reason="max_tokens"`, `usage_output_tokens=4096`, `input_json_chars=2`, `plans_is_list=false`
+
+**Evidence from `.claude/c4-gen-diag-result.json`:**
+- `diversify`: `reason="InvalidToolUsePayload"`, `n_plans=0`
+- `cut_drawdown`: `reason="InvalidToolUsePayload"`, `n_plans=0`
+- `lift_risk_adjusted`: `reason="InvalidToolUsePayload"`, `n_plans=0`
+- `volatility_mitigation`: `reason=null`, `n_plans=12` — only objective that fit within 4096 tokens for this particular run
+
+The non-determinism (which objectives truncate varies by run, depending on plan complexity and token packing) makes this a persistent latent defect that silently degrades ~3/4 of objectives per run while appearing to "work" for whichever objective happens to emit shorter JSON.
+
+**Root cause:** `max_tokens=4096` was a carry-over from `ai_advisor._build_client` call patterns where a single structured response is expected. `N_PLANS_PER_OBJECTIVE=12` full-grammar plans — each embedding multi-level DSL nodes, condition blocks, and tickers — easily exceed 4096 output tokens.
+
+### Fix
+
+Two changes to `advisors/build_plan_generator.py` (GREEN a2a678f; comment-truth recommit 2a1787e):
+
+1. **Raised `max_tokens` constant — `MAX_OUTPUT_TOKENS = 16384`.** The bare literal `max_tokens=4096` is replaced by the named constant `MAX_OUTPUT_TOKENS: int = 16384` (line ~110). Empirical calibration (2026-06-20, run at `max_tokens=32000`, `stop_reason=tool_use` confirmed non-truncated): `cut_drawdown` = 4,906 output tokens; `diversify` = 5,015 tokens (worst-case). `ceil(5015 * 1.25) = 6,269`; floored at the RED test minimum of 16,000. 16,384 = 16,000 floor + small buffer — approximately 3.3× the empirical worst-case, robust to Opus output variance for the weekly job. `max_tokens` is a billing CEILING (billing is by actual output tokens, not the ceiling), so a generous value carries no cost penalty.
+
+2. **Bounded truncation-retry loop — `MAX_GENERATION_ATTEMPTS = 3`.** A `for _attempt in range(MAX_GENERATION_ATTEMPTS)` loop wraps the `client.messages.create` call. After each response, `stop_reason` is inspected: any value other than `"max_tokens"` breaks the loop and proceeds to parsing (the normal path). A `stop_reason == "max_tokens"` response logs a warning and retries. After all `MAX_GENERATION_ATTEMPTS` return `"max_tokens"`, the loop falls through to its `else` clause and returns `GeneratorResult(plans=[], reason="max_tokens: response truncated after all attempts")` — an honest D-1 degradation, never a raise. The combined effect: `MAX_OUTPUT_TOKENS = 16384` makes truncation rare in practice; the retry loop makes it recoverable if it occurs anyway.
+
+### Design decisions
+
+**Why a named constant rather than a literal?** Consistent with the project rule (no magic numbers in advisor modules); the comment documents the derivation (12 plans * estimated tokens/plan). The constant is tunable when `N_PLANS_PER_OBJECTIVE` changes.
+
+**Why this is non-trivial to detect in tests.** The mocked-SDK test suite returns conforming plans regardless of `max_tokens`; the limit only fires against the real API. This is the same "tests-green-but-hollow" failure mode as DE-SB-GEN-DRIFT-FIX (vocabulary drift). Only a live exam with `usage_output_tokens` inspection reveals truncation.
+
+### Files changed
+
+- `advisors/build_plan_generator.py` — `MAX_OUTPUT_TOKENS: int = 16384` constant added (line ~110); `MAX_GENERATION_ATTEMPTS: int = 3` constant added (line ~114); `messages.create` call site updated to use `max_tokens=MAX_OUTPUT_TOKENS` inside a `for _attempt in range(MAX_GENERATION_ATTEMPTS)` retry loop (+36 lines / -7 lines, commit a2a678f; recommitted 2a1787e for comment-truth)
+- `tests/advisors/test_build_plan_generator_truncation.py` — 16 new RED tests (written by sbgen-test before the GREEN implementation): truncation retry fires on `stop_reason="max_tokens"`; exhaustion degrades honestly; non-truncated stop_reason does not retry; `MAX_OUTPUT_TOKENS >= 16000` assertion; `MAX_GENERATION_ATTEMPTS == 3` assertion
+
+### Status
+
+Unit-verified GREEN at HEAD 2a1787e. 16 new truncation tests GREEN; full `tests/advisors/` suite GREEN (counts to be confirmed by team-lead live re-exam). Production confirmation pending team-lead live re-exam (results reported separately).
+
+---
+
+## DE-SB-C5 — C5: Unified dual-mode Atlas admission + orphaned adapter deletion + route error-boundary sanitization (2026-06-20)
+
+Branch: feat/strategy-builder-real
+Commits: 1d5dd48 (route rewire), 147a181 (scheduler dual-mode + adapter deletion), db4a2bf (test re-point)
+
+### Context
+
+Pre-C5, the Strategy Builder had two divergent community-candidate paths:
+- **Route path** (`POST /ai-advisor/strategy-builder/run`): called `load_community_strategies(force_refresh=False)` + the unranked `community_candidate_infos` adapter (first-N, no objective-matching) to obtain community candidates.
+- **Scheduler path** (`strategy_builder_scheduler.run_weekly_build`): called `propose_strategies(community_candidates=[])` — no atlas injection at all on the weekly automated run.
+
+Both paths were stale: `build_plan_generator.admit_community_candidates` and `load_atlas_candidates` (objective-matched, bill-protected, D-1) already existed from the C2/2b phase. The route was using the old pre-C2b unranked adapter; the scheduler was not using atlas injection at all. The result was that the on-demand and weekly runs produced structurally different candidate batches despite claiming to be equivalent (route-parity AC-19 was violated).
+
+Additionally, `run.error` was echoed verbatim in the route's error-branch JSON response. `propose_strategies` sets `run.error` from `str(exc)` at the outer catch site, which can carry API keys, file paths, or other sensitive content.
+
+### Decisions
+
+**Route rewire to Shape A (commit 1d5dd48):** Replace `load_community_strategies + community_candidate_infos` in the route with a single call to `build_plan_generator.load_atlas_candidates(objective)` — the objective-matched admission path (AC-12/AC-13). This is "Shape A" because it directly calls the wrapper that does the full admission pipeline (load → rank → cap → return `CandidateInfo` list). Chosen over manually calling `load_community_strategies` then `admit_community_candidates` in the route because:
+1. The wrapper enforces `force_refresh=False` unconditionally (bill-protection cannot be accidentally bypassed by a caller).
+2. One call site is simpler to audit for the D-1 contract.
+3. Consistent with the scheduler path (both now call `load_atlas_candidates`).
+
+The route's outer `try/except` is retained as belt-and-suspenders even though `load_atlas_candidates` is D-1 — defense-in-depth at the Flask boundary.
+
+**Scheduler dual-mode (commit 147a181, Lane 2a):** Inject `_bpg.load_atlas_candidates(objective)` per objective inside `run_weekly_build`'s per-objective loop, forwarding the result as `community_candidates=` to `propose_strategies`. The Atlas call is placed INSIDE the per-objective loop (not hoisted) because each objective needs its own ranked set (cut_drawdown ranks by drawdown, volatility_mitigation ranks by volatility, etc.). Per-objective inner `try/except` degrades to `community_candidates=[]` on any Atlas error — built-new always runs.
+
+**Adapter deletion (commit 147a181, Lane 2b):** `strategy_builder_engine.community_candidate_infos` (70 lines, the old unranked first-N adapter) is deleted. After the route rewire (1d5dd48) it had zero production callers. The `propose_strategies` `community_candidates=` kwarg is PRESERVED — only the standalone unranked adapter function is gone. The engine's docstring reference to `community_candidate_infos` was updated to point to `build_plan_generator.load_atlas_candidates` (`strategy_builder_engine.py:758`).
+
+**EDGE-1 (adapter deletion):** `strategy_builder_engine.community_candidate_infos` is gone. Any code importing it will get an `AttributeError`. Tests that patched it via `patch("advisors.strategy_builder_engine.community_candidate_infos")` need `create=True` to avoid `AttributeError` on the mock setup. This is tracked as test-infrastructure debt; quint-test re-pointed the stale tests in commit db4a2bf.
+
+**EDGE-2 (weekly dual-mode fold-in):** The idempotency guard in `_already_ran_this_week` counts any `STRATEGY_BUILDER` observation from this ISO week — both built-new and atlas-suggested survivors contribute to the same `advisor_observations` table. A week where only built-new survivors were persisted (e.g. from a pre-C5 run) will cause C5's dual-mode run to no-op if the check fires. Acceptable: the weekly cadence is advisory freshness, not a hard real-time requirement.
+
+**AC-23 route error-boundary sanitization (commit 1d5dd48):** The route's `run.error` branch now logs the full error server-side and surfaces only the static token `"strategy-builder-error"` in the JSON response (`app.py:3840`). This closes the observable leak at the route boundary. The internal normalization of `propose_strategies`' error string (replacing `str(exc)` with the class name at the `propose_strategies` outer-catch site, `strategy_builder_engine.py:965`) is a tracked follow-on — it removes the raw exception body from `run.error` itself, so future callers cannot accidentally surface it. NOT done in C5; the route static-string fully closes the operator-visible leak.
+
+### Provenance tags after C5
+
+| `template_id` value | Source |
+|---------------------|--------|
+| `"built-new"` | C4 real pipeline: C1 (universe) → C2 (generator) → C3 (compiler) |
+| `"atlas-suggested"` | C5 objective-matched admission via `build_plan_generator.load_atlas_candidates` |
+
+`"community"` (the old unranked adapter's tag) no longer appears. `"T1"`–`"T7"` (the old stamper's tags) no longer appear.
+
+### Files changed
+
+- `app.py` — `ai_advisor_strategy_builder_run()` route rewired: lazy import swapped from `load_community_strategies + community_candidate_infos` → `build_plan_generator.load_atlas_candidates`; `run.error` branch sanitized to static `"strategy-builder-error"` token with server-side logging (+10 / -9 lines, commit 1d5dd48)
+- `advisors/strategy_builder_engine.py` — `community_candidate_infos` function and section header deleted (70 lines removed); docstring reference updated to `build_plan_generator.load_atlas_candidates` (commit 147a181)
+- `advisors/strategy_builder_scheduler.py` — per-objective `_bpg.load_atlas_candidates(objective)` call added inside `run_weekly_build` loop; CC-2 lazy import of `advisors.build_plan_generator as _bpg` added (+17 lines, commit 147a181)
+- `tests/` — stale `community_candidate_infos` wiring tests re-pointed to Shape A (commit db4a2bf)
+
+### Binding rules
+
+1. The canonical community-admission path for ALL callers (route, scheduler, future) is `build_plan_generator.load_atlas_candidates(objective)`. The `propose_strategies(community_candidates=...)` kwarg is the injection point.
+2. `community_candidate_infos` is deleted. Do not re-add it.
+3. Route error responses never echo `run.error` or `str(exc)` — static safe token only.
+4. The scheduler calls `load_atlas_candidates` INSIDE the per-objective loop, not hoisted.

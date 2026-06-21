@@ -1,18 +1,24 @@
-"""RED tests — propose_strategies community-candidate wiring.
+"""propose_strategies community-candidate wiring.
 
 Module under test: advisors.strategy_builder_engine
 
-These tests are RED by construction: the new symbols
-(`community_candidate_infos`, `MAX_COMMUNITY_CANDIDATES_PER_RUN`, and the
-`community_candidates` kwarg on `propose_strategies`) do not exist yet.
+C5 RE-POINT (stale-by-intent, 2026-06-20): the old unranked
+`strategy_builder_engine.community_candidate_infos` ADAPTER was DELETED (EDGE-1) once the
+route + scheduler moved to the objective-matched `build_plan_generator.load_atlas_candidates`
+path. The adapter's DIRECT unit tests (mapping / cap / empty-unavailable) were REMOVED here —
+that coverage now lives in tests/advisors/test_build_plan_atlas_admission.py against
+admit_community_candidates / load_atlas_candidates. The ENGINE-behaviour tests below (full-batch
+gating, per-candidate backtest isolation, provenance persistence, never-raises, None/[] no-
+regression) are PRESERVED and re-pointed: they build community CandidateInfo objects via the
+local `_make_community_candidate_infos` helper (mirroring admit_community_candidates' output:
+template_id="community", params.provenance="atlas-suggested") instead of the deleted adapter.
 
-Adversarial coverage:
-  AC-1  adapter mapping + cap + empty/available=False → []
-  AC-2  gate receives FULL batch (template + community together)
+Coverage retained here (engine contract — still valid):
+  AC-2  gate receives FULL batch (built-new + community together)
   AC-3  MAX_COMMUNITY_CANDIDATES_PER_RUN constant exists and is enforced
   AC-4  per-candidate backtest-failure isolation
   AC-5  persisted observation carries template_id="community" + sid provenance
-  AC-6  community_candidates=None and =[] → no regression vs template-only
+  AC-6  community_candidates=None and =[] → no regression vs built-new-only
   AC-7  advisory-safety (no LIVE_EXECUTION path) + never-raises contract
 
 Rules:
@@ -63,6 +69,42 @@ def _make_error_backtest_result(reason: str = "network timeout"):
     from advisors.composer_backtest_client import BacktestResult
 
     return BacktestResult(stats=None, data_warnings=[], daily_returns={}, error=reason)
+
+
+def _patch_builder_generates(*, n_plans: int = 2):
+    """Patch build_plan_generator.generate_build_plans to return N valid built-new plans.
+
+    C4 (commit 5ae6c8c) replaced the 7-template stamper inside _generate_candidate_trees
+    with the real C1→C2→C3 pipeline, so 'template' (built-new) candidates now originate from
+    generate_build_plans → compile_plan instead of the old hardcoded templates. Tests that
+    assert built-new candidates reach the gate alongside community candidates must therefore
+    supply built-new plans through this seam (the conftest autouse guard otherwise neutralises
+    the live Opus call → empty plans). The plans compile to validate_tree-clean trees via the
+    REAL plan_tree_compiler — anti-hollow. Returns a patch() context manager."""
+    from advisors import build_plan_generator as _gen
+
+    plans = [
+        {
+            "plan_id": f"builtnew-{i}",
+            "objective": "diversify",
+            "name": f"Built New {i}",
+            "rebalance": "daily",
+            "root": {
+                "kind": "weight",
+                "scheme": "equal",
+                "children": [
+                    {"kind": "asset", "ticker": "SPY"},
+                    {"kind": "asset", "ticker": "AGG"},
+                ],
+            },
+        }
+        for i in range(n_plans)
+    ]
+    return patch.object(
+        _gen,
+        "generate_build_plans",
+        return_value=_gen.GeneratorResult(plans=plans, reason=None),
+    )
 
 
 def _make_community_result(n_candidates: int = 2, *, available: bool = True) -> dict:
@@ -122,6 +164,45 @@ def _make_community_result(n_candidates: int = 2, *, available: bool = True) -> 
         "stats": {"pulled": n_candidates, "valid": n_candidates},
         "source": "captplanet",
     }
+
+
+def _make_community_candidate_infos(community_result: dict, *, max_candidates: int = 10) -> list:
+    """Build community CandidateInfo objects DIRECTLY from a community_result dict.
+
+    C5 re-point (stale-by-intent): the old strategy_builder_engine.community_candidate_infos
+    adapter was DELETED (EDGE-1) once the route + scheduler moved to the objective-matched
+    build_plan_generator.load_atlas_candidates path. These engine-behaviour tests used the
+    adapter only as a FIXTURE to construct community candidates; they are re-pointed to build
+    the same CandidateInfo shape directly — mirroring what admit_community_candidates emits:
+    candidate_id=sid, template_id="community", params carries sid/name/composition_hash AND
+    provenance="atlas-suggested". The objective-matched admission's own behaviour is covered
+    in tests/advisors/test_build_plan_atlas_admission.py — NOT here.
+    """
+    from advisors.build_plan_generator import PROVENANCE_ATLAS_SUGGESTED  # noqa: PLC0415
+    from advisors.strategy_builder_engine import CandidateInfo  # noqa: PLC0415
+
+    if not isinstance(community_result, dict) or not community_result.get("available"):
+        return []
+    raw = community_result.get("candidates") or []
+    infos = []
+    for doc in raw[:max_candidates]:
+        sid = doc["sid"]
+        infos.append(
+            CandidateInfo(
+                candidate_id=sid,
+                tree=doc["tree"],
+                template_id="community",
+                params={
+                    "sid": sid,
+                    "name": doc.get("name", ""),
+                    "composition_hash": doc.get("composition_hash", ""),
+                    "provenance": PROVENANCE_ATLAS_SUGGESTED,
+                },
+                metrics={},
+                backtest_error=None,
+            )
+        )
+    return infos
 
 
 def _make_gated_batch_with_survivors(candidate_ids: list[str]):
@@ -219,170 +300,6 @@ class TestMaxCommunityCandidatesConstant:
 
 
 # ===========================================================================
-# SECTION 2 — AC-1: community_candidate_infos adapter
-# ===========================================================================
-
-
-class TestCommunityAdapterMapping:
-    """community_candidate_infos maps community_result docs to CandidateInfo objects."""
-
-    def test_community_candidate_infos_exists_on_module(self, sbe):
-        """AC-1: function must be importable from the module."""
-        assert hasattr(sbe, "community_candidate_infos"), (
-            "community_candidate_infos must be a public function on strategy_builder_engine; "
-            "missing means the adapter was not added"
-        )
-        assert callable(sbe.community_candidate_infos)
-
-    def test_adapter_returns_list(self, sbe):
-        """AC-1: return type is always a list."""
-        result_doc = _make_community_result(n_candidates=1)
-        out = sbe.community_candidate_infos(result_doc, max_candidates=10)
-        assert isinstance(out, list), (
-            f"community_candidate_infos must return list, got {type(out).__name__}"
-        )
-
-    def test_adapter_candidate_id_is_sid(self, sbe):
-        """AC-1: candidate_id must equal the source sid — not the name or a derived string."""
-        result_doc = _make_community_result(n_candidates=1)
-        sid = result_doc["candidates"][0]["sid"]
-        out = sbe.community_candidate_infos(result_doc, max_candidates=10)
-        assert len(out) == 1
-        assert out[0].candidate_id == sid, (
-            f"candidate_id must equal sid={sid!r}; got {out[0].candidate_id!r}"
-        )
-
-    def test_adapter_template_id_is_community(self, sbe):
-        """AC-1: template_id must be exactly 'community' for all adapted candidates."""
-        result_doc = _make_community_result(n_candidates=2)
-        out = sbe.community_candidate_infos(result_doc, max_candidates=10)
-        for info in out:
-            assert info.template_id == "community", (
-                f"template_id must be 'community', got {info.template_id!r}"
-            )
-
-    def test_adapter_tree_carried_through(self, sbe):
-        """AC-1: the tree from the community doc must appear verbatim in CandidateInfo.tree."""
-        result_doc = _make_community_result(n_candidates=1)
-        source_tree = result_doc["candidates"][0]["tree"]
-        out = sbe.community_candidate_infos(result_doc, max_candidates=10)
-        assert out[0].tree == source_tree, (
-            "tree must be carried through unchanged; deepcopy is fine but structure must match"
-        )
-
-    def test_adapter_params_contains_sid(self, sbe):
-        """AC-1: params dict must include the sid so persistence has provenance."""
-        result_doc = _make_community_result(n_candidates=1)
-        sid = result_doc["candidates"][0]["sid"]
-        out = sbe.community_candidate_infos(result_doc, max_candidates=10)
-        assert "sid" in out[0].params, (
-            f"params must contain key 'sid'; got keys {list(out[0].params.keys())}"
-        )
-        assert out[0].params["sid"] == sid
-
-    def test_adapter_params_contains_name(self, sbe):
-        """AC-1: params dict must include the name for human-readable traceability."""
-        result_doc = _make_community_result(n_candidates=1)
-        name = result_doc["candidates"][0]["name"]
-        out = sbe.community_candidate_infos(result_doc, max_candidates=10)
-        assert "name" in out[0].params, "params must contain key 'name'"
-        assert out[0].params["name"] == name
-
-    def test_adapter_params_contains_composition_hash(self, sbe):
-        """AC-1: params must include composition_hash for dedup traceability."""
-        result_doc = _make_community_result(n_candidates=1)
-        comp_hash = result_doc["candidates"][0]["composition_hash"]
-        out = sbe.community_candidate_infos(result_doc, max_candidates=10)
-        assert "composition_hash" in out[0].params, "params must contain key 'composition_hash'"
-        assert out[0].params["composition_hash"] == comp_hash
-
-    def test_adapter_metrics_empty_dict_pre_backtest(self, sbe):
-        """AC-1: metrics must be empty {} before backtesting — never pre-filled from oos_metrics."""
-        result_doc = _make_community_result(n_candidates=1)
-        out = sbe.community_candidate_infos(result_doc, max_candidates=10)
-        assert out[0].metrics == {}, (
-            f"metrics must be empty {{}} before backtesting; got {out[0].metrics!r}. "
-            "oos_metrics from the loader must NOT be injected — backtest runs fresh."
-        )
-
-    def test_adapter_backtest_error_is_none_pre_backtest(self, sbe):
-        """AC-1: backtest_error must be None before any backtest attempt."""
-        result_doc = _make_community_result(n_candidates=1)
-        out = sbe.community_candidate_infos(result_doc, max_candidates=10)
-        assert out[0].backtest_error is None
-
-    def test_adapter_count_matches_candidates_list(self, sbe):
-        """AC-1: adapter returns one CandidateInfo per candidate (up to max_candidates)."""
-        n = 3
-        result_doc = _make_community_result(n_candidates=n)
-        out = sbe.community_candidate_infos(result_doc, max_candidates=10)
-        assert len(out) == n, f"Expected {n} CandidateInfo objects; got {len(out)}"
-
-
-class TestCommunityAdapterEmptyAndUnavailable:
-    """AC-1 edge cases: empty input and available=False → []."""
-
-    def test_adapter_available_false_returns_empty_list(self, sbe):
-        """AC-1: available=False → [] regardless of candidates content."""
-        result_doc = _make_community_result(available=False)
-        out = sbe.community_candidate_infos(result_doc, max_candidates=10)
-        assert out == [], (
-            "community_candidate_infos must return [] when available=False; "
-            "this prevents unavailable community results from polluting the gate"
-        )
-
-    def test_adapter_empty_candidates_list_returns_empty_list(self, sbe):
-        """AC-1: candidates=[] → [] even when available=True."""
-        result_doc = {
-            "available": True,
-            "candidates": [],
-            "stats": {"pulled": 0, "valid": 0},
-            "source": "captplanet",
-        }
-        out = sbe.community_candidate_infos(result_doc, max_candidates=10)
-        assert out == [], "community_candidate_infos must return [] when candidates list is empty"
-
-
-class TestCommunityAdapterCap:
-    """AC-3: max_candidates kwarg caps the output deterministically."""
-
-    def test_adapter_caps_at_max_candidates(self, sbe):
-        """AC-3: when len(candidates) > max_candidates, output is truncated to max_candidates."""
-        n = 5
-        cap = 2
-        result_doc = _make_community_result(n_candidates=n)
-        out = sbe.community_candidate_infos(result_doc, max_candidates=cap)
-        assert len(out) == cap, (
-            f"Adapter must cap output at max_candidates={cap}; got {len(out)} items"
-        )
-
-    def test_adapter_cap_is_deterministic_takes_first(self, sbe):
-        """AC-3: truncation must be deterministic — takes the first max_candidates items."""
-        n = 4
-        cap = 2
-        result_doc = _make_community_result(n_candidates=n)
-        out_full = sbe.community_candidate_infos(result_doc, max_candidates=n)
-        out_capped = sbe.community_candidate_infos(result_doc, max_candidates=cap)
-        # The capped result must be a prefix of the full result
-        assert [i.candidate_id for i in out_capped] == [i.candidate_id for i in out_full[:cap]], (
-            "Truncation must be deterministic: capped result must be a prefix of the full result"
-        )
-
-    def test_adapter_max_candidates_uses_module_constant_as_default(self, sbe):
-        """AC-3: MAX_COMMUNITY_CANDIDATES_PER_RUN is the natural default for the cap."""
-        cap = sbe.MAX_COMMUNITY_CANDIDATES_PER_RUN
-        # Build more candidates than the cap
-        n = cap + 3
-        result_doc = _make_community_result(n_candidates=n)
-        # Passing the constant explicitly must work the same as enforcement inside propose_strategies
-        out = sbe.community_candidate_infos(result_doc, max_candidates=cap)
-        assert len(out) == cap, (
-            f"Adapter with max_candidates=MAX_COMMUNITY_CANDIDATES_PER_RUN ({cap}) "
-            f"must cap at {cap}; got {len(out)}"
-        )
-
-
-# ===========================================================================
 # SECTION 3 — AC-2: gate receives the FULL batch (template + community together)
 # ===========================================================================
 
@@ -393,7 +310,7 @@ class TestGateReceivesFullBatch:
     def test_gate_input_includes_community_candidate_ids(self, sbe):
         """AC-2: community candidate IDs appear in the candidate_ids passed to evaluate_candidate_batch."""
         community_result = _make_community_result(n_candidates=2)
-        community_cands = sbe.community_candidate_infos(community_result, max_candidates=10)
+        community_cands = _make_community_candidate_infos(community_result, max_candidates=10)
 
         fake_result = _make_fake_backtest_result(n_days=100)
         captured_batch = []
@@ -436,7 +353,7 @@ class TestGateReceivesFullBatch:
         The gate must receive BOTH template and community candidates — not just community.
         """
         community_result = _make_community_result(n_candidates=1)
-        community_cands = sbe.community_candidate_infos(community_result, max_candidates=10)
+        community_cands = _make_community_candidate_infos(community_result, max_candidates=10)
 
         fake_result = _make_fake_backtest_result(n_days=100)
         captured_batch = []
@@ -446,6 +363,7 @@ class TestGateReceivesFullBatch:
             return _make_empty_gated_batch()
 
         with (
+            _patch_builder_generates(n_plans=2),
             patch("advisors.strategy_builder_engine.run_backtest", return_value=fake_result),
             patch(
                 "advisors.strategy_builder_engine.evaluate_candidate_batch",
@@ -477,7 +395,7 @@ class TestGateReceivesFullBatch:
         Two separate gate calls (one for template, one for community) is a FDR violation.
         """
         community_result = _make_community_result(n_candidates=1)
-        community_cands = sbe.community_candidate_infos(community_result, max_candidates=10)
+        community_cands = _make_community_candidate_infos(community_result, max_candidates=10)
 
         fake_result = _make_fake_backtest_result(n_days=100)
         mock_gate = MagicMock(return_value=_make_empty_gated_batch())
@@ -646,6 +564,7 @@ class TestBacktestFailureIsolation:
             return _make_empty_gated_batch()
 
         with (
+            _patch_builder_generates(n_plans=2),
             patch("advisors.strategy_builder_engine.run_backtest", side_effect=_selective_run),
             patch(
                 "advisors.strategy_builder_engine.evaluate_candidate_batch",
@@ -743,7 +662,7 @@ class TestCommunityProvenance:
     def test_persisted_observation_has_template_id_community(self, sbe):
         """AC-5: insert_advisor_observation must be called with a raw_response containing template_id='community'."""
         community_result = _make_community_result(n_candidates=1)
-        community_cands = sbe.community_candidate_infos(community_result, max_candidates=10)
+        community_cands = _make_community_candidate_infos(community_result, max_candidates=10)
 
         fake_result = _make_fake_backtest_result(n_days=100)
         # Make the community candidate a survivor
@@ -785,7 +704,7 @@ class TestCommunityProvenance:
     def test_persisted_observation_raw_response_contains_sid(self, sbe):
         """AC-5: the raw_response for a surviving community candidate must reference the sid."""
         community_result = _make_community_result(n_candidates=1)
-        community_cands = sbe.community_candidate_infos(community_result, max_candidates=10)
+        community_cands = _make_community_candidate_infos(community_result, max_candidates=10)
         expected_sid = community_cands[0].candidate_id  # candidate_id IS the sid (AC-1)
 
         fake_result = _make_fake_backtest_result(n_days=100)
@@ -833,7 +752,7 @@ class TestCommunityProvenance:
     def test_persisted_subject_id_is_sid(self, sbe):
         """AC-5: insert_advisor_observation must be called with subject_id=<sid>."""
         community_result = _make_community_result(n_candidates=1)
-        community_cands = sbe.community_candidate_infos(community_result, max_candidates=10)
+        community_cands = _make_community_candidate_infos(community_result, max_candidates=10)
         expected_sid = community_cands[0].candidate_id
 
         fake_result = _make_fake_backtest_result(n_days=100)
@@ -1013,33 +932,15 @@ class TestNoRegression:
 class TestAdvisorySafetyAndNeverRaises:
     """AC-7: no LIVE_EXECUTION path, no allowlist entry, never raises."""
 
-    def test_community_candidate_infos_never_raises_on_malformed_result(self, sbe):
-        """AC-7: adapter must not raise even when community_result has unexpected shape."""
-        # Missing keys, wrong types — the adapter must degrade gracefully
-        bad_inputs = [
-            {},
-            {"available": True},
-            {"available": True, "candidates": None},
-            {"available": True, "candidates": "not-a-list"},
-            None,
-        ]
-        for bad in bad_inputs:
-            try:
-                out = sbe.community_candidate_infos(bad, max_candidates=10)
-                # If it returns, it must be a list (possibly empty)
-                assert isinstance(out, list), (
-                    f"community_candidate_infos({bad!r}) must return a list or raise; got {type(out).__name__}"
-                )
-            except Exception as exc:
-                pytest.fail(
-                    f"community_candidate_infos({bad!r}) raised {type(exc).__name__}: {exc}. "
-                    "The adapter must never raise — it is on an advisory path."
-                )
+# C5 re-point: the adapter-malformed-input never-raises test was DELETED — the old
+# community_candidate_infos adapter is gone (EDGE-1). The objective-matched admission's
+# never-raises-on-malformed contract is covered in
+# tests/advisors/test_build_plan_atlas_admission.py (admit_community_candidates / load_atlas_candidates).
 
     def test_propose_strategies_never_raises_on_community_exception(self, sbe):
         """AC-7: even if all community candidate processing raises unexpected errors, no exception escapes."""
         community_result = _make_community_result(n_candidates=2)
-        community_cands = sbe.community_candidate_infos(community_result, max_candidates=10)
+        community_cands = _make_community_candidate_infos(community_result, max_candidates=10)
 
         with (
             patch(
@@ -1071,7 +972,7 @@ class TestAdvisorySafetyAndNeverRaises:
     def test_propose_strategies_returns_proposal_run_on_community_failures(self, sbe):
         """AC-7: catastrophic failure → ProposalRun with error set, not an exception."""
         community_result = _make_community_result(n_candidates=1)
-        community_cands = sbe.community_candidate_infos(community_result, max_candidates=10)
+        community_cands = _make_community_candidate_infos(community_result, max_candidates=10)
 
         with (
             patch(
@@ -1111,18 +1012,15 @@ class TestAdvisorySafetyAndNeverRaises:
             "this is an off-execution-path advisory module"
         )
 
-    def test_community_candidate_infos_does_not_call_live_execution(self, sbe):
-        """AC-7: community_candidate_infos must not touch any live-execution flag."""
-        result_doc = _make_community_result(n_candidates=1)
-        # Just calling the adapter with a fully valid result must not interact with any execution path
-        # We assert no exception and a list return — actual flag isolation is verified by architecture
-        out = sbe.community_candidate_infos(result_doc, max_candidates=10)
-        assert isinstance(out, list)
+    # C5 re-point: the adapter-does-not-call-live-execution test was DELETED — the old
+    # community_candidate_infos adapter is gone (EDGE-1). The objective-matched admission's
+    # advisory-only / no-LIVE_EXECUTION contract is covered in
+    # tests/advisors/test_build_plan_atlas_admission.py and the C5 AC-22 grep guard.
 
     def test_propose_strategies_with_community_candidates_returns_proposal_run_type(self, sbe):
         """AC-7: the return type is always ProposalRun — not a bare dict or None."""
         community_result = _make_community_result(n_candidates=1)
-        community_cands = sbe.community_candidate_infos(community_result, max_candidates=10)
+        community_cands = _make_community_candidate_infos(community_result, max_candidates=10)
 
         with (
             patch(

@@ -1,9 +1,9 @@
 # advisors/symphony_schema
 
-> Pure-stdlib Composer decision-tree schema layer: 16 constructors, 4 read-only inspection functions, and a grammar-pinned vocabulary that builds and validates synthetic ``raw_value`` trees for the Planet Stopper Strategy Builder.
+> Pure-stdlib Composer decision-tree schema layer: 16 constructors, 4 read-only inspection functions, and a grammar-pinned vocabulary that builds and validates synthetic ``raw_value`` trees for the Planet Stopper Strategy Builder. Constructor count stays at 16 — `make_weight_marketcap` was not added because Composer deprecated market-cap weighting (HTTP 422; 2026-06-20; see `DE-SB-MARKETCAP-DEPRECATED` in `DECISIONS.md`).
 
 **Source:** `advisors/symphony_schema.py`
-**Last updated:** 2026-06-18
+**Last updated:** 2026-06-20 (binary-encoding-fix: _collect_condition_tickers now collects binary-leaf lhs_ticker/rhs.ticker)
 
 ## Overview
 
@@ -110,7 +110,11 @@ Return the set of all real ticker strings present in the tree.
 
 **Never raises.** Never mutates input. Iterative DFS.
 
-**AC-9 (grammar-foundation):** Extended to also collect tickers from compound `condition` blocks (specifically from `binary-compound` nodes' `tickers` list). The `%` placeholder emitted by `make_binary_compound_condition` for the broadcast lhs operand is excluded — it is a grammar placeholder, not a real ticker.
+**AC-9 (grammar-foundation):** Extended to collect tickers from compound `condition` blocks via `_collect_condition_tickers`. Collects:
+- `binary-compound` nodes: `tickers[]` list (the broadcast lhs operand pool)
+- `binary` nodes (binary-encoding-fix, 2026-06-20): `lhs_ticker` (the lhs operand ticker) and `rhs.ticker` (the rhs comparison ticker, when present) — both skipping the `%` placeholder. Prior to this fix, `extract_tickers` did not descend into binary-leaf `lhs_fn`/`lhs_ticker` fields, so a strategy gating on e.g. RSI(PSR) referenced PSR in the condition but `extract_tickers` returned an empty set for that condition operand — causing the membership validator in the generator to incorrectly pass or reject plans. This fix closes a pre-existing `extract_tickers` blind spot for binary condition operands.
+
+The `%` placeholder emitted by `make_binary_compound_condition` for the broadcast lhs operand is excluded in all paths — it is a grammar placeholder, not a real ticker.
 
 **Parameters:**
 
