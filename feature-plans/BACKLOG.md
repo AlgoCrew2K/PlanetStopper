@@ -1,5 +1,5 @@
 # Planet Stopper — Open Backlog
-**As of:** 2026-06-19
+**As of:** 2026-06-21
 **Source of truth for shipped/obsolete history:** `.claude/backlog-reconciliation.md`
 
 This file lists only work that is genuinely open. Plans renamed to `.completed.md` or `.obsolete.md`
@@ -29,16 +29,6 @@ Small; Tier 1.
 - **DEP-1:** tighten `anthropic~=0.85.0` and `feedparser>=6.0` to exact `==` pins in
   `requirements.txt` / `pyproject.toml`.
 
-### `test-reload-leak-remediation.md` — endemic `importlib.reload`-per-test memory leak
-Pre-existing C1 test-infra debt: `tests/advisors/` files call `importlib.reload(...)` per
-test → orphans heavy modules (`pymongo`/`atlas_cache`) → unbounded growth that OOMs
-single-process full-tree verification (`-p no:xdist`). Sites: `test_community_strats.py`
-(35), `test_atlas_cache.py` (1), `test_community_strats_timeout.py` (1). The
-`test_universe_provider.py` portion is already fixed (commit `e52e17c`, the reference
-pattern). Dedicated remediation cycle — own branch/team; the `community_strats` reloads are
-load-bearing for patch-visibility (real test-breakage risk). Discovered by the C5 full-tree
-gate, 2026-06-21.
-
 ---
 
 ## Deployment follow-on
@@ -47,3 +37,18 @@ gate, 2026-06-21.
 Full E2E validation of the production droplet: confirm daemon healthy, council timer
 firing at 03:00, no two-daemon conflict, MARKET_PRISM rows arriving nightly, Overview
 tab rendering council output. Requires operator access to the droplet.
+
+---
+
+## Shipped this cycle (2026-06-21)
+
+### `test-reload-leak-remediation.md` — `importlib.reload` removal (commit 470de98)
+All 37 per-test `importlib.reload` calls removed from `tests/advisors/` (35 in
+`test_community_strats.py`, 1 each in `test_atlas_cache.py` and
+`test_community_strats_timeout.py`). Replaced with module-attribute patching and env-var-only
+isolation; per-file AST anti-recurrence guard added. Behavior-preserving: 722 passed / 4
+skipped. NOTE: The original hypothesis (reloads = dominant OOM driver) was falsified — the
+reloads contributed only ~1.1 GB of the ~8 GB single-process peak. The real driver is
+cumulative heavy-lib footprint (quantstats/Optuna/anthropic), which is bounded under xdist (CI
+mode). Single-process full-tree peak reduced from 8.1 GB to 6.9 GB. See plan doc for full
+empirical detail.

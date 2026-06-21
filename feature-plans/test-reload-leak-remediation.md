@@ -1,101 +1,116 @@
 # Tracked Debt — `importlib.reload`-per-test memory-leak remediation
 
-**Status:** ready (dedicated post-feature remediation cycle — NOT a Strategy-Builder-Real task)
+**Status:** shipped (commit 470de98, branch fix/test-reload-leak)
 **Type:** pre-existing test-infrastructure debt
 **Discovered:** 2026-06-21, by the Strategy-Builder-Real (C5) single-process full-tree gate
 **Classification:** PRE-EXISTING C1-era test-debt (git-proven — see "Provenance" below). NOT a C5 defect.
-**Owner:** TBD (own branch + own team for the remediation cycle)
+**Shipped:** 2026-06-21
 
 ---
 
 ## Summary
 
-Several `tests/advisors/` test files call `importlib.reload(...)` once (or many times) **per
-test** to "pick up a new env var" or "re-bind to a patched dependency." `importlib.reload`
-is a memory-leak anti-pattern: it re-executes the module into a **new** module object while
-other already-imported modules keep references to the **old** one, so each reload orphans a
-whole module's worth of objects (plus its heavy transitive imports — `pymongo`,
-`advisors.atlas_cache`, `pandas`/`requests` state). Across a multi-file run the orphaned
-modules accumulate **unbounded**, which **OOMs single-process full-tree verification**
-(`pytest -p no:xdist`). Under the project's default/CI test mode (`pytest -n auto`, xdist) the
-accumulation is sharded across worker processes, so it stays bounded — which is why this only
-surfaces under the operator-mandated single-process pre-merge gate.
+Several `tests/advisors/` test files called `importlib.reload(...)` once (or many times) **per
+test** to "pick up a new env var" or "re-bind to a patched dependency." The initial hypothesis
+was that these reloads were the dominant memory driver causing single-process full-tree
+verification to OOM — but this was falsified by controlled measurement (see "Red Herring"
+below). The reloads were nonetheless dead weight and were removed: behavior-preserving
+refactor, patch-visibility maintained via module-attribute patching and env-var-only isolation.
 
-This is **partially fixed already**: the `test_universe_provider.py` portion was removed on the
-C5 feature branch (commit `e52e17c`) to unblock that feature's full-tree gate. The remaining
-sites below are the dedicated remediation deliverable.
+## What shipped (commit 470de98)
 
-## Affected files + site counts (remaining, as of `e52e17c`)
+- All 37 per-test `importlib.reload(...)` calls removed from 3 `tests/advisors/` files:
+  - `test_community_strats.py` — 35 sites
+  - `test_community_strats_timeout.py` — 1 site
+  - `test_atlas_cache.py` — 1 site
+- Replacement strategy (per site, per access-pattern analysis — see below):
+  - Module-attribute patching (`patch("advisors.community_strats.cached_pull")`) where
+    `community_strats` accesses the symbol via module attribute at call time
+  - Env-var-only isolation (`monkeypatch.setenv` + `tmp_path`) where the reload existed
+    only to pick up a new `ATLAS_CACHE_DB_PATH`
+- Per-file AST anti-recurrence guard added to each file:
+  `test_no_importlib_reload_in_this_test_module` — enforces zero future reloads per file
+- **Behavior-preserving:** 722 passed / 4 skipped on full `tests/advisors/` `-n0` run
+  (+3 tests = the new AST guards). No production code changed.
 
-| File | `importlib.reload` sites | Notes |
-|------|--------------------------|-------|
-| `tests/advisors/test_community_strats.py` | **35** | DOMINANT leaker. A `module_under_test` fixture reloads `advisors.community_strats` per test, AND ~all tests reload AGAIN inside the test body to re-bind to a patched dependency. `community_strats` pulls in `atlas_cache` + `pymongo` → each reload orphans a heavy module. |
-| `tests/advisors/test_atlas_cache.py` | 1 | `isolated_atlas_cache_db`-style fixture reload. |
-| `tests/advisors/test_community_strats_timeout.py` | 1 | Single reload of `advisors.community_strats`. |
-| `tests/advisors/test_universe_provider.py` | 0 (FIXED, `e52e17c`) | Reference implementation of the fix — see below. |
+## Why the fix is correct (access-pattern analysis)
 
-## Mechanism (why it leaks, why interaction-dependent)
+`community_strats.py:25` does `from advisors import atlas_cache` (imports the MODULE OBJECT,
+not a name from it). Line 195 calls `atlas_cache.cached_pull(...)` — a call-time module-attribute
+lookup. This means `patch("advisors.atlas_cache.cached_pull")` patches the attribute on the live
+module object, which `community_strats` will see at call time WITHOUT any reload. The reload was
+adding no patch-visibility — it was dead weight.
 
-- `importlib.reload(M)` runs `M`'s top-level code again and updates `sys.modules["M"]` in place,
-  but any object that already did `from M import name` or holds `M.func` keeps pointing at the
-  PRE-reload definitions. The pre-reload module object (and everything it imported) cannot be
-  garbage-collected while those references live. Each per-test reload therefore leaks ~one
-  module graph.
-- **Standalone-clean, multi-file-leaky:** run ALONE, the leaking file has few other holders of
-  the reloaded module, so the orphan count is small and bounded (`test_universe_provider.py`
-  alone peaked 0.16 GB). In a full-`tests/advisors/` run, MANY other test modules import
-  `community_strats`/`atlas_cache` first, so the per-test reload orphans references all of them
-  hold → the accumulation compounds (observed: full `tests/advisors/` climbing 1.2 → 5.5 GB+
-  single-process before fix; still 3.6 GB+ with only the universe_provider portion fixed).
+Similarly: `pymongo` is lazy-imported inside the fetch closure; `ThreadPoolExecutor` is patched
+at call time. `atlas_cache` resolves `ATLAS_CACHE_DB_PATH` from `os.environ` at call time, so
+`monkeypatch.setenv` + `tmp_path` fully isolates without any module reload.
 
-## The LOAD-BEARING risk (why this is NOT a mechanical sweep)
+## The red herring — original hypothesis falsified (document honestly)
 
-`test_community_strats.py`'s reloads are **load-bearing for patch visibility**, not just env
-isolation: tests do `patch("advisors.atlas_cache.cached_pull", ...)` then
-`importlib.reload(community_strats)` so the reloaded `community_strats` re-binds to the patched
-dependency. Naively deleting these reloads can BREAK pre-existing tests if `community_strats`
-binds its dependency at import time (`from advisors.atlas_cache import cached_pull`) rather than
-accessing it as a module attribute at call time (`atlas_cache.cached_pull(...)`). Each site must
-be verified before removal. This is why it was NOT swept inside C5 (high-risk, unrelated to the
-feature).
+The plan's central hypothesis was: "each `importlib.reload` orphans a module graph → unbounded
+balloon → ~14 GB single-process peak." This was **falsified by controlled before/after
+measurement:**
 
-## Candidate fixes (per site, choose by what each test actually needs)
+| Condition | Peak RSS |
+|-----------|----------|
+| BEFORE (37 reloads present) | **8.067 GB** (`.claude/_before_clean.txt`) |
+| AFTER (reloads removed) | **6.932 GB** (`.claude/_after_clean.txt`) |
+| **Reduction** | **~1.1 GB** |
 
-1. **Env-var-only isolation (the universe_provider fix):** if the reload exists merely to "pick
-   up a new env var," delete it — `atlas_cache._db_path()` reads `ATLAS_CACHE_DB_PATH` from
-   `os.environ` at CALL time, so `monkeypatch.setenv(...)` + `tmp_path` already isolate. Proven
-   sufficient in `test_universe_provider.py` (`e52e17c`).
-2. **Re-point the patch target:** if the reload exists for patch visibility, patch the symbol
-   where it is USED (e.g. `patch("advisors.community_strats.cached_pull")` if `community_strats`
-   imported it by name, or `patch("advisors.atlas_cache.cached_pull")` + ensure `community_strats`
-   calls it via module attribute). This removes the need to reload for re-binding.
-3. **Fixture-teardown reset (last resort, if a reload is genuinely unavoidable):** in a fixture
-   `yield` teardown, `sys.modules.pop("advisors.community_strats", None)` + `gc.collect()` to
-   force the orphan free per test (bounds the accumulation even if reload stays).
+The reloads contributed ~1.1 GB, NOT the originally hypothesized multi-GB balloon. The fix is
+correct and worth keeping (dead weight removed, patch-visibility explicitly verified, AST guard
+added) — but it does NOT bring single-process `tests/advisors/` into a sub-1 GB footprint. The
+dominant driver is elsewhere.
 
-## Acceptance criteria for the remediation cycle
+**The earlier 14.3 / 13.5 GB readings** that prompted the original OOM diagnosis were
+**measurement contamination** — concurrent overlapping `pytest` processes running at the same
+time inflated the apparent single-process peak. The true isolated single-process peak was always
+~8 GB before the fix.
 
-- **AC-1:** Zero `importlib.reload(...)` calls remain in `tests/advisors/` (enforce with an
-  AST guard like `test_universe_provider.py::test_no_importlib_reload_in_this_test_module`,
-  generalized to the whole dir or replicated per file).
-- **AC-2:** Every affected file's tests stay GREEN with the same assertions (no weakening; this
-  is isolation-mechanism change only, not a behavior change).
-- **AC-3 (the proof):** `pytest tests/advisors/ -m "not live and not slow and not perf"
-  -p no:xdist -o addopts=` completes BOUNDED (~base sub-GB peak) with 0 failed / 0 errors.
-  Bounded single-process completion IS the proof.
+## The real driver — cumulative heavy-lib footprint
+
+Per-file RSS diagnostic (`.claude/_perfile_diag.txt`, run on the fixed branch, 726 tests, final RSS 4.10 GB):
+
+| File | delta_GB | Notes |
+|------|----------|-------|
+| `test_builder_scheduler.py` | **+1.49 GB** | Dominant grower — imports quantstats/Optuna/anthropic |
+| `test_symphony_schema.py` | +0.69 GB | |
+| `test_community_strats_timeout.py` | +0.54 GB | |
+| `test_strategy_builder_engine.py` | +0.30 GB | |
+| All others | < 0.22 GB each | |
+
+This is **cumulative heavy-library / feature-test object footprint** (quantstats, pandas, Optuna,
+anthropic SDK) that accumulates across test files in a single process. It is NOT module-orphaning
+from reloads.
+
+**Why this is single-process-ONLY:** xdist (the CI and real-world test mode) bounds it per-worker
+(~270 MB per worker). This is not a production or daemon leak — the strategy-builder scheduler
+runs as fresh weekly subprocesses in prod, so no accumulation occurs.
+
+## AC status
+
+| AC | Description | Status |
+|----|-------------|--------|
+| AC-1 | Zero `importlib.reload(...)` in `tests/advisors/`; AST guard per file | **DONE** |
+| AC-2 | All affected files GREEN with same assertions; behavior-preserving | **DONE** — 722 passed / 4 skipped |
+| AC-3 | `tests/advisors/` `-p no:xdist` completes bounded (sub-GB peak) | **NOT ACHIEVED** — residual 6.9 GB peak is multi-cause heavy-lib footprint, not module-orphaning. xdist-bounded in CI (~270 MB/worker); not a prod leak. Tracked LOW PRIORITY as a separate concern. |
+
+## What AC-3 not achieved means in practice
+
+- CI (`pytest -n auto`, xdist) is UNAFFECTED — always bounded per-worker.
+- The daemon/production path is UNAFFECTED — no accumulation.
+- Single-process full-tree verification still requires xdist exclusion for `tests/advisors/` or
+  a large-RAM host. This is a known constraint tracked separately; it does not block this PR.
 
 ## Provenance (git evidence the leak is pre-existing, not C5)
 
 - C5 (`4de25d8..6d20d77`) did NOT touch `tests/advisors/test_community_strats.py`,
-  `test_atlas_cache.py`, `test_community_strats_timeout.py`, `test_universe_provider.py`,
-  `tests/advisors/conftest.py`, or production `advisors/community_strats.py` /
-  `advisors/atlas_cache.py` / `advisors/universe_provider.py` (all `git diff --stat` empty).
-- The leaking surface is byte-identical to the pre-C5 commit `2a1787e`. Identical code +
-  identical inputs ⇒ identical leak. The mechanism predates C5; C5's larger footprint (more
-  importers of `community_strats`/`atlas_cache` collected before the leaking files) merely
-  pushed the single-process orphan count past the OOM threshold, exposing it at the C5 gate.
+  `test_atlas_cache.py`, `test_community_strats_timeout.py`, or the production modules they test.
+- The reload pattern is byte-identical to the pre-C5 commit `2a1787e`. C5's larger footprint
+  (more importers of `community_strats`/`atlas_cache` collected before the leaking files) merely
+  raised the single-process accumulation, exposing it at the C5 gate — it did not introduce it.
 
 ## Reference implementation
 
 `tests/advisors/test_universe_provider.py` @ `e52e17c` — the env-var-only isolation pattern +
-the AST anti-recurrence guard. Use it as the template for the remediation cycle.
+the AST anti-recurrence guard. Used as the template for this remediation cycle.
