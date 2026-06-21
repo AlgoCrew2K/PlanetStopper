@@ -214,3 +214,23 @@ Thirty-seven `importlib.reload(...)` calls were removed from three test files in
 The reloads were dead weight: all three modules resolve their database path and patch targets from `os.environ` at call time, so the existing `monkeypatch.setenv` fixtures provide full isolation without re-executing the module. Patches were re-pointed to the correct module-attribute targets. Behavior is preserved: every test's assertions are unchanged. Three AST-based anti-recurrence guards (`test_no_importlib_reload_in_this_test_module`) were added, one per file, to prevent the pattern from returning.
 
 The residual ~6.9 GB single-process footprint is dominated by cumulative heavy-library retention (quantstats, Optuna, anthropic SDK) across the full `tests/advisors/` suite. That is a separate concern: it is bounded per-worker under xdist, it is not a production daemon leak, and it is tracked as a low-priority follow-on item in `feature-plans/BACKLOG.md`.
+
+---
+
+## Atlas Community-Strategies Cache Fix (PR #66, 2026-06-21)
+
+The community-strategies weekly cache was silently broken: every attempt to populate it failed, so every Strategy Builder run fetched live from Atlas even when a cached result should have been served.
+
+Two bugs were responsible. **Bug 1 — ObjectId serialization:** The MongoDB projection used to fetch community strategies did not suppress the `_id` field. MongoDB's default `_id` is a BSON `ObjectId`, which is not JSON-serializable. The `atlas_cache` layer called `json.dumps` on the result to write it to the cache; the `TypeError` was swallowed, and the cache row was never written. Every subsequent call re-fetched live from Atlas. The fix adds `"_id": 0` to the projection. **Bug 2 — unbounded fetch OOM:** The original fetch retrieved all matching documents with no server-side limit. The Atlas collection holds roughly 11,000 strategy documents; pulling them all in one call exhausted the 4 GB droplet's memory and killed the process. The fix applies a server-side sort (`oos_metrics.sharpe` descending) and limit (`_MAX_FETCH_DOCS=500`) inside the fetch function so only the top candidates are transferred. The `atlas_cache` upsert was also hardened with `json.dumps(..., default=str)` as a defense-in-depth serialization guard.
+
+After these fixes the cache populates correctly on first access and serves the cached result for the remainder of the week. The Strategy Builder admitted 481 community candidates on the first live run post-fix. Advisory-only; no execution-path impact.
+
+---
+
+## Test and CI Housekeeping (PR #67, PR #68, 2026-06-21)
+
+Internal changes, no user-visible behavior affected.
+
+**PR #67 — news-corpus recency test determinism:** A recency-scoring test was anchored to `datetime.now()` rather than a fixture timestamp. As wall-clock time advanced, the exponential-decay weight of a fixture article drifted, eventually causing the test to fail. The fix anchors the "now" reference used by the scoring function to the fixture's own timestamp, making the assertion deterministic regardless of when the test runs.
+
+**PR #68 — GitHub Actions CI restored to green:** The automated test pipeline (`ruff format --check` + full pytest) had been continuously failing since the initial project setup due to formatting debt in the Strategy Builder modules introduced during the #63 development cycle. Thirty-four files were reformatted to satisfy `ruff`'s style rules, and ten pre-existing tests that relied on wall-clock time or uncontrolled external state were made hermetic. The CI workflow now runs and passes cleanly on every push. Automated test gating is active.
