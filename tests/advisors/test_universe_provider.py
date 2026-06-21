@@ -44,11 +44,9 @@ No live network calls. No production DB writes.
 from __future__ import annotations
 
 import ast
-import importlib
 import json
 import os
 import pathlib
-import sys
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -113,19 +111,21 @@ def asset_fixture():
 
 @pytest.fixture()
 def isolated_cache(tmp_path, monkeypatch):
-    """Redirect ATLAS_CACHE_DB_PATH to a per-test temp file and reload the module.
+    """Redirect ATLAS_CACHE_DB_PATH to a per-test temp file for cache isolation.
 
     This prevents cross-test cache pollution and keeps all writes off disk.
     Returns the db_path string so tests can inspect cache state directly.
+
+    No module reload is needed (and reloading per-test is a memory-leak anti-pattern —
+    importlib.reload installs a NEW module object while other already-imported modules
+    keep references to the OLD one, leaking a module per test across a multi-file run):
+    atlas_cache._db_path() reads ATLAS_CACHE_DB_PATH from os.environ at CALL time
+    (atlas_cache.py), so monkeypatch.setenv alone makes the new path take effect; and
+    universe_provider has no module-level mutable cache (it routes through atlas_cache's
+    per-test SQLite DB), so the tmp_path env var fully isolates each test.
     """
     db_path = str(tmp_path / "test_atlas_cache.db")
     monkeypatch.setenv("ATLAS_CACHE_DB_PATH", db_path)
-    # Reload atlas_cache so it picks up the new env var.
-    if "advisors.atlas_cache" in sys.modules:
-        importlib.reload(sys.modules["advisors.atlas_cache"])
-    # Reload universe_provider so it starts with a cold module-level cache.
-    if "advisors.universe_provider" in sys.modules:
-        importlib.reload(sys.modules["advisors.universe_provider"])
     yield db_path
 
 
@@ -503,9 +503,7 @@ class TestWeeklyCache:
         with patch("requests.get", return_value=mock_resp):
             with patch.object(atlas_cache, "cached_pull", wraps=atlas_cache.cached_pull) as spy:
                 from advisors import universe_provider
-                if "advisors.universe_provider" in sys.modules:
-                    importlib.reload(sys.modules["advisors.universe_provider"])
-                    from advisors import universe_provider  # noqa: F811
+
                 universe_provider.fetch_universe()
 
         assert spy.called, "fetch_universe must route through atlas_cache.cached_pull"
@@ -1043,3 +1041,39 @@ class TestWarehousePersistence:
             "universe_provider.py contains forbidden optimization-DB imports (AC-6):\n"
             + "\n".join(violations)
         )
+
+
+# ---------------------------------------------------------------------------
+# Anti-recurrence guard: importlib.reload-per-test is a memory-leak anti-pattern
+# (it installs a NEW module object each call while other already-imported modules
+# keep references to the OLD one — leaking a whole module per test across a
+# multi-file run, which OOMs single-process full-tree verification). This file
+# was the first to leak it; this guard keeps it from creeping back into THIS file.
+# Isolation here is env-var-only (ATLAS_CACHE_DB_PATH via monkeypatch + tmp_path).
+# ---------------------------------------------------------------------------
+
+
+def test_no_importlib_reload_in_this_test_module():
+    """Guard: this test module must not call importlib.reload (memory-leak anti-pattern).
+
+    Detected via AST (a call to an attribute named 'reload' on a name/attr 'importlib'),
+    so a docstring or comment mentioning the word does not trip it.
+    """
+    module_path = pathlib.Path(__file__)
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+
+    offenders = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "reload":
+                target = node.func.value
+                root = target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", "")
+                if root == "importlib" or node.func.attr == "reload":
+                    offenders.append(node.lineno)
+
+    assert not offenders, (
+        "importlib.reload(...) found in test_universe_provider.py at lines "
+        f"{offenders} — this is a per-test memory-leak anti-pattern. Isolate via "
+        "monkeypatch.setenv(ATLAS_CACHE_DB_PATH) + tmp_path instead (atlas_cache reads "
+        "the path at call time; universe_provider has no module-level mutable cache)."
+    )
