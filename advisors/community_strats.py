@@ -28,9 +28,14 @@ logger = logging.getLogger(__name__)
 
 # Wall-clock bound for the live Atlas fetch leg. serverSelectionTimeoutMS /
 # connectTimeoutMS do NOT cover mongodb+srv:// SRV/TXT DNS resolution (confirmed:
-# hangs >50s with those set). Chosen > 10s serverSelectionTimeoutMS so a
-# reachable-but-slow Atlas still completes server selection.
-_ATLAS_FETCH_TIMEOUT_S: float = 12.0
+# hangs >50s with those set). 45s is intentionally generous: the bound exists to
+# catch a genuine SRV/DNS hang (DE-CS-002), NOT to be tight. A cold connect +
+# server-side sharpe-sort over ~11k docs was live-observed to exceed 12s on the
+# droplet; the weekly cache (atlas_cache, ~7-day TTL) means this fetch runs at
+# most once per week, so a 45s bound is acceptable. 45s still terminates a true
+# hung SRV DNS resolution well before it would block the caller indefinitely.
+# (DE-ATLAS-CACHE-001 / AC-5)
+_ATLAS_FETCH_TIMEOUT_S: float = 45.0
 
 
 class _AtlasFetchTimeout(Exception):
@@ -43,12 +48,25 @@ class _AtlasFetchTimeout(Exception):
 
 # Inclusion projection: fetch only the fields the loader reads.
 # Omits 'backtest' and 'quantstats_metrics' (multi-MB arrays per doc).
+# "_id": 0 explicitly suppresses the BSON ObjectId field. pymongo includes
+# _id by default even when not in the inclusion list — ObjectId is not
+# JSON-serializable and would cause atlas_cache's json.dumps to raise
+# TypeError, silently dropping the cache row on every write attempt.
 _PROJECTION: dict = {
+    "_id": 0,
     "sid": 1,
     "name": 1,
     "edn_string": 1,
     "oos_metrics": 1,
 }
+
+# Server-side fetch cap: top-N docs by oos_metrics.sharpe desc.
+# Bounds memory and latency — captplanet.strategies holds ~11k docs; fetching
+# all would OOM the 4GB droplet (multi-MB edn_string fields × 11k = several GB).
+# 500 covers MAX_COMMUNITY_CANDIDATES_PER_RUN=20 with generous headroom for
+# dedup/validation loss. The public `limit` param (post-fetch, post-dedup)
+# is a separate, independent caller-level control — not the same as this cap.
+_MAX_FETCH_DOCS: int = 500
 
 # Atlas collection identifier — key used in the atlas_cache table.
 _COLLECTION_NAME = "captplanet.strategies"
@@ -159,7 +177,15 @@ def load_community_strategies(
         # Build a fetch_fn closure: lazy pymongo import inside so the module
         # is importable without pymongo installed.
         def _fetch_fn() -> list:
-            """Connect to Atlas and return the projected strategy documents."""
+            """Connect to Atlas and return the projected strategy documents.
+
+            Server-side sort + limit applied at query time:
+            - sort by oos_metrics.sharpe descending so the cap takes the best-sharpe
+              docs (missing-sharpe docs sort to the bottom in Mongo's collation).
+            - allowDiskUse=True prevents the 32 MB in-memory sort limit from
+              aborting the query on a large collection.
+            - .limit(_MAX_FETCH_DOCS) caps the network transfer and avoids OOM.
+            """
             import pymongo  # noqa: PLC0415
 
             mongo_client = pymongo.MongoClient(
@@ -168,7 +194,12 @@ def load_community_strategies(
                 connectTimeoutMS=10_000,
             )
             collection = mongo_client["captplanet"]["strategies"]
-            cursor = collection.find({}, _PROJECTION)
+            cursor = collection.find(
+                {},
+                _PROJECTION,
+                sort=[("oos_metrics.sharpe", pymongo.DESCENDING)],
+                allow_disk_use=True,
+            ).limit(_MAX_FETCH_DOCS)
             return list(cursor)
 
         def _bounded_fetch_fn() -> list:

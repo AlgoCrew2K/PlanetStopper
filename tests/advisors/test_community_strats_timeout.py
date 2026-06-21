@@ -50,10 +50,12 @@ import pytest
 # Module under test and helpers
 # ---------------------------------------------------------------------------
 
-# The expected timeout constant value per the feature plan.
-# Tests use this as the authoritative reference; after GREEN the implementation
-# must define _ATLAS_FETCH_TIMEOUT_S = 12.0 (or a value that makes timing hold).
-_BOUND = 12.0
+# The expected timeout constant value — raised from 12.0 to 45.0 (AC-5,
+# DE-ATLAS-CACHE-001): a cold mongodb+srv connect + server-side sharpe-sort over
+# ~11k docs was live-observed to exceed 12s on the droplet. The weekly cache makes
+# a 45s bound acceptable; 45s still terminates a genuine SRV/DNS hang well before
+# it would block indefinitely. Tests use this as the authoritative reference.
+_BOUND = 45.0
 
 # Wall-clock margin: thread start overhead on Windows CI.
 # A join-on-exit hang (wrong impl) would block _BOUND * 5 = 60s.
@@ -74,13 +76,20 @@ def _recursive_contains(obj: Any, substring: str) -> bool:
 def _make_fast_mongo_client_mock(docs: list) -> MagicMock:
     """Return a MagicMock MongoClient that immediately returns `docs` from find().
 
-    Chain: client["captplanet"]["strategies"].find({}, projection) -> iter(docs).
+    Chain: client["captplanet"]["strategies"].find({}, projection).limit(N) -> iter(docs).
     Handles both subscript (client[db][col]) and attribute (client.db.col) access.
+
+    Real pymongo: find() -> Cursor; Cursor.limit(n) -> Cursor (same object, iterable).
+    The mock must faithfully replicate this chain so that _fetch_fn's
+    `collection.find(...).limit(_MAX_FETCH_DOCS)` still yields the fixture docs.
     """
     mock_cursor = MagicMock()
     mock_cursor.__iter__ = MagicMock(return_value=iter(docs))
     # list(cursor) calls are used in _fetch_fn; make that work too
     mock_cursor.__len__ = MagicMock(return_value=len(docs))
+    # .limit(n) must return the same cursor so the chain find(...).limit(N) is iterable.
+    # Without this, .limit() returns a fresh MagicMock that is not wired to iter(docs).
+    mock_cursor.limit = MagicMock(return_value=mock_cursor)
 
     mock_collection = MagicMock()
     mock_collection.find.return_value = mock_cursor

@@ -3,17 +3,17 @@
 > Weekly-cached captplanet Atlas loader: validates, deduplicates, and filters community strategy documents for the Strategy Builder proposal suite.
 
 **Source:** `advisors/community_strats.py`
-**Last updated:** 2026-06-17 (wall-clock timeout — DE-CS-002)
+**Last updated:** 2026-06-21 (DE-ATLAS-CACHE-001: _id:0 projection + _MAX_FETCH_DOCS=500 + server-side sort+limit)
 
 ## Overview
 
 `advisors/community_strats.py` fetches strategy documents from the captplanet MongoDB Atlas `strategies` collection and returns a well-formed result dict of validated, deduplicated community-symphony candidates.
 
-The Atlas network read is routed through `advisors/atlas_cache.cached_pull` with a weekly TTL — the collection is fetched at most once per week per the operator's bill-protection directive. Validation, deduplication, and sharpe filtering run on the cached payload on every call (cheap, in-process). Only the raw projected docs are cached; the caller always receives freshly-processed results.
+The Atlas network read is routed through `advisors/atlas_cache.cached_pull` with a weekly TTL -- the collection is fetched at most once per week per the operator bill-protection directive. Validation, deduplication, and sharpe filtering run on the cached payload on every call (cheap, in-process). Only the raw projected docs are cached; the caller always receives freshly-processed results.
 
 Off-execution-path. Advisory-only. No Flask routes, no execution flags. pymongo is lazy-imported inside the `fetch_fn` closure only; the module is importable without pymongo installed.
 
-**Never-raising contract (D-1):** all failure modes return `available=False` with `reason=type(exc).__name__` — never the exception message, MONGO_URI, hostname, or any credential. The function never raises.
+**Never-raising contract (D-1):** all failure modes return `available=False` with `reason=type(exc).__name__` -- never the exception message, MONGO_URI, hostname, or any credential. The function never raises.
 
 ## Public API
 
@@ -25,12 +25,12 @@ Load and validate community strategies from the captplanet Atlas collection.
 
 | Name | Type | Description |
 |------|------|-------------|
-| `limit` | `int \| None` | Cap the number of returned candidates (applied after dedup and sharpe filtering). `None` = no cap. |
-| `min_oos_sharpe` | `float \| None` | Exclude candidates whose `oos_metrics['sharpe']` is below this floor. Docs that **lack** `oos_metrics` or lack the `sharpe` key are **kept** regardless. `None` = no floor applied. |
+| `limit` | `int or None` | Cap the number of returned candidates (applied after dedup and sharpe filtering). `None` = no cap. |
+| `min_oos_sharpe` | `float or None` | Exclude candidates whose `oos_metrics['sharpe']` is below this floor. Docs that **lack** `oos_metrics` or lack the `sharpe` key are **kept** regardless. `None` = no floor applied. |
 | `client` | `any` | Reserved for interface compatibility. Not used in this implementation. |
 | `force_refresh` | `bool` | When `True`, bypass the atlas_cache TTL and re-fetch from Mongo unconditionally. Default `False`. |
 
-**Returns:** `dict` — always returned, never raises. Shape:
+**Returns:** `dict` -- always returned, never raises. Shape:
 
 ```python
 # Success
@@ -41,8 +41,8 @@ Load and validate community strategies from the captplanet Atlas collection.
             "sid": str,
             "name": str,
             "tree": dict,           # parsed + validated Composer decision tree
-            "tickers": list[str],   # extract_tickers result (no '%' placeholders)
-            "oos_metrics": dict | None,
+            "tickers": list,        # extract_tickers result (no '%' placeholders)
+            "oos_metrics": dict,    # or None
             "composition_hash": str,  # SHA-256 hex of tree structure (see below)
         },
         ...
@@ -62,7 +62,7 @@ Load and validate community strategies from the captplanet Atlas collection.
 # Failure (any exception, cache unavailable, non-list payload)
 {
     "available": False,
-    "reason": str,   # type(exc).__name__ only — no secret values
+    "reason": str,   # type(exc).__name__ only -- no secret values
     "candidates": [],
     "stats": {"pulled": 0, "valid": 0, "missing_edn_string": 0,
               "parse_failed": 0, "validate_rejected": 0,
@@ -89,22 +89,60 @@ else:
 Each call executes these steps on the cached payload:
 
 ```
-cached_pull("captplanet.strategies", fetch_fn)
-    -> raw_docs (list of projected Mongo docs)
-        -> per-doc: edn_string present? → json.loads → validate_tree → extract_tickers
+cached_pull("captplanet.strategies", bounded_fetch_fn)
+    -> raw_docs (list of projected Mongo docs, capped at _MAX_FETCH_DOCS=500)
+        -> per-doc: edn_string present? -> json.loads -> validate_tree -> extract_tickers
         -> sharpe filter (docs lacking sharpe: kept)
         -> dedup by composition_hash (retain highest OOS sharpe per hash)
         -> limit
     -> {available, candidates, stats, source}
 ```
 
-### Atlas fetch (weekly cache, wall-clock bounded)
+### Mongo projection (`_PROJECTION`)
 
-The live Atlas fetch is bounded by a `_bounded_fetch_fn` wrapper (nested def inside `load_community_strategies`): a `ThreadPoolExecutor(max_workers=1)` submits `_fetch_fn` to a background thread and calls `fut.result(timeout=_ATLAS_FETCH_TIMEOUT_S)` (12.0 s). If `_fetch_fn` does not return within that window, `concurrent.futures.TimeoutError` is caught, the `_timeout_fired` closure flag is set to `True`, and `_AtlasFetchTimeout` is raised before `shutdown(wait=False, cancel_futures=True)` releases the calling thread.
+`_fetch_fn` applies a server-side inclusion projection to limit network transfer to the fields the loader actually reads:
 
-**Why `ThreadPoolExecutor` and not `serverSelectionTimeoutMS`:** A `mongodb+srv://` URI triggers an SRV/TXT DNS query before the Mongo driver starts server selection. `serverSelectionTimeoutMS` and `connectTimeoutMS` apply only after DNS resolves — they cannot bound an SRV/DNS hang. `_ATLAS_FETCH_TIMEOUT_S=12.0` is set above `serverSelectionTimeoutMS=10_000` so a reachable-but-slow Atlas cluster can still complete server selection without a false timeout. See `DE-CS-002` in `DECISIONS.md`.
+```python
+_PROJECTION: dict = {
+    "_id": 0,        # explicit suppression -- pymongo includes _id by default even in
+                     # inclusion projections; ObjectId is not JSON-serializable and would
+                     # cause atlas_cache json.dumps to raise TypeError, silently dropping
+                     # the cache row on every write attempt (DE-ATLAS-CACHE-001 Bug 1)
+    "sid": 1,
+    "name": 1,
+    "edn_string": 1,
+    "oos_metrics": 1,
+}
+```
 
-`_fetch_fn` (the inner unwrapped function) lazy-imports `pymongo`, connects to `os.environ["MONGO_URI"]`, and fetches from `captplanet.strategies` using the projection `{sid, name, edn_string, oos_metrics}` only — explicitly excluding multi-MB `backtest` and `quantstats_metrics` arrays. `cached_pull` routes `_bounded_fetch_fn` through the weekly cache; the second call within the TTL returns the cached payload without touching Mongo or entering the timeout wrapper.
+The `backtest` and `quantstats_metrics` fields (multi-MB arrays per doc) are excluded from the projection.
+
+### Atlas fetch (weekly cache, server-side bounded, wall-clock bounded)
+
+The live Atlas fetch is bounded in two independent ways.
+
+**Server-side bound -- `_MAX_FETCH_DOCS = 500`**
+
+`_fetch_fn` applies a server-side sort + limit before the cursor is materialized:
+
+```python
+cursor = collection.find(
+    {},
+    _PROJECTION,
+    sort=[("oos_metrics.sharpe", pymongo.DESCENDING)],
+    allow_disk_use=True,
+).limit(_MAX_FETCH_DOCS)
+```
+
+- `sort=[("oos_metrics.sharpe", DESCENDING)]` ensures the cap keeps the best-sharpe docs. Docs missing `oos_metrics.sharpe` sort to the bottom in MongoDB's collation and may be excluded -- this is the intended fetch policy (highest-quality candidates fetched first). The Python-side keep-rule (docs lacking sharpe are kept after fetch) applies to the fetched subset and is independent.
+- `allow_disk_use=True` prevents the 32 MB in-memory sort limit from aborting the query on the ~11k-doc `captplanet.strategies` collection.
+- `.limit(_MAX_FETCH_DOCS)` caps the network transfer and in-process memory. 500 covers `MAX_COMMUNITY_CANDIDATES_PER_RUN = 20` with generous headroom for validation/dedup loss. Fetching all 11k docs unbounded OOM-killed the 4 GB droplet (DE-ATLAS-CACHE-001 Bug 2).
+
+**Wall-clock bound -- `_ATLAS_FETCH_TIMEOUT_S = 12.0 s`**
+
+`_bounded_fetch_fn` (nested def inside `load_community_strategies`) wraps `_fetch_fn` via a `ThreadPoolExecutor(max_workers=1)`. `fut.result(timeout=_ATLAS_FETCH_TIMEOUT_S)` fires if the fetch exceeds the window; the `_timeout_fired` closure flag is set to `True` before raising `_AtlasFetchTimeout`; `shutdown(wait=False, cancel_futures=True)` releases the calling thread. `serverSelectionTimeoutMS` and `connectTimeoutMS` cannot bound a `mongodb+srv://` SRV/TXT DNS hang -- the ThreadPoolExecutor timeout is the only reliable wall-clock bound. See `DE-CS-002` in `DECISIONS.md`.
+
+`cached_pull` routes `_bounded_fetch_fn` through the weekly cache; the second call within the TTL returns the cached payload without touching Mongo or entering the timeout wrapper.
 
 ### edn_string parse
 
@@ -112,19 +150,19 @@ Despite the field name, `edn_string` stores a **JSON-encoded Composer decision t
 
 ### Validation
 
-`symphony_schema.validate_tree(tree)` — HARD errors only (returns `[]` for a valid tree). Any non-empty error list or any exception from `validate_tree` increments `validate_rejected` and skips the doc.
+`symphony_schema.validate_tree(tree)` -- HARD errors only (returns `[]` for a valid tree). Any non-empty error list or any exception from `validate_tree` increments `validate_rejected` and skips the doc.
 
-`symphony_schema.extract_tickers(tree)` — excludes `%` placeholder. Any exception increments `validate_rejected`.
+`symphony_schema.extract_tickers(tree)` -- excludes `%` placeholder. Any exception increments `validate_rejected`.
 
 ### Composition hash (tree-structure, NOT `database.compute_composition_hash`)
 
 The dedup key is a **local tree-structural hash** computed by `_composition_hash(tree)`:
 
-1. Strip all `id` keys recursively from the tree dict (`_strip_ids`) — uuid4 node ids differ per construction, but identical logic trees must hash identically.
-2. `json.dumps(stripped_tree, sort_keys=True, separators=(",", ":"))` — deterministic canonical form.
-3. `hashlib.sha256(...).hexdigest()` — 64-character hex string.
+1. Strip all `id` keys recursively from the tree dict (`_strip_ids`) -- uuid4 node ids differ per construction, but identical logic trees must hash identically.
+2. `json.dumps(stripped_tree, sort_keys=True, separators=(",", ":"))` -- deterministic canonical form.
+3. `hashlib.sha256(...).hexdigest()` -- 64-character hex string.
 
-**This is NOT `database.compute_composition_hash`.** That function takes a `list[str]` of symphony IDs and is used for portfolio-set identity (mode-resolver use). `_composition_hash` operates on a single tree dict and is local to this module.
+**This is NOT `database.compute_composition_hash`**, which takes a `list[str]` of symphony IDs and is used for portfolio-set identity (mode-resolver use). `_composition_hash` operates on a single tree dict and is local to this module.
 
 ### Deduplication
 
@@ -132,14 +170,14 @@ Within each `composition_hash` group, the candidate with the highest `oos_metric
 
 ### Stats invariant
 
-For a successful (non-exception) run, the 7 stats keys account for all docs:
+For a successful (non-exception) run:
 
 ```
 pulled == (valid + missing_edn_string + parse_failed + validate_rejected
            + sharpe_filtered + deduped) + (candidates dropped by limit)
 ```
 
-`valid` reflects the final candidate count after dedup and sharpe filtering but before `limit`. When `limit` truncates, `valid` still equals the number returned (it is set from `len(final_candidates)` after limit is applied).
+`valid` reflects the final candidate count after dedup and sharpe filtering but before `limit`.
 
 ## Failure Modes and D-1 Contract
 
@@ -151,13 +189,13 @@ pulled == (valid + missing_edn_string + parse_failed + validate_rejected
 | `atlas_cache.cached_pull` returns `None` (cache miss + fetch failed + no stale row, no timeout) | `"AtlasCacheUnavailable"` | `False` |
 | `atlas_cache.cached_pull` returns a non-list payload (corrupt cache) | `"TypeError"` | `False` |
 | Any other exception in the outer try block | `type(exc).__name__` | `False` |
-| Empty collection (zero docs) | — | `True` (candidates=[], stats.pulled=0) |
+| Empty collection (zero docs) | -- | `True` (candidates=[], stats.pulled=0) |
 
-`"AtlasFetchTimeout"` is set when `_timeout_fired[0]` is `True` (the wall-clock wrapper fired before `cached_pull` returned). `"AtlasCacheUnavailable"` is the named sentinel for the `raw_docs is None` path when the timeout did not fire. Both are named strings (not `type(exc).__name__`). See `DE-CS-002` in `DECISIONS.md` for the full root-cause and design rationale.
+`"AtlasFetchTimeout"` is set when `_timeout_fired[0]` is `True` (the wall-clock wrapper fired). `"AtlasCacheUnavailable"` is the named sentinel for the `raw_docs is None` path when no timeout fired. See `DE-CS-002` in `DECISIONS.md`.
 
 ## DB Isolation
 
-`community_strats.py` does not import `database`, `autotuner`, or any execution module. No cross-join with the state DB, optimization DB, or lens warehouse. The Atlas cache DB (`alphabot_atlas_cache.db`) is accessed only through `atlas_cache.cached_pull` — this module has no direct sqlite3 connection. `MONGO_URI` is read inside `fetch_fn` only and is never returned, logged, or stored by this module.
+`community_strats.py` does not import `database`, `autotuner`, or any execution module. No cross-join with the state DB, optimization DB, or lens warehouse. The Atlas cache DB is accessed only through `atlas_cache.cached_pull` -- this module has no direct sqlite3 connection. `MONGO_URI` is read inside `fetch_fn` only and is never returned, logged, or stored by this module.
 
 ## Configuration
 
@@ -169,38 +207,24 @@ pulled == (valid + missing_edn_string + parse_failed + validate_rejected
 
 ## Internal Dependencies
 
-- `advisors.atlas_cache` — `cached_pull` for weekly-TTL Atlas read routing
-- `advisors.symphony_schema` — `validate_tree`, `extract_tickers`
-- `concurrent.futures` — `ThreadPoolExecutor` wall-clock timeout wrapper (`_bounded_fetch_fn`)
-- `json` — `edn_string` parsing and composition hash canonical form
-- `hashlib` — SHA-256 composition hash
-- `os` — `MONGO_URI` env read inside `fetch_fn`
-- `pymongo` — lazy-imported inside `_fetch_fn` only; not a module-level import
+- `advisors.atlas_cache` -- `cached_pull` for weekly-TTL Atlas read routing
+- `advisors.symphony_schema` -- `validate_tree`, `extract_tickers`
+- `concurrent.futures` -- `ThreadPoolExecutor` wall-clock timeout wrapper (`_bounded_fetch_fn`)
+- `json` -- `edn_string` parsing and composition hash canonical form
+- `hashlib` -- SHA-256 composition hash
+- `os` -- `MONGO_URI` env read inside `fetch_fn`
+- `pymongo` -- lazy-imported inside `_fetch_fn` only; not a module-level import
 
 No imports from `database.py`, `autotuner.py`, `app.py`, or any execution module.
 
 ## Production Caller
 
-`advisors/community_strats.py` is called from production by the Strategy Builder route handler `ai_advisor_strategy_builder_run()` in `app.py` (handler defined at `app.py:3395`).
+`advisors/community_strats.py` is called indirectly via `advisors/build_plan_generator.load_atlas_candidates(objective)`, which wraps `load_community_strategies` with objective-matched ranking and the `MAX_COMMUNITY_CANDIDATES_PER_RUN` cap.
 
-The route lazily imports `load_community_strategies` at `app.py:3421` (inside the handler body — never at module level, preserving the CC-2 import boundary). The community load is **best-effort**:
+The canonical community-admission path for all production callers (Strategy Builder route and weekly scheduler) is `build_plan_generator.load_atlas_candidates(objective)`. The former `load_community_strategies + community_candidate_infos` route pattern was replaced in C5 (see `DE-SB-C5` in `DECISIONS.md`). Key invariants:
 
-```python
-# app.py:3440-3448
-community_candidates: list = []
-try:
-    _community = load_community_strategies(force_refresh=False)
-    community_candidates = community_candidate_infos(
-        _community, max_candidates=MAX_COMMUNITY_CANDIDATES_PER_RUN
-    )
-except Exception as exc:
-    _daemon_log.warning("community-strats load skipped: %s", type(exc).__name__)
-    community_candidates = []
-```
+- `force_refresh=False` is enforced inside `load_atlas_candidates` -- the weekly Atlas cache TTL is the operator bill-protection directive.
+- Any failure (Atlas down, `MONGO_URI` unset, cache miss) degrades to `community_candidates=[]`; the proposal run completes as built-new-only.
+- Community candidates enter the single-batch FDR gate alongside built-new candidates (anti-overfit invariant).
 
-Key invariants of the production call:
-- `force_refresh=False` is mandatory — the weekly Atlas cache TTL is the operator bill-protection directive. A per-request forced pull is never acceptable.
-- Any exception (Atlas down, `MONGO_URI` unset, cache miss, adapter failure) logs only the exception class name and degrades to `community_candidates=[]`. The proposal run completes as template-only.
-- `community_candidates=` is forwarded to `propose_strategies` at `app.py:3457`. When non-empty, community candidates enter the single-batch FDR gate alongside template candidates (anti-overfit invariant — DE-PSW-001). When empty or `None`, `propose_strategies` behaves identically to the pre-wiring template-only path.
-
-See `DE-HF1-001` in `DECISIONS.md` for the full architectural rationale.
+See `DE-HF1-001` and `DE-SB-C5` in `DECISIONS.md` for the full architectural rationale.

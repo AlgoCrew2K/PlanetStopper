@@ -175,7 +175,10 @@ def cached_pull(
     # --- Upsert the freshly fetched payload ---
     try:
         now_iso = datetime.now(UTC).isoformat()
-        serialised = json.dumps(fetched_payload)
+        # default=str converts non-JSON-native values (BSON ObjectId, datetime,
+        # Decimal128) to their str() representation rather than raising TypeError.
+        # Prevents silent row-drop when docs carry un-projected BSON _id fields.
+        serialised = json.dumps(fetched_payload, default=str)
         conn = sqlite3.connect(db_path)
         try:
             conn.execute(
