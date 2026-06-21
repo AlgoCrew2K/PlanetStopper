@@ -1900,5 +1900,94 @@ def main():
         database.release_lock()
 
 
+def seed_symphonies_into_bot_state(bot_state: dict) -> int:
+    """Create baseline bot_state entries for every symphony not already present.
+
+    Iterates ACCOUNT_UUIDS, calls fetch_symphony_stats per account, and creates
+    the per-symphony entry for any symphony id not yet in bot_state.  Mirrors
+    the DATA PHASE create-block (lines 771-790) so seed and cycle logic cannot
+    drift independently.
+
+    Per-account exceptions are caught, logged, and skipped — partial success is
+    allowed; the function never re-raises (AC-4 fail-safe).
+
+    Does NOT call database.record_shadow_observation (shadow_history write path)
+    and does NOT open any post_mortem_*.json files (AC-3).
+
+    Returns the count of NEW entries created.
+    """
+    created = 0
+    for account in ACCOUNT_UUIDS:
+        try:
+            symphonies = fetch_symphony_stats(account)
+        except Exception as exc:
+            print(f"[seed] fetch_symphony_stats({account!r}) failed: {type(exc).__name__}: {exc}")
+            continue
+
+        for sym in symphonies:
+            s_id = sym.get("id")
+            if not s_id or s_id in bot_state:
+                continue  # skip already-present entries
+
+            # current_return may be None when last_percent_change is absent or null.
+            raw_pct = sym.get("last_percent_change")
+            current_return = (raw_pct or 0.0) * 100
+
+            bot_state[s_id] = {
+                "high_water_mark": current_return,
+                "shadow_hwm": current_return,
+                "prev_return": None,
+                "armed": False,
+                "tp_armed": False,
+                "para_armed": False,
+                "triggered": False,
+                "mc_history": [],
+                "below_stop_count": 0,
+                "above_tp_count": 0,
+                "vwap_ticks": 0,
+                "vwap_bleed_ticks": 0,
+                "breakeven_locked": False,
+                "hwm_hold_ticks": 0,
+                # First-ever position for this symphony gets a fresh epoch so
+                # shadow_history rows are scoped to the position (mirrors AC-3
+                # annotation in the DATA PHASE create-block at line 788).
+                "position_epoch": database.mint_position_epoch(),
+                "name": sym.get("name", ""),
+                "current_holdings": [],
+            }
+            _persist_composer_fields_to_bot_state(bot_state, s_id, sym)
+            created += 1
+
+    return created
+
+
+def ensure_bot_state_seeded() -> None:
+    """Seed bot_state at daemon startup if it contains no symphony entries.
+
+    AC-2 — Idempotent: if any symphony entry already exists, returns immediately
+    without loading from the network (no fetch, no save).
+
+    AC-4 — Fail-safe: the entire body is wrapped in try/except so a transient
+    Composer error at startup never crashes the daemon.
+
+    Must NOT be called from inside main() — call once from the app.py daemon
+    startup path, before the minute scheduler starts (AC-7).
+    """
+    try:
+        bot_state = database.load_state()
+        # Presence check: any dict value means at least one symphony entry exists.
+        if any(isinstance(v, dict) for v in bot_state.values()):
+            return  # already seeded — no-op
+
+        created = seed_symphonies_into_bot_state(bot_state)
+        if created >= 1:
+            database.save_state(bot_state)
+            print(f"[seed] Startup seed complete — {created} symphony entries created.")
+        else:
+            print("[seed] Startup seed: 0 entries created (no symphonies returned).")
+    except Exception as exc:
+        print(f"[seed] ensure_bot_state_seeded failed (non-fatal): {type(exc).__name__}: {exc}")
+
+
 if __name__ == "__main__":
     main()

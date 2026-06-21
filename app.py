@@ -4376,6 +4376,12 @@ if __name__ == "__main__":
     # If a stale pidfile exists (ungraceful prior kill) it is overwritten cleanly.
     _acquire_daemon_singleton(_PIDFILE_PATH)
 
+    # Seed bot_state with baseline symphony entries before the scheduler starts.
+    # Lazy import avoids any circular-import risk at module level; the call is a
+    # no-op when entries already exist (idempotent — AC-2) and never raises (AC-4).
+    from alpha_bot_execution import ensure_bot_state_seeded  # noqa: PLC0415
+    ensure_bot_state_seeded()
+
     # Start the scheduler thread
     threading.Thread(target=run_scheduler, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
