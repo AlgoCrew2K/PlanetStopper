@@ -44,12 +44,27 @@ spawns the entire suite as a subprocess (50-minute timeout). Run it explicitly:
 python -m pytest tests/meta/test_zero_skip_xfail_close.py -n0 -v --tb=short
 ```
 
+## Total-job Memory Cap (automatic — no wrapper needed)
+
+`tests/conftest.py:pytest_configure` installs a Windows Job-Object total-tree memory cap **before xdist workers spawn**. This is automatic on every `python -m pytest` invocation; no special wrapper or env var is required for the cap to be active.
+
+**Env knob:** `ALPHABOT_TEST_MEM_CAP_GB` (default: 24 GB). Set it in the environment to override:
+- `set ALPHABOT_TEST_MEM_CAP_GB=32` — raise the cap (e.g. on a host with more RAM)
+- `set ALPHABOT_TEST_MEM_CAP_GB=0` — disable the cap (explicit operator opt-out; loud warning logged)
+
+**What the cap covers:** The Windows Job Object bounds the TOTAL committed memory of the entire process tree — controller + all `-n` xdist workers + any subprocess-spawned child interpreters. An over-cap allocation raises `MemoryError` at the exact allocation site rather than crashing the host.
+
+**Linux/CI:** The cap installer is a clean no-op on non-Windows. CI relies on the runner's own cgroup limits. The default cap is intentionally high enough that a legitimately-bounded suite does not spuriously `MemoryError`.
+
+**Context (DE-TEST-MEMCAP-001):** A full `python -m pytest` run committed ~238 GB of virtual memory on 2026-06-21, triggering a hard host reboot (Windows Kernel-Power 41). The Jun-13 memfix (env-bounded joblib/optuna + forced-single-process meta tests) was necessary but insufficient — the total fan-out still exceeded the host ceiling. The total-job cap is the durable guard; it bounds ANY fan-out regardless of source.
+
 ## What You Must NOT Do
 
 - Never install packages (`pip install`, `poetry add`, etc.)
 - Never modify any test file
 - Never run `test_live_*.py` files unless the user explicitly passes `--include-live`
 - Never run tests against live external APIs without `--include-live`
+- Never run two pytest invocations concurrently (fan-out compounds across runs)
 
 ## Examples
 

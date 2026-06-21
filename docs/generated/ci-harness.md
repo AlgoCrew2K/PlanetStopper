@@ -3,7 +3,7 @@
 > GitHub Actions `tests` workflow: ruff format check, ruff lint, and pytest — all three steps pass on every push.
 
 **Source:** `.github/workflows/tests.yml`, `pyproject.toml`, `requirements-dev.txt`, `tests/conftest.py`
-**Last updated:** 2026-06-19
+**Last updated:** 2026-06-21
 
 ## Overview
 
@@ -74,6 +74,18 @@ The `live`, `slow`, and `perf` markers are already excluded by `pyproject.toml a
 ## Atlas Cache DB Isolation
 
 `tests/conftest.py:pytest_configure()` routes `ATLAS_CACHE_DB_PATH` to a session-temp directory before any test collection. Without this, a stale `alphabot_atlas_cache.db` from a previous operator run with real credentials causes mock-timeout tests (e.g. `test_community_strats_timeout`) to return `available=True` (cache hit) instead of the expected `available=False` (timeout behavior). The temp path ensures every test run sees a cold cache. See DE-CIGREEN-001.
+
+## Total-Job Memory Cap (DE-TEST-MEMCAP-001)
+
+`tests/conftest.py:pytest_configure()` installs a Windows Job-Object total-tree memory cap before xdist workers spawn. This is **automatic** — every `python -m pytest` invocation activates it with no additional wrapper or flags.
+
+**Why this exists:** A full `python -m pytest` run committed ~238 GB of virtual memory on 2026-06-21, triggering a Windows Kernel-Power 41 hard reboot. Root cause is process fan-out: `-n 2` xdist workers + subprocess-spawned child interpreters from ~15 tests + the heavy scientific stack each reserve multi-GB committed address space; on Windows this is attributed to a single controller PID. The Jun-13 memfix (env-bounded joblib/optuna + forced-single-process meta tests) reduced the worst-case fan-out sites but did not bound the total committed tree — the host still crashed. An OS-level total-job cap is the durable guard.
+
+**Implementation (`tests/_mem_cap.py`):** ctypes Win32 `JOB_OBJECT_LIMIT_JOB_MEMORY` (total-tree, not per-process) via `CreateJobObjectW` + `SetInformationJobObject` + `AssignProcessToJobObject`. Handle kept alive process-lifetime. Linux/CI: no-op (returns immediately, no import of Windows-only APIs at module top level).
+
+**Env knob:** `ALPHABOT_TEST_MEM_CAP_GB` (default 24 GB). Set to `0` to disable (explicit opt-out; loud warning). The default is chosen to be well under the dev host ceiling while well above a legitimately-bounded run's peak.
+
+**CI:** The installer is a no-op on the Linux GitHub Actions runner. CI relies on the runner's cgroup limits; the full suite runs identically to before on Linux.
 
 ## Deferred Work
 
