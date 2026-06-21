@@ -2027,7 +2027,9 @@ class TestRssRecencyFromPublishedParsed:
 
         assert articles, "fed_press fixture must yield at least one article"
 
-        now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+        # Anchored to the fixture's newest entry (Thu, 18 Jun 2026 13:00:00 GMT) + 1h
+        # so the test is deterministic regardless of when it runs.
+        now = datetime.datetime(2026, 6, 18, 14, 0, 0)
         recency_vals = [_recency(art["published"], now) for art in articles]
 
         non_default = [v for v in recency_vals if v != 0.5]
@@ -2065,7 +2067,11 @@ class TestRssRecencyFromPublishedParsed:
 
         assert len(articles) >= 2, "fed_press fixture must yield at least 2 articles"
 
-        now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+        # Anchored to the fixture's newest entry (Thu, 18 Jun 2026 13:00:00 GMT) + 1h
+        # so the test is deterministic regardless of when it runs.  The fixture spans
+        # entries from 2026-06-18 down to 2026-05-13, giving a >25-day spread that
+        # far exceeds the > 0.1 threshold even with TAU_HOURS=24.
+        now = datetime.datetime(2026, 6, 18, 14, 0, 0)
         recency_vals = [_recency(art["published"], now) for art in articles]
 
         spread = max(recency_vals) - min(recency_vals)
