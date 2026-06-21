@@ -102,6 +102,10 @@ Planet Stopper is a **monolithic Flask daemon** built around a one-minute schedu
 | `regime_classifier.py` | kNN regime classification — identifies the k nearest-neighbor historical days for MC gating and CVaR estimation. |
 | `composer_backtest.py` | Thin client for Composer's stateless backtest endpoint; used by the AI Advisor proposal suite. |
 
+### Reference documentation
+
+Auto-generated per-module API and behavior reference lives in [`docs/generated/INDEX.md`](docs/generated/INDEX.md). The index lists every documented module with a one-line description and links to its dedicated reference page. It is regenerated after each merge and covers all public functions, types, and behavioral contracts across the codebase.
+
 ### The two-database pattern
 
 Planet Stopper keeps **two SQLite databases** with a strict separation of duties:
@@ -205,19 +209,9 @@ The pieces, in order of the loop:
 
 - **Explain-only chat** (`advisor_chat.py`) — a contextual "chat about this" backend. You point it at a *specific* surfaced artifact (a gate verdict, a correlation result, a swap or logic-change proposal, an observation) and it explains that artifact in plain language. It is a **hard boundary**: chat cannot issue trade directives, cannot propose/apply/accept any change, cannot generate new unvalidated recommendations, and has no write path. The boundary is enforced both by the system prompt and structurally — the module imports no write, trade, or config-mutation surface. Like the rest of the AI surface it never raises; with no LLM key it returns a clear "chat unavailable" message.
 
+- **Strategy Builder** (`advisors/strategy_builder_engine.py`, `advisors/build_plan_generator.py`, `advisors/plan_tree_compiler.py`) — an Opus-driven proposal engine that generates net-new symphony candidates from scratch. It runs the full C1→C2→C3 pipeline: C1 fetches the live tradeable US-equity universe from Alpaca, C2 uses Claude Opus (SDK structured tool-use) to generate diverse build plans shaped by a measurable objective (diversify / cut drawdown / lift risk-adjusted return / volatility mitigation), and C3 compiles those plans into valid Composer `raw_value` trees via the `symphony_schema` constructor API. Candidates from algo-db.com's community symphonies (read-only, objective-ranked, weekly-cached) are pooled with built-new candidates and gated together in a single FDR batch. Never raises; off-execution-path; advisory-only.
+
 The suite is surfaced on the **AI Advisor single-page app** at `/ai-advisor` as six in-place tabs: **Overview**, **Correlations**, **Asset Swaps**, **Logic Changes**, **Chat**, and **Strategy Builder**. Each tab is a read-only surface; the "evaluate" endpoints run the offline backtest-and-gate pipeline and render the gated results. Old per-tab URLs (`/ai-advisor/correlations`, etc.) 302-redirect to `/ai-advisor`.
-
-### 6.4 The nightly Market Prism council
-
-Each night at 03:00 America/New_York, a standalone council of six Claude agents (five lens analysts + a synthesizer) produces a structured market overview stored as a `MARKET_PRISM` row in the state DB and rendered on the AI Advisor Overview tab. The council runs via `prism_scheduler.py`, invoked by a systemd oneshot timer on the production droplet. It authenticates via the operator's Claude subscription (`CLAUDE_CODE_OAUTH_TOKEN`), not the metered API key — nightly council runs do not accrue per-token costs against `ANTHROPIC_API_KEY`.
-
-The five lens analysts each independently read market data (technicals, sentiment/news, derivatives/VIX, macro/FRED, fundamentals/SEC EDGAR) and file an `initial_read` audit entry. The synthesizer waits for all five entries to appear in the audit DB before conducting Q&A and optional debate rounds. On the dashboard Overview tab, the most recent nightly verdict renders with a sentiment chip, rationale, per-lens digest, and cited sources; an informative empty state is shown when the council has not yet run.
-
-### 6.4 The nightly Market Prism council
-
-Each night at 03:00, a standalone council of six Claude agents (five lens analysts + a synthesizer) produces a structured market overview stored as a `MARKET_PRISM` row in the state DB and rendered on the AI Advisor Overview tab. The council runs as a systemd oneshot service on the production droplet, invoked by `prism_scheduler.py`. It authenticates via the operator's Claude subscription (`CLAUDE_CODE_OAUTH_TOKEN`), not the metered API key, so nightly council runs do not accrue per-token costs against `ANTHROPIC_API_KEY`.
-
-The five lens analysts each independently read market data (technicals, sentiment/news, derivatives/VIX, macro/FRED, fundamentals/SEC EDGAR) and file an `initial_read` audit entry. The synthesizer waits for all five entries to appear in the audit DB, then conducts a structured Q&A and optional debate round before writing the final verdict. The Overview tab always renders either the most recent nightly output or an informative empty state when the council has not yet run.
 
 ### 6.2 The config advisor (`ai_advisor.py`)
 
@@ -252,6 +246,12 @@ All three read the database through a dedicated read-only query helper, and the 
 - **Overfitting Conscience** (`overfitting_conscience.py`) — watches the researcher-degrees-of-freedom counter against the autotuner's effective-test budget. It flags any backtest-selected facet, escalates when researcher degrees of freedom exceed a fraction of the trial budget, and watches for that counter growing run-over-run. A clean reading is the signal that the autotuner is operating in its honest steady state.
 - **Spec Critic** (`spec_critic.py`) — checks the spec-bundle tables for structural integrity: that the required THEORY-frozen facets (the risk-aversion γ, the utility family, and the wealth argument) are present and frozen, that every facet's freeze discipline is recognized (default-deny on anything unknown), and that no out-of-scope facet has been seeded prematurely.
 - **Divergence Explainer** (`divergence_explainer.py`) — surfaces the state of a second, operator-configurable CVaR window when that feature is enabled. By default the feature is **off**, and the advisor writes a "not applicable" observation each cycle to keep the audit trail complete. It is structurally forbidden from ever persisting or displaying a signed divergence quantity — see §[7.6](#76-cvar-a-diagnostic-not-a-trigger).
+
+### 6.4 The nightly Market Prism council
+
+Each night at 03:00 America/New_York, a standalone council of six Claude agents (five lens analysts + a synthesizer) produces a structured market overview stored as a `MARKET_PRISM` row in the state DB and rendered on the AI Advisor Overview tab. The council runs via `prism_scheduler.py`, invoked by a systemd oneshot timer on the production droplet. It authenticates via the operator's Claude subscription (`CLAUDE_CODE_OAUTH_TOKEN`), not the metered API key — nightly council runs do not accrue per-token costs against `ANTHROPIC_API_KEY`.
+
+The five lens analysts each independently read market data (technicals, sentiment/news, derivatives/VIX, macro/FRED, fundamentals/SEC EDGAR) and file an `initial_read` audit entry. The synthesizer waits for all five entries to appear in the audit DB before conducting Q&A and optional debate rounds. On the dashboard Overview tab, the most recent nightly verdict renders with a sentiment chip, rationale, per-lens digest, and cited sources; an informative empty state is shown when the council has not yet run.
 
 ---
 
@@ -377,6 +377,7 @@ The 250-day window (expanded from an earlier 125-day window) yields approximatel
 | **Alpaca** | 1-minute historical and intraday price bars for the underlying ETFs. | `ALPACA_KEY`, `ALPACA_SECRET` |
 | **Discord** | Exit alerts and the daily EOD post-mortem, with QuickChart-rendered summaries. | `DISCORD_WEBHOOK_URL` |
 | **Anthropic (optional)** | The config advisor's suggestions and the explain-only chat (§[6.2](#62-the-config-advisor-ai_advisorpy)). Not needed to run the daemon. | `ANTHROPIC_API_KEY` |
+| **algo-db.com** | Community strategy symphonies for the Strategy Builder — read-only from its `captplanet.strategies` MongoDB Atlas collection (weekly-cached, bill-protected); never modified. | `MONGO_URI` |
 
 > Composer's API is poorly documented and is assumed to drift. Treat any change to the Composer client as requiring fresh verification against the live API.
 
