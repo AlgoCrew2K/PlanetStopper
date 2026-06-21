@@ -196,74 +196,6 @@ def _has_composer_key() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Community-candidate adapter
-# ---------------------------------------------------------------------------
-
-
-def community_candidate_infos(
-    community_result,
-    *,
-    max_candidates: int,
-) -> list[CandidateInfo]:
-    """Map a load_community_strategies result to a capped list of CandidateInfo objects.
-
-    Each candidate dict ``{sid, name, tree, tickers, oos_metrics, composition_hash}``
-    becomes a ``CandidateInfo`` with:
-        candidate_id  = sid
-        template_id   = "community"
-        params        = {sid, name, composition_hash}   (provenance — AC-5)
-        metrics       = {}                              (filled after backtest — AC-1)
-        backtest_error = None
-
-    Returns ``[]`` when:
-        - community_result is None or not a dict
-        - ``available`` is False
-        - ``candidates`` is missing, None, or empty
-
-    Never raises — any unexpected error returns ``[]`` (advisory path).
-
-    Args:
-        community_result: Dict returned by load_community_strategies (caller's job to obtain).
-        max_candidates: Hard cap on the returned list length (first-N, deterministic).
-    """
-    try:
-        if not isinstance(community_result, dict):
-            return []
-        if not community_result.get("available", False):
-            return []
-        raw = community_result.get("candidates")
-        if not raw or not isinstance(raw, list):
-            return []
-
-        infos: list[CandidateInfo] = []
-        for doc in raw[:max_candidates]:
-            try:
-                sid = doc["sid"]
-                infos.append(
-                    CandidateInfo(
-                        candidate_id=sid,
-                        tree=doc["tree"],
-                        template_id="community",
-                        params={
-                            "sid": sid,
-                            "name": doc.get("name", ""),
-                            "composition_hash": doc.get("composition_hash", ""),
-                        },
-                        metrics={},
-                        backtest_error=None,
-                    )
-                )
-            except Exception:
-                # Skip malformed individual docs; don't abort the whole adapter.
-                logger.debug("community_candidate_infos: skipping malformed doc", exc_info=True)
-                continue
-        return infos
-    except Exception:
-        logger.debug("community_candidate_infos: unexpected error", exc_info=True)
-        return []
-
-
-# ---------------------------------------------------------------------------
 # Template library — 7 templates
 # ---------------------------------------------------------------------------
 
@@ -822,7 +754,8 @@ def propose_strategies(
         default_oos_alpha: Fallback OOS alpha used by the gate when no incumbent
             alpha is available.
         community_candidates: Optional pre-built ``CandidateInfo`` objects sourced from
-            the community-strategies loader (via ``community_candidate_infos``).  These
+            the community-strategies loader (via
+            ``build_plan_generator.load_atlas_candidates``).  These
             are appended to the template-generated candidates and flow through the SAME
             single-batch FDR gate (AC-2).  Capped at ``MAX_COMMUNITY_CANDIDATES_PER_RUN``
             inside this function regardless of list length (AC-3).  ``None`` and ``[]``

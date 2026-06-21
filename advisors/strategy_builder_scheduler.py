@@ -108,6 +108,7 @@ def run_weekly_build() -> None:
     """
     try:
         # CC-2 lazy imports — off-execution-path.
+        import advisors.build_plan_generator as _bpg  # noqa: PLC0415
         from advisors.strategy_builder_engine import (  # noqa: PLC0415
             Objective,
             ScreenConfig,
@@ -125,6 +126,21 @@ def run_weekly_build() -> None:
     logger.info("strategy_builder_scheduler: starting weekly build for all objectives")
 
     for objective in Objective:
+        # Objective-matched Atlas community injection (AC-13/EDGE-2 dual-mode).
+        # load_atlas_candidates is D-1 (never-raises) and bill-protected (force_refresh=False
+        # inside). Guard the call site too so any unexpected raise degrades to built-new-only.
+        community_candidates: list = []
+        try:
+            community_candidates = _bpg.load_atlas_candidates(objective)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "strategy_builder_scheduler: Atlas load skipped for objective=%s (%s) "
+                "— built-new only",
+                objective.value,
+                type(exc).__name__,
+            )
+            community_candidates = []
+
         attempt = 0
         while attempt < MAX_ATTEMPTS:
             attempt += 1
@@ -140,6 +156,7 @@ def run_weekly_build() -> None:
                     universe=[],  # self-source from C1 (Q2-A)
                     screen_config=ScreenConfig(),
                     live_returns=[],
+                    community_candidates=community_candidates,
                 )
                 logger.info(
                     "strategy_builder_scheduler: objective=%s completed", objective.value
