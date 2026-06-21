@@ -630,7 +630,9 @@ class TestEdge1AdapterOrphanRemoved:
         """EDGE-1: after the rewire+deletion, community_candidate_infos must have ZERO
         production CODE references (app.py route, engine, scheduler, generator). RED now:
         app.py:3784,3808 still import + call it."""
-        offenders = [rel for rel in _PRODUCTION_PY_FILES if _production_call_references_adapter(rel)]
+        offenders = [
+            rel for rel in _PRODUCTION_PY_FILES if _production_call_references_adapter(rel)
+        ]
         assert offenders == [], (
             "EDGE-1: community_candidate_infos must have no production CODE references after "
             f"the objective-matched rewire; still referenced in: {offenders}. GREEN: "

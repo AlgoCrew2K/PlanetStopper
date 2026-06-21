@@ -62,9 +62,7 @@ def _resolve_run_fn(scheduler):  # scheduler is the imported module (from _load_
         fn = getattr(scheduler, name, None)
         if callable(fn):
             return fn
-    raise AssertionError(
-        f"scheduler exposes no runnable entry (expected one of {_RUN_FN_NAMES})"
-    )
+    raise AssertionError(f"scheduler exposes no runnable entry (expected one of {_RUN_FN_NAMES})")
 
 
 # ===========================================================================

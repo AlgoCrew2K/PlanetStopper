@@ -453,9 +453,15 @@ class TestAC4NeverRaisingD1:
         body = json.loads(resp.data)
         error_val = body.get("error", "")
         assert isinstance(error_val, str), "error value must be a string"
-        assert " " not in error_val, f"error value must be a bare class name (no spaces); got {error_val!r}"
-        assert ":" not in error_val, f"error value must be a bare class name (no colon); got {error_val!r}"
-        assert "/" not in error_val, f"error value must be a bare class name (no slash); got {error_val!r}"
+        assert " " not in error_val, (
+            f"error value must be a bare class name (no spaces); got {error_val!r}"
+        )
+        assert ":" not in error_val, (
+            f"error value must be a bare class name (no colon); got {error_val!r}"
+        )
+        assert "/" not in error_val, (
+            f"error value must be a bare class name (no slash); got {error_val!r}"
+        )
         assert error_val == "TypeError", f"error value must be 'TypeError'; got {error_val!r}"
 
 
@@ -570,13 +576,17 @@ class TestAC6NoRegression:
         body = json.loads(resp.data)
         required_keys = {"survivors", "rejected", "n_candidates", "fdr_adjusted_threshold"}
         missing = required_keys - body.keys()
-        assert not missing, f"Happy-path response must have keys {required_keys}; missing: {missing}"
+        assert not missing, (
+            f"Happy-path response must have keys {required_keys}; missing: {missing}"
+        )
         assert isinstance(body["survivors"], list), "survivors must be a list"
         assert isinstance(body["rejected"], list), "rejected must be a list"
         assert isinstance(body["n_candidates"], int), "n_candidates must be an int"
         assert body["fdr_adjusted_threshold"] is None or isinstance(
             body["fdr_adjusted_threshold"], (int, float)
-        ), f"fdr_adjusted_threshold must be None or numeric; got {type(body['fdr_adjusted_threshold']).__name__}"
+        ), (
+            f"fdr_adjusted_threshold must be None or numeric; got {type(body['fdr_adjusted_threshold']).__name__}"
+        )
 
 
 # ===========================================================================

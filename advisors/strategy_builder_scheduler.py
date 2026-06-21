@@ -22,7 +22,7 @@ Design constraints:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ def _already_ran_this_week() -> bool:
         import database  # noqa: PLC0415 - CC-2 lazy; no state-DB on execution path
 
         # ISO week bounds: Monday 00:00 UTC of the current week.
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         iso_year, iso_week, _ = now.isocalendar()
 
         # Fetch recent STRATEGY_BUILDER observations — we only need to check
@@ -77,7 +77,7 @@ def _already_ran_this_week() -> bool:
                 else:
                     row_dt = created_at
                 if not row_dt.tzinfo:
-                    row_dt = row_dt.replace(tzinfo=timezone.utc)
+                    row_dt = row_dt.replace(tzinfo=UTC)
                 row_year, row_week, _ = row_dt.isocalendar()
                 if row_year == iso_year and row_week == iso_week:
                     return True
@@ -88,7 +88,9 @@ def _already_ran_this_week() -> bool:
 
     except Exception as exc:
         # D-1: degrade to False (run anyway) on any DB error.
-        logger.debug("_already_ran_this_week: check failed (%s); defaulting to False", type(exc).__name__)
+        logger.debug(
+            "_already_ran_this_week: check failed (%s); defaulting to False", type(exc).__name__
+        )
         return False
 
 
@@ -158,9 +160,7 @@ def run_weekly_build() -> None:
                     live_returns=[],
                     community_candidates=community_candidates,
                 )
-                logger.info(
-                    "strategy_builder_scheduler: objective=%s completed", objective.value
-                )
+                logger.info("strategy_builder_scheduler: objective=%s completed", objective.value)
                 break  # success — no retry needed
             except Exception as exc:
                 # D-1: log exception class name only — no key/path/message leak.

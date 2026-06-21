@@ -67,9 +67,7 @@ def gen():
 # rebalance, root}; root is a NODE — kind in {asset, weight, group, filter, if, ...}.
 # ---------------------------------------------------------------------------
 
-_MEMBERSHIP = frozenset(
-    {"SPY", "QQQ", "IWM", "EFA", "AGG", "GLD", "TLT", "XLF", "XLE", "XLV"}
-)
+_MEMBERSHIP = frozenset({"SPY", "QQQ", "IWM", "EFA", "AGG", "GLD", "TLT", "XLF", "XLE", "XLV"})
 
 
 def _equal_weight_plan(plan_id: str, tickers: list[str], *, objective: str) -> dict:
@@ -101,9 +99,7 @@ def _inverse_vol_plan(plan_id: str, tickers: list[str], *, objective: str) -> di
     }
 
 
-def _patch_builder_seams(
-    monkeypatch, sbe, gen, *, plans: list[dict], membership=_MEMBERSHIP
-):
+def _patch_builder_seams(monkeypatch, sbe, gen, *, plans: list[dict], membership=_MEMBERSHIP):
     """Patch ONLY the network/SDK seams; leave compile_plan + validate_tree REAL.
 
     - get_tradeable_set (+ fetch_universe) → the controlled membership frozenset.
@@ -280,7 +276,9 @@ def test_generate_candidate_trees_self_sources_membership_from_c1(sbe, gen, monk
     if hasattr(sbe, "generate_build_plans"):
         monkeypatch.setattr(sbe, "generate_build_plans", _capture_generate, raising=False)
     if hasattr(sbe, "get_tradeable_set"):
-        monkeypatch.setattr(sbe, "get_tradeable_set", lambda *a, **k: frozenset(_MEMBERSHIP), raising=False)
+        monkeypatch.setattr(
+            sbe, "get_tradeable_set", lambda *a, **k: frozenset(_MEMBERSHIP), raising=False
+        )
 
     sbe._generate_candidate_trees(sbe.Objective.diversify, [])
     assert "membership" in captured, "generate_build_plans must be called (C2 wired)"
@@ -343,7 +341,9 @@ def test_generate_candidate_trees_empty_generator_degrades_to_empty(sbe, gen, mo
     if hasattr(sbe, "generate_build_plans"):
         monkeypatch.setattr(sbe, "generate_build_plans", _empty_generate, raising=False)
     if hasattr(sbe, "get_tradeable_set"):
-        monkeypatch.setattr(sbe, "get_tradeable_set", lambda *a, **k: frozenset(_MEMBERSHIP), raising=False)
+        monkeypatch.setattr(
+            sbe, "get_tradeable_set", lambda *a, **k: frozenset(_MEMBERSHIP), raising=False
+        )
 
     infos = sbe._generate_candidate_trees(sbe.Objective.diversify, [])
     assert called["gen"], (

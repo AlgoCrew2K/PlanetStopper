@@ -216,7 +216,9 @@ def _spy_aware_backtest(series_by_id: dict[str, dict[str, float]], spy_series: d
         sid = tree.get("_series_id") if isinstance(tree, dict) else None
         is_candidate = sid in series_by_id
         if not is_candidate and ("SPY" in str(symphony_id).upper() or _is_spy_benchmark_tree(tree)):
-            return BacktestResult(stats={"sharpe": 1.0}, data_warnings=[], daily_returns=dict(spy_series))
+            return BacktestResult(
+                stats={"sharpe": 1.0}, data_warnings=[], daily_returns=dict(spy_series)
+            )
         # Candidate path: map the tree marker → its series (empty dict if unknown).
         series = series_by_id.get(sid, {})
         return BacktestResult(stats={"sharpe": 0.5}, data_warnings=[], daily_returns=dict(series))

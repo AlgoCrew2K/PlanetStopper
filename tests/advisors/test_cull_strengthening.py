@@ -567,16 +567,16 @@ def test_ac25_spy_unavailable_blocks_an_otherwise_adopting_candidate_non_confoun
         kwargs["pbo"] = None  # no PBO veto in this isolation
         return real_gate(*args, **kwargs)
 
-    monkeypatch.setattr(gate_engine, "evaluate_acceptance_gate", _adopt_friendly_gate, raising=False)
+    monkeypatch.setattr(
+        gate_engine, "evaluate_acceptance_gate", _adopt_friendly_gate, raising=False
+    )
     monkeypatch.setattr(_ag, "evaluate_acceptance_gate", _adopt_friendly_gate)
 
     # Candidates with clearly-positive fold oos_alpha (would beat the 0.0 fallback).
     cand = _make_candidate(gate_engine, "would_adopt", {d: 0.03 for d in _DATES})
     sibling = _make_candidate(gate_engine, "would_adopt2", {d: 0.025 for d in _DATES})
     # SPY unavailable.
-    batch = gate_engine.evaluate_candidate_batch(
-        [cand, sibling], spy_returns_fn=lambda *a, **k: {}
-    )
+    batch = gate_engine.evaluate_candidate_batch([cand, sibling], spy_returns_fn=lambda *a, **k: {})
     for cid in ("would_adopt", "would_adopt2"):
         assert _verdict_for(batch, cid) != acceptance_gate.DECISION_ADOPT_CANDIDATE, (
             "EDGE-14 BUG: a candidate that clears BHY+panel and beats the 0.0 fallback "

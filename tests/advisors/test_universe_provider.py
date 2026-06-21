@@ -191,13 +191,9 @@ class TestFetchTarget:
         called_url = mock_get.call_args[0][0]
 
         # Accept either explicit params dict OR URL-embedded query string.
-        has_status_active = (
-            params.get("status") == "active"
-            or "status=active" in called_url
-        )
+        has_status_active = params.get("status") == "active" or "status=active" in called_url
         has_us_equity = (
-            params.get("asset_class") == "us_equity"
-            or "asset_class=us_equity" in called_url
+            params.get("asset_class") == "us_equity" or "asset_class=us_equity" in called_url
         )
         assert has_status_active, (
             f"Missing status=active in params={params!r} or URL={called_url!r}"
@@ -262,8 +258,8 @@ class TestFetchTarget:
         Conflating the two hosts is the most dangerous implementation mistake —
         paper keys 401 on the live data host path (api.alpaca.markets/v2/assets).
         """
-        from advisors import universe_provider
         import synthetic_history
+        from advisors import universe_provider
 
         assert hasattr(universe_provider, "ALPACA_TRADING_BASE_URL"), (
             "universe_provider must define ALPACA_TRADING_BASE_URL as a named constant"
@@ -326,9 +322,7 @@ class TestFilterCorrectness:
             "OTC_TRADABLE slipped through the exchange filter — OTC must be excluded"
         )
 
-    def test_filter_drops_untradable_nasdaq_symbol(
-        self, asset_fixture, isolated_cache, alpaca_env
-    ):
+    def test_filter_drops_untradable_nasdaq_symbol(self, asset_fixture, isolated_cache, alpaca_env):
         """UNTRADABLE_TICK (tradable=False, exchange=NASDAQ) must not survive."""
         from advisors import universe_provider
 
@@ -481,8 +475,8 @@ class TestWeeklyCache:
         mock_resp = _make_mock_response(json_body=raw_assets)
 
         with patch("requests.get", return_value=mock_resp) as mock_get:
-            universe_provider.fetch_universe()                      # populates cache
-            universe_provider.fetch_universe(force_refresh=True)   # must bypass cache
+            universe_provider.fetch_universe()  # populates cache
+            universe_provider.fetch_universe(force_refresh=True)  # must bypass cache
 
         assert mock_get.call_count == 2, (
             f"Expected 2 HTTP calls (initial + force_refresh); got {mock_get.call_count}. "
@@ -544,9 +538,7 @@ class TestMembershipLookup:
         with patch("requests.get") as mock_get:
             result = universe_provider.is_tradeable(a_survivor)
 
-        assert result is True, (
-            f"Expected is_tradeable({a_survivor!r}) == True; got {result!r}"
-        )
+        assert result is True, f"Expected is_tradeable({a_survivor!r}) == True; got {result!r}"
         # No extra HTTP call after cache warm.
         assert mock_get.call_count == 0, (
             f"is_tradeable fired an HTTP request after cache was already warm "
@@ -560,9 +552,7 @@ class TestMembershipLookup:
         with patch("requests.get") as mock_get:
             result = universe_provider.is_tradeable("DOESNOTEXIST_XYZ")
 
-        assert result is False, (
-            "Expected is_tradeable('DOESNOTEXIST_XYZ') == False; got {result!r}"
-        )
+        assert result is False, "Expected is_tradeable('DOESNOTEXIST_XYZ') == False; got {result!r}"
         assert mock_get.call_count == 0, (
             "is_tradeable fired an HTTP request for a known-absent ticker — cache not used"
         )
@@ -579,8 +569,7 @@ class TestMembershipLookup:
             f"is_tradeable({a_survivor!r}) must return the bool True, got {result_true!r}"
         )
         assert result_false is False, (
-            "is_tradeable('DOESNOTEXIST_XYZ') must return the bool False, "
-            f"got {result_false!r}"
+            f"is_tradeable('DOESNOTEXIST_XYZ') must return the bool False, got {result_false!r}"
         )
 
     def test_membership_served_from_cache_no_new_http(self, warm_cache, alpaca_env):
@@ -658,6 +647,7 @@ class TestMembershipLookup:
         naively try to access result['symbols'] on a failure dict that has an empty set.
         """
         import requests
+
         from advisors import universe_provider
 
         with patch("requests.get", side_effect=requests.Timeout("simulated timeout")):
@@ -669,9 +659,7 @@ class TestMembershipLookup:
                     "violates 'never raises' contract (AC-4 + D-1)"
                 )
 
-        assert result is False, (
-            f"is_tradeable must return False when fetch fails; got {result!r}"
-        )
+        assert result is False, f"is_tradeable must return False when fetch fails; got {result!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -684,9 +672,7 @@ class TestD1NeverRaises:
 
     def _assert_graceful_degradation(self, result: dict, context: str) -> None:
         """Shared assertion: available=False + reason present, no exception propagation."""
-        assert isinstance(result, dict), (
-            f"{context}: expected dict result; got {type(result)}"
-        )
+        assert isinstance(result, dict), f"{context}: expected dict result; got {type(result)}"
         assert result.get("available") is False, (
             f"{context}: expected available=False; got available={result.get('available')!r}"
         )
@@ -696,9 +682,7 @@ class TestD1NeverRaises:
         assert isinstance(result["reason"], str), (
             f"{context}: reason must be a string; got {type(result['reason'])}"
         )
-        assert result["reason"], (
-            f"{context}: reason must be a non-empty string"
-        )
+        assert result["reason"], f"{context}: reason must be a non-empty string"
 
     def test_wrong_host_401_returns_available_false(self, isolated_cache, alpaca_env):
         """A 401 HTTP response (paper keys hitting wrong host) → available=False + reason."""
@@ -719,6 +703,7 @@ class TestD1NeverRaises:
     def test_timeout_returns_available_false(self, isolated_cache, alpaca_env):
         """requests.Timeout → available=False; reason must be the exception class name only."""
         import requests
+
         from advisors import universe_provider
 
         with patch("requests.get", side_effect=requests.Timeout("connection timed out")):
@@ -779,6 +764,7 @@ class TestD1NeverRaises:
     def test_connection_error_returns_available_false(self, isolated_cache, alpaca_env):
         """requests.ConnectionError → available=False; never raises."""
         import requests
+
         from advisors import universe_provider
 
         with patch(
@@ -813,6 +799,7 @@ class TestD1NeverRaises:
         no path, no credential value.
         """
         import requests
+
         from advisors import universe_provider
 
         key_value = os.environ["ALPACA_KEY"]
@@ -870,9 +857,7 @@ class TestWarehousePersistence:
         with patch("requests.get", return_value=_make_mock_response(json_body=raw_assets)):
             universe_provider.fetch_universe(db_path=warehouse_path)
 
-        rows = lens_warehouse.get_lens_snapshots(
-            lens="universe_provider", db_path=warehouse_path
-        )
+        rows = lens_warehouse.get_lens_snapshots(lens="universe_provider", db_path=warehouse_path)
         assert len(rows) >= 1, (
             f"Expected >= 1 warehouse snapshot row after a fresh fetch; got {len(rows)}. "
             "Every fresh universe fetch must persist a snapshot to the warehouse DB "
@@ -896,14 +881,12 @@ class TestWarehousePersistence:
         with patch("requests.get", return_value=_make_mock_response(json_body=raw_assets)):
             universe_provider.fetch_universe(db_path=warehouse_path)
 
-        rows = lens_warehouse.get_lens_snapshots(
-            lens="universe_provider", db_path=warehouse_path
-        )
+        rows = lens_warehouse.get_lens_snapshots(lens="universe_provider", db_path=warehouse_path)
         for row in rows:
             raw_json_str = row.get("raw_json", "")
             assert key_value not in raw_json_str, (
-                f"ALPACA_KEY value found in warehouse raw_json — credential leak! "
-                f"The warehouse write must apply _strip_secrets before persisting."
+                "ALPACA_KEY value found in warehouse raw_json — credential leak! "
+                "The warehouse write must apply _strip_secrets before persisting."
             )
 
     def test_warehouse_snapshot_contains_symbol_set_for_drift_reconstruction(
@@ -932,9 +915,7 @@ class TestWarehousePersistence:
         with patch("requests.get", return_value=_make_mock_response(json_body=raw_assets)):
             universe_provider.fetch_universe(db_path=warehouse_path)
 
-        rows = lens_warehouse.get_lens_snapshots(
-            lens="universe_provider", db_path=warehouse_path
-        )
+        rows = lens_warehouse.get_lens_snapshots(lens="universe_provider", db_path=warehouse_path)
         assert len(rows) >= 1, (
             "No warehouse row written — cannot check drift-reconstruction payload"
         )
@@ -943,9 +924,7 @@ class TestWarehousePersistence:
         try:
             payload = json.loads(raw_json_str)
         except json.JSONDecodeError as exc:
-            pytest.fail(
-                f"Warehouse raw_json is not valid JSON: {exc}\nraw_json={raw_json_str!r}"
-            )
+            pytest.fail(f"Warehouse raw_json is not valid JSON: {exc}\nraw_json={raw_json_str!r}")
 
         assert "symbols" in payload, (
             f"Warehouse payload is missing the 'symbols' key — drift reconstruction "
@@ -1067,7 +1046,9 @@ def test_no_importlib_reload_in_this_test_module():
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr == "reload":
                 target = node.func.value
-                root = target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", "")
+                root = (
+                    target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", "")
+                )
                 if root == "importlib" or node.func.attr == "reload":
                     offenders.append(node.lineno)
 

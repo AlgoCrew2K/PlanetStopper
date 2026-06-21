@@ -822,9 +822,7 @@ def propose_strategies(
             _spy_returns_dict: dict[str, float] = {}
         else:
             # Pct-scale matches dated_returns on candidates (log × 100 → pct).
-            _spy_returns_dict = {
-                d: r * 100.0 for d, r in _spy_result.daily_returns.items()
-            }
+            _spy_returns_dict = {d: r * 100.0 for d, r in _spy_result.daily_returns.items()}
         _spy_returns_fn = lambda: _spy_returns_dict  # noqa: E731
 
         bt_candidates: list[BacktestCandidate] = []
