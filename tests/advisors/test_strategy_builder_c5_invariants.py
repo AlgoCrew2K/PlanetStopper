@@ -63,6 +63,21 @@ import pytest
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
+@pytest.fixture(autouse=True)
+def _ci_hermetic_composer_key(monkeypatch):
+    """Patch _has_composer_key to return True for every test in this module.
+
+    CI-hermetic fix: in CI, COMPOSER_KEY_ID / COMPOSER_SECRET are absent, so
+    propose_strategies() returns early with error="Composer API key not configured"
+    before reaching the FDR gate, backtest, or persistence paths these tests guard.
+    The actual Composer backtest is already mocked via run_backtest in each test —
+    this fixture only unblocks the credential gate so the real pipeline runs against
+    those mocks, which is the invariant under test.
+    """
+    with patch("advisors.strategy_builder_engine._has_composer_key", return_value=True):
+        yield
+
+
 @pytest.fixture(scope="module")
 def sbe():
     import advisors.strategy_builder_engine as _sbe  # noqa: PLC0415

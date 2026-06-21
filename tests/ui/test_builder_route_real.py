@@ -50,6 +50,20 @@ def _no_live_atlas():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _ci_hermetic_composer_key():
+    """Patch _has_composer_key to return True for every route test in this file.
+
+    CI-hermetic fix: in CI, COMPOSER_KEY_ID / COMPOSER_SECRET are absent, so
+    propose_strategies() returns early with error="Composer API key not configured"
+    before reaching the C1 universe-provider path. The actual Composer backtest is
+    mocked per-test; this fixture only unblocks the credential gate so the real
+    builder pipeline (C1 → C2 → C3 → gate) runs against those mocks.
+    """
+    with patch("advisors.strategy_builder_engine._has_composer_key", return_value=True):
+        yield
+
+
 @pytest.fixture
 def sb_client():
     import app as app_module  # noqa: PLC0415

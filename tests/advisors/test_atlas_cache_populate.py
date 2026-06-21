@@ -513,7 +513,15 @@ class TestBoundedFetch:
         called, and verify a limit is applied — either via .limit(N) chained on
         the cursor, or by a $maxN sort-limit pattern, or by passing limit= as a
         find() kwarg.
+
+        CI-hermetic: MONGO_URI is set to a dummy value so the code reaches the
+        mocked pymongo.MongoClient instead of raising KeyError before the mock runs.
+        The mock intercepts the connection, so no live Atlas call is made.
         """
+        # Provide a dummy MONGO_URI so _fetch_fn's os.environ["MONGO_URI"] read
+        # succeeds and the code proceeds into the mocked pymongo path.
+        monkeypatch.setenv("MONGO_URI", "mongodb+srv://ci-dummy:ci-dummy@test.example.com/db")
+
         captured_find_calls: list = []
         limit_calls: list = []
 
@@ -778,7 +786,7 @@ class TestCacheHitOnSecondCall:
             "serialize ObjectId-bearing payloads (default=str) or exclude _id at projection."
         )
 
-    def test_second_call_returns_same_candidates(self, isolated_cache_db):
+    def test_second_call_returns_same_candidates(self, isolated_cache_db, monkeypatch):
         """The second call's return value must match the first call's return value.
 
         Verifies the pipeline (parse/validate/dedup) is applied to cached docs too.
@@ -790,7 +798,14 @@ class TestCacheHitOnSecondCall:
         row via the real cached_pull write path, then assert the second call
         (force_refresh=False) HITs that row and returns the SAME candidates with
         no second MongoClient instantiation.
+
+        CI-hermetic: MONGO_URI set to a dummy value so _fetch_fn's os.environ read
+        succeeds and the code proceeds into the mocked pymongo path.
         """
+        # Provide a dummy MONGO_URI so _fetch_fn's os.environ["MONGO_URI"] read
+        # succeeds and reaches the mocked pymongo.MongoClient instead of KeyError.
+        monkeypatch.setenv("MONGO_URI", "mongodb+srv://ci-dummy:ci-dummy@test.example.com/db")
+
         import advisors.community_strats as cs  # noqa: PLC0415
 
         plain_doc = _make_mongo_doc_plain(sid="hit-002", ticker="QQQ")
@@ -855,7 +870,14 @@ class TestCacheHitOnSecondCall:
 
         ADVERSARIAL: without a written cache row (AC-1 bug), both calls invoke
         _bounded_fetch_fn → fetch_count == 2 → this assertion FAILS.
+
+        CI-hermetic: MONGO_URI set to a dummy value so _fetch_fn's os.environ read
+        succeeds and the code proceeds into the mocked pymongo path.
         """
+        # Provide a dummy MONGO_URI so _fetch_fn's os.environ["MONGO_URI"] read
+        # succeeds and reaches the mocked pymongo.MongoClient instead of KeyError.
+        monkeypatch.setenv("MONGO_URI", "mongodb+srv://ci-dummy:ci-dummy@test.example.com/db")
+
         import advisors.community_strats as cs  # noqa: PLC0415
 
         fetch_invocations = Counter()
