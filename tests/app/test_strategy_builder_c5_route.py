@@ -377,36 +377,19 @@ class TestAC13ProvenanceEndToEnd:
             f"('cut_drawdown'); got {objective_value!r}"
         )
 
-    def test_route_does_not_call_old_unranked_community_adapter(self, client):
-        """AC-13 (contract upgrade): the route must NO LONGER call the old unranked
-        strategy_builder_engine.community_candidate_infos adapter. RED today: it does."""
-        atlas_result = {
-            "available": True,
-            "candidates": [{"sid": "atlas-1", "name": "A", "tree": {}, "oos_metrics": {}}],
-            "stats": {"pulled": 1, "valid": 1},
-            "source": "captplanet",
-        }
-        run = _proposal_run(survivors=[], rejected=[], n_candidates=0)
-        old_adapter = MagicMock(return_value=[])
+    def test_old_unranked_community_adapter_is_gone(self, client):
+        """AC-13 / EDGE-1 (contract upgrade): the old unranked community_candidate_infos
+        adapter must be DELETED from strategy_builder_engine — so the route structurally
+        CANNOT call it. (Originally this patched the adapter and asserted not-called; once
+        the adapter was deleted, patching a non-existent attribute errors, so this is
+        re-pointed to assert the deletion — the durable post-rewire contract. The route's
+        positive use of the objective-matched admission is asserted in
+        test_route_uses_objective_matched_admission_not_old_adapter above.)"""
+        import advisors.strategy_builder_engine as sbe  # noqa: PLC0415
 
-        with (
-            patch(
-                "advisors.community_strats.load_community_strategies",
-                return_value=atlas_result,
-            ),
-            patch("advisors.strategy_builder_engine.propose_strategies", return_value=run),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos",
-                old_adapter,
-            ),
-        ):
-            resp = _post(client, {"objective": "diversify", "universe": []})
-
-        assert resp.status_code == 200
-        assert not old_adapter.called, (
-            "AC-13 (RED gap): the route must NOT call the old unranked "
-            "community_candidate_infos adapter after the objective-matched rewire; "
-            "it was called."
+        assert not hasattr(sbe, "community_candidate_infos"), (
+            "EDGE-1: the old unranked community_candidate_infos adapter must be deleted; "
+            "the route uses the objective-matched build_plan_generator.load_atlas_candidates."
         )
 
 

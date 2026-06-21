@@ -1,35 +1,40 @@
-"""RED tests — community-strats route wiring (HF-1).
+"""Route community-admission wiring tests (Shape A — objective-matched atlas admission).
 
 Module under test: app.ai_advisor_strategy_builder_run
 Route: POST /ai-advisor/strategy-builder/run
 
-These are ROUTE-LAYER tests only. The ENGINE-LAYER tests live in
-tests/advisors/test_community_strats_wiring.py (which tests
-strategy_builder_engine.community_candidate_infos / propose_strategies
-directly). This file tests that the Flask handler calls the right helpers
-with the right arguments and degrades correctly.
+CONTRACT UPGRADE (C5, 2026-06-20 — stale-by-intent re-point, NOT a weakening):
+  The route's community-admission contract was INTENTIONALLY upgraded from the old
+  unranked `strategy_builder_engine.community_candidate_infos` adapter (template_id=
+  "community", objective-ignorant) to the OBJECTIVE-MATCHED `build_plan_generator.
+  load_atlas_candidates(objective)` (provenance="atlas-suggested", AC-12/AC-13). The
+  old adapter was orphaned and DELETED this cycle (EDGE-1). These tests are re-pointed
+  to assert the Shape-A contract:
 
-Tests are RED by construction: the route currently calls propose_strategies()
-WITHOUT the community_candidates kwarg and WITHOUT calling
-load_community_strategies at all. Every AC-1, AC-2, AC-3, AC-4 test will
-fail until the route wiring is implemented. AC-5 and AC-6 tests are
-constraint guards that pass both before and after implementation.
+    route → load_atlas_candidates(objective)  [exactly once; bill-protected inside]
+         → propose_strategies(community_candidates=<that output>)
 
-Mocking strategy:
-  - advisors.community_strats.load_community_strategies  — source module patch
-  - advisors.strategy_builder_engine.community_candidate_infos  — source module patch
-  - advisors.strategy_builder_engine.propose_strategies  — source module patch
+  The route NO LONGER calls load_community_strategies directly NOR the deleted adapter.
+  The force_refresh=False bill-protection now lives INSIDE load_atlas_candidates and is
+  positively asserted in tests/advisors/test_build_plan_atlas_admission.py
+  ::test_ac12_uses_force_refresh_false_when_loading_from_atlas — so the route-level
+  AC-3/security guard here verifies the route never FORCES a refresh (it cannot — it
+  passes no force_refresh) and calls the wrapper exactly once.
+
+These remain ROUTE-LAYER tests only. The objective-matched admission internals are
+covered in tests/advisors/test_build_plan_atlas_admission.py + the generator suite.
+The end-to-end provenance/parity assertions live in tests/app/test_strategy_builder_c5_route.py.
+
+Mocking strategy (Shape A seams):
+  - advisors.build_plan_generator.load_atlas_candidates  — the objective-matched admission
+    (route lazy-imports it from build_plan_generator; patch the source module)
+  - advisors.strategy_builder_engine.propose_strategies  — capture call kwargs
   - database.load_state  — autouse-stubbed by tests/ui/conftest.py
   - CSRF  — autouse-disabled by tests/conftest.py
 
-All patches target the source modules. The route handler uses lazy
-`from X import Y` imports inside the function body; each call re-imports
-from the source module namespace, so patching the source is the correct seam.
-
 Rules:
   - No live Atlas, Composer, or DB calls.
-  - No hardcoded producer-computed metric values; assert shape/membership/kwarg
-    forwarding only.
+  - No hardcoded producer-computed metric values; assert shape/membership/kwarg forwarding.
   - Every test has at least one assertion that can fail on a wrong implementation.
 """
 
@@ -49,17 +54,12 @@ import pytest
 def _make_fake_proposal_run(*, error: str | None = None) -> MagicMock:
     """Minimal ProposalRun-shaped MagicMock that the route handler can serialise.
 
-    The route's response-building section accesses:
-      run.error, run.gated_batch, run.candidates, run.screened_survivors,
-      run.gated_batch.results, run.gated_batch.n_candidates, run.gated_batch.fdr_q
-
-    We set these explicitly so tests that focus on kwarg-forwarding / call
-    patterns don't crash in the serialisation code downstream.
+    The route's response-building section accesses run.error, run.gated_batch,
+    run.candidates, run.screened_survivors, run.gated_batch.results /.n_candidates /.fdr_q.
     """
     run = MagicMock()
     run.error = error
 
-    # Build a minimal gated_batch with no survivors and no rejected candidates.
     gate = MagicMock()
     gate.n_candidates = 0
     gate.fdr_q = 0.05
@@ -67,48 +67,16 @@ def _make_fake_proposal_run(*, error: str | None = None) -> MagicMock:
     gate.survivors = []
     run.gated_batch = gate
 
-    # No candidates, no survivors.
     run.candidates = []
     run.screened_survivors = []
-
     return run
 
 
-def _make_community_result(*, n_candidates: int = 2, available: bool = True) -> dict:
-    """Minimal community_result dict matching load_community_strategies output shape.
-
-    Does NOT use real tree objects — the route handler passes the result to
-    community_candidate_infos, which is mocked. We only need the dict shape.
-    """
-    if not available:
-        return {
-            "available": False,
-            "reason": "AtlasUnavailable",
-            "candidates": [],
-            "stats": {"pulled": 0, "valid": 0},
-            "source": "captplanet",
-        }
-    return {
-        "available": True,
-        "candidates": [
-            {
-                "sid": f"sid-{i:04d}",
-                "name": f"Community Strat {i}",
-            }
-            for i in range(n_candidates)
-        ],
-        "stats": {"pulled": n_candidates, "valid": n_candidates},
-        "source": "captplanet",
-    }
-
-
-def _make_fake_candidate_infos(n: int) -> list:
-    """Return N opaque MagicMock objects standing in for CandidateInfo instances.
-
-    The route passes these through to propose_strategies unchanged; we only
-    care about count and identity, not internal structure.
-    """
-    return [MagicMock(name=f"CandidateInfo-{i}") for i in range(n)]
+def _make_fake_atlas_candidates(n: int) -> list:
+    """N opaque MagicMock objects standing in for objective-matched atlas CandidateInfo
+    instances (the load_atlas_candidates output). The route forwards these unchanged to
+    propose_strategies; we only care about count and identity."""
+    return [MagicMock(name=f"AtlasCandidate-{i}") for i in range(n)]
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +86,6 @@ def _make_fake_candidate_infos(n: int) -> list:
 
 @pytest.fixture
 def sb_client():
-    """Flask test client for the strategy-builder route."""
     import app as app_module
 
     app_module.app.config["TESTING"] = True
@@ -126,7 +93,7 @@ def sb_client():
         yield c
 
 
-def _post_run(client, body: dict | None = None) -> flask.wrappers.Response:  # type: ignore[name-defined]  # noqa: F821
+def _post_run(client, body: dict | None = None):
     """POST /ai-advisor/strategy-builder/run with a JSON body."""
     payload = body or {"objective": "diversify", "universe": ["SPY", "QQQ"]}
     return client.post(
@@ -136,84 +103,33 @@ def _post_run(client, body: dict | None = None) -> flask.wrappers.Response:  # t
     )
 
 
-# ---------------------------------------------------------------------------
-# Context managers — patch all three collaborators together
-# ---------------------------------------------------------------------------
-
-
-def _patch_all(
-    *,
-    n_community_candidates: int = 2,
-    available: bool = True,
-    load_raises: Exception | None = None,
-    propose_raises: Exception | None = None,
-    propose_error: str | None = None,
-):
-    """Return a context manager that patches load, adapter, and propose_strategies.
-
-    Captures the call_args on propose_strategies so tests can inspect kwargs.
-    Returns (load_mock, adapter_mock, propose_mock).
-    """
-    community_result = _make_community_result(
-        n_candidates=n_community_candidates, available=available
-    )
-    adapter_output = _make_fake_candidate_infos(n_community_candidates if available else 0)
-    fake_run = _make_fake_proposal_run(error=propose_error)
-
-    load_mock = MagicMock(return_value=community_result)
-    if load_raises is not None:
-        load_mock.side_effect = load_raises
-
-    adapter_mock = MagicMock(return_value=adapter_output)
-
-    propose_mock = MagicMock(return_value=fake_run)
-    if propose_raises is not None:
-        propose_mock.side_effect = propose_raises
-
-    return (
-        patch("advisors.community_strats.load_community_strategies", load_mock),
-        patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
-        patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
-        load_mock,
-        adapter_mock,
-        propose_mock,
-        adapter_output,
-    )
-
-
 # ===========================================================================
-# SECTION 1 — AC-1: community candidates forwarded as community_candidates kwarg
+# SECTION 1 — AC-1/AC-13: route forwards load_atlas_candidates output as
+# community_candidates kwarg to propose_strategies.
 # ===========================================================================
 
 
 class TestAC1CommunityKwargForwarding:
-    """AC-1: the route must call propose_strategies(community_candidates=<adapter_output>)."""
+    """AC-1 (Shape A): the route must call propose_strategies(community_candidates=
+    <load_atlas_candidates output>)."""
 
     def test_community_candidates_kwarg_forwarded_to_propose_strategies(self, sb_client):
-        """AC-1: community_candidates kwarg passed to propose_strategies equals adapter output.
-
-        RED: currently the route calls propose_strategies() without community_candidates.
-        This test asserts the kwarg IS present and matches what community_candidate_infos
-        returned.
-        """
+        """AC-1: community_candidates kwarg passed to propose_strategies equals the
+        load_atlas_candidates output."""
         n = 2
-        community_result = _make_community_result(n_candidates=n)
-        adapter_output = _make_fake_candidate_infos(n)
+        atlas_output = _make_fake_atlas_candidates(n)
         fake_run = _make_fake_proposal_run()
 
-        load_mock = MagicMock(return_value=community_result)
-        adapter_mock = MagicMock(return_value=adapter_output)
+        atlas_mock = MagicMock(return_value=atlas_output)
         propose_mock = MagicMock(return_value=fake_run)
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
 
         assert resp.status_code == 200
-
         assert propose_mock.called, "propose_strategies must be called; it was not called at all"
 
         _, kwargs = propose_mock.call_args
@@ -221,61 +137,43 @@ class TestAC1CommunityKwargForwarding:
             "propose_strategies must be called with community_candidates= kwarg; "
             f"actual kwargs: {list(kwargs.keys())}"
         )
-        forwarded = kwargs["community_candidates"]
-        assert forwarded == adapter_output, (
-            "community_candidates forwarded to propose_strategies must equal "
-            "the adapter output; got a different object or value"
+        assert kwargs["community_candidates"] == atlas_output, (
+            "community_candidates forwarded to propose_strategies must equal the "
+            "load_atlas_candidates output; got a different object or value"
         )
 
-    def test_community_candidates_kwarg_count_matches_adapter_output(self, sb_client):
-        """AC-1: len(forwarded community_candidates) == len(adapter output).
-
-        RED: without community wiring, propose_strategies is called with no
-        community_candidates kwarg, so this check cannot even start.
-        """
+    def test_community_candidates_kwarg_count_matches_admission_output(self, sb_client):
+        """AC-1: len(forwarded community_candidates) == len(load_atlas_candidates output)."""
         n = 3
-        community_result = _make_community_result(n_candidates=n)
-        adapter_output = _make_fake_candidate_infos(n)
+        atlas_output = _make_fake_atlas_candidates(n)
         fake_run = _make_fake_proposal_run()
 
-        load_mock = MagicMock(return_value=community_result)
-        adapter_mock = MagicMock(return_value=adapter_output)
+        atlas_mock = MagicMock(return_value=atlas_output)
         propose_mock = MagicMock(return_value=fake_run)
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             _post_run(sb_client)
 
         _, kwargs = propose_mock.call_args
         forwarded = kwargs.get("community_candidates")
-        assert forwarded is not None, (
-            "community_candidates must be forwarded; got None/missing kwarg"
-        )
+        assert forwarded is not None, "community_candidates must be forwarded; got None/missing"
         assert len(forwarded) == n, (
             f"expected {n} community_candidates forwarded; got {len(forwarded)}"
         )
 
     def test_community_candidates_forwarded_value_is_list_not_none(self, sb_client):
-        """AC-1: the forwarded community_candidates must be a list, not None.
-
-        Guards against an impl that passes community_candidates=None when
-        candidates exist.
-        """
-        n = 1
-        community_result = _make_community_result(n_candidates=n)
-        adapter_output = _make_fake_candidate_infos(n)
+        """AC-1: the forwarded community_candidates must be a list, not None."""
+        atlas_output = _make_fake_atlas_candidates(1)
         fake_run = _make_fake_proposal_run()
 
-        load_mock = MagicMock(return_value=community_result)
-        adapter_mock = MagicMock(return_value=adapter_output)
+        atlas_mock = MagicMock(return_value=atlas_output)
         propose_mock = MagicMock(return_value=fake_run)
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             _post_run(sb_client)
@@ -286,118 +184,63 @@ class TestAC1CommunityKwargForwarding:
             f"community_candidates must be a list; got {type(forwarded).__name__}"
         )
 
-    def test_community_candidate_infos_called_with_load_result_and_max_cap(self, sb_client):
-        """AC-1: adapter called with the community_result from load AND max_candidates kwarg.
-
-        RED: currently community_candidate_infos is never called from this route.
-        """
-        community_result = _make_community_result(n_candidates=2)
-        adapter_output = _make_fake_candidate_infos(2)
+    def test_load_atlas_candidates_called_with_request_objective(self, sb_client):
+        """AC-1/AC-12 (Shape A): the route calls the OBJECTIVE-MATCHED admission with the
+        request objective (objective-shaped admission, not a global unranked pull)."""
+        atlas_output = _make_fake_atlas_candidates(2)
         fake_run = _make_fake_proposal_run()
 
-        load_mock = MagicMock(return_value=community_result)
-        adapter_mock = MagicMock(return_value=adapter_output)
+        atlas_mock = MagicMock(return_value=atlas_output)
         propose_mock = MagicMock(return_value=fake_run)
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
-            _post_run(sb_client)
+            _post_run(sb_client, {"objective": "cut_drawdown", "universe": []})
 
-        assert adapter_mock.called, "community_candidate_infos must be called; it was not called"
-
-        _, adapter_kwargs = adapter_mock.call_args
-        # First positional arg must be the community_result dict from load
-        adapter_args, _ = adapter_mock.call_args
-        assert len(adapter_args) >= 1, (
-            "community_candidate_infos must receive the community_result as positional arg"
+        assert atlas_mock.called, "load_atlas_candidates must be called; it was not called"
+        call = atlas_mock.call_args
+        objective_arg = call.args[0] if call.args else call.kwargs.get("objective")
+        objective_value = getattr(objective_arg, "value", objective_arg)
+        assert objective_value == "cut_drawdown", (
+            "AC-12: load_atlas_candidates must receive the request objective "
+            f"('cut_drawdown'); got {objective_value!r}"
         )
-        assert adapter_args[0] == community_result, (
-            "community_candidate_infos must receive the dict returned by "
-            "load_community_strategies; got a different object"
-        )
-        # max_candidates must be forwarded
-        assert "max_candidates" in adapter_kwargs, (
-            "community_candidate_infos must be called with max_candidates= kwarg; "
-            f"actual kwargs: {list(adapter_kwargs.keys())}"
-        )
-        assert adapter_kwargs["max_candidates"] > 0, "max_candidates must be a positive integer cap"
 
 
 # ===========================================================================
-# SECTION 2 — AC-2: empty / unavailable → template-only, route completes
+# SECTION 2 — AC-2: empty / unavailable admission → template-only, route completes
 # ===========================================================================
 
 
 class TestAC2TemplateDegradation:
-    """AC-2: route must complete a template-only run when community load is empty/unavailable."""
+    """AC-2: route completes a template-only run when atlas admission yields []."""
 
-    def test_empty_candidates_list_route_completes(self, sb_client):
-        """AC-2: community_result with available=True but empty candidates → 200.
-
-        RED: currently load_community_strategies is not called at all, so the
-        response shape is the same regardless; but the kwarg forwarding part
-        is absent.
-        """
-        community_result = _make_community_result(n_candidates=0)
-        adapter_output = []  # adapter returns [] for empty candidates
+    def test_empty_admission_route_completes(self, sb_client):
+        """AC-2: load_atlas_candidates returns [] (no objective-matched community) → 200."""
         fake_run = _make_fake_proposal_run()
-
-        load_mock = MagicMock(return_value=community_result)
-        adapter_mock = MagicMock(return_value=adapter_output)
+        atlas_mock = MagicMock(return_value=[])
         propose_mock = MagicMock(return_value=fake_run)
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
 
         assert resp.status_code == 200, (
-            f"route must return 200 when community load has no candidates; got {resp.status_code}"
+            f"route must return 200 when atlas admission is empty; got {resp.status_code}"
         )
 
-    def test_available_false_route_completes(self, sb_client):
-        """AC-2: available=False in community_result → 200, no error raised.
-
-        RED: without the wiring, load is never called; this tests that
-        the route gracefully handles an unavailable community result.
-        """
-        community_result = _make_community_result(available=False)
-        adapter_output = []
-        fake_run = _make_fake_proposal_run()
-
-        load_mock = MagicMock(return_value=community_result)
-        adapter_mock = MagicMock(return_value=adapter_output)
-        propose_mock = MagicMock(return_value=fake_run)
-
-        with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
-            patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
-        ):
-            resp = _post_run(sb_client)
-
-        assert resp.status_code == 200, (
-            f"route must return 200 when available=False; got {resp.status_code}"
-        )
-
-    def test_empty_load_response_has_required_json_keys(self, sb_client):
+    def test_empty_admission_response_has_required_json_keys(self, sb_client):
         """AC-2: response must carry survivors/rejected/n_candidates/fdr_adjusted_threshold."""
-        community_result = _make_community_result(n_candidates=0)
-        adapter_output = []
         fake_run = _make_fake_proposal_run()
-
-        load_mock = MagicMock(return_value=community_result)
-        adapter_mock = MagicMock(return_value=adapter_output)
+        atlas_mock = MagicMock(return_value=[])
         propose_mock = MagicMock(return_value=fake_run)
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
@@ -406,127 +249,82 @@ class TestAC2TemplateDegradation:
         required = {"survivors", "rejected", "n_candidates", "fdr_adjusted_threshold"}
         missing = required - body.keys()
         assert not missing, (
-            f"response must have keys {required}; missing: {missing}. "
-            f"Actual keys: {set(body.keys())}"
+            f"response must have keys {required}; missing: {missing}. Actual: {set(body.keys())}"
         )
 
-    def test_unavailable_response_has_required_json_keys(self, sb_client):
-        """AC-2: available=False → response still has required keys."""
-        community_result = _make_community_result(available=False)
-        adapter_output = []
-        fake_run = _make_fake_proposal_run()
+    def test_empty_admission_propose_still_called(self, sb_client):
+        """AC-2: propose_strategies must be called even when atlas admission returns [].
 
-        load_mock = MagicMock(return_value=community_result)
-        adapter_mock = MagicMock(return_value=adapter_output)
+        Template-only (built-new) path must complete — not short-circuit on empty atlas."""
+        fake_run = _make_fake_proposal_run()
+        atlas_mock = MagicMock(return_value=[])
         propose_mock = MagicMock(return_value=fake_run)
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
-            patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
-        ):
-            resp = _post_run(sb_client)
-
-        body = json.loads(resp.data)
-        required = {"survivors", "rejected", "n_candidates", "fdr_adjusted_threshold"}
-        missing = required - body.keys()
-        assert not missing, (
-            f"response must have keys {required} even when available=False; missing: {missing}"
-        )
-
-    def test_empty_community_propose_still_called(self, sb_client):
-        """AC-2: propose_strategies must be called even when community load returns [].
-
-        Template-only path must complete — not short-circuit when community empty.
-        """
-        community_result = _make_community_result(n_candidates=0)
-        adapter_output = []
-        fake_run = _make_fake_proposal_run()
-
-        load_mock = MagicMock(return_value=community_result)
-        adapter_mock = MagicMock(return_value=adapter_output)
-        propose_mock = MagicMock(return_value=fake_run)
-
-        with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             _post_run(sb_client)
 
         assert propose_mock.called, (
-            "propose_strategies must still be called when community candidates is []; "
-            "template-only run must not be skipped"
+            "propose_strategies must still be called when atlas admission is []; "
+            "the template-only (built-new) run must not be skipped"
         )
 
 
 # ===========================================================================
-# SECTION 3 — AC-3: bill-protection — force_refresh never True
+# SECTION 3 — AC-3: bill-protection — route calls the wrapper once, never forces refresh.
+# (The force_refresh=False guarantee is positively asserted INSIDE load_atlas_candidates
+#  in tests/advisors/test_build_plan_atlas_admission.py::test_ac12_uses_force_refresh_false.)
 # ===========================================================================
 
 
 class TestAC3BillProtection:
-    """AC-3: load_community_strategies must never be called with force_refresh=True."""
+    """AC-3: the route uses the bill-protected wrapper; it never forces an Atlas refresh."""
 
-    def test_load_community_strategies_called_without_force_refresh_true(self, sb_client):
-        """AC-3: route must not pass force_refresh=True to load_community_strategies.
-
-        RED: currently load_community_strategies is never called from the route,
-        so assert load_mock.called also fails. After impl, both assertions must pass.
-        """
-        community_result = _make_community_result(n_candidates=1)
-        adapter_output = _make_fake_candidate_infos(1)
+    def test_load_atlas_candidates_called_exactly_once(self, sb_client):
+        """AC-3: load_atlas_candidates is called exactly once per request — calling it
+        multiple times would multiply Atlas read cost (the wrapper caches weekly)."""
+        atlas_output = _make_fake_atlas_candidates(1)
         fake_run = _make_fake_proposal_run()
 
-        load_mock = MagicMock(return_value=community_result)
-        adapter_mock = MagicMock(return_value=adapter_output)
+        atlas_mock = MagicMock(return_value=atlas_output)
         propose_mock = MagicMock(return_value=fake_run)
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             _post_run(sb_client)
 
-        # First: the route must call load_community_strategies at all.
-        assert load_mock.called, (
-            "load_community_strategies must be called by the route; it was not called. "
-            "This is the core community-wiring RED test."
+        assert atlas_mock.call_count == 1, (
+            f"load_atlas_candidates must be called exactly once per request; "
+            f"called {atlas_mock.call_count} times"
         )
 
-        # Second: it must NOT be called with force_refresh=True.
-        _, kwargs = load_mock.call_args
-        force_refresh_value = kwargs.get("force_refresh", False)
-        assert force_refresh_value is not True, (
-            "load_community_strategies must NOT be called with force_refresh=True; "
-            f"got force_refresh={force_refresh_value!r}. "
-            "force_refresh=True would bypass the weekly cache and bill the Atlas provider."
-        )
-
-    def test_load_community_strategies_is_called_exactly_once(self, sb_client):
-        """AC-3: load_community_strategies is called exactly once per request.
-
-        Calling it multiple times per request would multiply Atlas read costs.
-        """
-        community_result = _make_community_result(n_candidates=1)
-        adapter_output = _make_fake_candidate_infos(1)
+    def test_route_does_not_force_atlas_refresh(self, sb_client):
+        """AC-3 / bill-protection: the route must never pass force_refresh=True to the
+        admission path. Shape A: the route calls load_atlas_candidates(objective) with NO
+        force_refresh kwarg (the wrapper enforces force_refresh=False internally —
+        positively asserted in test_build_plan_atlas_admission.py). A regression that
+        added force_refresh=True to the route call would bypass the weekly cache."""
+        atlas_output = _make_fake_atlas_candidates(1)
         fake_run = _make_fake_proposal_run()
 
-        load_mock = MagicMock(return_value=community_result)
-        adapter_mock = MagicMock(return_value=adapter_output)
+        atlas_mock = MagicMock(return_value=atlas_output)
         propose_mock = MagicMock(return_value=fake_run)
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             _post_run(sb_client)
 
-        assert load_mock.call_count == 1, (
-            f"load_community_strategies must be called exactly once per request; "
-            f"called {load_mock.call_count} times"
+        assert atlas_mock.called, "load_atlas_candidates must be called"
+        _, kwargs = atlas_mock.call_args
+        assert kwargs.get("force_refresh") is not True, (
+            "AC-3 bill-protection: the route must NOT pass force_refresh=True to "
+            f"load_atlas_candidates; got force_refresh={kwargs.get('force_refresh')!r}"
         )
 
 
@@ -536,101 +334,75 @@ class TestAC3BillProtection:
 
 
 class TestAC4NeverRaisingD1:
-    """AC-4: load or adapter failure must not break the route; propose failure yields error classname."""
+    """AC-4: an admission failure must not break the route; a propose failure → classname."""
 
-    def test_community_load_raises_route_does_not_500(self, sb_client):
-        """AC-4: load_community_strategies raising must not cause a 500.
-
-        RED: without the try/except wrapper around the community load block,
-        a raised exception propagates and crashes the route (500) or is caught
-        by the outer propose_strategies try/except, returning {"error": ...}
-        without ever calling propose_strategies. After impl, the route degrades
-        to template-only and returns 200 with the normal response shape.
-        """
+    def test_atlas_admission_raises_route_does_not_500(self, sb_client):
+        """AC-4: load_atlas_candidates raising must not 500 the route — it degrades to a
+        template-only (built-new) run. (load_atlas_candidates is itself never-raising, but
+        the route's best-effort try/except guards the call site regardless.)"""
         fake_run = _make_fake_proposal_run()
-
-        load_mock = MagicMock(side_effect=RuntimeError("atlas is down"))
-        adapter_mock = MagicMock()
+        atlas_mock = MagicMock(side_effect=RuntimeError("atlas is down"))
         propose_mock = MagicMock(return_value=fake_run)
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
 
         assert resp.status_code == 200, (
-            "route must return 200 when community load raises; "
-            f"got {resp.status_code}. Community load must be best-effort."
+            f"route must return 200 when atlas admission raises; got {resp.status_code}. "
+            "Atlas admission must be best-effort."
         )
 
-    def test_community_load_raises_response_does_not_leak_exception_str(self, sb_client):
-        """AC-4 / D-1: exception message must not appear in the response body.
-
-        The exception could contain a MONGO_URI or credential path. The D-1
-        contract requires only type(exc).__name__ in logs; nothing in the response.
-        """
+    def test_atlas_admission_raises_response_does_not_leak_exception_str(self, sb_client):
+        """AC-4 / D-1: an admission exception message (could carry a MONGO_URI/credential)
+        must not appear in the response body."""
         secret_message = "mongodb+srv://admin:S3cr3t@cluster.mongo.net"
         fake_run = _make_fake_proposal_run()
-
-        load_mock = MagicMock(side_effect=ConnectionError(secret_message))
-        adapter_mock = MagicMock()
+        atlas_mock = MagicMock(side_effect=ConnectionError(secret_message))
         propose_mock = MagicMock(return_value=fake_run)
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
 
         body_str = resp.data.decode("utf-8", errors="replace")
         assert secret_message not in body_str, (
-            "D-1 violation: exception message from community load appears in response body. "
-            "The message could contain credentials/paths. Log only the class name."
+            "D-1 violation: admission exception message appears in the response body. "
+            "It could carry credentials/paths. Log only the class name."
         )
 
-    def test_propose_strategies_still_called_when_community_load_raises(self, sb_client):
-        """AC-4: when community load raises, propose_strategies must still be called.
-
-        The route must degrade to template-only (community_candidates=[]) and
-        proceed — not abort the entire proposal run.
-        """
+    def test_propose_still_called_when_atlas_admission_raises(self, sb_client):
+        """AC-4: when atlas admission raises, propose_strategies must STILL be called —
+        the route degrades to template-only (community_candidates=[]) and proceeds."""
         fake_run = _make_fake_proposal_run()
-
-        load_mock = MagicMock(side_effect=RuntimeError("atlas timeout"))
-        adapter_mock = MagicMock()
+        atlas_mock = MagicMock(side_effect=RuntimeError("atlas timeout"))
         propose_mock = MagicMock(return_value=fake_run)
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             _post_run(sb_client)
 
         assert propose_mock.called, (
-            "propose_strategies must still be called when community load raises; "
-            "community failure must be best-effort / template-only fallback"
+            "propose_strategies must still be called when atlas admission raises; "
+            "admission failure must be best-effort / template-only fallback"
         )
 
-    def test_propose_strategies_raises_returns_error_classname(self, sb_client):
-        """AC-4 / D-1: propose_strategies raising → {"error": "<ClassName>"} not a 500.
+    def test_propose_strategies_raises_returns_safe_error_no_500(self, sb_client):
+        """AC-4 / D-1: propose_strategies raising → a safe error token, never a 500. The
+        route's outer except surfaces type(exc).__name__ (app.py:3829)."""
+        atlas_output = _make_fake_atlas_candidates(1)
 
-        This is the existing outer try/except behaviour — assert it is preserved
-        after community wiring.
-        """
-        community_result = _make_community_result(n_candidates=1)
-        adapter_output = _make_fake_candidate_infos(1)
-
-        load_mock = MagicMock(return_value=community_result)
-        adapter_mock = MagicMock(return_value=adapter_output)
+        atlas_mock = MagicMock(return_value=atlas_output)
         propose_mock = MagicMock(side_effect=ConnectionError("boom"))
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
@@ -640,65 +412,50 @@ class TestAC4NeverRaisingD1:
         )
         body = json.loads(resp.data)
         assert "error" in body, (
-            f"response must have 'error' key when propose_strategies raises; "
+            f"response must have an 'error' key when propose_strategies raises; "
             f"got keys: {list(body.keys())}"
         )
         assert body["error"] == "ConnectionError", (
-            f"error must be the exception class name 'ConnectionError'; got {body['error']!r}"
+            f"the route's outer except must surface the exception class name; got {body['error']!r}"
         )
 
     def test_propose_strategies_raises_body_has_no_exception_str(self, sb_client):
-        """AC-4 / D-1: exception message must not leak into the response body."""
+        """AC-4 / D-1: a propose exception message must not leak into the response body."""
         secret_detail = "internal path /opt/app/config.yaml line 42"
-        community_result = _make_community_result(n_candidates=1)
-        adapter_output = _make_fake_candidate_infos(1)
+        atlas_output = _make_fake_atlas_candidates(1)
 
-        load_mock = MagicMock(return_value=community_result)
-        adapter_mock = MagicMock(return_value=adapter_output)
+        atlas_mock = MagicMock(return_value=atlas_output)
         propose_mock = MagicMock(side_effect=ValueError(secret_detail))
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
 
         body_str = resp.data.decode("utf-8", errors="replace")
         assert secret_detail not in body_str, (
-            "D-1 violation: exception message from propose_strategies appears in response. "
-            "Only type(exc).__name__ is permitted in the response."
+            "D-1 violation: propose_strategies exception message appears in the response. "
+            "Only type(exc).__name__ is permitted."
         )
 
     def test_propose_strategies_raises_error_value_is_bare_classname(self, sb_client):
-        """AC-4 / D-1: the error value must be a bare class name — no punctuation/path/traceback."""
-        community_result = _make_community_result(n_candidates=0)
-        adapter_output = []
-
-        load_mock = MagicMock(return_value=community_result)
-        adapter_mock = MagicMock(return_value=adapter_output)
+        """AC-4 / D-1: the error value must be a bare class name — no spaces/colons/slashes."""
+        atlas_mock = MagicMock(return_value=[])
         propose_mock = MagicMock(side_effect=TypeError("cannot do this"))
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
 
         body = json.loads(resp.data)
         error_val = body.get("error", "")
-        # A bare class name has no spaces, colons, or slashes
         assert isinstance(error_val, str), "error value must be a string"
-        assert " " not in error_val, (
-            f"error value must be bare class name (no spaces); got {error_val!r}"
-        )
-        assert ":" not in error_val, (
-            f"error value must be bare class name (no colon); got {error_val!r}"
-        )
-        assert "/" not in error_val, (
-            f"error value must be bare class name (no slash); got {error_val!r}"
-        )
+        assert " " not in error_val, f"error value must be a bare class name (no spaces); got {error_val!r}"
+        assert ":" not in error_val, f"error value must be a bare class name (no colon); got {error_val!r}"
+        assert "/" not in error_val, f"error value must be a bare class name (no slash); got {error_val!r}"
         assert error_val == "TypeError", f"error value must be 'TypeError'; got {error_val!r}"
 
 
@@ -708,48 +465,44 @@ class TestAC4NeverRaisingD1:
 
 
 class TestAC5BoundaryPreserved:
-    """AC-5: constraint guards — these must pass both before and after implementation.
-
-    They verify that the implementation does NOT do bad things:
-    - No module-level import of load_community_strategies
-    - No community key in _SETTINGS_WRITE_ALLOWLIST
-    - No LIVE_EXECUTION reference in handler source
-    These are GREEN before impl and must remain GREEN after impl.
-    """
+    """AC-5: constraint guards — must hold both before and after the rewire."""
 
     def test_load_community_strategies_not_module_level_attr(self):
-        """AC-5: load_community_strategies must NOT be a module-level attr of app.
-
-        The import must stay inside the function body (lazy). A module-level
-        import would couple community_strats to the live 1-minute execution path.
-        """
+        """AC-5: load_community_strategies must NOT be a module-level attr of app —
+        community admission stays a lazy import inside the route (CC-2 boundary)."""
         import app as app_module
 
         assert not hasattr(app_module, "load_community_strategies"), (
             "load_community_strategies must not be imported at app module level; "
-            "it must be a lazy import inside the route handler to stay off the "
-            "1-minute execution path (CC-2 boundary)"
+            "it must stay lazy (it lives inside load_atlas_candidates now)"
         )
 
-    def test_community_candidate_infos_not_module_level_attr(self):
-        """AC-5: community_candidate_infos must NOT be a module-level attr of app."""
+    def test_load_atlas_candidates_not_module_level_attr(self):
+        """AC-5 (Shape A): the objective-matched admission must also be a lazy import
+        inside the route — not a module-level app attr (CC-2 boundary)."""
+        import app as app_module
+
+        assert not hasattr(app_module, "load_atlas_candidates"), (
+            "load_atlas_candidates must not be imported at app module level; "
+            "it must be a lazy import inside the route handler (CC-2 boundary)"
+        )
+
+    def test_old_community_adapter_not_module_level_attr(self):
+        """AC-5 / EDGE-1: the deleted community_candidate_infos adapter must not be a
+        module-level attr of app (it is gone — never re-introduce it)."""
         import app as app_module
 
         assert not hasattr(app_module, "community_candidate_infos"), (
-            "community_candidate_infos must not be imported at app module level; "
-            "it must be a lazy import inside the route handler"
+            "community_candidate_infos was deleted (EDGE-1) — it must not be referenced "
+            "at app module level"
         )
 
     def test_SETTINGS_WRITE_ALLOWLIST_does_not_contain_community_key(self):
-        """AC-5: _SETTINGS_WRITE_ALLOWLIST must not include any community-related key.
-
-        The strategy-builder route is advisory-only and must never be gated via
-        the settings allowlist.
-        """
+        """AC-5: _SETTINGS_WRITE_ALLOWLIST must not include any community-related key —
+        the strategy-builder route is advisory-only."""
         import app as app_module
 
         allowlist = app_module._SETTINGS_WRITE_ALLOWLIST
-        # No community-related key should be in the allowlist
         community_keys = {k for k in allowlist if "community" in k.lower()}
         assert not community_keys, (
             f"_SETTINGS_WRITE_ALLOWLIST must not contain community-related keys; "
@@ -757,174 +510,73 @@ class TestAC5BoundaryPreserved:
         )
 
     def test_LIVE_EXECUTION_not_referenced_in_handler_source(self):
-        """AC-5: the handler must not reference LIVE_EXECUTION in executable code.
-
-        The strategy-builder route is advisory-only; any interaction with the
-        LIVE_EXECUTION flag in code would be a critical scope violation.
-
-        The existing docstring documents "No LIVE_EXECUTION interaction anywhere"
-        (a statement of intent) — that is acceptable. We check only non-docstring
-        lines so the documentation statement does not trigger a false failure.
-        """
-        import ast
-        import textwrap
-
-        import app as app_module
-
-        raw_src = inspect.getsource(app_module.ai_advisor_strategy_builder_run)
-        # Dedent so ast.parse works reliably on method source extracted by inspect.
-        src = textwrap.dedent(raw_src)
-
-        try:
-            tree = ast.parse(src)
-        except SyntaxError:
-            # If ast.parse fails (e.g. decorator syntax in stripped source),
-            # fall back to a line-by-line check that skips comment/docstring lines.
-            non_doc_lines = []
-            in_docstring = False
-            for line in src.splitlines():
-                stripped = line.strip()
-                if stripped.startswith('"""') or stripped.startswith("'''"):
-                    in_docstring = not in_docstring
-                    continue
-                if not in_docstring and not stripped.startswith("#"):
-                    non_doc_lines.append(line)
-            code_only = "\n".join(non_doc_lines)
-            assert "LIVE_EXECUTION" not in code_only, (
-                "LIVE_EXECUTION must not appear in non-docstring, non-comment handler code"
-            )
-            return
-
-        # Walk the AST — collect all Name/Attribute nodes and string constants
-        # that appear in executable positions (not docstrings).
-        # Docstrings are Expr(value=Constant(s)) at the function body start;
-        # ast.get_docstring strips them. Check remaining nodes for the identifier.
-        class _Checker(ast.NodeVisitor):
-            def __init__(self):
-                self.found = False
-
-            def visit_Name(self, node):
-                if node.id == "LIVE_EXECUTION":
-                    self.found = True
-                self.generic_visit(node)
-
-            def visit_Attribute(self, node):
-                if node.attr == "LIVE_EXECUTION":
-                    self.found = True
-                self.generic_visit(node)
-
-        # Remove docstring from the function body before walking.
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                # Drop the first statement if it's a docstring constant.
-                if (
-                    node.body
-                    and isinstance(node.body[0], ast.Expr)
-                    and isinstance(node.body[0].value, ast.Constant)
-                    and isinstance(node.body[0].value.value, str)
-                ):
-                    node.body = node.body[1:]
-
-        checker = _Checker()
-        checker.visit(tree)
-        assert not checker.found, (
-            "LIVE_EXECUTION must not appear as a Name or Attribute reference in "
-            "ai_advisor_strategy_builder_run executable code; "
-            "the route is advisory-only and must not interact with the execution path"
-        )
+        """AC-5: the handler must not reference LIVE_EXECUTION in executable code (a
+        docstring mention of intent is acceptable)."""
+        _assert_no_live_execution_in_handler()
 
 
 # ===========================================================================
-# SECTION 6 — AC-6: no regression — empty community → same response shape
+# SECTION 6 — AC-6: no regression — empty admission → same response shape
 # ===========================================================================
 
 
 class TestAC6NoRegression:
-    """AC-6: with community wiring producing [], template-only response shape is unchanged."""
+    """AC-6: with atlas admission producing [], the template-only response shape is unchanged."""
 
-    def test_empty_community_and_raise_both_produce_same_response_keys(self, sb_client):
-        """AC-6: both empty-load and load-raises paths return identical response key sets.
-
-        This guards against a scenario where community wiring changes the
-        response shape for the template-only path.
-        """
+    def test_empty_admission_and_raise_both_produce_same_response_keys(self, sb_client):
+        """AC-6: both empty-admission and admission-raises paths return identical key sets."""
         fake_run = _make_fake_proposal_run()
 
-        # Path 1: load returns empty candidates
-        load_mock_empty = MagicMock(return_value=_make_community_result(n_candidates=0))
-        adapter_mock_empty = MagicMock(return_value=[])
-        propose_mock_1 = MagicMock(return_value=fake_run)
-
+        # Path 1: admission returns []
+        atlas_empty = MagicMock(return_value=[])
+        propose_1 = MagicMock(return_value=fake_run)
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock_empty),
-            patch(
-                "advisors.strategy_builder_engine.community_candidate_infos",
-                adapter_mock_empty,
-            ),
-            patch("advisors.strategy_builder_engine.propose_strategies", propose_mock_1),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_empty),
+            patch("advisors.strategy_builder_engine.propose_strategies", propose_1),
         ):
             resp1 = _post_run(sb_client)
 
-        # Path 2: load raises → degrade
-        load_mock_raise = MagicMock(side_effect=RuntimeError("atlas down"))
-        adapter_mock_2 = MagicMock()
-        propose_mock_2 = MagicMock(return_value=fake_run)
-
+        # Path 2: admission raises → degrade
+        atlas_raise = MagicMock(side_effect=RuntimeError("atlas down"))
+        propose_2 = MagicMock(return_value=fake_run)
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock_raise),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock_2),
-            patch("advisors.strategy_builder_engine.propose_strategies", propose_mock_2),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_raise),
+            patch("advisors.strategy_builder_engine.propose_strategies", propose_2),
         ):
             resp2 = _post_run(sb_client)
 
         keys1 = set(json.loads(resp1.data).keys())
         keys2 = set(json.loads(resp2.data).keys())
-
         assert keys1 == keys2, (
-            "Response key sets must be identical for empty-community and "
-            "community-load-raises paths; "
-            f"empty-load keys: {keys1}, load-raises keys: {keys2}"
+            "Response key sets must be identical for empty-admission and admission-raises "
+            f"paths; empty: {keys1}, raises: {keys2}"
         )
 
     def test_happy_path_response_shape_keys_present(self, sb_client):
-        """AC-6: happy-path response (with community candidates) has the required keys.
-
-        Asserts shape only — no specific metric values.
-        """
-        community_result = _make_community_result(n_candidates=2)
-        adapter_output = _make_fake_candidate_infos(2)
+        """AC-6: happy-path response (with atlas candidates) has the required keys."""
+        atlas_output = _make_fake_atlas_candidates(2)
         fake_run = _make_fake_proposal_run()
 
-        load_mock = MagicMock(return_value=community_result)
-        adapter_mock = MagicMock(return_value=adapter_output)
+        atlas_mock = MagicMock(return_value=atlas_output)
         propose_mock = MagicMock(return_value=fake_run)
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
 
         assert resp.status_code == 200
         body = json.loads(resp.data)
-
         required_keys = {"survivors", "rejected", "n_candidates", "fdr_adjusted_threshold"}
         missing = required_keys - body.keys()
-        assert not missing, (
-            f"Happy-path response must have keys {required_keys}; missing: {missing}"
-        )
-        # Structural type checks — no hardcoded values
+        assert not missing, f"Happy-path response must have keys {required_keys}; missing: {missing}"
         assert isinstance(body["survivors"], list), "survivors must be a list"
         assert isinstance(body["rejected"], list), "rejected must be a list"
         assert isinstance(body["n_candidates"], int), "n_candidates must be an int"
-        # fdr_adjusted_threshold can be None or a number
         assert body["fdr_adjusted_threshold"] is None or isinstance(
             body["fdr_adjusted_threshold"], (int, float)
-        ), (
-            f"fdr_adjusted_threshold must be None or numeric; "
-            f"got {type(body['fdr_adjusted_threshold']).__name__}"
-        )
+        ), f"fdr_adjusted_threshold must be None or numeric; got {type(body['fdr_adjusted_threshold']).__name__}"
 
 
 # ===========================================================================
@@ -932,128 +584,124 @@ class TestAC6NoRegression:
 # ===========================================================================
 
 
+def _assert_no_live_execution_in_handler() -> None:
+    """Shared guard: ai_advisor_strategy_builder_run must not reference LIVE_EXECUTION in
+    executable code (a docstring mention of intent is acceptable)."""
+    import ast
+    import textwrap
+
+    import app as app_module
+
+    raw_src = inspect.getsource(app_module.ai_advisor_strategy_builder_run)
+    src = textwrap.dedent(raw_src)
+
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        non_doc_lines = []
+        in_docstring = False
+        for line in src.splitlines():
+            stripped = line.strip()
+            if stripped.startswith('"""') or stripped.startswith("'''"):
+                in_docstring = not in_docstring
+                continue
+            if not in_docstring and not stripped.startswith("#"):
+                non_doc_lines.append(line)
+        code_only = "\n".join(non_doc_lines)
+        assert "LIVE_EXECUTION" not in code_only, (
+            "LIVE_EXECUTION must not appear in non-docstring, non-comment handler code"
+        )
+        return
+
+    # Strip docstrings before walking.
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if (
+                node.body
+                and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)
+                and isinstance(node.body[0].value.value, str)
+            ):
+                node.body = node.body[1:]
+
+    class _Checker(ast.NodeVisitor):
+        def __init__(self):
+            self.found = False
+
+        def visit_Name(self, node):
+            if node.id == "LIVE_EXECUTION":
+                self.found = True
+            self.generic_visit(node)
+
+        def visit_Attribute(self, node):
+            if node.attr == "LIVE_EXECUTION":
+                self.found = True
+            self.generic_visit(node)
+
+    checker = _Checker()
+    checker.visit(tree)
+    assert not checker.found, (
+        "LIVE_EXECUTION must not appear as a Name or Attribute reference in "
+        "ai_advisor_strategy_builder_run executable code; the route is advisory-only"
+    )
+
+
 class TestSecurityBoundary:
-    """Security constraints — must hold both before and after implementation."""
+    """Security constraints — must hold both before and after the rewire."""
 
     def test_no_live_execution_interaction_in_handler(self):
-        """Security: handler must not reference LIVE_EXECUTION in executable code.
+        """Security: handler must not reference LIVE_EXECUTION in executable code."""
+        _assert_no_live_execution_in_handler()
 
-        LIVE_EXECUTION controls whether real trades execute. Any code-level
-        interaction from an advisory route is a critical security scope violation.
-
-        The existing docstring mentions LIVE_EXECUTION as documentation ("No
-        LIVE_EXECUTION interaction anywhere") — that is acceptable. We check
-        only for AST-level Name/Attribute usage in executable code.
-        """
-        import ast
-        import textwrap
-
-        import app as app_module
-
-        raw_src = inspect.getsource(app_module.ai_advisor_strategy_builder_run)
-        src = textwrap.dedent(raw_src)
-
-        try:
-            tree = ast.parse(src)
-        except SyntaxError:
-            pytest.skip("Cannot parse handler source — fallback to string check skipped")
-            return
-
-        # Strip docstrings from function bodies before walking.
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if (
-                    node.body
-                    and isinstance(node.body[0], ast.Expr)
-                    and isinstance(node.body[0].value, ast.Constant)
-                    and isinstance(node.body[0].value.value, str)
-                ):
-                    node.body = node.body[1:]
-
-        class _Checker(ast.NodeVisitor):
-            def __init__(self):
-                self.found = False
-
-            def visit_Name(self, node):
-                if node.id == "LIVE_EXECUTION":
-                    self.found = True
-                self.generic_visit(node)
-
-            def visit_Attribute(self, node):
-                if node.attr == "LIVE_EXECUTION":
-                    self.found = True
-                self.generic_visit(node)
-
-        checker = _Checker()
-        checker.visit(tree)
-        assert not checker.found, (
-            "Security: LIVE_EXECUTION must not appear as a Name or Attribute "
-            "in ai_advisor_strategy_builder_run executable code"
-        )
-
-    def test_force_refresh_not_true_prevents_atlas_abuse(self, sb_client):
+    def test_route_does_not_force_atlas_refresh(self, sb_client):
         """Security: a caller cannot force repeated Atlas reads by hammering the route.
-
-        The weekly-cache path (force_refresh=False) is the only acceptable call.
-        This is also AC-3 — duplicated in the security block because the bill
-        protection is a security concern (abuse via Atlas cost amplification).
-        """
-        community_result = _make_community_result(n_candidates=1)
-        adapter_output = _make_fake_candidate_infos(1)
+        Duplicated from AC-3 because Atlas cost amplification is an abuse vector. The
+        route must never pass force_refresh=True to the objective-matched admission."""
+        atlas_output = _make_fake_atlas_candidates(1)
         fake_run = _make_fake_proposal_run()
 
-        load_mock = MagicMock(return_value=community_result)
-        adapter_mock = MagicMock(return_value=adapter_output)
+        atlas_mock = MagicMock(return_value=atlas_output)
         propose_mock = MagicMock(return_value=fake_run)
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             _post_run(sb_client)
 
-        if load_mock.called:
-            _, kwargs = load_mock.call_args
+        if atlas_mock.called:
+            _, kwargs = atlas_mock.call_args
             assert kwargs.get("force_refresh") is not True, (
-                "Security: force_refresh=True would allow callers to exhaust "
-                "the weekly Atlas quota on demand"
+                "Security: force_refresh=True would let callers exhaust the weekly Atlas "
+                "quota on demand"
             )
 
-    def test_community_load_exception_message_not_in_response(self, sb_client):
-        """Security / D-1: credential string in exception message must not reach the client."""
+    def test_atlas_admission_exception_message_not_in_response(self, sb_client):
+        """Security / D-1: a credential string in an admission exception must not reach
+        the client."""
         credential_string = "apikey=ABCDEF1234567890"
         fake_run = _make_fake_proposal_run()
-
-        load_mock = MagicMock(side_effect=ValueError(f"Failed with {credential_string}"))
-        adapter_mock = MagicMock()
+        atlas_mock = MagicMock(side_effect=ValueError(f"Failed with {credential_string}"))
         propose_mock = MagicMock(return_value=fake_run)
 
         with (
-            patch("advisors.community_strats.load_community_strategies", load_mock),
-            patch("advisors.strategy_builder_engine.community_candidate_infos", adapter_mock),
+            patch("advisors.build_plan_generator.load_atlas_candidates", atlas_mock),
             patch("advisors.strategy_builder_engine.propose_strategies", propose_mock),
         ):
             resp = _post_run(sb_client)
 
         body_str = resp.data.decode("utf-8", errors="replace")
         assert credential_string not in body_str, (
-            "Security / D-1: credential string in exception message must not "
-            "appear in the response body"
+            "Security / D-1: credential string from an admission exception must not reach "
+            "the response body"
         )
 
     def test_route_not_in_settings_write_allowlist(self):
-        """Security: the strategy-builder run route must NOT be in _SETTINGS_WRITE_ALLOWLIST.
-
-        Being in the allowlist would allow it to write arbitrary .env keys,
-        including LIVE_EXECUTION.
-        """
+        """Security: the advisory route must not be gated via _SETTINGS_WRITE_ALLOWLIST."""
         import app as app_module
 
         allowlist = app_module._SETTINGS_WRITE_ALLOWLIST
-        # The allowlist keys are env var names; none should be community/strategy-builder
-        problematic = {k for k in allowlist if "strategy" in k.lower() or "community" in k.lower()}
-        assert not problematic, (
-            f"Security: no community/strategy keys should be in _SETTINGS_WRITE_ALLOWLIST; "
-            f"found: {problematic}"
+        assert "strategy-builder" not in allowlist and "strategy_builder" not in allowlist, (
+            "the strategy-builder route is advisory-only and must not be in "
+            "_SETTINGS_WRITE_ALLOWLIST"
         )
