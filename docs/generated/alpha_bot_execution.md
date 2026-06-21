@@ -74,11 +74,14 @@ Creates baseline `bot_state` entries for every symphony not already present.
 
 #### `_SEED_RESERVED_KEYS: frozenset[str]`
 
-Module-level constant. Reserved top-level `bot_state` keys that are NOT symphony entries. The `ensure_bot_state_seeded` presence check excludes these so that a metadata-only state (e.g., after a market close that wrote `last_market_close_snapshot` but before any DATA PHASE cycle created symphony entries) is not mistaken for an already-seeded state.
+Module-level constant. Composition: `frozenset(database._WIPE_RESERVED_KEYS) | frozenset({"fleet_correlation_alert", "last_successful_cycle_at"})` — 5 keys total: `date`, `last_execution_mode`, `last_market_close_snapshot`, `fleet_correlation_alert`, `last_successful_cycle_at`.
 
-Extends `database._WIPE_RESERVED_KEYS` (`date`, `last_execution_mode`, `last_market_close_snapshot`) with engine-level metadata keys:
-- `"fleet_correlation_alert"`
-- `"last_successful_cycle_at"`
+The presence check in `ensure_bot_state_seeded` is `isinstance(v, dict) and k not in _SEED_RESERVED_KEYS`. Only **dict-valued** metadata keys can false-positive this check. Two members are load-bearing for that reason:
+
+- **`last_market_close_snapshot`** (from `_WIPE_RESERVED_KEYS`) — dict-valued; written by the EOD path.
+- **`fleet_correlation_alert`** (added here) — dict-valued; written by the engine.
+
+The remaining three members (`date`, `last_execution_mode`, `last_successful_cycle_at`) are string-valued and can never trigger the dict check; they are present as defensive inherited members.
 
 ---
 
