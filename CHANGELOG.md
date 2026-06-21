@@ -140,3 +140,77 @@ After the live droplet deployment, the database was wiped clean to begin accumul
 - **GDELT reachability is environment-dependent.** GDELT operates correctly on the production Linux VPS; it may be intermittently unreachable from isolated development environments. The honest-availability contract means an unreachable GDELT degrades the sentiment lens gracefully rather than failing the council.
 - **The council regime hook is not wired to the risk engine.** The council's derived regime classification (risk-on / risk-off) is surfaced on the Overview for operator information only; it is not consumed by the trailing-stop or autotuner logic.
 - **A latent display bug exists for `run_ts`.** After the run_id unification in PR #49, the `MARKET_PRISM` observation's `run_ts` field holds the UUID run_id rather than an ISO timestamp. The Overview tab displays `run_ts`, so the "As of" datetime shown for council-produced rows is a UUID. This is a display-only issue; the `created_at` column is unaffected. It is tracked for a future render fix.
+
+---
+
+## Real Opus-Driven Strategy Builder (PR #63, 2026-06-20)
+
+### What Changed
+
+The Strategy Builder's fixed seven-template generator (T1-T7) has been replaced with a real Claude Opus-driven builder. Previously the builder stamped out seven preset strategy shapes regardless of your objective. Now it asks Opus to design strategies from scratch, proposes its own tickers based on market knowledge, validates those tickers against a live universe of every tradeable US-equity on Alpaca, compiles the designs into valid Composer trees, and runs all candidates through the same antioverfit cull the autotuner uses before surfacing survivors.
+
+The builder is also dual-mode: alongside net-new Opus designs it now pulls existing strategies from the Atlas community database and ranks them by how well they fit your chosen objective. Both sources flow through the same backtest and FDR gate, and every result is tagged with its provenance (built-new or atlas-suggested) so you can tell where each proposal came from.
+
+**The builder is advisory-only.** It does not affect Guard Alpha, it does not touch `LIVE_EXECUTION`, and it does not auto-deploy anything. It proposes strategies for operator review.
+
+---
+
+### Four Objectives
+
+The builder now supports four objectives (up from three):
+
+- **diversify** — strategies with low correlation to your existing holdings
+- **cut_drawdown** — strategies with the lowest historical drawdown
+- **lift_risk_adjusted** — strategies with the best OOS Sharpe ratio
+- **volatility_mitigation** (new) — strategies using inverse-vol weighting or low-vol filters
+
+---
+
+### How It Works
+
+The pipeline has five components that run in sequence when you hit "Run Analysis" on the Strategy Builder tab.
+
+**Component 1 — Tradeable Universe Provider (`advisors/universe_provider.py`):** Fetches the complete active US-equity tradeable set from Alpaca's paper trading host (roughly 12,700 symbols) and caches it for a week. This is a membership/validation set only — no ranking, no dollar-volume filter, no curated palette. Opus proposes tickers; the universe confirms they are real and tradeable; Composer's own `/backtest` endpoint is the final arbiter.
+
+**Component 2 — Opus Build-Plan Generator (`advisors/build_plan_generator.py`):** Calls the Anthropic SDK with structured tool-use to generate 12 strategy build-plans per objective. Plans are expressed in an intermediate DSL (a typed pre-image of the `symphony_schema` constructor API) rather than raw Composer JSON. Opus proposes tickers from its own market knowledge; off-universe tickers are pruned; degenerate plans (fewer than one asset after pruning) are dropped; structurally-identical plans are deduplicated. The generation system prompt encodes the full Composer condition grammar, three compiler-verified DSL examples, and objective-specific signatures (e.g. `volatility_mitigation` requires an inverse-vol weight or a low-vol filter anywhere in the plan). A bounded retry fires if the model hits its output-token limit.
+
+**Component 2b — Atlas Community Admission (inside `build_plan_generator.py`):** `load_atlas_candidates(objective)` pulls the Atlas community strategy database (weekly-cached, bill-protected) and ranks candidates by the stat most relevant to the objective — lowest drawdown for `cut_drawdown`, lowest vol for `volatility_mitigation`, best Sharpe for `lift_risk_adjusted`, lowest pairwise Jaccard overlap for `diversify`. Up to 20 are admitted per run, tagged `provenance="atlas-suggested"`, and pooled with the built-new plans before the FDR gate.
+
+**Component 3 — Plan-to-Tree Compiler (`advisors/plan_tree_compiler.py`):** Deterministically compiles each DSL plan into a Composer `raw_value` tree using only `symphony_schema` constructors. The full grammar is reachable: nested groups, equal/specified/inverse-vol weighting, filters, simple conditions, and compound conditions (`make_binary_compound_condition`, `make_compound_condition`). Every compiled tree is gated by `symphony_schema.validate_tree` before it is allowed to proceed. A bounded repair loop handles tradeability rejections (HTTP 400 from Composer — prunes the named ticker and retries) separately from grammar rejections (HTTP 422 — not blindly repaired, dropped instead). Plans using market-cap weighting are dropped immediately: Composer deprecated that node type and returns HTTP 422 for it.
+
+**Component 4 — Weekly Scheduler (`advisors/strategy_builder_scheduler.py`):** A standalone script that runs the builder automatically once per ISO week for all four objectives. It includes a same-week idempotency guard (patchable by tests) and bounded per-objective retry. A failure on one objective is logged and the scheduler continues to the next. Invoke manually with `python -m advisors.strategy_builder_scheduler`. The on-demand route (`POST /ai-advisor/strategy-builder/run`) runs the same pipeline immediately.
+
+**Component 5 — Downstream pipeline (unchanged except cull strengthening):** Backtests via Composer (1 request/second rate limit), then runs the full batch — both built-new and atlas-suggested candidates together — through the Harvey-Liu BHY FDR gate. The cull has been strengthened to autotuner grade:
+
+- **PBO veto (new):** Probability of Backtest Overfitting is computed for each candidate via `math_engine.compute_pbo`. A candidate with PBO > 0.5 is vetoed regardless of FDR result.
+- **SPY OOS benchmark (new):** The previously-always-zero OOS alpha baseline is replaced with a real SPY benchmark computed by backtesting a 100%-SPY tree over the same fold. Candidates that do not beat SPY OOS alpha are rejected. If SPY data is unavailable the gate fails conservatively (never silently passes everyone).
+- **Rejection tagging:** Every rejected candidate carries a `rejection_reason` field — `pbo_veto`, `below_spy_alpha`, or `fdr_not_winner` — so you can see exactly why a candidate did not survive.
+
+---
+
+### Route and Error Boundary
+
+The on-demand route (`POST /ai-advisor/strategy-builder/run`) now calls `build_plan_generator.load_atlas_candidates(objective)` for the objective-matched Atlas injection path. The previous unranked community adapter (`community_candidate_infos`) was deleted — it had no callers after this rewire.
+
+Engine errors are no longer echoed verbatim in the JSON response (which could expose API key material in an exception message). The error branch now returns a fixed `"strategy-builder-error"` token and logs the real error server-side.
+
+---
+
+### Known Scope Boundaries
+
+- **Advisory-only throughout.** The builder adds no new settings-write path, does not interact with `LIVE_EXECUTION`, and does not deploy strategies to Composer.
+- **Composer `/backtest` is the final tradeability arbiter.** A ticker that passes the Alpaca membership check may still fail the Composer backtest — those candidates are dropped by the repair loop or the gate.
+- **Market-cap weighting is not supported.** Composer deprecated the market-cap node type and returns HTTP 422 for it. The compiler detects market-cap plans and drops them before attempting a backtest.
+- **The weekly scheduler does not gate on market hours.** It persists survivors as advisory observations keyed to `symphony_id=""` (unattached to any live symphony). Those proposals accumulate in the Strategy Builder tab for operator review.
+
+---
+
+## Test Hygiene — importlib.reload Removal (PR #64, 2026-06-21)
+
+Internal test-infrastructure change, no user-visible behavior affected.
+
+Thirty-seven `importlib.reload(...)` calls were removed from three test files in `tests/advisors/` (`test_community_strats.py`, `test_community_strats_timeout.py`, `test_atlas_cache.py`). These reloads installed a new module object on every test while other already-imported modules kept references to the old one, leaking a complete module copy per test. Under the project's default parallel-test mode (pytest-xdist, `-n auto`) the accumulation is sharded across workers and bounded; under single-process mode (`-n0`) the leak drove resident memory from roughly 8.1 GB to 6.9 GB in the `tests/advisors/` suite alone.
+
+The reloads were dead weight: all three modules resolve their database path and patch targets from `os.environ` at call time, so the existing `monkeypatch.setenv` fixtures provide full isolation without re-executing the module. Patches were re-pointed to the correct module-attribute targets. Behavior is preserved: every test's assertions are unchanged. Three AST-based anti-recurrence guards (`test_no_importlib_reload_in_this_test_module`) were added, one per file, to prevent the pattern from returning.
+
+The residual ~6.9 GB single-process footprint is dominated by cumulative heavy-library retention (quantstats, Optuna, anthropic SDK) across the full `tests/advisors/` suite. That is a separate concern: it is bounded per-worker under xdist, it is not a production daemon leak, and it is tracked as a low-priority follow-on item in `feature-plans/BACKLOG.md`.
