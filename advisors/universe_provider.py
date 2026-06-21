@@ -34,6 +34,7 @@ Design constraints
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 
@@ -152,10 +153,10 @@ def fetch_universe(*, force_refresh: bool = False, db_path=None) -> dict:
     Never raises.
     """
     # Ensure the atlas_cache schema exists — cached_pull does not call init.
-    try:
+    with contextlib.suppress(
+        Exception
+    ):  # Non-fatal; cached_pull will degrade gracefully if DB is broken.
         atlas_cache.init_atlas_cache()
-    except Exception:
-        pass  # Non-fatal; cached_pull will degrade gracefully if DB is broken.
 
     try:
         cached = atlas_cache.cached_pull(

@@ -46,9 +46,21 @@ def _no_live_atlas():
         "stats": {"pulled": 0, "valid": 0},
         "source": "captplanet",
     }
-    with patch(
-        "advisors.community_strats.load_community_strategies", return_value=empty
-    ):
+    with patch("advisors.community_strats.load_community_strategies", return_value=empty):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _ci_hermetic_composer_key():
+    """Patch _has_composer_key to return True for every route test in this file.
+
+    CI-hermetic fix: in CI, COMPOSER_KEY_ID / COMPOSER_SECRET are absent, so
+    propose_strategies() returns early with error="Composer API key not configured"
+    before reaching the C1 universe-provider path. The actual Composer backtest is
+    mocked per-test; this fixture only unblocks the credential gate so the real
+    builder pipeline (C1 → C2 → C3 → gate) runs against those mocks.
+    """
+    with patch("advisors.strategy_builder_engine._has_composer_key", return_value=True):
         yield
 
 
@@ -81,8 +93,8 @@ def test_ac19_route_sources_universe_from_c1_not_operator_list(sb_client, monkey
     was consulted and the response carries the preserved contract. RED today: the route
     requires an operator universe and the old stamper ignores C1 — with no universe the run
     yields no candidates without ever consulting C1."""
-    import advisors.universe_provider as up  # noqa: PLC0415
     import advisors.build_plan_generator as gen  # noqa: PLC0415
+    import advisors.universe_provider as up  # noqa: PLC0415
 
     c1_consulted = {"hit": False}
 
@@ -92,18 +104,35 @@ def test_ac19_route_sources_universe_from_c1_not_operator_list(sb_client, monkey
 
     monkeypatch.setattr(up, "get_tradeable_set", _membership)
     monkeypatch.setattr(
-        up, "fetch_universe",
-        lambda *a, **k: {"available": True, "symbols": frozenset({"SPY", "QQQ", "AGG", "GLD"}), "reason": ""},
+        up,
+        "fetch_universe",
+        lambda *a, **k: {
+            "available": True,
+            "symbols": frozenset({"SPY", "QQQ", "AGG", "GLD"}),
+            "reason": "",
+        },
     )
     # Generator returns one valid plan (no real SDK call); real compile_plan runs.
     monkeypatch.setattr(
-        gen, "generate_build_plans",
+        gen,
+        "generate_build_plans",
         lambda *a, **k: gen.GeneratorResult(
-            plans=[{
-                "plan_id": "p1", "objective": "diversify", "name": "P1", "rebalance": "daily",
-                "root": {"kind": "weight", "scheme": "equal",
-                         "children": [{"kind": "asset", "ticker": "SPY"}, {"kind": "asset", "ticker": "QQQ"}]},
-            }],
+            plans=[
+                {
+                    "plan_id": "p1",
+                    "objective": "diversify",
+                    "name": "P1",
+                    "rebalance": "daily",
+                    "root": {
+                        "kind": "weight",
+                        "scheme": "equal",
+                        "children": [
+                            {"kind": "asset", "ticker": "SPY"},
+                            {"kind": "asset", "ticker": "QQQ"},
+                        ],
+                    },
+                }
+            ],
             reason=None,
         ),
         raising=False,
@@ -111,10 +140,14 @@ def test_ac19_route_sources_universe_from_c1_not_operator_list(sb_client, monkey
     # run_backtest mocked (no network) — return a date-keyed series so the gate runs.
     import advisors.strategy_builder_engine as sbe  # noqa: PLC0415
     from advisors.composer_backtest_client import BacktestResult  # noqa: PLC0415
+
     _series = {f"2026-{m:02d}-{d:02d}": 0.001 for m in range(1, 5) for d in range(1, 11)}
     monkeypatch.setattr(
-        sbe, "run_backtest",
-        lambda *a, **k: BacktestResult(stats={"sharpe": 0.4}, data_warnings=[], daily_returns=dict(_series)),
+        sbe,
+        "run_backtest",
+        lambda *a, **k: BacktestResult(
+            stats={"sharpe": 0.4}, data_warnings=[], daily_returns=dict(_series)
+        ),
         raising=False,
     )
 
@@ -136,28 +169,43 @@ def test_ac19_route_response_contract_preserved_with_real_builder(sb_client, mon
     """AC-19: the response JSON contract is the SAME class as before (survivors/rejected/
     n_candidates/fdr_adjusted_threshold/error), produced via the REAL builder path. Mocks
     only the network/SDK seams; the real _generate_candidate_trees + compile_plan + gate run."""
-    import advisors.universe_provider as up  # noqa: PLC0415
     import advisors.build_plan_generator as gen  # noqa: PLC0415
     import advisors.strategy_builder_engine as sbe  # noqa: PLC0415
+    import advisors.universe_provider as up  # noqa: PLC0415
     from advisors.composer_backtest_client import BacktestResult  # noqa: PLC0415
 
     monkeypatch.setattr(up, "get_tradeable_set", lambda *a, **k: frozenset({"SPY", "QQQ", "AGG"}))
     monkeypatch.setattr(
-        gen, "generate_build_plans",
+        gen,
+        "generate_build_plans",
         lambda *a, **k: gen.GeneratorResult(
-            plans=[{
-                "plan_id": "p1", "objective": "diversify", "name": "P1", "rebalance": "daily",
-                "root": {"kind": "weight", "scheme": "equal",
-                         "children": [{"kind": "asset", "ticker": "SPY"}, {"kind": "asset", "ticker": "AGG"}]},
-            }],
+            plans=[
+                {
+                    "plan_id": "p1",
+                    "objective": "diversify",
+                    "name": "P1",
+                    "rebalance": "daily",
+                    "root": {
+                        "kind": "weight",
+                        "scheme": "equal",
+                        "children": [
+                            {"kind": "asset", "ticker": "SPY"},
+                            {"kind": "asset", "ticker": "AGG"},
+                        ],
+                    },
+                }
+            ],
             reason=None,
         ),
         raising=False,
     )
     _series = {f"2026-{m:02d}-{d:02d}": 0.001 for m in range(1, 5) for d in range(1, 11)}
     monkeypatch.setattr(
-        sbe, "run_backtest",
-        lambda *a, **k: BacktestResult(stats={"sharpe": 0.4}, data_warnings=[], daily_returns=dict(_series)),
+        sbe,
+        "run_backtest",
+        lambda *a, **k: BacktestResult(
+            stats={"sharpe": 0.4}, data_warnings=[], daily_returns=dict(_series)
+        ),
         raising=False,
     )
 
@@ -189,8 +237,10 @@ def test_ac19_route_accepts_volatility_mitigation_objective(sb_client, monkeypat
     def _capture_propose(objective, *a, **k):
         seen["objective"] = getattr(objective, "value", objective)
         return sbe.ProposalRun(
-            candidates=[], gated_batch=sbe._empty_gate_batch(),
-            screened_survivors=[], observations_written=0,
+            candidates=[],
+            gated_batch=sbe._empty_gate_batch(),
+            screened_survivors=[],
+            observations_written=0,
         )
 
     monkeypatch.setattr(sbe, "propose_strategies", _capture_propose, raising=False)
@@ -210,10 +260,13 @@ def test_ac19_route_remains_advisory_only_no_live_execution(sb_client, monkeypat
     import advisors.strategy_builder_engine as sbe  # noqa: PLC0415
 
     monkeypatch.setattr(
-        sbe, "propose_strategies",
+        sbe,
+        "propose_strategies",
         lambda *a, **k: sbe.ProposalRun(
-            candidates=[], gated_batch=sbe._empty_gate_batch(),
-            screened_survivors=[], observations_written=0,
+            candidates=[],
+            gated_batch=sbe._empty_gate_batch(),
+            screened_survivors=[],
+            observations_written=0,
         ),
         raising=False,
     )
@@ -229,6 +282,7 @@ def test_ac19_route_remains_advisory_only_no_live_execution(sb_client, monkeypat
     import ast  # noqa: PLC0415
     import inspect  # noqa: PLC0415
     import textwrap  # noqa: PLC0415
+
     import app as app_module  # noqa: PLC0415
 
     src = textwrap.dedent(inspect.getsource(app_module.ai_advisor_strategy_builder_run))

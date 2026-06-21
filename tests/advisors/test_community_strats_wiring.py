@@ -932,10 +932,10 @@ class TestNoRegression:
 class TestAdvisorySafetyAndNeverRaises:
     """AC-7: no LIVE_EXECUTION path, no allowlist entry, never raises."""
 
-# C5 re-point: the adapter-malformed-input never-raises test was DELETED — the old
-# community_candidate_infos adapter is gone (EDGE-1). The objective-matched admission's
-# never-raises-on-malformed contract is covered in
-# tests/advisors/test_build_plan_atlas_admission.py (admit_community_candidates / load_atlas_candidates).
+    # C5 re-point: the adapter-malformed-input never-raises test was DELETED — the old
+    # community_candidate_infos adapter is gone (EDGE-1). The objective-matched admission's
+    # never-raises-on-malformed contract is covered in
+    # tests/advisors/test_build_plan_atlas_admission.py (admit_community_candidates / load_atlas_candidates).
 
     def test_propose_strategies_never_raises_on_community_exception(self, sbe):
         """AC-7: even if all community candidate processing raises unexpected errors, no exception escapes."""

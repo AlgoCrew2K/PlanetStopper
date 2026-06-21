@@ -114,9 +114,7 @@ def _proposal_run(*, survivors, rejected, n_candidates, error=None):
     """
     survivor_results = [_gate_result(cid, decision="ADOPT_CANDIDATE") for cid, _ in survivors]
     rejected_results = [_gate_result(cid, decision="WITHHELD_FDR") for cid, _ in rejected]
-    all_infos = [
-        _candidate_info(cid, provenance=prov) for cid, prov in (survivors + rejected)
-    ]
+    all_infos = [_candidate_info(cid, provenance=prov) for cid, prov in (survivors + rejected)]
     gate = SimpleNamespace(
         results=survivor_results + rejected_results,
         survivors=survivor_results,
