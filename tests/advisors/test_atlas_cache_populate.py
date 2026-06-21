@@ -963,8 +963,9 @@ class TestTimeoutBoundJustified:
             "A zero or negative value would disable the timeout guard."
         )
         # Sanity: must be long enough for a real bounded Mongo query.
-        # The existing value is 12.0s; a bounded query should complete much faster,
-        # but we allow up to 120s (2 minutes) for a cold DNS resolve + server select.
+        # Raised to 45.0s (AC-5): cold connect + server-side sort over ~11k docs
+        # live-observed to exceed 12s; weekly cache makes 45s acceptable (DE-ATLAS-CACHE-001).
+        # Upper ceiling of 120s (2 minutes) still applies.
         assert timeout <= 120, (
             f"_ATLAS_FETCH_TIMEOUT_S={timeout} is unreasonably large (> 120s). "
             "A bounded query should complete within 2 minutes; re-check the value."

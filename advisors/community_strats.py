@@ -28,9 +28,14 @@ logger = logging.getLogger(__name__)
 
 # Wall-clock bound for the live Atlas fetch leg. serverSelectionTimeoutMS /
 # connectTimeoutMS do NOT cover mongodb+srv:// SRV/TXT DNS resolution (confirmed:
-# hangs >50s with those set). Chosen > 10s serverSelectionTimeoutMS so a
-# reachable-but-slow Atlas still completes server selection.
-_ATLAS_FETCH_TIMEOUT_S: float = 12.0
+# hangs >50s with those set). 45s is intentionally generous: the bound exists to
+# catch a genuine SRV/DNS hang (DE-CS-002), NOT to be tight. A cold connect +
+# server-side sharpe-sort over ~11k docs was live-observed to exceed 12s on the
+# droplet; the weekly cache (atlas_cache, ~7-day TTL) means this fetch runs at
+# most once per week, so a 45s bound is acceptable. 45s still terminates a true
+# hung SRV DNS resolution well before it would block the caller indefinitely.
+# (DE-ATLAS-CACHE-001 / AC-5)
+_ATLAS_FETCH_TIMEOUT_S: float = 45.0
 
 
 class _AtlasFetchTimeout(Exception):

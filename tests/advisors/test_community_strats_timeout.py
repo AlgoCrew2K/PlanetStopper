@@ -50,10 +50,12 @@ import pytest
 # Module under test and helpers
 # ---------------------------------------------------------------------------
 
-# The expected timeout constant value per the feature plan.
-# Tests use this as the authoritative reference; after GREEN the implementation
-# must define _ATLAS_FETCH_TIMEOUT_S = 12.0 (or a value that makes timing hold).
-_BOUND = 12.0
+# The expected timeout constant value — raised from 12.0 to 45.0 (AC-5,
+# DE-ATLAS-CACHE-001): a cold mongodb+srv connect + server-side sharpe-sort over
+# ~11k docs was live-observed to exceed 12s on the droplet. The weekly cache makes
+# a 45s bound acceptable; 45s still terminates a genuine SRV/DNS hang well before
+# it would block indefinitely. Tests use this as the authoritative reference.
+_BOUND = 45.0
 
 # Wall-clock margin: thread start overhead on Windows CI.
 # A join-on-exit hang (wrong impl) would block _BOUND * 5 = 60s.
