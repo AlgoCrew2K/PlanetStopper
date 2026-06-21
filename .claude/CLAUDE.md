@@ -89,6 +89,7 @@ No feature reaches `main` (local OR origin) by self-merge. EVERY feature passes 
 | AI Advisor empty suggestions (most symphonies) | Expected. The CRRA-EU + Harvey-Liu FDR gate is intentionally strict. `build_assessment_from_context` explains why — `oos_alpha=None` means all trials were haircut-rejected, not an error. |
 | Advisor tab templates deleted | The 4 old per-tab advisor templates (`ai_advisor_correlations.html`, etc.) were deleted in the advisor-cleanup cycle (2026-06-10). Do not recreate them — the unified SPA at `templates/ai_advisor.html` is canonical. |
 | Strategy Builder standalone template deleted | `templates/ai_advisor_strategy_builder.html` was deleted in the spa-port cycle (2026-06-13) when the Strategy Builder was folded in as the 6th tab of the unified SPA. Do not recreate it. `GET /ai-advisor/strategy-builder` now 302-redirects to `/ai-advisor`. |
+| Full pytest run can commit >67 GB on Windows (Kernel-Power 41, 2026-06-21) | Total-job OS cap auto-installed via `tests/_mem_cap.py` + `conftest.pytest_configure` (DE-TEST-MEMCAP-001); env knob `ALPHABOT_TEST_MEM_CAP_GB` (default 24 GB). Never run full suite uncapped. |
 
 ## Project-Local Specialist Agents (`.claude/agents/`)
 **Task-engine specialists:**
