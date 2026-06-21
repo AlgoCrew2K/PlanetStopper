@@ -1,6 +1,6 @@
 # Planet Stopper -- Generated Module Reference Index
 
-**Last regenerated:** 2026-06-21 (DE-ATLAS-CACHE-001: community_strats _id:0 projection + _MAX_FETCH_DOCS=500 server-side sort+limit; atlas_cache default=str serialization; prior: C5 dual-mode Atlas admission + adapter deletion + route error-boundary + DE-SB-C5)
+**Last regenerated:** 2026-06-21 (DE-TEST-MEMCAP-001: total-job Windows Job-Object memory cap in conftest; new tests/_mem_cap module; ci-harness doc updated; prior: DE-ATLAS-CACHE-001 community_strats + atlas_cache fixes)
 
 All pages in this directory are auto-generated from source. Do not hand-edit generated sections. Sections marked `<!-- manual -->` are preserved across regenerations.
 
@@ -42,7 +42,8 @@ All pages in this directory are auto-generated from source. Do not hand-edit gen
 | `advisors/overfitting_conscience` | [advisors_overfitting_conscience.md](advisors_overfitting_conscience.md) | Sprint 3 producer: characterises overfitting risk via S-counter vs N_effective; verdicts CLEAR / WATCH / BREACH | 2026-05-27 |
 | `advisors/spec_critic` | [advisors_spec_critic.md](advisors_spec_critic.md) | Sprint 3 producer: critiques Phase-1 spec bundle structural integrity (facet completeness, freeze-discipline validity, age, phase-scope leaks) | 2026-05-27 |
 | `static/ai_advisor.js` | [static_ai_advisor_js.md](static_ai_advisor_js.md) | Client-side AI Advisor SPA: in-place tab switching (initTabSwitcher), suggestion card rendering with per-symphony assessment block, accept/reject lifecycle, autotune run feed, symphony selection, Strategy Builder tab functions (sbRunAnalysis, openChatWithArtifact) | 2026-06-13 |
-| CI / test harness | [ci-harness.md](ci-harness.md) | GitHub Actions `tests` workflow: 3-step harness (ruff format, ruff lint, pytest); ruff==0.15.11 pinned; per-file-ignores with justifications; credential-gated test skipif; ATLAS_CACHE_DB_PATH isolation in conftest | 2026-06-19 |
+| CI / test harness | [ci-harness.md](ci-harness.md) | GitHub Actions `tests` workflow: 3-step harness (ruff format, ruff lint, pytest); ruff==0.15.11 pinned; per-file-ignores with justifications; credential-gated test skipif; ATLAS_CACHE_DB_PATH isolation in conftest; **DE-TEST-MEMCAP-001:** conftest installs total-job Windows Job-Object cap (ALPHABOT_TEST_MEM_CAP_GB, default 24 GB) before xdist workers spawn | 2026-06-21 |
+| `tests/_mem_cap` | [tests_mem_cap.md](tests_mem_cap.md) | Windows Job Object total-tree memory cap for the pytest suite: install_total_memory_cap(cap_bytes) + install_from_env(); JOB_OBJECT_LIMIT_JOB_MEMORY (total-tree, not per-process); DEFAULT_CAP_GB=24.0; ALPHABOT_TEST_MEM_CAP_GB env knob; Linux/CI no-op; wired into conftest.pytest_configure; guard tests in tests/mem_cap/ (9 tests, 4 groups) | 2026-06-21 |
 | `market_calendar` | *(no generated page)* | Market session state helpers -- `get_market_state`; imported by `app.py` | -- |
 | `composer_backtest` | *(no generated page)* | Composer backtest client; imported by `advisors/asset_swap_engine.py` | -- |
 | `regime_classifier` | *(no generated page)* | Regime classification helpers; label cache consumed by `database.save_regime_label` | -- |
