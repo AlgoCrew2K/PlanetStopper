@@ -31,6 +31,42 @@ Small; Tier 1.
 
 ---
 
+## Low priority / tracked follow-on
+
+### Per-module test footprint (`tests/advisors/` single-process) — LOW PRIORITY
+**Discovered:** 2026-06-21 (reload-leak remediation diagnostic). **Priority:** LOW — gates
+nothing; xdist (CI/real test mode) bounds it per-worker (~270 MB). NOT a production/daemon leak.
+
+**Symptom:** `pytest tests/advisors/ -p no:xdist` accumulates RSS cumulatively across test
+files (the process never releases between modules). Clean serialized peak after reload removal
+(SHA 470de98): **~6.9 GB**.
+
+**Dominant growers** (per-file RSS diagnostic, `.claude/_perfile_diag.txt` on branch
+`fix/test-reload-leak`):
+
+| File | delta_GB |
+|------|----------|
+| `test_builder_scheduler.py` | +1.49 GB |
+| `test_symphony_schema.py` | +0.69 GB |
+| `test_community_strats_timeout.py` | +0.54 GB |
+| `test_strategy_builder_engine.py` | +0.30 GB |
+
+**Hypothesis:** heavy-object retention from quantstats/pandas/Optuna/anthropic imports + per-test
+object footprint. Unclear whether the root cause is fixture-scope/accumulator patterns or simply
+the cost of repeated heavy-import initialization — needs a targeted per-file diagnosis before
+any fix.
+
+**Classification:** single-process-ONLY. xdist shards across workers and bounds per-worker
+footprint to ~270 MB. The strategy-builder scheduler runs as fresh weekly subprocesses in
+production — no accumulation occurs in the daemon or live path.
+
+**If pursued:** separate RED cycle — diagnose fixture-scope/accumulator vs heavy-imports per top
+file, then targeted test-infra fix (e.g. session-scoped fixtures, gc.collect teardowns, or
+test-file splitting). Do NOT address by weakening assertions or removing coverage — this is an
+infrastructure concern, not a test correctness problem.
+
+---
+
 ## Deployment follow-on
 
 ### Droplet wipe-and-collect
@@ -50,5 +86,5 @@ isolation; per-file AST anti-recurrence guard added. Behavior-preserving: 722 pa
 skipped. NOTE: The original hypothesis (reloads = dominant OOM driver) was falsified — the
 reloads contributed only ~1.1 GB of the ~8 GB single-process peak. The real driver is
 cumulative heavy-lib footprint (quantstats/Optuna/anthropic), which is bounded under xdist (CI
-mode). Single-process full-tree peak reduced from 8.1 GB to 6.9 GB. See plan doc for full
-empirical detail.
+mode). Single-process full-tree peak reduced from 8.1 GB to 6.9 GB. Residual tracked above
+as LOW PRIORITY follow-on.
