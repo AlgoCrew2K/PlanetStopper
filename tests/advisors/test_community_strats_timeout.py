@@ -34,8 +34,9 @@ MONGO_URI env var is set to a fake value in each test that needs it.
 
 from __future__ import annotations
 
-import importlib
+import ast
 import json
+import pathlib
 import sqlite3
 import time
 from datetime import UTC, datetime
@@ -138,10 +139,19 @@ def _seed_cache(db_path: str, docs: list) -> None:
 
 @pytest.fixture
 def mod(isolated_cache_db):
-    """Reload community_strats after env isolation is in place."""
-    if "advisors.community_strats" in __import__("sys").modules:
-        return importlib.reload(__import__("sys").modules["advisors.community_strats"])
-    return importlib.import_module("advisors.community_strats")
+    """Return the community_strats module after env isolation is in place.
+
+    No reload: community_strats accesses its deps via module-attribute /
+    call-time lookup (`atlas_cache.cached_pull(...)`, lazy `import pymongo`
+    inside the fetch closure), and the in-test seams patch those attributes
+    directly — so patch-visibility holds without re-executing the module.
+    importlib.reload per test is a memory-leak anti-pattern (it installs a NEW
+    module object while other already-imported modules keep references to the
+    OLD one, leaking a module graph per test across a multi-file run).
+    """
+    from advisors import community_strats
+
+    return community_strats
 
 
 # ===========================================================================
@@ -838,3 +848,37 @@ class TestRouteDegradesTemplateOnly:
         assert data.get("survivors") == [], (
             "Template-only degradation must return survivors=[] (no community enhancement)"
         )
+
+
+# ---------------------------------------------------------------------------
+# Anti-recurrence guard: importlib.reload-per-test is a memory-leak anti-pattern
+# (it installs a NEW module object each call while other already-imported modules
+# keep references to the OLD one — leaking a whole module graph per test across a
+# multi-file run, which OOMs single-process full-tree verification). community_strats
+# is accessed via module-attribute / call-time lookup, so the in-test seams (patching
+# atlas_cache.cached_pull, pymongo.MongoClient, concurrent.futures.ThreadPoolExecutor)
+# are visible without re-executing the module — no reload needed.
+# ---------------------------------------------------------------------------
+
+
+def test_no_importlib_reload_in_this_test_module():
+    """Guard: this test module must not call importlib.reload (memory-leak anti-pattern).
+
+    Detected via AST (a call to an attribute named 'reload'), so a docstring or
+    comment mentioning the word does not trip it.
+    """
+    module_path = pathlib.Path(__file__)
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+
+    offenders = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "reload":
+                offenders.append(node.lineno)
+
+    assert not offenders, (
+        "importlib.reload(...) found in test_community_strats_timeout.py at lines "
+        f"{offenders} — this is a per-test memory-leak anti-pattern. The community_strats "
+        "module is accessed via module-attribute / call-time lookup; patch the relevant "
+        "seam (atlas_cache.cached_pull / pymongo.MongoClient / ThreadPoolExecutor) directly."
+    )

@@ -2606,3 +2606,83 @@ The route's outer `try/except` is retained as belt-and-suspenders even though `l
 2. `community_candidate_infos` is deleted. Do not re-add it.
 3. Route error responses never echo `run.error` or `str(exc)` — static safe token only.
 4. The scheduler calls `load_atlas_candidates` INSIDE the per-objective loop, not hoisted.
+
+---
+
+## DE-RELOAD-001 — `importlib.reload` anti-pattern removed from `tests/advisors/`; original OOM hypothesis falsified (2026-06-21)
+
+Branch: fix/test-reload-leak | Base: origin/main `3af37ea` | Commit: 470de98
+
+### Context
+
+The Strategy-Builder-Real (C5) single-process full-tree gate exposed that `pytest tests/advisors/
+-p no:xdist` was consuming ~8 GB peak RSS and risking OOM on memory-constrained hosts. Three
+`tests/advisors/` files contained 37 per-test `importlib.reload(...)` calls, originally written to
+"pick up a new env var" or "re-bind to a patched dependency." The initial plan hypothesised these
+reloads as the dominant driver.
+
+### Empirical finding — hypothesis falsified
+
+Controlled before/after measurement with isolated single-process runs:
+
+| Condition | Peak RSS |
+|-----------|----------|
+| BEFORE (37 reloads present) | 8.067 GB |
+| AFTER (reloads removed) | 6.932 GB |
+| Reduction | ~1.1 GB |
+
+The reloads were NOT the dominant single-process memory driver. The earlier 14.3–13.5 GB
+readings that suggested an unbounded balloon were measurement contamination from concurrent
+overlapping `pytest` processes, not true single-process peaks.
+
+The real driver is **cumulative heavy-library footprint** (quantstats, pandas, Optuna, anthropic
+SDK) that accumulates across test files in a single process. Per-file RSS profiling identified
+`test_builder_scheduler.py` as the dominant grower (+1.49 GB), followed by
+`test_symphony_schema.py` (+0.69 GB) and `test_community_strats_timeout.py` (+0.54 GB). This
+is bounded in CI and production: xdist shards across workers (~270 MB each); the
+strategy-builder scheduler runs as fresh weekly subprocesses in prod, so no accumulation occurs.
+
+### Decision — remove the reloads anyway
+
+The reloads were confirmed dead weight via access-pattern analysis:
+
+- `community_strats.py:25` does `from advisors import atlas_cache` (imports the MODULE OBJECT).
+  Line 195 calls `atlas_cache.cached_pull(...)` — a call-time module-attribute lookup.
+  Therefore `patch("advisors.atlas_cache.cached_pull")` is visible to `community_strats` WITHOUT
+  any reload. The reload added no patch-visibility.
+- `pymongo` is lazy-imported inside the fetch closure; `ThreadPoolExecutor` is patched at call
+  time. `atlas_cache` resolves `ATLAS_CACHE_DB_PATH` from `os.environ` at call time, so
+  `monkeypatch.setenv` + `tmp_path` fully isolates without reload.
+
+Removing the reloads is correct: dead weight gone, patch-visibility explicitly verified and
+preserved via module-attribute patching and env-var-only isolation. This is a
+**behavior-preserving refactor** — no tests were weakened, skipped, or had their assertions
+reduced. Patch-visibility is maintained by re-pointing patch targets, not by dropping coverage.
+
+### What shipped (commit 470de98)
+
+- 37 `importlib.reload(...)` calls removed: `test_community_strats.py` (35),
+  `test_community_strats_timeout.py` (1), `test_atlas_cache.py` (1).
+- Replacement: module-attribute patching + env-var-only isolation per site.
+- Per-file AST anti-recurrence guard (`test_no_importlib_reload_in_this_test_module`) added to
+  each affected file.
+- 722 passed / 4 skipped on full `tests/advisors/` `-p no:xdist` run (+3 = new AST guards).
+- No production code changed.
+
+### AC-3 not achieved
+
+AC-3 (sub-GB single-process peak) was not achieved — the residual 6.9 GB is multi-cause
+heavy-lib footprint, not fixable by this change. CI and production are unaffected (xdist-bounded).
+The remaining single-process footprint is tracked as a LOW PRIORITY separate concern.
+
+### Binding rules
+
+1. `importlib.reload` is forbidden in `tests/advisors/` — enforced by the per-file AST guard.
+2. When a test needs to pick up a new env var, use `monkeypatch.setenv` — `os.environ` is read
+   at call time by the relevant modules.
+3. When a test needs to patch a function imported by another module, patch the symbol where it is
+   USED (module-attribute access path), not where it is defined — verify the access pattern
+   (`from X import name` vs `import X; X.name`) before choosing the patch target.
+4. The remaining single-process `tests/advisors/` footprint (~6.9 GB) is a known constraint.
+   Do not attempt to reduce it by weakening tests or removing coverage — address it as a
+   separate infrastructure concern (e.g. fixture teardown, gc.collect, test-file splitting).

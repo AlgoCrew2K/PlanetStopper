@@ -104,16 +104,18 @@ def _recursive_contains(obj: Any, substring: str) -> bool:
 
 @pytest.fixture()
 def isolated_atlas_cache_db(tmp_path, monkeypatch):
-    """Redirect ATLAS_CACHE_DB_PATH to a per-test temp file.
+    """Redirect ATLAS_CACHE_DB_PATH to a per-test temp file and init the schema.
 
-    Initialises the schema so cached_pull can write to it, and reloads
-    advisors.atlas_cache so the env var is picked up fresh.
+    No module reload is needed: atlas_cache resolves ATLAS_CACHE_DB_PATH from
+    os.environ at CALL time (advisors/atlas_cache.py:_atlas_cache_db), so
+    monkeypatch.setenv alone makes the new path take effect for the subsequent
+    init_atlas_cache() + cached_pull calls. importlib.reload per test is a
+    memory-leak anti-pattern (it installs a NEW module object while other
+    already-imported modules keep references to the OLD one, leaking a module
+    graph per test across a multi-file run).
     """
     db_path = str(tmp_path / "test_atlas_cache.db")
     monkeypatch.setenv("ATLAS_CACHE_DB_PATH", db_path)
-    # Reload so the module-level env read (if any) is up-to-date.
-    if "advisors.atlas_cache" in sys.modules:
-        importlib.reload(sys.modules["advisors.atlas_cache"])
     ac.init_atlas_cache()
     return db_path
 
@@ -135,12 +137,18 @@ def two_different_docs():
 
 @pytest.fixture()
 def module_under_test(isolated_atlas_cache_db):
-    """Import (or reload) community_strats after env isolation is in place."""
-    if "advisors.community_strats" in sys.modules:
-        mod = importlib.reload(sys.modules["advisors.community_strats"])
-    else:
-        mod = importlib.import_module("advisors.community_strats")
-    return mod
+    """Return the community_strats module after env isolation is in place.
+
+    No reload: community_strats accesses its dependency via module-attribute
+    lookup at call time (`atlas_cache.cached_pull(...)`), so tests that
+    `patch("advisors.atlas_cache.cached_pull", ...)` are visible to the module
+    without re-executing it. importlib.reload per test is a memory-leak
+    anti-pattern (it installs a NEW module object while other already-imported
+    modules keep references to the OLD one, leaking a module graph per test).
+    """
+    from advisors import community_strats
+
+    return community_strats
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +178,7 @@ class TestCacheRoutingHitMiss:
 
         with patch("advisors.atlas_cache.cached_pull", side_effect=spy_cached_pull):
             # Reload to pick up the patched module reference if needed.
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies()
 
         # The function must have used cached_pull at all (available=True means it ran).
@@ -210,10 +218,7 @@ class TestCacheRoutingHitMiss:
             conn.close()
 
         # Now call load_community_strategies. It must hit the cache, not fetch.
-        if "advisors.community_strats" in sys.modules:
-            mod = importlib.reload(sys.modules["advisors.community_strats"])
-        else:
-            mod = importlib.import_module("advisors.community_strats")
+        from advisors import community_strats as mod
 
         original_cached_pull = ac.cached_pull
 
@@ -276,10 +281,7 @@ class TestForceRefresh:
 
             return original_cached_pull(collection_name, counted_fetch, **kwargs)
 
-        if "advisors.community_strats" in sys.modules:
-            mod = importlib.reload(sys.modules["advisors.community_strats"])
-        else:
-            mod = importlib.import_module("advisors.community_strats")
+        from advisors import community_strats as mod
 
         with patch("advisors.atlas_cache.cached_pull", side_effect=spy_cached_pull):
             mod.load_community_strategies(force_refresh=True)
@@ -305,7 +307,6 @@ class TestCandidateShape:
             "advisors.atlas_cache.cached_pull",
             return_value=doc_list,
         ):
-            mod = importlib.reload(mod)
             result = mod.load_community_strategies()
         assert result["available"] is True, f"expected available=True; got {result!r}"
         assert len(result["candidates"]) >= 1, "expected at least one candidate"
@@ -348,7 +349,7 @@ class TestCandidateShape:
         """The top-level result dict must carry source='captplanet' on a
         successful load (available=True with real docs from cache)."""
         with patch("advisors.atlas_cache.cached_pull", return_value=single_valid_doc):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies()
         # The function must process the returned docs and succeed, not just
         # hardcode a static stub return value.
@@ -363,7 +364,7 @@ class TestCandidateShape:
         """The 'stats' dict must carry all 7 counters defined by the contract,
         and stats['pulled'] must equal the number of docs returned by the cache."""
         with patch("advisors.atlas_cache.cached_pull", return_value=single_valid_doc):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies()
         stats = result.get("stats", {})
         required_stat_keys = {
@@ -406,7 +407,7 @@ class TestFilteringAndStats:
         """A doc with no 'edn_string' key must increment stats['missing_edn_string']."""
         doc_missing_edn = {"sid": "sid-x", "name": "No EDN", "oos_metrics": {}}
         with patch("advisors.atlas_cache.cached_pull", return_value=[doc_missing_edn]):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies()
         assert result["available"] is True, "missing-edn docs should not cause available=False"
         assert result["stats"]["missing_edn_string"] >= 1, (
@@ -425,7 +426,7 @@ class TestFilteringAndStats:
             "oos_metrics": {},
         }
         with patch("advisors.atlas_cache.cached_pull", return_value=[doc_bad_edn]):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies()
         assert result["available"] is True, "parse-fail docs should not cause available=False"
         assert result["stats"]["parse_failed"] >= 1, (
@@ -446,7 +447,7 @@ class TestFilteringAndStats:
             "oos_metrics": {},
         }
         with patch("advisors.atlas_cache.cached_pull", return_value=[doc_bad_tree]):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies()
         assert result["available"] is True, "validate-reject docs should not cause available=False"
         assert result["stats"]["validate_rejected"] >= 1, (
@@ -470,7 +471,7 @@ class TestFilteringAndStats:
         docs = [valid_doc, bad_edn_doc, missing_edn_doc]
 
         with patch("advisors.atlas_cache.cached_pull", return_value=docs):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies()
 
         assert result["available"] is True
@@ -487,7 +488,7 @@ class TestFilteringAndStats:
         """An empty collection (no docs from Mongo) must yield available=True,
         candidates=[], stats.pulled=0. (Edge case from feature plan.)"""
         with patch("advisors.atlas_cache.cached_pull", return_value=[]):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies()
         assert result["available"] is True, "empty collection must not cause available=False"
         assert result["candidates"] == [], "empty collection must yield empty candidates"
@@ -533,7 +534,7 @@ class TestDeduplication:
         docs = self._make_duplicate_pair(sharpe_a=low_sharpe, sharpe_b=high_sharpe)
 
         with patch("advisors.atlas_cache.cached_pull", return_value=docs):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies()
 
         assert result["available"] is True
@@ -553,7 +554,7 @@ class TestDeduplication:
         docs = self._make_duplicate_pair()
 
         with patch("advisors.atlas_cache.cached_pull", return_value=docs):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies()
 
         # 2 docs with the same hash → 1 kept, 1 deduped.
@@ -582,7 +583,7 @@ class TestDeduplication:
         docs = [doc_without_sharpe, doc_with_sharpe]
 
         with patch("advisors.atlas_cache.cached_pull", return_value=docs):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies()
 
         assert result["available"] is True
@@ -610,7 +611,7 @@ class TestSharpeFilterAndLimit:
         docs = [doc_above, doc_below]
 
         with patch("advisors.atlas_cache.cached_pull", return_value=docs):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies(min_oos_sharpe=floor)
 
         assert result["available"] is True
@@ -632,7 +633,7 @@ class TestSharpeFilterAndLimit:
         docs = [doc_no_sharpe, doc_with_low_sharpe]
 
         with patch("advisors.atlas_cache.cached_pull", return_value=docs):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies(min_oos_sharpe=floor)
 
         candidate_sids = {c["sid"] for c in result["candidates"]}
@@ -653,7 +654,7 @@ class TestSharpeFilterAndLimit:
         ]
 
         with patch("advisors.atlas_cache.cached_pull", return_value=docs):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies(limit=2)
 
         # The function must have processed the docs (not just returned stub []).
@@ -677,7 +678,7 @@ class TestSharpeFilterAndLimit:
         ]
 
         with patch("advisors.atlas_cache.cached_pull", return_value=docs):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies(limit=None)
 
         # All 3 are distinct → all 3 should be returned (no dedup, no filter).
@@ -698,8 +699,7 @@ class TestNeverRaisingD1Contract:
     def _call_with_mongo_down(self, mod):
         """Simulate Mongo being unavailable by making cached_pull return None."""
         with patch("advisors.atlas_cache.cached_pull", return_value=None):
-            mod_reloaded = importlib.reload(mod)
-            return mod_reloaded.load_community_strategies()
+            return mod.load_community_strategies()
 
     def test_mongo_down_returns_available_false(self, module_under_test, single_valid_doc):
         """When cached_pull returns None (its documented sentinel for 'fetch failed,
@@ -711,8 +711,7 @@ class TestNeverRaisingD1Contract:
         """
         # Pairing: confirm available=True is POSSIBLE when cache has valid data.
         with patch("advisors.atlas_cache.cached_pull", return_value=single_valid_doc):
-            mod_success = importlib.reload(module_under_test)
-            success_result = mod_success.load_community_strategies()
+            success_result = module_under_test.load_community_strategies()
         assert success_result["available"] is True, (
             f"paired assertion: expected available=True when cache returns valid docs; "
             f"this confirms the function is not unconditionally returning False. "
@@ -729,7 +728,7 @@ class TestNeverRaisingD1Contract:
         """The D-1 failure dict must carry {available, reason, source, candidates, stats}
         and reason must not be 'NotImplemented' (the stub sentinel)."""
         with patch("advisors.atlas_cache.cached_pull", side_effect=RuntimeError("boom")):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies()
         required = {"available", "reason", "source", "candidates", "stats"}
         missing = required - result.keys()
@@ -762,7 +761,7 @@ class TestNeverRaisingD1Contract:
         exc_instance = _FakeMongoPymongoError("mongodb+srv://user:password@cluster.example.com")
 
         with patch("advisors.atlas_cache.cached_pull", side_effect=exc_instance):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies()
 
         assert result["available"] is False
@@ -782,7 +781,7 @@ class TestNeverRaisingD1Contract:
         exc = ConnectionError(f"Failed to connect to {fake_uri}")
 
         with patch("advisors.atlas_cache.cached_pull", side_effect=exc):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies()
 
         assert not _recursive_contains(result, fake_uri), (
@@ -801,7 +800,7 @@ class TestNeverRaisingD1Contract:
         exc = OSError("Connection refused: myhost.example.com:27017")
 
         with patch("advisors.atlas_cache.cached_pull", side_effect=exc):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies()
 
         assert not _recursive_contains(result, "myhost.example.com"), (
@@ -821,7 +820,7 @@ class TestNeverRaisingD1Contract:
         ]
         for scenario in scenarios:
             with scenario:
-                mod = importlib.reload(module_under_test)
+                mod = module_under_test
                 try:
                     result = mod.load_community_strategies()
                 except Exception as exc:
@@ -851,7 +850,7 @@ class TestSecretsIsolation:
         monkeypatch.setenv("MONGO_URI", fake_uri)
 
         with patch("advisors.atlas_cache.cached_pull", return_value=single_valid_doc):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             mod.load_community_strategies()
 
         # Inspect the cache DB for any occurrence of the URI.
@@ -878,7 +877,7 @@ class TestSecretsIsolation:
         monkeypatch.setenv("MONGO_URI", fake_uri)
 
         with patch("advisors.atlas_cache.cached_pull", return_value=single_valid_doc):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies()
 
         assert not _recursive_contains(result, fake_uri), (
@@ -1020,7 +1019,7 @@ class TestProjection:
                 "advisors.atlas_cache.cached_pull",
                 side_effect=lambda col, fn, **kw: fn(),
             ):
-                mod = importlib.reload(module_under_test)
+                mod = module_under_test
                 mod.load_community_strategies()
 
         if not captured_projections:
@@ -1099,7 +1098,7 @@ class TestSignatureAndPlumbing:
             return []
 
         with patch("advisors.atlas_cache.cached_pull", side_effect=spy_cached_pull):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             mod.load_community_strategies(force_refresh=True)
 
         assert captured_kwargs, (
@@ -1121,7 +1120,7 @@ class TestSignatureAndPlumbing:
             return []
 
         with patch("advisors.atlas_cache.cached_pull", side_effect=spy_cached_pull):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             mod.load_community_strategies()  # default force_refresh=False
 
         assert captured_kwargs, "cached_pull was not called"
@@ -1140,7 +1139,7 @@ class TestSignatureAndPlumbing:
             return []
 
         with patch("advisors.atlas_cache.cached_pull", side_effect=spy_cached_pull):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             mod.load_community_strategies()
 
         assert captured_collections, "cached_pull was not called"
@@ -1175,10 +1174,7 @@ class TestCachePipelineIntegrity:
         finally:
             conn.close()
 
-        if "advisors.community_strats" in sys.modules:
-            mod = importlib.reload(sys.modules["advisors.community_strats"])
-        else:
-            mod = importlib.import_module("advisors.community_strats")
+        from advisors import community_strats as mod
 
         # Do NOT mock cached_pull — use the real one with the isolated DB.
         result = mod.load_community_strategies()
@@ -1249,7 +1245,7 @@ class TestStatsInvariant:
         # Total pulled: 7
 
         with patch("advisors.atlas_cache.cached_pull", return_value=docs):
-            mod = importlib.reload(module_under_test)
+            mod = module_under_test
             result = mod.load_community_strategies(min_oos_sharpe=1.0)
 
         stats = result["stats"]
@@ -1270,3 +1266,41 @@ class TestStatsInvariant:
             f"stats sum invariant failed: pulled ({pulled}) != sum of all drop counters "
             f"({accounted}). Stats: {stats!r}. Every pulled doc must land in exactly one bucket."
         )
+
+
+# ---------------------------------------------------------------------------
+# Anti-recurrence guard: importlib.reload-per-test is a memory-leak anti-pattern
+# (it installs a NEW module object each call while other already-imported modules
+# keep references to the OLD one — leaking a whole module graph per test across a
+# multi-file run, which OOMs single-process full-tree verification). This file was
+# the DOMINANT leaker (35 reload sites). community_strats accesses atlas_cache via
+# module-attribute / call-time lookup (`atlas_cache.cached_pull(...)`), so tests that
+# patch "advisors.atlas_cache.cached_pull" are visible without re-executing the module.
+# importlib.import_module (no reload) is still permitted — it does not orphan a module.
+# ---------------------------------------------------------------------------
+
+
+def test_no_importlib_reload_in_this_test_module():
+    """Guard: this test module must not call importlib.reload (memory-leak anti-pattern).
+
+    Detected via AST (a call to an attribute named 'reload'), so a docstring or
+    comment mentioning the word does not trip it. importlib.import_module is allowed.
+    """
+    import pathlib
+
+    module_path = pathlib.Path(__file__)
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+
+    offenders = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "reload":
+                offenders.append(node.lineno)
+
+    assert not offenders, (
+        "importlib.reload(...) found in test_community_strats.py at lines "
+        f"{offenders} — this is a per-test memory-leak anti-pattern. The community_strats "
+        "module is accessed via module-attribute / call-time lookup; patch "
+        "'advisors.atlas_cache.cached_pull' (or the relevant seam) directly instead of "
+        "reloading. Env isolation is monkeypatch.setenv(ATLAS_CACHE_DB_PATH) + tmp_path."
+    )

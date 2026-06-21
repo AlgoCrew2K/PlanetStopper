@@ -29,12 +29,10 @@ No live network calls. No Mongo client. No production DB writes.
 from __future__ import annotations
 
 import ast
-import importlib
 import json
 import os
 import pathlib
 import sqlite3
-import sys
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
@@ -70,11 +68,12 @@ def atlas_cache_db(tmp_path, monkeypatch):
     """
     db_path = str(tmp_path / "test_atlas_cache.db")
     monkeypatch.setenv("ATLAS_CACHE_DB_PATH", db_path)
-    # Force a fresh module import so the env var is picked up.
-    # atlas_cache may read the env at import time or at call time; we cover both
-    # by reloading if already imported.
-    if "advisors.atlas_cache" in sys.modules:
-        importlib.reload(sys.modules["advisors.atlas_cache"])
+    # No module reload needed: atlas_cache resolves ATLAS_CACHE_DB_PATH from
+    # os.environ at CALL time (advisors/atlas_cache.py:_atlas_cache_db), so
+    # monkeypatch.setenv alone makes the new path take effect. importlib.reload
+    # per test is a memory-leak anti-pattern — it installs a NEW module object
+    # while other already-imported modules keep references to the OLD one,
+    # leaking a module graph per test across a multi-file run.
     yield db_path
 
 
@@ -679,3 +678,36 @@ class TestStructuralIsolation:
         assert count == 1, (
             f"Expected exactly 1 row for collection 'dup_col' (PRIMARY KEY upsert); got {count}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Anti-recurrence guard: importlib.reload-per-test is a memory-leak anti-pattern
+# (it installs a NEW module object each call while other already-imported modules
+# keep references to the OLD one — leaking a whole module graph per test across a
+# multi-file run, which OOMs single-process full-tree verification). Isolation in
+# this file is env-var-only (ATLAS_CACHE_DB_PATH via monkeypatch + tmp_path);
+# atlas_cache reads the path at call time, so no reload is needed.
+# ---------------------------------------------------------------------------
+
+
+def test_no_importlib_reload_in_this_test_module():
+    """Guard: this test module must not call importlib.reload (memory-leak anti-pattern).
+
+    Detected via AST (a call to an attribute named 'reload'), so a docstring or
+    comment mentioning the word does not trip it.
+    """
+    module_path = pathlib.Path(__file__)
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+
+    offenders = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "reload":
+                offenders.append(node.lineno)
+
+    assert not offenders, (
+        "importlib.reload(...) found in test_atlas_cache.py at lines "
+        f"{offenders} — this is a per-test memory-leak anti-pattern. Isolate via "
+        "monkeypatch.setenv(ATLAS_CACHE_DB_PATH) + tmp_path instead (atlas_cache reads "
+        "the path at call time)."
+    )
