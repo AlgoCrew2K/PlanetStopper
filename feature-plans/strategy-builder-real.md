@@ -141,6 +141,8 @@ milestone (AC-1)** - the build must not assume it.
 
 **AC-12 — Objective-matched Atlas admission.** Community strategies pulled via `load_community_strategies(force_refresh=False)` are filtered/ranked by **objective-relevance** using the stats the loader already returns (each candidate carries `oos_metrics`; the loader also exposes a `min_oos_sharpe` floor) — NOT admitted as an unfiltered top-20. The matching rule per objective: `cut_drawdown` -> lowest drawdown; `volatility_mitigation` -> lowest volatility; `lift_risk_adjusted` -> best risk-adjusted (e.g. OOS sharpe); `diversify` -> low cross-correlation vs the rest of the admitted set. The admitted count is bounded by a named constant (<= `MAX_COMMUNITY_CANDIDATES_PER_RUN`). A test per objective asserts the admitted community candidates are the objective-best by the named stat (e.g. `cut_drawdown` admits the lowest-drawdown docs first), and that a doc lacking the needed stat is handled deterministically (kept-last or excluded — documented, never crashes). Weekly Atlas-cache / bill-protection discipline is preserved (`force_refresh=False`; no extra ad-hoc pulls).
 
+> **[IMPLEMENTED — C5, 2026-06-20, commits 1d5dd48 (route) + 147a181 (scheduler + adapter deletion) + db4a2bf (tests)]**
+
 **AC-13 — Provenance tagging in results.** Every surfaced candidate (survivor AND rejected) is tagged with its provenance — **built-new** (Opus-generated) vs **atlas-suggested** (community) — in the persisted `advisor_observations` raw_response and in the route/SPA JSON, so the operator can tell at a glance which survivors are net-new builds vs matched community strategies. Built-new and atlas-suggested candidates are gated in the SAME single-batch FDR call (no separate gate, no pre-shrink — AC-21). A test asserts both provenance values appear correctly tagged end-to-end and that the FDR batch count includes both sources.
 
 ### Component 3 — Plan->Tree Compiler (deterministic)
@@ -159,15 +161,23 @@ milestone (AC-1)** - the build must not assume it.
 
 **AC-18 — Weekly unattended run.** A standalone scheduler script (modeled on `prism_scheduler.py` + a WEEKLY systemd timer) runs the builder unattended for each objective, persisting survivors as advisory observations. It carries named constants (no magic numbers), an idempotency guard (a duplicate run in the same week is a no-op), bounded retry, and a D-1 error contract. A test asserts the idempotency guard and that the script persists via the unchanged downstream persist path.
 
+> **[IMPLEMENTED — C5, 2026-06-20, commit 1d5dd48]**
+
 **AC-19 — On-demand parity.** The existing `POST /ai-advisor/strategy-builder/run` route (`app.py:3759`) is rewired to the real builder and produces the SAME class of result (survivors/rejected/FDR JSON) as the weekly run, sourcing the universe from the provider (Component 1) rather than an operator-supplied ticker list. A route test asserts the response JSON contract is preserved and the real builder path is exercised.
 
 **AC-20 — `propose_strategies` public signature preserved.** Replacing `_generate_candidate_trees` does NOT change the `propose_strategies(...)` public signature; existing callers (`app.py:3816` and `advisors/strategy_builder_scheduler.py`) work unchanged. `autotuner.py` does NOT call `propose_strategies`. A test imports `propose_strategies` and asserts its signature is unchanged.
 
 ### Component 5 — Downstream invariants (unchanged but guarded)
 
+> **[IMPLEMENTED — C5, 2026-06-20, commits 1d5dd48 + 147a181]**
+
 **AC-21 — FDR gate stays the overfit guard over the FULL batch (both provenance sources; strengthened per 5b).** Every successfully-backtested candidate — built-new (Opus) AND atlas-suggested (objective-matched community) together — flows through ONE `evaluate_candidate_batch` call; screens NEVER shrink the gate input. A test asserts `gated_batch.n_candidates == len(successfully_backtested)` (counting BOTH sources), that survivors carry `SURVIVOR_OVERFITTING_CAVEAT`, and that provenance tags survive the gate (AC-13).
 
+> **[IMPLEMENTED — verified via advisory-only grep guard tests, GREEN]**
+
 **AC-22 — Advisory-only safety (no live surface).** No code path in any new module or the rewired route touches `LIVE_EXECUTION`, calls a Composer write/deploy endpoint, or adds an entry to `_SETTINGS_WRITE_ALLOWLIST`. All persisted observations are `is_advisory_only=1`. A test greps the new modules + route for `LIVE_EXECUTION` / deploy / go-to-cash / allowlist mutation and asserts absence.
+
+> **[IMPLEMENTED — C5, 2026-06-20, commits 1d5dd48 (route error-boundary) + 147a181 (scheduler D-1)]**
 
 **AC-23 — End-to-end honest degradation.** When the universe source (Alpaca paper), Anthropic (generation), or Composer (backtest) is unavailable, the run degrades to an empty/limited result with an honest reason — never a crash, never a partial LIVE_EXECUTION side effect, never a leaked secret. A test exercises each upstream-down scenario through the full builder and asserts a clean error or empty survivors.
 

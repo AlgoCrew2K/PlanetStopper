@@ -3,7 +3,7 @@
 > Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
 **Source:** `app.py`
-**Last updated:** 2026-06-19 (guard-alpha-panel d0fb04c — UI layer added)
+**Last updated:** 2026-06-20 (strategy-builder C5 dual-mode route rewire 1d5dd48)
 
 ## Overview
 
@@ -306,7 +306,56 @@ Rate-limited (per-IP via `_CHAT_RATE_LIMITER`) explain-only chat endpoint. Accep
 
 #### `POST /ai-advisor/strategy-builder/run` — `ai_advisor_strategy_builder_run()`
 
-CSRF-protected. Accepts JSON: `{ objective, universe, symphony_id? }`. Lazy-imports `propose_strategies` from `advisors.strategy_builder_engine` (keeps the engine off the live 1-minute execution path). Calls `propose_strategies` with a `ScreenConfig`, gates candidates via the full FDR batch, and returns JSON with survivor/rejected detail plus FDR metadata for the operator audit trail. Advisory-only: never calls Composer write endpoints, never touches `LIVE_EXECUTION`. Not in `_SETTINGS_WRITE_ALLOWLIST`. D-1 contract honored: returns `{"error": type(exc).__name__}` on exception, never `str(exc)`.
+CSRF-protected. Accepts JSON: `{ objective, universe, symphony_id? }`. Lazy-imports `propose_strategies` from `advisors.strategy_builder_engine` and `load_atlas_candidates` from `advisors.build_plan_generator` (CC-2: both kept off the live 1-minute execution path).
+
+**Request body:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `objective` | `str` | One of `diversify` / `cut_drawdown` / `lift_risk_adjusted` / `volatility_mitigation`. Unknown values default to `diversify`. |
+| `universe` | `list[str]` or comma-string | Optional ticker override; `[]` (default) triggers C1 self-sourcing from `universe_provider.get_tradeable_set()`. |
+| `symphony_id` | `str` | Optional. Keys persisted observations to this Composer symphony ID. Defaults to `""`. |
+
+**Pipeline (C5 rewire, commit 1d5dd48):**
+
+1. Parse `objective` → `Objective` enum (default `diversify` on unknown values, `app.py:3800`).
+2. Call `build_plan_generator.load_atlas_candidates(objective)` — objective-matched Atlas community injection (AC-12/AC-13, `app.py:3807`). D-1 (never raises); bill-protected (`force_refresh=False` inside). Atlas failure → `community_candidates=[]`, template-only run proceeds.
+3. Call `propose_strategies(objective, universe, screen_config=ScreenConfig(), live_returns=[], symphony_id=..., community_candidates=...)` (`app.py:3813`). Built-new (Opus C1→C2→C3) AND atlas-suggested candidates flow into ONE FDR batch (AC-21).
+4. Serialize survivors and rejected candidates from `run.gated_batch` + `run.screened_survivors` (`app.py:3852–3879`); each entry carries `template_id` (provenance: `"built-new"` or `"atlas-suggested"`), gate metrics, and candidate params.
+
+**Response JSON:**
+
+```json
+{
+  "survivors": [
+    {
+      "candidate_id": "...",
+      "template_id": "built-new",
+      "gate_decision": "...",
+      "winner_p_adj": 0.012,
+      "caveats": ["SURVIVOR_OVERFITTING_CAVEAT"],
+      "metrics": {},
+      "params": {"provenance": "built-new", "objective": "diversify"},
+      "n_candidates": 12,
+      "fdr_q": 0.05,
+      "fdr_adjusted_threshold": 0.012
+    }
+  ],
+  "rejected": [...],
+  "n_candidates": 12,
+  "fdr_adjusted_threshold": 0.012,
+  "error": null
+}
+```
+
+`template_id` carries provenance end-to-end: `"built-new"` for Opus-generated candidates, `"atlas-suggested"` for objective-matched community candidates (AC-13).
+
+**Error handling (AC-23 boundary):**
+
+- Route outer `except`: returns `{"error": type(exc).__name__}` — never `str(exc)` (`app.py:3826`).
+- `run.error` branch: logs the full error server-side; surfaces the static token `"strategy-builder-error"` to the operator (`app.py:3840`) — never echoes `run.error` verbatim (it is set by `propose_strategies` via `str(exc)`, which can carry API keys or internal paths). The internal normalization of `propose_strategies`' error string to a class name is a tracked follow-on (not done in C5).
+
+Advisory-only: never calls Composer write endpoints, never touches `LIVE_EXECUTION`, not in `_SETTINGS_WRITE_ALLOWLIST`.
 
 ---
 
@@ -334,5 +383,6 @@ Normalizes an `autotune_runs` DB row for the `/api/autotune-runs` JSON response.
 - `advisors.logic_change_engine` — `propose_operator_logic_change`, `LogicTweak`, `LogicChangeObjective`
 - `advisors.advisor_chat` — `explain_artifact`, `CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS`
 - `advisors.strategy_builder_engine` — `propose_strategies`, `Objective`, `ScreenConfig` (lazy import)
+- `advisors.build_plan_generator` — `load_atlas_candidates` (lazy import, C5 route rewire)
 - `symphony_logic` — `fetch_symphony_score`
 - `werkzeug.security` — `check_password_hash` for `DASHBOARD_PASSWORD_HASH` verification

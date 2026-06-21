@@ -2547,3 +2547,62 @@ Two changes to `advisors/build_plan_generator.py` (GREEN a2a678f; comment-truth 
 ### Status
 
 Unit-verified GREEN at HEAD 2a1787e. 16 new truncation tests GREEN; full `tests/advisors/` suite GREEN (counts to be confirmed by team-lead live re-exam). Production confirmation pending team-lead live re-exam (results reported separately).
+
+---
+
+## DE-SB-C5 — C5: Unified dual-mode Atlas admission + orphaned adapter deletion + route error-boundary sanitization (2026-06-20)
+
+Branch: feat/strategy-builder-real
+Commits: 1d5dd48 (route rewire), 147a181 (scheduler dual-mode + adapter deletion), db4a2bf (test re-point)
+
+### Context
+
+Pre-C5, the Strategy Builder had two divergent community-candidate paths:
+- **Route path** (`POST /ai-advisor/strategy-builder/run`): called `load_community_strategies(force_refresh=False)` + the unranked `community_candidate_infos` adapter (first-N, no objective-matching) to obtain community candidates.
+- **Scheduler path** (`strategy_builder_scheduler.run_weekly_build`): called `propose_strategies(community_candidates=[])` — no atlas injection at all on the weekly automated run.
+
+Both paths were stale: `build_plan_generator.admit_community_candidates` and `load_atlas_candidates` (objective-matched, bill-protected, D-1) already existed from the C2/2b phase. The route was using the old pre-C2b unranked adapter; the scheduler was not using atlas injection at all. The result was that the on-demand and weekly runs produced structurally different candidate batches despite claiming to be equivalent (route-parity AC-19 was violated).
+
+Additionally, `run.error` was echoed verbatim in the route's error-branch JSON response. `propose_strategies` sets `run.error` from `str(exc)` at the outer catch site, which can carry API keys, file paths, or other sensitive content.
+
+### Decisions
+
+**Route rewire to Shape A (commit 1d5dd48):** Replace `load_community_strategies + community_candidate_infos` in the route with a single call to `build_plan_generator.load_atlas_candidates(objective)` — the objective-matched admission path (AC-12/AC-13). This is "Shape A" because it directly calls the wrapper that does the full admission pipeline (load → rank → cap → return `CandidateInfo` list). Chosen over manually calling `load_community_strategies` then `admit_community_candidates` in the route because:
+1. The wrapper enforces `force_refresh=False` unconditionally (bill-protection cannot be accidentally bypassed by a caller).
+2. One call site is simpler to audit for the D-1 contract.
+3. Consistent with the scheduler path (both now call `load_atlas_candidates`).
+
+The route's outer `try/except` is retained as belt-and-suspenders even though `load_atlas_candidates` is D-1 — defense-in-depth at the Flask boundary.
+
+**Scheduler dual-mode (commit 147a181, Lane 2a):** Inject `_bpg.load_atlas_candidates(objective)` per objective inside `run_weekly_build`'s per-objective loop, forwarding the result as `community_candidates=` to `propose_strategies`. The Atlas call is placed INSIDE the per-objective loop (not hoisted) because each objective needs its own ranked set (cut_drawdown ranks by drawdown, volatility_mitigation ranks by volatility, etc.). Per-objective inner `try/except` degrades to `community_candidates=[]` on any Atlas error — built-new always runs.
+
+**Adapter deletion (commit 147a181, Lane 2b):** `strategy_builder_engine.community_candidate_infos` (70 lines, the old unranked first-N adapter) is deleted. After the route rewire (1d5dd48) it had zero production callers. The `propose_strategies` `community_candidates=` kwarg is PRESERVED — only the standalone unranked adapter function is gone. The engine's docstring reference to `community_candidate_infos` was updated to point to `build_plan_generator.load_atlas_candidates` (`strategy_builder_engine.py:758`).
+
+**EDGE-1 (adapter deletion):** `strategy_builder_engine.community_candidate_infos` is gone. Any code importing it will get an `AttributeError`. Tests that patched it via `patch("advisors.strategy_builder_engine.community_candidate_infos")` need `create=True` to avoid `AttributeError` on the mock setup. This is tracked as test-infrastructure debt; quint-test re-pointed the stale tests in commit db4a2bf.
+
+**EDGE-2 (weekly dual-mode fold-in):** The idempotency guard in `_already_ran_this_week` counts any `STRATEGY_BUILDER` observation from this ISO week — both built-new and atlas-suggested survivors contribute to the same `advisor_observations` table. A week where only built-new survivors were persisted (e.g. from a pre-C5 run) will cause C5's dual-mode run to no-op if the check fires. Acceptable: the weekly cadence is advisory freshness, not a hard real-time requirement.
+
+**AC-23 route error-boundary sanitization (commit 1d5dd48):** The route's `run.error` branch now logs the full error server-side and surfaces only the static token `"strategy-builder-error"` in the JSON response (`app.py:3840`). This closes the observable leak at the route boundary. The internal normalization of `propose_strategies`' error string (replacing `str(exc)` with the class name at the `propose_strategies` outer-catch site, `strategy_builder_engine.py:965`) is a tracked follow-on — it removes the raw exception body from `run.error` itself, so future callers cannot accidentally surface it. NOT done in C5; the route static-string fully closes the operator-visible leak.
+
+### Provenance tags after C5
+
+| `template_id` value | Source |
+|---------------------|--------|
+| `"built-new"` | C4 real pipeline: C1 (universe) → C2 (generator) → C3 (compiler) |
+| `"atlas-suggested"` | C5 objective-matched admission via `build_plan_generator.load_atlas_candidates` |
+
+`"community"` (the old unranked adapter's tag) no longer appears. `"T1"`–`"T7"` (the old stamper's tags) no longer appear.
+
+### Files changed
+
+- `app.py` — `ai_advisor_strategy_builder_run()` route rewired: lazy import swapped from `load_community_strategies + community_candidate_infos` → `build_plan_generator.load_atlas_candidates`; `run.error` branch sanitized to static `"strategy-builder-error"` token with server-side logging (+10 / -9 lines, commit 1d5dd48)
+- `advisors/strategy_builder_engine.py` — `community_candidate_infos` function and section header deleted (70 lines removed); docstring reference updated to `build_plan_generator.load_atlas_candidates` (commit 147a181)
+- `advisors/strategy_builder_scheduler.py` — per-objective `_bpg.load_atlas_candidates(objective)` call added inside `run_weekly_build` loop; CC-2 lazy import of `advisors.build_plan_generator as _bpg` added (+17 lines, commit 147a181)
+- `tests/` — stale `community_candidate_infos` wiring tests re-pointed to Shape A (commit db4a2bf)
+
+### Binding rules
+
+1. The canonical community-admission path for ALL callers (route, scheduler, future) is `build_plan_generator.load_atlas_candidates(objective)`. The `propose_strategies(community_candidates=...)` kwarg is the injection point.
+2. `community_candidate_infos` is deleted. Do not re-add it.
+3. Route error responses never echo `run.error` or `str(exc)` — static safe token only.
+4. The scheduler calls `load_atlas_candidates` INSIDE the per-objective loop, not hoisted.

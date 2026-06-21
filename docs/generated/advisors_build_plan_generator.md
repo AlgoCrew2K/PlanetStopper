@@ -17,7 +17,7 @@ The module has two responsibilities:
 
 Off-execution-path. Advisory-only. Never raises — every function degrades honestly on failure.
 
-**Scope note:** `advisors/strategy_builder_engine.py` and `advisors/community_strats.py` are NOT modified in this phase. The engine's existing 3-value `Objective` enum stays in place; this module defines its own independent 4-value `Objective`. The engine rewire (_generate_candidate_trees replacement) and community_strats changes land in Component 3.
+**C5 status (2026-06-20):** The engine rewire (`_generate_candidate_trees` replacement) landed in C4 (commit 5ae6c8c). The `community_candidate_infos` adapter was deleted from `strategy_builder_engine.py` in C5 (commit 147a181); the canonical community admission path is now `build_plan_generator.load_atlas_candidates(objective)`. Both the route (`app.py`) and the weekly scheduler (`strategy_builder_scheduler.py`) call `load_atlas_candidates` and inject atlas-suggested candidates via `propose_strategies(community_candidates=...)`.
 
 ## The Build-Plan DSL (canonical generator↔compiler contract)
 
@@ -107,7 +107,7 @@ These are embedded into every SDK prompt by `_build_generation_prompt`.
 
 ### `Objective` (enum)
 
-Four-value enum defined in this module (independent of `strategy_builder_engine.Objective`, which remains the 3-value enum until the engine rewire in Component 3).
+Four-value enum defined in this module. `strategy_builder_engine.Objective` is also 4-value (unified in C4 when `volatility_mitigation` was added); both enums share the same `.value` strings and are cross-cast via `sbe.Objective(bpg_objective.value)`.
 
 | Value | Description | Structural signature required |
 |-------|-------------|-------------------------------|
@@ -356,7 +356,7 @@ Pool the two provenance sources into one list for the downstream FDR gate (AC-13
 
 Concatenates both lists without reshaping. `built_new` items are `dict` objects (provenance at `item["provenance"]`); `atlas_suggested` items are `CandidateInfo` objects (provenance at `item.params["provenance"]`). Each item's existing provenance tag is preserved unchanged.
 
-The resulting pooled list is the future input to `strategy_builder_engine.propose_strategies`'s single-batch FDR gate (wiring deferred to Component 3/5 — see Forward-AC below).
+The resulting pooled list feeds `strategy_builder_engine.propose_strategies`'s single-batch FDR gate. As of C4/C5, callers (the route and the weekly scheduler) use `load_atlas_candidates` to obtain the atlas-suggested list and inject it directly via the `community_candidates=` kwarg — `pool_candidates` is an internal utility available for testing; production callers do not call it directly.
 
 **Parameters:**
 
@@ -367,21 +367,19 @@ The resulting pooled list is the future input to `strategy_builder_engine.propos
 
 **Returns:** `list` — pooled candidates; `len(result) == len(built_new) + len(atlas_suggested)`.
 
-## Forward-AC: C3/C5 boundary
+## AC-13 Provenance End-to-End (C3/C5 — RESOLVED)
 
-The following AC-13 behaviors are DEFERRED to later phases on this same branch and are NOT yet implemented:
+All AC-13 provenance behaviors are IMPLEMENTED as of C4 (engine rewire) + C5 (route + scheduler):
 
-- Both provenance sources entering the SAME single-batch `evaluate_candidate_batch` FDR gate (Component 3 / compiler + engine rewire integration)
-- Gate count including both sources
-- Provenance tag surviving to the persisted `advisor_observations.raw_response`
-- Provenance tag surfacing in the SPA route JSON (Component 5 / route rewire)
-
-These are forward-ACs; the C2/2b module provides the pooled list and provenance tags; the wiring into the gate and persistence is Component 3/5 work.
+- Both provenance sources enter the SAME single-batch `evaluate_candidate_batch` FDR gate — `_generate_candidate_trees` produces built-new `CandidateInfo` objects; `community_candidates` (from `load_atlas_candidates`) are appended before the gate call.
+- Gate count (`gated_batch.n_candidates`) includes both sources (AC-21).
+- Provenance tag (`template_id`) survives to persisted `advisor_observations.raw_response` (AC-13).
+- Provenance tag surfaces in the SPA route JSON as `template_id: built-new` or `template_id: atlas-suggested` on every survivor and rejected candidate (C5 route rewire, commit 1d5dd48).
 
 ## Internal Dependencies
 
 - `advisors.community_strats` — `load_community_strategies` (called inside `load_atlas_candidates`, CC-2 lazy import)
-- `advisors.strategy_builder_engine` — `MAX_COMMUNITY_CANDIDATES_PER_RUN` and `CandidateInfo` re-exported (the engine itself is NOT modified in this phase)
+- `advisors.strategy_builder_engine` — `MAX_COMMUNITY_CANDIDATES_PER_RUN` and `CandidateInfo` (re-exported; engine was modified in C4 body swap and C5 adapter deletion)
 - `anthropic` — SDK client via `_build_client()` (lazy import inside the function, CC-2 boundary)
 - `advisors.symphony_schema` — `KNOWN_COMPARATORS`, `KNOWN_REBALANCE`, `_KNOWN_OPERATORS` (vocabulary constants for DSL validation)
 
@@ -403,6 +401,6 @@ No imports from `database`, `autotuner`, `app`, or any execution module. Off-exe
 - **Structural dedup fingerprints the root node, not the full plan.** `_root_fingerprint` computes `sha256(json.dumps(plan["root"], sort_keys=True))` over the `root` NODE. Volatile top-level fields (`plan_id`, `name`, `provenance`) are excluded by operating only on the subtree — two plans with identical structure but different names hash identically.
 - **D-1 error contract.** `reason` strings contain `type(exc).__name__` only. No API key value, no file path, no exception message body ever appears in a returned reason string.
 - **Bill-protection on Atlas pulls.** `load_atlas_candidates` passes `force_refresh=False` unconditionally — Atlas reads are bounded to at most once per week per the operator directive (see `DE-ATLAS-001`).
-- **Heterogeneous pool.** `pool_candidates` returns a mixed-type list: `dict` items (built-new plans) and `CandidateInfo` items (atlas-suggested). The downstream FDR gate in `strategy_builder_engine.evaluate_candidate_batch` operates on `CandidateInfo` objects; the Component 3 engine rewire will normalize built-new dicts into `CandidateInfo` before calling the gate (deferred to C3).
-- **Independent `Objective` enum.** This module defines its own 4-value `Objective` enum. `strategy_builder_engine.Objective` remains the 3-value enum until Component 3 unifies them during the engine rewire.
+- **Heterogeneous pool.** `pool_candidates` returns a mixed-type list: `dict` items (built-new plans) and `CandidateInfo` items (atlas-suggested). In production, the C4 engine rewire in `_generate_candidate_trees` produces built-new `CandidateInfo` objects directly (not dicts); the `pool_candidates` utility is therefore primarily a test/diagnostic tool. The live path: `_generate_candidate_trees` → `CandidateInfo` list; `load_atlas_candidates` → `CandidateInfo` list; both fed to `propose_strategies(community_candidates=...)` for the single-batch FDR gate.
+- **Aligned `Objective` enums.** This module defines its own 4-value `Objective` enum. `strategy_builder_engine.Objective` is also 4-value (unified in C4 when `volatility_mitigation` was added). Values are cross-cast via `.value` strings in `_generate_candidate_trees`; no numeric index.
 - **`market_cap` scheme is a forward-compat DSL token; the constructor was never added.** Composer retired market-cap weighting (HTTP 422 `node-type-not-supported` / "Market cap weighting is no longer supported"; captured 2026-06-20; evidence at `tests/fixtures/strategy_builder/wt_marketcap_deprecated_envelope.json`). Per PM Option A (adopt-the-provider-contract), no `make_weight_marketcap` constructor and no `wt-marketcap` entry in `KNOWN_STEPS` are added. The DSL retains `scheme:"market_cap"` as a recognized value so generator plans are structurally valid; `advisors/plan_tree_compiler._has_market_cap` detects and drops them before compilation. See `DE-SB-MARKETCAP-DEPRECATED`.

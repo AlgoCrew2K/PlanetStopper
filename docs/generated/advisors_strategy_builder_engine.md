@@ -64,14 +64,14 @@ Per-candidate state: tree, provenance, backtest metrics, and error if backtest f
 class CandidateInfo:
     candidate_id: str
     tree: dict
-    template_id: str        # provenance: "built-new" (C4), "community", or plan.provenance
+    template_id: str        # provenance: "built-new" (C4), "atlas-suggested" (C5), or plan.provenance
     params: dict
     metrics: dict = field(default_factory=dict)
     backtest_error: str | None = None
     data_warnings: list = field(default_factory=list)
 ```
 
-`template_id` carries provenance; it is never `"T1"`–`"T7"` for built-new candidates (the old template-stamper was removed in C4).
+`template_id` carries provenance; it is never `"T1"`–`"T7"` for built-new candidates (the old template-stamper was removed in C4). It is never `"community"` for atlas-sourced candidates after C5 (the `community_candidate_infos` adapter was deleted; the tag is now `"atlas-suggested"`).
 
 ### `ProposalRun` (dataclass)
 
@@ -89,30 +89,6 @@ class ProposalRun:
 
 ## API Reference
 
-### `community_candidate_infos(community_result, *, max_candidates) -> list[CandidateInfo]`
-
-Map a `load_community_strategies` result dict to a capped list of `CandidateInfo` objects for injection into `propose_strategies`.
-
-Each candidate `{sid, name, tree, tickers, oos_metrics, composition_hash}` becomes a `CandidateInfo` with:
-- `candidate_id = sid`
-- `template_id = "community"`
-- `params = {sid, name, composition_hash}` (provenance carrier — AC-5)
-- `metrics = {}` (filled after backtest)
-- `backtest_error = None`
-
-Returns `[]` when `community_result` is not a dict, `available` is `False`, or `candidates` is missing/empty. Never raises — any unexpected error returns `[]`.
-
-**Parameters:**
-
-| Name | Type | Description |
-|------|------|-------------|
-| `community_result` | `dict` | Return value of `load_community_strategies` |
-| `max_candidates` | `int` | Hard cap on returned list length (first-N, deterministic) |
-
-**Returns:** `list[CandidateInfo]`
-
----
-
 ### `propose_strategies(objective, universe, screen_config, live_returns, symphony_id, *, incumbent_oos_alpha, default_oos_alpha, community_candidates) -> ProposalRun`
 
 Propose new candidate symphonies from scratch. Never raises.
@@ -127,8 +103,8 @@ Propose new candidate symphonies from scratch. Never raises.
 | `live_returns` | `list[float]` | Chronological daily portfolio returns in percent scale; used for blended-drawdown and correlation screens; may be empty |
 | `symphony_id` | `str` | Composer symphony ID to key observations to; defaults to `""` |
 | `incumbent_oos_alpha` | `float` | OOS alpha of the incumbent strategy, passed to `evaluate_candidate_batch` |
-| `default_oos_alpha` | `float` | Fallback OOS alpha when no incumbent alpha is available. In production, the C5b SPY-fold baseline — sourced internally by `propose_strategies` via a `run_backtest` call before the candidate loop — overrides this value inside `evaluate_candidate_batch`. Callers do not need to wire the SPY baseline; it is automatic as of C5b (commit 5d6e04a). |
-| `community_candidates` | `list[CandidateInfo] \| None` | Optional pre-built `CandidateInfo` objects from `community_candidate_infos`. Appended to the built-new list and flow through the **same single-batch FDR gate** (AC-2). Capped at `MAX_COMMUNITY_CANDIDATES_PER_RUN` internally (AC-3). `None` and `[]` are identical — no community candidates are injected (AC-6). |
+| `default_oas_alpha` | `float` | Fallback OOS alpha when no incumbent alpha is available. In production, the C5b SPY-fold baseline — sourced internally by `propose_strategies` via a `run_backtest` call before the candidate loop — overrides this value inside `evaluate_candidate_batch`. Callers do not need to wire the SPY baseline; it is automatic as of C5b (commit 5d6e04a). |
+| `community_candidates` | `list[CandidateInfo] \| None` | Optional pre-built `CandidateInfo` objects. As of C5, callers supply these via `build_plan_generator.load_atlas_candidates(objective)` (the canonical path for both the route and the scheduler). Appended to the built-new list and flow through the **same single-batch FDR gate** (AC-2). Capped at `MAX_COMMUNITY_CANDIDATES_PER_RUN` internally (AC-3). `None` and `[]` are identical — no community candidates are injected (AC-6). |
 
 **Returns:** `ProposalRun` where:
 - `candidates` contains only successfully-backtested `CandidateInfo` objects
@@ -136,7 +112,7 @@ Propose new candidate symphonies from scratch. Never raises.
 - `screened_survivors` is a subset of `gated_batch.survivors`
 - `error` is non-None on catastrophic failure
 
-**FDR integrity invariant:** `evaluate_candidate_batch` receives ALL successfully-backtested candidates — built-new (real C1→C2→C3) and community-sourced together in one batch. Wide exploration pays one batch-wide multiple-testing correction. Screens apply only to gate survivors. The gate input is never pre-filtered or split.
+**FDR integrity invariant:** `evaluate_candidate_batch` receives ALL successfully-backtested candidates — built-new (real C1→C2→C3) and atlas-suggested together in one batch. Wide exploration pays one batch-wide multiple-testing correction. Screens apply only to gate survivors. The gate input is never pre-filtered or split.
 
 **Pipeline:**
 
@@ -185,19 +161,32 @@ The old `_generate_candidate_trees` contained ~140 lines of T1–T7 `symphony_sc
 
 ---
 
-## Community-Candidate Wiring (propose-wiring cycle, 2026-06-14)
+## C5 — Dual-Mode Atlas Admission + Adapter Deletion (commits 1d5dd48, 147a181, 2026-06-20)
 
-The `community_candidates` keyword argument on `propose_strategies` enables caller-injected community symphonies from `advisors/community_strats.load_community_strategies`. Design choices:
+**Component 5** unifies the community-candidate admission path across the route and the weekly scheduler onto `build_plan_generator.load_atlas_candidates(objective)`, and deletes the orphaned `community_candidate_infos` adapter.
 
-1. **Single-batch FDR gate (anti-overfit invariant).** Community and built-new candidates enter `evaluate_candidate_batch` together as one batch. Splitting them into a separate gate would give each group a weaker multiple-testing correction.
+### What changed
 
-2. **Adapter at the caller boundary.** `propose_strategies` does not import or call `load_community_strategies`. The caller obtains the community result, passes it through `community_candidate_infos`, and injects via `community_candidates`.
+**Route rewire (1d5dd48):** `POST /ai-advisor/strategy-builder/run` previously called `load_community_strategies` + the now-deleted `community_candidate_infos` adapter (unranked, no objective-matching). It now calls `build_plan_generator.load_atlas_candidates(objective)` — the same objective-matched admission path used by the scheduler. Atlas candidates reaching `propose_strategies` are now tagged `provenance="atlas-suggested"` (not `"community"`).
 
-3. **Per-candidate failure isolation (AC-4).** Each community candidate's `run_backtest` call is wrapped in per-candidate `try/except`. A failing backtest sets `backtest_error` and excludes the candidate from the gate; other candidates are unaffected.
+**Scheduler dual-mode (147a181):** `strategy_builder_scheduler.run_weekly_build` previously called `propose_strategies(community_candidates=[])` — no atlas injection on the weekly path. It now calls `_bpg.load_atlas_candidates(objective)` per objective and forwards the result as `community_candidates=` to `propose_strategies`. The weekly run is genuinely dual-mode: built-new (Opus C2) AND objective-matched atlas-suggested in ONE FDR batch, bill-protected (`force_refresh=False` inside the wrapper), D-1 (Atlas failure → built-new-only).
 
-4. **Provenance in persisted observations (AC-5).** Community-sourced survivors record `template_id="community"` and the source `sid` in the observation's `params`.
+**Adapter deletion (147a181):** `community_candidate_infos` (70 lines, the old unranked first-N adapter) was deleted from `strategy_builder_engine.py`. It had zero production callers after the route rewire. The `propose_strategies` `community_candidates=` kwarg path is preserved unchanged — only the unranked standalone adapter function is gone. The engine docstring reference to `community_candidate_infos` was updated to point to `build_plan_generator.load_atlas_candidates` (`strategy_builder_engine.py:758`).
 
-5. **No-regression guarantee (AC-6).** When `community_candidates` is `None` or `[]`, the extend is skipped and the execution path is byte-for-byte identical to the pre-wiring code.
+### Provenance tags after C5
+
+`template_id` in `CandidateInfo` identifies origin:
+
+| Value | Source |
+|-------|--------|
+| `"built-new"` (or `plan.provenance`) | C4 real pipeline: C1→C2→C3 |
+| `"atlas-suggested"` | C5 objective-matched admission via `build_plan_generator.load_atlas_candidates` |
+
+**Note:** `"T1"`–`"T7"` no longer appear on built-new candidates (removed in C4). `"community"` no longer appears — the `community_candidate_infos` adapter that emitted it is deleted (C5, 147a181).
+
+### Route error-boundary sanitization (AC-23)
+
+Pre-C5, `run.error` was echoed verbatim in the route JSON response. `run.error` is set by `propose_strategies` via `str(exc)`, which can carry API keys or internal paths. C5 (1d5dd48) sanitizes this: the route logs the full `run.error` server-side and surfaces the static token `"strategy-builder-error"` to the operator (`app.py:3840`). The route's own outer `except` already used `type(exc).__name__` (AC-23 boundary closed at the observable surface). The internal `propose_strategies` normalization (replacing `str(exc)` with the class name at `propose_strategies:965`) is a tracked follow-on, not done in this cycle.
 
 ---
 
@@ -207,9 +196,9 @@ The `community_candidates` keyword argument on `propose_strategies` enables call
 
 **Gap 1 — PBO veto was structurally disabled.** `evaluate_candidate_batch` was called without a `pbo` argument → `None` → PBO veto never fired on the Advisor path. C5b wires `math_engine.compute_pbo` over the candidate batch's `dated_returns` intersection and threads `_batch_pbo` into every gate call.
 
-**Gap 2 — OOS-alpha baseline always beats zero.** The `default_oos_alpha=0.0` default meant a candidate cleared merely by having positive validation-fold alpha. C5b injects a `spy_returns_fn` seam using a real SPY backtest (Step 2a).
+**Gap 2 — OOS-alpha baseline always beats zero.** The `default_oas_alpha=0.0` default meant a candidate cleared merely by having positive validation-fold alpha. C5b injects a `spy_returns_fn` seam using a real SPY backtest (Step 2a).
 
-**Atlas parity is structural (AC-26).** Atlas community candidates and built-new candidates flow through the same `evaluate_candidate_batch` call. Advertised community `oos_metrics` are structurally inert in the gate (`metrics={}` at `BacktestCandidate` construction).
+**Atlas parity is structural (AC-26).** Atlas community candidates and built-new candidates flow through the same `evaluate_candidate_batch` call. Advertised community `oas_metrics` are structurally inert in the gate (`metrics={}` at `BacktestCandidate` construction).
 
 **`rejection_reason` field.** Each `CandidateGateResult` carries a deterministic `rejection_reason`: `None` (survivor) → `"pbo_veto"` (Stage-1) → `"below_spy_alpha"` (Stage-2) → `"fdr_not_winner"` (catch-all). See `advisors_backtest_gate_engine.md` and `DE-SB-CULL-001` in `DECISIONS.md`.
 
@@ -223,21 +212,10 @@ The `community_candidates` keyword argument on `propose_strategies` enables call
 
 ---
 
-## Provenance Tags
-
-`template_id` in `CandidateInfo` identifies origin:
-
-| Value | Source |
-|-------|--------|
-| `"built-new"` (or `plan.provenance`) | C4 real pipeline: C1→C2→C3 |
-| `"community"` | Community-sourced via `community_candidate_infos` adapter |
-
-**Note:** `"T1"`–`"T7"` no longer appear on built-new candidates. The old template-stamper was removed in C4 (5ae6c8c).
-
 ## Internal Dependencies
 
 - `advisors.universe_provider` — `get_tradeable_set()` (C1, CC-2 lazy import inside `_generate_candidate_trees`)
-- `advisors.build_plan_generator` — `generate_build_plans`, `Objective` (C2, CC-2 lazy import)
+- `advisors.build_plan_generator` — `generate_build_plans`, `Objective` (C2, CC-2 lazy import); `load_atlas_candidates` is the canonical community-admission path for both route and scheduler callers
 - `advisors.plan_tree_compiler` — `compile_plan` (C3, CC-2 lazy import)
 - `advisors.symphony_schema` — used internally by `plan_tree_compiler`; no longer called directly from this module
 - `advisors.backtest_gate_engine` — `evaluate_candidate_batch`, `BacktestCandidate`, `CandidateGateResult`, `GatedBatch`, `HARVEY_LIU_FDR_Q`, `SURVIVOR_OVERFITTING_CAVEAT`
@@ -245,4 +223,4 @@ The `community_candidates` keyword argument on `propose_strategies` enables call
 - `analytics` — `compute_quantstats_metrics`
 - `database` — `insert_advisor_observation`
 
-No import of `alpha_bot_execution`, `autotuner`, or any execution module. Off-execution-path; advisory-only. The sole production caller is `app.py:3816` (`ai_advisor_strategy_builder_run` route); the weekly scheduler (`advisors/strategy_builder_scheduler.py`) is the other caller for automated runs.
+No import of `alpha_bot_execution`, `autotuner`, or any execution module. Off-execution-path; advisory-only. The sole production callers are `app.py:3813` (`ai_advisor_strategy_builder_run` route) and `advisors/strategy_builder_scheduler.py` (`run_weekly_build`). `autotuner.py` does NOT call `propose_strategies` — a prior doc claim to the contrary was stale (corrected in C4 doc pass).
