@@ -3,7 +3,7 @@
 > Core per-cycle execution engine: fetches live portfolio state from Composer, runs all per-symphony exit decisions, calls autotuner post-market, and writes state back to the DB.
 
 **Source:** `alpha_bot_execution.py`
-**Last updated:** 2026-05-27
+**Last updated:** 2026-06-21 (startup-seed-symphonies)
 
 ## Overview
 
@@ -17,12 +17,68 @@
 
 **Sprint 3 change (SITE-A1–A5):** The port-level dispatch block was removed. No port-level decision math is reachable. All exit decisions flow through per-symphony paths only.
 
+**Startup seed (feat/startup-seed-symphonies, 2026-06-21):** `ensure_bot_state_seeded()` is called once from `app.py` daemon startup, before the minute scheduler starts. This prevents the dashboard showing 0 symphonies after an off-hours DB wipe or first-ever start. The seed is idempotent, fail-safe, and does not pollute `shadow_history`. See `DE-SEED-STARTUP-001` in `DECISIONS.md`.
+
 ## API Reference
 
 ### Top-Level Entry Point
 
 #### `main() → None`
 Entry point when run as `python alpha_bot_execution.py`. Acquires the execution lock, loads state, runs the per-symphony execution loop, and releases the lock. On `--force`, bypasses the market-hours guard.
+
+---
+
+### Startup Symphony Seeding
+
+#### `ensure_bot_state_seeded() → None`
+
+Called once from `app.py` daemon startup (before the minute scheduler). Seeds `bot_state` with baseline symphony entries when none are present.
+
+**Behavior:**
+- Loads `bot_state` from the DB via `database.load_state()`.
+- Presence check: counts dict-valued keys that are NOT in `_SEED_RESERVED_KEYS`. If any symphony entry already exists, returns immediately — no network call, no save (AC-2 idempotency).
+- When `bot_state` is empty (or contains only reserved metadata keys), calls `seed_symphonies_into_bot_state(bot_state)` and saves via `database.save_state(bot_state)` if `created >= 1`.
+- Entire body is wrapped in `try/except` — a Composer error at startup is logged (`[seed] ensure_bot_state_seeded failed (non-fatal): ...`) and ignored; the daemon continues starting (AC-4 fail-safe).
+
+**Must NOT be called from inside `main()`.** Only called from `app.py` startup, never on the per-minute execution path (AC-7 startup-cost bounded).
+
+---
+
+#### `seed_symphonies_into_bot_state(bot_state: dict) → int`
+
+Creates baseline `bot_state` entries for every symphony not already present.
+
+**Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| `bot_state` | `dict` | The mutable state dict loaded from `database.load_state()`. Modified in-place. |
+
+**Returns:** `int` — count of NEW entries created (0 if all accounts return 0 symphonies or all fetches fail).
+
+**Behavior per account in `ACCOUNT_UUIDS`:**
+- Calls `fetch_symphony_stats(account)`. Per-account exceptions are caught, logged (`[seed] fetch_symphony_stats(...) failed: ExcType: ...`), and skipped — partial success is allowed, the function never re-raises (AC-4).
+- For each symphony id returned that is NOT already in `bot_state`, creates the baseline entry:
+  - `high_water_mark` / `shadow_hwm` initialized from `(last_percent_change or 0.0) * 100`
+  - `armed`, `tp_armed`, `para_armed`, `triggered`, `breakeven_locked` = `False`
+  - `mc_history`, `current_holdings` = `[]`
+  - `below_stop_count`, `above_tp_count`, `vwap_ticks`, `vwap_bleed_ticks`, `hwm_hold_ticks` = `0`
+  - `prev_return` = `None`
+  - `position_epoch` = `database.mint_position_epoch()` (fresh epoch per AC-3 — not the shadow_history write path)
+  - `name` from `sym.get("name", "")`
+- Calls `_persist_composer_fields_to_bot_state(bot_state, s_id, sym)` after each new entry (mirrors the DATA PHASE create-block at `alpha_bot_execution.py:771-790`).
+- Does NOT call `database.record_shadow_observation` and does NOT write any `post_mortem_*.json` files (AC-3 — no Guard-Alpha collection pollution).
+
+**Design limitation (DE-SEED-STARTUP-001):** This function mirrors the DATA PHASE create-block but the two blocks are separate implementations. There is no structural enforcement of their alignment — a future refactor should extract a shared `_create_symphony_entry` helper.
+
+---
+
+#### `_SEED_RESERVED_KEYS: frozenset[str]`
+
+Module-level constant. Reserved top-level `bot_state` keys that are NOT symphony entries. The `ensure_bot_state_seeded` presence check excludes these so that a metadata-only state (e.g., after a market close that wrote `last_market_close_snapshot` but before any DATA PHASE cycle created symphony entries) is not mistaken for an already-seeded state.
+
+Extends `database._WIPE_RESERVED_KEYS` (`date`, `last_execution_mode`, `last_market_close_snapshot`) with engine-level metadata keys:
+- `"fleet_correlation_alert"`
+- `"last_successful_cycle_at"`
 
 ---
 
@@ -71,7 +127,7 @@ At startup (before any execution cycle), `alpha_bot_execution.py` calls `databas
 
 ## Internal Dependencies
 
-- `database` — `acquire_lock`, `release_lock`, `load_state`, `save_state`, `get_or_create_phase1_theory_bundle_id`, `record_exit_trigger`, `record_shadow_observation`, `get_symphony_live_mode` (per-symphony dry-run/live dispatch)
+- `database` — `acquire_lock`, `release_lock`, `load_state`, `save_state`, `get_or_create_phase1_theory_bundle_id`, `record_exit_trigger`, `record_shadow_observation`, `get_symphony_live_mode` (per-symphony dry-run/live dispatch), `mint_position_epoch` (startup seed), `_WIPE_RESERVED_KEYS` (extended by `_SEED_RESERVED_KEYS`)
 - `math_engine` — all per-tick decision primitives, `run_monte_carlo`, `resolve_trigger_priority`, `compute_regime_match_quality`, `apply_regime_exit_adjustment` (regime-exit-adjustment on the live path)
 - `autotuner` — `run_autotuner` (post-market)
 - `reporting` — `generate_eod_snapshot`, Discord notifications

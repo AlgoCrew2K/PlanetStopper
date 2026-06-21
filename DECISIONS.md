@@ -2863,3 +2863,59 @@ The repo carries `deploy/planetstopper.service.d/memory.conf` — a systemd drop
 | AC-5 | Sanctioned entrypoint + docs | GREEN (this commit) |
 | AC-6 | Droplet systemd drop-in carried in repo; PM applies at gate | In-repo: GREEN; applied: PM gate |
 | AC-7 | Default cap does not false-trip a legitimately-bounded run | GREEN (this cycle) |
+## DE-SEED-STARTUP-001 — Startup symphony seed: idempotent bot_state bootstrap on daemon start (2026-06-21)
+
+Branch: feat/startup-seed-symphonies | Base: origin/main (aefad7b)
+
+### Problem
+
+After a DB wipe (or any first-ever daemon start outside market hours), `bot_state` contains no symphony entries. The market-hours DATA PHASE at `alpha_bot_execution.py` creates entries only inside the trading-hours gate (`if not is_trading or current_time > post_mortem_cutoff or current_time < REAL_MARKET_OPEN: return`). The weekend/closed path refreshes symphonies that are **already** present (`if _s_id in _closed_bot_state`) but never creates new ones. Consequence: the dashboard shows 0 symphonies until the next market-open cycle — often hours away.
+
+### Decision
+
+Add a one-shot **startup seed** in `app.py`: call `ensure_bot_state_seeded()` once after the pidfile is acquired and before the minute scheduler thread starts. This is the only call site; the function is never called on the per-minute execution path.
+
+### Implementation
+
+**`alpha_bot_execution.py` — two new public symbols + one module-level constant:**
+
+- `seed_symphonies_into_bot_state(bot_state: dict) -> int` — iterates `ACCOUNT_UUIDS`, calls `fetch_symphony_stats` per account, creates the baseline `bot_state` entry for each symphony id not already present (mirrors the DATA PHASE create-block at lines 771-790). Does NOT call `database.record_shadow_observation`; does NOT write any `post_mortem_*.json` files (AC-3). Per-account exceptions are caught and logged; the function never re-raises.
+- `ensure_bot_state_seeded() -> None` — loads `bot_state`, runs the `_SEED_RESERVED_KEYS`-aware presence check, calls the helper and saves if any entries were created. Entire body is wrapped in `try/except` → fail-safe (AC-4). Must NOT be called from inside `main()` (AC-7).
+- `_SEED_RESERVED_KEYS: frozenset[str]` — extends `database._WIPE_RESERVED_KEYS` with `"fleet_correlation_alert"` and `"last_successful_cycle_at"`. Required because both of those are dict-valued top-level keys that must not be mistaken for symphony entries during the presence check.
+
+**`app.py` — startup hook:**
+
+```python
+# After _acquire_daemon_singleton(), before threading.Thread(target=run_scheduler).start()
+from alpha_bot_execution import ensure_bot_state_seeded  # noqa: PLC0415
+ensure_bot_state_seeded()
+```
+
+Lazy import (`PLC0415` suppressed with a comment) avoids any circular-import risk at module level.
+
+### Design limitation — no single source of truth for entry creation
+
+`seed_symphonies_into_bot_state` documents that it "mirrors" the DATA PHASE create-block (lines 771-790) but the two blocks are **separate implementations**. There is no structural enforcement of their alignment — if one is updated, the other may silently drift.
+
+**Future refactor (tracked here, not in scope for this cycle):** extract a shared `_create_symphony_entry(bot_state, s_id, sym)` helper. Both the DATA PHASE create-block and the seed helper would call it. This would make entry-field additions a single-file change and eliminate the drift risk.
+
+### Acceptance criteria verified (HEAD 5d8b91f)
+
+- AC-1: seed-when-empty creates N entries on a mocked `fetch_symphony_stats` returning N symphonies, market-closed (mock `is_trading=False`) — entries present after. GREEN.
+- AC-2: pre-seeded `bot_state` with a sentinel field (custom HWM + `triggered=True`) is UNCHANGED after `ensure_bot_state_seeded()`. GREEN.
+- AC-3: `shadow_history` row count is identical before/after a startup seed. GREEN.
+- AC-4: `fetch_symphony_stats` raising → `ensure_bot_state_seeded()` returns without raising; daemon-startup caller does not propagate. GREEN.
+- AC-4 (partial): account A returns syms, account B raises → A seeded, no raise. GREEN.
+- AC-5: after seed, a simulated market-hours create/update pass does not duplicate entries. GREEN.
+- AC-6: account with 0 symphonies → no entries, no raise. GREEN.
+- AC-7: hook is in `app.py __main__` block, not in `main()` or on the per-minute scheduler path. Verified in code review.
+
+Reviewer: quant-code-reviewer APPROVE (conditional on PM live gate) at HEAD 5d8b91f. All 8 Planet Stopper gates PASS.
+
+### Files changed
+
+- `alpha_bot_execution.py` — `seed_symphonies_into_bot_state`, `ensure_bot_state_seeded`, `_SEED_RESERVED_KEYS` (all new, appended after `main()`)
+- `app.py` — 6-line startup hook block (after pidfile acquire, before scheduler thread)
+- `tests/engine/test_startup_seed_symphonies.py` — 7 AC-driven tests (new)
+- `tests/fixtures/engine/startup_seed/basic_symphony_stats.json` — fixture for mocked `fetch_symphony_stats` (new)
+- `feature-plans/startup-seed-symphonies.md` — cycle planning artifact (Status: ready)
