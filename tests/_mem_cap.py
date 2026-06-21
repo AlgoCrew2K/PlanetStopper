@@ -33,7 +33,7 @@ DEFAULT_CAP_GB: float = 24.0
 # Win32 Job Object limit flags.
 # These are module-level constants so tests can pin the correct flag value and
 # catch any regression to the weaker per-process flag.
-JOB_OBJECT_LIMIT_JOB_MEMORY: int = 0x00000200      # total committed across the whole job tree
+JOB_OBJECT_LIMIT_JOB_MEMORY: int = 0x00000200  # total committed across the whole job tree
 JOB_OBJECT_LIMIT_PROCESS_MEMORY: int = 0x00000100  # per-process (weaker; DO NOT use for total cap)
 
 # Internal Win32 constants used by install_total_memory_cap.
@@ -58,6 +58,7 @@ _JOB_HANDLE = None
 # ---------------------------------------------------------------------------
 # Implementation
 # ---------------------------------------------------------------------------
+
 
 def install_total_memory_cap(cap_bytes: int) -> None:
     """Install a Windows Job Object with JOB_OBJECT_LIMIT_JOB_MEMORY (total tree cap).
@@ -117,7 +118,7 @@ def install_total_memory_cap(cap_bytes: int) -> None:
             ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
             ("IoInfo", IO_COUNTERS),
             ("ProcessMemoryLimit", ctypes.c_size_t),  # per-process cap field (not used here)
-            ("JobMemoryLimit", ctypes.c_size_t),       # total-job cap field (this is what we set)
+            ("JobMemoryLimit", ctypes.c_size_t),  # total-job cap field (this is what we set)
             ("PeakProcessMemoryUsed", ctypes.c_size_t),
             ("PeakJobMemoryUsed", ctypes.c_size_t),
         ]
@@ -134,7 +135,7 @@ def install_total_memory_cap(cap_bytes: int) -> None:
     # Set the total-job memory limit.
     info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
     info.BasicLimitInformation.LimitFlags = (
-        JOB_OBJECT_LIMIT_JOB_MEMORY           # total committed across the whole tree
+        JOB_OBJECT_LIMIT_JOB_MEMORY  # total committed across the whole tree
         | _JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
     )
     # CRITICAL: JobMemoryLimit (total) — NOT ProcessMemoryLimit (per-process).

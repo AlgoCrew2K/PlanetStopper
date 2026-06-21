@@ -34,7 +34,9 @@ _WORKTREE = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 """Absolute path to the worktree root — used to build PYTHONPATH for children."""
 
 
-def _run_child(script: str, *, env: dict | None = None, timeout: int = 30) -> subprocess.CompletedProcess:
+def _run_child(
+    script: str, *, env: dict | None = None, timeout: int = 30
+) -> subprocess.CompletedProcess:
     """Run a small Python script in a child process, returning the result.
 
     The child inherits the current Job Object (default inherit flags), so its
@@ -57,6 +59,7 @@ def _run_child(script: str, *, env: dict | None = None, timeout: int = 30) -> su
 # ---------------------------------------------------------------------------
 # Group 1 — Module contract (Windows-gated)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.skipif(os.name != "nt", reason="Win32 Job Object cap — Windows only")
 def test_install_total_job_cap_callable_on_windows():
@@ -164,6 +167,7 @@ def test_install_total_job_cap_is_idempotent():
 # ---------------------------------------------------------------------------
 # Group 2 — Safety semantics (Windows-gated, bounded by the cap itself)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.skipif(os.name != "nt", reason="Win32 Job Object cap — Windows only")
 def test_over_cap_allocation_raises_memory_error_not_host_crash():
@@ -320,9 +324,7 @@ def test_total_job_semantics_bounds_fanout_not_just_per_process():
         ctypes.sizeof(info),
         ctypes.byref(ret_len),
     )
-    assert ok, (
-        f"QueryInformationJobObject failed: {ctypes.WinError(ctypes.get_last_error())}"
-    )
+    assert ok, f"QueryInformationJobObject failed: {ctypes.WinError(ctypes.get_last_error())}"
 
     JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200
     JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x00000100
@@ -361,6 +363,7 @@ def test_total_job_semantics_bounds_fanout_not_just_per_process():
 # Group 3 — Linux/CI no-op (cross-platform — NOT Windows-gated)
 # ---------------------------------------------------------------------------
 
+
 def test_install_total_job_cap_is_noop_on_non_windows(monkeypatch):
     """install_total_memory_cap is a clean no-op on non-Windows (AC-4).
 
@@ -386,6 +389,7 @@ def test_install_total_job_cap_is_noop_on_non_windows(monkeypatch):
 # ---------------------------------------------------------------------------
 # Group 4 — Env knob (cross-platform, no skip)
 # ---------------------------------------------------------------------------
+
 
 def test_alphabot_test_mem_cap_gb_env_knob_zero_disables_with_warning(monkeypatch):
     """ALPHABOT_TEST_MEM_CAP_GB=0 disables the cap and emits a warning (AC-1/AC-7).
@@ -439,9 +443,7 @@ def test_alphabot_test_mem_cap_gb_default_is_present_and_sane():
         f"DEFAULT_CAP_GB must be a numeric type, got {type(cap).__name__}"
     )
     assert cap > 0, f"DEFAULT_CAP_GB must be positive, got {cap}"
-    assert cap >= 8, (
-        f"DEFAULT_CAP_GB must be >= 8 GB (a pytest run needs headroom), got {cap}"
-    )
+    assert cap >= 8, f"DEFAULT_CAP_GB must be >= 8 GB (a pytest run needs headroom), got {cap}"
     assert cap <= 64, (
         f"DEFAULT_CAP_GB must be <= 64 GB (well under the 67.8 GB host ceiling), got {cap}"
     )

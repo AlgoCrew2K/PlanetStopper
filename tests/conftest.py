@@ -80,6 +80,7 @@ def pytest_configure(config):
     # See tests/_mem_cap.py and DE-TEST-MEMCAP-001 in DECISIONS.md.
     if os.name == "nt":
         from tests import _mem_cap
+
         _mem_cap.install_from_env()
 
 
