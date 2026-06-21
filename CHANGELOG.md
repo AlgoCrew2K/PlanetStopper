@@ -147,7 +147,7 @@ After the live droplet deployment, the database was wiped clean to begin accumul
 
 ### What Changed
 
-The Strategy Builder's fixed seven-template generator (T1-T7) has been replaced with a real Claude Opus-driven builder. Previously the builder stamped out seven preset strategy shapes regardless of your objective. Now it asks Opus to design strategies from scratch, proposes its own tickers based on market knowledge, validates those tickers against a live universe of every tradeable US-equity on Alpaca, compiles the designs into valid Composer trees, and runs all candidates through the same antioverfit cull the autotuner uses before surfacing survivors.
+The Strategy Builder's fixed seven-template generator (T1-T7) has been replaced with a real Claude Opus-driven builder. Previously the builder stamped out seven preset strategy shapes regardless of your objective. Now it asks Opus to design strategies from scratch, proposes its own tickers based on market knowledge, validates those tickers against a live universe of every tradeable US-equity on Alpaca, compiles the designs into valid Composer trees, and runs all candidates through the same anti-overfit cull the autotuner uses before surfacing survivors.
 
 The builder is also dual-mode: alongside net-new Opus designs it now pulls existing strategies from the Atlas community database and ranks them by how well they fit your chosen objective. Both sources flow through the same backtest and FDR gate, and every result is tagged with its provenance (built-new or atlas-suggested) so you can tell where each proposal came from.
 
