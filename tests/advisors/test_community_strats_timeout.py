@@ -74,13 +74,20 @@ def _recursive_contains(obj: Any, substring: str) -> bool:
 def _make_fast_mongo_client_mock(docs: list) -> MagicMock:
     """Return a MagicMock MongoClient that immediately returns `docs` from find().
 
-    Chain: client["captplanet"]["strategies"].find({}, projection) -> iter(docs).
+    Chain: client["captplanet"]["strategies"].find({}, projection).limit(N) -> iter(docs).
     Handles both subscript (client[db][col]) and attribute (client.db.col) access.
+
+    Real pymongo: find() -> Cursor; Cursor.limit(n) -> Cursor (same object, iterable).
+    The mock must faithfully replicate this chain so that _fetch_fn's
+    `collection.find(...).limit(_MAX_FETCH_DOCS)` still yields the fixture docs.
     """
     mock_cursor = MagicMock()
     mock_cursor.__iter__ = MagicMock(return_value=iter(docs))
     # list(cursor) calls are used in _fetch_fn; make that work too
     mock_cursor.__len__ = MagicMock(return_value=len(docs))
+    # .limit(n) must return the same cursor so the chain find(...).limit(N) is iterable.
+    # Without this, .limit() returns a fresh MagicMock that is not wired to iter(docs).
+    mock_cursor.limit = MagicMock(return_value=mock_cursor)
 
     mock_collection = MagicMock()
     mock_collection.find.return_value = mock_cursor
