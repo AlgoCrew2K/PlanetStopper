@@ -74,6 +74,14 @@ def pytest_configure(config):
     os.environ.setdefault("ALPHABOT_MAX_JOBS", "1")
     os.environ.setdefault("OPTUNA_N_JOBS", "1")
 
+    # Install a Windows Job Object total-tree memory cap before xdist workers spawn.
+    # On Linux/CI this is a no-op.  Cap value comes from ALPHABOT_TEST_MEM_CAP_GB
+    # (default 24 GB); set to 0 to disable with a loud warning.
+    # See tests/_mem_cap.py and DE-TEST-MEMCAP-001 in DECISIONS.md.
+    if os.name == "nt":
+        from tests import _mem_cap
+        _mem_cap.install_from_env()
+
 
 def pytest_unconfigure(config):
     """Clean up the session temp directory after the test run."""
