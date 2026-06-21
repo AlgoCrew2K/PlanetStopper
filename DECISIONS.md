@@ -2789,3 +2789,77 @@ The public `limit` parameter (caller-level, post-dedup) is a separate control an
 ### Community-strategy source
 
 The `captplanet.strategies` Atlas collection is owned by **algo-db.com**, a third-party community-strategy database. `MONGO_URI` connects to algo-db.com's MongoDB Atlas instance; the collection is never modified by this project (read-only consumer).
+
+---
+
+## DE-TEST-MEMCAP-001 — Total-job Windows Job-Object memory cap in conftest (2026-06-21)
+
+Branch: fix/test-host-memory-cap | Base: origin/main 84fc0da
+
+### RCA: 2026-06-21 host hard reboot (Kernel-Power 41)
+
+A full `python -m pytest` run (default `-n 2 --dist loadfile` via pyproject.toml addopts) committed ~238 GB of virtual memory on the dev host, exceeding the physical ceiling of ~67.8 GB (63.8 GB RAM + 4 GB pagefile). Windows triggered a low-virtual-memory condition and the host hard-rebooted (Kernel-Power 41 event).
+
+Root cause is **process fan-out** — not a single large allocation:
+
+- `-n 2` xdist workers each fork a full Python interpreter + the heavy scientific stack (numpy/scipy/pandas/optuna/matplotlib/seaborn). Each interpreter reserves multi-GB committed address space on Windows even before allocating.
+- ~15 tests spawn additional child interpreters via `subprocess.run([sys.executable, ...])` (e.g. the prism council tests, meta-suite test). These children also inherit the xdist worker environment.
+- On Windows, committed (reserved) address space of nested child processes is attributed to a controller PID — the entire tree reads as one "238 GB process."
+
+### Why the Jun-13 memfix was necessary but insufficient
+
+The `.design-handoff/memfix` cycle (MERGED before this cycle) addressed two specific fan-out sites:
+
+1. The nested-pytest meta test (`test_full_suite_reports_zero_skips_and_zero_xfails`) — forced single-process with `-p no:xdist -o addopts=` so the nested run cannot inherit the xdist workers.
+2. `synthetic_history.py` `joblib.Parallel(n_jobs=-1)` — env-bounded to 1 in tests via `ALPHABOT_MAX_JOBS=1` in conftest.
+
+These caps are correct and remain in place. However, they address individual fan-out sites. They do NOT bound the total committed memory of the controller + xdist workers + all remaining subprocess-spawned children collectively. A full `-n 2` run after those fixes still exceeded the host ceiling on 2026-06-21.
+
+**Stale claim to correct:** `.design-handoff/memfix/FINDINGS.md` §"The single safe pytest command going forward" states `python -m pytest` is now memory-safe. This claim is superseded. `python -m pytest` is safe ONLY on a checkout that includes the total-job cap installed by this cycle's conftest change. An older checkout lacking that cap remains unsafe on a host with less than ~90 GB commit headroom.
+
+### Fix: total-job OS-level cap
+
+The proven mechanism is a Windows Job Object with `JOB_OBJECT_LIMIT_JOB_MEMORY` (total-tree committed memory across ALL processes in the job). This is distinct from the per-process flag (`JOB_OBJECT_LIMIT_PROCESS_MEMORY`) used in the `.design-handoff/memfix/job_cap_harness.py` prototype — the per-process flag does NOT bound a fan-out of many medium processes.
+
+**Implementation (`tests/_mem_cap.py` + `tests/conftest.py`):**
+
+- `install_total_memory_cap(cap_bytes)` — ctypes Win32: `CreateJobObjectW` → `SetInformationJobObject(JobObjectExtendedLimitInformation)` with `LimitFlags = JOB_OBJECT_LIMIT_JOB_MEMORY`, `JobMemoryLimit = cap_bytes` → `AssignProcessToJobObject(GetCurrentProcess())`. Handle kept alive process-lifetime. Returns immediately (no-op) on non-Windows.
+- Called from `tests/conftest.py:pytest_configure()` as early as possible (before xdist workers spawn). Each xdist worker process also self-installs when it runs `pytest_configure`; Win8+ nested job assignment is safe and idempotent.
+- **Env knob:** `ALPHABOT_TEST_MEM_CAP_GB` (default 24 GB). `os.environ.setdefault`-style so an explicit operator override is preserved. `=0` or garbled value disables the cap with a loud warning log.
+- On non-Windows (Linux CI, droplet): the installer is a clean no-op. No new hard dependency — `ctypes` is stdlib; Win32-only code paths are guarded by `os.name == "nt"`.
+
+**Effect:** An over-cap allocation raises `MemoryError` at the exact allocation site in the test or child process that triggered it. The host commit never approaches the ceiling; the test run fails at the offending test (acceptable) rather than crashing the machine.
+
+### Droplet daemon hardening (AC-6, applied by PM at gate)
+
+The repo carries `deploy/planetstopper.service.d/memory.conf` — a systemd drop-in adding `MemoryMax=3G` and `Restart=on-failure` + `RestartSec=10s` to the `planetstopper` daemon unit (and a matching drop-in for the council timer's service unit). This limits a runaway daemon on the 4 GB DigitalOcean droplet to OOM-restart rather than taking down the droplet. PM applies via SSH at the PR gate.
+
+### Key design decisions
+
+- **Total-job, not per-process.** The per-process flag (the prototype pattern) does not bound a fan-out. `JOB_OBJECT_LIMIT_JOB_MEMORY` is the correct flag for bounding the whole process tree.
+- **Default 24 GB.** Well under the dev host ceiling (~67.8 GB) and well above a legitimately-bounded run (the Jun-13 findings showed single-process peaks of 0.17–0.42 GB per scope). False-trips on a legitimately-bounded run are unlikely; if they occur, the cap can be raised via env.
+- **No production behavior change.** `synthetic_history.py` production parallelism (`Parallel(n_jobs=-1)`) is unchanged. The env-bounded path in conftest (`setdefault`) does not override an explicitly-set operator value. No xdist `-n` setting changed.
+- **CI is the cloud full-suite gate.** The dev-host cap makes running locally safe; it does not change that the GitHub Actions runner is the authoritative full-suite green gate.
+
+### Files changed
+
+- `tests/_mem_cap.py` — NEW: `install_total_memory_cap(cap_bytes)` + sentinel + Windows ctypes implementation + Linux no-op
+- `tests/conftest.py` — `pytest_configure` calls `install_total_memory_cap` from `_mem_cap`; reads `ALPHABOT_TEST_MEM_CAP_GB`
+- `tests/test_mem_cap/` or `tests/conftest_memcap/` — guard tests (AC-2/AC-3/AC-4/AC-7): over-cap raises MemoryError; total-job semantics; Linux no-op; env knob; cap-disabled warning
+- `deploy/planetstopper.service.d/memory.conf` — NEW: systemd drop-in for daemon MemoryMax + Restart
+- `deploy/planetstopper-council.service.d/memory.conf` — NEW: systemd drop-in for council timer service
+- `.design-handoff/memfix/FINDINGS.md` — dated addendum correcting the stale "safe going forward" claim
+- `.claude/skills/run-tests/SKILL.md` — cap is automatic via conftest; ALPHABOT_TEST_MEM_CAP_GB knob documented
+- `docs/generated/` — new `tests_mem_cap.md`; updated `ci-harness.md`; updated `INDEX.md`
+
+### Acceptance criteria status
+
+| AC | Description | Status |
+|----|-------------|--------|
+| AC-1 | Total-tree cap installed at pytest startup via conftest | GREEN (this cycle) |
+| AC-2 | Over-cap raises MemoryError, host survives | GREEN (this cycle) |
+| AC-3 | Total-job semantics proven (two children whose sum exceeds cap are bounded) | GREEN (this cycle) |
+| AC-4 | Linux/CI no-op, never breaks CI | GREEN (this cycle) |
+| AC-5 | Sanctioned entrypoint + docs | GREEN (this commit) |
+| AC-6 | Droplet systemd drop-in carried in repo; PM applies at gate | In-repo: GREEN; applied: PM gate |
+| AC-7 | Default cap does not false-trip a legitimately-bounded run | GREEN (this cycle) |

@@ -134,3 +134,47 @@ NEVER restore -n auto. NEVER run two pytest invocations concurrently.
 - tests/synthetic_history/test_bounded_replay_parallelism.py -- NEW regression guard.
 - .design-handoff/memfix/watchdog.py -- sanctioned watchdog runner (tooling).
 - .design-handoff/memfix/FINDINGS.md -- this file.
+
+---
+
+## ADDENDUM — 2026-06-21: Jun-13 fixes necessary but insufficient; total-job OS cap required
+
+**This addendum supersedes the "The single safe pytest command going forward" section above.**
+
+### What happened
+
+A full `python -m pytest` run was executed on 2026-06-21 on the same host this fix targeted. The host hard-rebooted with a Windows Kernel-Power 41 event — the same failure mode as before this fix was merged. Committed memory reached ~238 GB, exceeding the host ceiling (~67.8 GB: 63.8 GB RAM + 4 GB pagefile).
+
+### Why the Jun-13 fixes were insufficient
+
+The two fixes in this branch addressed specific fan-out sites:
+
+1. **Nested pytest meta-test** — forced single-process with `-p no:xdist -o addopts=`. This fix is correct and still in place.
+2. **`synthetic_history.py` `joblib.Parallel(n_jobs=-1)`** — env-bounded to 1 in tests via `ALPHABOT_MAX_JOBS=1`. This fix is correct and still in place.
+
+Neither fix bounds the **total committed memory** of the process tree as a whole. The root cause of the 2026-06-21 crash was the combined reservation of:
+
+- The controller process + 2 xdist worker processes, each loading the full scientific stack (numpy/scipy/pandas/optuna/matplotlib). Each reserves multi-GB committed address space on Windows even before test code runs.
+- Subprocess-spawned child interpreters from the ~15 remaining tests that invoke `subprocess.run([sys.executable, ...])` (prism council tests, etc.) — each child also carries a full-stack reservation.
+
+The site-specific env caps reduced the worst-case fan-out but did not eliminate it. The total commit of the bounded-but-still-multi-process tree remained above the host ceiling.
+
+### Corrected safe-run guidance
+
+**The statement "`python -m pytest` is now memory-safe" in the section above is STALE and INCORRECT for any checkout predating this addendum's cycle (branch: `fix/test-host-memory-cap`).**
+
+`python -m pytest` is safe ONLY on a checkout that includes the **total-job Windows Job-Object cap** installed by `tests/conftest.py:pytest_configure` in the `fix/test-host-memory-cap` cycle. On an older checkout (or with `ALPHABOT_TEST_MEM_CAP_GB=0`), the full suite remains unsafe on a host with less than ~90 GB commit headroom.
+
+### The durable guard: total-job OS cap (DE-TEST-MEMCAP-001)
+
+The `fix/test-host-memory-cap` cycle installs a Windows Job Object with `JOB_OBJECT_LIMIT_JOB_MEMORY` from `tests/conftest.py:pytest_configure`. This bounds the **total committed memory of the entire process tree** — controller + all xdist workers + all subprocess-spawned children. An over-cap allocation raises `MemoryError` at the exact site rather than crashing the host.
+
+Key properties:
+- Automatic — no wrapper or special invocation needed. Every `python -m pytest` installs the cap.
+- Default cap: 24 GB (`ALPHABOT_TEST_MEM_CAP_GB` env knob; 0 = explicit opt-out with warning).
+- Total-tree (not per-process) — bounds ANY fan-out, not just the two sites fixed in this branch.
+- Linux/CI no-op — GitHub Actions runner uses its own cgroup limits; the cap installer returns immediately on non-Windows.
+
+An RSS-poll watchdog (like `.design-handoff/memfix/watchdog.py`) is NOT a reliable substitute: a per-process-poll misses a fan-out of many medium processes, and a fast Windows reservation outruns the poll interval.
+
+See `DECISIONS.md` DE-TEST-MEMCAP-001 for full design rationale, implementation details, and AC status.
