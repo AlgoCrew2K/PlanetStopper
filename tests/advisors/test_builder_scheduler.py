@@ -92,8 +92,16 @@ def test_scheduler_runs_each_objective_via_propose_strategies(monkeypatch):
     """AC-18: the scheduler must invoke the real builder (propose_strategies) for EACH of
     the four objectives, persisting via the unchanged downstream path. We mock
     propose_strategies (orchestration is under test, not the builder) and assert it was
-    called once per objective with a distinct objective value."""
+    called once per objective with a distinct objective value.
+
+    CI-hermetic: load_atlas_candidates is also mocked so the scheduler's Atlas injection
+    leg (line 136 of strategy_builder_scheduler.py) never fires a live MongoDB SRV/DNS
+    lookup. Without this mock the test HANGS when credentials are present — load_atlas_candidates
+    calls load_community_strategies → atlas_cache.cached_pull → _bounded_fetch_fn → Atlas
+    DNS before propose_strategies is even reached (where the existing mock lives).
+    """
     scheduler = _load_scheduler()
+    import advisors.build_plan_generator as bpg  # noqa: PLC0415
     import advisors.strategy_builder_engine as sbe  # noqa: PLC0415
 
     seen_objectives: list = []
@@ -111,6 +119,14 @@ def test_scheduler_runs_each_objective_via_propose_strategies(monkeypatch):
     monkeypatch.setattr(sbe, "propose_strategies", _fake_propose, raising=False)
     if hasattr(scheduler, "propose_strategies"):
         monkeypatch.setattr(scheduler, "propose_strategies", _fake_propose, raising=False)
+
+    # Patch load_atlas_candidates to return an empty list — the scheduler calls this
+    # BEFORE propose_strategies to inject Atlas community candidates. Without this mock
+    # the scheduler triggers a live Atlas SRV/DNS lookup and hangs when creds are present.
+    monkeypatch.setattr(bpg, "load_atlas_candidates", lambda *a, **k: [], raising=False)
+    if hasattr(scheduler, "load_atlas_candidates"):
+        monkeypatch.setattr(scheduler, "load_atlas_candidates", lambda *a, **k: [], raising=False)
+
     # Force the idempotency guard to treat this as a fresh week (not already-run).
     for marker_name in ("_already_ran_this_week", "_is_this_weeks_row", "_has_run_this_week"):
         if hasattr(scheduler, marker_name):
