@@ -46,10 +46,18 @@ ADVERSARIAL FOCUS:
     hits the cache row, not Atlas.
 
 No live network calls. No production DB reads/writes. All tests use temp paths.
-`importlib.reload` is used sparingly (only where the env var must be re-read
-at import time). Where `atlas_cache` reads `ATLAS_CACHE_DB_PATH` at call-time
-(which it does — `_atlas_cache_db()` is called inside every function), no
-reload is needed; `monkeypatch.setenv` is sufficient.
+
+TEST HYGIENE (matches origin/main #64): this module NEVER calls
+`importlib.reload` — that is a per-test memory-leak anti-pattern (it orphans a
+module graph per call, OOMing single-process full-tree verification). Both
+modules under test read their env at CALL time — `atlas_cache._atlas_cache_db()`
+reads `ATLAS_CACHE_DB_PATH` inside every function, and `community_strats`
+accesses `atlas_cache` via module-attribute / call-time lookup
+(`atlas_cache.cached_pull(...)`). So `monkeypatch.setenv(ATLAS_CACHE_DB_PATH)`
++ `tmp_path` for env isolation, and `patch("advisors.atlas_cache.cached_pull")`
+/ `patch("pymongo.MongoClient")` for seam control, are sufficient — no reload.
+`test_no_importlib_reload_in_this_test_module` (bottom of file) is the AST
+anti-recurrence guard.
 """
 
 from __future__ import annotations
@@ -57,9 +65,8 @@ from __future__ import annotations
 import ast
 import json
 import sqlite3
-import sys
 from collections import Counter
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -174,20 +181,6 @@ def _read_cache_row(db_path: str, collection: str) -> dict | None:
     return json.loads(row[0])
 
 
-def _seed_cache_row(db_path: str, collection: str, payload: object, age_seconds: int = 1) -> None:
-    """Directly insert a pre-aged cache row for use in HIT tests."""
-    fetched_at = (datetime.now(UTC) - timedelta(seconds=age_seconds)).isoformat()
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(
-            "INSERT OR REPLACE INTO atlas_cache (collection, fetched_at, payload) VALUES (?, ?, ?)",
-            (collection, fetched_at, json.dumps(payload)),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
 # ---------------------------------------------------------------------------
 # AC-1: ObjectId _id causes TypeError → cache row never written (the bug).
 #        Fix: _PROJECTION must include "_id": 0 to exclude it.
@@ -274,8 +267,6 @@ class TestProjectionTypeErrorFix:
         ADVERSARIAL: fails on un-fixed code where _PROJECTION = {sid:1, name:1,
         edn_string:1, oos_metrics:1} with no _id:0.
         """
-        import importlib
-
         import advisors.community_strats as cs
 
         projection = getattr(cs, "_PROJECTION", None)
@@ -400,9 +391,7 @@ class TestAtlasCacheSerializationRobustness:
             "atlas_cache must use json.dumps(..., default=str) or sanitize before writing."
         )
 
-    def test_universe_provider_payload_unaffected_by_robust_serialization(
-        self, isolated_cache_db
-    ):
+    def test_universe_provider_payload_unaffected_by_robust_serialization(self, isolated_cache_db):
         """The universe_provider cache row (plain ticker strings) must remain byte-stable.
 
         AC-2 fix must not alter JSON encoding of payloads that are already
@@ -486,20 +475,17 @@ class TestBoundedFetch:
         ADVERSARIAL: on the un-fixed code, no such constant exists — the fetch
         is unbounded. The fix must introduce a named constant (e.g. _MAX_FETCH_DOCS).
         """
-        import importlib
-
-        # Force a fresh import to pick up the module attribute.
-        if "advisors.community_strats" in sys.modules:
-            mod = sys.modules["advisors.community_strats"]
-        else:
-            import advisors.community_strats as mod  # noqa: PLC0415
+        import advisors.community_strats as mod  # noqa: PLC0415
 
         # The module must expose a cap constant. Acceptable names:
         # _MAX_FETCH_DOCS, _FETCH_LIMIT, _MAX_DOCS, etc. — any name ending in
         # a number-like suffix or containing LIMIT/CAP/MAX/FETCH is acceptable.
         candidate_attrs = [
-            attr for attr in dir(mod)
-            if any(kw in attr.upper() for kw in ("MAX_FETCH", "FETCH_LIMIT", "FETCH_CAP", "MAX_DOCS"))
+            attr
+            for attr in dir(mod)
+            if any(
+                kw in attr.upper() for kw in ("MAX_FETCH", "FETCH_LIMIT", "FETCH_CAP", "MAX_DOCS")
+            )
             and isinstance(getattr(mod, attr), int)
         ]
         assert candidate_attrs, (
@@ -571,11 +557,14 @@ class TestBoundedFetch:
             ):
                 cs.load_community_strategies()
 
-        if not captured_find_calls:
-            pytest.skip(
-                "pymongo.find() was not called during this test — "
-                "stub or cache-hit path (not RED on fetch); check test isolation."
-            )
+        # find() MUST have been called — a skip here would hide a regression where
+        # the fetch path silently stops issuing the query. This is RED on unfixed
+        # code (it DOES call find, just without a limit), so we assert, not skip.
+        assert captured_find_calls, (
+            "pymongo collection.find() was never called — the fetch path did not run. "
+            "This hides the OOM-bounding contract entirely; the test must exercise the "
+            "real _fetch_fn query."
+        )
 
         # A limit must have been applied. Two valid approaches:
         # (a) .limit(N) called on the cursor returned by find()
@@ -597,6 +586,50 @@ class TestBoundedFetch:
             f"cursor.limit() calls: {limit_calls!r}"
         )
 
+        # TIGHTER: the limit value must equal the module's named cap constant
+        # (_MAX_FETCH_DOCS) — not an arbitrary positive number. A naive fix that
+        # hardcodes a different number, or applies the public `limit` param here,
+        # would pass the loose check above but fail this one.
+        cap = cs._MAX_FETCH_DOCS
+        observed_limit = limit_calls[0] if limit_calls else limit_in_kwargs
+        assert observed_limit == cap, (
+            f"The server-side limit must equal _MAX_FETCH_DOCS ({cap}); "
+            f"observed {observed_limit!r}. The fetch cap must use the named constant, "
+            "not a hardcoded or caller-supplied value."
+        )
+
+        # The OOM fix's intent is 'top-N by sharpe' — assert the server-side sort
+        # is on oos_metrics.sharpe DESCENDING so the cap keeps the BEST docs, not
+        # an arbitrary 500. Accept either the `sort=` kwarg on find() or a
+        # cursor.sort(...) chain.
+        sort_in_find = find_call["kwargs"].get("sort")
+        cursor_sort_calls = mock_cursor.sort.call_args_list
+        sort_spec = None
+        if sort_in_find is not None:
+            sort_spec = sort_in_find
+        elif cursor_sort_calls:
+            # cursor.sort(spec) — spec is the first positional arg of the first call.
+            sort_spec = cursor_sort_calls[0].args[0] if cursor_sort_calls[0].args else None
+
+        assert sort_spec is not None, (
+            "The fetch must apply a server-side sort so the .limit() keeps the BEST "
+            "candidates, not an arbitrary slice. No sort= kwarg or cursor.sort() found. "
+            f"find kwargs: {find_call['kwargs']!r}"
+        )
+        # The sort must reference oos_metrics.sharpe descending. pymongo.DESCENDING == -1.
+        sort_pairs = list(sort_spec) if isinstance(sort_spec, (list, tuple)) else []
+        sharpe_desc = any(
+            isinstance(pair, (list, tuple))
+            and len(pair) == 2
+            and "sharpe" in str(pair[0])
+            and pair[1] == -1
+            for pair in sort_pairs
+        )
+        assert sharpe_desc, (
+            "The server-side sort must be on oos_metrics.sharpe DESCENDING (-1) so the "
+            f"cap keeps the highest-sharpe docs. Observed sort spec: {sort_spec!r}"
+        )
+
     def test_returned_doc_count_does_not_exceed_cap(self, monkeypatch):
         """load_community_strategies must not return more candidates than the fetch cap allows.
 
@@ -610,8 +643,11 @@ class TestBoundedFetch:
         # Get the cap constant from the module. If absent (unfixed), we can't check
         # the exact value — but the test above will already fail in that case.
         cap_attrs = [
-            attr for attr in dir(cs)
-            if any(kw in attr.upper() for kw in ("MAX_FETCH", "FETCH_LIMIT", "FETCH_CAP", "MAX_DOCS"))
+            attr
+            for attr in dir(cs)
+            if any(
+                kw in attr.upper() for kw in ("MAX_FETCH", "FETCH_LIMIT", "FETCH_CAP", "MAX_DOCS")
+            )
             and isinstance(getattr(cs, attr), int)
         ]
         if not cap_attrs:
@@ -709,47 +745,109 @@ class TestCacheHitOnSecondCall:
             "Ensure AC-1/AC-2 are fixed so the row is written on the first call."
         )
 
+    def test_objectid_bearing_first_call_still_enables_cache_hit(self, isolated_cache_db):
+        """The HIT path must work even when the first fetch returns ObjectId-bearing docs.
+
+        ADVERSARIAL — this is the AC-4 test that actually catches the AC-1 bug.
+        `test_second_call_within_ttl_skips_fetch_fn` uses a PLAIN doc, so the cache
+        row writes even on unfixed code → that test passes regardless and does NOT
+        exercise the bug. HERE the first fetch returns a doc carrying a non-JSON-native
+        _id (the real-world Mongo shape). On unfixed atlas_cache (bare json.dumps),
+        the first write throws TypeError → row never persists → the SECOND call must
+        re-fetch (fetch_count == 2) → this assertion FAILS. With the fix (default=str
+        and/or _id:0 projection), the row persists and the second call HITs it
+        (fetch_count == 1).
+        """
+        fetch_count = Counter()
+
+        def counting_fetch_with_objectid():
+            fetch_count["calls"] += 1
+            # Each fetch returns a fresh doc carrying an ObjectId _id.
+            return [_make_mongo_doc_with_objectid(sid="oid-hit")]
+
+        # First call: cold cache → fetch + attempt to persist the ObjectId-bearing payload.
+        ac.cached_pull("captplanet.strategies", counting_fetch_with_objectid)
+        # Second call within TTL: must HIT the persisted row, NOT re-fetch.
+        ac.cached_pull("captplanet.strategies", counting_fetch_with_objectid)
+
+        assert fetch_count["calls"] == 1, (
+            f"fetch_fn must be called exactly ONCE across two calls within TTL even when "
+            f"the docs carry an ObjectId _id; got {fetch_count['calls']}. "
+            "fetch_count == 2 means the first write was swallowed (the AC-1 TypeError bug): "
+            "the cache row never persisted, so the second call re-fetched. The fix must "
+            "serialize ObjectId-bearing payloads (default=str) or exclude _id at projection."
+        )
+
     def test_second_call_returns_same_candidates(self, isolated_cache_db):
         """The second call's return value must match the first call's return value.
 
         Verifies the pipeline (parse/validate/dedup) is applied to cached docs too.
+
+        DE-SKIPPED: the prior version skipped whenever the first call returned
+        available=False — which is ALWAYS the case in CI (no MONGO_URI → the live
+        _fetch_fn KeyErrors), so the HIT path was never exercised. We now mock the
+        SEAM (pymongo.MongoClient) so the first call genuinely populates the cache
+        row via the real cached_pull write path, then assert the second call
+        (force_refresh=False) HITs that row and returns the SAME candidates with
+        no second MongoClient instantiation.
         """
         import advisors.community_strats as cs  # noqa: PLC0415
 
         plain_doc = _make_mongo_doc_plain(sid="hit-002", ticker="QQQ")
 
-        def _fetch():
-            return [plain_doc]
+        mock_cursor = MagicMock()
+        mock_cursor.__iter__ = MagicMock(return_value=iter([plain_doc]))
+        mock_cursor.limit = MagicMock(return_value=mock_cursor)
+        mock_cursor.sort = MagicMock(return_value=mock_cursor)
 
-        with patch("advisors.atlas_cache.cached_pull", side_effect=lambda col, fn, **kw: fn()):
-            # Both calls go through the fetch path (we control what cached_pull returns).
-            # Simulate first call populating the cache, second call hitting it.
-            pass
+        mock_collection = MagicMock()
+        mock_collection.find.return_value = mock_cursor
 
-        # Test through the real cached_pull using the isolated temp DB.
-        result1 = cs.load_community_strategies(force_refresh=True)
+        mock_db = MagicMock()
+        mock_db.__getitem__ = MagicMock(return_value=mock_collection)
+        mock_db.strategies = mock_collection
 
-        # Pre-seed a fresh cache row for the second call to hit.
-        if result1["available"]:
-            raw = [plain_doc]
-            _seed_cache_row(isolated_cache_db, "captplanet.strategies", raw, age_seconds=1)
+        mock_client = MagicMock()
+        mock_client.__getitem__ = MagicMock(return_value=mock_db)
+        mock_client.captplanet = mock_db
 
+        ctor = MagicMock(return_value=mock_client)
+
+        with patch("pymongo.MongoClient", ctor):
+            # First call: cold cache → real cached_pull writes the row via default=str.
+            result1 = cs.load_community_strategies()
+            # Re-arm the cursor iterator in case the fetch path is hit again (it must NOT be).
+            mock_cursor.__iter__ = MagicMock(return_value=iter([plain_doc]))
+            # Second call within TTL: must HIT the persisted row, no new MongoClient.
             result2 = cs.load_community_strategies(force_refresh=False)
 
-            assert result2["available"] is True, (
-                "Second call (cache HIT) must return available=True with valid cached docs"
+        assert result1["available"] is True, (
+            f"First call must populate and return available=True; got {result1!r}"
+        )
+        assert result2["available"] is True, (
+            "Second call (cache HIT) must return available=True with valid cached docs"
+        )
+        # The HIT must not have re-fetched: MongoClient instantiated exactly once.
+        assert ctor.call_count == 1, (
+            f"MongoClient must be instantiated exactly once across both calls; "
+            f"got {ctor.call_count}. The second call re-fetched → the cache row was "
+            "not written or not read (AC-1/AC-4 regression)."
+        )
+        # Both calls must yield the SAME candidates (same composition hashes).
+        hashes1 = sorted(c["composition_hash"] for c in result1["candidates"])
+        hashes2 = sorted(c["composition_hash"] for c in result2["candidates"])
+        assert hashes1 == hashes2 and hashes1, (
+            f"Cache-HIT candidates must match the populate call's candidates. "
+            f"first={hashes1!r} second={hashes2!r}"
+        )
+        # The parse/validate/dedup pipeline must run on cached payloads too.
+        for cand in result2["candidates"]:
+            required = {"sid", "name", "tree", "tickers", "oos_metrics", "composition_hash"}
+            missing = required - cand.keys()
+            assert not missing, (
+                f"Cache-hit candidate missing keys: {missing!r}. "
+                "The parse/validate pipeline must run on cached payloads."
             )
-            # The candidate shapes must be consistent (same keys).
-            if result2["candidates"]:
-                for cand in result2["candidates"]:
-                    required = {"sid", "name", "tree", "tickers", "oos_metrics", "composition_hash"}
-                    missing = required - cand.keys()
-                    assert not missing, (
-                        f"Cache-hit candidate missing keys: {missing!r}. "
-                        "The parse/validate pipeline must run on cached payloads."
-                    )
-        else:
-            pytest.skip("First call returned available=False — cannot test second-call HIT behavior")
 
     def test_fetch_invocation_count_is_one_after_two_calls(self, isolated_cache_db, monkeypatch):
         """Two consecutive load_community_strategies() calls must invoke the internal
@@ -853,7 +951,9 @@ class TestTimeoutBoundJustified:
 
         timeout = getattr(cs, "_ATLAS_FETCH_TIMEOUT_S", None)
         if timeout is None:
-            pytest.skip("_ATLAS_FETCH_TIMEOUT_S not yet defined (test_atlas_fetch_timeout_constant_exists must pass first)")
+            pytest.skip(
+                "_ATLAS_FETCH_TIMEOUT_S not yet defined (test_atlas_fetch_timeout_constant_exists must pass first)"
+            )
 
         assert isinstance(timeout, (int, float)), (
             f"_ATLAS_FETCH_TIMEOUT_S must be a numeric type; got {type(timeout).__name__}"
@@ -960,15 +1060,24 @@ class TestD1NeverRaisesPreserved:
         reason = result.get("reason", "")
 
         # Must NOT contain the exception message substring.
-        assert fake_uri not in reason, (
-            f"D-1 violation: MONGO_URI found in reason: {reason!r}"
-        )
+        assert fake_uri not in reason, f"D-1 violation: MONGO_URI found in reason: {reason!r}"
         assert "mycluster.example.com" not in reason, (
             f"D-1 violation: hostname found in reason: {reason!r}"
         )
         # Must match the exception class name pattern (no colons, no spaces from messages).
         assert reason == "OSError", (
             f"reason must be exactly 'OSError' (type(exc).__name__); got {reason!r}"
+        )
+        # Defense-in-depth: NO string anywhere in the result dict may leak the URI,
+        # the host, the username, or the password — not just the reason field.
+        assert not _recursive_contains(result, "mycluster.example.com"), (
+            f"D-1 violation: hostname leaked somewhere in the result dict: {result!r}"
+        )
+        assert not _recursive_contains(result, "s3cr3t"), (
+            f"D-1 violation: password leaked somewhere in the result dict: {result!r}"
+        )
+        assert not _recursive_contains(result, "mongodb+srv://"), (
+            f"D-1 violation: connection-string scheme leaked in the result dict: {result!r}"
         )
 
     def test_available_false_has_required_keys(self):
@@ -984,11 +1093,47 @@ class TestD1NeverRaisesPreserved:
         required_keys = {"available", "reason", "candidates", "stats", "source"}
         missing = required_keys - result.keys()
         assert not missing, (
-            f"D-1 failure dict missing required keys: {missing!r}. "
-            f"Got keys: {set(result.keys())!r}"
+            f"D-1 failure dict missing required keys: {missing!r}. Got keys: {set(result.keys())!r}"
         )
         assert result["available"] is False
         assert result["candidates"] == [], "D-1 failure dict must carry candidates=[]"
-        assert isinstance(result.get("stats"), dict), (
-            "D-1 failure dict must carry a stats dict"
-        )
+        assert isinstance(result.get("stats"), dict), "D-1 failure dict must carry a stats dict"
+
+
+# ---------------------------------------------------------------------------
+# Anti-recurrence guard: importlib.reload-per-test is a memory-leak anti-pattern
+# (it installs a NEW module object each call while other already-imported modules
+# keep references to the OLD one — leaking a whole module graph per test across a
+# multi-file run, which OOMs single-process full-tree verification). origin/main
+# #64 removed this pattern from the entire advisors test suite and added this same
+# guard. community_strats accesses atlas_cache via module-attribute / call-time
+# lookup (`atlas_cache.cached_pull(...)`), and atlas_cache reads ATLAS_CACHE_DB_PATH
+# at call time — so tests patch the seam / setenv directly instead of reloading.
+# importlib.import_module (no reload) is still permitted — it does not orphan a module.
+# ---------------------------------------------------------------------------
+
+
+def test_no_importlib_reload_in_this_test_module():
+    """Guard: this test module must not call importlib.reload (memory-leak anti-pattern).
+
+    Detected via AST (a call to an attribute named 'reload'), so a docstring or
+    comment mentioning the word does not trip it. importlib.import_module is allowed.
+    """
+    import pathlib
+
+    module_path = pathlib.Path(__file__)
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+
+    offenders = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "reload":
+                offenders.append(node.lineno)
+
+    assert not offenders, (
+        "importlib.reload(...) found in test_atlas_cache_populate.py at lines "
+        f"{offenders} — this is a per-test memory-leak anti-pattern. atlas_cache and "
+        "community_strats are accessed via module-attribute / call-time lookup; patch "
+        "'advisors.atlas_cache.cached_pull' / 'pymongo.MongoClient' (or setenv "
+        "ATLAS_CACHE_DB_PATH with tmp_path) directly instead of reloading."
+    )
