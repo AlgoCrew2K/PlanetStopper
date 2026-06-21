@@ -732,3 +732,163 @@ class TestStartupCostBounded:
         assert result >= 0, (
             f"Return value must be non-negative count of seeded entries. Got {result}."
         )
+
+
+# ---------------------------------------------------------------------------
+# Revise-cycle RED tests — presence check must distinguish symphony entries
+# from reserved metadata keys (last_market_close_snapshot, fleet_correlation_alert)
+# ---------------------------------------------------------------------------
+
+
+class TestPresenceCheckExcludesMetadataKeys:
+    """Revise-cycle: the 'is it seeded?' check must exclude known reserved metadata keys.
+
+    bot_state can contain dict-valued metadata keys that are NOT symphony entries:
+      - last_market_close_snapshot  (set daily at EOD, alpha_bot_execution.py:1078)
+      - fleet_correlation_alert     (set by set_fleet_correlation_alert, may be a dict)
+
+    An implementation using `any(isinstance(v, dict) for v in bot_state.values())`
+    would treat a metadata-only state as "already seeded" and skip the seed — silently
+    leaving the dashboard showing 0 symphonies after a DB wipe that ran before market
+    close on a prior day.
+
+    database.py:301 defines _WIPE_RESERVED_KEYS = {"date", "last_execution_mode",
+    "last_market_close_snapshot"} — these are the authoritative non-symphony keys.
+    The presence check must filter them out (or use a positive test: does the key look
+    like a symphony id rather than a reserved name).
+    """
+
+    def test_metadata_only_state_with_last_market_close_snapshot_triggers_seed(self):
+        """A bot_state containing ONLY last_market_close_snapshot must be treated as empty.
+
+        last_market_close_snapshot is a dict — a naive isinstance check would return
+        True and skip the seed, leaving 0 symphonies on the dashboard.
+        """
+        import alpha_bot_execution
+
+        fixture = _load_fixture()
+        syms = fixture["symphonies"][:2]
+
+        # Seed the DB with a metadata-only state (no symphony entries)
+        metadata_only = {
+            "last_market_close_snapshot": {
+                "trading_day": "2026-06-20",
+                "captured_at_et": "16:00:00 ET",
+                "data_as_of": "16:00 ET",
+                "portfolio_strip": [],
+                "shadow_divergence": {"by_symphony": {}, "portfolio": None},
+                "accounts_map": {},
+            }
+        }
+        database.save_state(metadata_only)
+
+        with patch.object(alpha_bot_execution, "fetch_symphony_stats", return_value=syms):
+            alpha_bot_execution.ensure_bot_state_seeded()
+
+        state = database.load_state()
+        seeded_ids = [s["id"] for s in syms]
+        for sid in seeded_ids:
+            assert sid in state, (
+                f"ensure_bot_state_seeded() must seed when bot_state contains only "
+                f"last_market_close_snapshot (a metadata key, not a symphony entry). "
+                f"'{sid}' missing from state keys: {list(state.keys())}. "
+                f"The presence check must exclude reserved metadata keys."
+            )
+
+    def test_metadata_only_state_with_date_and_last_execution_mode_triggers_seed(self):
+        """A bot_state with only scalar metadata keys must be treated as empty.
+
+        date and last_execution_mode are string-valued reserved keys — not dict-valued,
+        so a naive isinstance check passes this scenario.  Included for completeness:
+        the seed must run even when these scalars are present.
+        """
+        import alpha_bot_execution
+
+        fixture = _load_fixture()
+        syms = fixture["symphonies"][:1]
+
+        metadata_only = {
+            "date": "2026-06-20",
+            "last_execution_mode": "PAPER",
+            "last_successful_cycle_at": "2026-06-20T15:59:00",
+        }
+        database.save_state(metadata_only)
+
+        with patch.object(alpha_bot_execution, "fetch_symphony_stats", return_value=syms):
+            alpha_bot_execution.ensure_bot_state_seeded()
+
+        state = database.load_state()
+        assert syms[0]["id"] in state, (
+            f"ensure_bot_state_seeded() must seed when bot_state contains only scalar "
+            f"metadata keys. '{syms[0]['id']}' missing. "
+            f"State keys: {list(state.keys())}"
+        )
+
+    def test_presence_check_does_not_false_positive_on_fleet_correlation_alert(self):
+        """fleet_correlation_alert is a dict value — must not block seeding.
+
+        set_fleet_correlation_alert writes a dict to bot_state under
+        'fleet_correlation_alert'.  If present without any symphony entries, the
+        seed must still run.
+        """
+        import alpha_bot_execution
+
+        fixture = _load_fixture()
+        syms = fixture["symphonies"][:1]
+
+        alert_only = {
+            "fleet_correlation_alert": {
+                "triggered_at": "2026-06-20T10:35:00",
+                "mean_corr": 0.91,
+                "affected_symphonies": ["sym-abc", "sym-def"],
+            }
+        }
+        database.save_state(alert_only)
+
+        with patch.object(alpha_bot_execution, "fetch_symphony_stats", return_value=syms):
+            alpha_bot_execution.ensure_bot_state_seeded()
+
+        state = database.load_state()
+        assert syms[0]["id"] in state, (
+            f"ensure_bot_state_seeded() must seed when bot_state contains only "
+            f"fleet_correlation_alert (a dict-valued metadata key, not a symphony entry). "
+            f"'{syms[0]['id']}' missing. State keys: {list(state.keys())}"
+        )
+
+    def test_presence_check_still_blocks_seed_when_real_symphony_entry_exists(self):
+        """Regression: adding reserved-key awareness must not break the idempotency guard.
+
+        When a real symphony entry exists alongside metadata keys, seeding must NOT occur.
+        """
+        import alpha_bot_execution
+
+        fixture = _load_fixture()
+        syms = fixture["symphonies"]
+        real_sym_id = syms[0]["id"]
+
+        mixed_state = {
+            "date": "2026-06-20",
+            "last_market_close_snapshot": {"trading_day": "2026-06-20"},
+            real_sym_id: {
+                "high_water_mark": "SENTINEL_HWM",
+                "triggered": True,
+                "current_holdings": ["SENTINEL_TICKER"],
+            },
+        }
+        database.save_state(mixed_state)
+
+        with patch.object(
+            alpha_bot_execution, "fetch_symphony_stats", return_value=syms
+        ) as mock_fetch:
+            alpha_bot_execution.ensure_bot_state_seeded()
+
+        mock_fetch.assert_not_called(), (
+            "ensure_bot_state_seeded() must NOT call fetch_symphony_stats when a real "
+            "symphony entry exists alongside metadata keys. The presence check must "
+            "detect real entries even when reserved keys are also present."
+        )
+
+        state = database.load_state()
+        assert state[real_sym_id]["high_water_mark"] == "SENTINEL_HWM", (
+            "Existing symphony entry must be unchanged when the seed is correctly blocked."
+        )
