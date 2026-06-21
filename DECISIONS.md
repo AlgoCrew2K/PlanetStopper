@@ -2686,3 +2686,102 @@ The remaining single-process footprint is tracked as a LOW PRIORITY separate con
 4. The remaining single-process `tests/advisors/` footprint (~6.9 GB) is a known constraint.
    Do not attempt to reduce it by weakening tests or removing coverage — address it as a
    separate infrastructure concern (e.g. fixture teardown, gc.collect, test-file splitting).
+
+---
+
+## DE-ATLAS-CACHE-001 — Atlas community-strategies cache populate + OOM fix (2026-06-21)
+
+Branch: fix/atlas-cache-populate
+Commits: 56c28de (RED), 06b7071 (GREEN), 76309e2 (test sufficiency hardening)
+
+### Root causes
+
+Two bugs prevented `captplanet.strategies` data from ever being served from the weekly `atlas_cache`. They are independent and both must be fixed.
+
+**Bug 1 — ObjectId TypeError → cache row never written (`advisors/community_strats.py`)**
+
+`_fetch_fn` returned raw pymongo cursor documents. The inclusion projection `_PROJECTION` did not suppress `_id`:
+
+```python
+# BEFORE (broken)
+_PROJECTION = {"sid": 1, "name": 1, "edn_string": 1, "oos_metrics": 1}
+```
+
+pymongo includes `_id` in every document by default even when not listed in an inclusion projection — `_id` must be explicitly excluded with `"_id": 0`. The `_id` field is a BSON `ObjectId`, which is not JSON-serializable. `atlas_cache.cached_pull`'s upsert calls `json.dumps(fetched_payload)` which raised `TypeError: Object of type ObjectId is not JSON serializable`. `cached_pull` caught and swallowed the exception (its never-raises contract) and logged "write error (TypeError); returning payload without caching." The `captplanet.strategies` cache row was **never written**.
+
+Symptom: every call to `load_community_strategies` re-hit Atlas live, defeating the operator's 1-week-TTL bill-protection directive. The `universe_provider` cache row (`list[str]` — JSON-native) serialized fine, masking the issue in cache inspection.
+
+**Bug 2 — Unbounded `find()` → OOM on 4 GB droplet (`advisors/community_strats.py`)**
+
+`_fetch_fn` did:
+
+```python
+# BEFORE (broken)
+return list(cursor)  # cursor = collection.find({}, _PROJECTION) — no .limit()
+```
+
+`captplanet.strategies` holds ~11,193 documents. Each carries a large `edn_string` (JSON-encoded Composer decision tree). Fetching all 11k docs × large `edn_string` fields exhausted the 4 GB droplet's memory budget and the process was OOM-killed mid-run.
+
+`MAX_COMMUNITY_CANDIDATES_PER_RUN = 20` (the post-processing cap) was not sufficient — the memory hit came from the raw transfer, before any filtering.
+
+### Fixes
+
+**Fix 1 — Explicit `_id: 0` projection (community_strats.py)**
+
+```python
+# AFTER
+_PROJECTION: dict = {
+    "_id": 0,        # suppress BSON ObjectId (not JSON-serializable)
+    "sid": 1,
+    "name": 1,
+    "edn_string": 1,
+    "oos_metrics": 1,
+}
+```
+
+`"_id": 0` explicitly suppresses the ObjectId field so the projected docs contain only JSON-native types. The cache upsert now serializes cleanly.
+
+**Fix 2 — Defense-in-depth `default=str` serialization (atlas_cache.py)**
+
+```python
+# AFTER
+serialised = json.dumps(fetched_payload, default=str)
+```
+
+`json.dumps(..., default=str)` converts any remaining non-JSON-native value (BSON `ObjectId`, `datetime`, `Decimal128`) to its `str()` representation rather than raising `TypeError`. This is a defense-in-depth layer: the canonical fix is `_id: 0` in the projection; `default=str` ensures a stray BSON type from any current or future caller cannot silently drop a cache row. Applies to all `cached_pull` callers (`community_strats`, `universe_provider`, future loaders) — the `universe_provider` path is byte-stable because its payload is `list[str]` (JSON-native; unaffected).
+
+**Fix 3 — Server-side sort + named cap (`community_strats.py`)**
+
+```python
+_MAX_FETCH_DOCS: int = 500
+
+cursor = collection.find(
+    {},
+    _PROJECTION,
+    sort=[("oos_metrics.sharpe", pymongo.DESCENDING)],
+    allow_disk_use=True,
+).limit(_MAX_FETCH_DOCS)
+```
+
+Three changes working together:
+
+- **Named constant `_MAX_FETCH_DOCS = 500`**: caps the network transfer and in-process memory. 500 covers `MAX_COMMUNITY_CANDIDATES_PER_RUN = 20` with generous headroom for validation/dedup loss (observed: ~60% pass rate on real Atlas data).
+- **Server-side sort `oos_metrics.sharpe DESC`**: ensures the cap takes the best-sharpe docs. Docs missing `oos_metrics.sharpe` sort to the bottom in MongoDB's collation and may be excluded by the cap — this is intentional, not a violation of the Python-side keep-rule (the keep-rule applies after the fetch; the server-side sort is the fetch policy). `allow_disk_use=True` prevents the 32 MB in-memory sort limit from aborting the query on the 11k-doc collection.
+- **`limit(_MAX_FETCH_DOCS)`**: applied after the server-side sort so `.limit()` takes the top-N by sharpe, not an arbitrary first-N.
+
+The public `limit` parameter (caller-level, post-dedup) is a separate control and is not affected.
+
+### Invariants preserved
+
+- D-1 never-raises contract: unchanged for both `load_community_strategies` and `cached_pull`.
+- No `LIVE_EXECUTION` interaction; advisory-only; off-execution-path.
+- `MONGO_URI` is never read, stored, or returned by `atlas_cache.py`.
+- Cache DB (`alphabot_atlas_cache.db`) remains isolated from the state, optimization, and lens warehouse DBs.
+- `universe_provider` path (`list[str]` payload): byte-stable; the `default=str` addition is a no-op for JSON-native types.
+
+### Files changed
+
+- `advisors/community_strats.py` — `_PROJECTION` gains `"_id": 0`; new `_MAX_FETCH_DOCS = 500` named constant; `_fetch_fn` gains `sort=[("oos_metrics.sharpe", pymongo.DESCENDING)]`, `allow_disk_use=True`, `.limit(_MAX_FETCH_DOCS)`
+- `advisors/atlas_cache.py` — upsert `json.dumps` gains `default=str`
+- `tests/advisors/test_atlas_cache_populate.py` — RED + GREEN + sufficiency hardening (AC-4 ObjectId-bearing HIT, exact limit+sort assert, de-skip MONGO_URI-gated paths, D-1 defense-in-depth)
+- `feature-plans/atlas-cache-populate-fix.md` — cycle planning artifact (Status: ready)
