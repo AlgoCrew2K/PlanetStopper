@@ -1,15 +1,15 @@
 # advisors/community_strats
 
-> Weekly-cached captplanet Atlas loader: validates, deduplicates, and filters community strategy documents for the Strategy Builder proposal suite.
+> Community symphonies sourced from **algo-db.com** (read via its `captplanet.strategies` MongoDB Atlas collection, weekly-cached): validates, deduplicates, and filters candidates for the Strategy Builder proposal suite.
 
 **Source:** `advisors/community_strats.py`
 **Last updated:** 2026-06-21 (DE-ATLAS-CACHE-001: _id:0 projection + _MAX_FETCH_DOCS=500 + server-side sort+limit)
 
 ## Overview
 
-`advisors/community_strats.py` fetches strategy documents from the captplanet MongoDB Atlas `strategies` collection and returns a well-formed result dict of validated, deduplicated community-symphony candidates.
+`advisors/community_strats.py` fetches community symphonies from **algo-db.com** (read via its `captplanet.strategies` MongoDB Atlas collection) and returns a well-formed result dict of validated, deduplicated community-symphony candidates.
 
-The Atlas network read is routed through `advisors/atlas_cache.cached_pull` with a weekly TTL -- the collection is fetched at most once per week per the operator bill-protection directive. Validation, deduplication, and sharpe filtering run on the cached payload on every call (cheap, in-process). Only the raw projected docs are cached; the caller always receives freshly-processed results.
+The algo-db.com Atlas network read is routed through `advisors/atlas_cache.cached_pull` with a weekly TTL -- the collection is fetched at most once per week per the operator bill-protection directive. Validation, deduplication, and sharpe filtering run on the cached payload on every call (cheap, in-process). Only the raw projected docs are cached; the caller always receives freshly-processed results.
 
 Off-execution-path. Advisory-only. No Flask routes, no execution flags. pymongo is lazy-imported inside the `fetch_fn` closure only; the module is importable without pymongo installed.
 
