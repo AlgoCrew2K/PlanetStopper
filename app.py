@@ -2586,7 +2586,7 @@ def get_history(days):
             _conn = database.get_connection()
             try:
                 _rows = _conn.execute(
-                    "SELECT symphony_id, ts_utc, at_return, trigger_reason "
+                    "SELECT symphony_id, ts_utc, at_return, triggered_reason "
                     "FROM exit_triggers ORDER BY ts_utc DESC LIMIT 50"
                 ).fetchall()
             finally:
@@ -2597,7 +2597,7 @@ def get_history(days):
                         "symphony_id": r[0],
                         "ts_utc": r[1],
                         "at_return": r[2],
-                        "trigger_reason": r[3],
+                        "triggered_reason": r[3],
                     }
                     for r in _rows
                 ]

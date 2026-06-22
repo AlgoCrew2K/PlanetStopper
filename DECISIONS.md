@@ -3088,9 +3088,17 @@ Decision: the `< 2` guard in the multi-day analytics functions is correct and un
 
 AC-1 through AC-6 passed synthetic fixture tests because the test fixtures were modeled on an assumed columnar bot_state schema. The real droplet schema is a single-row JSON blob. Synthetic fixtures cannot catch schema-coupling bugs in SQL. The bar for "fixed" is a visual gate against the running live DB -- not tests-green on synthetic data.
 
+#### DE-LIVE-DASH-001-AC-4b: get_windowed_strip() -- load_state() blob lookup (2026-06-22)
+
+**Root cause:** Same phantom-column defect as AC-1b, second occurrence. `get_windowed_strip()` intraday fallback (`app.py:2185`) used `SELECT position_value FROM bot_state WHERE symphony_id = t.symphony_id`. The real `bot_state` schema is a single-row JSON blob -- no such column, no such per-row index. The `OperationalError` was swallowed by `except Exception` at `app.py:2214` --> `guard_alpha` stayed `0.0`, `intraday_only` was never set, despite exit_triggers rows on the live droplet.
+
+**Fix (7b5f29d):** Same `database.load_state()` pattern as AC-1b: pre-call `load_state()` before the SQL, remove the correlated position_value subquery, look up `current_value` from the blob dict per symphony_id in the result loop. Legacy columnar fallback (`SELECT symphony_id, position_value FROM bot_state`) preserved when `load_state()` returns empty.
+
+**Discovery:** Caught by `ld2-review` during the AC-1b/AC-2b/AC-3b review cycle -- the `guard_alpha_summary()` fix was correct but the same pattern was present at the strip route, a second call site not covered by the AC-1b test class.
+
 ### Files changed
 
-- `app.py` -- `guard_alpha_summary()` intraday fallback (+30 lines); `get_windowed_strip()` intraday guard_alpha path (+25 lines); `get_history()` base_dir fix + todays_exits fallback (+20 lines); `api_performance()` shadow_history fallback (+10 lines); AC-1b load_state blob lookup in `guard_alpha_summary()` (+20 lines); AC-3b trigger_count backfill in `get_history()` (+1 line); AC-2b single-day fallback in `api_performance()` (+14 lines)
+- `app.py` -- `guard_alpha_summary()` intraday fallback (+30 lines); `get_windowed_strip()` intraday guard_alpha path (+25 lines); `get_history()` base_dir fix + todays_exits fallback (+20 lines); `api_performance()` shadow_history fallback (+10 lines); AC-1b load_state blob lookup in `guard_alpha_summary()` (+20 lines); AC-3b trigger_count backfill in `get_history()` (+1 line); AC-2b single-day fallback in `api_performance()` (+14 lines); AC-4b load_state blob lookup in `get_windowed_strip()` intraday fallback (+27 lines)
 - `analytics.py` -- `get_single_day_shadow_returns()` new function (AC-2b, +55 lines)
 - `templates/index.html` -- None-aware MDD bot guard (lines 1121-1144)
 - `templates/ai_advisor.html` -- per-lens sources aggregation (lines 954-966, 1024-1052)
