@@ -799,7 +799,7 @@ class TestArticleCorpusPipelineContract:
             "facet_b_corpus": [self._CORPUS_ARTICLE],
         }
 
-    def test_build_sentiment_section_emits_article_corpus_key(self):
+    def test_build_sentiment_section_emits_article_corpus_key(self, monkeypatch):
         """AC-5b: _build_sentiment_section must include article_corpus in its return dict.
 
         Fails RED because the current implementation returns:
@@ -810,30 +810,19 @@ class TestArticleCorpusPipelineContract:
         Fix: add article_corpus=corpus[:TOP_K] (or similar) to the return dict so
         lens_pipeline._build_per_lens_digest can pass it through to the digest entry.
         """
-        import sys
-        from unittest.mock import MagicMock
-
+        import advisors.news_corpus as news_corpus_module
         import ai_advisor as ai_advisor_module
 
         mock_corpus = self._mock_news_corpus_result()
 
-        # Patch the lazy import path: _build_sentiment_section does
-        # `from advisors import news_corpus` inside the function body.
-        # Injecting our mock into sys.modules before the call intercepts it.
-        mock_nc = MagicMock()
-        mock_nc.build_news_corpus.return_value = mock_corpus
+        # Robust mock: patch build_news_corpus on the REAL module object so the mock
+        # is order-independent.  sys.modules swap is fragile — if any earlier test in
+        # the full suite imports advisors.news_corpus first, `from advisors import
+        # news_corpus` resolves the package attribute (the real module), not the
+        # sys.modules entry, and the swap is silently bypassed → live GDELT runs.
+        monkeypatch.setattr(news_corpus_module, "build_news_corpus", lambda *a, **kw: mock_corpus)
 
-        # Patch the module in sys.modules so the lazy `from advisors import news_corpus`
-        # inside _build_sentiment_section picks up our mock.
-        original = sys.modules.get("advisors.news_corpus")
-        sys.modules["advisors.news_corpus"] = mock_nc
-        try:
-            result = ai_advisor_module._build_sentiment_section()
-        finally:
-            if original is not None:
-                sys.modules["advisors.news_corpus"] = original
-            else:
-                sys.modules.pop("advisors.news_corpus", None)
+        result = ai_advisor_module._build_sentiment_section()
 
         assert result.get("available") is True, (
             f"Test setup: _build_sentiment_section must return available=True "
@@ -896,26 +885,25 @@ class TestArticleCorpusPipelineContract:
 
         Fails RED because neither step 1 nor step 2 currently emit article_corpus.
         """
-        import sys
-        from unittest.mock import MagicMock
-
+        import advisors.news_corpus as news_corpus_module
         import ai_advisor as ai_advisor_module
         from advisors import lens_pipeline as lp
 
         mock_corpus_result = self._mock_news_corpus_result()
-        mock_nc = MagicMock()
-        mock_nc.build_news_corpus.return_value = mock_corpus_result
+
+        # Robust mock: patch build_news_corpus on the REAL module object so the mock
+        # is import-order-independent.  The previous sys.modules swap was fragile:
+        # once any earlier test in the full suite imports advisors.news_corpus, the
+        # package attribute is bound to the real module; `from advisors import
+        # news_corpus` inside _build_sentiment_section resolves that attribute,
+        # not the sys.modules entry → swap bypassed → live GDELT/RSS ran in CI →
+        # reuters.com URL missing from live corpus → assertion failed non-deterministically.
+        monkeypatch.setattr(
+            news_corpus_module, "build_news_corpus", lambda *a, **kw: mock_corpus_result
+        )
 
         # Step 1: run _build_sentiment_section with mocked news_corpus
-        original = sys.modules.get("advisors.news_corpus")
-        sys.modules["advisors.news_corpus"] = mock_nc
-        try:
-            sentiment_block = ai_advisor_module._build_sentiment_section()
-        finally:
-            if original is not None:
-                sys.modules["advisors.news_corpus"] = original
-            else:
-                sys.modules.pop("advisors.news_corpus", None)
+        sentiment_block = ai_advisor_module._build_sentiment_section()
 
         # Step 2: run _build_per_lens_digest
         digest = lp._build_per_lens_digest({"sentiment": sentiment_block})
