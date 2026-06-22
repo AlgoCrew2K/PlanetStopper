@@ -2863,6 +2863,76 @@ The repo carries `deploy/planetstopper.service.d/memory.conf` — a systemd drop
 | AC-5 | Sanctioned entrypoint + docs | GREEN (this commit) |
 | AC-6 | Droplet systemd drop-in carried in repo; PM applies at gate | In-repo: GREEN; applied: PM gate |
 | AC-7 | Default cap does not false-trip a legitimately-bounded run | GREEN (this cycle) |
+
+---
+
+## DE-TEST-MEMCAP-002 — Cap hardening: KILL_ON_JOB_CLOSE + IsProcessInJob verify + xdist guard + footprint reduction (2026-06-22)
+
+Branch: fix/footprint-cap-hardening | Base: origin/main 5597eb5
+
+### Context
+
+DE-TEST-MEMCAP-001 (PR #73) installed the total-job Windows Job-Object cap and the droplet systemd MemoryMax drop-in. Three gaps remained in the cap implementation; separately, ~14 scattered `node --check` subprocess test methods, two `pytest --collect-only` subprocess spawns, and one `_init_db_at` subprocess added unnecessary process fan-out.
+
+### Changes
+
+**AC-4: `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (0x2000) added to LimitFlags**
+
+`install_total_memory_cap` now OR's `_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` into the `LimitFlags` field alongside `JOB_OBJECT_LIMIT_JOB_MEMORY` and `_JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION`. Without this flag, child processes that inherit the job handle survive after the controller exits — they are orphaned and bypass the cap. With the flag, the OS kills all job members when the last handle to the job closes. This closes the cleanup-hygiene gap from #73.
+
+Guard tests: `tests/mem_cap/test_kill_on_job_close_flag.py` (3 tests): constant defined, value is 0x2000, flag is present in `LimitFlags` after install.
+
+**AC-5: `_is_process_in_job_seam` + verify-or-fail-loud in `install_total_memory_cap`**
+
+`install_total_memory_cap` previously swallowed `AssignProcessToJobObject` errors (ERROR_ACCESS_DENIED=5, ERROR_INVALID_PARAMETER=87) and unconditionally set `_CAP_INSTALLED=True`. This left a silent placebo path: if assignment failed for any other reason, the cap was claimed installed when it was not.
+
+The fix extracts `_is_process_in_job_seam(cur_handle, job_handle) -> bool` — a module-level function wrapping `IsProcessInJob` — so tests can monkeypatch the verification step without fighting ctypes internals. `install_total_memory_cap` now calls `_is_process_in_job_seam` after `AssignProcessToJobObject` (regardless of whether assignment succeeded or failed) and sets `_CAP_INSTALLED=True` only if membership is confirmed. On non-confirmation it emits a loud `UserWarning` and returns without setting the sentinel.
+
+Design: the verified path still handles Win8+ nested-job re-runs — `IsProcessInJob` returns True when the process is already in an ancestor job, so repeated `pytest_configure` calls (controller + xdist workers) remain safe and idempotent.
+
+Guard tests: `tests/mem_cap/test_cap_install_verify_or_fail_loud.py` (5 tests): happy path confirms sentinel + membership; install uses IsProcessInJob; unconfirmed membership emits UserWarning + leaves sentinel False; nested-job path with confirmed membership sets sentinel True; non-Windows is a no-op.
+
+**AC-6: `_assert_safe_worker_count(numprocesses)` guard in conftest**
+
+`tests/conftest.py:pytest_configure` now calls `_assert_safe_worker_count(config.option.numprocesses)` before `install_from_env()`. The guard raises `SystemExit` with a descriptive message when `numprocesses` is `auto` or an integer > 4. Accepts 0, 1, 2, 3, 4, None (xdist disabled or not active).
+
+Extracted as a top-level helper (not inlined) so tests can call it directly without triggering cap-install or env side-effects.
+
+Rationale: both Kernel-Power 41 crashes on 2026-06-21 were caused by `-n auto` (24 workers on the dev host). The Job-Object cap bounds total committed memory but does not prevent the fan-out from making legitimate test memory-pressure harder to diagnose. Rejecting `-n auto`/`-n>4` at `pytest_configure` time is the structural fix.
+
+Guard tests: `tests/conftest_guard/test_xdist_worker_count_guard.py`.
+
+**Footprint reduction — AC-1 / AC-2 / AC-3**
+
+These changes reduce per-test process fan-out. They do not affect the cap implementation.
+
+- **AC-1:** ~14 `node --check` subprocess calls scattered across 19 test files (`tests/ui/`, `tests/dashboard/`, `tests/ai_advisor/`, `tests/app/`) consolidated into one parametrized test in `tests/js_syntax/test_js_syntax.py` (glob-discovers `static/*.js`; `shutil.which(node) is None` skip guard). Coverage identical. Three empty `TestIndexJsSyntaxValidity` / `TestIndexJsParses` / `TestNodeSyntaxCheck` husk classes left by the consolidation were deleted (commit 862fcc1); their orphaned imports removed; ruff-format applied across 13 affected files.
+- **AC-2:** Two `subprocess.run([python, -m, pytest, --collect-only, ...])` calls in `TestRetainedPortmodeTestsStillCollect` (`tests/execution/test_orphan_port_modules_removed.py`) replaced with in-process `importlib.import_module()` calls. Each subprocess spawn re-imported the full app module stack (~1-2 GB committed); in-process import is effectively free.
+- **AC-3:** The `_init_db_at` subprocess body in `tests/advisors/test_prism_dotenv_hardening.py` replaced with in-process `os.environ[DB_PATH]=str(db_path); database.init_db()`. Eliminates one per-test child interpreter spawn.
+
+**Continuation: recurrence guard**
+
+`tests/meta/test_all_test_files_parse.py` — a parametrized guard that calls `compile(src, path, exec)` over every `*.py` under `tests/` (excluding `__pycache__` and `.claude` path segments). An empty class body — the exact defect AC-1 introduced and 862fcc1 fixed — raises `SyntaxError: expected an indented block after class definition` and fails the test with the offending file path. Pure stdlib; no subprocess; runs on every CI push.
+
+### Key design decisions
+
+- **Seam over ctypes internals.** `_is_process_in_job_seam` is a named module-level function so monkeypatch targets it directly. Trying to patch `ctypes.WinDLL` internals produces fragile, platform-dependent tests.
+- **Verify-or-fail-loud.** Silently claiming `_CAP_INSTALLED=True` when the OS call fails converts a safety mechanism into a placebo. The new path fails loud (UserWarning + no sentinel) so the operator knows the cap is absent.
+- **Guard runs on Linux CI.** `_assert_safe_worker_count` has no `os.name == nt` gate — an uncapped `-n auto` run on a CI runner with many CPUs would fan out and waste credits even if it does not crash the machine.
+
+### Files changed
+
+- `tests/_mem_cap.py` — `_is_process_in_job_seam` (new); `install_total_memory_cap` gains AC-4 `KILL_ON_JOB_CLOSE` OR and AC-5 verify-or-fail-loud path
+- `tests/conftest.py` — `_assert_safe_worker_count` (new top-level helper); `pytest_configure` calls it before `install_from_env`
+- `tests/mem_cap/test_kill_on_job_close_flag.py` — 3 guard tests for AC-4
+- `tests/mem_cap/test_cap_install_verify_or_fail_loud.py` — 5 guard tests for AC-5
+- `tests/conftest_guard/test_xdist_worker_count_guard.py` — guard tests for AC-6
+- `tests/js_syntax/test_js_syntax.py` — new consolidated node --check module (AC-1)
+- `tests/execution/test_orphan_port_modules_removed.py` — subprocess -> importlib refactor (AC-2)
+- `tests/advisors/test_prism_dotenv_hardening.py` — subprocess -> in-process DB init (AC-3)
+- 19 source files in `tests/ui/`, `tests/dashboard/`, `tests/ai_advisor/`, `tests/app/` — scattered node --check methods removed (AC-1)
+- `tests/meta/test_all_test_files_parse.py` — recurrence guard (continuation)
+
 ## DE-SEED-STARTUP-001 — Startup symphony seed: idempotent bot_state bootstrap on daemon start (2026-06-21)
 
 Branch: feat/startup-seed-symphonies | Base: origin/main (aefad7b)
