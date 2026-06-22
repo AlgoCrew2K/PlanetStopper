@@ -750,15 +750,6 @@ class TestAC6StandaloneTemplateDeleted:
 
 
 # ===========================================================================
-# AC7 — node --check on static/ai_advisor.js (JS parse safety guard)
-# ===========================================================================
-
-
-class TestAC7JSParseGuard:
-    """AC7: static/ai_advisor.js must pass node --check after functions are moved in."""
-
-
-# ===========================================================================
 # Advisory-only contract — preserved after SPA-port (regression guard)
 # ===========================================================================
 

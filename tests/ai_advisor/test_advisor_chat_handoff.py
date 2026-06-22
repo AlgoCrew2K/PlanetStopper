@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import pathlib
 import re
-import subprocess
 
 import pytest
 
@@ -52,32 +51,7 @@ def _read(path: pathlib.Path) -> str:
 
 
 # ===========================================================================
-# Group 1 — JS syntax validity (node --check)
-#
-# A file that is syntactically invalid never runs — the "Chat about this"
-# button silently does nothing, which is worse than the current defect.
-# These tests double as the "safe to land" gate for any change to these files.
-# ===========================================================================
-
-
-class TestJsSyntaxValidity:
-    """All three JS files must pass node --check (Node.js syntax validation)."""
-
-    def _node_check(self, path: pathlib.Path) -> None:
-        result = subprocess.run(
-            ["node", "--check", str(path)],
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, (
-            f"node --check failed for {path.name}.\n"
-            f"stderr:\n{result.stderr.strip()}\n"
-            f"Fix: resolve the JS syntax error before landing this change."
-        )
-
-
-# ===========================================================================
-# Group 2 — Sender: ai_advisor_asset_swaps.js
+# Group 1 — Sender: ai_advisor_asset_swaps.js
 #
 # The "Chat about this" onclick handler has two branches where openChatPanel
 # is unavailable:

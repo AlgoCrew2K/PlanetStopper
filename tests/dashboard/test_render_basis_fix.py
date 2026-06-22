@@ -58,15 +58,6 @@ def _html() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Parse gate — broken JS means every renderer silently never runs
-# ---------------------------------------------------------------------------
-
-
-class TestIndexJsParseGate:
-    """node --check must pass so the JS engine executes renderGuardAlpha at all."""
-
-
-# ---------------------------------------------------------------------------
 # Invariant 1 — renderGuardAlpha reads guard_alpha directly
 # ---------------------------------------------------------------------------
 
