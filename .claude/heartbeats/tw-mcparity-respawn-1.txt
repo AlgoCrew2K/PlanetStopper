@@ -1,6 +1,0 @@
-Agent: tw-mcparity
-UTC: 2026-05-29T16:24:20Z
-Branch: cycle/mc-parity-postinit
-HEAD: b0d1e2bd02cd82c1488914600abccfe065856ba9
-git log -1 --oneline: b0d1e2b merge: R2 honest flag — interpretive-nature caveat at VWAP System-A Peskir-discretization comment (2ac2361; rev-r2flag + risk-r2flag APPROVED; 6/6 cycle + 992/992 math_engine)
-Status: respawn-1; about to read parity column sets + RegimeMatchAssessment + CVaRAssessment precedent before writing RED.

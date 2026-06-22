@@ -1,1 +1,0 @@
-5cc860f test(math_engine): RED — PERF-004 verify-first pin (Outcome B, hoist unsafe) | impl-perf004-respawn | Thu May 28 17:33:13 MDT 2026

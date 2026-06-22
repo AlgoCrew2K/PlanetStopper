@@ -1,9 +1,0 @@
-name: tw-perf006
-role: test-writer + team-lead
-cycle: perf-006-harmonic-sum
-worktree: C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/perf-006-harmonic
-branch: cycle/perf-006-harmonic-sum
-fork-point: 468aad9 (plan/finalist-a-scaffold)
-HEAD: 468aad9 merge: PERF-005 — RDBStorage contention regression lock
-utc: 2026-05-29T00:00:00Z
-status: respawn-1, heartbeat-only, proceeding to read autotuner.py:400-430

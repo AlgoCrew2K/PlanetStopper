@@ -1,8 +1,0 @@
-tw-perf007 respawn-1 heartbeat
-agent: tw-perf007 (test-writer + team-lead, PERF-007)
-utc: 2026-05-29T00:00:00Z
-cycle: perf-007-cwd-relative-glob
-worktree: C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/perf-007-cwd-glob
-branch: cycle/perf-007-cwd-relative-glob
-HEAD: ef83ef4 merge: PERF-006 — cache Yekutieli c(N) harmonic helper (4e00df6; rev-perf006 + opt-perf006 APPROVED; 16/16 PERF-006 + 8/8 M1 BHY preservation)
-status: starting — about to read autotuner.py:500-540 and write RED tests for cwd-relative glob.

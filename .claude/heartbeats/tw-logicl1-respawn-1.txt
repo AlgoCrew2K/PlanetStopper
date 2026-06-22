@@ -1,6 +1,0 @@
-tw-logicl1 — LOGIC-L-1 brief-symbol-drift
-UTC: 2026-05-29T15:42:05Z
-HEAD: 6efc094 merge: LOGIC-L-2 — /api/advisor-observations docstring drift fix (e792102; PM-ferried impl-logicl2 WIP; risk-logicl2 APPROVED on WIP content; 7/7 cycle)
-Branch: cycle/logic-l-1-brief-symbol-drift
-Worktree: C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/logic-l-1
-Status: heartbeat posted; proceeding to grep planning docs for symbol drift.
