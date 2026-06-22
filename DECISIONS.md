@@ -3124,3 +3124,73 @@ Decision: no backward-compat shims for schemas that never existed in production.
 - `ai_advisor.py` -- `_build_sentiment_section` gains `article_corpus` top-level key (AC-5b)
 - `advisors/lens_pipeline.py` -- `_build_per_lens_digest` passes `article_corpus` through to `per_lens_digest.sentiment` (AC-5b)
 - `docs/generated/app.md` -- dashboard routes section updated (DE-LIVE-DASH-001)
+- `docs/generated/reporting.md` -- `generate_eod_snapshot` doc updated (DE-GUARD-ALPHA-SAVED-001)
+
+## DE-GUARD-ALPHA-SAVED-001 — Post-mortem if-held sourced from shadow_history.current_return (2026-06-22)
+
+Branch: fix/guard-alpha-saved-math | Base: 8d7ea51 | Fix commit: 0d0d4f3
+
+### The bug: basket reconstruction collapsed to ~$0 saved
+
+`generate_eod_snapshot` (Stage 1, 15:54 ET freeze) computed `saved_dollars` per triggered symphony using a basket reconstruction:
+
+```python
+triggered_basket = sym.get("triggered_basket_snapshot", [])
+if triggered_basket and live_prices:
+    post_trigger_move = 0.0
+    for h in triggered_basket:
+        ...
+        post_trigger_move += alloc * ((p_now - p_start) / p_start)
+    basketReturnAtPreclose = f_ret + (post_trigger_move * 100.0)
+else:
+    basketReturnAtPreclose = sym.get("current_return", 0.0)
+live_ret = basketReturnAtPreclose
+saved_pct = f_ret - live_ret
+```
+
+**Root cause:** `triggered_basket_snapshot` prices (`p_start`) were frozen at the exit level at trigger time. By 15:54 ET (Stage-1 freeze), `live_prices` reflected current market quotes — but the basket-position prices used as the baseline were the exit-level snapshots, so `(p_now - p_start) / p_start` measured movement from the exit point rather than the beginning-of-day entry. `post_trigger_move` collapsed to ≈ 0, making `live_ret ≈ f_ret`, `saved_pct ≈ 0`, and `saved_dollars ≈ $0`.
+
+On 2026-06-22: 11 exit events, operator saw **$2.96** on the dashboard. The true guard-alpha at the same freeze instant, read from `shadow_history.current_return` in the DB, was **$199.57**. A ~67× understatement.
+
+### The fix: source live_ret from current_return
+
+```python
+# Source if-held from shadow_history.current_return (the engine's live
+# trajectory), recorded accurately post-trigger by alpha_bot_execution.py.
+live_ret = sym.get("current_return", 0.0)
+```
+
+**Why this is correct:** `current_return` in `bot_state` is populated by `alpha_bot_execution.py` as `last_percent_change * 100` at each cycle. Post-trigger, the engine explicitly reconstructs `current_return` as `f_ret + post_trigger_move * 100` from `shadow_history` (`alpha_bot_execution.py:1189-1203`), tracking the live if-held trajectory correctly through every subsequent cycle. `shadow_return` (the other candidate) is frozen at `triggered_at_return` post-trigger (`alpha_bot_execution.py:901-911`) — using it would compute (locked-in − locked-in) ≈ $0.
+
+**No new DB call needed.** `current_return` is already in the `bot_state` dict passed to `generate_eod_snapshot`; the engine has already done the trajectory accounting.
+
+### Field semantics (permanent reference)
+
+| Field | Source | Semantics post-trigger |
+|-------|--------|----------------------|
+| `current_return` | `bot_state[sym]["current_return"]` | Live if-held return — updated every engine cycle via shadow_history trajectory (`alpha_bot_execution.py:1189-1203`) |
+| `shadow_return` | `bot_state[sym]["shadow_return"]` | Frozen at exit (`triggered_at_return`) — never updated post-trigger |
+| `triggered_at_return` / `at_return` | `exit_triggers.at_return` | Locked-in exit return — the Guard-Alpha "sell price" |
+
+Guard-alpha $-saved formula: `(at_return − current_return) / 100 × position_value`
+
+### Blast radius
+
+Every consumer of `saved_dollars` from post-mortem JSON files was understating by the same factor:
+- **`/api/guard-alpha-summary` panel** (`app.py:2275`) — primary branch sums post-mortem `saved_dollars`.
+- **History tab** — `analytics.get_history_summary()` sums `saved_dollars` + `saved_pct_guard_alpha` from post-mortem files (`analytics.py:1616-1620`).
+- **Performance tab** — `reporting.py` chart/summary aggregations (`reporting.py:205-208`, `:330-331`).
+- **Discord** — EOD summary includes guard-alpha $-saved from the same post-mortem JSON.
+
+Not affected: `get_windowed_strip()` guard_alpha (sources `shadow_history` directly, bypasses post-mortem producer — correct per DE-LIVE-DASH-001-AC-4b).
+
+### Lesson
+
+A $-value reporting feature must be magnitude-validated against a known ground truth before shipping, not just verified non-zero. The diagnosis (`guard-alpha-saved-diagnosis.md`, commit a7601fb) confirmed the correct value was $199.57 at the same freeze instant from a different code path — the divergence was unambiguous once that comparison was made. Post-mortem producer outputs that feed multiple consumers (panel, History, Performance, Discord) need an explicit cross-check against the engine's own accounting signals at the time they are introduced.
+
+### Files changed
+
+- `reporting.py` -- `generate_eod_snapshot` Stage-1 if-held sourcing: 15-line basket reconstruction removed, replaced with `live_ret = sym.get("current_return", 0.0)` + explanatory comment (-15 lines / +5 lines, commit 0d0d4f3)
+- `tests/reporting/test_postmortem_saved_dollars_source.py` -- 5 classes / 9 tests covering the correct sourcing contract (new file, commit a7601fb)
+- `tests/fixtures/math/guard_alpha_postmortem_producer.json` -- golden fixture for the post-mortem producer (new file, commit a7601fb)
+- `docs/generated/reporting.md` -- `generate_eod_snapshot` doc updated to reflect current_return sourcing (DE-GUARD-ALPHA-SAVED-001)
