@@ -1,124 +1,120 @@
-# TDD Handoff — startup-seed-symphonies
+# TDD Handoff — footprint-cap-hardening cycle
 
-## Status
-GREEN — 22/22 tests passing. No test file issues. No disputed tests.
-
-Implementer GREEN commit: (see git log)
-
-## Status Log
-- [GREEN] implementer: GREEN complete — 22/22 tests passing, 0 test bugs documented. Ruff lint ✓.
-
-Phase: green
-
-## What to implement (GREEN phase)
-
-You are the minimalist implementer.  Read THIS FILE, not the feature plan.
-Write the minimum code to make all 21 failing tests pass.  No gold-plating.
+**Cycle:** test-footprint-and-cap-hardening
+**Feature plan:** `feature-plans/test-footprint-and-cap-hardening.md`
+**Branch:** `fix/footprint-cap-hardening`
+**Worktree:** `C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/footprint-cap`
 
 ---
 
-## Two new functions required in alpha_bot_execution.py
+## RED tests committed — implementer reads THIS FILE, NOT the feature plan
 
-### 1. `seed_symphonies_into_bot_state(bot_state: dict) -> int`
+### What is RED and what you must make GREEN
 
-Purpose: for each account in `ACCOUNT_UUIDS`, call `fetch_symphony_stats(account)`
-and create the per-symphony baseline entry in `bot_state` for each symphony id
-that is NOT already present.
+**File 1: `tests/mem_cap/test_kill_on_job_close_flag.py`** (AC-4)
 
-Required:
-- Create entry for each symphony id not already in bot_state
-- The entry MUST include at minimum: `high_water_mark` (set from current_return),
-  `shadow_hwm`, `triggered` (False), `armed` (False), `mc_history` ([]),
-  `below_stop_count` (0), `position_epoch` (from database.mint_position_epoch()),
-  and `name` (from sym["name"]).  Match the existing create-block at
-  alpha_bot_execution.py:771-790 — the DATA PHASE create-block.
-- Call `_persist_composer_fields_to_bot_state(bot_state, s_id, sym)` after creating
-  each entry (same as the DATA PHASE does).
-- MUST NOT call `database.record_shadow_observation` (shadow_history write path).
-- MUST NOT open/write any post_mortem_*.json files.
-- MUST call `fetch_symphony_stats` (not raw requests.get) to inherit its timeout.
-- Per-account exception: catch any Exception raised by fetch_symphony_stats, log it
-  (`print(...)` is sufficient — no new logging infrastructure), and continue to the
-  next account (partial success allowed, no re-raise).
-- Returns `int`: count of NEW entries created (0 if nothing was new).
+- `test_kill_on_job_close_flag_defined_as_named_constant` — PASSES (constant already defined)
+- `test_kill_on_job_close_flag_value_is_0x2000` — PASSES (constant value correct)
+- `test_kill_on_job_close_flag_present_in_limit_flags_after_install` — **FAILS** (RED)
+  - Root: `_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is defined as a constant but NOT ORed into `LimitFlags` in `SetInformationJobObject`.
+  - Fix: Add `| _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` to the OR-expression in `install_total_memory_cap` (line ~138 of `tests/_mem_cap.py`).
 
-### 2. `ensure_bot_state_seeded() -> None`
+**File 2: `tests/mem_cap/test_cap_install_verify_or_fail_loud.py`** (AC-5)
 
-Purpose: the conditional startup entry point.
+- `test_cap_installed_true_and_membership_confirmed_on_success_path` — PASSES (happy path)
+- `test_cap_install_is_noop_on_non_windows` — PASSES (no-op)
+- `test_cap_install_uses_is_process_in_job_for_verification` — **FAILS** (RED)
+  - Root: `_is_process_in_job_seam` does not exist. Add it as a module-level callable in `tests/_mem_cap.py`.
+  - Seam signature: `_is_process_in_job_seam(cur_handle, job_handle) -> bool`
+  - The seam wraps `IsProcessInJob(GetCurrentProcess(), job)` so tests can patch it.
+  - After adding the seam, `install_total_memory_cap` must call it after `AssignProcessToJobObject` and only set `_CAP_INSTALLED=True` if it returns True; otherwise emit `warnings.warn(..., UserWarning)` and return without setting True.
+- `test_cap_installed_false_and_warning_when_membership_not_confirmed` — XFAIL (becomes GREEN after seam added)
+- `test_cap_installed_true_when_already_nested_and_membership_confirmed` — XFAIL (becomes GREEN after seam added)
 
-Required:
-- Call `database.load_state()`
-- If any value in the dict is itself a dict (i.e., any symphony entry exists),
-  return immediately — NO save_state, NO fetch. (AC-2: presence-based check)
-- Otherwise: call `seed_symphonies_into_bot_state(bot_state)`; if it created >= 1
-  entry, call `database.save_state(bot_state)`.
-- Wrap the entire body in try/except Exception: log and return (AC-4 fail-safe).
-- MUST NOT be called from within `main()` in alpha_bot_execution.py.
+**File 3: `tests/conftest_guard/test_xdist_worker_count_guard.py`** (AC-6)
+
+All 10 tests PASS — AC-6 guard is already implemented in `tests/conftest.py`. These are regression guards. No implementation needed for AC-6.
+
+**File 4: `tests/js_syntax/test_js_syntax_consolidation.py`** (AC-1)
+
+- `test_js_syntax_consolidated_module_exists` — **FAILS** (RED) — create `tests/js_syntax/test_js_syntax.py`
+- `test_js_syntax_consolidated_module_has_node_skip_guard` — SKIPPED (pending AC-1)
+- `test_js_syntax_covers_all_static_js_files` — SKIPPED (pending AC-1)
+- `test_js_syntax_consolidated_module_is_valid_python` — SKIPPED (pending AC-1)
+
+**Implementation needed:**
+1. Create `tests/js_syntax/test_js_syntax.py` with a parametrized `node --check` test that discovers `static/*.js` via glob. Must include `shutil.which("node") is None` skip guard.
+2. Remove the ~14 individual `node --check` test method calls from these files (keep all other tests in those files):
+   - `tests/ui/test_persymph_settings_modal.py`
+   - `tests/ui/test_run_advisor_backtest_413_and_client_errors.py`
+   - `tests/ui/test_dash_advisor_fixes.py`
+   - `tests/ui/test_config_suggestion_card_fixes.py`
+   - `tests/dashboard/test_symph_autoupdate.py`
+   - `tests/dashboard/test_window_picker_wiring.py`
+   - `tests/dashboard/test_render_basis_fix.py`
+   - `tests/dashboard/test_cold_start_account_stat.py`
+   - `tests/dashboard/test_dash_fixes.py`
+   - `tests/dashboard/test_dashboard_render_consistency.py`
+   - `tests/dashboard/test_cards_live_refresh.py`
+   - `tests/dashboard/test_cards_live_updates.py`
+   - `tests/dashboard/test_card_consistency_liveness.py`
+   - `tests/app/test_strategy_builder_spa_port.py`
+   - `tests/app/test_guard_alpha_panel_ui.py`
+   - `tests/ai_advisor/test_cycle5_market_prism_surface.py`
+   - `tests/ai_advisor/test_advisor_informative_output.py`
+   - `tests/ai_advisor/test_advisor_inplace_tabs.py`
+   - `tests/ai_advisor/test_advisor_chat_handoff.py`
+
+**File 5: `tests/execution/test_orphan_port_importlib_refactor.py`** (AC-2)
+
+- `test_collect_only_subprocess_calls_removed_from_orphan_test` — **FAILS** (RED)
+- `test_importlib_import_used_instead` — PASSES
+- `test_orphan_test_still_asserts_target_files_exist` — PASSES
+
+**Implementation needed:**
+Replace the two `subprocess.run(["python", "-m", "pytest", "--collect-only", ...])` calls at
+lines 524 and 540 of `tests/execution/test_orphan_port_modules_removed.py` with in-process
+`importlib.import_module(...)` calls. If the module doesn't import, ImportError is raised —
+equivalent coverage to `--collect-only`. Keep the `target.exists()` assertion.
+
+**File 6: `tests/advisors/test_prism_dotenv_init_refactor.py`** (AC-3)
+
+- `test_init_db_at_no_longer_spawns_subprocess` — **FAILS** (RED)
+- `test_init_db_at_uses_in_process_init_db` — PASSES
+- `test_essential_dotenv_subprocess_tests_preserved` — PASSES
+- `test_prism_dotenv_hardening_file_is_valid_python` — PASSES
+
+**Implementation needed:**
+Replace the subprocess body of `_init_db_at` in `tests/advisors/test_prism_dotenv_hardening.py`
+(lines 80-103) with a direct `os.environ["DB_PATH"] = str(db_path)` + `database.init_db()` call.
+The essential dotenv-discovery subprocess tests (which call the real CLI via subprocess.run) are
+UNCHANGED — only the helper function changes.
 
 ---
 
-## Startup hook in app.py
+## Summary of RED → GREEN requirements
 
-Call `ensure_bot_state_seeded()` once at daemon startup in app.py, BEFORE the
-Flask scheduler starts.  Place it in the startup code path that runs in the
-daemon process only (not in pytest / not on every request).
-
-Lazy-import it: `from alpha_bot_execution import ensure_bot_state_seeded` inside
-the startup function to avoid circular imports.
-
----
-
-## Tests to make GREEN
-
-File: `tests/engine/test_startup_seed_symphonies.py`
-Run: `python -m pytest tests/engine/test_startup_seed_symphonies.py -n0`
-
-All 21 currently-RED tests must pass.  The 1 currently-passing structural test
-(`test_ensure_bot_state_seeded_not_called_inside_main_body`) must remain passing.
+| File to change | Required implementation |
+|---|---|
+| `tests/_mem_cap.py` | (1) Add `_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` to LimitFlags OR-expression (AC-4); (2) Add `_is_process_in_job_seam` callable wrapping IsProcessInJob; (3) Call seam after AssignProcessToJobObject; (4) warn+return if unconfirmed (AC-5) |
+| `tests/js_syntax/test_js_syntax.py` | CREATE: parametrized `node --check` over `static/*.js` with `shutil.which` skip |
+| 19 scattered test files | REMOVE per-file `node --check` test methods |
+| `tests/execution/test_orphan_port_modules_removed.py:524,540` | REPLACE subprocess `--collect-only` with `importlib.import_module(...)` |
+| `tests/advisors/test_prism_dotenv_hardening.py:_init_db_at` | REPLACE subprocess body with direct `database.init_db()` call |
 
 ---
 
-## Do NOT change
+## Constraints
 
-- The `shadow_history` write path (`database.record_shadow_observation`)
-- The market-hours DATA PHASE in `main()` (lines 766-949)
-- The post-mortem write path (lines 1014-1032)
-- Any existing test files
-- Any migration SQL files
+- All changes are ONLY in `tests/` — NO production code (app.py, math_engine.py, etc.)
+- Confirm `git branch --show-current` is `fix/footprint-cap-hardening` before committing
+- Verify ONLY with bounded per-file `-n0` runs using `pytest.main(... '--override-ini=addopts=')` from `C:/Windows/Temp`
+- Do NOT merge and do NOT push
+- After GREEN, SendMessage w1-test (test-writer) with the HEAD SHA
 
-## When GREEN
+## Note on w1-impl working tree state
 
-Run `python -m pytest tests/engine/test_startup_seed_symphonies.py -n0` and
-confirm 22 passed / 0 failed.  Then commit on `feat/startup-seed-symphonies`
-and SendMessage `seed-testwriter` (me) with your GREEN commit SHA so I can
-review the implementation for sufficiency and write any remaining RED tests.
-
----
-
-## Implementation Notes
-
-### Functions added to alpha_bot_execution.py (end of file, before `if __name__ == "__main__":`)
-
-**`seed_symphonies_into_bot_state(bot_state: dict) -> int`**
-- Iterates `ACCOUNT_UUIDS`, calls `fetch_symphony_stats(account)` per account
-- Per-account `except Exception`: logs with `print(...)`, continues to next account (partial success)
-- For each symphony id not already in bot_state: creates entry matching the DATA PHASE create-block (lines 771-790) including `position_epoch = database.mint_position_epoch()`, then calls `_persist_composer_fields_to_bot_state`
-- `last_percent_change` can be `None` in fixture (and live) — handled as `(raw_pct or 0.0) * 100`
-- Does NOT call `database.record_shadow_observation`; does NOT open post_mortem files
-- Returns count of NEW entries created
-
-**`ensure_bot_state_seeded() -> None`**
-- Loads state, checks `any(isinstance(v, dict) for v in bot_state.values())` — early return if any entry exists (no fetch, no save)
-- Otherwise calls `seed_symphonies_into_bot_state(bot_state)`, saves if `created >= 1`
-- Entire body wrapped in `try/except Exception` — logs, returns (never raises)
-
-### Startup hook in app.py
-- Lazy import `from alpha_bot_execution import ensure_bot_state_seeded` inside `if __name__ == "__main__":` block
-- Placed BEFORE `threading.Thread(target=run_scheduler, daemon=True).start()`
-- NOT called under pytest (the block is guarded by `if __name__ == "__main__":`)
-
-## Test File Issues (for test-writer to fix)
-None.
-
-## Disputed Tests
-None.
+The implementer's working tree already contains partial changes to `tests/_mem_cap.py` and
+`tests/conftest.py` (unstaged). Verify with `git diff tests/_mem_cap.py` before committing.
+The conftest.py change (AC-6 guard) is correct and should be committed. The `_mem_cap.py`
+changes implement AC-4 and AC-5 — verify they pass the RED tests above before committing.
