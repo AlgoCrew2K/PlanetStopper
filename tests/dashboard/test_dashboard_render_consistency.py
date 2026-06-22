@@ -30,8 +30,6 @@ from __future__ import annotations
 
 import pathlib
 import re
-import shutil
-import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -186,14 +184,6 @@ class TestPollUpdatesDeltaSpans:
             "AC-4a FAIL: updateComparisonRows must assign textContent to a delta element "
             "for the today/cumulative/mdd rows (the alpha must refresh on poll)."
         )
-
-
-# ===========================================================================
-# AC-4a part 3 — index.js must parse (node --check) so the poll actually runs
-# ===========================================================================
-
-
-class TestIndexJsParses:
 
 
 # ===========================================================================

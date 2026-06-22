@@ -22,7 +22,6 @@ No live browser; no Flask test client needed for these structure checks.
 from __future__ import annotations
 
 import pathlib
-import subprocess
 
 import pytest
 
@@ -44,14 +43,6 @@ def _html() -> str:
 
 def _js() -> str:
     return _INDEX_JS.read_text(encoding="utf-8")
-
-
-# ---------------------------------------------------------------------------
-# AC-7: static/index.js must pass node --check after the fetch is added
-# ---------------------------------------------------------------------------
-
-
-class TestIndexJsSyntaxValidity:
 
 
 # ---------------------------------------------------------------------------

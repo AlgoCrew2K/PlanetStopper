@@ -20,8 +20,6 @@ has no jsdom). The PM owns the LIVE picker gate — these are necessary, not suf
 from __future__ import annotations
 
 import pathlib
-import shutil
-import subprocess
 
 import pytest
 
@@ -105,11 +103,3 @@ class TestPickerJsReWindowsValue:
             "AC-3 FAIL: static/index.js does not update 'guard-alpha-window-label' on picker "
             "click. The label must reflect the selected window (incl 'All Time')."
         )
-
-
-# ---------------------------------------------------------------------------
-# Parse guard — the picker wiring must actually be runnable
-# ---------------------------------------------------------------------------
-
-
-class TestIndexJsParses:
