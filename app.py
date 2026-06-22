@@ -2283,6 +2283,15 @@ def guard_alpha_summary():
         # No post-mortem files yet (day-1 droplet) — fall back to exit_triggers DB rows.
         # Intraday estimate: saved = (at_return - current_return) / 100 * position_value
         # Label clearly as an intraday estimate so the UI can qualify the display.
+        #
+        # AC-1b: bot_state is a SINGLE-ROW JSON BLOB (id, data TEXT) — there is no
+        # position_value column and no symphony_id column.  Use database.load_state()
+        # which parses the blob and returns a dict keyed by symphony_id.
+        # Degrade to empty dict if the schema differs (no raise — the count query still runs).
+        try:
+            bot_state_dict = database.load_state()
+        except Exception:
+            bot_state_dict = {}
         try:
             conn = database.get_connection()
             try:
@@ -2290,14 +2299,28 @@ def guard_alpha_summary():
                 rows = conn.execute(
                     "SELECT t.symphony_id, t.at_return, "
                     "  (SELECT current_return FROM shadow_history "
-                    "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1), "
-                    "  (SELECT position_value FROM bot_state WHERE symphony_id = t.symphony_id) "
+                    "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1) "
                     "FROM exit_triggers t"
                 ).fetchall()
+
+                # Build a position_value lookup: prefer the blob dict (real production schema).
+                # Fall back to a direct column query for legacy columnar bot_state schemas.
+                if not bot_state_dict:
+                    try:
+                        pv_rows = conn.execute(
+                            "SELECT symphony_id, position_value FROM bot_state"
+                        ).fetchall()
+                        bot_state_dict = {
+                            r[0]: {"current_value": r[1]} for r in pv_rows if r[1] is not None
+                        }
+                    except Exception:
+                        pass
             finally:
                 conn.close()
 
-            for _sym_id, _at_ret, _cur_ret, _pos_val in rows:
+            for _sym_id, _at_ret, _cur_ret in rows:
+                # Look up position_value from the blob dict (real schema) or legacy fallback.
+                _pos_val = (bot_state_dict.get(_sym_id) or {}).get("current_value")
                 if _at_ret is None or _cur_ret is None or _pos_val is None:
                     continue
                 try:
@@ -2554,6 +2577,8 @@ def get_history(days):
                     }
                     for r in _rows
                 ]
+                # AC-3b: keep trigger_count consistent with the backfilled todays_exits.
+                stats["trigger_count"] = len(stats["todays_exits"])
         except Exception:
             _daemon_log.debug("get_history: exit_triggers fallback failed", exc_info=True)
 
@@ -2666,6 +2691,20 @@ def api_performance():
                 dates, live_returns, shadow_returns = _fallback
         except Exception:
             _daemon_log.debug("api_performance: shadow_history fallback failed", exc_info=True)
+
+    # AC-2b: get_portfolio_bot_and_held_daily_returns() returns None when fewer than
+    # 2 distinct trading days exist.  On a fresh droplet (day one), that guard fires
+    # and leaves dates empty.  Fall back to the single-day seam so the chart is
+    # non-empty even before the 2-day guard can pass.
+    if not dates:
+        try:
+            _single = analytics.get_single_day_shadow_returns()
+            if _single is not None:
+                dates, live_returns, shadow_returns = _single
+        except Exception:
+            _daemon_log.debug(
+                "api_performance: single-day shadow_history fallback failed", exc_info=True
+            )
 
     observation_count = len(dates)
     insufficient_history = observation_count < _PERFORMANCE_MIN_HISTORY_DAYS

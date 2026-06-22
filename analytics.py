@@ -1290,6 +1290,61 @@ def get_portfolio_bot_and_held_daily_returns(
     return out_dates, bot_returns, held_returns
 
 
+def get_single_day_shadow_returns(
+    db_file: str | None = None,
+) -> tuple[list[str], list[float], list[float]] | None:
+    """Return a single-day (dates, bot_returns, held_returns) tuple from shadow_history.
+
+    AC-2b: get_portfolio_bot_and_held_daily_returns() returns None when fewer than
+    2 distinct trading days exist.  On a fresh droplet (day one), that guard fires
+    and the performance route returned observation_count=0.  This function provides
+    a minimal 1-entry fallback — one date, one bot return, one held return — so the
+    chart is non-empty from day one even before the multi-day guard can pass.
+
+    Returns (dates, bot_daily_returns_pct, held_daily_returns_pct) where each list
+    has exactly 1 element, or None when shadow_history is empty or unreadable.
+    """
+    import sqlite3
+
+    _db_file = db_file if db_file is not None else _get_shadow_db_file()
+    try:
+        conn = sqlite3.connect(f"file:{_db_file}?mode=ro", uri=True, timeout=10.0)
+        rows = conn.execute(
+            "SELECT trading_day, shadow_return, current_return "
+            "FROM shadow_history "
+            "WHERE ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+            "                WHERE s2.symphony_id = shadow_history.symphony_id "
+            "                  AND s2.trading_day = shadow_history.trading_day) "
+            "ORDER BY trading_day DESC, shadow_history.symphony_id ASC",
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return None
+
+    if not rows:
+        return None
+
+    # Use the latest trading_day only; value-weight by abs(current_return).
+    latest_day = rows[0][0]
+    day_rows = [r for r in rows if r[0] == latest_day]
+
+    weight_sum = 0.0
+    bot_wsum = 0.0
+    held_wsum = 0.0
+    for _day, shadow_ret, cur_ret in day_rows:
+        shadow_f = float(shadow_ret) if shadow_ret is not None else 0.0
+        cur_f = float(cur_ret) if cur_ret is not None else 0.0
+        w = abs(cur_f) if cur_f != 0.0 else 1.0
+        weight_sum += w
+        bot_wsum += shadow_f * w
+        held_wsum += cur_f * w
+
+    if weight_sum == 0.0:
+        return None
+
+    return [latest_day], [bot_wsum / weight_sum], [held_wsum / weight_sum]
+
+
 # V1 bootstrap gate — three-state fold-sufficiency check (PA-M1F-11, AC-M1F.6.4)
 # Threshold: N >= 30 per Bailey/de-Prado 2014 interpretability floor.
 _V1_BOOTSTRAP_MIN_DAYS = 30
