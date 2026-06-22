@@ -1447,3 +1447,140 @@ class TestNoSurfaceReturnsZeroWhenDataExists:
             f"guard_alpha must not be 0.0 when triggered symphonies have divergence. "
             f"Got {data.get('guard_alpha')}. AC-7 property violated."
         )
+
+
+# ===========================================================================
+# AC-4b (live): strip intraday fallback — blob bot_state schema
+# ===========================================================================
+
+
+class TestStripIntradayFallbackBlobSchema:
+    """AC-4b: get_windowed_strip() intraday fallback must work with the REAL
+    bot_state schema (single JSON blob: id INTEGER PRIMARY KEY, data TEXT).
+
+    The AC-4 tests in TestStripRouteIntradayGuardAlpha use db_with_exit_triggers
+    whose bot_state is COLUMNAR (symphony_id TEXT PRIMARY KEY, position_value REAL).
+    Those tests pass because app.py:2189 queries the position_value column, which
+    exists in the columnar fixture.
+
+    On the REAL droplet bot_state is a blob — no position_value column, no
+    symphony_id column.  The subquery at app.py:2189:
+        (SELECT position_value FROM bot_state WHERE symphony_id = t.symphony_id)
+    throws OperationalError; the outer except Exception (app.py:2214) swallows it
+    → guard_alpha stays 0.0, intraday_only never set.
+
+    Fix path (for ld2-impl): mirror the guard_alpha_summary() AC-1b fix:
+        1. Call database.load_state() before the SQL.
+        2. Remove the correlated position_value subquery.
+        3. Look up current_value from the blob dict per symphony_id.
+        4. Fall back to a legacy columnar query when the blob dict is empty
+           (ensures the AC-4 columnar-fixture tests keep passing).
+    """
+
+    @pytest.fixture
+    def db_with_blob_bot_state_strip(self, tmp_path, monkeypatch):
+        """Minimal DB matching the REAL bot_state schema for the strip route.
+
+        bot_state: single blob row (id=1, data=JSON dict keyed by symphony_id).
+        shadow_history: 1 distinct trading day — triggers insufficient_history=True
+        so the intraday fallback fires.
+        exit_triggers: 2 rows with positive divergence.
+        """
+        import json as _json
+
+        db_path = str(tmp_path / "test_strip_blob.db")
+        conn = sqlite3.connect(db_path)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS exit_triggers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symphony_id TEXT NOT NULL,
+                ts_utc TEXT NOT NULL,
+                at_return REAL NOT NULL,
+                trigger_reason TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS shadow_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symphony_id TEXT NOT NULL,
+                trading_day TEXT NOT NULL,
+                ts_utc TEXT NOT NULL,
+                shadow_return REAL NOT NULL,
+                current_return REAL NOT NULL,
+                is_post_trigger INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS bot_state (
+                id INTEGER PRIMARY KEY,
+                data TEXT
+            );
+        """)
+        conn.executemany(
+            "INSERT INTO exit_triggers (symphony_id, ts_utc, at_return, trigger_reason) VALUES (?,?,?,?)",
+            [
+                ("SYM_X", "2026-06-22T13:43:00Z", 3.1, "TAKE_PROFIT"),
+                ("SYM_Y", "2026-06-22T14:23:00Z", 2.2, "VWAP_BREAKDOWN"),
+            ],
+        )
+        # 1 distinct trading_day → insufficient_history=True → intraday fallback fires
+        conn.executemany(
+            "INSERT INTO shadow_history "
+            "(symphony_id, trading_day, ts_utc, shadow_return, current_return, is_post_trigger) "
+            "VALUES (?,?,?,?,?,?)",
+            [
+                ("SYM_X", "2026-06-22", "2026-06-22T16:00:00Z", 3.1, -0.8, 1),
+                ("SYM_Y", "2026-06-22", "2026-06-22T16:00:00Z", 2.2, -1.5, 1),
+            ],
+        )
+        # Real blob schema — current_value provides the position_value weight
+        blob = {
+            "SYM_X": {"name": "ExAlpha", "current_value": 12000.0, "current_return": -0.8},
+            "SYM_Y": {"name": "ExBeta",  "current_value": 18000.0, "current_return": -1.5},
+        }
+        conn.execute("INSERT INTO bot_state (id, data) VALUES (1, ?)", (_json.dumps(blob),))
+        conn.commit()
+        conn.close()
+        monkeypatch.setenv("DB_PATH", db_path)
+        return db_path
+
+    def test_strip_intraday_only_set_with_blob_bot_state(
+        self, client, db_with_blob_bot_state_strip
+    ):
+        """AC-4b: intraday_only=True when shadow_history has 1 day and bot_state is a blob.
+
+        Fails RED because app.py:2189 queries the non-existent position_value column;
+        OperationalError is swallowed by except Exception (app.py:2214) → strip returns
+        without intraday_only, leaving it absent/False.
+        """
+        resp = client.get("/api/strip/30d")
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
+        data = resp.get_json()
+
+        assert data.get("intraday_only") is True, (
+            "strip response must include intraday_only=True when shadow_history has 1 day "
+            "and bot_state uses the real blob schema. "
+            f"Got intraday_only={data.get('intraday_only')!r}. "
+            "RED: app.py:2189 queries `position_value` column which does not exist in "
+            "blob bot_state (id, data TEXT) — OperationalError swallowed → fallback never fires."
+        )
+
+    def test_strip_guard_alpha_nonzero_with_blob_bot_state(
+        self, client, db_with_blob_bot_state_strip
+    ):
+        """AC-4b: guard_alpha is non-zero when at_return > current_return with blob bot_state.
+
+        The intraday formula requires position_value (weight); that comes from
+        current_value in the blob dict via load_state().  With the broken column query
+        the formula never runs → guard_alpha stays 0.0.
+
+        Asserts guard_alpha != 0.0 (sign/presence), not the exact weighted average —
+        the exact value depends on the fixture's at_return, current_return, and
+        current_value inserted above.
+        """
+        resp = client.get("/api/strip/30d")
+        assert resp.status_code == 200
+        data = resp.get_json()
+
+        assert data.get("guard_alpha") != 0.0, (
+            "guard_alpha must be non-zero when triggered symphonies have positive divergence "
+            "and bot_state uses the real blob schema. "
+            f"Got guard_alpha={data.get('guard_alpha')!r}. "
+            "RED: position_value lookup fails → weighted sum is 0 → guard_alpha=0.0."
+        )
