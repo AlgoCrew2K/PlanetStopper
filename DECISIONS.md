@@ -3076,6 +3076,14 @@ Decision: always access `bot_state` via `database.load_state()` in route code, n
 
 **Fix (93bd62c):** `stats["trigger_count"] = len(stats["todays_exits"])` is assigned immediately after the backfill block. One line added.
 
+#### DE-LIVE-DASH-001-AC-3c: get_history() -- triggered_reason column name (2026-06-22)
+
+**Root cause:** The AC-3 todays_exits backfill queried `SELECT symphony_id, ts_utc, at_return, trigger_reason FROM exit_triggers`. The real column is `triggered_reason` (confirmed via PRAGMA on the live droplet). The wrong name caused all backfilled exit rows to have `trigger_reason: null` -- the History tab displayed exits but with no reason shown.
+
+**Fix (56901e0):** Column name corrected to `triggered_reason` in both the SELECT statement (`app.py:2589`) and the dict key in the response (`app.py:2600`). The response dict key is also corrected to `triggered_reason` so template consumers receive the actual value.
+
+**Discovery:** PM visual gate against the real droplet DB after AC-3b was merged; the exits appeared in the list but with blank reason fields. PRAGMA table_info confirmed the column name on the live DB.
+
 #### DE-LIVE-DASH-001-AC-2b: api_performance() -- single-day shadow_history fallback (2026-06-22)
 
 **Root cause:** Both `analytics.get_portfolio_bot_and_held_daily_returns()` and `analytics.get_portfolio_daily_returns_from_shadow()` return `None` when fewer than 2 distinct trading days exist in shadow_history (each has its own `< 2` guard). On a fresh droplet with one trading day, both guards fired and the route returned `observation_count=0` -- the performance chart was blank.

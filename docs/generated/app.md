@@ -174,6 +174,8 @@ Returns historical portfolio summary for the last `days` days.
 
 **`trigger_count` backfill (AC-3b):** `stats["trigger_count"]` is updated to `len(stats["todays_exits"])` immediately after the AC-3 backfill so the two fields stay consistent. Previously `trigger_count` was left at 0 from `get_history_summary()` while `todays_exits` had rows, causing the History tab to show "Today's exits (0)".
 
+**Column name fix (AC-3c):** The backfill query and response dict used `trigger_reason`; the real `exit_triggers` column is `triggered_reason` (PRAGMA-confirmed on live droplet). Fixed in 56901e0 -- both the `SELECT` (`app.py:2589`) and the dict key (`app.py:2600`) use `triggered_reason`.
+
 #### `GET /api/logs/<symphony_id>`
 Returns symphony execution logs.
 
