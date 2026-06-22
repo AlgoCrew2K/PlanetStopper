@@ -3049,15 +3049,14 @@ Decision: `intraday_only` is an additive field to avoid breaking callers that do
 
 The broken `_raw.get('sources', [])` block was replaced with a Jinja2 loop over `per_lens_digest[lens]['sources']` (plain-string citations) and `per_lens_digest[lens]['article_corpus']` (article-object dicts). Plain string citations render as text spans; article_corpus entries render as clickable links with `rel="noopener noreferrer"`. All values escaped with `| e`; no `| safe` used.
 
-#### DE-LIVE-DASH-001-AC5b: article corpus persistence -- DEFERRED
+#### DE-LIVE-DASH-001-AC5b: article corpus persistence -- SHIPPED
 
-AC-5b (persist the `news_corpus` article corpus into `per_lens_digest.sentiment.article_corpus` in the MARKET_PRISM `raw_response`) was NOT implemented in this cycle.
+AC-5b is implemented at commit 43ecb35. Two changes wire the article corpus end-to-end:
 
-Status: the template (AC-5a) reads `article_corpus` from `per_lens_digest.sentiment` if present, but the Prism council's `_build_per_lens_digest` in `advisors/lens_pipeline.py` serializes `payload` as `json.dumps(block["payload"])` rather than extracting `article_corpus` as a top-level key. The `article_corpus` branch in the template will never render until AC-5b is wired.
+- `ai_advisor.py:672` -- `_build_sentiment_section()` return dict gains `"article_corpus": corpus` as a top-level key (alongside `payload`, `sources`). When the corpus is empty, the key is an empty list.
+- `advisors/lens_pipeline.py:173` -- `_build_per_lens_digest()` passes the key through: `if block.get("article_corpus"): entry["article_corpus"] = block["article_corpus"]`. This surfaces the corpus in `per_lens_digest.sentiment.article_corpus` in the MARKET_PRISM `raw_response`.
 
-Rationale for deferral: the template fix (AC-5a) is the P0 item -- it fixes the `AttributeError` crash caused by calling `.get('url')` on strings. The corpus enrichment is additive and safe to defer; the template degrades gracefully (no article_corpus = no links, but citations still render).
-
-Tracked for a future `lens_pipeline` / `ai_advisor` cycle: wire `_build_per_lens_digest` to carry `article_corpus` from `payload.corpus` when the sentiment lens is available.
+The template (AC-5a, `ai_advisor.html:962`) already reads `per_lens_digest[lens]['article_corpus']` and renders each entry as a clickable link with `rel="noopener noreferrer"`. With AC-5b wired, the sentiment lens block on the Overview tab shows article links when the nightly Prism run included a corpus.
 
 #### DE-LIVE-DASH-001-AC6: index.html -- None-aware MDD bot guard
 
@@ -3070,5 +3069,7 @@ Template change only. `{% set _mdd_bot_raw = mdd_d.get("dry_run") if mdd_d is ma
 - `templates/ai_advisor.html` -- per-lens sources aggregation (lines 954-966, 1024-1052)
 - `tests/app/test_live_dashboard_metrics.py` -- 25 AC-driven tests (new)
 - `tests/fixtures/math/guard_alpha_intraday_saved.json` -- golden fixture for intraday formula
-- `feature-plans/live-dashboard-metrics.md` -- planning artifact (Status: ready; AC-5b noted deferred)
+- `feature-plans/live-dashboard-metrics.md` -- planning artifact (Status: ready)
+- `ai_advisor.py` -- `_build_sentiment_section` gains `article_corpus` top-level key (AC-5b)
+- `advisors/lens_pipeline.py` -- `_build_per_lens_digest` passes `article_corpus` through to `per_lens_digest.sentiment` (AC-5b)
 - `docs/generated/app.md` -- dashboard routes section updated (DE-LIVE-DASH-001)
