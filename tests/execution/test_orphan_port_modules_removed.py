@@ -521,31 +521,12 @@ class TestRetainedPortmodeTestsStillCollect:
     def test_test_api_state_route_additive_fields_collects(self):
         target = _project_root() / "tests" / "portmode" / "test_api_state_route_additive_fields.py"
         assert target.exists(), f"{target} must remain in the suite (Sprint-3-manifest §6 KEEP)"
-        result = subprocess.run(
-            ["python", "-m", "pytest", "--collect-only", "-q", str(target)],
-            cwd=str(_project_root()),
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        assert result.returncode == 0, (
-            "tests/portmode/test_api_state_route_additive_fields.py must "
-            "collect cleanly after Cycle B (KEEP-DISPLAY surface).\n"
-            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-        )
+        # AC-2: replaced subprocess --collect-only (which imported the full Flask stack,
+        # ~1-2 GB per child) with in-process importlib — same coverage, no subprocess overhead.
+        importlib.import_module("tests.portmode.test_api_state_route_additive_fields")
 
     def test_test_port_state_schema_collects(self):
         target = _project_root() / "tests" / "portmode" / "test_port_state_schema.py"
         assert target.exists(), f"{target} must remain in the suite (Sprint-3-manifest §6 KEEP)"
-        result = subprocess.run(
-            ["python", "-m", "pytest", "--collect-only", "-q", str(target)],
-            cwd=str(_project_root()),
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        assert result.returncode == 0, (
-            "tests/portmode/test_port_state_schema.py must collect cleanly "
-            "after Cycle B (KEEP-DISPLAY surface).\n"
-            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-        )
+        # AC-2: replaced subprocess --collect-only with in-process importlib.
+        importlib.import_module("tests.portmode.test_port_state_schema")

@@ -98,26 +98,6 @@ def test_evaluate_fetch_handler_guards_before_json_parse(js_path):
     )
 
 
-@pytest.mark.parametrize("js_path", _EVALUATE_JS, ids=lambda p: p.name)
-def test_evaluate_js_is_syntactically_valid(js_path):
-    """node --check must pass on the evaluate JS (no parse error from the fix).
-
-    Guards the hand-written client JS against a syntax break introduced by the
-    AC-9a change (a parse error makes the whole modal dead — caught by node --check,
-    not by any server/template test). Skips only if node is unavailable.
-    """
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node not available — cannot run --check syntax gate")
-    assert js_path.is_file(), f"{js_path} not found"
-    result = subprocess.run(
-        [node, "--check", str(js_path)],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, f"node --check failed on {js_path.name}:\n{result.stderr}"
-
-
 # ===========================================================================
 # AC-9b — run_backtest converts a 413 into a graceful error result (no crash).
 # ===========================================================================

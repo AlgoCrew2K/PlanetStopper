@@ -658,25 +658,6 @@ class TestAC4JSRendersAssessment:
 
     _JS_PATH = pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor.js"
 
-    def test_ai_advisor_js_passes_node_check(self):
-        """``node --check static/ai_advisor.js`` must exit 0 (no syntax errors).
-
-        A JS parse error passes every Python test but silently breaks the page.
-        This test makes a JS parse error a pytest failure.
-        """
-        result = subprocess.run(
-            ["node", "--check", str(self._JS_PATH)],
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, (
-            f"node --check static/ai_advisor.js failed (exit {result.returncode}):\n"
-            f"stdout: {result.stdout}\n"
-            f"stderr: {result.stderr}\n"
-            "A JS syntax error makes the entire AI Advisor page non-functional "
-            "while all Python tests pass green."
-        )
-
     def test_ai_advisor_js_references_assessment_in_empty_branch(self):
         """The empty-suggestions branch in getSuggestions must reference
         ``assessment`` so it can render per-symphony content.

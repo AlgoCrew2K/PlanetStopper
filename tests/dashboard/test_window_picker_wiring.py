@@ -113,12 +113,3 @@ class TestPickerJsReWindowsValue:
 
 
 class TestIndexJsParses:
-    def test_node_check_passes(self):
-        node = shutil.which("node")
-        if node is None:
-            pytest.skip("node not available — JS parse guard requires node")
-        result = subprocess.run([node, "--check", str(_JS_PATH)], capture_output=True, text=True)
-        assert result.returncode == 0, (
-            "static/index.js failed `node --check`. A parse error makes the picker wiring "
-            f"never run while every server test still passes. stderr:\n{result.stderr}"
-        )

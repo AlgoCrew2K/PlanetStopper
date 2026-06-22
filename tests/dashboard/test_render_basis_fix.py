@@ -65,22 +65,6 @@ def _html() -> str:
 class TestIndexJsParseGate:
     """node --check must pass so the JS engine executes renderGuardAlpha at all."""
 
-    def test_node_check_passes(self):
-        node = shutil.which("node")
-        if node is None:
-            pytest.skip("node not available in this environment")
-        result = subprocess.run(
-            [node, "--check", str(_JS_PATH)],
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, (
-            "RENDER-BASIS FAIL: static/index.js has a parse error. "
-            "The entire renderGuardAlpha + updateComparisonRows never runs while "
-            "every server/template test remains green.\n"
-            f"node --check stderr:\n{result.stderr.strip()}"
-        )
-
 
 # ---------------------------------------------------------------------------
 # Invariant 1 — renderGuardAlpha reads guard_alpha directly

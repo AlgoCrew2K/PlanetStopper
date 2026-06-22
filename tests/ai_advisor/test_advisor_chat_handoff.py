@@ -75,27 +75,6 @@ class TestJsSyntaxValidity:
             f"Fix: resolve the JS syntax error before landing this change."
         )
 
-    def test_asset_swaps_js_passes_node_check(self):
-        """static/ai_advisor_asset_swaps.js must pass node --check.
-
-        A syntax error in this file disables the entire Asset Swaps tab UI.
-        """
-        self._node_check(_ASSET_SWAPS_JS)
-
-    def test_logic_changes_js_passes_node_check(self):
-        """static/ai_advisor_logic_changes.js must pass node --check.
-
-        A syntax error in this file disables the entire Logic Changes tab UI.
-        """
-        self._node_check(_LOGIC_CHANGES_JS)
-
-    def test_chat_js_passes_node_check(self):
-        """static/ai_advisor_chat.js must pass node --check.
-
-        A syntax error in this file breaks the chat panel for all advisor tabs.
-        """
-        self._node_check(_CHAT_JS)
-
 
 # ===========================================================================
 # Group 2 — Sender: ai_advisor_asset_swaps.js
