@@ -49,22 +49,12 @@ def generate_eod_snapshot(
 
                 f_ret = sym.get("triggered_at_return", 0.0)
 
-                triggered_basket = sym.get("triggered_basket_snapshot", [])
-                if triggered_basket and live_prices:
-                    post_trigger_move = 0.0
-                    for h in triggered_basket:
-                        t = h.get("ticker")
-                        alloc = h.get("allocation", 0.0)
-                        p_start = h.get("price", 0.0)
-                        if t in live_prices and p_start > 0:
-                            p_now = live_prices[t].get("last_price", 0.0)
-                            if p_now > 0:
-                                post_trigger_move += alloc * ((p_now - p_start) / p_start)
-                    basketReturnAtPreclose = f_ret + (post_trigger_move * 100.0)
-                else:
-                    basketReturnAtPreclose = sym.get("current_return", 0.0)
-
-                live_ret = basketReturnAtPreclose
+                # Source if-held from shadow_history.current_return (the engine's live
+                # trajectory), recorded accurately post-trigger by alpha_bot_execution.py.
+                # The basket reconstruction (triggered_basket_snapshot + live_prices) collapsed
+                # to ~f_ret when basket prices were frozen at exit level, producing ~$0 saved
+                # despite large actual divergence. Diagnosis: a7601fb / guard-alpha-saved-diagnosis.md.
+                live_ret = sym.get("current_return", 0.0)
                 saved_pct = f_ret - live_ret
 
                 sym_val = sym.get("current_value", 0.0)
