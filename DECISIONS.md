@@ -3066,7 +3066,7 @@ Template change only. `{% set _mdd_bot_raw = mdd_d.get("dry_run") if mdd_d is ma
 
 **Root cause:** The original AC-1 intraday fallback used a correlated subquery `SELECT position_value FROM bot_state WHERE symphony_id = t.symphony_id` that assumes a multi-row columnar bot_state schema. The real production schema is a single-row JSON blob (`id INTEGER, data TEXT`) with no `position_value` column and no `symphony_id` column. The correlated subquery raised `OperationalError` on the live droplet; the outer `except Exception` swallowed it, producing `guard_event_count=0` and `cumulative_saved_dollars=0.0` despite 11 real exit_triggers rows.
 
-**Fix (93bd62c):** `guard_alpha_summary()` now reads position value via `database.load_state()` -- the canonical accessor that parses the blob dict keyed by symphony_id -- and extracts `current_value` per symphony. `load_state()` is isolated in its own `try/except` so a schema-read failure degrades to `{}` without killing the exit_triggers count query. A legacy columnar fallback (`SELECT symphony_id, position_value FROM bot_state`) runs if `load_state()` returns empty, preserving backward compatibility with pre-blob schemas.
+**Fix (93bd62c):** `guard_alpha_summary()` now reads position value via `database.load_state()` -- the canonical accessor that parses the blob dict keyed by symphony_id -- and extracts `current_value` per symphony. `load_state()` is isolated in its own `try/except` so a schema-read failure degrades to `{}` without killing the exit_triggers count query. The transitional columnar fallback added in 93bd62c was deleted at d8c14c7 (see DE-LIVE-DASH-001-cleanup below) once all fixtures were corrected to the real blob schema.
 
 Decision: always access `bot_state` via `database.load_state()` in route code, never via direct SQL column references. The blob schema is canonical; direct column SQL against bot_state is a schema-coupling bug.
 
@@ -3100,13 +3100,21 @@ AC-1 through AC-6 passed synthetic fixture tests because the test fixtures were 
 
 **Root cause:** Same phantom-column defect as AC-1b, second occurrence. `get_windowed_strip()` intraday fallback (`app.py:2185`) used `SELECT position_value FROM bot_state WHERE symphony_id = t.symphony_id`. The real `bot_state` schema is a single-row JSON blob -- no such column, no such per-row index. The `OperationalError` was swallowed by `except Exception` at `app.py:2214` --> `guard_alpha` stayed `0.0`, `intraday_only` was never set, despite exit_triggers rows on the live droplet.
 
-**Fix (7b5f29d):** Same `database.load_state()` pattern as AC-1b: pre-call `load_state()` before the SQL, remove the correlated position_value subquery, look up `current_value` from the blob dict per symphony_id in the result loop. Legacy columnar fallback (`SELECT symphony_id, position_value FROM bot_state`) preserved when `load_state()` returns empty.
+**Fix (7b5f29d):** Same `database.load_state()` pattern as AC-1b: pre-call `load_state()` before the SQL, remove the correlated position_value subquery, look up `current_value` from the blob dict per symphony_id in the result loop. The transitional columnar fallback was deleted at d8c14c7 once all fixtures were corrected to the real blob schema.
 
 **Discovery:** Caught by `ld2-review` during the AC-1b/AC-2b/AC-3b review cycle -- the `guard_alpha_summary()` fix was correct but the same pattern was present at the strip route, a second call site not covered by the AC-1b test class.
 
+#### DE-LIVE-DASH-001-cleanup: delete transitional columnar bot_state fallback (2026-06-22)
+
+**What was deleted (d8c14c7, -27 lines):** After AC-1b and AC-4b replaced the broken correlated subqueries with `database.load_state()` blob lookups, both `guard_alpha_summary()` and `get_windowed_strip()` carried a transitional block that re-queried `SELECT symphony_id, position_value FROM bot_state` when `load_state()` returned empty. This was dead code: the real production `bot_state` schema is a single-row JSON blob; there is no `symphony_id` or `position_value` column. The only way `load_state()` returns empty is if the DB is uninitialised -- in which case the fallback would also fail.
+
+**Why safe to delete:** All test fixtures were corrected to the real blob schema (cbfce3c corrected `db_with_exit_triggers`; 3ef67a1 corrected the per-class blob fixtures). 37 tests passed after deletion with no regressions. The columnar code path was never reachable on the live droplet.
+
+Decision: no backward-compat shims for schemas that never existed in production. Dead code is a maintenance liability; delete it once fixtures prove the real path is sound.
+
 ### Files changed
 
-- `app.py` -- `guard_alpha_summary()` intraday fallback (+30 lines); `get_windowed_strip()` intraday guard_alpha path (+25 lines); `get_history()` base_dir fix + todays_exits fallback (+20 lines); `api_performance()` shadow_history fallback (+10 lines); AC-1b load_state blob lookup in `guard_alpha_summary()` (+20 lines); AC-3b trigger_count backfill in `get_history()` (+1 line); AC-2b single-day fallback in `api_performance()` (+14 lines); AC-4b load_state blob lookup in `get_windowed_strip()` intraday fallback (+27 lines)
+- `app.py` -- `guard_alpha_summary()` intraday fallback (+30 lines); `get_windowed_strip()` intraday guard_alpha path (+25 lines); `get_history()` base_dir fix + todays_exits fallback (+20 lines); `api_performance()` shadow_history fallback (+10 lines); AC-1b load_state blob lookup in `guard_alpha_summary()` (+20 lines); AC-3b trigger_count backfill in `get_history()` (+1 line); AC-2b single-day fallback in `api_performance()` (+14 lines); AC-4b load_state blob lookup in `get_windowed_strip()` intraday fallback (+27 lines); cleanup: delete dead columnar fallback blocks from both routes (d8c14c7, -27 lines)
 - `analytics.py` -- `get_single_day_shadow_returns()` new function (AC-2b, +55 lines)
 - `templates/index.html` -- None-aware MDD bot guard (lines 1121-1144)
 - `templates/ai_advisor.html` -- per-lens sources aggregation (lines 954-966, 1024-1052)
