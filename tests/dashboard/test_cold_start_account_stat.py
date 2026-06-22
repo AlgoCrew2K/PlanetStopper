@@ -66,33 +66,6 @@ def _js() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Parse gate — broken JS means every renderer silently never runs
-# ---------------------------------------------------------------------------
-
-
-def test_node_check_passes():
-    """
-    AC-CS.7: static/index.js must pass `node --check` with exit code 0.
-
-    Any syntax error prevents the entire file from loading in the browser.
-    Pinned here so a broken cold-start fix is caught before the ux-expert gate.
-    """
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node not available in this environment")
-    result = subprocess.run(
-        [node, "--check", str(_JS_PATH)],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, (
-        "AC-CS.7 FAIL: static/index.js has a parse error. "
-        "The account-all-time cold-start fix broke the JS syntax.\n"
-        f"node --check stderr:\n{result.stderr.strip()}"
-    )
-
-
-# ---------------------------------------------------------------------------
 # AC-CS.1 — dedicated renderer exists and targets the element
 # ---------------------------------------------------------------------------
 

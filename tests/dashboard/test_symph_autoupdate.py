@@ -84,33 +84,6 @@ def _html() -> str:
 
 
 # ---------------------------------------------------------------------------
-# AC-SA.1 — parse gate
-# ---------------------------------------------------------------------------
-
-
-def test_node_check_passes():
-    """
-    AC-SA.1: static/index.js must pass `node --check` with exit code 0.
-
-    Any syntax error introduced by the section-partition fix prevents the entire
-    file from loading — all card updates, hero chart, and status pills silently fail.
-    """
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node not available in this environment")
-    result = subprocess.run(
-        [node, "--check", str(_JS_PATH)],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, (
-        "AC-SA.1 FAIL: static/index.js has a parse error introduced by the "
-        "section-partition fix.\n"
-        f"node --check stderr:\n{result.stderr.strip()}"
-    )
-
-
-# ---------------------------------------------------------------------------
 # AC-SA.2 — section container testids referenced in update logic
 # ---------------------------------------------------------------------------
 

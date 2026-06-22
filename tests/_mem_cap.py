@@ -56,6 +56,38 @@ _JOB_HANDLE = None
 
 
 # ---------------------------------------------------------------------------
+# AC-5 testability seam
+# ---------------------------------------------------------------------------
+
+
+def _is_process_in_job_seam(cur_handle, job_handle) -> bool:
+    """Verify the current process is a member of the given job (AC-5 seam).
+
+    Wraps the Win32 IsProcessInJob call so tests can monkeypatch this function
+    to simulate confirmed or unconfirmed membership without fighting ctypes internals.
+
+    Signature: (cur_handle, job_handle) -> bool
+      Returns True if IsProcessInJob confirms membership, False otherwise.
+
+    This function is only called on Windows (install_total_memory_cap guards it).
+    It is defined at module level so monkeypatch can target it by name.
+    """
+    import ctypes  # noqa: PLC0415
+    import ctypes.wintypes as wintypes  # noqa: PLC0415
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.IsProcessInJob.restype = wintypes.BOOL
+    kernel32.IsProcessInJob.argtypes = [
+        wintypes.HANDLE,
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.BOOL),
+    ]
+    result = wintypes.BOOL(0)
+    kernel32.IsProcessInJob(cur_handle, job_handle, ctypes.pointer(result))
+    return bool(result)
+
+
+# ---------------------------------------------------------------------------
 # Implementation
 # ---------------------------------------------------------------------------
 
@@ -137,6 +169,7 @@ def install_total_memory_cap(cap_bytes: int) -> None:
     info.BasicLimitInformation.LimitFlags = (
         JOB_OBJECT_LIMIT_JOB_MEMORY  # total committed across the whole tree
         | _JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
+        | _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE  # AC-4: orphaned children die when controller exits
     )
     # CRITICAL: JobMemoryLimit (total) — NOT ProcessMemoryLimit (per-process).
     info.JobMemoryLimit = cap_bytes
@@ -165,14 +198,31 @@ def install_total_memory_cap(cap_bytes: int) -> None:
     kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
     ok = kernel32.AssignProcessToJobObject(job, cur)
     if not ok:
-        err = ctypes.get_last_error()
-        # ERROR_ACCESS_DENIED (5) or ERROR_INVALID_PARAMETER (87): process is already in a
-        # job that does not allow child jobs (pre-Win8) or a nested-job assignment issue.
-        # Either way the process is already bounded by an ancestor job — treat as capped.
-        if err not in (5, 87):
-            raise ctypes.WinError(err)
-        # Swallow: already in a job (nested or pre-Win8).  _CAP_INSTALLED = True below
-        # because the ancestor job's limits apply.
+        # Any failure from AssignProcessToJobObject — including ERROR_ACCESS_DENIED (5)
+        # or ERROR_INVALID_PARAMETER (87) — falls through to IsProcessInJob verification
+        # below (AC-5).  We do NOT raise here because the process may already be bounded
+        # by an ancestor job, which IsProcessInJob will confirm.
+        pass
+
+    # AC-5: Verify actual job membership before claiming the cap is installed.
+    # Delegates to _is_process_in_job_seam (module-level, patchable in tests).
+    # On the happy path (AssignProcessToJobObject succeeded) this returns True.
+    # On the assignment-failed path (already in an ancestor job) it may still
+    # return True (ancestor's limits apply — treat as bounded).  If False, the
+    # cap could not be confirmed — emit a loud warning and leave _CAP_INSTALLED False.
+    confirmed = _is_process_in_job_seam(cur, job)
+
+    if not confirmed:
+        # Cap could not be verified — emit a loud warning, leave _CAP_INSTALLED False.
+        warnings.warn(
+            "[mem-cap] WARNING: install_total_memory_cap could not confirm job membership "
+            "via IsProcessInJob — the memory cap is NOT installed.  "
+            "The host crash-protection cap is inactive.  "
+            "Set ALPHABOT_TEST_MEM_CAP_GB=0 to suppress this warning and opt out explicitly.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return
 
     # Keep the handle alive — closing it would destroy the Job Object and release limits.
     _JOB_HANDLE = job

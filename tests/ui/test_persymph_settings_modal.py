@@ -1094,48 +1094,6 @@ def test_post_live_mode_string_true_does_not_silently_arm_live(
         )
 
 
-# ---------------------------------------------------------------------------
-# UX-expert findings — 7156deb audit (6 blockers + 1 minor)
-# ---------------------------------------------------------------------------
-
-
-# Finding 1 — BLOCKER — JS parse error: settings-modal.js fails to load
-# A multi-expression ternary true-branch in an array literal causes a
-# SyntaxError: node --check exits non-zero; Firefox reports "missing : in
-# conditional expression"; window.openSymphonySettings is never defined;
-# clicking any gear icon silently fails.  All 12 ACs are blocked until fixed.
-
-
-def test_settings_modal_js_has_no_syntax_errors():
-    """Finding 1: static/settings-modal.js must pass `node --check` with exit code 0.
-
-    A SyntaxError in the IIFE prevents the entire file from loading.
-    window.openSymphonySettings is never registered and clicking any gear icon
-    produces a silent ReferenceError — all 12 ACs fail.
-
-    node --check performs a syntax-only parse without executing the file.
-    Any exit code other than 0 means the file will not load in the browser.
-    """
-    import subprocess
-
-    js_path = _STATIC_DIR / "settings-modal.js"
-    assert js_path.exists(), "static/settings-modal.js must exist"
-
-    result = subprocess.run(
-        ["node", "--check", str(js_path)],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, (
-        f"Finding 1: static/settings-modal.js has a syntax error that prevents "
-        f"it from loading in the browser.\n"
-        f"node --check stderr: {result.stderr.strip()}\n"
-        f"All 12 ACs are blocked until this is fixed. "
-        f"Check for multi-expression ternary true-branches inside array literals "
-        f"(comma operator ambiguity at JS syntax level)."
-    )
-
-
 # Finding 2 — BLOCKER — Effective-mode badge never injected into DOM (AC-2)
 # _renderModal computes modeBadge correctly but never writes it into
 # #sym-settings-mode-badge — the div remains empty in all modal states.

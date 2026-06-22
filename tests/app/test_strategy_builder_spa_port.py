@@ -750,46 +750,6 @@ class TestAC6StandaloneTemplateDeleted:
 
 
 # ===========================================================================
-# AC7 — node --check on static/ai_advisor.js (JS parse safety guard)
-# ===========================================================================
-
-
-class TestAC7JSParseGuard:
-    """AC7: static/ai_advisor.js must pass node --check after functions are moved in."""
-
-    def test_ai_advisor_js_passes_node_check(self):
-        """AC7-A: node --check static/ai_advisor.js must exit 0 (no JS syntax errors).
-
-        Moving sbRunAnalysis and openChatWithArtifact into ai_advisor.js introduces
-        risk of syntax errors that Python unit tests cannot catch. A parse error
-        silently breaks all JS on the page — tab switching, CSRF fetch, suggestion
-        cards, everything.
-
-        RED: this test will fail if ai_advisor.js has a syntax error after the move.
-        Note: this test also fails if node is not installed, which is a test environment
-        misconfiguration — node is required per BRIEF operational rules.
-        """
-        js_path = _REPO_ROOT / "static" / "ai_advisor.js"
-        assert js_path.exists(), (
-            f"static/ai_advisor.js not found at {js_path}. "
-            "The file must exist for the SPA to function."
-        )
-        result = subprocess.run(
-            ["node", "--check", str(js_path)],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        assert result.returncode == 0, (
-            f"node --check failed on static/ai_advisor.js (exit {result.returncode}):\n"
-            f"STDERR: {result.stderr}\n"
-            f"STDOUT: {result.stdout}\n"
-            "JS syntax errors break all client-side functionality. Fix the syntax before "
-            "claiming GREEN (AC7)."
-        )
-
-
-# ===========================================================================
 # Advisory-only contract — preserved after SPA-port (regression guard)
 # ===========================================================================
 

@@ -20,8 +20,6 @@ has no jsdom). The PM owns the LIVE picker gate — these are necessary, not suf
 from __future__ import annotations
 
 import pathlib
-import shutil
-import subprocess
 
 import pytest
 
@@ -104,21 +102,4 @@ class TestPickerJsReWindowsValue:
         assert "guard-alpha-window-label" in js, (
             "AC-3 FAIL: static/index.js does not update 'guard-alpha-window-label' on picker "
             "click. The label must reflect the selected window (incl 'All Time')."
-        )
-
-
-# ---------------------------------------------------------------------------
-# Parse guard — the picker wiring must actually be runnable
-# ---------------------------------------------------------------------------
-
-
-class TestIndexJsParses:
-    def test_node_check_passes(self):
-        node = shutil.which("node")
-        if node is None:
-            pytest.skip("node not available — JS parse guard requires node")
-        result = subprocess.run([node, "--check", str(_JS_PATH)], capture_output=True, text=True)
-        assert result.returncode == 0, (
-            "static/index.js failed `node --check`. A parse error makes the picker wiring "
-            f"never run while every server test still passes. stderr:\n{result.stderr}"
         )

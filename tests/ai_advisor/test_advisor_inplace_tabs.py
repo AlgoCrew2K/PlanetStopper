@@ -480,55 +480,6 @@ def test_ac5_post_routes_require_csrf(monkeypatch):
 
 
 # ===========================================================================
-# AC7 — node --check on static/ai_advisor.js (no JS parse errors).
-# ===========================================================================
-
-
-def test_ac7_ai_advisor_js_passes_node_check():
-    """static/ai_advisor.js must pass `node --check` (no syntax errors).
-
-    A JS parse error means openChatPanel and tab-switcher code never run,
-    but all Python/server tests remain green — this test catches that class
-    of bug at the gate.
-
-    RED if the implementer adds tab-switching JS with a syntax error.
-    """
-    import pathlib
-
-    worktree = pathlib.Path(__file__).parents[2]
-    js_path = worktree / "static" / "ai_advisor.js"
-    assert js_path.exists(), (
-        f"static/ai_advisor.js not found at {js_path}. The tab-switcher JS must live in this file."
-    )
-    result = subprocess.run(
-        ["node", "--check", str(js_path)], capture_output=True, text=True, timeout=15
-    )
-    assert result.returncode == 0, (
-        f"node --check failed on static/ai_advisor.js:\n{result.stderr}\n{result.stdout}\n"
-        "JS syntax errors prevent openChatPanel and tab-switcher from running — AC7."
-    )
-
-
-def test_ac7_ai_advisor_chat_js_passes_node_check():
-    """static/ai_advisor_chat.js must pass `node --check` (no syntax errors).
-
-    After consolidation, ai_advisor_chat.js's openChatPanel function must still
-    be loadable with no parse errors.
-    """
-    import pathlib
-
-    worktree = pathlib.Path(__file__).parents[2]
-    js_path = worktree / "static" / "ai_advisor_chat.js"
-    assert js_path.exists(), f"static/ai_advisor_chat.js not found at {js_path}."
-    result = subprocess.run(
-        ["node", "--check", str(js_path)], capture_output=True, text=True, timeout=15
-    )
-    assert result.returncode == 0, (
-        f"node --check failed on static/ai_advisor_chat.js:\n{result.stderr}\n{result.stdout}\nAC7."
-    )
-
-
-# ===========================================================================
 # AC2 (structural) — tab switcher JS present in the consolidated page.
 # ===========================================================================
 

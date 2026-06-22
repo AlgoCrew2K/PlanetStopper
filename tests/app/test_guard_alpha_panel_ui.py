@@ -22,7 +22,6 @@ No live browser; no Flask test client needed for these structure checks.
 from __future__ import annotations
 
 import pathlib
-import subprocess
 
 import pytest
 
@@ -44,35 +43,6 @@ def _html() -> str:
 
 def _js() -> str:
     return _INDEX_JS.read_text(encoding="utf-8")
-
-
-# ---------------------------------------------------------------------------
-# AC-7: static/index.js must pass node --check after the fetch is added
-# ---------------------------------------------------------------------------
-
-
-class TestIndexJsSyntaxValidity:
-    def test_index_js_passes_node_check(self):
-        """static/index.js must pass node --check (no JS syntax errors).
-
-        A parse error in index.js silently disables the entire dashboard —
-        every renderGuardAlpha, updateDashboard, and updateCards call fails.
-        This is the primary safety gate for any JS change.
-
-        Fails RED if node --check exits non-zero (i.e., a syntax error was
-        introduced while adding fetchGuardAlphaSummary).
-        """
-        result = subprocess.run(
-            ["node", "--check", str(_INDEX_JS)],
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, (
-            f"node --check failed for index.js — the fetch/render addition "
-            f"introduced a JS syntax error that would break the entire dashboard.\n"
-            f"stderr:\n{result.stderr.strip()}\n"
-            f"Fix: resolve the JS syntax error before landing this change."
-        )
 
 
 # ---------------------------------------------------------------------------

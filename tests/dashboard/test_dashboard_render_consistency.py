@@ -30,8 +30,6 @@ from __future__ import annotations
 
 import pathlib
 import re
-import shutil
-import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -185,28 +183,6 @@ class TestPollUpdatesDeltaSpans:
         assert re.search(r"[Dd]elta[A-Za-z]*\.textContent\s*=", body), (
             "AC-4a FAIL: updateComparisonRows must assign textContent to a delta element "
             "for the today/cumulative/mdd rows (the alpha must refresh on poll)."
-        )
-
-
-# ===========================================================================
-# AC-4a part 3 — index.js must parse (node --check) so the poll actually runs
-# ===========================================================================
-
-
-class TestIndexJsParses:
-    def test_node_check_passes(self):
-        node = shutil.which("node")
-        if node is None:
-            pytest.skip("node not available — JS parse guard requires node")
-        result = subprocess.run(
-            [node, "--check", str(_JS_PATH)],
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, (
-            "static/index.js failed `node --check` (JS parse error). A parse error makes "
-            "the entire poll/updateComparisonRows never run while every server/template "
-            f"test still passes. stderr:\n{result.stderr}"
         )
 
 

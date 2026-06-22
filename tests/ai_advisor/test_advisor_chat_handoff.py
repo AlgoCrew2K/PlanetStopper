@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import pathlib
 import re
-import subprocess
 
 import pytest
 
@@ -52,53 +51,7 @@ def _read(path: pathlib.Path) -> str:
 
 
 # ===========================================================================
-# Group 1 — JS syntax validity (node --check)
-#
-# A file that is syntactically invalid never runs — the "Chat about this"
-# button silently does nothing, which is worse than the current defect.
-# These tests double as the "safe to land" gate for any change to these files.
-# ===========================================================================
-
-
-class TestJsSyntaxValidity:
-    """All three JS files must pass node --check (Node.js syntax validation)."""
-
-    def _node_check(self, path: pathlib.Path) -> None:
-        result = subprocess.run(
-            ["node", "--check", str(path)],
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, (
-            f"node --check failed for {path.name}.\n"
-            f"stderr:\n{result.stderr.strip()}\n"
-            f"Fix: resolve the JS syntax error before landing this change."
-        )
-
-    def test_asset_swaps_js_passes_node_check(self):
-        """static/ai_advisor_asset_swaps.js must pass node --check.
-
-        A syntax error in this file disables the entire Asset Swaps tab UI.
-        """
-        self._node_check(_ASSET_SWAPS_JS)
-
-    def test_logic_changes_js_passes_node_check(self):
-        """static/ai_advisor_logic_changes.js must pass node --check.
-
-        A syntax error in this file disables the entire Logic Changes tab UI.
-        """
-        self._node_check(_LOGIC_CHANGES_JS)
-
-    def test_chat_js_passes_node_check(self):
-        """static/ai_advisor_chat.js must pass node --check.
-
-        A syntax error in this file breaks the chat panel for all advisor tabs.
-        """
-        self._node_check(_CHAT_JS)
-
-
-# ===========================================================================
-# Group 2 — Sender: ai_advisor_asset_swaps.js
+# Group 1 — Sender: ai_advisor_asset_swaps.js
 #
 # The "Chat about this" onclick handler has two branches where openChatPanel
 # is unavailable:

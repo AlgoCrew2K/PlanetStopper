@@ -28,6 +28,31 @@ import pytest
 _SESSION_TEMP_DIR: tempfile.TemporaryDirectory | None = None
 
 
+def _assert_safe_worker_count(numprocesses) -> None:
+    """Reject unsafe xdist worker counts before install_from_env() runs (AC-6).
+
+    Raises SystemExit when numprocesses is "auto" or an integer > 4.
+    Accepts 0, 1, 2, 3, 4, None (xdist disabled or not active).
+
+    Extracted as a top-level helper so tests can call it directly without
+    triggering cap-install or env side-effects (testability seam).
+
+    Background: "-n auto" uses all CPU cores.  On the 24-core dev host this
+    fans out to 24 xdist workers × ~1-2 GB each = ~238 GB committed, which
+    caused two Kernel-Power 41 hard-reboots (2026-06-21).  Maximum safe = 4.
+    This guard runs on Linux CI too so no uncapped run sneaks through pipelines.
+    """
+    if numprocesses is None:
+        return
+    if numprocesses == "auto" or (isinstance(numprocesses, int) and numprocesses > 4):
+        raise SystemExit(
+            f"[mem-cap] Rejecting xdist numprocesses={numprocesses!r}: "
+            "exceeds the safe ceiling of 4 on this host (67.8 GB RAM + 4 GB pf). "
+            "Two Kernel-Power 41 hard-reboots were caused by -n auto fan-out. "
+            "Use -n 0..4.  To opt out, set ALPHABOT_TEST_MEM_CAP_GB=0."
+        )
+
+
 def pytest_configure(config):
     """Set DB_PATH before any test module is imported (pre-collection hook).
 
@@ -73,6 +98,9 @@ def pytest_configure(config):
     # that deliberately wants more parallelism in a controlled environment).
     os.environ.setdefault("ALPHABOT_MAX_JOBS", "1")
     os.environ.setdefault("OPTUNA_N_JOBS", "1")
+
+    # AC-6: Reject unsafe xdist worker counts EARLY — before install_from_env().
+    _assert_safe_worker_count(getattr(config.option, "numprocesses", None))
 
     # Install a Windows Job Object total-tree memory cap before xdist workers spawn.
     # On Linux/CI this is a no-op.  Cap value comes from ALPHABOT_TEST_MEM_CAP_GB

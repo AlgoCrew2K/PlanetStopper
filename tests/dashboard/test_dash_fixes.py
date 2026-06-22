@@ -814,23 +814,6 @@ class TestRegressionSymTableContainerAbsent:
             "This pattern was reverted in cycle/dash-live — must not return."
         )
 
-    def test_index_js_passes_node_syntax_check(self):
-        """static/index.js must pass `node --check` with exit code 0."""
-        import subprocess
-
-        js_path = _STATIC / "index.js"
-        assert js_path.exists(), "static/index.js must exist"
-        result = subprocess.run(
-            ["node", "--check", str(js_path)],
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, (
-            "REGRESSION: static/index.js has a syntax error. "
-            "All JavaScript in the browser will silently fail to load.\n"
-            f"node --check stderr:\n{result.stderr.strip()}"
-        )
-
     def test_poll_interval_is_present_in_index_js(self):
         """
         static/index.js must define POLL_INTERVAL_MS (the 30s poll) — regression

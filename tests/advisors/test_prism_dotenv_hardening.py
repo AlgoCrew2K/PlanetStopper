@@ -80,27 +80,17 @@ def _clean_env(extra: dict[str, str] | None = None) -> dict[str, str]:
 def _init_db_at(db_path: pathlib.Path) -> None:
     """Initialise a minimal prism_audit_log table in a fresh SQLite file.
 
-    The real database.init_db() runs migrations; here we just need the table
-    the CLI writes to so the subprocess can succeed without the full stack.
-    We call the real init_db via a helper subprocess to avoid importing
-    database in the test process with an unexpected DB_PATH.
+    AC-3: replaced the subprocess spawn (which started a new Python process and
+    cost ~30 MB + startup overhead) with a direct in-process call.  The
+    conftest.py _isolate_db autouse fixture + per-call DB_PATH override ensures
+    the production DB is never touched.
     """
-    # Use a helper script so we don't import database into the test process
-    # with the wrong DB_PATH.
-    script = textwrap.dedent(f"""
-        import os, sys
-        os.environ["DB_PATH"] = {str(db_path)!r}
-        sys.path.insert(0, {str(_WORKTREE)!r})
-        import database
-        database.init_db()
-    """)
-    result = subprocess.run(
-        [_PYTHON, "-c", script],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, f"init_db helper failed: stderr={result.stderr!r}"
+    import os  # noqa: PLC0415
+
+    import database  # noqa: PLC0415
+
+    os.environ["DB_PATH"] = str(db_path)
+    database.init_db()
 
 
 # ===========================================================================

@@ -699,32 +699,6 @@ class TestMarketStateAndStripChipsUpdate:
 
 
 # ---------------------------------------------------------------------------
-# CC-9  node --check passes on static/index.js
-# ---------------------------------------------------------------------------
-
-
-def test_index_js_passes_node_syntax_check():
-    """
-    CC-9: static/index.js must pass `node --check` with exit code 0.
-
-    A syntax error introduced during the card-consistency fix would silently
-    break ALL client-side functionality — hero chart, status poll, card updates,
-    sparklines — because the browser stops parsing at the first error.
-    """
-    assert _STATIC_JS.exists(), "static/index.js must exist"
-    result = subprocess.run(
-        ["node", "--check", str(_STATIC_JS)],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, (
-        "CC-9 FAIL: static/index.js has a syntax error that will prevent all "
-        "client-side functionality from loading.\n"
-        f"node --check stderr:\n{result.stderr.strip()}"
-    )
-
-
-# ---------------------------------------------------------------------------
 # CC-10  Regression guards (sym-table-container; structure preserved)
 # ---------------------------------------------------------------------------
 

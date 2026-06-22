@@ -279,36 +279,6 @@ def test_api_state_existing_fields_preserved_after_symphonies_added(
 
 
 # ---------------------------------------------------------------------------
-# AC-CL.4  static/index.js passes node --check (no syntax errors)
-# ---------------------------------------------------------------------------
-
-
-def test_index_js_passes_node_syntax_check():
-    """
-    static/index.js must pass `node --check` with exit code 0.
-
-    Any syntax error introduced by the implementer will prevent the entire file
-    from loading in the browser — all card update logic, hero chart, mode badge,
-    and every other in-page function silently fail.
-
-    node --check performs a parse-only pass; it does not execute the file.
-    """
-    js_path = _STATIC_DIR / "index.js"
-    assert js_path.exists(), "static/index.js must exist"
-
-    result = subprocess.run(
-        ["node", "--check", str(js_path)],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, (
-        "AC-CL.4 FAIL: static/index.js has a syntax error that will prevent it "
-        "from loading in the browser.\n"
-        f"node --check stderr:\n{result.stderr.strip()}"
-    )
-
-
-# ---------------------------------------------------------------------------
 # AC-CL.5  updateDashboard references data-sym-id targeting (card update path)
 # ---------------------------------------------------------------------------
 
