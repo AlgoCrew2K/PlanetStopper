@@ -74,6 +74,20 @@ def pytest_configure(config):
     os.environ.setdefault("ALPHABOT_MAX_JOBS", "1")
     os.environ.setdefault("OPTUNA_N_JOBS", "1")
 
+    # AC-6: Reject xdist worker counts that risk blowing the 67.8 GB dev-host ceiling.
+    # "-n auto" uses all CPU cores (e.g. 24 workers × ~1-2 GB each = ~238 GB committed),
+    # which caused two PC hard-reboots (Kernel-Power 41, 2026-06-21).  Maximum safe = 4.
+    # This guard runs on Linux CI too so no uncapped run can sneak through cloud pipelines.
+    numprocesses = getattr(config.option, "numprocesses", None)
+    if numprocesses is not None:
+        if numprocesses == "auto" or (isinstance(numprocesses, int) and numprocesses > 4):
+            raise SystemExit(
+                f"[mem-cap] Rejecting xdist numprocesses={numprocesses!r}: "
+                "exceeds the safe ceiling of 4 on this host (67.8 GB RAM + 4 GB pf). "
+                "Two Kernel-Power 41 hard-reboots were caused by -n auto fan-out. "
+                "Use -n 0..4.  To opt out, set ALPHABOT_TEST_MEM_CAP_GB=0."
+            )
+
     # Install a Windows Job Object total-tree memory cap before xdist workers spawn.
     # On Linux/CI this is a no-op.  Cap value comes from ALPHABOT_TEST_MEM_CAP_GB
     # (default 24 GB); set to 0 to disable with a loud warning.
