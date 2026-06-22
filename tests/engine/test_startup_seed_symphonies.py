@@ -41,9 +41,7 @@ import database
 # Fixture loading
 # ---------------------------------------------------------------------------
 
-_FIXTURES = (
-    pathlib.Path(__file__).parent.parent / "fixtures" / "engine" / "startup_seed"
-)
+_FIXTURES = pathlib.Path(__file__).parent.parent / "fixtures" / "engine" / "startup_seed"
 
 
 def _load_fixture() -> dict:
@@ -211,14 +209,15 @@ class TestIdempotencyNonClobbering:
         # save_state is the REAL one — it wrote the sentinel above.
         # Now we track whether the seed path calls it again.
         with patch.object(database, "save_state", wraps=database.save_state) as spy_save:
-            with patch.object(
-                alpha_bot_execution, "fetch_symphony_stats", return_value=syms
-            ):
+            with patch.object(alpha_bot_execution, "fetch_symphony_stats", return_value=syms):
                 alpha_bot_execution.ensure_bot_state_seeded()
 
-            spy_save.assert_not_called(), (
-                "ensure_bot_state_seeded() must NOT call save_state when bot_state "
-                "already has symphony entries (AC-2 idempotency)."
+            (
+                spy_save.assert_not_called(),
+                (
+                    "ensure_bot_state_seeded() must NOT call save_state when bot_state "
+                    "already has symphony entries (AC-2 idempotency)."
+                ),
             )
 
         state = database.load_state()
@@ -248,14 +247,15 @@ class TestIdempotencyNonClobbering:
         sentinel_id = fixture["symphonies"][0]["id"]
         _save_sentinel_bot_state(sentinel_id)
 
-        with patch.object(
-            alpha_bot_execution, "fetch_symphony_stats"
-        ) as mock_fetch:
+        with patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch:
             alpha_bot_execution.ensure_bot_state_seeded()
 
-        mock_fetch.assert_not_called(), (
-            "fetch_symphony_stats must NOT be called by ensure_bot_state_seeded() "
-            "when bot_state already contains symphony entries (AC-2 early-return)."
+        (
+            mock_fetch.assert_not_called(),
+            (
+                "fetch_symphony_stats must NOT be called by ensure_bot_state_seeded() "
+                "when bot_state already contains symphony entries (AC-2 early-return)."
+            ),
         )
 
     def test_seed_idempotent_called_twice_on_empty_then_seeded(self):
@@ -348,9 +348,12 @@ class TestNoCollectionPollution:
         ):
             alpha_bot_execution.ensure_bot_state_seeded()
 
-        mock_record.assert_not_called(), (
-            "database.record_shadow_observation must NOT be called during startup seed. "
-            "The shadow_history telemetry write path must be excluded from the seed helper."
+        (
+            mock_record.assert_not_called(),
+            (
+                "database.record_shadow_observation must NOT be called during startup seed. "
+                "The shadow_history telemetry write path must be excluded from the seed helper."
+            ),
         )
 
     def test_seed_does_not_write_post_mortem_files(self):
@@ -509,14 +512,18 @@ class TestMarketHoursCycleContinuity:
             alpha_bot_execution.ensure_bot_state_seeded()
 
         state_after_seed = database.load_state()
-        key_count_after_seed = len([k for k in state_after_seed if isinstance(state_after_seed[k], dict)])
+        key_count_after_seed = len(
+            [k for k in state_after_seed if isinstance(state_after_seed[k], dict)]
+        )
 
         # Second seed call must be a no-op because entries now exist
         with patch.object(alpha_bot_execution, "fetch_symphony_stats", return_value=syms):
             alpha_bot_execution.ensure_bot_state_seeded()
 
         state_after_second = database.load_state()
-        key_count_after_second = len([k for k in state_after_second if isinstance(state_after_second[k], dict)])
+        key_count_after_second = len(
+            [k for k in state_after_second if isinstance(state_after_second[k], dict)]
+        )
 
         assert key_count_after_second == key_count_after_seed, (
             f"Symphony entry count must be unchanged after a second ensure_bot_state_seeded() "
@@ -583,9 +590,7 @@ class TestEmptyAccountSafe:
                 )
 
         state = database.load_state()
-        symphony_entries = {
-            k: v for k, v in state.items() if isinstance(v, dict)
-        }
+        symphony_entries = {k: v for k, v in state.items() if isinstance(v, dict)}
         assert symphony_entries == {}, (
             f"bot_state must have no symphony entries after seeding an empty account. "
             f"Got: {symphony_entries}"
@@ -605,9 +610,12 @@ class TestEmptyAccountSafe:
         ):
             alpha_bot_execution.ensure_bot_state_seeded()
 
-        mock_save.assert_not_called(), (
-            "ensure_bot_state_seeded() must not call save_state when no symphonies "
-            "are seeded (empty account). AC-6: no-op on empty result."
+        (
+            mock_save.assert_not_called(),
+            (
+                "ensure_bot_state_seeded() must not call save_state when no symphonies "
+                "are seeded (empty account). AC-6: no-op on empty result."
+            ),
         )
 
 
@@ -655,10 +663,13 @@ class TestStartupCostBounded:
         ) as mock_fetch:
             alpha_bot_execution.seed_symphonies_into_bot_state(database.load_state())
 
-        mock_fetch.assert_called(), (
-            "seed_symphonies_into_bot_state must call fetch_symphony_stats (not raw "
-            "requests.get) to inherit the existing bounded timeout.  AC-7: no new "
-            "magic timeouts; reuse the existing network boundary."
+        (
+            mock_fetch.assert_called(),
+            (
+                "seed_symphonies_into_bot_state must call fetch_symphony_stats (not raw "
+                "requests.get) to inherit the existing bounded timeout.  AC-7: no new "
+                "magic timeouts; reuse the existing network boundary."
+            ),
         )
 
     def test_seed_helper_calls_fetch_once_per_account(self):
@@ -882,10 +893,13 @@ class TestPresenceCheckExcludesMetadataKeys:
         ) as mock_fetch:
             alpha_bot_execution.ensure_bot_state_seeded()
 
-        mock_fetch.assert_not_called(), (
-            "ensure_bot_state_seeded() must NOT call fetch_symphony_stats when a real "
-            "symphony entry exists alongside metadata keys. The presence check must "
-            "detect real entries even when reserved keys are also present."
+        (
+            mock_fetch.assert_not_called(),
+            (
+                "ensure_bot_state_seeded() must NOT call fetch_symphony_stats when a real "
+                "symphony entry exists alongside metadata keys. The presence check must "
+                "detect real entries even when reserved keys are also present."
+            ),
         )
 
         state = database.load_state()

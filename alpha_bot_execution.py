@@ -1967,10 +1967,12 @@ def seed_symphonies_into_bot_state(bot_state: dict) -> int:
 # metadata-only state is not mistaken for an already-seeded state.
 # Extends database._WIPE_RESERVED_KEYS (date / last_execution_mode /
 # last_market_close_snapshot) with additional engine-level metadata keys.
-_SEED_RESERVED_KEYS: frozenset[str] = frozenset(database._WIPE_RESERVED_KEYS) | frozenset({
-    "fleet_correlation_alert",
-    "last_successful_cycle_at",
-})
+_SEED_RESERVED_KEYS: frozenset[str] = frozenset(database._WIPE_RESERVED_KEYS) | frozenset(
+    {
+        "fleet_correlation_alert",
+        "last_successful_cycle_at",
+    }
+)
 
 
 def ensure_bot_state_seeded() -> None:
@@ -1992,8 +1994,7 @@ def ensure_bot_state_seeded() -> None:
         # are both dict-valued but are engine metadata, not symphony entries — they must
         # not trigger a false-positive early-return (_SEED_RESERVED_KEYS).
         has_symphony_entry = any(
-            isinstance(v, dict) and k not in _SEED_RESERVED_KEYS
-            for k, v in bot_state.items()
+            isinstance(v, dict) and k not in _SEED_RESERVED_KEYS for k, v in bot_state.items()
         )
         if has_symphony_entry:
             return  # already seeded — no-op

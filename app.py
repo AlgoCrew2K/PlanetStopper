@@ -4380,6 +4380,7 @@ if __name__ == "__main__":
     # Lazy import avoids any circular-import risk at module level; the call is a
     # no-op when entries already exist (idempotent — AC-2) and never raises (AC-4).
     from alpha_bot_execution import ensure_bot_state_seeded  # noqa: PLC0415
+
     ensure_bot_state_seeded()
 
     # Start the scheduler thread
