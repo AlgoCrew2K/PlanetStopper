@@ -939,6 +939,356 @@ class TestArticleCorpusPipelineContract:
 
 
 # ===========================================================================
+# AC-1b (live): guard_alpha_summary — bot_state JSON blob lookup (not column)
+# ===========================================================================
+
+
+class TestGuardAlphaSummaryBotStateBlob:
+    """AC-1b: guard_alpha_summary() must read position_value from the bot_state
+    JSON blob (database.load_state() → dict keyed by symphony_id), NOT from a
+    non-existent position_value column.
+
+    These tests go RED until app.py replaces the broken subquery
+      SELECT position_value FROM bot_state WHERE symphony_id = t.symphony_id
+    with a load_state()-based lookup.
+
+    Root cause (ld-ux live audit, 2026-06-22): bot_state schema is a single-row
+    blob (id, data TEXT).  The correlated subquery raises OperationalError on
+    the live droplet; the outer except Exception swallows it → guard_event_count=0
+    despite 11 exit_triggers rows.
+    """
+
+    @pytest.fixture
+    def db_with_blob_bot_state(self, tmp_path, monkeypatch):
+        """Minimal DB matching the REAL bot_state schema: single blob row id=1."""
+        import json as _json
+        db_path = str(tmp_path / "test_blob_state.db")
+        conn = sqlite3.connect(db_path)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS exit_triggers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symphony_id TEXT NOT NULL,
+                ts_utc TEXT NOT NULL,
+                at_return REAL NOT NULL,
+                trigger_reason TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS shadow_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symphony_id TEXT NOT NULL,
+                trading_day TEXT NOT NULL,
+                ts_utc TEXT NOT NULL,
+                shadow_return REAL NOT NULL,
+                current_return REAL NOT NULL,
+                is_post_trigger INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS bot_state (
+                id INTEGER PRIMARY KEY,
+                data TEXT
+            );
+        """)
+        # Two exit_triggers with positive divergence
+        conn.executemany(
+            "INSERT INTO exit_triggers (symphony_id, ts_utc, at_return, trigger_reason) VALUES (?,?,?,?)",
+            [
+                ("SYM_A", "2026-06-22T13:43:00Z", 2.5, "TAKE_PROFIT"),
+                ("SYM_B", "2026-06-22T14:23:00Z", 1.8, "VWAP_BREAKDOWN"),
+            ],
+        )
+        # shadow_history: current_return has drifted negative post-exit
+        conn.executemany(
+            "INSERT INTO shadow_history (symphony_id, trading_day, ts_utc, shadow_return, current_return, is_post_trigger) VALUES (?,?,?,?,?,?)",
+            [
+                ("SYM_A", "2026-06-22", "2026-06-22T16:00:00Z", 2.5, -0.5, 1),
+                ("SYM_B", "2026-06-22", "2026-06-22T16:00:00Z", 1.8, -1.2, 1),
+            ],
+        )
+        # bot_state: real schema — single JSON blob row
+        blob = {
+            "SYM_A": {"name": "Alpha", "current_value": 15000.0, "current_return": -0.5},
+            "SYM_B": {"name": "Beta",  "current_value": 20000.0, "current_return": -1.2},
+        }
+        conn.execute("INSERT INTO bot_state (id, data) VALUES (1, ?)", (_json.dumps(blob),))
+        conn.commit()
+        conn.close()
+        monkeypatch.setenv("DB_PATH", db_path)
+        return db_path
+
+    def test_guard_event_count_nonzero_with_blob_bot_state(
+        self, client, db_with_blob_bot_state, tmp_path, monkeypatch
+    ):
+        """AC-1b: guard_event_count must be 2 on a DB with the real bot_state schema.
+
+        Fails RED because the current query uses `position_value` column which does
+        not exist in the blob schema — the entire try block fails silently.
+        """
+        import analytics as analytics_module
+        empty_pm = tmp_path / "no_pm"
+        empty_pm.mkdir()
+        monkeypatch.setattr(analytics_module, "_POST_MORTEMS_DIR", str(empty_pm))
+
+        resp = client.get("/api/guard-alpha-summary")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["guard_event_count"] == 2, (
+            f"guard_event_count must be 2 with 2 exit_triggers rows and real blob bot_state. "
+            f"Got {data['guard_event_count']}. "
+            "RED: app.py correlated subquery SELECT position_value FROM bot_state "
+            "raises OperationalError on the real schema; except swallows it → 0."
+        )
+
+    def test_cumulative_saved_dollars_positive_with_blob_bot_state(
+        self, client, db_with_blob_bot_state, tmp_path, monkeypatch
+    ):
+        """AC-1b: cumulative_saved_dollars is positive when bot exited higher than held.
+
+        The dollar formula requires reading current_value from the bot_state blob dict,
+        not from a non-existent column.  Fails RED until load_state() is used.
+        """
+        import analytics as analytics_module
+        empty_pm = tmp_path / "no_pm2"
+        empty_pm.mkdir()
+        monkeypatch.setattr(analytics_module, "_POST_MORTEMS_DIR", str(empty_pm))
+
+        resp = client.get("/api/guard-alpha-summary")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["cumulative_saved_dollars"] > 0, (
+            f"cumulative_saved_dollars must be positive with at_return > current_return "
+            f"and position_value > 0. Got {data['cumulative_saved_dollars']}. "
+            "RED: position_value lookup fails because column does not exist in blob schema."
+        )
+
+
+# ===========================================================================
+# AC-3b (live): history route — trigger_count backfilled from exit_triggers
+# ===========================================================================
+
+
+class TestHistoryRouteTriggerCountBackfill:
+    """AC-3b: when exit_triggers is backfilled into todays_exits, trigger_count
+    must also be updated in the stats dict.
+
+    ld-ux live audit: History tab shows 'Today's exits (0)' despite 11 exit_triggers
+    rows because stats['trigger_count'] is never updated by the AC-3 backfill code.
+    """
+
+    @pytest.fixture
+    def db_with_exit_triggers_only(self, tmp_path, monkeypatch):
+        """Minimal DB: exit_triggers rows, no post_mortem files."""
+        db_path = str(tmp_path / "test_history_triggers.db")
+        conn = sqlite3.connect(db_path)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS exit_triggers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symphony_id TEXT NOT NULL,
+                ts_utc TEXT NOT NULL,
+                at_return REAL NOT NULL,
+                trigger_reason TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS bot_state (
+                id INTEGER PRIMARY KEY,
+                data TEXT
+            );
+        """)
+        conn.executemany(
+            "INSERT INTO exit_triggers (symphony_id, ts_utc, at_return, trigger_reason) VALUES (?,?,?,?)",
+            [
+                ("SYM_A", "2026-06-22T13:43:00Z", 2.5, "TAKE_PROFIT"),
+                ("SYM_B", "2026-06-22T14:23:00Z", 1.8, "VWAP_BREAKDOWN"),
+                ("SYM_C", "2026-06-22T15:01:00Z", 0.9, "VWAP_BREAKDOWN"),
+            ],
+        )
+        conn.execute("INSERT INTO bot_state (id, data) VALUES (1, '{}')")
+        conn.commit()
+        conn.close()
+        monkeypatch.setenv("DB_PATH", db_path)
+        return db_path
+
+    def test_history_trigger_count_reflects_exit_triggers(
+        self, client, db_with_exit_triggers_only, tmp_path, monkeypatch
+    ):
+        """AC-3b: /api/history/<days> trigger_count must equal exit_triggers row count
+        when no post_mortem files exist.
+
+        Fails RED because the AC-3 backfill populates todays_exits but never updates
+        stats['trigger_count'] — it remains 0 from get_history_summary().
+        """
+        import analytics as analytics_module
+        empty_pm = tmp_path / "no_pm_hist"
+        empty_pm.mkdir()
+        monkeypatch.setattr(analytics_module, "_POST_MORTEMS_DIR", str(empty_pm))
+
+        resp = client.get("/api/history/30")
+        assert resp.status_code == 200
+        data = resp.get_json()
+
+        assert data.get("trigger_count", 0) == 3, (
+            f"trigger_count must be 3 (from 3 exit_triggers rows). "
+            f"Got trigger_count={data.get('trigger_count')}. "
+            "RED: AC-3 backfill sets todays_exits but not trigger_count."
+        )
+
+    def test_history_todays_exits_length_matches_trigger_count(
+        self, client, db_with_exit_triggers_only, tmp_path, monkeypatch
+    ):
+        """AC-3b: len(todays_exits) must match trigger_count — they must be consistent.
+
+        Fails RED if one is backfilled but not the other.
+        """
+        import analytics as analytics_module
+        empty_pm = tmp_path / "no_pm_hist2"
+        empty_pm.mkdir()
+        monkeypatch.setattr(analytics_module, "_POST_MORTEMS_DIR", str(empty_pm))
+
+        resp = client.get("/api/history/30")
+        assert resp.status_code == 200
+        data = resp.get_json()
+
+        todays_exits = data.get("todays_exits", [])
+        trigger_count = data.get("trigger_count", 0)
+        assert len(todays_exits) == trigger_count, (
+            f"len(todays_exits)={len(todays_exits)} must equal "
+            f"trigger_count={trigger_count}. "
+            "RED: backfill sets one but not the other."
+        )
+        assert trigger_count > 0, (
+            f"trigger_count must be > 0 when exit_triggers has rows. Got {trigger_count}."
+        )
+
+
+# ===========================================================================
+# AC-2b (live): performance route — single-day shadow_history fallback
+# ===========================================================================
+
+
+class TestPerformanceSingleDayShadowFallback:
+    """AC-2b: /api/performance must return observation_count >= 1 from
+    shadow_history even when shadow_history has only 1 distinct trading_day.
+
+    ld-ux live audit: get_portfolio_bot_and_held_daily_returns() returns None
+    when len(out_dates) < 2 (its own guard at analytics.py).  The AC-2 fallback
+    in app.py checks `if _fallback is not None` — with 1 day the fallback is
+    None and observation_count stays 0.
+
+    The fix must handle the single-day case: either by calling a different
+    analytics function that returns single-day data, or by bypassing the < 2
+    guard at the route level.
+    """
+
+    def test_performance_observation_count_nonzero_with_single_shadow_day(
+        self, client, monkeypatch
+    ):
+        """AC-2b: observation_count >= 1 when shadow_history has exactly 1 trading day.
+
+        Root cause: both get_portfolio_bot_and_held_daily_returns AND
+        get_portfolio_daily_returns_from_shadow return None when len(out_dates) < 2
+        (each has its own '< 2' guard). With only 1 trading day on a fresh droplet,
+        every analytics fallback returns None and the route returns observation_count=0.
+
+        Fix: app.py api_performance() needs a third fallback when both analytics
+        functions return None — query shadow_history directly for the single trading
+        day and build a minimal 1-entry dates/returns list.  Shape contract:
+          dates = ["YYYY-MM-DD"], live_returns = [float], shadow_returns = [float]
+          observation_count = 1, insufficient_history = True (honest — 1 < MIN_OBS)
+
+        This test mocks both analytics functions to return None (simulating the
+        1-day scenario) and mocks a direct DB shadow_history query to return a
+        minimal single-day series.  Fails RED until the route implements the
+        single-day direct-query path.
+        """
+        import analytics as analytics_module
+
+        # No post-mortem history
+        monkeypatch.setattr(
+            analytics_module,
+            "get_history_with_cache_invalidation",
+            lambda **kw: {},
+        )
+        monkeypatch.setattr(
+            analytics_module,
+            "compute_aggregate_returns",
+            lambda history: ([], [], []),
+        )
+        # Both multi-day analytics functions return None (1-day guard fires)
+        monkeypatch.setattr(
+            analytics_module,
+            "get_portfolio_bot_and_held_daily_returns",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            analytics_module,
+            "get_portfolio_daily_returns_from_shadow",
+            lambda *a, **kw: None,
+        )
+
+        # Mock the expected single-day direct query seam.
+        # The implementer must add a function (or inline the query) that returns
+        # a 1-entry tuple even when out_dates has only 1 day.
+        # We mock analytics.get_single_day_shadow_returns as the seam name;
+        # implementer may choose a different name but must provide the hook.
+        monkeypatch.setattr(
+            analytics_module,
+            "get_single_day_shadow_returns",
+            lambda *a, **kw: (["2026-06-22"], [1.376], [0.481]),
+            raising=False,  # attribute may not exist yet (RED)
+        )
+
+        resp = client.get("/api/performance")
+        assert resp.status_code == 200
+        data = resp.get_json()
+
+        assert data.get("observation_count", 0) >= 1, (
+            f"observation_count must be >= 1 when shadow_history has 1 trading day. "
+            f"Got observation_count={data.get('observation_count')}. "
+            "RED: route needs a single-day fallback (e.g. analytics.get_single_day_shadow_returns) "
+            "when both multi-day analytics functions return None."
+        )
+
+    def test_performance_dates_nonempty_with_single_shadow_day(
+        self, client, monkeypatch
+    ):
+        """AC-2b: dates must be non-empty from single-day shadow_history fallback."""
+        import analytics as analytics_module
+
+        monkeypatch.setattr(
+            analytics_module,
+            "get_history_with_cache_invalidation",
+            lambda **kw: {},
+        )
+        monkeypatch.setattr(
+            analytics_module,
+            "compute_aggregate_returns",
+            lambda history: ([], [], []),
+        )
+        monkeypatch.setattr(
+            analytics_module,
+            "get_portfolio_bot_and_held_daily_returns",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            analytics_module,
+            "get_portfolio_daily_returns_from_shadow",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            analytics_module,
+            "get_single_day_shadow_returns",
+            lambda *a, **kw: (["2026-06-22"], [1.376], [0.481]),
+            raising=False,
+        )
+
+        resp = client.get("/api/performance")
+        assert resp.status_code == 200
+        data = resp.get_json()
+
+        assert len(data.get("dates", [])) >= 1, (
+            f"dates must be non-empty with 1-day shadow fallback. "
+            f"Got dates={data.get('dates')}. "
+            "RED: single-day analytics path not wired."
+        )
+
+
+# ===========================================================================
 # AC-6: MDD bot column — None renders as '--'
 # ===========================================================================
 
