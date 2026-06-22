@@ -97,9 +97,11 @@ def _build_bot_state(case: dict, current_return_override: float | None = None) -
     shadow_history before passing bot_state to generate_eod_snapshot.
     """
     inp = case["inputs"]
-    if_held = current_return_override if current_return_override is not None else inp[
-        "shadow_history_current_return"
-    ]
+    if_held = (
+        current_return_override
+        if current_return_override is not None
+        else inp["shadow_history_current_return"]
+    )
     return {
         "SYM_TEST": {
             "triggered": True,
@@ -177,11 +179,14 @@ class TestSavedDollarsReflectsCurrentReturnDivergence:
     (exit_return - current_return)/100 * position_value.
     """
 
-    @pytest.mark.parametrize("case_name", [
-        "basket_prices_stale_current_return_diverges",
-        "large_divergence_basket_near_exit_current_return_negative",
-        "current_return_above_exit_negative_guard_alpha",
-    ])
+    @pytest.mark.parametrize(
+        "case_name",
+        [
+            "basket_prices_stale_current_return_diverges",
+            "large_divergence_basket_near_exit_current_return_negative",
+            "current_return_above_exit_negative_guard_alpha",
+        ],
+    )
     def test_saved_dollars_equals_exit_minus_current_return_times_position(
         self, fixture, tmp_path, monkeypatch, case_name
     ):
@@ -267,10 +272,13 @@ class TestSavedDollarsMagnitudeNotCollapsingToZero:
     Any value < $5 on a 1pp+ divergence is evidence of the basket-collapse bug.
     """
 
-    @pytest.mark.parametrize("case_name", [
-        "basket_prices_stale_current_return_diverges",
-        "large_divergence_basket_near_exit_current_return_negative",
-    ])
+    @pytest.mark.parametrize(
+        "case_name",
+        [
+            "basket_prices_stale_current_return_diverges",
+            "large_divergence_basket_near_exit_current_return_negative",
+        ],
+    )
     def test_saved_dollars_magnitude_not_near_zero_for_significant_divergence(
         self, fixture, tmp_path, monkeypatch, case_name
     ):
@@ -288,7 +296,9 @@ class TestSavedDollarsMagnitudeNotCollapsingToZero:
         ]
         inp = case["inputs"]
         divergence_pp = abs(inp["triggered_at_return"] - inp["shadow_history_current_return"])
-        assert divergence_pp >= 1.0, f"Fixture case {case_name} divergence too small to be meaningful"
+        assert divergence_pp >= 1.0, (
+            f"Fixture case {case_name} divergence too small to be meaningful"
+        )
         assert inp["current_value"] >= 500.0, f"Fixture case {case_name} position too small"
 
         bot_state = _build_bot_state(case)
@@ -379,7 +389,9 @@ class TestIfHeldSourceIsCurrentReturnNotBasketReconstruction:
         trigger = snapshot["triggers"][0]
 
         # The correct saved_pct is derived from current_return, not the basket.
-        expected_saved_pct = round(inp["triggered_at_return"] - inp["shadow_history_current_return"], 2)
+        expected_saved_pct = round(
+            inp["triggered_at_return"] - inp["shadow_history_current_return"], 2
+        )
 
         assert trigger["saved_pct_guard_alpha"] == pytest.approx(expected_saved_pct, abs=1e-9), (
             f"SOURCE MISMATCH: saved_pct_guard_alpha={trigger['saved_pct_guard_alpha']:.4f} "
@@ -472,9 +484,7 @@ class TestHistoryAggregationReadsProducerValues:
     It will catch a future aggregation bug that introduces an independent error.
     """
 
-    def test_history_aggregation_sums_saved_dollars_from_post_mortem_files(
-        self, tmp_path
-    ):
+    def test_history_aggregation_sums_saved_dollars_from_post_mortem_files(self, tmp_path):
         """
         analytics.get_history_summary(days, base_dir) sums saved_dollars across
         triggers in post-mortem files. We seed two files with known saved_dollars
@@ -486,8 +496,9 @@ class TestHistoryAggregationReadsProducerValues:
 
         Use dates within the last 7 days so days=30 covers them.
         """
-        import analytics
         from datetime import date, timedelta
+
+        import analytics
 
         # Derive saved values from the corrected formula for the first two fixture cases:
         #   case 1: (1.85 - 0.63) / 100 * 1020.0 = 12.444
@@ -610,10 +621,14 @@ class TestDiscordPathRemainsIntactAfterProducerFix:
 
         monkeypatch.setattr(reporting, "_POST_MORTEMS_DIR", str(tmp_path))
 
-        mock_resp = type("R", (), {
-            "status_code": 200,
-            "json": lambda self: {"id": "mock-chart-123"},
-        })()
+        mock_resp = type(
+            "R",
+            (),
+            {
+                "status_code": 200,
+                "json": lambda self: {"id": "mock-chart-123"},
+            },
+        )()
 
         with patch("reporting.requests.post", return_value=mock_resp) as mock_post:
             # Should not raise; reports the file to Discord.
