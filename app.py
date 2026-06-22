@@ -2198,20 +2198,6 @@ def get_windowed_strip(window):
                     "FROM exit_triggers t"
                 ).fetchall()
 
-                # Build position_value lookup: prefer blob dict (real production schema).
-                # Fall back to direct column query for legacy columnar bot_state schemas.
-                if not _bot_state_dict:
-                    try:
-                        _pv_rows = _conn.execute(
-                            "SELECT symphony_id, position_value FROM bot_state"
-                        ).fetchall()
-                        _bot_state_dict = {
-                            r[0]: {"current_value": r[1]}
-                            for r in _pv_rows
-                            if r[1] is not None
-                        }
-                    except Exception:
-                        pass
             finally:
                 _conn.close()
 
@@ -2327,23 +2313,10 @@ def guard_alpha_summary():
                     "FROM exit_triggers t"
                 ).fetchall()
 
-                # Build a position_value lookup: prefer the blob dict (real production schema).
-                # Fall back to a direct column query for legacy columnar bot_state schemas.
-                if not bot_state_dict:
-                    try:
-                        pv_rows = conn.execute(
-                            "SELECT symphony_id, position_value FROM bot_state"
-                        ).fetchall()
-                        bot_state_dict = {
-                            r[0]: {"current_value": r[1]} for r in pv_rows if r[1] is not None
-                        }
-                    except Exception:
-                        pass
             finally:
                 conn.close()
 
             for _sym_id, _at_ret, _cur_ret in rows:
-                # Look up position_value from the blob dict (real schema) or legacy fallback.
                 _pos_val = (bot_state_dict.get(_sym_id) or {}).get("current_value")
                 if _at_ret is None or _cur_ret is None or _pos_val is None:
                     continue
