@@ -111,7 +111,7 @@ def db_with_exit_triggers(tmp_path, monkeypatch):
             symphony_id TEXT NOT NULL,
             ts_utc TEXT NOT NULL,
             at_return REAL NOT NULL,
-            trigger_reason TEXT NOT NULL,
+            triggered_reason TEXT NOT NULL,
             gate_state_json TEXT
         );
         CREATE TABLE IF NOT EXISTS shadow_history (
@@ -133,12 +133,12 @@ def db_with_exit_triggers(tmp_path, monkeypatch):
     # Two triggered symphonies with real divergence: bot locked in gains,
     # held continued to fall.
     trigger_rows = [
-        # symphony_id, ts_utc, at_return, trigger_reason
+        # symphony_id, ts_utc, at_return, triggered_reason
         ("SYM_ALPHA", "2026-06-22T13:43:00Z", 2.5, "TAKE_PROFIT"),
         ("SYM_BETA",  "2026-06-22T14:23:00Z", 1.8, "VWAP_BREAKDOWN"),
     ]
     conn.executemany(
-        "INSERT INTO exit_triggers (symphony_id, ts_utc, at_return, trigger_reason) VALUES (?,?,?,?)",
+        "INSERT INTO exit_triggers (symphony_id, ts_utc, at_return, triggered_reason) VALUES (?,?,?,?)",
         trigger_rows,
     )
 
@@ -1099,7 +1099,7 @@ class TestHistoryRouteTriggerCountBackfill:
                 symphony_id TEXT NOT NULL,
                 ts_utc TEXT NOT NULL,
                 at_return REAL NOT NULL,
-                trigger_reason TEXT NOT NULL
+                triggered_reason TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS bot_state (
                 id INTEGER PRIMARY KEY,
@@ -1107,7 +1107,7 @@ class TestHistoryRouteTriggerCountBackfill:
             );
         """)
         conn.executemany(
-            "INSERT INTO exit_triggers (symphony_id, ts_utc, at_return, trigger_reason) VALUES (?,?,?,?)",
+            "INSERT INTO exit_triggers (symphony_id, ts_utc, at_return, triggered_reason) VALUES (?,?,?,?)",
             [
                 ("SYM_A", "2026-06-22T13:43:00Z", 2.5, "TAKE_PROFIT"),
                 ("SYM_B", "2026-06-22T14:23:00Z", 1.8, "VWAP_BREAKDOWN"),
@@ -1170,6 +1170,54 @@ class TestHistoryRouteTriggerCountBackfill:
         assert trigger_count > 0, (
             f"trigger_count must be > 0 when exit_triggers has rows. Got {trigger_count}."
         )
+
+    def test_history_todays_exits_use_triggered_reason_column(
+        self, client, db_with_exit_triggers_only, tmp_path, monkeypatch
+    ):
+        """AC-3c: each exit in todays_exits must carry key 'triggered_reason'
+        (the real exit_triggers column name), not 'trigger_reason' (a typo).
+
+        ld-ux live audit (2026-06-22): app.py:2589 SELECT uses 'trigger_reason'
+        but the real DB column is 'triggered_reason' (database.py migration 022,
+        line 222).  On the real droplet this raises OperationalError which the
+        outer except swallows → todays_exits=[], trigger_count=0.
+
+        The corrected fixtures (db_with_exit_triggers, db_with_exit_triggers_only)
+        now use 'triggered_reason' to match the real schema.  This test goes RED
+        because the app.py query still selects 'trigger_reason' — an OperationalError
+        is swallowed and todays_exits stays empty.
+
+        Fix: app.py:2589 must change 'trigger_reason' → 'triggered_reason' in the
+        SELECT clause AND in the result dict key at app.py:2600.
+        """
+        import analytics as analytics_module
+
+        empty_pm = tmp_path / "no_pm_hist3"
+        empty_pm.mkdir()
+        monkeypatch.setattr(analytics_module, "_POST_MORTEMS_DIR", str(empty_pm))
+
+        resp = client.get("/api/history/30")
+        assert resp.status_code == 200
+        data = resp.get_json()
+
+        todays_exits = data.get("todays_exits", [])
+        assert len(todays_exits) > 0, (
+            "todays_exits must be non-empty when exit_triggers has rows. "
+            f"Got todays_exits={todays_exits!r}. "
+            "RED: app.py:2589 selects 'trigger_reason' (no such column in real schema) "
+            "→ OperationalError swallowed → empty list."
+        )
+        # Each exit dict must carry the real column name as its key.
+        for exit_item in todays_exits:
+            assert "triggered_reason" in exit_item, (
+                f"Each exit dict must have key 'triggered_reason' (real column name). "
+                f"Got keys: {list(exit_item.keys())}. "
+                "RED: app.py:2600 emits 'trigger_reason' (typo) as the dict key."
+            )
+            assert "trigger_reason" not in exit_item, (
+                f"Exit dict must NOT have key 'trigger_reason' (wrong column name). "
+                f"Got keys: {list(exit_item.keys())}."
+            )
 
 
 # ===========================================================================
