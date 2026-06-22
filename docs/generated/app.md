@@ -1,4 +1,4 @@
-# app
+﻿# app
 
 > Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
@@ -148,7 +148,13 @@ Render performance analytics page.
 
 Returns per-day time-series + quantstats metrics. Accepts `scope` ("aggregate"/"symphony"), `days` (int), and `symphony_id` (required when scope=symphony) query params.
 
-**Data-source precedence (AC-2, DE-LIVE-DASH-001):** Primary source is post-mortem history via `analytics.get_history_with_cache_invalidation(base_dir=analytics._POST_MORTEMS_DIR)`. When that returns an empty date list (no post-mortem files yet -- day-1 droplet), falls back to `analytics.get_portfolio_bot_and_held_daily_returns()` which reads from `shadow_history`. This ensures the Performance chart is non-empty from day one. `insufficient_history=True` is set when `observation_count < _PERFORMANCE_MIN_HISTORY_DAYS`; quantstats metrics are skipped for fewer than 2 observations. The JS template handles `insufficient_history=True` by showing available data points without the metrics table.
+**Data-source precedence (AC-2/AC-2b, DE-LIVE-DASH-001):** Three-tier fallback:
+
+1. **Post-mortem history (primary):** `analytics.get_history_with_cache_invalidation(base_dir=analytics._POST_MORTEMS_DIR)` -- used when EOD files exist.
+2. **Multi-day shadow_history:** `analytics.get_portfolio_bot_and_held_daily_returns()` or `analytics.get_portfolio_daily_returns_from_shadow()` -- used on day-1 when no post-mortem files exist and shadow_history has >= 2 distinct trading days.
+3. **Single-day shadow_history (AC-2b):** `analytics.get_single_day_shadow_returns()` -- used when both tier-2 functions return `None` (fewer than 2 distinct trading days, i.e. fresh droplet on its first trading day). Returns a 1-element `([date], [bot_pct], [held_pct])` tuple so the chart is never blank. `insufficient_history` remains `True` (honest -- 1 < `_PERFORMANCE_MIN_HISTORY_DAYS`).
+
+The `< 2` guard in the tier-2 functions is correct and unchanged; tier-3 handles day-one without weakening the statistical guard.
 
 **Response shape:** `{scope, dates, live_returns, shadow_returns, live_metrics, shadow_metrics, observation_count, insufficient_history}`.
 
@@ -165,6 +171,8 @@ Returns historical portfolio summary for the last `days` days.
 **Bug fix (AC-3, DE-LIVE-DASH-001):** Previously called `analytics.get_history_summary(days=days)` without the `base_dir` argument, which defaulted to the process CWD and found no files. Now calls `analytics.get_history_summary(days=days, base_dir=analytics._POST_MORTEMS_DIR)` -- the same constant used by every other post-mortem reader.
 
 **`todays_exits` fallback (AC-3):** When `stats["todays_exits"]` is empty (no post-mortem written yet today), the route reads the 50 most-recent rows from `exit_triggers` and backfills them into the response. This ensures live exits appear in the History tab on day one, before the EOD post-mortem is written.
+
+**`trigger_count` backfill (AC-3b):** `stats["trigger_count"]` is updated to `len(stats["todays_exits"])` immediately after the AC-3 backfill so the two fields stay consistent. Previously `trigger_count` was left at 0 from `get_history_summary()` while `todays_exits` had rows, causing the History tab to show "Today's exits (0)".
 
 #### `GET /api/logs/<symphony_id>`
 Returns symphony execution logs.
@@ -217,7 +225,9 @@ Returns cumulative dollar-saved aggregate and guard-event count.
 **Dual-path data source (AC-1, DE-LIVE-DASH-001):**
 
 - **Primary (EOD) path:** when `post_mortem_*.json` files exist in `analytics._POST_MORTEMS_DIR`, sums `saved_dollars` from all trigger entries and sets `source="post_mortem_eod"`. Dollar figures are snapshot-time (computed by `reporting.py` at exit time).
-- **Intraday fallback path:** when no post-mortem files exist (day-1 droplet), queries `exit_triggers` + `shadow_history` + `bot_state` directly. Formula per exit: `saved = (at_return - current_return) / 100 * position_value`, where `current_return` is the latest `shadow_history` row for that symphony, `at_return` is `exit_triggers.at_return`, and `position_value` is from `bot_state`. Rows where any value is NULL are skipped. Sets `source="exit_triggers_intraday"` and `basis_label="intraday estimate -- updates live"`. On fallback DB error, returns `guard_event_count=0`, `cumulative_saved_dollars=0.0`, `basis_label="no guard events yet"`.
+- **Intraday fallback path (AC-1/AC-1b):** when no post-mortem files exist (day-1 droplet), queries `exit_triggers` + `shadow_history` for per-symphony returns, and reads `position_value` from `database.load_state()` (the JSON blob accessor keyed by symphony_id -- `current_value` field). Formula per exit: `saved = (at_return - current_return) / 100 * position_value`. Rows where any value is NULL are skipped. A legacy columnar fallback (`SELECT symphony_id, position_value FROM bot_state`) runs only if `load_state()` returns empty, for backward compatibility with pre-blob schemas. Sets `source="exit_triggers_intraday"` and `basis_label="intraday estimate -- updates live"`. On fallback DB error, returns `guard_event_count=0`, `cumulative_saved_dollars=0.0`, `basis_label="no guard events yet"`.
+
+  **AC-1b root cause (fixed 93bd62c):** The original implementation used a correlated subquery `SELECT position_value FROM bot_state WHERE symphony_id = t.symphony_id` which assumed a multi-row columnar schema. The real production `bot_state` is a single-row JSON blob (`id INTEGER, data TEXT`). The subquery raised `OperationalError`; the outer `except Exception` swallowed it silently, producing zero results despite real exit_triggers rows.
 
 **Response shape:**
 | Field | Type | Description |

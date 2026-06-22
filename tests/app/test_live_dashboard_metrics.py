@@ -84,7 +84,19 @@ def db_with_exit_triggers(tmp_path, monkeypatch):
 
     This is the minimal live-droplet state: one trading day, all symphonies triggered.
     Returns (db_path, trigger_rows, shadow_rows) so tests can derive expected values.
+
+    bot_state uses the REAL production schema: a single JSON blob row (id INTEGER
+    PRIMARY KEY, data TEXT) keyed by symphony_id — matching database.load_state().
+    This ensures guard_alpha_summary() and get_windowed_strip() exercise the real
+    load_state() code path, not the legacy columnar fallback branch.
+
+    Position values embedded in the blob (current_value):
+        SYM_ALPHA: 15000.0
+        SYM_BETA:  20000.0
+    Tests that derive expected saved_dollars must use these same constants.
     """
+    import json as _json
+
     # Use a non-sentinel basename to avoid the database._db_file() production-DB guard.
     # The guard fires when basename == "alphabot_state.db" under pytest.
     db_path = str(tmp_path / "test_live_dash.db")
@@ -113,13 +125,8 @@ def db_with_exit_triggers(tmp_path, monkeypatch):
             epoch_label TEXT
         );
         CREATE TABLE IF NOT EXISTS bot_state (
-            symphony_id TEXT PRIMARY KEY,
-            position_value REAL DEFAULT 0.0,
-            high_water_mark REAL,
-            triggered INTEGER DEFAULT 0,
-            triggered_reason TEXT,
-            current_return REAL,
-            last_updated TEXT
+            id INTEGER PRIMARY KEY,
+            data TEXT
         );
     """)
 
@@ -149,17 +156,26 @@ def db_with_exit_triggers(tmp_path, monkeypatch):
         shadow_rows,
     )
 
-    # bot_state with position_value (needed for dollar calculation)
-    bot_rows = [
-        ("SYM_ALPHA", 15000.0, 2.5, 1, "TAKE_PROFIT", -0.5, "2026-06-22T16:00:00Z"),
-        ("SYM_BETA",  20000.0, 1.8, 1, "VWAP_BREAKDOWN", -1.2, "2026-06-22T16:00:00Z"),
-    ]
-    conn.executemany(
-        "INSERT INTO bot_state "
-        "(symphony_id, position_value, high_water_mark, triggered, triggered_reason, current_return, last_updated) "
-        "VALUES (?,?,?,?,?,?,?)",
-        bot_rows,
-    )
+    # bot_state: REAL production schema — single JSON blob (id=1, data=JSON dict).
+    # database.load_state() does: SELECT data FROM bot_state WHERE id = 1
+    # current_value is the position weight used by the dollar-saved formula.
+    blob = {
+        "SYM_ALPHA": {
+            "name": "Alpha",
+            "current_value": 15000.0,
+            "current_return": -0.5,
+            "triggered": True,
+            "triggered_reason": "TAKE_PROFIT",
+        },
+        "SYM_BETA": {
+            "name": "Beta",
+            "current_value": 20000.0,
+            "current_return": -1.2,
+            "triggered": True,
+            "triggered_reason": "VWAP_BREAKDOWN",
+        },
+    }
+    conn.execute("INSERT INTO bot_state (id, data) VALUES (1, ?)", (_json.dumps(blob),))
 
     conn.commit()
     conn.close()
