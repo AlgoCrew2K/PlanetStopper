@@ -247,37 +247,34 @@ class TestHangIsBounded:
         # Guard: shutdown(wait=False) must have been called (AC-3 structural check)
         mock_executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
 
-    @pytest.mark.perf
     def test_no_join_on_exit_hang_worker_still_sleeping(self, mod, monkeypatch):
-        """AC-3: when the worker thread sleeps _BOUND * 5s, the call STILL returns
-        within _BOUND + _MARGIN_S seconds — proving shutdown(wait=False) is used.
+        """AC-3: the timeout wrapper calls shutdown(wait=False, cancel_futures=True) —
+        proving it does NOT block on the hung worker thread at teardown.
 
         `with ThreadPoolExecutor() as ex:` calls shutdown(wait=True) in __exit__,
-        which blocks until the sleeping thread exits. With sleep=60s, that would
-        make this test take ~60s and fail the timing assertion.
+        which would block until the sleeping thread exits — the AC-3 bug. The correct
+        implementation uses explicit `ex.shutdown(wait=False, cancel_futures=True)`.
 
-        Correct implementation uses explicit `ex.shutdown(wait=False, cancel_futures=True)`.
-        The orphan thread is allowed to linger (it will exit when MongoClient errors).
+        Deterministic approach: mock ThreadPoolExecutor so fut.result() raises
+        concurrent.futures.TimeoutError synchronously (no real sleep). The decisive
+        AC-3 guard is the structural assertion: mock_executor.shutdown must have been
+        called with wait=False. If the implementation uses `with ThreadPoolExecutor()`
+        (which calls shutdown via __exit__ with wait=True), this assertion fires.
 
-        Marked @pytest.mark.perf: this is a wall-clock timing assertion (_BOUND * 5 = 60s
-        sleep). On a loaded shared CI runner (2 vCPUs), OS scheduling jitter can push
-        elapsed past _BOUND + _MARGIN_S = 15s even when the implementation is correct.
-        Run opt-in: `pytest -m perf` on a dedicated machine.
+        The elapsed assertion is kept as a secondary guard — it is trivially fast here
+        because there is no real sleep, but it would fail if the implementation
+        introduced a blocking wait on the timeout path.
         """
         monkeypatch.setenv("MONGO_URI", "mongodb+srv://fake-uri-for-test/db")
 
-        sleep_secs = _BOUND * 5  # 60s — exaggerated to make the AC-3 bug obvious
-
-        def _very_slow_mongo(*args, **kwargs):
-            time.sleep(sleep_secs)
-            return MagicMock()
+        mock_executor_class, mock_executor, _mock_future = _make_timeout_executor_mock()
 
         with (
             patch(
                 "advisors.atlas_cache.cached_pull",
                 side_effect=lambda col, fn, **kw: fn(),
             ),
-            patch("pymongo.MongoClient", side_effect=_very_slow_mongo),
+            patch("concurrent.futures.ThreadPoolExecutor", mock_executor_class),
         ):
             t0 = time.monotonic()
             result = mod.load_community_strategies()
@@ -285,12 +282,14 @@ class TestHangIsBounded:
 
         assert result["available"] is False, "Timed-out fetch must return available=False"
         assert elapsed < _BOUND + _MARGIN_S, (
-            f"AC-3 FAIL: load_community_strategies took {elapsed:.2f}s when the worker "
-            f"sleeps {sleep_secs:.0f}s. Expected < {_BOUND + _MARGIN_S:.1f}s. "
-            "This means shutdown(wait=True) is blocking on the hung thread. "
-            "The implementation MUST use ex.shutdown(wait=False, cancel_futures=True) — "
-            "NEVER `with ThreadPoolExecutor() as ex:` which joins (wait=True) on exit."
+            f"AC-3 FAIL: load_community_strategies took {elapsed:.2f}s. "
+            f"Expected < {_BOUND + _MARGIN_S:.1f}s. "
+            "The implementation must not block on the timeout path."
         )
+        # Primary AC-3 structural guard: shutdown(wait=False) must have been called.
+        # If the implementation uses `with ThreadPoolExecutor() as ex:`, __exit__ calls
+        # shutdown(wait=True) — this assertion catches that regression.
+        mock_executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
 
 
 # ===========================================================================
@@ -340,7 +339,7 @@ class TestFastPathUnchanged:
     def test_fast_fetch_elapsed_is_well_below_bound(self, mod, monkeypatch):
         """AC-4: a fast MongoClient returns almost instantly — no timeout overhead.
 
-        Wall-clock elapsed must be well below _BOUND (12s). If the wrapper introduces
+        Wall-clock elapsed must be well below _BOUND (45s). If the wrapper introduces
         significant overhead for the fast path, this test catches it.
         """
         monkeypatch.setenv("MONGO_URI", "mongodb+srv://fake-uri-for-test/db")
@@ -613,9 +612,12 @@ class TestCachePathIntact:
         """AC-6 / Architecture: _ATLAS_FETCH_TIMEOUT_S must exist as a module-level
         named constant, be a positive float, and be > 10.0 (> serverSelectionTimeoutMS).
 
-        The plan specifies 12.0. The > 10.0 check verifies the constant is set correctly
-        so that a reachable-but-slow Atlas still has time to complete server selection.
-        Named constant with source comment is mandatory (no magic numbers rule).
+        The constant is currently 45.0 (raised from 12.0 in DE-ATLAS-CACHE-001; a cold
+        mongodb+srv connect + server-side sharpe-sort over ~11k docs was observed to
+        exceed 12s on the droplet). The > 10.0 check verifies the constant remains
+        above serverSelectionTimeoutMS so a reachable-but-slow Atlas still has time to
+        complete server selection. Named constant with source comment is mandatory
+        (no magic numbers rule).
         """
         assert hasattr(mod, "_ATLAS_FETCH_TIMEOUT_S"), (
             "community_strats must define _ATLAS_FETCH_TIMEOUT_S as a module-level constant. "
@@ -760,20 +762,16 @@ class TestRouteDegradesTemplateOnly:
         """AC-2: POST /run must return 200 within _BOUND + _MARGIN_S when Atlas times out.
 
         This is the route-level decisive guard. A hung Atlas fetch will block the Flask
-        request thread until MongoClient eventually errors (50s+). The timeout wrapper
-        must prevent this.
+        request thread indefinitely without the timeout wrapper.
 
-        MongoClient sleeps _BOUND * 2 (24s) — past the timeout but shorter than a real hang.
-        The route must complete in < _BOUND + _MARGIN_S seconds.
+        Deterministic approach: mock ThreadPoolExecutor so fut.result() raises
+        concurrent.futures.TimeoutError synchronously (no real sleep). This forces the
+        exact same code path as a real DNS hang without wall-clock fragility. The route
+        must return 200 and complete in sub-second time.
         """
         monkeypatch.setenv("MONGO_URI", "mongodb+srv://fake-route-test/db")
 
-        sleep_secs = _BOUND * 2  # 24s — past timeout, shorter than real SRV hang
-
-        def _slow_mongo(*args, **kwargs):
-            time.sleep(sleep_secs)
-            return MagicMock()
-
+        mock_executor_class, _mock_executor, _mock_future = _make_timeout_executor_mock()
         mock_run = self._make_minimal_proposal_run()
 
         with (
@@ -782,7 +780,11 @@ class TestRouteDegradesTemplateOnly:
                 "advisors.atlas_cache.cached_pull",
                 side_effect=lambda col, fn, **kw: fn(),
             ),
-            patch("pymongo.MongoClient", side_effect=_slow_mongo),
+            # Replace ThreadPoolExecutor: fut.result() raises TimeoutError immediately
+            patch(
+                "advisors.community_strats.concurrent.futures.ThreadPoolExecutor",
+                mock_executor_class,
+            ),
             patch(
                 "advisors.strategy_builder_engine.propose_strategies",
                 return_value=mock_run,
@@ -814,13 +816,13 @@ class TestRouteDegradesTemplateOnly:
         to template-only. The response must still carry the standard JSON shape:
         {survivors, rejected, n_candidates, fdr_adjusted_threshold, error}.
         The error field must be None (degradation is not an error).
+
+        Deterministic approach: mock ThreadPoolExecutor so fut.result() raises
+        concurrent.futures.TimeoutError synchronously (no real sleep).
         """
         monkeypatch.setenv("MONGO_URI", "mongodb+srv://fake-route-test/db")
 
-        def _slow_mongo(*args, **kwargs):
-            time.sleep(_BOUND * 2)
-            return MagicMock()
-
+        mock_executor_class, _mock_executor, _mock_future = _make_timeout_executor_mock()
         mock_run = self._make_minimal_proposal_run()
 
         with (
@@ -828,7 +830,10 @@ class TestRouteDegradesTemplateOnly:
                 "advisors.atlas_cache.cached_pull",
                 side_effect=lambda col, fn, **kw: fn(),
             ),
-            patch("pymongo.MongoClient", side_effect=_slow_mongo),
+            patch(
+                "advisors.community_strats.concurrent.futures.ThreadPoolExecutor",
+                mock_executor_class,
+            ),
             patch(
                 "advisors.strategy_builder_engine.propose_strategies",
                 return_value=mock_run,
