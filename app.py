@@ -2178,23 +2178,47 @@ def get_windowed_strip(window):
     # guard_alpha is None (zero weight) and insufficient_history=True.  Compute
     # an intraday estimate from exit_triggers so the day-1 droplet shows a
     # non-zero value.  The 15-second auto-refresh floor means this stays fresh.
+    #
+    # AC-4b: bot_state is a SINGLE-ROW JSON BLOB (id, data TEXT) — there is no
+    # position_value column and no symphony_id column.  Mirror the AC-1b fix:
+    # use database.load_state() (isolated try/except → degrades to {}) then fall
+    # back to a columnar SELECT when the blob dict is empty (legacy schema).
     if strip.get("insufficient_history") and not strip.get("guard_alpha"):
         try:
+            try:
+                _bot_state_dict = database.load_state()
+            except Exception:
+                _bot_state_dict = {}
             _conn = database.get_connection()
             try:
                 _rows = _conn.execute(
                     "SELECT t.symphony_id, t.at_return, "
                     "  (SELECT current_return FROM shadow_history "
-                    "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1), "
-                    "  (SELECT position_value FROM bot_state WHERE symphony_id = t.symphony_id) "
+                    "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1) "
                     "FROM exit_triggers t"
                 ).fetchall()
+
+                # Build position_value lookup: prefer blob dict (real production schema).
+                # Fall back to direct column query for legacy columnar bot_state schemas.
+                if not _bot_state_dict:
+                    try:
+                        _pv_rows = _conn.execute(
+                            "SELECT symphony_id, position_value FROM bot_state"
+                        ).fetchall()
+                        _bot_state_dict = {
+                            r[0]: {"current_value": r[1]}
+                            for r in _pv_rows
+                            if r[1] is not None
+                        }
+                    except Exception:
+                        pass
             finally:
                 _conn.close()
 
             _alpha_wsum = 0.0
             _weight_sum = 0.0
-            for _sym_id, _at_ret, _cur_ret, _pos_val in _rows:
+            for _sym_id, _at_ret, _cur_ret in _rows:
+                _pos_val = (_bot_state_dict.get(_sym_id) or {}).get("current_value")
                 if _at_ret is None or _cur_ret is None or _pos_val is None:
                     continue
                 try:
