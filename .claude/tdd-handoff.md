@@ -31,9 +31,37 @@
 - `test_cap_installed_false_and_warning_when_membership_not_confirmed` — XFAIL (becomes GREEN after seam added)
 - `test_cap_installed_true_when_already_nested_and_membership_confirmed` — XFAIL (becomes GREEN after seam added)
 
-**File 3: `tests/conftest_guard/test_xdist_worker_count_guard.py`** (AC-6)
+**File 3: `tests/conftest_guard/test_xdist_worker_count_guard.py`** (AC-6 — REVISED, now 11 RED)
 
-All 10 tests PASS — AC-6 guard is already implemented in `tests/conftest.py`. These are regression guards. No implementation needed for AC-6.
+All 11 tests now **FAIL** (RED) — PM refinement requires extracting the inline guard into a
+named helper `_assert_safe_worker_count(numprocesses)` exported from `tests/conftest.py`.
+
+Root: The guard logic is inline inside `pytest_configure` and not exported as a seam.
+Calling `pytest_configure` directly in tests triggers cap-install and env side-effects.
+
+Fix: Extract the xdist guard block from `pytest_configure` into:
+
+```python
+def _assert_safe_worker_count(numprocesses) -> None:
+    """Reject unsafe xdist worker counts (AC-6). Called EARLY in pytest_configure."""
+    if numprocesses is None:
+        return
+    if numprocesses == "auto" or (isinstance(numprocesses, int) and numprocesses > 4):
+        raise SystemExit(
+            f"[mem-cap] Rejecting xdist numprocesses={numprocesses!r}: "
+            "exceeds the safe ceiling of 4 on this host (67.8 GB RAM + 4 GB pf). "
+            "Two Kernel-Power 41 hard-reboots were caused by -n auto fan-out. "
+            "Use -n 0..4.  To opt out, set ALPHABOT_TEST_MEM_CAP_GB=0."
+        )
+```
+
+Then in `pytest_configure`, replace the inline guard block with:
+```python
+_assert_safe_worker_count(getattr(config.option, "numprocesses", None))
+```
+
+This call must remain BEFORE the `ALPHABOT_MAX_JOBS`/`OPTUNA_N_JOBS` setdefaults and
+BEFORE `install_from_env()` — the guard must fire before any side-effects.
 
 **File 4: `tests/js_syntax/test_js_syntax_consolidation.py`** (AC-1)
 
@@ -65,17 +93,22 @@ All 10 tests PASS — AC-6 guard is already implemented in `tests/conftest.py`. 
    - `tests/ai_advisor/test_advisor_inplace_tabs.py`
    - `tests/ai_advisor/test_advisor_chat_handoff.py`
 
-**File 5: `tests/execution/test_orphan_port_importlib_refactor.py`** (AC-2)
+**File 5: `tests/execution/test_orphan_port_importlib_refactor.py`** (AC-2 — REVISED)
 
-- `test_collect_only_subprocess_calls_removed_from_orphan_test` — **FAILS** (RED)
-- `test_importlib_import_used_instead` — PASSES
-- `test_orphan_test_still_asserts_target_files_exist` — PASSES
+- `test_collect_only_subprocess_calls_removed_from_orphan_test` — **FAILS** (RED, AST-scoped)
+- `test_importlib_import_module_used_in_retained_portmode_class` — **FAILS** (RED, AST-scoped)
+- `test_importlib_calls_cover_both_portmode_targets` — PASSES
+
+The tests now use AST-scoped checks (not raw string search) to avoid false-passes on
+comments/docstrings. Both `subprocess.run([..., '--collect-only', ...])` absence AND
+`importlib.import_module()` presence are verified within the `TestRetainedPortmodeTestsStillCollect`
+class body only.
 
 **Implementation needed:**
 Replace the two `subprocess.run(["python", "-m", "pytest", "--collect-only", ...])` calls at
-lines 524 and 540 of `tests/execution/test_orphan_port_modules_removed.py` with in-process
-`importlib.import_module(...)` calls. If the module doesn't import, ImportError is raised —
-equivalent coverage to `--collect-only`. Keep the `target.exists()` assertion.
+lines 524 and 540 of `tests/execution/test_orphan_port_modules_removed.py` (inside
+`TestRetainedPortmodeTestsStillCollect`) with in-process `importlib.import_module(...)` calls.
+If the module doesn't import, ImportError is raised — equivalent coverage. Keep `target.exists()`.
 
 **File 6: `tests/advisors/test_prism_dotenv_init_refactor.py`** (AC-3)
 
@@ -97,9 +130,10 @@ UNCHANGED — only the helper function changes.
 | File to change | Required implementation |
 |---|---|
 | `tests/_mem_cap.py` | (1) Add `_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` to LimitFlags OR-expression (AC-4); (2) Add `_is_process_in_job_seam` callable wrapping IsProcessInJob; (3) Call seam after AssignProcessToJobObject; (4) warn+return if unconfirmed (AC-5) |
-| `tests/js_syntax/test_js_syntax.py` | CREATE: parametrized `node --check` over `static/*.js` with `shutil.which` skip |
+| `tests/conftest.py` | Extract inline xdist guard into `_assert_safe_worker_count(numprocesses)` top-level helper; call it EARLY in `pytest_configure` before any other side-effect (AC-6) |
+| `tests/js_syntax/test_js_syntax.py` | CREATE: parametrized `node --check` over `static/*.js` with `shutil.which` skip; must actually run `node --check` and assert exit 0 per file (AC-1) |
 | 19 scattered test files | REMOVE per-file `node --check` test methods |
-| `tests/execution/test_orphan_port_modules_removed.py:524,540` | REPLACE subprocess `--collect-only` with `importlib.import_module(...)` |
+| `tests/execution/test_orphan_port_modules_removed.py:524,540` | REPLACE subprocess `--collect-only` with `importlib.import_module(...)` inside `TestRetainedPortmodeTestsStillCollect` |
 | `tests/advisors/test_prism_dotenv_hardening.py:_init_db_at` | REPLACE subprocess body with direct `database.init_db()` call |
 
 ---
