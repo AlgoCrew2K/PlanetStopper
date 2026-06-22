@@ -2181,8 +2181,7 @@ def get_windowed_strip(window):
     #
     # AC-4b: bot_state is a SINGLE-ROW JSON BLOB (id, data TEXT) — there is no
     # position_value column and no symphony_id column.  Mirror the AC-1b fix:
-    # use database.load_state() (isolated try/except → degrades to {}) then fall
-    # back to a columnar SELECT when the blob dict is empty (legacy schema).
+    # use database.load_state() (isolated try/except → degrades to {}).
     if strip.get("insufficient_history") and not strip.get("guard_alpha"):
         try:
             try:
