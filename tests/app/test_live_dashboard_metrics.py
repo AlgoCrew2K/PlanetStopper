@@ -40,10 +40,7 @@ import app as app_module
 # ---------------------------------------------------------------------------
 
 _MATH_FIXTURE_PATH = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math"
-    / "guard_alpha_intraday_saved.json"
+    pathlib.Path(__file__).parent.parent / "fixtures" / "math" / "guard_alpha_intraday_saved.json"
 )
 _MATH_FIXTURE = json.loads(_MATH_FIXTURE_PATH.read_text())
 
@@ -135,7 +132,7 @@ def db_with_exit_triggers(tmp_path, monkeypatch):
     trigger_rows = [
         # symphony_id, ts_utc, at_return, triggered_reason
         ("SYM_ALPHA", "2026-06-22T13:43:00Z", 2.5, "TAKE_PROFIT"),
-        ("SYM_BETA",  "2026-06-22T14:23:00Z", 1.8, "VWAP_BREAKDOWN"),
+        ("SYM_BETA", "2026-06-22T14:23:00Z", 1.8, "VWAP_BREAKDOWN"),
     ]
     conn.executemany(
         "INSERT INTO exit_triggers (symphony_id, ts_utc, at_return, triggered_reason) VALUES (?,?,?,?)",
@@ -147,7 +144,7 @@ def db_with_exit_triggers(tmp_path, monkeypatch):
     shadow_rows = [
         # symphony_id, trading_day, ts_utc, shadow_return, current_return, is_post_trigger, epoch
         ("SYM_ALPHA", "2026-06-22", "2026-06-22T16:00:00Z", 2.5, -0.5, 1, "epoch1"),
-        ("SYM_BETA",  "2026-06-22", "2026-06-22T16:00:00Z", 1.8, -1.2, 1, "epoch1"),
+        ("SYM_BETA", "2026-06-22", "2026-06-22T16:00:00Z", 1.8, -1.2, 1, "epoch1"),
     ]
     conn.executemany(
         "INSERT INTO shadow_history "
@@ -322,20 +319,17 @@ class TestGuardAlphaIntradayMath:
         expected_sign = case["expected_sign"]
         if expected_sign == "positive":
             assert result > 0, (
-                f"Case '{case['name']}': expected positive result, got {result}. "
-                f"Inputs: {inputs}"
+                f"Case '{case['name']}': expected positive result, got {result}. Inputs: {inputs}"
             )
         elif expected_sign == "negative":
             assert result < 0, (
-                f"Case '{case['name']}': expected negative result, got {result}. "
-                f"Inputs: {inputs}"
+                f"Case '{case['name']}': expected negative result, got {result}. Inputs: {inputs}"
             )
         elif expected_sign == "zero":
             assert result == pytest.approx(0.0, abs=1e-9), (
                 # abs=1e-9: float multiplication with 0 should be exact but
                 # floating-point arithmetic can produce -0.0; 1e-9 absorbs that.
-                f"Case '{case['name']}': expected zero result, got {result}. "
-                f"Inputs: {inputs}"
+                f"Case '{case['name']}': expected zero result, got {result}. Inputs: {inputs}"
             )
 
     def test_formula_is_dimensionally_correct(self):
@@ -363,9 +357,7 @@ class TestPerformanceRoutesShadowHistoryFallback:
     """AC-2: /api/performance must return a non-empty series from shadow_history
     when no post_mortem files exist (day-1 droplet state)."""
 
-    def test_api_performance_returns_nonempty_dates_on_day1(
-        self, client, monkeypatch
-    ):
+    def test_api_performance_returns_nonempty_dates_on_day1(self, client, monkeypatch):
         """AC-2: with 0 post_mortem files and 1 shadow_history day, dates is non-empty.
 
         Fails RED if route only populates from post_mortem history.
@@ -381,9 +373,9 @@ class TestPerformanceRoutesShadowHistoryFallback:
 
         # Simulate: shadow_history has 1 day of data
         mock_series = (
-            ["2026-06-22"],   # dates
-            [1.376],          # bot_pct (today's change, locked-in)
-            [0.481],          # held_pct (today's if-held)
+            ["2026-06-22"],  # dates
+            [1.376],  # bot_pct (today's change, locked-in)
+            [0.481],  # held_pct (today's if-held)
         )
         monkeypatch.setattr(
             analytics_module,
@@ -402,9 +394,7 @@ class TestPerformanceRoutesShadowHistoryFallback:
             "RED: route only reads post_mortem history."
         )
 
-    def test_api_performance_observation_count_positive_on_day1(
-        self, client, monkeypatch
-    ):
+    def test_api_performance_observation_count_positive_on_day1(self, client, monkeypatch):
         """AC-2: observation_count >= 1 when shadow_history has at least 1 day."""
         import analytics as analytics_module
 
@@ -429,9 +419,7 @@ class TestPerformanceRoutesShadowHistoryFallback:
             "RED: route returns 0 because post_mortem history is empty."
         )
 
-    def test_api_performance_insufficient_history_flag_true_on_day1(
-        self, client, monkeypatch
-    ):
+    def test_api_performance_insufficient_history_flag_true_on_day1(self, client, monkeypatch):
         """AC-2: insufficient_history=True with 1 shadow_history day (honest).
 
         The route must NOT claim sufficient history with only 1 data point —
@@ -597,8 +585,7 @@ class TestStripRouteIntradayGuardAlpha:
 
         guard_alpha = data.get("guard_alpha")
         assert guard_alpha is not None, (
-            "strip response must include 'guard_alpha' key. "
-            f"Got keys: {list(data.keys())}"
+            f"strip response must include 'guard_alpha' key. Got keys: {list(data.keys())}"
         )
         assert guard_alpha != 0.0, (
             f"guard_alpha must be non-zero when triggered symphonies have "
@@ -708,9 +695,7 @@ class TestAiAdvisorNewsSourcesRender:
             "per_lens_digest[lens]['sources']."
         )
 
-    def test_ai_advisor_does_not_expose_raw_json_in_sources_block(
-        self, client, monkeypatch
-    ):
+    def test_ai_advisor_does_not_expose_raw_json_in_sources_block(self, client, monkeypatch):
         """AC-5a: the sources block must not render raw JSON strings.
 
         A common failure mode: template dumps the entire raw_response dict as a
@@ -736,13 +721,10 @@ class TestAiAdvisorNewsSourcesRender:
         )
         # Another JSON telltale: the bare dict key 'per_lens_digest'
         assert "per_lens_digest" not in html, (
-            "Template must not render raw JSON keys like 'per_lens_digest'. "
-            "Found in HTML."
+            "Template must not render raw JSON keys like 'per_lens_digest'. Found in HTML."
         )
 
-    def test_ai_advisor_renders_article_corpus_links_when_present(
-        self, client, monkeypatch
-    ):
+    def test_ai_advisor_renders_article_corpus_links_when_present(self, client, monkeypatch):
         """AC-5b (template contract only): when per_lens_digest.sentiment.article_corpus
         exists in the DB row, the template renders clickable article links.
 
@@ -829,8 +811,9 @@ class TestArticleCorpusPipelineContract:
         lens_pipeline._build_per_lens_digest can pass it through to the digest entry.
         """
         import sys
-        import ai_advisor as ai_advisor_module
         from unittest.mock import MagicMock
+
+        import ai_advisor as ai_advisor_module
 
         mock_corpus = self._mock_news_corpus_result()
 
@@ -914,9 +897,10 @@ class TestArticleCorpusPipelineContract:
         Fails RED because neither step 1 nor step 2 currently emit article_corpus.
         """
         import sys
+        from unittest.mock import MagicMock
+
         import ai_advisor as ai_advisor_module
         from advisors import lens_pipeline as lp
-        from unittest.mock import MagicMock
 
         mock_corpus_result = self._mock_news_corpus_result()
         mock_nc = MagicMock()
@@ -946,9 +930,7 @@ class TestArticleCorpusPipelineContract:
         )
         # Verify article URL is preserved (not just the key existing with empty list)
         corpus = sentiment_entry["article_corpus"]
-        assert any(
-            "reuters.com" in art.get("url", "") for art in corpus
-        ), (
+        assert any("reuters.com" in art.get("url", "") for art in corpus), (
             "AC-5b: article URL from news_corpus must appear in the preserved article_corpus. "
             f"Got corpus={corpus!r}"
         )
@@ -978,6 +960,7 @@ class TestGuardAlphaSummaryBotStateBlob:
     def db_with_blob_bot_state(self, tmp_path, monkeypatch):
         """Minimal DB matching the REAL bot_state schema: single blob row id=1."""
         import json as _json
+
         db_path = str(tmp_path / "test_blob_state.db")
         conn = sqlite3.connect(db_path)
         conn.executescript("""
@@ -1021,7 +1004,7 @@ class TestGuardAlphaSummaryBotStateBlob:
         # bot_state: real schema — single JSON blob row
         blob = {
             "SYM_A": {"name": "Alpha", "current_value": 15000.0, "current_return": -0.5},
-            "SYM_B": {"name": "Beta",  "current_value": 20000.0, "current_return": -1.2},
+            "SYM_B": {"name": "Beta", "current_value": 20000.0, "current_return": -1.2},
         }
         conn.execute("INSERT INTO bot_state (id, data) VALUES (1, ?)", (_json.dumps(blob),))
         conn.commit()
@@ -1038,6 +1021,7 @@ class TestGuardAlphaSummaryBotStateBlob:
         not exist in the blob schema — the entire try block fails silently.
         """
         import analytics as analytics_module
+
         empty_pm = tmp_path / "no_pm"
         empty_pm.mkdir()
         monkeypatch.setattr(analytics_module, "_POST_MORTEMS_DIR", str(empty_pm))
@@ -1061,6 +1045,7 @@ class TestGuardAlphaSummaryBotStateBlob:
         not from a non-existent column.  Fails RED until load_state() is used.
         """
         import analytics as analytics_module
+
         empty_pm = tmp_path / "no_pm2"
         empty_pm.mkdir()
         monkeypatch.setattr(analytics_module, "_POST_MORTEMS_DIR", str(empty_pm))
@@ -1130,6 +1115,7 @@ class TestHistoryRouteTriggerCountBackfill:
         stats['trigger_count'] — it remains 0 from get_history_summary().
         """
         import analytics as analytics_module
+
         empty_pm = tmp_path / "no_pm_hist"
         empty_pm.mkdir()
         monkeypatch.setattr(analytics_module, "_POST_MORTEMS_DIR", str(empty_pm))
@@ -1152,6 +1138,7 @@ class TestHistoryRouteTriggerCountBackfill:
         Fails RED if one is backfilled but not the other.
         """
         import analytics as analytics_module
+
         empty_pm = tmp_path / "no_pm_hist2"
         empty_pm.mkdir()
         monkeypatch.setattr(analytics_module, "_POST_MORTEMS_DIR", str(empty_pm))
@@ -1308,9 +1295,7 @@ class TestPerformanceSingleDayShadowFallback:
             "when both multi-day analytics functions return None."
         )
 
-    def test_performance_dates_nonempty_with_single_shadow_day(
-        self, client, monkeypatch
-    ):
+    def test_performance_dates_nonempty_with_single_shadow_day(self, client, monkeypatch):
         """AC-2b: dates must be non-empty from single-day shadow_history fallback."""
         import analytics as analytics_module
 
@@ -1443,9 +1428,7 @@ class TestMDDBotColumnNoneRendersAsDash:
         We check that the template source no longer contains the pattern
         'mdd_d.get("dry_run", 0)' (which silently converts None to 0).
         """
-        template_path = (
-            pathlib.Path(__file__).parent.parent.parent / "templates" / "index.html"
-        )
+        template_path = pathlib.Path(__file__).parent.parent.parent / "templates" / "index.html"
         assert template_path.exists(), f"index.html not found at {template_path}"
         source = template_path.read_text(encoding="utf-8")
 
@@ -1456,6 +1439,7 @@ class TestMDDBotColumnNoneRendersAsDash:
         # The exact spacing varies ("dry_run",  0) vs ("dry_run", 0)), so we use
         # a regex that tolerates whitespace variation.
         import re as _re
+
         buggy_pattern = _re.compile(
             r'mdd_bot\s*=.*mdd_d\.get\(["\']dry_run["\'],\s*0\).*\|\s*float'
         )
@@ -1596,7 +1580,7 @@ class TestStripIntradayFallbackBlobSchema:
         # Real blob schema — current_value provides the position_value weight
         blob = {
             "SYM_X": {"name": "ExAlpha", "current_value": 12000.0, "current_return": -0.8},
-            "SYM_Y": {"name": "ExBeta",  "current_value": 18000.0, "current_return": -1.5},
+            "SYM_Y": {"name": "ExBeta", "current_value": 18000.0, "current_return": -1.5},
         }
         conn.execute("INSERT INTO bot_state (id, data) VALUES (1, ?)", (_json.dumps(blob),))
         conn.commit()
