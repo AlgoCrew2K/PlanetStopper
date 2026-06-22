@@ -2,6 +2,16 @@
 
 ---
 
+## Self-Healing Symphony Dashboard
+
+When the daemon starts and finds no symphonies recorded — for example after a fresh deployment or a database reset — it now seeds your live Composer symphonies into the dashboard immediately, without waiting for the next market-hours data cycle.
+
+Previously, a database reset or first-time deployment on a weekend would leave the dashboard blank until the market reopened Monday morning. The seeding now runs at startup regardless of market hours, so your dashboard reflects your live Composer portfolio within seconds of the daemon coming online.
+
+The seeding is fully idempotent: if your symphonies are already recorded, nothing changes. It does not write synthetic or placeholder performance history — only the symphony entries themselves are created, keeping your real performance tracking clean.
+
+---
+
 ## Symphony Builder + Community Suggester
 
 The AI Advisor's **Strategy Builder** tab now does two things together every time you run an analysis.
