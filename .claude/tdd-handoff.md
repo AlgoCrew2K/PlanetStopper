@@ -4,10 +4,81 @@
 **Feature plan:** `feature-plans/test-footprint-and-cap-hardening.md`
 **Branch:** `fix/footprint-cap-hardening`
 **Worktree:** `C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/footprint-cap`
+**Phase:** GREEN + recurrence guard committed — awaiting w1b-review APPROVE + w1b-doc docs
 
 ---
 
-## RED tests committed — implementer reads THIS FILE, NOT the feature plan
+## Current state (updated 2026-06-22 by w1b-lead after continuation dispatch)
+
+All AC-1 through AC-6 are GREEN (implemented by w1b-impl in commits 62afd25, 85e9145, 7c0d5cf, 862fcc1).
+Recurrence guard added in dd7daab (this commit).
+
+### Branch HEAD: dd7daab
+
+### Commit history (newest first)
+| SHA | What |
+|-----|------|
+| `dd7daab` | test(meta): recurrence guard — every tests/**/*.py must parse |
+| `862fcc1` | fix(test-infra): AC-1 remove dead empty husk classes + ruff format |
+| `7c0d5cf` | fix(test-infra): AC-6 extract _assert_safe_worker_count seam |
+| `85e9145` | fix(test-infra): AC-1/AC-2/AC-3 footprint refactors |
+| `62afd25` | fix(test-infra): AC-4/AC-5/AC-6 cap hardening |
+| `283e99a` | test(footprint-cap): RED tests for AC-1..AC-6 |
+| `bf8bb4e` | docs(plan): test-footprint reduction + memory-cap hardening |
+
+### AC coverage — all GREEN
+| AC | Description | Test file(s) | Status |
+|----|-------------|-------------|--------|
+| AC-1 | node --check consolidated + empty husks removed | `tests/js_syntax/test_js_syntax.py`, `tests/js_syntax/test_js_syntax_consolidation.py`, `tests/meta/test_all_test_files_parse.py` (recurrence guard) | GREEN |
+| AC-2 | subprocess --collect-only → importlib.import_module | `tests/execution/test_orphan_port_importlib_refactor.py` | GREEN |
+| AC-3 | _init_db_at subprocess → in-process init_db | `tests/advisors/test_prism_dotenv_init_refactor.py` | GREEN |
+| AC-4 | KILL_ON_JOB_CLOSE flag in LimitFlags | `tests/mem_cap/test_kill_on_job_close_flag.py` | GREEN |
+| AC-5 | IsProcessInJob membership verify-or-fail-loud | `tests/mem_cap/test_cap_install_verify_or_fail_loud.py` | GREEN |
+| AC-6 | xdist worker count guard + _assert_safe_worker_count seam | `tests/conftest_guard/test_xdist_worker_count_guard.py` | GREEN |
+| AC-7 | cap regression — total-job semantics preserved | `tests/mem_cap/test_total_job_memory_cap.py` | GREEN |
+| Recurrence guard | every tests/**/*.py must compile (empty class body prevention) | `tests/meta/test_all_test_files_parse.py` | GREEN (477 files) |
+
+### Verified (w1b-lead, 2026-06-22, ALPHABOT_TEST_MEM_CAP_GB=8 -n0)
+- `tests/meta/test_all_test_files_parse.py` — 477 passed
+- `tests/app/test_guard_alpha_panel_ui.py`, `tests/dashboard/test_dashboard_render_consistency.py`, `tests/dashboard/test_window_picker_wiring.py` — all included in the 477, GREEN
+- `tests/js_syntax/` + `tests/mem_cap/` + `tests/conftest_guard/` — 43 passed
+- Combined (guard + 3 fixed husks + targeted dirs) — 513 passed / 0 failed / 0 errors
+- `ruff format --check .` — 532 files already formatted (clean)
+- `ruff check .` — All checks passed (clean)
+
+### Unstaged remaining (NOT test files — w1b-doc owns these)
+- `.claude/CLAUDE.md` — doc-gen update pending
+- `DECISIONS.md` — doc-gen update pending
+
+---
+
+## For w1b-review
+
+Review the diff on this branch vs origin/main (or vs 5597eb5, the pre-cycle base). Key files to review:
+- `tests/_mem_cap.py` — AC-4 LimitFlags OR + AC-5 IsProcessInJob seam + membership guard
+- `tests/conftest.py` — AC-6 _assert_safe_worker_count seam extraction
+- `tests/js_syntax/test_js_syntax.py` — AC-1 parametrized node --check
+- `tests/meta/test_all_test_files_parse.py` — recurrence guard (new, dd7daab)
+- 19 donor test files — verify only node --check methods removed, no collateral deletions
+
+Review focus: correctness of seam extraction, flag OR semantics, warning path, guard deselect-safety.
+
+## For w1b-doc
+
+Commit `.claude/CLAUDE.md` and `DECISIONS.md` updates onto this branch before signaling cycle-complete.
+Key doc entries needed:
+- `tests/meta/test_all_test_files_parse.py` — what it guards (empty class body recurrence), how it works
+- `tests/_mem_cap.py` — KILL_ON_JOB_CLOSE flag + IsProcessInJob membership verification
+- `tests/conftest.py` — _assert_safe_worker_count seam + xdist ceiling enforcement
+- `tests/js_syntax/test_js_syntax.py` — consolidated JS syntax guard
+
+---
+
+## Original RED requirements (historical — all implemented)
+
+*(kept below for audit trail; implementation is complete)*
+
+### What was RED and what was made GREEN
 
 ### What is RED and what you must make GREEN
 
