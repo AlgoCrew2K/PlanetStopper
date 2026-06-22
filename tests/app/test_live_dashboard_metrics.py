@@ -727,8 +727,14 @@ class TestAiAdvisorNewsSourcesRender:
     def test_ai_advisor_renders_article_corpus_links_when_present(
         self, client, monkeypatch
     ):
-        """AC-5b: when per_lens_digest.sentiment.article_corpus exists, the template
-        renders clickable article links.
+        """AC-5b (template contract only): when per_lens_digest.sentiment.article_corpus
+        exists in the DB row, the template renders clickable article links.
+
+        NOTE: this test verifies the TEMPLATE reads article_corpus correctly when
+        the field is already present in a DB row.  It does NOT verify that the
+        production pipeline writes article_corpus — that is covered by
+        TestArticleCorpusPipelineContract below, which goes RED until
+        _build_sentiment_section + _build_per_lens_digest emit article_corpus.
 
         Fails RED if template does not read article_corpus from the sentiment lens.
         """
@@ -753,6 +759,182 @@ class TestAiAdvisorNewsSourcesRender:
         # The article title must appear
         assert "Fed signals caution" in html, (
             "Expected article title from article_corpus to appear in rendered HTML."
+        )
+
+
+# ===========================================================================
+# AC-5b (pipeline): article_corpus flows from _build_sentiment_section
+#                   through _build_per_lens_digest into the persisted row
+# ===========================================================================
+
+
+class TestArticleCorpusPipelineContract:
+    """AC-5b (pipeline): the production pipeline must write article_corpus into
+    the per_lens_digest.sentiment entry so the template can render it.
+
+    These are RED tests: they fail until _build_sentiment_section emits
+    article_corpus in the returned lens block AND _build_per_lens_digest
+    passes it through to the digest entry.
+
+    The circular fixture (test_ai_advisor_renders_article_corpus_links_when_present
+    above) injects article_corpus manually and only proves the template reads it
+    when present. These tests prove the key is PRODUCED by the pipeline.
+    """
+
+    # Minimal corpus article matching news_corpus.build_news_corpus() return shape.
+    _CORPUS_ARTICLE = {
+        "url": "https://www.reuters.com/markets/us/fed-caution-2026-06-22/",
+        "title": "Fed signals caution on rate cuts",
+        "published": "2026-06-22T10:00:00Z",
+        "domain": "reuters.com",
+        "topics": ["macro"],
+        "authority": 0.9,
+    }
+
+    def _mock_news_corpus_result(self) -> dict:
+        """Build a minimal build_news_corpus() return value with one corpus article."""
+        return {
+            "available": True,
+            "tone": -0.5,
+            "corpus": [self._CORPUS_ARTICLE],
+            "facet_a_tone": -0.5,
+            "facet_b_corpus": [self._CORPUS_ARTICLE],
+        }
+
+    def test_build_sentiment_section_emits_article_corpus_key(self):
+        """AC-5b: _build_sentiment_section must include article_corpus in its return dict.
+
+        Fails RED because the current implementation returns:
+          {"lens": "sentiment", "available": True, "payload": {...corpus...}, "sources": [...]}
+        where article_corpus is buried inside payload.corpus, not exposed as a
+        top-level article_corpus key.
+
+        Fix: add article_corpus=corpus[:TOP_K] (or similar) to the return dict so
+        lens_pipeline._build_per_lens_digest can pass it through to the digest entry.
+        """
+        import sys
+        import ai_advisor as ai_advisor_module
+        from unittest.mock import MagicMock
+
+        mock_corpus = self._mock_news_corpus_result()
+
+        # Patch the lazy import path: _build_sentiment_section does
+        # `from advisors import news_corpus` inside the function body.
+        # Injecting our mock into sys.modules before the call intercepts it.
+        mock_nc = MagicMock()
+        mock_nc.build_news_corpus.return_value = mock_corpus
+
+        # Patch the module in sys.modules so the lazy `from advisors import news_corpus`
+        # inside _build_sentiment_section picks up our mock.
+        original = sys.modules.get("advisors.news_corpus")
+        sys.modules["advisors.news_corpus"] = mock_nc
+        try:
+            result = ai_advisor_module._build_sentiment_section()
+        finally:
+            if original is not None:
+                sys.modules["advisors.news_corpus"] = original
+            else:
+                sys.modules.pop("advisors.news_corpus", None)
+
+        assert result.get("available") is True, (
+            f"Test setup: _build_sentiment_section must return available=True "
+            f"when news_corpus returns a non-empty corpus. Got: {result}"
+        )
+        assert "article_corpus" in result, (
+            "AC-5b: _build_sentiment_section must include 'article_corpus' key in its "
+            "return dict so lens_pipeline._build_per_lens_digest can pass it through. "
+            "RED: current implementation buries corpus inside payload.corpus only."
+        )
+        assert len(result["article_corpus"]) >= 1, (
+            "AC-5b: article_corpus must contain at least 1 entry when corpus is non-empty. "
+            f"Got article_corpus={result.get('article_corpus')!r}"
+        )
+
+    def test_build_per_lens_digest_passes_article_corpus_through(self):
+        """AC-5b: _build_per_lens_digest must preserve article_corpus in the digest entry.
+
+        Fails RED because _build_per_lens_digest (lens_pipeline.py:152) only
+        writes 'summary' and 'sources' — it drops any article_corpus key from
+        the lens block.
+
+        Fix: in _build_per_lens_digest, if the block has article_corpus, include
+        it in the digest entry: entry["article_corpus"] = block["article_corpus"].
+        """
+        from advisors import lens_pipeline as lp
+
+        # Simulate a sentiment lens block that already has article_corpus (after
+        # _build_sentiment_section is fixed).
+        sentiment_block = {
+            "lens": "sentiment",
+            "available": True,
+            "summary": "Markets showed mixed signals.",
+            "sources": [{"title": "Reuters", "url": "https://reuters.com/1", "lens": "sentiment"}],
+            "article_corpus": [self._CORPUS_ARTICLE],
+        }
+
+        per_lens = {"sentiment": sentiment_block}
+        digest = lp._build_per_lens_digest(per_lens)
+
+        sentiment_entry = digest.get("sentiment", {})
+        assert "article_corpus" in sentiment_entry, (
+            "AC-5b: _build_per_lens_digest must preserve article_corpus in the "
+            "sentiment digest entry. "
+            "RED: current implementation drops article_corpus (only writes summary + sources)."
+        )
+        assert len(sentiment_entry["article_corpus"]) >= 1, (
+            "AC-5b: preserved article_corpus must be non-empty. "
+            f"Got: {sentiment_entry.get('article_corpus')!r}"
+        )
+
+    def test_end_to_end_article_corpus_in_persisted_observation(self, monkeypatch):
+        """AC-5b (end-to-end): article_corpus appears in a per_lens_digest entry
+        as it would be stored in advisor_observations.raw_response.
+
+        This test simulates the full pipeline:
+          1. _build_sentiment_section (mocked news_corpus) → lens block with article_corpus
+          2. _build_per_lens_digest → digest entry with article_corpus preserved
+          3. Assert the digest entry the DB row would carry has article_corpus
+
+        Fails RED because neither step 1 nor step 2 currently emit article_corpus.
+        """
+        import sys
+        import ai_advisor as ai_advisor_module
+        from advisors import lens_pipeline as lp
+        from unittest.mock import MagicMock
+
+        mock_corpus_result = self._mock_news_corpus_result()
+        mock_nc = MagicMock()
+        mock_nc.build_news_corpus.return_value = mock_corpus_result
+
+        # Step 1: run _build_sentiment_section with mocked news_corpus
+        original = sys.modules.get("advisors.news_corpus")
+        sys.modules["advisors.news_corpus"] = mock_nc
+        try:
+            sentiment_block = ai_advisor_module._build_sentiment_section()
+        finally:
+            if original is not None:
+                sys.modules["advisors.news_corpus"] = original
+            else:
+                sys.modules.pop("advisors.news_corpus", None)
+
+        # Step 2: run _build_per_lens_digest
+        digest = lp._build_per_lens_digest({"sentiment": sentiment_block})
+
+        # Step 3: assert article_corpus survives in the digest
+        sentiment_entry = digest.get("sentiment", {})
+        assert "article_corpus" in sentiment_entry, (
+            "AC-5b end-to-end: article_corpus must survive the full pipeline from "
+            "_build_sentiment_section → _build_per_lens_digest → per_lens_digest entry. "
+            "RED: both functions need to emit/preserve the key. "
+            f"sentiment_entry keys: {list(sentiment_entry.keys())}"
+        )
+        # Verify article URL is preserved (not just the key existing with empty list)
+        corpus = sentiment_entry["article_corpus"]
+        assert any(
+            "reuters.com" in art.get("url", "") for art in corpus
+        ), (
+            "AC-5b: article URL from news_corpus must appear in the preserved article_corpus. "
+            f"Got corpus={corpus!r}"
         )
 
 
