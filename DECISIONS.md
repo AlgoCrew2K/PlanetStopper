@@ -2906,13 +2906,16 @@ Guard tests: `tests/conftest_guard/test_xdist_worker_count_guard.py`.
 
 These changes reduce per-test process fan-out. They do not affect the cap implementation.
 
-- **AC-1:** ~14 `node --check` subprocess calls scattered across 19 test files (`tests/ui/`, `tests/dashboard/`, `tests/ai_advisor/`, `tests/app/`) consolidated into one parametrized test in `tests/js_syntax/test_js_syntax.py` (glob-discovers `static/*.js`; `shutil.which(node) is None` skip guard). Coverage identical. Three empty `TestIndexJsSyntaxValidity` / `TestIndexJsParses` / `TestNodeSyntaxCheck` husk classes left by the consolidation were deleted (commit 862fcc1); their orphaned imports removed; ruff-format applied across 13 affected files.
+- **AC-1:** ~14 `node --check` subprocess calls scattered across 19 test files (`tests/ui/`, `tests/dashboard/`, `tests/ai_advisor/`, `tests/app/`) consolidated into one parametrized test in `tests/js_syntax/test_js_syntax.py` (glob-discovers `static/*.js`; `shutil.which(node) is None` skip guard). Coverage identical. Six empty husk classes left by the consolidation were deleted across two commits: three compile-error husks (`TestIndexJsSyntaxValidity`, `TestIndexJsParses` x2) deleted in 862fcc1; three additional docstring/pass husks (`TestJsSyntaxValidity`, `TestAC7JSParseGuard`, `TestIndexJsParseGate`) found by the strengthened recurrence guard and deleted in c314b1f. Orphaned imports removed; ruff-format applied.
 - **AC-2:** Two `subprocess.run([python, -m, pytest, --collect-only, ...])` calls in `TestRetainedPortmodeTestsStillCollect` (`tests/execution/test_orphan_port_modules_removed.py`) replaced with in-process `importlib.import_module()` calls. Each subprocess spawn re-imported the full app module stack (~1-2 GB committed); in-process import is effectively free.
 - **AC-3:** The `_init_db_at` subprocess body in `tests/advisors/test_prism_dotenv_hardening.py` replaced with in-process `os.environ[DB_PATH]=str(db_path); database.init_db()`. Eliminates one per-test child interpreter spawn.
 
 **Continuation: recurrence guard**
 
-`tests/meta/test_all_test_files_parse.py` — a parametrized guard that calls `compile(src, path, exec)` over every `*.py` under `tests/` (excluding `__pycache__` and `.claude` path segments). An empty class body — the exact defect AC-1 introduced and 862fcc1 fixed — raises `SyntaxError: expected an indented block after class definition` and fails the test with the offending file path. Pure stdlib; no subprocess; runs on every CI push.
+`tests/meta/test_all_test_files_parse.py` — two complementary guards, pure stdlib, no subprocess, runs on every CI push.
+
+- **Guard 1 (compile, parametrized):** calls `compile(src, path, "exec")` over every `*.py` under `tests/` (excluding `__pycache__` and `.claude` path segments). An empty class body raises `SyntaxError: expected an indented block after class definition` and fails the test for that specific file with the offending path and line number.
+- **Guard 2 (AST walk, aggregated):** after parse succeeds, walks the AST of each file looking for `Test*`-named classes with zero direct `test_`-prefixed methods. A class left with only a docstring or a helper method (but no `test_` method) compiles cleanly but contributes zero assertions — Guard 1 cannot catch these. Guard 2 was added in c314b1f and immediately found 3 additional husks that 862fcc1 had missed (`TestJsSyntaxValidity`, `TestAC7JSParseGuard`, `TestIndexJsParseGate`); all three deleted in the same commit. `_BASE_CLASS_EXEMPTIONS` frozenset provided for legitimate base classes.
 
 ### Key design decisions
 
@@ -2931,7 +2934,8 @@ These changes reduce per-test process fan-out. They do not affect the cap implem
 - `tests/execution/test_orphan_port_modules_removed.py` — subprocess -> importlib refactor (AC-2)
 - `tests/advisors/test_prism_dotenv_hardening.py` — subprocess -> in-process DB init (AC-3)
 - 19 source files in `tests/ui/`, `tests/dashboard/`, `tests/ai_advisor/`, `tests/app/` — scattered node --check methods removed (AC-1)
-- `tests/meta/test_all_test_files_parse.py` — recurrence guard (continuation)
+- `tests/meta/test_all_test_files_parse.py` — recurrence guard: Guard 1 (compile parametrized) committed dd7daab; Guard 2 (AST empty-Test*-class walk) + 3 additional husk deletions committed c314b1f
+- `tests/ai_advisor/test_advisor_chat_handoff.py`, `tests/app/test_strategy_builder_spa_port.py`, `tests/dashboard/test_render_basis_fix.py` — 3 additional empty husk classes deleted (c314b1f)
 
 ## DE-SEED-STARTUP-001 — Startup symphony seed: idempotent bot_state bootstrap on daemon start (2026-06-21)
 
