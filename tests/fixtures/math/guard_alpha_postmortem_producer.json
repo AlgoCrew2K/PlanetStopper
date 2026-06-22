@@ -1,0 +1,61 @@
+{
+  "_comment": "Golden fixture for post-mortem producer saved_dollars math (reporting.py:50-71). The bug: when triggered_basket_snapshot is non-empty and live_prices are provided, post_trigger_move collapses to ~0 (basket prices pinned near exit), so live_ret ≈ f_ret → near-zero saved. The correct if-held source is shadow_history.current_return, which the engine records accurately. All expected values are DERIVED from the fixture inputs — never hardcoded from producer output.",
+  "cases": [
+    {
+      "name": "basket_prices_stale_current_return_diverges",
+      "description": "Bot locked in at +1.85%. If-held (shadow_history.current_return) is +0.63% — a 1.22pp divergence on a $1020 position ($12.44 saved). The basket reconstruction collapses to near exit return because ticker prices barely moved from the trigger price (simulating the stale/at-exit basket bug). The CORRECT producer must use current_return, NOT the basket reconstruction.",
+      "inputs": {
+        "triggered_at_return": 1.85,
+        "shadow_history_current_return": 0.63,
+        "current_value": 1020.0,
+        "triggered_basket_snapshot": [
+          {"ticker": "LQD", "allocation": 0.6, "price": 105.0},
+          {"ticker": "EYEG", "allocation": 0.4, "price": 12.0}
+        ],
+        "live_prices": {
+          "LQD":  {"last_price": 105.02},
+          "EYEG": {"last_price": 12.01}
+        }
+      },
+      "correct_if_held_source": "shadow_history.current_return",
+      "correct_formula": "saved_dollars = (triggered_at_return - shadow_history_current_return) / 100 * current_value",
+      "expected_sign": "positive"
+    },
+    {
+      "name": "large_divergence_basket_near_exit_current_return_negative",
+      "description": "Bot exited at +2.82%. If-held fell to +0.37% (shadow_history.current_return). Divergence = 2.45pp on $985 = $24.13. Basket prices barely moved from snapshot → basket reconstruction ≈ exit return ≈ $0 saved (the bug). Correct producer uses current_return.",
+      "inputs": {
+        "triggered_at_return": 2.82,
+        "shadow_history_current_return": 0.37,
+        "current_value": 985.0,
+        "triggered_basket_snapshot": [
+          {"ticker": "IAGG", "allocation": 1.0, "price": 52.0}
+        ],
+        "live_prices": {
+          "IAGG": {"last_price": 52.01}
+        }
+      },
+      "correct_if_held_source": "shadow_history.current_return",
+      "correct_formula": "saved_dollars = (triggered_at_return - shadow_history_current_return) / 100 * current_value",
+      "expected_sign": "positive"
+    },
+    {
+      "name": "current_return_above_exit_negative_guard_alpha",
+      "description": "Bot exited at +0.67%. If-held actually recovered to +1.15% (shadow_history.current_return). Guard alpha is negative (market recovered past exit). Saved = (0.67 - 1.15)/100 * $1200 = -$5.76. Basket reconstruction again gives near-zero (bug path), hiding the real negative outcome.",
+      "inputs": {
+        "triggered_at_return": 0.67,
+        "shadow_history_current_return": 1.15,
+        "current_value": 1200.0,
+        "triggered_basket_snapshot": [
+          {"ticker": "GLD", "allocation": 1.0, "price": 180.0}
+        ],
+        "live_prices": {
+          "GLD": {"last_price": 180.01}
+        }
+      },
+      "correct_if_held_source": "shadow_history.current_return",
+      "correct_formula": "saved_dollars = (triggered_at_return - shadow_history_current_return) / 100 * current_value",
+      "expected_sign": "negative"
+    }
+  ]
+}
