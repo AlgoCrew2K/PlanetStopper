@@ -101,7 +101,20 @@ ALPHA_BOT_PATH = REPO_ROOT / "alpha_bot_execution.py"
 # safe (immediate re-raise, top-level barrier with full traceback log,
 # etc.). NEVER widen this set as a quick-fix to make the test pass;
 # the fix is to narrow the except clause in production code instead.
-WHITELISTED_LINENOS: frozenset[int] = frozenset()
+WHITELISTED_LINENOS: frozenset[int] = frozenset(
+    {
+        # seed_symphonies_into_bot_state: per-account AC-4 partial-success barrier.
+        # fetch_symphony_stats may raise any exception type (e.g. RuntimeError);
+        # narrowing is infeasible and would break AC-4. If this line shifts, re-grep
+        # "except Exception" inside seed_symphonies_into_bot_state to find the new lineno.
+        1923,
+        # ensure_bot_state_seeded: top-level daemon startup fail-safe barrier (AC-4).
+        # Wraps load_state + presence-check + seed + save; must swallow all exception
+        # types to prevent daemon crash at startup. If this line shifts, re-grep
+        # "except Exception" inside ensure_bot_state_seeded to find the new lineno.
+        2012,
+    }
+)
 
 
 # ---------------------------------------------------------------------------

@@ -1920,7 +1920,11 @@ def seed_symphonies_into_bot_state(bot_state: dict) -> int:
     for account in ACCOUNT_UUIDS:
         try:
             symphonies = fetch_symphony_stats(account)
-        except Exception as exc:
+        except (
+            Exception
+        ) as exc:  # AC-4 partial-success barrier: per-account fail-safe. fetch_symphony_stats
+            # may raise any exception type (e.g. RuntimeError) — narrowing is infeasible and would
+            # break AC-4. Mandated by tests/engine/test_startup_seed_symphonies.py TestFailSafeStartup.
             print(f"[seed] fetch_symphony_stats({account!r}) failed: {type(exc).__name__}: {exc}")
             continue
 
@@ -2005,7 +2009,10 @@ def ensure_bot_state_seeded() -> None:
             print(f"[seed] Startup seed complete — {created} symphony entries created.")
         else:
             print("[seed] Startup seed: 0 entries created (no symphonies returned).")
-    except Exception as exc:
+    except Exception as exc:  # AC-4 top-level daemon startup fail-safe barrier: wraps load_state,
+        # presence check, seed_symphonies_into_bot_state, and save_state. Must swallow any exception
+        # type to prevent daemon crash at startup. Mandated by tests/engine/test_startup_seed_symphonies.py
+        # TestFailSafeStartup (seed_symphonies_into_bot_state / ensure_bot_state_seeded).
         print(f"[seed] ensure_bot_state_seeded failed (non-fatal): {type(exc).__name__}: {exc}")
 
 
