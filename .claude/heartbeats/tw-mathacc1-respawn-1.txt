@@ -1,6 +1,0 @@
-name: tw-mathacc1
-utc: 2026-05-29T14:30:28Z
-head: e44944b merge: PERF-007 — anchor post-mortem glob to absolute dir (564319c; rev-perf007 + opt-perf007 APPROVED; 100/0 combined)
-cycle: math-acc-001-tail-obs-phrasing
-role: test-writer + team-lead
-status: heartbeat written; reading source next

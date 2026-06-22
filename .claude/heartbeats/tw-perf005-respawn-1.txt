@@ -1,5 +1,0 @@
-tw-perf005 respawn-1
-timestamp: 2026-05-28
-HEAD: 262ef90 merge: PERF-004 — verify-first pin (Outcome B hoist UNSAFE) + compute_regime_match_quality defensive-scan gap closure (ba37fdd; rev-perf004 + risk-perf004 APPROVED; 4102/0 full tree)
-branch: cycle/perf-005-rdbstorage-contention
-role: test-writer + team-lead

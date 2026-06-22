@@ -1,4 +1,0 @@
-4b684db merge: OQ-1..OQ-10 audit open-provenance resolution (a5ae75b; 4 CITE / 5 TAG-OPEN / 1 CROSS-LINK)
-agent: vision-auditor
-UTC: 2026-05-29T00:00:00Z
-status: alive
