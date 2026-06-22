@@ -45,7 +45,7 @@ def _extract_function_source(source: str, fn_name: str) -> str | None:
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == fn_name:
             start = node.lineno - 1  # ast lineno is 1-based
-            end = node.end_lineno    # inclusive 1-based
+            end = node.end_lineno  # inclusive 1-based
             return "\n".join(lines[start:end])
     return None
 
@@ -90,9 +90,7 @@ def test_init_db_at_uses_in_process_init_db():
     source = _TARGET.read_text(encoding="utf-8")
     fn_source = _extract_function_source(source, "_init_db_at")
 
-    assert fn_source is not None, (
-        "_init_db_at not found in test_prism_dotenv_hardening.py"
-    )
+    assert fn_source is not None, "_init_db_at not found in test_prism_dotenv_hardening.py"
 
     has_init_db = "init_db" in fn_source and "database" in fn_source
     assert has_init_db, (
@@ -145,6 +143,4 @@ def test_prism_dotenv_hardening_file_is_valid_python():
     try:
         ast.parse(source)
     except SyntaxError as exc:
-        pytest.fail(
-            f"test_prism_dotenv_hardening.py has a syntax error after AC-3 refactor: {exc}"
-        )
+        pytest.fail(f"test_prism_dotenv_hardening.py has a syntax error after AC-3 refactor: {exc}")

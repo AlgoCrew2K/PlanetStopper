@@ -698,8 +698,6 @@ class TestMarketStateAndStripChipsUpdate:
         )
 
 
-
-
 # ---------------------------------------------------------------------------
 # CC-10  Regression guards (sym-table-container; structure preserved)
 # ---------------------------------------------------------------------------

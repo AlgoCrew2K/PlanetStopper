@@ -103,9 +103,7 @@ def test_js_syntax_consolidated_module_covers_all_static_js_files():
     if uses_glob and uses_js_extension:
         # Dynamic discovery — the implementer uses glob("static/*.js") or equivalent.
         # Trust that the pattern covers all files; assert the pattern is present.
-        assert "static" in source, (
-            "Glob-based discovery must reference the 'static' directory"
-        )
+        assert "static" in source, "Glob-based discovery must reference the 'static' directory"
     else:
         # Static list — each basename must appear explicitly.
         missing = [name for name in js_basenames if name not in source]

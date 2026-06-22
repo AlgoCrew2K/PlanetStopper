@@ -34,10 +34,10 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Import the helper (RED until the seam is extracted)
 # ---------------------------------------------------------------------------
+
 
 def _get_guard():
     """Import _assert_safe_worker_count from tests.conftest.

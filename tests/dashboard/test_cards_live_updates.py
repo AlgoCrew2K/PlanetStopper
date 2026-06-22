@@ -278,8 +278,6 @@ def test_api_state_existing_fields_preserved_after_symphonies_added(
     )
 
 
-
-
 # ---------------------------------------------------------------------------
 # AC-CL.5  updateDashboard references data-sym-id targeting (card update path)
 # ---------------------------------------------------------------------------

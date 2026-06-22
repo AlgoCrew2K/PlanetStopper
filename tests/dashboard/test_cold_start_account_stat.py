@@ -65,8 +65,6 @@ def _js() -> str:
     return _JS_PATH.read_text(encoding="utf-8")
 
 
-
-
 # ---------------------------------------------------------------------------
 # AC-CS.1 — dedicated renderer exists and targets the element
 # ---------------------------------------------------------------------------

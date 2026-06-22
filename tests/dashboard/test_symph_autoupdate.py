@@ -83,8 +83,6 @@ def _html() -> str:
     return _TEMPLATE_PATH.read_text(encoding="utf-8")
 
 
-
-
 # ---------------------------------------------------------------------------
 # AC-SA.2 — section container testids referenced in update logic
 # ---------------------------------------------------------------------------

@@ -696,5 +696,3 @@ def test_market_prism_block_marked_advisory_only(client, monkeypatch):
         "e.g., data-testid='market-prism-block' or class='market-prism-*'. "
         "This enables the ux-expert visual gate to locate the block."
     )
-
-

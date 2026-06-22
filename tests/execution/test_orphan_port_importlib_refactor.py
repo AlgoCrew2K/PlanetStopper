@@ -31,6 +31,7 @@ _TARGET = _WORKTREE / "tests" / "execution" / "test_orphan_port_modules_removed.
 # AST helpers
 # ---------------------------------------------------------------------------
 
+
 def _collect_subprocess_run_args_in_class(source: str, class_name: str) -> list[list[str]]:
     """Return the argument lists of every subprocess.run() call inside a named class.
 
@@ -147,10 +148,7 @@ def test_collect_only_subprocess_calls_removed_from_orphan_test():
     except SyntaxError as exc:
         pytest.fail(f"test_orphan_port_modules_removed.py has a syntax error: {exc}")
 
-    collect_only_calls = [
-        args for args in subprocess_args
-        if "--collect-only" in args
-    ]
+    collect_only_calls = [args for args in subprocess_args if "--collect-only" in args]
 
     assert not collect_only_calls, (
         f"Found {len(collect_only_calls)} subprocess.run([..., '--collect-only', ...]) "

@@ -479,8 +479,6 @@ def test_ac5_post_routes_require_csrf(monkeypatch):
             )
 
 
-
-
 # ===========================================================================
 # AC2 (structural) — tab switcher JS present in the consolidated page.
 # ===========================================================================

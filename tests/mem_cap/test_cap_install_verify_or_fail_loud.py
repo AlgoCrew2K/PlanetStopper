@@ -30,10 +30,7 @@ import textwrap
 
 import pytest
 
-
-_WORKTREE = os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-)
+_WORKTREE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 # ---------------------------------------------------------------------------
@@ -103,9 +100,7 @@ def test_cap_install_uses_is_process_in_job_for_verification():
         "This seam is the AC-5 testability boundary.  "
         "This test is RED until AC-5 adds the seam."
     )
-    assert callable(_mem_cap._is_process_in_job_seam), (
-        "_is_process_in_job_seam must be callable"
-    )
+    assert callable(_mem_cap._is_process_in_job_seam), "_is_process_in_job_seam must be callable"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Win32 Job Object — Windows only")
@@ -149,7 +144,9 @@ def test_cap_installed_false_and_warning_when_membership_not_confirmed(monkeypat
             "AC-5: never silently claim the cap is installed without verification."
         )
 
-        warn_texts = [str(w.message) for w in caught if issubclass(w.category, (UserWarning, RuntimeWarning))]
+        warn_texts = [
+            str(w.message) for w in caught if issubclass(w.category, (UserWarning, RuntimeWarning))
+        ]
         assert warn_texts, (
             "install_total_memory_cap must emit a loud warnings.warn when membership is "
             "not confirmed — silent failure is forbidden by AC-5.  No warning was emitted."

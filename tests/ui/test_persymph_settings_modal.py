@@ -1094,8 +1094,6 @@ def test_post_live_mode_string_true_does_not_silently_arm_live(
         )
 
 
-
-
 # Finding 2 — BLOCKER — Effective-mode badge never injected into DOM (AC-2)
 # _renderModal computes modeBadge correctly but never writes it into
 # #sym-settings-mode-badge — the div remains empty in all modal states.
