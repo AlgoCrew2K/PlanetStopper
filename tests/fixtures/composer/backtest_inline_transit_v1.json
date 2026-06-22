@@ -1,0 +1,139 @@
+{
+  "_fixture_provenance": "captured-from-producer",
+  "_capture_date": "2026-06-18",
+  "_endpoint": "POST /api/v0.1/backtest",
+  "_encoding": "raw_value (symphony.raw_value)",
+  "_note": "Re-captured 2026-06-18 to verify current schema. raw_value still returns HTTP 200 \u2014 the encoding_type+encoded_value drift from research report is NOT currently live. The encoded_value path with transit/JSON encoding returns HTTP 422 unrecognized-node-step for step=root and step=wt-cash-equal. New response fields vs 2026-05-31: rebalance_days, active_asset_nodes, tdvm_weights. dvm_capital/rebalance_days/active_asset_nodes/tdvm_weights truncated for fixture size.",
+  "_request_body": {
+    "symphony": {
+      "raw_value": {
+        "step": "root",
+        "name": "Discovery Probe SPY",
+        "rebalance": "monthly",
+        "id": "7a97be3f-96c9-4fb9-beb6-db769da8fc83",
+        "children": [
+          {
+            "step": "wt-cash-equal",
+            "id": "b5c95f1e-3ce2-40bb-aad8-40ac82ca4c66",
+            "children": [
+              {
+                "step": "asset",
+                "ticker": "SPY",
+                "name": "SPDR S&P 500 ETF",
+                "exchange": "XNAS",
+                "id": "b6aff090-81f1-4292-9db2-df520fc197f5"
+              }
+            ]
+          }
+        ],
+        "description": "Minimal probe for backtest inline schema discovery"
+      }
+    },
+    "capital": 10000,
+    "apply_reg_fee": true,
+    "apply_taf_fee": true,
+    "slippage_percent": 0.005,
+    "broker": "alpaca",
+    "backtest_version": "v2"
+  },
+  "_response_shape_diff_vs_2026_05_31": {
+    "added_keys": [
+      "rebalance_days",
+      "active_asset_nodes",
+      "tdvm_weights"
+    ],
+    "removed_keys": [],
+    "dvm_capital_key_semantics": "inline-backtest: key == raw_value.id (the UUID assigned to the root node)"
+  },
+  "response": {
+    "first_day": 8429,
+    "last_market_days_value": 308153.92,
+    "last_market_days_holdings": {
+      "$USD": 0.01,
+      "SPY": 412.6656034952273
+    },
+    "legend": {
+      "7a97be3f-96c9-4fb9-beb6-db769da8fc83": {
+        "name": "Discovery Probe SPY"
+      }
+    },
+    "data_warnings": {},
+    "last_market_day": 20622,
+    "costs": {
+      "reg_fee": 0.0,
+      "taf_fee": 0.0,
+      "cat_fee": 0.25,
+      "slippage": 49.75,
+      "spread_markup": 0.0,
+      "subscription": 0.0
+    },
+    "dvm_capital": {
+      "7a97be3f-96c9-4fb9-beb6-db769da8fc83": {
+        "8429": 9950.24,
+        "8432": 10020.42,
+        "8433": 10040.8,
+        "8434": 10147.23,
+        "8435": 10190.26,
+        "8436": 10183.46,
+        "8439": 10183.46,
+        "8440": 10113.27,
+        "8441": 10126.85,
+        "8442": 10176.67
+      }
+    },
+    "rebalance_days": [
+      8429,
+      8432,
+      8460,
+      8491,
+      8523,
+      8552,
+      8582,
+      8614,
+      8644,
+      8674
+    ],
+    "active_asset_nodes": {
+      "b6aff090-81f1-4292-9db2-df520fc197f5": 1.0
+    },
+    "tdvm_weights": {
+      "$USD": {},
+      "SPY": {
+        "8429": 1.0,
+        "8432": 1.0,
+        "8433": 1.0,
+        "8434": 1.0,
+        "8435": 1.0
+      }
+    },
+    "stats": {
+      "skewness": -0.016249464426663824,
+      "min": -0.1094236820474318,
+      "top_five_percent_day_contribution": 3.219488662994974,
+      "annualized_rate_of_return": 0.1082602914734887,
+      "mean": 0.00047674391941706447,
+      "herfindahl_index": 0.9999981045050576,
+      "top_ten_percent_day_contribution": 4.9551592760020995,
+      "top_one_day_contribution": 0.03954980958760917,
+      "calmar_ratio": 0.19616242316164756,
+      "sortino_ratio": 0.9184131619977965,
+      "win_rate": 0.5349280019040819,
+      "sharpe_ratio": 0.6457575584192363,
+      "tail_ratio": 0.9412567672929573,
+      "trailing_two_week_return": -0.011130361974311387,
+      "trailing_one_day_return": 0.010396409061102618,
+      "size": 8403,
+      "cumulative_return": 29.815392,
+      "trailing_one_year_return": 0.2674851600414623,
+      "annualized_turnover": 9.611439977615163e-07,
+      "trailing_one_month_return": 0.013556220111942574,
+      "max_drawdown": 0.5518910794871088,
+      "median": 0.0006486964223495484,
+      "max": 0.14519773113288958,
+      "standard_deviation": 0.18604422995402825,
+      "kurtosis": 11.756783707083931,
+      "trailing_one_week_return": 0.014778931830577324,
+      "trailing_three_month_return": 0.13497709614785602
+    }
+  }
+}
