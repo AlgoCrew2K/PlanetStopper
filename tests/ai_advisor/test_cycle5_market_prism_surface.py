@@ -79,12 +79,15 @@ _FULL_PRISM_SUMMARY = {
             "sentiment": {
                 "available": True,
                 "summary": "Retail sentiment elevated; institutional flows neutral.",
-                "sources": [
+                "sources": [],
+                # AC-5a: article_corpus entries render as <a href> links in the template
+                # (per_lens_digest[*].article_corpus → _all_sources with url key → <a>).
+                # Plain-string sources[] entries render as <span> citations only.
+                "article_corpus": [
                     {
                         "title": "Market Sentiment Daily",
                         "url": "https://example.com/sentiment",
                         "published": "2026-06-12",
-                        "lens": "sentiment",
                     }
                 ],
             },
@@ -456,18 +459,27 @@ def test_xss_hostile_title_is_html_escaped(monkeypatch):
     import database
 
     hostile_title = "<script>alert('xss')</script>Hostile Market Report"
-    hostile_summary = {
-        **_FULL_PRISM_SUMMARY,
-        "raw_response": {
-            **_FULL_PRISM_SUMMARY["raw_response"],
-            "sources": [
+    # AC-5a: template reads article_corpus from per_lens_digest entries (not top-level
+    # sources).  Inject the hostile title into article_corpus so it is actually rendered
+    # and the XSS-escape assertion is exercised.
+    hostile_per_lens = {
+        **_FULL_PRISM_SUMMARY["raw_response"]["per_lens_digest"],
+        "sentiment": {
+            **_FULL_PRISM_SUMMARY["raw_response"]["per_lens_digest"]["sentiment"],
+            "article_corpus": [
                 {
                     "title": hostile_title,
                     "url": "https://example.com/hostile",
                     "published": "2026-06-13",
-                    "lens": "sentiment",
                 }
             ],
+        },
+    }
+    hostile_summary = {
+        **_FULL_PRISM_SUMMARY,
+        "raw_response": {
+            **_FULL_PRISM_SUMMARY["raw_response"],
+            "per_lens_digest": hostile_per_lens,
         },
     }
 
