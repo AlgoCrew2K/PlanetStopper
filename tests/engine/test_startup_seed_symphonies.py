@@ -88,6 +88,33 @@ def _save_sentinel_bot_state(symphony_id: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Hermeticity — ACCOUNT_UUIDS must not depend on the ambient environment
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_account_uuids():
+    """Pin alpha_bot_execution.ACCOUNT_UUIDS to a deterministic non-empty test account.
+
+    ACCOUNT_UUIDS is built from env at import (alpha_bot_execution.py:63 —
+    ``[uid for uid in [acc_ind, acc_roth, acc_trad] if uid]``) and is therefore EMPTY
+    when no .env is present (e.g. CI).  An empty ACCOUNT_UUIDS skips the seed loop
+    entirely, which would make every seed-expectation test fail in CI (and the
+    no-pollution tests pass vacuously).  Patching it here makes the whole module
+    hermetic — the seed loop runs deterministically regardless of the ambient env.
+
+    Tests that need specific multi-account scenarios (e.g. partial-account failure,
+    once-per-account counting) override this with their own
+    ``patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [...])`` — that context
+    manager takes precedence inside the test and restores this value on exit.
+    """
+    import alpha_bot_execution
+
+    with patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", ["seed-test-account-uuid"]):
+        yield
+
+
+# ---------------------------------------------------------------------------
 # AC-1 — Seed-when-empty, market-agnostic
 # ---------------------------------------------------------------------------
 
