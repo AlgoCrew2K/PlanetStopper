@@ -1,0 +1,62 @@
+{
+  "_provenance": "schema-derived from fetch_symphony_stats response shape (alpha_bot_execution.py:175-189). Field names match the 'symphonies' list items returned by the Composer /portfolio/accounts/{id}/symphony-stats-meta endpoint. Values are illustrative non-production fixtures — null where the test must not hardcode producer-computed rates/dollars/percents.",
+  "symphonies": [
+    {
+      "id": "fixture-sym-id-001",
+      "name": "Fixture Symphony Alpha",
+      "last_percent_change": null,
+      "holdings": [],
+      "simple_return": null,
+      "net_deposits": null,
+      "time_weighted_return": null,
+      "max_drawdown": null,
+      "current_value": null
+    },
+    {
+      "id": "fixture-sym-id-002",
+      "name": "Fixture Symphony Beta",
+      "last_percent_change": null,
+      "holdings": [],
+      "simple_return": null,
+      "net_deposits": null,
+      "time_weighted_return": null,
+      "max_drawdown": null,
+      "current_value": null
+    },
+    {
+      "id": "fixture-sym-id-003",
+      "name": "Fixture Symphony Gamma",
+      "last_percent_change": null,
+      "holdings": [],
+      "simple_return": null,
+      "net_deposits": null,
+      "time_weighted_return": null,
+      "max_drawdown": null,
+      "current_value": null
+    }
+  ],
+  "partial_failure_account_b": [
+    {
+      "id": "fixture-sym-id-004",
+      "name": "Fixture Symphony Delta",
+      "last_percent_change": null,
+      "holdings": [],
+      "simple_return": null,
+      "net_deposits": null,
+      "time_weighted_return": null,
+      "max_drawdown": null,
+      "current_value": null
+    },
+    {
+      "id": "fixture-sym-id-005",
+      "name": "Fixture Symphony Epsilon",
+      "last_percent_change": null,
+      "holdings": [],
+      "simple_return": null,
+      "net_deposits": null,
+      "time_weighted_return": null,
+      "max_drawdown": null,
+      "current_value": null
+    }
+  ]
+}

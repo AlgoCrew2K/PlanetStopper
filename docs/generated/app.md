@@ -3,13 +3,14 @@
 > Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
 **Source:** `app.py`
-**Last updated:** 2026-06-20 (strategy-builder C5 dual-mode route rewire 1d5dd48)
+**Last updated:** 2026-06-21 (startup-seed-symphonies startup hook)
 
 ## Overview
 
 `app.py` is the Flask application and process host. It owns:
 
 - **Daemon singleton** — pidfile-based single-instance enforcement at startup.
+- **Startup symphony seed** — calls `alpha_bot_execution.ensure_bot_state_seeded()` once after the pidfile is acquired and before the minute scheduler starts. Idempotent no-op when symphonies already exist; fail-safe if Composer is unreachable at startup. See `DE-SEED-STARTUP-001` in `DECISIONS.md`.
 - **Minute scheduler** — spawns `alpha_bot_execution.py` at `:00` via `subprocess.run`; refreshes Composer account totals once per minute; prunes telemetry at 02:00.
 - **Dashboard routes** — operator UI routes. Two CSRF-protected write paths exist: `POST /api/settings` (allowlisted .env keys) and `POST /api/symphony-settings/<name>` (per-symphony live-mode toggle). Templates open SQLite read-only; the dashboard is NOT a live-trade-action surface.
 - **AI Advisor routes** — unified single-page SPA at `GET /ai-advisor` renders all 6 tabs in one server-side render; GET sub-routes for all 5 old per-tab pages now 302-redirect to `/ai-advisor`; POST action routes (suggest, evaluate, accept, reject, chat/send, strategy-builder/run) are unchanged.
@@ -45,6 +46,17 @@ Module-level thread-safety constructs:
 | `ADVISOR_SYNTHESIS_MODEL` | optional | Claude model for AI Advisor synthesis calls. Default: `claude-opus-4-8`. Overridable at runtime without a code change. |
 
 ## API Reference
+
+### Daemon Startup Sequence
+
+The `if __name__ == "__main__":` block runs this sequence:
+
+1. `_acquire_daemon_singleton(_PIDFILE_PATH)` — pidfile-based single-instance enforcement.
+2. `from alpha_bot_execution import ensure_bot_state_seeded; ensure_bot_state_seeded()` — lazy-imported to avoid circular-import risk at module level; seeds `bot_state` with baseline symphony entries when none exist (idempotent no-op when already seeded; fail-safe on Composer errors). See `alpha_bot_execution.ensure_bot_state_seeded`.
+3. `threading.Thread(target=run_scheduler, daemon=True).start()` — minute scheduler thread.
+4. `app.run(...)` — Flask server.
+
+---
 
 ### Dashboard Auth Gate
 
@@ -105,7 +117,7 @@ Flask `before_request` hook. Injects CSRF enforcement for the two guarded write 
 ### Scheduler
 
 #### `run_scheduler() → None`
-Runs the `schedule` loop: every minute at `:00` triggers `threaded_trigger()` and `_refresh_account_totals()`; daily at 02:00 runs `_run_trigger_retention()`.
+Runs the `schedule` loop: every minute at `:00` triggers `threaded_trigger()` and `_refresh_account_totals()`; daily at 02:00 runs `_run_trigger_retention()`; daily at 03:00 runs `_run_lens_pipeline()` (gated by `DISABLE_DAEMON_LENS_PIPELINE`).
 
 #### `trigger_alpha_bot(force: bool = False) → None`
 Spawns `alpha_bot_execution.py` as a subprocess. Passes `--force` when `force=True`. Logs stdout/stderr to `alphabot_daemon.log`.
@@ -384,5 +396,6 @@ Normalizes an `autotune_runs` DB row for the `/api/autotune-runs` JSON response.
 - `advisors.advisor_chat` — `explain_artifact`, `CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS`
 - `advisors.strategy_builder_engine` — `propose_strategies`, `Objective`, `ScreenConfig` (lazy import)
 - `advisors.build_plan_generator` — `load_atlas_candidates` (lazy import, C5 route rewire)
+- `alpha_bot_execution` — `ensure_bot_state_seeded` (lazy import, startup seed)
 - `symphony_logic` — `fetch_symphony_score`
 - `werkzeug.security` — `check_password_hash` for `DASHBOARD_PASSWORD_HASH` verification
