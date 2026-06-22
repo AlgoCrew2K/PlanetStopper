@@ -2993,3 +2993,82 @@ Reviewer: quant-code-reviewer APPROVE (conditional on PM live gate) at HEAD 5d8b
 - `tests/engine/test_startup_seed_symphonies.py` — 7 AC-driven tests (new)
 - `tests/fixtures/engine/startup_seed/basic_symphony_stats.json` — fixture for mocked `fetch_symphony_stats` (new)
 - `feature-plans/startup-seed-symphonies.md` — cycle planning artifact (Status: ready)
+
+
+---
+
+## DE-LIVE-DASH-001 -- Live dashboard data-integrity P0: six broken surfaces wired to live DB sources (2026-06-22)
+
+Branch: fix/live-dashboard-metrics | Base: origin/main (52ef5cc)
+
+### Problem
+
+The live droplet dashboard showed blank/zero/stale values on six surfaces from day one because every affected route was gated on post-mortem JSON files that do not exist until end-of-day. A fresh droplet has no post-mortem files, so the operator saw a dashboard that appeared non-functional.
+
+Root causes per surface:
+
+| Surface | Root cause |
+|---------|-----------|
+| $-saved panel | `guard_alpha_summary()` read only `post_mortem_*.json`; no fallback |
+| Performance chart | `api_performance()` returned empty series when post-mortem dir was empty |
+| History tab | `get_history()` called `analytics.get_history_summary()` without `base_dir`, defaulting to CWD |
+| History todays_exits | No live source; populated only from post-mortem on disk |
+| Hero guard-alpha strip | `get_windowed_strip()` returned 0.0 when `shadow_history` had <2 trading days |
+| MDD bot column | Template coerced `None` -> `0.0` via `| float`, rendering "0.0%" instead of "--" |
+| AI Advisor news sources | Template read `_raw.get('sources', [])` -- a key that does not exist in MARKET_PRISM `raw_response` |
+
+### Decisions
+
+#### DE-LIVE-DASH-001-AC1: guard_alpha_summary -- intraday exit_triggers fallback
+
+When no `post_mortem_*.json` files exist, `guard_alpha_summary()` now queries `exit_triggers` + `shadow_history` + `bot_state` directly. Formula: `saved = (at_return - current_return) / 100 * position_value` per exit trigger. NULL values for any operand skip the row (conservative, not zero-filling). The EOD post-mortem path is UNCHANGED and takes precedence when files exist.
+
+The response carries a new `source` field: `"post_mortem_eod"` (EOD path) or `"exit_triggers_intraday"` (fallback). `basis_label` is changed from "snapshot-time basis" to "intraday estimate -- updates live" when using the fallback. This distinction lets the UI qualify the display without hard-coding assumptions in the route.
+
+Decision: intraday estimate is mathematically distinct from snapshot-time post-mortem figures. Never equate the two; always propagate the `source` field to the UI.
+
+#### DE-LIVE-DASH-001-AC2: api_performance -- shadow_history fallback series
+
+When `analytics.get_history_with_cache_invalidation()` returns an empty date list, `api_performance()` calls `analytics.get_portfolio_bot_and_held_daily_returns()` as a fallback to populate the return series from `shadow_history`. The `insufficient_history` flag and quantstats minimum-observations floor are UNCHANGED -- the flag remains `True` when `observation_count < _PERFORMANCE_MIN_HISTORY_DAYS`.
+
+Decision: populating a non-empty series from day one so the chart renders is correct behavior. The `insufficient_history` flag already communicates that metrics are not yet reliable. Same fallback applied to `api_performance_symphonies()`.
+
+#### DE-LIVE-DASH-001-AC3: get_history -- base_dir one-line fix + todays_exits fallback
+
+The `base_dir` omission was a bug, not a design choice: `analytics.get_history_summary()` has a `base_dir` parameter that defaults to `"."` when omitted. All other routes pass `base_dir=analytics._POST_MORTEMS_DIR`. Fixed.
+
+`todays_exits` backfill reads the 50 most-recent `exit_triggers` rows when the stats dict has no exits from the post-mortem. The 50-row cap is conservative -- no operator runs 50 guard-alpha exits in a single day.
+
+#### DE-LIVE-DASH-001-AC4: get_windowed_strip -- single-day intraday guard-alpha
+
+When `insufficient_history=True` and `guard_alpha` is falsy, the strip route computes a value-weighted intraday guard-alpha from `exit_triggers` (only triggered symphonies participate; non-triggered contribute 0 divergence). The new `intraday_only=True` field is additive -- it does not change existing fields. The JS template can check for this field to show "Today only" rather than "+0.00%".
+
+Decision: `intraday_only` is an additive field to avoid breaking callers that do not check for it.
+
+#### DE-LIVE-DASH-001-AC5a: ai_advisor.html -- per-lens sources aggregation
+
+The broken `_raw.get('sources', [])` block was replaced with a Jinja2 loop over `per_lens_digest[lens]['sources']` (plain-string citations) and `per_lens_digest[lens]['article_corpus']` (article-object dicts). Plain string citations render as text spans; article_corpus entries render as clickable links with `rel="noopener noreferrer"`. All values escaped with `| e`; no `| safe` used.
+
+#### DE-LIVE-DASH-001-AC5b: article corpus persistence -- DEFERRED
+
+AC-5b (persist the `news_corpus` article corpus into `per_lens_digest.sentiment.article_corpus` in the MARKET_PRISM `raw_response`) was NOT implemented in this cycle.
+
+Status: the template (AC-5a) reads `article_corpus` from `per_lens_digest.sentiment` if present, but the Prism council's `_build_per_lens_digest` in `advisors/lens_pipeline.py` serializes `payload` as `json.dumps(block["payload"])` rather than extracting `article_corpus` as a top-level key. The `article_corpus` branch in the template will never render until AC-5b is wired.
+
+Rationale for deferral: the template fix (AC-5a) is the P0 item -- it fixes the `AttributeError` crash caused by calling `.get('url')` on strings. The corpus enrichment is additive and safe to defer; the template degrades gracefully (no article_corpus = no links, but citations still render).
+
+Tracked for a future `lens_pipeline` / `ai_advisor` cycle: wire `_build_per_lens_digest` to carry `article_corpus` from `payload.corpus` when the sentiment lens is available.
+
+#### DE-LIVE-DASH-001-AC6: index.html -- None-aware MDD bot guard
+
+Template change only. `{% set _mdd_bot_raw = mdd_d.get("dry_run") if mdd_d is mapping else None %}` extracts the value without coercing. The render block checks `{% if _mdd_bot_raw is not none %}` before formatting; `None` renders as `--`. The analytics.py function is unchanged.
+
+### Files changed
+
+- `app.py` -- `guard_alpha_summary()` intraday fallback (+30 lines); `get_windowed_strip()` intraday guard_alpha path (+25 lines); `get_history()` base_dir fix + todays_exits fallback (+20 lines); `api_performance()` shadow_history fallback (+10 lines)
+- `templates/index.html` -- None-aware MDD bot guard (lines 1121-1144)
+- `templates/ai_advisor.html` -- per-lens sources aggregation (lines 954-966, 1024-1052)
+- `tests/app/test_live_dashboard_metrics.py` -- 25 AC-driven tests (new)
+- `tests/fixtures/math/guard_alpha_intraday_saved.json` -- golden fixture for intraday formula
+- `feature-plans/live-dashboard-metrics.md` -- planning artifact (Status: ready; AC-5b noted deferred)
+- `docs/generated/app.md` -- dashboard routes section updated (DE-LIVE-DASH-001)

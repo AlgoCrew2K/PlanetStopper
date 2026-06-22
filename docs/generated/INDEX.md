@@ -1,6 +1,6 @@
 # Planet Stopper -- Generated Module Reference Index
 
-**Last regenerated:** 2026-06-22 (DE-TEST-MEMCAP-002: cap hardening + footprint reduction; prior: DE-TEST-MEMCAP-001 + DE-SEED-STARTUP-001 + DE-ATLAS-CACHE-001 + DE-SB-C5)
+**Last regenerated:** 2026-06-22 (DE-LIVE-DASH-001: live dashboard data-integrity P0; prior: DE-TEST-MEMCAP-002 + DE-SEED-STARTUP-001 + DE-ATLAS-CACHE-001 + DE-SB-C5)
 
 All pages in this directory are auto-generated from source. Do not hand-edit generated sections. Sections marked `<!-- manual -->` are preserved across regenerations.
 
