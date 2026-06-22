@@ -986,7 +986,7 @@ class TestGuardAlphaSummaryBotStateBlob:
                 symphony_id TEXT NOT NULL,
                 ts_utc TEXT NOT NULL,
                 at_return REAL NOT NULL,
-                trigger_reason TEXT NOT NULL
+                triggered_reason TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS shadow_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1004,7 +1004,7 @@ class TestGuardAlphaSummaryBotStateBlob:
         """)
         # Two exit_triggers with positive divergence
         conn.executemany(
-            "INSERT INTO exit_triggers (symphony_id, ts_utc, at_return, trigger_reason) VALUES (?,?,?,?)",
+            "INSERT INTO exit_triggers (symphony_id, ts_utc, at_return, triggered_reason) VALUES (?,?,?,?)",
             [
                 ("SYM_A", "2026-06-22T13:43:00Z", 2.5, "TAKE_PROFIT"),
                 ("SYM_B", "2026-06-22T14:23:00Z", 1.8, "VWAP_BREAKDOWN"),
@@ -1560,7 +1560,7 @@ class TestStripIntradayFallbackBlobSchema:
                 symphony_id TEXT NOT NULL,
                 ts_utc TEXT NOT NULL,
                 at_return REAL NOT NULL,
-                trigger_reason TEXT NOT NULL
+                triggered_reason TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS shadow_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1577,7 +1577,7 @@ class TestStripIntradayFallbackBlobSchema:
             );
         """)
         conn.executemany(
-            "INSERT INTO exit_triggers (symphony_id, ts_utc, at_return, trigger_reason) VALUES (?,?,?,?)",
+            "INSERT INTO exit_triggers (symphony_id, ts_utc, at_return, triggered_reason) VALUES (?,?,?,?)",
             [
                 ("SYM_X", "2026-06-22T13:43:00Z", 3.1, "TAKE_PROFIT"),
                 ("SYM_Y", "2026-06-22T14:23:00Z", 2.2, "VWAP_BREAKDOWN"),
