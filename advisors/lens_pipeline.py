@@ -170,6 +170,10 @@ def _build_per_lens_digest(per_lens: dict[str, dict]) -> dict:
             # Sources are validated at the top-level aggregation step; store
             # per-lens sources as-is in the digest (before citation filtering).
             entry["sources"] = block.get("sources") or []
+            # AC-5b: pass through article_corpus when present so the template
+            # can render clickable article links from the sentiment lens.
+            if block.get("article_corpus"):
+                entry["article_corpus"] = block["article_corpus"]
         else:
             reason = block.get("reason", "unavailable")
             # D-1: reason must already be type(exc).__name__ or a short label — never str(exc).

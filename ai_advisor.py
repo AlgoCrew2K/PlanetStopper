@@ -669,6 +669,7 @@ def _build_sentiment_section(_data: object = None) -> dict:
             "article_count": len(corpus),
         },
         "sources": sources,
+        "article_corpus": corpus,  # AC-5b: top-level so lens_pipeline can pass it through to per_lens_digest
     }
 
 
