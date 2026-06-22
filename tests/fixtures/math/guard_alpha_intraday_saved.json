@@ -1,0 +1,55 @@
+{
+  "_comment": "Golden fixture for AC-1 intraday guard_alpha saved-dollars formula: saved = (at_return - current_return) / 100 * position_value. Positive when bot locked in gains that the held position has since given up.",
+  "cases": [
+    {
+      "name": "bot_locked_in_gains_held_fell",
+      "description": "Bot exited at +2.5%; held fell to -0.5%. Divergence = 3pp on $10k = $300 saved.",
+      "inputs": {
+        "at_return": 2.5,
+        "current_return": -0.5,
+        "position_value": 10000.0
+      },
+      "expected_sign": "positive"
+    },
+    {
+      "name": "bot_locked_in_gains_held_also_positive_but_lower",
+      "description": "Bot exited at +3.0%; held is at +1.0%. Divergence = 2pp on $5k = $100 saved.",
+      "inputs": {
+        "at_return": 3.0,
+        "current_return": 1.0,
+        "position_value": 5000.0
+      },
+      "expected_sign": "positive"
+    },
+    {
+      "name": "held_above_exit_price",
+      "description": "Bot exited at +1.0%; held is now at +2.5%. Bot missed gains. Divergence negative.",
+      "inputs": {
+        "at_return": 1.0,
+        "current_return": 2.5,
+        "position_value": 8000.0
+      },
+      "expected_sign": "negative"
+    },
+    {
+      "name": "no_divergence_exact_match",
+      "description": "Bot exited and held at exactly same return. Zero alpha.",
+      "inputs": {
+        "at_return": 1.5,
+        "current_return": 1.5,
+        "position_value": 20000.0
+      },
+      "expected_sign": "zero"
+    },
+    {
+      "name": "large_positive_divergence",
+      "description": "Bot exited at +5.0%; held collapsed to -3.0%. 8pp on $50k = $4000 saved.",
+      "inputs": {
+        "at_return": 5.0,
+        "current_return": -3.0,
+        "position_value": 50000.0
+      },
+      "expected_sign": "positive"
+    }
+  ]
+}

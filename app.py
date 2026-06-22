@@ -2147,7 +2147,10 @@ def get_windowed_strip(window):
         return jsonify({"error": "unknown window token"}), 404
 
     trading_day = datetime.now(_ET).strftime("%Y-%m-%d")
-    bot_state = database.load_state() or {}
+    try:
+        bot_state = database.load_state() or {}
+    except Exception:
+        bot_state = {}
     symphony_keys = [k for k, v in bot_state.items() if isinstance(v, dict) and "name" in v]
     symphonies_list = []
     for k in symphony_keys:
@@ -2167,10 +2170,60 @@ def get_windowed_strip(window):
 
     try:
         strip = analytics.compute_windowed_portfolio_strip(symphonies_list, bot_state, window=token)
-        return jsonify(strip)
     except Exception:
         _daemon_log.error("get_windowed_strip failed for window=%s", token, exc_info=True)
         return jsonify({"error": "An internal error occurred"}), 500
+
+    # AC-4: when shadow_history has only 1 distinct trading_day the windowed
+    # guard_alpha is None (zero weight) and insufficient_history=True.  Compute
+    # an intraday estimate from exit_triggers so the day-1 droplet shows a
+    # non-zero value.  The 15-second auto-refresh floor means this stays fresh.
+    #
+    # AC-4b: bot_state is a SINGLE-ROW JSON BLOB (id, data TEXT) — there is no
+    # position_value column and no symphony_id column.  Mirror the AC-1b fix:
+    # use database.load_state() (isolated try/except → degrades to {}).
+    if strip.get("insufficient_history") and not strip.get("guard_alpha"):
+        try:
+            try:
+                _bot_state_dict = database.load_state()
+            except Exception:
+                _bot_state_dict = {}
+            _conn = database.get_connection()
+            try:
+                _rows = _conn.execute(
+                    "SELECT t.symphony_id, t.at_return, "
+                    "  (SELECT current_return FROM shadow_history "
+                    "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1) "
+                    "FROM exit_triggers t"
+                ).fetchall()
+
+            finally:
+                _conn.close()
+
+            _alpha_wsum = 0.0
+            _weight_sum = 0.0
+            for _sym_id, _at_ret, _cur_ret in _rows:
+                _pos_val = (_bot_state_dict.get(_sym_id) or {}).get("current_value")
+                if _at_ret is None or _cur_ret is None or _pos_val is None:
+                    continue
+                try:
+                    _w = float(_pos_val)
+                    if _w <= 0.0:
+                        continue
+                    # Guard alpha = at_return − current_return (locked in vs held)
+                    _alpha_wsum += (float(_at_ret) - float(_cur_ret)) * _w
+                    _weight_sum += _w
+                except (TypeError, ValueError):
+                    continue
+
+            if _weight_sum > 0.0:
+                strip = dict(strip)
+                strip["guard_alpha"] = _alpha_wsum / _weight_sum
+                strip["intraday_only"] = True
+        except Exception:
+            _daemon_log.debug("strip intraday fallback failed", exc_info=True)
+
+    return jsonify(strip)
 
 
 @app.route("/api/guard-alpha-summary")
@@ -2233,9 +2286,53 @@ def guard_alpha_summary():
         latest = max(dates)
         date_range = {"earliest": earliest, "latest": latest}
         basis_label = f"snapshot-time basis, since {earliest}"
+        source = "post_mortem_eod"
     else:
         date_range = {"earliest": None, "latest": None}
-        basis_label = "no guard events yet"
+        # No post-mortem files yet (day-1 droplet) — fall back to exit_triggers DB rows.
+        # Intraday estimate: saved = (at_return - current_return) / 100 * position_value
+        # Label clearly as an intraday estimate so the UI can qualify the display.
+        #
+        # AC-1b: bot_state is a SINGLE-ROW JSON BLOB (id, data TEXT) — there is no
+        # position_value column and no symphony_id column.  Use database.load_state()
+        # which parses the blob and returns a dict keyed by symphony_id.
+        # Degrade to empty dict if the schema differs (no raise — the count query still runs).
+        try:
+            bot_state_dict = database.load_state()
+        except Exception:
+            bot_state_dict = {}
+        try:
+            conn = database.get_connection()
+            try:
+                count = conn.execute("SELECT COUNT(*) FROM exit_triggers").fetchone()[0]
+                rows = conn.execute(
+                    "SELECT t.symphony_id, t.at_return, "
+                    "  (SELECT current_return FROM shadow_history "
+                    "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1) "
+                    "FROM exit_triggers t"
+                ).fetchall()
+
+            finally:
+                conn.close()
+
+            for _sym_id, _at_ret, _cur_ret in rows:
+                _pos_val = (bot_state_dict.get(_sym_id) or {}).get("current_value")
+                if _at_ret is None or _cur_ret is None or _pos_val is None:
+                    continue
+                try:
+                    cumulative_saved_dollars += (
+                        (float(_at_ret) - float(_cur_ret)) / 100.0 * float(_pos_val)
+                    )
+                except (TypeError, ValueError):
+                    pass
+
+            guard_event_count = count
+            source = "exit_triggers_intraday"
+            basis_label = "intraday estimate — updates live" if count > 0 else "no guard events yet"
+        except Exception:
+            _daemon_log.debug("guard_alpha_summary: exit_triggers fallback failed", exc_info=True)
+            source = "exit_triggers_intraday"
+            basis_label = "no guard events yet"
 
     return jsonify(
         {
@@ -2243,6 +2340,7 @@ def guard_alpha_summary():
             "guard_event_count": guard_event_count,
             "date_range": date_range,
             "basis_label": basis_label,
+            "source": source,
         }
     )
 
@@ -2449,8 +2547,37 @@ def resend_discord():
 
 @app.route("/api/history/<int:days>")
 def get_history(days):
-    stats = analytics.get_history_summary(days=days)
+    stats = analytics.get_history_summary(days=days, base_dir=analytics._POST_MORTEMS_DIR)
     stats["window_days"] = days
+
+    # AC-3: when post-mortem files do not yet exist (day-1 droplet), todays_exits
+    # will be empty in the stats dict.  Backfill from exit_triggers so the History
+    # tab shows live exits on day one.
+    if not stats.get("todays_exits"):
+        try:
+            _conn = database.get_connection()
+            try:
+                _rows = _conn.execute(
+                    "SELECT symphony_id, ts_utc, at_return, triggered_reason "
+                    "FROM exit_triggers ORDER BY ts_utc DESC LIMIT 50"
+                ).fetchall()
+            finally:
+                _conn.close()
+            if _rows:
+                stats["todays_exits"] = [
+                    {
+                        "symphony_id": r[0],
+                        "ts_utc": r[1],
+                        "at_return": r[2],
+                        "triggered_reason": r[3],
+                    }
+                    for r in _rows
+                ]
+                # AC-3b: keep trigger_count consistent with the backfilled todays_exits.
+                stats["trigger_count"] = len(stats["todays_exits"])
+        except Exception:
+            _daemon_log.debug("get_history: exit_triggers fallback failed", exc_info=True)
+
     return jsonify(stats)
 
 
@@ -2549,6 +2676,31 @@ def api_performance():
         dates, live_returns, shadow_returns = analytics.compute_per_symphony_returns(
             history, symphony_id
         )
+
+    # AC-2: when post-mortem history is empty (day-1 droplet), fall back to
+    # shadow_history for the series so the chart is non-empty from day one.
+    # The insufficient_history / quantstats-min-obs guard is unchanged.
+    if not dates:
+        try:
+            _fallback = analytics.get_portfolio_bot_and_held_daily_returns()
+            if _fallback is not None:
+                dates, live_returns, shadow_returns = _fallback
+        except Exception:
+            _daemon_log.debug("api_performance: shadow_history fallback failed", exc_info=True)
+
+    # AC-2b: get_portfolio_bot_and_held_daily_returns() returns None when fewer than
+    # 2 distinct trading days exist.  On a fresh droplet (day one), that guard fires
+    # and leaves dates empty.  Fall back to the single-day seam so the chart is
+    # non-empty even before the 2-day guard can pass.
+    if not dates:
+        try:
+            _single = analytics.get_single_day_shadow_returns()
+            if _single is not None:
+                dates, live_returns, shadow_returns = _single
+        except Exception:
+            _daemon_log.debug(
+                "api_performance: single-day shadow_history fallback failed", exc_info=True
+            )
 
     observation_count = len(dates)
     insufficient_history = observation_count < _PERFORMANCE_MIN_HISTORY_DAYS

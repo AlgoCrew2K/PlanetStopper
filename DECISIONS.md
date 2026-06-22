@@ -1,4 +1,4 @@
-# Planet Stopper — Architectural Decisions
+﻿# Planet Stopper — Architectural Decisions
 
 This file records binding architectural decisions made during Planet Stopper development. Entries are append-only. Do not edit past entries; add corrections as new entries.
 
@@ -232,7 +232,7 @@ These decisions were made during Sprint 3 (port-level deprecation + AI Advisor) 
 
 ### DE-S3-003: NARRATOR enum retained with deferral comment
 
-**Decision:** The `NARRATOR` advisor role enum value is retained in the codebase with an inline deferral comment. No code is deleted.
+**Decision:** The `nARRATOR` advisor role enum value is retained in the codebase with an inline deferral comment. No code is deleted.
 
 **Rationale:** Removal would be a premature destructive action. Narrator is deferred, not cancelled. Retaining the enum makes its future activation a one-line change rather than a schema migration + enum re-add.
 
@@ -390,7 +390,7 @@ These decisions were made during the advisor hardening session (autotuner remedi
 
 **Decision:** `assemble_advisor_context` accepts a `composer_symphony_id` parameter (the Composer hash). The route resolves the Composer hash from `bot_state` and passes it as `composer_symphony_id`; `assemble_advisor_context` uses this hash when calling `symphony_logic.get_condensed_logic`. The prior behaviour — passing the normalized name — caused HTTP 400 from the Composer `/score` API and an all-empty logic struct for every symphony.
 
-**Rationale:** Composer's `/score` API requires the opaque hash identifier, not a human-readable name. All other Composer API call sites in the codebase already use the hash. The normalized name is the correct key for internal DB lookups; these are now kept separate. The parameter is optional and backward-compatible (`None` falls back to `symphony_id`).
+**Rationale:** Composer's `/score` API requires the opaque hash identifier, not a human-readable name. All other Composer API call sites in the codebase already use the hash. The normalized name is the correct key for internal DB lookups; these are now kept separate. The parameter is optional and backward-compatible (`none` falls back to `symphony_id`).
 
 **Status:** Merged (2039f62, 7fbbe04). Full tree clean.
 
@@ -488,7 +488,7 @@ These decisions were made during the advisor hardening session (autotuner remedi
 
 ### DE-ML-001: Honest-availability lens-block contract
 
-**Decision:** Every lens helper in `ai_advisor.py` returns a dict with a fixed 5-key contract: `{lens, available: bool, reason: str, payload, sources}`. A lens with `available=False` MUST NOT fabricate a payload — `payload` is `None` and `sources` is `[]`. The `reason` field is always a non-empty string explaining the unavailability (naming the missing source).
+**Decision:** Every lens helper in `ai_advisor.py` returns a dict with a fixed 5-key contract: `{lens, available: bool, reason: str, payload, sources}`. A lens with `available=False` MUST NOT fabricate a payload — `payload` is `none` and `sources` is `[]`. The `reason` field is always a non-empty string explaining the unavailability (naming the missing source).
 
 **Rationale:** Mirrors the existing `_build_volatility_regime` pattern (`ai_advisor.py:218–270`), which was introduced to fix the fabricated-context problem (GATE-1-AC CC-3: data-wall; analytical context must never be invented). Honest degradation is preferable to plausible-but-wrong context reaching the LLM. Cycle-1 stubs all return `available=False`; fast-follow producers will wire in real sources per lens.
 
@@ -552,7 +552,7 @@ These decisions were made during the advisor hardening session (autotuner remedi
 
 **Gate unchanged:** Candidates still go through `advisors.backtest_gate_engine.evaluate_candidate_batch` (BHY-FDR). Lens scoring influences ranking only — it does not relax or replace the statistical gate.
 
-**Backward-compatibility:** All existing call sites pass `lens_scores=None` (the default). Pre-Cycle-3 behaviour is byte-identical when `lens_scores` is `None` or empty. Existing test suite (35 tests in `tests/advisors/test_asset_swap_engine.py`) unaffected.
+**Backward-compatibility:** All existing call sites pass `lens_scores=None` (the default). Pre-Cycle-3 behaviour is byte-identical when `lens_scores` is `none` or empty. Existing test suite (35 tests in `tests/advisors/test_asset_swap_engine.py`) unaffected.
 
 **Persistence contract (AC-4):** Persisted observations (`advisor_role="ASSET_SWAP"`, `is_advisory_only=1`) now carry `lens_evidence: {ticker: {signal, source_lens, confidence}}` and `sources: [{title, url, published, lens}]` in `raw_response`. Both default to `{}` / `[]` when no lens evidence is supplied. No schema migration required — `raw_response` is an untyped JSON blob (per DE-ML-002).
 
@@ -606,7 +606,7 @@ These decisions were made during the advisor hardening session (autotuner remedi
 
 5. **Claude synthesis degrades gracefully.** If Claude is unavailable or the API call fails, `overall_sentiment` degrades to `"limited-inputs"` with an honest rationale. The observation is still persisted. No exception leaks to the caller.
 
-**New database accessor:** `database.get_latest_market_prism_summary() -> dict | None` returns the most recently inserted `MARKET_PRISM` row, deserialized, or `None` when none exists. Used by the Cycle-5 Overview tab.
+**New database accessor:** `database.get_latest_market_prism_summary() -> dict | None` returns the most recently inserted `MARKET_PRISM` row, deserialized, or `none` when none exists. Used by the Cycle-5 Overview tab.
 
 **Rationale:** The always-emit design eliminates a class of silent failures where the pipeline runs but writes nothing. A `"limited-inputs"` observation is more honest than absence — it tells the dashboard "we ran but had no data", which is actionable. The per-lens isolation means a single unreachable data source (FRED, a sentiment feed) does not invalidate the remaining available lenses.
 
@@ -620,7 +620,7 @@ These decisions were made during the advisor hardening session (autotuner remedi
 
 **Key design choices:**
 
-1. **Always renders.** When `get_latest_market_prism_summary()` returns `None` (no row written yet), the block renders an informative empty state: "No overnight market read yet — the off-hours pipeline runs daily at 03:00." It never shows a blank section or raises a 500. This is consistent with the always-emit invariant established in Cycle 4 (DE-CY4-001).
+1. **Always renders.** When `get_latest_market_prism_summary()` returns `none` (no row written yet), the block renders an informative empty state: "No overnight market read yet — the off-hours pipeline runs daily at 03:00." It never shows a blank section or raises a 500. This is consistent with the always-emit invariant established in Cycle 4 (DE-CY4-001).
 
 2. **Read-only GET path.** The route prefetches the summary via `get_latest_market_prism_summary()` (read-only SQLite) and passes it to the template as `market_prism_summary`. `run_pipeline` is never called from the GET path. The block is never re-run on user request — it reflects the most recent nightly write.
 
@@ -630,7 +630,7 @@ These decisions were made during the advisor hardening session (autotuner remedi
 
 5. **XSS safety.** All dynamic values are rendered with Jinja2 `| e` escaping. No `Markup()` or `|safe` filters on source fields. The test suite includes an adversarial hostile-title XSS check (AC-3).
 
-**Route change (`app.py`):** `ai_advisor_tab()` gains a `market_prism_summary` prefetch block (guarded `try/except`; `None` on failure). The variable is appended to the `render_template` call.
+**Route change (`app.py`):** `ai_advisor_tab()` gains a `market_prism_summary` prefetch block (guarded `try/except`; `none` on failure). The variable is appended to the `render_template` call.
 
 **Template change (`templates/ai_advisor.html`):** The `data-testid="market-prism-block"` container is inserted at the top of the Overview tab panel (above the controls bar), with the full sentiment chip / rationale / per-lens / sources / empty-state Jinja2 structure.
 
@@ -648,7 +648,7 @@ These decisions were made during the advisor hardening session (autotuner remedi
 
 **Key design choices:**
 
-1. **`run_id` = `run_ts` (same value, two names).** The pipeline generates a single ISO UTC timestamp at the start of each run (`run_ts`). `run_id` is set to the same value and written into `raw_response` alongside the existing `run_ts` key. Callers use `.get("run_id")` (not direct access) for backward-compat: existing rows that predate Prism Phase 1 simply return `None` for the missing key and do not crash.
+1. **`run_id` = `run_ts` (same value, two names).** The pipeline generates a single ISO UTC timestamp at the start of each run (`run_ts`). `run_id` is set to the same value and written into `raw_response` alongside the existing `run_ts` key. Callers use `.get("run_id")` (not direct access) for backward-compat: existing rows that predate Prism Phase 1 simply return `none` for the missing key and do not crash.
 
 2. **Append-only, parameterized writes.** No `update_prism_*` or `delete_prism_*` accessor exists. All four caller-supplied fields (`run_id`, `agent_role`, `phase`, `content`) are written via `?` placeholders — never f-string interpolation. Injection-shaped content (SQL keywords, quotes, semicolons, embedded nulls) is stored verbatim.
 
@@ -681,7 +681,7 @@ These decisions were made during the advisor hardening session (autotuner remedi
 
 2. **Weekly default TTL, env-configurable.** `ATLAS_CACHE_TTL_DAYS` (default `7`) controls the freshness window. Boundary is strict: `age < ttl_days` is fresh (HIT, no fetch); `age >= ttl_days` is stale (MISS, fetch called). The `ttl_days` kwarg on `cached_pull` lets callers override per-call; the env var sets the module default.
 
-3. **Never-raising contract (AC-5, AC-7).** `cached_pull` absorbs every exception path. Degradation order: cached payload → stale payload (when `fetch_fn` raises on MISS but a stale row exists) → `None` sentinel (when `fetch_fn` raises and no row exists). A write failure after a successful fetch returns the fetched payload without raising. This matches the `lens_pipeline` resilience posture.
+3. **Never-raising contract (AC-5, AC-7).** `cached_pull` absorbs every exception path. Degradation order: cached payload → stale payload (when `fetch_fn` raises on MISS but a stale row exists) → `none` sentinel (when `fetch_fn` raises and no row exists). A write failure after a successful fetch returns the fetched payload without raising. This matches the `lens_pipeline` resilience posture.
 
 4. **Secrets isolation (AC-8, AC-9).** `atlas_cache.py` never reads `MONGO_URI` or any credential. Callers own the Mongo connection and pass projected docs as the `fetch_fn` return value. The cache stores only what `fetch_fn` returns. Structurally enforced: no Mongo/pymongo/motor imports in `atlas_cache.py` (AC-9 AST walk).
 
@@ -695,7 +695,7 @@ These decisions were made during the advisor hardening session (autotuner remedi
 
 **No production caller yet.** The community-strats and frontrunner loaders that will pull through this cache are separate rebuild cycles. `alphabot_atlas_cache.db` must not be referenced from production code until a caller is wired. Tests use `ATLAS_CACHE_DB_PATH` env override to an isolated temp path.
 
-**Rationale:** The operator's directive was to protect the captplanet Atlas provider's billing by caching weekly. A new dedicated DB (not the state DB) keeps the cache's schema evolvable without risking state DB migrations. The never-raising posture means a transiently-unavailable Atlas cluster (or an unreachable local DB) degrades gracefully to stale data or `None` rather than aborting the caller. The secrets-isolation invariant (no `MONGO_URI` in `atlas_cache.py`) means the cache layer can be audited and tested without any Mongo credentials.
+**Rationale:** The operator's directive was to protect the captplanet Atlas provider's billing by caching weekly. A new dedicated DB (not the state DB) keeps the cache's schema evolvable without risking state DB migrations. The never-raising posture means a transiently-unavailable Atlas cluster (or an unreachable local DB) degrades gracefully to stale data or `none` rather than aborting the caller. The secrets-isolation invariant (no `MONGO_URI` in `atlas_cache.py`) means the cache layer can be audited and tested without any Mongo credentials.
 
 **Status:** GREEN at d05670c. 24/24 tests GREEN (AC-1..AC-9). Acceptance criteria verified: init_atlas_cache idempotent + WAL, cached_pull HIT/MISS/force/degrade contract confirmed, never-raises enforced, secrets isolation (no MONGO_URI) + structural isolation (no database/autotuner imports) verified. Docs committed at 48cca9d.
 
@@ -1052,7 +1052,7 @@ The module-level `_CLAUDE_MODEL` and `_CHAT_MODEL` constants were **removed** at
 ),
 ```
 
-Other four concepts retain single-tag tuples (no migration evidence in the closeout). **Outer logical keys are stable** (`Revenues`, `NetIncomeLoss`, `Assets`, `Liabilities`, `StockholdersEquity`) — these are the `key_facts` output keys consumed by the synthesis prompt and Overview render; changing them is explicitly out of scope.
+Other four concepts retain single-tag tuples (no migration evidence in the closeout). **Outer logical keys are stable** (`Revenues`, `netIncomeLoss`, `Assets`, `Liabilities`, `StockholdersEquity`) — these are the `key_facts` output keys consumed by the synthesis prompt and Overview render; changing them is explicitly out of scope.
 
 **Mode B — wrong sort key (`ai_advisor.py:1011-1073`):**
 
@@ -1144,7 +1144,7 @@ Branch: `fix/community-strats-atlas-timeout` | HEAD: 55b00ea
 
 3. **`shutdown(wait=False, cancel_futures=True)` — never `wait=True`.** When `concurrent.futures.TimeoutError` fires, the worker thread is blocked in pymongo and cannot be interrupted. `shutdown(wait=True)` would block the `finally` clause indefinitely, defeating the timeout. `shutdown(wait=False)` releases the calling thread immediately; the orphaned worker thread is allowed to linger until pymongo's own internal socket timeout eventually unblocks it. The comment `# NEVER wait=True` is on the line.
 
-4. **`_timeout_fired: list[bool]` closure flag.** `cached_pull` has a never-raising contract: it catches all exceptions from `fetch_fn` and returns `None`. After `cached_pull` returns `None`, the outer scope cannot distinguish a wall-clock timeout from any other Atlas failure. A `list[bool]` flag (mutated inside the closure before `_AtlasFetchTimeout` is raised) persists across the `cached_pull` boundary — it is set to `True` before the exception is raised so that even if `cached_pull` swallows `_AtlasFetchTimeout`, the flag remains readable. The `raw_docs is None` branch checks the flag: `reason = "AtlasFetchTimeout" if _timeout_fired[0] else "AtlasCacheUnavailable"`.
+4. **`_timeout_fired: list[bool]` closure flag.** `cached_pull` has a never-raising contract: it catches all exceptions from `fetch_fn` and returns `none`. After `cached_pull` returns `none`, the outer scope cannot distinguish a wall-clock timeout from any other Atlas failure. A `list[bool]` flag (mutated inside the closure before `_AtlasFetchTimeout` is raised) persists across the `cached_pull` boundary — it is set to `True` before the exception is raised so that even if `cached_pull` swallows `_AtlasFetchTimeout`, the flag remains readable. The `raw_docs is None` branch checks the flag: `reason = "AtlasFetchTimeout" if _timeout_fired[0] else "AtlasCacheUnavailable"`.
 
 5. **`_AtlasFetchTimeout` custom exception.** A dedicated exception class distinguishes a timeout from `concurrent.futures.TimeoutError` at the caller boundary and avoids leaking CPython internals through the D-1 reason contract.
 
@@ -1211,7 +1211,7 @@ Branch: `feat/lens-news-events` | HEAD: 2649229
 
 1. **No language filter.** The artlist query had no `sourcelang:eng` constraint, so GDELT returned articles in any language (including non-English and articles with a null `language` field). Non-English headlines are not useful to English-language operators and add noise to the Market Prism synthesis prompt.
 
-2. **Tone-only availability gate allowed a forbidden state.** The prior gate set `available=True` as soon as the tone endpoint returned HTTP 200 — even when tone extraction yielded `None` (empty timeline, no numeric data). `available=True, tone=None` is explicitly forbidden by the honest-availability contract (§4). The fix changes the gate to `available = bool(events) OR tone is not None`, so availability is tied to a real signal.
+2. **Tone-only availability gate allowed a forbidden state.** The prior gate set `available=True` as soon as the tone endpoint returned HTTP 200 — even when tone extraction yielded `none` (empty timeline, no numeric data). `available=True, tone=None` is explicitly forbidden by the honest-availability contract (§4). The fix changes the gate to `available = bool(events) OR tone is not None`, so availability is tied to a real signal.
 
 3. **No first-class events field.** The return dict had no `events` key; the artlist payload was buried in `sources` as raw citation dicts. The Market Prism synthesizer could not directly access ranked news headlines without re-parsing citations.
 
@@ -1330,7 +1330,7 @@ Result: ≤2 spaced GDELT GETs per `_build_sentiment_section` call. The two GETs
 Both calls are CC-2 lazy imports, wrapped in `try/except` with `pass` — warehouse errors never surface to callers (D-1).
 
 **Additional cycle-2 changes:**
-- `sources[]` in the return dict now populated: `build_citation({title, url, published, lens})` called per corpus article; `None` returns filtered.
+- `sources[]` in the return dict now populated: `build_citation({title, url, published, lens})` called per corpus article; `none` returns filtered.
 - `article_count: len(corpus)` added to payload dict.
 - `utcnow()` replaced with `datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)` (Python 3.12+ deprecation guard).
 
@@ -1430,11 +1430,11 @@ If `rc==0` but no row exists, the attempt is classified as failed, a diagnostic 
 
 **New seam — `_get_market_prism_row_for_run(run_id: str) -> dict | None`:**
 
-Queries `advisor_observations` for a MARKET_PRISM row whose `raw_response["run_id"]` matches the scheduler-generated `run_id`. Implementation: calls `database.get_latest_market_prism_summary()` (existing seam) and confirms `raw_response["run_id"] == run_id`. Since the scheduler's `run_id` is a unique uuid4, the latest row is this run's row iff it was written. Non-fatal — returns `None` on any DB or parse error; logs `type(exc).__name__` only (D-1). Never raises.
+Queries `advisor_observations` for a MARKET_PRISM row whose `raw_response["run_id"]` matches the scheduler-generated `run_id`. Implementation: calls `database.get_latest_market_prism_summary()` (existing seam) and confirms `raw_response["run_id"] == run_id`. Since the scheduler's `run_id` is a unique uuid4, the latest row is this run's row iff it was written. Non-fatal — returns `none` on any DB or parse error; logs `type(exc).__name__` only (D-1). Never raises.
 
 **Spend logging preserved on rc==0:** `_persist_spend` fires on `returncode == 0` *before* the row check. An attempt that exits 0 but writes no row still logs its spend. This preserves the existing spend-logging contract and avoids lost billing data on partially-successful attempts.
 
-**Files changed:** `prism_scheduler.py` — `_get_market_prism_row_for_run(run_id)` added as a patchable seam; `main()` retry loop updated: a `proc_ok=True` outcome now calls `_get_market_prism_row_for_run(run_id)` and treats a `None` return as a failed attempt before logging and sleeping.
+**Files changed:** `prism_scheduler.py` — `_get_market_prism_row_for_run(run_id)` added as a patchable seam; `main()` retry loop updated: a `proc_ok=True` outcome now calls `_get_market_prism_row_for_run(run_id)` and treats a `none` return as a failed attempt before logging and sleeping.
 
 **Tests:** `tests/ai_advisor/test_prism_scheduling.py` — `TestMarketPrismRowVerification` class (3 tests): (1) rc==0 + no row -> all MAX_ATTEMPTS exhausted -> non-zero exit + no "Run completed successfully" in stdout (RED gate); (2) rc==0 + row present -> exit 0 + success message (happy-path regression lock, skips pre-GREEN); (3) rc==0 + no row on attempt 1, rc==0 + row on attempt 2 -> subprocess called twice + exit 0 (retry-on-empty RED gate). Pre-existing happy-path tests patched to supply `_get_market_prism_row_for_run=_SAMPLE_MARKET_PRISM_ROW` so prior expectations are preserved. GREEN at 9de5f71.
 
@@ -1470,7 +1470,7 @@ A new pure helper module `advisors/prism_render.py` is added with two public fun
 
 **Detection invariant:** `json.loads(summary)` result type determines the path. A `dict` or `list` result -> structured -> humanize. Anything else (bare scalar, parse error) -> prose passthrough. This correctly handles: prose with braces, council prose with numbers/symbols, `$416B`-style values, and bare numeric strings like `"16.41"`.
 
-**Empty-state invariant (AC-3):** Null/empty summaries (`None`, `""`, `"null"`, `"None"`) and all degenerate-input paths return `_EMPTY_STATE = "limited inputs -- data unavailable"`, never `"null"`, `"{}"`, `"None"`, or raw JSON.
+**Empty-state invariant (AC-3):** Null/empty summaries (`none`, `""`, `"null"`, `"None"`) and all degenerate-input paths return `_EMPTY_STATE = "limited inputs -- data unavailable"`, never `"null"`, `"{}"`, `"None"`, or raw JSON.
 
 **XSS contract:** Both functions return plain `str`. Template renders all output with Jinja2 autoescaping (`{{ ... | e }}`). `| safe` is never applied to humanized output. Neither function produces HTML.
 
@@ -1507,7 +1507,7 @@ Both wiring blocks are wrapped in `except Exception: pass` -- humanization failu
 
 **Decision: overfitting controls — PBO (CSCV) + Harvey-Liu/BHY haircut.** Same methodology as the production walk-forward. DSR (Deflated Sharpe Ratio) is NOT used on the selection path (Decision D3, carried from `walk-forward-overhaul.completed.md`):
 - **PBO and BHY are orthogonal guards** (`math_engine.py:1958-1961`, verified): BHY = multiplicity axis; PBO = sample-robustness axis. They address different failure modes.
-- **Removing DSR is defensible here:** PBO (CSCV) covers the selection-generalization failure mode more directly than DSR's analytic False-Strategy-Theorem approximation. BHY covers the multiplicity failure mode. The CRRA-EU objective + bootstrap SE t-stat captures non-normality empirically via resampling. DSR's remaining non-redundant residual (analytic effective-N via trial-correlation clustering) errs conservative in its absence — additive `N_effective` over-counts, producing a stronger haircut, which is the safe direction.
+- **Removing DSR is defensible here:** PBO (CSCV) covers the selection-generalization failure mode more directly than DSR's analytic False-Strategy-Theorem approximation. BHY covers the multiplicity failure mode. The CRRA-EU objective + bootstrap SE t-stat captures non-normality empirically via resampling. DSR's remaining non-redundant residual (analytic effective-N via trial-correlation clustering) errs conservative in its absence — additive `n_effective` over-counts, producing a stronger haircut, which is the safe direction.
 - **D3 category error (original removal rationale, from `walk-forward-overhaul.completed.md:17-18`):** deflating a CRRA-EU/Sortino objective with a Sharpe sampling distribution is a D3 category error. DSR-reporting-only (not on the selection path) remains a possible future operator decision requiring a logged D3 amendment; it is NOT in scope for this cycle.
 - Bailey, D. H. & López de Prado, M. (2014). "The Probability of Backtest Overfitting." *J. Computational Finance.* SSRN 2326253. [High]
 - Harvey, C. R. & Liu, Y. (2015). "Backtesting." *J. Portfolio Management.* SSRN 2345489. [High]
@@ -1712,7 +1712,7 @@ When the env var is set to any non-empty value, `_run_lens_pipeline()` logs one 
 
 ### Falsy-semantics choice: `os.environ.get` vs `"..." in os.environ`
 
-`os.environ.get("DISABLE_DAEMON_LENS_PIPELINE")` returns `None` (falsy) when the var is absent and a non-empty string (truthy) when set. This means:
+`os.environ.get("DISABLE_DAEMON_LENS_PIPELINE")` returns `none` (falsy) when the var is absent and a non-empty string (truthy) when set. This means:
 - Setting the var to any non-empty value (e.g. `DISABLE_DAEMON_LENS_PIPELINE=1`, `=true`, `=yes`) silences the daemon slot.
 - Setting it to an empty string (`DISABLE_DAEMON_LENS_PIPELINE=`) leaves the slot active (empty string is falsy).
 
@@ -2057,7 +2057,7 @@ The compiler never constructs a Composer node dict directly. Every output node i
 
 **2. Bounded repair loop: validate_tree gate is pre-backtest and post-prune (AC-15)**
 
-`symphony_schema.validate_tree` is called on every tree before the first `backtest_fn` call, and again after every ticker prune. A HARD-error tree never reaches `backtest_fn`. `MAX_REPAIR_ATTEMPTS = 3` is a named constant (test-asserted to be in 1..10); the loop is never unbounded. Degenerate post-prune trees (empty children after pruning) are detected by `_prune_ticker_from_tree` returning `None` and dropped with `reason="prune_degenerated_tree"` rather than calling `validate_tree` on a known-broken structure.
+`symphony_schema.validate_tree` is called on every tree before the first `backtest_fn` call, and again after every ticker prune. A HARD-error tree never reaches `backtest_fn`. `MAX_REPAIR_ATTEMPTS = 3` is a named constant (test-asserted to be in 1..10); the loop is never unbounded. Degenerate post-prune trees (empty children after pruning) are detected by `_prune_ticker_from_tree` returning `none` and dropped with `reason="prune_degenerated_tree"` rather than calling `validate_tree` on a known-broken structure.
 
 **3. Error-envelope split is STATUS-driven, not message-text-driven (AC-16)**
 
@@ -2065,9 +2065,9 @@ Tradeability rejections (HTTP 400 -> prune + retry) vs grammar rejections (HTTP 
 
 **4. Prune-target must be an in-tree ticker (AC-16 Revise-1)**
 
-The initial GREEN implementation extracted the first uppercase candidate from the 400 envelope text. The Revise-1 RED test demonstrated this is insufficient: a venue/market name (e.g. `NASDAQ`, `NYSE`) or an off-tree ticker appearing in the envelope could be selected, producing a no-op prune that wastes the repair budget without removing the actual offending ticker.
+The initial GREEN implementation extracted the first uppercase candidate from the 400 envelope text. The Revise-1 RED test demonstrated this is insufficient: a venue/market name (e.g. `nASDAQ`, `nYSE`) or an off-tree ticker appearing in the envelope could be selected, producing a no-op prune that wastes the repair budget without removing the actual offending ticker.
 
-`_find_prune_target` cross-references all uppercase candidates against `symphony_schema.extract_tickers(current_tree)` (the real in-tree ticker set) and selects only an in-tree match. Within in-tree matches it prefers the candidate immediately before the first untradable signal phrase (`"not tradable"`, `"untradable"`, `"no pricing"`) — the ticker Composer explicitly flagged. Returns `None` when no in-tree ticker is found; `compile_plan` drops with `reason="no_in_tree_ticker_in_400"` (clean give-up, no budget waste).
+`_find_prune_target` cross-references all uppercase candidates against `symphony_schema.extract_tickers(current_tree)` (the real in-tree ticker set) and selects only an in-tree match. Within in-tree matches it prefers the candidate immediately before the first untradable signal phrase (`"not tradable"`, `"untradable"`, `"no pricing"`) — the ticker Composer explicitly flagged. Returns `none` when no in-tree ticker is found; `compile_plan` drops with `reason="no_in_tree_ticker_in_400"` (clean give-up, no budget waste).
 
 **5. `backtest_fn` is an injected seam, not a module-level import (Component 5 boundary)**
 
@@ -2128,7 +2128,7 @@ The seam is independently testable: tests call `_build_generation_prompt(objecti
 **Part 2 — Schema-tighten: `_EMIT_BUILD_PLANS_TOOL` enum constraints (defense-in-depth).**
 
 The loose `items: {type: object}` passthrough schema is replaced with a structured schema:
-- `NODE.kind` is `enum`-constrained to `["asset","weight","group","filter","if","if_compound"]` — excludes `"weighted"` at the JSON schema level.
+- `nODE.kind` is `enum`-constrained to `["asset","weight","group","filter","if","if_compound"]` — excludes `"weighted"` at the JSON schema level.
 - `weight.scheme` is `enum`-constrained to `["equal","specified","inverse_vol"]`.
 - Plan-level fields (`plan_id`, `objective`, `name`, `rebalance`, `root`) are typed and `required`.
 - `rebalance` is `enum`-constrained to the KNOWN_REBALANCE values.
@@ -2138,7 +2138,7 @@ This is the second layer after the prompt steer. It cannot prevent all deep-nest
 
 **Part 3 — Robustness: unknown-kind reject + zero-ticker guard.**
 
-- `_prune_node` now returns `None` for any unknown `kind` (was `return node` pass-through). An unknown kind is an Opus drift token that `plan_tickers()` cannot walk and the C3 compiler will reject — passing it through only delays the inevitable rejection and makes the failure reason opaque.
+- `_prune_node` now returns `none` for any unknown `kind` (was `return node` pass-through). An unknown kind is an Opus drift token that `plan_tickers()` cannot walk and the C3 compiler will reject — passing it through only delays the inevitable rejection and makes the failure reason opaque.
 - `_validate_and_prune` adds a post-prune zero-ticker check: `if not plan_tickers(validated): return None`. This catches plans where a nested unknown-kind node (wrapped by a known outer kind) survives `_prune_node`'s check on the outer node but leaves the plan with 0 walkable tickers. Zero-ticker plans cannot become valid Composer trees.
 
 This is the third layer: even if prompt-steer and schema-tighten both fail to prevent a drift token, the admission pipeline now rejects it explicitly rather than silently passing it to the AC-8 signature filter.
@@ -2348,7 +2348,7 @@ Branch: feat/strategy-builder-real | Commits: f13ea98 (RED) → 74bda68 (RED+) �
 
 A trace of `backtest_gate_engine.evaluate_candidate_batch` before C5b confirmed the cull was already out-of-sample (20% validation fold via `_fold_transform_single`) and BHY/Yekutieli FDR-corrected — sound foundations. Two gaps remained:
 
-**Gap 1 — PBO veto structurally disabled.** `evaluate_candidate_batch` called `acceptance_gate.evaluate_acceptance_gate` without supplying `pbo`, so it defaulted to `None` (acceptance_gate.py:160,203-208 comment: "NO behavior change on the Advisor path"). The PBO veto (`PBO_REJECT_THRESHOLD=0.5` in `math_engine.py:79`) was wired in the autotuner since PHASE-3 but had never reached the Advisor gate.
+**Gap 1 — PBO veto structurally disabled.** `evaluate_candidate_batch` called `acceptance_gate.evaluate_acceptance_gate` without supplying `pbo`, so it defaulted to `none` (acceptance_gate.py:160,203-208 comment: "NO behavior change on the Advisor path"). The PBO veto (`PBO_REJECT_THRESHOLD=0.5` in `math_engine.py:79`) was wired in the autotuner since PHASE-3 but had never reached the Advisor gate.
 
 **Gap 2 — OOS-alpha baseline always beats zero.** `propose_strategies` defaulted `incumbent_oos_alpha=0.0` and `default_oos_alpha=0.0` (strategy_builder_engine.py:862-863); the route passed neither override. A candidate cleared the OOS-superiority gate by merely having positive validation-fold alpha — no benchmark comparison.
 
@@ -2364,7 +2364,7 @@ A trace of `backtest_gate_engine.evaluate_candidate_batch` before C5b confirmed 
 
 | Priority | Value | Condition |
 |----------|-------|-----------|
-| 1 | `None` | `ADOPT_CANDIDATE` (survivor) |
+| 1 | `none` | `ADOPT_CANDIDATE` (survivor) |
 | 2 | `"pbo_veto"` | `_batch_pbo > PBO_REJECT_THRESHOLD` (Stage-1 hard veto) |
 | 3 | `"below_spy_alpha"` | `fold.oos_alpha <= _effective_default_oos_alpha` (Stage-2 alpha gate) |
 | 4 | `"fdr_not_winner"` | BHY non-winner, nn1 failure, purge failure, or thin-window |
@@ -2383,7 +2383,7 @@ PBO is Stage-1 in `acceptance_gate` and must dominate: a high-PBO batch is too s
 GREEN at ddcbb24. Math-adversarial sufficiency pass complete (3 mutation probes — positional-fold, pbo=None, precedence-reorder mutants each caught by the test suite). Cycle-complete pending PM merge gate.
 
 **Binding rules from this decision:**
-- The `spy_returns_fn` seam is the ONLY path to supplying the SPY benchmark series; production callers must wire a real fetch, not pass `None`.
+- The `spy_returns_fn` seam is the ONLY path to supplying the SPY benchmark series; production callers must wire a real fetch, not pass `none`.
 - `BacktestCandidate.dated_returns` must be populated by callers who want PBO and SPY-fold alignment; callers passing only `daily_returns_pct` continue to work (PBO and SPY gates degrade safely to `pbo=None` and conservative WITHHOLD respectively).
 - The `rejection_reason` precedence order (`pbo_veto` before `below_spy_alpha`) is load-bearing for the operator live-probe; do not reorder without a new RED test + DECISIONS entry.
 
@@ -2509,7 +2509,7 @@ Branch: feat/strategy-builder-real
 
 ### Finding (live exam)
 
-Post-C4 live diagnostic probes (`.claude/c4-trunc-probe-result.json`, `.claude/c4-gen-diag-result.json`, `.claude/c4-prod-exam-result.json`) revealed that the generator `messages.create` call capped output at `max_tokens=4096`. Generating `N_PLANS_PER_OBJECTIVE=12` full-grammar build-plans saturated this budget, truncating the JSON mid-payload. The truncated response caused `tool_block.input.get("plans")` to return either `{}` (empty dict, `input_json_chars=2`) or a malformed partial list — both non-list values — hitting the `InvalidToolUsePayload` degradation path and returning 0 plans.
+Post-C4 live diagnostic probes (`.claude/c4-trunc-probe-result.json`, `.claude/c4-gen-diag-result.json`, `.claude/c4-prod-exam-result.json`) revealed that the generator `messages.create` call capped output at `max_tokens=4096`. Generating `n_PLANS_PER_OBJECTIVE=12` full-grammar build-plans saturated this budget, truncating the JSON mid-payload. The truncated response caused `tool_block.input.get("plans")` to return either `{}` (empty dict, `input_json_chars=2`) or a malformed partial list — both non-list values — hitting the `InvalidToolUsePayload` degradation path and returning 0 plans.
 
 **Evidence from `.claude/c4-trunc-probe-result.json`:**
 - `diversify`: `stop_reason="max_tokens"`, `usage_output_tokens=4096`, `input_json_chars=2`, `plans_is_list=false`
@@ -2523,7 +2523,7 @@ Post-C4 live diagnostic probes (`.claude/c4-trunc-probe-result.json`, `.claude/c
 
 The non-determinism (which objectives truncate varies by run, depending on plan complexity and token packing) makes this a persistent latent defect that silently degrades ~3/4 of objectives per run while appearing to "work" for whichever objective happens to emit shorter JSON.
 
-**Root cause:** `max_tokens=4096` was a carry-over from `ai_advisor._build_client` call patterns where a single structured response is expected. `N_PLANS_PER_OBJECTIVE=12` full-grammar plans — each embedding multi-level DSL nodes, condition blocks, and tickers — easily exceed 4096 output tokens.
+**Root cause:** `max_tokens=4096` was a carry-over from `ai_advisor._build_client` call patterns where a single structured response is expected. `n_PLANS_PER_OBJECTIVE=12` full-grammar plans — each embedding multi-level DSL nodes, condition blocks, and tickers — easily exceed 4096 output tokens.
 
 ### Fix
 
@@ -2535,7 +2535,7 @@ Two changes to `advisors/build_plan_generator.py` (GREEN a2a678f; comment-truth 
 
 ### Design decisions
 
-**Why a named constant rather than a literal?** Consistent with the project rule (no magic numbers in advisor modules); the comment documents the derivation (12 plans * estimated tokens/plan). The constant is tunable when `N_PLANS_PER_OBJECTIVE` changes.
+**Why a named constant rather than a literal?** Consistent with the project rule (no magic numbers in advisor modules); the comment documents the derivation (12 plans * estimated tokens/plan). The constant is tunable when `n_PLANS_PER_OBJECTIVE` changes.
 
 **Why this is non-trivial to detect in tests.** The mocked-SDK test suite returns conforming plans regardless of `max_tokens`; the limit only fires against the real API. This is the same "tests-green-but-hollow" failure mode as DE-SB-GEN-DRIFT-FIX (vocabulary drift). Only a live exam with `usage_output_tokens` inspection reveals truncation.
 
@@ -2993,3 +2993,134 @@ Reviewer: quant-code-reviewer APPROVE (conditional on PM live gate) at HEAD 5d8b
 - `tests/engine/test_startup_seed_symphonies.py` — 7 AC-driven tests (new)
 - `tests/fixtures/engine/startup_seed/basic_symphony_stats.json` — fixture for mocked `fetch_symphony_stats` (new)
 - `feature-plans/startup-seed-symphonies.md` — cycle planning artifact (Status: ready)
+
+
+---
+
+## DE-LIVE-DASH-001 -- Live dashboard data-integrity P0: six broken surfaces wired to live DB sources (2026-06-22)
+
+Branch: fix/live-dashboard-metrics | Base: origin/main (52ef5cc)
+
+### Problem
+
+The live droplet dashboard showed blank/zero/stale values on six surfaces from day one because every affected route was gated on post-mortem JSON files that do not exist until end-of-day. A fresh droplet has no post-mortem files, so the operator saw a dashboard that appeared non-functional.
+
+Root causes per surface:
+
+| Surface | Root cause |
+|---------|-----------|
+| $-saved panel | `guard_alpha_summary()` read only `post_mortem_*.json`; no fallback |
+| Performance chart | `api_performance()` returned empty series when post-mortem dir was empty |
+| History tab | `get_history()` called `analytics.get_history_summary()` without `base_dir`, defaulting to CWD |
+| History todays_exits | No live source; populated only from post-mortem on disk |
+| Hero guard-alpha strip | `get_windowed_strip()` returned 0.0 when `shadow_history` had <2 trading days |
+| MDD bot column | Template coerced `none` -> `0.0` via `| float`, rendering "0.0%" instead of "--" |
+| AI Advisor news sources | Template read `_raw.get('sources', [])` -- a key that does not exist in MARKET_PRISM `raw_response` |
+
+### Decisions
+
+#### DE-LIVE-DASH-001-AC1: guard_alpha_summary -- intraday exit_triggers fallback
+
+When no `post_mortem_*.json` files exist, `guard_alpha_summary()` now queries `exit_triggers` + `shadow_history` + `bot_state` directly. Formula: `saved = (at_return - current_return) / 100 * position_value` per exit trigger. NULL values for any operand skip the row (conservative, not zero-filling). The EOD post-mortem path is UNCHANGED and takes precedence when files exist.
+
+The response carries a new `source` field: `"post_mortem_eod"` (EOD path) or `"exit_triggers_intraday"` (fallback). `basis_label` is changed from "snapshot-time basis" to "intraday estimate -- updates live" when using the fallback. This distinction lets the UI qualify the display without hard-coding assumptions in the route.
+
+Decision: intraday estimate is mathematically distinct from snapshot-time post-mortem figures. Never equate the two; always propagate the `source` field to the UI.
+
+#### DE-LIVE-DASH-001-AC2: api_performance -- shadow_history fallback series
+
+When `analytics.get_history_with_cache_invalidation()` returns an empty date list, `api_performance()` calls `analytics.get_portfolio_bot_and_held_daily_returns()` as a fallback to populate the return series from `shadow_history`. The `insufficient_history` flag and quantstats minimum-observations floor are UNCHANGED -- the flag remains `True` when `observation_count < _PERFORMANCE_MIN_HISTORY_DAYS`.
+
+Decision: populating a non-empty series from day one so the chart renders is correct behavior. The `insufficient_history` flag already communicates that metrics are not yet reliable. Same fallback applied to `api_performance_symphonies()`.
+
+#### DE-LIVE-DASH-001-AC3: get_history -- base_dir one-line fix + todays_exits fallback
+
+The `base_dir` omission was a bug, not a design choice: `analytics.get_history_summary()` has a `base_dir` parameter that defaults to `"."` when omitted. All other routes pass `base_dir=analytics._POST_MORTEMS_DIR`. Fixed.
+
+`todays_exits` backfill reads the 50 most-recent `exit_triggers` rows when the stats dict has no exits from the post-mortem. The 50-row cap is conservative -- no operator runs 50 guard-alpha exits in a single day.
+
+#### DE-LIVE-DASH-001-AC4: get_windowed_strip -- single-day intraday guard-alpha
+
+When `insufficient_history=True` and `guard_alpha` is falsy, the strip route computes a value-weighted intraday guard-alpha from `exit_triggers` (only triggered symphonies participate; non-triggered contribute 0 divergence). The new `intraday_only=True` field is additive -- it does not change existing fields. The JS template can check for this field to show "Today only" rather than "+0.00%".
+
+Decision: `intraday_only` is an additive field to avoid breaking callers that do not check for it.
+
+#### DE-LIVE-DASH-001-AC5a: ai_advisor.html -- per-lens sources aggregation
+
+The broken `_raw.get('sources', [])` block was replaced with a Jinja2 loop over `per_lens_digest[lens]['sources']` (plain-string citations) and `per_lens_digest[lens]['article_corpus']` (article-object dicts). Plain string citations render as text spans; article_corpus entries render as clickable links with `rel="noopener noreferrer"`. All values escaped with `| e`; no `| safe` used.
+
+#### DE-LIVE-DASH-001-AC5b: article corpus persistence -- SHIPPED
+
+AC-5b is implemented at commit 43ecb35. Two changes wire the article corpus end-to-end:
+
+- `ai_advisor.py:672` -- `_build_sentiment_section()` return dict gains `"article_corpus": corpus` as a top-level key (alongside `payload`, `sources`). When the corpus is empty, the key is an empty list.
+- `advisors/lens_pipeline.py:173` -- `_build_per_lens_digest()` passes the key through: `if block.get("article_corpus"): entry["article_corpus"] = block["article_corpus"]`. This surfaces the corpus in `per_lens_digest.sentiment.article_corpus` in the MARKET_PRISM `raw_response`.
+
+The template (AC-5a, `ai_advisor.html:962`) already reads `per_lens_digest[lens]['article_corpus']` and renders each entry as a clickable link with `rel="noopener noreferrer"`. With AC-5b wired, the sentiment lens block on the Overview tab shows article links when the nightly Prism run included a corpus.
+
+#### DE-LIVE-DASH-001-AC6: index.html -- None-aware MDD bot guard
+
+Template change only. `{% set _mdd_bot_raw = mdd_d.get("dry_run") if mdd_d is mapping else None %}` extracts the value without coercing. The render block checks `{% if _mdd_bot_raw is not none %}` before formatting; `none` renders as `--`. The analytics.py function is unchanged.
+
+#### DE-LIVE-DASH-001-AC-1b: guard_alpha_summary -- load_state() blob lookup (2026-06-22)
+
+**Root cause:** The original AC-1 intraday fallback used a correlated subquery `SELECT position_value FROM bot_state WHERE symphony_id = t.symphony_id` that assumes a multi-row columnar bot_state schema. The real production schema is a single-row JSON blob (`id INTEGER, data TEXT`) with no `position_value` column and no `symphony_id` column. The correlated subquery raised `OperationalError` on the live droplet; the outer `except Exception` swallowed it, producing `guard_event_count=0` and `cumulative_saved_dollars=0.0` despite 11 real exit_triggers rows.
+
+**Fix (93bd62c):** `guard_alpha_summary()` now reads position value via `database.load_state()` -- the canonical accessor that parses the blob dict keyed by symphony_id -- and extracts `current_value` per symphony. `load_state()` is isolated in its own `try/except` so a schema-read failure degrades to `{}` without killing the exit_triggers count query. The transitional columnar fallback added in 93bd62c was deleted at d8c14c7 (see DE-LIVE-DASH-001-cleanup below) once all fixtures were corrected to the real blob schema.
+
+Decision: always access `bot_state` via `database.load_state()` in route code, never via direct SQL column references. The blob schema is canonical; direct column SQL against bot_state is a schema-coupling bug.
+
+#### DE-LIVE-DASH-001-AC-3b: get_history() -- trigger_count backfill (2026-06-22)
+
+**Root cause:** The AC-3 todays_exits backfill (from exit_triggers) populated `stats["todays_exits"]` but never updated `stats["trigger_count"]`. The History tab showed "Today's exits (0)" despite the list being populated because `trigger_count` was left at 0 from `get_history_summary()`.
+
+**Fix (93bd62c):** `stats["trigger_count"] = len(stats["todays_exits"])` is assigned immediately after the backfill block. One line added.
+
+#### DE-LIVE-DASH-001-AC-3c: get_history() -- triggered_reason column name (2026-06-22)
+
+**Root cause:** The AC-3 todays_exits backfill queried `SELECT symphony_id, ts_utc, at_return, trigger_reason FROM exit_triggers`. The real column is `triggered_reason` (confirmed via PRAGMA on the live droplet). The wrong name caused all backfilled exit rows to have `trigger_reason: null` -- the History tab displayed exits but with no reason shown.
+
+**Fix (56901e0):** Column name corrected to `triggered_reason` in both the SELECT statement (`app.py:2589`) and the dict key in the response (`app.py:2600`). The response dict key is also corrected to `triggered_reason` so template consumers receive the actual value.
+
+**Discovery:** PM visual gate against the real droplet DB after AC-3b was merged; the exits appeared in the list but with blank reason fields. PRAGMA table_info confirmed the column name on the live DB.
+
+#### DE-LIVE-DASH-001-AC-2b: api_performance() -- single-day shadow_history fallback (2026-06-22)
+
+**Root cause:** Both `analytics.get_portfolio_bot_and_held_daily_returns()` and `analytics.get_portfolio_daily_returns_from_shadow()` return `None` when fewer than 2 distinct trading days exist in shadow_history (each has its own `< 2` guard). On a fresh droplet with one trading day, both guards fired and the route returned `observation_count=0` -- the performance chart was blank.
+
+**Fix (93bd62c):** A third fallback in `api_performance()` calls `analytics.get_single_day_shadow_returns()` when `dates` is still empty after both multi-day paths. The new function (D-1, never raises) reads the most recent trading day from shadow_history, value-weights by `abs(current_return)` (equal-weight fallback when all returns are zero), and returns `([date], [bot_pct], [held_pct])` as 1-element lists. Returns `None` when shadow_history is empty or unreadable. `observation_count` is computed from `len(dates)`; `insufficient_history` remains `True` (honest -- 1 < `_PERFORMANCE_MIN_HISTORY_DAYS`).
+
+Decision: the `< 2` guard in the multi-day analytics functions is correct and unchanged. The fix is a route-level third fallback that handles the day-one case without weakening the statistical guard.
+
+### Lesson (visual-gate-against-live-DB is the bar)
+
+AC-1 through AC-6 passed synthetic fixture tests because the test fixtures were modeled on an assumed columnar bot_state schema. The real droplet schema is a single-row JSON blob. Synthetic fixtures cannot catch schema-coupling bugs in SQL. The bar for "fixed" is a visual gate against the running live DB -- not tests-green on synthetic data.
+
+#### DE-LIVE-DASH-001-AC-4b: get_windowed_strip() -- load_state() blob lookup (2026-06-22)
+
+**Root cause:** Same phantom-column defect as AC-1b, second occurrence. `get_windowed_strip()` intraday fallback (`app.py:2185`) used `SELECT position_value FROM bot_state WHERE symphony_id = t.symphony_id`. The real `bot_state` schema is a single-row JSON blob -- no such column, no such per-row index. The `OperationalError` was swallowed by `except Exception` at `app.py:2214` --> `guard_alpha` stayed `0.0`, `intraday_only` was never set, despite exit_triggers rows on the live droplet.
+
+**Fix (7b5f29d):** Same `database.load_state()` pattern as AC-1b: pre-call `load_state()` before the SQL, remove the correlated position_value subquery, look up `current_value` from the blob dict per symphony_id in the result loop. The transitional columnar fallback was deleted at d8c14c7 once all fixtures were corrected to the real blob schema.
+
+**Discovery:** Caught by `ld2-review` during the AC-1b/AC-2b/AC-3b review cycle -- the `guard_alpha_summary()` fix was correct but the same pattern was present at the strip route, a second call site not covered by the AC-1b test class.
+
+#### DE-LIVE-DASH-001-cleanup: delete transitional columnar bot_state fallback (2026-06-22)
+
+**What was deleted (d8c14c7, -27 lines):** After AC-1b and AC-4b replaced the broken correlated subqueries with `database.load_state()` blob lookups, both `guard_alpha_summary()` and `get_windowed_strip()` carried a transitional block that re-queried `SELECT symphony_id, position_value FROM bot_state` when `load_state()` returned empty. This was dead code: the real production `bot_state` schema is a single-row JSON blob; there is no `symphony_id` or `position_value` column. The only way `load_state()` returns empty is if the DB is uninitialised -- in which case the fallback would also fail.
+
+**Why safe to delete:** All test fixtures were corrected to the real blob schema (cbfce3c corrected `db_with_exit_triggers`; 3ef67a1 corrected the per-class blob fixtures). 37 tests passed after deletion with no regressions. The columnar code path was never reachable on the live droplet.
+
+Decision: no backward-compat shims for schemas that never existed in production. Dead code is a maintenance liability; delete it once fixtures prove the real path is sound.
+
+### Files changed
+
+- `app.py` -- `guard_alpha_summary()` intraday fallback (+30 lines); `get_windowed_strip()` intraday guard_alpha path (+25 lines); `get_history()` base_dir fix + todays_exits fallback (+20 lines); `api_performance()` shadow_history fallback (+10 lines); AC-1b load_state blob lookup in `guard_alpha_summary()` (+20 lines); AC-3b trigger_count backfill in `get_history()` (+1 line); AC-2b single-day fallback in `api_performance()` (+14 lines); AC-4b load_state blob lookup in `get_windowed_strip()` intraday fallback (+27 lines); cleanup: delete dead columnar fallback blocks from both routes (d8c14c7, -27 lines)
+- `analytics.py` -- `get_single_day_shadow_returns()` new function (AC-2b, +55 lines)
+- `templates/index.html` -- None-aware MDD bot guard (lines 1121-1144)
+- `templates/ai_advisor.html` -- per-lens sources aggregation (lines 954-966, 1024-1052)
+- `tests/app/test_live_dashboard_metrics.py` -- 25 AC-driven tests (original) + AC-1b/AC-2b/AC-3b RED tests (350 lines, commit 353c013)
+- `tests/fixtures/math/guard_alpha_intraday_saved.json` -- golden fixture for intraday formula
+- `feature-plans/live-dashboard-metrics.md` -- planning artifact (Status: ready)
+- `ai_advisor.py` -- `_build_sentiment_section` gains `article_corpus` top-level key (AC-5b)
+- `advisors/lens_pipeline.py` -- `_build_per_lens_digest` passes `article_corpus` through to `per_lens_digest.sentiment` (AC-5b)
+- `docs/generated/app.md` -- dashboard routes section updated (DE-LIVE-DASH-001)

@@ -1,9 +1,9 @@
-# app
+﻿# app
 
 > Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
 **Source:** `app.py`
-**Last updated:** 2026-06-21 (startup-seed-symphonies startup hook)
+**Last updated:** 2026-06-22 (DE-LIVE-DASH-001: live data-source wiring for six broken dashboard surfaces)
 
 ## Overview
 
@@ -144,14 +144,37 @@ Render historical performance page.
 #### `GET /performance`
 Render performance analytics page.
 
-#### `GET /api/performance`
-Returns per-day performance metrics as JSON.
+#### `GET /api/performance` -- `api_performance()`
 
-#### `GET /api/performance/symphonies`
-Returns per-symphony performance breakdowns.
+Returns per-day time-series + quantstats metrics. Accepts `scope` ("aggregate"/"symphony"), `days` (int), and `symphony_id` (required when scope=symphony) query params.
 
-#### `GET /api/history/<int:days>`
-Returns historical portfolio data for the last `days` days.
+**Data-source precedence (AC-2/AC-2b, DE-LIVE-DASH-001):** Three-tier fallback:
+
+1. **Post-mortem history (primary):** `analytics.get_history_with_cache_invalidation(base_dir=analytics._POST_MORTEMS_DIR)` -- used when EOD files exist.
+2. **Multi-day shadow_history:** `analytics.get_portfolio_bot_and_held_daily_returns()` or `analytics.get_portfolio_daily_returns_from_shadow()` -- used on day-1 when no post-mortem files exist and shadow_history has >= 2 distinct trading days.
+3. **Single-day shadow_history (AC-2b):** `analytics.get_single_day_shadow_returns()` -- used when both tier-2 functions return `None` (fewer than 2 distinct trading days, i.e. fresh droplet on its first trading day). Returns a 1-element `([date], [bot_pct], [held_pct])` tuple so the chart is never blank. `insufficient_history` remains `True` (honest -- 1 < `_PERFORMANCE_MIN_HISTORY_DAYS`).
+
+The `< 2` guard in the tier-2 functions is correct and unchanged; tier-3 handles day-one without weakening the statistical guard.
+
+**Response shape:** `{scope, dates, live_returns, shadow_returns, live_metrics, shadow_metrics, observation_count, insufficient_history}`.
+
+Read-only: no DB writes, no network I/O, not in `_SETTINGS_WRITE_ALLOWLIST`.
+
+#### `GET /api/performance/symphonies` -- `api_performance_symphonies()`
+
+Per-symphony performance breakdowns. Same post-mortem primary path + `shadow_history` fallback as `/api/performance`.
+
+#### `GET /api/history/<int:days>` -- `get_history()`
+
+Returns historical portfolio summary for the last `days` days.
+
+**Bug fix (AC-3, DE-LIVE-DASH-001):** Previously called `analytics.get_history_summary(days=days)` without the `base_dir` argument, which defaulted to the process CWD and found no files. Now calls `analytics.get_history_summary(days=days, base_dir=analytics._POST_MORTEMS_DIR)` -- the same constant used by every other post-mortem reader.
+
+**`todays_exits` fallback (AC-3):** When `stats["todays_exits"]` is empty (no post-mortem written yet today), the route reads the 50 most-recent rows from `exit_triggers` and backfills them into the response. This ensures live exits appear in the History tab on day one, before the EOD post-mortem is written.
+
+**`trigger_count` backfill (AC-3b):** `stats["trigger_count"]` is updated to `len(stats["todays_exits"])` immediately after the AC-3 backfill so the two fields stay consistent. Previously `trigger_count` was left at 0 from `get_history_summary()` while `todays_exits` had rows, causing the History tab to show "Today's exits (0)".
+
+**Column name fix (AC-3c):** The backfill query and response dict used `trigger_reason`; the real `exit_triggers` column is `triggered_reason` (PRAGMA-confirmed on live droplet). Fixed in 56901e0 -- both the `SELECT` (`app.py:2589`) and the dict key (`app.py:2600`) use `triggered_reason`.
 
 #### `GET /api/logs/<symphony_id>`
 Returns symphony execution logs.
@@ -183,6 +206,16 @@ Resends the most recent Discord notification.
 #### `POST /api/sell_account`
 Operator-initiated account sell (protected; writes via Composer API).
 
+#### `GET /api/strip/<window>` -- `get_windowed_strip()`
+
+Returns comparison strip metrics (guard-alpha/CR/MDD/vol) re-windowed for the selected window token (30d/60d/90d/125d/ytd/1y/all). Threads the token through `analytics.compute_windowed_portfolio_strip`.
+
+**Intraday guard-alpha fallback (AC-4/AC-4b, DE-LIVE-DASH-001):** when `insufficient_history=True` AND `guard_alpha` is falsy (fewer than 2 distinct trading days in `shadow_history`), the route queries `exit_triggers` + `shadow_history` for per-symphony returns and reads `position_value` from `database.load_state()` (the JSON blob accessor, `current_value` field per symphony_id). Computes `alpha_per_symphony = at_return - current_return` weighted by `position_value`. When at least one triggered symphony has valid values, the strip dict is updated with the computed `guard_alpha` and `intraday_only=True` (additive field -- callers show a "Today only" label instead of "+0.00%"). The 15-second auto-refresh floor keeps this current.
+
+**AC-4b root cause (fixed 7b5f29d):** The original correlated subquery `SELECT position_value FROM bot_state WHERE symphony_id = t.symphony_id` assumed a columnar bot_state schema; the real schema is a single-row JSON blob. The `OperationalError` was swallowed by `except Exception` at `app.py:2214` → `guard_alpha` stayed `0.0`, `intraday_only` never set. Fixed with the same `load_state()` pattern as AC-1b.
+
+Read-only; builds symphony list from state DB, never reruns the engine.
+
 #### `GET /api/autotune-runs`
 Returns paginated autotune run history via `database.get_all_autotune_runs`. Response normalized via `_normalize_autotune_row`.
 
@@ -191,33 +224,32 @@ Returns `advisor_observations` rows for a symphony. Accepts `?symphony_id=` quer
 
 #### `GET /api/guard-alpha-summary` -- `guard_alpha_summary()`
 
-Returns cumulative dollar-saved aggregate and guard-event count from post_mortem JSON files on disk.
+Returns cumulative dollar-saved aggregate and guard-event count.
+
+**Dual-path data source (AC-1, DE-LIVE-DASH-001):**
+
+- **Primary (EOD) path:** when `post_mortem_*.json` files exist in `analytics._POST_MORTEMS_DIR`, sums `saved_dollars` from all trigger entries and sets `source="post_mortem_eod"`. Dollar figures are snapshot-time (computed by `reporting.py` at exit time).
+- **Intraday fallback path (AC-1/AC-1b):** when no post-mortem files exist (day-1 droplet), queries `exit_triggers` + `shadow_history` for per-symphony returns, and reads `position_value` from `database.load_state()` (the JSON blob accessor keyed by symphony_id -- `current_value` field). Formula per exit: `saved = (at_return - current_return) / 100 * position_value`. Rows where any value is NULL are skipped. Sets `source="exit_triggers_intraday"` and `basis_label="intraday estimate -- updates live"`. On fallback DB error, returns `guard_event_count=0`, `cumulative_saved_dollars=0.0`, `basis_label="no guard events yet"`.
+
+  **AC-1b root cause (fixed 93bd62c):** The original implementation used a correlated subquery `SELECT position_value FROM bot_state WHERE symphony_id = t.symphony_id` which assumed a multi-row columnar schema. The real production `bot_state` is a single-row JSON blob (`id INTEGER, data TEXT`). The subquery raised `OperationalError`; the outer `except Exception` swallowed it silently, producing zero results despite real exit_triggers rows.
 
 **Response shape:**
 | Field | Type | Description |
 |-------|------|-------------|
-| `cumulative_saved_dollars` | float | Sum of `saved_dollars` across all `triggers` in all `post_mortem_*.json` files. Zero when no files exist. |
-| `guard_event_count` | int | Total number of trigger entries across all post_mortem files. Zero when no files exist. |
-| `date_range` | dict | `{earliest, latest}` ISO date strings (YYYY-MM-DD) from filenames; null values when no files exist. |
-| `basis_label` | str | "snapshot-time basis, since <earliest>" when files exist; "no guard events yet" for empty-state. |
+| `cumulative_saved_dollars` | float | Aggregated savings. 0.0 when no events or values are NULL. |
+| `guard_event_count` | int | Total exit-trigger count. |
+| `date_range` | dict | `{earliest, latest}` ISO dates from filenames (EOD path); `{null, null}` when using intraday path. |
+| `basis_label` | str | "snapshot-time basis, since <date>" (EOD), "intraday estimate -- updates live" (intraday), "no guard events yet" (empty). |
+| `source` | str | `"post_mortem_eod"` or `"exit_triggers_intraday"`. Callers use this to qualify the display. |
 
 **Key properties:**
-- **Read-only.** Globs `analytics._POST_MORTEMS_DIR` for `post_mortem_*.json` via bounded `glob.glob`; no DB reads, no DB writes, not in `_SETTINGS_WRITE_ALLOWLIST`. Dollar figures are snapshot-time (computed by `reporting.py:71` at exit), labeled explicitly -- not mark-to-market.
-- **Malformed-file resilient (AC-6).** Each file is wrapped in `try/except (OSError, json.JSONDecodeError)`; failures log the basename only (no file content) and skip the file. Always returns 200.
-- **Honest empty-state (AC-5).** No post_mortem files yields `cumulative_saved_dollars=0.0`, `guard_event_count=0`, null date_range, basis_label="no guard events yet". Never returns NaN or None in numeric fields.
-- **Auth-gated (AC-8).** Covered by the global `_auth_before_request` hook (DE-AUTH-001); unauthenticated XHR receives 401.
+- **Read-only.** Not in `_SETTINGS_WRITE_ALLOWLIST`, no `LIVE_EXECUTION`, no DB writes.
+- **Malformed-file resilient.** Each post-mortem file is wrapped in `try/except (OSError, json.JSONDecodeError)`; failures log the basename only and skip the file. Always returns 200.
+- **Auth-gated.** Covered by the global `_auth_before_request` hook (DE-AUTH-001); unauthenticated XHR receives 401.
 
-See `DE-GAP-001` in `DECISIONS.md`.
+See `DE-GAP-001` and `DE-LIVE-DASH-001` in `DECISIONS.md`.
 
-**Consumed by:** `fetchGuardAlphaSummary()` in `static/index.js` (called once on
-`DOMContentLoaded` — aggregate changes only at EOD when a new post_mortem file is
-written, so continuous polling is unnecessary). Populates three DOM elements in
-`templates/index.html:1028-1034` (`data-testid="dollar-saved-panel"`):
-- `#dollar-saved-headline` — formatted as `$N.NN` when events exist; `"No guard events yet"` on empty-state.
-- `#guard-event-count` — integer exit count.
-- `#dollar-saved-basis-label` — `basis_label` string from the route response.
-Uses `.hero-section` light card-UI CSS; does not clobber `#guard-alpha-headline`
-(that element carries the windowed % guard alpha from `/api/strip/<window>`).
+**Consumed by:** `fetchGuardAlphaSummary()` in `static/index.js`. Populates `#dollar-saved-headline`, `#guard-event-count`, `#dollar-saved-basis-label` in `templates/index.html` (`data-testid="dollar-saved-panel"`). Does not clobber `#guard-alpha-headline` (windowed % guard alpha from `/api/strip/<window>`).
 
 ---
 

@@ -951,7 +951,19 @@
                 {% set _sentiment = _raw.get('overall_sentiment', 'limited-inputs') %}
                 {% set _rationale = _raw.get('sentiment_rationale', '') %}
                 {% set _per_lens  = _raw.get('per_lens_digest', {}) %}
-                {% set _sources   = _raw.get('sources', []) %}
+                {# AC-5a: aggregate sources from per-lens entries (plain-string citations
+                   and article_corpus dicts) instead of a missing top-level 'sources' key. #}
+                {% set _all_sources = [] %}
+                {% for _sln, _sle in _per_lens.items() %}
+                    {% if _sle is mapping %}
+                        {% for _src_str in _sle.get('sources', []) %}
+                            {% set _ = _all_sources.append({'citation': _src_str, 'lens': _sln}) %}
+                        {% endfor %}
+                        {% for _art in _sle.get('article_corpus', []) %}
+                            {% set _ = _all_sources.append({'url': _art.get('url', '#'), 'title': _art.get('title', ''), 'published': _art.get('published', ''), 'lens': _sln}) %}
+                        {% endfor %}
+                    {% endif %}
+                {% endfor %}
                 {% set _created   = market_prism_summary.get('created_at', '') %}
             {% endif %}
 
@@ -1009,19 +1021,26 @@
                     </div>
                 {% endif %}
 
-                {# Cited news sources — clickable <a href>, XSS-safe, external link safety attrs #}
-                {% if _sources %}
+                {# Cited news sources — AC-5a: render per-lens plain citations and
+                   article_corpus links.  Plain string citations render as text spans;
+                   article_corpus entries render as clickable <a href> links.
+                   XSS-safe: all values escaped with | e, no | safe used. #}
+                {% if _all_sources %}
                     <div data-testid="prism-sources">
                         <div class="prism-sources-header">Sources</div>
                         <ul class="prism-sources-list" style="list-style: none; margin: 0; padding: 0;">
-                            {% for _src in _sources %}
+                            {% for _src in _all_sources %}
                                 <li class="prism-source-item" data-testid="prism-source-item">
-                                    <a class="prism-source-link"
-                                       href="{{ _src.get('url', '#') | e }}"
-                                       target="_blank"
-                                       rel="noopener noreferrer">{{ _src.get('title', 'Untitled') | e }}</a>
-                                    {% if _src.get('published') %}
-                                        <span class="prism-source-meta">{{ _src.get('published') | e }}</span>
+                                    {% if _src.get('url') %}
+                                        <a class="prism-source-link"
+                                           href="{{ _src.get('url', '#') | e }}"
+                                           target="_blank"
+                                           rel="noopener noreferrer">{{ _src.get('title', 'Untitled') | e }}</a>
+                                        {% if _src.get('published') %}
+                                            <span class="prism-source-meta">{{ _src.get('published') | e }}</span>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="prism-source-citation">{{ _src.get('citation', '') | e }}</span>
                                     {% endif %}
                                     {% if _src.get('lens') %}
                                         <span class="prism-source-lens-tag">{{ _src.get('lens') | e }}</span>

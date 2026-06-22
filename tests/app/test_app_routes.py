@@ -32,6 +32,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import analytics as analytics_module
 import app as app_module
 
 # ---------------------------------------------------------------------------
@@ -777,8 +778,11 @@ def test_api_history_aggregates_post_mortems_within_window(client, tmp_path, mon
     (tmp_path / f"post_mortem_{f1_date}.json").write_text(json.dumps({"triggers": triggers_f1}))
     (tmp_path / f"post_mortem_{f2_date}.json").write_text(json.dumps({"triggers": triggers_f2}))
 
-    # Pivot cwd so glob("post_mortem_*.json") sees our fixtures.
-    monkeypatch.chdir(tmp_path)
+    # Point the production POST_MORTEMS_DIR constant at tmp_path so
+    # get_history_summary (which now receives base_dir=analytics._POST_MORTEMS_DIR
+    # from the route) reads our fixture files.  chdir is insufficient because the
+    # AC-3 change passes an explicit absolute base_dir to get_history_summary.
+    monkeypatch.setattr(analytics_module, "_POST_MORTEMS_DIR", str(tmp_path))
 
     resp = client.get("/api/history/7")
     assert resp.status_code == 200

@@ -1118,7 +1118,10 @@
             {% set tc_held = (tc_d.get("if_held",  0) if tc_d  is mapping else 0) | float %}
             {% set cr_bot  = (cr.get("dry_run",    0) or 0) | float %}
             {% set cr_held = (cr.get("if_held",    0) or 0) | float %}
-            {% set mdd_bot  = (mdd_d.get("dry_run",  0) if mdd_d is mapping else (mdd_d or 0)) | float %}
+            {# AC-6: None-aware MDD bot guard — dry_run=None (< 2 trading days) renders
+               '--' instead of coercing None to 0.0 via | float with default 0. #}
+            {% set _mdd_bot_raw = mdd_d.get("dry_run") if mdd_d is mapping else None %}
+            {% set mdd_bot = _mdd_bot_raw | float if _mdd_bot_raw is not none else 0.0 %}
             {% set mdd_held = (mdd_d.get("if_held",  0) if mdd_d is mapping else 0) | float %}
             {% set tc_alpha  = tc_bot  - tc_held %}
             {% set cr_alpha  = cr_bot  - cr_held %}
@@ -1138,7 +1141,7 @@
               {% set _card_mdd_insufficient = (meta.portfolio.insufficient_history if meta is defined and meta.portfolio is defined else true) %}
               <div class="cfg-cell">
                 <span class="cfg-label">Max DD {% if not _card_mdd_insufficient %}<span data-field="mdd-alpha-badge" class="cfg-alpha-badge {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(mdd_alpha) }}</span>{% else %}<span data-testid="card-mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-faint);font-weight:400;font-style:italic;">insufficient history (&lt;30d)</span>{% endif %}</span>
-                <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="mdd-bot" class="cfg-val neg">{{ "%.1f"|format(mdd_bot|abs) }}%</span></div>
+                <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="mdd-bot" class="cfg-val neg">{% if _mdd_bot_raw is not none %}{{ "%.1f"|format(mdd_bot|abs) }}%{% else %}--{% endif %}</span></div>
                 <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="mdd-held" class="cfg-val neg" style="opacity:0.7;">{{ "%.1f"|format(mdd_held|abs) }}%</span></div>
               </div>
             </div>
@@ -1192,7 +1195,10 @@
           {% set tc_held = (tc_d.get("if_held",  0) if tc_d  is mapping else 0) | float %}
           {% set cr_bot  = (cr.get("dry_run",    0) or 0) | float %}
           {% set cr_held = (cr.get("if_held",    0) or 0) | float %}
-          {% set mdd_bot  = (mdd_d.get("dry_run",  0) if mdd_d is mapping else (mdd_d or 0)) | float %}
+          {# AC-6: None-aware MDD bot guard — dry_run=None (< 2 trading days) renders
+             '--' instead of coercing None to 0.0 via | float with default 0. #}
+          {% set _mdd_bot_raw = mdd_d.get("dry_run") if mdd_d is mapping else None %}
+          {% set mdd_bot = _mdd_bot_raw | float if _mdd_bot_raw is not none else 0.0 %}
           {% set mdd_held = (mdd_d.get("if_held",  0) if mdd_d is mapping else 0) | float %}
           {% set tc_alpha  = tc_bot  - tc_held %}
           {% set cr_alpha  = cr_bot  - cr_held %}
@@ -1212,7 +1218,7 @@
             {% set _card_mdd_insufficient = (meta.portfolio.insufficient_history if meta is defined and meta.portfolio is defined else true) %}
             <div class="cfg-cell">
               <span class="cfg-label">Max DD {% if not _card_mdd_insufficient %}<span data-field="mdd-alpha-badge" class="cfg-alpha-badge {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(mdd_alpha) }}</span>{% else %}<span data-testid="card-mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-faint);font-weight:400;font-style:italic;">insufficient history (&lt;30d)</span>{% endif %}</span>
-              <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="mdd-bot" class="cfg-val neg">{{ "%.1f"|format(mdd_bot|abs) }}%</span></div>
+              <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="mdd-bot" class="cfg-val neg">{% if _mdd_bot_raw is not none %}{{ "%.1f"|format(mdd_bot|abs) }}%{% else %}--{% endif %}</span></div>
               <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="mdd-held" class="cfg-val neg" style="opacity:0.7;">{{ "%.1f"|format(mdd_held|abs) }}%</span></div>
             </div>
           </div>

@@ -133,8 +133,11 @@ def test_history_route_populates_name_map_from_live_state(
     }
     (tmp_path / f"post_mortem_{today_str}.json").write_text(json.dumps(today_post_mortem))
 
-    # Pivot cwd so get_history_summary sees the fixture file.
-    monkeypatch.chdir(tmp_path)
+    # Point the production _POST_MORTEMS_DIR constant at tmp_path so the route
+    # (which passes base_dir=analytics._POST_MORTEMS_DIR explicitly since AC-3)
+    # reads our fixture files.  monkeypatch.chdir is insufficient because the
+    # explicit base_dir parameter bypasses cwd lookup.
+    monkeypatch.setattr(analytics_module, "_POST_MORTEMS_DIR", str(tmp_path))
 
     # Stub database at the analytics module level — the REAL analytics code
     # must call analytics.database.load_state (not a global).
@@ -192,7 +195,8 @@ def test_history_route_name_map_fallback_to_id_when_state_empty(
         ]
     }
     (tmp_path / f"post_mortem_{today_str}.json").write_text(json.dumps(today_post_mortem))
-    monkeypatch.chdir(tmp_path)
+    # Same base_dir redirect as test above — chdir bypassed by explicit AC-3 base_dir.
+    monkeypatch.setattr(analytics_module, "_POST_MORTEMS_DIR", str(tmp_path))
 
     fake_db = MagicMock()
     fake_db.load_state.return_value = {}  # empty — no symphonies in state
