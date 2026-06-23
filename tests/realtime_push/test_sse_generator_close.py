@@ -26,9 +26,9 @@ from __future__ import annotations
 import threading
 import types
 
-import app as app_module
 import pytest
 
+import app as app_module
 
 # ---------------------------------------------------------------------------
 # BLOCK-1: GeneratorExit must not be swallowed by the SSE generator
@@ -120,26 +120,31 @@ class TestSseGeneratorCloseIsClean:
 
 class TestNotifyCycleCompleteDoesNotRaceWithCacheRefresh:
     def test_notify_cycle_complete_does_not_clear_cache_without_protection(self):
-        """_notify_cycle_complete() must not call _account_totals_cache.clear()
-        without thread safety around the same dict that _refresh_account_totals writes.
+        """_notify_cycle_complete() must serialise its cache .clear() with
+        _refresh_account_totals via the shared _account_totals_cache_lock, preventing
+        partial-state (one key present, the other missing) from reaching /api/state.
 
-        The race: _notify_cycle_complete() (called from trigger_alpha_bot finally)
-        and _refresh_account_totals() (scheduled at the same :00 tick) both access
-        _account_totals_cache concurrently. A bare .clear() mid-write sequence from
-        _refresh_account_totals produces a partially-populated or empty cache, causing
-        /api/state to show `--` for portfolio value.
+        Production race scenario:
+          _notify_cycle_complete() (trigger_alpha_bot finally block) and
+          _refresh_account_totals() (same :00 scheduler tick) both touch
+          _account_totals_cache concurrently. Without shared-lock serialisation a
+          bare .clear() can fire between the two writes of a multi-key batch,
+          leaving `portfolio_cr` set but `portfolio_value` missing — /api/state
+          then shows `--` for portfolio value.
 
-        This test verifies the fix: after _notify_cycle_complete() runs concurrently
-        with a simulated _refresh_account_totals write, _account_totals_cache must
-        contain valid data (not be empty or partially populated).
+        Invariant under lock-serialised access (the correct implementation):
+          After both threads complete, the cache is either:
+            (a) Empty       — notify won the lock last and cleared after refresh, OR
+            (b) Fully populated with BOTH keys — refresh won the lock last.
+          It is NEVER partial (one key present, the other absent).
 
-        Acceptable fixes:
-          (a) Use _account_totals_cache_lock (or equivalent) around .clear() in _notify
-          (b) Use a "dirty flag" approach — mark cache stale, let _refresh re-populate
-          (c) Delete specific known keys (not .clear()) so any partial write wins
+        The simulated refresh acquires _account_totals_cache_lock around its two-key
+        write (matching the production _refresh_account_totals codepath) so this
+        invariant is correctly testable.
 
-        Fails until rt-impl adds thread safety to the cache invalidation in
-        _notify_cycle_complete().
+        Fails if _notify_cycle_complete clears the cache WITHOUT holding
+        _account_totals_cache_lock — a bare .clear() races with the lock-holding
+        refresh and produces partial state.
         """
         import time
         from unittest.mock import MagicMock, patch
@@ -149,12 +154,21 @@ class TestNotifyCycleCompleteDoesNotRaceWithCacheRefresh:
         races_detected: list = []
 
         def _slow_refresh():
-            """Simulates _refresh_account_totals writing multiple keys with a tiny sleep
-            between them — exposes the .clear() race window."""
-            app_module._account_totals_cache["portfolio_value"] = _EXPECTED_VALUE
-            # Brief yield to allow _notify_cycle_complete to interleave
-            time.sleep(0.005)
-            app_module._account_totals_cache["portfolio_cr"] = _EXPECTED_CR
+            """Simulates _refresh_account_totals writing multiple keys under the shared
+            cache lock — matches the production path that uses _account_totals_cache_lock.
+
+            The sleep inside the lock forces a longer hold window so _notify_cycle_complete's
+            lock-protected .clear() must wait for both writes to complete (or vice versa)
+            rather than slipping between them. Partial state (one key present, one missing)
+            is impossible when both callers hold the same lock for the full write sequence.
+            """
+            with app_module._account_totals_cache_lock:
+                app_module._account_totals_cache["portfolio_value"] = _EXPECTED_VALUE
+                # Yield inside the lock: if _notify tries to .clear() without the lock it
+                # races here and CAN produce partial state; with the lock it blocks until
+                # we release — and the post-clear state is empty (both keys gone), not partial.
+                time.sleep(0.005)
+                app_module._account_totals_cache["portfolio_cr"] = _EXPECTED_CR
 
         def _run_notify():
             # Suppress _refresh_account_totals live API call inside _notify
@@ -186,12 +200,13 @@ class TestNotifyCycleCompleteDoesNotRaceWithCacheRefresh:
         app_module._account_totals_cache.clear()
 
         assert not races_detected, (
-            f"Cache race detected in {len(races_detected)}/{N_TRIALS} trials: "
-            f"_notify_cycle_complete() cleared the cache mid-write by _refresh_account_totals, "
-            f"leaving partial state. Sample: {races_detected[:3]}. "
-            "rt-impl: protect _account_totals_cache.clear() in _notify_cycle_complete() with "
-            "a lock shared with _refresh_account_totals, OR replace .clear() with a "
-            "dirty-flag that causes _refresh to re-populate on its next scheduled run."
+            f"Partial-state race detected in {len(races_detected)}/{N_TRIALS} trials: "
+            f"_notify_cycle_complete() cleared the cache mid-write, leaving exactly one key. "
+            f"Sample: {races_detected[:3]}. "
+            "Both callers use _account_totals_cache_lock; partial state means _notify "
+            "is clearing WITHOUT the lock — bare .clear() races with the lock-holding "
+            "refresh. Fix: use `with _account_totals_cache_lock: _account_totals_cache.clear()` "
+            "in _notify_cycle_complete()."
         )
 
     def test_account_totals_cache_lock_exists_for_thread_safety(self):
@@ -216,6 +231,7 @@ class TestNotifyCycleCompleteDoesNotRaceWithCacheRefresh:
         # for cache operations (structural check on intent — source inspection).
         if not found:
             import inspect
+
             notify_src = inspect.getsource(app_module._notify_cycle_complete)
             reuses_sse_lock = "_sse_clients_lock" in notify_src and (
                 "_account_totals_cache" in notify_src

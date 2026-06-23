@@ -14,9 +14,9 @@ import queue
 import threading
 from unittest.mock import MagicMock, patch
 
-import app as app_module
 import pytest
 
+import app as app_module
 
 # ---------------------------------------------------------------------------
 # Helpers

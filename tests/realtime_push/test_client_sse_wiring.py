@@ -25,8 +25,7 @@ _INDEX_JS = _STATIC_DIR / "index.js"
 def index_js_source() -> str:
     """Read static/index.js once for the whole module."""
     assert _INDEX_JS.exists(), (
-        f"static/index.js not found at {_INDEX_JS}. "
-        "This fixture requires the file to exist."
+        f"static/index.js not found at {_INDEX_JS}. This fixture requires the file to exist."
     )
     return _INDEX_JS.read_text(encoding="utf-8")
 

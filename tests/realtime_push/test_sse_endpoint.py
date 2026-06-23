@@ -11,9 +11,9 @@ All Composer / auth seams are mocked via conftest autouse fixtures.
 
 from __future__ import annotations
 
-import app as app_module
 import pytest
 
+import app as app_module
 
 # ---------------------------------------------------------------------------
 # AC-2: The SSE endpoint returns text/event-stream with 200 on authed request

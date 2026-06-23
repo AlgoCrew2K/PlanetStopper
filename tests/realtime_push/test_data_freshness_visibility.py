@@ -32,8 +32,9 @@ import time
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
-import app as app_module
 import pytest
+
+import app as app_module
 
 _STATIC_DIR = pathlib.Path(__file__).parent.parent.parent / "static"
 _INDEX_JS = _STATIC_DIR / "index.js"
@@ -108,9 +109,11 @@ class TestDataAsOfReflectsRealDataAge:
 
         try:
             from zoneinfo import ZoneInfo
+
             _ET = ZoneInfo("America/New_York")
         except ImportError:
             import pytz
+
             _ET = pytz.timezone("America/New_York")
 
         now_hhmm = datetime.now(_ET).strftime("%H:%M")
@@ -161,30 +164,34 @@ class TestDataAsOfReflectsRealDataAge:
 
         Fails until rt-impl fixes app.py:1619 (the second data_as_of = datetime.now(...)).
         """
-        import database as db
-
         from datetime import datetime
+
+        import database as db
 
         try:
             from zoneinfo import ZoneInfo
+
             _ET = ZoneInfo("America/New_York")
         except ImportError:
             import pytz
+
             _ET = pytz.timezone("America/New_York")
 
         # Write a known bot_state row so get_state() will pick it up.
-        db.save_state({
-            "sym-test": {
-                "name": "Test Symphony",
-                "current_value": 1000.0,
-                "current_return": 1.0,
-                "simple_return": 0.01,
-                "net_deposits": 900.0,
-                "time_weighted_return": 0.02,
-                "max_drawdown": 0.05,
-                "last_successful_cycle_at": _FAKE_CYCLE_TS,
+        db.save_state(
+            {
+                "sym-test": {
+                    "name": "Test Symphony",
+                    "current_value": 1000.0,
+                    "current_return": 1.0,
+                    "simple_return": 0.01,
+                    "net_deposits": 900.0,
+                    "time_weighted_return": 0.02,
+                    "max_drawdown": 0.05,
+                    "last_successful_cycle_at": _FAKE_CYCLE_TS,
+                }
             }
-        })
+        )
 
         response = client.get("/api/state")
         assert response.status_code == 200, (
@@ -219,9 +226,7 @@ class TestDataAsOfReflectsRealDataAge:
 
 
 class TestVisibleStalenessCueOnFetchFailure:
-    def test_index_js_does_not_have_console_only_catch_in_loadstate(
-        self, index_js_source: str
-    ):
+    def test_index_js_does_not_have_console_only_catch_in_loadstate(self, index_js_source: str):
         """static/index.js loadState() must not have a catch that is ONLY console.error.
 
         The current implementation (app.py audit line 1296):
@@ -276,9 +281,7 @@ class TestVisibleStalenessCueOnFetchFailure:
             "and add an independent badge-staleness timer."
         )
 
-    def test_index_js_has_visible_stale_indicator_on_poll_failure(
-        self, index_js_source: str
-    ):
+    def test_index_js_has_visible_stale_indicator_on_poll_failure(self, index_js_source: str):
         """static/index.js must have a visible staleness indicator triggered on poll failure.
 
         Acceptable implementations:
@@ -306,16 +309,12 @@ class TestVisibleStalenessCueOnFetchFailure:
         found = any(p in index_js_source for p in stale_patterns)
         assert found, (
             "static/index.js must implement a visible staleness cue for poll/SSE failure. "
-            "None of the expected patterns were found: "
-            + str(stale_patterns)
-            + ". "
+            "None of the expected patterns were found: " + str(stale_patterns) + ". "
             "rt-impl: add e.g. `lastSuccessfulPollAt` tracking + an independent badge-staleness "
             "timer, OR a `showConnectionLost()` DOM-write called in the loadState .catch path."
         )
 
-    def test_index_js_has_independent_staleness_timer_or_tracker(
-        self, index_js_source: str
-    ):
+    def test_index_js_has_independent_staleness_timer_or_tracker(self, index_js_source: str):
         """static/index.js must track last-successful-update time independently of the poll.
 
         The badge must be able to go Stale even if every poll call fails (fetch error,
@@ -342,8 +341,6 @@ class TestVisibleStalenessCueOnFetchFailure:
             "static/index.js must track the last-successful-update timestamp independently "
             "of the poll (e.g. `var lastSuccessfulPollAt = 0;` + `lastSuccessfulPollAt = Date.now()` "
             "inside the .then success path + stale check in the .catch or on a setInterval). "
-            "None of the expected patterns found: "
-            + str(tracker_patterns)
-            + ". "
+            "None of the expected patterns found: " + str(tracker_patterns) + ". "
             "rt-impl: add this tracker so the badge can go Stale even when every poll errors."
         )
