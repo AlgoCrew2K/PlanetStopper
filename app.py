@@ -2114,7 +2114,31 @@ def get_state():
 
         portfolio_strip = _compute_portfolio_strip(state_data, trading_day=_today_et)
 
-        data_as_of = datetime.now().strftime("%H:%M ET")
+        # AC-7: top-level data_as_of is the JS fallback hero freshness signal
+        # (index.js: `portfolio.data_as_of || data.data_as_of`).  Derive it from
+        # last_successful_cycle_at in state_data — same pattern as
+        # _compute_portfolio_strip (app.py:1281-1303) — so the operator sees real
+        # data age, not the server render clock.  Falls back to datetime.now(_ET)
+        # when no cycle timestamp is available.  Also fixes the pre-existing naive
+        # datetime.now() (no timezone) bug — the original produced local-system time,
+        # not ET.
+        _tl_cycle_ts = None
+        for _tl_v in state_data.values():
+            if isinstance(_tl_v, dict):
+                _tl_ts = _tl_v.get("last_successful_cycle_at")
+                if _tl_ts:
+                    _tl_cycle_ts = _tl_ts
+                    break
+        if _tl_cycle_ts:
+            try:
+                _tl_dt = datetime.fromisoformat(_tl_cycle_ts.replace("Z", "+00:00"))
+                if _tl_dt.tzinfo is None:
+                    _tl_dt = _tl_dt.replace(tzinfo=_ET)
+                data_as_of = _tl_dt.astimezone(_ET).strftime("%H:%M ET")
+            except Exception:
+                data_as_of = datetime.now(_ET).strftime("%H:%M ET")
+        else:
+            data_as_of = datetime.now(_ET).strftime("%H:%M ET")
 
         try:
             rendered_html = render_template(
