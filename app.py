@@ -1124,15 +1124,23 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         )
 
     # Use cached Composer account-level value when available; per-symphony sum as fallback.
-    if "portfolio_value" in _account_totals_cache:
-        account_value = _account_totals_cache["portfolio_value"]
+    # Use .get() (single call) rather than __contains__ + __getitem__ to eliminate the
+    # TOCTOU window: _notify_cycle_complete() can call mark_stale() between the two calls,
+    # causing __contains__ to return True but __getitem__ to raise KeyError.
+    _cached_portfolio_value = _account_totals_cache.get("portfolio_value")
+    if _cached_portfolio_value is not None:
+        account_value = _cached_portfolio_value
     else:
         account_value = sum(
             v.get("current_value") or 0.0 for v in bot_state.values() if isinstance(v, dict)
         )
 
     try:
-        if "portfolio_cr" in _account_totals_cache:
+        # Use .get() for all cache reads below to eliminate TOCTOU between __contains__
+        # and __getitem__ — _StaleFlagDict.mark_stale() can fire between the two calls
+        # and cause __getitem__ to raise KeyError even when __contains__ returned True.
+        _cached_cr = _account_totals_cache.get("portfolio_cr")
+        if _cached_cr is not None:
             # B-1 fix: put Bot (dry_run) on the same account basis as Held (if_held).
             # Held = Composer simple_return (cash-inclusive denominator).
             # Bot = VW per-symphony guard divergence scaled to account basis so that
@@ -1146,7 +1154,7 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
             cumulative_return: dict | None = (
                 analytics.get_portfolio_cumulative_return_account_basis(
                     _vw_cr,
-                    _account_totals_cache["portfolio_cr"],
+                    _cached_cr,
                     account_value,
                     _symphony_value_sum,
                 )
@@ -1159,9 +1167,10 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         # D-01: use the Composer-sourced today-change (includes cash in denominator)
         # when available; otherwise fall back to the per-symphony value-weighted sum
         # which excludes uninvested cash and will be slightly off.
-        if "portfolio_tc" in _account_totals_cache:
+        _cached_tc = _account_totals_cache.get("portfolio_tc")
+        if _cached_tc is not None:
             today_change: dict = {
-                "if_held": _account_totals_cache["portfolio_tc"],
+                "if_held": _cached_tc,
                 "dry_run": analytics.get_portfolio_today_change(
                     symphonies_list, bot_state, trading_day=trading_day
                 ).get("dry_run"),
@@ -1184,9 +1193,10 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         # magnitude. The cold-cache path flows through
         # analytics.get_portfolio_max_drawdown, already positive magnitude — both
         # branches must agree on sign regardless of cache warmth.
-        if "portfolio_mdd" in _account_totals_cache:
+        _cached_mdd = _account_totals_cache.get("portfolio_mdd")
+        if _cached_mdd is not None:
             max_drawdown: dict = {
-                "if_held": abs(_account_totals_cache["portfolio_mdd"]),
+                "if_held": abs(_cached_mdd),
                 "dry_run": analytics.get_portfolio_max_drawdown(
                     symphonies_list, bot_state, trading_day=trading_day
                 ).get("dry_run"),
@@ -1743,15 +1753,32 @@ def get_state():
                             "name": _sym_r.get("name"),
                             "account": _sym_r.get("account"),
                         }
+                # Derive data_as_of from the snapshot's own capture time.
+                # captured_at_et is written as "%H:%M:%S ET" (e.g. "16:00:01 ET");
+                # reformat to "%H:%M ET" to match the live-path format.
+                # Fall back to snapshot.data_as_of (may be None for legacy snapshots).
+                _snap_captured = snapshot.get("captured_at_et") or ""
+                try:
+                    # Strip the " ET" suffix, parse HH:MM:SS or HH:MM, reformat.
+                    _cap_time_str = _snap_captured.replace(" ET", "").strip()
+                    _cap_parts = _cap_time_str.split(":")
+                    _snap_data_as_of = f"{_cap_parts[0]}:{_cap_parts[1]} ET"
+                except Exception:
+                    _snap_data_as_of = snapshot.get("data_as_of")
+
                 try:
                     _snap_cr = analytics.get_portfolio_cumulative_return(
                         _snap_symphonies_list, _snap_bot_state, trading_day=_snap_trading_day
                     )
-                    if "portfolio_cr" in _account_totals_cache:
+                    # Use .get() to avoid TOCTOU between __contains__ and __getitem__:
+                    # _StaleFlagDict.mark_stale() can fire between the two calls.
+                    _snap_cached_cr = _account_totals_cache.get("portfolio_cr")
+                    if _snap_cached_cr is not None:
                         _snap_cr = {
-                            "if_held": _account_totals_cache["portfolio_cr"],
+                            "if_held": _snap_cached_cr,
                             "dry_run": _snap_cr.get("dry_run") if _snap_cr else None,
                         }
+                    _snap_cached_value = _account_totals_cache.get("portfolio_value")
                     _portfolio_strip = {
                         "today_change": analytics.get_portfolio_today_change(
                             _snap_symphonies_list, _snap_bot_state, trading_day=_snap_trading_day
@@ -1761,24 +1788,21 @@ def get_state():
                             _snap_symphonies_list, _snap_bot_state, trading_day=_snap_trading_day
                         ),
                         "account_value": (
-                            _account_totals_cache["portfolio_value"]
-                            if "portfolio_value" in _account_totals_cache
+                            _snap_cached_value
+                            if _snap_cached_value is not None
                             else sum(
                                 v.get("current_value") or 0.0
                                 for v in _snap_bot_state.values()
                                 if isinstance(v, dict)
                             )
                         ),
-                        # Use the snapshot's own captured timestamp, not the server
-                        # render clock — this is a frozen close-of-day view and the
-                        # age shown to the operator should reflect when the data was
-                        # actually recorded, not when the dashboard was last served.
-                        "data_as_of": snapshot.get("data_as_of"),
+                        # Anchor to the snapshot's REAL capture time so the operator
+                        # sees data age, not dashboard render time.
+                        "data_as_of": _snap_data_as_of,
                     }
-                    # Mirror _compute_portfolio_strip (line 833-835): surface the
-                    # Composer account-lifetime CR as the "Account · all-time" stat.
-                    # Without this, _build_meta sets account_all_time_cr=None and the
-                    # template's {% if _acct_cr is not none %} guard omits the element.
+                    # Mirror _compute_portfolio_strip: surface the Composer account-lifetime
+                    # CR as the "Account · all-time" stat so the template's
+                    # {% if _acct_cr is not none %} guard includes the element.
                     _acct_cr = _account_totals_cache.get("portfolio_cr")
                     if isinstance(_acct_cr, (int, float)):
                         _portfolio_strip["account_all_time_cr"] = _acct_cr
@@ -1789,7 +1813,7 @@ def get_state():
                         "max_drawdown": None,
                         "account_value": _account_totals_cache.get("portfolio_value"),
                         # Same frozen-snapshot semantics as the happy path above.
-                        "data_as_of": snapshot.get("data_as_of"),
+                        "data_as_of": _snap_data_as_of,
                     }
 
                 try:
