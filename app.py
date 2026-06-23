@@ -1769,7 +1769,11 @@ def get_state():
                                 if isinstance(v, dict)
                             )
                         ),
-                        "data_as_of": datetime.now(_ET).strftime("%H:%M ET"),
+                        # Use the snapshot's own captured timestamp, not the server
+                        # render clock — this is a frozen close-of-day view and the
+                        # age shown to the operator should reflect when the data was
+                        # actually recorded, not when the dashboard was last served.
+                        "data_as_of": snapshot.get("data_as_of"),
                     }
                     # Mirror _compute_portfolio_strip (line 833-835): surface the
                     # Composer account-lifetime CR as the "Account · all-time" stat.
@@ -1784,7 +1788,8 @@ def get_state():
                         "cumulative_return": None,
                         "max_drawdown": None,
                         "account_value": _account_totals_cache.get("portfolio_value"),
-                        "data_as_of": datetime.now(_ET).strftime("%H:%M ET"),
+                        # Same frozen-snapshot semantics as the happy path above.
+                        "data_as_of": snapshot.get("data_as_of"),
                     }
 
                 try:
