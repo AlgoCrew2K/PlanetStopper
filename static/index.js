@@ -1301,7 +1301,7 @@
         var dot = document.getElementById('engine-status-dot');
         var label = document.getElementById('engine-status-label');
         if (dot) { dot.style.background = 'var(--studio-neg, #e33)'; }
-        if (label) { label.textContent = 'Connection Lost'; }
+        if (label) { label.textContent = 'Connection Lost'; label.style.color = 'var(--studio-neg, #e33)'; }
         var dataAsOf = document.getElementById('hero-data-as-of');
         if (dataAsOf) { dataAsOf.textContent = 'connection lost'; }
     }
