@@ -66,8 +66,15 @@ def index_js_source() -> str:
 # AC-7 helpers
 # ---------------------------------------------------------------------------
 
-_FAKE_CYCLE_TS = "2026-06-23T10:09:00"  # last_successful_cycle_at from the audit
-_FAKE_CYCLE_LABEL = "10:09"  # what the timestamp should produce (HH:MM)
+# Naive ISO string — covers the older-DB-row / tzinfo-is-None fallback branch in
+# the app.py readers (app.py:1290: `if _dt.tzinfo is None: _dt = _dt.replace(tzinfo=_ET)`).
+_FAKE_CYCLE_TS = "2026-06-23T10:09:00"
+# Aware ISO string — PRODUCTION shape.  get_current_et() returns a TZ-aware datetime
+# (alpha_bot_execution.py:437-442: `datetime.now(ZoneInfo("America/New_York"))`), so
+# .isoformat() emits an offset suffix, e.g. "2026-06-23T10:09:00-04:00" (EDT).
+# Tests using this constant exercise the AWARE branch, not the naive fallback.
+_FAKE_CYCLE_TS_AWARE = "2026-06-23T10:09:00-04:00"  # EDT offset, same HH:MM
+_FAKE_CYCLE_LABEL = "10:09"  # HH:MM component both timestamps should produce
 
 
 def _bot_state_with_cycle_at(cycle_ts: str) -> dict:
@@ -176,6 +183,36 @@ class TestDataAsOfReflectsRealDataAge:
             f"(last_successful_cycle_at={_FAKE_CYCLE_TS} → expected '10:09'). "
             "rt-impl: change app.py:1142 to parse last_successful_cycle_at and "
             "format it as 'HH:MM ET' (or similar), replacing datetime.now(_ET)."
+        )
+
+    def test_compute_portfolio_strip_data_as_of_reflects_aware_cycle_ts(self):
+        """_compute_portfolio_strip must correctly parse the PRODUCTION-shape aware
+        isoformat string (with UTC offset) and render the correct ET HH:MM.
+
+        Production shape: get_current_et() returns datetime.now(ZoneInfo("America/New_York"))
+        — a TZ-AWARE datetime.  .isoformat() on that emits an offset suffix, e.g.
+        "2026-06-23T10:09:00-04:00" (EDT).  The naive fixture ("2026-06-23T10:09:00")
+        exercises only the tzinfo-is-None fallback branch (app.py:1290).  This test
+        exercises the AWARE branch — the one the engine actually produces.
+
+        Must be GREEN: the reader calls `_dt.astimezone(_ET)` which correctly converts
+        any offset-aware datetime to ET.
+
+        Would go RED if the reader stripped tzinfo or mishandled the offset.
+        """
+        bot_state = _bot_state_with_cycle_at(_FAKE_CYCLE_TS_AWARE)
+
+        result = app_module._compute_portfolio_strip(bot_state)
+
+        data_as_of = result.get("data_as_of", "")
+        assert isinstance(data_as_of, str), (
+            f"data_as_of must be a string; got {type(data_as_of).__name__}."
+        )
+        assert _FAKE_CYCLE_LABEL in data_as_of, (
+            f"data_as_of='{data_as_of}' does not encode the cycle timestamp "
+            f"(last_successful_cycle_at={_FAKE_CYCLE_TS_AWARE} → expected '{_FAKE_CYCLE_LABEL}'). "
+            "The reader must correctly parse the production-shape aware isoformat string "
+            "(with UTC offset) and convert to ET via astimezone(_ET)."
         )
 
     def test_get_state_portfolio_strip_data_as_of_not_always_now(self, client):
@@ -530,6 +567,21 @@ class TestVisibleStalenessCueOnFetchFailure:
             )
             + "rt-impl: change index.js showConnectionLost() to target "
             f"getElementById('{dao_id}') (matching templates/index.html:846)."
+        )
+
+        # --- Contract check: label element gets a color change ---
+        # showConnectionLost sets label.textContent='Connection Lost' but must ALSO
+        # set label.style.color so the text visually signals the error state.
+        # Without label.style.color, the label text stays the prior Live color (green)
+        # next to a red dot — misleading to the operator.
+        # Assert that the function body sets label.style.color (any value is acceptable;
+        # the test only requires it is set).
+        assert "label.style.color" in fn_body, (
+            "showConnectionLost() sets label.textContent but does NOT set label.style.color. "
+            "The label text keeps the prior (Live/green) color next to a red dot — "
+            "misleading to the operator. "
+            "rt-impl: add `label.style.color = 'var(--studio-neg, #e33)';` "
+            "inside the `if (label)` block in showConnectionLost() (index.js:1304)."
         )
 
 
