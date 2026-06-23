@@ -1284,9 +1284,10 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         if _cycle_ts:
             try:
                 _dt = datetime.fromisoformat(_cycle_ts.replace("Z", "+00:00"))
-                # The engine writes last_successful_cycle_at as current_et.isoformat() —
-                # an ET-local naive datetime with no tzinfo suffix.  Attach _ET so
-                # strftime renders the correct HH:MM without a local-system offset shift.
+                # The engine writes last_successful_cycle_at as a TZ-AWARE isoformat string
+                # (get_current_et() returns datetime.now(ZoneInfo("America/New_York")) —
+                # alpha_bot_execution.py:437-442).  The tzinfo-is-None branch below covers
+                # older DB rows written before the aware-datetime fix.
                 if _dt.tzinfo is None:
                     _dt = _dt.replace(tzinfo=_ET)
                 _dt_et = _dt.astimezone(_ET)
