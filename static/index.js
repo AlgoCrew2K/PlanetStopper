@@ -1286,14 +1286,40 @@
     }
 
     // ---------------------------------------------------------------------------
-    // Poll loop
+    // Poll loop + staleness tracking
     // ---------------------------------------------------------------------------
+
+    // AC-8: track the last time a successful /api/state response arrived so the badge
+    // can reflect a connection-lost state independently of the poll cadence.
+    var lastSuccessfulPollAt = 0;
+
+    // AC-8: surface a visible "connection lost" state when the poll/SSE fails.
+    // Flips the engine badge and the data-as-of element so the operator knows
+    // the displayed numbers are frozen — not silently stale.
+    function showConnectionLost() {
+        var badge = document.getElementById('engine-status-badge');
+        if (badge) {
+            badge.textContent = 'Connection Lost';
+            badge.className = badge.className.replace(/\b(live|stale)\b/g, '') + ' stale';
+        }
+        var dataAsOf = document.querySelector('[data-testid="data-as-of"]') ||
+                       document.querySelector('.data-as-of');
+        if (dataAsOf) {
+            dataAsOf.textContent = 'connection lost';
+        }
+    }
 
     function loadState() {
         fetch('/api/state')
             .then(function (r) { return r.json(); })
-            .then(function (data) { updateDashboard(data); })
-            .catch(function (err) { console.error('state load failed', err); });
+            .then(function (data) {
+                lastSuccessfulPollAt = Date.now();
+                updateDashboard(data);
+            })
+            .catch(function (err) {
+                showConnectionLost();
+                console.error('state load failed', err);
+            });
     }
 
     // Re-window the hero headline VALUE + the three vs-rows for a window token.
