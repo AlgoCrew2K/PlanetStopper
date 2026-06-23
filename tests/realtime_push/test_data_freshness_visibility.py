@@ -244,6 +244,57 @@ class TestDataAsOfReflectsRealDataAge:
                 "rt-impl: fix app.py:1619 to derive data_as_of from the real data age."
             )
 
+    def test_compute_portfolio_strip_ignores_per_sym_cycle_ts_no_top_level(self):
+        """Negative guard: when last_successful_cycle_at is ONLY inside a per-symphony
+        sub-dict (production-impossible shape) and absent from the top level, the reader
+        must NOT use it — it must fall back to datetime.now().
+
+        This closes the "defensive OR-fallback" regression class.  A future refactor
+        that re-adds a per-sym fallback (e.g.
+            `state.get("last_successful_cycle_at") or <loop over sym dicts>`)
+        would re-honor the production-impossible shape and still pass the positive tests
+        (which all supply the key at the correct top level).  This test would fail it.
+
+        Shape injected here: last_successful_cycle_at inside "sym-1" ONLY, no top-level
+        key — exactly the hollow-fixture shape we removed from the positive tests.
+
+        Must be GREEN immediately (current fixed reader uses top-level .get, finds nothing,
+        falls back to datetime.now()).  Would go RED if a per-sym fallback were re-introduced.
+        """
+        # Production-impossible shape: key buried in per-sym dict, absent at top level.
+        bot_state_wrong_shape = {
+            "sym-1": {
+                "name": "Symphony 1",
+                "current_value": 1000.0,
+                "current_return": 1.5,
+                "simple_return": 0.05,
+                "net_deposits": 800.0,
+                "time_weighted_return": 0.06,
+                "max_drawdown": 0.12,
+                "last_successful_cycle_at": _FAKE_CYCLE_TS,  # wrong location — per-sym
+            }
+            # Intentionally NO top-level "last_successful_cycle_at".
+        }
+
+        result = app_module._compute_portfolio_strip(bot_state_wrong_shape)
+
+        data_as_of = result.get("data_as_of", "")
+        assert isinstance(data_as_of, str), (
+            f"data_as_of must be a string; got {type(data_as_of).__name__}."
+        )
+
+        # The key assertion: the per-sym key must NOT be honored.
+        # The reader should fall back to datetime.now() because no top-level key exists.
+        # We can't assert the exact now() value, but we CAN assert that the
+        # production-impossible per-sym shape was ignored (10:09 must NOT appear).
+        assert _FAKE_CYCLE_LABEL not in data_as_of, (
+            f"data_as_of='{data_as_of}' encodes '{_FAKE_CYCLE_LABEL}' from a "
+            f"per-symphony-dict last_successful_cycle_at — the reader is honoring a "
+            "production-impossible shape.  The reader must use ONLY the top-level key "
+            "bot_state.get('last_successful_cycle_at'), never a per-sym sub-dict lookup. "
+            "Regression: a per-sym fallback was re-introduced at app.py _compute_portfolio_strip."
+        )
+
 
 # ---------------------------------------------------------------------------
 # AC-8: visible staleness cue on poll/SSE failure
