@@ -479,3 +479,160 @@ class TestSnapshotBranchDataAsOfUsesSnapshotTimestamp:
             "The snapshot branch must use snapshot.get('data_as_of') not datetime.now(). "
             "Regression target: app.py lines ~1776 and ~1792 in the closed_frozen branch."
         )
+
+
+# ---------------------------------------------------------------------------
+# AC-7: top-level data_as_of in /api/state live-market path (app.py ~2117/2230)
+#
+# Scope decision: IN-SCOPE (PM ratified 2026-06-23).
+#   app.py:2117 `data_as_of` is the JS fallback hero freshness signal:
+#   index.js:1168 reads `portfolio.data_as_of || data.data_as_of`.
+#   When bot_state carries a `last_successful_cycle_at`, the top-level
+#   data_as_of must derive from that timestamp, not the render clock.
+#   Fixed at b215049: same last_successful_cycle_at pattern as
+#   _compute_portfolio_strip (app.py:1281-1303). Also fixes the pre-existing
+#   naive datetime.now() (no _ET timezone) bug.
+#
+#   OUT-OF-SCOPE (exception path):
+#     app.py:1362  exception-fallback in _compute_portfolio_strip — entire strip
+#     failed, no bot_state reachable; datetime.now(_ET) is the only value.
+# ---------------------------------------------------------------------------
+
+
+class TestTopLevelDataAsOfDerivesFromCycleTimestamp:
+    """Regression guard: top-level data_as_of at app.py:2117 must derive from
+    last_successful_cycle_at, not datetime.now() (render clock).
+
+    The JS reads `portfolio.data_as_of || data.data_as_of` (index.js:1168) —
+    the top-level field is the hero freshness fallback when portfolio.data_as_of
+    is absent. Fixed at b215049 to mirror _compute_portfolio_strip (1281-1303).
+
+    These tests go GREEN against b215049 and would FAIL if app.py:2117 regressed
+    back to datetime.now() (render clock).
+    """
+
+    def test_get_state_top_level_data_as_of_not_always_render_clock(self, client):
+        """GET /api/state top-level data_as_of must NOT always match the server render clock.
+
+        Scenario:
+        1. Write bot_state with last_successful_cycle_at='2026-06-23T10:09:00'.
+        2. GET /api/state.
+        3. Assert top-level data_as_of does NOT contain the current ET or naive clock HH:MM
+           when that differs from the known cycle timestamp.
+
+        Uses a past fixed timestamp (10:09 ET) — distinct from current time unless
+        the test runs at exactly 10:09:XX ET (skipped if that happens).
+
+        Would FAIL if app.py:2117 reverts to `datetime.now().strftime(...)`.
+        """
+        from datetime import datetime
+
+        import database as db
+
+        try:
+            from zoneinfo import ZoneInfo
+
+            _ET = ZoneInfo("America/New_York")
+        except ImportError:
+            import pytz
+
+            _ET = pytz.timezone("America/New_York")
+
+        db.save_state(
+            {
+                "sym-tl-1": {
+                    "name": "Top-Level Test Symphony",
+                    "current_value": 2000.0,
+                    "current_return": 3.0,
+                    "simple_return": 0.03,
+                    "net_deposits": 1900.0,
+                    "time_weighted_return": 0.04,
+                    "max_drawdown": 0.02,
+                    "last_successful_cycle_at": _FAKE_CYCLE_TS,
+                }
+            }
+        )
+
+        response = client.get("/api/state")
+        assert response.status_code == 200, (
+            f"GET /api/state returned {response.status_code}; expected 200."
+        )
+
+        data = response.get_json()
+        if not isinstance(data, dict):
+            return
+
+        top_level_dao = data.get("data_as_of", "")
+        if not top_level_dao:
+            return
+
+        # Capture both ET-aware and naive now() to detect either render-clock flavor.
+        now_hhmm_et = datetime.now(_ET).strftime("%H:%M")
+        now_hhmm_naive = datetime.now().strftime("%H:%M")
+        if _FAKE_CYCLE_LABEL in (now_hhmm_et, now_hhmm_naive):
+            pytest.skip(
+                f"Test skipped: server clock ({now_hhmm_et} ET / {now_hhmm_naive} local) "
+                f"matches fake cycle label ({_FAKE_CYCLE_LABEL}) — cannot distinguish "
+                "render-clock from cycle-ts at this exact minute."
+            )
+
+        is_et_clock = now_hhmm_et in top_level_dao
+        is_naive_clock = now_hhmm_naive in top_level_dao
+        has_cycle_label = _FAKE_CYCLE_LABEL in top_level_dao
+
+        if (is_et_clock or is_naive_clock) and not has_cycle_label:
+            clock_found = now_hhmm_et if is_et_clock else now_hhmm_naive
+            pytest.fail(
+                f"GET /api/state top-level data_as_of='{top_level_dao}' encodes the "
+                f"server render clock ({clock_found}) rather than the data age "
+                f"(last_successful_cycle_at ~ {_FAKE_CYCLE_LABEL} ET). "
+                "Regression: app.py:2117 reverted to datetime.now() — must derive "
+                "from state_data last_successful_cycle_at (b215049 fix)."
+            )
+
+    def test_get_state_top_level_data_as_of_encodes_cycle_timestamp(self, client):
+        """GET /api/state top-level data_as_of must encode the cycle timestamp HH:MM.
+
+        When bot_state contains last_successful_cycle_at='2026-06-23T10:09:00',
+        the top-level data_as_of must contain '10:09' — the actual data age.
+
+        Would FAIL if app.py:2117 regressed to datetime.now() (always renders
+        current clock time, never the cycle timestamp).
+        """
+        import database as db
+
+        db.save_state(
+            {
+                "sym-tl-2": {
+                    "name": "Top-Level Cycle-TS Symphony",
+                    "current_value": 3000.0,
+                    "current_return": 2.5,
+                    "simple_return": 0.025,
+                    "net_deposits": 2800.0,
+                    "time_weighted_return": 0.03,
+                    "max_drawdown": 0.015,
+                    "last_successful_cycle_at": _FAKE_CYCLE_TS,
+                }
+            }
+        )
+
+        response = client.get("/api/state")
+        assert response.status_code == 200, (
+            f"GET /api/state returned {response.status_code}; expected 200."
+        )
+
+        data = response.get_json()
+        if not isinstance(data, dict):
+            return
+
+        top_level_dao = data.get("data_as_of", "")
+        if not top_level_dao:
+            return
+
+        assert _FAKE_CYCLE_LABEL in top_level_dao, (
+            f"GET /api/state top-level data_as_of='{top_level_dao}' does not encode "
+            f"the cycle timestamp (last_successful_cycle_at={_FAKE_CYCLE_TS} → "
+            f"expected '{_FAKE_CYCLE_LABEL}'). "
+            "Regression: app.py:2117 reverted to render-clock — must derive from "
+            "last_successful_cycle_at (b215049 fix at app.py:2125-2141)."
+        )
