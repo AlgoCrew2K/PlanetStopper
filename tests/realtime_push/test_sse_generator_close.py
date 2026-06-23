@@ -120,31 +120,35 @@ class TestSseGeneratorCloseIsClean:
 
 class TestNotifyCycleCompleteDoesNotRaceWithCacheRefresh:
     def test_notify_cycle_complete_does_not_clear_cache_without_protection(self):
-        """_notify_cycle_complete() must serialise its cache .clear() with
-        _refresh_account_totals via the shared _account_totals_cache_lock, preventing
-        partial-state (one key present, the other missing) from reaching /api/state.
+        """_notify_cycle_complete() must prevent partial-state (one key present, the
+        other missing) from ever reaching /api/state after a concurrent refresh write.
 
         Production race scenario:
           _notify_cycle_complete() (trigger_alpha_bot finally block) and
           _refresh_account_totals() (same :00 scheduler tick) both touch
-          _account_totals_cache concurrently. Without shared-lock serialisation a
-          bare .clear() can fire between the two writes of a multi-key batch,
-          leaving `portfolio_cr` set but `portfolio_value` missing — /api/state
-          then shows `--` for portfolio value.
+          _account_totals_cache concurrently. Without protection a bare .clear() can
+          fire between the two writes of a multi-key batch, leaving `portfolio_cr`
+          set but `portfolio_value` missing — /api/state then shows `--` for
+          portfolio value.
 
-        Invariant under lock-serialised access (the correct implementation):
-          After both threads complete, the cache is either:
-            (a) Empty       — notify won the lock last and cleared after refresh, OR
-            (b) Fully populated with BOTH keys — refresh won the lock last.
-          It is NEVER partial (one key present, the other absent).
+        Correct implementations (any of):
+          (a) _StaleFlagDict.mark_stale() — masks ALL reads atomically via a boolean
+              flag without touching the dict; partial state is never exposed.
+          (b) Lock-protected .clear() — holds _account_totals_cache_lock for both
+              the clear AND the full write batch, preventing interleaving.
+
+        Invariant (both implementations):
+          After both threads complete, for any pair of reads:
+            - Both keys return a value (fully populated), OR
+            - Both keys return None (empty / stale).
+          Partial state — one key Some, one None — is never observable.
 
         The simulated refresh acquires _account_totals_cache_lock around its two-key
-        write (matching the production _refresh_account_totals codepath) so this
-        invariant is correctly testable.
+        write (matching the production _refresh_account_totals codepath) and includes
+        a sleep inside the lock to extend the contention window.
 
-        Fails if _notify_cycle_complete clears the cache WITHOUT holding
-        _account_totals_cache_lock — a bare .clear() races with the lock-holding
-        refresh and produces partial state.
+        Fails if _notify_cycle_complete neither calls mark_stale() nor holds the
+        cache lock during .clear(), allowing the clear to interleave with the write.
         """
         import time
         from unittest.mock import MagicMock, patch
@@ -155,18 +159,19 @@ class TestNotifyCycleCompleteDoesNotRaceWithCacheRefresh:
 
         def _slow_refresh():
             """Simulates _refresh_account_totals writing multiple keys under the shared
-            cache lock — matches the production path that uses _account_totals_cache_lock.
+            cache lock — matches the production path (_account_totals_cache_lock).
 
-            The sleep inside the lock forces a longer hold window so _notify_cycle_complete's
-            lock-protected .clear() must wait for both writes to complete (or vice versa)
-            rather than slipping between them. Partial state (one key present, one missing)
-            is impossible when both callers hold the same lock for the full write sequence.
+            The sleep inside the lock extends the contention window: an unprotected
+            .clear() in _notify can fire between the two STORE instructions, leaving
+            one key present. A mark_stale() call (no lock) sets _stale=True which
+            masks both reads to None — so reads are always consistent (both None or
+            both set) regardless of interleave order. Either protection passes.
             """
             with app_module._account_totals_cache_lock:
                 app_module._account_totals_cache["portfolio_value"] = _EXPECTED_VALUE
-                # Yield inside the lock: if _notify tries to .clear() without the lock it
-                # races here and CAN produce partial state; with the lock it blocks until
-                # we release — and the post-clear state is empty (both keys gone), not partial.
+                # Yield inside the lock: forces _notify to either (a) wait for the
+                # lock before clearing or (b) set the stale flag (masking reads)
+                # while both stores are still in-flight.
                 time.sleep(0.005)
                 app_module._account_totals_cache["portfolio_cr"] = _EXPECTED_CR
 
@@ -201,12 +206,11 @@ class TestNotifyCycleCompleteDoesNotRaceWithCacheRefresh:
 
         assert not races_detected, (
             f"Partial-state race detected in {len(races_detected)}/{N_TRIALS} trials: "
-            f"_notify_cycle_complete() cleared the cache mid-write, leaving exactly one key. "
+            f"concurrent _notify_cycle_complete() + refresh left exactly one key set. "
             f"Sample: {races_detected[:3]}. "
-            "Both callers use _account_totals_cache_lock; partial state means _notify "
-            "is clearing WITHOUT the lock — bare .clear() races with the lock-holding "
-            "refresh. Fix: use `with _account_totals_cache_lock: _account_totals_cache.clear()` "
-            "in _notify_cycle_complete()."
+            "Fix: _notify_cycle_complete() must either (a) call mark_stale() to mask "
+            "all reads atomically, OR (b) hold _account_totals_cache_lock around the "
+            "full .clear() so it cannot interleave with the write batch."
         )
 
     def test_account_totals_cache_lock_exists_for_thread_safety(self):
