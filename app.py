@@ -2114,6 +2114,12 @@ def get_state():
 
         portfolio_strip = _compute_portfolio_strip(state_data, trading_day=_today_et)
 
+        # Intentional render-clock: this stamp feeds the table_partial header row
+        # (the sortable symphony table), NOT the hero portfolio-strip panel whose
+        # data_as_of is AC-7-audited and derives from last_successful_cycle_at in
+        # _compute_portfolio_strip (app.py:1279-1301).  The table header is a
+        # secondary / non-hero surface; render time is an honest "rendered at" label
+        # for a table whose rows already carry per-symphony cycle timestamps.
         data_as_of = datetime.now().strftime("%H:%M ET")
 
         try:
