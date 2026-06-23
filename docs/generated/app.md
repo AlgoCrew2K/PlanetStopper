@@ -1,9 +1,9 @@
-﻿# app
+# app
 
 > Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
 **Source:** `app.py`
-**Last updated:** 2026-06-22 (DE-LIVE-DASH-001: live data-source wiring for six broken dashboard surfaces)
+**Last updated:** 2026-06-23 (feat/dashboard-realtime-push: SSE /api/events + _StaleFlagDict + _notify_cycle_complete + data_as_of fix; prior: DE-LIVE-DASH-001: live data-source wiring for six broken dashboard surfaces)
 
 ## Overview
 
@@ -16,12 +16,16 @@
 - **AI Advisor routes** — unified single-page SPA at `GET /ai-advisor` renders all 6 tabs in one server-side render; GET sub-routes for all 5 old per-tab pages now 302-redirect to `/ai-advisor`; POST action routes (suggest, evaluate, accept, reject, chat/send, strategy-builder/run) are unchanged.
 - **CSRF infrastructure** — `_validate_csrf()` hook; `_csrf_before_request` before-request handler; `GET /api/csrf-token` token endpoint; `_SETTINGS_WRITE_ALLOWLIST` restricts which .env keys the settings write path can touch.
 - **Dashboard auth gate** — single-password Flask signed-session gate protecting the entire Flask surface (AC-1..AC-13). `_auth_before_request` before-request hook registered before CSRF; `_AUTH_EXEMPT_ENDPOINTS` frozenset allowlist (`login`, `logout`, `static`, `get_csrf_token`, `health`); `_resolve_dashboard_credential()` for hash-preferred credential resolution (`DASHBOARD_PASSWORD_HASH` over `DASHBOARD_PASSWORD`); `_is_api_or_xhr()` dispatches 401 JSON vs 302 redirect; in-memory throttle `_AUTH_FAILED_ATTEMPTS`; **fail-closed**: missing credential or `SECRET_KEY` denies ALL requests.
+- **Event-driven dashboard push** — `GET /api/events` SSE endpoint streams `cycle-complete` notifications to all connected dashboard clients; `_notify_cycle_complete()` fans out after every engine subprocess exit (success or failure). Primary update path; 30 s poll is the resilience fallback. See `DE-SSE-PUSH-001` in `DECISIONS.md`.
 
 Module-level thread-safety constructs:
 
 - `_DISMISS_EXECUTOR` — `ThreadPoolExecutor(max_workers=1)` for fleet-alert dismiss writes. Registered with `atexit` for graceful shutdown.
 - `_FLUSH_STATE_LOCK` — `threading.Lock()` serializing `flush_resync` background writes against engine `save_state` writes.
 - `_CHAT_RATE_LIMITER` — per-IP rate-limiter for AI Advisor chat endpoint (cost-DoS guard; max `CHAT_RATE_LIMITER_MAX_TRACKED_IPS` IPs).
+- `_account_totals_cache` — `_StaleFlagDict` instance holding Composer account-level totals; reads return empty-state when marked stale by `_notify_cycle_complete()`, unmasking after `_refresh_account_totals()` writes fresh values.
+- `_account_totals_cache_lock` — `threading.Lock()` serializing multi-key writes from `_refresh_account_totals()` so concurrent readers never observe a partial write sequence.
+- `_sse_clients` / `_sse_clients_lock` — list of `queue.Queue` objects (one per connected `/api/events` client) and its `threading.Lock`. `_notify_cycle_complete()` fans out under the lock; the SSE generator registers/deregisters its queue under the same lock.
 
 ## Environment Variables
 
@@ -120,13 +124,65 @@ Flask `before_request` hook. Injects CSRF enforcement for the two guarded write 
 Runs the `schedule` loop: every minute at `:00` triggers `threaded_trigger()` and `_refresh_account_totals()`; daily at 02:00 runs `_run_trigger_retention()`; daily at 03:00 runs `_run_lens_pipeline()` (gated by `DISABLE_DAEMON_LENS_PIPELINE`).
 
 #### `trigger_alpha_bot(force: bool = False) → None`
-Spawns `alpha_bot_execution.py` as a subprocess. Passes `--force` when `force=True`. Logs stdout/stderr to `alphabot_daemon.log`.
+Spawns `alpha_bot_execution.py` as a subprocess. Passes `--force` when `force=True`. Logs stdout/stderr to `alphabot_daemon.log`. After the subprocess exits (success or `CalledProcessError`), calls `_notify_cycle_complete()` in a `finally` block — the cycle notification is unconditional.
+
+#### `_notify_cycle_complete() → None`
+Fan-out hook called from `trigger_alpha_bot()` in a `finally` block. Never raises. Performs three steps in order:
+
+1. **Mark cache stale** — calls `_account_totals_cache.mark_stale()` (O(1), lock-free). All subsequent reads from `_account_totals_cache` return `None`/empty until `_refresh_account_totals()` clears the flag. `mark_stale()` is used instead of `dict.clear()` to avoid a partial-write window: a bare `.clear()` under the write lock would not prevent a lock-free reader from observing an incomplete dict mid-write; `mark_stale()` masks ALL reads atomically in O(1).
+2. **Spawn refresh thread** — starts a short-lived daemon thread (`threading.Thread(target=_refresh_account_totals, daemon=True, name="cycle-refresh")`). The thread is started BEFORE the SSE fan-out so the Composer API call is in-flight while the fan-out loop runs. This gives the refresh maximum lead time: by the time the connected client receives the event and its `/api/state` fetch arrives (~50–200 ms), the single Composer call (~100–500 ms) has typically completed. Without this, the cache stays masked until the NEXT per-minute scheduler tick (~55 s) — the SSE-triggered fetch would see blank totals, defeating the feature.
+3. **Fan out SSE event** — copies `_sse_clients` under `_sse_clients_lock`, then calls `q.put_nowait("cycle-complete")` for each client queue. Exceptions (full queue, closed) are swallowed per client; the loop always completes. O(1) per client; no I/O.
 
 #### `_refresh_account_totals() → None`
-Fetches Composer account-level total-stats (`portfolio_value`, `simple_return`, `todays_percent_change`, `max_drawdown`) and populates `_account_totals_cache`. Swallows all exceptions — stale cache is preferred over an empty one.
+Fetches Composer account-level total-stats (`portfolio_value`, `simple_return`, `todays_percent_change`, `max_drawdown`) and populates `_account_totals_cache`. Must never raise (swallows all exceptions — D-1 contract).
+
+**Write protocol:** all five keys are written under `_account_totals_cache_lock` (prevents concurrent readers from observing a partial write). After the last key is written, calls `_account_totals_cache.refresh_written()` to clear the stale flag atomically. If Composer returns non-200 or any exception occurs, `refresh_written()` is NOT called: the cache remains masked and consumers see empty-state (honest degradation triggering the AC-8 staleness cue in the client).
+
+Called by the per-minute scheduler AND as a short-lived daemon thread spawned by `_notify_cycle_complete()`.
 
 #### `_run_trigger_retention() → None`
 Prunes `exit_triggers` rows older than `TRIGGER_TELEMETRY_RETENTION_DAYS` (default 90) and `shadow_history` rows older than `SHADOW_HISTORY_RETENTION_DAYS` (default 180).
+
+---
+
+### Account Totals Cache
+
+#### `class _StaleFlagDict(dict)`
+`dict` subclass used for `_account_totals_cache`. Adds a boolean stale flag that, when set, causes all read operations (`.get()`, `.__getitem__()`, `.__contains__()`, `.keys()`, `.values()`, `.items()`) to return empty-state (default / `KeyError` / `False` / empty views) without modifying the underlying data. Writes always succeed regardless of the stale flag.
+
+**Methods:**
+| Method | Description |
+|--------|-------------|
+| `mark_stale() → None` | Sets `_stale = True`. O(1), requires no lock. Called by `_notify_cycle_complete()` at cycle end. |
+| `refresh_written() → None` | Clears `_stale = False`. Called by `_refresh_account_totals()` after all keys are written under `_account_totals_cache_lock`. |
+| `clear() → None` | Calls `super().clear()` AND resets `_stale = False` — mirrors standard dict.clear semantics. |
+| `.get(key, default=None)` | Returns `default` when stale; otherwise delegates to `dict.get`. |
+| `.__getitem__(key)` | Raises `KeyError` when stale; otherwise delegates to `dict.__getitem__`. |
+| `.__contains__(key)` | Returns `False` when stale; otherwise delegates to `dict.__contains__`. |
+
+**TOCTOU safety:** All `_compute_portfolio_strip` cache reads use `.get()` (single call) rather than `.__contains__()` + `.__getitem__()`. This eliminates the window where `mark_stale()` fires between the two calls, which would cause `__contains__` to return `True` but `__getitem__` to raise `KeyError`.
+
+**Module-level instance:** `_account_totals_cache: _StaleFlagDict = _StaleFlagDict()`
+
+---
+
+### Event-Driven Push
+
+#### `GET /api/events` — `sse_events()`
+Server-Sent Events endpoint. Returns `text/event-stream`. Auth-gated by `_auth_before_request` (unauthenticated → 401 JSON). SSE is GET-only; CSRF infrastructure is unaffected.
+
+**Lifecycle:**
+1. Creates a `queue.Queue()` for this connection.
+2. Appends the queue to `_sse_clients` under `_sse_clients_lock`.
+3. Runs the `generate()` generator: blocks on `client_q.get(timeout=15)`; on a message yields `event: <msg>\ndata: {}\n\n`; on `queue.Empty` (15 s timeout) yields `: heartbeat\n\n` to keep the connection alive through proxies.
+4. On `GeneratorExit` (client disconnect or server response close), removes the queue from `_sse_clients` under `_sse_clients_lock` via a `finally` block.
+
+**Response headers:** `Cache-Control: no-cache`, `X-Accel-Buffering: no` (disables nginx buffering for streaming).
+
+**Edge cases:**
+- Auth-failed clients receive 401 JSON; `EventSource.onerror` fires and the client falls back to the 30 s poll.
+- Daemon restart: existing clients get a connection error and reconnect via `EventSource`'s built-in retry.
+- Engine cycle fails (`CalledProcessError`): `_notify_cycle_complete()` is still called unconditionally — the client polls fresh state reflecting the failure.
 
 ---
 
@@ -137,6 +193,8 @@ Dashboard root. Calls `get_api_state_dict()`, partitions symphonies into active/
 
 #### `GET /api/state`
 Returns the full API state dict as JSON. Includes `bot_state`, `portfolio_strip`, `meta`, `exit_authority`, and `port_state` (SITE-D1 KEEP-DISPLAY).
+
+**Freshness contract (AC-4):** After a new engine cycle writes state to the DB, the first call to `GET /api/state` returns data reflecting that cycle because `_notify_cycle_complete()` marks `_account_totals_cache` stale at cycle completion. `_compute_portfolio_strip()` reads the fresh DB state and falls back to per-symphony sum for `portfolio_value` while the cache is masked. A staleness indicator in the response (`data_as_of`) reflects the actual cycle timestamp, not the server render clock.
 
 #### `GET /history`
 Render historical performance page.
@@ -407,6 +465,18 @@ Advisory-only: never calls Composer write endpoints, never touches `LIVE_EXECUTI
 
 #### `get_api_state_dict() → dict`
 Assembles the full state payload for `/api/state` and the dashboard template. Reads `bot_state`, computes `portfolio_strip`, builds `meta`, adds `exit_authority` via `os.getenv("EXIT_AUTHORITY")`.
+
+#### `_compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) → dict`
+Shared by `get_api_state_dict()` (Jinja render path) and `get_state()` (JSON poll path) so both paths emit identical `portfolio_strip` shape.
+
+**`data_as_of` derivation (AC-7 fix):** The `data_as_of` field is derived from the actual engine cycle timestamp, not the server render clock. Implementation:
+1. Iterates `bot_state` values for the first `last_successful_cycle_at` field.
+2. Parses the ISO timestamp; if timezone-naive, attaches `_ET` so `strftime` renders the correct HH:MM without a local-system offset shift (the engine writes `current_et.isoformat()` — an ET-local naive datetime).
+3. Falls back to `datetime.now(_ET).strftime("%H:%M ET")` when no cycle timestamp is present.
+
+This ensures the `data_as_of` display reflects when the cycle data was captured, not when the HTTP request was served. The BLOCK-B TOCTOU fix also ensures `data_as_of` is snapshotted at data-capture time on the historical branch in `get_api_state_dict()`.
+
+**Cache reads:** All `_account_totals_cache` reads use `.get()` (single call, TOCTOU-safe against `_StaleFlagDict.mark_stale()`). The `portfolio_value` is sourced from the cache when available; falls back to a per-symphony sum from `bot_state` when the cache is masked (stale window after `_notify_cycle_complete()`).
 
 #### `_compute_suggestion_gates(suggestion, symphony_id: str) → dict`
 Computes four-gates verdict booleans for one suggestion: `allowlist`, `risk_direction`, `oos_frozen_eval`, `locked_vars`.
