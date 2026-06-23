@@ -654,18 +654,28 @@ def _notify_cycle_complete() -> None:
     """Fan out a cycle-complete notification to all connected SSE clients.
 
     Called from trigger_alpha_bot() in a finally block — must never raise.
-    Marks _account_totals_cache stale so /api/state immediately serves
-    empty-state rather than prior-cycle data.  Uses _StaleFlagDict.mark_stale()
-    (O(1), no lock needed) instead of .clear() to avoid a partial-write race:
-    _refresh_account_totals() writes multiple keys under _account_totals_cache_lock;
-    a bare .clear() racing between those writes would leave one key set and
-    another missing.  mark_stale() masks ALL reads atomically without touching
-    the underlying data.
+
+    Sequence:
+      1. Mark _account_totals_cache stale (O(1)) so /api/state returns empty-state
+         immediately rather than prior-cycle data.  mark_stale() is used instead of
+         .clear() because all cache readers (_compute_portfolio_strip / get_state) are
+         lock-free: a bare .clear() under the write lock would not prevent a reader from
+         seeing a partially-populated dict during _refresh_account_totals's multi-key
+         write sequence.  mark_stale() masks ALL reads atomically.
+      2. Fan out the "cycle-complete" SSE event to connected clients.
+      3. Spawn a short-lived daemon thread to call _refresh_account_totals() so the
+         cache unmasks with FRESH data within ~1-2 s (one Composer API call).  Without
+         this, the cache stays stale until the NEXT per-minute scheduler tick (~55 s) —
+         the SSE-event fetch the client makes immediately after the event would land in
+         that blank window and show "--" for account totals, defeating the feature.
+         The thread is daemon=True (dies with the process) and fire-and-forget; the
+         finally path is NEVER blocked (Arch constraint #1: no blocking I/O on the
+         scheduler/finally path).
     """
-    # Mark cache stale — reads return None until _refresh_account_totals() writes
-    # fresh values and calls _account_totals_cache.refresh_written().
+    # Step 1: atomically mask stale data from all lock-free readers.
     _account_totals_cache.mark_stale()
 
+    # Step 2: fan out SSE notification.
     with _sse_clients_lock:
         clients = list(_sse_clients)
 
@@ -674,6 +684,11 @@ def _notify_cycle_complete() -> None:
             q.put_nowait("cycle-complete")
         except Exception:
             pass  # full or closed — skip, do not raise
+
+    # Step 3: fire-and-forget refresh so the SSE-event fetch sees fresh data.
+    # The per-minute scheduler also calls _refresh_account_totals, but that tick
+    # can be ~55 s away; spawning here closes the blank-window gap.
+    threading.Thread(target=_refresh_account_totals, daemon=True, name="cycle-refresh").start()
 
 
 def trigger_alpha_bot(force=False):
