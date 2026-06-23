@@ -344,3 +344,126 @@ class TestVisibleStalenessCueOnFetchFailure:
             "None of the expected patterns found: " + str(tracker_patterns) + ". "
             "rt-impl: add this tracker so the badge can go Stale even when every poll errors."
         )
+
+
+# ---------------------------------------------------------------------------
+# AC-7 (BLOCK-B): snapshot branch data_as_of regression guard
+# ---------------------------------------------------------------------------
+
+_SNAP_DATA_AS_OF = "10:09 ET"
+_SNAP_TRADING_DAY = "2026-06-23"
+_SNAP_CAPTURED_AT_ET = "10:09:00 ET"
+
+
+class TestSnapshotBranchDataAsOfUsesSnapshotTimestamp:
+    """Regression guard: when /api/state serves a frozen market-close snapshot
+    (market_state in ('closed_frozen', 'pre_market')), portfolio_strip.data_as_of
+    must reflect the snapshot's own captured timestamp — not the server render clock.
+
+    The snapshot branch at app.py lines ~1776 and ~1792 uses
+    `snapshot.get('data_as_of')` (correct) rather than `datetime.now()` (wrong).
+    This test exercises that path end-to-end so a regression back to `datetime.now()`
+    is caught immediately.
+
+    The test fails if data_as_of matches the current server clock instead of the
+    known snapshot timestamp ('10:09 ET').
+    """
+
+    def test_snapshot_branch_data_as_of_matches_snapshot_not_render_clock(self, client):
+        """/api/state in closed_frozen state must serve portfolio_strip.data_as_of
+        from the snapshot's `data_as_of` field, not the server render clock.
+
+        Scenario:
+        1. Write a last_market_close_snapshot into the DB with data_as_of='10:09 ET'.
+        2. Patch get_market_state to return 'closed_frozen' so the snapshot branch fires.
+        3. GET /api/state.
+        4. Assert portfolio_strip.data_as_of == '10:09 ET' (the snapshot's value).
+
+        Would FAIL if the snapshot branch used datetime.now() — the current HH:MM
+        would not match '10:09 ET' (unless the test happens to run at exactly 10:09,
+        which is ~1/720 chance and caught by the clock-match guard below).
+
+        Regression guard for app.py:1776 / app.py:1792 (`snapshot.get('data_as_of')`).
+        """
+        import database as db
+
+        # Write a known snapshot into the per-test isolated DB.
+        # The snapshot branch reads last_market_close_snapshot from load_state().
+        snapshot = {
+            "trading_day": _SNAP_TRADING_DAY,
+            "captured_at_et": _SNAP_CAPTURED_AT_ET,
+            "data_as_of": _SNAP_DATA_AS_OF,
+            # Minimal accounts_map so the strip builder has something to iterate.
+            "accounts_map": {
+                "test-account": [
+                    {
+                        "id": "sym-snap-test",
+                        "name": "Snap Symphony",
+                        "current_return": 5.0,
+                        "current_value": 10000.0,
+                        "simple_return": 0.05,
+                        "net_deposits": 9500.0,
+                        "time_weighted_return": 0.06,
+                        "max_drawdown": 0.03,
+                    }
+                ]
+            },
+            "shadow_divergence": {"by_symphony": {}, "portfolio": None},
+            "portfolio_strip": None,
+        }
+        db.save_state({"last_market_close_snapshot": snapshot})
+
+        # Force the snapshot branch: patch get_market_state in app's namespace.
+        with patch("app.get_market_state", return_value="closed_frozen"):
+            response = client.get("/api/state")
+
+        assert response.status_code == 200, (
+            f"GET /api/state returned {response.status_code}; expected 200."
+        )
+
+        data = response.get_json()
+        assert isinstance(data, dict), (
+            f"Expected dict response from /api/state, got {type(data)!r}."
+        )
+
+        port_strip = data.get("portfolio_strip")
+        assert isinstance(port_strip, dict), (
+            f"portfolio_strip missing or non-dict in /api/state response: {data!r}. "
+            "The snapshot branch should produce a portfolio_strip from the snapshot data."
+        )
+
+        data_as_of = port_strip.get("data_as_of")
+        assert data_as_of is not None, (
+            "portfolio_strip.data_as_of is None in snapshot-branch response. "
+            f"Expected '{_SNAP_DATA_AS_OF}' (from snapshot). "
+            "rt-impl: snapshot branch must propagate snapshot['data_as_of'] "
+            "not produce None."
+        )
+
+        # Guard: if test runs exactly at 10:09 ET, the clock-match would be a
+        # false pass. Detect this edge case and skip rather than give a false green.
+        try:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+
+            _ET = ZoneInfo("America/New_York")
+        except ImportError:
+            import pytz
+
+            _ET = pytz.timezone("America/New_York")
+
+        now_hhmm_et = datetime.now(_ET).strftime("%H:%M ET")
+        if now_hhmm_et == _SNAP_DATA_AS_OF:
+            import pytest
+
+            pytest.skip(
+                f"Test skipped: current ET time ({now_hhmm_et}) matches the snapshot "
+                f"timestamp ({_SNAP_DATA_AS_OF}) — cannot distinguish snapshot vs clock source."
+            )
+
+        assert data_as_of == _SNAP_DATA_AS_OF, (
+            f"portfolio_strip.data_as_of='{data_as_of}' does not match the snapshot "
+            f"timestamp '{_SNAP_DATA_AS_OF}'. "
+            "The snapshot branch must use snapshot.get('data_as_of') not datetime.now(). "
+            "Regression target: app.py lines ~1776 and ~1792 in the closed_frozen branch."
+        )
