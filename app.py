@@ -6,6 +6,7 @@ import hmac
 import io
 import logging
 import os
+import queue
 import secrets
 import signal
 import subprocess
@@ -453,6 +454,11 @@ _DAEMON_STARTED_AT: str = datetime.now(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M
 # _compute_portfolio_strip() so dashboard requests never block on a live call.
 _account_totals_cache: dict = {}
 
+# SSE client registry — one Queue per connected /api/events client.
+# _notify_cycle_complete() fans out a sentinel to each queue under the lock.
+_sse_clients: list = []
+_sse_clients_lock = threading.Lock()
+
 # ---------------------------------------------------------------------------
 # Daemon singleton — pidfile lifecycle
 # ---------------------------------------------------------------------------
@@ -569,6 +575,26 @@ def _acquire_daemon_singleton(pidfile: str) -> None:
 
 
 # --- 1. Bot Execution Logic ---
+def _notify_cycle_complete() -> None:
+    """Fan out a cycle-complete notification to all connected SSE clients.
+
+    Called from trigger_alpha_bot() in a finally block — must never raise.
+    Also invalidates _account_totals_cache so /api/state serves fresh data.
+    """
+    # Invalidate the per-cycle Composer account-totals cache so the next
+    # get_state() call does not serve data from the prior cycle.
+    _account_totals_cache.clear()
+
+    with _sse_clients_lock:
+        clients = list(_sse_clients)
+
+    for q in clients:
+        try:
+            q.put_nowait("cycle-complete")
+        except Exception:
+            pass  # full or closed — skip, do not raise
+
+
 def trigger_alpha_bot(force=False):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Triggering Alpha Bot...")
     try:
@@ -581,6 +607,8 @@ def trigger_alpha_bot(force=False):
             subprocess.run(cmd, check=True, env=env, stdout=log_fh, stderr=log_fh)
     except subprocess.CalledProcessError as e:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Execution failed: {e}")
+    finally:
+        _notify_cycle_complete()
 
 
 def threaded_trigger():
@@ -1238,6 +1266,42 @@ def get_api_state_dict() -> dict:
         "daemon_started_at": _DAEMON_STARTED_AT,
         "portfolio_strip": portfolio_strip,
     }
+
+
+@app.route("/api/events")
+def sse_events():
+    """Server-Sent Events endpoint — streams cycle-complete notifications (AC-2).
+
+    Auth-gated by _auth_before_request like all /api/ routes.
+    Each connected client gets a Queue; _notify_cycle_complete() fans out to all.
+    Heartbeat comment every 15 s keeps the connection alive.
+    """
+
+    client_q: queue.Queue = queue.Queue()
+
+    def generate():
+        with _sse_clients_lock:
+            _sse_clients.append(client_q)
+        try:
+            while True:
+                try:
+                    msg = client_q.get(timeout=15)  # 15 s heartbeat cadence
+                    yield f"event: {msg}\ndata: {{}}\n\n"
+                except queue.Empty:
+                    yield ": heartbeat\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            with _sse_clients_lock:
+                try:
+                    _sse_clients.remove(client_q)
+                except ValueError:
+                    pass
+
+    response = app.response_class(generate(), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
 
 
 @app.route("/api/state")
