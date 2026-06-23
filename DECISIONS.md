@@ -3230,14 +3230,14 @@ The dashboard previously relied exclusively on a 30 s `setInterval` poll against
 
 ### Decision: AC-7 `data_as_of` scope
 
-The final four-item scope table (confirmed by rtf-impl, commits 60ed9ca + f453c57):
+Final four-item scope table (code confirmed at branch HEAD; 60ed9ca revert db6fdef resolved the 2117 classification):
 
 | Site | Classification | Rationale |
 |------|---------------|-----------|
-| `app.py:1279â1301` â `_compute_portfolio_strip()` hero strip | **IN SCOPE / FIXED** | Derives `data_as_of` from `last_successful_cycle_at` (engine ET-local timestamp). Falls back to `datetime.now(_ET)` when no cycle timestamp is present. |
-| `app.py:1782â1841` â `get_api_state_dict()` snapshot path | **IN SCOPE / ALREADY CORRECT** | Anchors `data_as_of` to `captured_at_et` from the historical snapshot (BLOCK-B fix). No change needed. |
-| `app.py:1362` â exception fallback in `_compute_portfolio_strip()` | **OUT OF SCOPE â exception path** | Executes only when the entire function body raises an unhandled exception. All computed stats are `None`; no `bot_state` data is in scope. The render clock is honest: the display shows all-null stats which already signals failure. AC-7 requires the live state path to reflect the new cycle; this site serves nulls, not stale data. |
-| `app.py:2117` â `get_state()` table_partial header stamp | **OUT OF SCOPE â non-hero surface** | Feeds the sortable symphony table header row, not the hero portfolio-strip panel. PM decision: render time is an honest "rendered at" label for a secondary surface whose rows already carry per-symphony cycle timestamps. Documented in-code (commit 60ed9ca). |
+| `app.py:1279–1301` — `_compute_portfolio_strip()` hero strip | **IN SCOPE / FIXED** | Derives `data_as_of` from `last_successful_cycle_at` (engine ET-local timestamp). Falls back to `datetime.now(_ET)` when no cycle timestamp is present. |
+| `app.py:1782–1841` — `get_api_state_dict()` snapshot path | **IN SCOPE / ALREADY CORRECT** | Anchors `data_as_of` to `captured_at_et` from the historical snapshot (BLOCK-B fix). No change needed. |
+| `app.py:2117` — `get_state()` top-level `data_as_of` | **IN SCOPE / FIXED** | `static/index.js:1168` reads `portfolio.data_as_of || data.data_as_of` — the top-level field is the JS fallback for the hero freshness signal, making it operator-visible. Now derives from `last_successful_cycle_at` in `state_data` (same pattern as app.py:1281–1303). Also fixes the pre-existing naive `datetime.now()` (no `_ET`) bug. |
+| `app.py:1362` — exception fallback in `_compute_portfolio_strip()` | **OUT OF SCOPE — exception path** | Executes only when the entire function body raises an unhandled exception. All computed stats are `None`; no `bot_state` is in scope. The render clock is the only available value; all-null stats already signal failure to the operator. AC-7 requires the live state path to reflect the new cycle; this site serves nulls, not stale data. |
 
 ### Files changed
 

@@ -196,6 +196,8 @@ Returns the full API state dict as JSON. Includes `bot_state`, `portfolio_strip`
 
 **Freshness contract (AC-4):** After a new engine cycle writes state to the DB, the first call to `GET /api/state` returns data reflecting that cycle because `_notify_cycle_complete()` marks `_account_totals_cache` stale at cycle completion. `_compute_portfolio_strip()` reads the fresh DB state and falls back to per-symphony sum for `portfolio_value` while the cache is masked. A staleness indicator in the response (`data_as_of`) reflects the actual cycle timestamp, not the server render clock.
 
+**AC-7 top-level `data_as_of` (in-scope fix, app.py:2117):** The response also carries a top-level `data_as_of` field used by `static/index.js:1168` as the hero freshness fallback (`portfolio.data_as_of || data.data_as_of`). This field now derives from `last_successful_cycle_at` in `state_data` — the same `last_successful_cycle_at` pattern as `_compute_portfolio_strip` (app.py:1281–1303). Also fixes a pre-existing naive `datetime.now()` bug (no `_ET`) that produced local-system time instead of ET.
+
 #### `GET /history`
 Render historical performance page.
 
