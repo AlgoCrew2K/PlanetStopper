@@ -3230,13 +3230,14 @@ The dashboard previously relied exclusively on a 30 s `setInterval` poll against
 
 ### Decision: AC-7 `data_as_of` scope
 
-**Producers fixed (derive from capture time):**
-- `_compute_portfolio_strip()` — `data_as_of` is now derived from `bot_state[sym]["last_successful_cycle_at"]` (the engine's own ET-local timestamp), not `datetime.now()` at render time. Falls back to `datetime.now(_ET)` when no cycle timestamp is present.
-- Historical branch in `get_api_state_dict()` — `data_as_of` is snapshotted from the historical snapshot's `captured_at` field, not the render clock.
+The final four-item scope table (confirmed by rtf-impl, commits 60ed9ca + f453c57):
 
-**Producers documented as render-clock (not changed):**
-- Error/fallback branches in `_compute_portfolio_strip()` and `get_api_state_dict()` — when no bot_state data is available, the render clock is the only available timestamp and is honest (no data was captured to give a better time).
-- `/api/strip/<window>` (`get_windowed_strip`) — the windowed strip does not currently carry a `data_as_of` field; it sources `guard_alpha` from `shadow_history` directly.
+| Site | Classification | Rationale |
+|------|---------------|-----------|
+| `app.py:1279â1301` â `_compute_portfolio_strip()` hero strip | **IN SCOPE / FIXED** | Derives `data_as_of` from `last_successful_cycle_at` (engine ET-local timestamp). Falls back to `datetime.now(_ET)` when no cycle timestamp is present. |
+| `app.py:1782â1841` â `get_api_state_dict()` snapshot path | **IN SCOPE / ALREADY CORRECT** | Anchors `data_as_of` to `captured_at_et` from the historical snapshot (BLOCK-B fix). No change needed. |
+| `app.py:1362` â exception fallback in `_compute_portfolio_strip()` | **OUT OF SCOPE â exception path** | Executes only when the entire function body raises an unhandled exception. All computed stats are `None`; no `bot_state` data is in scope. The render clock is honest: the display shows all-null stats which already signals failure. AC-7 requires the live state path to reflect the new cycle; this site serves nulls, not stale data. |
+| `app.py:2117` â `get_state()` table_partial header stamp | **OUT OF SCOPE â non-hero surface** | Feeds the sortable symphony table header row, not the hero portfolio-strip panel. PM decision: render time is an honest "rendered at" label for a secondary surface whose rows already carry per-symphony cycle timestamps. Documented in-code (commit 60ed9ca). |
 
 ### Files changed
 
