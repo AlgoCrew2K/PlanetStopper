@@ -6,6 +6,7 @@ import hmac
 import io
 import logging
 import os
+import queue
 import secrets
 import signal
 import subprocess
@@ -451,7 +452,87 @@ _DAEMON_STARTED_AT: str = datetime.now(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M
 # TTL cache for account-level Composer total-stats.  Populated by
 # _refresh_account_totals() on the minute scheduler; read by
 # _compute_portfolio_strip() so dashboard requests never block on a live call.
-_account_totals_cache: dict = {}
+#
+# Uses _StaleFlagDict: _notify_cycle_complete() sets the stale flag (O(1), no
+# lock needed) so that .get()/.keys() return empty-state immediately after a
+# cycle completes.  _refresh_account_totals() clears the flag when it writes
+# fresh values under _account_totals_cache_lock, preventing a partial-write
+# window that a bare .clear() would expose.
+
+
+class _StaleFlagDict(dict):
+    """dict subclass whose reads return empty-state when marked stale.
+
+    - mark_stale(): called by _notify_cycle_complete() after a cycle; reads
+      immediately return None / empty until refresh_written() is called.
+    - refresh_written(): called by _refresh_account_totals() after a
+      successful write; clears the stale flag so reads see fresh values.
+    - Writes always succeed regardless of the stale flag so the scheduler
+      can populate the cache while it is still marked stale.
+    - .clear() resets the stale flag (mirrors normal dict.clear semantics).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._stale: bool = False
+
+    def mark_stale(self) -> None:
+        """Mark cache stale; reads return None until refresh_written()."""
+        self._stale = True
+
+    def refresh_written(self) -> None:
+        """Clear the stale flag after _refresh_account_totals writes new values."""
+        self._stale = False
+
+    # ------------------------------------------------------------------
+    # dict read protocol: return None / raise KeyError when stale
+    # ------------------------------------------------------------------
+
+    def get(self, key, default=None):
+        if self._stale:
+            return default
+        return super().get(key, default)
+
+    def __getitem__(self, key):
+        if self._stale:
+            raise KeyError(key)
+        return super().__getitem__(key)
+
+    def __contains__(self, key):
+        if self._stale:
+            return False
+        return super().__contains__(key)
+
+    def keys(self):
+        if self._stale:
+            return {}.keys()
+        return super().keys()
+
+    def values(self):
+        if self._stale:
+            return {}.values()
+        return super().values()
+
+    def items(self):
+        if self._stale:
+            return {}.items()
+        return super().items()
+
+    def clear(self):
+        """Clear underlying data and reset the stale flag."""
+        super().clear()
+        self._stale = False
+
+
+_account_totals_cache: _StaleFlagDict = _StaleFlagDict()
+# Serializes multi-key writes from _refresh_account_totals so that a
+# concurrent reader never observes a partial write sequence.
+_account_totals_cache_lock = threading.Lock()
+
+# SSE client registry — one Queue per connected /api/events client.
+# _notify_cycle_complete() fans out a sentinel to each queue under the lock.
+_sse_clients: list = []
+_sse_clients_lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # Daemon singleton — pidfile lifecycle
@@ -569,6 +650,56 @@ def _acquire_daemon_singleton(pidfile: str) -> None:
 
 
 # --- 1. Bot Execution Logic ---
+def _notify_cycle_complete() -> None:
+    """Fan out a cycle-complete notification to all connected SSE clients.
+
+    Called from trigger_alpha_bot() in a finally block — must never raise.
+    trigger_alpha_bot() is always invoked via threaded_trigger() (a daemon
+    thread spawned by the per-minute scheduler), so this function runs in
+    that daemon thread, NOT the scheduler thread.
+
+    Sequence:
+      1. Mark _account_totals_cache stale so /api/state returns empty-state
+         immediately rather than prior-cycle data.  mark_stale() is used instead
+         of .clear() because all cache readers (_compute_portfolio_strip / get_state)
+         are lock-free: a bare .clear() under the write lock would not prevent a
+         reader from observing a partially-populated dict mid-write.  mark_stale()
+         masks ALL reads atomically in O(1).
+      2. Spawn a short-lived daemon thread calling _refresh_account_totals() so the
+         cache unmasks with FRESH post-cycle Composer data.  The thread is started
+         BEFORE the SSE fan-out so the Composer API call is in-flight while the
+         put_nowait loop runs (O(1) per client).  By the time the connected client
+         receives the event and its /api/state fetch arrives (~50-200 ms network
+         round-trip + JS processing), the refresh thread has typically finished its
+         single Composer call (~100-500 ms).  Without this, the cache stays masked
+         until the NEXT per-minute _refresh_account_totals tick (~55 s) — the
+         SSE-triggered fetch would hit the blank window and show "--" for totals,
+         defeating the feature.  If Composer is unreachable the thread completes
+         without calling refresh_written(); the cache stays masked and the AC-8
+         staleness cue fires (honest degradation).
+         _notify_cycle_complete itself stays well under the 100 ms non-blocking
+         budget: thread spawn + queue puts are O(1) and do no I/O.
+      3. Fan out the "cycle-complete" SSE event.
+    """
+    # Step 1: atomically mask stale data from all lock-free readers.
+    _account_totals_cache.mark_stale()
+
+    # Step 2: start the refresh before the fan-out so it has maximum lead time.
+    # _refresh_account_totals never raises (D-1 contract); daemon=True so it
+    # does not prevent process exit.
+    threading.Thread(target=_refresh_account_totals, daemon=True, name="cycle-refresh").start()
+
+    # Step 3: fan out SSE notification (O(1) per client, no I/O).
+    with _sse_clients_lock:
+        clients = list(_sse_clients)
+
+    for q in clients:
+        try:
+            q.put_nowait("cycle-complete")
+        except Exception:
+            pass  # full or closed — skip, do not raise
+
+
 def trigger_alpha_bot(force=False):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Triggering Alpha Bot...")
     try:
@@ -581,6 +712,8 @@ def trigger_alpha_bot(force=False):
             subprocess.run(cmd, check=True, env=env, stdout=log_fh, stderr=log_fh)
     except subprocess.CalledProcessError as e:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Execution failed: {e}")
+    finally:
+        _notify_cycle_complete()
 
 
 def threaded_trigger():
@@ -608,7 +741,10 @@ def _refresh_account_totals() -> None:
     """Fetch Composer account-level total-stats and populate _account_totals_cache.
 
     Called by the minute scheduler — must never raise (swallows all exceptions).
-    On non-200 or any exception the existing cache is left unchanged (stale > empty).
+    On non-200 or any exception the stale flag (set by _notify_cycle_complete)
+    is NOT cleared; reads continue to return None until the next successful call.
+    On success, writes all keys under _account_totals_cache_lock and then calls
+    _account_totals_cache.refresh_written() to clear the stale flag atomically.
     Auth pattern mirrors alpha_bot_execution.get_composer_headers().
     """
     try:
@@ -633,22 +769,29 @@ def _refresh_account_totals() -> None:
         resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
-            _account_totals_cache["portfolio_value"] = data["portfolio_value"]
-            # simple_return (not time_weighted_return) matches Composer's displayed
-            # portfolio return for accounts with net deposits > 0. TWR diverges by
-            # ~5 pp when cash flows exist; operators should compare against
-            # Composer's "Total return" figure, which also uses simple_return.
-            _account_totals_cache["portfolio_cr"] = data["simple_return"] * 100.0
-            # Cache todays_percent_change from Composer so the portfolio TC can use
-            # the authoritative denominator (includes cash) rather than the
-            # per-symphony sum which excludes uninvested cash.
-            if "todays_percent_change" in data:
-                _account_totals_cache["portfolio_tc"] = data["todays_percent_change"] * 100.0
-            # D-02: cache Composer portfolio-level MDD (peak-to-trough on aggregate
-            # equity curve) so we never substitute value-weighted average of per-symphony MDDs.
-            _metrics = data.get("metrics") or {}
-            if "max_drawdown" in _metrics:
-                _account_totals_cache["portfolio_mdd"] = float(_metrics["max_drawdown"]) * 100.0
+            # Acquire the shared cache lock before writing multiple keys so that
+            # concurrent readers never observe a partial-write sequence.
+            # After all keys are written, clear the stale flag so reads see the
+            # fresh values (the flag was set by _notify_cycle_complete at cycle end).
+            with _account_totals_cache_lock:
+                _account_totals_cache["portfolio_value"] = data["portfolio_value"]
+                # simple_return (not time_weighted_return) matches Composer's displayed
+                # portfolio return for accounts with net deposits > 0. TWR diverges by
+                # ~5 pp when cash flows exist; operators should compare against
+                # Composer's "Total return" figure, which also uses simple_return.
+                _account_totals_cache["portfolio_cr"] = data["simple_return"] * 100.0
+                # Cache todays_percent_change from Composer so the portfolio TC can use
+                # the authoritative denominator (includes cash) rather than the
+                # per-symphony sum which excludes uninvested cash.
+                if "todays_percent_change" in data:
+                    _account_totals_cache["portfolio_tc"] = data["todays_percent_change"] * 100.0
+                # D-02: cache Composer portfolio-level MDD (peak-to-trough on aggregate
+                # equity curve) so we never substitute value-weighted average of per-symphony MDDs.
+                _metrics = data.get("metrics") or {}
+                if "max_drawdown" in _metrics:
+                    _account_totals_cache["portfolio_mdd"] = float(_metrics["max_drawdown"]) * 100.0
+                # All keys written; clear the stale flag so reads now return fresh values.
+                _account_totals_cache.refresh_written()
         else:
             _daemon_log.warning(
                 "_refresh_account_totals: Composer returned %s — cache unchanged",
@@ -1005,15 +1148,23 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         )
 
     # Use cached Composer account-level value when available; per-symphony sum as fallback.
-    if "portfolio_value" in _account_totals_cache:
-        account_value = _account_totals_cache["portfolio_value"]
+    # Use .get() (single call) rather than __contains__ + __getitem__ to eliminate the
+    # TOCTOU window: _notify_cycle_complete() can call mark_stale() between the two calls,
+    # causing __contains__ to return True but __getitem__ to raise KeyError.
+    _cached_portfolio_value = _account_totals_cache.get("portfolio_value")
+    if _cached_portfolio_value is not None:
+        account_value = _cached_portfolio_value
     else:
         account_value = sum(
             v.get("current_value") or 0.0 for v in bot_state.values() if isinstance(v, dict)
         )
 
     try:
-        if "portfolio_cr" in _account_totals_cache:
+        # Use .get() for all cache reads below to eliminate TOCTOU between __contains__
+        # and __getitem__ — _StaleFlagDict.mark_stale() can fire between the two calls
+        # and cause __getitem__ to raise KeyError even when __contains__ returned True.
+        _cached_cr = _account_totals_cache.get("portfolio_cr")
+        if _cached_cr is not None:
             # B-1 fix: put Bot (dry_run) on the same account basis as Held (if_held).
             # Held = Composer simple_return (cash-inclusive denominator).
             # Bot = VW per-symphony guard divergence scaled to account basis so that
@@ -1027,7 +1178,7 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
             cumulative_return: dict | None = (
                 analytics.get_portfolio_cumulative_return_account_basis(
                     _vw_cr,
-                    _account_totals_cache["portfolio_cr"],
+                    _cached_cr,
                     account_value,
                     _symphony_value_sum,
                 )
@@ -1040,9 +1191,10 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         # D-01: use the Composer-sourced today-change (includes cash in denominator)
         # when available; otherwise fall back to the per-symphony value-weighted sum
         # which excludes uninvested cash and will be slightly off.
-        if "portfolio_tc" in _account_totals_cache:
+        _cached_tc = _account_totals_cache.get("portfolio_tc")
+        if _cached_tc is not None:
             today_change: dict = {
-                "if_held": _account_totals_cache["portfolio_tc"],
+                "if_held": _cached_tc,
                 "dry_run": analytics.get_portfolio_today_change(
                     symphonies_list, bot_state, trading_day=trading_day
                 ).get("dry_run"),
@@ -1065,9 +1217,10 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         # magnitude. The cold-cache path flows through
         # analytics.get_portfolio_max_drawdown, already positive magnitude — both
         # branches must agree on sign regardless of cache warmth.
-        if "portfolio_mdd" in _account_totals_cache:
+        _cached_mdd = _account_totals_cache.get("portfolio_mdd")
+        if _cached_mdd is not None:
             max_drawdown: dict = {
-                "if_held": abs(_account_totals_cache["portfolio_mdd"]),
+                "if_held": abs(_cached_mdd),
                 "dry_run": analytics.get_portfolio_max_drawdown(
                     symphonies_list, bot_state, trading_day=trading_day
                 ).get("dry_run"),
@@ -1123,6 +1276,27 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         except Exception:
             _daemon_log.error("_compute_portfolio_strip bot/held series failed", exc_info=True)
 
+        # Derive data_as_of from the actual data timestamp, not the server render clock.
+        # Falls back to datetime.now() if no cycle timestamp is available.
+        # The engine writes last_successful_cycle_at at the TOP LEVEL of bot_state
+        # (alpha_bot_execution.py:948/1092/1878) — read it directly, not via a per-sym loop.
+        _cycle_ts = bot_state.get("last_successful_cycle_at")
+        if _cycle_ts:
+            try:
+                _dt = datetime.fromisoformat(_cycle_ts.replace("Z", "+00:00"))
+                # The engine writes last_successful_cycle_at as a TZ-AWARE isoformat string
+                # (get_current_et() returns datetime.now(ZoneInfo("America/New_York")) —
+                # alpha_bot_execution.py:437-442).  The tzinfo-is-None branch below covers
+                # older DB rows written before the aware-datetime fix.
+                if _dt.tzinfo is None:
+                    _dt = _dt.replace(tzinfo=_ET)
+                _dt_et = _dt.astimezone(_ET)
+                _data_as_of = _dt_et.strftime("%H:%M ET")
+            except Exception:
+                _data_as_of = datetime.now(_ET).strftime("%H:%M ET")
+        else:
+            _data_as_of = datetime.now(_ET).strftime("%H:%M ET")
+
         _strip = {
             "today_change": today_change,
             "cumulative_return": cumulative_return,
@@ -1133,7 +1307,7 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
             "hist_dates": hist_dates,
             "hist_bot": hist_bot,
             "hist_held": hist_held,
-            "data_as_of": datetime.now(_ET).strftime("%H:%M ET"),
+            "data_as_of": _data_as_of,
         }
 
         # Option A: surface the Composer account-lifetime CR as its OWN non-windowed stat
@@ -1238,6 +1412,42 @@ def get_api_state_dict() -> dict:
         "daemon_started_at": _DAEMON_STARTED_AT,
         "portfolio_strip": portfolio_strip,
     }
+
+
+@app.route("/api/events")
+def sse_events():
+    """Server-Sent Events endpoint — streams cycle-complete notifications (AC-2).
+
+    Auth-gated by _auth_before_request like all /api/ routes.
+    Each connected client gets a Queue; _notify_cycle_complete() fans out to all.
+    Heartbeat comment every 15 s keeps the connection alive.
+    """
+
+    client_q: queue.Queue = queue.Queue()
+
+    def generate():
+        with _sse_clients_lock:
+            _sse_clients.append(client_q)
+        try:
+            while True:
+                try:
+                    msg = client_q.get(timeout=15)  # 15 s heartbeat cadence
+                    yield f"event: {msg}\ndata: {{}}\n\n"
+                except queue.Empty:
+                    yield ": heartbeat\n\n"
+        finally:
+            # PEP 342: close() throws GeneratorExit into the generator; a `finally`
+            # block runs without any explicit catch, so no separate handler is needed.
+            with _sse_clients_lock:
+                try:
+                    _sse_clients.remove(client_q)
+                except ValueError:
+                    pass
+
+    response = app.response_class(generate(), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
 
 
 @app.route("/api/state")
@@ -1564,15 +1774,32 @@ def get_state():
                             "name": _sym_r.get("name"),
                             "account": _sym_r.get("account"),
                         }
+                # Derive data_as_of from the snapshot's own capture time.
+                # captured_at_et is written as "%H:%M:%S ET" (e.g. "16:00:01 ET");
+                # reformat to "%H:%M ET" to match the live-path format.
+                # Fall back to snapshot.data_as_of (may be None for legacy snapshots).
+                _snap_captured = snapshot.get("captured_at_et") or ""
+                try:
+                    # Strip the " ET" suffix, parse HH:MM:SS or HH:MM, reformat.
+                    _cap_time_str = _snap_captured.replace(" ET", "").strip()
+                    _cap_parts = _cap_time_str.split(":")
+                    _snap_data_as_of = f"{_cap_parts[0]}:{_cap_parts[1]} ET"
+                except Exception:
+                    _snap_data_as_of = snapshot.get("data_as_of")
+
                 try:
                     _snap_cr = analytics.get_portfolio_cumulative_return(
                         _snap_symphonies_list, _snap_bot_state, trading_day=_snap_trading_day
                     )
-                    if "portfolio_cr" in _account_totals_cache:
+                    # Use .get() to avoid TOCTOU between __contains__ and __getitem__:
+                    # _StaleFlagDict.mark_stale() can fire between the two calls.
+                    _snap_cached_cr = _account_totals_cache.get("portfolio_cr")
+                    if _snap_cached_cr is not None:
                         _snap_cr = {
-                            "if_held": _account_totals_cache["portfolio_cr"],
+                            "if_held": _snap_cached_cr,
                             "dry_run": _snap_cr.get("dry_run") if _snap_cr else None,
                         }
+                    _snap_cached_value = _account_totals_cache.get("portfolio_value")
                     _portfolio_strip = {
                         "today_change": analytics.get_portfolio_today_change(
                             _snap_symphonies_list, _snap_bot_state, trading_day=_snap_trading_day
@@ -1582,20 +1809,21 @@ def get_state():
                             _snap_symphonies_list, _snap_bot_state, trading_day=_snap_trading_day
                         ),
                         "account_value": (
-                            _account_totals_cache["portfolio_value"]
-                            if "portfolio_value" in _account_totals_cache
+                            _snap_cached_value
+                            if _snap_cached_value is not None
                             else sum(
                                 v.get("current_value") or 0.0
                                 for v in _snap_bot_state.values()
                                 if isinstance(v, dict)
                             )
                         ),
-                        "data_as_of": datetime.now(_ET).strftime("%H:%M ET"),
+                        # Anchor to the snapshot's REAL capture time so the operator
+                        # sees data age, not dashboard render time.
+                        "data_as_of": _snap_data_as_of,
                     }
-                    # Mirror _compute_portfolio_strip (line 833-835): surface the
-                    # Composer account-lifetime CR as the "Account · all-time" stat.
-                    # Without this, _build_meta sets account_all_time_cr=None and the
-                    # template's {% if _acct_cr is not none %} guard omits the element.
+                    # Mirror _compute_portfolio_strip: surface the Composer account-lifetime
+                    # CR as the "Account · all-time" stat so the template's
+                    # {% if _acct_cr is not none %} guard includes the element.
                     _acct_cr = _account_totals_cache.get("portfolio_cr")
                     if isinstance(_acct_cr, (int, float)):
                         _portfolio_strip["account_all_time_cr"] = _acct_cr
@@ -1605,7 +1833,8 @@ def get_state():
                         "cumulative_return": None,
                         "max_drawdown": None,
                         "account_value": _account_totals_cache.get("portfolio_value"),
-                        "data_as_of": datetime.now(_ET).strftime("%H:%M ET"),
+                        # Same frozen-snapshot semantics as the happy path above.
+                        "data_as_of": _snap_data_as_of,
                     }
 
                 try:
@@ -1882,7 +2111,27 @@ def get_state():
 
         portfolio_strip = _compute_portfolio_strip(state_data, trading_day=_today_et)
 
-        data_as_of = datetime.now().strftime("%H:%M ET")
+        # AC-7: top-level data_as_of is the JS fallback hero freshness signal
+        # (index.js: `portfolio.data_as_of || data.data_as_of`).  Derive it from
+        # last_successful_cycle_at in state_data — same pattern as
+        # _compute_portfolio_strip (app.py:1281-1303) — so the operator sees real
+        # data age, not the server render clock.  Falls back to datetime.now(_ET)
+        # when no cycle timestamp is available.  Also fixes the pre-existing naive
+        # datetime.now() (no timezone) bug — the original produced local-system time,
+        # not ET.
+        # The engine writes last_successful_cycle_at at the TOP LEVEL of state_data
+        # (alpha_bot_execution.py:948/1092/1878) — read it directly.
+        _tl_cycle_ts = state_data.get("last_successful_cycle_at")
+        if _tl_cycle_ts:
+            try:
+                _tl_dt = datetime.fromisoformat(_tl_cycle_ts.replace("Z", "+00:00"))
+                if _tl_dt.tzinfo is None:
+                    _tl_dt = _tl_dt.replace(tzinfo=_ET)
+                data_as_of = _tl_dt.astimezone(_ET).strftime("%H:%M ET")
+            except Exception:
+                data_as_of = datetime.now(_ET).strftime("%H:%M ET")
+        else:
+            data_as_of = datetime.now(_ET).strftime("%H:%M ET")
 
         try:
             rendered_html = render_template(

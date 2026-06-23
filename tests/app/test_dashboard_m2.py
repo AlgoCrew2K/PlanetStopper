@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -722,31 +723,39 @@ class TestFreshnessTimestamp:
 
     def test_data_as_of_reflects_current_time(self, client, mock_database, monkeypatch):
         """
-        data_as_of must be close to the current wall-clock time.
+        data_as_of must be close to the current wall-clock time expressed in ET.
         We verify the hour matches (within a 1-minute window boundary tolerance).
 
         This guards against using a stale cached timestamp — the staleness bug
         was precisely that a cached time appeared as the freshness indicator.
+
+        AC-7 fixed the fallback from naive datetime.now() to ET-aware
+        datetime.now(ZoneInfo("America/New_York")), so the rendered hour is always
+        in ET regardless of server timezone.  CI runs in UTC; comparing against
+        naive datetime.now() (UTC) would therefore be wrong on ET/UTC boundaries
+        (e.g. CI hour 20 UTC = hour 16 ET → assertion fails).  Compare against
+        ET-aware datetimes to match what the route actually renders.
         """
+        _ET = ZoneInfo("America/New_York")
         mock_database.load_state.return_value = _make_state_with_one_symphony()
         monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
         monkeypatch.setattr(app_module, "render_template", lambda *_a, **_k: "")
         monkeypatch.setattr(app_module, "analytics", _default_analytics_mock())
 
-        before = datetime.now()
+        before = datetime.now(_ET)
         resp = client.get("/api/state")
-        after = datetime.now()
+        after = datetime.now(_ET)
 
         data_as_of = resp.get_json()["data_as_of"]
         # Parse just HH:MM from the value
         time_part = data_as_of.strip().split(" ")[0]  # strip 'ET' suffix if present
         parsed = datetime.strptime(time_part, "%H:%M")
 
-        # The hour must match what it was when the request ran.
+        # The hour must match what it was (in ET) when the request ran.
         # We allow the hour to be either before.hour or after.hour (straddle boundary).
         valid_hours = {before.hour, after.hour}
         assert parsed.hour in valid_hours, (
-            f"data_as_of hour={parsed.hour} does not match current hour (one of {valid_hours}); "
+            f"data_as_of hour={parsed.hour} does not match current ET hour (one of {valid_hours}); "
             "the timestamp must be generated fresh per request — not a stale cached value"
         )
 

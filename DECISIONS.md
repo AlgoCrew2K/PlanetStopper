@@ -3194,3 +3194,53 @@ A $-value reporting feature must be magnitude-validated against a known ground t
 - `tests/reporting/test_postmortem_saved_dollars_source.py` -- 5 classes / 9 tests covering the correct sourcing contract (new file, commit a7601fb)
 - `tests/fixtures/math/guard_alpha_postmortem_producer.json` -- golden fixture for the post-mortem producer (new file, commit a7601fb)
 - `docs/generated/reporting.md` -- `generate_eod_snapshot` doc updated to reflect current_return sourcing (DE-GUARD-ALPHA-SAVED-001)
+
+---
+
+## DE-SSE-PUSH-001 — Event-driven dashboard push (feat/dashboard-realtime-push, 2026-06-23)
+
+### Context
+
+The dashboard previously relied exclusively on a 30 s `setInterval` poll against `/api/state`. After an engine cycle completed, the displayed numbers would lag up to 30 s. The goal: reduce perceived lag to ~1 s without touching the execution path or adding WebSocket infrastructure.
+
+### Decision: SSE over WebSocket, SSE over faster poll
+
+**SSE chosen over WebSocket:**
+- One-way server→client notification is sufficient; no client→server messages needed over this channel.
+- SSE works through standard HTTP proxies (nginx, Cloudflare) without additional configuration; WebSocket requires `Upgrade` header pass-through.
+- No additional Python dependency — Flask's `Response(generator(), mimetype="text/event-stream")` is stdlib-compatible.
+- SSE has browser-native reconnect with exponential backoff; WebSocket reconnect must be hand-coded.
+
+**SSE chosen over a faster poll (e.g. 5 s):**
+- A 6× faster poll increases Composer API pressure on `/api/state` proportionally with no improvement in worst-case lag (still up to 5 s).
+- SSE fires within ~1 s of the cycle completing regardless of when the client connected; a poll-based approach cannot achieve sub-interval freshness without approaching real-time polling rates.
+- The 30 s poll is retained as a resilience fallback — SSE failure silently degrades to poll without any visible disruption.
+
+### Decision: `_StaleFlagDict.mark_stale()` over `dict.clear()` under lock
+
+**Alternatives considered:**
+
+| Option | Problem |
+|--------|---------|
+| `_account_totals_cache.clear()` under `_account_totals_cache_lock` | Lock-free readers (`_compute_portfolio_strip`, `get_state`) can enter between the lock release and their own read, observing an empty dict mid-write from a concurrent `_refresh_account_totals` that holds the lock and is part-way through writing. A bare `.clear()` produces a valid empty dict — not a partial dict — but the window between clear and next successful write is indistinguishable from Composer being unreachable. |
+| Lock-protect all cache reads | Would require every call site to acquire `_account_totals_cache_lock`, including the hot paths in `_compute_portfolio_strip`. Adds lock contention on the per-request rendering path; the goal is a lock-free read fast path. |
+| `_StaleFlagDict.mark_stale()` (chosen) | O(1) atomic flag flip; no lock needed. All read methods check `_stale` first and short-circuit to empty-state. Writes always succeed regardless of the flag, so `_refresh_account_totals` can write fresh values while the flag is set; `refresh_written()` clears the flag after the last key is written under `_account_totals_cache_lock`. This is the only approach that gives lock-free reads, atomic masking, and a clean partial-write-safe unmask. |
+
+**Why `refresh_written()` is called inside `_account_totals_cache_lock`:** The write lock ensures all five cache keys are written before the flag is cleared. Without it, a reader could see `_stale=False` (flag already cleared by `refresh_written()`) while only two of five keys have been written by `_refresh_account_totals()`. The lock serializes the multi-key write; `refresh_written()` at the end of the critical section is the atomic unmask.
+
+### Decision: AC-7 `data_as_of` scope
+
+Final four-item scope table (code confirmed at branch HEAD; 60ed9ca revert db6fdef resolved the 2117 classification):
+
+| Site | Classification | Rationale |
+|------|---------------|-----------|
+| `app.py:1279–1301` — `_compute_portfolio_strip()` hero strip | **IN SCOPE / FIXED (cycle 2026-06-23)** | Reads `last_successful_cycle_at` from the **top level** of `bot_state` via `bot_state.get("last_successful_cycle_at")` (app.py:1283). Falls back to `datetime.now(_ET)` when absent. **Prior defect:** the original iterated `bot_state.values()` looking for the key inside per-symphony sub-dicts — a shape production never emits — so every call fell through to `datetime.now()` (render clock). **Regression test was GREEN-but-HOLLOW:** the fixture wrote `last_successful_cycle_at` inside a per-symphony dict, matching the broken iteration path instead of the real top-level structure. The fix and its test now both operate on the real shape. |
+| `app.py:1782–1841` — `get_api_state_dict()` snapshot path | **IN SCOPE / ALREADY CORRECT** | Anchors `data_as_of` to `captured_at_et` from the historical snapshot (BLOCK-B fix). No change needed. |
+| `app.py:2117` — `get_state()` top-level `data_as_of` | **IN SCOPE / FIXED** | `static/index.js:1168` reads `portfolio.data_as_of || data.data_as_of` — the top-level field is the JS fallback for the hero freshness signal, making it operator-visible. Now derives from `last_successful_cycle_at` in `state_data` (same pattern as app.py:1281–1303). Also fixes the pre-existing naive `datetime.now()` (no `_ET`) bug. |
+| `app.py:1362` — exception fallback in `_compute_portfolio_strip()` | **OUT OF SCOPE — exception path** | Executes only when the entire function body raises an unhandled exception. All computed stats are `None`; no `bot_state` is in scope. The render clock is the only available value; all-null stats already signal failure to the operator. AC-7 requires the live state path to reflect the new cycle; this site serves nulls, not stale data. |
+
+### Files changed
+
+- `app.py` — `_StaleFlagDict` class (app.py:463–525); `_account_totals_cache` / `_account_totals_cache_lock` / `_sse_clients` / `_sse_clients_lock` module-level constructs (app.py:527–535); `_notify_cycle_complete()` (app.py:653–700); `trigger_alpha_bot()` finally-block hook (app.py:715–716); `_refresh_account_totals()` write protocol + `refresh_written()` call (app.py:740–794); `_compute_portfolio_strip()` `data_as_of` derivation (app.py:1279–1301) + TOCTOU-safe `.get()` reads (app.py:1154–1220); `GET /api/events` SSE route (app.py:1420–1453)
+- `static/index.js` — `EventSource` subscription + `cycle-complete` handler (index.js:1381–1385); `showConnectionLost()` (index.js:1299–1310) **[AC-8 selector fix, cycle 2026-06-23]:** now targets `#engine-status-dot`, `#engine-status-label`, `#hero-data-as-of` (real production element IDs from `_chrome.html:51-53` / `index.html:846`). Prior code targeted `#engine-status-badge` / `[data-testid="data-as-of"]` / `.data-as-of` — none of which exist in the template — so the staleness cue was a silent no-op on a dropped connection.
+- `tests/realtime_push/` — 6 test modules covering AC-1 through AC-8 (32 tests, all GREEN at HEAD a077c7e)
