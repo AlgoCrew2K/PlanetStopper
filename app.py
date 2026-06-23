@@ -1278,13 +1278,9 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
 
         # Derive data_as_of from the actual data timestamp, not the server render clock.
         # Falls back to datetime.now() if no cycle timestamp is available.
-        _cycle_ts = None
-        for _sym_v in bot_state.values():
-            if isinstance(_sym_v, dict):
-                _ts = _sym_v.get("last_successful_cycle_at")
-                if _ts:
-                    _cycle_ts = _ts
-                    break
+        # The engine writes last_successful_cycle_at at the TOP LEVEL of bot_state
+        # (alpha_bot_execution.py:948/1092/1878) — read it directly, not via a per-sym loop.
+        _cycle_ts = bot_state.get("last_successful_cycle_at")
         if _cycle_ts:
             try:
                 _dt = datetime.fromisoformat(_cycle_ts.replace("Z", "+00:00"))
@@ -2122,13 +2118,9 @@ def get_state():
         # when no cycle timestamp is available.  Also fixes the pre-existing naive
         # datetime.now() (no timezone) bug — the original produced local-system time,
         # not ET.
-        _tl_cycle_ts = None
-        for _tl_v in state_data.values():
-            if isinstance(_tl_v, dict):
-                _tl_ts = _tl_v.get("last_successful_cycle_at")
-                if _tl_ts:
-                    _tl_cycle_ts = _tl_ts
-                    break
+        # The engine writes last_successful_cycle_at at the TOP LEVEL of state_data
+        # (alpha_bot_execution.py:948/1092/1878) — read it directly.
+        _tl_cycle_ts = state_data.get("last_successful_cycle_at")
         if _tl_cycle_ts:
             try:
                 _tl_dt = datetime.fromisoformat(_tl_cycle_ts.replace("Z", "+00:00"))

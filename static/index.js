@@ -1297,16 +1297,13 @@
     // Flips the engine badge and the data-as-of element so the operator knows
     // the displayed numbers are frozen — not silently stale.
     function showConnectionLost() {
-        var badge = document.getElementById('engine-status-badge');
-        if (badge) {
-            badge.textContent = 'Connection Lost';
-            badge.className = badge.className.replace(/\b(live|stale)\b/g, '') + ' stale';
-        }
-        var dataAsOf = document.querySelector('[data-testid="data-as-of"]') ||
-                       document.querySelector('.data-as-of');
-        if (dataAsOf) {
-            dataAsOf.textContent = 'connection lost';
-        }
+        // Target real ids from _chrome.html:51-53 and index.html:846.
+        var dot = document.getElementById('engine-status-dot');
+        var label = document.getElementById('engine-status-label');
+        if (dot) { dot.style.background = 'var(--studio-neg, #e33)'; }
+        if (label) { label.textContent = 'Connection Lost'; }
+        var dataAsOf = document.getElementById('hero-data-as-of');
+        if (dataAsOf) { dataAsOf.textContent = 'connection lost'; }
     }
 
     function loadState() {
