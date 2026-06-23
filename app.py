@@ -654,28 +654,42 @@ def _notify_cycle_complete() -> None:
     """Fan out a cycle-complete notification to all connected SSE clients.
 
     Called from trigger_alpha_bot() in a finally block — must never raise.
+    trigger_alpha_bot() is always invoked via threaded_trigger() (a daemon
+    thread spawned by the per-minute scheduler), so this function runs in
+    that daemon thread, NOT the scheduler thread.
 
     Sequence:
-      1. Mark _account_totals_cache stale (O(1)) so /api/state returns empty-state
-         immediately rather than prior-cycle data.  mark_stale() is used instead of
-         .clear() because all cache readers (_compute_portfolio_strip / get_state) are
-         lock-free: a bare .clear() under the write lock would not prevent a reader from
-         seeing a partially-populated dict during _refresh_account_totals's multi-key
-         write sequence.  mark_stale() masks ALL reads atomically.
-      2. Fan out the "cycle-complete" SSE event to connected clients.
-      3. Spawn a short-lived daemon thread to call _refresh_account_totals() so the
-         cache unmasks with FRESH data within ~1-2 s (one Composer API call).  Without
-         this, the cache stays stale until the NEXT per-minute scheduler tick (~55 s) —
-         the SSE-event fetch the client makes immediately after the event would land in
-         that blank window and show "--" for account totals, defeating the feature.
-         The thread is daemon=True (dies with the process) and fire-and-forget; the
-         finally path is NEVER blocked (Arch constraint #1: no blocking I/O on the
-         scheduler/finally path).
+      1. Mark _account_totals_cache stale so /api/state returns empty-state
+         immediately rather than prior-cycle data.  mark_stale() is used instead
+         of .clear() because all cache readers (_compute_portfolio_strip / get_state)
+         are lock-free: a bare .clear() under the write lock would not prevent a
+         reader from observing a partially-populated dict mid-write.  mark_stale()
+         masks ALL reads atomically in O(1).
+      2. Spawn a short-lived daemon thread calling _refresh_account_totals() so the
+         cache unmasks with FRESH post-cycle Composer data.  The thread is started
+         BEFORE the SSE fan-out so the Composer API call is in-flight while the
+         put_nowait loop runs (O(1) per client).  By the time the connected client
+         receives the event and its /api/state fetch arrives (~50-200 ms network
+         round-trip + JS processing), the refresh thread has typically finished its
+         single Composer call (~100-500 ms).  Without this, the cache stays masked
+         until the NEXT per-minute _refresh_account_totals tick (~55 s) — the
+         SSE-triggered fetch would hit the blank window and show "--" for totals,
+         defeating the feature.  If Composer is unreachable the thread completes
+         without calling refresh_written(); the cache stays masked and the AC-8
+         staleness cue fires (honest degradation).
+         _notify_cycle_complete itself stays well under the 100 ms non-blocking
+         budget: thread spawn + queue puts are O(1) and do no I/O.
+      3. Fan out the "cycle-complete" SSE event.
     """
     # Step 1: atomically mask stale data from all lock-free readers.
     _account_totals_cache.mark_stale()
 
-    # Step 2: fan out SSE notification.
+    # Step 2: start the refresh before the fan-out so it has maximum lead time.
+    # _refresh_account_totals never raises (D-1 contract); daemon=True so it
+    # does not prevent process exit.
+    threading.Thread(target=_refresh_account_totals, daemon=True, name="cycle-refresh").start()
+
+    # Step 3: fan out SSE notification (O(1) per client, no I/O).
     with _sse_clients_lock:
         clients = list(_sse_clients)
 
@@ -684,11 +698,6 @@ def _notify_cycle_complete() -> None:
             q.put_nowait("cycle-complete")
         except Exception:
             pass  # full or closed — skip, do not raise
-
-    # Step 3: fire-and-forget refresh so the SSE-event fetch sees fresh data.
-    # The per-minute scheduler also calls _refresh_account_totals, but that tick
-    # can be ~55 s away; spawning here closes the blank-window gap.
-    threading.Thread(target=_refresh_account_totals, daemon=True, name="cycle-refresh").start()
 
 
 def trigger_alpha_bot(force=False):
