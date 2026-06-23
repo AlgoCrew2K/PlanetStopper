@@ -1,241 +1,168 @@
-# TDD Handoff — dashboard-realtime-push RED phase
+# TDD Handoff — dfix cycle (AC-7 + AC-8 defect fixes)
 
-**Branch:** `feat/dashboard-realtime-push`  
-**Worktree:** `C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\rt-push`  
-**RED commit:** `9406ee8`  
-**RED count:** 19 FAILED / 2 PASSED  
+**Branch:** feat/dashboard-realtime-push
+**RED commit:** see git log (test(ac7-ac8): re-point hollow fixtures...)
+**Handoff owner:** dfix-impl (flask-dashboard-specialist)
+**Do NOT read the PM brief or dfix-test brief** — implement ONLY what is in this file.
 
-## Your job (rt-impl)
-Write the MINIMUM code in `app.py` and `static/index.js` that makes all 19 RED tests GREEN. No gold-plating. Do not read the feature plan. Read this handoff only.
+---
 
-## What is failing and where
+## What is RED and why
 
-### app.py — add these 4 things:
+Running `python -m pytest tests/realtime_push/test_data_freshness_visibility.py -n0`
+produces **5 FAILED / 5 PASSED**.
 
-**1. Module-level registry (near existing module-level `_account_totals_cache: dict = {}`)**
-```python
-import queue as _queue
-_sse_clients: list = []
-_sse_clients_lock = threading.Lock()
-```
+The 5 failing tests expose two concrete defects:
 
-**2. `_notify_cycle_complete()` function**
-- Non-blocking: iterates `_sse_clients` under the lock and puts a sentinel on each queue
-- Must NOT raise on empty list, full queue (catch `queue.Full`), or any other condition
-- Must complete within 100 ms (use `queue.SimpleQueue.put_nowait()` or `put()` with no blocking)
-- Must also clear `_account_totals_cache` (or call `_refresh_account_totals()`) so the cache is never stale post-cycle
-- Called from `trigger_alpha_bot()` in a `finally:` block (after `subprocess.run()`, success or failure)
+### Defect 1 — AC-7: per-symphony-dict reader misses the top-level key
+
+The engine writes `last_successful_cycle_at` at the **top level** of `bot_state`, never
+inside a per-symphony sub-dict (alpha_bot_execution.py:948/1092/1878):
 
 ```python
-def _notify_cycle_complete() -> None:
-    """Fan out a cycle-complete notification to all connected SSE clients.
-
-    Called from trigger_alpha_bot() in a finally block — must never raise.
-    Also invalidates _account_totals_cache so /api/state serves fresh data.
-    """
-    # Invalidate the per-cycle Composer account-totals cache so the next
-    # get_state() call does not serve data from the prior cycle.
-    _account_totals_cache.clear()
-
-    with _sse_clients_lock:
-        clients = list(_sse_clients)
-
-    for q in clients:
-        try:
-            q.put_nowait("cycle-complete")
-        except Exception:
-            pass  # full or closed — skip, do not raise
+bot_state["last_successful_cycle_at"] = current_et.isoformat()
 ```
 
-**3. Wire `_notify_cycle_complete()` into `trigger_alpha_bot()`** (app.py:572)
+Two reader sites in app.py loop over per-symphony dicts and miss the top-level key:
 
-Current code:
+**Site 1 — `_compute_portfolio_strip` (app.py:1281-1287):**
 ```python
-def trigger_alpha_bot(force=False):
-    print(...)
-    try:
-        cmd = [sys.executable, "alpha_bot_execution.py"]
-        ...
-        subprocess.run(cmd, check=True, env=env, stdout=log_fh, stderr=log_fh)
-    except subprocess.CalledProcessError as e:
-        print(...)
-```
-
-Add `finally:` block:
-```python
-def trigger_alpha_bot(force=False):
-    print(...)
-    try:
-        cmd = [sys.executable, "alpha_bot_execution.py"]
-        ...
-        subprocess.run(cmd, check=True, env=env, stdout=log_fh, stderr=log_fh)
-    except subprocess.CalledProcessError as e:
-        print(...)
-    finally:
-        _notify_cycle_complete()
-```
-
-**4. `GET /api/events` SSE route**
-
-- Returns `text/event-stream` with `Cache-Control: no-cache` and `X-Accel-Buffering: no`
-- Auth-gated by the existing `_auth_before_request` hook (do NOT add to `_AUTH_EXEMPT_ENDPOINTS`)
-- Registers a `queue.SimpleQueue` in `_sse_clients`, yields events as they arrive, deregisters on generator exit
-- Yields a heartbeat comment (`: heartbeat\n\n`) on a timeout so the connection stays alive
-- Pattern:
-
-```python
-@app.route("/api/events")
-def sse_events():
-    """Server-Sent Events endpoint — streams cycle-complete notifications (AC-2)."""
-    import queue as _q
-
-    client_q: _q.SimpleQueue = _q.SimpleQueue()
-
-    def generate():
-        with _sse_clients_lock:
-            _sse_clients.append(client_q)
-        try:
-            while True:
-                try:
-                    msg = client_q.get(timeout=15)  # 15 s heartbeat cadence
-                    yield f"event: {msg}\ndata: {{}}\n\n"
-                except _q.Empty:
-                    yield ": heartbeat\n\n"
-        except GeneratorExit:
-            pass
-        finally:
-            with _sse_clients_lock:
-                try:
-                    _sse_clients.remove(client_q)
-                except ValueError:
-                    pass
-
-    response = app.response_class(generate(), mimetype="text/event-stream")
-    response.headers["Cache-Control"] = "no-cache"
-    response.headers["X-Accel-Buffering"] = "no"
-    return response
-```
-
-Note: `queue.SimpleQueue` has no `get(timeout=...)` — use `queue.Queue` for the blocking-with-timeout path, or use `SimpleQueue` with a polling loop. The skeleton above uses `queue.Queue` semantics. The test for `queue.Full` on a bounded queue means the `put` path must handle `queue.Full` — `SimpleQueue.put()` never raises Full; the test injects a `queue.Queue(maxsize=1)` to probe the guard. The implementation should use `try/except Exception` around each put to handle both.
-
-Simplest correct approach using `queue.Queue`:
-```python
-client_q: queue.Queue = queue.Queue()
-```
-and replace `_q.SimpleQueue` with `queue.Queue` throughout.
-
-### static/index.js — add EventSource wiring
-
-Inside the `DOMContentLoaded` handler, after the existing `setInterval` call, add:
-```js
-// AC-3: SSE event-driven update — primary path; poll (above) is the resilience fallback.
-if (typeof EventSource !== 'undefined') {
-    var _es = new EventSource('/api/events');
-    _es.addEventListener('cycle-complete', function () { loadState(); });
-    _es.onerror = function () { /* silent — poll fallback handles reconnect */ };
-}
-```
-
-Do NOT remove `setInterval(loadState, POLL_INTERVAL_MS)` — it must stay as the AC-5 fallback.
-
-## AC-7: data_as_of must reflect real data age (app.py:1142 and app.py:1619)
-
-Currently: `"data_as_of": datetime.now(_ET).strftime("%H:%M ET")` — always looks current.
-Fix: read `last_successful_cycle_at` from bot_state, parse it, format as HH:MM ET.
-
-Pattern (both call sites — app.py:1142 in `_compute_portfolio_strip` and app.py:1619 in `get_state`):
-```python
-# Derive data_as_of from the actual data timestamp, not the server render clock.
-# Falls back to datetime.now() if no cycle timestamp is available.
 _cycle_ts = None
 for _sym_v in bot_state.values():
     if isinstance(_sym_v, dict):
-        _ts = _sym_v.get("last_successful_cycle_at")
+        _ts = _sym_v.get("last_successful_cycle_at")   # <-- never in a per-sym dict
         if _ts:
             _cycle_ts = _ts
             break
-if _cycle_ts:
-    try:
-        from datetime import datetime
-        # Parse ISO format (with or without timezone)
-        _dt = datetime.fromisoformat(_cycle_ts.replace("Z", "+00:00"))
-        # Convert to ET for display
-        try:
-            from zoneinfo import ZoneInfo
-            _ET_tz = ZoneInfo("America/New_York")
-        except ImportError:
-            import pytz
-            _ET_tz = pytz.timezone("America/New_York")
-        _dt_et = _dt.astimezone(_ET_tz)
-        data_as_of = _dt_et.strftime("%H:%M ET")
-    except Exception:
-        data_as_of = datetime.now(_ET).strftime("%H:%M ET")
-else:
-    data_as_of = datetime.now(_ET).strftime("%H:%M ET")
 ```
+Local variable name here is `bot_state`.
 
-Then use `data_as_of` (not `datetime.now(_ET).strftime(...)`) in the strip dict.
+**Site 2 — `get_state` top-level data_as_of (app.py:2125-2131):**
+```python
+_tl_cycle_ts = None
+for _tl_v in state_data.values():
+    if isinstance(_tl_v, dict):
+        _tl_ts = _tl_v.get("last_successful_cycle_at")  # <-- never in a per-sym dict
+        if _tl_ts:
+            _tl_cycle_ts = _tl_ts
+            break
+```
+Local variable name here is `state_data` (different from site 1 — do not copy-paste a NameError).
 
-## AC-8: visible staleness cue on poll failure (static/index.js:1292-1297)
+Both sites fall through to `datetime.now(_ET)` because `last_successful_cycle_at` is
+never found in any per-symphony dict. The correct read pattern already exists at
+app.py:2255: `state_data.get("last_successful_cycle_at")` — a direct top-level get.
 
-Currently the `.catch` in `loadState()` is console-only — no visible indicator.
-Fix requires three changes to static/index.js:
+### Defect 2 — AC-8: `showConnectionLost()` targets non-existent DOM element ids
 
-**1. Add a `lastSuccessfulPollAt` tracker** (at IIFE scope, before DOMContentLoaded):
+`static/index.js:1299-1310` — `showConnectionLost()` uses wrong selectors:
+
 ```js
-var lastSuccessfulPollAt = 0;
+var badge = document.getElementById('engine-status-badge');     // <-- id does not exist
+// ...
+var dataAsOf = document.querySelector('[data-testid="data-as-of"]') ||
+               document.querySelector('.data-as-of');           // <-- no such testid/class
 ```
 
-**2. Update `lastSuccessfulPollAt` in the success `.then`** (inside loadState):
-```js
-function loadState() {
-    fetch('/api/state')
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-            lastSuccessfulPollAt = Date.now();
-            updateDashboard(data);
-        })
-        .catch(function (err) {
-            console.error('state load failed', err);
-            showConnectionLost();  // <-- ADD THIS
-        });
-}
+Real element ids in the templates:
+- `templates/_chrome.html:51-53`: `id="engine-status-dot"` and `id="engine-status-label"`
+  (there is no `engine-status-badge` id anywhere)
+- `templates/index.html:846`: `id="hero-data-as-of" class="legend-as-of"`
+  (there is no `data-as-of` testid and no `.data-as-of` class anywhere)
+
+Result: `showConnectionLost()` silently no-ops on every call — no visible cue renders.
+
+---
+
+## Minimal GREEN implementation
+
+### Fix 1 — app.py site 1 (`_compute_portfolio_strip`, local var `bot_state`)
+
+Replace the per-sym-dict loop (app.py:1281-1287) with a direct top-level get:
+
+```python
+# Derive data_as_of from the actual data timestamp, not the server render clock.
+# The engine writes last_successful_cycle_at at the TOP LEVEL of bot_state
+# (alpha_bot_execution.py:948/1092/1878) — never inside per-symphony sub-dicts.
+# Falls back to datetime.now() if no cycle timestamp is available.
+_cycle_ts = bot_state.get("last_successful_cycle_at")
 ```
 
-**3. Add `showConnectionLost()` function** (at IIFE scope):
+Then use `_cycle_ts` in the existing isoformat-parse block that follows (the try/except
+that formats `_data_as_of` is already correct — only the lookup changes).
+
+### Fix 2 — app.py site 2 (`get_state` top-level, local var `state_data`)
+
+Replace the per-sym-dict loop (app.py:2125-2131) with a direct top-level get:
+
+```python
+# AC-7: top-level data_as_of is the JS fallback hero freshness signal.
+# last_successful_cycle_at is a top-level key (alpha_bot_execution.py:948/1092/1878).
+_tl_cycle_ts = state_data.get("last_successful_cycle_at")
+```
+
+Then use `_tl_cycle_ts` in the existing isoformat-parse block that follows.
+
+### Fix 3 — `static/index.js` `showConnectionLost()` (index.js:1299-1310)
+
+Replace the two wrong selector calls with the real element ids:
+
 ```js
 function showConnectionLost() {
-    // Flip the engine badge to a visible "connection lost" state
-    // so the operator knows the dashboard is stale even if it looks alive.
-    var badge = document.getElementById('engine-status-badge');
-    if (badge) {
-        badge.textContent = 'Connection Lost';
-        badge.className = badge.className.replace(/\b(live|stale)\b/g, '') + ' stale';
+    // Badge cluster: _chrome.html:51-53 uses engine-status-dot + engine-status-label
+    var dot = document.getElementById('engine-status-dot');
+    var label = document.getElementById('engine-status-label');
+    if (dot) {
+        dot.style.background = 'var(--studio-neg, #e53e3e)';
     }
-    var dataAsOf = document.querySelector('[data-testid="data-as-of"]') ||
-                   document.querySelector('.data-as-of');
+    if (label) {
+        label.textContent = 'Connection Lost';
+        label.style.color = 'var(--studio-neg, #e53e3e)';
+    }
+    // Data-as-of element: index.html:846 uses id="hero-data-as-of"
+    var dataAsOf = document.getElementById('hero-data-as-of');
     if (dataAsOf) {
         dataAsOf.textContent = 'connection lost';
     }
 }
 ```
 
-The exact DOM selectors are flexible — what matters is that a visible DOM element is
-updated in the catch path, and `lastSuccessfulPollAt` / `showConnectionLost` appear in the source.
+The mutation logic (textContent, color/style) is your choice — the test asserts only
+that the function body references `engine-status-dot` or `engine-status-label`
+(at least one real badge id from `_chrome.html`) AND references `hero-data-as-of`
+(the real data-as-of id from `index.html`).
 
-## Test files to run (bounded — NEVER run full suite)
+---
+
+## Scope boundary
+
+- Do NOT touch the AC-4 path (`_StaleFlagDict`, `_refresh_account_totals`, SSE freshness).
+- Do NOT touch the snapshot branch (`closed_frozen` / `TestSnapshotBranchDataAsOfUsesSnapshotTimestamp`).
+- Do NOT touch `alpha_bot_execution.py`.
+- Do NOT create a PR or merge to main.
+
+---
+
+## After your GREEN
+
+Run:
 ```
-python -m pytest tests/realtime_push/ -n0 -p no:cacheprovider -q
+python -m pytest tests/realtime_push/test_data_freshness_visibility.py -n0 --tb=short
 ```
 
-Expected: 27 passed / 0 failed.
+Expected: **0 failed, 10 passed** (all 5 previously-RED tests now GREEN, 5 previously-GREEN
+tests still GREEN).
 
-## Hook points in app.py for reference
-- `trigger_alpha_bot()` — app.py:572 — add `finally: _notify_cycle_complete()`
-- `_account_totals_cache` — app.py:454 — module-level dict (already exists)
-- `run_scheduler()` — app.py:696 — no changes needed here
-- `get_state()` — app.py:1244 — no changes needed; cache clear in `_notify_cycle_complete` is sufficient
-- `static/index.js` DOMContentLoaded handler — around line 1349
+Also run ruff on changed files:
+```
+python -m ruff check app.py static/index.js
+python -m ruff format app.py --check
+```
 
-## Signal when GREEN
-Send: `SendMessage rt-test "GREEN: 21 passed / 0 failed at <SHA>. Tests: tests/realtime_push/. Ready for your review."`
+Commit path-scoped (do NOT `git add -A`):
+```
+git add app.py static/index.js
+git commit -m "fix(ac7-ac8): top-level last_successful_cycle_at reader + showConnectionLost real selectors"
+```
+
+Then SendMessage dfix-test: "GREEN — 0 failed / 10 passed. SHA=<sha>. Ready for review."

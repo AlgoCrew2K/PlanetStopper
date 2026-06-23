@@ -38,6 +38,9 @@ import app as app_module
 
 _STATIC_DIR = pathlib.Path(__file__).parent.parent.parent / "static"
 _INDEX_JS = _STATIC_DIR / "index.js"
+_TEMPLATES_DIR = pathlib.Path(__file__).parent.parent.parent / "templates"
+_CHROME_HTML = _TEMPLATES_DIR / "_chrome.html"
+_INDEX_HTML = _TEMPLATES_DIR / "index.html"
 
 
 @pytest.fixture(autouse=True)
@@ -68,7 +71,16 @@ _FAKE_CYCLE_LABEL = "10:09"  # what the timestamp should produce (HH:MM)
 
 
 def _bot_state_with_cycle_at(cycle_ts: str) -> dict:
-    """Minimal bot_state with a last_successful_cycle_at stamp."""
+    """Minimal bot_state with last_successful_cycle_at at the TOP LEVEL.
+
+    The engine writes this key at the top level of bot_state, never inside a
+    per-symphony sub-dict.  See alpha_bot_execution.py:948/1092/1878:
+        bot_state["last_successful_cycle_at"] = current_et.isoformat()
+
+    Placing the key at the top level makes _compute_portfolio_strip RED against
+    the current per-sym-dict loop reader (app.py:1281-1287) and GREEN only after
+    the loop is replaced with bot_state.get("last_successful_cycle_at").
+    """
     return {
         "sym-1": {
             "name": "Symphony 1",
@@ -78,8 +90,9 @@ def _bot_state_with_cycle_at(cycle_ts: str) -> dict:
             "net_deposits": 800.0,
             "time_weighted_return": 0.06,
             "max_drawdown": 0.12,
-            "last_successful_cycle_at": cycle_ts,
-        }
+            # NOT here — engine never writes this into per-sym dicts.
+        },
+        "last_successful_cycle_at": cycle_ts,  # top-level, production shape
     }
 
 
@@ -357,6 +370,117 @@ class TestVisibleStalenessCueOnFetchFailure:
             "rt-impl: add this tracker so the badge can go Stale even when every poll errors."
         )
 
+    def test_show_connection_lost_targets_real_dom_ids(self, index_js_source: str):
+        """showConnectionLost() in static/index.js must reference element ids that
+        actually exist in the rendered templates — bidirectional JS↔template contract.
+
+        This test enforces BOTH directions of the contract:
+
+        Direction 1 (JS → template): the ids used by showConnectionLost() must match
+        the ids present in templates/_chrome.html and templates/index.html.
+
+        Direction 2 (template → JS): the ids present in the templates must be
+        referenced by showConnectionLost() so a template rename is caught immediately.
+
+        DEFECT (index.js:1299-1310):
+          - getElementById('engine-status-badge')  →  no such id exists
+              Real ids in _chrome.html:51-53: 'engine-status', 'engine-status-dot',
+              'engine-status-label'
+          - querySelector('[data-testid="data-as-of"]') || querySelector('.data-as-of')
+              →  no element with that testid or class exists
+              Real element in templates/index.html:846: id='hero-data-as-of'
+
+        After rt-impl fixes showConnectionLost() to use the real selectors, this test
+        passes. A future template rename that breaks the contract will also be caught here.
+
+        Fails until rt-impl changes index.js:1300/1305-1306 to target real ids.
+        """
+        # --- Extract showConnectionLost function body from index.js ---
+        fn_start = index_js_source.find("function showConnectionLost(")
+        assert fn_start >= 0, (
+            "static/index.js must contain `function showConnectionLost(` — it is the "
+            "AC-8 visible-staleness function."
+        )
+        # Take a generous window covering the function body (up to ~500 chars).
+        fn_body = index_js_source[fn_start : fn_start + 500]
+
+        # --- Read template source files (fail fast if missing) ---
+        assert _CHROME_HTML.exists(), (
+            f"templates/_chrome.html not found at {_CHROME_HTML}. "
+            "Required for JS↔template contract check."
+        )
+        assert _INDEX_HTML.exists(), (
+            f"templates/index.html not found at {_INDEX_HTML}. "
+            "Required for JS↔template contract check."
+        )
+        chrome_src = _CHROME_HTML.read_text(encoding="utf-8")
+        index_html_src = _INDEX_HTML.read_text(encoding="utf-8")
+
+        # --- Contract check: badge element ids ---
+        # The badge cluster in _chrome.html uses three ids.  showConnectionLost must
+        # reference at least one of them — and that id must actually exist in the template.
+        # The WRONG id ('engine-status-badge') must NOT be the only badge reference.
+        badge_ids_in_template = []
+        for bid in ("engine-status-dot", "engine-status-label", "engine-status"):
+            if f'id="{bid}"' in chrome_src or f"id='{bid}'" in chrome_src:
+                badge_ids_in_template.append(bid)
+
+        assert badge_ids_in_template, (
+            "templates/_chrome.html contains none of the expected badge element ids "
+            "('engine-status-dot', 'engine-status-label', 'engine-status'). "
+            "This test expects those ids to exist in the template. "
+            "If _chrome.html was refactored, update this test and showConnectionLost together."
+        )
+
+        js_refs_a_real_badge_id = any(bid in fn_body for bid in badge_ids_in_template)
+        wrong_badge_id = "engine-status-badge"
+        js_only_has_wrong_id = (wrong_badge_id in fn_body) and not js_refs_a_real_badge_id
+
+        assert js_refs_a_real_badge_id, (
+            f"showConnectionLost() does not reference any real badge element id. "
+            f"Real ids in templates/_chrome.html: {badge_ids_in_template}. "
+            + (
+                f"Found wrong id '{wrong_badge_id}' instead — this id does not exist in the template. "
+                if js_only_has_wrong_id
+                else ""
+            )
+            + "rt-impl: change index.js showConnectionLost() to target "
+            "getElementById('engine-status-dot') and/or getElementById('engine-status-label') "
+            "(matching _chrome.html:51-53)."
+        )
+
+        # --- Contract check: data-as-of element id ---
+        # templates/index.html:846 uses id='hero-data-as-of'.  showConnectionLost must
+        # reference that id.  The WRONG selectors ('[data-testid="data-as-of"]' and
+        # '.data-as-of') must not be the only data-as-of references.
+        dao_id = "hero-data-as-of"
+        dao_id_in_template = (
+            f'id="{dao_id}"' in index_html_src or f"id='{dao_id}'" in index_html_src
+        )
+
+        assert dao_id_in_template, (
+            f"templates/index.html does not contain id='{dao_id}'. "
+            "This test expects that id to exist (templates/index.html:846 in the audit). "
+            "If index.html was refactored, update this test and showConnectionLost together."
+        )
+
+        js_refs_dao_id = dao_id in fn_body
+        wrong_dao_patterns = ['data-testid="data-as-of"', "data-testid='data-as-of'", ".data-as-of"]
+        js_only_has_wrong_dao = any(p in fn_body for p in wrong_dao_patterns) and not js_refs_dao_id
+
+        assert js_refs_dao_id, (
+            f"showConnectionLost() does not reference the real data-as-of element id "
+            f"('{dao_id}'). "
+            + (
+                "Found wrong selectors ('[data-testid=\"data-as-of\"]' / '.data-as-of') instead — "
+                "no element with that testid or class exists in the template. "
+                if js_only_has_wrong_dao
+                else ""
+            )
+            + "rt-impl: change index.js showConnectionLost() to target "
+            f"getElementById('{dao_id}') (matching templates/index.html:846)."
+        )
+
 
 # ---------------------------------------------------------------------------
 # AC-7 (BLOCK-B): snapshot branch data_as_of regression guard
@@ -538,6 +662,12 @@ class TestTopLevelDataAsOfDerivesFromCycleTimestamp:
 
             _ET = pytz.timezone("America/New_York")
 
+        # Production shape: last_successful_cycle_at is a TOP-LEVEL key, not per-sym.
+        # Engine writes: bot_state["last_successful_cycle_at"] = current_et.isoformat()
+        # (alpha_bot_execution.py:948/1092/1878).  The hollow test wrote it inside the
+        # per-sym dict, where the buggy per-sym-dict reader at app.py:2125-2131 happened
+        # to find it — producing a false GREEN.  Top-level placement makes it RED against
+        # the per-sym-dict loop and GREEN only after state_data.get("last_successful_cycle_at").
         db.save_state(
             {
                 "sym-tl-1": {
@@ -548,8 +678,9 @@ class TestTopLevelDataAsOfDerivesFromCycleTimestamp:
                     "net_deposits": 1900.0,
                     "time_weighted_return": 0.04,
                     "max_drawdown": 0.02,
-                    "last_successful_cycle_at": _FAKE_CYCLE_TS,
-                }
+                    # NOT here — engine never writes cycle_at into per-sym dicts.
+                },
+                "last_successful_cycle_at": _FAKE_CYCLE_TS,  # top-level, production shape
             }
         )
 
@@ -586,8 +717,8 @@ class TestTopLevelDataAsOfDerivesFromCycleTimestamp:
                 f"GET /api/state top-level data_as_of='{top_level_dao}' encodes the "
                 f"server render clock ({clock_found}) rather than the data age "
                 f"(last_successful_cycle_at ~ {_FAKE_CYCLE_LABEL} ET). "
-                "Regression: app.py:2117 reverted to datetime.now() — must derive "
-                "from state_data last_successful_cycle_at (b215049 fix)."
+                "Regression: app.py:2125-2131 still uses per-sym-dict loop — must "
+                "replace with state_data.get('last_successful_cycle_at') (top-level)."
             )
 
     def test_get_state_top_level_data_as_of_encodes_cycle_timestamp(self, client):
@@ -601,6 +732,7 @@ class TestTopLevelDataAsOfDerivesFromCycleTimestamp:
         """
         import database as db
 
+        # Production shape: last_successful_cycle_at at TOP LEVEL (not per-sym).
         db.save_state(
             {
                 "sym-tl-2": {
@@ -611,8 +743,9 @@ class TestTopLevelDataAsOfDerivesFromCycleTimestamp:
                     "net_deposits": 2800.0,
                     "time_weighted_return": 0.03,
                     "max_drawdown": 0.015,
-                    "last_successful_cycle_at": _FAKE_CYCLE_TS,
-                }
+                    # NOT here — engine never writes cycle_at into per-sym dicts.
+                },
+                "last_successful_cycle_at": _FAKE_CYCLE_TS,  # top-level, production shape
             }
         )
 
@@ -633,6 +766,6 @@ class TestTopLevelDataAsOfDerivesFromCycleTimestamp:
             f"GET /api/state top-level data_as_of='{top_level_dao}' does not encode "
             f"the cycle timestamp (last_successful_cycle_at={_FAKE_CYCLE_TS} → "
             f"expected '{_FAKE_CYCLE_LABEL}'). "
-            "Regression: app.py:2117 reverted to render-clock — must derive from "
-            "last_successful_cycle_at (b215049 fix at app.py:2125-2141)."
+            "app.py:2125-2131 must use state_data.get('last_successful_cycle_at') "
+            "(direct top-level get) not the per-sym-dict loop."
         )
