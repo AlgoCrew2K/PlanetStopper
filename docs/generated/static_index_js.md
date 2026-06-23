@@ -26,11 +26,14 @@ Called on:
 - Every `cycle-complete` SSE event (primary path)
 
 ### `showConnectionLost()`
-Visible staleness cue (AC-8). Flips two DOM elements:
-- `#engine-status-badge` — text set to `'Connection Lost'`; CSS class `live` or `stale` replaced with `stale`.
-- `[data-testid="data-as-of"]` or `.data-as-of` — text set to `'connection lost'`.
+Visible staleness cue (AC-8). Targets three real DOM element IDs (from `_chrome.html:51-53` and `index.html:846`):
+- `#engine-status-dot` — background color set to `'var(--studio-neg, #e33)'` (red dot).
+- `#engine-status-label` — text set to `'Connection Lost'`.
+- `#hero-data-as-of` — text set to `'connection lost'`.
 
 Called by `loadState()` on fetch failure. Does NOT suppress or replace the poll retry — `setInterval` continues, so the badge self-heals on the next successful poll.
+
+**Prior defect (fixed this cycle):** The original implementation targeted `#engine-status-badge` and `[data-testid="data-as-of"]`/`.data-as-of` — selectors that do not exist in the production template. `getElementById` returned `null` for all three; the staleness cue was silently a no-op: the operator saw no visual indication of a dropped connection.
 
 ### SSE subscription (DOMContentLoaded block)
 ```js

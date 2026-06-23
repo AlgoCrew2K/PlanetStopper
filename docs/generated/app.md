@@ -472,11 +472,13 @@ Assembles the full state payload for `/api/state` and the dashboard template. Re
 Shared by `get_api_state_dict()` (Jinja render path) and `get_state()` (JSON poll path) so both paths emit identical `portfolio_strip` shape.
 
 **`data_as_of` derivation (AC-7 fix):** The `data_as_of` field is derived from the actual engine cycle timestamp, not the server render clock. Implementation:
-1. Iterates `bot_state` values for the first `last_successful_cycle_at` field.
+1. Reads `bot_state.get("last_successful_cycle_at")` directly from the **top level** of the state dict (app.py:1283). The engine writes this key at the top level of `bot_state` in `alpha_bot_execution.py:948/1092/1878`; it is NOT nested inside per-symphony sub-dicts.
 2. Parses the ISO timestamp; if timezone-naive, attaches `_ET` so `strftime` renders the correct HH:MM without a local-system offset shift (the engine writes `current_et.isoformat()` — an ET-local naive datetime).
 3. Falls back to `datetime.now(_ET).strftime("%H:%M ET")` when no cycle timestamp is present.
 
 This ensures the `data_as_of` display reflects when the cycle data was captured, not when the HTTP request was served. The BLOCK-B TOCTOU fix also ensures `data_as_of` is snapshotted at data-capture time on the historical branch in `get_api_state_dict()`.
+
+**Prior defect (fixed this cycle):** The original implementation iterated `bot_state.values()` looking for the key inside per-symphony sub-dicts — a shape that production never emits. Every call fell through to `datetime.now()`, making `data_as_of` the server render clock rather than the cycle timestamp. The regression test that was supposed to guard this was GREEN-but-HOLLOW: its fixture wrote `last_successful_cycle_at` inside a per-symphony dict, matching the broken code's iteration path rather than the real production shape (top-level key). The fix and its test now both operate on the real top-level structure.
 
 **Cache reads:** All `_account_totals_cache` reads use `.get()` (single call, TOCTOU-safe against `_StaleFlagDict.mark_stale()`). The `portfolio_value` is sourced from the cache when available; falls back to a per-symphony sum from `bot_state` when the cache is masked (stale window after `_notify_cycle_complete()`).
 
