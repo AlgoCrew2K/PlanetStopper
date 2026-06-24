@@ -305,19 +305,28 @@ def test_ai_advisor_tab_merge_preserves_existing_per_lens_digest_keys(client):
 
 
 def test_ai_advisor_tab_merge_exception_logged_not_silently_swallowed(client, caplog):
-    """M-5 (PM-caught): GIVEN database.get_latest_market_prism_sources_for_run raises
-    an exception inside ai_advisor_tab (e.g. shape drift, unexpected error),
+    """M-5 (PM-caught + sov-review gate #7): GIVEN get_latest_market_prism_sources_for_run
+    raises inside ai_advisor_tab (e.g. shape drift, unexpected error),
     WHEN GET /ai-advisor is called,
-    THEN: (a) route still returns 200 — crash-safe / honest empty-state,
-          (b) a WARNING-level log message is emitted (not a bare silent pass).
+    THEN:
+      (a) route still returns 200 — crash-safe / honest empty-state,
+      (b) a WARNING-level log message is emitted (not a bare silent pass),
+      (c) the log message is TYPE-ONLY — contains the exception TYPE name ("RuntimeError")
+          but NO citation/response-body content (no raw_response, no urls, no titles,
+          no exc.args / str(exc) which would expose response body via the error message).
 
-    A bare `except Exception: pass` in the merge block produces ZERO log signal when the
-    merge fails — the page renders "no links" with no diagnostic, which is the hollow-fix
-    failure mode. The merge except must log at WARNING minimum.
+    A bare `except Exception: pass` produces ZERO log signal — hollow-fix failure mode.
+    Logging `str(exc)` leaks citation body content into logs — redaction failure.
+    The merge except must log `type(exc).__name__` ONLY (or equivalent type-only form).
 
     Scope: ONLY the new SOURCES-merge block's except. The pre-existing except on
     get_latest_market_prism_summary() is OUT OF SCOPE.
     """
+    # The exception message contains content that must NOT appear in logs.
+    _LEAK_SENTINEL = "simulated shape drift in merge"
+
+    # app.py uses _daemon_log = logging.getLogger("alphabot") for the merge warning.
+    # caplog must capture that logger specifically, not just root.
     with (
         patch(
             "database.get_latest_market_prism_summary",
@@ -325,9 +334,9 @@ def test_ai_advisor_tab_merge_exception_logged_not_silently_swallowed(client, ca
         ),
         patch(
             "database.get_latest_market_prism_sources_for_run",
-            side_effect=RuntimeError("simulated shape drift in merge"),
+            side_effect=RuntimeError(_LEAK_SENTINEL),
         ),
-        caplog.at_level(logging.WARNING),
+        caplog.at_level(logging.WARNING, logger="alphabot"),
     ):
         resp = client.get("/ai-advisor")
 
@@ -335,11 +344,27 @@ def test_ai_advisor_tab_merge_exception_logged_not_silently_swallowed(client, ca
         "Route must return 200 even when the SOURCES merge block raises — crash-safe."
     )
 
-    # A WARNING (or higher) log must have been emitted from the merge except.
+    # (b) A WARNING (or higher) log must have been emitted from the merge except.
     warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert warning_records, (
         "The SOURCES-merge except block must emit a WARNING-level log when it catches "
         "an exception. A bare `except Exception: pass` produces zero log signal — "
         "the page renders 'no links' with no diagnostic (hollow-fix failure mode). "
-        f"caplog.records (all levels): {[(r.levelname, r.message) for r in caplog.records]!r}"
+        f"caplog.records (all levels): {[(r.levelname, r.getMessage()) for r in caplog.records]!r}"
+    )
+
+    # (c) The log is TYPE-ONLY — exception type name present, body content absent.
+    # Use r.getMessage() (not r.message) — caplog records are not pre-formatted;
+    # getMessage() performs the %-interpolation and returns the final rendered string.
+    combined_log = " ".join(r.getMessage() for r in warning_records)
+    assert "RuntimeError" in combined_log, (
+        "WARNING log must contain the exception type name ('RuntimeError') so operators "
+        "can triage without response-body exposure. "
+        f"Combined warning messages (getMessage): {combined_log!r}"
+    )
+    assert _LEAK_SENTINEL not in combined_log, (
+        "WARNING log must NOT contain the exception message body — logging str(exc) or "
+        "exc.args leaks citation/response content into logs (redaction failure). "
+        "Log type(exc).__name__ ONLY (e.g. app.logger.warning('...(%s)', type(exc).__name__)). "
+        f"Combined warning messages (getMessage): {combined_log!r}"
     )
