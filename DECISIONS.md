@@ -3244,3 +3244,31 @@ Final four-item scope table (code confirmed at branch HEAD; 60ed9ca revert db6fd
 - `app.py` — `_StaleFlagDict` class (app.py:463–525); `_account_totals_cache` / `_account_totals_cache_lock` / `_sse_clients` / `_sse_clients_lock` module-level constructs (app.py:527–535); `_notify_cycle_complete()` (app.py:653–700); `trigger_alpha_bot()` finally-block hook (app.py:715–716); `_refresh_account_totals()` write protocol + `refresh_written()` call (app.py:740–794); `_compute_portfolio_strip()` `data_as_of` derivation (app.py:1279–1301) + TOCTOU-safe `.get()` reads (app.py:1154–1220); `GET /api/events` SSE route (app.py:1420–1453)
 - `static/index.js` — `EventSource` subscription + `cycle-complete` handler (index.js:1381–1385); `showConnectionLost()` (index.js:1299–1310) **[AC-8 selector fix, cycle 2026-06-23]:** now targets `#engine-status-dot`, `#engine-status-label`, `#hero-data-as-of` (real production element IDs from `_chrome.html:51-53` / `index.html:846`). Prior code targeted `#engine-status-badge` / `[data-testid="data-as-of"]` / `.data-as-of` — none of which exist in the template — so the staleness cue was a silent no-op on a dropped connection.
 - `tests/realtime_push/` — 6 test modules covering AC-1 through AC-8 (32 tests, all GREEN at HEAD a077c7e)
+
+## DE-PRISM-SOURCES-001 — Deterministic post-council citation patch for Overview sources provenance (2026-06-24)
+
+### Problem
+
+The council's MARKET_PRISM rows had empty `article_corpus` lists in their `per_lens_digest` entries. The Overview tab rendered lens source attribution as plain text labels only — no clickable provenance links. The prism-synthesizer writes the `MARKET_PRISM` observation from council deliberation prose; asking the LLM to also emit structured `{url, title, published}` citation dicts for each lens in a reliable, consistently-shaped JSON payload is brittle: the synthesizer is non-deterministic, cannot be forced to emit machine-readable citation fields reliably, and threading citation structure into the council protocol would require modifying all 6 prism-*.md agent role files.
+
+### Decision: deterministic post-council `_patch_provenance` in `prism_scheduler.py`
+
+After the council completes and the MARKET_PRISM row is confirmed in the DB (F-4 row-verification), `_run_prism()` calls `_patch_provenance(run_id, row)` to rebuild validated citation urls deterministically and persist them into the row's `raw_response`.
+
+**Why this over LLM-threading:**
+
+| Option | Problem |
+|--------|---------|
+| Thread citations into the synthesizer's output prompt | Non-deterministic; synthesizer can drop, hallucinate, or mis-shape citation dicts; requires modifying the council protocol and all analyst role files; hard to write reliable RED tests for LLM output shape |
+| Post-council deterministic patch (chosen) | Pure function on a known DB row — TDD-able, fully deterministic, independently testable; reuses already-validated `build_citation` from `lens_pipeline`/`ai_advisor` (no reinvented citation logic); no template change; no schema migration (existing `raw_response` JSON blob column); council protocol and agent role files untouched |
+
+### Implementation contract
+
+- `_patch_provenance(run_id: str, row: dict | None) -> bool` (`prism_scheduler.py:236`) — for each url-bearing lens (sentiment, macro, derivatives, fundamentals) calls the corresponding `ai_advisor._build_*_section()` builder, collects validated citations from `section["sources"]` and `section["article_corpus"]`, and replaces `per_lens_digest[lens]["article_corpus"]` in the row's `raw_response`. Replace-not-append makes re-patching idempotent (AC-6).
+- **technicals excluded intentionally (AC-2):** Alpaca bar data has no public URLs; `article_corpus` for the technicals lens is left empty.
+- **D-1 never-raises (AC-4):** the patch does not gate or prevent `sys.exit(0)` in `main()`. A failed patch is silent; reporting and the council run are unaffected.
+- `update_advisor_observation_raw_response(row_id: int, raw_response: dict) -> None` (`database.py:1108`) — additive UPDATE of the `raw_response` JSON blob by row id. Non-existent `row_id` is a silent no-op. No migration needed (existing column).
+
+### Reference
+
+DE-PRISM-SOURCES-001; PR pending on `feat/overview-sources-provenance`.
