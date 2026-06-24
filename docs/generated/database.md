@@ -177,13 +177,12 @@ Returns rows for a given advisor role, newest-first.
 #### `get_latest_market_prism_summary() → dict | None`
 Returns the most recently inserted `advisor_observations` row with `advisor_role="MARKET_PRISM"`, deserialized (including `raw_response` as a dict), or `None` when no row exists. Used by the Cycle-5 Overview tab to render the always-on Market Prism block.
 
-#### `get_latest_market_prism_sources() → dict | None`
-Returns the most recently inserted `advisor_observations` row with `advisor_role="MARKET_PRISM_SOURCES"`, deserialized, or `None` when no row exists. Each MARKET_PRISM_SOURCES row holds citation metadata in `raw_response.per_lens_digest[lens].article_corpus = [{url, title, published}]` for url-bearing lenses (sentiment, macro, derivatives, fundamentals). Written by `prism_scheduler._patch_provenance` after each successful council run (DE-PRISM-SOURCES-001).
-
 #### `get_latest_market_prism_sources_for_run(run_id: str) → dict | None`
-Returns the MARKET_PRISM_SOURCES row whose `raw_response.run_id` matches `run_id`, or `None`. Queries `ORDER BY id DESC LIMIT 20`, iterates rows, parses each `raw_response["run_id"]`, and returns the first match. Returns `None` on run_id mismatch — **no fallback to a different run's citations** (stale-citation-bleed guard). D-1 never-raises. Used by `app.py:ai_advisor_tab()` to ensure the citation overlay matches the currently-displayed MARKET_PRISM row.
+Returns the MARKET_PRISM_SOURCES row for this `run_id`, or `None`. Uses an exact `json_extract(raw_response,'$.run_id') = ?` SQLite match — no scan-and-compare loop. Returns `None` on mismatch — **no fallback to a different run's citations** (stale-citation-bleed guard). D-1 never-raises; uses `get_ro_connection()`. Used by `app.py:ai_advisor_tab()` to ensure the citation overlay matches the currently-displayed MARKET_PRISM row. Each MARKET_PRISM_SOURCES row holds rebuilt-at-patch-time citation metadata in `raw_response.per_lens_digest[lens].article_corpus = [{url, title, published}]`.
 
 > **`update_advisor_observation_raw_response` REMOVED (DE-PRISM-SOURCES-001 v1 rejection):** A v1 UPDATE accessor was drafted but rejected because `advisor_observations` is append-only — no UPDATE path exists or is permitted. Callers that need to associate new data with an existing observation must insert a new row with a linking `run_id`.
+
+> **`get_latest_market_prism_sources()` REMOVED:** The no-run_id variant had zero production callers after `app.py` was wired to the `_for_run` accessor. Deleted to avoid dead API surface.
 
 ---
 

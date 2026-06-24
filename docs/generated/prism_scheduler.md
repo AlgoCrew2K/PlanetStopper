@@ -82,19 +82,22 @@ Patchable in tests as `patch.object(mod, "_get_market_prism_row_for_run", ...)`.
 
 ### `_patch_provenance(run_id: str, row: dict | None) -> bool`
 
-Post-council citation builder (DE-PRISM-SOURCES-001 v2). Called by `main()` after F-4 row-verification confirms the MARKET_PRISM row exists. Builds structured citation metadata deterministically from the same `ai_advisor._build_*_section()` builders used by the nightly `lens_pipeline`, then inserts a new append-only `advisor_observations` row with `advisor_role="MARKET_PRISM_SOURCES"`.
+Post-council citation builder (DE-PRISM-SOURCES-001 v2). Called by `main()` after F-4 row-verification confirms the MARKET_PRISM row exists. Re-fetches live lens data via `ai_advisor._build_*_section()` builders at patch time (minutes after the council exits), then inserts a new append-only `advisor_observations` row with `advisor_role="MARKET_PRISM_SOURCES"`.
 
 **Behavior:**
 - For each url-bearing lens (`sentiment`, `macro`, `derivatives`, `fundamentals`) calls the corresponding `ai_advisor._build_*_section()` builder and collects `{url, title, published}` dicts from `section["sources"]` and `section["article_corpus"]`.
-- Deduplicates by url across the two source lists.
+- Deduplicates by url (first occurrence wins — sentiment emits the same articles in both `sources` and `article_corpus`, so union would otherwise double-count).
 - Assembles `raw_response = {"run_id": run_id, "per_lens_digest": {lens: {"article_corpus": [...]}}}`.
+- Checks for an existing SOURCES row for this `run_id` (AC-6 idempotency); skips INSERT if one already exists.
 - Calls `database.insert_advisor_observation(advisor_role="MARKET_PRISM_SOURCES", subject_id="global", raw_response=..., ...)`.
 
 **technicals excluded intentionally (AC-2):** Alpaca bar data has no public URLs; `article_corpus` for the technicals lens is omitted from the SOURCES row.
 
 **D-1 / never-raises (AC-4):** A failed patch (builder exception, DB error) is logged as `type(exc).__name__` only and returns `False`. Does not gate or prevent `sys.exit(0)` — the council run is unaffected.
 
-**One SOURCES row per run:** Keyed by `run_id`. The corresponding `get_latest_market_prism_sources_for_run(run_id)` accessor rejects rows from a different run_id, preventing stale-citation bleed.
+**One SOURCES row per run:** Keyed by `run_id`. The corresponding `get_latest_market_prism_sources_for_run(run_id)` accessor uses an exact `json_extract` match, preventing stale-citation bleed from a different run's row.
+
+**Provenance note:** The `article_corpus` entries are **rebuilt-at-patch-time per-lens sources**, not a snapshot of the exact articles the council analyzed. The council's synthesizer writes the MARKET_PRISM row from prose deliberation and does not persist structured citation lists. `macro`, `fundamentals`, and `derivatives` source URLs are stable across the patch window (~minutes); `sentiment` artlist top-N may drift slightly. UI copy must not imply "the exact articles the council read." See DE-PRISM-SOURCES-001 §Provenance honesty in `DECISIONS.md` for the full stability breakdown and future-enhancement tracking.
 
 ### `_run_prism(run_id: str = "unknown") -> bool`
 

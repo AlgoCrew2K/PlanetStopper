@@ -3275,14 +3275,29 @@ After the council completes and the MARKET_PRISM row is confirmed in the DB (F-4
 
 ### Implementation contract (v2)
 
-- `_patch_provenance(run_id: str, row: dict | None) -> bool` in `prism_scheduler.py` — for each url-bearing lens (sentiment, macro, derivatives, fundamentals) calls the corresponding `ai_advisor._build_*_section()` builder, collects validated citations from `section["sources"]` and `section["article_corpus"]`, and assembles `raw_response.per_lens_digest[lens].article_corpus = [{url, title, published}]`. Persists via `database.insert_advisor_observation(advisor_role="MARKET_PRISM_SOURCES", subject_id="global", ...)`. One SOURCES row per council run; keyed by `run_id`.
+- `_patch_provenance(run_id: str, row: dict | None) -> bool` in `prism_scheduler.py` — for each url-bearing lens (sentiment, macro, derivatives, fundamentals) calls the corresponding `ai_advisor._build_*_section()` builder **at patch time** (a few minutes after the council exits), collects validated citations from `section["sources"]` and `section["article_corpus"]`, deduplicates by url, and assembles `raw_response.per_lens_digest[lens].article_corpus = [{url, title, published}]`. Persists via `database.insert_advisor_observation(advisor_role="MARKET_PRISM_SOURCES", subject_id="global", ...)`. One SOURCES row per council run; keyed by `run_id`.
 - **technicals excluded intentionally (AC-2):** Alpaca bar data has no public URLs; `article_corpus` for the technicals lens is left as an empty list.
 - **D-1 never-raises (AC-4):** the patch does not gate or prevent `sys.exit(0)` in `main()`. A failed patch is logged as `type(exc).__name__` only; the council run is unaffected.
 - **`update_advisor_observation_raw_response` DELETED** from `database.py` — the v1 UPDATE accessor is removed. No callers remain.
-- **New read-only accessors in `database.py`:**
-  - `get_latest_market_prism_sources() -> dict | None` — returns the most recent MARKET_PRISM_SOURCES row, deserialized.
-  - `get_latest_market_prism_sources_for_run(run_id: str) -> dict | None` — returns the SOURCES row whose `raw_response.run_id` matches. Returns `None` on run_id mismatch — **no fallback to a different run's citations** (stale-citation-bleed guard).
+- **Read-only accessor in `database.py`:** `get_latest_market_prism_sources_for_run(run_id: str) -> dict | None` — exact `json_extract(raw_response,'$.run_id')=?` match; returns `None` on mismatch — **no fallback to a different run's citations** (stale-citation-bleed guard).
 - **`app.py` `ai_advisor_tab()`** — after fetching `market_prism_summary` (the MARKET_PRISM row), additively fetches the SOURCES row via `get_latest_market_prism_sources_for_run(run_id)` and merges `article_corpus` lists from SOURCES into `per_lens_digest` entries in the MARKET_PRISM summary before template render. Returns honest empty-state (no `article_corpus`) when the SOURCES row is absent or `run_id` mismatches. Template unchanged.
+
+### Provenance honesty
+
+**The SOURCES row's `article_corpus` entries are rebuilt at patch time from current live data — NOT a guaranteed snapshot of the exact articles the council analyzed.**
+
+The council's synthesizer writes the MARKET_PRISM row from deliberation prose; it does NOT persist the url-bearing citations it encountered during analysis (the `per_lens_digest` it writes stores labels/summaries, not structured citation lists). `_patch_provenance` therefore re-invokes the same `ai_advisor._build_*_section()` builders used by the nightly lens pipeline, a few minutes after the council exits. For most lenses this is equivalent:
+
+| Lens | Stability |
+|------|-----------|
+| `macro` | Stable — FRED series URLs do not change run-to-run |
+| `fundamentals` | Stable — SEC EDGAR filing URLs are stable |
+| `derivatives` | Stable — derivatives source URLs are stable |
+| `sentiment` | May drift slightly — GDELT artlist top-N and RSS feeds can return different articles within the patch window (~minutes) |
+
+The display text on the Overview tab must therefore say something like "Sources used in today's analysis" or "Referenced sources" — never "The exact articles the council read" or "The council's sources." **Any UI copy implying exact-snapshot provenance is false and must be rejected.**
+
+**Future enhancement (tracked, out of scope for this PR):** Have each analyst persist their url-bearing citations into the audit trail at run time (via `prism_audit_write`), and have `_patch_provenance` (or the synthesizer) aggregate from those rows instead of re-fetching live. This would give exact provenance — the articles as-seen by each analyst at analysis time — and eliminate the re-fetch entirely.
 
 ### Reference
 
