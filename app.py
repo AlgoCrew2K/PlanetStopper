@@ -3734,12 +3734,11 @@ def ai_advisor_tab():
                             if _corpus:
                                 _mp_pld[_src_lens]["article_corpus"] = _corpus
         except Exception as _merge_exc:
-            # Log at WARNING so merge failures produce diagnostic signal — honest empty-state
-            # is still rendered (no re-raise), but silent swallowing hides shape drift.
+            # Log type-only at WARNING — no exc args/message to avoid leaking citation
+            # content into logs; honest empty-state is still rendered (no re-raise).
             _daemon_log.warning(
-                "MARKET_PRISM_SOURCES merge failed (%s: %s) — rendering without article_corpus",
+                "market-prism sources merge skipped: %s",
                 type(_merge_exc).__name__,
-                _merge_exc,
             )
 
     # Pre-humanize per_lens_digest summaries so the template never sees raw JSON.
