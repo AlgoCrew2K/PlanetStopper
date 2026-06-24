@@ -1105,6 +1105,29 @@ def insert_advisor_observation(
     return row_id
 
 
+def update_advisor_observation_raw_response(row_id: int, raw_response: dict) -> None:
+    """Update raw_response on an advisor_observations row by id.
+
+    Additive update — callers replace the full raw_response dict.
+    D-1 never-raises; non-existent row_id is a silent no-op (UPDATE affects 0 rows).
+    No migration needed: raw_response is an existing JSON blob column.
+    """
+    try:
+        raw_str = json.dumps(raw_response)
+        conn = get_connection()
+        conn.execute(
+            "UPDATE advisor_observations SET raw_response = ? WHERE id = ?",
+            (raw_str, row_id),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[database] UpdateRawResponseError: {type(exc).__name__}",
+            file=sys.stderr,
+        )
+
+
 def get_advisor_observations_for_subject(
     subject_type: str,
     subject_id: str,
