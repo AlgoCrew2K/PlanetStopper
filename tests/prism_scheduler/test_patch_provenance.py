@@ -50,6 +50,18 @@ _VALID_CITATION_SENTIMENT = {
     "published": "2026-06-24",
     "lens": "sentiment",
 }
+
+# Raw corpus item as returned by news_corpus.build_news_corpus() — NOT pre-validated.
+# _build_sentiment_section puts this in article_corpus (ai_advisor.py:672).
+# It has url/title/published but also extra keys that build_citation ignores.
+_SENTIMENT_CORPUS_ARTICLE = {
+    "title": "Reuters Markets Daily",
+    "url": "https://www.reuters.com/markets/2026-06-24",
+    "published": "2026-06-24",
+    "domain": "reuters.com",
+    "score": 0.87,
+    "topics": ["macro", "broad-sentiment"],
+}
 _VALID_CITATION_MACRO = {
     "title": "FRED T10Y2Y Release",
     "url": "https://fred.stlouisfed.org/series/T10Y2Y",
@@ -111,6 +123,28 @@ def _available_section_with_sources(citations: list[dict]) -> dict:
     return {"available": True, "summary": "stub summary", "sources": citations}
 
 
+def _sentiment_production_shape(sources: list[dict], article_corpus: list[dict]) -> dict:
+    """Production shape of _build_sentiment_section (ai_advisor.py:662-673).
+
+    Returns BOTH sources (pre-validated citation dicts, line 671) AND
+    article_corpus (raw corpus items from news_corpus, line 672).
+    _patch_provenance must collect citations from BOTH paths; this mock
+    exercises the article_corpus path that sources-only mocks miss.
+    """
+    return {
+        "lens": "sentiment",
+        "available": True,
+        "payload": {
+            "tone_score": 0.12,
+            "corpus": article_corpus,
+            "events": [],
+            "article_count": len(article_corpus),
+        },
+        "sources": sources,
+        "article_corpus": article_corpus,  # primary url-bearing path for sentiment
+    }
+
+
 def _unavailable_section() -> dict:
     return {"available": False, "reason": "StubError", "sources": []}
 
@@ -124,8 +158,12 @@ def test_patch_provenance_populates_article_corpus_for_url_bearing_lenses():
     """AC-1: _patch_provenance writes validated article_corpus for sentiment, macro,
     derivatives, fundamentals; AC-3: each emitted citation has url/title/published.
 
+    Sentiment is mocked with its production shape (ai_advisor.py:662-673): both
+    `sources` (pre-validated citation dicts) AND `article_corpus` (raw corpus items).
+    Macro/derivatives/fundamentals return sources only — matching their production shape.
+
     GIVEN a MARKET_PRISM row in the DB with no article_corpus, AND builders
-    patched to return one valid citation each,
+    patched to return their production shapes,
     WHEN _patch_provenance is called,
     THEN each of the 4 url-bearing lenses has article_corpus with at least one
     entry; every entry has url (http/https), title, published.
@@ -137,7 +175,11 @@ def test_patch_provenance_populates_article_corpus_for_url_bearing_lenses():
     with (
         patch(
             "ai_advisor._build_sentiment_section",
-            return_value=_available_section_with_sources([_VALID_CITATION_SENTIMENT]),
+            # Production shape: sources (validated) + article_corpus (raw corpus items).
+            return_value=_sentiment_production_shape(
+                sources=[_VALID_CITATION_SENTIMENT],
+                article_corpus=[_SENTIMENT_CORPUS_ARTICLE],
+            ),
         ),
         patch(
             "ai_advisor._build_macro_section",
@@ -179,6 +221,89 @@ def test_patch_provenance_populates_article_corpus_for_url_bearing_lenses():
 
 
 # ---------------------------------------------------------------------------
+# T1b — AC-1 (sentiment article_corpus path): citations sourced from article_corpus
+#        are captured independently of the sources list
+# ---------------------------------------------------------------------------
+
+
+def test_patch_provenance_captures_sentiment_article_corpus_path():
+    """AC-1 (fidelity): _patch_provenance must capture citations sourced from
+    sentiment's article_corpus field, not only from sources.
+
+    Production _build_sentiment_section (ai_advisor.py:662-673) returns:
+      sources: pre-validated citation dicts (build_citation already run)
+      article_corpus: raw corpus items — {title, url, published, domain, score, ...}
+
+    This test mocks sentiment with EMPTY sources and a non-empty article_corpus to
+    prove _patch_provenance processes the article_corpus path specifically.
+    A sources-only collect would produce 0 citations here → test fails → RED.
+
+    GIVEN sentiment builder returns sources=[] + article_corpus=[one raw corpus item],
+    WHEN _patch_provenance is called,
+    THEN per_lens_digest["sentiment"]["article_corpus"] in the DB has at least one
+    validated citation whose url matches the corpus item's url.
+    """
+    raw = dict(_BASE_RAW_RESPONSE)
+    raw["per_lens_digest"] = {k: dict(v) for k, v in _COUNCIL_PER_LENS_DIGEST.items()}
+    row = _insert_market_prism_row(raw)
+
+    with (
+        patch(
+            "ai_advisor._build_sentiment_section",
+            # sources=[] intentionally empty — only article_corpus has the url.
+            return_value=_sentiment_production_shape(
+                sources=[],
+                article_corpus=[_SENTIMENT_CORPUS_ARTICLE],
+            ),
+        ),
+        patch(
+            "ai_advisor._build_macro_section",
+            return_value=_available_section_with_sources([_VALID_CITATION_MACRO]),
+        ),
+        patch(
+            "ai_advisor._build_derivatives_section",
+            return_value=_available_section_with_sources([_VALID_CITATION_DERIVATIVES]),
+        ),
+        patch(
+            "ai_advisor._build_fundamentals_section",
+            return_value=_available_section_with_sources([_VALID_CITATION_FUNDAMENTALS]),
+        ),
+        patch(
+            "ai_advisor._build_technicals_section",
+            return_value=_available_section_with_sources([]),
+        ),
+    ):
+        prism_scheduler._patch_provenance(_RUN_ID, row)
+
+    updated_row = database.get_latest_market_prism_summary()
+    assert updated_row is not None
+    sentiment_corpus = (
+        updated_row["raw_response"]["per_lens_digest"]["sentiment"].get("article_corpus") or []
+    )
+
+    assert sentiment_corpus, (
+        "sentiment article_corpus must be populated from the builder's article_corpus field "
+        "(sources was empty — only article_corpus carried the citation); "
+        f"got: {sentiment_corpus!r}"
+    )
+
+    # The corpus item's url must appear in the persisted citations.
+    expected_url = _SENTIMENT_CORPUS_ARTICLE["url"]
+    found_urls = [e.get("url") for e in sentiment_corpus]
+    assert expected_url in found_urls, (
+        f"Expected url {expected_url!r} from article_corpus to be captured; "
+        f"found urls: {found_urls!r}"
+    )
+
+    # Every persisted citation must pass build_citation validation (http/https url).
+    for entry in sentiment_corpus:
+        url = entry.get("url", "")
+        assert url.startswith("http://") or url.startswith("https://"), (
+            f"Persisted sentiment citation url must be http/https, got {url!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # T2 — AC-2: technicals never gets article_corpus populated
 # ---------------------------------------------------------------------------
 
@@ -204,7 +329,10 @@ def test_patch_provenance_technicals_never_gets_article_corpus():
     with (
         patch(
             "ai_advisor._build_sentiment_section",
-            return_value=_available_section_with_sources([_VALID_CITATION_SENTIMENT]),
+            return_value=_sentiment_production_shape(
+                sources=[_VALID_CITATION_SENTIMENT],
+                article_corpus=[_SENTIMENT_CORPUS_ARTICLE],
+            ),
         ),
         patch(
             "ai_advisor._build_macro_section",
@@ -342,8 +470,10 @@ def test_patch_provenance_idempotent_no_duplicate_citations():
     row = _insert_market_prism_row(raw)
 
     builder_returns = {
-        "ai_advisor._build_sentiment_section": _available_section_with_sources(
-            [_VALID_CITATION_SENTIMENT]
+        # Production shape for sentiment: both sources + article_corpus.
+        "ai_advisor._build_sentiment_section": _sentiment_production_shape(
+            sources=[_VALID_CITATION_SENTIMENT],
+            article_corpus=[_SENTIMENT_CORPUS_ARTICLE],
         ),
         "ai_advisor._build_macro_section": _available_section_with_sources([_VALID_CITATION_MACRO]),
         "ai_advisor._build_derivatives_section": _available_section_with_sources(
