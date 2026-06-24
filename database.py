@@ -1105,29 +1105,6 @@ def insert_advisor_observation(
     return row_id
 
 
-def update_advisor_observation_raw_response(row_id: int, raw_response: dict) -> None:
-    """Update raw_response on an advisor_observations row by id.
-
-    Additive update — callers replace the full raw_response dict.
-    D-1 never-raises; non-existent row_id is a silent no-op (UPDATE affects 0 rows).
-    No migration needed: raw_response is an existing JSON blob column.
-    """
-    try:
-        raw_str = json.dumps(raw_response)
-        conn = get_connection()
-        conn.execute(
-            "UPDATE advisor_observations SET raw_response = ? WHERE id = ?",
-            (raw_str, row_id),
-        )
-        conn.commit()
-        conn.close()
-    except Exception as exc:  # noqa: BLE001
-        print(
-            f"[database] UpdateRawResponseError: {type(exc).__name__}",
-            file=sys.stderr,
-        )
-
-
 def get_advisor_observations_for_subject(
     subject_type: str,
     subject_id: str,
@@ -1223,6 +1200,62 @@ def get_latest_market_prism_summary() -> dict | None:
     if row is None:
         return None
     return _parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS)
+
+
+def get_latest_market_prism_sources_for_run(run_id: str) -> dict | None:
+    """Return the MARKET_PRISM_SOURCES advisor_observations row for this run_id, or None.
+
+    Queries advisor_observations WHERE advisor_role='MARKET_PRISM_SOURCES', parses each
+    row's raw_response["run_id"], and returns the first row whose run_id matches the argument.
+    Returns None when no match exists — never falls back to a different run's row.
+
+    No-stale-citation-bleed guard (AC-9): a night where all lenses are unavailable
+    produces no SOURCES row; returning a different run's row would inject stale citations.
+
+    D-1 never-raises. Uses get_ro_connection().
+    """
+    try:
+        conn = get_ro_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT "
+            + ", ".join(_ADVISOR_OBSERVATION_COLUMNS)
+            + " FROM advisor_observations WHERE advisor_role = 'MARKET_PRISM_SOURCES'"
+            + " ORDER BY id DESC LIMIT 20",
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        for row in rows:
+            parsed = _parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS)
+            raw = parsed.get("raw_response") or {}
+            if isinstance(raw, dict) and raw.get("run_id") == run_id:
+                return parsed
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def get_latest_market_prism_sources() -> dict | None:
+    """Return the most recent MARKET_PRISM_SOURCES advisor_observations row, or None.
+
+    Ordered by id DESC LIMIT 1. D-1 never-raises. Uses get_ro_connection().
+    """
+    try:
+        conn = get_ro_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT "
+            + ", ".join(_ADVISOR_OBSERVATION_COLUMNS)
+            + " FROM advisor_observations WHERE advisor_role = 'MARKET_PRISM_SOURCES'"
+            + " ORDER BY id DESC LIMIT 1",
+        )
+        row = cursor.fetchone()
+        conn.close()
+        if row is None:
+            return None
+        return _parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 # --- Prism Phase 1: audit-log accessors (migration 032) ---
