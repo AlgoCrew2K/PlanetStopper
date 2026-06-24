@@ -621,3 +621,106 @@ def test_patch_provenance_malformed_citation_dropped():
         )
     ]
     assert not bad_urls, f"Malformed citations must be dropped, but found: {bad_urls!r}"
+
+
+# ---------------------------------------------------------------------------
+# T8-dedup — INTRA-PATCH DEDUPLICATION: sentiment sources + article_corpus overlap
+# ---------------------------------------------------------------------------
+
+
+def test_patch_provenance_sentiment_deduplicates_sources_and_article_corpus_overlap():
+    """INTRA-PATCH DEDUP: _patch_provenance must deduplicate by url when sentiment's
+    sources and article_corpus contain the same article.
+
+    Production _build_sentiment_section (ai_advisor.py:649-672) always returns the
+    SAME corpus articles in BOTH fields:
+      sources:        [build_citation({title, url, published, lens}) for art in corpus]
+      article_corpus: corpus  (the raw list — same articles, different shape)
+
+    A union-without-dedup produces two entries per article → Overview renders duplicate
+    <a href> links (ai_advisor.html:962-964 iterates article_corpus).
+
+    This test uses the REAL overlap shape: sources contains a build_citation-shaped copy
+    of the corpus item (url matches), article_corpus contains the raw corpus item.
+    With sources=[] in T1b the overlap was hidden; here sources carries the same url.
+
+    GIVEN sentiment builder returns the production overlap shape:
+        sources=[{title, url, published, lens}]   ← build_citation-validated
+        article_corpus=[{title, url, published, domain, score, ...}]  ← same url
+    WHEN _patch_provenance is called,
+    THEN per_lens_digest["sentiment"]["article_corpus"] has exactly ONE citation
+    for that url (not two) — dedup by url is required.
+    """
+    # The overlapping url — present in BOTH sources (validated) and article_corpus (raw).
+    shared_url = "https://www.reuters.com/markets/overlap-dedup-test-2026-06-24"
+
+    # sources entry: already build_citation-shaped (title/url/published/lens).
+    sources_entry = {
+        "title": "Reuters Markets Overlap",
+        "url": shared_url,
+        "published": "2026-06-24",
+        "lens": "sentiment",
+    }
+    # article_corpus entry: raw corpus item — same url, extra keys, no lens key.
+    corpus_entry = {
+        "title": "Reuters Markets Overlap",
+        "url": shared_url,
+        "published": "2026-06-24",
+        "domain": "reuters.com",
+        "score": 0.91,
+        "topics": ["macro"],
+    }
+
+    raw = dict(_BASE_RAW_RESPONSE)
+    raw["per_lens_digest"] = {k: dict(v) for k, v in _COUNCIL_PER_LENS_DIGEST.items()}
+    row = _insert_market_prism_row(raw)
+
+    with (
+        patch(
+            "ai_advisor._build_sentiment_section",
+            # Production overlap: same article in both sources and article_corpus.
+            return_value={
+                "lens": "sentiment",
+                "available": True,
+                "payload": {
+                    "tone_score": 0.05,
+                    "corpus": [corpus_entry],
+                    "events": [],
+                    "article_count": 1,
+                },
+                "sources": [sources_entry],
+                "article_corpus": [corpus_entry],
+            },
+        ),
+        patch(
+            "ai_advisor._build_macro_section",
+            return_value=_available_section_with_sources([_VALID_CITATION_MACRO]),
+        ),
+        patch(
+            "ai_advisor._build_derivatives_section",
+            return_value=_available_section_with_sources([_VALID_CITATION_DERIVATIVES]),
+        ),
+        patch(
+            "ai_advisor._build_fundamentals_section",
+            return_value=_available_section_with_sources([_VALID_CITATION_FUNDAMENTALS]),
+        ),
+        patch(
+            "ai_advisor._build_technicals_section",
+            return_value=_available_section_with_sources([]),
+        ),
+    ):
+        prism_scheduler._patch_provenance(_RUN_ID, row)
+
+    updated_row = database.get_latest_market_prism_summary()
+    assert updated_row is not None
+    sentiment_corpus = (
+        updated_row["raw_response"]["per_lens_digest"]["sentiment"].get("article_corpus") or []
+    )
+
+    # Collect all urls for the shared_url in the persisted corpus.
+    matching_urls = [e.get("url") for e in sentiment_corpus if e.get("url") == shared_url]
+    assert len(matching_urls) == 1, (
+        f"Expected exactly 1 citation for url={shared_url!r} after dedup; "
+        f"got {len(matching_urls)} (union-without-dedup produces 2 — one from sources, "
+        f"one from article_corpus). Full sentiment corpus: {sentiment_corpus!r}"
+    )
