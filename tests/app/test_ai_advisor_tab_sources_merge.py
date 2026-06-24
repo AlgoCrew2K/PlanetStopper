@@ -33,6 +33,7 @@ Design:
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -295,4 +296,50 @@ def test_ai_advisor_tab_merge_preserves_existing_per_lens_digest_keys(client):
     # And the new article_corpus url must also appear.
     assert 'href="https://example.com/merge-test-article"' in html, (
         "article_corpus url must also appear after additive merge."
+    )
+
+
+# ---------------------------------------------------------------------------
+# M-5: Merge exception -> logged WARNING + honest empty-state (no silent swallow)
+# ---------------------------------------------------------------------------
+
+
+def test_ai_advisor_tab_merge_exception_logged_not_silently_swallowed(client, caplog):
+    """M-5 (PM-caught): GIVEN database.get_latest_market_prism_sources_for_run raises
+    an exception inside ai_advisor_tab (e.g. shape drift, unexpected error),
+    WHEN GET /ai-advisor is called,
+    THEN: (a) route still returns 200 — crash-safe / honest empty-state,
+          (b) a WARNING-level log message is emitted (not a bare silent pass).
+
+    A bare `except Exception: pass` in the merge block produces ZERO log signal when the
+    merge fails — the page renders "no links" with no diagnostic, which is the hollow-fix
+    failure mode. The merge except must log at WARNING minimum.
+
+    Scope: ONLY the new SOURCES-merge block's except. The pre-existing except on
+    get_latest_market_prism_summary() is OUT OF SCOPE.
+    """
+    with (
+        patch(
+            "database.get_latest_market_prism_summary",
+            return_value=_MARKET_PRISM_ROW,
+        ),
+        patch(
+            "database.get_latest_market_prism_sources_for_run",
+            side_effect=RuntimeError("simulated shape drift in merge"),
+        ),
+        caplog.at_level(logging.WARNING),
+    ):
+        resp = client.get("/ai-advisor")
+
+    assert resp.status_code == 200, (
+        "Route must return 200 even when the SOURCES merge block raises — crash-safe."
+    )
+
+    # A WARNING (or higher) log must have been emitted from the merge except.
+    warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warning_records, (
+        "The SOURCES-merge except block must emit a WARNING-level log when it catches "
+        "an exception. A bare `except Exception: pass` produces zero log signal — "
+        "the page renders 'no links' with no diagnostic (hollow-fix failure mode). "
+        f"caplog.records (all levels): {[(r.levelname, r.message) for r in caplog.records]!r}"
     )
