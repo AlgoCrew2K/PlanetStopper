@@ -1,168 +1,216 @@
-# TDD Handoff — dfix cycle (AC-7 + AC-8 defect fixes)
+# TDD Handoff — DE-PRISM-SOURCES-001 Overview Market Prism Sources Provenance
 
-**Branch:** feat/dashboard-realtime-push
-**RED commit:** see git log (test(ac7-ac8): re-point hollow fixtures...)
-**Handoff owner:** dfix-impl (flask-dashboard-specialist)
-**Do NOT read the PM brief or dfix-test brief** — implement ONLY what is in this file.
-
----
-
-## What is RED and why
-
-Running `python -m pytest tests/realtime_push/test_data_freshness_visibility.py -n0`
-produces **5 FAILED / 5 PASSED**.
-
-The 5 failing tests expose two concrete defects:
-
-### Defect 1 — AC-7: per-symphony-dict reader misses the top-level key
-
-The engine writes `last_successful_cycle_at` at the **top level** of `bot_state`, never
-inside a per-symphony sub-dict (alpha_bot_execution.py:948/1092/1878):
-
-```python
-bot_state["last_successful_cycle_at"] = current_et.isoformat()
-```
-
-Two reader sites in app.py loop over per-symphony dicts and miss the top-level key:
-
-**Site 1 — `_compute_portfolio_strip` (app.py:1281-1287):**
-```python
-_cycle_ts = None
-for _sym_v in bot_state.values():
-    if isinstance(_sym_v, dict):
-        _ts = _sym_v.get("last_successful_cycle_at")   # <-- never in a per-sym dict
-        if _ts:
-            _cycle_ts = _ts
-            break
-```
-Local variable name here is `bot_state`.
-
-**Site 2 — `get_state` top-level data_as_of (app.py:2125-2131):**
-```python
-_tl_cycle_ts = None
-for _tl_v in state_data.values():
-    if isinstance(_tl_v, dict):
-        _tl_ts = _tl_v.get("last_successful_cycle_at")  # <-- never in a per-sym dict
-        if _tl_ts:
-            _tl_cycle_ts = _tl_ts
-            break
-```
-Local variable name here is `state_data` (different from site 1 — do not copy-paste a NameError).
-
-Both sites fall through to `datetime.now(_ET)` because `last_successful_cycle_at` is
-never found in any per-symphony dict. The correct read pattern already exists at
-app.py:2255: `state_data.get("last_successful_cycle_at")` — a direct top-level get.
-
-### Defect 2 — AC-8: `showConnectionLost()` targets non-existent DOM element ids
-
-`static/index.js:1299-1310` — `showConnectionLost()` uses wrong selectors:
-
-```js
-var badge = document.getElementById('engine-status-badge');     // <-- id does not exist
-// ...
-var dataAsOf = document.querySelector('[data-testid="data-as-of"]') ||
-               document.querySelector('.data-as-of');           // <-- no such testid/class
-```
-
-Real element ids in the templates:
-- `templates/_chrome.html:51-53`: `id="engine-status-dot"` and `id="engine-status-label"`
-  (there is no `engine-status-badge` id anywhere)
-- `templates/index.html:846`: `id="hero-data-as-of" class="legend-as-of"`
-  (there is no `data-as-of` testid and no `.data-as-of` class anywhere)
-
-Result: `showConnectionLost()` silently no-ops on every call — no visible cue renders.
+**From:** sov-test (quant-test-writer)
+**To:** sov-impl (sqlite-specialist)
+**Branch:** feat/overview-sources-provenance @ 88bbfd4
+**Worktree:** C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/sov-sources
+**Do NOT read the PM brief** — implement ONLY what is in this file.
 
 ---
 
-## Minimal GREEN implementation
+## RED state confirmed
 
-### Fix 1 — app.py site 1 (`_compute_portfolio_strip`, local var `bot_state`)
-
-Replace the per-sym-dict loop (app.py:1281-1287) with a direct top-level get:
-
-```python
-# Derive data_as_of from the actual data timestamp, not the server render clock.
-# The engine writes last_successful_cycle_at at the TOP LEVEL of bot_state
-# (alpha_bot_execution.py:948/1092/1878) — never inside per-symphony sub-dicts.
-# Falls back to datetime.now() if no cycle timestamp is available.
-_cycle_ts = bot_state.get("last_successful_cycle_at")
 ```
-
-Then use `_cycle_ts` in the existing isoformat-parse block that follows (the try/except
-that formats `_data_as_of` is already correct — only the lookup changes).
-
-### Fix 2 — app.py site 2 (`get_state` top-level, local var `state_data`)
-
-Replace the per-sym-dict loop (app.py:2125-2131) with a direct top-level get:
-
-```python
-# AC-7: top-level data_as_of is the JS fallback hero freshness signal.
-# last_successful_cycle_at is a top-level key (alpha_bot_execution.py:948/1092/1878).
-_tl_cycle_ts = state_data.get("last_successful_cycle_at")
+cd C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/sov-sources
+python -m pytest tests/prism_scheduler/test_patch_provenance.py tests/prism_scheduler/test_patch_provenance_render_contract.py -n0 --tb=line -q
 ```
+Expected: **7 FAILED** (prism_scheduler._patch_provenance absent), **2 PASSED** (render-contract guards already pass — template is already correct).
 
-Then use `_tl_cycle_ts` in the existing isoformat-parse block that follows.
-
-### Fix 3 — `static/index.js` `showConnectionLost()` (index.js:1299-1310)
-
-Replace the two wrong selector calls with the real element ids:
-
-```js
-function showConnectionLost() {
-    // Badge cluster: _chrome.html:51-53 uses engine-status-dot + engine-status-label
-    var dot = document.getElementById('engine-status-dot');
-    var label = document.getElementById('engine-status-label');
-    if (dot) {
-        dot.style.background = 'var(--studio-neg, #e53e3e)';
-    }
-    if (label) {
-        label.textContent = 'Connection Lost';
-        label.style.color = 'var(--studio-neg, #e53e3e)';
-    }
-    // Data-as-of element: index.html:846 uses id="hero-data-as-of"
-    var dataAsOf = document.getElementById('hero-data-as-of');
-    if (dataAsOf) {
-        dataAsOf.textContent = 'connection lost';
-    }
-}
 ```
-
-The mutation logic (textContent, color/style) is your choice — the test asserts only
-that the function body references `engine-status-dot` or `engine-status-label`
-(at least one real badge id from `_chrome.html`) AND references `hero-data-as-of`
-(the real data-as-of id from `index.html`).
+DB_PATH=/tmp/test_sov_sources_db.db python -m pytest tests/database/test_update_advisor_observation_raw_response.py -n0 --tb=line -q
+```
+Expected: **3 FAILED** (database.update_advisor_observation_raw_response absent).
 
 ---
 
-## Scope boundary
+## Production symbols to implement (ONLY these 3 — no gold-plating)
 
-- Do NOT touch the AC-4 path (`_StaleFlagDict`, `_refresh_account_totals`, SSE freshness).
-- Do NOT touch the snapshot branch (`closed_frozen` / `TestSnapshotBranchDataAsOfUsesSnapshotTimestamp`).
-- Do NOT touch `alpha_bot_execution.py`.
-- Do NOT create a PR or merge to main.
+### Symbol 1: `database.update_advisor_observation_raw_response(row_id: int, raw_response: dict) -> None`
+
+**Location:** `database.py` — add after `insert_advisor_observation` (~line 1105)
+
+**Contract:**
+- Parameterized `UPDATE advisor_observations SET raw_response = ? WHERE id = ?`
+- Serialise `raw_response` dict to JSON string via `json.dumps`
+- Non-existent `row_id`: no-op (UPDATE affects 0 rows — that is fine, no exception)
+- D-1 never-raises: wrap entire body in `try/except Exception as exc`, log `type(exc).__name__` to stderr
+- No DB migration needed — `raw_response` is an existing JSON blob column
+- Use `get_connection()` (this is a write path)
+
+Example skeleton:
+```python
+def update_advisor_observation_raw_response(row_id: int, raw_response: dict) -> None:
+    """Update raw_response on an advisor_observations row by id.
+
+    Additive update — callers replace the full raw_response dict.
+    D-1 never-raises; non-existent row_id is a silent no-op.
+    No migration needed: raw_response is an existing JSON blob column.
+    """
+    try:
+        raw_str = json.dumps(raw_response)
+        conn = get_connection()
+        conn.execute(
+            "UPDATE advisor_observations SET raw_response = ? WHERE id = ?",
+            (raw_str, row_id),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[database] UpdateRawResponseError: {type(exc).__name__}",
+            file=sys.stderr,
+        )
+```
+
+### Symbol 2: `prism_scheduler._patch_provenance(run_id: str, row: dict | None) -> bool`
+
+**Location:** `prism_scheduler.py` — add before `main()`
+
+**Contract:**
+- Guard: `if row is None` → return False (silent no-op)
+- Parse `raw_response` from `row`: if it is a string try `json.loads`; on parse failure → return False
+- If `raw_response` has no `per_lens_digest` → return False
+- For each of the 4 url-bearing lenses (`sentiment`, `macro`, `derivatives`, `fundamentals`):
+  - Call `ai_advisor._build_<lens>_section()` — wrap in `try/except Exception: continue`
+  - Collect `section.get("sources") or []`
+  - For each source call `ai_advisor.build_citation(source)` — keep only non-None results
+  - **AC-6 idempotency:** REPLACE (not append) `pld[lens]["article_corpus"] = valid_citations`
+    This makes re-patching idempotent — second call with same builders produces the same list
+- **technicals is EXCLUDED — never write article_corpus for technicals (AC-2)**
+- Persist via `database.update_advisor_observation_raw_response(row["id"], raw_response)`
+- Outer `try/except Exception` wraps everything (D-1): on error log `type(exc).__name__` and return False
+- Returns True on success (even if some lenses got 0 citations), False on no-op/error
+
+**Lazy imports:** use `import ai_advisor` and `import database` inside the function body to
+avoid circular import issues (same pattern as other scheduler helper functions).
+
+Example skeleton:
+```python
+def _patch_provenance(run_id: str, row: "dict | None") -> bool:
+    """Post-council patch: rebuild per-lens validated article_corpus citations
+    and persist them into the MARKET_PRISM row's raw_response.
+
+    Reuses ai_advisor._build_*_section + build_citation — no reinvented logic.
+    D-1 never-raises; AC-4: does not gate or prevent sys.exit(0) in main().
+    Returns True if patch attempted, False if no-op/error.
+    """
+    try:
+        if row is None:
+            return False
+        raw = row.get("raw_response") or {}
+        if isinstance(raw, str):
+            try:
+                import json as _json  # noqa: PLC0415
+                raw = _json.loads(raw)
+            except Exception:  # noqa: BLE001
+                return False
+        pld = raw.get("per_lens_digest")
+        if not isinstance(pld, dict):
+            return False
+
+        import ai_advisor  # noqa: PLC0415
+
+        _BUILDERS = {
+            "sentiment": ai_advisor._build_sentiment_section,
+            "macro": ai_advisor._build_macro_section,
+            "derivatives": ai_advisor._build_derivatives_section,
+            "fundamentals": ai_advisor._build_fundamentals_section,
+            # technicals intentionally omitted — AC-2: Alpaca bar data has no public urls
+        }
+
+        for lens, builder in _BUILDERS.items():
+            if lens not in pld:
+                continue
+            try:
+                section = builder()
+            except Exception:  # noqa: BLE001
+                continue  # D-1: this lens contributes no citations
+            sources = section.get("sources") or []
+            valid = [
+                c for c in (ai_advisor.build_citation(s) for s in sources)
+                if c is not None
+            ]
+            pld[lens]["article_corpus"] = valid  # AC-6: replace not append
+
+        import database as _db  # noqa: PLC0415
+
+        _db.update_advisor_observation_raw_response(row["id"], raw)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[prism_scheduler] PatchProvenanceError: {type(exc).__name__}",
+            file=sys.stderr,
+        )
+        return False
+```
+
+### Symbol 3: Wire `_patch_provenance` into `prism_scheduler.main()`
+
+**Location:** `prism_scheduler.py`, `main()` function — in the SUCCESS path (currently around line 259-262).
+
+**Current code:**
+```python
+if row is not None:
+    print("[prism_scheduler] Run completed successfully.")
+    sys.exit(0)
+```
+
+**Change to:**
+```python
+if row is not None:
+    print("[prism_scheduler] Run completed successfully.")
+    _patch_provenance(run_id, row)  # AC-4: D-1 never-raises; does not gate sys.exit(0)
+    sys.exit(0)
+```
+
+**AC-4 critical:** `_patch_provenance` must NOT prevent `sys.exit(0)`. Its D-1 contract
+ensures it never raises, so `sys.exit(0)` always fires after it returns. The council
+run's success verdict is independent of whether the patch succeeds.
 
 ---
 
-## After your GREEN
+## GREEN target
 
-Run:
-```
-python -m pytest tests/realtime_push/test_data_freshness_visibility.py -n0 --tb=short
-```
+After implementing the 3 symbols:
 
-Expected: **0 failed, 10 passed** (all 5 previously-RED tests now GREEN, 5 previously-GREEN
-tests still GREEN).
+```bash
+cd C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/sov-sources
 
-Also run ruff on changed files:
-```
-python -m ruff check app.py static/index.js
-python -m ruff format app.py --check
+# Prism scheduler unit tests + render-contract
+python -m pytest tests/prism_scheduler/test_patch_provenance.py tests/prism_scheduler/test_patch_provenance_render_contract.py -n0 -q
+
+# DB accessor tests
+DB_PATH=/tmp/test_sov_sources_db.db python -m pytest tests/database/test_update_advisor_observation_raw_response.py -n0 -q
 ```
 
-Commit path-scoped (do NOT `git add -A`):
-```
-git add app.py static/index.js
-git commit -m "fix(ac7-ac8): top-level last_successful_cycle_at reader + showConnectionLost real selectors"
+Target: **12 passed / 0 failed / 0 errors** total across both runs.
+
+Then ruff check + format on changed files:
+```bash
+python -m ruff check prism_scheduler.py database.py
+python -m ruff format --check prism_scheduler.py database.py
 ```
 
-Then SendMessage dfix-test: "GREEN — 0 failed / 10 passed. SHA=<sha>. Ready for review."
+---
+
+## Scope boundaries (do NOT touch)
+
+- `templates/ai_advisor.html` — already renders article_corpus correctly (no change)
+- `app.py` — no route change needed
+- No DB migration — raw_response is an existing column
+- `advisors/lens_pipeline.py` — reuse, do not modify
+- `.claude/agents/prism-*.md` role files — do not change
+- Do NOT create a PR or merge to main
+
+---
+
+## After GREEN
+
+Run the two test commands above; confirm 12 passed / 0 failed / 0 errors.
+Commit path-scoped (NOT `git add -A`):
+```bash
+git add prism_scheduler.py database.py
+git commit -m "fix(prism-sources): _patch_provenance + update_advisor_observation_raw_response (DE-PRISM-SOURCES-001)"
+```
+
+Then `SendMessage` sov-test: "GREEN — <N> passed / 0 failed / 0 errors. SHA=<sha>. Ready for review cycle."
