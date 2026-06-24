@@ -358,7 +358,7 @@ Unified single-page render for all 6 in-place tab panels. Server-side assembles 
 | `chat_available` | `bool(os.environ.get("ANTHROPIC_API_KEY"))` — key presence only, value never passed to template | Chat |
 | `sb_observations` | `database.get_advisor_observations_for_role("STRATEGY_BUILDER")`, reversed (oldest-first); empty list on error | Strategy Builder |
 | `sb_card_artifacts` | dict keyed by `obs["id"]`; each value is an M6 `strategy_proposal` artifact dict for the Discuss/Chat affordance; built from `raw_response` fields per observation | Strategy Builder |
-| `market_prism_summary` | `database.get_latest_market_prism_summary()`; `dict` or `None`; wrapped in `try/except` — `None` on failure renders an informative empty state; **RF-1:** `per_lens_digest` summaries are pre-humanized in-place by `advisors.prism_render.humanize_lens_summary` before template render (no new context key — template's existing `_lens.get('summary')` reads humanized prose); **DE-PRISM-SOURCES-001:** if non-None, the MARKET_PRISM row's `run_id` is used to fetch the matching MARKET_PRISM_SOURCES row via `database.get_latest_market_prism_sources_for_run(run_id)` and `article_corpus` lists are merged into `per_lens_digest` entries before render — honest empty-state (no `article_corpus`) when the SOURCES row is absent or mismatched | Overview (Market Prism block) |
+| `market_prism_summary` | `database.get_latest_market_prism_summary()`; `dict` or `None`; wrapped in `try/except` — `None` on failure renders an informative empty state; **RF-1:** `per_lens_digest` summaries are pre-humanized in-place by `advisors.prism_render.humanize_lens_summary` before template render (no new context key — template's existing `_lens.get('summary')` reads humanized prose); **DE-PRISM-SOURCES-001:** if non-None, a `copy.deepcopy` is taken, then `run_id` from `raw_response` is used to fetch the matching MARKET_PRISM_SOURCES row via `database.get_latest_market_prism_sources_for_run(run_id)`; matching `article_corpus` lists are merged into `per_lens_digest` entries **before RF-1 humanization** — honest empty-state (no article links) when SOURCES row is absent, run_id mismatches, or merge raises | Overview (Market Prism block) |
 
 The Correlations, API-key, Symphonies, Strategy Builder, and Market Prism data assembly sections are wrapped in `try/except` — if those panels' data fails, the others still render. The Overview observations loop is not wrapped.
 
@@ -372,7 +372,15 @@ See `DE-RF1-PROSE-RENDER` in `DECISIONS.md` and [advisors/prism_render](advisors
 
 **DE-PRISM-SOURCES-001 (Overview citation overlay):**
 
-After RF-1 humanization, if `market_prism_summary` is present, `ai_advisor_tab()` fetches the SOURCES row via `database.get_latest_market_prism_sources_for_run(market_prism_summary["raw_response"]["run_id"])`. If the SOURCES row is found, its `per_lens_digest[lens]["article_corpus"]` lists are merged into the corresponding entries in `market_prism_summary["raw_response"]["per_lens_digest"]` before template render. If the SOURCES row is `None` (absent, run_id mismatch, or DB error), `per_lens_digest` is unchanged — lenses render without clickable citation links (honest empty-state). Template is unchanged.
+If `market_prism_summary` is non-None, `ai_advisor_tab()` runs the SOURCES merge block **before** RF-1 humanization:
+
+1. `copy.deepcopy(market_prism_summary)` — deep-copies the summary so the original DB row object is never mutated in-place (safe for shared references in tests/caches).
+2. Decodes `raw_response` from JSON string if needed (guards against the row arriving as a string blob).
+3. Extracts `run_id` from `raw_response.get("run_id")`. If absent or falsy, the merge is skipped.
+4. Calls `database.get_latest_market_prism_sources_for_run(run_id)`. If the SOURCES row is found, iterates its `per_lens_digest` entries and copies each non-empty `article_corpus` list into the corresponding entry of `_mp_raw["per_lens_digest"]` — only if both the source and destination lens entries are dicts.
+5. Entire block is wrapped in `try/except Exception: pass` — merge failure never crashes the route; honest empty-state (no article links) on any error, run_id mismatch, or absent SOURCES row.
+
+Template is unchanged.
 
 #### `GET /ai-advisor/correlations` → 302 redirect to `/ai-advisor`
 #### `GET /ai-advisor/asset-swaps` → 302 redirect to `/ai-advisor`
