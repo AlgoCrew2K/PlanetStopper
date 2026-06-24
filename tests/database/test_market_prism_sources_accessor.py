@@ -14,14 +14,15 @@ Coverage:
        (No stale citation bleed — AC-9.)
   A-4  get_latest_market_prism_sources_for_run returns None when no SOURCES rows
        exist at all.
-  A-5  get_latest_market_prism_sources() returns the most recent MARKET_PRISM_SOURCES
-       row by id when one exists.
-  A-6  get_latest_market_prism_sources() returns None when no SOURCES rows exist.
   A-7  get_latest_market_prism_summary() NEVER returns a MARKET_PRISM_SOURCES row —
        it is hard-filtered to advisor_role='MARKET_PRISM'.
   A-8  get_latest_market_prism_sources_for_run uses get_ro_connection (read-only path).
-  A-9  get_latest_market_prism_sources uses get_ro_connection (read-only path).
   A-10 The returned row has all expected shape keys (id, advisor_role, raw_response as dict).
+  A-11 get_latest_market_prism_sources_for_run uses exact SQL match (json_extract), not
+       prefix/substring match — a run_id that is a prefix of another must NOT match.
+
+Note: get_latest_market_prism_sources() (no run_id arg) was deleted — zero production
+callers; tests A-5, A-6, A-9 removed alongside it.
 
 Fixture provenance (D-2): rows inserted via insert_advisor_observation (public write
 accessor) with production-shape raw_response. The MARKET_PRISM raw_response shape follows
@@ -291,51 +292,6 @@ def test_get_latest_market_prism_sources_for_run_returns_none_when_empty():
 
 
 # ---------------------------------------------------------------------------
-# A-5: get_latest_market_prism_sources returns the most recent SOURCES row
-# ---------------------------------------------------------------------------
-
-
-def test_get_latest_market_prism_sources_returns_most_recent():
-    """A-5: get_latest_market_prism_sources() must return the most recent
-    MARKET_PRISM_SOURCES row by id.
-
-    GIVEN two SOURCES rows (A then B, B has the higher id),
-    WHEN get_latest_market_prism_sources() is called,
-    THEN it returns the B row (highest id = most recent).
-    """
-    _insert_sources_row(run_id=_RUN_ID_A, sources_raw=dict(_SOURCES_RAW_A))
-    id_b = _insert_sources_row(run_id=_RUN_ID_B, sources_raw=dict(_SOURCES_RAW_B))
-
-    result = db_module.get_latest_market_prism_sources()
-
-    assert result is not None, (
-        "get_latest_market_prism_sources() must return the most recent SOURCES row; "
-        "got None. Either the accessor is not implemented or the rows are not found."
-    )
-    assert result["id"] == id_b, (
-        f"Expected the most recent SOURCES row (id={id_b}, run_id={_RUN_ID_B!r}); "
-        f"got id={result.get('id')!r}"
-    )
-    assert result["advisor_role"] == "MARKET_PRISM_SOURCES", (
-        f"Returned row must have advisor_role='MARKET_PRISM_SOURCES'; "
-        f"got {result.get('advisor_role')!r}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# A-6: get_latest_market_prism_sources returns None when no SOURCES rows
-# ---------------------------------------------------------------------------
-
-
-def test_get_latest_market_prism_sources_returns_none_when_empty():
-    """A-6: get_latest_market_prism_sources() must return None when no
-    MARKET_PRISM_SOURCES rows exist — never raise.
-    """
-    result = db_module.get_latest_market_prism_sources()
-    assert result is None, f"Expected None when no SOURCES rows exist; got {result!r}"
-
-
-# ---------------------------------------------------------------------------
 # A-7: get_latest_market_prism_summary NEVER returns a MARKET_PRISM_SOURCES row
 # ---------------------------------------------------------------------------
 
@@ -403,23 +359,6 @@ def test_get_latest_market_prism_sources_for_run_uses_ro_connection():
     )
 
 
-def test_get_latest_market_prism_sources_uses_ro_connection():
-    """A-9: get_latest_market_prism_sources must use get_ro_connection.
-
-    Same rationale as A-8 — read paths must be structurally isolated from the write path.
-    """
-    assert hasattr(db_module, "get_latest_market_prism_sources"), (
-        "get_latest_market_prism_sources is not yet implemented in database.py"
-    )
-    source = inspect.getsource(db_module.get_latest_market_prism_sources)
-    assert "get_ro_connection" in source, (
-        "get_latest_market_prism_sources must use get_ro_connection(), not get_connection()."
-    )
-    assert "get_connection()" not in source, (
-        "get_latest_market_prism_sources must not call get_connection()."
-    )
-
-
 # ---------------------------------------------------------------------------
 # A-10: returned row has expected shape keys
 # ---------------------------------------------------------------------------
@@ -448,4 +387,55 @@ def test_get_latest_market_prism_sources_for_run_returns_expected_shape():
     )
     assert row["subject_id"] == "global", (
         f"subject_id must be 'global'; got {row.get('subject_id')!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# A-11: scan window — match found beyond LIMIT 20 (pins json_extract over Python scan)
+# ---------------------------------------------------------------------------
+
+# The current LIMIT-20 scan fetches at most 20 rows and matches in Python.
+# If a matching row exists but is outside the 20-row window (buried under 20+ newer
+# SOURCES rows), the LIMIT-20 impl returns None even though a match exists.
+# json_extract(raw_response, '$.run_id') = ? has no such limit — it matches any row.
+_RUN_ID_TARGET = "11111111-1111-1111-1111-111111111111"
+_RUN_ID_NOISE = "22222222-2222-2222-2222-222222222222"
+_LIMIT_SCAN_WINDOW = 20  # current impl scans at most this many rows
+
+
+def test_get_latest_market_prism_sources_for_run_finds_match_beyond_scan_window():
+    """A-11: get_latest_market_prism_sources_for_run must use exact SQL match
+    (json_extract), not a LIMIT-N Python scan.
+
+    A LIMIT-20 scan returns None for a row whose id is buried under 20+ newer rows.
+    json_extract(raw_response, '$.run_id') = ? has no window — it finds any matching row.
+
+    GIVEN: 1 SOURCES row for _RUN_ID_TARGET (the target), then
+           21 SOURCES rows for _RUN_ID_NOISE (noise, higher ids),
+    WHEN get_latest_market_prism_sources_for_run(_RUN_ID_TARGET) is called,
+    THEN it must return the TARGET row — not None.
+
+    A LIMIT-20 scan fetches the 20 most recent rows (all NOISE) and misses TARGET.
+    json_extract finds TARGET regardless of how many NOISE rows are newer.
+    """
+    # Insert the target row first (lowest id).
+    _insert_sources_row(run_id=_RUN_ID_TARGET)
+
+    # Insert 21 noise rows (higher ids, all with a different run_id).
+    noise_raw = {"run_id": _RUN_ID_NOISE, "per_lens_digest": {}}
+    for _ in range(_LIMIT_SCAN_WINDOW + 1):
+        _insert_sources_row(run_id=_RUN_ID_NOISE, sources_raw=dict(noise_raw))
+
+    result = db_module.get_latest_market_prism_sources_for_run(_RUN_ID_TARGET)
+
+    assert result is not None, (
+        f"get_latest_market_prism_sources_for_run must find the TARGET row even when "
+        f"{_LIMIT_SCAN_WINDOW + 1} newer NOISE rows exist. "
+        f"A LIMIT-{_LIMIT_SCAN_WINDOW} Python scan misses it — use "
+        f"json_extract(raw_response, '$.run_id') = ? for an exact SQL match instead. "
+        f"Got None — the matching row was outside the scan window."
+    )
+    raw = result.get("raw_response") or {}
+    assert raw.get("run_id") == _RUN_ID_TARGET, (
+        f"Returned row run_id must be {_RUN_ID_TARGET!r}; got {raw.get('run_id')!r}"
     )
