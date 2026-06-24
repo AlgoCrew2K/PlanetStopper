@@ -1,216 +1,240 @@
-# TDD Handoff — DE-PRISM-SOURCES-001 Overview Market Prism Sources Provenance
+# TDD Handoff v2 — DE-PRISM-SOURCES-001 Overview Market Prism Sources Provenance
 
-**From:** sov-test (quant-test-writer)
-**To:** sov-impl (sqlite-specialist)
-**Branch:** feat/overview-sources-provenance @ 88bbfd4
+**From:** sov-test (quant-test-writer, team lead)
+**To:** sov-db (sqlite-specialist) AND sov-flask (flask-dashboard-specialist)
+**Branch:** feat/overview-sources-provenance (current after RED commit)
 **Worktree:** C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/sov-sources
 **Do NOT read the PM brief** — implement ONLY what is in this file.
+**Do NOT merge or push to origin — the PM owns the ship gate.**
 
 ---
 
 ## RED state confirmed
 
-```
-cd C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/sov-sources
-python -m pytest tests/prism_scheduler/test_patch_provenance.py tests/prism_scheduler/test_patch_provenance_render_contract.py -n0 --tb=line -q
-```
-Expected: **7 FAILED** (prism_scheduler._patch_provenance absent), **2 PASSED** (render-contract guards already pass — template is already correct).
+29 total failing tests across 4 files. Run the bounded -n0 suite to verify:
 
 ```
-DB_PATH=/tmp/test_sov_sources_db.db python -m pytest tests/database/test_update_advisor_observation_raw_response.py -n0 --tb=line -q
+DB_PATH=/tmp/sov_v2_verify.db python -m pytest \
+  tests/database/test_market_prism_sources_accessor.py \
+  tests/database/test_017_advisor_observations.py \
+  tests/prism_scheduler/test_patch_provenance.py \
+  tests/prism_scheduler/test_patch_provenance_render_contract.py \
+  tests/app/test_ai_advisor_tab_sources_merge.py \
+  -n0 --tb=line -q
 ```
-Expected: **3 FAILED** (database.update_advisor_observation_raw_response absent).
+
+Expected RED summary:
+- `test_market_prism_sources_accessor.py`: 11 FAILED (accessor absent, mutation present)
+- `test_017_advisor_observations.py`: 1 FAILED (`test_no_update_advisor_observation_symbol_in_database_module`)
+- `test_patch_provenance.py`: 9 FAILED (v1 behavior, not INSERT)
+- `test_patch_provenance_render_contract.py`: 4 FAILED (accessor mock target absent)
+- `test_ai_advisor_tab_sources_merge.py`: 4 FAILED (route merge logic absent)
 
 ---
 
-## Production symbols to implement (ONLY these 3 — no gold-plating)
+## The v2 problem statement
 
-### Symbol 1: `database.update_advisor_observation_raw_response(row_id: int, raw_response: dict) -> None`
+The v1 design added `database.update_advisor_observation_raw_response` (a mutation
+accessor) and had `prism_scheduler._patch_provenance` UPDATE the existing MARKET_PRISM
+row. This violated the `advisor_observations` append-only contract and failed
+`test_017::test_no_update_advisor_observation_symbol_in_database_module` in full CI.
 
-**Location:** `database.py` — add after `insert_advisor_observation` (~line 1105)
+v2 fix: everything is now APPEND-ONLY. `_patch_provenance` INSERTs a new row with
+`advisor_role="MARKET_PRISM_SOURCES"`. The MARKET_PRISM row is NEVER modified.
+`app.py` fetches and merges the SOURCES row additively at render time.
 
-**Contract:**
-- Parameterized `UPDATE advisor_observations SET raw_response = ? WHERE id = ?`
-- Serialise `raw_response` dict to JSON string via `json.dumps`
-- Non-existent `row_id`: no-op (UPDATE affects 0 rows — that is fine, no exception)
-- D-1 never-raises: wrap entire body in `try/except Exception as exc`, log `type(exc).__name__` to stderr
-- No DB migration needed — `raw_response` is an existing JSON blob column
-- Use `get_connection()` (this is a write path)
+---
 
-Example skeleton:
-```python
-def update_advisor_observation_raw_response(row_id: int, raw_response: dict) -> None:
-    """Update raw_response on an advisor_observations row by id.
+## sov-db (sqlite-specialist) — implement these 3 symbols
 
-    Additive update — callers replace the full raw_response dict.
-    D-1 never-raises; non-existent row_id is a silent no-op.
-    No migration needed: raw_response is an existing JSON blob column.
-    """
-    try:
-        raw_str = json.dumps(raw_response)
-        conn = get_connection()
-        conn.execute(
-            "UPDATE advisor_observations SET raw_response = ? WHERE id = ?",
-            (raw_str, row_id),
-        )
-        conn.commit()
-        conn.close()
-    except Exception as exc:  # noqa: BLE001
-        print(
-            f"[database] UpdateRawResponseError: {type(exc).__name__}",
-            file=sys.stderr,
-        )
-```
+### Symbol 1 (DELETE): Remove `update_advisor_observation_raw_response` from database.py
 
-### Symbol 2: `prism_scheduler._patch_provenance(run_id: str, row: dict | None) -> bool`
+**Location:** database.py, around line 1108.
+**Action:** Delete the entire function. This is the v1 mutation accessor that fails test_017.
+**Verification:** After deletion, `test_017::test_no_update_advisor_observation_symbol_in_database_module` must PASS.
 
-**Location:** `prism_scheduler.py` — add before `main()`
+### Symbol 2 (ADD): `get_latest_market_prism_sources_for_run(run_id: str) -> dict | None`
+
+**Location:** database.py — add near `get_latest_market_prism_summary()` (~line 1225).
 
 **Contract:**
-- Guard: `if row is None` → return False (silent no-op)
-- Parse `raw_response` from `row`: if it is a string try `json.loads`; on parse failure → return False
-- If `raw_response` has no `per_lens_digest` → return False
-- For each of the 4 url-bearing lenses (`sentiment`, `macro`, `derivatives`, `fundamentals`):
-  - Call `ai_advisor._build_<lens>_section()` — wrap in `try/except Exception: continue`
-  - Collect `section.get("sources") or []`
-  - For each source call `ai_advisor.build_citation(source)` — keep only non-None results
-  - **AC-6 idempotency:** REPLACE (not append) `pld[lens]["article_corpus"] = valid_citations`
-    This makes re-patching idempotent — second call with same builders produces the same list
-- **technicals is EXCLUDED — never write article_corpus for technicals (AC-2)**
-- Persist via `database.update_advisor_observation_raw_response(row["id"], raw_response)`
-- Outer `try/except Exception` wraps everything (D-1): on error log `type(exc).__name__` and return False
-- Returns True on success (even if some lenses got 0 citations), False on no-op/error
+- Queries `advisor_observations WHERE advisor_role='MARKET_PRISM_SOURCES'`.
+- Matches on `raw_response["run_id"] == run_id` (parse JSON, compare in Python).
+- Returns the first matching row as a fully parsed dict (raw_response deserialized), or `None`.
+- On no match: return `None` — NEVER fall back to the latest SOURCES row if run_ids differ.
+  This is the no-stale-citation-bleed guard (AC-9).
+- D-1 never-raises: wrap in try/except Exception, return None on error.
+- Uses `get_ro_connection()` — read-only at driver level.
+- Implementer chooses the query mechanism (e.g., fetch a small window newest-first, filter in Python).
 
-**Lazy imports:** use `import ai_advisor` and `import database` inside the function body to
-avoid circular import issues (same pattern as other scheduler helper functions).
-
-Example skeleton:
+**Signature:**
 ```python
-def _patch_provenance(run_id: str, row: "dict | None") -> bool:
-    """Post-council patch: rebuild per-lens validated article_corpus citations
-    and persist them into the MARKET_PRISM row's raw_response.
+def get_latest_market_prism_sources_for_run(run_id: str) -> dict | None:
+    """Return the MARKET_PRISM_SOURCES advisor_observations row for this run_id, or None.
 
-    Reuses ai_advisor._build_*_section + build_citation — no reinvented logic.
-    D-1 never-raises; AC-4: does not gate or prevent sys.exit(0) in main().
-    Returns True if patch attempted, False if no-op/error.
+    Queries advisor_observations WHERE advisor_role='MARKET_PRISM_SOURCES', parses each
+    row's raw_response["run_id"], and returns the first row whose run_id matches the argument.
+    Returns None when no match exists — never falls back to a different run's row.
+
+    No-stale-citation-bleed guard (AC-9): a night where all lenses are unavailable
+    produces no SOURCES row; returning a different run's row would inject stale citations.
+
+    D-1 never-raises. Uses get_ro_connection().
     """
+```
+
+### Symbol 3 (ADD): `get_latest_market_prism_sources() -> dict | None`
+
+**Location:** database.py — add immediately after Symbol 2.
+
+**Contract:**
+- Returns the most recent MARKET_PRISM_SOURCES row by id, or None.
+- Does NOT filter by run_id — just latest row.
+- D-1 never-raises. Uses `get_ro_connection()`.
+
+**Signature:**
+```python
+def get_latest_market_prism_sources() -> dict | None:
+    """Return the most recent MARKET_PRISM_SOURCES advisor_observations row, or None.
+
+    Ordered by id DESC LIMIT 1. D-1 never-raises. Uses get_ro_connection().
+    """
+```
+
+### Also wire in `prism_scheduler._patch_provenance` (sov-db owns this file too)
+
+**Location:** prism_scheduler.py, `_patch_provenance` function (~line 236).
+
+The existing citation-build body (four builders, dedup-by-url, `build_citation`) is SOUND and
+stays. Replace ONLY the persistence step at the end (the current `update_advisor_observation_raw_response` call).
+
+**v2 persistence step — replace the current persistence block with:**
+
+```python
+# AC-6 idempotency: if a SOURCES row already exists for this run_id, skip INSERT.
+existing = _db.get_latest_market_prism_sources_for_run(run_id)
+if existing is not None:
+    return True  # already patched
+
+# INSERT the new append-only SOURCES row (v2: no UPDATE).
+_db.insert_advisor_observation(
+    advisor_role="MARKET_PRISM_SOURCES",
+    subject_type="portfolio",
+    subject_id="global",
+    verdict=None,
+    raw_response={"run_id": run_id, "per_lens_digest": sources_per_lens_digest},
+    symphony_id="",
+)
+return True
+```
+
+Where `sources_per_lens_digest` is the dict already built by the existing citation-build body:
+`{lens: {"article_corpus": [valid citations]}, ...}` for url-bearing lenses that had any citations.
+
+**Note on `insert_advisor_observation` call:** The existing function (database.py:1053) accepts
+`verdict: str | None = None` — passing `verdict=None` is fine. The `symphony_id=""` parameter
+is also accepted (migration 025 added that column).
+
+The function must also add `import database as _db` at top of function if not already present
+(it may already do a lazy import or use a module-level reference — match the existing import style).
+
+---
+
+## sov-flask (flask-dashboard-specialist) — implement the merge in app.py
+
+### Location: `ai_advisor_tab()` in app.py, around line 3694-3720
+
+Find the block that fetches `market_prism_summary` and the humanization block that follows it.
+Insert a SOURCES merge block BETWEEN them (after fetch, before humanize):
+
+```python
+# ------------------------------------------------------------------ #
+# Additively merge MARKET_PRISM_SOURCES article_corpus into the       #
+# per_lens_digest for url-bearing lenses (DE-PRISM-SOURCES-001 v2).  #
+# Matched by run_id — no stale citation bleed if run_ids differ.     #
+# ------------------------------------------------------------------ #
+if market_prism_summary:
     try:
-        if row is None:
-            return False
-        raw = row.get("raw_response") or {}
-        if isinstance(raw, str):
-            try:
-                import json as _json  # noqa: PLC0415
-                raw = _json.loads(raw)
-            except Exception:  # noqa: BLE001
-                return False
-        pld = raw.get("per_lens_digest")
-        if not isinstance(pld, dict):
-            return False
-
-        import ai_advisor  # noqa: PLC0415
-
-        _BUILDERS = {
-            "sentiment": ai_advisor._build_sentiment_section,
-            "macro": ai_advisor._build_macro_section,
-            "derivatives": ai_advisor._build_derivatives_section,
-            "fundamentals": ai_advisor._build_fundamentals_section,
-            # technicals intentionally omitted — AC-2: Alpaca bar data has no public urls
-        }
-
-        for lens, builder in _BUILDERS.items():
-            if lens not in pld:
-                continue
-            try:
-                section = builder()
-            except Exception:  # noqa: BLE001
-                continue  # D-1: this lens contributes no citations
-            sources = section.get("sources") or []
-            valid = [
-                c for c in (ai_advisor.build_citation(s) for s in sources)
-                if c is not None
-            ]
-            pld[lens]["article_corpus"] = valid  # AC-6: replace not append
-
-        import database as _db  # noqa: PLC0415
-
-        _db.update_advisor_observation_raw_response(row["id"], raw)
-        return True
-    except Exception as exc:  # noqa: BLE001
-        print(
-            f"[prism_scheduler] PatchProvenanceError: {type(exc).__name__}",
-            file=sys.stderr,
-        )
-        return False
+        _mp_raw = market_prism_summary.get("raw_response") or {}
+        if isinstance(_mp_raw, str):
+            import json as _json  # noqa: PLC0415
+            _mp_raw = _json.loads(_mp_raw)
+        _mp_run_id = _mp_raw.get("run_id") if isinstance(_mp_raw, dict) else None
+        if _mp_run_id:
+            _sources_row = database.get_latest_market_prism_sources_for_run(_mp_run_id)
+            if _sources_row is not None:
+                _src_raw = _sources_row.get("raw_response") or {}
+                _src_pld = _src_raw.get("per_lens_digest", {}) if isinstance(_src_raw, dict) else {}
+                _mp_pld = _mp_raw.get("per_lens_digest", {}) if isinstance(_mp_raw, dict) else {}
+                for _src_lens, _src_lens_data in _src_pld.items():
+                    if isinstance(_src_lens_data, dict) and isinstance(_mp_pld.get(_src_lens), dict):
+                        _corpus = _src_lens_data.get("article_corpus")
+                        if _corpus:
+                            _mp_pld[_src_lens]["article_corpus"] = _corpus
+    except Exception:
+        pass  # Merge failure must never crash the route — honest empty-state.
 ```
 
-### Symbol 3: Wire `_patch_provenance` into `prism_scheduler.main()`
+**Critical placement:** this merge block must come BEFORE the `humanize_lens_summary` block,
+so the article_corpus is present in per_lens_digest when humanization runs.
 
-**Location:** `prism_scheduler.py`, `main()` function — in the SUCCESS path (currently around line 259-262).
-
-**Current code:**
-```python
-if row is not None:
-    print("[prism_scheduler] Run completed successfully.")
-    sys.exit(0)
-```
-
-**Change to:**
-```python
-if row is not None:
-    print("[prism_scheduler] Run completed successfully.")
-    _patch_provenance(run_id, row)  # AC-4: D-1 never-raises; does not gate sys.exit(0)
-    sys.exit(0)
-```
-
-**AC-4 critical:** `_patch_provenance` must NOT prevent `sys.exit(0)`. Its D-1 contract
-ensures it never raises, so `sys.exit(0)` always fires after it returns. The council
-run's success verdict is independent of whether the patch succeeds.
+**Contract:**
+- If `market_prism_summary` is None: skip entirely (no-op).
+- Extract `run_id` from `market_prism_summary["raw_response"]["run_id"]`.
+- Call `database.get_latest_market_prism_sources_for_run(run_id)` -> `sources_row`.
+- If `sources_row` is None (no SOURCES row for this run): skip merge entirely.
+  NEVER fall back to `database.get_latest_market_prism_sources()` — that would bleed
+  stale citations from a different run (AC-9 hard requirement).
+- If `sources_row` present: merge `sources_row["raw_response"]["per_lens_digest"][lens]["article_corpus"]`
+  into `market_prism_summary["raw_response"]["per_lens_digest"][lens]` for each matching lens.
+- Entire block wrapped in try/except — never crashes the route.
+- Template: UNCHANGED.
 
 ---
 
 ## GREEN target
 
-After implementing the 3 symbols:
+After implementing all symbols (sov-db + sov-flask):
 
-```bash
-cd C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/sov-sources
-
-# Prism scheduler unit tests + render-contract
-python -m pytest tests/prism_scheduler/test_patch_provenance.py tests/prism_scheduler/test_patch_provenance_render_contract.py -n0 -q
-
-# DB accessor tests
-DB_PATH=/tmp/test_sov_sources_db.db python -m pytest tests/database/test_update_advisor_observation_raw_response.py -n0 -q
+```
+DB_PATH=/tmp/sov_v2_green.db python -m pytest \
+  tests/database/test_market_prism_sources_accessor.py \
+  tests/database/test_017_advisor_observations.py \
+  tests/prism_scheduler/test_patch_provenance.py \
+  tests/prism_scheduler/test_patch_provenance_render_contract.py \
+  tests/app/test_ai_advisor_tab_sources_merge.py \
+  -n0 -q
 ```
 
-Target: **12 passed / 0 failed / 0 errors** total across both runs.
+Target: **ALL passed / 0 failed / 0 errors** across all 5 files.
 
 Then ruff check + format on changed files:
-```bash
-python -m ruff check prism_scheduler.py database.py
-python -m ruff format --check prism_scheduler.py database.py
+```
+python -m ruff check database.py prism_scheduler.py app.py
+python -m ruff format --check database.py prism_scheduler.py app.py
 ```
 
 ---
 
 ## Scope boundaries (do NOT touch)
 
-- `templates/ai_advisor.html` — already renders article_corpus correctly (no change)
-- `app.py` — no route change needed
-- No DB migration — raw_response is an existing column
-- `advisors/lens_pipeline.py` — reuse, do not modify
-- `.claude/agents/prism-*.md` role files — do not change
-- Do NOT create a PR or merge to main
+- `templates/ai_advisor.html` — already renders article_corpus correctly (no change).
+- `.claude/agents/prism-*.md` role files — do not change (synthesizer keeps writing MARKET_PRISM).
+- No DB migration — no new columns, no schema changes.
+- Do NOT create a PR or merge to main — PM owns the ship gate.
+- Do NOT run the full/uncapped/-n>4 pytest suite — it reboots the host.
 
 ---
 
 ## After GREEN
 
-Run the two test commands above; confirm 12 passed / 0 failed / 0 errors.
+Run the 5-file bounded -n0 suite and confirm all pass / 0 failed / 0 errors.
 Commit path-scoped (NOT `git add -A`):
-```bash
-git add prism_scheduler.py database.py
-git commit -m "fix(prism-sources): _patch_provenance + update_advisor_observation_raw_response (DE-PRISM-SOURCES-001)"
+```
+git -C "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/sov-sources" \
+  add database.py prism_scheduler.py app.py
+git -C "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/sov-sources" \
+  commit -m "fix(prism-sources): v2 append-only SOURCES row + merge (DE-PRISM-SOURCES-001)"
 ```
 
-Then `SendMessage` sov-test: "GREEN — <N> passed / 0 failed / 0 errors. SHA=<sha>. Ready for review cycle."
+Then `SendMessage` the PM (team-lead) "GREEN: <N> passed / 0 failed / 0 errors. SHA=<sha>. Ready for review cycle."
