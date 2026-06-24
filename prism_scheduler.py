@@ -292,6 +292,18 @@ def _patch_provenance(run_id: str, row: "dict | None") -> bool:
                     art = {**art, "lens": lens}
                 candidates.append(art)
 
+            # Dedup by url (first occurrence wins) — sentiment puts the same articles
+            # in both sources (citation-shaped) and article_corpus (raw dicts), so the
+            # union would otherwise double every entry.
+            seen_urls: set[str] = set()
+            deduped: list[dict] = []
+            for c in candidates:
+                url = c.get("url", "")
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    deduped.append(c)
+            candidates = deduped
+
             valid = [c for c in (ai_advisor.build_citation(s) for s in candidates) if c is not None]
             pld[lens]["article_corpus"] = valid  # AC-6: replace not append
 
