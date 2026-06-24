@@ -3245,29 +3245,44 @@ Final four-item scope table (code confirmed at branch HEAD; 60ed9ca revert db6fd
 - `static/index.js` — `EventSource` subscription + `cycle-complete` handler (index.js:1381–1385); `showConnectionLost()` (index.js:1299–1310) **[AC-8 selector fix, cycle 2026-06-23]:** now targets `#engine-status-dot`, `#engine-status-label`, `#hero-data-as-of` (real production element IDs from `_chrome.html:51-53` / `index.html:846`). Prior code targeted `#engine-status-badge` / `[data-testid="data-as-of"]` / `.data-as-of` — none of which exist in the template — so the staleness cue was a silent no-op on a dropped connection.
 - `tests/realtime_push/` — 6 test modules covering AC-1 through AC-8 (32 tests, all GREEN at HEAD a077c7e)
 
-## DE-PRISM-SOURCES-001 — Deterministic post-council citation patch for Overview sources provenance (2026-06-24)
+## DE-PRISM-SOURCES-001 — Append-only MARKET_PRISM_SOURCES row for Overview sources provenance (2026-06-24)
 
 ### Problem
 
 The council's MARKET_PRISM rows had empty `article_corpus` lists in their `per_lens_digest` entries. The Overview tab rendered lens source attribution as plain text labels only — no clickable provenance links. The prism-synthesizer writes the `MARKET_PRISM` observation from council deliberation prose; asking the LLM to also emit structured `{url, title, published}` citation dicts for each lens in a reliable, consistently-shaped JSON payload is brittle: the synthesizer is non-deterministic, cannot be forced to emit machine-readable citation fields reliably, and threading citation structure into the council protocol would require modifying all 6 prism-*.md agent role files.
 
-### Decision: deterministic post-council `_patch_provenance` in `prism_scheduler.py`
+### v1 Design — REJECTED (2026-06-24)
 
-After the council completes and the MARKET_PRISM row is confirmed in the DB (F-4 row-verification), `_run_prism()` calls `_patch_provenance(run_id, row)` to rebuild validated citation urls deterministically and persist them into the row's `raw_response`.
+The initial implementation wrote citation data by **UPDATE**-ing the existing MARKET_PRISM row's `raw_response` blob via a new `update_advisor_observation_raw_response` accessor in `database.py`. This violated the `advisor_observations` table's append-only invariant (documented in `database.md` §Advisor Observations) and was blocked by `test_017` in CI. The accessor was removed.
+
+### Decision (v2): deterministic post-council `_patch_provenance` inserts an append-only MARKET_PRISM_SOURCES row
+
+After the council completes and the MARKET_PRISM row is confirmed in the DB (F-4 row-verification), `_run_prism()` calls `_patch_provenance(run_id, row)` to rebuild validated citation urls deterministically and persist them as a **new, separate** `advisor_observations` row with `advisor_role="MARKET_PRISM_SOURCES"`.
 
 **Why this over LLM-threading:**
 
 | Option | Problem |
 |--------|---------|
 | Thread citations into the synthesizer's output prompt | Non-deterministic; synthesizer can drop, hallucinate, or mis-shape citation dicts; requires modifying the council protocol and all analyst role files; hard to write reliable RED tests for LLM output shape |
-| Post-council deterministic patch (chosen) | Pure function on a known DB row — TDD-able, fully deterministic, independently testable; reuses already-validated `build_citation` from `lens_pipeline`/`ai_advisor` (no reinvented citation logic); no template change; no schema migration (existing `raw_response` JSON blob column); council protocol and agent role files untouched |
+| Post-council deterministic patch (chosen) | Pure function on a known DB row — TDD-able, fully deterministic, independently testable; reuses already-validated `build_citation` from `lens_pipeline`/`ai_advisor` (no reinvented citation logic); no template change; no schema migration; council protocol and agent role files untouched |
 
-### Implementation contract
+**Why a new row over UPDATE:**
 
-- `_patch_provenance(run_id: str, row: dict | None) -> bool` (`prism_scheduler.py:236`) — for each url-bearing lens (sentiment, macro, derivatives, fundamentals) calls the corresponding `ai_advisor._build_*_section()` builder, collects validated citations from `section["sources"]` and `section["article_corpus"]`, and replaces `per_lens_digest[lens]["article_corpus"]` in the row's `raw_response`. Replace-not-append makes re-patching idempotent (AC-6).
-- **technicals excluded intentionally (AC-2):** Alpaca bar data has no public URLs; `article_corpus` for the technicals lens is left empty.
-- **D-1 never-raises (AC-4):** the patch does not gate or prevent `sys.exit(0)` in `main()`. A failed patch is silent; reporting and the council run are unaffected.
-- `update_advisor_observation_raw_response(row_id: int, raw_response: dict) -> None` (`database.py:1108`) — additive UPDATE of the `raw_response` JSON blob by row id. Non-existent `row_id` is a silent no-op. No migration needed (existing column).
+| Option | Problem |
+|--------|---------|
+| UPDATE existing MARKET_PRISM row (v1 — rejected) | Violates `advisor_observations` append-only invariant; broke `test_017` in CI; requires a non-standard UPDATE accessor that has no other callers and no future use |
+| INSERT separate MARKET_PRISM_SOURCES row (v2 — chosen) | Fully append-only; uses the existing `insert_advisor_observation` accessor unchanged; isolated from the synthesizer's row (no race); independently queryable by run_id |
+
+### Implementation contract (v2)
+
+- `_patch_provenance(run_id: str, row: dict | None) -> bool` in `prism_scheduler.py` — for each url-bearing lens (sentiment, macro, derivatives, fundamentals) calls the corresponding `ai_advisor._build_*_section()` builder, collects validated citations from `section["sources"]` and `section["article_corpus"]`, and assembles `raw_response.per_lens_digest[lens].article_corpus = [{url, title, published}]`. Persists via `database.insert_advisor_observation(advisor_role="MARKET_PRISM_SOURCES", subject_id="global", ...)`. One SOURCES row per council run; keyed by `run_id`.
+- **technicals excluded intentionally (AC-2):** Alpaca bar data has no public URLs; `article_corpus` for the technicals lens is left as an empty list.
+- **D-1 never-raises (AC-4):** the patch does not gate or prevent `sys.exit(0)` in `main()`. A failed patch is logged as `type(exc).__name__` only; the council run is unaffected.
+- **`update_advisor_observation_raw_response` DELETED** from `database.py` — the v1 UPDATE accessor is removed. No callers remain.
+- **New read-only accessors in `database.py`:**
+  - `get_latest_market_prism_sources() -> dict | None` — returns the most recent MARKET_PRISM_SOURCES row, deserialized.
+  - `get_latest_market_prism_sources_for_run(run_id: str) -> dict | None` — returns the SOURCES row whose `raw_response.run_id` matches. Returns `None` on run_id mismatch — **no fallback to a different run's citations** (stale-citation-bleed guard).
+- **`app.py` `ai_advisor_tab()`** — after fetching `market_prism_summary` (the MARKET_PRISM row), additively fetches the SOURCES row via `get_latest_market_prism_sources_for_run(run_id)` and merges `article_corpus` lists from SOURCES into `per_lens_digest` entries in the MARKET_PRISM summary before template render. Returns honest empty-state (no `article_corpus`) when the SOURCES row is absent or `run_id` mismatches. Template unchanged.
 
 ### Reference
 

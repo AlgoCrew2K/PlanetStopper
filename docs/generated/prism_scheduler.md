@@ -3,7 +3,7 @@
 > Nightly Market Prism scheduler wrapper — invokes the Market Prism council via a vanilla-primary headless Claude session, triggered by Windows Task Scheduler (Option B, daemon-decoupled).
 
 **Source:** `prism_scheduler.py`
-**Last updated:** 2026-06-19 (DE-PRISM-SUB-AUTH-001: subprocess pops ANTHROPIC_API_KEY to force subscription billing)
+**Last updated:** 2026-06-24 (DE-PRISM-SOURCES-001: `_patch_provenance` appends MARKET_PRISM_SOURCES row for Overview citations; DE-PRISM-SUB-AUTH-001: subprocess pops ANTHROPIC_API_KEY)
 
 ## Overview
 
@@ -80,7 +80,24 @@ Calls `database.get_latest_market_prism_summary()` and confirms `raw_response["r
 
 Patchable in tests as `patch.object(mod, "_get_market_prism_row_for_run", ...)`. Pre-existing happy-path tests supply a `_SAMPLE_MARKET_PRISM_ROW` fixture; `TestMarketPrismRowVerification` tests exercise the `None` path (false-green kill) and the retry-on-empty path.
 
+### `_patch_provenance(run_id: str, row: dict | None) -> bool`
+
+Post-council citation builder (DE-PRISM-SOURCES-001 v2). Called by `main()` after F-4 row-verification confirms the MARKET_PRISM row exists. Builds structured citation metadata deterministically from the same `ai_advisor._build_*_section()` builders used by the nightly `lens_pipeline`, then inserts a new append-only `advisor_observations` row with `advisor_role="MARKET_PRISM_SOURCES"`.
+
+**Behavior:**
+- For each url-bearing lens (`sentiment`, `macro`, `derivatives`, `fundamentals`) calls the corresponding `ai_advisor._build_*_section()` builder and collects `{url, title, published}` dicts from `section["sources"]` and `section["article_corpus"]`.
+- Deduplicates by url across the two source lists.
+- Assembles `raw_response = {"run_id": run_id, "per_lens_digest": {lens: {"article_corpus": [...]}}}`.
+- Calls `database.insert_advisor_observation(advisor_role="MARKET_PRISM_SOURCES", subject_id="global", raw_response=..., ...)`.
+
+**technicals excluded intentionally (AC-2):** Alpaca bar data has no public URLs; `article_corpus` for the technicals lens is omitted from the SOURCES row.
+
+**D-1 / never-raises (AC-4):** A failed patch (builder exception, DB error) is logged as `type(exc).__name__` only and returns `False`. Does not gate or prevent `sys.exit(0)` — the council run is unaffected.
+
+**One SOURCES row per run:** Keyed by `run_id`. The corresponding `get_latest_market_prism_sources_for_run(run_id)` accessor rejects rows from a different run_id, preventing stale-citation bleed.
+
 ### `_run_prism(run_id: str = "unknown") -> bool`
+
 
 Invokes the Market Prism council as a vanilla-primary headless subprocess. Returns `True` on `returncode == 0`, `False` on non-zero or exception.
 
@@ -149,7 +166,7 @@ All error paths surface `type(exc).__name__` only — no raw exception messages,
 
 ## Internal Dependencies
 
-- `database` — `get_latest_market_prism_summary()` (idempotency check + F-4 row verification in `_get_market_prism_row_for_run`) + `insert_prism_audit_entry()` (spend logging); both lazy-imported inside their respective wrappers
+- `database` — `get_latest_market_prism_summary()` (idempotency check + F-4 row verification in `_get_market_prism_row_for_run`) + `insert_prism_audit_entry()` (spend logging) + `insert_advisor_observation()` (MARKET_PRISM_SOURCES row written by `_patch_provenance`); all lazy-imported inside their respective wrappers
 - `dotenv` — `.env` loading (lazy import inside `_load_env()`)
 - `subprocess` — headless `claude` invocation
 - `uuid` — `uuid4()` run_id generation in `main()`

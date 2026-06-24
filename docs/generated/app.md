@@ -358,7 +358,7 @@ Unified single-page render for all 6 in-place tab panels. Server-side assembles 
 | `chat_available` | `bool(os.environ.get("ANTHROPIC_API_KEY"))` — key presence only, value never passed to template | Chat |
 | `sb_observations` | `database.get_advisor_observations_for_role("STRATEGY_BUILDER")`, reversed (oldest-first); empty list on error | Strategy Builder |
 | `sb_card_artifacts` | dict keyed by `obs["id"]`; each value is an M6 `strategy_proposal` artifact dict for the Discuss/Chat affordance; built from `raw_response` fields per observation | Strategy Builder |
-| `market_prism_summary` | `database.get_latest_market_prism_summary()`; `dict` or `None`; wrapped in `try/except` — `None` on failure renders an informative empty state; **RF-1:** `per_lens_digest` summaries are pre-humanized in-place by `advisors.prism_render.humanize_lens_summary` before template render (no new context key — template's existing `_lens.get('summary')` reads humanized prose) | Overview (Market Prism block) |
+| `market_prism_summary` | `database.get_latest_market_prism_summary()`; `dict` or `None`; wrapped in `try/except` — `None` on failure renders an informative empty state; **RF-1:** `per_lens_digest` summaries are pre-humanized in-place by `advisors.prism_render.humanize_lens_summary` before template render (no new context key — template's existing `_lens.get('summary')` reads humanized prose); **DE-PRISM-SOURCES-001:** if non-None, the MARKET_PRISM row's `run_id` is used to fetch the matching MARKET_PRISM_SOURCES row via `database.get_latest_market_prism_sources_for_run(run_id)` and `article_corpus` lists are merged into `per_lens_digest` entries before render — honest empty-state (no `article_corpus`) when the SOURCES row is absent or mismatched | Overview (Market Prism block) |
 
 The Correlations, API-key, Symphonies, Strategy Builder, and Market Prism data assembly sections are wrapped in `try/except` — if those panels' data fails, the others still render. The Overview observations loop is not wrapped.
 
@@ -369,6 +369,10 @@ The Correlations, API-key, Symphonies, Strategy Builder, and Market Prism data a
 - **R2 (obs-raw-preview):** For each non-MARKET_PRISM observation in `observations`, `ai_advisor_tab()` stamps `obs["_preview_text"] = humanize_obs_preview(obs["raw_response"])` (app.py:2892–2902). The template renders `obs.get('_preview_text', '') | e` for non-MARKET_PRISM rows and `obs.verdict | e` for MARKET_PRISM rows.
 
 See `DE-RF1-PROSE-RENDER` in `DECISIONS.md` and [advisors/prism_render](advisors_prism_render.md).
+
+**DE-PRISM-SOURCES-001 (Overview citation overlay):**
+
+After RF-1 humanization, if `market_prism_summary` is present, `ai_advisor_tab()` fetches the SOURCES row via `database.get_latest_market_prism_sources_for_run(market_prism_summary["raw_response"]["run_id"])`. If the SOURCES row is found, its `per_lens_digest[lens]["article_corpus"]` lists are merged into the corresponding entries in `market_prism_summary["raw_response"]["per_lens_digest"]` before template render. If the SOURCES row is `None` (absent, run_id mismatch, or DB error), `per_lens_digest` is unchanged — lenses render without clickable citation links (honest empty-state). Template is unchanged.
 
 #### `GET /ai-advisor/correlations` → 302 redirect to `/ai-advisor`
 #### `GET /ai-advisor/asset-swaps` → 302 redirect to `/ai-advisor`
