@@ -718,3 +718,165 @@ def test_never_raises_on_formatting_error(capsys, monkeypatch):
                 )
 
     # result may be True or False depending on implementation; key invariant is no raise
+
+
+# ---------------------------------------------------------------------------
+# AC-4 (extended) — _council_env credentials beyond OAUTH+API_KEY must be redacted
+#
+# _run_prism builds _council_env = os.environ.copy() then pops only
+# ANTHROPIC_API_KEY.  All other .env credentials (COMPOSER_SECRET, ALPACA_SECRET,
+# DISCORD_WEBHOOK_URL, etc.) remain in _council_env and are passed verbatim to
+# the council subprocess.  If those values appear in subprocess stderr/stdout,
+# they must NOT reach the logs.  None of their formats match the three shape
+# regexes, so secret_values must cover all credential-keyed env vars in
+# _council_env — not just CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_API_KEY.
+#
+# Reviewer Finding 1 (council-review, commit 6cfb935): BLOCKER — these three
+# credential classes are structurally absent from secret_values and would appear
+# unredacted in journald on a real Composer/Alpaca/Discord auth failure.
+# ---------------------------------------------------------------------------
+
+
+def test_does_not_leak_composer_secret_from_council_env(capsys, monkeypatch):
+    """COMPOSER_SECRET from _council_env appearing in subprocess stderr must be redacted.
+
+    _council_env = os.environ.copy() passes ALL .env credentials to the subprocess.
+    Only CLAUDE_CODE_OAUTH_TOKEN + ANTHROPIC_API_KEY are in the original secret_values;
+    COMPOSER_SECRET has no matching shape regex and will survive unredacted unless
+    secret_values is extended to sweep the full _council_env for credential-keyed vars.
+    """
+    composer_secret = "COMPOSER_SECRET_VALUE_XYZ_PLAINTEXT_9876"
+    monkeypatch.setenv("COMPOSER_SECRET", composer_secret)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    stderr_with_creds = (
+        f"Authorization failed: COMPOSER_SECRET={composer_secret} was rejected by Composer API"
+    )
+    with patch(
+        "prism_scheduler.subprocess.run",
+        return_value=_make_proc(1, stderr=stderr_with_creds),
+    ):
+        prism_scheduler._run_prism("run-id-composer-secret-leak")
+
+    captured = capsys.readouterr()
+    assert composer_secret not in captured.out + captured.err, (
+        "COMPOSER_SECRET from _council_env must not appear in any log output — "
+        "secret_values must cover all credential-keyed env vars in _council_env, "
+        "not only CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_API_KEY"
+    )
+    assert _REDACTED in captured.out + captured.err, (
+        "***REDACTED*** must appear in the log when a COMPOSER_SECRET value was replaced"
+    )
+
+
+def test_does_not_leak_alpaca_secret_from_council_env(capsys, monkeypatch):
+    """ALPACA_SECRET_KEY from _council_env appearing in subprocess stdout must be redacted.
+
+    ALPACA_SECRET_KEY is present in _council_env (inherited from os.environ after
+    _load_env).  An Alpaca 401 error in subprocess output would echo this value.
+    It matches no shape regex (no sk-ant-/sk-/oat_ prefix).
+    """
+    alpaca_secret = "alpaca_secret_key_ABCDEFGHIJ_plaintext_live"
+    monkeypatch.setenv("ALPACA_SECRET_KEY", alpaca_secret)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    stdout_with_secret = f'{{"error": "unauthorized", "key_used": "{alpaca_secret}", "code": 401}}'
+    with patch(
+        "prism_scheduler.subprocess.run",
+        return_value=_make_proc(1, stdout=stdout_with_secret, stderr="council error"),
+    ):
+        prism_scheduler._run_prism("run-id-alpaca-secret-leak")
+
+    captured = capsys.readouterr()
+    assert alpaca_secret not in captured.out + captured.err, (
+        "ALPACA_SECRET_KEY from _council_env must not appear in any log output"
+    )
+    assert _REDACTED in captured.out + captured.err
+
+
+def test_does_not_leak_discord_webhook_from_council_env(capsys, monkeypatch):
+    """DISCORD_WEBHOOK_URL from _council_env appearing in subprocess stderr must be redacted.
+
+    A Discord webhook URL is a bearer-equivalent secret — possession = ability to
+    post to the channel.  It has no token shape matching any of the three regexes
+    (no sk-ant-/sk-/oat_ prefix) and would appear unredacted in journald unless
+    secret_values covers it.
+    """
+    discord_webhook = "https://discord.com/api/webhooks/111222333/abcdefghijklmnop_secret_token"
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", discord_webhook)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    stderr_with_webhook = (
+        f"Discord notification failed: POST {discord_webhook} returned 401 Unauthorized"
+    )
+    with patch(
+        "prism_scheduler.subprocess.run",
+        return_value=_make_proc(1, stderr=stderr_with_webhook),
+    ):
+        prism_scheduler._run_prism("run-id-discord-webhook-leak")
+
+    captured = capsys.readouterr()
+    assert discord_webhook not in captured.out + captured.err, (
+        "DISCORD_WEBHOOK_URL from _council_env must not appear in any log output"
+    )
+    assert _REDACTED in captured.out + captured.err
+
+
+def test_full_env_credential_sweep_no_value_leaks(capsys, monkeypatch):
+    """Master sweep: ALL .env credential classes present in _council_env must be redacted.
+
+    Plants five distinct credential values across five env vars (two named explicitly
+    in the original secret_values, three that are absent but present in _council_env).
+    Embeds all five in mocked stderr AND stdout.  Reads the entirety of capsys output
+    and asserts none of the five values appears as a substring anywhere.
+
+    This is the regression guard for the full expanded-secret_values fix.
+    """
+    oauth_token = "oat_SWEEPTOKEN_MASTER_AAAAAAA"  # matches oat_ shape regex too
+    api_key = "sk-ant-sweep-master-BBBBBBBB"  # matches sk-ant- shape regex too
+    composer_secret = "COMPOSER_MASTER_SECRET_99999_plaintext"
+    alpaca_secret = "alpaca_master_secret_ZZZZZZZZZ_live"
+    discord_webhook = "https://discord.com/api/webhooks/999888777/master_sweep_secret_token_xyz"
+
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", oauth_token)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", api_key)
+    monkeypatch.setenv("COMPOSER_SECRET", composer_secret)
+    monkeypatch.setenv("ALPACA_SECRET_KEY", alpaca_secret)
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", discord_webhook)
+
+    poisoned_stderr = (
+        f"oauth={oauth_token} api_key={api_key} composer={composer_secret} alpaca={alpaca_secret}"
+    )
+    poisoned_stdout = (
+        f'{{"discord": "{discord_webhook}", "composer": "{composer_secret}", '
+        f'"alpaca": "{alpaca_secret}"}}'
+    )
+
+    with patch(
+        "prism_scheduler.subprocess.run",
+        return_value=_make_proc(1, stderr=poisoned_stderr, stdout=poisoned_stdout),
+    ):
+        prism_scheduler._run_prism("run-id-full-env-sweep")
+
+    captured = capsys.readouterr()
+    full_output = captured.out + captured.err
+
+    secrets_that_must_not_appear = {
+        "oauth_token": oauth_token,
+        "api_key": api_key,
+        "composer_secret": composer_secret,
+        "alpaca_secret": alpaca_secret,
+        "discord_webhook": discord_webhook,
+    }
+    for name, value in secrets_that_must_not_appear.items():
+        assert value not in full_output, (
+            f"{name} ({value[:20]}…) must not appear anywhere in captured log output — "
+            "secret_values must sweep ALL credential-keyed env vars in _council_env"
+        )
+
+    assert _REDACTED in full_output, (
+        "***REDACTED*** must appear at least once when credentials were redacted"
+    )
