@@ -880,3 +880,88 @@ def test_full_env_credential_sweep_no_value_leaks(capsys, monkeypatch):
     assert _REDACTED in full_output, (
         "***REDACTED*** must appear at least once when credentials were redacted"
     )
+
+
+# ---------------------------------------------------------------------------
+# Over-redaction guard — short/common marker-keyed values must NOT be redacted
+#
+# A credential-marker sweep (keys containing SECRET/KEY/TOKEN/…) that lacks a
+# minimum-value-length floor will pull in vars like `LOG_LEVEL=1`, `X_KEY=yes`,
+# `SOME_TOKEN=true`, etc.  Redacting "1", "yes", or "true" everywhere destroys
+# diagnostic value — every returncode, integer, and common word in the log gets
+# censored.  The fix must skip values shorter than a minimum floor (e.g. 8 chars).
+# ---------------------------------------------------------------------------
+
+
+def test_short_secret_marker_keyed_value_not_redacted(capsys, monkeypatch):
+    """An env var with a credential-marker key but a SHORT value must NOT be redacted.
+
+    A credential-marker sweep without a minimum-value-length floor pulls in vars
+    like LOG_LEVEL_KEY=info42 (6 chars).  Redacting 'info42' everywhere corrupts
+    the diagnostic.  The fix must skip values below a named min-length constant
+    (e.g. _MIN_SWEEP_SECRET_LEN = 8).
+
+    The distinctive value 'info42' is embedded in the mocked stderr WITHOUT the
+    key name.  An implementation without the floor replaces it with ***REDACTED***,
+    failing the assertion — that is the intended RED signal to drive the fix.
+    """
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    # 6-char value — distinctive enough not to appear accidentally in the diagnostic
+    # prefix text, and safely below any reasonable min-length floor (e.g. 8 chars).
+    # The key contains "KEY" so a naive marker sweep includes this value.
+    short_value = "info42"
+    monkeypatch.setenv("LOG_LEVEL_KEY", short_value)
+
+    # Embed the value in stderr WITHOUT the key name — the only path the assertion
+    # can pass is if the value itself survives unredacted.
+    # No floor:    "severity=info42" → "severity=***REDACTED***" → assertion FAILS.
+    # With floor:  "severity=info42" unchanged               → assertion PASSES.
+    stderr_with_short_value = f"Process exited: severity={short_value} returncode=1"
+    with patch(
+        "prism_scheduler.subprocess.run",
+        return_value=_make_proc(1, stderr=stderr_with_short_value),
+    ):
+        prism_scheduler._run_prism("run-id-over-redact-guard")
+
+    captured = capsys.readouterr()
+    full_output = captured.out + captured.err
+
+    # "info42" must survive in the log.  If swept into secret_values without a
+    # min-length floor it is replaced everywhere and the assertion fails.
+    assert short_value in full_output, (
+        f"Short ({len(short_value)}-char) marker-keyed value {short_value!r} must NOT "
+        "be replaced by ***REDACTED*** — the min-length floor (_MIN_SWEEP_SECRET_LEN) "
+        "must exclude values shorter than 8 chars from secret_values to prevent "
+        "corrupting diagnostic output (common config values, short strings)"
+    )
+
+
+def test_benign_non_marker_env_var_never_redacted(capsys, monkeypatch):
+    """Env vars with no credential-marker in their key must never be redacted.
+
+    Only vars whose key contains a marker (SECRET/KEY/TOKEN/WEBHOOK/PASSWORD/URI)
+    are candidates for redaction.  A long benign value in an innocent key (e.g.
+    PYTHONPATH, HOME, TERM, PATH fragment) must pass through unmolested.
+    """
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    # Benign env var — long value, no credential marker in key
+    benign_value = "very_long_benign_value_abcdefghijklmnop_definitely_not_a_secret"
+    monkeypatch.setenv("PYTHONPATH_EXTRA", benign_value)
+
+    stderr_with_benign = f"Subprocess stderr mentioning PYTHONPATH_EXTRA={benign_value}"
+    with patch(
+        "prism_scheduler.subprocess.run",
+        return_value=_make_proc(1, stderr=stderr_with_benign),
+    ):
+        prism_scheduler._run_prism("run-id-benign-no-redact")
+
+    captured = capsys.readouterr()
+    # The benign value must not be redacted — only marker-keyed vars are in scope
+    assert benign_value in captured.err, (
+        f"Benign non-marker-keyed value must appear unredacted in the log; "
+        f"got: {captured.err[:200]!r}"
+    )
