@@ -183,6 +183,65 @@ def _disable_auth_for_tests(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_account_totals_cache():
+    """Reset app._account_totals_cache to a clean state before and after every test.
+
+    Root cause addressed: tests/app/test_app_routes.py and tests/execution/
+    test_reliability_expansion.py exercise trigger_alpha_bot(), which calls
+    _notify_cycle_complete() in its ``finally`` block.  _notify_cycle_complete()
+    does two things that leave the cache dirty:
+
+      1. Calls _account_totals_cache.mark_stale() — sets _stale=True, causing
+         every subsequent _StaleFlagDict.get() to return None regardless of what
+         is in the dict.
+      2. Spawns a daemon "cycle-refresh" thread that runs _refresh_account_totals().
+         In CI (no real Composer credentials), the thread fails and never calls
+         refresh_written(), so _stale stays True until either clear() or a
+         successful refresh.
+
+    Without this fixture, any test on the same xdist worker AFTER those tests
+    will see _account_totals_cache.get("portfolio_cr") return None — even after
+    monkeypatch.setitem injects a value — because _StaleFlagDict.get() short-
+    circuits on _stale=True before reading the underlying dict.
+
+    Fix: before and after every test, join any live "cycle-refresh" threads (up
+    to _CYCLE_REFRESH_JOIN_TIMEOUT each) so no lagging thread can race with the
+    next test's cache state, then hard-reset the cache via clear() (resets dict
+    contents + _stale flag per _StaleFlagDict.clear) and refresh_written()
+    (belt-and-suspenders in case a thread squeezed in a mark_stale() between the
+    join and the clear).
+
+    This fixture is scoped to the entire suite.  tests/realtime_push/conftest.py
+    defines an identically-named fixture whose narrower scope overrides this one
+    for realtime_push tests — that is intentional (the local fixture is fully
+    compatible and adds realtime_push-specific documentation).
+    """
+    import threading
+
+    import app as _app_module
+
+    _CYCLE_REFRESH_JOIN_TIMEOUT = 0.5
+
+    def _drain_and_reset():
+        for t in threading.enumerate():
+            if t.name == "cycle-refresh" and t.is_alive():
+                t.join(timeout=_CYCLE_REFRESH_JOIN_TIMEOUT)
+        cache = _app_module._account_totals_cache
+        cache.clear()  # dict.clear() works on both plain dict and _StaleFlagDict
+        # refresh_written() only exists on _StaleFlagDict; guard for tests that
+        # monkeypatch.setattr(_account_totals_cache, plain_dict) during the test body
+        # — those tests' teardown runs before monkeypatch restores the original.
+        _rw = getattr(cache, "refresh_written", None)
+        if callable(_rw):
+            _rw()  # belt-and-suspenders: ensure _stale=False even if a thread
+            # squeezed in a mark_stale() between the join and the clear
+
+    _drain_and_reset()
+    yield
+    _drain_and_reset()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_db(tmp_path, monkeypatch):
     """Redirect DB_PATH to a per-test temp file for every test in the suite.
 
