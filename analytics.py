@@ -1080,6 +1080,67 @@ def get_portfolio_cumulative_return_account_basis(
     return {"if_held": account_if_held, "dry_run": dry_run_account}
 
 
+def get_portfolio_today_change_account_basis(
+    vw_tc: dict,
+    account_if_held_tc: float,
+    account_value: float,
+    symphony_value_sum: float,
+) -> dict:
+    """Re-express portfolio Today's Change on an account (cash-inclusive) basis.
+
+    The VW portfolio TC is computed over invested capital only (cash excluded).
+    The Composer "Held" figure (todays_percent_change) uses account value as the
+    denominator (cash-inclusive).  Subtracting the two is a scope artefact, not
+    guard alpha.
+
+    This function translates the bot's guard-alpha DIVERGENCE from VW symphony-basis
+    to account-basis so that Bot and Held share a common denominator:
+
+        guard_delta_vw = vw_tc["dry_run"] - vw_tc["if_held"]   # pure guard effect, VW basis
+        invested_frac  = symphony_value_sum / account_value     # fraction of account deployed
+        dry_run_account = account_if_held_tc + guard_delta_vw * invested_frac
+
+    The guard effect is measured against the VW if_held (same denominator as dry_run),
+    then scaled by invested_frac so it is expressed as a fraction of account value,
+    then applied to the account-level Held today-change.
+
+    Args:
+        vw_tc:               {"if_held": float, "dry_run": float | None} — VW portfolio TC
+                             Both fields use symphony value-sum as denominator.
+        account_if_held_tc:  Composer todays_percent_change * 100 (account-level Held,
+                             cash-inclusive)
+        account_value:       total account value including cash (from _account_totals_cache)
+        symphony_value_sum:  sum of invested symphony values (cash excluded)
+
+    Returns:
+        {"if_held": account_if_held_tc, "dry_run": account-basis dry_run | None}
+
+    Guard invariants:
+        - Untriggered symphonies have dry_run == if_held on VW basis → guard_delta_vw == 0 →
+          dry_run_account == account_if_held_tc (no phantom alpha regardless of cash).
+        - if account_value <= 0 or symphony_value_sum <= 0: returns vw_tc unchanged
+          (division guard; caller should treat as a missing-data case).
+        - if vw_tc["dry_run"] is None or vw_tc["if_held"] is None: returns
+          {"if_held": account_if_held_tc, "dry_run": None}.
+    """
+    if not (math.isfinite(account_value) and account_value > 0.0):
+        return vw_tc
+    if not (math.isfinite(symphony_value_sum) and symphony_value_sum > 0.0):
+        return vw_tc
+    if vw_tc.get("if_held") is None:
+        return {"if_held": account_if_held_tc, "dry_run": None}
+    if vw_tc.get("dry_run") is None:
+        return {"if_held": account_if_held_tc, "dry_run": None}
+
+    invested_frac = symphony_value_sum / account_value
+    # Guard delta measured on VW basis (dry_run and if_held share the same
+    # symphony-value denominator, so this is a clean pure-guard-effect measure).
+    guard_delta_vw = float(vw_tc["dry_run"]) - float(vw_tc["if_held"])
+    # Scale to account basis and apply to the account-level Held today-change.
+    dry_run_account = account_if_held_tc + guard_delta_vw * invested_frac
+    return {"if_held": account_if_held_tc, "dry_run": dry_run_account}
+
+
 # ---------------------------------------------------------------------------
 # get_history_with_cache_invalidation
 # ---------------------------------------------------------------------------
