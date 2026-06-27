@@ -42,19 +42,26 @@ def _today_row(offset_days: int = 0) -> dict:
 
 
 def _import_scheduler():
-    """Import (or reimport) prism_scheduler fresh each call."""
-    if "prism_scheduler" in sys.modules:
-        del sys.modules["prism_scheduler"]
-    # The scheduler lives at the project root which is on sys.path in the worktree env;
-    # if not, add the worktree root explicitly.
+    """Import (or reimport) prism_scheduler fresh each call.
+
+    Uses importlib.reload() rather than del+reimport so that the module object
+    identity in sys.modules is preserved.  The del+reimport pattern creates a new
+    module object on every call, which corrupts patch() targets in other test files
+    that hold a module-level reference to prism_scheduler acquired at collection time
+    (patch("prism_scheduler.X") would patch the new object while the test calls
+    methods on the old one → assertion failures in unrelated tests).
+    """
+    import importlib
     import os
 
     worktree = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     if worktree not in sys.path:
         sys.path.insert(0, worktree)
-    import prism_scheduler  # noqa: PLC0415
-
-    return prism_scheduler
+    if "prism_scheduler" in sys.modules:
+        importlib.reload(sys.modules["prism_scheduler"])
+    else:
+        import prism_scheduler  # noqa: PLC0415
+    return sys.modules["prism_scheduler"]
 
 
 # ---------------------------------------------------------------------------
