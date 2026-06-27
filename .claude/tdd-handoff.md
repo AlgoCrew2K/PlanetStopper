@@ -18,6 +18,24 @@
 - [2026-06-27] council-test: RED — over-redaction guard (info42, no OR escape). Commit: 1f2f386.
 - [2026-06-27] council-impl: GREEN — _MIN_SWEEP_SECRET_LEN=8 floor, 39/0. Commit: 9fd3496.
 - [2026-06-27] council-review: APPROVE — all checks pass, no blockers. HEAD: 9fd3496.
+- [2026-06-27] PM /review sub-cycle — 4 must-fix findings:
+    1. ANTHROPIC_API_KEY explicit append bypasses _MIN_SWEEP_SECRET_LEN floor (correctness, same over-redaction class).
+    2. Hoist _SHAPE_PATTERNS to module level (compiled once, not per-call).
+    3. Hoist _tail nested helper to module level as _tail_output (importable + testable).
+    4. Tighten _redact_secrets docstring re: pattern coverage.
+- [2026-06-27] council-test: RED — 4 new tests (short API key floor, _tail_output hoist invariants). Commit: 9488512.
+- [2026-06-27] council-impl: GREEN — 43/0. All 4 review findings fixed. Commit: aaafcb1.
+- [2026-06-27] council-review: APPROVE (final) — all floor/hoist checks pass. HEAD: aaafcb1.
+- [2026-06-27] PM: CI red on aaafcb1 — 2 tests fail in full suite (cross-dir isolation).
+    Root cause: tests/ai_advisor/test_prism_scheduling.py::_import_scheduler() did
+    del sys.modules["prism_scheduler"] + reimport, creating a new module object.
+    patch("prism_scheduler.X") patched the new object; test file's module-level
+    import prism_scheduler held the old object → patches did not intercept.
+    Bisect confirmed: test_prism_scheduling.py + test_run_prism_diagnostics.py → 2 failed.
+- [2026-06-27] council-test: ISOLATION FIX — replaced del+reimport with importlib.reload()
+    in _import_scheduler (preserves module identity in sys.modules).
+    Bisect after fix: 95 passed, 1 skipped, 0 failed. All 43 diagnostics tests GREEN.
+    No production code touched. Commit: 814ede5. Signaled PM — ready for re-push + re-CI.
 
 ## Implementation Notes
 
