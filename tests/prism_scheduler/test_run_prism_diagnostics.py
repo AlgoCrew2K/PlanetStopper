@@ -965,3 +965,108 @@ def test_benign_non_marker_env_var_never_redacted(capsys, monkeypatch):
         f"Benign non-marker-keyed value must appear unredacted in the log; "
         f"got: {captured.err[:200]!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Explicit ANTHROPIC_API_KEY append must also respect the min-length floor
+#
+# The marker-keyed sweep applies _MIN_SWEEP_SECRET_LEN.  The explicit
+# ANTHROPIC_API_KEY append must apply the SAME floor — otherwise a short value
+# (e.g. "short7x" from a CI/dev override) gets added to secret_values and
+# replaces itself everywhere in the log (over-redaction of the same class as
+# the sweep bug, just on a different code path at prism_scheduler.py:281-283).
+# ---------------------------------------------------------------------------
+
+
+def test_short_anthropic_api_key_not_redacted(capsys, monkeypatch):
+    """A short ANTHROPIC_API_KEY value must NOT be added to secret_values.
+
+    The explicit append (`if _api_key: secret_values.append(_api_key)`) bypasses
+    the `_MIN_SWEEP_SECRET_LEN` floor applied to the marker-keyed sweep.  A short
+    API key (< 8 chars) therefore gets appended and then replaced everywhere —
+    corrupting the diagnostic ("returncode=1" → "returncode=***REDACTED***" if the
+    key value happens to be "1").
+
+    The fix: apply the same floor to the explicit append:
+      `if _api_key and len(_api_key) >= _MIN_SWEEP_SECRET_LEN`.
+
+    The distinctive 7-char value 'short7x' is embedded in mocked stderr WITHOUT
+    any key name.  An implementation without the floor replaces it, failing the
+    assertion — that is the intended RED signal.
+    """
+    # 7 chars — distinctively below _MIN_SWEEP_SECRET_LEN (8) but long enough to
+    # prove the floor rather than relying on an empty/None guard.
+    short_api_key = "short7x"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", short_api_key)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+
+    # Embed the value in stderr WITHOUT the key name.  The only path the
+    # assertion can pass is if the value itself survives unredacted.
+    # No floor on explicit append:  "key=short7x" → "key=***REDACTED***" → FAILS.
+    # With floor:                   "key=short7x" unchanged              → PASSES.
+    stderr_with_short_key = f"Auth error: key={short_api_key} returncode=1"
+    with patch(
+        "prism_scheduler.subprocess.run",
+        return_value=_make_proc(1, stderr=stderr_with_short_key),
+    ):
+        prism_scheduler._run_prism("run-id-short-api-key")
+
+    captured = capsys.readouterr()
+    full_output = captured.out + captured.err
+
+    assert short_api_key in full_output, (
+        f"Short ({len(short_api_key)}-char) ANTHROPIC_API_KEY value {short_api_key!r} "
+        "must NOT be replaced by ***REDACTED*** — the explicit append must apply the "
+        "same _MIN_SWEEP_SECRET_LEN floor as the marker-keyed sweep to prevent "
+        "over-redacting common short strings in the diagnostic log"
+    )
+
+
+# ---------------------------------------------------------------------------
+# _tail_output must be a module-level callable (hoisted from nested _tail)
+#
+# The nested `_tail` function defined inside _run_prism's try block is not
+# importable — it cannot be unit-tested directly.  Hoisting it to module level
+# as `_tail_output` makes the boundary behavior (empty sentinel, at-cap, over-cap
+# truncation) directly testable without going through _run_prism end-to-end.
+# ---------------------------------------------------------------------------
+
+
+def test_tail_output_empty_returns_label_marker():
+    """Empty text must return the '(<label> empty)' sentinel.
+
+    This test ERRORs (AttributeError) if _tail_output is not yet hoisted to
+    module level — that is the intended RED signal.
+    """
+    result = prism_scheduler._tail_output("", 100, "stderr")
+    assert result == "(stderr empty)", (
+        f"_tail_output('', 100, 'stderr') must return '(stderr empty)'; got {result!r}"
+    )
+
+
+def test_tail_output_at_cap_returns_full():
+    """Text at or below the cap must be returned unchanged (no truncation marker)."""
+    text = "A" * 100
+    result = prism_scheduler._tail_output(text, 100, "x")
+    assert result == text, (
+        f"_tail_output must return text unchanged when len(text) <= cap; got {result!r}"
+    )
+
+
+def test_tail_output_over_cap_returns_tail_with_truncation_marker():
+    """Text over the cap must return a truncation marker + the final cap chars.
+
+    The last `cap` chars must be present verbatim; a truncation indicator
+    ('...' or 'truncat') must appear to signal that the head was discarded.
+    """
+    cap = 50
+    # Last `cap` chars are all 'Y' — a distinct sentinel easy to assert on.
+    text = "X" * 40 + "Y" * cap
+    result = prism_scheduler._tail_output(text, cap, "stdout")
+
+    assert "Y" * cap in result, (
+        f"_tail_output must include the final {cap} chars of the text; got {result!r}"
+    )
+    assert any(marker in result for marker in ("...", "truncat")), (
+        "A truncation marker ('...' or 'truncat') must appear when text exceeds the cap"
+    )
