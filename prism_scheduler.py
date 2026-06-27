@@ -18,6 +18,7 @@ Exit codes:
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -36,6 +37,10 @@ BACKOFF_CAP_SECONDS: int = 60  # Maximum wait between retries
 # conditional debate) realistically costs $5-10 per run. 15.0 is a
 # runaway-prevention ceiling, not a target.
 MAX_BUDGET_USD: float = 15.0
+_STDERR_LOG_CAP: int = 4000  # chars of stderr tail logged on council failure (fits a full traceback, bounded for journald)
+_STDOUT_LOG_CAP: int = (
+    2000  # chars of stdout tail logged on council failure (council JSON error payload)
+)
 
 # Prompt passed to the vanilla-primary headless claude session. The primary
 # spawns ALL 6 agents itself — prism-synthesizer has no Agent/spawn tool and
@@ -179,6 +184,31 @@ def _get_market_prism_row_for_run(run_id: str) -> dict | None:
         return None
 
 
+def _redact_secrets(text: str, secret_values: list[str]) -> str:
+    """Replace known credential values and token-shaped patterns with ***REDACTED***.
+
+    Applies literal-value replacement first (all occurrences of each non-empty
+    secret), then three shape-regex patterns as defense-in-depth for tokens that
+    may not appear in secret_values (e.g. a rotated credential still in output).
+
+    Empty strings in secret_values are skipped — str.replace("", ...) inserts
+    a marker between every character and corrupts the string.
+
+    Pure — no I/O. The caller (_run_prism) wraps in try/except.
+    """
+    for value in secret_values:
+        if value:  # skip empty strings
+            text = text.replace(value, "***REDACTED***")
+    _SHAPE_PATTERNS = (
+        re.compile(r"sk-ant-[A-Za-z0-9_-]{8,}"),  # Anthropic API key shape
+        re.compile(r"sk-[A-Za-z0-9_-]{16,}"),  # generic secret-key shape
+        re.compile(r"oat_[A-Za-z0-9_-]{8,}"),  # Claude OAuth token shape
+    )
+    for pattern in _SHAPE_PATTERNS:
+        text = pattern.sub("***REDACTED***", text)
+    return text
+
+
 def _run_prism(run_id: str = "unknown") -> bool:
     """
     Invoke the 6-agent Prism council via a vanilla headless `claude -p` subprocess.
@@ -221,6 +251,43 @@ def _run_prism(run_id: str = "unknown") -> bool:
         )
         if result.returncode == 0:
             _persist_spend(run_id, result.stdout)
+        else:
+            try:
+                # a) Build secret values from the env actually passed to the subprocess
+                secret_values = [
+                    v
+                    for v in (
+                        _council_env.get("CLAUDE_CODE_OAUTH_TOKEN"),
+                        os.environ.get("ANTHROPIC_API_KEY"),
+                    )
+                    if v
+                ]
+                # b) Redact both output channels
+                safe_stderr = _redact_secrets(result.stderr or "", secret_values)
+                safe_stdout = _redact_secrets(result.stdout or "", secret_values)
+
+                # c) Tail-truncate with marker
+                def _tail(text: str, cap: int, label: str) -> str:
+                    if not text:
+                        return f"({label} empty)"
+                    if len(text) <= cap:
+                        return text
+                    return f"...[truncated, showing last {cap}]...\n{text[-cap:]}"
+
+                # d) Print the diagnostic block to stderr so journald captures it
+                print(
+                    f"[prism_scheduler] Council subprocess failed:"
+                    f" returncode={result.returncode}\n"
+                    f"  stderr: {_tail(safe_stderr, _STDERR_LOG_CAP, 'stderr')}\n"
+                    f"  stdout: {_tail(safe_stdout, _STDOUT_LOG_CAP, 'stdout')}",
+                    file=sys.stderr,
+                )
+            except Exception as exc:  # noqa: BLE001
+                # AC-7: diagnostic suppressed — never propagate; return value is preserved
+                print(
+                    f"[prism_scheduler] (diagnostic suppressed: {type(exc).__name__})",
+                    file=sys.stderr,
+                )
         return result.returncode == 0
     except Exception as exc:  # noqa: BLE001
         # D-1: log type only — never exc message or path
