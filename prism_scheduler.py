@@ -53,6 +53,14 @@ _CREDENTIAL_KEY_MARKERS: tuple[str, ...] = (
     "URI",
 )
 _MIN_SWEEP_SECRET_LEN: int = 8  # minimum value length for marker-keyed sweep; guards against short common values (e.g. LOG_LEVEL_KEY=info)
+# Compiled token-shape patterns for defense-in-depth redaction.  These match
+# [A-Za-z0-9_-]-shaped API key / OAuth token prefixes; non-word-char secrets
+# (e.g. URLs, passwords with symbols) rely on the literal env-var sweep.
+_SHAPE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"sk-ant-[A-Za-z0-9_-]{8,}"),  # Anthropic API key shape
+    re.compile(r"sk-[A-Za-z0-9_-]{16,}"),  # generic secret-key shape
+    re.compile(r"oat_[A-Za-z0-9_-]{8,}"),  # Claude OAuth token shape
+)
 
 # Prompt passed to the vanilla-primary headless claude session. The primary
 # spawns ALL 6 agents itself — prism-synthesizer has no Agent/spawn tool and
@@ -200,8 +208,9 @@ def _redact_secrets(text: str, secret_values: list[str]) -> str:
     """Replace known credential values and token-shaped patterns with ***REDACTED***.
 
     Applies literal-value replacement first (all occurrences of each non-empty
-    secret), then three shape-regex patterns as defense-in-depth for tokens that
-    may not appear in secret_values (e.g. a rotated credential still in output).
+    secret), then the module-level _SHAPE_PATTERNS regexes as defense-in-depth
+    for [A-Za-z0-9_-]-shaped tokens (sk-ant-..., sk-..., oat_...).  Non-word-char
+    secrets (URLs, passwords with symbols) rely on the literal env-var sweep.
 
     Empty strings in secret_values are skipped — str.replace("", ...) inserts
     a marker between every character and corrupts the string.
@@ -211,14 +220,23 @@ def _redact_secrets(text: str, secret_values: list[str]) -> str:
     for value in secret_values:
         if value:  # skip empty strings
             text = text.replace(value, "***REDACTED***")
-    _SHAPE_PATTERNS = (
-        re.compile(r"sk-ant-[A-Za-z0-9_-]{8,}"),  # Anthropic API key shape
-        re.compile(r"sk-[A-Za-z0-9_-]{16,}"),  # generic secret-key shape
-        re.compile(r"oat_[A-Za-z0-9_-]{8,}"),  # Claude OAuth token shape
-    )
     for pattern in _SHAPE_PATTERNS:
         text = pattern.sub("***REDACTED***", text)
     return text
+
+
+def _tail_output(text: str, cap: int, label: str) -> str:
+    """Return text tail-truncated to cap chars, with a marker when cut.
+
+    Returns '(<label> empty)' for empty input, the full text when within the
+    cap, or a truncation marker + the final cap chars when over the cap.
+    Used by _run_prism to bound stderr/stdout in the failure diagnostic block.
+    """
+    if not text:
+        return f"({label} empty)"
+    if len(text) <= cap:
+        return text
+    return f"...[truncated, showing last {cap}]...\n{text[-cap:]}"
 
 
 def _run_prism(run_id: str = "unknown") -> bool:
@@ -279,26 +297,18 @@ def _run_prism(run_id: str = "unknown") -> bool:
                 # ANTHROPIC_API_KEY was popped from _council_env before subprocess.run;
                 # add it explicitly so its value is still redacted if it appears in output.
                 _api_key = os.environ.get("ANTHROPIC_API_KEY")
-                if _api_key:
+                if _api_key and len(_api_key) >= _MIN_SWEEP_SECRET_LEN:
                     secret_values.append(_api_key)
                 # b) Redact both output channels
                 safe_stderr = _redact_secrets(result.stderr or "", secret_values)
                 safe_stdout = _redact_secrets(result.stdout or "", secret_values)
 
-                # c) Tail-truncate with marker
-                def _tail(text: str, cap: int, label: str) -> str:
-                    if not text:
-                        return f"({label} empty)"
-                    if len(text) <= cap:
-                        return text
-                    return f"...[truncated, showing last {cap}]...\n{text[-cap:]}"
-
-                # d) Print the diagnostic block to stderr so journald captures it
+                # c) Print the diagnostic block to stderr so journald captures it
                 print(
                     f"[prism_scheduler] Council subprocess failed:"
                     f" returncode={result.returncode}\n"
-                    f"  stderr: {_tail(safe_stderr, _STDERR_LOG_CAP, 'stderr')}\n"
-                    f"  stdout: {_tail(safe_stdout, _STDOUT_LOG_CAP, 'stdout')}",
+                    f"  stderr: {_tail_output(safe_stderr, _STDERR_LOG_CAP, 'stderr')}\n"
+                    f"  stdout: {_tail_output(safe_stdout, _STDOUT_LOG_CAP, 'stdout')}",
                     file=sys.stderr,
                 )
             except Exception as exc:  # noqa: BLE001
