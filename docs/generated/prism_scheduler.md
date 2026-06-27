@@ -3,7 +3,7 @@
 > Nightly Market Prism scheduler wrapper — invokes the Market Prism council via a vanilla-primary headless Claude session, triggered by Windows Task Scheduler (Option B, daemon-decoupled).
 
 **Source:** `prism_scheduler.py`
-**Last updated:** 2026-06-24 (DE-PRISM-SOURCES-001: `_patch_provenance` appends MARKET_PRISM_SOURCES row for Overview citations; DE-PRISM-SUB-AUTH-001: subprocess pops ANTHROPIC_API_KEY)
+**Last updated:** 2026-06-27 (DE-PRISM-DIAG-001: `_run_prism` logs redacted subprocess stderr/stdout on non-zero exit; DE-PRISM-SOURCES-001: `_patch_provenance` appends MARKET_PRISM_SOURCES row for Overview citations; DE-PRISM-SUB-AUTH-001: subprocess pops ANTHROPIC_API_KEY)
 
 ## Overview
 
@@ -22,6 +22,10 @@ Per-run Opus spend is captured from the `--output-format json` subprocess stdout
 | `BACKOFF_CAP_SECONDS` | `60` | Maximum wait between retries in seconds |
 | `MAX_BUDGET_USD` | `15.0` | Per-run spend ceiling passed as `--max-budget-usd`. A full 6-agent Opus council realistically costs $5–10/run; 15.0 is a runaway-prevention ceiling, not a target. |
 | `PRISM_RUN_PROMPT` | (see below) | Prompt passed to the vanilla-primary headless session. Encodes the 5/5 council orchestration directives (DE-PRISM-5OF5). |
+| `_STDERR_LOG_CAP` | `4000` | Chars of `stderr` tail captured and logged on non-zero subprocess exit. Sized to hold a full Python traceback; bounded to avoid flooding journald. |
+| `_STDOUT_LOG_CAP` | `2000` | Chars of `stdout` tail captured and logged on non-zero subprocess exit. Captures the council JSON error payload. |
+| `_CREDENTIAL_KEY_MARKERS` | `("SECRET","KEY","TOKEN","WEBHOOK","PASSWORD","URI")` | Key-name substrings used to identify credential env vars for redaction. Sweeps all of `_council_env` so secrets beyond the two Claude-specific keys (e.g. `COMPOSER_SECRET`, `DISCORD_WEBHOOK_URL`) are also redacted. |
+| `_MIN_SWEEP_SECRET_LEN` | `8` | Minimum value length for the marker-keyed sweep. Values shorter than 8 chars (e.g. `LOG_LEVEL_KEY=info`) are excluded to prevent over-redaction that corrupts the logged output. |
 
 ### `PRISM_RUN_PROMPT`
 
@@ -99,8 +103,20 @@ Post-council citation builder (DE-PRISM-SOURCES-001 v2). Called by `main()` afte
 
 **Provenance note:** The `article_corpus` entries are **rebuilt-at-patch-time per-lens sources**, not a snapshot of the exact articles the council analyzed. The council's synthesizer writes the MARKET_PRISM row from prose deliberation and does not persist structured citation lists. `macro`, `fundamentals`, and `derivatives` source URLs are stable across the patch window (~minutes); `sentiment` artlist top-N may drift slightly. UI copy must not imply "the exact articles the council read." See DE-PRISM-SOURCES-001 §Provenance honesty in `DECISIONS.md` for the full stability breakdown and future-enhancement tracking.
 
-### `_run_prism(run_id: str = "unknown") -> bool`
+### `_redact_secrets(text: str, secret_values: list[str]) -> str`
 
+Pure helper (DE-PRISM-DIAG-001). Replaces known credential values and token-shaped patterns with `***REDACTED***`. No I/O. Never raises -- the caller (`_run_prism`) wraps it in `try/except`.
+
+**Two-phase redaction:**
+1. **Literal-value replace**: for each non-empty string in `secret_values`, replaces all occurrences globally. Empty strings are skipped (`str.replace("", ...)` would insert a marker between every character).
+2. **Shape-regex patterns** (defense-in-depth for secrets not in `secret_values`):
+   - `sk-ant-[A-Za-z0-9_-]{8,}` -- Anthropic API key shape
+   - `sk-[A-Za-z0-9_-]{16,}` -- generic secret-key shape
+   - `oat_[A-Za-z0-9_-]{8,}` -- Claude OAuth token shape
+
+Redaction is applied **before** truncation in `_run_prism` so no secret escapes via a truncation boundary.
+
+### `_run_prism(run_id: str = "unknown") -> bool`
 
 Invokes the Market Prism council as a vanilla-primary headless subprocess. Returns `True` on `returncode == 0`, `False` on non-zero or exception.
 
@@ -120,10 +136,14 @@ The final positional argument is `PRISM_RUN_PROMPT + f" The run_id for this sess
 **Subprocess options:**
 - `cwd=str(_PROJECT_ROOT)` — project root, not caller's cwd
 - `env=_council_env` where `_council_env = os.environ.copy()` then `_council_env.pop("ANTHROPIC_API_KEY", None)` — passes all env vars except the metered API key so `claude -p` falls back to `CLAUDE_CODE_OAUTH_TOKEN` (subscription billing); see DE-PRISM-SUB-AUTH-001
-- `capture_output=True, text=True` — captures stdout for spend logging
-- `shell=False` — no shell injection risk
+- `capture_output=True, text=True` -- captures stdout/stderr for spend logging and failure diagnostics
+- `shell=False` -- no shell injection risk
 
-On success, passes `result.stdout` to `_persist_spend(run_id, ...)` for spend logging. Exceptions caught and logged as `type(exc).__name__` only (D-1).
+**On success (`returncode == 0`):** passes `result.stdout` to `_persist_spend(run_id, ...)` for spend logging. Returns `True`. No diagnostic log emitted.
+
+**On non-zero exit (DE-PRISM-DIAG-001):** executes a diagnostic block wrapped in `try/except` (D-1: block failure never propagates). Builds `secret_values` by sweeping `_council_env` for keys matching `_CREDENTIAL_KEY_MARKERS` with values `>= _MIN_SWEEP_SECRET_LEN` chars, plus `ANTHROPIC_API_KEY` explicitly. Redacts both `result.stderr` and `result.stdout` via `_redact_secrets`. Tail-truncates to `_STDERR_LOG_CAP` / `_STDOUT_LOG_CAP`. Prints a single `[prism_scheduler] Council subprocess failed: returncode=N` block to `sys.stderr` (journald). On internal diagnostic error, logs `(diagnostic suppressed: {ExcType})` and continues. Returns `False`.
+
+**On `subprocess.run` exception:** logs `SubprocessError: {type(exc).__name__}` type-only (D-1 -- no message, no path) and returns `False`. No stdout/stderr exists on this path.
 
 ## Usage
 
@@ -180,3 +200,5 @@ All error paths surface `type(exc).__name__` only — no raw exception messages,
 `tests/ai_advisor/test_prism_scheduling.py` — 53 tests (43 pre-F-4 + 10 F-4 additions) covering AC-1 through AC-8, HC-1 (spend cap), HC-2 (spend logging), HC-3 (model pin), the Phase-4 invocation shape (vanilla `-p`, no `--agent` pin, `PRISM_RUN_PROMPT` as positional arg, `MAX_BUDGET_USD=15.0`), the council architecture (primary spawns all 6; `prism-synthesizer` coordinates only via SendMessage), the 5/5 orchestration directives (DE-PRISM-5OF5): run_id generated before spawning, kickoff embedded in analyst spawn prompts, agentIds captured and passed to synthesizer, wait-barrier before synthesis, and **F-4 row-verification** (`TestMarketPrismRowVerification`): (1) rc==0 + no row — all MAX_ATTEMPTS exhausted — non-zero exit (RED gate); (2) rc==0 + row — exit 0 (happy-path regression lock, skips pre-GREEN); (3) rc==0 + no row on attempt 1, rc==0 + row on attempt 2 — subprocess called twice + exit 0 (retry-on-empty RED gate). All tests mock `subprocess.run`, `time.sleep`, `_get_summary()`, and `_get_market_prism_row_for_run()` — no real DB calls, no real subprocess invocations.
 
 `tests/prism_scheduler/test_council_sub_auth.py` — 3 tests (DE-PRISM-SUB-AUTH-001): AC-1 (`ANTHROPIC_API_KEY` excluded from subprocess env), AC-2 (`CLAUDE_CODE_OAUTH_TOKEN` passes through unchanged), AC-3 (all other env vars including `DB_PATH` preserved — surgical removal, not an allowlist). Tests use `monkeypatch.setenv` and patch `prism_scheduler.subprocess.run` to inspect the `env` kwarg.
+
+`tests/prism_scheduler/test_run_prism_diagnostics.py` — hermetic test module (DE-PRISM-DIAG-001); all tests mock `subprocess.run` and capture output via `capsys` — no real `claude -p`, no network, no LLM spend. Covers: non-zero exit logs returncode + stderr/stdout tails to `sys.stderr` (AC-1/AC-2/AC-3); empty stderr/stdout logs explicit `(empty)` markers; truncation marker present when output exceeds cap; `_redact_secrets` replaces live OAuth token, `ANTHROPIC_API_KEY` value, and `sk-ant-`/`sk-`/`oat_` token-shaped patterns with `***REDACTED***`; `_CREDENTIAL_KEY_MARKERS` sweep redacts `COMPOSER_SECRET`/`ALPACA_SECRET_KEY`/`DISCORD_WEBHOOK_URL` (reviewer Finding 1); values shorter than `_MIN_SWEEP_SECRET_LEN=8` are NOT swept (over-redaction guard, reviewer Finding 2); success path (`rc==0`) emits no diagnostic log and calls `_persist_spend` unchanged; `subprocess.run` raise path logs type-only `SubprocessError`; monkeypatching `_redact_secrets` to raise causes `_run_prism` to log `(diagnostic suppressed: ...)` without raising (AC-7); `_redact_secrets` direct unit tests (empty input, no secrets, value at start/middle/end, multiple occurrences, overlapping patterns).
