@@ -3245,6 +3245,83 @@ Final four-item scope table (code confirmed at branch HEAD; 60ed9ca revert db6fd
 - `static/index.js` — `EventSource` subscription + `cycle-complete` handler (index.js:1381–1385); `showConnectionLost()` (index.js:1299–1310) **[AC-8 selector fix, cycle 2026-06-23]:** now targets `#engine-status-dot`, `#engine-status-label`, `#hero-data-as-of` (real production element IDs from `_chrome.html:51-53` / `index.html:846`). Prior code targeted `#engine-status-badge` / `[data-testid="data-as-of"]` / `.data-as-of` — none of which exist in the template — so the staleness cue was a silent no-op on a dropped connection.
 - `tests/realtime_push/` — 6 test modules covering AC-1 through AC-8 (32 tests, all GREEN at HEAD a077c7e)
 
+---
+
+## DE-TODAY-BASIS-001 — Today's Change account-basis alignment: eliminate phantom bot-vs-held divergence (fix/today-change-account-basis, 2026-06-26)
+
+Branch: fix/today-change-account-basis | Base: 39bf78f (PR #81)
+
+### Root cause
+
+The dashboard hero "Today's Change" displayed bot ≠ held even when zero guard events had fired and all symphonies were fully aligned (`shadow_history.current_return == shadow_return`, `is_post_trigger=0`). The phantom divergence was arithmetic, not guard alpha.
+
+**Basis mismatch:** The `if_held` side sourced `portfolio_tc` from `_account_totals_cache` — Composer's `todays_percent_change` expressed as a percentage of **account value** (cash-inclusive). The `dry_run` side sourced `analytics.get_portfolio_today_change()` — a value-weighted sum over **symphony values only** (cash-excluded). Different denominators meant cash diluted the held-side return without diluting the bot side, producing a systematic difference that looked like guard alpha even with every symphony bot == held.
+
+The cumulative-return path already had the mirror fix (`analytics.get_portfolio_cumulative_return_account_basis`, shipped as B-1 in DE-LIVE-DASH-001). The today-change path never received the equivalent.
+
+**Verified on the live droplet:** all 11 symphonies untriggered yet the hero showed bot +0.54% vs held +0.46%.
+
+### Decision: account-basis translation helper mirroring B-1
+
+A new `analytics.get_portfolio_today_change_account_basis` function applies the same formula as B-1 to today-change:
+
+```
+invested_frac  = symphony_value_sum / account_value
+guard_delta_vw = vw_tc["dry_run"] - vw_tc["if_held"]   # pure guard effect, VW basis
+dry_run_acct   = account_if_held_tc + guard_delta_vw * invested_frac
+```
+
+The guard delta is measured on the VW basis (both operands share the same symphony-value denominator — a clean measure). It is then scaled by `invested_frac` to express it as a fraction of account value, and applied to the account-level Held today-change.
+
+**Invariant:** With zero guard divergence (`vw_tc["dry_run"] == vw_tc["if_held"]`), `guard_delta_vw == 0` and `dry_run_acct == account_if_held_tc` exactly — no phantom alpha regardless of cash ratio.
+
+**Division guards (corrected — see edge-case hardening addendum, 2026-06-26):** `account_value <= 0/non-finite` or `symphony_value_sum <= 0/non-finite` returns `{"if_held": account_if_held_tc, "dry_run": account_if_held_tc}` (Bot==Held; no phantom alpha — original guard incorrectly returned `vw_tc` unchanged). `account_if_held_tc is None` returns `{"if_held": None, "dry_run": None}`. `vw_tc["dry_run"] is None` or `vw_tc["if_held"] is None` returns `{"if_held": account_if_held_tc, "dry_run": None}`.
+
+### Wire-in (app.py `_compute_portfolio_strip`)
+
+`_symphony_value_sum` was previously computed inside the `if _cached_cr` branch only, putting it out of scope for the TC block. It is now hoisted before both branches (single pass, cheap). The today-change warm-cache block is updated:
+
+**Before (phantom divergence):**
+```python
+today_change = {
+    "if_held": _cached_tc,
+    "dry_run": analytics.get_portfolio_today_change(...).get("dry_run"),
+}
+```
+
+**After (account-basis aligned):**
+```python
+_vw_tc = analytics.get_portfolio_today_change(symphonies_list, bot_state, trading_day=trading_day)
+today_change = analytics.get_portfolio_today_change_account_basis(
+    _vw_tc, _cached_tc, account_value, _symphony_value_sum,
+)
+```
+
+The cold-cache fallback (`else` branch, VW-both) is unchanged. When neither side has access to `portfolio_tc`, both are on VW basis — still apples-to-apples.
+
+### Lesson
+
+A $/% comparison between a bot and a benchmark must use a common denominator. The cumulative path got the account-basis alignment (B-1, DE-LIVE-DASH-001) but the today-change path was missed. When adding a parallel helper, sweep ALL call sites at the same time — a partial fix leaves a silent phantom in adjacent display surfaces.
+
+### Files changed
+
+- `analytics.py` — new `get_portfolio_today_change_account_basis(vw_tc, account_if_held_tc, account_value, symphony_value_sum) -> dict` (`analytics.py:1083–1157`); mirrors `get_portfolio_cumulative_return_account_basis`; full docstring with guard invariants
+- `app.py` — `_compute_portfolio_strip()`: hoisted `_symphony_value_sum` before both CR and TC blocks (`app.py:1167–1172`); TC warm-cache branch wired to new helper (`app.py:1196–1210`); comment updated (D-01/B-2 fix)
+- `tests/analytics/test_account_basis_tc.py` — new test file (AC-1..AC-9, 8+ test classes); covers zero-guard invariant, real-divergence scaling, cash-basis attenuation, division guards, None propagation, strip integration, cold-cache fallback, cumulative regression guard
+- `tests/fixtures/math/today_change_account_basis_basic.json` — golden fixture with captured-from-producer inputs and formula-derived expected values
+- `feature-plans/today-change-account-basis.completed.md` — plan marked completed (renamed from `.md`)
+### Edge-case hardening, 2026-06-26 (commit 046bb5e)
+
+Three contract refinements landed on top of the core fix:
+
+**1. Division-guard return value (contract correction).** The original guard returned `vw_tc` unchanged when `account_value <= 0/non-finite` or `symphony_value_sum <= 0/non-finite`. This was wrong: returning the VW-basis dict on an account-basis call site swaps semantics — a caller treating the result as account-basis could surface phantom bot-vs-held divergence even after the fix. The corrected guard returns `{"if_held": account_if_held_tc, "dry_run": account_if_held_tc}` (Bot==Held, no phantom alpha). When `invested_frac` is undefined the conservative choice is zero guard effect, meaning bot equals held on account basis.
+
+**2. `invested_frac` clamp.** `invested_frac` is now computed as `min(symphony_value_sum / account_value, 1.0)`. A stale snapshot can produce `symphony_value_sum > account_value` (e.g. after a partial account-cache flush); without the cap the account-basis guard delta would be amplified beyond its VW-basis magnitude, producing ghost alpha. Cash cannot be negative in a real portfolio; the cap enforces that invariant numerically (operational policy, not a math correction).
+
+**3. `account_if_held_tc is None` guard.** When the account-level Held today-change is unavailable (warm-cache miss), the function now returns `{"if_held": None, "dry_run": None}` cleanly. Previously `None` propagated into arithmetic (`None + float(...)`) and raised `TypeError`. The new guard short-circuits before the computation reaches the arithmetic path.
+
+All three cases are covered by RED tests in `tests/analytics/test_account_basis_tc.py`: `TestDivisionGuardAccountBasis`, `TestInvestedFracClamp`, and `TestNoneGuard`.
+
 ## DE-PRISM-SOURCES-001 — Append-only MARKET_PRISM_SOURCES row for Overview sources provenance (2026-06-24)
 
 ### Problem

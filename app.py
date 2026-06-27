@@ -1163,6 +1163,12 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         # Use .get() for all cache reads below to eliminate TOCTOU between __contains__
         # and __getitem__ — _StaleFlagDict.mark_stale() can fire between the two calls
         # and cause __getitem__ to raise KeyError even when __contains__ returned True.
+        # Hoisted: both the CR and TC account-basis helpers need this sum, and it is
+        # cheap (a single pass over symphonies_list).  Computing it once here avoids
+        # the duplicate that previously lived inside the if _cached_cr branch only,
+        # which left it out of scope for the TC block.
+        _symphony_value_sum = sum(s.get("value") or 0.0 for s in symphonies_list)
+
         _cached_cr = _account_totals_cache.get("portfolio_cr")
         if _cached_cr is not None:
             # B-1 fix: put Bot (dry_run) on the same account basis as Held (if_held).
@@ -1174,7 +1180,6 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
             _vw_cr = analytics.get_portfolio_cumulative_return(
                 symphonies_list, bot_state, trading_day=trading_day
             )
-            _symphony_value_sum = sum(s.get("value") or 0.0 for s in symphonies_list)
             cumulative_return: dict | None = (
                 analytics.get_portfolio_cumulative_return_account_basis(
                     _vw_cr,
@@ -1188,17 +1193,23 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
                 symphonies_list, bot_state, trading_day=trading_day
             )
 
-        # D-01: use the Composer-sourced today-change (includes cash in denominator)
-        # when available; otherwise fall back to the per-symphony value-weighted sum
-        # which excludes uninvested cash and will be slightly off.
+        # D-01 / B-2 fix: use the Composer-sourced today-change (includes cash in
+        # denominator) when available, and put Bot on the same account basis so that
+        # guard_alpha = dry_run - if_held is zero when no guard has fired.
+        # Previously: if_held = _cached_tc (account basis, cash-inclusive) but
+        # dry_run = VW symphony sum (cash-excluded) — different denominators produced
+        # phantom alpha even when all symphonies were bot == held.
         _cached_tc = _account_totals_cache.get("portfolio_tc")
         if _cached_tc is not None:
-            today_change: dict = {
-                "if_held": _cached_tc,
-                "dry_run": analytics.get_portfolio_today_change(
-                    symphonies_list, bot_state, trading_day=trading_day
-                ).get("dry_run"),
-            }
+            _vw_tc = analytics.get_portfolio_today_change(
+                symphonies_list, bot_state, trading_day=trading_day
+            )
+            today_change: dict = analytics.get_portfolio_today_change_account_basis(
+                _vw_tc,
+                _cached_tc,
+                account_value,
+                _symphony_value_sum,
+            )
         else:
             today_change = analytics.get_portfolio_today_change(
                 symphonies_list, bot_state, trading_day=trading_day
