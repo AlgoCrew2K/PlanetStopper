@@ -380,7 +380,9 @@ class TestAccountBasisTCEdgeCases:
             f"Got {result.get('dry_run')}."
         )
 
-    def test_negative_account_value_returns_account_if_held_basis(self, basis_fixture: dict) -> None:
+    def test_negative_account_value_returns_account_if_held_basis(
+        self, basis_fixture: dict
+    ) -> None:
         """
         Negative account_value is nonsensical (division guard): must return
         account_if_held_tc on both sides, not vw_tc (basis swap), not raise.
@@ -402,7 +404,9 @@ class TestAccountBasisTCEdgeCases:
             f"{account_if_held_tc:.6f} (no guard effect). Got {result.get('dry_run')}."
         )
 
-    def test_zero_symphony_value_sum_returns_account_if_held_basis(self, basis_fixture: dict) -> None:
+    def test_zero_symphony_value_sum_returns_account_if_held_basis(
+        self, basis_fixture: dict
+    ) -> None:
         """
         symphony_value_sum == 0 (all-cash / no invested positions): no guard effect
         is possible (invested_frac=0). Must return account_if_held_tc on both sides,
