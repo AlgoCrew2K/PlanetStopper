@@ -266,6 +266,56 @@ class TestAccountBasisTCMath:
             f"dry_run must be a finite float; got {result['dry_run']}."
         )
 
+    def test_meaningful_cash_guard_alpha_attenuated_proportionally(
+        self, basis_fixture: dict
+    ) -> None:
+        """
+        With 30% uninvested cash (invested_frac=0.70), the account-basis guard alpha
+        must equal exactly guard_delta_vw * invested_frac — a clearly measurable 30%
+        attenuation, not just a marginal one.
+
+        The top-level fixture has invested_frac~0.998 (0.16% cash). A wrong
+        implementation using invested_frac=1.0 would produce guard_delta_account=0.5
+        vs correct 0.4992 — a 0.0008pp gap that is easy to miss. With invested_frac=0.70
+        the gap is 0.15pp (0.5 vs 0.35) — unambiguous.
+
+        Expected values DERIVED from scenario_meaningful_cash fixture fields — never
+        hardcoded from what the producer returns.
+        Tolerance abs=1e-9: single-multiply floating-point arithmetic, no accumulated
+        rounding; rel tolerance would hide near-misses when result is small.
+        """
+        fix_s = basis_fixture["scenario_meaningful_cash"]
+        vw_tc = fix_s["vw_tc"]
+        account_if_held_tc = fix_s["account_if_held_tc"]
+        account_value = fix_s["account_value"]
+        symphony_value_sum = fix_s["symphony_value_sum"]
+
+        # Derive from fixture inputs — not from what the function returns
+        invested_frac = symphony_value_sum / account_value  # == fix_s["_invested_frac"]
+        guard_delta_vw = fix_s["_guard_delta_vw"]
+        expected_guard_delta_account = guard_delta_vw * invested_frac
+
+        result = analytics.get_portfolio_today_change_account_basis(
+            vw_tc, account_if_held_tc, account_value, symphony_value_sum
+        )
+
+        guard_delta_account = float(result["dry_run"]) - float(result["if_held"])
+
+        # Exact proportional attenuation (single-multiply, abs tolerance adequate)
+        assert guard_delta_account == pytest.approx(expected_guard_delta_account, abs=1e-9), (
+            f"With invested_frac={invested_frac:.4f} (30% cash), account-basis guard "
+            f"delta must equal guard_delta_vw * invested_frac = "
+            f"{guard_delta_vw:.4f} * {invested_frac:.4f} = {expected_guard_delta_account:.6f}. "
+            f"Got {guard_delta_account:.6f}."
+        )
+        # Attenuation is unambiguous at 30% cash: gap is 0.15, not 0.0008
+        assert guard_delta_account < guard_delta_vw, (
+            f"With 30% uninvested cash, account-basis guard delta ({guard_delta_account:.6f}) "
+            f"must be strictly less than VW guard delta ({guard_delta_vw:.6f}). "
+            f"A bug using invested_frac=1.0 would produce guard_delta_account={guard_delta_vw:.6f}, "
+            f"easily detectable with this fixture (gap={guard_delta_vw - expected_guard_delta_account:.6f})."
+        )
+
 
 # ---------------------------------------------------------------------------
 # TestAccountBasisTCEdgeCases — guard invariants and None propagation
@@ -302,48 +352,81 @@ class TestAccountBasisTCEdgeCases:
             "if_held must be account_if_held_tc even when dry_run=None."
         )
 
-    def test_zero_account_value_returns_vw_tc_unchanged(self, basis_fixture: dict) -> None:
+    def test_zero_account_value_returns_account_if_held_basis(self, basis_fixture: dict) -> None:
         """
-        account_value == 0 (division guard) must return vw_tc unchanged, not raise.
-        """
-        fix = basis_fixture
-        vw_tc = fix["scenario_untriggered"]["vw_tc"]
+        account_value == 0 (division guard): must return account_if_held_tc on both
+        sides, not vw_tc (that would be a basis swap), not raise.
 
-        result = analytics.get_portfolio_today_change_account_basis(
-            vw_tc, fix["portfolio_tc"], 0.0, fix["symphony_value_sum"]
-        )
-
-        assert result == vw_tc, (
-            "With account_value=0, must return vw_tc unchanged (division guard, no ZeroDivisionError)."
-        )
-
-    def test_negative_account_value_returns_vw_tc_unchanged(self, basis_fixture: dict) -> None:
-        """
-        Negative account_value is nonsensical — must return vw_tc unchanged, not raise.
+        Contract: {"if_held": account_if_held_tc, "dry_run": account_if_held_tc}
+        No account value -> no guard-effect scaling is meaningful; report the
+        account-level Held return for both sides (bot==held, no phantom alpha).
         """
         fix = basis_fixture
         vw_tc = fix["scenario_untriggered"]["vw_tc"]
+        account_if_held_tc = fix["portfolio_tc"]
 
         result = analytics.get_portfolio_today_change_account_basis(
-            vw_tc, fix["portfolio_tc"], -500.0, fix["symphony_value_sum"]
+            vw_tc, account_if_held_tc, 0.0, fix["symphony_value_sum"]
         )
 
-        assert result == vw_tc, "With account_value < 0, must return vw_tc unchanged."
+        assert result["if_held"] == pytest.approx(account_if_held_tc, rel=1e-9), (
+            f"With account_value=0, result.if_held must equal account_if_held_tc="
+            f"{account_if_held_tc:.6f}, not vw_tc['if_held']={vw_tc['if_held']:.6f} "
+            f"(that is a basis swap). Got {result.get('if_held')}."
+        )
+        assert result["dry_run"] == pytest.approx(account_if_held_tc, rel=1e-9), (
+            f"With account_value=0, result.dry_run must equal account_if_held_tc="
+            f"{account_if_held_tc:.6f} (bot==held, no phantom divergence). "
+            f"Got {result.get('dry_run')}."
+        )
 
-    def test_zero_symphony_value_sum_returns_vw_tc_unchanged(self, basis_fixture: dict) -> None:
+    def test_negative_account_value_returns_account_if_held_basis(self, basis_fixture: dict) -> None:
         """
-        symphony_value_sum == 0 (no invested positions) → invested_frac undefined.
-        Must return vw_tc unchanged, not raise.
+        Negative account_value is nonsensical (division guard): must return
+        account_if_held_tc on both sides, not vw_tc (basis swap), not raise.
         """
         fix = basis_fixture
         vw_tc = fix["scenario_untriggered"]["vw_tc"]
+        account_if_held_tc = fix["portfolio_tc"]
 
         result = analytics.get_portfolio_today_change_account_basis(
-            vw_tc, fix["portfolio_tc"], fix["account_value"], 0.0
+            vw_tc, account_if_held_tc, -500.0, fix["symphony_value_sum"]
         )
 
-        assert result == vw_tc, (
-            "With symphony_value_sum=0, must return vw_tc unchanged (no invested positions)."
+        assert result["if_held"] == pytest.approx(account_if_held_tc, rel=1e-9), (
+            f"With account_value<0, result.if_held must equal account_if_held_tc="
+            f"{account_if_held_tc:.6f}. Got {result.get('if_held')}."
+        )
+        assert result["dry_run"] == pytest.approx(account_if_held_tc, rel=1e-9), (
+            f"With account_value<0, result.dry_run must equal account_if_held_tc="
+            f"{account_if_held_tc:.6f} (no guard effect). Got {result.get('dry_run')}."
+        )
+
+    def test_zero_symphony_value_sum_returns_account_if_held_basis(self, basis_fixture: dict) -> None:
+        """
+        symphony_value_sum == 0 (all-cash / no invested positions): no guard effect
+        is possible (invested_frac=0). Must return account_if_held_tc on both sides,
+        not vw_tc (which is defined over empty positions, not account-level), not raise.
+
+        Contract: {"if_held": account_if_held_tc, "dry_run": account_if_held_tc}
+        """
+        fix = basis_fixture
+        vw_tc = fix["scenario_untriggered"]["vw_tc"]
+        account_if_held_tc = fix["portfolio_tc"]
+
+        result = analytics.get_portfolio_today_change_account_basis(
+            vw_tc, account_if_held_tc, fix["account_value"], 0.0
+        )
+
+        assert result["if_held"] == pytest.approx(account_if_held_tc, rel=1e-9), (
+            f"With symphony_value_sum=0, result.if_held must equal account_if_held_tc="
+            f"{account_if_held_tc:.6f} (account-level Held basis), not vw_tc['if_held']="
+            f"{vw_tc['if_held']:.6f} (VW basis swap). Got {result.get('if_held')}."
+        )
+        assert result["dry_run"] == pytest.approx(account_if_held_tc, rel=1e-9), (
+            f"With symphony_value_sum=0, result.dry_run must equal account_if_held_tc="
+            f"{account_if_held_tc:.6f} (bot==held, no phantom divergence). "
+            f"Got {result.get('dry_run')}."
         )
 
     def test_none_vw_if_held_returns_account_if_held_with_none_dry_run(
@@ -366,6 +449,110 @@ class TestAccountBasisTCEdgeCases:
         )
         assert result["if_held"] == pytest.approx(account_if_held_tc, rel=1e-9), (
             "if_held must be account_if_held_tc even when vw if_held is None."
+        )
+
+    def test_all_cash_portfolio_guard_stays_on_account_basis(self) -> None:
+        """
+        All-cash portfolio (symphony_value_sum=0, vw_tc.if_held=0.0): the VW if_held
+        is 0.0 (no invested capital changed), but the account-level Held may be non-zero
+        (e.g. cash in a money-market accruing interest). Returning vw_tc would report
+        if_held=0.0 — a basis swap that hides real account-level movement.
+
+        Contract: {"if_held": account_if_held_tc, "dry_run": account_if_held_tc}
+
+        This is the DE-TODAY-BASIS-001 scenario: all-cash / unpopulated symphonies,
+        warm cache returns account_if_held_tc=0.46 (real account-level change) but
+        vw_tc.if_held=0.0 (empty-position VW basis). The difference is not guard alpha
+        — it is a pure basis artefact that must NOT appear as phantom divergence.
+        """
+        # Inline values — boundary scenario not representable by the shared fixture
+        account_if_held_tc = 0.46  # real account-level change from warm cache
+        vw_tc = {"if_held": 0.0, "dry_run": 0.0}  # all-cash VW: no invested-capital change
+        account_value = 12893.7
+        symphony_value_sum = 0.0  # no invested positions
+
+        result = analytics.get_portfolio_today_change_account_basis(
+            vw_tc, account_if_held_tc, account_value, symphony_value_sum
+        )
+
+        assert result["if_held"] == pytest.approx(account_if_held_tc, abs=1e-9), (
+            f"All-cash portfolio: result.if_held must equal account_if_held_tc="
+            f"{account_if_held_tc} (account basis), not vw_tc['if_held']=0.0 "
+            f"(VW basis swap). Got {result.get('if_held')}."
+        )
+        assert result["dry_run"] == pytest.approx(account_if_held_tc, abs=1e-9), (
+            f"All-cash portfolio: no guard position exists; result.dry_run must equal "
+            f"account_if_held_tc={account_if_held_tc} (bot==held, no phantom divergence). "
+            f"Got {result.get('dry_run')}."
+        )
+
+    def test_over_invested_snapshot_does_not_amplify_guard_delta(self) -> None:
+        """
+        Stale snapshot where symphony_value_sum > account_value produces an unclamped
+        invested_frac > 1.0. Without a clamp, the account-basis guard delta EXCEEDS the
+        VW guard delta — contradicting the cash-attenuation contract (cash should dilute,
+        never amplify, the guard effect).
+
+        Contract: invested_frac is clamped to min(invested_frac, 1.0).
+        Assertion: result["dry_run"] - result["if_held"] <= guard_delta_vw
+
+        Without clamp: invested_frac=1.25, guard_delta_account=0.625 > guard_delta_vw=0.5.
+        With clamp:    invested_frac=1.00, guard_delta_account=0.500 <= guard_delta_vw=0.5.
+        """
+        account_value = 12000.0
+        symphony_value_sum = 15000.0  # stale snapshot: sv_sum > acct_val
+        account_if_held_tc = 0.46
+        vw_tc = {"if_held": -1.0, "dry_run": -0.5}
+
+        # Derive guard_delta_vw from inputs — do not hardcode 0.5
+        guard_delta_vw = float(vw_tc["dry_run"]) - float(vw_tc["if_held"])
+
+        # Preconditions: stale snapshot scenario
+        assert symphony_value_sum > account_value, (
+            "Precondition: this test requires a stale snapshot (symphony_value_sum > account_value)"
+        )
+        assert guard_delta_vw > 0, "Precondition: positive guard delta is required."
+
+        result = analytics.get_portfolio_today_change_account_basis(
+            vw_tc, account_if_held_tc, account_value, symphony_value_sum
+        )
+
+        guard_delta_account = float(result["dry_run"]) - float(result["if_held"])
+        assert guard_delta_account <= guard_delta_vw, (
+            f"Stale-snapshot amplification: account-basis guard delta ({guard_delta_account:.6f}) "
+            f"must not exceed VW guard delta ({guard_delta_vw:.6f}). "
+            f"Unclamped invested_frac={symphony_value_sum / account_value:.4f} amplifies the "
+            f"guard effect, violating the cash-attenuation contract. "
+            f"Fix: clamp invested_frac to min(symphony_value_sum / account_value, 1.0)."
+        )
+
+    def test_none_account_if_held_tc_returns_none_pair(self) -> None:
+        """
+        account_if_held_tc=None (warm cache miss — Composer account-level today-change
+        not yet available). Must return {"if_held": None, "dry_run": None} without
+        raising TypeError.
+
+        The formula path would reach `None + guard_delta_vw * invested_frac`, causing
+        TypeError if account_if_held_tc is not guarded before the computation.
+        This mirrors the existing vw_tc None-guards: when any required input is None,
+        propagate None cleanly rather than raise.
+        """
+        account_if_held_tc = None  # warm cache miss
+        vw_tc = {"if_held": -1.0, "dry_run": -0.5}  # finite VW — not the trigger
+        account_value = 12000.0
+        symphony_value_sum = 10000.0
+
+        # Must not raise TypeError
+        result = analytics.get_portfolio_today_change_account_basis(
+            vw_tc, account_if_held_tc, account_value, symphony_value_sum
+        )
+
+        assert result["if_held"] is None, (
+            "account_if_held_tc=None must propagate: result.if_held must be None."
+        )
+        assert result["dry_run"] is None, (
+            "account_if_held_tc=None must propagate: result.dry_run must be None "
+            "(formula path `None + float * invested_frac` raises TypeError without this guard)."
         )
 
 

@@ -25,5 +25,17 @@
       "if_held": -2.018890,
       "dry_run": null
     }
+  },
+  "scenario_meaningful_cash": {
+    "_description": "30% uninvested cash (invested_frac=0.70). Guard delta must be proportionally attenuated — not just marginally (top-level fixture has invested_frac~0.998, only 0.16% cash). Uses its own account_value/symphony_value_sum so the 30%-cash invariant is unambiguous. _guard_delta_vw and _invested_frac encoded for test derivation — never hardcode the expected result.",
+    "account_value": 10000.0,
+    "symphony_value_sum": 7000.0,
+    "account_if_held_tc": 0.46,
+    "vw_tc": {
+      "if_held": -1.0,
+      "dry_run": -0.5
+    },
+    "_guard_delta_vw": 0.5,
+    "_invested_frac": 0.7
   }
 }
