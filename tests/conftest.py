@@ -226,8 +226,15 @@ def _reset_account_totals_cache():
         for t in threading.enumerate():
             if t.name == "cycle-refresh" and t.is_alive():
                 t.join(timeout=_CYCLE_REFRESH_JOIN_TIMEOUT)
-        _app_module._account_totals_cache.clear()  # resets dict + _stale flag
-        _app_module._account_totals_cache.refresh_written()  # belt-and-suspenders
+        cache = _app_module._account_totals_cache
+        cache.clear()  # dict.clear() works on both plain dict and _StaleFlagDict
+        # refresh_written() only exists on _StaleFlagDict; guard for tests that
+        # monkeypatch.setattr(_account_totals_cache, plain_dict) during the test body
+        # — those tests' teardown runs before monkeypatch restores the original.
+        _rw = getattr(cache, "refresh_written", None)
+        if callable(_rw):
+            _rw()  # belt-and-suspenders: ensure _stale=False even if a thread
+            # squeezed in a mark_stale() between the join and the clear
 
     _drain_and_reset()
     yield
