@@ -41,6 +41,17 @@ _STDERR_LOG_CAP: int = 4000  # chars of stderr tail logged on council failure (f
 _STDOUT_LOG_CAP: int = (
     2000  # chars of stdout tail logged on council failure (council JSON error payload)
 )
+# Key-name substrings used to identify credential env vars for redaction.
+# Sweeps _council_env (= os.environ.copy() minus ANTHROPIC_API_KEY) to catch
+# all .env secrets — not only the two Claude-specific keys.
+_CREDENTIAL_KEY_MARKERS: tuple[str, ...] = (
+    "SECRET",
+    "KEY",
+    "TOKEN",
+    "WEBHOOK",
+    "PASSWORD",
+    "URI",
+)
 
 # Prompt passed to the vanilla-primary headless claude session. The primary
 # spawns ALL 6 agents itself — prism-synthesizer has no Agent/spawn tool and
@@ -253,15 +264,20 @@ def _run_prism(run_id: str = "unknown") -> bool:
             _persist_spend(run_id, result.stdout)
         else:
             try:
-                # a) Build secret values from the env actually passed to the subprocess
+                # a) Build secret values from the env actually passed to the subprocess.
+                # Sweep _council_env by key-name markers so ALL credential-typed vars
+                # (COMPOSER_SECRET, ALPACA_SECRET_KEY, DISCORD_WEBHOOK_URL, etc.) are
+                # redacted — not only the two Claude-specific keys.
                 secret_values = [
                     v
-                    for v in (
-                        _council_env.get("CLAUDE_CODE_OAUTH_TOKEN"),
-                        os.environ.get("ANTHROPIC_API_KEY"),
-                    )
-                    if v
+                    for k, v in _council_env.items()
+                    if v and any(m in k.upper() for m in _CREDENTIAL_KEY_MARKERS)
                 ]
+                # ANTHROPIC_API_KEY was popped from _council_env before subprocess.run;
+                # add it explicitly so its value is still redacted if it appears in output.
+                _api_key = os.environ.get("ANTHROPIC_API_KEY")
+                if _api_key:
+                    secret_values.append(_api_key)
                 # b) Redact both output channels
                 safe_stderr = _redact_secrets(result.stderr or "", secret_values)
                 safe_stdout = _redact_secrets(result.stdout or "", secret_values)
