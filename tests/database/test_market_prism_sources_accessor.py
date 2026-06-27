@@ -391,49 +391,51 @@ def test_get_latest_market_prism_sources_for_run_returns_expected_shape():
 
 
 # ---------------------------------------------------------------------------
-# A-11: scan window — match found beyond LIMIT 20 (pins json_extract over Python scan)
+# A-11: depth-independent match — json_extract finds any row regardless of table depth
 # ---------------------------------------------------------------------------
 
-# The current LIMIT-20 scan fetches at most 20 rows and matches in Python.
-# If a matching row exists but is outside the 20-row window (buried under 20+ newer
-# SOURCES rows), the LIMIT-20 impl returns None even though a match exists.
-# json_extract(raw_response, '$.run_id') = ? has no such limit — it matches any row.
+# The exact SQL json_extract(raw_response, '$.run_id') = ? match finds the target row
+# regardless of how many newer rows exist in the table. A prior bounded row-count
+# scan would have missed a target row buried under more noise rows than its scan
+# window — the noise rows below prove the current implementation is not subject to
+# that failure mode.
 _RUN_ID_TARGET = "11111111-1111-1111-1111-111111111111"
 _RUN_ID_NOISE = "22222222-2222-2222-2222-222222222222"
-_LIMIT_SCAN_WINDOW = 20  # current impl scans at most this many rows
+_NOISE_ROW_COUNT = 20  # noise rows inserted after the target to prove depth-independence
 
 
-def test_get_latest_market_prism_sources_for_run_finds_match_beyond_scan_window():
-    """A-11: get_latest_market_prism_sources_for_run must use exact SQL match
-    (json_extract), not a LIMIT-N Python scan.
+def test_get_latest_market_prism_sources_for_run_finds_match_regardless_of_table_depth():
+    """A-11: get_latest_market_prism_sources_for_run finds the target row regardless
+    of how many newer rows exist in the table (depth-independence).
 
-    A LIMIT-20 scan returns None for a row whose id is buried under 20+ newer rows.
-    json_extract(raw_response, '$.run_id') = ? has no window — it finds any matching row.
+    The current implementation uses exact SQL json_extract(raw_response, '$.run_id') = ?
+    — it scans ALL rows and returns the match wherever it sits in the table. A bounded
+    row-count scan (e.g. a prior Python LIMIT-N scan) would have missed a target row
+    buried under more noise rows than its scan window.
 
-    GIVEN: 1 SOURCES row for _RUN_ID_TARGET (the target), then
-           21 SOURCES rows for _RUN_ID_NOISE (noise, higher ids),
+    GIVEN: 1 SOURCES row for _RUN_ID_TARGET (inserted first, lowest id), then
+           (_NOISE_ROW_COUNT + 1) SOURCES rows for _RUN_ID_NOISE (higher ids),
     WHEN get_latest_market_prism_sources_for_run(_RUN_ID_TARGET) is called,
     THEN it must return the TARGET row — not None.
 
-    A LIMIT-20 scan fetches the 20 most recent rows (all NOISE) and misses TARGET.
-    json_extract finds TARGET regardless of how many NOISE rows are newer.
+    A bounded row-count scan would return only the most recent rows (all NOISE) and
+    miss TARGET. The exact SQL match must find TARGET regardless of table depth.
     """
     # Insert the target row first (lowest id).
     _insert_sources_row(run_id=_RUN_ID_TARGET)
 
-    # Insert 21 noise rows (higher ids, all with a different run_id).
+    # Insert noise rows (higher ids, all with a different run_id).
     noise_raw = {"run_id": _RUN_ID_NOISE, "per_lens_digest": {}}
-    for _ in range(_LIMIT_SCAN_WINDOW + 1):
+    for _ in range(_NOISE_ROW_COUNT + 1):
         _insert_sources_row(run_id=_RUN_ID_NOISE, sources_raw=dict(noise_raw))
 
     result = db_module.get_latest_market_prism_sources_for_run(_RUN_ID_TARGET)
 
     assert result is not None, (
         f"get_latest_market_prism_sources_for_run must find the TARGET row even when "
-        f"{_LIMIT_SCAN_WINDOW + 1} newer NOISE rows exist. "
-        f"A LIMIT-{_LIMIT_SCAN_WINDOW} Python scan misses it — use "
-        f"json_extract(raw_response, '$.run_id') = ? for an exact SQL match instead. "
-        f"Got None — the matching row was outside the scan window."
+        f"{_NOISE_ROW_COUNT + 1} newer NOISE rows exist. "
+        f"A bounded row-count scan would miss it; the exact SQL json_extract match must not. "
+        f"Got None — the implementation did not find the target row."
     )
     raw = result.get("raw_response") or {}
     assert raw.get("run_id") == _RUN_ID_TARGET, (
