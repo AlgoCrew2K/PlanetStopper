@@ -43,18 +43,10 @@ _FIXTURE_PATH = (
     Path(__file__).parent.parent / "fixtures" / "math" / "today_change_account_basis_basic.json"
 )
 _ACCT_FIXTURE_PATH = (
-    Path(__file__).parent.parent
-    / "fixtures"
-    / "composer"
-    / "account-basis"
-    / "total_stats.json"
+    Path(__file__).parent.parent / "fixtures" / "composer" / "account-basis" / "total_stats.json"
 )
 _SYM_FIXTURE_PATH = (
-    Path(__file__).parent.parent
-    / "fixtures"
-    / "composer"
-    / "v3-audit"
-    / "symphony_stats_meta.json"
+    Path(__file__).parent.parent / "fixtures" / "composer" / "v3-audit" / "symphony_stats_meta.json"
 )
 
 
@@ -186,9 +178,7 @@ class TestAccountBasisTCMath:
             f"Got {result['if_held']}."
         )
 
-    def test_real_guard_divergence_scales_by_invested_fraction(
-        self, basis_fixture: dict
-    ) -> None:
+    def test_real_guard_divergence_scales_by_invested_fraction(self, basis_fixture: dict) -> None:
         """
         With a real guard divergence (symphony exited, bot outperformed if-held on VW
         basis), the account-basis guard alpha is the VW guard delta scaled by
@@ -207,7 +197,9 @@ class TestAccountBasisTCMath:
         guard_delta_vw = float(vw_tc["dry_run"]) - float(vw_tc["if_held"])
 
         # Derive expected from fixture inputs + formula
-        expected_dry_run = _expected_dry_run_account(account_if_held_tc, guard_delta_vw, invested_frac)
+        expected_dry_run = _expected_dry_run_account(
+            account_if_held_tc, guard_delta_vw, invested_frac
+        )
 
         result = analytics.get_portfolio_today_change_account_basis(
             vw_tc, account_if_held_tc, account_value, symphony_value_sum
