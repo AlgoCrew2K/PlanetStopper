@@ -3379,3 +3379,56 @@ The display text on the Overview tab must therefore say something like "Sources 
 ### Reference
 
 DE-PRISM-SOURCES-001; PR pending on `feat/overview-sources-provenance`.
+
+## DE-PRISM-DIAG-001 — Council subprocess failure diagnostics: capture + log redacted stderr/stdout on non-zero exit (2026-06-27)
+
+### Problem — diagnostic blind spot in unattended systemd runs
+
+On 2026-06-25 and 2026-06-26 the nightly Market Prism council exited with a non-zero returncode within ~3 seconds under the systemd environment. The failures could not be root-caused because `_run_prism` **silently discarded** `result.stderr` and `result.stdout` on non-zero exit — `main()` logged only a generic `Attempt N failed (SubprocessError)` line. No structured traceback, no model error, no auth rejection message.
+
+Pre-investigation eliminated all superficial causes: the OAuth token was valid, the Anthropic model endpoint was accessible, a basic `claude -p "hello"` worked under the systemd env, and single-subagent spawning worked. The fast ~3 s failure implied an early rejection (auth, model flag, env var) rather than a council logic error, but no evidence existed to confirm which. Without the subprocess output the cause was structurally undiagnosable from log data alone.
+
+### Decision — instrumentation first; root-cause fix after the next run
+
+The correct response to an unconfirmed root cause is instrumentation, not speculative remediation. Schedule stagger, resource tuning, and env-var guessing were all rejected as changes-without-evidence. The failing output needed to land in journald first; the next real run would reveal the cause for a targeted fix.
+
+### Fix — `_run_prism` logs redacted subprocess stderr + stdout tail on non-zero exit
+
+On `returncode != 0`, `_run_prism` now executes a diagnostic block (wrapped in `try/except` so it never propagates — D-1 contract preserved):
+
+1. **Build `secret_values`**: sweep `_council_env` (the env dict actually passed to the subprocess) for all keys whose uppercased name contains any of `_CREDENTIAL_KEY_MARKERS` = `("SECRET", "KEY", "TOKEN", "WEBHOOK", "PASSWORD", "URI")`, filtering values shorter than `_MIN_SWEEP_SECRET_LEN = 8` chars (over-redaction floor — see below). Also appends `os.environ.get("ANTHROPIC_API_KEY")` explicitly, because that key was popped from `_council_env` before `subprocess.run` but could still appear verbatim in subprocess output.
+
+2. **Redact via `_redact_secrets(text, secret_values)`**: replaces each non-empty value with `***REDACTED***` (literal global replace), then applies three shape-regex patterns as defense-in-depth (`sk-ant-[A-Za-z0-9_-]{8,}` for Anthropic API keys, `sk-[A-Za-z0-9_-]{16,}` for generic secret-key shapes, `oat_[A-Za-z0-9_-]{8,}` for Claude OAuth tokens). Redaction runs **before** truncation so no secret escapes via a truncation boundary.
+
+3. **Tail-truncate**: stderr to `_STDERR_LOG_CAP = 4000` chars (tracebacks appear at the end; 4,000 chars comfortably holds a full Python traceback); stdout to `_STDOUT_LOG_CAP = 2000` chars (the council JSON error payload). Outputs shorter than their cap are logged in full. Empty output is logged as an explicit `(stderr empty)` / `(stdout empty)` marker — absence itself is diagnostic.
+
+4. **Print to `sys.stderr`** with prefix `[prism_scheduler]` so journald captures it under the systemd unit.
+
+5. **On diagnostic error**: any exception raised inside the diagnostic block is caught and logged as `(diagnostic suppressed: {ExcType})` — the `return result.returncode == 0` is never blocked by a redaction/formatting failure.
+
+The success path (`returncode == 0`) and the outer `except Exception` path (where `subprocess.run` itself raises — `FileNotFoundError`, `OSError`, etc.) are **byte-for-byte unchanged**.
+
+### Review-driven hardenings (post-initial implementation)
+
+**Finding 1 — env-secret-leak sweep (commit 39e6861).**
+The initial implementation built `secret_values` from only two keys: `_council_env.get("CLAUDE_CODE_OAUTH_TOKEN")` and `os.environ.get("ANTHROPIC_API_KEY")`. The reviewer noted that `_council_env = os.environ.copy()` carries the full process environment to the subprocess, which includes additional credential-typed vars from `.env`: `COMPOSER_SECRET`, `ALPACA_SECRET_KEY`, `DISCORD_WEBHOOK_URL`, and others. These would not have been redacted from the logged output. Fix: sweep all `_council_env` entries by key-name substring (`_CREDENTIAL_KEY_MARKERS`), retaining the explicit `ANTHROPIC_API_KEY` append because that key was popped from `_council_env` before `subprocess.run`.
+
+**Finding 2 — over-redaction min-length floor (commit 9fd3496).**
+The marker-keyed sweep matched any non-empty value. Short values in credential-named keys (e.g. `LOG_LEVEL_KEY=info`, `DB_KEY=1`) would be swept, replacing innocent common substrings throughout the logged output and making the output unreadable. Fix: `_MIN_SWEEP_SECRET_LEN = 8` — values shorter than 8 chars are skipped by the sweep. Token-shape regexes already enforce minimum lengths independently (`{8,}` / `{16,}` minimums) so they are unaffected.
+
+### Scope — diagnosability only
+
+This feature is **diagnosability infrastructure, not a root-cause fix.** The actual cause of the 2026-06-25/26 systemd failures remains unconfirmed until the next real instrumented council run produces output in journald. No council prompt, agent role file, schedule timing, retry count, or subprocess flag was changed.
+
+### Deeper follow-up (out of scope, tracked)
+
+`_council_env = os.environ.copy()` exposes the full process environment to the council subprocess. The correct long-term posture is a **minimal allowlist env** — only the vars the council subprocess genuinely needs (`CLAUDE_CODE_OAUTH_TOKEN`, `DB_PATH`, `HOME`, `PATH`, `PYTHONPATH`, and any runtime vars required by the headless `claude` binary) rather than a copy of everything. This eliminates the redaction problem at its root: secrets not passed cannot leak. Deferred to a follow-up cycle because (a) the minimum required var set is unconfirmed until the systemd failure is diagnosed, and (b) an overly-narrow env allowlist could itself cause a new failure mode.
+
+### Files changed
+
+- `prism_scheduler.py` — new `_redact_secrets(text, secret_values) -> str` pure helper; new module constants `_STDERR_LOG_CAP=4000`, `_STDOUT_LOG_CAP=2000`, `_CREDENTIAL_KEY_MARKERS`, `_MIN_SWEEP_SECRET_LEN=8`; `_run_prism` non-zero exit branch logs redacted stderr+stdout tail to `sys.stderr`; D-1 AC-7 guard wraps the diagnostic block
+- `tests/prism_scheduler/test_run_prism_diagnostics.py` — hermetic test module (mocked `subprocess.run`, `capsys`); covers AC-1..AC-8, credential-redaction security cases, success-path unchanged regression lock, never-raises contract, `_redact_secrets` direct unit tests
+
+### Reference
+
+DE-PRISM-DIAG-001; branch `fix/council-subprocess-diagnostics`; HEAD `9fd3496`.

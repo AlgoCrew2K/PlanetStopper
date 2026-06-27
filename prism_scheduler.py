@@ -18,6 +18,7 @@ Exit codes:
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -36,6 +37,30 @@ BACKOFF_CAP_SECONDS: int = 60  # Maximum wait between retries
 # conditional debate) realistically costs $5-10 per run. 15.0 is a
 # runaway-prevention ceiling, not a target.
 MAX_BUDGET_USD: float = 15.0
+_STDERR_LOG_CAP: int = 4000  # chars of stderr tail logged on council failure (fits a full traceback, bounded for journald)
+_STDOUT_LOG_CAP: int = (
+    2000  # chars of stdout tail logged on council failure (council JSON error payload)
+)
+# Key-name substrings used to identify credential env vars for redaction.
+# Sweeps _council_env (= os.environ.copy() minus ANTHROPIC_API_KEY) to catch
+# all .env secrets — not only the two Claude-specific keys.
+_CREDENTIAL_KEY_MARKERS: tuple[str, ...] = (
+    "SECRET",
+    "KEY",
+    "TOKEN",
+    "WEBHOOK",
+    "PASSWORD",
+    "URI",
+)
+_MIN_SWEEP_SECRET_LEN: int = 8  # minimum value length for marker-keyed sweep; guards against short common values (e.g. LOG_LEVEL_KEY=info)
+# Compiled token-shape patterns for defense-in-depth redaction.  These match
+# [A-Za-z0-9_-]-shaped API key / OAuth token prefixes; non-word-char secrets
+# (e.g. URLs, passwords with symbols) rely on the literal env-var sweep.
+_SHAPE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"sk-ant-[A-Za-z0-9_-]{8,}"),  # Anthropic API key shape
+    re.compile(r"sk-[A-Za-z0-9_-]{16,}"),  # generic secret-key shape
+    re.compile(r"oat_[A-Za-z0-9_-]{8,}"),  # Claude OAuth token shape
+)
 
 # Prompt passed to the vanilla-primary headless claude session. The primary
 # spawns ALL 6 agents itself — prism-synthesizer has no Agent/spawn tool and
@@ -179,6 +204,41 @@ def _get_market_prism_row_for_run(run_id: str) -> dict | None:
         return None
 
 
+def _redact_secrets(text: str, secret_values: list[str]) -> str:
+    """Replace known credential values and token-shaped patterns with ***REDACTED***.
+
+    Applies literal-value replacement first (all occurrences of each non-empty
+    secret), then the module-level _SHAPE_PATTERNS regexes as defense-in-depth
+    for [A-Za-z0-9_-]-shaped tokens (sk-ant-..., sk-..., oat_...).  Non-word-char
+    secrets (URLs, passwords with symbols) rely on the literal env-var sweep.
+
+    Empty strings in secret_values are skipped — str.replace("", ...) inserts
+    a marker between every character and corrupts the string.
+
+    Pure — no I/O. The caller (_run_prism) wraps in try/except.
+    """
+    for value in secret_values:
+        if value:  # skip empty strings
+            text = text.replace(value, "***REDACTED***")
+    for pattern in _SHAPE_PATTERNS:
+        text = pattern.sub("***REDACTED***", text)
+    return text
+
+
+def _tail_output(text: str, cap: int, label: str) -> str:
+    """Return text tail-truncated to cap chars, with a marker when cut.
+
+    Returns '(<label> empty)' for empty input, the full text when within the
+    cap, or a truncation marker + the final cap chars when over the cap.
+    Used by _run_prism to bound stderr/stdout in the failure diagnostic block.
+    """
+    if not text:
+        return f"({label} empty)"
+    if len(text) <= cap:
+        return text
+    return f"...[truncated, showing last {cap}]...\n{text[-cap:]}"
+
+
 def _run_prism(run_id: str = "unknown") -> bool:
     """
     Invoke the 6-agent Prism council via a vanilla headless `claude -p` subprocess.
@@ -221,6 +281,42 @@ def _run_prism(run_id: str = "unknown") -> bool:
         )
         if result.returncode == 0:
             _persist_spend(run_id, result.stdout)
+        else:
+            try:
+                # a) Build secret values from the env actually passed to the subprocess.
+                # Sweep _council_env by key-name markers so ALL credential-typed vars
+                # (COMPOSER_SECRET, ALPACA_SECRET_KEY, DISCORD_WEBHOOK_URL, etc.) are
+                # redacted — not only the two Claude-specific keys.
+                secret_values = [
+                    v
+                    for k, v in _council_env.items()
+                    if v
+                    and len(v) >= _MIN_SWEEP_SECRET_LEN
+                    and any(m in k.upper() for m in _CREDENTIAL_KEY_MARKERS)
+                ]
+                # ANTHROPIC_API_KEY was popped from _council_env before subprocess.run;
+                # add it explicitly so its value is still redacted if it appears in output.
+                _api_key = os.environ.get("ANTHROPIC_API_KEY")
+                if _api_key and len(_api_key) >= _MIN_SWEEP_SECRET_LEN:
+                    secret_values.append(_api_key)
+                # b) Redact both output channels
+                safe_stderr = _redact_secrets(result.stderr or "", secret_values)
+                safe_stdout = _redact_secrets(result.stdout or "", secret_values)
+
+                # c) Print the diagnostic block to stderr so journald captures it
+                print(
+                    f"[prism_scheduler] Council subprocess failed:"
+                    f" returncode={result.returncode}\n"
+                    f"  stderr: {_tail_output(safe_stderr, _STDERR_LOG_CAP, 'stderr')}\n"
+                    f"  stdout: {_tail_output(safe_stdout, _STDOUT_LOG_CAP, 'stdout')}",
+                    file=sys.stderr,
+                )
+            except Exception as exc:  # noqa: BLE001
+                # AC-7: diagnostic suppressed — never propagate; return value is preserved
+                print(
+                    f"[prism_scheduler] (diagnostic suppressed: {type(exc).__name__})",
+                    file=sys.stderr,
+                )
         return result.returncode == 0
     except Exception as exc:  # noqa: BLE001
         # D-1: log type only — never exc message or path

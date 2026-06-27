@@ -1,160 +1,202 @@
-# TDD Handoff v3 — DE-PRISM-SOURCES-001 cleanup lap (dead accessor + json_extract)
+# TDD Handoff — DE-PRISM-DIAG-001 (Council Subprocess Diagnostics)
 
-**From:** sov-test (quant-test-writer, team lead)
-**To:** sov-db (sqlite-specialist)
-**Branch:** feat/overview-sources-provenance (current after cleanup-RED commit)
-**Worktree:** C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/sov-sources
-**Do NOT read the PM brief** — implement ONLY what is in this file.
-**Do NOT merge or push to origin — the PM owns the ship gate.**
+**Phase:** CYCLE-COMPLETE
+
+**For:** `council-impl` (the implementer)
+**Written by:** `council-test` (quant-test-writer)
+**Branch:** `fix/council-subprocess-diagnostics`
+**Worktree:** `C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/council-diag`
+**RED test file:** `tests/prism_scheduler/test_run_prism_diagnostics.py` (28 failing, 5 passing)
+
+## Status Log
+
+- [2026-06-27] council-impl: GREEN complete — 33/33 tests passing, 0 test bugs documented. Ruff format ✓ Ruff check ✓. Commit: 6cfb935.
+- [2026-06-27] council-review: BLOCKER — credential sweep incomplete (COMPOSER_SECRET, ALPACA_SECRET, DISCORD_WEBHOOK_URL not covered).
+- [2026-06-27] council-test: RED — 4 credential-leak tests. Commit: 710b4c2.
+- [2026-06-27] council-impl: GREEN — extended sweep with _CREDENTIAL_KEY_MARKERS, 39/0. Commit: 39e6861.
+- [2026-06-27] team-lead: caught over-redaction bug (no min-length floor) + weak guard test.
+- [2026-06-27] council-test: RED — over-redaction guard (info42, no OR escape). Commit: 1f2f386.
+- [2026-06-27] council-impl: GREEN — _MIN_SWEEP_SECRET_LEN=8 floor, 39/0. Commit: 9fd3496.
+- [2026-06-27] council-review: APPROVE — all checks pass, no blockers. HEAD: 9fd3496.
+- [2026-06-27] PM /review sub-cycle — 4 must-fix findings:
+    1. ANTHROPIC_API_KEY explicit append bypasses _MIN_SWEEP_SECRET_LEN floor (correctness, same over-redaction class).
+    2. Hoist _SHAPE_PATTERNS to module level (compiled once, not per-call).
+    3. Hoist _tail nested helper to module level as _tail_output (importable + testable).
+    4. Tighten _redact_secrets docstring re: pattern coverage.
+- [2026-06-27] council-test: RED — 4 new tests (short API key floor, _tail_output hoist invariants). Commit: 9488512.
+- [2026-06-27] council-impl: GREEN — 43/0. All 4 review findings fixed. Commit: aaafcb1.
+- [2026-06-27] council-review: APPROVE (final) — all floor/hoist checks pass. HEAD: aaafcb1.
+- [2026-06-27] PM: CI red on aaafcb1 — 2 tests fail in full suite (cross-dir isolation).
+    Root cause: tests/ai_advisor/test_prism_scheduling.py::_import_scheduler() did
+    del sys.modules["prism_scheduler"] + reimport, creating a new module object.
+    patch("prism_scheduler.X") patched the new object; test file's module-level
+    import prism_scheduler held the old object → patches did not intercept.
+    Bisect confirmed: test_prism_scheduling.py + test_run_prism_diagnostics.py → 2 failed.
+- [2026-06-27] council-test: ISOLATION FIX — replaced del+reimport with importlib.reload()
+    in _import_scheduler (preserves module identity in sys.modules).
+    Bisect after fix: 95 passed, 1 skipped, 0 failed. All 43 diagnostics tests GREEN.
+    No production code touched. Commit: 814ede5. Signaled PM — ready for re-push + re-CI.
+
+## Implementation Notes
+
+- Added `import re` (alphabetically between `os` and `subprocess`) for shape-regex patterns.
+- `_STDERR_LOG_CAP` constant placed after `MAX_BUDGET_USD`. `_STDOUT_LOG_CAP` was reformatted by ruff to a parenthesized multi-line form (100-char limit) — value still `int = 2000`, tests pass.
+- `_redact_secrets` placed between `_get_market_prism_row_for_run` and `_run_prism`. Shapes compiled inside the function. Empty-string guard via `if value:` before `str.replace`. Regex order: `sk-ant-` before `sk-` (more specific first, avoids partial overlap concern though both would catch their tokens).
+- `_tail` defined as a local function inside the `try` block — valid Python, ruff clean.
+- Secret sourcing: OAuth token from `_council_env.get("CLAUDE_CODE_OAUTH_TOKEN")`, API key from `os.environ.get("ANTHROPIC_API_KEY")` — both filtered via `if v` to exclude None.
+- Success branch and outer `except Exception` (SubprocessError path) left byte-for-byte unchanged.
+
+## Test File Issues (for test-writer to fix)
+
+None — all 33 tests pass with zero workarounds.
+
+Do NOT read the feature plan — implement only what is in this file.
+Do NOT merge, push, or touch any branch other than `fix/council-subprocess-diagnostics`.
 
 ---
 
-## RED state (cleanup lap)
+## Your job
 
-Run the bounded -n0 suite to verify RED:
-
-```
-DB_PATH=/tmp/sov_cleanup_verify.db python -m pytest \
-  tests/database/test_market_prism_sources_accessor.py \
-  tests/database/test_017_advisor_observations.py \
-  tests/prism_scheduler/test_patch_provenance.py \
-  tests/prism_scheduler/test_patch_provenance_render_contract.py \
-  tests/app/test_ai_advisor_tab_sources_merge.py \
-  -n0 --tb=line -q
-```
-
-Expected RED summary:
-- `test_market_prism_sources_accessor.py`: 1 FAILED (A-11: prefix match not caught by LIMIT-20 scan)
-- All other files: all passed (already GREEN from prior lap)
+Make the 28 failing tests pass by modifying ONLY `prism_scheduler.py`.
+Do NOT touch the test file. Do NOT add new dependencies. Write the minimum code.
 
 ---
 
-## Cleanup lap — what changed
+## What the tests require (behavior contract)
 
-Two /review findings surfaced after the prior GREEN:
+### 1. Two new module-level constants (near the existing `MAX_ATTEMPTS` block)
 
-1. `get_latest_market_prism_sources()` (no run_id arg) has ZERO production callers —
-   deleted from tests (A-5, A-6, A-9 removed). sov-db deletes it from database.py.
-
-2. `get_latest_market_prism_sources_for_run` uses `ORDER BY id DESC LIMIT 20` + Python
-   loop matching on `raw.get("run_id") == run_id`. This is a scan, not an exact match.
-   sov-db converts to `json_extract(raw_response, '$.run_id') = ?` exact SQL equality.
-
----
-
-## sov-db (sqlite-specialist) — two changes to database.py
-
-### Change 1 (DELETE): Remove `get_latest_market_prism_sources()` from database.py
-
-**Location:** database.py ~line 1238. Delete the entire function (no run_id variant).
-Zero production callers confirmed by review grep. No callers in prism_scheduler.py or app.py.
-
-### Change 2 (MODIFY): Convert `get_latest_market_prism_sources_for_run` to exact SQL match
-
-**Location:** database.py ~line 1205-1235. Replace the current LIMIT-20 scan with an exact
-`json_extract` query.
-
-**Current implementation (LIMIT-20 scan — replace this):**
 ```python
-cursor.execute(
-    "SELECT "
-    + ", ".join(_ADVISOR_OBSERVATION_COLUMNS)
-    + " FROM advisor_observations WHERE advisor_role = 'MARKET_PRISM_SOURCES'"
-    + " ORDER BY id DESC LIMIT 20",
-)
-rows = cursor.fetchall()
-conn.close()
-for row in rows:
-    parsed = _parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS)
-    raw = parsed.get("raw_response") or {}
-    if isinstance(raw, dict) and raw.get("run_id") == run_id:
-        return parsed
-return None
+_STDERR_LOG_CAP: int = 4000   # chars of stderr tail logged on council failure (fits a full traceback, bounded for journald)
+_STDOUT_LOG_CAP: int = 2000   # chars of stdout tail logged on council failure (council JSON error payload)
 ```
 
-**New implementation (exact json_extract match):**
+Both must be `int`, both must be `> 0`.
+
+### 2. New pure helper: `_redact_secrets(text: str, secret_values: list[str]) -> str`
+
+Contract (tested directly by `TestRedactSecrets`):
+- Empty input -> empty output.
+- Benign text with no secrets and no token shapes -> returned unchanged.
+- Each non-empty value in `secret_values` is replaced globally (all occurrences) with `***REDACTED***`.
+- Empty strings in `secret_values` are SKIPPED — do NOT call `str.replace("", ...)`.
+- After literal-value replacement, apply these shape-regex patterns (defense-in-depth),
+  all replaced with `***REDACTED***`:
+  - `sk-ant-[A-Za-z0-9_-]{8,}`  — Anthropic API key shape
+  - `sk-[A-Za-z0-9_-]{16,}`     — generic secret-key shape
+  - `oat_[A-Za-z0-9_-]{8,}`     — Claude OAuth token shape
+- `oat_ABC` (3 chars after `oat_`, below the 8-char floor) must NOT be redacted.
+- Pure, no I/O. Should not raise, but the caller guards it anyway (see AC-7).
+
+### 3. Modified `_run_prism` — non-zero-exit diagnostic block
+
+The existing code after `result = subprocess.run(...)` is:
+
 ```python
-cursor.execute(
-    "SELECT "
-    + ", ".join(_ADVISOR_OBSERVATION_COLUMNS)
-    + " FROM advisor_observations"
-    + " WHERE advisor_role = 'MARKET_PRISM_SOURCES'"
-    + " AND json_extract(raw_response, '$.run_id') = ?"
-    + " ORDER BY id DESC LIMIT 1",
-    (run_id,),
-)
-row = cursor.fetchone()
-conn.close()
-if row is None:
-    return None
-return _parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS)
+if result.returncode == 0:
+    _persist_spend(run_id, result.stdout)
+return result.returncode == 0
 ```
 
-**Key constraints:**
-- Use `json_extract(raw_response, '$.run_id') = ?` — EXACT equality (NOT LIKE '%...%').
-  A prefix/substring match would falsely match run_ids that contain the search string.
-- Droplet is Ubuntu 24.04 / SQLite 3.45 — json_extract is fully supported.
-- `raw_response` is stored as a JSON text column — json_extract works on it directly.
-- Keep `get_ro_connection()` — read-only path unchanged.
-- Keep D-1 `try/except Exception: return None` wrapper — unchanged.
-- The returned row must have `raw_response` as a parsed dict (not a JSON string).
-  The existing `_parse_advisor_observation_row` handles this — keep using it.
-- NO-FALLBACK contract preserved: if `json_extract` finds no match, `fetchone()` returns
-  `None` → function returns `None`. No scan fallback.
+Add a diagnostic block in the failure (`else`) branch, wrapped in `try/except`:
 
-**Docstring update** — update to reflect the exact-match implementation:
+```python
+if result.returncode == 0:
+    _persist_spend(run_id, result.stdout)
+else:
+    try:
+        # a) Build secret values from the env actually passed to the subprocess
+        secret_values = [
+            v for v in (
+                _council_env.get("CLAUDE_CODE_OAUTH_TOKEN"),
+                os.environ.get("ANTHROPIC_API_KEY"),
+            )
+            if v
+        ]
+        # b) Redact both output channels
+        safe_stderr = _redact_secrets(result.stderr or "", secret_values)
+        safe_stdout = _redact_secrets(result.stdout or "", secret_values)
+        # c) Tail-truncate with marker
+        def _tail(text, cap, label):
+            if not text:
+                return f"({label} empty)"
+            if len(text) <= cap:
+                return text
+            return f"...[truncated, showing last {cap}]...\n{text[-cap:]}"
+        # d) Print the diagnostic block
+        print(
+            f"[prism_scheduler] Council subprocess failed: returncode={result.returncode}\n"
+            f"  stderr: {_tail(safe_stderr, _STDERR_LOG_CAP, 'stderr')}\n"
+            f"  stdout: {_tail(safe_stdout, _STDOUT_LOG_CAP, 'stdout')}",
+            file=sys.stderr,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # AC-7: diagnostic suppressed — never propagate; return value is preserved
+        print(
+            f"[prism_scheduler] (diagnostic suppressed: {type(exc).__name__})",
+            file=sys.stderr,
+        )
+return result.returncode == 0
 ```
-Queries advisor_observations WHERE advisor_role='MARKET_PRISM_SOURCES' AND
-json_extract(raw_response, '$.run_id') = run_id. Returns the most recent matching
-row (ORDER BY id DESC LIMIT 1), or None when no match exists.
-```
+
+The exact formatting is yours — tests check for substrings, not exact format.
+What they assert:
+- `"[prism_scheduler]"` in captured stderr on non-zero exit.
+- `"returncode=2"` (or `"returncode: 2"` or `"2"`) in captured stderr.
+- The sentinel content of `result.stderr` appears in captured stderr.
+- `"(stderr empty)"` when `result.stderr == ""`.
+- `"(stdout empty)"` when `result.stdout == ""`.
+- `"truncat"` (case-insensitive) OR `"..."` OR `"…"` when output exceeds cap.
+- Tail chars (last 20+ chars of a long output) appear in captured stderr.
+- No live credential value in ANY captured output (both `.out` and `.err`).
+- `"***REDACTED***"` present when a secret was replaced.
+- `"(diagnostic suppressed: RuntimeError)"` in captured stderr when `_redact_secrets` raises.
+- `"RuntimeError"` appears in captured stderr in that suppressed case.
+
+### 4. What you must NOT change
+
+- The `if result.returncode == 0:` success branch — zero change. Tests assert `_persist_spend`
+  called once on rc=0 and NO `[prism_scheduler]` diagnostic emitted.
+- The outer `except Exception` block (catches `subprocess.run` raising) — tests assert it still
+  logs ONLY `SubprocessError: {type(exc).__name__}`, no message, no path.
+- Any other function in `prism_scheduler.py`.
 
 ---
 
-## GREEN target
+## Security — the adversarial sweep test
 
-After implementing both changes:
+`test_no_secret_value_appears_in_any_log_line` plants real values in both env vars,
+embeds both in mocked stderr AND stdout, then sweeps ALL of `capsys.readouterr()`
+(`.out` + `.err`) asserting neither value appears as a substring.
 
-```
-DB_PATH=/tmp/sov_cleanup_green.db python -m pytest \
-  tests/database/test_market_prism_sources_accessor.py \
-  tests/database/test_017_advisor_observations.py \
-  tests/prism_scheduler/test_patch_provenance.py \
-  tests/prism_scheduler/test_patch_provenance_render_contract.py \
-  tests/app/test_ai_advisor_tab_sources_merge.py \
-  -n0 -q
-```
-
-Target: **ALL passed / 0 failed / 0 errors** across all 5 files.
-
-Then ruff check + format:
-```
-python -m ruff check database.py
-python -m ruff format --check database.py
-```
+Critical: pull the OAuth token from `_council_env.get("CLAUDE_CODE_OAUTH_TOKEN")` —
+NOT from `os.environ` — because `_council_env` is the dict actually passed to the
+subprocess. Both are redacted: the OAuth token from `_council_env`, the API key from
+`os.environ.get("ANTHROPIC_API_KEY")`.
 
 ---
 
-## Scope boundaries (do NOT touch)
+## How to verify GREEN
 
-- `app.py` — UNCHANGED (merge logic already correct; no callers of deleted function).
-- `prism_scheduler.py` — UNCHANGED (idempotency guard calls `get_latest_market_prism_sources_for_run`, not the deleted variant).
-- `templates/ai_advisor.html` — UNCHANGED.
-- No DB migration — json_extract works on existing text column with no schema change.
-- Do NOT create a PR or merge to main — PM owns the ship gate.
-- Do NOT run the full/uncapped/-n>4 pytest suite — it reboots the host.
+In the worktree:
+```
+set ALPHABOT_TEST_MEM_CAP_GB=24
+set DB_PATH=C:/Users/paulm/AppData/Local/Temp/test_diag_state.db
+python -m pytest tests/prism_scheduler/test_run_prism_diagnostics.py -n0 --tb=short -q
+```
 
----
+Target: **33 passed, 0 failed**.
 
-## After GREEN
+Run ruff on `prism_scheduler.py` before committing:
+```
+python -m ruff format prism_scheduler.py
+python -m ruff check prism_scheduler.py
+```
 
-Run the 5-file bounded -n0 suite and confirm all pass / 0 failed / 0 errors.
 Commit path-scoped (NOT `git add -A`):
 ```
-git -C "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/sov-sources" \
-  add database.py
-git -C "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/sov-sources" \
-  commit -m "fix(db): delete dead get_latest_market_prism_sources + json_extract exact match (DE-PRISM-SOURCES-001)"
+git add prism_scheduler.py
+git commit -m "fix(prism_scheduler): capture+log council subprocess stderr/stdout on non-zero exit with credential redaction (DE-PRISM-DIAG-001)"
 ```
 
-Then `SendMessage` the PM (team-lead) "GREEN: <N> passed / 0 failed / 0 errors. SHA=<sha>."
+Then `SendMessage` to `council-test`: "GREEN: 33 passed / 0 failed / 0 errors. SHA=<sha>."
