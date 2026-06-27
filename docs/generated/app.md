@@ -3,7 +3,7 @@
 > Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
 **Source:** `app.py`
-**Last updated:** 2026-06-23 (feat/dashboard-realtime-push: SSE /api/events + _StaleFlagDict + _notify_cycle_complete + data_as_of fix; prior: DE-LIVE-DASH-001: live data-source wiring for six broken dashboard surfaces)
+**Last updated:** 2026-06-26 (fix/today-change-account-basis: B-2 today-change account-basis alignment, DE-TODAY-BASIS-001; prior: 2026-06-23 feat/dashboard-realtime-push: SSE push + _StaleFlagDict + data_as_of fix)
 
 ## Overview
 
@@ -481,6 +481,8 @@ This ensures the `data_as_of` display reflects when the cycle data was captured,
 **Prior defect (fixed this cycle):** The original implementation iterated `bot_state.values()` looking for the key inside per-symphony sub-dicts — a shape that production never emits. Every call fell through to `datetime.now()`, making `data_as_of` the server render clock rather than the cycle timestamp. The regression test that was supposed to guard this was GREEN-but-HOLLOW: its fixture wrote `last_successful_cycle_at` inside a per-symphony dict, matching the broken code's iteration path rather than the real production shape (top-level key). The fix and its test now both operate on the real top-level structure.
 
 **Cache reads:** All `_account_totals_cache` reads use `.get()` (single call, TOCTOU-safe against `_StaleFlagDict.mark_stale()`). The `portfolio_value` is sourced from the cache when available; falls back to a per-symphony sum from `bot_state` when the cache is masked (stale window after `_notify_cycle_complete()`).
+
+**B-2 today-change account-basis fix (DE-TODAY-BASIS-001):** The warm-cache today-change block now routes through `analytics.get_portfolio_today_change_account_basis()`. Previously, `if_held` was `_cached_tc` (Composer `todays_percent_change`, account-value denominator, cash-inclusive) while `dry_run` was the VW portfolio today-change (symphony-value denominator, cash-excluded). Different denominators produced phantom bot-vs-held divergence even when no guard had fired. The fix computes a guard delta on the VW basis (common denominator) and scales it by `invested_frac = symphony_value_sum / account_value` before applying it to the account-level Held today-change. With zero guard divergence, `guard_delta_vw == 0` and `dry_run == account_if_held_tc` exactly. `_symphony_value_sum` is now hoisted before both the CR and TC blocks (previously scoped inside the `if _cached_cr` branch, out of reach for TC). The cold-cache fallback (`else` branch, VW-both) is unchanged.
 
 #### `_compute_suggestion_gates(suggestion, symphony_id: str) → dict`
 Computes four-gates verdict booleans for one suggestion: `allowlist`, `risk_direction`, `oos_frozen_eval`, `locked_vars`.
