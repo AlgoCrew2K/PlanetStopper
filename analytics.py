@@ -1118,21 +1118,37 @@ def get_portfolio_today_change_account_basis(
     Guard invariants:
         - Untriggered symphonies have dry_run == if_held on VW basis → guard_delta_vw == 0 →
           dry_run_account == account_if_held_tc (no phantom alpha regardless of cash).
-        - if account_value <= 0 or symphony_value_sum <= 0: returns vw_tc unchanged
-          (division guard; caller should treat as a missing-data case).
+        - if account_value <= 0/non-finite or symphony_value_sum <= 0/non-finite: returns
+          {"if_held": account_if_held_tc, "dry_run": account_if_held_tc} (Bot==Held;
+          no phantom alpha — invested_frac is undefined so guard effect can't be scaled).
+        - if account_if_held_tc is None: returns {"if_held": None, "dry_run": None}
+          (account-basis result is undefined; propagate None cleanly).
         - if vw_tc["dry_run"] is None or vw_tc["if_held"] is None: returns
           {"if_held": account_if_held_tc, "dry_run": None}.
+        - invested_frac is clamped to min(..., 1.0): symphony_value_sum > account_value
+          is inconsistent (cash non-negative) but a stale snapshot can produce it;
+          clamping prevents guard-delta amplification beyond the VW magnitude.
     """
     if not (math.isfinite(account_value) and account_value > 0.0):
-        return vw_tc
+        # Division guard: can't compute invested_frac; no measurable guard effect →
+        # Bot == Held on account basis (conservative, no phantom alpha).
+        return {"if_held": account_if_held_tc, "dry_run": account_if_held_tc}
     if not (math.isfinite(symphony_value_sum) and symphony_value_sum > 0.0):
-        return vw_tc
+        # Division guard: zero/missing deployed capital → invested_frac undefined →
+        # Bot == Held on account basis (conservative, no phantom alpha).
+        return {"if_held": account_if_held_tc, "dry_run": account_if_held_tc}
+    if account_if_held_tc is None:
+        # Account-level Held unavailable; account-basis result undefined.
+        return {"if_held": None, "dry_run": None}
     if vw_tc.get("if_held") is None:
         return {"if_held": account_if_held_tc, "dry_run": None}
     if vw_tc.get("dry_run") is None:
         return {"if_held": account_if_held_tc, "dry_run": None}
 
-    invested_frac = symphony_value_sum / account_value
+    # Cap at 1.0: symphony_value_sum > account_value is inconsistent (cash can't be
+    # negative) but a stale snapshot could produce it; clamping prevents amplification
+    # of the guard delta beyond its VW-basis magnitude (operational policy).
+    invested_frac = min(symphony_value_sum / account_value, 1.0)
     # Guard delta measured on VW basis (dry_run and if_held share the same
     # symphony-value denominator, so this is a clean pure-guard-effect measure).
     guard_delta_vw = float(vw_tc["dry_run"]) - float(vw_tc["if_held"])
