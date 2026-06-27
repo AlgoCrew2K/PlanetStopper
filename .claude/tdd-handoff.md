@@ -1,10 +1,36 @@
 # TDD Handoff — DE-PRISM-DIAG-001 (Council Subprocess Diagnostics)
 
+**Phase:** CYCLE-COMPLETE
+
 **For:** `council-impl` (the implementer)
 **Written by:** `council-test` (quant-test-writer)
 **Branch:** `fix/council-subprocess-diagnostics`
 **Worktree:** `C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/council-diag`
 **RED test file:** `tests/prism_scheduler/test_run_prism_diagnostics.py` (28 failing, 5 passing)
+
+## Status Log
+
+- [2026-06-27] council-impl: GREEN complete — 33/33 tests passing, 0 test bugs documented. Ruff format ✓ Ruff check ✓. Commit: 6cfb935.
+- [2026-06-27] council-review: BLOCKER — credential sweep incomplete (COMPOSER_SECRET, ALPACA_SECRET, DISCORD_WEBHOOK_URL not covered).
+- [2026-06-27] council-test: RED — 4 credential-leak tests. Commit: 710b4c2.
+- [2026-06-27] council-impl: GREEN — extended sweep with _CREDENTIAL_KEY_MARKERS, 39/0. Commit: 39e6861.
+- [2026-06-27] team-lead: caught over-redaction bug (no min-length floor) + weak guard test.
+- [2026-06-27] council-test: RED — over-redaction guard (info42, no OR escape). Commit: 1f2f386.
+- [2026-06-27] council-impl: GREEN — _MIN_SWEEP_SECRET_LEN=8 floor, 39/0. Commit: 9fd3496.
+- [2026-06-27] council-review: APPROVE — all checks pass, no blockers. HEAD: 9fd3496.
+
+## Implementation Notes
+
+- Added `import re` (alphabetically between `os` and `subprocess`) for shape-regex patterns.
+- `_STDERR_LOG_CAP` constant placed after `MAX_BUDGET_USD`. `_STDOUT_LOG_CAP` was reformatted by ruff to a parenthesized multi-line form (100-char limit) — value still `int = 2000`, tests pass.
+- `_redact_secrets` placed between `_get_market_prism_row_for_run` and `_run_prism`. Shapes compiled inside the function. Empty-string guard via `if value:` before `str.replace`. Regex order: `sk-ant-` before `sk-` (more specific first, avoids partial overlap concern though both would catch their tokens).
+- `_tail` defined as a local function inside the `try` block — valid Python, ruff clean.
+- Secret sourcing: OAuth token from `_council_env.get("CLAUDE_CODE_OAUTH_TOKEN")`, API key from `os.environ.get("ANTHROPIC_API_KEY")` — both filtered via `if v` to exclude None.
+- Success branch and outer `except Exception` (SubprocessError path) left byte-for-byte unchanged.
+
+## Test File Issues (for test-writer to fix)
+
+None — all 33 tests pass with zero workarounds.
 
 Do NOT read the feature plan — implement only what is in this file.
 Do NOT merge, push, or touch any branch other than `fix/council-subprocess-diagnostics`.
