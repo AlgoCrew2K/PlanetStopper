@@ -1,168 +1,160 @@
-# TDD Handoff — dfix cycle (AC-7 + AC-8 defect fixes)
+# TDD Handoff v3 — DE-PRISM-SOURCES-001 cleanup lap (dead accessor + json_extract)
 
-**Branch:** feat/dashboard-realtime-push
-**RED commit:** see git log (test(ac7-ac8): re-point hollow fixtures...)
-**Handoff owner:** dfix-impl (flask-dashboard-specialist)
-**Do NOT read the PM brief or dfix-test brief** — implement ONLY what is in this file.
-
----
-
-## What is RED and why
-
-Running `python -m pytest tests/realtime_push/test_data_freshness_visibility.py -n0`
-produces **5 FAILED / 5 PASSED**.
-
-The 5 failing tests expose two concrete defects:
-
-### Defect 1 — AC-7: per-symphony-dict reader misses the top-level key
-
-The engine writes `last_successful_cycle_at` at the **top level** of `bot_state`, never
-inside a per-symphony sub-dict (alpha_bot_execution.py:948/1092/1878):
-
-```python
-bot_state["last_successful_cycle_at"] = current_et.isoformat()
-```
-
-Two reader sites in app.py loop over per-symphony dicts and miss the top-level key:
-
-**Site 1 — `_compute_portfolio_strip` (app.py:1281-1287):**
-```python
-_cycle_ts = None
-for _sym_v in bot_state.values():
-    if isinstance(_sym_v, dict):
-        _ts = _sym_v.get("last_successful_cycle_at")   # <-- never in a per-sym dict
-        if _ts:
-            _cycle_ts = _ts
-            break
-```
-Local variable name here is `bot_state`.
-
-**Site 2 — `get_state` top-level data_as_of (app.py:2125-2131):**
-```python
-_tl_cycle_ts = None
-for _tl_v in state_data.values():
-    if isinstance(_tl_v, dict):
-        _tl_ts = _tl_v.get("last_successful_cycle_at")  # <-- never in a per-sym dict
-        if _tl_ts:
-            _tl_cycle_ts = _tl_ts
-            break
-```
-Local variable name here is `state_data` (different from site 1 — do not copy-paste a NameError).
-
-Both sites fall through to `datetime.now(_ET)` because `last_successful_cycle_at` is
-never found in any per-symphony dict. The correct read pattern already exists at
-app.py:2255: `state_data.get("last_successful_cycle_at")` — a direct top-level get.
-
-### Defect 2 — AC-8: `showConnectionLost()` targets non-existent DOM element ids
-
-`static/index.js:1299-1310` — `showConnectionLost()` uses wrong selectors:
-
-```js
-var badge = document.getElementById('engine-status-badge');     // <-- id does not exist
-// ...
-var dataAsOf = document.querySelector('[data-testid="data-as-of"]') ||
-               document.querySelector('.data-as-of');           // <-- no such testid/class
-```
-
-Real element ids in the templates:
-- `templates/_chrome.html:51-53`: `id="engine-status-dot"` and `id="engine-status-label"`
-  (there is no `engine-status-badge` id anywhere)
-- `templates/index.html:846`: `id="hero-data-as-of" class="legend-as-of"`
-  (there is no `data-as-of` testid and no `.data-as-of` class anywhere)
-
-Result: `showConnectionLost()` silently no-ops on every call — no visible cue renders.
+**From:** sov-test (quant-test-writer, team lead)
+**To:** sov-db (sqlite-specialist)
+**Branch:** feat/overview-sources-provenance (current after cleanup-RED commit)
+**Worktree:** C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/sov-sources
+**Do NOT read the PM brief** — implement ONLY what is in this file.
+**Do NOT merge or push to origin — the PM owns the ship gate.**
 
 ---
 
-## Minimal GREEN implementation
+## RED state (cleanup lap)
 
-### Fix 1 — app.py site 1 (`_compute_portfolio_strip`, local var `bot_state`)
+Run the bounded -n0 suite to verify RED:
 
-Replace the per-sym-dict loop (app.py:1281-1287) with a direct top-level get:
-
-```python
-# Derive data_as_of from the actual data timestamp, not the server render clock.
-# The engine writes last_successful_cycle_at at the TOP LEVEL of bot_state
-# (alpha_bot_execution.py:948/1092/1878) — never inside per-symphony sub-dicts.
-# Falls back to datetime.now() if no cycle timestamp is available.
-_cycle_ts = bot_state.get("last_successful_cycle_at")
+```
+DB_PATH=/tmp/sov_cleanup_verify.db python -m pytest \
+  tests/database/test_market_prism_sources_accessor.py \
+  tests/database/test_017_advisor_observations.py \
+  tests/prism_scheduler/test_patch_provenance.py \
+  tests/prism_scheduler/test_patch_provenance_render_contract.py \
+  tests/app/test_ai_advisor_tab_sources_merge.py \
+  -n0 --tb=line -q
 ```
 
-Then use `_cycle_ts` in the existing isoformat-parse block that follows (the try/except
-that formats `_data_as_of` is already correct — only the lookup changes).
-
-### Fix 2 — app.py site 2 (`get_state` top-level, local var `state_data`)
-
-Replace the per-sym-dict loop (app.py:2125-2131) with a direct top-level get:
-
-```python
-# AC-7: top-level data_as_of is the JS fallback hero freshness signal.
-# last_successful_cycle_at is a top-level key (alpha_bot_execution.py:948/1092/1878).
-_tl_cycle_ts = state_data.get("last_successful_cycle_at")
-```
-
-Then use `_tl_cycle_ts` in the existing isoformat-parse block that follows.
-
-### Fix 3 — `static/index.js` `showConnectionLost()` (index.js:1299-1310)
-
-Replace the two wrong selector calls with the real element ids:
-
-```js
-function showConnectionLost() {
-    // Badge cluster: _chrome.html:51-53 uses engine-status-dot + engine-status-label
-    var dot = document.getElementById('engine-status-dot');
-    var label = document.getElementById('engine-status-label');
-    if (dot) {
-        dot.style.background = 'var(--studio-neg, #e53e3e)';
-    }
-    if (label) {
-        label.textContent = 'Connection Lost';
-        label.style.color = 'var(--studio-neg, #e53e3e)';
-    }
-    // Data-as-of element: index.html:846 uses id="hero-data-as-of"
-    var dataAsOf = document.getElementById('hero-data-as-of');
-    if (dataAsOf) {
-        dataAsOf.textContent = 'connection lost';
-    }
-}
-```
-
-The mutation logic (textContent, color/style) is your choice — the test asserts only
-that the function body references `engine-status-dot` or `engine-status-label`
-(at least one real badge id from `_chrome.html`) AND references `hero-data-as-of`
-(the real data-as-of id from `index.html`).
+Expected RED summary:
+- `test_market_prism_sources_accessor.py`: 1 FAILED (A-11: prefix match not caught by LIMIT-20 scan)
+- All other files: all passed (already GREEN from prior lap)
 
 ---
 
-## Scope boundary
+## Cleanup lap — what changed
 
-- Do NOT touch the AC-4 path (`_StaleFlagDict`, `_refresh_account_totals`, SSE freshness).
-- Do NOT touch the snapshot branch (`closed_frozen` / `TestSnapshotBranchDataAsOfUsesSnapshotTimestamp`).
-- Do NOT touch `alpha_bot_execution.py`.
-- Do NOT create a PR or merge to main.
+Two /review findings surfaced after the prior GREEN:
+
+1. `get_latest_market_prism_sources()` (no run_id arg) has ZERO production callers —
+   deleted from tests (A-5, A-6, A-9 removed). sov-db deletes it from database.py.
+
+2. `get_latest_market_prism_sources_for_run` uses `ORDER BY id DESC LIMIT 20` + Python
+   loop matching on `raw.get("run_id") == run_id`. This is a scan, not an exact match.
+   sov-db converts to `json_extract(raw_response, '$.run_id') = ?` exact SQL equality.
 
 ---
 
-## After your GREEN
+## sov-db (sqlite-specialist) — two changes to database.py
 
-Run:
-```
-python -m pytest tests/realtime_push/test_data_freshness_visibility.py -n0 --tb=short
+### Change 1 (DELETE): Remove `get_latest_market_prism_sources()` from database.py
+
+**Location:** database.py ~line 1238. Delete the entire function (no run_id variant).
+Zero production callers confirmed by review grep. No callers in prism_scheduler.py or app.py.
+
+### Change 2 (MODIFY): Convert `get_latest_market_prism_sources_for_run` to exact SQL match
+
+**Location:** database.py ~line 1205-1235. Replace the current LIMIT-20 scan with an exact
+`json_extract` query.
+
+**Current implementation (LIMIT-20 scan — replace this):**
+```python
+cursor.execute(
+    "SELECT "
+    + ", ".join(_ADVISOR_OBSERVATION_COLUMNS)
+    + " FROM advisor_observations WHERE advisor_role = 'MARKET_PRISM_SOURCES'"
+    + " ORDER BY id DESC LIMIT 20",
+)
+rows = cursor.fetchall()
+conn.close()
+for row in rows:
+    parsed = _parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS)
+    raw = parsed.get("raw_response") or {}
+    if isinstance(raw, dict) and raw.get("run_id") == run_id:
+        return parsed
+return None
 ```
 
-Expected: **0 failed, 10 passed** (all 5 previously-RED tests now GREEN, 5 previously-GREEN
-tests still GREEN).
+**New implementation (exact json_extract match):**
+```python
+cursor.execute(
+    "SELECT "
+    + ", ".join(_ADVISOR_OBSERVATION_COLUMNS)
+    + " FROM advisor_observations"
+    + " WHERE advisor_role = 'MARKET_PRISM_SOURCES'"
+    + " AND json_extract(raw_response, '$.run_id') = ?"
+    + " ORDER BY id DESC LIMIT 1",
+    (run_id,),
+)
+row = cursor.fetchone()
+conn.close()
+if row is None:
+    return None
+return _parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS)
+```
 
-Also run ruff on changed files:
+**Key constraints:**
+- Use `json_extract(raw_response, '$.run_id') = ?` — EXACT equality (NOT LIKE '%...%').
+  A prefix/substring match would falsely match run_ids that contain the search string.
+- Droplet is Ubuntu 24.04 / SQLite 3.45 — json_extract is fully supported.
+- `raw_response` is stored as a JSON text column — json_extract works on it directly.
+- Keep `get_ro_connection()` — read-only path unchanged.
+- Keep D-1 `try/except Exception: return None` wrapper — unchanged.
+- The returned row must have `raw_response` as a parsed dict (not a JSON string).
+  The existing `_parse_advisor_observation_row` handles this — keep using it.
+- NO-FALLBACK contract preserved: if `json_extract` finds no match, `fetchone()` returns
+  `None` → function returns `None`. No scan fallback.
+
+**Docstring update** — update to reflect the exact-match implementation:
 ```
-python -m ruff check app.py static/index.js
-python -m ruff format app.py --check
+Queries advisor_observations WHERE advisor_role='MARKET_PRISM_SOURCES' AND
+json_extract(raw_response, '$.run_id') = run_id. Returns the most recent matching
+row (ORDER BY id DESC LIMIT 1), or None when no match exists.
 ```
 
-Commit path-scoped (do NOT `git add -A`):
+---
+
+## GREEN target
+
+After implementing both changes:
+
 ```
-git add app.py static/index.js
-git commit -m "fix(ac7-ac8): top-level last_successful_cycle_at reader + showConnectionLost real selectors"
+DB_PATH=/tmp/sov_cleanup_green.db python -m pytest \
+  tests/database/test_market_prism_sources_accessor.py \
+  tests/database/test_017_advisor_observations.py \
+  tests/prism_scheduler/test_patch_provenance.py \
+  tests/prism_scheduler/test_patch_provenance_render_contract.py \
+  tests/app/test_ai_advisor_tab_sources_merge.py \
+  -n0 -q
 ```
 
-Then SendMessage dfix-test: "GREEN — 0 failed / 10 passed. SHA=<sha>. Ready for review."
+Target: **ALL passed / 0 failed / 0 errors** across all 5 files.
+
+Then ruff check + format:
+```
+python -m ruff check database.py
+python -m ruff format --check database.py
+```
+
+---
+
+## Scope boundaries (do NOT touch)
+
+- `app.py` — UNCHANGED (merge logic already correct; no callers of deleted function).
+- `prism_scheduler.py` — UNCHANGED (idempotency guard calls `get_latest_market_prism_sources_for_run`, not the deleted variant).
+- `templates/ai_advisor.html` — UNCHANGED.
+- No DB migration — json_extract works on existing text column with no schema change.
+- Do NOT create a PR or merge to main — PM owns the ship gate.
+- Do NOT run the full/uncapped/-n>4 pytest suite — it reboots the host.
+
+---
+
+## After GREEN
+
+Run the 5-file bounded -n0 suite and confirm all pass / 0 failed / 0 errors.
+Commit path-scoped (NOT `git add -A`):
+```
+git -C "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/sov-sources" \
+  add database.py
+git -C "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/sov-sources" \
+  commit -m "fix(db): delete dead get_latest_market_prism_sources + json_extract exact match (DE-PRISM-SOURCES-001)"
+```
+
+Then `SendMessage` the PM (team-lead) "GREEN: <N> passed / 0 failed / 0 errors. SHA=<sha>."

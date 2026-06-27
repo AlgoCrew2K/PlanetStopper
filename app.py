@@ -3697,6 +3697,50 @@ def ai_advisor_tab():
     except Exception:
         pass  # Empty state rendered by template on None.
 
+    # ------------------------------------------------------------------ #
+    # Additively merge MARKET_PRISM_SOURCES article_corpus into the       #
+    # per_lens_digest for url-bearing lenses (DE-PRISM-SOURCES-001 v2).  #
+    # Matched by run_id — no stale citation bleed if run_ids differ.     #
+    # Deep-copy before mutating so the original DB row object is never   #
+    # modified in-place (safe for shared references in tests / caches).  #
+    # ------------------------------------------------------------------ #
+    if market_prism_summary:
+        try:
+            import copy as _copy  # noqa: PLC0415
+
+            market_prism_summary = _copy.deepcopy(market_prism_summary)
+            _mp_raw = market_prism_summary.get("raw_response") or {}
+            if isinstance(_mp_raw, str):
+                import json as _json  # noqa: PLC0415
+
+                _mp_raw = _json.loads(_mp_raw)
+                market_prism_summary["raw_response"] = _mp_raw
+            _mp_run_id = _mp_raw.get("run_id") if isinstance(_mp_raw, dict) else None
+            if _mp_run_id:
+                _sources_row = database.get_latest_market_prism_sources_for_run(_mp_run_id)
+                if _sources_row is not None:
+                    _src_raw = _sources_row.get("raw_response") or {}
+                    _src_pld = (
+                        _src_raw.get("per_lens_digest", {}) if isinstance(_src_raw, dict) else {}
+                    )
+                    _mp_pld = (
+                        _mp_raw.get("per_lens_digest", {}) if isinstance(_mp_raw, dict) else {}
+                    )
+                    for _src_lens, _src_lens_data in _src_pld.items():
+                        if isinstance(_src_lens_data, dict) and isinstance(
+                            _mp_pld.get(_src_lens), dict
+                        ):
+                            _corpus = _src_lens_data.get("article_corpus")
+                            if _corpus:
+                                _mp_pld[_src_lens]["article_corpus"] = _corpus
+        except Exception as _merge_exc:
+            # Log type-only at WARNING — no exc args/message to avoid leaking citation
+            # content into logs; honest empty-state is still rendered (no re-raise).
+            _daemon_log.warning(
+                "market-prism sources merge skipped: %s",
+                type(_merge_exc).__name__,
+            )
+
     # Pre-humanize per_lens_digest summaries so the template never sees raw JSON.
     # Council prose passes through unchanged; lens_pipeline JSON is humanized to
     # readable text.  Null summaries become an honest empty-state string so the

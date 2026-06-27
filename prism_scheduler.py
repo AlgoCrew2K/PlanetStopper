@@ -229,6 +229,119 @@ def _run_prism(run_id: str = "unknown") -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Post-council provenance patch
+# ---------------------------------------------------------------------------
+
+
+def _patch_provenance(run_id: str, row: "dict | None") -> bool:
+    """Post-council patch: rebuild per-lens validated article_corpus citations
+    and INSERT a new MARKET_PRISM_SOURCES advisor_observations row (v2).
+
+    Reuses ai_advisor._build_*_section + build_citation — no reinvented citation
+    logic.  For each url-bearing lens (sentiment, macro, derivatives, fundamentals)
+    collects citations from the union of section["sources"] and
+    section["article_corpus"] (sentiment returns both; others return sources only),
+    validates each via build_citation, and accumulates into a SEPARATE
+    sources_per_lens_digest dict.  The MARKET_PRISM row is NEVER modified (v2).
+
+    technicals is intentionally excluded: Alpaca bar data has no public urls (AC-2).
+
+    D-1 never-raises; AC-4: does not gate or prevent sys.exit(0) in main().
+    Returns True if the patch was attempted and persisted, False on no-op/error.
+    """
+    try:
+        if row is None:
+            return False
+        raw = row.get("raw_response") or {}
+        if isinstance(raw, str):
+            try:
+                import json as _json  # noqa: PLC0415
+
+                raw = _json.loads(raw)
+            except Exception:  # noqa: BLE001
+                return False
+        pld = raw.get("per_lens_digest")
+        if not isinstance(pld, dict):
+            return False
+
+        import ai_advisor  # noqa: PLC0415
+
+        # technicals intentionally absent — AC-2: Alpaca bar data has no public urls.
+        _BUILDERS: dict = {
+            "sentiment": ai_advisor._build_sentiment_section,
+            "macro": ai_advisor._build_macro_section,
+            "derivatives": ai_advisor._build_derivatives_section,
+            "fundamentals": ai_advisor._build_fundamentals_section,
+        }
+
+        # Accumulate per-lens citations into a SEPARATE dict — never mutate the
+        # MARKET_PRISM row (v2: INSERT-only; the MARKET_PRISM raw_response is
+        # byte-unchanged after this function returns).
+        sources_per_lens_digest: dict = {}
+
+        for lens, builder in _BUILDERS.items():
+            if lens not in pld:
+                continue
+            try:
+                section = builder()
+            except Exception:  # noqa: BLE001
+                continue  # D-1: this lens contributes no citations
+
+            # Union sources + article_corpus so sentiment's primary corpus is captured.
+            # sources items are already citation-shaped; article_corpus items are raw
+            # corpus dicts (title/url/published, no lens key) — inject lens before
+            # passing to build_citation.
+            candidates: list[dict] = list(section.get("sources") or [])
+            for art in section.get("article_corpus") or []:
+                if isinstance(art, dict) and "lens" not in art:
+                    art = {**art, "lens": lens}
+                candidates.append(art)
+
+            # Dedup by url (first occurrence wins) — sentiment puts the same articles
+            # in both sources (citation-shaped) and article_corpus (raw dicts), so the
+            # union would otherwise double every entry.
+            seen_urls: set[str] = set()
+            deduped: list[dict] = []
+            for c in candidates:
+                url = c.get("url", "")
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    deduped.append(c)
+            candidates = deduped
+
+            valid = [c for c in (ai_advisor.build_citation(s) for s in candidates) if c is not None]
+            if valid:
+                sources_per_lens_digest[lens] = {"article_corpus": valid}
+
+        import database as _db  # noqa: PLC0415
+
+        # AC-6 idempotency: if a SOURCES row already exists for this run_id, skip INSERT.
+        existing = _db.get_latest_market_prism_sources_for_run(run_id)
+        if existing is not None:
+            return True  # already patched
+
+        # v2: INSERT an append-only MARKET_PRISM_SOURCES row — never modify MARKET_PRISM.
+        # NOTE: do NOT add "MARKET_PRISM_SOURCES" to app.py's _ADVISOR_ROLES list —
+        # the Overview observations loop (app.py:3604) and _preview_text stamp
+        # (app.py:3633) would treat SOURCES rows as normal observations.
+        _db.insert_advisor_observation(
+            advisor_role="MARKET_PRISM_SOURCES",
+            subject_type="portfolio",
+            subject_id="global",
+            verdict=None,
+            raw_response={"run_id": run_id, "per_lens_digest": sources_per_lens_digest},
+            symphony_id="",
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[prism_scheduler] PatchProvenanceError: {type(exc).__name__}",
+            file=sys.stderr,
+        )
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -259,6 +372,7 @@ def main() -> None:
             row = _get_market_prism_row_for_run(run_id)
             if row is not None:
                 print("[prism_scheduler] Run completed successfully.")
+                _patch_provenance(run_id, row)  # AC-4: D-1 never-raises; does not gate sys.exit(0)
                 sys.exit(0)
             # rc==0 but no row — council ran but wrote nothing.
             # Treat as a failed attempt; the retry loop continues.
