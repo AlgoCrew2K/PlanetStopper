@@ -292,7 +292,10 @@ class TestAccountBasisTCMath:
 
         # Derive from fixture inputs — not from what the function returns
         invested_frac = symphony_value_sum / account_value  # == fix_s["_invested_frac"]
-        guard_delta_vw = fix_s["_guard_delta_vw"]
+        guard_delta_vw = float(vw_tc["dry_run"]) - float(vw_tc["if_held"])
+        assert guard_delta_vw == pytest.approx(fix_s["_guard_delta_vw"], abs=1e-12), (
+            "fixture _guard_delta_vw annotation is stale vs vw_tc"
+        )
         expected_guard_delta_account = guard_delta_vw * invested_frac
 
         result = analytics.get_portfolio_today_change_account_basis(

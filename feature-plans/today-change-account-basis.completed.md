@@ -25,7 +25,7 @@ showed bot ≠ held (e.g. +0.54 vs +0.46).
 - **AC-2:** With zero guard divergence (`vw_tc["dry_run"] == vw_tc["if_held"]`), `result["dry_run"]` equals `account_if_held_tc` exactly (no phantom alpha regardless of uninvested cash).
 - **AC-3 (real divergence):** With `guard_delta_vw = vw_tc["dry_run"] - vw_tc["if_held"]` ≠ 0, `result["dry_run"] == account_if_held_tc + guard_delta_vw * (symphony_value_sum / account_value)`. Magnitude sanity: with cash present (`invested_frac < 1.0`), the account-basis guard alpha is strictly less than the VW guard delta.
 - **AC-4 (cash basis):** The scaling correctly handles `account_value > symphony_value_sum` (uninvested cash); guard delta is attenuated, not inflated.
-- **AC-5 (division guard):** `account_value <= 0` or `symphony_value_sum <= 0` → return `vw_tc` unchanged (no `ZeroDivisionError`).
+- **AC-5 (division guard):** `account_value <= 0`/non-finite OR `symphony_value_sum <= 0`/non-finite → return `{"if_held": account_if_held_tc, "dry_run": account_if_held_tc}` (account-basis, Bot==Held, no phantom alpha — NOT `vw_tc`, which would be a basis swap) (corrected post-`/review`, edge-case hardening 046bb5e — see DECISIONS.md addendum). Additional guards: `account_if_held_tc is None → {"if_held": None, "dry_run": None}`; `invested_frac` clamped to `min(symphony_value_sum / account_value, 1.0)`.
 - **AC-6 (None propagation):** `vw_tc["dry_run"] is None` or `vw_tc["if_held"] is None` → `{"if_held": account_if_held_tc, "dry_run": None}`.
 - **AC-7 (strip integration):** `_compute_portfolio_strip` uses the new helper when `_account_totals_cache["portfolio_tc"]` is warm. With untriggered symphonies (zero VW guard divergence), `today_change["dry_run"] == today_change["if_held"]` (both on account basis).
 - **AC-8 (cold-cache fallback):** When `portfolio_tc` is absent, the VW-both fallback path (`analytics.get_portfolio_today_change`, both bot and held on VW basis) is unchanged and still yields `dry_run == if_held` for untriggered symphonies.
@@ -69,7 +69,7 @@ today_change = analytics.get_portfolio_today_change_account_basis(
 
 ## Edge Cases
 
-- `account_value` or `symphony_value_sum` ≤ 0: return `vw_tc` unchanged.
+- `account_value` or `symphony_value_sum` ≤ 0 (or non-finite): return `{"if_held": account_if_held_tc, "dry_run": account_if_held_tc}` (corrected post-`/review`, edge-case hardening 046bb5e — see DECISIONS.md addendum; NOT `vw_tc`, which is a basis swap).
 - `vw_tc["dry_run"]` is `None`: return `{"if_held": account_if_held_tc, "dry_run": None}`.
 - `vw_tc["if_held"]` is `None`: same as `dry_run=None` path (can't compute guard delta).
 - Cold cache (`portfolio_tc` absent from `_account_totals_cache`): fallback path unchanged.
