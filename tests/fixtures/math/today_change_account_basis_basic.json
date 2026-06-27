@@ -1,0 +1,29 @@
+{
+  "_provenance": "Inputs derived from tests/fixtures/composer/account-basis/total_stats.json + tests/fixtures/composer/v3-audit/symphony_stats_meta.json (captured-from-producer 2026-06-04). Tests get_portfolio_today_change_account_basis (today-change B-2 fix, mirrors get_portfolio_cumulative_return_account_basis). Expected values are DERIVED from inputs using the formula — never hardcoded from the producer.",
+  "_formula": "guard_delta_vw = vw_tc.dry_run - vw_tc.if_held; invested_frac = symphony_value_sum / account_value; dry_run_account = account_if_held_tc + guard_delta_vw * invested_frac",
+  "account_value": 12893.7,
+  "symphony_value_sum": 12872.73,
+  "portfolio_tc": -2.020585293505977,
+  "scenario_untriggered": {
+    "_description": "Zero guard divergence: vw_tc.dry_run == vw_tc.if_held. Expected: result.dry_run == portfolio_tc (no phantom alpha). vw_if_held is the hypothetical VW symphony-basis today-change (differs from portfolio_tc because cash dilutes the account denominator).",
+    "vw_tc": {
+      "if_held": -2.018890,
+      "dry_run": -2.018890
+    }
+  },
+  "scenario_real_guard": {
+    "_description": "Non-zero guard divergence: symphony exited, bot outperformed if-held on VW basis. Expected: guard alpha is scaled by invested_frac so it is expressed on account basis.",
+    "vw_tc": {
+      "if_held": -2.018890,
+      "dry_run": -1.518890
+    },
+    "_guard_delta_vw": 0.5
+  },
+  "scenario_none_dry_run": {
+    "_description": "dry_run=None (no shadow history). Expected: result is {if_held: portfolio_tc, dry_run: None}.",
+    "vw_tc": {
+      "if_held": -2.018890,
+      "dry_run": null
+    }
+  }
+}
