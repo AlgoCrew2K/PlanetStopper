@@ -52,6 +52,7 @@ _CREDENTIAL_KEY_MARKERS: tuple[str, ...] = (
     "PASSWORD",
     "URI",
 )
+_MIN_SWEEP_SECRET_LEN: int = 8  # minimum value length for marker-keyed sweep; guards against short common values (e.g. LOG_LEVEL_KEY=info)
 
 # Prompt passed to the vanilla-primary headless claude session. The primary
 # spawns ALL 6 agents itself — prism-synthesizer has no Agent/spawn tool and
@@ -271,7 +272,9 @@ def _run_prism(run_id: str = "unknown") -> bool:
                 secret_values = [
                     v
                     for k, v in _council_env.items()
-                    if v and any(m in k.upper() for m in _CREDENTIAL_KEY_MARKERS)
+                    if v
+                    and len(v) >= _MIN_SWEEP_SECRET_LEN
+                    and any(m in k.upper() for m in _CREDENTIAL_KEY_MARKERS)
                 ]
                 # ANTHROPIC_API_KEY was popped from _council_env before subprocess.run;
                 # add it explicitly so its value is still redacted if it appears in output.
