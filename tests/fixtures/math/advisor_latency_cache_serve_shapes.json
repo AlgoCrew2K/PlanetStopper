@@ -1,0 +1,102 @@
+{
+  "_provenance": "Derived by reading ai_advisor._build_*_section() source bodies (2026-06-29). Values are minimal sentinels — no producer-computed numbers. The shape (keys and Python types) is the contract, not the values. Used by test_advisor_latency_cache_serve.py for AC-7 round-trip assertions.",
+  "_note": "payload keys are the ones each builder returns on available=True. reason is present on available=False. sources is always a list. The 'sentiment' builder additionally emits 'article_corpus' at the top level (AC-5b compatibility).",
+
+  "lens_available_required_keys": ["lens", "available", "payload", "sources"],
+  "lens_unavailable_required_keys": ["lens", "available", "payload", "sources", "reason"],
+  "council_prose_forbidden_top_level_keys": ["summary", "per_lens_digest"],
+
+  "technicals_available_payload_keys": ["ma_posture", "breadth", "momentum"],
+  "technicals_available_shape": {
+    "lens": "technicals",
+    "available": true,
+    "payload": {"ma_posture": null, "breadth": null, "momentum": null},
+    "sources": []
+  },
+
+  "sentiment_available_payload_keys": ["tone_score", "corpus", "events", "article_count"],
+  "sentiment_available_shape": {
+    "lens": "sentiment",
+    "available": true,
+    "payload": {
+      "tone_score": null,
+      "corpus": [],
+      "events": [],
+      "article_count": 0
+    },
+    "sources": [],
+    "article_corpus": []
+  },
+
+  "derivatives_available_payload_keys": ["vix_level", "vix_term_structure", "risk_read", "as_of_date"],
+  "derivatives_available_shape": {
+    "lens": "derivatives",
+    "available": true,
+    "payload": {
+      "vix_level": null,
+      "vix_term_structure": null,
+      "risk_read": null,
+      "as_of_date": ""
+    },
+    "sources": []
+  },
+
+  "macro_available_payload_keys": ["series"],
+  "macro_available_shape": {
+    "lens": "macro",
+    "available": true,
+    "payload": {"series": {}},
+    "sources": []
+  },
+
+  "fundamentals_available_payload_keys": ["tickers", "coverage"],
+  "fundamentals_available_shape": {
+    "lens": "fundamentals",
+    "available": true,
+    "payload": {
+      "tickers": {},
+      "coverage": {"available": 0, "universe": 0}
+    },
+    "sources": []
+  },
+
+  "cache_raw_response_required_keys": ["captured_at", "lenses"],
+  "cache_lenses_required_names": ["technicals", "sentiment", "derivatives", "macro", "fundamentals"],
+
+  "cache_raw_response_shape_template": {
+    "captured_at": "2026-06-29T03:00:00+00:00",
+    "lenses": {
+      "technicals": {
+        "lens": "technicals",
+        "available": true,
+        "payload": {"ma_posture": null, "breadth": null, "momentum": null},
+        "sources": []
+      },
+      "sentiment": {
+        "lens": "sentiment",
+        "available": true,
+        "payload": {"tone_score": null, "corpus": [], "events": [], "article_count": 0},
+        "sources": [],
+        "article_corpus": []
+      },
+      "derivatives": {
+        "lens": "derivatives",
+        "available": true,
+        "payload": {"vix_level": null, "vix_term_structure": null, "risk_read": null, "as_of_date": ""},
+        "sources": []
+      },
+      "macro": {
+        "lens": "macro",
+        "available": true,
+        "payload": {"series": {}},
+        "sources": []
+      },
+      "fundamentals": {
+        "lens": "fundamentals",
+        "available": true,
+        "payload": {"tickers": {}, "coverage": {"available": 0, "universe": 0}},
+        "sources": []
+      }
+    }
+  }
+}
