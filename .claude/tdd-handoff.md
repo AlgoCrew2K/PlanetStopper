@@ -1,178 +1,118 @@
-# TDD Handoff — DE-PRISM-DIAG-001 (Council Subprocess Diagnostics)
+# TDD Handoff — DE-SOURCES-CAROUSEL-001 (Overview Sources Carousel)
 
-**Phase:** CYCLE-COMPLETE
+**Phase:** red
 
-**For:** `council-impl` (the implementer)
-**Written by:** `council-test` (quant-test-writer)
-**Branch:** `fix/council-subprocess-diagnostics`
-**Worktree:** `C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/council-diag`
-**RED test file:** `tests/prism_scheduler/test_run_prism_diagnostics.py` (28 failing, 5 passing)
-
-## Status Log
-
-- [2026-06-27] council-impl: GREEN complete — 33/33 tests passing, 0 test bugs documented. Ruff format ✓ Ruff check ✓. Commit: 6cfb935.
-- [2026-06-27] council-review: BLOCKER — credential sweep incomplete (COMPOSER_SECRET, ALPACA_SECRET, DISCORD_WEBHOOK_URL not covered).
-- [2026-06-27] council-test: RED — 4 credential-leak tests. Commit: 710b4c2.
-- [2026-06-27] council-impl: GREEN — extended sweep with _CREDENTIAL_KEY_MARKERS, 39/0. Commit: 39e6861.
-- [2026-06-27] team-lead: caught over-redaction bug (no min-length floor) + weak guard test.
-- [2026-06-27] council-test: RED — over-redaction guard (info42, no OR escape). Commit: 1f2f386.
-- [2026-06-27] council-impl: GREEN — _MIN_SWEEP_SECRET_LEN=8 floor, 39/0. Commit: 9fd3496.
-- [2026-06-27] council-review: APPROVE — all checks pass, no blockers. HEAD: 9fd3496.
-- [2026-06-27] PM /review sub-cycle — 4 must-fix findings:
-    1. ANTHROPIC_API_KEY explicit append bypasses _MIN_SWEEP_SECRET_LEN floor (correctness, same over-redaction class).
-    2. Hoist _SHAPE_PATTERNS to module level (compiled once, not per-call).
-    3. Hoist _tail nested helper to module level as _tail_output (importable + testable).
-    4. Tighten _redact_secrets docstring re: pattern coverage.
-- [2026-06-27] council-test: RED — 4 new tests (short API key floor, _tail_output hoist invariants). Commit: 9488512.
-- [2026-06-27] council-impl: GREEN — 43/0. All 4 review findings fixed. Commit: aaafcb1.
-- [2026-06-27] council-review: APPROVE (final) — all floor/hoist checks pass. HEAD: aaafcb1.
-- [2026-06-27] PM: CI red on aaafcb1 — 2 tests fail in full suite (cross-dir isolation).
-    Root cause: tests/ai_advisor/test_prism_scheduling.py::_import_scheduler() did
-    del sys.modules["prism_scheduler"] + reimport, creating a new module object.
-    patch("prism_scheduler.X") patched the new object; test file's module-level
-    import prism_scheduler held the old object → patches did not intercept.
-    Bisect confirmed: test_prism_scheduling.py + test_run_prism_diagnostics.py → 2 failed.
-- [2026-06-27] council-test: ISOLATION FIX — replaced del+reimport with importlib.reload()
-    in _import_scheduler (preserves module identity in sys.modules).
-    Bisect after fix: 95 passed, 1 skipped, 0 failed. All 43 diagnostics tests GREEN.
-    No production code touched. Commit: 814ede5. Signaled PM — ready for re-push + re-CI.
-
-## Implementation Notes
-
-- Added `import re` (alphabetically between `os` and `subprocess`) for shape-regex patterns.
-- `_STDERR_LOG_CAP` constant placed after `MAX_BUDGET_USD`. `_STDOUT_LOG_CAP` was reformatted by ruff to a parenthesized multi-line form (100-char limit) — value still `int = 2000`, tests pass.
-- `_redact_secrets` placed between `_get_market_prism_row_for_run` and `_run_prism`. Shapes compiled inside the function. Empty-string guard via `if value:` before `str.replace`. Regex order: `sk-ant-` before `sk-` (more specific first, avoids partial overlap concern though both would catch their tokens).
-- `_tail` defined as a local function inside the `try` block — valid Python, ruff clean.
-- Secret sourcing: OAuth token from `_council_env.get("CLAUDE_CODE_OAUTH_TOKEN")`, API key from `os.environ.get("ANTHROPIC_API_KEY")` — both filtered via `if v` to exclude None.
-- Success branch and outer `except Exception` (SubprocessError path) left byte-for-byte unchanged.
-
-## Test File Issues (for test-writer to fix)
-
-None — all 33 tests pass with zero workarounds.
-
-Do NOT read the feature plan — implement only what is in this file.
-Do NOT merge, push, or touch any branch other than `fix/council-subprocess-diagnostics`.
+**For:** `carousel-impl` (flask-dashboard-specialist, the implementer)
+**Written by:** quant-test-writer (test-writer)
+**Branch:** `feat/overview-sources-carousel`
+**Worktree:** `C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/sources-carousel`
+**RED test file:** `tests/ai_advisor/test_overview_sources_carousel.py` (11 tests — 2 new RED from ux-expert findings)
 
 ---
 
 ## Your job
 
-Make the 28 failing tests pass by modifying ONLY `prism_scheduler.py`.
-Do NOT touch the test file. Do NOT add new dependencies. Write the minimum code.
+Make the 9 failing tests pass by modifying ONLY:
+- `templates/ai_advisor.html` (the sources render block ~lines 1024–1052 + the CSS block ~lines 798–854)
+- Optionally `static/ai_advisor.js` IF you add arrow controls (CSS scroll-snap preferred — prefer NO JS)
+
+Do NOT touch the test file.
+Do NOT merge, push, or touch any branch other than `feat/overview-sources-carousel`.
+Do NOT add new backend routes, database accessors, or Python files.
 
 ---
 
 ## What the tests require (behavior contract)
 
-### 1. Two new module-level constants (near the existing `MAX_ATTEMPTS` block)
+### 1. Replace `<ul class="prism-sources-list">` with a horizontal carousel container
 
-```python
-_STDERR_LOG_CAP: int = 4000   # chars of stderr tail logged on council failure (fits a full traceback, bounded for journald)
-_STDOUT_LOG_CAP: int = 2000   # chars of stdout tail logged on council failure (council JSON error payload)
+The block rendered for `{% if _all_sources %}` (currently ~lines 1028–1052 of the template)
+must become:
+
+```html
+<div data-testid="prism-sources" class="... prism-sources-carousel ...">
+    <div class="prism-sources-header">Sources</div>
+    <!-- one card per source -->
+    ...
+</div>
 ```
 
-Both must be `int`, both must be `> 0`.
+- No `<ul class="prism-sources-list">` anywhere in the rendered output.
+- The carousel container must carry class `prism-sources-carousel` (the CSS check asserts it).
+- `data-testid="prism-sources"` stays on the OUTER container.
 
-### 2. New pure helper: `_redact_secrets(text: str, secret_values: list[str]) -> str`
+### 2. `article_corpus` entries → `<a>` cards
 
-Contract (tested directly by `TestRedactSecrets`):
-- Empty input -> empty output.
-- Benign text with no secrets and no token shapes -> returned unchanged.
-- Each non-empty value in `secret_values` is replaced globally (all occurrences) with `***REDACTED***`.
-- Empty strings in `secret_values` are SKIPPED — do NOT call `str.replace("", ...)`.
-- After literal-value replacement, apply these shape-regex patterns (defense-in-depth),
-  all replaced with `***REDACTED***`:
-  - `sk-ant-[A-Za-z0-9_-]{8,}`  — Anthropic API key shape
-  - `sk-[A-Za-z0-9_-]{16,}`     — generic secret-key shape
-  - `oat_[A-Za-z0-9_-]{8,}`     — Claude OAuth token shape
-- `oat_ABC` (3 chars after `oat_`, below the 8-char floor) must NOT be redacted.
-- Pure, no I/O. Should not raise, but the caller guards it anyway (see AC-7).
+Each entry from `_src.url` (an `article_corpus` item with a non-empty http/https URL) must render as:
 
-### 3. Modified `_run_prism` — non-zero-exit diagnostic block
-
-The existing code after `result = subprocess.run(...)` is:
-
-```python
-if result.returncode == 0:
-    _persist_spend(run_id, result.stdout)
-return result.returncode == 0
+```html
+<a class="prism-source-card"
+   href="{{ _src.url | e }}"
+   target="_blank"
+   rel="noopener noreferrer">
+    ...title, published, lens...
+</a>
 ```
 
-Add a diagnostic block in the failure (`else`) branch, wrapped in `try/except`:
+Rules:
+- `target="_blank"` — required; test asserts its presence.
+- `rel="noopener noreferrer"` — required; test asserts its presence.
+- The `href` must equal the URL from `article_corpus`; test checks for both distinct URLs.
+- All interpolated fields use `| e` (Jinja auto-escape) — no `| safe`.
 
-```python
-if result.returncode == 0:
-    _persist_spend(run_id, result.stdout)
-else:
-    try:
-        # a) Build secret values from the env actually passed to the subprocess
-        secret_values = [
-            v for v in (
-                _council_env.get("CLAUDE_CODE_OAUTH_TOKEN"),
-                os.environ.get("ANTHROPIC_API_KEY"),
-            )
-            if v
-        ]
-        # b) Redact both output channels
-        safe_stderr = _redact_secrets(result.stderr or "", secret_values)
-        safe_stdout = _redact_secrets(result.stdout or "", secret_values)
-        # c) Tail-truncate with marker
-        def _tail(text, cap, label):
-            if not text:
-                return f"({label} empty)"
-            if len(text) <= cap:
-                return text
-            return f"...[truncated, showing last {cap}]...\n{text[-cap:]}"
-        # d) Print the diagnostic block
-        print(
-            f"[prism_scheduler] Council subprocess failed: returncode={result.returncode}\n"
-            f"  stderr: {_tail(safe_stderr, _STDERR_LOG_CAP, 'stderr')}\n"
-            f"  stdout: {_tail(safe_stdout, _STDOUT_LOG_CAP, 'stdout')}",
-            file=sys.stderr,
-        )
-    except Exception as exc:  # noqa: BLE001
-        # AC-7: diagnostic suppressed — never propagate; return value is preserved
-        print(
-            f"[prism_scheduler] (diagnostic suppressed: {type(exc).__name__})",
-            file=sys.stderr,
-        )
-return result.returncode == 0
+### 3. Card fields: title, published, lens
+
+Each card must include:
+- Title text (from `_src.get('title', 'Untitled')`) — escaped; test asserts the text content appears.
+- Published date (from `_src.get('published', '')`) — if present; test asserts the value appears.
+- Lens tag (from `_src.get('lens', '')`) — if present; test asserts the value appears.
+
+XSS: a title of `<b>Inject</b>` must appear entity-encoded (`&lt;b&gt;Inject&lt;/b&gt;`), never as live HTML.
+
+### 4. Plain-string `sources` entries → NON-`<a>` citation cards
+
+When `_all_sources` contains an entry with no `url` key (only `citation` + `lens`),
+it must render as a non-clickable element — e.g., a `<div>` or `<span>`.
+It must NOT render as `<a href="#">` or any anchor element.
+The citation text must appear in the HTML.
+
+### 5. `javascript:` URL → non-clickable (security)
+
+When `article_corpus` contains `url = "javascript:alert(1)"`, the template
+must NOT emit `<a href="javascript:`. That URL must be treated as non-http
+and fall through to the non-clickable citation card path.
+
+Implementation hint (Jinja):
+```jinja
+{% if _src.url and _src.url.startswith('http') %}
+    <a href="{{ _src.url | e }}" ...>...</a>
+{% else %}
+    <div class="prism-source-card prism-source-card--citation">...</div>
+{% endif %}
 ```
 
-The exact formatting is yours — tests check for substrings, not exact format.
-What they assert:
-- `"[prism_scheduler]"` in captured stderr on non-zero exit.
-- `"returncode=2"` (or `"returncode: 2"` or `"2"`) in captured stderr.
-- The sentinel content of `result.stderr` appears in captured stderr.
-- `"(stderr empty)"` when `result.stderr == ""`.
-- `"(stdout empty)"` when `result.stdout == ""`.
-- `"truncat"` (case-insensitive) OR `"..."` OR `"…"` when output exceeds cap.
-- Tail chars (last 20+ chars of a long output) appear in captured stderr.
-- No live credential value in ANY captured output (both `.out` and `.err`).
-- `"***REDACTED***"` present when a secret was replaced.
-- `"(diagnostic suppressed: RuntimeError)"` in captured stderr when `_redact_secrets` raises.
-- `"RuntimeError"` appears in captured stderr in that suppressed case.
+### 6. Empty `_all_sources` → no carousel, no header
 
-### 4. What you must NOT change
+When all `per_lens_digest` entries have empty `sources: []` and no `article_corpus` key,
+`_all_sources` stays empty (`[]`). The template's `{% if _all_sources %}` guard
+must prevent any carousel element or "Sources" header from rendering.
+`data-testid="prism-sources"` must be ABSENT from the output.
 
-- The `if result.returncode == 0:` success branch — zero change. Tests assert `_persist_spend`
-  called once on rc=0 and NO `[prism_scheduler]` diagnostic emitted.
-- The outer `except Exception` block (catches `subprocess.run` raising) — tests assert it still
-  logs ONLY `SubprocessError: {type(exc).__name__}`, no message, no path.
-- Any other function in `prism_scheduler.py`.
+### 7. CSS: `.prism-sources-carousel` must have `overflow-x` + height cap
 
----
+In the `<style>` block, the `.prism-sources-carousel` rule must contain:
+- `overflow-x` (with value `auto` or `scroll`)
+- A height-bounding property: either `height` or `max-height`
 
-## Security — the adversarial sweep test
+And `.prism-source-card` must exist in the CSS.
 
-`test_no_secret_value_appears_in_any_log_line` plants real values in both env vars,
-embeds both in mocked stderr AND stdout, then sweeps ALL of `capsys.readouterr()`
-(`.out` + `.err`) asserting neither value appears as a substring.
+No raw hex color literals (`#[0-9a-fA-F]{3,8}`) anywhere in the
+`.prism-sources-carousel` or `.prism-source-card` CSS rules — use `var(--...)` tokens.
 
-Critical: pull the OAuth token from `_council_env.get("CLAUDE_CODE_OAUTH_TOKEN")` —
-NOT from `os.environ` — because `_council_env` is the dict actually passed to the
-subprocess. Both are redacted: the OAuth token from `_council_env`, the API key from
-`os.environ.get("ANTHROPIC_API_KEY")`.
+### 8. `data-testid="prism-sources"` preserved
+
+When sources are present, `data-testid="prism-sources"` must appear
+exactly once in the rendered HTML. This is the regression guard.
 
 ---
 
@@ -181,22 +121,105 @@ subprocess. Both are redacted: the OAuth token from `_council_env`, the API key 
 In the worktree:
 ```
 set ALPHABOT_TEST_MEM_CAP_GB=24
-set DB_PATH=C:/Users/paulm/AppData/Local/Temp/test_diag_state.db
-python -m pytest tests/prism_scheduler/test_run_prism_diagnostics.py -n0 --tb=short -q
+set DB_PATH=C:/Users/paulm/AppData/Local/Temp/test_carousel_state.db
+python -m pytest tests/ai_advisor/test_overview_sources_carousel.py -n0 --tb=short -q
 ```
 
-Target: **33 passed, 0 failed**.
+Target: **9 passed, 0 failed**.
 
-Run ruff on `prism_scheduler.py` before committing:
+Run ruff on every file you touch before committing:
 ```
-python -m ruff format prism_scheduler.py
-python -m ruff check prism_scheduler.py
+python -m ruff format templates/ai_advisor.html  # (ruff skips non-py; just run check on any .py if you touched one)
+python -m ruff check .  # only if you touched a .py file
 ```
 
 Commit path-scoped (NOT `git add -A`):
 ```
-git add prism_scheduler.py
-git commit -m "fix(prism_scheduler): capture+log council subprocess stderr/stdout on non-zero exit with credential redaction (DE-PRISM-DIAG-001)"
+git add templates/ai_advisor.html
+# if you touched static/ai_advisor.js:
+# git add static/ai_advisor.js
+git commit -m "feat(overview): replace prism sources vertical list with bounded horizontal carousel (DE-SOURCES-CAROUSEL-001)"
 ```
 
-Then `SendMessage` to `council-test`: "GREEN: 33 passed / 0 failed / 0 errors. SHA=<sha>."
+Then `SendMessage` to quant-test-writer: "GREEN: 9 passed / 0 failed / 0 errors. SHA=<sha>."
+
+---
+
+## Test Files
+- `tests/ai_advisor/test_overview_sources_carousel.py` — 9 tests (all RED)
+
+## A/C Coverage Matrix
+
+| A/C ID | Description | Test File | Test Name(s) | Status |
+|--------|-------------|-----------|--------------|--------|
+| AC-1 | Horizontal carousel container replaces vertical `<ul>` | test_overview_sources_carousel.py | test_sources_carousel_container_replaces_vertical_list | GREEN |
+| AC-1 (CSS) | `.prism-sources-carousel` CSS has `overflow-x` + height cap | test_overview_sources_carousel.py | test_carousel_css_has_horizontal_scroll_and_height_cap | GREEN |
+| AC-2 | Each `article_corpus` source is an `<a>` card with `target=_blank` + `rel` | test_overview_sources_carousel.py | test_each_article_corpus_source_is_an_anchor_card | GREEN |
+| AC-3 | Card fields present and HTML-escaped (no `| safe`) | test_overview_sources_carousel.py | test_card_fields_present_and_html_escaped | GREEN |
+| AC-5 | Plain-string citation entry is non-`<a>` | test_overview_sources_carousel.py | test_plain_citation_entry_renders_as_non_anchor_card | GREEN |
+| AC-6 | Empty sources → no carousel, no header | test_overview_sources_carousel.py | test_empty_sources_renders_no_carousel_and_no_header | TEST BUG |
+| AC-7 | Design tokens only; no raw hex in carousel CSS | test_overview_sources_carousel.py | test_carousel_css_uses_design_tokens_not_raw_hex | GREEN |
+| AC-7 | CSS has `overflow-x` + height bounding | test_overview_sources_carousel.py | test_carousel_css_has_horizontal_scroll_and_height_cap | GREEN |
+| AC-8 | `data-testid="prism-sources"` preserved | test_overview_sources_carousel.py | test_prism_sources_data_testid_preserved | GREEN |
+| Security | `javascript:` URL must not produce clickable link | test_overview_sources_carousel.py | test_javascript_url_does_not_become_clickable_link | GREEN |
+
+## Questions for User
+None.
+
+## Import Stubs Created
+None — this is a template-only change. All modules (`app`, `database`) already exist.
+
+## Status Log
+- [2026-06-29] test-writer: Starting RED phase — DE-SOURCES-CAROUSEL-001
+- [2026-06-29] test-writer: RED complete — 9 tests written (5 failing, 4 regression guards). Commit e2ef464
+- [2026-06-29] implementer: GREEN — 8/9. 1 test bug: bare `"prism-sources-carousel"` matched CSS selector in `<style>` block. SHA=8066d67
+- [2026-06-29] test-writer: FIXED test bug — changed to `'class="prism-sources-carousel"'` (element attr check). 9/9 passed. Commit bbf2e29
+- [2026-06-29] test-writer: REVIEW PASSED — all 9 ACs covered. Old `.prism-sources-list`/`.prism-source-item`/`.prism-source-link` CSS fully removed. No dead code. No raw hex. Security guard (javascript: url → non-anchor) confirmed. Pair satisfied. APPROVED for ux-expert + doc-gen.
+- [2026-06-29] ux-expert: 2 visual-contract gaps found from Playwright render (d3d9e5e). Finding A (CRITICAL): `.prism-source-card--citation` has no CSS rule — citation cards visually identical to anchor cards. Finding B (MEDIUM): no title ellipsis truncation CSS — long headlines wrap, breaking card height uniformity.
+- [2026-06-29] test-writer: RED — 2 new tests added for ux findings A+B. 9 pass / 2 fail. Commit 9342f68. Sending carousel-impl back for fix.
+
+---
+
+## Test File Issues (for test-writer to fix)
+
+### `test_empty_sources_renders_no_carousel_and_no_header` — second assertion too broad
+
+**File:** `tests/ai_advisor/test_overview_sources_carousel.py`, line 614
+
+**Failing assertion:**
+```python
+assert "prism-sources-carousel" not in html
+```
+
+**Root cause:** The assertion checks the entire rendered HTML output for the string `"prism-sources-carousel"`. However, the required CSS rule `.prism-sources-carousel { ... }` lives in the `<style>` block in `<head>`, which is always rendered regardless of whether any sources are present. So "prism-sources-carousel" always appears in the rendered HTML as part of the CSS selector — even when the carousel HTML element itself is correctly absent.
+
+This was a valid test against the OLD implementation (which had `.prism-sources-list` in the CSS, not `.prism-sources-carousel`). With the carousel CSS added, the constraint is contradictory: AC-1 CSS + AC-7 require `.prism-sources-carousel { ... }` in the main `<style>` block (which is always rendered), while this assertion requires the string to be absent from the rendered HTML when sources are empty.
+
+The **first assertion in the same test passes correctly:**
+```python
+assert 'data-testid="prism-sources"' not in html  # PASSES — guard works
+```
+
+**What correct code produces:** `"prism-sources-carousel"` appears in the CSS `<style>` block; `data-testid="prism-sources"` and `class="prism-sources-carousel"` (the HTML element class) are correctly absent.
+
+**Suggested fix (for test-writer):**
+```python
+# Replace:
+assert "prism-sources-carousel" not in html
+
+# With:
+assert 'class="prism-sources-carousel"' not in html
+```
+This checks for the HTML *element* class attribute (absent when no sources), not the CSS class name (always present in the style block).
+
+---
+
+## Implementation Notes
+
+- **CSS:** Replaced `.prism-sources-list` (vertical flex-column), `.prism-source-item`, `.prism-source-link`, `.prism-source-link:hover`, and `.prism-source-meta` with `.prism-sources-carousel` (horizontal flex row, `overflow-x:auto`, `scroll-snap-type:x mandatory`, `max-height:160px`) and `.prism-source-card` (card-shaped flex column). `.prism-source-lens-tag` kept but updated with `align-self:flex-start`. No raw hex — all colors use existing `var(--)` tokens (`var(--studio-border)`, `var(--studio-ink)`, `var(--studio-ink-dim)`).
+
+- **HTML:** The `<ul class="prism-sources-list">` + `<li>` structure is replaced with `<div class="prism-sources-carousel">` containing `<a class="prism-source-card">` (http/https URLs) or `<div class="prism-source-card prism-source-card--citation">` (plain citations and non-http URLs). The `{% if _all_sources %}` guard and `data-testid="prism-sources"` outer wrapper are preserved unchanged.
+
+- **Security gate:** `_src.get('url', '').startswith(('http://', 'https://'))` — stricter than bare `'http'` (team-lead hardening), rejects `javascript:`, `httpfoo:`, etc. Only http/https URLs produce `<a>` elements.
+
+- **No JS added:** Pure CSS scroll-snap implementation. `static/ai_advisor.js` not touched.

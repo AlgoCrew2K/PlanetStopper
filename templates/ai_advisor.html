@@ -805,32 +805,57 @@
             margin-bottom: 0.5rem;
         }
 
-        .prism-sources-list {
+        /* Horizontal scroll-snap carousel; max-height keeps page height stable */
+        .prism-sources-carousel {
+            display: flex;
+            flex-direction: row;
+            overflow-x: auto;
+            /* overflow-y: hidden prevents CSS axis-promotion from ever showing a
+               vertical scrollbar when card content slightly exceeds max-height */
+            overflow-y: hidden;
+            scroll-snap-type: x mandatory;
+            gap: 0.75rem;
+            padding: 0.5rem 0;
+            max-height: 160px;
+        }
+
+        .prism-source-card {
+            flex: 0 0 auto;
+            scroll-snap-align: start;
+            min-width: 160px;
+            max-width: 220px;
             display: flex;
             flex-direction: column;
-            gap: 0.375rem;
-        }
-
-        .prism-source-item {
+            gap: 0.25rem;
+            padding: 0.5rem 0.625rem;
+            border: 1px solid var(--studio-border);
+            border-radius: 6px;
             font-size: 0.75rem;
-            display: flex;
-            align-items: baseline;
-            gap: 0.5rem;
-            flex-wrap: wrap;
-        }
-
-        .prism-source-link {
-            color: var(--studio-accent);
+            color: var(--studio-ink);
             text-decoration: none;
-            word-break: break-word;
         }
 
-        .prism-source-link:hover { text-decoration: underline; }
+        /* Hover affordance for clickable anchor cards */
+        a.prism-source-card:hover {
+            border-color: var(--studio-accent);
+        }
 
-        .prism-source-meta {
+        /* Citation-only cards are non-interactive — dim + suppress pointer cursor */
+        .prism-source-card--citation {
+            opacity: 0.75;
+            cursor: default;
+        }
+
+        /* Truncate long titles to a single line so card height stays uniform */
+        .prism-source-card span:first-child {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .prism-source-card .prism-source-meta {
             font-size: 0.6875rem;
             color: var(--studio-ink-dim);
-            white-space: nowrap;
         }
 
         .prism-source-lens-tag {
@@ -842,6 +867,7 @@
             border: 1px solid var(--studio-border);
             border-radius: 999px;
             padding: 0.05rem 0.3rem;
+            align-self: flex-start;
         }
 
         /* Empty / no-data state */
@@ -1028,26 +1054,31 @@
                 {% if _all_sources %}
                     <div data-testid="prism-sources">
                         <div class="prism-sources-header">Sources</div>
-                        <ul class="prism-sources-list" style="list-style: none; margin: 0; padding: 0;">
+                        <div class="prism-sources-carousel">
                             {% for _src in _all_sources %}
-                                <li class="prism-source-item" data-testid="prism-source-item">
-                                    {% if _src.get('url') %}
-                                        <a class="prism-source-link"
-                                           href="{{ _src.get('url', '#') | e }}"
-                                           target="_blank"
-                                           rel="noopener noreferrer">{{ _src.get('title', 'Untitled') | e }}</a>
+                                {% if _src.get('url') and _src.get('url').startswith(('http://', 'https://')) %}
+                                    <a class="prism-source-card"
+                                       href="{{ _src.get('url') | e }}"
+                                       target="_blank"
+                                       rel="noopener noreferrer">
+                                        <span>{{ _src.get('title', 'Untitled') | e }}</span>
                                         {% if _src.get('published') %}
                                             <span class="prism-source-meta">{{ _src.get('published') | e }}</span>
                                         {% endif %}
-                                    {% else %}
-                                        <span class="prism-source-citation">{{ _src.get('citation', '') | e }}</span>
-                                    {% endif %}
-                                    {% if _src.get('lens') %}
-                                        <span class="prism-source-lens-tag">{{ _src.get('lens') | e }}</span>
-                                    {% endif %}
-                                </li>
+                                        {% if _src.get('lens') %}
+                                            <span class="prism-source-lens-tag">{{ _src.get('lens') | e }}</span>
+                                        {% endif %}
+                                    </a>
+                                {% else %}
+                                    <div class="prism-source-card prism-source-card--citation">
+                                        <span>{{ _src.get('citation', _src.get('title', '')) | e }}</span>
+                                        {% if _src.get('lens') %}
+                                            <span class="prism-source-lens-tag">{{ _src.get('lens') | e }}</span>
+                                        {% endif %}
+                                    </div>
+                                {% endif %}
                             {% endfor %}
-                        </ul>
+                        </div>
                     </div>
                 {% endif %}
 

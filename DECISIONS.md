@@ -3432,3 +3432,52 @@ This feature is **diagnosability infrastructure, not a root-cause fix.** The act
 ### Reference
 
 DE-PRISM-DIAG-001; branch `fix/council-subprocess-diagnostics`; HEAD `9fd3496`.
+
+## DE-SOURCES-CAROUSEL-001 — Replace vertical prism sources list with bounded horizontal carousel (2026-06-29)
+
+### Problem
+
+The Overview tab's Market Prism "Sources" section (shipped in DE-PRISM-SOURCES-001) rendered as a vertical `<ul class="prism-sources-list">` of `<li>` items. With a full nightly council run producing many citations the list expanded the Overview page vertically without bound — the operator described it as "unruly." The sources feature itself was correct and wanted; only the layout was the problem.
+
+### Decision — bounded single-row horizontal carousel
+
+Replace the vertical list with a single-row horizontal carousel of clickable source cards. The carousel's vertical height is capped at `max-height: 160px`; adding more sources scrolls horizontally and does NOT increase the page's vertical footprint.
+
+**Why a carousel over a collapsed/accordion approach:** the operator wanted sources visible at a glance without a click, and the carousel provides both affordances — visible-on-load with overflow-scroll for many sources — with no JS required (CSS scroll-snap + native touch/trackpad swipe).
+
+### Implementation
+
+File changed: `templates/ai_advisor.html` only. No backend, route, or data change.
+
+**CSS (replaced):**
+
+| Old class | New class | Change |
+|-----------|-----------|--------|
+| `.prism-sources-list` | `.prism-sources-carousel` | `flex-direction:row`, `overflow-x:auto`, `scroll-snap-type:x mandatory`, `max-height:160px` |
+| `.prism-source-item` | `.prism-source-card` | Fixed-width card (`min-width:160px`, `max-width:220px`), `scroll-snap-align:start`, border + border-radius, column flex |
+| `.prism-source-link` | (card is the `<a>`) | Whole-card anchor — larger hit target |
+| `.prism-source-meta` | `.prism-source-card .prism-source-meta` | Scoped to card |
+
+All styling uses existing design-system CSS custom properties (`--studio-*` tokens). No raw hex colors introduced.
+
+**Render block (replaced):**
+
+- Container: `<div class="prism-sources-carousel">` (was `<ul class="prism-sources-list">`)
+- Per source: a `startswith(('http://', 'https://'))` guard on `_src.get('url', '')` determines the card type:
+  - **http(s) url present** → `<a class="prism-source-card" href="{{ url | e }}" target="_blank" rel="noopener noreferrer">` (whole card is the link)
+  - **non-http or no url** → `<div class="prism-source-card prism-source-card--citation">` (non-clickable citation card)
+- All interpolated fields escaped with `| e`; no `| safe` used anywhere
+- `data-testid="prism-sources"` preserved on the wrapper `<div>` (AC-8)
+- `{% if _all_sources %}` empty-state guard preserved (AC-6)
+
+### Security
+
+The `startswith(('http://', 'https://'))` guard ensures `javascript:`, `data:`, and other non-http schemes never become `href` values. Any such entry falls through to the non-clickable citation card path. This closes the `javascript:` protocol injection vector at the template layer, independent of upstream validation.
+
+### Files changed
+
+- `templates/ai_advisor.html` — CSS block (`.prism-sources-list`→`.prism-sources-carousel`, `.prism-source-item`→`.prism-source-card`) and render block (`<ul>`→`<div>`, `<li>`→card `<a>`/`<div>` with url guard); no other file changed
+
+### Reference
+
+DE-SOURCES-CAROUSEL-001; PR on `feat/overview-sources-carousel`; commit `8066d67`.

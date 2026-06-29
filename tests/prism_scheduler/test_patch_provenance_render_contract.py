@@ -216,11 +216,11 @@ def test_render_article_corpus_emits_anchor_links_v2(client):
         f"First 2000 chars of HTML: {html[:2000]!r}"
     )
     assert "Test Article Render" in html, "article_corpus title must appear in rendered HTML"
-    assert 'data-testid="prism-source-item"' in html, (
-        "prism-source-item testid must be rendered for any source entry"
+    assert 'class="prism-source-card"' in html, (
+        "article_corpus links must carry class=prism-source-card (new carousel contract)"
     )
-    assert 'class="prism-source-link"' in html, (
-        "article_corpus links must carry class=prism-source-link"
+    assert '<a class="prism-source-card"' in html, (
+        "url-bearing article_corpus entry must render as a clickable <a> anchor card"
     )
 
 
@@ -250,16 +250,13 @@ def test_render_urlless_sources_emits_span_not_anchor_v2(client):
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
 
-    assert 'class="prism-source-citation"' in html, (
-        "Urlless plain-string sources must render as <span class=prism-source-citation>, "
-        "not as anchor links"
+    assert "prism-source-card--citation" in html, (
+        "Urlless plain-string sources must render as prism-source-card--citation "
+        "(non-clickable citation card, new carousel contract)"
     )
     assert 'href="#"' not in html, (
         'No <a href="#"> must appear for urlless sources; '
         "a href='#' means a fabricated/defaulted url was emitted (AC-3 violation)."
-    )
-    assert 'data-testid="prism-source-item"' in html, (
-        "prism-source-item testid must be rendered for urlless sources too"
     )
 
 
