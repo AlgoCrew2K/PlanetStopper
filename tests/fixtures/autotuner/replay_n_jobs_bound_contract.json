@@ -1,0 +1,29 @@
+{
+  "_provenance": "schema-derived from DE-AUTOTUNE-OOM feature plan (AC-2/AC-5/AC-7) — autotune path must thread bounded n_jobs=1 to generate_synthetic_history regardless of ALPHABOT_MAX_JOBS env var; empirical AC-1 verdict in feature-plans/autotune-oom-memory-bound.md establishes n_jobs=1 as the safe bound on the 2-core/3GB-cgroup droplet",
+  "_audit_source": "feature-plans/autotune-oom-memory-bound.md §AC-1 (empirical result), §AC-2 (architecture), §AC-5 (guard), §AC-7 (reproducibility-neutral contract)",
+  "_site": {
+    "file": "autotuner.py",
+    "anchor": "run_autotuner generate_synthetic_history call (autotuner.py:2158)",
+    "_anchor_provenance": "captured from fix/autotune-oom-memory-bound HEAD 0cad13d; behavioral tests locate the call via spy on autotuner.synthetic_history.generate_synthetic_history so refactors do not silently invalidate the test"
+  },
+  "replay_parallelism_contract": {
+    "env_var": "ALPHABOT_MAX_JOBS",
+    "global_default_when_unset": -1,
+    "_global_default_comment": "_resolve_replay_n_jobs() returns -1 when ALPHABOT_MAX_JOBS is unset — joblib forks all cores, OOM on the 2-core / 3GB-cgroup droplet (root cause confirmed in AC-1)",
+    "autotune_safe_n_jobs": 1,
+    "_autotune_safe_comment": "n_jobs=1 → joblib sequential backend (no fork) → peak 2.03GB under the 3.0GB cgroup MemoryMax cap (AC-1 empirical cgroup-bounded profile, 2026-06-29). n_jobs=2 on a 2-core box is equivalent to n_jobs=-1 — both fork 2 workers, same OOM."
+  },
+  "generate_synthetic_history_api_contract": {
+    "required_kwarg": "n_jobs",
+    "_rationale": "Threads 1:1 to Parallel(n_jobs=...); autotuner passes n_jobs=1 explicitly so the autotune path is bounded regardless of ALPHABOT_MAX_JOBS, while other callers' None/default continues to resolve via _resolve_replay_n_jobs(). Name chosen to match the Parallel kwarg exactly — no impedance mismatch."
+  },
+  "autotune_module_contract": {
+    "constant_name_must_contain_any_of": ["JOBS", "N_JOBS", "REPLAY"],
+    "constant_value": 1,
+    "_rationale": "Per project rule: no magic numbers in autotuner.py — every constant named + source comment. Pattern requirement ensures the name is semantically auditable (avoids false-positive match on an unrelated int constant whose value happens to be 1)."
+  },
+  "mem_cap_guard": {
+    "max_cap_gb": 24,
+    "_rationale": "tests._mem_cap.DEFAULT_CAP_GB must not be raised above 24 GB (the operator-approved ceiling for the dev host with 67.8GB RAM). Raising it risks uncapped fan-out and Kernel-Power 41 hard-reboots (2026-06-21 RCA)."
+  }
+}
