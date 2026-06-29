@@ -84,36 +84,83 @@ def _parallel_calls(tree: ast.AST) -> list[ast.Call]:
 
 
 def test_no_bare_all_core_parallel_call():
-    """Every Parallel(...) call must take n_jobs from _resolve_replay_n_jobs().
+    """Parallel(n_jobs=...) must not receive a bare literal; _resolve_replay_n_jobs
+    must still be consulted inside generate_synthetic_history (env fallback preserved).
 
-    A literal ``Parallel(n_jobs=-1)`` (or any literal) inside an xdist worker is
-    the exact construct that caused the multiplicative fan-out / host bugcheck.
+    Safety contract after DE-AUTOTUNE-OOM (2026-06-29):
+    - The ``Parallel`` call receives n_jobs via a variable (e.g. ``effective_n_jobs``),
+      NOT a literal such as ``-1``.  A literal inside an xdist worker is the exact
+      construct that caused the multiplicative fan-out / host bugcheck.
+    - ``_resolve_replay_n_jobs()`` is still called somewhere in the body of
+      ``generate_synthetic_history`` — the env-bounded fallback path is preserved for
+      callers that do not supply an explicit n_jobs override.  Removing it silently
+      breaks production behavior for all non-autotune callers.
+
+    Two-part check:
+      (A) No ``ast.Constant`` at any ``Parallel(n_jobs=<here>)`` site.
+      (B) ``_resolve_replay_n_jobs()`` is reachable (called) inside
+          ``generate_synthetic_history``'s AST body.
+
+    Regression oracle: revert ``Parallel(n_jobs=effective_n_jobs)`` to
+    ``Parallel(n_jobs=-1)`` and (A) fails; remove the ``_resolve_replay_n_jobs()``
+    call from the assignment and (B) fails.
     """
     tree = ast.parse(_MODULE_PATH.read_text(encoding="utf-8"))
     calls = _parallel_calls(tree)
     assert calls, "Expected at least one Parallel(...) call in synthetic_history.py"
+
+    # (A) Parallel(n_jobs=...) must receive a Name (variable reference) or Call —
+    # never a literal or any other constant-like expression.  Positive allowlist
+    # rather than a negative blocklist: in Python's AST, -1 is UnaryOp(USub,
+    # Constant(1)), not a Constant, so ``not isinstance(val, ast.Constant)`` has a
+    # gap.  Requiring ast.Name | ast.Call closes it definitively.
     for call in calls:
         n_jobs_kw = next((kw for kw in call.keywords if kw.arg == "n_jobs"), None)
         assert n_jobs_kw is not None, (
             f"Parallel(...) at line {call.lineno} has no n_jobs= kwarg; it must "
-            "pass n_jobs=_resolve_replay_n_jobs() (not rely on joblib's default)."
+            "route n_jobs through the resolver or an explicit kwarg (never rely on "
+            "joblib's default of -1)."
         )
         val = n_jobs_kw.value
-        # Forbid a literal (e.g. -1, 0, 8). Require a call to the resolver.
-        assert not isinstance(val, ast.Constant), (
-            f"Parallel(n_jobs=<literal>) at line {call.lineno} is forbidden — a "
-            "hardcoded n_jobs re-introduces the unbounded fan-out. Route it "
-            "through _resolve_replay_n_jobs()."
+        # Only ast.Name (variable) or ast.Call (function call) are safe.
+        # Constant (e.g. 1, 0) and UnaryOp (e.g. -1 = USub(Constant(1))) are both
+        # unsafe — they hardcode the degree of parallelism.
+        is_safe = isinstance(val, (ast.Name, ast.Call))
+        assert is_safe, (
+            f"Parallel(n_jobs=<literal or expression>) at line {call.lineno} — "
+            f"got {type(val).__name__}({ast.dump(val)!r:.120}). "
+            "Only a variable name or a function call is allowed. A bare literal "
+            "(including -1, which is UnaryOp not Constant in the AST) re-introduces "
+            "the unbounded fan-out. Use a variable derived from "
+            "_resolve_replay_n_jobs() or an explicit caller kwarg."
         )
-        is_resolver_call = (
-            isinstance(val, ast.Call)
-            and isinstance(val.func, ast.Name)
-            and val.func.id == "_resolve_replay_n_jobs"
-        )
-        assert is_resolver_call, (
-            f"Parallel(n_jobs=...) at line {call.lineno} must call "
-            f"_resolve_replay_n_jobs(); got {ast.dump(val)}."
-        )
+
+    # (B) _resolve_replay_n_jobs() must be called inside generate_synthetic_history —
+    # the env fallback is what bounds all non-autotune callers (n_jobs=None default).
+    func_node = next(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "generate_synthetic_history"
+        ),
+        None,
+    )
+    assert func_node is not None, (
+        "generate_synthetic_history function not found in synthetic_history.py"
+    )
+    resolver_calls = [
+        node
+        for node in ast.walk(func_node)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_resolve_replay_n_jobs"
+    ]
+    assert resolver_calls, (
+        "_resolve_replay_n_jobs() must be called somewhere inside "
+        "generate_synthetic_history — the env fallback path must be preserved for "
+        "callers that do not pass an explicit n_jobs. Removing it silently breaks "
+        "env-bounded production behavior."
+    )
 
 
 def test_conftest_sets_job_caps_in_test_environment():
