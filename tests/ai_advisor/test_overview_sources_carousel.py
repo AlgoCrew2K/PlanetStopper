@@ -920,3 +920,87 @@ def test_anchor_source_card_has_hover_affordance():
         f"Raw hex color(s) found in hover rule: {hex_hits}.  "
         "Use ``var(--studio-...)`` tokens instead (e.g. ``var(--studio-accent)``)."
     )
+
+
+# ===========================================================================
+# FIX-2: article_corpus entry with url=None must not crash the route (500)
+#         and must render as a citation card, not a broken anchor.
+# ===========================================================================
+
+# Fixture with a single article_corpus entry whose url key is present but None.
+_SUMMARY_NULL_URL = {
+    "id": 110,
+    "advisor_role": "MARKET_PRISM",
+    "subject_id": None,
+    "verdict": "neutral",
+    "created_at": "2026-06-29T03:05:00",
+    "raw_response": {
+        "run_id": _RUN_ID,
+        "run_ts": _RUN_ID,
+        "overall_sentiment": "neutral",
+        "sentiment_rationale": "Null URL guard test.",
+        "per_lens_digest": {
+            "technicals": {
+                "available": True,
+                "summary": "Null url check.",
+                "sources": [],
+                "article_corpus": [
+                    {
+                        "url": None,
+                        "title": "Null URL Item",
+                        "published": "2026-06-28",
+                    }
+                ],
+            },
+            "sentiment": {"available": False, "reason": "StubError", "sources": []},
+            "derivatives": {"available": False, "reason": "StubError", "sources": []},
+            "macro": {"available": False, "reason": "StubError", "sources": []},
+            "fundamentals": {"available": False, "reason": "StubError", "sources": []},
+        },
+    },
+}
+
+
+def test_null_url_in_article_corpus_does_not_crash_and_renders_citation_card(client, monkeypatch):
+    """An article_corpus entry with ``url: None`` (key present, value null) must NOT
+    produce a 500 (AttributeError from calling .startswith on None).
+
+    The render guard ``{% if _src.get('url', '').startswith(...) %}`` calls
+    .startswith on None when the key exists with a null value — ``get`` returns
+    None, not the default.  The corrected guard is:
+        ``{% if _src.get('url') and _src.get('url').startswith(...) %}``.
+
+    Assertions:
+    - ``resp.status_code == 200`` — no crash.
+    - Entry is NOT an anchor card (``href="#"`` absent, ``href="None"`` absent).
+    - Entry renders as ``prism-source-card--citation`` (non-clickable fallback).
+
+    RED intent: the current guard calls ``.startswith`` on None →
+    AttributeError → 500.  This test must fail (500) until the guard is fixed.
+    """
+    _mock_route_helpers(monkeypatch, _SUMMARY_NULL_URL)
+
+    resp = client.get("/ai-advisor")
+
+    assert resp.status_code == 200, (
+        "GET /ai-advisor with url=None in article_corpus must return 200, not 500. "
+        "The render guard must short-circuit on None before calling .startswith."
+    )
+
+    html = resp.data.decode("utf-8", errors="replace")
+
+    # Entry must NOT become a clickable anchor with a null or fabricated href.
+    assert 'href="#"' not in html, (
+        "url=None must not produce href='#' — the old default fallback is not safe "
+        "as a link target and would create a broken anchor."
+    )
+    assert 'href="None"' not in html, (
+        "url=None must not produce href='None' — the stringified None must not "
+        "appear as an href value."
+    )
+
+    # Entry must fall through to the non-clickable citation card.
+    assert "prism-source-card--citation" in html, (
+        "url=None entry must render as prism-source-card--citation "
+        "(non-clickable fallback), not as an anchor card."
+    )
