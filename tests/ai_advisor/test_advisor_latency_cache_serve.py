@@ -982,3 +982,69 @@ def test_cache_serve_preserves_symphony_specific_context():
         '(get_condensed_logic was mocked to return {"rules": []}). '
         f"Got: {sym_logic!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# AC-3 (UI surface): lens_data_as_of must be rendered in the suggest panel JS
+# Fails today — static/ai_advisor.js has no reference to lens_data_as_of.
+# ---------------------------------------------------------------------------
+
+_AI_ADVISOR_JS = _WORKTREE / "static" / "ai_advisor.js"
+
+
+def test_ai_advisor_js_reads_lens_data_as_of_from_suggest_response():
+    """AC-3 (UI): static/ai_advisor.js must consume 'lens_data_as_of' from the
+    /ai-advisor/suggest JSON response and render a staleness stamp in the suggest panel.
+
+    AC-3 says: "surfaced to the advisor output/UI; the timestamp is HTML-escaped
+    where rendered." The JSON response carries the field (covered by context-level
+    tests), but AC-3 explicitly requires UI rendering — the JS must read the field
+    and display it.
+
+    Fails today: static/ai_advisor.js has no reference to 'lens_data_as_of'.
+    After implementation: the JS suggest callback reads response.lens_data_as_of
+    (or data.lens_data_as_of) and updates a DOM element with the staleness stamp.
+    """
+    content = _AI_ADVISOR_JS.read_text(encoding="utf-8")
+    assert "lens_data_as_of" in content, (
+        "static/ai_advisor.js must read 'lens_data_as_of' from the /ai-advisor/suggest "
+        "JSON response and surface it in the suggest panel (AC-3: 'surfaced to the "
+        "advisor output/UI'). The field is present in the JSON response (route confirmed) "
+        "but the JS currently never reads or displays it. Add a staleness stamp to the "
+        "suggest panel — e.g. 'Market context as of <ts> (stale)' when lens_data_stale "
+        "is true, or 'Market context as of <ts>' when fresh."
+    )
+
+
+def test_ai_advisor_js_lens_stamp_not_injected_via_inner_html():
+    """AC-3 (safety GUARD): when 'lens_data_as_of' is referenced in static/ai_advisor.js,
+    it must NOT be set via a raw .innerHTML assignment with the value directly concatenated
+    or interpolated (XSS risk; AC-3 requires HTML-escaped rendering).
+
+    Acceptable patterns: textContent, innerText, DOM createElement+appendChild,
+    a sanitize() wrapper, or a template literal in .textContent.
+    Not acceptable: element.innerHTML = '...' + lens_data_as_of + '...'
+                    element.innerHTML = `...${lens_data_as_of}...`
+
+    Today: passes vacuously (no lens_data_as_of in JS yet).
+    After implementation: guards that the value is not injected unsafely.
+    Note: this test will catch a literal innerHTML injection; a sanitize wrapper
+    used correctly would also pass.
+    """
+    content = _AI_ADVISOR_JS.read_text(encoding="utf-8")
+    if "lens_data_as_of" not in content:
+        # JS not yet updated — nothing to check (RED test above will catch this)
+        return
+
+    lines = content.splitlines()
+    for i, line in enumerate(lines, start=1):
+        if "lens_data_as_of" not in line:
+            continue
+        # A line that both assigns innerHTML AND includes lens_data_as_of is unsafe.
+        if "innerHTML" in line and ("+" in line or "${" in line):
+            pytest.fail(
+                f"static/ai_advisor.js line {i} appears to set innerHTML with "
+                f"'lens_data_as_of' directly concatenated or interpolated — XSS risk. "
+                f"AC-3 requires the timestamp to be HTML-escaped (use textContent, "
+                f"innerText, or a sanitizer wrapper). Offending line:\n  {line.strip()!r}"
+            )
