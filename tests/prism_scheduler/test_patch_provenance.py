@@ -138,6 +138,18 @@ def _count_all_advisor_rows() -> int:
     return count
 
 
+def _count_lens_cache_rows() -> int:
+    """Return the current count of MARKET_LENS_CACHE rows in advisor_observations."""
+    conn = database.get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COUNT(*) FROM advisor_observations WHERE advisor_role = 'MARKET_LENS_CACHE'"
+    )
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+
 # ---------------------------------------------------------------------------
 # Builder helpers (production-shape mocks)
 # ---------------------------------------------------------------------------
@@ -226,8 +238,9 @@ def test_patch_provenance_v2_market_prism_row_byte_unchanged():
 
 
 def test_patch_provenance_v2_inserts_sources_row():
-    """V2-GUARD / AC-1: _patch_provenance must INSERT exactly one new
-    MARKET_PRISM_SOURCES row. The advisor_observations row count must grow by 1.
+    """V2-GUARD / AC-1 + AC-2 (lens-cache): _patch_provenance must INSERT exactly two
+    new advisor_observations rows: one MARKET_PRISM_SOURCES row and one MARKET_LENS_CACHE
+    row.  The advisor_observations row count must grow by 2.
     """
     row = _insert_market_prism_row()
     count_before = _count_all_advisor_rows()
@@ -261,12 +274,19 @@ def test_patch_provenance_v2_inserts_sources_row():
         prism_scheduler._patch_provenance(_RUN_ID, row)
 
     count_after = _count_all_advisor_rows()
-    assert count_after == count_before + 1, (
-        f"_patch_provenance must INSERT exactly 1 new row; "
+    # _patch_provenance inserts both a MARKET_PRISM_SOURCES row and a
+    # MARKET_LENS_CACHE row (AC-2 of the cache-serve PR), so the total delta is +2.
+    assert count_after == count_before + 2, (
+        f"_patch_provenance must INSERT exactly 2 new rows "
+        f"(MARKET_PRISM_SOURCES + MARKET_LENS_CACHE); "
         f"row count before={count_before}, after={count_after}."
     )
     sources_count = _count_sources_rows()
     assert sources_count == 1, f"Expected exactly 1 MARKET_PRISM_SOURCES row; got {sources_count}"
+    lens_cache_count = _count_lens_cache_rows()
+    assert lens_cache_count == 1, (
+        f"Expected exactly 1 MARKET_LENS_CACHE row (cache-serve bundle); got {lens_cache_count}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -759,3 +779,102 @@ def test_patch_provenance_v2_sentiment_deduplicates_sources_and_article_corpus_o
         f"got {len(matching)} (sources+article_corpus overlap must be deduped by url). "
         f"Full sentiment corpus: {sentiment_corpus!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# T12 — FIX-4 / cache gate: lens absent from council pld still gets live builder
+#        payload in MARKET_LENS_CACHE; SOURCES row unchanged (no citations).
+# ---------------------------------------------------------------------------
+
+_MACRO_LIVE_SECTION = {
+    "lens": "macro",
+    "available": True,
+    "payload": {"t10y2y": 0.42, "fed_funds": 5.25},
+    "sources": [_VALID_CITATION_MACRO],
+}
+
+
+def test_lens_absent_from_council_digest_cached_from_live_builder():
+    """FIX-4: When a lens is ABSENT from the council per_lens_digest (degraded night),
+    _patch_provenance must still call its live builder and store the builder's result
+    in MARKET_LENS_CACHE — NOT a synthetic unavailable block with reason='BuildError'.
+
+    The MARKET_PRISM_SOURCES row must NOT include that lens's citations (council-context
+    gate: no council output = no provenance to cite, SOURCES behavior unchanged).
+
+    RED against current code: the current loop gates builder() on `lens in pld`;
+    an absent lens stores _unavailable_block (reason='BuildError') in the cache
+    without calling the builder.
+    """
+    # Insert a MARKET_PRISM row whose per_lens_digest has macro deliberately absent
+    # (simulates a degraded council night where the macro analyst filed nothing).
+    raw = dict(_BASE_RAW_RESPONSE)
+    pld_without_macro = {k: dict(v) for k, v in _COUNCIL_PER_LENS_DIGEST.items() if k != "macro"}
+    raw["per_lens_digest"] = pld_without_macro
+    row_id = database.insert_advisor_observation(
+        advisor_role="MARKET_PRISM",
+        subject_type="portfolio",
+        subject_id="",
+        verdict="neutral",
+        raw_response=raw,
+        symphony_id="",
+    )
+    row = database.get_latest_market_prism_summary()
+    assert row is not None and row["id"] == row_id
+
+    with (
+        patch(
+            "ai_advisor._build_sentiment_section",
+            return_value=_sentiment_production_shape(
+                sources=[_VALID_CITATION_SENTIMENT],
+                article_corpus=[_SENTIMENT_CORPUS_ARTICLE],
+            ),
+        ),
+        patch(
+            "ai_advisor._build_macro_section",
+            return_value=_MACRO_LIVE_SECTION,
+        ),
+        patch(
+            "ai_advisor._build_derivatives_section",
+            return_value=_available_section_with_sources([_VALID_CITATION_DERIVATIVES]),
+        ),
+        patch(
+            "ai_advisor._build_fundamentals_section",
+            return_value=_available_section_with_sources([_VALID_CITATION_FUNDAMENTALS]),
+        ),
+        patch(
+            "ai_advisor._build_technicals_section",
+            return_value=_available_section_with_sources([]),
+        ),
+    ):
+        prism_scheduler._patch_provenance(_RUN_ID, row)
+
+    # 1. MARKET_LENS_CACHE must carry the live builder result for macro, NOT BuildError.
+    cache_row = database.get_latest_market_lens_cache()
+    assert cache_row is not None, "MARKET_LENS_CACHE row must be written"
+    cache_raw = cache_row.get("raw_response") or {}
+    cached_lenses = cache_raw.get("lenses") or {}
+    macro_cached = cached_lenses.get("macro")
+    assert macro_cached is not None, (
+        "macro must be present in MARKET_LENS_CACHE even when absent from council digest"
+    )
+    assert macro_cached.get("available") is True, (
+        f"macro in MARKET_LENS_CACHE must be available=True (live builder returned available=True); "
+        f"got {macro_cached!r}. "
+        "FIX-4 RED: current code stores reason='BuildError' without calling the builder."
+    )
+    assert macro_cached.get("reason") != "BuildError", (
+        "macro cache block must not have reason='BuildError' — the live builder succeeded. "
+        "FIX-4 RED: current loop gates builder() on `lens in pld`, so absent lenses "
+        "never reach the builder."
+    )
+
+    # 2. MARKET_PRISM_SOURCES must NOT include macro citations (absent from council pld).
+    sources_row = database.get_latest_market_prism_sources_for_run(_RUN_ID)
+    if sources_row is not None:
+        pld_sources = (sources_row.get("raw_response") or {}).get("per_lens_digest", {})
+        assert "macro" not in pld_sources, (
+            "SOURCES row must NOT include macro citations when macro is absent from the "
+            "council per_lens_digest (no council context = no provenance to cite). "
+            f"Got per_lens_digest keys: {list(pld_sources.keys())!r}"
+        )

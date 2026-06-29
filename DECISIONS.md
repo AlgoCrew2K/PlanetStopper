@@ -3481,3 +3481,57 @@ The `startswith(('http://', 'https://'))` guard ensures `javascript:`, `data:`, 
 ### Reference
 
 DE-SOURCES-CAROUSEL-001; PR on `feat/overview-sources-carousel`; commit `8066d67`.
+
+---
+
+## DE-ADVISOR-LATENCY — Market-lens cache-serve: eliminate 6-minute advisor hang (2026-06-29)
+
+Branch: `feat/advisor-latency-cache-serve` | Base: `origin/main` d15e06c | HEAD: f684ab6
+
+### Problem — per-click live lens fan-out
+
+`ai_advisor.assemble_advisor_context` made 5 blocking live lens fetches on every `/ai-advisor/suggest` request: `_build_technicals_section` (Alpaca bars), `_build_sentiment_section` (GDELT + 8 RSS feeds), `_build_derivatives_section` (FRED), `_build_macro_section` (FRED), and `_build_fundamentals_section` (SEC EDGAR companyfacts fan-out over live holdings). Together these were 17–29 sequential external API calls, producing a 6-minute hang per advisor click (operator-reported). All five lenses are **market-wide context** — they do not require per-click freshness and share no symphony-specific coupling beyond a proxy-floor universe.
+
+**Verified premises (live droplet, read-only, 2026-06-29):** no complete structured nightly cache existed. `lens_warehouse.lens_snapshots` only persisted `macro` and `sentiment` incidentally. The nightly `MARKET_PRISM.per_lens_digest` (council id=11) is PROSE (`{available, summary:str, sources}`, `payload=None`) — NOT the structured `_build_*_section()` payload the advisor prompt consumes. A naive "read existing cache" swap was not viable; the cache layer had to be built.
+
+### Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Reuse the nightly council path via `_patch_provenance` (no new systemd timer) | The 5 builders already run there; capturing their outputs adds one DB write, zero network calls, zero new ops/deploy risk. A dedicated `lens-cache.timer` was rejected — added droplet ops complexity and cannot be CI-tested. |
+| `MARKET_LENS_CACHE` advisor_observations role (no schema migration) | Reuses proven append-only infra with freshness derivable from `created_at` / `captured_at`; consistent with how `MARKET_PRISM_SOURCES` is stored; avoids destructive migration risk. |
+| Cache the structured `_build_*_section()` output, NOT the council prose `per_lens_digest` | Verified on droplet: council digest is prose (`payload=None`); the advisor prompt consumes structured payload. Serving prose would silently degrade/break the advisor. |
+| Serve-always-with-honest-age-stamp; live-fetch ONLY on total cache absence | Never silently hang; never silently present stale as current. A stale bundle (> `_LENS_CACHE_MAX_AGE_HOURS=36h`) is still served with a label, not rejected. |
+| Cold-start degradation: honest `available=False, reason="lens_cache_unavailable"` blocks; the 5 live builders are NEVER the silent default fallback | Prevents weaponizing a cache-absent state into repeated 6-minute fan-outs. |
+| Keep market-wide (proxy-floor) context; do NOT personalize per-symphony holdings in the cache | The cached proxy-floor universe is the correct "market context as of <ts>". Per-symphony coupling stays out of scope. |
+| `MARKET_LENS_CACHE` excluded from `app.py _ADVISOR_ROLES` | Keeps it out of the Overview observations loop and `_preview_text` stamping, exactly like `MARKET_PRISM_SOURCES`. |
+| Council-safety isolation: cache-persist in its own `try/except` inside `_patch_provenance` | A cache-write failure must NEVER prevent the council run being recorded as successful. The MARKET_PRISM_SOURCES write fires before the MARKET_LENS_CACHE write; both are isolated. |
+
+### Implementation
+
+**New constant (`ai_advisor.py:61-63`):** `_LENS_CACHE_MAX_AGE_HOURS = 36` — 36 hours covers a missed council night while still allowing the next nightly run to refresh.
+
+**New producer (`ai_advisor.persist_market_lens_cache(sections: dict) -> None`):** Persists one `MARKET_LENS_CACHE` advisor_observations row with `raw_response = {"captured_at": <ISO UTC>, "lenses": {"technicals": ..., "sentiment": ..., "derivatives": ..., "macro": ..., "fundamentals": ...}}` where each value is the exact structured `_build_*_section()` dict. D-1 never-raises; append-only (latest row wins on serve).
+
+**New DB accessor (`database.get_latest_market_lens_cache() -> dict | None`):** `SELECT ... WHERE advisor_role='MARKET_LENS_CACHE' ORDER BY id DESC LIMIT 1`. Parameterized; read-only (`get_ro_connection()`). D-1 never-raises — returns `None` on cache miss or any DB error.
+
+**`assemble_advisor_context` cache-serve path (AC-1, AC-3, AC-4, AC-5):** Before the former live-fetch block, calls `database.get_latest_market_lens_cache()`. On a valid cache hit: extracts the 5 structured lens payloads, computes `age_hours`, sets `lens_data_as_of` (ISO UTC string) and `lens_data_stale` bool (`age_hours > _LENS_CACHE_MAX_AGE_HOURS`). Skips ALL 5 live `_build_*_section()` calls. Cold-start (no row or unparseable `captured_at`): each lens block is set to `available=False, reason="lens_cache_unavailable"` — no live builders are called. The backward-compat top-level aliases (`context["technicals"]`, `context["sentiment"]`, etc.) are preserved for existing consumers of the context dict; they read from the cache-served payloads.
+
+**`build_assessment_from_context` reword (AC-8):** "Optuna has not yet run for this symphony — no walk-forward validation evidence is available. Config is unvalidated; Claude is reasoning without OOS data." is replaced with "Walk-forward optimization (Optuna) has not run for this symphony yet. No out-of-sample (OOS) validation evidence is available — the current config is unvalidated. Claude will reason without OOS data." Semantics identical; framing less alarming.
+
+**`_patch_provenance` MARKET_LENS_CACHE wiring (`prism_scheduler.py:443-474`):** The per-builder loop now captures each `section` into `_lens_cache_sections[lens]` (including `_unavailable_block` on build errors). After the SOURCES row is written, a separate nested `try/except` block fetches `_build_technicals_section()` (technicals was excluded from `_BUILDERS` because Alpaca bar data has no public URLs for the SOURCES row, but IS needed in the lens cache), sets `_lens_cache_sections["technicals"]`, and calls `ai_advisor.persist_market_lens_cache(_lens_cache_sections)`. A failure in this inner block is logged as `type(exc).__name__` to stderr and never propagates to the outer `return True`.
+
+**Staleness surfacing (AC-3):** `app.py:ai_advisor_suggest` threads `lens_data_as_of` and `lens_data_stale` into the suggest response JSON. `static/ai_advisor.js` populates `#advisor-lens-as-of` using `textContent` (no innerHTML, no XSS risk). `templates/ai_advisor.html` adds `<div id="advisor-lens-as-of" class="prism-as-of" style="display:none">` — hidden until JS populates it on suggest completion.
+
+### Files changed
+
+- `ai_advisor.py` — `_LENS_CACHE_MAX_AGE_HOURS=36`; `persist_market_lens_cache(sections)`; `assemble_advisor_context` cache-serve path replacing the per-click live-fetch block; `build_assessment_from_context` empty-state reword
+- `database.py` — `get_latest_market_lens_cache() -> dict | None`
+- `prism_scheduler.py` — `_patch_provenance` captures `_lens_cache_sections` per builder; technicals fetch + `persist_market_lens_cache` call in isolated `try/except`
+- `app.py` — `ai_advisor_suggest` response JSON gains `lens_data_as_of` + `lens_data_stale`
+- `static/ai_advisor.js` — `#advisor-lens-as-of` population (textContent) on suggest completion
+- `templates/ai_advisor.html` — `<div id="advisor-lens-as-of" class="prism-as-of">` (AC-3 staleness stamp)
+
+### Reference
+
+DE-ADVISOR-LATENCY; branch `feat/advisor-latency-cache-serve`; HEAD `f684ab6`.

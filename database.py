@@ -1234,6 +1234,36 @@ def get_latest_market_prism_sources_for_run(run_id: str) -> dict | None:
         return None
 
 
+def get_latest_market_lens_cache() -> dict | None:
+    """Return the most recent MARKET_LENS_CACHE advisor_observations row, or None.
+
+    Returns a fully parsed dict (raw_response deserialized from JSON) representing
+    the most recently persisted nightly lens cache bundle, or None when no such row
+    exists yet (cold-start) or on any DB error.
+
+    Uses get_ro_connection() — read-only at the driver level (architecture constraint 5).
+    Ordered by id DESC LIMIT 1 — insertion order is a reliable recency proxy for
+    sequential nightly writes.
+
+    D-1 never-raises: any exception degrades to None (cache miss).
+    """
+    try:
+        conn = get_ro_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT "
+            + ", ".join(_ADVISOR_OBSERVATION_COLUMNS)
+            + " FROM advisor_observations WHERE advisor_role = 'MARKET_LENS_CACHE' ORDER BY id DESC LIMIT 1",
+        )
+        row = cursor.fetchone()
+        conn.close()
+        if row is None:
+            return None
+        return _parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # --- Prism Phase 1: audit-log accessors (migration 032) ---
 
 _PRISM_AUDIT_COLUMNS: tuple[str, ...] = (

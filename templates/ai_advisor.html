@@ -1118,6 +1118,13 @@
                  id="chip-rejected">0 OOS rejected</div>
         </div>
 
+        <!-- Lens-cache staleness stamp (AC-3) — hidden until JS populates from suggest response.
+             Uses textContent only; never innerHTML (XSS guard). -->
+        <div id="advisor-lens-as-of"
+             data-testid="advisor-lens-as-of"
+             class="prism-as-of"
+             style="display:none;padding:0.25rem 0;"></div>
+
         <!-- Two-column grid -->
         <div data-testid="advisor-grid" class="adv-grid">
 

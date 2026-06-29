@@ -374,14 +374,38 @@ def _patch_provenance(run_id: str, row: "dict | None") -> bool:
         # MARKET_PRISM row (v2: INSERT-only; the MARKET_PRISM raw_response is
         # byte-unchanged after this function returns).
         sources_per_lens_digest: dict = {}
+        # Also capture structured payloads for the MARKET_LENS_CACHE bundle (AC-2).
+        # technicals is populated separately below (excluded from SOURCES — no public URLs).
+        _lens_cache_sections: dict = {}
 
         for lens, builder in _BUILDERS.items():
-            if lens not in pld:
-                continue
+            _unavailable_block = {
+                "lens": lens,
+                "available": False,
+                "reason": "BuildError",
+                "payload": None,
+                "sources": [],
+            }
+            # Always call the live builder for the MARKET_LENS_CACHE — the cache must
+            # reflect what external data sources (FRED, GDELT, etc.) can provide at
+            # patch time, NOT the council's digest membership.  On a degraded-council
+            # night a lens may be absent from `pld` even though FRED is fully
+            # operational; storing BuildError without calling the builder would cause
+            # assemble_advisor_context to serve a false "unavailable" block until the
+            # next successful council run.
             try:
                 section = builder()
             except Exception:  # noqa: BLE001
+                _lens_cache_sections[lens] = _unavailable_block
                 continue  # D-1: this lens contributes no citations
+
+            _lens_cache_sections[lens] = section  # capture for MARKET_LENS_CACHE
+
+            if lens not in pld:
+                # Lens absent from council digest — structured payload captured for
+                # the cache above, but NO citations added to SOURCES (no council
+                # context = no provenance to attribute).
+                continue
 
             # Union sources + article_corpus so sentiment's primary corpus is captured.
             # sources items are already citation-shaped; article_corpus items are raw
@@ -428,6 +452,32 @@ def _patch_provenance(run_id: str, row: "dict | None") -> bool:
             raw_response={"run_id": run_id, "per_lens_digest": sources_per_lens_digest},
             symphony_id="",
         )
+
+        # Persist the 5-lens MARKET_LENS_CACHE bundle (AC-2).
+        # technicals was excluded from _BUILDERS (no public URLs for SOURCES) but belongs
+        # in the lens cache so the advisor can serve breadth/momentum without a live fetch.
+        # Extra isolation: wrap in its own try/except so any failure here cannot prevent
+        # the `return True` below — the SOURCES row is already written at this point and
+        # the council must always be recorded as successful regardless of the cache write.
+        try:
+            try:
+                _tech_block = ai_advisor._build_technicals_section()
+            except Exception:  # noqa: BLE001
+                _tech_block = {
+                    "lens": "technicals",
+                    "available": False,
+                    "reason": "BuildError",
+                    "payload": None,
+                    "sources": [],
+                }
+            _lens_cache_sections["technicals"] = _tech_block
+            ai_advisor.persist_market_lens_cache(_lens_cache_sections)
+        except Exception as _cache_exc:  # noqa: BLE001
+            print(
+                f"[prism_scheduler] LensCacheError: {type(_cache_exc).__name__}",
+                file=sys.stderr,
+            )
+
         return True
     except Exception as exc:  # noqa: BLE001
         print(

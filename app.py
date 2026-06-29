@@ -4510,7 +4510,17 @@ def ai_advisor_suggest():
             "optuna_evidence": ai_advisor._build_optuna_section(autotune_run),
         }
         assessment = ai_advisor.build_assessment_from_context(_evidence_context)
-        return jsonify({"suggestions": suggestions, "assessment": assessment})
+        return jsonify(
+            {
+                "suggestions": suggestions,
+                "assessment": assessment,
+                # Lens-cache staleness stamp — AC-3.  The timestamp is server-generated
+                # ISO UTC; never user-supplied.  Escape with | e where rendered in a
+                # template.  None when the cache has never been populated (cold-start).
+                "lens_data_as_of": context.get("lens_data_as_of"),
+                "lens_data_stale": context.get("lens_data_stale"),
+            }
+        )
     except Exception as _exc:
         _daemon_log.error("ai_advisor_suggest failed: %s", _exc, exc_info=True)
         # D-1 security contract: do NOT echo str(exc) — exception messages may contain
