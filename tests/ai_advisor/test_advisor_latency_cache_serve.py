@@ -873,3 +873,112 @@ def test_suggest_route_returns_200_when_cache_row_is_malformed():
         f"malformed (D-1: error degrades to cache-miss, route still responds). "
         f"Got HTTP {resp.status_code}."
     )
+
+
+# ---------------------------------------------------------------------------
+# AC-6: per-click symphony-specific work is preserved on the cache-serve path
+# (GUARD — passes today; must continue to pass after implementation)
+# ---------------------------------------------------------------------------
+
+
+def test_cache_serve_preserves_symphony_specific_context():
+    """AC-6 GUARD: When a fresh MARKET_LENS_CACHE row is present and the 5 live
+    builders are skipped, assemble_advisor_context() must STILL assemble all the
+    symphony-specific context elements:
+      - optuna_evidence (Optuna walk-forward metrics for this symphony)
+      - suggestible_surface (per-symphony config surface + locked vars)
+      - symphony_logic (condensed Composer logic for this symphony)
+      - scope, symphony_id
+
+    These are per-click, not market-wide — they must never be served from the
+    market-wide cache. The cache only covers the 5 market-wide lens blocks.
+
+    Adversarial guard: patches all 5 builders with AssertionError (must not be called),
+    yet the symphony-specific fields must still appear with the expected types.
+    A wrong implementation that also caches optuna_evidence / suggestible_surface
+    will fail here or in AC-1 tests.
+
+    Passes today — the current implementation always assembles these fields.
+    Must continue to pass after the cache-serve path is added.
+    """
+    _insert_cache_row()  # fresh cache row — builders must be skipped
+
+    # Provide a known autotune_run so optuna_evidence is deterministic
+    _fake_autotune = {
+        "oos_alpha": None,  # sentinel for "all trials haircut-rejected"
+        "fallback_oos_alpha": 0.0,
+        "default_oas_alpha": 0.0,
+        "baseline_decision": "HOLD",
+        "train_alpha": 0.01,
+    }
+
+    with (
+        # 5 market-wide builders: must NOT be called (AC-1 contract)
+        patch.object(
+            ai_advisor,
+            "_build_technicals_section",
+            side_effect=AssertionError("AC-6: technicals builder called — cache should serve this"),
+        ),
+        patch.object(
+            ai_advisor,
+            "_build_sentiment_section",
+            side_effect=AssertionError("AC-6: sentiment builder called — cache should serve this"),
+        ),
+        patch.object(
+            ai_advisor,
+            "_build_derivatives_section",
+            side_effect=AssertionError(
+                "AC-6: derivatives builder called — cache should serve this"
+            ),
+        ),
+        patch.object(
+            ai_advisor,
+            "_build_macro_section",
+            side_effect=AssertionError("AC-6: macro builder called — cache should serve this"),
+        ),
+        patch.object(
+            ai_advisor,
+            "_build_fundamentals_section",
+            side_effect=AssertionError(
+                "AC-6: fundamentals builder called — cache should serve this"
+            ),
+        ),
+        patch.object(ai_advisor.symphony_logic, "get_condensed_logic", return_value={"rules": []}),
+        patch.object(db_module, "load_state", return_value={}),
+    ):
+        context = ai_advisor.assemble_advisor_context(
+            scope="symphony",
+            symphony_id="test-symphony-ac6",
+            autotune_run=_fake_autotune,
+        )
+
+    # Symphony-specific fields must be present and well-typed
+    assert context.get("scope") == "symphony", (
+        f"context['scope'] must be 'symphony'; got {context.get('scope')!r}"
+    )
+    assert context.get("symphony_id") == "test-symphony-ac6", (
+        f"context['symphony_id'] must match the passed symphony_id; "
+        f"got {context.get('symphony_id')!r}"
+    )
+
+    optuna = context.get("optuna_evidence")
+    assert isinstance(optuna, dict) and optuna, (
+        "context['optuna_evidence'] must be a non-empty dict on the cache-serve path. "
+        "The autotune evidence is per-symphony and must never come from the market cache. "
+        f"Got: {optuna!r}"
+    )
+
+    surface = context.get("suggestible_surface")
+    assert isinstance(surface, list), (
+        "context['suggestible_surface'] must be a list (per-symphony config surface). "
+        "It is per-symphony and must never come from the market cache. "
+        f"Got type: {type(surface).__name__!r}"
+    )
+
+    # symphony_logic was mocked to return {"rules": []} — must appear in context
+    sym_logic = context.get("symphony_logic")
+    assert sym_logic == {"rules": []}, (
+        "context['symphony_logic'] must reflect the per-symphony condensed logic "
+        '(get_condensed_logic was mocked to return {"rules": []}). '
+        f"Got: {sym_logic!r}"
+    )
