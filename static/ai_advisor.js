@@ -85,6 +85,23 @@
         var container = document.getElementById('suggestions-container');
         updateChips(suggestions);
 
+        // AC-3: surface the nightly lens-cache staleness stamp in the suggest panel.
+        // Placed before branching so it updates on both empty-state and suggestion paths.
+        // Uses textContent (never innerHTML) — the timestamp is server-generated ISO UTC
+        // but textContent ensures no XSS risk regardless of future content changes.
+        var lensAsOfEl = document.getElementById('advisor-lens-as-of');
+        if (lensAsOfEl) {
+            var lensAsOf = body && body.lens_data_as_of;
+            if (lensAsOf) {
+                var staleTag = body.lens_data_stale ? ' (stale)' : '';
+                lensAsOfEl.textContent = 'Market context as of ' + lensAsOf + staleTag;
+                lensAsOfEl.style.display = '';
+            } else {
+                lensAsOfEl.textContent = '';
+                lensAsOfEl.style.display = 'none';
+            }
+        }
+
         if (suggestions.length === 0) {
             // AC1/AC4: render the per-symphony assessment so the empty-state
             // box shows real context (why no edit is suggested) rather than a
