@@ -199,15 +199,19 @@ def test_fresh_cache_serves_all_five_lens_names_in_context():
     ):
         context = ai_advisor.assemble_advisor_context(**_minimal_context_args())
 
-    # The implementer may put lens data under context["lenses"] (per the feature plan
-    # architecture) or preserve top-level keys — both are accepted here.
-    # What must be true: each lens name is reachable from the context.
-    nested_lenses = context.get("lenses") or {}
+    # Lens data is exposed via flat top-level keys: context["technicals"] etc.
+    # A "lenses" bundle key is intentionally absent to avoid double-serialization
+    # in the Claude prompt (perf: drop-lenses-bundle).
+    assert "lenses" not in context, (
+        "context must NOT carry a top-level 'lenses' bundle key — it double-serializes "
+        "every lens payload in json.dumps(context) sent to Claude (token regression). "
+        "Use the flat per-lens keys (context['technicals'] etc.) instead."
+    )
     for name in _LENS_NAMES:
-        found = nested_lenses.get(name) or context.get(name)
+        found = context.get(name)
         assert found is not None, (
             f"Lens '{name}' is missing from the returned context after cache-serve. "
-            "Either context['lenses'][name] or context[name] must be present. "
+            f"Expected context['{name}'] to be present as a flat top-level key. "
             f"context keys: {list(context.keys())!r}"
         )
 
@@ -619,16 +623,22 @@ def test_served_lenses_shape_identical_to_live_fetch_shape():
     ):
         context = ai_advisor.assemble_advisor_context(**_minimal_context_args())
 
-    # Find lens data — accept either context["lenses"][name] or context[name]
-    nested = context.get("lenses") or {}
+    # Lens data is exposed via flat top-level keys — no "lenses" bundle key (perf:
+    # drop-lenses-bundle: a single "lenses" key double-serialized every payload in the
+    # Claude prompt, which is a token-cost regression).
+    assert "lenses" not in context, (
+        "context must NOT carry a top-level 'lenses' bundle key — it double-serializes "
+        "every lens payload in json.dumps(context) sent to Claude. "
+        "Use the flat per-lens keys (context['technicals'] etc.) instead."
+    )
     required_keys_available = set(_SHAPES["lens_available_required_keys"])
     forbidden_council_keys = set(_SHAPES["council_prose_forbidden_top_level_keys"])
 
     for name in _LENS_NAMES:
-        block = nested.get(name) or context.get(name)
+        block = context.get(name)
         assert block is not None, (
             f"Lens '{name}' is not reachable from context after cache-serve. "
-            "Expected under context['lenses'][name] or context[name]. "
+            f"Expected context['{name}'] as a flat top-level key. "
             f"context keys: {list(context.keys())!r}"
         )
         assert isinstance(block, dict), (
@@ -847,14 +857,16 @@ def test_serve_stale_when_captured_at_missing():
     ):
         context = ai_advisor.assemble_advisor_context(**_minimal_context_args())
 
-    # The bundle must be SERVED — not discarded to the cold-start fallback
-    lenses_in_ctx = context.get("lenses") or {}
+    # The bundle must be SERVED via flat top-level keys — not discarded to cold-start.
+    assert "lenses" not in context, (
+        "context must NOT carry a top-level 'lenses' bundle key (perf: drop-lenses-bundle)."
+    )
     for name in _LENS_NAMES:
-        block = lenses_in_ctx.get(name) or context.get(name)
+        block = context.get(name)
         assert block is not None, (
             f"Lens '{name}' is missing from context — the bundle was discarded instead of served. "
             "A missing captured_at must not cause the valid ≥5-key lenses bundle to be dropped. "
-            "Treat as stale and SERVE the cached lenses."
+            "Treat as stale and SERVE the cached lenses via the flat per-lens keys."
         )
         # Must be the cached stub (available=True), not the cold-start sentinel
         assert block.get("available") is True, (
@@ -892,14 +904,16 @@ def test_serve_stale_when_captured_at_unparseable():
     ):
         context = ai_advisor.assemble_advisor_context(**_minimal_context_args())
 
-    # The bundle must be SERVED — not discarded to the cold-start fallback
-    lenses_in_ctx = context.get("lenses") or {}
+    # The bundle must be SERVED via flat top-level keys — not discarded to cold-start.
+    assert "lenses" not in context, (
+        "context must NOT carry a top-level 'lenses' bundle key (perf: drop-lenses-bundle)."
+    )
     for name in _LENS_NAMES:
-        block = lenses_in_ctx.get(name) or context.get(name)
+        block = context.get(name)
         assert block is not None, (
             f"Lens '{name}' is missing from context — the bundle was discarded instead of served. "
             "An unparseable captured_at must not cause the valid ≥5-key lenses bundle to be "
-            "dropped. Treat as stale and SERVE the cached lenses."
+            "dropped. Treat as stale and SERVE the cached lenses via the flat per-lens keys."
         )
         assert block.get("available") is True, (
             f"Lens '{name}' was served as available=False (cold-start sentinel) instead of the "

@@ -1640,15 +1640,19 @@ def assemble_advisor_context(
         "risk_invariants": _RISK_INVARIANTS,
         # P2 — condensed symphony logic / composition.
         "symphony_logic": condensed_logic,
-        # Nightly lens cache bundle — structured _build_*_section() payloads.
+        # Nightly lens cache bundle — individual lens blocks from structured
+        # _build_*_section() payloads (served via the flat keys below).
         # Staleness label: lens_data_stale=True if older than _LENS_CACHE_MAX_AGE_HOURS.
         # Cold-start (no bundle): each lens block is available=False with reason
         # "lens_cache_unavailable" — no live builder calls are made (AC-5).
-        "lenses": _lenses_from_cache,
+        # NOTE: the bundle is intentionally NOT exposed as a single "lenses" key here;
+        # the 5 flat aliases below are the canonical representation consumed by
+        # _build_messages / json.dumps(context) — a top-level "lenses" key would
+        # serialize every payload twice (token-cost regression; perf: drop-lenses-bundle).
         "lens_data_as_of": _lens_data_as_of,
         "lens_data_stale": _lens_data_stale,
-        # Backward-compat aliases — existing consumers (request_suggestions,
-        # _build_messages) read context["technicals"] etc. directly.
+        # Canonical lens keys — all consumers (request_suggestions, _build_messages)
+        # read context["technicals"] etc. directly.
         "technicals": _lenses_from_cache.get("technicals") or {},
         "sentiment": _lenses_from_cache.get("sentiment") or {},
         "derivatives": _lenses_from_cache.get("derivatives") or {},
