@@ -173,14 +173,11 @@ def test_fresh_cache_skips_all_live_builders():
         ai_advisor.assemble_advisor_context(**_minimal_context_args())
 
     for attr, mock in mocks.items():
-        (
-            mock.assert_not_called(),
-            (
-                f"_build{attr}() was called despite a fresh MARKET_LENS_CACHE row being present. "
-                "The cache-serve path must skip ALL live builder calls when a fresh cache exists. "
-                "This is the core latency contract (AC-1): the 6-min hang is gone when NONE of "
-                "the 5 builders are called on a cache-hit."
-            ),
+        assert mock.call_count == 0, (
+            f"_build{attr}() was called despite a fresh MARKET_LENS_CACHE row being present. "
+            "The cache-serve path must skip ALL live builder calls when a fresh cache exists. "
+            "This is the core latency contract (AC-1): the 6-min hang is gone when NONE of "
+            "the 5 builders are called on a cache-hit."
         )
 
 
@@ -434,13 +431,10 @@ def test_stale_bundle_is_served_not_ignored():
 
     # Stale bundle must STILL be served (not re-fetch live)
     for attr, mock in mocks.items():
-        (
-            mock.assert_not_called(),
-            (
-                f"{attr}() was called despite a stale MARKET_LENS_CACHE row being present. "
-                "AC-4 says stale bundles must be served WITH a stale label, "
-                "not discarded and re-fetched live. Serve-with-label, never re-fetch."
-            ),
+        assert mock.call_count == 0, (
+            f"{attr}() was called despite a stale MARKET_LENS_CACHE row being present. "
+            "AC-4 says stale bundles must be served WITH a stale label, "
+            "not discarded and re-fetched live. Serve-with-label, never re-fetch."
         )
 
     assert context.get("lens_data_stale") is True, (
@@ -583,10 +577,6 @@ def test_served_lenses_shape_identical_to_live_fetch_shape():
         lenses[name] = _stub_lens(name, available=True)
 
     _insert_cache_row(lenses=lenses)
-
-    # All 5 builders must remain uncalled (AC-1 + shape from cache, not live)
-    for attr in _BUILDER_ATTRS:
-        patch_target = getattr(ai_advisor, attr)
 
     with (
         patch.object(
