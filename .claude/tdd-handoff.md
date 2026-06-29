@@ -1,7 +1,7 @@
 # TDD Handoff — DE-ADVISOR-LATENCY: Cache-Serve Market Lenses
 
-**Phase:** RED (complete)
-**RED commit:** `cb471a7`
+**Phase:** RED (complete — adv-db accessor GREEN at bd06722, adv-app Surface B outstanding)
+**RED commit:** `cb471a7` (tests); `2af9ac2` (AC-6 guard addition)
 **Branch:** `feat/advisor-latency-cache-serve`
 **Worktree:** `C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/advisor-latency`
 **Feature plan:** `feature-plans/advisor-latency-cache-serve.md` (Status: ready)
@@ -16,7 +16,9 @@ ALPHABOT_TEST_MEM_CAP_GB=24 DB_PATH="C:/Users/paulm/AppData/Local/Temp/pytest_la
     -n0 --tb=short -q
 ```
 
-**Expected output today:** 21 FAILED, 5 passed
+**Expected output today (Surface B still outstanding):** 8 FAILED, 19 passed (27 total)
+- Surface A (accessor) GREEN since bd06722 — 9 DB tests now pass
+- Surface B (ai_advisor.py + prism_scheduler.py) outstanding — 8 RED remain
 
 ---
 
@@ -52,7 +54,7 @@ accessor is ready (sha of commit).
 ### Surface B — Producer + serve path + reword (`adv-app` / flask-dashboard-specialist)
 
 **Files to modify:** `ai_advisor.py`, `prism_scheduler.py`
-**Tests:** `tests/ai_advisor/test_advisor_latency_cache_serve.py` (12 RED + all DB tests must stay GREEN)
+**Tests:** `tests/ai_advisor/test_advisor_latency_cache_serve.py` (8 RED — AC-1, AC-3, AC-4 x3, AC-5, AC-6, AC-7)
 
 #### B-1: `ai_advisor.persist_market_lens_cache(sections: dict)` (AC-2)
 
