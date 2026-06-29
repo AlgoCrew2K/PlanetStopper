@@ -670,9 +670,7 @@ def generate_synthetic_history(bot_state, current_date_str, *, n_jobs=None):
     # Callers may pass an explicit n_jobs to override env-resolution (e.g. the
     # autotuner passes n_jobs=1 to bound peak RSS on the droplet — DE-AUTOTUNE-OOM).
     effective_n_jobs = n_jobs if n_jobs is not None else _resolve_replay_n_jobs()
-    results = Parallel(n_jobs=effective_n_jobs)(
-        delayed(process_day)(d) for d in intraday_dates
-    )
+    results = Parallel(n_jobs=effective_n_jobs)(delayed(process_day)(d) for d in intraday_dates)
 
     for date_str, day_history in results:
         for sym_id, ticks in day_history.items():
