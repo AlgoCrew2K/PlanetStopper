@@ -610,10 +610,13 @@ def test_empty_sources_renders_no_carousel_and_no_header(client, monkeypatch):
         "by the {% if _all_sources %} guard."
     )
 
-    # The carousel container class must also be absent.
-    assert "prism-sources-carousel" not in html, (
-        "When _all_sources is empty, no carousel container must be rendered. "
-        "The carousel class 'prism-sources-carousel' must not appear in the HTML."
+    # The carousel container element must also be absent.
+    # Check for the HTML element class attribute (not the CSS selector, which
+    # lives in the always-rendered <style> block and would always match).
+    assert 'class="prism-sources-carousel"' not in html, (
+        "When _all_sources is empty, no carousel container element must be rendered. "
+        "The HTML attribute 'class=\"prism-sources-carousel\"' must not appear in the "
+        "rendered body — only the CSS selector in the <style> block is allowed."
     )
 
 
