@@ -1,12 +1,12 @@
 # TDD Handoff — DE-SOURCES-CAROUSEL-001 (Overview Sources Carousel)
 
-**Phase:** done
+**Phase:** red
 
 **For:** `carousel-impl` (flask-dashboard-specialist, the implementer)
 **Written by:** quant-test-writer (test-writer)
 **Branch:** `feat/overview-sources-carousel`
 **Worktree:** `C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/sources-carousel`
-**RED test file:** `tests/ai_advisor/test_overview_sources_carousel.py` (9 tests)
+**RED test file:** `tests/ai_advisor/test_overview_sources_carousel.py` (11 tests — 2 new RED from ux-expert findings)
 
 ---
 
@@ -175,6 +175,8 @@ None — this is a template-only change. All modules (`app`, `database`) already
 - [2026-06-29] implementer: GREEN — 8/9. 1 test bug: bare `"prism-sources-carousel"` matched CSS selector in `<style>` block. SHA=8066d67
 - [2026-06-29] test-writer: FIXED test bug — changed to `'class="prism-sources-carousel"'` (element attr check). 9/9 passed. Commit bbf2e29
 - [2026-06-29] test-writer: REVIEW PASSED — all 9 ACs covered. Old `.prism-sources-list`/`.prism-source-item`/`.prism-source-link` CSS fully removed. No dead code. No raw hex. Security guard (javascript: url → non-anchor) confirmed. Pair satisfied. APPROVED for ux-expert + doc-gen.
+- [2026-06-29] ux-expert: 2 visual-contract gaps found from Playwright render (d3d9e5e). Finding A (CRITICAL): `.prism-source-card--citation` has no CSS rule — citation cards visually identical to anchor cards. Finding B (MEDIUM): no title ellipsis truncation CSS — long headlines wrap, breaking card height uniformity.
+- [2026-06-29] test-writer: RED — 2 new tests added for ux findings A+B. 9 pass / 2 fail. Commit 9342f68. Sending carousel-impl back for fix.
 
 ---
 
