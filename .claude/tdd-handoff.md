@@ -1,6 +1,6 @@
 # TDD Handoff — DE-SOURCES-CAROUSEL-001 (Overview Sources Carousel)
 
-**Phase:** red
+**Phase:** green
 
 **For:** `carousel-impl` (flask-dashboard-specialist, the implementer)
 **Written by:** quant-test-writer (test-writer)
@@ -152,16 +152,16 @@ Then `SendMessage` to quant-test-writer: "GREEN: 9 passed / 0 failed / 0 errors.
 
 | A/C ID | Description | Test File | Test Name(s) | Status |
 |--------|-------------|-----------|--------------|--------|
-| AC-1 | Horizontal carousel container replaces vertical `<ul>` | test_overview_sources_carousel.py | test_sources_carousel_container_replaces_vertical_list | RED |
-| AC-1 (CSS) | `.prism-sources-carousel` CSS has `overflow-x` + height cap | test_overview_sources_carousel.py | test_carousel_css_has_horizontal_scroll_and_height_cap | RED |
-| AC-2 | Each `article_corpus` source is an `<a>` card with `target=_blank` + `rel` | test_overview_sources_carousel.py | test_each_article_corpus_source_is_an_anchor_card | RED |
-| AC-3 | Card fields present and HTML-escaped (no `| safe`) | test_overview_sources_carousel.py | test_card_fields_present_and_html_escaped | RED |
-| AC-5 | Plain-string citation entry is non-`<a>` | test_overview_sources_carousel.py | test_plain_citation_entry_renders_as_non_anchor_card | RED |
-| AC-6 | Empty sources → no carousel, no header | test_overview_sources_carousel.py | test_empty_sources_renders_no_carousel_and_no_header | RED |
-| AC-7 | Design tokens only; no raw hex in carousel CSS | test_overview_sources_carousel.py | test_carousel_css_uses_design_tokens_not_raw_hex | RED |
-| AC-7 | CSS has `overflow-x` + height bounding | test_overview_sources_carousel.py | test_carousel_css_has_horizontal_scroll_and_height_cap | RED |
-| AC-8 | `data-testid="prism-sources"` preserved | test_overview_sources_carousel.py | test_prism_sources_data_testid_preserved | RED |
-| Security | `javascript:` URL must not produce clickable link | test_overview_sources_carousel.py | test_javascript_url_does_not_become_clickable_link | RED |
+| AC-1 | Horizontal carousel container replaces vertical `<ul>` | test_overview_sources_carousel.py | test_sources_carousel_container_replaces_vertical_list | GREEN |
+| AC-1 (CSS) | `.prism-sources-carousel` CSS has `overflow-x` + height cap | test_overview_sources_carousel.py | test_carousel_css_has_horizontal_scroll_and_height_cap | GREEN |
+| AC-2 | Each `article_corpus` source is an `<a>` card with `target=_blank` + `rel` | test_overview_sources_carousel.py | test_each_article_corpus_source_is_an_anchor_card | GREEN |
+| AC-3 | Card fields present and HTML-escaped (no `| safe`) | test_overview_sources_carousel.py | test_card_fields_present_and_html_escaped | GREEN |
+| AC-5 | Plain-string citation entry is non-`<a>` | test_overview_sources_carousel.py | test_plain_citation_entry_renders_as_non_anchor_card | GREEN |
+| AC-6 | Empty sources → no carousel, no header | test_overview_sources_carousel.py | test_empty_sources_renders_no_carousel_and_no_header | TEST BUG |
+| AC-7 | Design tokens only; no raw hex in carousel CSS | test_overview_sources_carousel.py | test_carousel_css_uses_design_tokens_not_raw_hex | GREEN |
+| AC-7 | CSS has `overflow-x` + height bounding | test_overview_sources_carousel.py | test_carousel_css_has_horizontal_scroll_and_height_cap | GREEN |
+| AC-8 | `data-testid="prism-sources"` preserved | test_overview_sources_carousel.py | test_prism_sources_data_testid_preserved | GREEN |
+| Security | `javascript:` URL must not produce clickable link | test_overview_sources_carousel.py | test_javascript_url_does_not_become_clickable_link | GREEN |
 
 ## Questions for User
 None.
@@ -172,3 +172,50 @@ None — this is a template-only change. All modules (`app`, `database`) already
 ## Status Log
 - [2026-06-29] test-writer: Starting RED phase — DE-SOURCES-CAROUSEL-001
 - [2026-06-29] test-writer: RED complete — 9 tests written (all failing), 0 stubs created
+- [2026-06-29] implementer: GREEN — 8/9 tests passing. 1 test bug documented (see below). Ruff N/A (template-only, no .py touched). SHA=pending commit.
+
+---
+
+## Test File Issues (for test-writer to fix)
+
+### `test_empty_sources_renders_no_carousel_and_no_header` — second assertion too broad
+
+**File:** `tests/ai_advisor/test_overview_sources_carousel.py`, line 614
+
+**Failing assertion:**
+```python
+assert "prism-sources-carousel" not in html
+```
+
+**Root cause:** The assertion checks the entire rendered HTML output for the string `"prism-sources-carousel"`. However, the required CSS rule `.prism-sources-carousel { ... }` lives in the `<style>` block in `<head>`, which is always rendered regardless of whether any sources are present. So "prism-sources-carousel" always appears in the rendered HTML as part of the CSS selector — even when the carousel HTML element itself is correctly absent.
+
+This was a valid test against the OLD implementation (which had `.prism-sources-list` in the CSS, not `.prism-sources-carousel`). With the carousel CSS added, the constraint is contradictory: AC-1 CSS + AC-7 require `.prism-sources-carousel { ... }` in the main `<style>` block (which is always rendered), while this assertion requires the string to be absent from the rendered HTML when sources are empty.
+
+The **first assertion in the same test passes correctly:**
+```python
+assert 'data-testid="prism-sources"' not in html  # PASSES — guard works
+```
+
+**What correct code produces:** `"prism-sources-carousel"` appears in the CSS `<style>` block; `data-testid="prism-sources"` and `class="prism-sources-carousel"` (the HTML element class) are correctly absent.
+
+**Suggested fix (for test-writer):**
+```python
+# Replace:
+assert "prism-sources-carousel" not in html
+
+# With:
+assert 'class="prism-sources-carousel"' not in html
+```
+This checks for the HTML *element* class attribute (absent when no sources), not the CSS class name (always present in the style block).
+
+---
+
+## Implementation Notes
+
+- **CSS:** Replaced `.prism-sources-list` (vertical flex-column), `.prism-source-item`, `.prism-source-link`, `.prism-source-link:hover`, and `.prism-source-meta` with `.prism-sources-carousel` (horizontal flex row, `overflow-x:auto`, `scroll-snap-type:x mandatory`, `max-height:160px`) and `.prism-source-card` (card-shaped flex column). `.prism-source-lens-tag` kept but updated with `align-self:flex-start`. No raw hex — all colors use existing `var(--)` tokens (`var(--studio-border)`, `var(--studio-ink)`, `var(--studio-ink-dim)`).
+
+- **HTML:** The `<ul class="prism-sources-list">` + `<li>` structure is replaced with `<div class="prism-sources-carousel">` containing `<a class="prism-source-card">` (http/https URLs) or `<div class="prism-source-card prism-source-card--citation">` (plain citations and non-http URLs). The `{% if _all_sources %}` guard and `data-testid="prism-sources"` outer wrapper are preserved unchanged.
+
+- **Security gate:** `_src.get('url', '').startswith(('http://', 'https://'))` — stricter than bare `'http'` (team-lead hardening), rejects `javascript:`, `httpfoo:`, etc. Only http/https URLs produce `<a>` elements.
+
+- **No JS added:** Pure CSS scroll-snap implementation. `static/ai_advisor.js` not touched.
