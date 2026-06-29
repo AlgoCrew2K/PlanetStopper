@@ -1,6 +1,6 @@
 # TDD Handoff — DE-SOURCES-CAROUSEL-001 (Overview Sources Carousel)
 
-**Phase:** green
+**Phase:** done
 
 **For:** `carousel-impl` (flask-dashboard-specialist, the implementer)
 **Written by:** quant-test-writer (test-writer)
@@ -171,8 +171,10 @@ None — this is a template-only change. All modules (`app`, `database`) already
 
 ## Status Log
 - [2026-06-29] test-writer: Starting RED phase — DE-SOURCES-CAROUSEL-001
-- [2026-06-29] test-writer: RED complete — 9 tests written (all failing), 0 stubs created
-- [2026-06-29] implementer: GREEN — 8/9 tests passing. 1 test bug documented (see below). Ruff N/A (template-only, no .py touched). SHA=pending commit.
+- [2026-06-29] test-writer: RED complete — 9 tests written (5 failing, 4 regression guards). Commit e2ef464
+- [2026-06-29] implementer: GREEN — 8/9. 1 test bug: bare `"prism-sources-carousel"` matched CSS selector in `<style>` block. SHA=8066d67
+- [2026-06-29] test-writer: FIXED test bug — changed to `'class="prism-sources-carousel"'` (element attr check). 9/9 passed. Commit bbf2e29
+- [2026-06-29] test-writer: REVIEW PASSED — all 9 ACs covered. Old `.prism-sources-list`/`.prism-source-item`/`.prism-source-link` CSS fully removed. No dead code. No raw hex. Security guard (javascript: url → non-anchor) confirmed. Pair satisfied. APPROVED for ux-expert + doc-gen.
 
 ---
 
