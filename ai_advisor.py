@@ -1585,17 +1585,27 @@ def assemble_advisor_context(
         _raw_cache = _cached_row.get("raw_response") or {}
         _cached_lenses = _raw_cache.get("lenses")
         _captured_at_str = _raw_cache.get("captured_at")
-        if isinstance(_cached_lenses, dict) and len(_cached_lenses) >= 5 and _captured_at_str:
-            try:
-                from datetime import UTC, datetime  # noqa: PLC0415
+        if isinstance(_cached_lenses, dict) and len(_cached_lenses) >= 5:
+            # A serveable bundle exists — always serve it regardless of captured_at state.
+            # Staleness is classified separately below; a bad/missing timestamp is loud-stale,
+            # never a reason to discard a valid lens bundle (AC-4, feature plan Edge Cases).
+            _lenses_from_cache = _cached_lenses
+            if _captured_at_str:
+                try:
+                    from datetime import UTC, datetime  # noqa: PLC0415
 
-                _captured_at_dt = datetime.fromisoformat(_captured_at_str).astimezone(UTC)
-                _age_hours = (datetime.now(UTC) - _captured_at_dt).total_seconds() / 3600
-                _lens_data_stale = _age_hours > _LENS_CACHE_MAX_AGE_HOURS
-                _lens_data_as_of = _captured_at_str
-                _lenses_from_cache = _cached_lenses
-            except Exception:  # noqa: BLE001
-                pass  # D-1: unparseable captured_at → treat as cache miss
+                    _captured_at_dt = datetime.fromisoformat(_captured_at_str).astimezone(UTC)
+                    _age_hours = (datetime.now(UTC) - _captured_at_dt).total_seconds() / 3600
+                    _lens_data_stale = _age_hours > _LENS_CACHE_MAX_AGE_HOURS
+                    _lens_data_as_of = _captured_at_str
+                except Exception:  # noqa: BLE001
+                    # D-1: unparseable captured_at → loud stale label, unknown age
+                    _lens_data_stale = True
+                    _lens_data_as_of = None
+            else:
+                # captured_at absent → loud stale label, unknown age
+                _lens_data_stale = True
+                _lens_data_as_of = None
 
     # Cold-start fallback (AC-5): do NOT fan out to all 5 live builders.
     # Honest degradation: each lens signals "lens_cache_unavailable" so the
