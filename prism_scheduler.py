@@ -447,19 +447,27 @@ def _patch_provenance(run_id: str, row: "dict | None") -> bool:
         # Persist the 5-lens MARKET_LENS_CACHE bundle (AC-2).
         # technicals was excluded from _BUILDERS (no public URLs for SOURCES) but belongs
         # in the lens cache so the advisor can serve breadth/momentum without a live fetch.
-        # D-1: builder failure → available=False block; persist is also never-raises.
+        # Extra isolation: wrap in its own try/except so any failure here cannot prevent
+        # the `return True` below — the SOURCES row is already written at this point and
+        # the council must always be recorded as successful regardless of the cache write.
         try:
-            _tech_block = ai_advisor._build_technicals_section()
-        except Exception:  # noqa: BLE001
-            _tech_block = {
-                "lens": "technicals",
-                "available": False,
-                "reason": "BuildError",
-                "payload": None,
-                "sources": [],
-            }
-        _lens_cache_sections["technicals"] = _tech_block
-        ai_advisor.persist_market_lens_cache(_lens_cache_sections)
+            try:
+                _tech_block = ai_advisor._build_technicals_section()
+            except Exception:  # noqa: BLE001
+                _tech_block = {
+                    "lens": "technicals",
+                    "available": False,
+                    "reason": "BuildError",
+                    "payload": None,
+                    "sources": [],
+                }
+            _lens_cache_sections["technicals"] = _tech_block
+            ai_advisor.persist_market_lens_cache(_lens_cache_sections)
+        except Exception as _cache_exc:  # noqa: BLE001
+            print(
+                f"[prism_scheduler] LensCacheError: {type(_cache_exc).__name__}",
+                file=sys.stderr,
+            )
 
         return True
     except Exception as exc:  # noqa: BLE001
