@@ -386,10 +386,13 @@ def _patch_provenance(run_id: str, row: "dict | None") -> bool:
                 "payload": None,
                 "sources": [],
             }
-            if lens not in pld:
-                # Still include in the lens cache even when absent from MARKET_PRISM digest.
-                _lens_cache_sections[lens] = _unavailable_block
-                continue
+            # Always call the live builder for the MARKET_LENS_CACHE — the cache must
+            # reflect what external data sources (FRED, GDELT, etc.) can provide at
+            # patch time, NOT the council's digest membership.  On a degraded-council
+            # night a lens may be absent from `pld` even though FRED is fully
+            # operational; storing BuildError without calling the builder would cause
+            # assemble_advisor_context to serve a false "unavailable" block until the
+            # next successful council run.
             try:
                 section = builder()
             except Exception:  # noqa: BLE001
@@ -397,6 +400,12 @@ def _patch_provenance(run_id: str, row: "dict | None") -> bool:
                 continue  # D-1: this lens contributes no citations
 
             _lens_cache_sections[lens] = section  # capture for MARKET_LENS_CACHE
+
+            if lens not in pld:
+                # Lens absent from council digest — structured payload captured for
+                # the cache above, but NO citations added to SOURCES (no council
+                # context = no provenance to attribute).
+                continue
 
             # Union sources + article_corpus so sentiment's primary corpus is captured.
             # sources items are already citation-shaped; article_corpus items are raw
