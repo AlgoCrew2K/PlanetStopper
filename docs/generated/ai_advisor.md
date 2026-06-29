@@ -1,9 +1,9 @@
 # ai_advisor
 
-> Claude-backed config advisor: context assembly, structured-output Claude call, per-symphony assessment, safety gates (7-item allowlist, risk-direction cross-check, OOS re-validation), and multi-lens pipeline (technicals wired; sentiment wired; derivatives wired with freshness guard; fundamentals wired with portfolio fan-out; macro wired with FRED producer (DGS10/UNRATE/CPIAUCSL/FEDFUNDS)).
+> Claude-backed config advisor: context assembly, per-symphony assessment, structured-output Claude call via ADVISOR_SYNTHESIS_MODEL, safety gates (7-item allowlist, risk-direction check, OOS re-validation), and market-wide lens cache-serve (nightly MARKET_LENS_CACHE bundle; no per-click live lens fetches for the 5 market-wide lens blocks).
 
 **Source:** `ai_advisor.py`
-**Last updated:** 2026-06-17
+**Last updated:** 2026-06-29 (DE-ADVISOR-LATENCY: MARKET_LENS_CACHE cache-serve path; persist_market_lens_cache producer; build_assessment_from_context empty-state reword; prior: DE-FUND-002 vintage-correct fundamentals)
 
 ## Overview
 
@@ -27,9 +27,11 @@ Real-money-critical input governance: `assemble_advisor_context` never includes 
 
 **Derivatives lens wiring (FRED VIX/VXV, 2026-06-16):** `_build_derivatives_section` lazy-imports `advisors.lens_options_proxy` and calls `_fetch_options_proxy()`. Honest-availability now covers **staleness** as well as fetch failure: the freshness guard (`_OPTIONS_PROXY_MAX_STALENESS_DAYS = 10`) rejects observations older than 10 calendar days as `available=False, reason="stale_data"`. Prior stub behavior is superseded — the producer returns a real VIX level, term-structure, and risk read when `FRED_API_KEY` is set and data is fresh. See [advisors/lens_options_proxy](advisors-lens-options-proxy.md).
 
-**Fundamentals lens portfolio fan-out (2026-06-16 — DE-FUND-001):** `_build_fundamentals_section()` (called with no ticker by both the 03:00 nightly pipeline and `assemble_advisor_context`) previously short-circuited to `available=False, reason="ticker symbol required..."` — a dead lens. Now fans out over a company-ticker universe (live `logic_holdings` ∪ `_FUNDAMENTALS_PROXY_UNIVERSE` floor of 8 large-cap company tickers — NOT ETFs, which have no SEC companyfacts). The single-ticker path (`ticker="AAPL"`) is preserved byte-for-byte via the extracted `_fetch_fundamentals_for_ticker(ticker)` helper. Per-ticker honest degradation; no invented composite ratios; bounded fan-out. See [DE-FUND-001 in DECISIONS.md](../../DECISIONS.md).
+**Fundamentals lens portfolio fan-out (2026-06-16 — DE-FUND-001):** `_build_fundamentals_section()` (called with no ticker by both the 03:00 nightly pipeline and `assemble_advisor_context`) previously short-circuited to `available=False, reason="ticker symbol required..."` — a dead lens. Now fans out over a company-ticker universe (live `logic_holdings` ∪ `_FUNDAMENTALS_PROXY_UNIVERSE` floor of 8 large-cap company tickers — NOT ETFs, which have no SEC EDGAR `companyfacts` entries). The single-ticker path (`ticker="AAPL"`) is preserved byte-for-byte via the extracted `_fetch_fundamentals_for_ticker(ticker)` helper. Per-ticker honest degradation; no invented composite ratios; bounded fan-out. See [DE-FUND-001 in DECISIONS.md](../../DECISIONS.md).
 
 **Fundamentals lens vintage fix (2026-06-17 — DE-FUND-002):** Two concurrent vintage defects resolved. Mode A (XBRL concept deprecation): `_SEC_KEY_CONCEPTS` now maps each logical concept to `(label, ordered_candidate_tags)` — the Revenues concept unions three candidate tags (`RevenueFromContractWithCustomerExcludingAssessedTax`, `SalesRevenueNet`, `Revenues`) so migrated issuers are not frozen at a deprecated tag. Mode B (wrong sort key): the entry selection loop now sorts by `(end desc, filed desc)` across the unioned candidate-tag entries, selecting the entry with the most recent reporting-period end date. `key_facts` output keys are stable (logical keys unchanged — `Revenues`, `NetIncomeLoss`, etc.). See [DE-FUND-002 in DECISIONS.md](../../DECISIONS.md).
+
+**Market-lens cache-serve (2026-06-29 — DE-ADVISOR-LATENCY):** The per-click 17-29 sequential external API call fan-out (6-minute hang) has been eliminated. `assemble_advisor_context` now serves the 5 market-wide lens blocks from a nightly `MARKET_LENS_CACHE` advisor_observations row instead of invoking the live `_build_*_section()` builders per request. The nightly producer (`persist_market_lens_cache`) is wired into `prism_scheduler._patch_provenance`, which already runs the 5 builders — the cache costs one additional DB write and zero extra network calls. Cold-start (no cache row yet): each lens block degrades honestly to `available=False, reason="lens_cache_unavailable"` — the live builders are never the silent default fallback. A stale bundle (older than `_LENS_CACHE_MAX_AGE_HOURS=36`) is served with an honest "stale" label rather than triggering a live re-fetch. Staleness metadata (`lens_data_as_of`, `lens_data_stale`) is surfaced in the suggest response JSON and the advisor SPA. See [DE-ADVISOR-LATENCY in DECISIONS.md](../../DECISIONS.md).
 
 ## API Reference
 
@@ -49,8 +51,13 @@ Assembles the prompt-ready context blob carrying all 9 must-have prompt elements
 8. Risk invariants as hard constraints
 9. Operator-assist role + task framing
 
-As of Cycle-1, the returned dict also includes five top-level lens keys:
-`technicals`, `sentiment`, `derivatives`, `macro`, `fundamentals` — each a lens block dict (see [Multi-Lens Scaffold](#multi-lens-scaffold)).
+The returned dict includes market-wide lens context from the nightly `MARKET_LENS_CACHE` bundle (DE-ADVISOR-LATENCY) rather than live fetches. New top-level keys:
+
+- `lenses` — `dict[str, dict]` with keys `technicals`, `sentiment`, `derivatives`, `macro`, `fundamentals`; each value is the structured `_build_*_section()` payload from the most recent nightly cache.
+- `lens_data_as_of` — `str | None` — ISO UTC timestamp of when the cache bundle was captured; `None` on cold-start.
+- `lens_data_stale` — `bool` — `True` when the bundle age exceeds `_LENS_CACHE_MAX_AGE_HOURS`; conservatively defaults to `True` on cold-start.
+
+Backward-compat aliases at the top level are preserved: `context["technicals"]`, `context["sentiment"]`, `context["derivatives"]`, `context["macro"]`, `context["fundamentals"]` — each reads from `_lenses_from_cache.get(name) or {}`. Existing consumers of these keys require no change.
 
 **Parameters:**
 | Name | Type | Description |
@@ -58,11 +65,13 @@ As of Cycle-1, the returned dict also includes five top-level lens keys:
 | `scope` | `str` | `"symphony"` or `"global"` |
 | `symphony_id` | `str \| None` | Required when `scope == "symphony"`; used as key for all state-DB lookups (autotune_runs, symphony_strategies) |
 | `composer_symphony_id` | `str \| None` | Optional Composer hash ID; passed to `get_condensed_logic` when present (hash required by Composer /score API) |
-| `autotune_run` | `dict \| None \| _SENTINEL` | Optional pre-fetched autotune run. When non-`_SENTINEL`, the value is used directly and `database.get_latest_autotune_run` is skipped (avoids a second DB round-trip). Pass `_SENTINEL` (the default) to have the function fetch from DB internally. Explicit `None` means "Optuna has not run" — also skips the fetch. |
+| `autotune_run` | `dict \| None \| _SENTINEL` | Optional pre-fetched autotune run. When non-`_SENTINEL`, the value is used directly and `database.get_latest_autotune_run` is skipped. Pass `_SENTINEL` (the default) to fetch from DB internally. Explicit `None` means "Optuna has not run" — also skips the fetch. |
 
-**Returns:** Well-shaped context dict including all lens blocks. Never raises; degrades gracefully when Optuna has not run.
+**Returns:** Well-shaped context dict including `lenses`, `lens_data_as_of`, `lens_data_stale`, and backward-compat lens aliases. Never raises; degrades gracefully when Optuna has not run or when the market-lens cache is absent.
 
 **Raises:** `ValueError` when `scope == "symphony"` and `symphony_id` is `None`.
+
+**Cache-serve path (DE-ADVISOR-LATENCY):** Before any live lens call, invokes `database.get_latest_market_lens_cache()`. On a valid cache hit, extracts the 5 structured lens payloads, computes `age_hours = (now_utc - captured_at).total_seconds() / 3600`, and sets `lens_data_stale = age_hours > _LENS_CACHE_MAX_AGE_HOURS`. Skips ALL 5 live `_build_*_section()` calls. Cold-start or unparseable `captured_at` → honest `available=False, reason="lens_cache_unavailable"` for each lens — still no live builder calls.
 
 ---
 
@@ -70,9 +79,9 @@ As of Cycle-1, the returned dict also includes five top-level lens keys:
 
 Builds a per-symphony assessment dict from the assembled context. Resolves the UI empty-state problem: `ConfigSuggestionsResponse` carries only a `suggestions` list — the route previously discarded the assembled context entirely, leaving the result box showing an identical generic message for every symphony regardless of tuning state.
 
-The assessment is derived from `context["optuna_evidence"]` which carries `baseline_decision`, `oos_alpha`, `fallback_oos_alpha`, `default_oos_alpha`, and `available`. The `summary` string is differentiated per tuning state:
+The assessment is derived from `context["optuna_evidence"]` which carries `baseline_decision`, `oos_alpha`, `fallback_oos_alpha`, `default_oas_alpha`, and `available`. The `summary` string is differentiated per tuning state:
 
-- No Optuna run: explains config is unvalidated.
+- No Optuna run: "Walk-forward optimization (Optuna) has not run for this symphony yet. No out-of-sample (OOS) validation evidence is available — the current config is unvalidated. Claude will reason without OOS data." (rewording of the prior "Optuna has not yet run…" text — DE-ADVISOR-LATENCY AC-8; semantics unchanged.)
 - `oos_alpha is None` (all trials haircut-rejected by FDR gate): explains all trials failed the significance gate; quotes fallback and default alphas. This is the expected state for most symphonies — the FDR + PBO gates are intentionally strict.
 - `oos_alpha` present: summarises the validated edge with numeric values.
 
@@ -82,6 +91,34 @@ The assessment is derived from `context["optuna_evidence"]` which carries `basel
 | `context` | `dict` | Output of `assemble_advisor_context` or any dict with `optuna_evidence` key |
 
 **Returns:** `{"baseline_decision": str | None, "oas_alpha": float | None, "fallback_oas_alpha": float | None, "default_oas_alpha": float | None, "summary": str}`.
+
+---
+
+#### `persist_market_lens_cache(sections: dict) -> None`
+
+Persists all 5 structured lens payloads as a `MARKET_LENS_CACHE` advisor_observations row. Called nightly from `prism_scheduler._patch_provenance` after the council builders have already run — adds one DB write at zero extra network cost.
+
+`sections` is a `dict[str, dict]` keyed by lens name (`technicals`, `sentiment`, `derivatives`, `macro`, `fundamentals`); each value is the exact dict returned by the corresponding `_build_*_section()` call. An unavailable lens is stored with its honest `available=False` block rather than being omitted — the advisor serve path handles partial availability correctly.
+
+`raw_response` shape stored:
+```json
+{
+    "captured_at": "<ISO UTC timestamp>",
+    "lenses": {
+        "technicals": { "lens": "technicals", "available": ..., ... },
+        "sentiment":  { ... },
+        "derivatives":{ ... },
+        "macro":      { ... },
+        "fundamentals":{ ... }
+    }
+}
+```
+
+`captured_at` is `datetime.now(UTC).isoformat()` at call time. Append-only: the latest row wins on serve. `advisor_role` is `"MARKET_LENS_CACHE"`, `subject_type` is `"portfolio"`, `subject_id` is `"global"`, `symphony_id` is `""`.
+
+**D-1 never-raises:** any exception is caught and logged as `logger.warning("persist_market_lens_cache failed: %s", type(exc).__name__)`. Never propagates.
+
+**Source:** `ai_advisor.py:1470–1495`
 
 ---
 
@@ -168,21 +205,23 @@ Every lens helper returns a dict conforming to this contract:
 
 ### Lens Helpers — Current Status
 
-All five are wired as top-level keys in the dict returned by `assemble_advisor_context`:
+All five are wired as top-level keys in the dict returned by `assemble_advisor_context` (via the backward-compat aliases) and as entries in `context["lenses"]`. **As of DE-ADVISOR-LATENCY (2026-06-29), these builders are called NIGHTLY by `prism_scheduler._patch_provenance` and cached as a `MARKET_LENS_CACHE` row — they are NOT called per-click on advisor requests.** Cold-start (no cache row) degrades to `available=False, reason="lens_cache_unavailable"` for each lens.
 
 | Helper | Key in context | Status | Producer |
 |--------|----------------|--------|----------|
-| `_build_technicals_section()` (`ai_advisor.py:439-482`) | `"technicals"` | **Wired** (2026-06-15) | `advisors/lens_technicals.py` — MA posture, breadth, momentum |
-| `_build_sentiment_section()` | `"sentiment"` | **Wired** (2026-06-15) | `advisors/lens_gdelt.py` — GDELT 2.0 tone + citations |
-| `_build_derivatives_section()` | `"derivatives"` | **Wired** (2026-06-16) — freshness-guarded | `advisors/lens_options_proxy.py` — FRED VIXCLS/VXVCLS; VIX level, term-structure regime, risk read; staleness guard (`_OPTIONS_PROXY_MAX_STALENESS_DAYS=10`) |
-| `_build_macro_section()` | `"macro"` | **Wired** — FRED producer (DGS10/UNRATE/CPIAUCSL/FEDFUNDS) | FRED API — fetches 10-Year Treasury (DGS10), Unemployment Rate (UNRATE), CPI-U (CPIAUCSL), Federal Funds Rate (FEDFUNDS); each with value+date and clickable fred.stlouisfed.org source citation; degrades to `available=False` when `FRED_API_KEY` is absent |
-| `_build_fundamentals_section()` | `"fundamentals"` | **Wired** (2026-06-16) — portfolio fan-out; vintage-correct (DE-FUND-001, DE-FUND-002) | SEC EDGAR companyfacts — per-ticker key facts over live holdings ∪ `_FUNDAMENTALS_PROXY_UNIVERSE`; vintage-correct selection: multi-tag union sorted by `(end desc, filed desc)` |
+| `_build_technicals_section()` (`ai_advisor.py:439-482`) | `"technicals"` | **Wired** (2026-06-15); served from nightly cache (2026-06-29) | `advisors/lens_technicals.py` — MA posture, breadth, momentum |
+| `_build_sentiment_section()` | `"sentiment"` | **Wired** (2026-06-15); served from nightly cache (2026-06-29) | `advisors/lens_gdelt.py` — GDELT 2.0 tone + citations |
+| `_build_derivatives_section()` | `"derivatives"` | **Wired** (2026-06-16) — freshness-guarded; served from nightly cache (2026-06-29) | `advisors/lens_options_proxy.py` — FRED VIXCLS/VXVCLS; VIX level, term-structure regime, risk read; staleness guard (`_OPTIONS_PROXY_MAX_STALENESS_DAYS=10`) |
+| `_build_macro_section()` | `"macro"` | **Wired** — FRED producer (DGS10/UNRATE/CPIAUCSL/FEDFUNDS); served from nightly cache (2026-06-29) | FRED API — 10-Year Treasury, Unemployment Rate, CPI-U, Federal Funds Rate; per-series value+date + clickable fred.stlouisfed.org citation; degrades to `available=False` when `FRED_API_KEY` absent |
+| `_build_fundamentals_section()` | `"fundamentals"` | **Wired** (2026-06-16) — portfolio fan-out; vintage-correct (DE-FUND-001, DE-FUND-002); served from nightly cache (2026-06-29) | SEC EDGAR companyfacts — per-ticker key facts over live holdings ∪ `_FUNDAMENTALS_PROXY_UNIVERSE`; vintage-correct selection: multi-tag union sorted by `(end desc, filed desc)` |
 
 Each accepts an optional `_data` argument (reserved for caller pre-injection; unused in current implementations) so future producers can be wired in without changing call sites in `assemble_advisor_context`.
 
 ### `_build_technicals_section(_data=None) → dict` (ai_advisor.py:439-482)
 
 Wired (2026-06-15). Lazy-imports `advisors.lens_technicals` (CC-2) and calls `_fetch_technicals([])`. Returns the lens block with `available=True` and `payload={ma_posture, breadth, momentum}` when bars are available; `available=False` with a named reason otherwise. Defense-in-depth: wraps the import+call in `try/except` — any unexpected exception returns `available=False, reason=type(exc).__name__`.
+
+Called nightly by `prism_scheduler._patch_provenance` to populate the MARKET_LENS_CACHE bundle. NOT called per advisor click as of DE-ADVISOR-LATENCY.
 
 See [advisors/lens_technicals](advisors_lens_technicals.md) for indicator definitions, constants, and retry protocol.
 
@@ -192,8 +231,8 @@ Wired (2026-06-16 — DE-FUND-001; vintage-corrected 2026-06-17 — DE-FUND-002)
 
 **Single-ticker path** (`ticker="AAPL"`): delegates immediately to `_fetch_fundamentals_for_ticker(ticker)` and wraps the result in the standard lens-block shape (adds the `"lens"` key). Per-symphony callers that pass a ticker are unaffected by any fan-out change — behavior is preserved (AC-6).
 
-**Portfolio fan-out path** (`ticker=None` — used by the 03:00 nightly pipeline and `assemble_advisor_context`):
-1. Lazily calls `database.load_state()` (CC-2 — never at module import time) to collect `logic_holdings` tickers from all monitored symphonies.
+**Portfolio fan-out path** (`ticker=None` — used by the nightly `_patch_provenance` and formerly by `assemble_advisor_context`):
+1. Lazily calls `database.load_state()` (CC-2) to collect `logic_holdings` tickers from all monitored symphonies.
 2. Merges with `_FUNDAMENTALS_PROXY_UNIVERSE` (unconditional floor — guarantees a non-empty universe at 03:00 / flat markets / off-hours).
 3. Fans out `_fetch_fundamentals_for_ticker` over each ticker; per-ticker failures degrade only that ticker.
 4. Returns `available=True` with `payload={tickers: {AAPL: {...}, ...}, coverage: {available: N, universe: M}}` when at least one ticker resolves.
@@ -295,22 +334,25 @@ The 7-item allowlist (6 Optuna search-space keys + `MAX_SQUEEZE_FLOOR`). Note: `
 | `MAX_PARABOLIC_SQUEEZE` | Yes | raising loosens risk |
 | `MAX_SQUEEZE_FLOOR` | No (`_UNTUNED_SUGGESTIBLE_KEY`) | raising loosens risk |
 
-### Module-Level Constants (Fundamentals Lens)
+### Module-Level Constants
 
 | Constant | Type | Value | Purpose |
 |----------|------|-------|---------|
+| `_LENS_CACHE_MAX_AGE_HOURS` | `int` | `36` | Freshness window for the nightly MARKET_LENS_CACHE bundle. A bundle within 36 hours is considered fresh; older is served with a stale label. 36 hours covers a missed council night while allowing the next nightly run to refresh. `ai_advisor.py:61-63`. |
 | `_FUNDAMENTALS_PROXY_UNIVERSE` | `frozenset[str]` | 8 company tickers | Unconditional floor for portfolio fan-out path; guarantees non-empty universe at 03:00 / flat markets. Individual companies only — ETFs excluded (no SEC companyfacts). |
 | `_SEC_USER_AGENT` | `str` | `"Planet Stopper AlphaBot..."` | Mandatory SEC EDGAR User-Agent (missing UA is the primary cause of 403 responses). |
 | `_SEC_KEY_CONCEPTS` | `dict[str, tuple[str, tuple[str, ...]]]` | logical concept → (display label, ordered candidate tags) | Maps each of the 5 recognized financial concepts to a display label and an ordered tuple of XBRL us-gaap candidate tags. All present candidate tags are unioned per concept; entry with most recent `end` wins. Outer logical keys are stable (`Revenues`, `NetIncomeLoss`, `Assets`, `Liabilities`, `StockholdersEquity`) — these are the `key_facts` output keys. `ai_advisor.py:361-374`. |
+| `_REQUEST_TIMEOUT_SECONDS` | `float` | `30.0` | Explicit client-side timeout for all Anthropic SDK calls. Never rely on SDK/urllib3 default. |
+| `_MAX_TOKENS` | `int` | `2048` | Max output tokens for the structured-output Claude call in `request_suggestions`. |
 
 ## Internal Dependencies
 
-- `database` — `get_latest_autotune_run`, `get_symphony_strategy`, `load_state`, `normalize_name`, `DEFAULT_STRATEGY`, `DEFAULT_LOCKED_VARS`
+- `database` — `get_latest_autotune_run`, `get_symphony_strategy`, `load_state`, `normalize_name`, `DEFAULT_STRATEGY`, `DEFAULT_LOCKED_VARS`, **`get_latest_market_lens_cache`** (DE-ADVISOR-LATENCY cache-serve path), **`insert_advisor_observation`** (called by `persist_market_lens_cache`)
 - `symphony_logic` — `get_condensed_logic` (called with Composer hash ID via `composer_symphony_id`, not normalized name)
 - `autotuner` — `run_simulation`, `calculate_historical_deviation` (lazy import in `revalidate_suggestion_oos`)
 - `synthetic_history` — `generate_synthetic_history` (lazy import in `revalidate_suggestion_oos`)
-- `advisors.lens_technicals` — `_fetch_technicals` (lazy import in `_build_technicals_section`)
-- `advisors.lens_gdelt` — `_fetch_gdelt_sentiment` (lazy import in `_build_sentiment_section`)
+- `advisors.lens_technicals` — `_fetch_technicals` (lazy import in `_build_technicals_section`; called nightly by prism_scheduler, not per advisor click)
+- `advisors.lens_gdelt` — `_fetch_gdelt_sentiment` (lazy import in `_build_sentiment_section`; called nightly)
 - `anthropic` SDK — `messages.parse` with structured output
 - `pydantic` — `ConfigSuggestion`, `ConfigSuggestionsResponse`
 - `requests` — SEC EDGAR HTTP fetches in `_fetch_fundamentals_for_ticker` / `_fetch_with_backoff` (direct import; no lazy boundary needed — SEC calls are off-execution-path advisory only)

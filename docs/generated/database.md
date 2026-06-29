@@ -3,7 +3,7 @@
 > SQLite state management for Planet Stopper: schema, migrations, all read/write accessors for the state DB, and a pytest sentinel guard that structurally prevents tests from writing to the production DB.
 
 **Source:** `database.py`
-**Last updated:** 2026-06-13
+**Last updated:** 2026-06-29 (DE-ADVISOR-LATENCY: `get_latest_market_lens_cache()` accessor; prior: DE-PRISM-SOURCES-001 `get_latest_market_prism_sources_for_run`)
 
 ## Overview
 
@@ -156,7 +156,7 @@ Inserts one `advisor_observations` row. Returns the new row id. `is_advisory_onl
 **Parameters:**
 | Name | Type | Description |
 |------|------|-------------|
-| `advisor_role` | `str` | `"OVERFITTING_CONSCIENCE"`, `"SPEC_CRITIC"`, `"DIVERGENCE_EXPLAINER"`, `"WALL_BREACH"`, `"MARKET_PRISM"`, or `"MARKET_PRISM_SOURCES"` |
+| `advisor_role` | `str` | `"OVERFITTING_CONSCIENCE"`, `"SPEC_CRITIC"`, `"DIVERGENCE_EXPLAINER"`, `"WALL_BREACH"`, `"MARKET_PRISM"`, `"MARKET_PRISM_SOURCES"`, or `"MARKET_LENS_CACHE"` |
 | `subject_type` | `str` | `"autotune_run"`, `"spec_bundle"`, `"fold_role_wall"`, or `"portfolio"` |
 | `subject_id` | `str` | String PK of the observed entity |
 | `verdict` | `str \| None` | `"CLEAR"`, `"WATCH"`, `"BREACH"`, `"INFORMATIONAL"`, `"NOT_APPLICABLE"`, `"neutral"`, `"bullish"`, `"bearish"`, or `"limited-inputs"` |
@@ -179,6 +179,37 @@ Returns the most recently inserted `advisor_observations` row with `advisor_role
 
 #### `get_latest_market_prism_sources_for_run(run_id: str) → dict | None`
 Returns the MARKET_PRISM_SOURCES row for this `run_id`, or `None`. Uses an exact `json_extract(raw_response,'$.run_id') = ?` SQLite match — no scan-and-compare loop. Returns `None` on mismatch — **no fallback to a different run's citations** (stale-citation-bleed guard). D-1 never-raises; uses `get_ro_connection()`. Used by `app.py:ai_advisor_tab()` to ensure the citation overlay matches the currently-displayed MARKET_PRISM row. Each MARKET_PRISM_SOURCES row holds rebuilt-at-patch-time citation metadata in `raw_response.per_lens_digest[lens].article_corpus = [{url, title, published}]`.
+
+#### `get_latest_market_lens_cache() → dict | None`
+
+Returns the most recent `MARKET_LENS_CACHE` advisor_observations row as a fully-parsed dict (with `raw_response` deserialized from JSON), or `None`.
+
+Used by `ai_advisor.assemble_advisor_context` to serve the 5 market-wide lens blocks from the nightly cache instead of making 17–29 live external API calls per advisor click (DE-ADVISOR-LATENCY).
+
+**Row shape when present:**
+```
+{
+    ...,                     # standard advisor_observations columns
+    "raw_response": {
+        "captured_at": "<ISO UTC timestamp>",
+        "lenses": {
+            "technicals":  { "lens": "technicals", "available": ..., ... },
+            "sentiment":   { ... },
+            "derivatives": { ... },
+            "macro":       { ... },
+            "fundamentals":{ ... }
+        }
+    }
+}
+```
+
+**Ordering:** `ORDER BY id DESC LIMIT 1` — insertion order is a reliable recency proxy for sequential nightly writes (all writes are from `prism_scheduler._patch_provenance`; no concurrent multi-writer for this role).
+
+**D-1 never-raises:** any exception (DB error, missing connection, parse failure) degrades to `None` — the caller treats `None` as cache miss and produces honest `available=False` lens blocks. Uses `get_ro_connection()` per architecture constraint 5.
+
+**Cold-start:** returns `None` before the first nightly council run has written a row. The caller (`assemble_advisor_context`) handles this gracefully without falling back to live lens fetches.
+
+**Source:** `database.py:1234–1270`
 
 > **`update_advisor_observation_raw_response` REMOVED (DE-PRISM-SOURCES-001 v1 rejection):** A v1 UPDATE accessor was drafted but rejected because `advisor_observations` is append-only — no UPDATE path exists or is permitted. Callers that need to associate new data with an existing observation must insert a new row with a linking `run_id`.
 

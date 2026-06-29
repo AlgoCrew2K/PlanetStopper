@@ -3,7 +3,7 @@
 > Nightly Market Prism scheduler wrapper — invokes the Market Prism council via a vanilla-primary headless Claude session, triggered by Windows Task Scheduler (Option B, daemon-decoupled).
 
 **Source:** `prism_scheduler.py`
-**Last updated:** 2026-06-27 (DE-PRISM-DIAG-001: `_run_prism` logs redacted subprocess stderr/stdout on non-zero exit; DE-PRISM-SOURCES-001: `_patch_provenance` appends MARKET_PRISM_SOURCES row for Overview citations; DE-PRISM-SUB-AUTH-001: subprocess pops ANTHROPIC_API_KEY)
+**Last updated:** 2026-06-29 (DE-ADVISOR-LATENCY: `_patch_provenance` now captures `_lens_cache_sections` per builder and calls `ai_advisor.persist_market_lens_cache` in an isolated `try/except` after the SOURCES row; prior: DE-PRISM-DIAG-001 redacted stderr/stdout logging; DE-PRISM-SOURCES-001 `_patch_provenance` MARKET_PRISM_SOURCES row; DE-PRISM-SUB-AUTH-001 subprocess pops ANTHROPIC_API_KEY)
 
 ## Overview
 
@@ -57,7 +57,7 @@ Main entry point. Exits 0 on success (row already exists today, or subprocess co
 3. Calls `_get_summary()` → `database.get_latest_market_prism_summary()`
 4. If today's row exists (UTC date comparison) → prints skip message and `sys.exit(0)`
 5. Otherwise: attempts `_run_prism(run_id)` up to `MAX_ATTEMPTS` times with exponential backoff
-6. For each `_run_prism` call that returns `True` (rc==0): calls `_get_market_prism_row_for_run(run_id)`. If the row is present → `sys.exit(0)`. If absent → logs diagnostic to stderr, continues retry loop.
+6. For each `_run_prism` call that returns `True` (rc==0): calls `_get_market_prism_row_for_run(run_id)`. If the row is present → calls `_patch_provenance(run_id, row)` → `sys.exit(0)`. If absent → logs diagnostic to stderr, continues retry loop.
 7. On exhaustion of all `MAX_ATTEMPTS` without a confirmed row → `sys.exit(1)`
 
 ### `_load_env() -> None`
@@ -86,22 +86,23 @@ Patchable in tests as `patch.object(mod, "_get_market_prism_row_for_run", ...)`.
 
 ### `_patch_provenance(run_id: str, row: dict | None) -> bool`
 
-Post-council citation builder (DE-PRISM-SOURCES-001 v2). Called by `main()` after F-4 row-verification confirms the MARKET_PRISM row exists. Re-fetches live lens data via `ai_advisor._build_*_section()` builders at patch time (minutes after the council exits), then inserts a new append-only `advisor_observations` row with `advisor_role="MARKET_PRISM_SOURCES"`.
+Post-council citation and lens-cache builder (DE-PRISM-SOURCES-001 v2 + DE-ADVISOR-LATENCY). Called by `main()` after F-4 row-verification confirms the MARKET_PRISM row exists. Performs two additive writes:
 
-**Behavior:**
-- For each url-bearing lens (`sentiment`, `macro`, `derivatives`, `fundamentals`) calls the corresponding `ai_advisor._build_*_section()` builder and collects `{url, title, published}` dicts from `section["sources"]` and `section["article_corpus"]`.
-- Deduplicates by url (first occurrence wins — sentiment emits the same articles in both `sources` and `article_corpus`, so union would otherwise double-count).
-- Assembles `raw_response = {"run_id": run_id, "per_lens_digest": {lens: {"article_corpus": [...]}}}`.
-- Checks for an existing SOURCES row for this `run_id` (AC-6 idempotency); skips INSERT if one already exists.
-- Calls `database.insert_advisor_observation(advisor_role="MARKET_PRISM_SOURCES", subject_id="global", raw_response=..., ...)`.
+**1. MARKET_PRISM_SOURCES row (existing — DE-PRISM-SOURCES-001):**
+Re-fetches live lens data via `ai_advisor._build_*_section()` builders at patch time (minutes after the council exits) for the url-bearing lenses (`sentiment`, `macro`, `derivatives`, `fundamentals`), collects `{url, title, published}` dicts from `section["sources"]` and `section["article_corpus"]`, deduplicates by url (first occurrence wins), and inserts an append-only `advisor_observations` row with `advisor_role="MARKET_PRISM_SOURCES"`.
 
-**technicals excluded intentionally (AC-2):** Alpaca bar data has no public URLs; `article_corpus` for the technicals lens is omitted from the SOURCES row.
+**2. MARKET_LENS_CACHE row (added DE-ADVISOR-LATENCY, `prism_scheduler.py:443-474`):**
+As each builder runs in the `_BUILDERS` loop, its structured output (or an `_unavailable_block` on build failure or missing lens) is captured into `_lens_cache_sections[lens]`. After the SOURCES row is written, a separate nested `try/except` block fetches `ai_advisor._build_technicals_section()` (technicals is excluded from `_BUILDERS` — Alpaca bar data has no public URLs for SOURCES — but IS needed in the lens cache for the advisor's MA posture / breadth / momentum context), sets `_lens_cache_sections["technicals"]`, and calls `ai_advisor.persist_market_lens_cache(_lens_cache_sections)`. **Council-safety isolation:** any failure in this inner block is caught and printed to stderr as `[prism_scheduler] LensCacheError: {type}` — it never propagates to the outer `try/except`, so a cache-write failure can never prevent the `return True` that records the council run as successful.
 
-**D-1 / never-raises (AC-4):** A failed patch (builder exception, DB error) is logged as `type(exc).__name__` only and returns `False`. Does not gate or prevent `sys.exit(0)` — the council run is unaffected.
+**Key properties common to both writes:**
 
-**One SOURCES row per run:** Keyed by `run_id`. The corresponding `get_latest_market_prism_sources_for_run(run_id)` accessor uses an exact `json_extract` match, preventing stale-citation bleed from a different run's row.
+- **technicals excluded from SOURCES, included in MARKET_LENS_CACHE:** Alpaca bar data has no public URLs, so no `article_corpus` for the technicals lens appears in the SOURCES row. The lens cache includes technicals because the advisor prompt needs the structured MA posture / breadth / momentum payload.
+- **Ordering guarantee:** SOURCES row is written before the MARKET_LENS_CACHE row. A crash between the two leaves SOURCES intact but no MARKET_LENS_CACHE row — the advisor cold-starts gracefully.
+- **D-1 / never-raises (AC-4):** A failed patch is logged as `type(exc).__name__` only (outer `except`) or as `[prism_scheduler] LensCacheError: {type}` (inner `except`). Does not gate or prevent `sys.exit(0)` — the council run is unaffected.
+- **One SOURCES row per run:** keyed by `run_id`. The corresponding `get_latest_market_prism_sources_for_run(run_id)` accessor uses an exact `json_extract` match, preventing stale-citation bleed from a different run's row.
+- **AC-6 idempotency guard (SOURCES only):** checks for an existing SOURCES row for this `run_id` before inserting. The MARKET_LENS_CACHE write is append-only; latest row wins on serve.
 
-**Provenance note:** The `article_corpus` entries are **rebuilt-at-patch-time per-lens sources**, not a snapshot of the exact articles the council analyzed. The council's synthesizer writes the MARKET_PRISM row from prose deliberation and does not persist structured citation lists. `macro`, `fundamentals`, and `derivatives` source URLs are stable across the patch window (~minutes); `sentiment` artlist top-N may drift slightly. UI copy must not imply "the exact articles the council read." See DE-PRISM-SOURCES-001 §Provenance honesty in `DECISIONS.md` for the full stability breakdown and future-enhancement tracking.
+**Provenance note (SOURCES):** The `article_corpus` entries are rebuilt at patch time from current live data — NOT a guaranteed snapshot of the exact articles the council analyzed. `macro`, `fundamentals`, and `derivatives` source URLs are stable across the patch window; `sentiment` artlist top-N may drift slightly. UI copy must not imply "the exact articles the council read." See DE-PRISM-SOURCES-001 §Provenance honesty in `DECISIONS.md` for the full stability breakdown.
 
 ### `_redact_secrets(text: str, secret_values: list[str]) -> str`
 
@@ -185,11 +186,12 @@ On each successful subprocess invocation (`returncode == 0`), `_persist_spend()`
 
 ## D-1 Error Contract
 
-All error paths surface `type(exc).__name__` only — no raw exception messages, file paths, or tracebacks are logged or propagated. This applies to `.env` load failures, DB query failures, subprocess exceptions, and spend-log parse/write failures.
+All error paths surface `type(exc).__name__` only — no raw exception messages, file paths, or tracebacks are logged or propagated. This applies to `.env` load failures, DB query failures, subprocess exceptions, spend-log parse/write failures, and the MARKET_LENS_CACHE write inside `_patch_provenance`.
 
 ## Internal Dependencies
 
-- `database` — `get_latest_market_prism_summary()` (idempotency check + F-4 row verification in `_get_market_prism_row_for_run`) + `insert_prism_audit_entry()` (spend logging) + `insert_advisor_observation()` (MARKET_PRISM_SOURCES row written by `_patch_provenance`); all lazy-imported inside their respective wrappers
+- `database` — `get_latest_market_prism_summary()` (idempotency check + F-4 row verification in `_get_market_prism_row_for_run`) + `insert_prism_audit_entry()` (spend logging) + `insert_advisor_observation()` (MARKET_PRISM_SOURCES row + MARKET_LENS_CACHE row written by `_patch_provenance`); all lazy-imported inside their respective wrappers
+- `ai_advisor` — `_build_*_section()` builders (called by `_patch_provenance` for SOURCES citations); `_build_technicals_section()` (called in the isolated MARKET_LENS_CACHE inner block); `persist_market_lens_cache()` (called to write the MARKET_LENS_CACHE row — DE-ADVISOR-LATENCY)
 - `dotenv` — `.env` loading (lazy import inside `_load_env()`)
 - `subprocess` — headless `claude` invocation
 - `uuid` — `uuid4()` run_id generation in `main()`
