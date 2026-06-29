@@ -374,14 +374,29 @@ def _patch_provenance(run_id: str, row: "dict | None") -> bool:
         # MARKET_PRISM row (v2: INSERT-only; the MARKET_PRISM raw_response is
         # byte-unchanged after this function returns).
         sources_per_lens_digest: dict = {}
+        # Also capture structured payloads for the MARKET_LENS_CACHE bundle (AC-2).
+        # technicals is populated separately below (excluded from SOURCES — no public URLs).
+        _lens_cache_sections: dict = {}
 
         for lens, builder in _BUILDERS.items():
+            _unavailable_block = {
+                "lens": lens,
+                "available": False,
+                "reason": "BuildError",
+                "payload": None,
+                "sources": [],
+            }
             if lens not in pld:
+                # Still include in the lens cache even when absent from MARKET_PRISM digest.
+                _lens_cache_sections[lens] = _unavailable_block
                 continue
             try:
                 section = builder()
             except Exception:  # noqa: BLE001
+                _lens_cache_sections[lens] = _unavailable_block
                 continue  # D-1: this lens contributes no citations
+
+            _lens_cache_sections[lens] = section  # capture for MARKET_LENS_CACHE
 
             # Union sources + article_corpus so sentiment's primary corpus is captured.
             # sources items are already citation-shaped; article_corpus items are raw
@@ -428,6 +443,24 @@ def _patch_provenance(run_id: str, row: "dict | None") -> bool:
             raw_response={"run_id": run_id, "per_lens_digest": sources_per_lens_digest},
             symphony_id="",
         )
+
+        # Persist the 5-lens MARKET_LENS_CACHE bundle (AC-2).
+        # technicals was excluded from _BUILDERS (no public URLs for SOURCES) but belongs
+        # in the lens cache so the advisor can serve breadth/momentum without a live fetch.
+        # D-1: builder failure → available=False block; persist is also never-raises.
+        try:
+            _tech_block = ai_advisor._build_technicals_section()
+        except Exception:  # noqa: BLE001
+            _tech_block = {
+                "lens": "technicals",
+                "available": False,
+                "reason": "BuildError",
+                "payload": None,
+                "sources": [],
+            }
+        _lens_cache_sections["technicals"] = _tech_block
+        ai_advisor.persist_market_lens_cache(_lens_cache_sections)
+
         return True
     except Exception as exc:  # noqa: BLE001
         print(

@@ -58,6 +58,10 @@ _MAX_TOKENS = 2048
 # Explicit client-side timeout — never rely on the SDK/urllib3 default.
 _REQUEST_TIMEOUT_SECONDS = 30.0
 
+# Freshness window for the nightly MARKET_LENS_CACHE bundle.
+# 36 h covers a missed council night while still allowing the next run to refresh.
+_LENS_CACHE_MAX_AGE_HOURS = 36
+
 
 def resolve_advisor_model() -> str:
     """Return the configured advisor synthesis model ID.
@@ -1434,9 +1438,9 @@ def build_assessment_from_context(context: dict) -> dict:
 
     if not available:
         summary = (
-            "Optuna has not yet run for this symphony — no walk-forward "
-            "validation evidence is available. Config is unvalidated; "
-            "Claude is reasoning without OOS data."
+            "Walk-forward optimization (Optuna) has not run for this symphony yet. "
+            "No out-of-sample (OOS) validation evidence is available — the current "
+            "config is unvalidated. Claude will reason without OOS data."
         )
     elif oos_alpha is None:
         # -inf sentinel: all trials were haircut-rejected by FDR gate.
@@ -1464,6 +1468,30 @@ def build_assessment_from_context(context: dict) -> dict:
         "default_oos_alpha": default_oos_alpha,
         "summary": summary,
     }
+
+
+def persist_market_lens_cache(sections: dict) -> None:
+    """Persist all 5 structured lens payloads as a MARKET_LENS_CACHE row.
+
+    sections: dict of lens_name -> _build_*_section() output (structured, not prose).
+    Captures captured_at = UTC now. Append-only: latest row wins on serve.
+    D-1 never-raises.
+    """
+    try:
+        from datetime import UTC, datetime  # noqa: PLC0415
+
+        captured_at = datetime.now(UTC).isoformat()
+        raw = {"captured_at": captured_at, "lenses": dict(sections)}
+        database.insert_advisor_observation(
+            advisor_role="MARKET_LENS_CACHE",
+            subject_type="portfolio",
+            subject_id="global",
+            verdict=None,
+            raw_response=raw,
+            symphony_id="",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("persist_market_lens_cache failed: %s", type(exc).__name__)
 
 
 def assemble_advisor_context(
@@ -1541,15 +1569,47 @@ def assemble_advisor_context(
         logic_id = composer_symphony_id if composer_symphony_id is not None else symphony_id
         condensed_logic = symphony_logic.get_condensed_logic(logic_id)
 
-    try:
-        _derivatives_block = _build_derivatives_section()
-    except Exception as _exc:
-        _derivatives_block = {
-            "lens": "derivatives",
-            "available": False,
-            "reason": type(_exc).__name__,
-            "payload": None,
-            "sources": [],
+    # --- Market-lens cache-serve path (AC-1, AC-3, AC-4, AC-5) ---
+    # Serve the 5 market-wide lens blocks from the nightly MARKET_LENS_CACHE bundle
+    # instead of making 17-29 live API calls on every per-click advisor request.
+    # A stale bundle (> _LENS_CACHE_MAX_AGE_HOURS old) is still served with a stale
+    # label rather than triggering a live re-fetch (AC-4: serve-with-label).
+    # Cold-start (no bundle yet) falls back to honest "lens_cache_unavailable" blocks;
+    # the 5 live builders are NEVER called as the silent default path (AC-5).
+    _lenses_from_cache: dict | None = None
+    _lens_data_as_of: str | None = None
+    _lens_data_stale: bool = True  # conservative default
+
+    _cached_row = database.get_latest_market_lens_cache()
+    if _cached_row is not None:
+        _raw_cache = _cached_row.get("raw_response") or {}
+        _cached_lenses = _raw_cache.get("lenses")
+        _captured_at_str = _raw_cache.get("captured_at")
+        if isinstance(_cached_lenses, dict) and len(_cached_lenses) >= 5 and _captured_at_str:
+            try:
+                from datetime import UTC, datetime  # noqa: PLC0415
+
+                _captured_at_dt = datetime.fromisoformat(_captured_at_str).astimezone(UTC)
+                _age_hours = (datetime.now(UTC) - _captured_at_dt).total_seconds() / 3600
+                _lens_data_stale = _age_hours > _LENS_CACHE_MAX_AGE_HOURS
+                _lens_data_as_of = _captured_at_str
+                _lenses_from_cache = _cached_lenses
+            except Exception:  # noqa: BLE001
+                pass  # D-1: unparseable captured_at → treat as cache miss
+
+    # Cold-start fallback (AC-5): do NOT fan out to all 5 live builders.
+    # Honest degradation: each lens signals "lens_cache_unavailable" so the
+    # advisor prompt sees an explicit empty-state, never fabricated context.
+    if _lenses_from_cache is None:
+        _lenses_from_cache = {
+            name: {
+                "lens": name,
+                "available": False,
+                "reason": "lens_cache_unavailable",
+                "payload": None,
+                "sources": [],
+            }
+            for name in ("technicals", "sentiment", "derivatives", "macro", "fundamentals")
         }
 
     context: dict = {
@@ -1570,15 +1630,20 @@ def assemble_advisor_context(
         "risk_invariants": _RISK_INVARIANTS,
         # P2 — condensed symphony logic / composition.
         "symphony_logic": condensed_logic,
-        # Cycle-1 multi-lens scaffold — 5 stub lens blocks.
-        # Each is available=False until the fast-follow producer connects its
-        # free-data source.  Honest degradation: never fabricates analytical
-        # context (CC-3 data-wall, GATE-1-AC §1).
-        "technicals": _build_technicals_section(),
-        "sentiment": _build_sentiment_section(),
-        "derivatives": _derivatives_block,
-        "macro": _build_macro_section(),
-        "fundamentals": _build_fundamentals_section(),
+        # Nightly lens cache bundle — structured _build_*_section() payloads.
+        # Staleness label: lens_data_stale=True if older than _LENS_CACHE_MAX_AGE_HOURS.
+        # Cold-start (no bundle): each lens block is available=False with reason
+        # "lens_cache_unavailable" — no live builder calls are made (AC-5).
+        "lenses": _lenses_from_cache,
+        "lens_data_as_of": _lens_data_as_of,
+        "lens_data_stale": _lens_data_stale,
+        # Backward-compat aliases — existing consumers (request_suggestions,
+        # _build_messages) read context["technicals"] etc. directly.
+        "technicals": _lenses_from_cache.get("technicals") or {},
+        "sentiment": _lenses_from_cache.get("sentiment") or {},
+        "derivatives": _lenses_from_cache.get("derivatives") or {},
+        "macro": _lenses_from_cache.get("macro") or {},
+        "fundamentals": _lenses_from_cache.get("fundamentals") or {},
     }
     return context
 
