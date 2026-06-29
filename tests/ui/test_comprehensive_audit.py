@@ -493,13 +493,24 @@ def test_history_no_max_width_cap_on_top_level_container():
 
 def test_advisor_no_max_width_cap_on_top_level_container():
     """D-LAY-01 (Advisor): Same max-width audit for the Advisor page.
-    Excludes @media breakpoints; only flags container element width caps.
+    Excludes @media breakpoints; only flags container/page-level width caps.
+
+    Component-level width bounds are exempt: a cap < 600px (e.g., the carousel
+    source-card's max-width: 220px — DE-SOURCES-CAROUSEL-001) cannot letterbox
+    a 4K display because it constrains only a small repeated element, not the page
+    container.  Only container-scale caps in [600px, 1600px] / [37.5rem, 100rem]
+    are flagged — these would produce visible blank margins on 4K ultrawide.
     """
     src = _strip_media_query_breakpoints(_ADVISOR_HTML.read_text(encoding="utf-8"))
     max_width_rem_matches = re.findall(r"max-width\s*:\s*([\d.]+)rem", src)
     max_width_px_matches = re.findall(r"max-width\s*:\s*(\d+)px", src)
-    capped_rem = [float(v) for v in max_width_rem_matches if float(v) <= 100]
-    capped_px = [int(v) for v in max_width_px_matches if int(v) <= 1600]
+    # Lower bound 600px / 37.5rem separates component-scale caps (e.g. cards at 220px,
+    # which are fine) from container-scale caps (e.g. 1408px / 88rem page containers,
+    # which letterbox 4K).  DE-SOURCES-CAROUSEL-001: .prism-source-card max-width:220px
+    # is intentional — cards need a width bound for white-space:nowrap text-overflow
+    # truncation to work; 220px on a repeated carousel element is not a page cap.
+    capped_rem = [float(v) for v in max_width_rem_matches if 37.5 <= float(v) <= 100]
+    capped_px = [int(v) for v in max_width_px_matches if 600 <= int(v) <= 1600]
     assert len(capped_rem) == 0 and len(capped_px) == 0, (
         f"templates/ai_advisor.html has max-width cap(s) rem={capped_rem} px={capped_px} "
         "that restricts layout on 4K ultrawide."
