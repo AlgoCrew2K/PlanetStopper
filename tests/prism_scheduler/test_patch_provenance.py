@@ -138,6 +138,18 @@ def _count_all_advisor_rows() -> int:
     return count
 
 
+def _count_lens_cache_rows() -> int:
+    """Return the current count of MARKET_LENS_CACHE rows in advisor_observations."""
+    conn = database.get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COUNT(*) FROM advisor_observations WHERE advisor_role = 'MARKET_LENS_CACHE'"
+    )
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+
 # ---------------------------------------------------------------------------
 # Builder helpers (production-shape mocks)
 # ---------------------------------------------------------------------------
@@ -226,8 +238,9 @@ def test_patch_provenance_v2_market_prism_row_byte_unchanged():
 
 
 def test_patch_provenance_v2_inserts_sources_row():
-    """V2-GUARD / AC-1: _patch_provenance must INSERT exactly one new
-    MARKET_PRISM_SOURCES row. The advisor_observations row count must grow by 1.
+    """V2-GUARD / AC-1 + AC-2 (lens-cache): _patch_provenance must INSERT exactly two
+    new advisor_observations rows: one MARKET_PRISM_SOURCES row and one MARKET_LENS_CACHE
+    row.  The advisor_observations row count must grow by 2.
     """
     row = _insert_market_prism_row()
     count_before = _count_all_advisor_rows()
@@ -261,12 +274,19 @@ def test_patch_provenance_v2_inserts_sources_row():
         prism_scheduler._patch_provenance(_RUN_ID, row)
 
     count_after = _count_all_advisor_rows()
-    assert count_after == count_before + 1, (
-        f"_patch_provenance must INSERT exactly 1 new row; "
+    # _patch_provenance inserts both a MARKET_PRISM_SOURCES row and a
+    # MARKET_LENS_CACHE row (AC-2 of the cache-serve PR), so the total delta is +2.
+    assert count_after == count_before + 2, (
+        f"_patch_provenance must INSERT exactly 2 new rows "
+        f"(MARKET_PRISM_SOURCES + MARKET_LENS_CACHE); "
         f"row count before={count_before}, after={count_after}."
     )
     sources_count = _count_sources_rows()
     assert sources_count == 1, f"Expected exactly 1 MARKET_PRISM_SOURCES row; got {sources_count}"
+    lens_cache_count = _count_lens_cache_rows()
+    assert lens_cache_count == 1, (
+        f"Expected exactly 1 MARKET_LENS_CACHE row (cache-serve bundle); got {lens_cache_count}"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -886,96 +886,21 @@ class TestDerivativesSectionEdgeCases:
 
 
 class TestAssembleAdvisorContextCallSiteGuard:
-    """The call-site at ai_advisor.py:1208 must be inside a try/except.
+    """assemble_advisor_context must not propagate proxy exceptions to callers.
 
-    Feature plan §Architecture / Call-site risk: if assemble_advisor_context
-    does NOT wrap the lens-section call in a try/except, a proxy failure would
-    propagate to the caller.
+    DE-ADVISOR-LATENCY (AC-1): lenses are now served from the MARKET_LENS_CACHE
+    bundle — assemble_advisor_context no longer calls _build_derivatives_section
+    directly.  Exception isolation of the builder is covered by the producer path:
+    test_patch_provenance_v2_d1_builder_raises_market_prism_unchanged (T6 in
+    tests/prism_scheduler/test_patch_provenance.py) verifies that when
+    _build_derivatives_section raises inside _patch_provenance the exception is
+    caught and does not propagate.
 
-    Audit finding (call-site audit required by feature plan): the call at
-    line 1208 is inside a dict literal built inside assemble_advisor_context,
-    with no try/except guard wrapping the lens-section calls.
-
-    We verify this structurally using AST inspection: the call to
-    _build_derivatives_section inside assemble_advisor_context must be wrapped
-    in a try/except. This test is RED until the implementer adds the guard.
+    The structural AST guard on the old assemble_advisor_context call-site was
+    removed (stale-by-intent) because the call-site itself was removed by this PR.
+    The runtime guard test below remains: it verifies the context assembly path
+    degrades gracefully if the proxy somehow fires.
     """
-
-    def test_derivatives_call_site_is_wrapped_in_try_except(self):
-        """assemble_advisor_context wraps _build_derivatives_section in a try/except.
-
-        Uses AST inspection to verify the structural guard requirement.
-        This is a structural test — it fails if the call-site has no try/except,
-        which is the current state before implementation.
-
-        RED: the call at ai_advisor.py:1208 is inside a bare dict literal with
-        no try/except. The AST will show _build_derivatives_section called inside
-        a plain Assign/Return, not inside a Try node.
-
-        FAILS until the implementer wraps the lens-section block in try/except.
-        """
-        import ast
-        import pathlib
-
-        ai_advisor_path = pathlib.Path(__file__).parents[2] / "ai_advisor.py"
-        source = ai_advisor_path.read_text(encoding="utf-8")
-        tree = ast.parse(source)
-
-        # Find assemble_advisor_context function definition
-        assemble_fn = None
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == "assemble_advisor_context":
-                assemble_fn = node
-                break
-
-        assert assemble_fn is not None, (
-            "assemble_advisor_context function not found in ai_advisor.py"
-        )
-
-        # Walk the function body to find all Call nodes for _build_derivatives_section
-        # and check whether each is inside a Try node within the function.
-        def _collect_call_ancestors(fn_node):
-            """Yield (call_node, ancestor_types) for every Call in fn_node."""
-            # Use parent-tracking traversal
-            for node in ast.walk(fn_node):
-                if (
-                    isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Name)
-                    and node.func.id == "_build_derivatives_section"
-                ):
-                    yield node
-
-        derivatives_calls = list(_collect_call_ancestors(assemble_fn))
-        assert len(derivatives_calls) >= 1, (
-            "_build_derivatives_section is not called inside assemble_advisor_context. "
-            "Expected at least one call at the call-site (ai_advisor.py ~line 1208)."
-        )
-
-        # Now check each call: walk parent chain to see if any ancestor is a Try node.
-        # We rebuild parent map for the function subtree.
-        parent_map: dict[int, ast.AST] = {}
-        for node in ast.walk(assemble_fn):
-            for child in ast.iter_child_nodes(node):
-                parent_map[id(child)] = node
-
-        def _is_inside_try(call_node: ast.AST) -> bool:
-            """True if call_node has a Try ancestor within assemble_fn."""
-            current = parent_map.get(id(call_node))
-            while current is not None and current is not assemble_fn:
-                if isinstance(current, ast.Try):
-                    return True
-                current = parent_map.get(id(current))
-            return False
-
-        all_guarded = all(_is_inside_try(c) for c in derivatives_calls)
-        assert all_guarded, (
-            "_build_derivatives_section is called inside assemble_advisor_context "
-            "but NOT inside a try/except block. "
-            "A proxy failure would propagate unguarded to the caller. "
-            "The implementer must wrap the lens-section block in try/except. "
-            "RED: fails until the guard is added (feature plan §Architecture / "
-            "Call-site risk)."
-        )
 
     def test_assemble_advisor_context_does_not_propagate_proxy_exception_at_runtime(
         self, tmp_path, monkeypatch
