@@ -830,6 +830,103 @@ def test_unparseable_captured_at_treated_as_stale_not_crash():
     )
 
 
+# ---------------------------------------------------------------------------
+# Edge Case: captured_at missing/unparseable in an otherwise-present row
+# → serve the bundle with a stale label, never crash or discard the bundle
+# (Feature plan Edge Cases: "captured_at missing or unparseable in an
+#  otherwise-present row → treat as STALE (loud label), never crash.")
+# ---------------------------------------------------------------------------
+
+
+def test_serve_stale_when_captured_at_missing():
+    """Edge case (serve-stale): a MARKET_LENS_CACHE row with a valid ≥5-key lenses
+    dict but captured_at ABSENT must SERVE the bundle (not discard it) with
+    lens_data_stale=True and lens_data_as_of=None.
+
+    Fails today: the current code's `and _captured_at_str` guard discards the
+    valid bundle when captured_at is absent, falling through to the cold-start
+    lens_cache_unavailable fallback instead of serving the cached data.
+    """
+    stub_lenses = _all_stub_lenses(available=True)
+    # Insert a row with a valid lenses dict but NO captured_at key at all
+    _insert_cache_row(raw_override={"lenses": stub_lenses})  # captured_at deliberately absent
+
+    with (
+        patch.object(ai_advisor.symphony_logic, "get_condensed_logic", return_value={}),
+        patch.object(db_module, "load_state", return_value={}),
+    ):
+        context = ai_advisor.assemble_advisor_context(**_minimal_context_args())
+
+    # The bundle must be SERVED — not discarded to the cold-start fallback
+    lenses_in_ctx = context.get("lenses") or {}
+    for name in _LENS_NAMES:
+        block = lenses_in_ctx.get(name) or context.get(name)
+        assert block is not None, (
+            f"Lens '{name}' is missing from context — the bundle was discarded instead of served. "
+            "A missing captured_at must not cause the valid ≥5-key lenses bundle to be dropped. "
+            "Treat as stale and SERVE the cached lenses."
+        )
+        # Must be the cached stub (available=True), not the cold-start sentinel
+        assert block.get("available") is True, (
+            f"Lens '{name}' was served as available=False (cold-start sentinel) instead of the "
+            "cached stub (available=True). The valid bundle was discarded — it must be served "
+            "with a stale label when captured_at is absent."
+        )
+
+    assert context.get("lens_data_stale") is True, (
+        "lens_data_stale must be True when captured_at is absent (treat as stale). "
+        f"Got: {context.get('lens_data_stale')!r}"
+    )
+    assert context.get("lens_data_as_of") is None, (
+        "lens_data_as_of must be None when captured_at is absent (unknown age). "
+        f"Got: {context.get('lens_data_as_of')!r}"
+    )
+
+
+def test_serve_stale_when_captured_at_unparseable():
+    """Edge case (serve-stale): a MARKET_LENS_CACHE row with a valid ≥5-key lenses
+    dict but captured_at UNPARSEABLE must SERVE the bundle (not discard it) with
+    lens_data_stale=True and lens_data_as_of=None.
+
+    Fails today: the current code's except-pass block discards _lenses_from_cache
+    when datetime.fromisoformat() raises, falling through to the cold-start
+    lens_cache_unavailable fallback instead of serving the cached data.
+    """
+    stub_lenses = _all_stub_lenses(available=True)
+    # Insert a row with valid lenses but an unparseable captured_at
+    _insert_cache_row(raw_override={"captured_at": "not-a-timestamp", "lenses": stub_lenses})
+
+    with (
+        patch.object(ai_advisor.symphony_logic, "get_condensed_logic", return_value={}),
+        patch.object(db_module, "load_state", return_value={}),
+    ):
+        context = ai_advisor.assemble_advisor_context(**_minimal_context_args())
+
+    # The bundle must be SERVED — not discarded to the cold-start fallback
+    lenses_in_ctx = context.get("lenses") or {}
+    for name in _LENS_NAMES:
+        block = lenses_in_ctx.get(name) or context.get(name)
+        assert block is not None, (
+            f"Lens '{name}' is missing from context — the bundle was discarded instead of served. "
+            "An unparseable captured_at must not cause the valid ≥5-key lenses bundle to be "
+            "dropped. Treat as stale and SERVE the cached lenses."
+        )
+        assert block.get("available") is True, (
+            f"Lens '{name}' was served as available=False (cold-start sentinel) instead of the "
+            "cached stub (available=True). The valid bundle was discarded — it must be served "
+            "with a stale label when captured_at is unparseable."
+        )
+
+    assert context.get("lens_data_stale") is True, (
+        "lens_data_stale must be True when captured_at is unparseable (treat as stale). "
+        f"Got: {context.get('lens_data_stale')!r}"
+    )
+    assert context.get("lens_data_as_of") is None, (
+        "lens_data_as_of must be None when captured_at is unparseable (unknown age). "
+        f"Got: {context.get('lens_data_as_of')!r}"
+    )
+
+
 def test_suggest_route_returns_200_when_cache_row_is_malformed():
     """AC-10: The /ai-advisor/suggest route must return HTTP 200 even when the
     MARKET_LENS_CACHE row is malformed (D-1 propagated through the route).
