@@ -854,3 +854,69 @@ def test_card_title_has_ellipsis_truncation_css():
         "  (b) Multi-line: ``display: -webkit-box; -webkit-box-orient: vertical; "
         "-webkit-line-clamp: 2; overflow: hidden`` for 2-line clamping."
     )
+
+
+# ===========================================================================
+# UX Finding A (part 2): clickable anchor cards must have a hover affordance
+# so users can distinguish them as interactive without having to guess.
+# ===========================================================================
+
+
+def test_anchor_source_card_has_hover_affordance():
+    """An ``a.prism-source-card:hover`` CSS rule must exist so clickable source
+    cards provide a visible hover cue — e.g. an accent border-color or a subtle
+    background change.
+
+    Without a hover rule, the only signal that a card is clickable is the
+    browser's cursor change on ``<a>`` elements.  Combined with Finding A
+    (citation cards are visually identical at rest), there is no affordance
+    distinction at all.  A hover rule on the anchor variant closes that gap.
+
+    Rule must use existing design tokens (``var(--...)``); no raw hex.
+
+    Source: ux-expert audit + team-lead render-verify at d3d9e5e.
+
+    RED intent: no ``a.prism-source-card:hover`` or ``.prism-source-card:hover``
+    rule scoped to anchor cards exists in the ``<style>`` block.
+    """
+    template_path = _WORKTREE / "templates" / "ai_advisor.html"
+    assert template_path.exists(), f"Template not found: {template_path}"
+
+    content = template_path.read_text(encoding="utf-8")
+    style_match = re.search(r"<style>(.*?)</style>", content, re.DOTALL | re.IGNORECASE)
+    assert style_match is not None, "No <style> block found in templates/ai_advisor.html."
+    style_block = style_match.group(1)
+
+    # Accept either the tag-qualified form (a.prism-source-card:hover) or
+    # the class-only form (.prism-source-card:hover) — both are valid selectors
+    # for the hover state of anchor cards.
+    hover_rule = re.search(
+        r"(?:a\.prism-source-card|\.prism-source-card)\s*:hover\s*\{([^}]*)\}",
+        style_block,
+        re.DOTALL,
+    )
+    assert hover_rule is not None, (
+        "No ``a.prism-source-card:hover`` or ``.prism-source-card:hover`` CSS rule "
+        "found in the <style> block.  Clickable source cards must have a visible hover "
+        "affordance so users can identify them as interactive.  Add a rule such as:\n"
+        "  a.prism-source-card:hover { border-color: var(--studio-accent); }\n"
+        "Use existing design tokens (``var(--studio-accent)``, ``var(--studio-border)``, "
+        "``var(--studio-surface-raised)``) — no raw hex colors."
+    )
+
+    rule_body = hover_rule.group(1)
+    # Hover rule must change something visible — border, background, or color.
+    has_visible_change = "border" in rule_body or "background" in rule_body or "color" in rule_body
+    assert has_visible_change, (
+        "The hover rule exists but changes nothing visible.  It must alter at least "
+        "one of: ``border-color``, ``background``, or ``color`` so the hover state is "
+        f"perceivable.  Found rule body:\n{rule_body.strip()}"
+    )
+
+    # Hover rule must use design tokens, not raw hex.
+    hex_in_hover = re.compile(r"(?<=[:,\s])#[0-9a-fA-F]{3,8}\b")
+    hex_hits = hex_in_hover.findall(rule_body)
+    assert not hex_hits, (
+        f"Raw hex color(s) found in hover rule: {hex_hits}.  "
+        "Use ``var(--studio-...)`` tokens instead (e.g. ``var(--studio-accent)``)."
+    )
