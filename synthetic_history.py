@@ -463,7 +463,7 @@ def build_replay_day(
     return ticks
 
 
-def generate_synthetic_history(bot_state, current_date_str):
+def generate_synthetic_history(bot_state, current_date_str, *, n_jobs=None):
     print("  -> Generating Synthetic Forward-Looking Intraday History...")
 
     # 1. Extract tickers
@@ -667,7 +667,10 @@ def generate_synthetic_history(bot_state, current_date_str):
     # n_jobs is env-bounded (ALPHABOT_MAX_JOBS, default -1 = all cores in prod;
     # set to 1 by tests/conftest.py to neutralize the xdist x cores fan-out that
     # crashed the host — see _resolve_replay_n_jobs). Reproducibility-neutral.
-    results = Parallel(n_jobs=_resolve_replay_n_jobs())(
+    # Callers may pass an explicit n_jobs to override env-resolution (e.g. the
+    # autotuner passes n_jobs=1 to bound peak RSS on the droplet — DE-AUTOTUNE-OOM).
+    effective_n_jobs = n_jobs if n_jobs is not None else _resolve_replay_n_jobs()
+    results = Parallel(n_jobs=effective_n_jobs)(
         delayed(process_day)(d) for d in intraday_dates
     )
 
