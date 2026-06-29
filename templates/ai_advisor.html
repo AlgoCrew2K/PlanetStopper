@@ -832,6 +832,19 @@
             text-decoration: none;
         }
 
+        /* Citation-only cards are non-interactive — dim + suppress pointer cursor */
+        .prism-source-card--citation {
+            opacity: 0.75;
+            cursor: default;
+        }
+
+        /* Truncate long titles to a single line so card height stays uniform */
+        .prism-source-card span:first-child {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
         .prism-source-card .prism-source-meta {
             font-size: 0.6875rem;
             color: var(--studio-ink-dim);
