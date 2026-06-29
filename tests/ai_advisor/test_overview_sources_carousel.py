@@ -723,3 +723,134 @@ def test_prism_sources_data_testid_preserved(client, monkeypatch):
         f"when sources are present.  Found {occurrences} occurrence(s). "
         "The carousel refactor must preserve this hook on the container element."
     )
+
+
+# ===========================================================================
+# UX Finding A (CRITICAL): .prism-source-card--citation must have a CSS rule
+# that visually distinguishes citation cards from clickable anchor cards.
+# ===========================================================================
+
+
+def test_citation_card_visually_distinct_from_anchor_card():
+    """The ``.prism-source-card--citation`` CSS rule must exist and apply a
+    visible distinction — e.g. reduced opacity, ``cursor: default``, or a
+    different border style — so non-link citation cards are clearly
+    non-interactive.
+
+    Without this rule, citation cards (rendered as ``<div>``) are
+    pixel-identical to anchor cards (rendered as ``<a>``) — same border,
+    same background, same text colour.  Users cannot tell which cards are
+    clickable.
+
+    Source: ux-expert Playwright audit at d3d9e5e (desktop 1280px).
+    Screenshot: ux-carousel-sources-focused-1280.png — cards 1-2 (citations)
+    visually identical to cards 3-5 (anchors).
+
+    RED intent: no ``.prism-source-card--citation { ... }`` CSS rule exists
+    in the ``<style>`` block; the modifier class carries no visual meaning.
+    """
+    template_path = _WORKTREE / "templates" / "ai_advisor.html"
+    assert template_path.exists(), f"Template not found: {template_path}"
+
+    content = template_path.read_text(encoding="utf-8")
+    style_match = re.search(r"<style>(.*?)</style>", content, re.DOTALL | re.IGNORECASE)
+    assert style_match is not None, "No <style> block found in templates/ai_advisor.html."
+    style_block = style_match.group(1)
+
+    citation_rule = re.search(
+        r"\.prism-source-card--citation\s*\{([^}]*)\}",
+        style_block,
+        re.DOTALL,
+    )
+    assert citation_rule is not None, (
+        "No ``.prism-source-card--citation { ... }`` CSS rule found in the <style> block. "
+        "Citation-only cards use class 'prism-source-card prism-source-card--citation' "
+        "but the modifier class has no CSS definition, making them pixel-identical to "
+        "clickable anchor cards.  Add a rule that applies at least one visual signal: "
+        "``cursor: default``, ``opacity: 0.7``, or a different border style."
+    )
+
+    rule_body = citation_rule.group(1)
+    # Must carry at least one visible distinction from anchor cards.
+    has_cursor_default = "cursor" in rule_body and "default" in rule_body
+    has_opacity = "opacity" in rule_body
+    has_border = "border" in rule_body
+    assert has_cursor_default or has_opacity or has_border, (
+        "The ``.prism-source-card--citation`` CSS rule exists but carries no visual "
+        "distinction from anchor cards.  It must set at least one of: "
+        "``cursor: default`` (suppresses pointer cursor), ``opacity`` (dims the card), "
+        "or a ``border`` variant.  "
+        f"Found rule body:\n{rule_body.strip()}"
+    )
+
+
+# ===========================================================================
+# UX Finding B (MEDIUM): title spans must have ellipsis-truncation CSS so
+# long headlines don't wrap and break card height uniformity.
+# ===========================================================================
+
+
+def test_card_title_has_ellipsis_truncation_css():
+    """Title text inside ``.prism-source-card`` must be capped to a fixed
+    number of lines via either single-line ellipsis or ``-webkit-line-clamp``,
+    so all cards stay the same height regardless of headline length.
+
+    Without truncation, a 90-char article headline wraps to 3+ lines and
+    makes that card significantly taller than its neighbours, breaking the
+    uniform single-row carousel appearance.
+
+    Source: ux-expert Playwright computed-styles audit at d3d9e5e: all title
+    spans have ``white-space: normal; text-overflow: clip`` (browser defaults
+    — no truncation rule applied).
+
+    RED intent: no ``text-overflow: ellipsis`` or ``-webkit-line-clamp`` CSS
+    is applied to card title spans anywhere in the ``.prism-source-card``
+    rule scope.  The card ``max-width: 220px`` alone does not prevent height
+    growth on title wrapping.
+    """
+    template_path = _WORKTREE / "templates" / "ai_advisor.html"
+    assert template_path.exists(), f"Template not found: {template_path}"
+
+    content = template_path.read_text(encoding="utf-8")
+    style_match = re.search(r"<style>(.*?)</style>", content, re.DOTALL | re.IGNORECASE)
+    assert style_match is not None, "No <style> block found in templates/ai_advisor.html."
+    style_block = style_match.group(1)
+
+    # Accept any of three valid approaches:
+    # (a) Single-line ellipsis applied directly to .prism-source-card or a
+    #     child selector thereof.
+    has_text_overflow_ellipsis = bool(
+        re.search(
+            r"\.prism-source-card[^{]*\{[^}]*text-overflow\s*:\s*ellipsis",
+            style_block,
+            re.DOTALL,
+        )
+    )
+    # (b) Multi-line clamp anywhere in a .prism-source-card rule scope.
+    has_line_clamp = bool(
+        re.search(
+            r"\.prism-source-card[^{]*\{[^}]*-webkit-line-clamp",
+            style_block,
+            re.DOTALL,
+        )
+    )
+    # (c) A dedicated .prism-source-title helper class with truncation.
+    has_title_class_truncation = bool(
+        re.search(
+            r"\.prism-source-title[^{]*\{"
+            r"[^}]*(?:text-overflow\s*:\s*ellipsis|-webkit-line-clamp)",
+            style_block,
+            re.DOTALL,
+        )
+    )
+
+    assert has_text_overflow_ellipsis or has_line_clamp or has_title_class_truncation, (
+        "No title-truncation CSS found for ``.prism-source-card`` title spans. "
+        "Long article headlines wrap to 3+ lines and break card height uniformity. "
+        "Add one of:\n"
+        "  (a) Single-line: ``white-space: nowrap; overflow: hidden; "
+        "text-overflow: ellipsis`` on ``.prism-source-card span:first-child`` "
+        "or a ``.prism-source-title`` class.\n"
+        "  (b) Multi-line: ``display: -webkit-box; -webkit-box-orient: vertical; "
+        "-webkit-line-clamp: 2; overflow: hidden`` for 2-line clamping."
+    )
