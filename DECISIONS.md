@@ -3435,6 +3435,8 @@ DE-PRISM-DIAG-001; branch `fix/council-subprocess-diagnostics`; HEAD `9fd3496`.
 
 ## DE-SOURCES-CAROUSEL-001 — Replace vertical prism sources list with bounded horizontal carousel (2026-06-29)
 
+> **SUPERSEDED — see DE-PRISM-SOURCES-PER-LENS-001 below.** The flat single-carousel layout shipped in this entry was replaced in the prism-sources-per-lens-carousels cycle (2026-06-30) with one carousel per prism lens. The historical record below is preserved unchanged.
+
 ### Problem
 
 The Overview tab's Market Prism "Sources" section (shipped in DE-PRISM-SOURCES-001) rendered as a vertical `<ul class="prism-sources-list">` of `<li>` items. With a full nightly council run producing many citations the list expanded the Overview page vertically without bound — the operator described it as "unruly." The sources feature itself was correct and wanted; only the layout was the problem.
@@ -3595,3 +3597,85 @@ The droplet `.env` sets `ALPHABOT_MAX_JOBS=1` as defense-in-depth. The code-leve
 ### Reference
 
 DE-AUTOTUNE-OOM; branch `fix/autotune-oom-memory-bound`; HEAD `b62dfa5`; AC-1 empirical profile 2026-06-29.
+
+---
+
+## DE-PRISM-SOURCES-PER-LENS-001 — Per-lens Market Prism sources carousels (2026-06-30)
+
+Branch: `feat/prism-sources-per-lens-carousels` | Base: `origin/main` cd36d5d | HEAD: 4260c2b
+
+### Problem
+
+The Overview tab's Market Prism Sources section (last updated in DE-SOURCES-CAROUSEL-001, PR #85) rendered ALL citations from all five prism lenses in a SINGLE flat horizontal carousel. With a full nightly council run each lens contributing multiple sources, the single strip became long enough that the operator had to scroll far horizontally to see citations from later lenses (derivatives, macro, fundamentals). The per-card `.prism-source-lens-tag` badge identified which lens each card belonged to, but the grouping was purely visual and difficult to scan.
+
+### Decision — one carousel per non-empty prism lens
+
+Replace the single flat carousel with **one carousel per non-empty prism lens**, in canonical order: technicals, sentiment, derivatives, macro, fundamentals. Each lens carousel has a `.prism-lens-carousel-label` header showing the lens display name, and a `data-testid="prism-sources-lens-{lens}"` wrapper. A source attributed to more than one lens appears in each of those lenses' carousels (natural duplication from the `per_lens_digest` keying; no cross-lens dedup introduced). Empty lenses are suppressed entirely (no bare label, no empty carousel strip). The per-card `.prism-source-lens-tag` badge is removed as redundant inside a lens-labeled strip.
+
+**Why per-lens over single-wider or accordion:** each lens is a coherent analytical domain; grouping sources by lens makes the provenance of each citation immediately clear without requiring the operator to read the badge on each card. Shorter per-lens strips mean the operator can scan to the end of any lens without horizontal scrolling across unrelated lenses' citations.
+
+### Implementation
+
+File changed: `templates/ai_advisor.html` only. No backend, route, or data change (AC-7).
+
+**CSS changes:**
+- **Added** `.prism-lens-carousel-label`: 0.6875rem, 700-weight, uppercase, letter-spaced `--studio-ink-dim` label above each lens strip. 0.75rem top margin / 0.25rem bottom margin to separate consecutive lens groups.
+- **Removed** `.prism-source-lens-tag`: the per-card lens badge (0.5625rem pill) is no longer needed and was deleted entirely. `data-testid` selectors depending on `.prism-source-lens-tag` should be updated; the project has none.
+
+**Render block changes:**
+
+Old structure (flat carousel):
+```
+{% set _all_sources = [] %}          {# aggregate all lenses into one list #}
+{% for _sln, _sle in _per_lens.items() ... %}  {# flatten sources + article_corpus #}
+{% if _all_sources %}
+  <div data-testid="prism-sources">
+    <div class="prism-sources-carousel">
+      {% for _src in _all_sources %} ... {% endfor %}
+    </div>
+  </div>
+{% endif %}
+```
+
+New structure (per-lens carousels):
+```
+{% set _lens_names = ['technicals','sentiment','derivatives','macro','fundamentals'] %}
+{% set _ns = namespace(any_sources=false) %}
+{% for _lname in _lens_names %}        {# probe for any non-empty lens #}
+  {% if _le.get('sources') or _le.get('article_corpus') %}{% set _ns.any_sources = true %}{% endif %}
+{% endfor %}
+{% if _ns.any_sources %}
+  <div data-testid="prism-sources">
+    {% for _lname in _lens_names %}    {# one carousel block per non-empty lens #}
+      {% if _le_articles or _le_sources %}
+        <div data-testid="prism-sources-lens-{{ _lname }}">
+          <div class="prism-lens-carousel-label">{{ _lname | capitalize }}</div>
+          <div class="prism-sources-carousel">
+            {# article_corpus entries first (clickable anchors), then sources strings (citation divs) #}
+          </div>
+        </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+{% endif %}
+```
+
+- Canonical iteration order is fixed to the `_lens_names` list (not `_per_lens.items()` dict order) — guarantees AC-8 stable ordering.
+- XSS safety preserved: all interpolated values use `| e`; no `| safe`; external links keep `target="_blank" rel="noopener noreferrer"`.
+- Empty-state guard (`{% if _ns.any_sources %}`) preserves AC-6 behavior: when no lens has sources, the Sources block is entirely absent.
+
+### Security
+
+No new attack surface. The `startswith(('http://', 'https://'))` URL guard from DE-SOURCES-CAROUSEL-001 is preserved on each per-lens `article_corpus` card. All interpolated fields continue to be escaped with `| e`. The per-card lens badge removal eliminates a (benign) interpolation site.
+
+### Files changed
+
+- `templates/ai_advisor.html` — CSS: added `.prism-lens-carousel-label`, removed `.prism-source-lens-tag`; render block: flat single-carousel → per-lens carousel loop in canonical order; no other file changed
+
+### Tests
+
+`tests/ai_advisor/test_prism_per_lens_carousels.py` — 10 tests (8 AC-driven + 2 regression guards). AC-1 one-carousel-per-non-empty-lens; AC-2 empty-lens suppressed; AC-3 shared URL appears in each lens carousel; AC-4 visual contract preserved (`.prism-source-card`, clickable `<a>` for http URLs, citation variant for non-URL); AC-5 `.prism-source-lens-tag` absent; AC-6 honest empty-state when no row; AC-8 canonical order. Regression: AC-6 honest empty-state (GREEN at base); XSS `| e` escaping (GREEN at base).
+
+### Reference
+
+DE-PRISM-SOURCES-PER-LENS-001; branch `feat/prism-sources-per-lens-carousels`; commit `4260c2b`; supersedes DE-SOURCES-CAROUSEL-001 (PR #85).
