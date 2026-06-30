@@ -463,7 +463,7 @@ def build_replay_day(
     return ticks
 
 
-def generate_synthetic_history(bot_state, current_date_str, *, n_jobs=None):
+def generate_synthetic_history(bot_state, current_date_str, *, n_jobs: int | None = None):
     print("  -> Generating Synthetic Forward-Looking Intraday History...")
 
     # 1. Extract tickers
