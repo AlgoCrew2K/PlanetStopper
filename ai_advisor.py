@@ -2018,7 +2018,12 @@ def revalidate_suggestion_oos(
     # date+holdings-keyed file cache; the autotuner fills this cache each cycle
     # before market open, so the cold-fetch case (no cache) only occurs when
     # the autotuner has not yet run — already a degraded-data situation.
-    history_data = _synthetic_history.generate_synthetic_history(bot_state, current_date_str)
+    # n_jobs=1 — bound replay parallelism on the OOS-revalidation path (C-1,
+    # DE-AUTOTUNE-OOM): same 2-core / 3 GiB-cgroup OOM root as the autotuner
+    # path. Sequential joblib backend (no fork), peak 2.03 GiB vs 3.0 GiB cap.
+    history_data = _synthetic_history.generate_synthetic_history(
+        bot_state, current_date_str, n_jobs=1
+    )
 
     # deviation_dict: 45-day trailing execution-deviation penalties by exit reason.
     deviation_dict = calculate_historical_deviation(current_date_str)
