@@ -1,4 +1,4 @@
-"""RED tests — DE-AUTOTUNE-OOM: autotuner replay parallelism bounding (AC-2/AC-5/AC-7/AC-8).
+"""RED tests — DE-AUTOTUNE-OOM: autotuner + ai_advisor OOS replay bounding (AC-2/AC-5/AC-7/AC-8).
 
 Background
 ----------
@@ -10,19 +10,26 @@ defaults to n_jobs=-1 (all cores) when ``ALPHABOT_MAX_JOBS`` is unset
 (parent ~2 GB + 2 copies > 3 GB) → the cgroup OOM-kills it before
 ``save_autotune_run`` is ever reached.
 
+Additionally, ``ai_advisor.revalidate_suggestion_oos`` (ai_advisor.py:2021)
+calls ``generate_synthetic_history(bot_state, current_date_str)`` with the
+FULL bot_state (same payload as the autotuner) and NO ``n_jobs`` kwarg →
+same OOM vector on the operator-accept path.  The reviewer surfaced this as a
+same-root gap that must be code-bounded (C-1).
+
 Fix scope (AC-1 verdict — config-only with code-level hardening)
 -----------------------------------------------------------------
 ``autotuner.run_autotuner`` must pass an explicit **bounded** ``n_jobs``
 kwarg to its ``generate_synthetic_history(...)`` call (autotuner.py:2158)
 so the autotune path is bounded **regardless of whether ``ALPHABOT_MAX_JOBS``
-is set**.  The bound value is ``1`` (sequential joblib backend, no fork, peak
+is set**.  ``ai_advisor.revalidate_suggestion_oos`` must do the same (C-1,
+REVISE).  The bound value is ``1`` (sequential joblib backend, no fork, peak
 2.03 GiB — 990 MB headroom under the 3.0 GiB cap).  Other
 ``generate_synthetic_history`` callers are untouched — their ``None``/default
 continues to resolve via ``_resolve_replay_n_jobs()``.
 
 Tests in this file
 ------------------
-RED tests (5 — currently failing, must go GREEN after at-impl's fix):
+RED tests (5 autotuner-path + 1 ai_advisor-path — must go GREEN after at-impl's fix):
 
 T1  AC-2 structural: ``generate_synthetic_history`` accepts ``n_jobs`` kwarg.
 T2  AC-2 / no-magic-numbers rule: ``autotuner.py`` exposes a named module-level
@@ -36,6 +43,11 @@ T4  AC-2 adversarial: ``run_autotuner`` passes ``n_jobs=1`` even when
 T5  AC-7 / reproducibility-neutral plumbing: ``generate_synthetic_history``
     passes the ``n_jobs`` kwarg through to ``Parallel`` as its n_jobs
     argument.  Pins the thread-through mechanism.
+C-1 Same-root OOM on the ai_advisor OOS-revalidation path:
+    ``revalidate_suggestion_oos`` must pass ``n_jobs=1`` to
+    ``generate_synthetic_history`` when ``ALPHABOT_MAX_JOBS`` is UNSET.
+    A config-only (.env) fix MUST fail this test (added in REVISE phase after
+    reviewer finding r2-correct).
 
 GREEN guards (2 — pass now, must STAY GREEN through the fix):
 
@@ -453,4 +465,105 @@ def test_mem_cap_default_not_raised_above_contract_ceiling(contract):
         f"Raising this cap risks uncapped pytest fan-out and host hard-reboots "
         f"(2026-06-21 RCA). The OOM fix belongs in the autotuner call site, "
         f"not in the test-suite cap."
+    )
+
+
+# ---------------------------------------------------------------------------
+# C-1 — ai_advisor OOS-revalidation path: same root OOM vector (REVISE)
+# ---------------------------------------------------------------------------
+
+
+def test_ai_advisor_oos_path_passes_bounded_n_jobs_when_alphabot_max_jobs_unset(
+    monkeypatch, contract
+):
+    """C-1 (reviewer finding r2-correct, REVISE phase): ``revalidate_suggestion_oos``
+    must pass ``n_jobs=1`` to ``generate_synthetic_history`` when
+    ``ALPHABOT_MAX_JOBS`` is UNSET.
+
+    Root cause matches the autotuner path (AC-2): ``ai_advisor.py:2021`` calls
+    ``generate_synthetic_history(bot_state, current_date_str)`` with the FULL
+    ``bot_state`` (all symphonies — same payload as the autotuner, NOT single-
+    symphony) and NO ``n_jobs`` kwarg.  On the 2-core / MemoryMax=3.0 GiB
+    droplet with a cold replay cache this forks 2 workers over ~2 GB of history
+    → the same cgroup OOM the PR prevents on the autotuner path.  The autotuner
+    path now has a code-level guard (``_AUTOTUNE_REPLAY_N_JOBS``); this path
+    has only the env var (AC-6) — insufficient per the box-safety rule.
+
+    Spy pattern mirrors T3 / T4: capture all kwargs passed to
+    ``generate_synthetic_history``, assert ``n_jobs=1`` is present and equals
+    the fixture-derived bound.  Heavy callers are stubbed (database.load_state,
+    autotuner.calculate_historical_deviation, autotuner.run_simulation) so no
+    network calls, Alpaca fetches, or DB writes occur.
+
+    Patch target for generate_synthetic_history: ``"synthetic_history.generate_synthetic_history"``
+    — ``revalidate_suggestion_oos`` lazily imports ``synthetic_history as _synthetic_history``
+    inside the function body, binding it to the cached ``sys.modules["synthetic_history"]``
+    module.  Patching the attribute on that module intercepts the call.  This is
+    the same target used in ``tests/ai_advisor/test_ai_advisor_safety.py:657``.
+
+    RED: current call is ``_synthetic_history.generate_synthetic_history(bot_state, date)``
+    with no ``n_jobs`` kwarg — the spy captures empty kwargs, assertion fails.
+    GREEN: ai_advisor passes ``n_jobs=<bound>`` (value 1) at the call site.
+
+    A config-only (.env ALPHABOT_MAX_JOBS=1) fix will FAIL this test — the
+    env var is deleted from the process environment before the call.
+    """
+    import ai_advisor
+
+    # Strip ALPHABOT_MAX_JOBS from env entirely — simulates the droplet state.
+    monkeypatch.delenv("ALPHABOT_MAX_JOBS", raising=False)
+
+    bounded = int(contract["replay_parallelism_contract"]["autotune_safe_n_jobs"])
+    kwarg_name = contract["generate_synthetic_history_api_contract"]["required_kwarg"]
+
+    # Spy: capture all kwargs passed to generate_synthetic_history.
+    # Returns {} (empty history_data) so run_simulation is reached; run_simulation
+    # is also patched to avoid autotuner / Optuna / network work.
+    captured_kwargs: list[dict] = []
+
+    def _spy(bot_state, current_date_str, **kwargs):
+        captured_kwargs.append(dict(kwargs))
+        return {}
+
+    # Minimal structurally-valid bot_state — one account keyed to symphony "sym-A".
+    # database.normalize_name("sym-A") == "sym-a" → matches symphony_id "sym-A".
+    _minimal_bot_state = {
+        "acc-sym-a": {
+            "name": "sym-A",
+            "current_return": 0.0,
+            "high_water_mark": 0.0,
+        }
+    }
+
+    with (
+        patch("database.load_state", return_value=_minimal_bot_state),
+        patch("synthetic_history.generate_synthetic_history", _spy),
+        patch("autotuner.calculate_historical_deviation", return_value={}),
+        patch("autotuner.run_simulation", side_effect=[1.0, 2.0]),
+    ):
+        ai_advisor.revalidate_suggestion_oos(
+            symphony_id="sym-A",
+            config_key="MAX_SQUEEZE_FLOOR",
+            suggested_value=0.30,
+            current_strategy={"MAX_SQUEEZE_FLOOR": 0.20},
+        )
+
+    assert captured_kwargs, (
+        "C-1: generate_synthetic_history was not called from revalidate_suggestion_oos "
+        "— the spy was never invoked. Verify that ai_advisor.py:2021 is still the call "
+        "site and that the lazy import inside the function body resolves correctly."
+    )
+    last_call = captured_kwargs[-1]
+    assert kwarg_name in last_call, (
+        f"C-1: revalidate_suggestion_oos did not pass ``{kwarg_name}=`` to "
+        f"generate_synthetic_history. Got kwargs: {last_call!r}. "
+        f"A config-only fix (ALPHABOT_MAX_JOBS=1 in .env) would NOT pass this "
+        f"test — the code must pass an explicit n_jobs bound (value {bounded!r}) "
+        f"at the ai_advisor.py:2021 call site."
+    )
+    assert last_call[kwarg_name] == bounded, (
+        f"C-1: revalidate_suggestion_oos passed {kwarg_name}={last_call[kwarg_name]!r} "
+        f"but expected {bounded!r} (the AC-1 safe bound). "
+        f"n_jobs=-1 (all-cores) forks 2 workers on the 2-core droplet → parent ~2 GB "
+        f"+ 2 copies > 3 GB MemoryMax → OOM-kill (same root cause as autotuner path)."
     )
