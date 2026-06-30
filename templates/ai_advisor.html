@@ -819,6 +819,16 @@
             max-height: 160px;
         }
 
+        /* Per-lens section label above each carousel group */
+        .prism-lens-carousel-label {
+            font-size: 0.6875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--studio-ink-dim);
+            margin: 0.75rem 0 0.25rem;
+        }
+
         .prism-source-card {
             flex: 0 0 auto;
             scroll-snap-align: start;
@@ -856,18 +866,6 @@
         .prism-source-card .prism-source-meta {
             font-size: 0.6875rem;
             color: var(--studio-ink-dim);
-        }
-
-        .prism-source-lens-tag {
-            font-size: 0.5625rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-            color: var(--studio-ink-dim);
-            border: 1px solid var(--studio-border);
-            border-radius: 999px;
-            padding: 0.05rem 0.3rem;
-            align-self: flex-start;
         }
 
         /* Empty / no-data state */
@@ -977,20 +975,7 @@
                 {% set _sentiment = _raw.get('overall_sentiment', 'limited-inputs') %}
                 {% set _rationale = _raw.get('sentiment_rationale', '') %}
                 {% set _per_lens  = _raw.get('per_lens_digest', {}) %}
-                {# AC-5a: aggregate sources from per-lens entries (plain-string citations
-                   and article_corpus dicts) instead of a missing top-level 'sources' key. #}
-                {% set _all_sources = [] %}
-                {% for _sln, _sle in _per_lens.items() %}
-                    {% if _sle is mapping %}
-                        {% for _src_str in _sle.get('sources', []) %}
-                            {% set _ = _all_sources.append({'citation': _src_str, 'lens': _sln}) %}
-                        {% endfor %}
-                        {% for _art in _sle.get('article_corpus', []) %}
-                            {% set _ = _all_sources.append({'url': _art.get('url', '#'), 'title': _art.get('title', ''), 'published': _art.get('published', ''), 'lens': _sln}) %}
-                        {% endfor %}
-                    {% endif %}
-                {% endfor %}
-                {% set _created   = market_prism_summary.get('created_at', '') %}
+                {% set _created = market_prism_summary.get('created_at', '') %}
             {% endif %}
 
             <div class="prism-block-header">
@@ -1047,38 +1032,56 @@
                     </div>
                 {% endif %}
 
-                {# Cited news sources — AC-5a: render per-lens plain citations and
-                   article_corpus links.  Plain string citations render as text spans;
-                   article_corpus entries render as clickable <a href> links.
+                {# Per-lens source carousels — one carousel per non-empty lens in canonical
+                   order.  A URL that is cited under multiple lenses appears in each of
+                   those lens carousels.  Plain string citations (sources list) render as
+                   citation cards; article_corpus entries with a valid http(s) URL render
+                   as clickable anchor cards.  Lenses with zero sources are suppressed.
                    XSS-safe: all values escaped with | e, no | safe used. #}
-                {% if _all_sources %}
+                {% set _ns = namespace(any_sources=false) %}
+                {% for _lname in _lens_names %}
+                    {% set _le = _per_lens.get(_lname, {}) %}
+                    {% if _le.get('sources') or _le.get('article_corpus') %}
+                        {% set _ns.any_sources = true %}
+                    {% endif %}
+                {% endfor %}
+                {% if _ns.any_sources %}
                     <div data-testid="prism-sources">
                         <div class="prism-sources-header">Sources</div>
-                        <div class="prism-sources-carousel">
-                            {% for _src in _all_sources %}
-                                {% if _src.get('url') and _src.get('url').startswith(('http://', 'https://')) %}
-                                    <a class="prism-source-card"
-                                       href="{{ _src.get('url') | e }}"
-                                       target="_blank"
-                                       rel="noopener noreferrer">
-                                        <span>{{ _src.get('title', 'Untitled') | e }}</span>
-                                        {% if _src.get('published') %}
-                                            <span class="prism-source-meta">{{ _src.get('published') | e }}</span>
-                                        {% endif %}
-                                        {% if _src.get('lens') %}
-                                            <span class="prism-source-lens-tag">{{ _src.get('lens') | e }}</span>
-                                        {% endif %}
-                                    </a>
-                                {% else %}
-                                    <div class="prism-source-card prism-source-card--citation">
-                                        <span>{{ _src.get('citation', _src.get('title', '')) | e }}</span>
-                                        {% if _src.get('lens') %}
-                                            <span class="prism-source-lens-tag">{{ _src.get('lens') | e }}</span>
-                                        {% endif %}
+                        {% for _lname in _lens_names %}
+                            {% set _le = _per_lens.get(_lname, {}) %}
+                            {% set _le_articles = _le.get('article_corpus', []) %}
+                            {% set _le_sources  = _le.get('sources', []) %}
+                            {% if _le_articles or _le_sources %}
+                                <div data-testid="prism-sources-lens-{{ _lname }}">
+                                    <div class="prism-lens-carousel-label">{{ _lname | capitalize }}</div>
+                                    <div class="prism-sources-carousel">
+                                        {% for _art in _le_articles %}
+                                            {% if _art.get('url') and _art.get('url').startswith(('http://', 'https://')) %}
+                                                <a class="prism-source-card"
+                                                   href="{{ _art.get('url') | e }}"
+                                                   target="_blank"
+                                                   rel="noopener noreferrer">
+                                                    <span>{{ _art.get('title', 'Untitled') | e }}</span>
+                                                    {% if _art.get('published') %}
+                                                        <span class="prism-source-meta">{{ _art.get('published') | e }}</span>
+                                                    {% endif %}
+                                                </a>
+                                            {% else %}
+                                                <div class="prism-source-card prism-source-card--citation">
+                                                    <span>{{ _art.get('title', '') | e }}</span>
+                                                </div>
+                                            {% endif %}
+                                        {% endfor %}
+                                        {% for _src_str in _le_sources %}
+                                            <div class="prism-source-card prism-source-card--citation">
+                                                <span>{{ _src_str | e }}</span>
+                                            </div>
+                                        {% endfor %}
                                     </div>
-                                {% endif %}
-                            {% endfor %}
-                        </div>
+                                </div>
+                            {% endif %}
+                        {% endfor %}
                     </div>
                 {% endif %}
 

@@ -3,7 +3,7 @@
 > Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
 **Source:** `app.py`
-**Last updated:** 2026-06-26 (fix/today-change-account-basis: B-2 today-change account-basis alignment, DE-TODAY-BASIS-001; prior: 2026-06-23 feat/dashboard-realtime-push: SSE push + _StaleFlagDict + data_as_of fix)
+**Last updated:** 2026-06-30 (DE-PRISM-SOURCES-PER-LENS-001: per-lens Market Prism sources carousels; prior: 2026-06-26 fix/today-change-account-basis, DE-TODAY-BASIS-001)
 
 ## Overview
 
@@ -380,7 +380,7 @@ If `market_prism_summary` is non-None, `ai_advisor_tab()` runs the SOURCES merge
 4. Calls `database.get_latest_market_prism_sources_for_run(run_id)`. If the SOURCES row is found, iterates its `per_lens_digest` entries and copies each non-empty `article_corpus` list into the corresponding entry of `_mp_raw["per_lens_digest"]` — only if both the source and destination lens entries are dicts.
 5. Entire block is wrapped in `try/except Exception: pass` — merge failure never crashes the route; honest empty-state (no article links) on any error, run_id mismatch, or absent SOURCES row.
 
-Template updated in **DE-SOURCES-CAROUSEL-001** (2026-06-29): Overview Market Prism sources now render as a bounded single-row horizontal carousel (`.prism-sources-carousel`, overflow-x:auto, scroll-snap) of clickable `.prism-source-card` elements instead of a vertical `<ul class="prism-sources-list">`. The data path (article_corpus merge into per_lens_digest) is unchanged; only the Jinja render block and its CSS were replaced. See `DECISIONS.md` §DE-SOURCES-CAROUSEL-001.
+Template updated first in **DE-SOURCES-CAROUSEL-001** (2026-06-29, superseded) and then in **DE-PRISM-SOURCES-PER-LENS-001** (2026-06-30): the Sources section now renders **one carousel per non-empty prism lens** in canonical order (technicals, sentiment, derivatives, macro, fundamentals), each prefixed with a `.prism-lens-carousel-label` and wrapped in `data-testid="prism-sources-lens-{lens}"`. A source attributed to multiple lenses appears in each matching carousel. Empty lenses are suppressed. The per-card `.prism-source-lens-tag` was removed (redundant inside a lens-labeled strip). The data path (article_corpus merge into per_lens_digest) is unchanged; only the Jinja render block and its CSS were updated. See `DECISIONS.md` §DE-PRISM-SOURCES-PER-LENS-001.
 
 #### `GET /ai-advisor/correlations` → 302 redirect to `/ai-advisor`
 #### `GET /ai-advisor/asset-swaps` → 302 redirect to `/ai-advisor`
