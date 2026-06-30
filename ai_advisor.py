@@ -62,6 +62,13 @@ _REQUEST_TIMEOUT_SECONDS = 30.0
 # 36 h covers a missed council night while still allowing the next run to refresh.
 _LENS_CACHE_MAX_AGE_HOURS = 36
 
+# _OOS_REPLAY_N_JOBS — bounds intraday-replay parallelism on the OOS-revalidation
+# path (C-1, DE-AUTOTUNE-OOM). Same 2-core / MemoryMax=3.0 GiB droplet root cause
+# as the autotuner path: generate_synthetic_history replays the full bot_state,
+# n_jobs=-1 forks 2 workers → parent ~2 GB + 2 copies > 3 GB → OOM-kill.
+# n_jobs=1 → joblib sequential backend (no fork), peak 2.03 GiB (990 MB headroom).
+_OOS_REPLAY_N_JOBS = 1
+
 
 def resolve_advisor_model() -> str:
     """Return the configured advisor synthesis model ID.
@@ -2018,7 +2025,9 @@ def revalidate_suggestion_oos(
     # date+holdings-keyed file cache; the autotuner fills this cache each cycle
     # before market open, so the cold-fetch case (no cache) only occurs when
     # the autotuner has not yet run — already a degraded-data situation.
-    history_data = _synthetic_history.generate_synthetic_history(bot_state, current_date_str)
+    history_data = _synthetic_history.generate_synthetic_history(
+        bot_state, current_date_str, n_jobs=_OOS_REPLAY_N_JOBS
+    )
 
     # deviation_dict: 45-day trailing execution-deviation penalties by exit reason.
     deviation_dict = calculate_historical_deviation(current_date_str)

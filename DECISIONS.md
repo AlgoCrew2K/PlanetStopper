@@ -3535,3 +3535,63 @@ Branch: `feat/advisor-latency-cache-serve` | Base: `origin/main` d15e06c | HEAD:
 ### Reference
 
 DE-ADVISOR-LATENCY; branch `feat/advisor-latency-cache-serve`; HEAD `f684ab6`.
+
+---
+
+## DE-AUTOTUNE-OOM — Bound autotuner replay n_jobs to prevent OOM on the droplet (2026-06-29)
+
+Branch: fix/autotune-oom-memory-bound | HEAD: b62dfa5
+
+### Problem
+
+The weekly walk-forward autotuner (invoked at `alpha_bot_execution.py:1105/1109` every Friday EOD) was OOM-killed on the 2-core / `MemoryMax=3221225472` (3.0 GiB) droplet before reaching `database.save_autotune_run`. The `autotune_runs` table was empty, causing every symphony in the AI Advisor to show "Optuna has not yet run / OOS alpha: N/A".
+
+### Root cause
+
+`synthetic_history.generate_synthetic_history` called `Parallel(n_jobs=_resolve_replay_n_jobs())` (`:670`) to parallelize intraday tick replay. `_resolve_replay_n_jobs()` reads `ALPHABOT_MAX_JOBS` from the environment and defaults to `-1` (all cores) when unset. `ALPHABOT_MAX_JOBS` was not set in the droplet `.env` — so joblib forked 2 worker processes on the 2-core box, each copying the full tick-data payload on top of:
+
+- Parent process holding all 11 symphonies' 250-day `history_125d` (replay-phase peak ~2 GB)
+- Per-symphony CPCV path histories and growing Optuna study (500 trials per symphony)
+
+This fan-out exceeded the 3.0 GiB cgroup cap — OOM kill confirmed in dmesg (Jun 26, pid 285168, UID 997, `oom_memcg=/system.slice/planetstopper.service`).
+
+**Not the cause:** Optuna's own `n_jobs` already defaults to 1 via `_resolve_optuna_n_jobs_from_env()` — SQLite RDBStorage cannot take parallel writes (`autotuner.py:243-261`).
+
+### Empirical profile (AC-1, 2026-06-29, cgroup-bounded on the droplet)
+
+A representative run was executed inside `systemd-run --scope -p MemoryMax=3G -p MemorySwapMax=0` against a `/tmp` DB copy (never the live DB, never a second live engine):
+
+- 11-symphony replay at `n_jobs=1`: cgroup MemoryPeak = **2.03 GiB** (process VmHWM 2.06 GiB), 990 MB headroom below the 3.00 GiB cap — **zero cgroup OOM**.
+- Memory growth ~1.1 MB/min plateau: `history_125d` (loaded once before the per-symphony loop) dominates; per-trial accumulation is flat.
+- Single-symphony full-completion run (real `OPTUNA_N_TRIALS_PRODUCTION=500` study): 64 s, 365 MB peak, 1 `autotune_runs` row written, exit 0.
+
+**Verdict:** `n_jobs=1` alone suffices. Per-symphony memory chunking (AC-3) is explicitly out of scope.
+
+### Fix (config-only — AC-1 empirical verdict)
+
+Two minimal changes scoped to the autotune path only; no other callers touched:
+
+1. **`synthetic_history.generate_synthetic_history`** gained a keyword-only `n_jobs=None` parameter. At the `Parallel(...)` call site: `effective_n_jobs = n_jobs if n_jobs is not None else _resolve_replay_n_jobs()`. Default `None` preserves existing env-driven behavior for all non-autotune callers.
+
+2. **`autotuner._AUTOTUNE_REPLAY_N_JOBS = 1`** — module-level named constant with source comment citing the AC-1 empirical profile and this entry. Passed by name at the single `generate_synthetic_history(bot_state, current_date_str, n_jobs=_AUTOTUNE_REPLAY_N_JOBS)` call site in `run_autotuner`. `n_jobs=1` uses joblib's sequential backend (no fork), keeping peak RSS at 2.03 GiB.
+
+### Why chunking (AC-3) was ruled out
+
+The AC-1 profile showed 990 MB of headroom at `n_jobs=1`, covering the replay phase which is the measured peak. Per-symphony memory chunking (explicit `del` / `gc.collect()` of CPCV slices, study objects, and restructured `history_125d` loading) would add implementation complexity with no demonstrated benefit. Revisit only if a future run shows peak > 3 GiB at `n_jobs=1`.
+
+### Defense-in-depth (AC-6)
+
+The droplet `.env` sets `ALPHABOT_MAX_JOBS=1` as defense-in-depth. The code-level constant `_AUTOTUNE_REPLAY_N_JOBS=1` is the **primary safety mechanism** — independent of any env var and cannot be bypassed by a missing `.env` entry.
+
+### Hard constraint: MemoryMax must never be raised
+
+`planetstopper.service MemoryMax=3221225472` is a host-safety boundary. The 4 GB droplet's physical RAM limit means raising the cap risks OOM-killing the host OS, not just the service. No change to MemoryMax is ever acceptable — the fix must live under the cap.
+
+### Files changed
+
+- `synthetic_history.py` — `generate_synthetic_history`: keyword-only `n_jobs=None`; `effective_n_jobs` resolution at `Parallel(...)` call; updated call-site comment
+- `autotuner.py` — `_AUTOTUNE_REPLAY_N_JOBS = 1` module constant (source-commented); `run_autotuner` passes `n_jobs=_AUTOTUNE_REPLAY_N_JOBS` at the single call site
+
+### Reference
+
+DE-AUTOTUNE-OOM; branch `fix/autotune-oom-memory-bound`; HEAD `b62dfa5`; AC-1 empirical profile 2026-06-29.

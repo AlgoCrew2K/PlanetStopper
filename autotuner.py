@@ -796,6 +796,15 @@ _BOOTSTRAP_MIN_T = 5
 # than a degenerate SE. Source: risk-engine-specialist's recommendation of 100.
 _BOOTSTRAP_MIN_VALID_RESAMPLES = 100
 
+# _AUTOTUNE_REPLAY_N_JOBS — bounds the intraday-replay parallelism on the autotune
+# path to prevent OOM on the 2-core / MemoryMax=3.0 GiB droplet. n_jobs=1 uses
+# joblib's sequential backend (no fork), keeping peak RSS at 2.03 GiB vs the 3.0 GiB
+# cgroup cap (AC-1 empirical profile 2026-06-29, DE-AUTOTUNE-OOM). Other callers of
+# generate_synthetic_history are untouched — their default (n_jobs=None) continues to
+# resolve via _resolve_replay_n_jobs(). AC-6 sets ALPHABOT_MAX_JOBS=1 in .env as
+# defense-in-depth; this constant is the primary code-level safety mechanism.
+_AUTOTUNE_REPLAY_N_JOBS = 1
+
 
 def compute_sortino_se_bootstrap(
     returns,
@@ -2155,7 +2164,9 @@ def run_autotuner(
     # "autotuner aborted — persistent history shortfall" rather than leaving
     # the operator unable to distinguish the abort from a no-change run.
     try:
-        history_125d = synthetic_history.generate_synthetic_history(bot_state, current_date_str)
+        history_125d = synthetic_history.generate_synthetic_history(
+            bot_state, current_date_str, n_jobs=_AUTOTUNE_REPLAY_N_JOBS
+        )
     except synthetic_history.HistoryShortfallError as e:
         print(f"  -> Autotuner aborted: persistent history shortfall — {e}")
         return {"aborted": True, "reason": str(e)}

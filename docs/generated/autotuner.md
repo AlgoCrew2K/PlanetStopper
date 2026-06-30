@@ -3,13 +3,13 @@
 > Optuna walk-forward optimizer: runs 500 trials per symphony over a 250-day sliding window, selects the best trial via the CRRA-EU objective + Harvey & Liu BHY haircut + CSCV PBO acceptance gate, and enforces NN1 spec-freeze discipline throughout. Also provides `run_calibration_sweep` — a separate, advisory-only 2-param sweep over `PARABOLIC_VELOCITY_THRESHOLD` and `VWAP_CROSS_HWM_PCT`.
 
 **Source:** `autotuner.py`
-**Last updated:** 2026-06-19
+**Last updated:** 2026-06-29
 
 ## Overview
 
 `autotuner.py` implements the per-symphony Bayesian optimization loop. At each autotuner run it:
 
-1. Fetches 250 trading days of synthetic replay history via `synthetic_history.generate_synthetic_history`.
+1. Fetches 250 trading days of synthetic replay history via `synthetic_history.generate_synthetic_history`, passing `n_jobs=_AUTOTUNE_REPLAY_N_JOBS` (= 1) to bound intraday-replay parallelism on the 2-core / 3.0 GiB droplet (DE-AUTOTUNE-OOM).
 2. Splits history 60/20/20 (train/validation/frozen-eval) with `PURGE_DAYS=20` and `EMBARGO_DAYS=1` per López de Prado 2018.
 3. Builds CPCV folds via `_generate_cpcv_folds` (N=6 groups, k=2 test groups, 15 splits, 5 complete OOS paths) and aggregates paths via `_aggregate_cpcv_paths`.
 4. Runs `OPTUNA_N_TRIALS_PRODUCTION` (500) Optuna TPE trials; each trial's objective uses the CRRA-EU branch (`run_simulation_crra_eu`) or the legacy Sortino branch. `locked_vars` keys are excluded from `suggest_*` calls.
@@ -287,6 +287,7 @@ Scans `post_mortem_*.json` files (last 45 days). Returns average execution-devia
 | `OPTUNA_N_TRIALS_PRODUCTION` | 500 | Production walk-forward main study; 5x the 100-trial stability floor |
 | `OPTUNA_N_TRIALS_CALIBRATION` | 100 | Calibration sweep; equals the statistical-stability floor exactly |
 | `ACTIVE_OPTUNA_PRUNER_FAMILY` | `"NOP"` | Explicit NOP pruner — prevents silent MedianPruner activation |
+| `_AUTOTUNE_REPLAY_N_JOBS` | 1 | Intraday-replay `n_jobs` override passed to `synthetic_history.generate_synthetic_history` on the autotune path. `n_jobs=1` uses joblib sequential backend (no fork), keeping peak RSS at 2.03 GiB on the 2-core / 3.0 GiB droplet (990 MB headroom, AC-1 empirical profile 2026-06-29, DE-AUTOTUNE-OOM). Other callers of `generate_synthetic_history` are untouched. |
 
 ### CPCV Constants (Phase 2)
 
