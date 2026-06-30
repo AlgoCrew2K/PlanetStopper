@@ -1,132 +1,104 @@
-# TDD Handoff — DE-AUTOTUNE-OOM (replay n_jobs bounding)
+# TDD Handoff — per-lens Market Prism sources carousels
+Plan: feature-plans/prism-sources-per-lens-carousels.md
+Branch: feat/prism-sources-per-lens-carousels
+Phase: red
 
-**Cycle:** DE-AUTOTUNE-OOM — autotuner replay parallelism bounding
-**Branch:** `fix/autotune-oom-memory-bound`
-**Phase:** green
-**RED commit SHA:** `2ea5216`
-**Worktree:** `C:/Users/paulm/Documents/Projects/POC/AlphaBotPM/.claude/worktrees/autotune-oom`
-**Feature plan:** `feature-plans/autotune-oom-memory-bound.md`
+## Test Files
+- tests/ai_advisor/test_prism_per_lens_carousels.py (10 tests)
 
----
+## Behavioral Test Plan
+1. GET /ai-advisor with multi-lens fixture → 3 `.prism-sources-carousel` containers, not 1 flat
+2. GET /ai-advisor → shared URL appears inside BOTH the technicals AND sentiment per-lens sections
+3. GET /ai-advisor → tech-only URL confined to technicals section, absent from sentiment section
+4. GET /ai-advisor → `.prism-source-lens-tag` class absent from rendered HTML entirely
+5. GET /ai-advisor → `data-testid="prism-sources-lens-{lens}"` present for technicals/sentiment/macro; absent for derivatives/fundamentals (no sources)
+6. GET /ai-advisor → technicals testid position < sentiment testid position < macro testid position
+7. GET /ai-advisor with no MARKET_PRISM row → `prism-empty-state` present, no carousel rendered
+8. GET /ai-advisor → lens name appears as visible text content (between tags) in its section
+9. GET /ai-advisor → macro plain-citation string rendered inside the macro per-lens section
+10. GET /ai-advisor with XSS title → raw `<b>Inject</b>` absent; "Inject" text present escaped
 
-## What is broken (the OOM root cause)
+## Implementation Notes for ph-impl (flask-dashboard-specialist)
 
-`synthetic_history.py:670`:
-```python
-results = Parallel(n_jobs=_resolve_replay_n_jobs())(...)
-```
-`_resolve_replay_n_jobs()` returns `-1` (all cores) when `ALPHABOT_MAX_JOBS` is
-unset. On the 2-core / MemoryMax=3.0 GiB droplet this forks 2 tick-data-copying
-workers → parent ~2 GB + 2 copies > 3 GB → cgroup OOM-kills the autotuner before
-`save_autotune_run` is ever reached (AC-1 empirical profile, 2026-06-29).
+### What GREEN must do — TEMPLATE-ONLY (AC-7 confirmed by recon at cf93826)
 
----
+**Replace the flat single-carousel block** (lines 982–1083 of `templates/ai_advisor.html`)
+with a per-lens loop. Specifically:
 
-## Fix scope (AC-1 verdict — LOCKED)
+**1. Remove the `_all_sources` aggregation list** — the entire `{% set _all_sources = [] %}`
+and the loop that populates it are deleted.
 
-**AC-3 chunking is OUT OF SCOPE.** `n_jobs=1` alone keeps peak at 2.03 GiB (990 MB
-headroom). The fix is two changes only:
+**2. Add a per-lens outer loop** over `_lens_names` (the canonical list at template line 1025:
+`['technicals', 'sentiment', 'derivatives', 'macro', 'fundamentals']`) in that fixed order.
+For each lens:
+  a. Collect that lens's sources: `article_corpus` list entries + plain `sources` strings.
+  b. If the lens has ZERO sources (both lists empty / absent), SKIP — no carousel, no label (AC-2).
+  c. If the lens has ≥1 source, emit:
+     ```html
+     <div data-testid="prism-sources-lens-{lens_name}">
+         <div class="prism-lens-carousel-label">{lens_name}</div>
+         <div class="prism-sources-carousel">
+             ... per-card loop (same logic as old flat loop, minus lens tag) ...
+         </div>
+     </div>
+     ```
 
-### Change 1 — `synthetic_history.py`
+**3. Remove `.prism-source-lens-tag` spans** from BOTH card variants (AC-5) — the parent
+group label already identifies the lens.
 
-Add `n_jobs` keyword argument to `generate_synthetic_history`:
+**4. Preserve all escaping** — keep `| e` on url/title/published/citation fields. No `| safe`.
 
-```python
-def generate_synthetic_history(bot_state, current_date_str, *, n_jobs=None):
-    ...
-    # At the Parallel call site (currently line 670):
-    effective_n_jobs = n_jobs if n_jobs is not None else _resolve_replay_n_jobs()
-    results = Parallel(n_jobs=effective_n_jobs)(
-        delayed(process_day)(d) for d in intraday_dates
-    )
-```
+**5. Outer structure preserved** — the existing `<div data-testid="prism-sources">` with
+`<div class="prism-sources-header">Sources</div>` must be kept as the outer wrapper
+(existing `test_overview_sources_carousel.py` pins `data-testid="prism-sources"`).
+The entire per-lens loop goes inside it, gated on whether ANY lens has sources.
 
-- `n_jobs=None` default → ALL OTHER CALLERS are untouched (their `None` resolves
-  via `_resolve_replay_n_jobs()` as before).
-- Do NOT change `_resolve_replay_n_jobs()` — its global default of `-1` must stay
-  `-1` (Guard G6 asserts this; changing it is out of scope and breaks other callers).
+**6. Empty-state rule (AC-6)** — when ALL lenses have zero sources, render NO carousel
+headers, NO groups, NO "Sources" heading (existing outer `{% if ... %}` guard must cover all).
+The `{% if market_prism_summary %}` guard for the no-row case is unchanged.
 
-### Change 2 — `autotuner.py`
+**7. URL guard preserved** — `{% if _src.get('url') and _src.get('url').startswith(('http://', 'https://')) %}`
+on anchor cards MUST stay as-is (prevents `javascript:` URLs, guards `url=None` crash).
 
-Add a named module-level constant AND thread it into the `generate_synthetic_history`
-call at line 2158:
+**8. CSS rules** — `.prism-sources-carousel`, `.prism-source-card`, `.prism-source-card--citation`,
+`a.prism-source-card:hover` all keep their existing rules. Remove the `.prism-source-lens-tag`
+CSS rule from the `<style>` block.
 
-```python
-# Bound the intraday-replay parallelism on the autotune path to prevent OOM on the
-# 2-core / MemoryMax=3.0 GiB droplet. n_jobs=1 → joblib sequential backend (no fork),
-# peak 2.03 GiB vs 3.0 GiB cap (AC-1 empirical profile 2026-06-29, DE-AUTOTUNE-OOM).
-# Other generate_synthetic_history callers are untouched (their default resolves via
-# _resolve_replay_n_jobs()). AC-6 sets ALPHABOT_MAX_JOBS=1 in .env as defense-in-depth.
-_AUTOTUNE_REPLAY_N_JOBS = 1
+### Data shape at cf93826 (confirmed by test-writer recon)
+- `market_prism_summary['raw_response']['per_lens_digest']` is the per-lens dict.
+- After `ai_advisor_tab()` merges the SOURCES row (app.py lines 3718–3754), each lens entry
+  MAY have `article_corpus: list[{url, title, published}]` AND/OR `sources: list[str]`.
+- Both fields may exist on the same lens entry; treat independently.
+- JS files (`static/ai_advisor.js`, `static/index.js`) have ZERO references to sources.
+  No JS changes needed.
 
-# Then at the call site (autotuner.py:2158):
-history_125d = synthetic_history.generate_synthetic_history(
-    bot_state, current_date_str, n_jobs=_AUTOTUNE_REPLAY_N_JOBS
-)
-```
+### Structural discriminators (what tests enforce)
+- `html.count('class="prism-sources-carousel"') == 3` for the 3-lens fixture
+- `data-testid="prism-sources-lens-technicals"` in html; `"prism-sources-lens-derivatives"` NOT in html
+- Shared URL present in BOTH technicals and sentiment sections (section-parsed)
+- Tech-only URL absent from sentiment section (section-parsed)
+- `prism-source-lens-tag` class absent from entire HTML
+- Lens name as visible text `>[Tt]echnicals<` between tags in its section
+- Macro citation string present in macro section
 
-The constant name must contain at least one of: `JOBS`, `N_JOBS`, `REPLAY`
-(T2 checks by value=1 AND name pattern).
+## A/C Coverage Matrix
+| A/C | Description | Test(s) | Status |
+|-----|-------------|---------|--------|
+| AC-1 | One carousel per non-empty lens, each labeled | test_1_carousel_count, test_8_lens_label | RED |
+| AC-2 | Empty lens renders no carousel | test_5_testid_per_lens (absent for derivatives/fundamentals) | RED |
+| AC-3 | Shared URL in each of its lens carousels | test_2_shared_url_in_both_sections | RED |
+| AC-4 | `.prism-sources-carousel` + `.prism-source-card--citation` preserved | test_1_carousel_count, test_9_macro_citation | RED |
+| AC-5 | `.prism-source-lens-tag` removed | test_4_lens_tag_absent | RED |
+| AC-6 | No-sources honest empty-state | test_7_empty_state | GUARD |
+| AC-7 | Template-only (no route/data change) | Recon finding — no test needed | N/A |
+| AC-8 | Canonical ordering | test_6_canonical_ordering | RED |
+| Security | XSS escaping preserved through restructure | test_10_xss_escaped | GUARD |
 
----
+## Import Stubs Created
+None — template-only change, no new Python modules.
 
-## RED tests — what you must make GREEN
-
-**File:** `tests/autotuner/test_replay_n_jobs_autotune_bound.py`
-**Fixture:** `tests/fixtures/autotuner/replay_n_jobs_bound_contract.json`
-
-| Test | What it asserts | Currently |
-|------|----------------|-----------|
-| T1 `test_generate_synthetic_history_api_has_n_jobs_kwarg` | `n_jobs` in `inspect.signature(generate_synthetic_history).parameters` | FAIL — no such param |
-| T2 `test_autotuner_exposes_named_autotune_replay_n_jobs_constant` | module-level int constant value==1, name contains JOBS/N_JOBS/REPLAY | FAIL — no such constant |
-| T3 `test_autotune_path_passes_bounded_n_jobs_when_alphabot_max_jobs_unset` | spy captures `n_jobs=1` kwarg when `ALPHABOT_MAX_JOBS` unset | FAIL — no kwarg passed |
-| T4 `test_autotune_path_passes_bounded_n_jobs_even_when_env_set_to_minus_one` | spy captures `n_jobs=1` kwarg even with env=-1 | FAIL — no kwarg passed |
-| T5 `test_generate_synthetic_history_passes_n_jobs_kwarg_to_parallel` | `Parallel` receives `n_jobs=1` when kwarg passed | FAIL — TypeError (no param) |
-| G6 `test_resolve_replay_n_jobs_global_default_unchanged_when_env_unset` | `_resolve_replay_n_jobs()` returns -1 (unchanged) | PASS — must stay GREEN |
-| G7 `test_mem_cap_default_not_raised_above_contract_ceiling` | `DEFAULT_CAP_GB <= 24` | PASS — must stay GREEN |
-
----
+## Questions for User / PM
+None — recon at cf93826 was conclusive. AC-7 confirmed template-only.
 
 ## Status Log
-
-- [2026-06-29] implementer: GREEN complete — 7/7 tests passing (5 RED → GREEN, G6 + G7 guards held). AC-8 autotuner regression suite: 717/717 passed. No test bugs documented. Typecheck N/A (Python). Lint pending.
-
-## Test File Issues (for test-writer to fix)
-
-None.
-
-## Implementation Notes
-
-- `synthetic_history.generate_synthetic_history`: added `*, n_jobs=None` as keyword-only param. Used `effective_n_jobs = n_jobs if n_jobs is not None else _resolve_replay_n_jobs()` at the `Parallel` call site. Default `None` → existing env-driven behavior unchanged for all non-autotune callers. Global `_resolve_replay_n_jobs()` body untouched (G6 confirmed green).
-- `autotuner.py`: added `_AUTOTUNE_REPLAY_N_JOBS = 1` module-level constant with a multi-line comment citing the AC-1 empirical result (2.03 GiB / 990 MB headroom, 2026-06-29, DE-AUTOTUNE-OOM). Constant name contains `AUTOTUNE`, `REPLAY`, `N_JOBS` — satisfies T2's name-pattern check. Passed at `run_autotuner`'s `generate_synthetic_history` call site; no other callers touched.
-- No gold-plating: chunking (AC-3), Optuna n_jobs, memory caps, and `.env` AC-6 config are all out of scope and untouched.
-
----
-
-## Hard rules for at-impl
-
-1. **Write ONLY the minimum code to make the 5 RED tests GREEN** — no gold-plating,
-   no AC-3 chunking, no changes beyond `synthetic_history.py` and `autotuner.py`.
-2. **G6 and G7 must stay GREEN** — do not change `_resolve_replay_n_jobs()` default,
-   do not raise `DEFAULT_CAP_GB`.
-3. **NEVER merge, never checkout main.** Signal at-test + PM with your GREEN commit SHA.
-4. Run the bounded suite only:
-   ```
-   pytest tests/autotuner/test_replay_n_jobs_autotune_bound.py -n0 -x
-   ```
-   with `ALPHABOT_TEST_MEM_CAP_GB=24`. Do NOT run the full tree.
-5. Existing tests must not break (AC-8). Also run:
-   ```
-   pytest tests/autotuner/ -n0 --ignore=tests/autotuner/test_replay_n_jobs_autotune_bound.py
-   ```
-   to confirm no regressions in the autotuner suite.
-
----
-
-## Scope boundaries (strict)
-
-- **IN scope:** `synthetic_history.generate_synthetic_history` signature + Parallel call;
-  `autotuner.run_autotuner` generate_synthetic_history call site + named constant.
-- **OUT of scope:** `_resolve_replay_n_jobs()` body; any other callers of
-  `generate_synthetic_history`; Optuna n_jobs; per-symphony memory release (AC-3);
-  droplet `.env` (AC-6 — PM handles); systemd MemoryMax; any cap constant.
+- [2026-06-30] test-writer: Starting RED phase — per-lens Market Prism sources carousels
