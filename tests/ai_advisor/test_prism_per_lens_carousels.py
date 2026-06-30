@@ -266,13 +266,11 @@ def _lens_section(html: str, lens_name: str) -> str:
     other_markers = [
         f'{_LENS_TESTID_PREFIX}{n}"'
         for n in _ALL_LENS_NAMES
-        if n != lens_name and f'{_LENS_TESTID_PREFIX}{n}"' in html[start + len(marker):]
+        if n != lens_name and f'{_LENS_TESTID_PREFIX}{n}"' in html[start + len(marker) :]
     ]
     if other_markers:
         # Pick the nearest one.
-        end = min(
-            html.index(m, start + len(marker)) for m in other_markers
-        )
+        end = min(html.index(m, start + len(marker)) for m in other_markers)
     else:
         end = len(html)
     return html[start:end]
@@ -505,12 +503,8 @@ def test_lens_carousels_in_canonical_ordering(client, monkeypatch):
         "ordering cannot be verified until the per-lens containers exist.  "
         "At HEAD this testid is absent → position is -1 → FAIL (RED)."
     )
-    assert sent_pos >= 0, (
-        "data-testid='prism-sources-lens-sentiment' not found."
-    )
-    assert macro_pos >= 0, (
-        "data-testid='prism-sources-lens-macro' not found."
-    )
+    assert sent_pos >= 0, "data-testid='prism-sources-lens-sentiment' not found."
+    assert macro_pos >= 0, "data-testid='prism-sources-lens-macro' not found."
 
     # Ordering check.
     assert tech_pos < sent_pos, (
@@ -589,7 +583,12 @@ def test_lens_name_as_visible_text_label_in_section(client, monkeypatch):
         section = _lens_section(html, lens_name)
         # Pattern: lens name (any case for first char) between a closing and opening tag.
         pattern = re.compile(
-            r">" + re.escape(lens_name[0]).upper() + r"|" + re.escape(lens_name[0]) + re.escape(lens_name[1:]) + r"<",
+            r">"
+            + re.escape(lens_name[0]).upper()
+            + r"|"
+            + re.escape(lens_name[0])
+            + re.escape(lens_name[1:])
+            + r"<",
             re.IGNORECASE,
         )
         # Simpler: just look for the lens name as text between > and <
