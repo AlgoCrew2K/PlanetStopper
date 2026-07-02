@@ -251,6 +251,86 @@ def test_ai_advisor_tab_does_not_mutate_market_prism_row_in_place(client):
 
 
 # ---------------------------------------------------------------------------
+# F1 (/review PR #90): a check with indicator=None (persisted for a malformed
+# cited_numbers entry, per Finding-1's fix — never silently dropped, see
+# TestMalformedCitedNumbersContainer::test_list_of_malformed_entries_verdict_not_clean_and_no_silent_drop)
+# must render an EMPTY label, never the literal string "None".
+# ---------------------------------------------------------------------------
+
+_VERIFICATION_ROW_WITH_NULL_INDICATOR = {
+    "id": 703,
+    "advisor_role": "MARKET_PRISM_VERIFICATION",
+    "subject_id": "global",
+    "verdict": None,
+    "created_at": "2026-07-02 03:05:00",
+    "raw_response": {
+        "run_id": _RUN_ID_CURRENT,
+        "verified_at": "2026-07-02T03:05:00Z",
+        "checks": [
+            {
+                # Matches the real shape Finding-1's fix now persists for a malformed
+                # cited_numbers entry (e.g. {"value": 4.35} with no "indicator" key) —
+                # indicator is present-but-None (key exists), not absent.
+                "indicator": None,
+                "lens": None,
+                "cited_value": None,
+                "ground_truth_value": None,
+                "classification": "unverifiable",
+            },
+        ],
+        "summary": {
+            "n_checks": 1,
+            "n_pass": 0,
+            "n_flagged": 0,
+            "n_overridden": 0,
+            "n_unverifiable": 1,
+        },
+        "verdict": "flags-detected",
+    },
+}
+
+
+def test_ai_advisor_tab_renders_empty_label_not_none_for_null_indicator(client):
+    """F1: a check with indicator=None must render an empty label — never the
+    literal string "None" — and data-testid must not be "prism-verify-check-None".
+
+    Root cause (templates/ai_advisor.html): `_chk.get('indicator', '') | e` — the
+    dict.get default only applies when the KEY IS ABSENT, not when its stored value
+    is None. Since the key exists with value None, `.get` returns None (not ''),
+    and Jinja's `| e` filter then does str(None) -> the literal "None".
+    """
+    with (
+        patch("database.get_latest_market_prism_summary", return_value=_MARKET_PRISM_ROW),
+        patch("database.get_latest_market_prism_sources_for_run", return_value=None),
+        patch(
+            "database.get_latest_market_prism_verification_for_run",
+            return_value=_VERIFICATION_ROW_WITH_NULL_INDICATOR,
+            create=True,
+        ),
+    ):
+        resp = client.get("/ai-advisor")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+
+    assert 'data-testid="prism-verify-check-None"' not in html, (
+        "F1: a check with indicator=None must not render "
+        "data-testid='prism-verify-check-None' — a None value must be treated as "
+        "empty, not stringified. "
+        f"HTML snippet (first 3000 chars): {html[:3000]!r}"
+    )
+    assert "None —" not in html and ">None<" not in html, (
+        "F1: the badge label must not contain the literal string 'None' for a "
+        "null-indicator check — expected an empty label instead. "
+        f"HTML snippet (first 3000 chars): {html[:3000]!r}"
+    )
+    assert "unverifiable" in html, (
+        "The check block must still render (with an empty indicator label) — "
+        "the classification text must still appear."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Security (PM sufficiency review, Probe 4): unlike cited_value/ground_truth_value
 # (which _build_check normalizes to float-or-None), the "indicator" field is stored
 # verbatim from the untrusted LLM council output — it must be HTML-escaped on render,
