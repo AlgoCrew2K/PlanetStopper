@@ -506,36 +506,60 @@ class TestLivePathStaleCachePolicy:
 
     def test_live_path_stale_tier1_account_value_uses_last_good(self, live_client, monkeypatch):
         """
-        NEWLY DISCOVERED via test execution (2026-07-02, while verifying the CR-leg
-        Tier-1 test above): the live path's `account_value` derivation (app.py
-        ~1173-1179) has NO Tier-1 last-good fallback — it only checks
-        _account_totals_cache.get("portfolio_value") (returns None when the cache is
-        marked stale) and otherwise falls back to a per-symphony sum of bot_state (a
-        cash-EXCLUDED approximation), never _account_totals_last_good. This is
-        asymmetric vs. the frozen path, which explicitly falls back its cached-value
-        variable to _account_totals_last_good.get("portfolio_value") when the primary
-        read is None.
+        F6 (DISCOVERED 2026-07-02, CONFIRMED reachable by eodreview — routine per-minute
+        stale window x triggered guard event, the MOST reachable finding of this cycle):
+        the live path's `account_value` derivation must fall back to
+        _account_totals_last_good.get("portfolio_value") when the primary cache read is
+        stale — mirroring the frozen path's equivalent fallback.
 
-        This is masked in the CR/TC if_held assertions above under the untriggered
-        fixture (guard_delta_vw=0 nullifies the invested_frac scaling term entirely,
-        so dry_run==if_held regardless of which account_value was used) — it only
-        surfaces as a wrong invested_frac denominator on a REAL triggered guard event,
-        silently mis-scaling guard_alpha. This test isolates it directly by asserting
-        on portfolio_strip['account_value'] itself rather than a guard-delta-scaled
-        output.
-        RED: current code has no such fallback; account_value stays sourced from the
-        bot_state per-symphony sum (cash-excluded), not the true last-good account
-        total (cash-inclusive).
+        STRENGTHENED per eodreview's post-GREEN critique: the original version of this
+        test used an EMPTY bot_state, which drives the buggy pre-fix fallback to
+        account_value=0.0 and trips the analytics division guard, returning a SAFE
+        degenerate result ({"if_held": account_if_held_tc, "dry_run": account_if_held_tc}
+        for TC; vw_cr unchanged for CR) — that only proves the fallback is ABSENT, not
+        that its absence causes real harm. This version uses a REALISTIC non-empty
+        bot_state (per-symphony sum = fixture's symphony_value_sum, matching the
+        fixture's real 20%-cash relationship) so the buggy fallback would land on
+        account_value == symphony_value_sum (both positive — the division guard does
+        NOT fire) instead of 0.0, silently producing invested_frac=1.0 (wrongly
+        fully-invested, ignoring the 20% cash) instead of the correct 0.8. It also uses
+        a TRIGGERED guard-delta pair (dry_run != if_held) — the fixture's own vw_tc/vw_cr
+        are deliberately untriggered for the AC-1/AC-2 zero-phantom-alpha tests
+        elsewhere, which makes invested_frac's magnitude irrelevant (guard_delta_vw=0
+        nullifies the scaling term regardless of which account_value was used) — exactly
+        the masking eodreview flagged. The guard-delta offsets below are synthetic guard
+        events layered on the fixture's real if_held values (not hardcoded producer
+        literals); both the CORRECT and WRONG expecteds are derived via the real
+        analytics helper, and an anti-tautology precondition proves they differ
+        meaningfully so this test can actually discriminate a regression.
+
+        Expected: PASSES against 8e8c5d9 (GREEN added the last-good fallback at
+        app.py:1173-1188). If it FAILS, the fix under-covers this realistic path.
         """
         client, app_module = live_client
         if not hasattr(app_module, "_account_totals_last_good"):
             pytest.fail("_account_totals_last_good absent.")
 
         fx = _load_parity_fixture()
-        # Empty bot_state so the (buggy) per-symphony-sum fallback is unambiguously
-        # 0.0 — sharply distinct from the last-good account_value (100000), so any
-        # nonzero result proves the last-good fallback fired.
-        bot_state = {"date": "2026-07-01", "holdings": {}}
+
+        # Realistic bot_state: per-symphony sum == fixture's symphony_value_sum (80000,
+        # 20% cash relative to the true last-good account_value of 100000). Positive, so
+        # the buggy pre-fix fallback would NOT trip the division guard.
+        bot_state = _realistic_bot_state(fx["symphony_value_sum"])
+
+        # Synthetic TRIGGERED guard-delta pair, layered on the fixture's real if_held
+        # values (not a hardcoded producer literal) — needed because the fixture's own
+        # vw_tc/vw_cr are untriggered and would mask invested_frac's magnitude entirely.
+        guard_delta_vw_tc = 0.20  # pp offset, today-change leg
+        guard_delta_vw_cr = 4.0  # pp offset, cumulative-return leg
+        triggered_vw_tc = {
+            "if_held": fx["vw_tc"]["if_held"],
+            "dry_run": fx["vw_tc"]["if_held"] + guard_delta_vw_tc,
+        }
+        triggered_vw_cr = {
+            "if_held": fx["vw_cr"]["if_held"],
+            "dry_run": fx["vw_cr"]["if_held"] + guard_delta_vw_cr,
+        }
 
         app_module._account_totals_last_good["portfolio_value"] = fx["account_value"]
         app_module._account_totals_last_good["portfolio_tc"] = fx["account_if_held_tc"]
@@ -548,24 +572,81 @@ class TestLivePathStaleCachePolicy:
                 app_module,
                 monkeypatch,
                 bot_state=bot_state,
-                vw_tc=fx["vw_tc"],
-                vw_cr=fx["vw_cr"],
+                vw_tc=triggered_vw_tc,
+                vw_cr=triggered_vw_cr,
             )
         finally:
             self._clear_live_cache(app_module)
             app_module._account_totals_last_good.clear()
 
+        # CORRECT expected: account_value = last-good 100000, symphony_value_sum = 80000
+        # (the fixture's real relationship) -> invested_frac = 0.8.
+        expected_correct_tc = real_analytics.get_portfolio_today_change_account_basis(
+            triggered_vw_tc,
+            fx["account_if_held_tc"],
+            fx["account_value"],
+            fx["symphony_value_sum"],
+        )
+        expected_correct_cr = real_analytics.get_portfolio_cumulative_return_account_basis(
+            triggered_vw_cr,
+            fx["account_cr"],
+            fx["account_value"],
+            fx["symphony_value_sum"],
+        )
+
+        # WRONG expected: simulates the pre-fix buggy fallback, where account_value would
+        # have landed on the per-symphony sum (== symphony_value_sum) -> invested_frac ==
+        # 1.0 (wrongly fully-invested, ignoring the 20% cash) — the exact defect F6 pins.
+        wrong_tc = real_analytics.get_portfolio_today_change_account_basis(
+            triggered_vw_tc,
+            fx["account_if_held_tc"],
+            fx["symphony_value_sum"],
+            fx["symphony_value_sum"],
+        )
+        wrong_cr = real_analytics.get_portfolio_cumulative_return_account_basis(
+            triggered_vw_cr,
+            fx["account_cr"],
+            fx["symphony_value_sum"],
+            fx["symphony_value_sum"],
+        )
+
+        # Anti-tautology precondition: correct (invested_frac=0.8) and wrong
+        # (invested_frac=1.0) must differ meaningfully, else this test could not
+        # discriminate a regression back to the buggy fallback.
+        assert abs(expected_correct_tc["dry_run"] - wrong_tc["dry_run"]) > 0.01, (
+            "Precondition: correct (invested_frac=0.8) and wrong (invested_frac=1.0) TC "
+            "dry_run must differ meaningfully, else this test cannot discriminate a "
+            "regression to the buggy fallback."
+        )
+        assert abs(expected_correct_cr["dry_run"] - wrong_cr["dry_run"]) > 0.01, (
+            "Precondition: correct and wrong CR dry_run must differ meaningfully."
+        )
+
         strip = body["portfolio_strip"]
+        tc = strip.get("today_change") or {}
+        cr = strip.get("cumulative_return") or {}
 
         assert strip.get("account_value") == pytest.approx(fx["account_value"], rel=1e-6), (
             f"Live path stale Tier 1: portfolio_strip['account_value'] must equal "
             f"last-good portfolio_value={fx['account_value']} (true cash-inclusive "
-            f"account total), not a bot_state-derived fallback. "
-            f"Got {strip.get('account_value')!r}. "
-            f"Fix: account_value derivation (app.py, top of _compute_portfolio_strip) "
-            f"must fall back to _account_totals_last_good.get('portfolio_value') when "
-            f"_account_totals_cache.get('portfolio_value') returns None (stale), "
-            f"mirroring the frozen path's last-good account-value fallback."
+            f"account total), not the per-symphony-sum fallback "
+            f"({fx['symphony_value_sum']!r}). Got {strip.get('account_value')!r}."
+        )
+        assert tc.get("dry_run") == pytest.approx(expected_correct_tc["dry_run"], rel=1e-6), (
+            f"Live path stale Tier 1 (realistic, triggered): today_change.dry_run must "
+            f"use the CORRECT cash-inclusive invested_frac=0.8 (last-good "
+            f"account_value={fx['account_value']}, symphony_value_sum="
+            f"{fx['symphony_value_sum']}), giving {expected_correct_tc['dry_run']!r}. "
+            f"Got {tc.get('dry_run')!r}. A regression to the buggy per-symphony-sum "
+            f"fallback (account_value==symphony_value_sum -> invested_frac==1.0, "
+            f"WRONGLY ignoring the 20% cash) would give {wrong_tc['dry_run']!r} instead "
+            f"— silently over-scaling guard_alpha."
+        )
+        assert cr.get("dry_run") == pytest.approx(expected_correct_cr["dry_run"], rel=1e-6), (
+            f"Live path stale Tier 1 (realistic, triggered): cumulative_return.dry_run "
+            f"must use the CORRECT invested_frac=0.8, giving "
+            f"{expected_correct_cr['dry_run']!r}. Got {cr.get('dry_run')!r}. The buggy "
+            f"fallback (invested_frac==1.0) would give {wrong_cr['dry_run']!r} instead."
         )
 
     def test_live_path_cr_unlabelled_when_only_tc_is_warm_and_cr_is_absent(
