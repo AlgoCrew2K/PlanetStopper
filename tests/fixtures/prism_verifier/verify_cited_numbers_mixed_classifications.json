@@ -1,0 +1,96 @@
+{
+  "_provenance": "Schema-derived from the confirmed ai_advisor.py builder payload shapes (derivatives: ai_advisor.py:755-765; macro: ai_advisor.py:900-905; sentiment: ai_advisor.py:673-684; technicals: ai_advisor.py:542-552; fundamentals: ai_advisor.py:1242-1253). Not parser+fixture co-design. Numeric values are synthetic (not live-captured) but structurally identical to production output.",
+  "run_id": "fixture-run-0001",
+  "market_prism_row": {
+    "id": 501,
+    "advisor_role": "MARKET_PRISM",
+    "subject_id": "",
+    "verdict": "neutral",
+    "raw_response": {
+      "run_id": "fixture-run-0001",
+      "run_ts": "fixture-run-0001",
+      "overall_sentiment": "neutral",
+      "sentiment_rationale": "Mixed macro/vol signals; unemployment slightly softer than headline expectations.",
+      "cited_numbers": [
+        {"indicator": "VIX", "value": 21.8, "lens": "derivatives"},
+        {"indicator": "UNRATE", "value": 4.3, "lens": "macro"},
+        {"indicator": "DGS10", "value": 6.50, "lens": "macro"},
+        {"indicator": "2s10s_yoy_inflation_pct", "value": 1.2, "lens": "macro"}
+      ]
+    }
+  },
+  "lens_sections": {
+    "derivatives": {
+      "lens": "derivatives",
+      "available": true,
+      "payload": {
+        "vix_level": 22.0,
+        "vix_term_structure": {
+          "spot": 22.0,
+          "term_3m": 23.1,
+          "ratio": 0.952,
+          "spread": -1.1,
+          "regime": "contango"
+        },
+        "risk_read": "neutral",
+        "as_of_date": "2026-07-01"
+      },
+      "sources": []
+    },
+    "macro": {
+      "lens": "macro",
+      "available": true,
+      "payload": {
+        "series": {
+          "DGS10": {"label": "10-Year Treasury", "value": "4.35", "date": "2026-07-01"},
+          "UNRATE": {"label": "Unemployment Rate", "value": "4.0", "date": "2026-06-01"},
+          "CPIAUCSL": {"label": "CPI", "value": "314.2", "date": "2026-06-01"},
+          "FEDFUNDS": {"label": "Fed Funds Rate", "value": "5.25", "date": "2026-06-01"}
+        }
+      },
+      "sources": []
+    },
+    "sentiment": {
+      "lens": "sentiment",
+      "available": true,
+      "payload": {"tone_score": 0.10, "corpus": [], "events": [], "article_count": 5},
+      "sources": []
+    },
+    "technicals": {
+      "lens": "technicals",
+      "available": true,
+      "payload": {"ma_posture": {}, "breadth": 0.58, "momentum": {}},
+      "sources": []
+    },
+    "fundamentals": {
+      "lens": "fundamentals",
+      "available": true,
+      "payload": {
+        "tickers": {
+          "AAPL": {
+            "entity_name": "Apple Inc.",
+            "cik": "0000320193",
+            "key_facts": {
+              "Revenues": {
+                "label": "Revenue",
+                "value": 391000000000,
+                "unit": "USD",
+                "end": "2025-09-30",
+                "filed": "2025-11-01",
+                "form": "10-K"
+              }
+            }
+          }
+        },
+        "coverage": {"available": 1, "universe": 1}
+      },
+      "sources": []
+    }
+  },
+  "expected_classifications": {
+    "VIX": "pass",
+    "UNRATE": "flagged",
+    "DGS10": "overridden",
+    "2s10s_yoy_inflation_pct": "unverifiable"
+  }
+}
