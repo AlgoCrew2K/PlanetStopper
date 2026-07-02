@@ -37,9 +37,7 @@ _FIXTURE_DIR = (
 
 
 def _load_parity_fixture() -> dict:
-    return json.loads(
-        (_FIXTURE_DIR / "eod_account_basis_parity.json").read_text(encoding="utf-8")
-    )
+    return json.loads((_FIXTURE_DIR / "eod_account_basis_parity.json").read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +47,41 @@ def _load_parity_fixture() -> dict:
 
 def _minimal_bot_state() -> dict:
     return {"date": "2026-07-01", "holdings": {}}
+
+
+def _realistic_bot_state(symphony_value_sum: float) -> dict:
+    """Flat live-path bot_state with real symphony entries summing to
+    symphony_value_sum. Needed wherever a test must avoid the account_value==0.0
+    fallback that _minimal_bot_state() produces (the live path's account_value
+    derivation, app.py ~1173-1179, sums bot_state's per-symphony current_value
+    when the cache is stale — an empty bot_state makes that sum 0.0, which
+    spuriously triggers the CR account-basis helper's account_value<=0 division
+    guard (analytics.py:1065-1066, intentionally returns vw_cr unchanged — a
+    documented, in-scope-frozen design choice, not a bug). Tests isolating CR's
+    OWN last-good wiring (independent of that guard) must use this factory."""
+    alpha_value = symphony_value_sum * 0.625
+    beta_value = symphony_value_sum * 0.375
+    return {
+        "date": "2026-07-01",
+        "sym-alpha": {
+            "name": "Alpha Momentum",
+            "current_return": 4.2,
+            "current_value": alpha_value,
+            "simple_return": 0.042,
+            "net_deposits": alpha_value * 0.9,
+            "time_weighted_return": 0.045,
+            "max_drawdown": 0.08,
+        },
+        "sym-beta": {
+            "name": "Beta Defensive",
+            "current_return": 1.1,
+            "current_value": beta_value,
+            "simple_return": 0.011,
+            "net_deposits": beta_value * 0.93,
+            "time_weighted_return": 0.012,
+            "max_drawdown": 0.03,
+        },
+    }
 
 
 # ===========================================================================
@@ -285,9 +318,7 @@ class TestLivePathStaleCachePolicy:
     def _make_db_mock_live(self, bot_state: dict) -> MagicMock:
         mock_db = MagicMock()
         mock_db.load_state.return_value = bot_state
-        mock_db.get_shadow_divergence.return_value = {
-            "by_symphony": {}, "portfolio_today": None
-        }
+        mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
         mock_db.get_triggers.return_value = []
         mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
         mock_db.read_fleet_alert.return_value = None
@@ -315,18 +346,10 @@ class TestLivePathStaleCachePolicy:
         ):
             mock_a.get_portfolio_today_change.return_value = vw_tc
             mock_a.get_portfolio_cumulative_return.return_value = vw_cr
-            mock_a.get_portfolio_max_drawdown.return_value = {
-                "if_held": -5.0, "dry_run": -5.0
-            }
-            mock_a.get_symphony_today_change.return_value = {
-                "if_held": None, "dry_run": None
-            }
-            mock_a.get_symphony_cumulative_return.return_value = {
-                "if_held": None, "dry_run": None
-            }
-            mock_a.get_symphony_max_drawdown.return_value = {
-                "if_held": None, "dry_run": None
-            }
+            mock_a.get_portfolio_max_drawdown.return_value = {"if_held": -5.0, "dry_run": -5.0}
+            mock_a.get_symphony_today_change.return_value = {"if_held": None, "dry_run": None}
+            mock_a.get_symphony_cumulative_return.return_value = {"if_held": None, "dry_run": None}
+            mock_a.get_symphony_max_drawdown.return_value = {"if_held": None, "dry_run": None}
             # Shadow/vol helpers: return None so the None-guarded unpack blocks are
             # skipped. A non-None MagicMock causes `a, b = result` to fail with
             # "not enough values to unpack" since MagicMock.__iter__ yields nothing.
@@ -346,9 +369,7 @@ class TestLivePathStaleCachePolicy:
             )
             resp = client.get("/api/state")
 
-        assert resp.status_code == 200, (
-            f"Live /api/state must return 200; got {resp.status_code}"
-        )
+        assert resp.status_code == 200, f"Live /api/state must return 200; got {resp.status_code}"
         return resp.get_json()
 
     def _setup_warm_live_cache(
@@ -381,9 +402,7 @@ class TestLivePathStaleCachePolicy:
                 "(a plain dict, NOT _StaleFlagDict — must survive mark_stale() calls)."
             )
 
-    def test_live_path_stale_tier1_uses_last_good_tc(
-        self, live_client, monkeypatch
-    ):
+    def test_live_path_stale_tier1_uses_last_good_tc(self, live_client, monkeypatch):
         """
         AC-10 Tier 1: stale primary cache + warm last-good → live TC.if_held equals
         last-good portfolio_tc (account basis).
@@ -405,8 +424,12 @@ class TestLivePathStaleCachePolicy:
 
         try:
             body = self._drive_live_branch(
-                client, app_module, monkeypatch,
-                bot_state=bot_state, vw_tc=fx["vw_tc"], vw_cr=fx["vw_cr"],
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
             )
         finally:
             self._clear_live_cache(app_module)
@@ -424,9 +447,269 @@ class TestLivePathStaleCachePolicy:
             f"mirroring AC-3 Tier 1."
         )
 
-    def test_live_path_stale_tier1_stamps_account_basis_stale(
+    def test_live_path_stale_tier1_uses_last_good_cr(self, live_client, monkeypatch):
+        """
+        AC-10 Tier 1 (CR leg): stale primary cache + warm last-good → live CR.if_held
+        equals last-good portfolio_cr (account basis).
+
+        Companion to test_live_path_stale_tier1_uses_last_good_tc — CR's independent
+        code path through the live-path stale-cache logic was previously untested; a
+        CR-isolated regression in the Tier-1 fallback would have passed all 33 prior
+        tests.
+
+        Uses _realistic_bot_state (not _minimal_bot_state) deliberately: an empty
+        bot_state makes the live path's account_value fall back to 0.0 (see
+        test_live_path_stale_tier1_account_value_uses_last_good below, which isolates
+        that separate, newly-discovered gap), which would spuriously trigger the CR
+        helper's account_value<=0 division guard and confound THIS assertion (if_held
+        is guard-blind to account_value's magnitude once the guard doesn't fire, so a
+        nonzero bot_state cleanly isolates whether CR's own last-good VALUE is picked
+        up, independent of the account_value question).
+        """
+        client, app_module = live_client
+        if not hasattr(app_module, "_account_totals_last_good"):
+            pytest.fail("_account_totals_last_good absent — see precondition test.")
+
+        fx = _load_parity_fixture()
+        account_cr = fx["account_cr"]  # 25.0
+
+        bot_state = _realistic_bot_state(fx["symphony_value_sum"])
+
+        app_module._account_totals_last_good["portfolio_value"] = fx["account_value"]
+        app_module._account_totals_last_good["portfolio_tc"] = fx["account_if_held_tc"]
+        app_module._account_totals_last_good["portfolio_cr"] = account_cr
+        app_module._account_totals_cache.mark_stale()
+
+        try:
+            body = self._drive_live_branch(
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
+            )
+        finally:
+            self._clear_live_cache(app_module)
+            app_module._account_totals_last_good.clear()
+
+        cr = body["portfolio_strip"]["cumulative_return"]
+
+        assert cr.get("if_held") == pytest.approx(account_cr, abs=1e-4), (
+            f"Live path stale Tier 1 (CR leg): CR.if_held must equal last-good "
+            f"portfolio_cr={account_cr} (account basis), not raw VW if_held="
+            f"{fx['vw_cr']['if_held']}. Got {cr.get('if_held')!r}. "
+            f"Fix: live path's CR wrap must fall back to _account_totals_last_good "
+            f"when _account_totals_cache.get('portfolio_cr') returns None (stale), "
+            f"mirroring the TC leg."
+        )
+
+    def test_live_path_stale_tier1_account_value_uses_last_good(self, live_client, monkeypatch):
+        """
+        NEWLY DISCOVERED via test execution (2026-07-02, while verifying the CR-leg
+        Tier-1 test above): the live path's `account_value` derivation (app.py
+        ~1173-1179) has NO Tier-1 last-good fallback — it only checks
+        _account_totals_cache.get("portfolio_value") (returns None when the cache is
+        marked stale) and otherwise falls back to a per-symphony sum of bot_state (a
+        cash-EXCLUDED approximation), never _account_totals_last_good. This is
+        asymmetric vs. the frozen path, which explicitly falls back its cached-value
+        variable to _account_totals_last_good.get("portfolio_value") when the primary
+        read is None.
+
+        This is masked in the CR/TC if_held assertions above under the untriggered
+        fixture (guard_delta_vw=0 nullifies the invested_frac scaling term entirely,
+        so dry_run==if_held regardless of which account_value was used) — it only
+        surfaces as a wrong invested_frac denominator on a REAL triggered guard event,
+        silently mis-scaling guard_alpha. This test isolates it directly by asserting
+        on portfolio_strip['account_value'] itself rather than a guard-delta-scaled
+        output.
+        RED: current code has no such fallback; account_value stays sourced from the
+        bot_state per-symphony sum (cash-excluded), not the true last-good account
+        total (cash-inclusive).
+        """
+        client, app_module = live_client
+        if not hasattr(app_module, "_account_totals_last_good"):
+            pytest.fail("_account_totals_last_good absent.")
+
+        fx = _load_parity_fixture()
+        # Empty bot_state so the (buggy) per-symphony-sum fallback is unambiguously
+        # 0.0 — sharply distinct from the last-good account_value (100000), so any
+        # nonzero result proves the last-good fallback fired.
+        bot_state = {"date": "2026-07-01", "holdings": {}}
+
+        app_module._account_totals_last_good["portfolio_value"] = fx["account_value"]
+        app_module._account_totals_last_good["portfolio_tc"] = fx["account_if_held_tc"]
+        app_module._account_totals_last_good["portfolio_cr"] = fx["account_cr"]
+        app_module._account_totals_cache.mark_stale()
+
+        try:
+            body = self._drive_live_branch(
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
+            )
+        finally:
+            self._clear_live_cache(app_module)
+            app_module._account_totals_last_good.clear()
+
+        strip = body["portfolio_strip"]
+
+        assert strip.get("account_value") == pytest.approx(fx["account_value"], rel=1e-6), (
+            f"Live path stale Tier 1: portfolio_strip['account_value'] must equal "
+            f"last-good portfolio_value={fx['account_value']} (true cash-inclusive "
+            f"account total), not a bot_state-derived fallback. "
+            f"Got {strip.get('account_value')!r}. "
+            f"Fix: account_value derivation (app.py, top of _compute_portfolio_strip) "
+            f"must fall back to _account_totals_last_good.get('portfolio_value') when "
+            f"_account_totals_cache.get('portfolio_value') returns None (stale), "
+            f"mirroring the frozen path's last-good account-value fallback."
+        )
+
+    def test_live_path_cr_unlabelled_when_only_tc_is_warm_and_cr_is_absent(
         self, live_client, monkeypatch
     ):
+        """
+        Cross-confirmed finding (eodtest + eodreview independent review, 2026-07-02):
+        the live-path Tier-2 honest-floor marker checks ONLY _cached_tc / last-good TC,
+        never CR's own state. When TC is warm (cache) but CR is absent from BOTH cache
+        and last-good, CR independently falls to raw VW with NO signal at all on the
+        strip — a direct AC-3 violation (never silently present VW as account basis).
+
+        Two-sided contract (per PM directive, mirroring the frozen-path analogue in
+        TestFrozenIndependentFieldGating): (1) a missing CR must not collaterally break
+        a warm TC — asserted here as a regression guard, since the live path's TC/CR
+        gating is already independent (unlike the frozen path's combined gate) so this
+        half is expected to already pass; (2) CR must carry an honesty signal.
+        RED (half 2 only, on current code): none of basis=='value_weighted',
+        account_basis_stale=True, or cumulative_return.if_held=None fire in this
+        scenario against current code.
+        """
+        client, app_module = live_client
+        fx = _load_parity_fixture()
+        account_if_held_tc = fx["account_if_held_tc"]
+        bot_state = {"date": "2026-07-01", "holdings": {}}
+
+        expected_tc = real_analytics.get_portfolio_today_change_account_basis(
+            fx["vw_tc"],
+            account_if_held_tc,
+            fx["account_value"],
+            fx["symphony_value_sum"],
+        )
+
+        # Warm TC only (via primary cache); CR absent from both cache and last-good.
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_cache["portfolio_value"] = fx["account_value"]
+        app_module._account_totals_cache["portfolio_tc"] = account_if_held_tc
+        app_module._account_totals_last_good.clear()
+
+        try:
+            body = self._drive_live_branch(
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
+            )
+        finally:
+            self._clear_live_cache(app_module)
+            app_module._account_totals_last_good.clear()
+
+        ps = body.get("portfolio_strip", {})
+        tc = ps.get("today_change") or {}
+        cr = ps.get("cumulative_return") or {}
+
+        # Half 1: warm TC must NOT be collaterally affected by CR's absence (regression
+        # guard — the live path's TC/CR gating is already independent).
+        assert tc.get("if_held") == pytest.approx(expected_tc["if_held"], rel=1e-6), (
+            f"Live path: warm TC / absent CR (no last-good) — today_change.if_held must "
+            f"remain the correctly account-basis-wrapped TC value "
+            f"({expected_tc['if_held']!r}). Got {tc.get('if_held')!r}. A missing CR must "
+            f"not collaterally break a warm TC."
+        )
+
+        # Half 2: CR (legitimately on VW basis) must be honestly signalled.
+        has_vw_marker = ps.get("basis") == "value_weighted"
+        has_stale_marker = ps.get("account_basis_stale") is True
+        has_null_if_held = cr.get("if_held") is None
+
+        assert has_vw_marker or has_stale_marker or has_null_if_held, (
+            f"Live path: warm TC / absent CR (no last-good) must signal CR is on VW "
+            f"basis via basis=='value_weighted', account_basis_stale=True, or "
+            f"cumulative_return.if_held=None. Got basis={ps.get('basis')!r}, "
+            f"account_basis_stale={ps.get('account_basis_stale')!r}, "
+            f"cumulative_return={cr!r}. "
+            f"Current code's Tier-2 marker checks only _cached_tc/last-good-TC, missing "
+            f"this CR-only-degraded case."
+        )
+
+    def test_live_path_stale_tier1_stamps_account_basis_as_of_is_string(
+        self, live_client, monkeypatch
+    ):
+        """
+        AC-10 Tier 1: account_basis_as_of must be a non-None STRING when Tier 1 fires —
+        mirroring the frozen path's explicit `_account_totals_last_success_at or
+        datetime.now(_ET).strftime(...)` fallback. The live path assigns
+        _account_totals_last_success_at directly with no such fallback.
+
+        This test resets the module-level timestamp to None BEFORE populating last-good
+        directly — the same test-construction pattern the existing Tier-1 live tests
+        already use (bypassing _refresh_account_totals, which never advances the real
+        timestamp in that construction) — to prove the stamp is robust even when the
+        timestamp was never set by a real fetch.
+        RED: current live-path code has no fallback, so account_basis_as_of is None.
+        """
+        client, app_module = live_client
+        if not hasattr(app_module, "_account_totals_last_good"):
+            pytest.fail("_account_totals_last_good absent.")
+
+        fx = _load_parity_fixture()
+        bot_state = {"date": "2026-07-01", "holdings": {}}
+
+        original_last_success_at = app_module._account_totals_last_success_at
+        app_module._account_totals_last_success_at = None
+
+        app_module._account_totals_last_good["portfolio_value"] = fx["account_value"]
+        app_module._account_totals_last_good["portfolio_tc"] = fx["account_if_held_tc"]
+        app_module._account_totals_last_good["portfolio_cr"] = fx["account_cr"]
+        app_module._account_totals_cache.mark_stale()
+
+        try:
+            body = self._drive_live_branch(
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
+            )
+        finally:
+            self._clear_live_cache(app_module)
+            app_module._account_totals_last_good.clear()
+            app_module._account_totals_last_success_at = original_last_success_at
+
+        ps = body.get("portfolio_strip", {})
+
+        assert ps.get("account_basis_stale") is True, (
+            f"Precondition: Tier 1 must have fired (account_basis_stale True). "
+            f"Got {ps.get('account_basis_stale')!r}."
+        )
+        assert ps.get("account_basis_as_of") is not None, (
+            f"Live Tier 1: account_basis_as_of must be present (non-None) even when "
+            f"_account_totals_last_success_at was never set by a real refresh. "
+            f"Got {ps.get('account_basis_as_of')!r}. "
+            f"Fix: mirror the frozen path's fallback — "
+            f"`_account_totals_last_success_at or datetime.now(_ET).strftime(...)`."
+        )
+        assert isinstance(ps["account_basis_as_of"], str), (
+            f"account_basis_as_of must be a string (ET timestamp); got "
+            f"{type(ps['account_basis_as_of']).__name__!r}: {ps['account_basis_as_of']!r}."
+        )
+
+    def test_live_path_stale_tier1_stamps_account_basis_stale(self, live_client, monkeypatch):
         """
         AC-10 Tier 1: stale + last-good → live portfolio_strip["account_basis_stale"] is True.
         RED: field does not exist on the live strip.
@@ -445,8 +728,12 @@ class TestLivePathStaleCachePolicy:
 
         try:
             body = self._drive_live_branch(
-                client, app_module, monkeypatch,
-                bot_state=bot_state, vw_tc=fx["vw_tc"], vw_cr=fx["vw_cr"],
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
             )
         finally:
             self._clear_live_cache(app_module)
@@ -458,9 +745,7 @@ class TestLivePathStaleCachePolicy:
             f"Got {ps.get('account_basis_stale')!r}."
         )
 
-    def test_live_path_stale_tier2_marks_basis_value_weighted(
-        self, live_client, monkeypatch
-    ):
+    def test_live_path_stale_tier2_marks_basis_value_weighted(self, live_client, monkeypatch):
         """
         AC-10 Tier 2: stale + no last-good → live TC must be labelled basis='value_weighted'
         OR today_change.if_held=None. Never an unlabelled VW value.
@@ -479,8 +764,12 @@ class TestLivePathStaleCachePolicy:
 
         try:
             body = self._drive_live_branch(
-                client, app_module, monkeypatch,
-                bot_state=bot_state, vw_tc=fx["vw_tc"], vw_cr=fx["vw_cr"],
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
             )
         finally:
             self._clear_live_cache(app_module)
@@ -498,6 +787,51 @@ class TestLivePathStaleCachePolicy:
             f"Current code returns raw VW value without any marker — mirroring the same "
             f"silent-VW-flip bug present in the frozen branch. "
             f"Fix: mirror AC-3 Tier 2 (honest floor) on the live path."
+        )
+
+    def test_live_path_stale_tier2_cr_stays_vw_with_marker(self, live_client, monkeypatch):
+        """
+        AC-10 Tier 2 (CR leg): stale/absent cache, no last-good (both TC and CR absent
+        together) → live CR stays raw VW AND the strip carries basis='value_weighted'.
+        Companion to test_live_path_stale_tier2_marks_basis_value_weighted (TC leg) —
+        CR's Tier-2 honest-floor output was previously unchecked. This scenario has
+        BOTH fields absent together, so the existing TC-scoped marker legitimately
+        fires here — distinct from test_live_path_cr_unlabelled_when_only_tc_is_warm_
+        and_cr_is_absent above, which isolates CR-only degradation.
+        """
+        client, app_module = live_client
+        if not hasattr(app_module, "_account_totals_last_good"):
+            pytest.fail("_account_totals_last_good absent.")
+
+        fx = _load_parity_fixture()
+        bot_state = {"date": "2026-07-01", "holdings": {}}
+
+        app_module._account_totals_last_good.clear()
+        self._clear_live_cache(app_module)
+
+        try:
+            body = self._drive_live_branch(
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
+            )
+        finally:
+            self._clear_live_cache(app_module)
+
+        ps = body.get("portfolio_strip", {})
+        cr = ps.get("cumulative_return") or {}
+
+        assert cr.get("if_held") == pytest.approx(float(fx["vw_cr"]["if_held"]), rel=1e-6), (
+            f"Live Tier 2 (no cache, no last-good): CR.if_held must equal raw VW if_held "
+            f"({fx['vw_cr']['if_held']}) — the honest-floor value. "
+            f"Got {cr.get('if_held')!r}."
+        )
+        assert ps.get("basis") == "value_weighted", (
+            f"Live Tier 2 (both TC and CR absent): portfolio_strip['basis'] must be "
+            f"'value_weighted'. Got {ps.get('basis')!r}."
         )
 
     def test_live_path_warm_cache_still_uses_account_basis_unaffected(
@@ -523,8 +857,12 @@ class TestLivePathStaleCachePolicy:
         # Explicitly NOT marking stale — cache is warm
         try:
             body = self._drive_live_branch(
-                client, app_module, monkeypatch,
-                bot_state=bot_state, vw_tc=fx["vw_tc"], vw_cr=fx["vw_cr"],
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
             )
         finally:
             self._clear_live_cache(app_module)
@@ -538,29 +876,147 @@ class TestLivePathStaleCachePolicy:
             f"The stale-policy change must not break the normal warm-cache path."
         )
 
-    def test_live_path_and_frozen_path_stale_tier2_are_consistent(
-        self, live_client, monkeypatch
-    ):
+    def _drive_frozen_minimal(
+        self, client, app_module, monkeypatch, *, vw_tc: dict, vw_cr: dict
+    ) -> dict:
+        """Drive the frozen /api/state branch with the SAME mocking scaffolding as
+        _drive_live_branch, so the two branches are compared under identical mocked
+        conditions. Self-contained (does not import tests.dashboard.test_eod_account_basis)
+        to avoid cross-test-module import fragility.
+        """
+        fx = _load_parity_fixture()
+        alpha_value = fx["symphony_value_sum"] * 0.625
+        beta_value = fx["symphony_value_sum"] * 0.375
+        snapshot = {
+            "trading_day": "2026-07-01",
+            "captured_at_et": "16:00:01 ET",
+            "shadow_divergence": {"by_symphony": {}, "portfolio_today": None},
+            "accounts_map": {
+                "ACC-INDIVIDUAL": [
+                    {
+                        "id": "sym-alpha",
+                        "name": "Alpha Momentum",
+                        "account": "ACC-INDIVIDUAL",
+                        "current_return": 4.2,
+                        "current_value": alpha_value,
+                        "simple_return": 0.042,
+                        "net_deposits": alpha_value * 0.9,
+                        "time_weighted_return": 0.045,
+                        "max_drawdown": 0.08,
+                    }
+                ],
+                "ACC-ROTH": [
+                    {
+                        "id": "sym-beta",
+                        "name": "Beta Defensive",
+                        "account": "ACC-ROTH",
+                        "current_return": 1.1,
+                        "current_value": beta_value,
+                        "simple_return": 0.011,
+                        "net_deposits": beta_value * 0.93,
+                        "time_weighted_return": 0.012,
+                        "max_drawdown": 0.03,
+                    }
+                ],
+            },
+        }
+        bot_state = {"date": "2026-07-01", "last_market_close_snapshot": snapshot}
+
+        mock_db = MagicMock()
+        mock_db.load_state.return_value = bot_state
+        mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+        mock_db.get_triggers.return_value = []
+        mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
+        mock_db.read_fleet_alert.return_value = None
+
+        with (
+            patch.object(app_module, "database", mock_db),
+            patch.object(app_module, "analytics") as mock_a,
+        ):
+            mock_a.get_portfolio_today_change.return_value = vw_tc
+            mock_a.get_portfolio_cumulative_return.return_value = vw_cr
+            mock_a.get_portfolio_max_drawdown.return_value = {"if_held": -5.0, "dry_run": -5.0}
+            mock_a.get_symphony_today_change.return_value = {"if_held": None, "dry_run": None}
+            mock_a.get_symphony_cumulative_return.return_value = {"if_held": None, "dry_run": None}
+            mock_a.get_symphony_max_drawdown.return_value = {"if_held": None, "dry_run": None}
+            mock_a.get_portfolio_daily_returns_from_shadow.return_value = None
+            mock_a.get_portfolio_bot_and_held_daily_returns.return_value = None
+            mock_a.compute_portfolio_annualized_vol.return_value = None
+            mock_a.get_portfolio_today_change_account_basis.side_effect = (
+                real_analytics.get_portfolio_today_change_account_basis
+            )
+            mock_a.get_portfolio_cumulative_return_account_basis.side_effect = (
+                real_analytics.get_portfolio_cumulative_return_account_basis
+            )
+            monkeypatch.setattr(
+                app_module, "get_market_state", lambda dt: "closed_frozen", raising=False
+            )
+            resp = client.get("/api/state")
+
+        assert resp.status_code == 200, f"Frozen /api/state must return 200; got {resp.status_code}"
+        return resp.get_json()
+
+    def test_live_path_and_frozen_path_stale_tier2_are_consistent(self, live_client, monkeypatch):
         """
         AC-10 consistency: both the live and frozen paths' Tier 2 honest floor must use
-        the SAME marker convention — either both use basis='value_weighted' or both use
-        if_held=None. Mixed conventions between the two paths would confuse the UI consumer.
-        """
-        import app  # noqa: F401 (import exercises module-level code)
+        the SAME marker convention when both cache and last-good are fully absent —
+        both must set portfolio_strip['basis'] == 'value_weighted'. Mixed conventions
+        between the two paths would confuse the UI consumer (one path could render a
+        staleness warning the other never triggers for the identical failure condition).
 
-        # This is an interface-consistency test; it does not drive a route.
-        # It verifies that the feature plan specifies the same contract for both paths.
-        #
-        # Contract: each path must emit AT LEAST ONE of:
-        #   (a) portfolio_strip.basis == "value_weighted"
-        #   (b) portfolio_strip.today_change.if_held is None
-        #
-        # Consistency is guaranteed iff both paths are fixed with the same helper or
-        # the same code block. This test enforces it structurally via import-time check.
-        #
-        # Once impl is complete, AC-3 Tier 2 test (dashboard) and this test will
-        # both call the SAME helper and observe the SAME output format.
-        #
-        # For RED purposes: the test passes if the module imports without error
-        # (the real RED tests above fail for the right reason).
-        assert True, "import-time consistency guard: module must import cleanly."
+        Drives BOTH the live (/api/state via market_open) and frozen (/api/state via
+        closed_frozen) branches with identical empty-cache/no-last-good inputs and
+        asserts the SAME marker fires on both.
+
+        Replaces a prior placeholder `assert True` (an assertion-free tautology that
+        could never fail regardless of implementation, providing zero real coverage —
+        a violation of the no-tautology testing rule).
+        """
+        client, app_module = live_client
+        fx = _load_parity_fixture()
+
+        # --- Live branch (market_open), no cache, no last-good ---
+        live_bot_state = {"date": "2026-07-01", "holdings": {}}
+        app_module._account_totals_last_good.clear()
+        self._clear_live_cache(app_module)
+        try:
+            live_body = self._drive_live_branch(
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=live_bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
+            )
+        finally:
+            self._clear_live_cache(app_module)
+
+        # --- Frozen branch (closed_frozen), no cache, no last-good ---
+        app_module._account_totals_last_good.clear()
+        self._clear_live_cache(app_module)
+        try:
+            frozen_body = self._drive_frozen_minimal(
+                client,
+                app_module,
+                monkeypatch,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
+            )
+        finally:
+            self._clear_live_cache(app_module)
+
+        live_basis = live_body.get("portfolio_strip", {}).get("basis")
+        frozen_basis = frozen_body.get("portfolio_strip", {}).get("basis")
+
+        assert live_basis == "value_weighted", (
+            f"Live Tier 2 (no cache, no last-good) must set basis='value_weighted'. "
+            f"Got {live_basis!r}."
+        )
+        assert frozen_basis == "value_weighted", (
+            f"Frozen Tier 2 (no cache, no last-good) must set basis='value_weighted'. "
+            f"Got {frozen_basis!r}."
+        )
+        assert live_basis == frozen_basis, (
+            f"Live and frozen Tier 2 marker conventions must match: live={live_basis!r}, "
+            f"frozen={frozen_basis!r}."
+        )

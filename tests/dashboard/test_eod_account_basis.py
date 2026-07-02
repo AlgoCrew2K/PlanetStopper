@@ -41,9 +41,7 @@ _FIXTURE_DIR = (
 
 
 def _load_parity_fixture() -> dict:
-    return json.loads(
-        (_FIXTURE_DIR / "eod_account_basis_parity.json").read_text(encoding="utf-8")
-    )
+    return json.loads((_FIXTURE_DIR / "eod_account_basis_parity.json").read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------
@@ -200,9 +198,7 @@ def _drive_frozen_branch(
         )
         resp = client.get("/api/state")
 
-    assert resp.status_code == 200, (
-        f"Frozen /api/state must return 200; got {resp.status_code}"
-    )
+    assert resp.status_code == 200, f"Frozen /api/state must return 200; got {resp.status_code}"
     return resp.get_json()
 
 
@@ -246,8 +242,12 @@ class TestFrozenTCAccountBasis:
         )
         try:
             body = _drive_frozen_branch(
-                client, app_module, monkeypatch,
-                bot_state=bot_state, vw_tc=vw_tc, vw_cr=fx["vw_cr"],
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=vw_tc,
+                vw_cr=fx["vw_cr"],
             )
         finally:
             _clear_cache(app_module)
@@ -290,8 +290,12 @@ class TestFrozenTCAccountBasis:
         )
         try:
             body = _drive_frozen_branch(
-                client, app_module, monkeypatch,
-                bot_state=bot_state, vw_tc=vw_tc, vw_cr=fx["vw_cr"],
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=vw_tc,
+                vw_cr=fx["vw_cr"],
             )
         finally:
             _clear_cache(app_module)
@@ -310,9 +314,7 @@ class TestFrozenTCAccountBasis:
             f"Current code: VW dry_run=0.625 vs account-basis if_held=0.50 → phantom 0.125pp."
         )
 
-    def test_frozen_tc_does_not_equal_raw_vw_when_cash_present(
-        self, flask_client, monkeypatch
-    ):
+    def test_frozen_tc_does_not_equal_raw_vw_when_cash_present(self, flask_client, monkeypatch):
         """
         AC-1 regression guard: when cash is present (account_value > symphony_value_sum),
         the frozen TC.if_held must NOT equal the raw VW if_held.
@@ -339,8 +341,12 @@ class TestFrozenTCAccountBasis:
         )
         try:
             body = _drive_frozen_branch(
-                client, app_module, monkeypatch,
-                bot_state=bot_state, vw_tc=vw_tc, vw_cr=fx["vw_cr"],
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=vw_tc,
+                vw_cr=fx["vw_cr"],
             )
         finally:
             _clear_cache(app_module)
@@ -406,8 +412,12 @@ class TestFrozenCRAccountBasis:
         )
         try:
             body = _drive_frozen_branch(
-                client, app_module, monkeypatch,
-                bot_state=bot_state, vw_tc=fx["vw_tc"], vw_cr=vw_cr,
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=vw_cr,
             )
         finally:
             _clear_cache(app_module)
@@ -425,9 +435,7 @@ class TestFrozenCRAccountBasis:
             f"mirroring app.py:1183-1190."
         )
 
-    def test_frozen_cr_dry_run_equals_if_held_when_untriggered(
-        self, flask_client, monkeypatch
-    ):
+    def test_frozen_cr_dry_run_equals_if_held_when_untriggered(self, flask_client, monkeypatch):
         """
         AC-2: untriggered (VW dry_run==VW if_held) → frozen CR.dry_run must equal
         CR.if_held (zero guard alpha on account basis).
@@ -455,8 +463,12 @@ class TestFrozenCRAccountBasis:
         )
         try:
             body = _drive_frozen_branch(
-                client, app_module, monkeypatch,
-                bot_state=bot_state, vw_tc=fx["vw_tc"], vw_cr=vw_cr,
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=vw_cr,
             )
         finally:
             _clear_cache(app_module)
@@ -474,9 +486,7 @@ class TestFrozenCRAccountBasis:
             f"→ 6.25pp phantom guard alpha (zero guard events happened)."
         )
 
-    def test_frozen_cr_if_held_matches_account_portfolio_cr(
-        self, flask_client, monkeypatch
-    ):
+    def test_frozen_cr_if_held_matches_account_portfolio_cr(self, flask_client, monkeypatch):
         """
         AC-2: frozen CR.if_held must equal cached portfolio_cr (Composer simple_return * 100).
         This already works in the current code but must stay correct after the fix.
@@ -495,8 +505,12 @@ class TestFrozenCRAccountBasis:
         )
         try:
             body = _drive_frozen_branch(
-                client, app_module, monkeypatch,
-                bot_state=bot_state, vw_tc=fx["vw_tc"], vw_cr=fx["vw_cr"],
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
             )
         finally:
             _clear_cache(app_module)
@@ -506,6 +520,178 @@ class TestFrozenCRAccountBasis:
         assert cr.get("if_held") == pytest.approx(account_cr, abs=1e-4), (
             f"frozen CR.if_held must equal cached portfolio_cr={account_cr} "
             f"(Composer simple_return * 100). Got {cr.get('if_held')!r}."
+        )
+
+
+# ===========================================================================
+# AC-3 / Architecture Edge Cases: independent per-field gating contract
+# ===========================================================================
+
+
+class TestFrozenIndependentFieldGating:
+    """
+    Contract/robustness test for the plan's Architecture §Edge Cases requirement:
+    "Legacy snapshot with no portfolio_tc in cache but a warm portfolio_cr: TC falls to
+    Tier-2 marker while CR wraps — the two fields are independently guarded (mirrors the
+    live path, where each cached key is checked independently)."
+
+    These tests set _account_totals_cache to a PARTIAL INTERNAL state (one field warm,
+    the other absent) to pin the gating logic's independence. This is not a claim that
+    Composer's API ever returns partial fields — _refresh_account_totals writes
+    portfolio_tc/portfolio_cr/portfolio_value together in production. The contract is
+    about the READ-side gating being robust regardless of how a partial cache state
+    could arise (a future schema change, a manual last-good seed, a partial write during
+    a code change, etc.) — exactly the robustness the live path (_compute_portfolio_strip)
+    already provides via its two fully-independent if/else blocks.
+
+    RED (test_frozen_cr_wraps_when_only_cr_is_warm_and_tc_is_absent): current code
+    (app.py, frozen branch final wrap gate) requires BOTH the TC-derived and CR-derived
+    variables non-None before wrapping EITHER field — a combined gate, not independent
+    gates. This discards a legitimately warm CR value to raw VW whenever TC alone is
+    missing with no last-good.
+
+    RED (test_frozen_cr_unlabelled_when_only_tc_is_warm_and_cr_is_absent): cross-confirmed
+    finding (eodtest + eodreview independent review, 2026-07-02) — the frozen Tier-2
+    honest-floor marker checks only the TC-derived variable, so when TC is warm but CR
+    alone degrades (absent from cache, no last-good), CR ships as fully unlabelled raw VW
+    with zero signal on the strip — a direct AC-3 violation.
+    """
+
+    def test_frozen_cr_wraps_when_only_cr_is_warm_and_tc_is_absent(self, flask_client, monkeypatch):
+        """
+        Partial cache: portfolio_cr warm, portfolio_tc absent, no last-good at all.
+        The independent-gating contract requires CR still wraps to account basis.
+        RED: current combined gate discards CR to raw VW because TC alone is missing.
+        """
+        client, app_module = flask_client
+        fx = _load_parity_fixture()
+        account_cr = fx["account_cr"]
+
+        expected_cr = real_analytics.get_portfolio_cumulative_return_account_basis(
+            fx["vw_cr"],
+            account_cr,
+            fx["account_value"],
+            fx["symphony_value_sum"],
+        )
+
+        snapshot = _make_snapshot(fx["symphony_value_sum"])
+        bot_state = {"date": "2026-07-01", "last_market_close_snapshot": snapshot}
+
+        # Partial internal cache state: CR warm, TC absent (key never set), no last-good.
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_cache["portfolio_value"] = fx["account_value"]
+        app_module._account_totals_cache["portfolio_cr"] = account_cr
+        app_module._account_totals_last_good.clear()
+
+        try:
+            body = _drive_frozen_branch(
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
+            )
+        finally:
+            _clear_cache(app_module)
+            app_module._account_totals_last_good.clear()
+
+        cr = body["portfolio_strip"]["cumulative_return"]
+
+        assert cr.get("if_held") == pytest.approx(expected_cr["if_held"], rel=1e-6), (
+            f"Independent-gating contract (plan Architecture Edge Cases): a warm CR must "
+            f"wrap to account basis even when TC alone is absent (no last-good). "
+            f"Got cr.if_held={cr.get('if_held')!r}, expected {expected_cr['if_held']!r} "
+            f"(derived from analytics.get_portfolio_cumulative_return_account_basis). "
+            f"Current frozen-branch code requires BOTH fields non-None before wrapping "
+            f"either — discarding this legitimately warm CR to raw VW. "
+            f"Fix: gate TC and CR independently, mirroring the live path's per-field checks."
+        )
+
+    def test_frozen_cr_unlabelled_when_only_tc_is_warm_and_cr_is_absent(
+        self, flask_client, monkeypatch
+    ):
+        """
+        Reverse direction: TC alone is warm (CR absent from cache AND no CR last-good).
+
+        Two-sided contract (per PM directive after eodreview traced the compounding bug
+        at app.py:1901 + 1940, 2026-07-02): a missing CR must NEVER collaterally break a
+        perfectly warm TC, AND the resulting CR-on-VW must be honestly signalled.
+        1. today_change.if_held must be the CORRECTLY WRAPPED account-basis TC value
+           (derived from the fixture), NOT None. Current code's combined final wrap gate
+           (`_snap_account_tc is not None and _snap_account_cr is not None`) requires
+           BOTH fields non-None before wrapping EITHER — so a missing CR forces TC into
+           the Tier-2 branch too, nulling `if_held` even though TC was warm.
+        2. CR must carry an honesty signal (basis=='value_weighted' OR
+           account_basis_stale is True OR cumulative_return.if_held is None) — AC-3:
+           "NEVER silently present a VW value as if it were account basis." Current
+           Tier-2 marker checks only the TC-derived variable, which stays non-None here
+           (never overwritten), so no marker fires despite CR shipping unlabelled raw VW.
+        RED: current code fails BOTH — asserting only #2 would let a marker-only patch
+        ship while leaving the TC-nulling compounding bug live.
+        """
+        client, app_module = flask_client
+        fx = _load_parity_fixture()
+        account_if_held_tc = fx["account_if_held_tc"]
+
+        expected_tc = real_analytics.get_portfolio_today_change_account_basis(
+            fx["vw_tc"],
+            account_if_held_tc,
+            fx["account_value"],
+            fx["symphony_value_sum"],
+        )
+
+        snapshot = _make_snapshot(fx["symphony_value_sum"])
+        bot_state = {"date": "2026-07-01", "last_market_close_snapshot": snapshot}
+
+        # Partial internal cache state: TC warm, CR absent, no last-good at all.
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_cache["portfolio_value"] = fx["account_value"]
+        app_module._account_totals_cache["portfolio_tc"] = account_if_held_tc
+        app_module._account_totals_last_good.clear()
+
+        try:
+            body = _drive_frozen_branch(
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
+            )
+        finally:
+            _clear_cache(app_module)
+            app_module._account_totals_last_good.clear()
+
+        ps = body.get("portfolio_strip", {})
+        tc = ps.get("today_change") or {}
+        cr = ps.get("cumulative_return") or {}
+
+        # Half 1: warm TC must NOT be collaterally nulled by CR's absence.
+        assert tc.get("if_held") == pytest.approx(expected_tc["if_held"], rel=1e-6), (
+            f"Warm TC / absent CR (no last-good): today_change.if_held must remain the "
+            f"correctly account-basis-wrapped TC value ({expected_tc['if_held']!r}, "
+            f"derived from analytics.get_portfolio_today_change_account_basis) — a "
+            f"missing CR must NOT collaterally null a perfectly warm TC. "
+            f"Got {tc.get('if_held')!r}. Current code's combined final wrap gate "
+            f"(app.py, frozen branch) requires BOTH fields non-None before wrapping "
+            f"EITHER, forcing TC into the Tier-2 (nulled) branch too."
+        )
+
+        # Half 2: CR (legitimately on VW basis — no data to wrap with) must be honestly
+        # signalled, not silently presented as if it were account basis.
+        has_vw_marker = ps.get("basis") == "value_weighted"
+        has_stale_marker = ps.get("account_basis_stale") is True
+        has_null_if_held = cr.get("if_held") is None
+
+        assert has_vw_marker or has_stale_marker or has_null_if_held, (
+            f"Warm TC / absent CR (no last-good): frozen strip must signal CR is on VW "
+            f"basis via basis=='value_weighted', account_basis_stale=True, or "
+            f"cumulative_return.if_held=None. Got basis={ps.get('basis')!r}, "
+            f"account_basis_stale={ps.get('account_basis_stale')!r}, "
+            f"cumulative_return={cr!r}. "
+            f"Current code's Tier-2 marker checks only the TC-derived variable, missing "
+            f"this CR-only-degraded case entirely."
         )
 
 
@@ -525,9 +711,7 @@ class TestFrozenStaleCachePolicy:
       (or if_held=None). Never an unlabelled value the UI would read as account basis.
     """
 
-    def test_stale_cache_with_last_good_uses_account_values(
-        self, flask_client, monkeypatch
-    ):
+    def test_stale_cache_with_last_good_uses_account_values(self, flask_client, monkeypatch):
         """
         AC-3 Tier 1: stale _account_totals_cache + warm _account_totals_last_good →
         frozen TC.if_held equals last-good portfolio_tc (not raw VW).
@@ -556,8 +740,12 @@ class TestFrozenStaleCachePolicy:
 
         try:
             body = _drive_frozen_branch(
-                client, app_module, monkeypatch,
-                bot_state=bot_state, vw_tc=fx["vw_tc"], vw_cr=fx["vw_cr"],
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
             )
         finally:
             _clear_cache(app_module)
@@ -571,6 +759,55 @@ class TestFrozenStaleCachePolicy:
             f"{fx['vw_tc']['if_held']}. Got {tc.get('if_held')!r}. "
             f"Fix: frozen branch falls back to _account_totals_last_good when "
             f"_account_totals_cache.get() returns None (stale)."
+        )
+
+    def test_stale_cache_with_last_good_cr_uses_account_values(self, flask_client, monkeypatch):
+        """
+        AC-3 Tier 1 (CR leg): stale _account_totals_cache + warm _account_totals_last_good
+        must ALSO put frozen CR.if_held on last-good portfolio_cr, not raw VW.
+
+        Companion to test_stale_cache_with_last_good_uses_account_values (TC leg) — CR's
+        independent code path through the same stale-cache logic was previously untested
+        anywhere in this file; a CR-isolated regression in the Tier-1 fallback would have
+        passed all 33 prior tests.
+        """
+        client, app_module = flask_client
+        fx = _load_parity_fixture()
+        account_cr = fx["account_cr"]  # 25.0
+
+        if not hasattr(app_module, "_account_totals_last_good"):
+            pytest.fail("_account_totals_last_good not found on app module.")
+
+        snapshot = _make_snapshot(fx["symphony_value_sum"])
+        bot_state = {"date": "2026-07-01", "last_market_close_snapshot": snapshot}
+
+        app_module._account_totals_last_good["portfolio_value"] = fx["account_value"]
+        app_module._account_totals_last_good["portfolio_tc"] = fx["account_if_held_tc"]
+        app_module._account_totals_last_good["portfolio_cr"] = account_cr
+        app_module._account_totals_cache.mark_stale()
+
+        try:
+            body = _drive_frozen_branch(
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
+            )
+        finally:
+            _clear_cache(app_module)
+            app_module._account_totals_last_good.clear()
+
+        cr = body["portfolio_strip"]["cumulative_return"]
+
+        assert cr.get("if_held") == pytest.approx(account_cr, abs=1e-4), (
+            f"Stale cache + warm last-good: frozen CR.if_held must equal last-good "
+            f"portfolio_cr={account_cr} (account basis), not raw VW "
+            f"{fx['vw_cr']['if_held']}. Got {cr.get('if_held')!r}. "
+            f"Fix: frozen branch's CR wrap must fall back to _account_totals_last_good "
+            f"when _account_totals_cache.get('portfolio_cr') returns None (stale), "
+            f"mirroring the TC leg."
         )
 
     def test_stale_cache_with_last_good_stamps_account_basis_stale_true(
@@ -596,8 +833,12 @@ class TestFrozenStaleCachePolicy:
 
         try:
             body = _drive_frozen_branch(
-                client, app_module, monkeypatch,
-                bot_state=bot_state, vw_tc=fx["vw_tc"], vw_cr=fx["vw_cr"],
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
             )
         finally:
             _clear_cache(app_module)
@@ -611,9 +852,7 @@ class TestFrozenStaleCachePolicy:
             f"current cycle). Got {ps.get('account_basis_stale')!r}."
         )
 
-    def test_stale_cache_with_last_good_stamps_account_basis_as_of(
-        self, flask_client, monkeypatch
-    ):
+    def test_stale_cache_with_last_good_stamps_account_basis_as_of(self, flask_client, monkeypatch):
         """
         AC-3 Tier 1: stale + last-good → portfolio_strip["account_basis_as_of"] present
         and is a string (ET timestamp from _account_totals_last_success_at).
@@ -635,8 +874,12 @@ class TestFrozenStaleCachePolicy:
 
         try:
             body = _drive_frozen_branch(
-                client, app_module, monkeypatch,
-                bot_state=bot_state, vw_tc=fx["vw_tc"], vw_cr=fx["vw_cr"],
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
             )
         finally:
             _clear_cache(app_module)
@@ -676,8 +919,12 @@ class TestFrozenStaleCachePolicy:
 
         try:
             body = _drive_frozen_branch(
-                client, app_module, monkeypatch,
-                bot_state=bot_state, vw_tc=fx["vw_tc"], vw_cr=fx["vw_cr"],
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
             )
         finally:
             _clear_cache(app_module)
@@ -695,6 +942,49 @@ class TestFrozenStaleCachePolicy:
             f"today_change={tc!r}. "
             f"Current code returns unlabelled VW value — operator cannot distinguish it from "
             f"an account-basis value. Fix: emit explicit honest-floor marker."
+        )
+
+    def test_no_last_good_cr_stays_raw_vw(self, flask_client, monkeypatch):
+        """
+        AC-3 Tier 2 (CR leg): no last-good (fresh restart), no cache → frozen CR must
+        stay raw VW (equal to vw_cr) — not accidentally wrapped, nulled, or corrupted.
+        Companion to test_no_last_good_marks_basis_value_weighted (TC leg) — CR's Tier-2
+        honest-floor output was previously unchecked.
+        """
+        client, app_module = flask_client
+        fx = _load_parity_fixture()
+
+        if not hasattr(app_module, "_account_totals_last_good"):
+            pytest.fail("_account_totals_last_good not on app module.")
+
+        snapshot = _make_snapshot(fx["symphony_value_sum"])
+        bot_state = {"date": "2026-07-01", "last_market_close_snapshot": snapshot}
+
+        _clear_cache(app_module)
+        app_module._account_totals_last_good.clear()
+
+        try:
+            body = _drive_frozen_branch(
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
+            )
+        finally:
+            _clear_cache(app_module)
+
+        cr = body["portfolio_strip"]["cumulative_return"]
+
+        assert cr.get("if_held") == pytest.approx(float(fx["vw_cr"]["if_held"]), rel=1e-6), (
+            f"No last-good (fresh restart): frozen CR.if_held must equal raw VW if_held "
+            f"({fx['vw_cr']['if_held']}) — the honest-floor value. "
+            f"Got {cr.get('if_held')!r}."
+        )
+        assert cr.get("dry_run") == pytest.approx(float(fx["vw_cr"]["dry_run"]), rel=1e-6), (
+            f"No last-good (fresh restart): frozen CR.dry_run must equal raw VW dry_run "
+            f"({fx['vw_cr']['dry_run']}). Got {cr.get('dry_run')!r}."
         )
 
     def test_no_last_good_value_differs_from_account_basis_computation(self):
@@ -767,9 +1057,7 @@ class TestGoldenFixtureFrozenLiveParity:
             f"Without meaningful cash the VW/account-basis numbers are too close to catch a bug."
         )
 
-    def test_frozen_tc_equals_live_path_for_fixture_inputs(
-        self, flask_client, monkeypatch
-    ):
+    def test_frozen_tc_equals_live_path_for_fixture_inputs(self, flask_client, monkeypatch):
         """
         AC-6: frozen-branch today_change must equal what the live-path analytics helper
         computes for the same inputs.
@@ -797,8 +1085,12 @@ class TestGoldenFixtureFrozenLiveParity:
         )
         try:
             body = _drive_frozen_branch(
-                client, app_module, monkeypatch,
-                bot_state=bot_state, vw_tc=fx["vw_tc"], vw_cr=fx["vw_cr"],
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
             )
         finally:
             _clear_cache(app_module)
@@ -819,9 +1111,7 @@ class TestGoldenFixtureFrozenLiveParity:
             f"({expected_tc['dry_run']})."
         )
 
-    def test_frozen_cr_equals_live_path_for_fixture_inputs(
-        self, flask_client, monkeypatch
-    ):
+    def test_frozen_cr_equals_live_path_for_fixture_inputs(self, flask_client, monkeypatch):
         """
         AC-6: frozen-branch cumulative_return must equal what the live-path analytics
         helper computes for the same inputs.
@@ -848,8 +1138,12 @@ class TestGoldenFixtureFrozenLiveParity:
         )
         try:
             body = _drive_frozen_branch(
-                client, app_module, monkeypatch,
-                bot_state=bot_state, vw_tc=fx["vw_tc"], vw_cr=fx["vw_cr"],
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
             )
         finally:
             _clear_cache(app_module)
@@ -899,9 +1193,7 @@ class TestFrozenNoNewHttpOnRenderPath:
     GREEN now; must stay GREEN after the implementation.
     """
 
-    def test_frozen_render_path_issues_zero_outbound_http(
-        self, flask_client, monkeypatch
-    ):
+    def test_frozen_render_path_issues_zero_outbound_http(self, flask_client, monkeypatch):
         """
         AC-8: requests.get must not be called during /api/state frozen branch render.
         """
@@ -924,18 +1216,13 @@ class TestFrozenNoNewHttpOnRenderPath:
             ):
                 mock_a.get_portfolio_today_change.return_value = fx["vw_tc"]
                 mock_a.get_portfolio_cumulative_return.return_value = fx["vw_cr"]
-                mock_a.get_portfolio_max_drawdown.return_value = {
-                    "if_held": -5.0, "dry_run": -5.0
-                }
-                mock_a.get_symphony_today_change.return_value = {
-                    "if_held": None, "dry_run": None
-                }
+                mock_a.get_portfolio_max_drawdown.return_value = {"if_held": -5.0, "dry_run": -5.0}
+                mock_a.get_symphony_today_change.return_value = {"if_held": None, "dry_run": None}
                 mock_a.get_symphony_cumulative_return.return_value = {
-                    "if_held": None, "dry_run": None
+                    "if_held": None,
+                    "dry_run": None,
                 }
-                mock_a.get_symphony_max_drawdown.return_value = {
-                    "if_held": None, "dry_run": None
-                }
+                mock_a.get_symphony_max_drawdown.return_value = {"if_held": None, "dry_run": None}
                 mock_a.get_portfolio_daily_returns_from_shadow.return_value = None
                 mock_a.get_portfolio_bot_and_held_daily_returns.return_value = None
                 mock_a.compute_portfolio_annualized_vol.return_value = None
@@ -993,8 +1280,12 @@ class TestPreMarketParity:
         )
         try:
             body = _drive_frozen_branch(
-                client, app_module, monkeypatch,
-                bot_state=bot_state, vw_tc=fx["vw_tc"], vw_cr=fx["vw_cr"],
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
                 market_state="pre_market",
             )
         finally:
@@ -1009,9 +1300,7 @@ class TestPreMarketParity:
             f"The account-basis wrap must apply to pre_market as well as closed_frozen."
         )
 
-    def test_pre_market_and_closed_frozen_produce_identical_strip(
-        self, flask_client, monkeypatch
-    ):
+    def test_pre_market_and_closed_frozen_produce_identical_strip(self, flask_client, monkeypatch):
         """
         AC-9: pre_market and closed_frozen with identical inputs must produce identical
         portfolio_strip TC and CR (they share the same branch at app.py:1581).
@@ -1032,8 +1321,12 @@ class TestPreMarketParity:
             )
             try:
                 body = _drive_frozen_branch(
-                    client, app_module, monkeypatch,
-                    bot_state=bot_state, vw_tc=fx["vw_tc"], vw_cr=fx["vw_cr"],
+                    client,
+                    app_module,
+                    monkeypatch,
+                    bot_state=bot_state,
+                    vw_tc=fx["vw_tc"],
+                    vw_cr=fx["vw_cr"],
                     market_state=state,
                 )
                 results[state] = body.get("portfolio_strip", {})
@@ -1056,8 +1349,8 @@ class TestPreMarketParity:
         pm_cr = results["pre_market"]["cumulative_return"]
 
         assert cf_cr["if_held"] == pytest.approx(pm_cr["if_held"], rel=1e-6), (
-            f"closed_frozen CR.if_held must equal pre_market CR.if_held."
+            "closed_frozen CR.if_held must equal pre_market CR.if_held."
         )
         assert cf_cr["dry_run"] == pytest.approx(pm_cr["dry_run"], rel=1e-6), (
-            f"closed_frozen CR.dry_run must equal pre_market CR.dry_run."
+            "closed_frozen CR.dry_run must equal pre_market CR.dry_run."
         )
