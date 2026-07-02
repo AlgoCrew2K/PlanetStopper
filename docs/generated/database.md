@@ -3,7 +3,7 @@
 > SQLite state management for Planet Stopper: schema, migrations, all read/write accessors for the state DB, and a pytest sentinel guard that structurally prevents tests from writing to the production DB.
 
 **Source:** `database.py`
-**Last updated:** 2026-06-29 (DE-ADVISOR-LATENCY: `get_latest_market_lens_cache()` accessor; prior: DE-PRISM-SOURCES-001 `get_latest_market_prism_sources_for_run`)
+**Last updated:** 2026-07-02 (DE-PRISM-NUMERIC-VERIFY-001: `get_latest_market_prism_verification_for_run` accessor; prior: DE-ADVISOR-LATENCY `get_latest_market_lens_cache()`; DE-PRISM-SOURCES-001 `get_latest_market_prism_sources_for_run`)
 
 ## Overview
 
@@ -27,6 +27,8 @@ Migrations 026–032:
 - `030_per_symphony_live_mode.sql` — `live_mode` on `symphony_strategies`, `config_audit_log` table
 - `031_shadow_history_sym_ts_index.sql` — composite index on `shadow_history (symphony_id, ts_utc)`
 - `032_prism_audit_log.sql` — `prism_audit_log` table + `idx_prism_audit_log_run_id` index (Prism Phase 1)
+
+**DE-PRISM-NUMERIC-VERIFY-001 adds no migration.** `MARKET_PRISM_VERIFICATION` is a new `advisor_role` value on the existing `advisor_observations` table — same no-schema-change pattern as `MARKET_PRISM_SOURCES` and `MARKET_LENS_CACHE`.
 
 ## Public API Reference
 
@@ -156,7 +158,7 @@ Inserts one `advisor_observations` row. Returns the new row id. `is_advisory_onl
 **Parameters:**
 | Name | Type | Description |
 |------|------|-------------|
-| `advisor_role` | `str` | `"OVERFITTING_CONSCIENCE"`, `"SPEC_CRITIC"`, `"DIVERGENCE_EXPLAINER"`, `"WALL_BREACH"`, `"MARKET_PRISM"`, `"MARKET_PRISM_SOURCES"`, or `"MARKET_LENS_CACHE"` |
+| `advisor_role` | `str` | `"OVERFITTING_CONSCIENCE"`, `"SPEC_CRITIC"`, `"DIVERGENCE_EXPLAINER"`, `"WALL_BREACH"`, `"MARKET_PRISM"`, `"MARKET_PRISM_SOURCES"`, `"MARKET_LENS_CACHE"`, or `"MARKET_PRISM_VERIFICATION"` |
 | `subject_type` | `str` | `"autotune_run"`, `"spec_bundle"`, `"fold_role_wall"`, or `"portfolio"` |
 | `subject_id` | `str` | String PK of the observed entity |
 | `verdict` | `str \| None` | `"CLEAR"`, `"WATCH"`, `"BREACH"`, `"INFORMATIONAL"`, `"NOT_APPLICABLE"`, `"neutral"`, `"bullish"`, `"bearish"`, or `"limited-inputs"` |
@@ -179,6 +181,18 @@ Returns the most recently inserted `advisor_observations` row with `advisor_role
 
 #### `get_latest_market_prism_sources_for_run(run_id: str) → dict | None`
 Returns the MARKET_PRISM_SOURCES row for this `run_id`, or `None`. Uses an exact `json_extract(raw_response,'$.run_id') = ?` SQLite match — no scan-and-compare loop. Returns `None` on mismatch — **no fallback to a different run's citations** (stale-citation-bleed guard). D-1 never-raises; uses `get_ro_connection()`. Used by `app.py:ai_advisor_tab()` to ensure the citation overlay matches the currently-displayed MARKET_PRISM row. Each MARKET_PRISM_SOURCES row holds rebuilt-at-patch-time citation metadata in `raw_response.per_lens_digest[lens].article_corpus = [{url, title, published}]`.
+
+#### `get_latest_market_prism_verification_for_run(run_id: str) → dict | None`
+
+**New (DE-PRISM-NUMERIC-VERIFY-001, AC-9).** Structural mirror of `get_latest_market_prism_sources_for_run` — same exact `json_extract(raw_response,'$.run_id') = ?` match, same `ORDER BY id DESC LIMIT 1`, same no-stale-bleed guard (returns `None` on mismatch — a run where the verifier found no `cited_numbers`, or errored, produces no VERIFICATION row for that run_id; falling back to a different run's row would show last night's checks against tonight's read), same D-1 / `get_ro_connection()` discipline.
+
+Returns the `MARKET_PRISM_VERIFICATION` `advisor_observations` row for this `run_id`, or `None`. Used by:
+- `advisors/prism_numeric_verifier.persist_verification()` — the idempotency check (a row already existing for `run_id` skips the INSERT, AC-8).
+- `app.py:ai_advisor_tab()` — the AC-10 Overview render overlay (fetches by the `MARKET_PRISM` row's own `run_id` to attach per-check verification badges).
+
+D-1 never-raises: any exception (DB error, parse failure) degrades to `None`. See [advisors/prism_numeric_verifier](advisors_prism_numeric_verifier.md) for the row's `raw_response` shape (`{run_id, verified_at, checks, summary, verdict}`).
+
+`"MARKET_PRISM_VERIFICATION"` is **NOT** added to `app.py`'s `_ADVISOR_ROLES` — keeps it out of the Overview `observations` loop and the `_preview_text` stamp, exactly like `MARKET_PRISM_SOURCES` and `MARKET_LENS_CACHE`.
 
 #### `get_latest_market_lens_cache() → dict | None`
 
