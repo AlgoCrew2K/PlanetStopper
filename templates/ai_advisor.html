@@ -1151,9 +1151,13 @@
                         <div class="prism-verification-header">Numeric Verification</div>
                         {% for _chk in market_prism_verification.get('checks', []) %}
                             {# .get(key, default)'s default only fires when the key is
-                               ABSENT — a malformed check can have indicator/classification
-                               present with value None, so `or` is required to catch that
-                               case too (F1, /review PR #90). #}
+                               ABSENT, not when it's present with value None (F1, /review
+                               PR #90). indicator can be None (Finding-1's `{}`-coercion
+                               path for a malformed cited_numbers entry); classification
+                               cannot be None from the real _build_check/_classify producer
+                               chain (always one of pass/flagged/overridden/unverifiable) —
+                               this guard is defense-in-depth only, against a hand-authored
+                               or legacy DB row bypassing the normal write path. #}
                             {% set _cls = _chk.get('classification') or 'unverifiable' %}
                             {% set _indicator = _chk.get('indicator') or '' %}
                             {% set _badge_class = {
