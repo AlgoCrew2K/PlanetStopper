@@ -1116,6 +1116,21 @@ class TestFrozenPathAccountAllTimeCr:
                 "if_held": -8.1,
                 "dry_run": -5.3,
             }
+            # This fixture sets _account_totals_cache["portfolio_cr"]=63.95 with
+            # portfolio_tc left unset (CR-warm/TC-absent) — the independent-gating
+            # branch (DE-EOD-BASIS-001 review revise) now reaches these two wrap
+            # helpers on the frozen path. Stub them so the route doesn't try to
+            # JSON-serialize an unstubbed MagicMock; values are consistent with the
+            # VW returns above (this test class only asserts on account_all_time_cr,
+            # not on today_change/cumulative_return contents).
+            mock_analytics.get_portfolio_cumulative_return_account_basis.return_value = {
+                "if_held": 63.95,
+                "dry_run": 27.56,
+            }
+            mock_analytics.get_portfolio_today_change_account_basis.return_value = {
+                "if_held": 0.2,
+                "dry_run": 0.1,
+            }
             mock_analytics.compute_windowed_portfolio_strip.return_value = {
                 "guard_alpha": 0.904,
                 "window": "30d",

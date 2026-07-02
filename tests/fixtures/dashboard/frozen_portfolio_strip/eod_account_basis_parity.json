@@ -1,0 +1,68 @@
+{
+  "_provenance": "schema-derived, DE-EOD-BASIS-001, 2026-07-02. Inputs are internally consistent: dollar_change = account_if_held_tc * account_value / 100 = 0.50 * 100000 / 100 = 500; VW TC = dollar_change / symphony_value_sum * 100 = 500 / 80000 * 100 = 0.625. invested_frac = symphony_value_sum / account_value = 80000 / 100000 = 0.8 (20% cash). VW CR back-derived: account_cr / invested_frac = 25.0 / 0.8 = 31.25. All values are untriggered (VW dry_run == VW if_held) so guard_delta_vw == 0 and expected account-basis dry_run == account-basis if_held.",
+  "_note": "20% uninvested cash makes the VW/account-basis gap unambiguous (0.625 vs 0.50 for TC; 31.25 vs 25.0 for CR). Any test that confuses VW with account-basis will diverge by >0.1 — well above any plausible floating-point tolerance.",
+  "account_value": 100000.0,
+  "symphony_value_sum": 80000.0,
+  "account_if_held_tc": 0.50,
+  "account_cr": 25.0,
+  "vw_tc": {
+    "if_held": 0.625,
+    "dry_run": 0.625
+  },
+  "vw_cr": {
+    "if_held": 31.25,
+    "dry_run": 31.25
+  },
+  "snapshot_input": {
+    "trading_day": "2026-07-01",
+    "captured_at_et": "16:00:01 ET",
+    "shadow_divergence": {
+      "by_symphony": {},
+      "portfolio_today": null
+    },
+    "accounts_map": {
+      "ACC-INDIVIDUAL": [
+        {
+          "id": "sym-alpha",
+          "name": "Alpha Momentum",
+          "account": "ACC-INDIVIDUAL",
+          "current_return": 4.2,
+          "current_value": 50000.0,
+          "simple_return": 0.042,
+          "net_deposits": 45000.0,
+          "time_weighted_return": 0.045,
+          "max_drawdown": 0.08,
+          "mc_prob": 72.5,
+          "armed": false,
+          "tp_armed": false,
+          "para_armed": false,
+          "triggered": false,
+          "stop_trigger": -3.5,
+          "shadow_hwm": 4.8,
+          "breakeven_locked": false
+        }
+      ],
+      "ACC-ROTH": [
+        {
+          "id": "sym-beta",
+          "name": "Beta Defensive",
+          "account": "ACC-ROTH",
+          "current_return": 1.1,
+          "current_value": 30000.0,
+          "simple_return": 0.011,
+          "net_deposits": 28000.0,
+          "time_weighted_return": 0.012,
+          "max_drawdown": 0.03,
+          "mc_prob": 55.0,
+          "armed": false,
+          "tp_armed": false,
+          "para_armed": false,
+          "triggered": false,
+          "stop_trigger": -2.0,
+          "shadow_hwm": 1.5,
+          "breakeven_locked": false
+        }
+      ]
+    }
+  }
+}

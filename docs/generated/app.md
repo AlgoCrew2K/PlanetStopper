@@ -3,7 +3,7 @@
 > Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
 **Source:** `app.py`
-**Last updated:** 2026-06-30 (DE-PRISM-SOURCES-PER-LENS-001: per-lens Market Prism sources carousels; prior: 2026-06-26 fix/today-change-account-basis, DE-TODAY-BASIS-001)
+**Last updated:** 2026-07-02 (DE-EOD-BASIS-001: EOD/frozen account-basis unification + per-field stale-cache hardening; prior: 2026-06-30 DE-PRISM-SOURCES-PER-LENS-001, per-lens Market Prism sources carousels; 2026-06-26 fix/today-change-account-basis, DE-TODAY-BASIS-001)
 
 ## Overview
 
@@ -25,6 +25,9 @@ Module-level thread-safety constructs:
 - `_CHAT_RATE_LIMITER` — per-IP rate-limiter for AI Advisor chat endpoint (cost-DoS guard; max `CHAT_RATE_LIMITER_MAX_TRACKED_IPS` IPs).
 - `_account_totals_cache` — `_StaleFlagDict` instance holding Composer account-level totals; reads return empty-state when marked stale by `_notify_cycle_complete()`, unmasking after `_refresh_account_totals()` writes fresh values.
 - `_account_totals_cache_lock` — `threading.Lock()` serializing multi-key writes from `_refresh_account_totals()` so concurrent readers never observe a partial write sequence.
+- `_account_totals_last_good` (DE-EOD-BASIS-001) — plain `dict` (NOT `_StaleFlagDict`) holding the last SUCCESSFULLY-fetched Composer account totals (`portfolio_value`, `portfolio_cr`, `portfolio_tc`, ...). Survives `_account_totals_cache.mark_stale()` calls — that is its entire purpose. Written only inside `_refresh_account_totals()` on a genuine 200 response, under `_account_totals_cache_lock`. Tier-1 stale-cache fallback source for both the live and frozen `/api/state` paths.
+- `_account_totals_last_success_at` (DE-EOD-BASIS-001) — `str | None`; ET-format timestamp (`"%Y-%m-%d %H:%M:%S ET"`) written immediately after `_account_totals_last_good` on each successful refresh. Surfaced as `portfolio_strip["account_basis_as_of"]` when the Tier-1 fallback fires; both the live and frozen paths fall back to a fresh `datetime.now(_ET)` string when it was never set, so `account_basis_as_of` is never `None` while `account_basis_stale=True`.
+- `_ACCOUNT_TOTALS_HTTP_TIMEOUT_S` (DE-EOD-BASIS-001) — named constant (`10`) promoting the bare `timeout=10` literal previously inline in the Composer `requests.get` call inside `_refresh_account_totals()`.
 - `_sse_clients` / `_sse_clients_lock` — list of `queue.Queue` objects (one per connected `/api/events` client) and its `threading.Lock`. `_notify_cycle_complete()` fans out under the lock; the SSE generator registers/deregisters its queue under the same lock.
 
 ## Environment Variables
@@ -134,9 +137,11 @@ Fan-out hook called from `trigger_alpha_bot()` in a `finally` block. Never raise
 3. **Fan out SSE event** — copies `_sse_clients` under `_sse_clients_lock`, then calls `q.put_nowait("cycle-complete")` for each client queue. Exceptions (full queue, closed) are swallowed per client; the loop always completes. O(1) per client; no I/O.
 
 #### `_refresh_account_totals() → None`
-Fetches Composer account-level total-stats (`portfolio_value`, `simple_return`, `todays_percent_change`, `max_drawdown`) and populates `_account_totals_cache`. Must never raise (swallows all exceptions — D-1 contract).
+Fetches Composer account-level total-stats (`portfolio_value`, `simple_return`, `todays_percent_change`, `max_drawdown`) and populates `_account_totals_cache`. Must never raise (swallows all exceptions — D-1 contract). HTTP timeout is `_ACCOUNT_TOTALS_HTTP_TIMEOUT_S` (named constant, DE-EOD-BASIS-001).
 
 **Write protocol:** all five keys are written under `_account_totals_cache_lock` (prevents concurrent readers from observing a partial write). After the last key is written, calls `_account_totals_cache.refresh_written()` to clear the stale flag atomically. If Composer returns non-200 or any exception occurs, `refresh_written()` is NOT called: the cache remains masked and consumers see empty-state (honest degradation triggering the AC-8 staleness cue in the client).
+
+**Last-good snapshot (DE-EOD-BASIS-001):** on a genuine 200 response, after `refresh_written()` clears the stale flag, `_account_totals_last_good` is cleared and repopulated from `_account_totals_cache` (still under the lock), then `_account_totals_last_success_at` is stamped with an ET timestamp string. A non-200 response or an exception updates neither — `_account_totals_last_good` and its timestamp only ever advance on a real Composer fetch, so they always reflect the last time Composer actually answered, independent of how many `mark_stale()` cycles have fired since.
 
 Called by the per-minute scheduler AND as a short-lived daemon thread spawned by `_notify_cycle_complete()`.
 
@@ -163,6 +168,8 @@ Prunes `exit_triggers` rows older than `TRIGGER_TELEMETRY_RETENTION_DAYS` (defau
 **TOCTOU safety:** All `_compute_portfolio_strip` cache reads use `.get()` (single call) rather than `.__contains__()` + `.__getitem__()`. This eliminates the window where `mark_stale()` fires between the two calls, which would cause `__contains__` to return `True` but `__getitem__` to raise `KeyError`.
 
 **Module-level instance:** `_account_totals_cache: _StaleFlagDict = _StaleFlagDict()`
+
+**Stale-cache fallback (DE-EOD-BASIS-001):** a masked `_account_totals_cache` read is not the end of the line — see `_account_totals_last_good` above and the two-tier fallback documented under `_compute_portfolio_strip()` / `GET /api/state` below.
 
 ---
 
@@ -197,6 +204,8 @@ Returns the full API state dict as JSON. Includes `bot_state`, `portfolio_strip`
 **Freshness contract (AC-4):** After a new engine cycle writes state to the DB, the first call to `GET /api/state` returns data reflecting that cycle because `_notify_cycle_complete()` marks `_account_totals_cache` stale at cycle completion. `_compute_portfolio_strip()` reads the fresh DB state and falls back to per-symphony sum for `portfolio_value` while the cache is masked. A staleness indicator in the response (`data_as_of`) reflects the actual cycle timestamp, not the server render clock.
 
 **AC-7 top-level `data_as_of` (in-scope fix, app.py:2117):** The response also carries a top-level `data_as_of` field used by `static/index.js:1168` as the hero freshness fallback (`portfolio.data_as_of || data.data_as_of`). This field now derives from `last_successful_cycle_at` in `state_data` — the same `last_successful_cycle_at` pattern as `_compute_portfolio_strip` (app.py:1281–1303). Also fixes a pre-existing naive `datetime.now()` bug (no `_ET`) that produced local-system time instead of ET.
+
+**Frozen/EOD snapshot recompute — per-field account-basis mirror (DE-EOD-BASIS-001):** When `market_state` is `closed_frozen` or `pre_market`, `get_state()` recomputes `portfolio_strip` from `last_market_close_snapshot` rather than passing through `_compute_portfolio_strip()` — the frozen branch is its own authoritative recompute, never a pass-through of the engine's written (VW) snapshot strip. TC, CR, and `account_value` are each resolved via the identical Tier-1 (last-good) / Tier-2 (honest floor) fallback described under `_compute_portfolio_strip()` below — `_snap_tc_stale` / `_snap_cr_stale` booleans track each field's own cache-vs-last-good source independently — then wrapped through the same `analytics.get_portfolio_today_change_account_basis()` / `get_portfolio_cumulative_return_account_basis()` helpers in two independent `if`/`else` blocks. Previously a single combined gate required BOTH TC and CR to be non-`None` before wrapping EITHER, so a cold CR could collaterally leave a warm TC unwrapped. The Tier-2 `basis="value_weighted"` marker and Tier-1 `account_basis_stale` / `account_basis_as_of` stamps mirror the live path's per-field logic exactly. On the Tier-2 (fully-missing) branch, both TC and CR surface raw VW unchanged on both paths — a post-review fix removed an earlier inconsistency where the frozen TC branch alone nulled `if_held` while every other Tier-2 branch surfaced raw VW; honesty is now signalled by the single `basis` marker on all four branches, not by selectively nulling a field (see "Post-review hardening" in `DECISIONS.md`). The engine's EOD snapshot writer (`alpha_bot_execution.py`) is unaffected — it keeps writing the raw VW strip; the account-basis wrap happens entirely at app read time. See `DE-EOD-BASIS-001` in `DECISIONS.md`.
 
 #### `GET /history`
 Render historical performance page.
@@ -496,6 +505,17 @@ This ensures the `data_as_of` display reflects when the cycle data was captured,
 
 **B-2 today-change account-basis fix (DE-TODAY-BASIS-001):** The warm-cache today-change block now routes through `analytics.get_portfolio_today_change_account_basis()`. Previously, `if_held` was `_cached_tc` (Composer `todays_percent_change`, account-value denominator, cash-inclusive) while `dry_run` was the VW portfolio today-change (symphony-value denominator, cash-excluded). Different denominators produced phantom bot-vs-held divergence even when no guard had fired. The fix computes a guard delta on the VW basis (common denominator) and scales it by `invested_frac = symphony_value_sum / account_value` before applying it to the account-level Held today-change. With zero guard divergence, `guard_delta_vw == 0` and `dry_run == account_if_held_tc` exactly. `_symphony_value_sum` is now hoisted before both the CR and TC blocks (previously scoped inside the `if _cached_cr` branch, out of reach for TC). The cold-cache fallback (`else` branch, VW-both) is unchanged.
 
+**EOD account-basis unification — two-tier per-field stale-cache hardening (DE-EOD-BASIS-001):** The warm-cache branch above assumes `_account_totals_cache.get(...)` returns a value. When it returns `None` (the every-minute `mark_stale()` window, a Composer timeout, or a fresh process with nothing fetched yet), TC, CR, and `account_value` are each resolved through an INDEPENDENT two-tier fallback — no field's fallback state gates another field's wrap:
+
+- **Tier 1 (last-good):** if `_account_totals_last_good` holds the field, it is used in place of the masked cache value; the VW-basis wrap still runs through the same `analytics.get_portfolio_*_account_basis()` helper as the warm-cache path, and `_live_basis_stale = True` is set. `account_value` gained this Tier-1 fallback in this cycle — previously it fell straight from a masked cache read to the cash-EXCLUDED per-symphony sum with no last-good check at all (asymmetric vs. the CR/TC fields and vs. the frozen path's equivalent variable).
+- **Tier 2 (honest floor):** if `_account_totals_last_good` has nothing for that field either (never fetched this process), the raw VW value is used unwrapped.
+
+After both TC and CR are resolved, the strip is stamped:
+- `portfolio_strip["basis"] = "value_weighted"` fires when EITHER TC or CR has no basis at all (Tier 2 for that field) — each field's own cache+last-good state is checked independently, so a warm TC is never silently mislabelled just because CR is on Tier 2 (previously the marker only checked TC's state, letting a CR-only degradation ship as unlabelled raw VW). The check is an explicit `is None` test, not a falsy check — a genuine last-good value of `0.0` (a real flat-day reading) counts as present, not fully-missing; a post-review pass fixed an earlier falsy-check version that would have mislabelled a correctly Tier-1-wrapped `0.0` as `value_weighted` (see "Post-review hardening" in `DECISIONS.md`).
+- `portfolio_strip["account_basis_stale"] = True` + `portfolio_strip["account_basis_as_of"]` fire when `_live_basis_stale` is set (i.e. at least one field used Tier 1). `account_basis_as_of` falls back to a fresh `datetime.now(_ET)` string when `_account_totals_last_success_at` was never set, so it is never `None` while `account_basis_stale=True`.
+
+See `DE-EOD-BASIS-001` in `DECISIONS.md` for the frozen-path mirror (`get_state()`, documented under `GET /api/state` above) and the 5 findings this hardening pass fixed.
+
 #### `_compute_suggestion_gates(suggestion, symphony_id: str) → dict`
 Computes four-gates verdict booleans for one suggestion: `allowlist`, `risk_direction`, `oos_frozen_eval`, `locked_vars`.
 
@@ -509,7 +529,7 @@ Normalizes an `autotune_runs` DB row for the `/api/autotune-runs` JSON response.
 
 - `ai_advisor` — context assembly, Claude call, C2 safety gates, assessment builder
 - `database` — all state-DB reads and writes for advisor routes
-- `analytics` — symphony history, correlation data, symphony list
+- `analytics` — symphony history, correlation data, symphony list; account-basis translation helpers (`get_portfolio_today_change_account_basis`, `get_portfolio_cumulative_return_account_basis`, DE-TODAY-BASIS-001) consumed by both the live and frozen portfolio-strip paths
 - `advisors.correlation_diagnostic` — `compute_pairwise_correlations`, `CRISIS_CAVEAT`
 - `advisors.asset_swap_engine` — `propose_operator_swap`, `SwapObjective`, `_has_composer_key`
 - `advisors.logic_change_engine` — `propose_operator_logic_change`, `LogicTweak`, `LogicChangeObjective`

@@ -529,6 +529,20 @@ _account_totals_cache: _StaleFlagDict = _StaleFlagDict()
 # concurrent reader never observes a partial write sequence.
 _account_totals_cache_lock = threading.Lock()
 
+# Last-good snapshot: plain dict (NOT _StaleFlagDict) so it survives mark_stale() calls
+# on _account_totals_cache.  Populated on every successful Composer fetch.  Used as
+# Tier-1 stale-cache fallback on both the live and frozen /api/state paths so that a
+# transient Composer timeout never silently flips to unlabelled VW values.
+_account_totals_last_good: dict = {}
+# ET-format timestamp written on each successful _refresh_account_totals call.
+# Surfaced as portfolio_strip["account_basis_as_of"] when the Tier-1 fallback fires.
+_account_totals_last_success_at: str | None = None
+# Named constant for the Composer HTTP timeout; promotes the bare literal at line 769.
+_ACCOUNT_TOTALS_HTTP_TIMEOUT_S = 10
+# ET-format timestamp string used for account_basis_as_of / _account_totals_last_success_at
+# across _refresh_account_totals and both the live and frozen stale-cache fallback paths.
+_ACCOUNT_BASIS_TS_FMT = "%Y-%m-%d %H:%M:%S ET"
+
 # SSE client registry — one Queue per connected /api/events client.
 # _notify_cycle_complete() fans out a sentinel to each queue under the lock.
 _sse_clients: list = []
@@ -747,6 +761,7 @@ def _refresh_account_totals() -> None:
     _account_totals_cache.refresh_written() to clear the stale flag atomically.
     Auth pattern mirrors alpha_bot_execution.get_composer_headers().
     """
+    global _account_totals_last_good, _account_totals_last_success_at
     try:
         env_vars = dotenv_values(ENV_FILE_PATH)
         key_id = env_vars.get("COMPOSER_KEY_ID") or os.environ.get("COMPOSER_KEY_ID", "")
@@ -766,7 +781,7 @@ def _refresh_account_totals() -> None:
             "authorization": f"Bearer {secret}",
             "Content-Type": "application/json",
         }
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = requests.get(url, headers=headers, timeout=_ACCOUNT_TOTALS_HTTP_TIMEOUT_S)
         if resp.status_code == 200:
             data = resp.json()
             # Acquire the shared cache lock before writing multiple keys so that
@@ -792,6 +807,16 @@ def _refresh_account_totals() -> None:
                     _account_totals_cache["portfolio_mdd"] = float(_metrics["max_drawdown"]) * 100.0
                 # All keys written; clear the stale flag so reads now return fresh values.
                 _account_totals_cache.refresh_written()
+                # Snapshot to last-good (plain dict — survives future mark_stale calls).
+                # Atomic reassignment (not clear()+update()): a reader between those two
+                # steps would see an empty dict — a TOCTOU window where a stale-cache read
+                # observes neither the fresh cache nor the prior last-good. Rebinding to a
+                # new dict is a single reference swap; readers always see a complete dict.
+                # Written only on genuine success (inside the lock, after refresh_written)
+                # so _account_totals_last_success_at reflects the last real Composer fetch.
+                _account_totals_last_good = dict(_account_totals_cache)
+            # Advance the as-of timestamp only after all writes completed without error.
+            _account_totals_last_success_at = datetime.now(_ET).strftime(_ACCOUNT_BASIS_TS_FMT)
         else:
             _daemon_log.warning(
                 "_refresh_account_totals: Composer returned %s — cache unchanged",
@@ -1155,9 +1180,16 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
     if _cached_portfolio_value is not None:
         account_value = _cached_portfolio_value
     else:
-        account_value = sum(
-            v.get("current_value") or 0.0 for v in bot_state.values() if isinstance(v, dict)
-        )
+        # Tier 1 — last-good present: use the retained cash-inclusive account total
+        # rather than falling straight to the cash-EXCLUDED per-symphony sum (mirrors
+        # the frozen path's account_value fallback).
+        _lg_portfolio_value = _account_totals_last_good.get("portfolio_value")
+        if _lg_portfolio_value is not None:
+            account_value = _lg_portfolio_value
+        else:
+            account_value = sum(
+                v.get("current_value") or 0.0 for v in bot_state.values() if isinstance(v, dict)
+            )
 
     try:
         # Use .get() for all cache reads below to eliminate TOCTOU between __contains__
@@ -1168,6 +1200,10 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         # the duplicate that previously lived inside the if _cached_cr branch only,
         # which left it out of scope for the TC block.
         _symphony_value_sum = sum(s.get("value") or 0.0 for s in symphonies_list)
+
+        # Track whether the live strip is using last-good (stale) account totals so
+        # the caller can stamp account_basis_stale on the returned portfolio_strip.
+        _live_basis_stale = False
 
         _cached_cr = _account_totals_cache.get("portfolio_cr")
         if _cached_cr is not None:
@@ -1189,9 +1225,22 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
                 )
             )
         else:
-            cumulative_return = analytics.get_portfolio_cumulative_return(
-                symphonies_list, bot_state, trading_day=trading_day
-            )
+            # Tier 1 — last-good present: use retained snapshot so a transient Composer
+            # timeout doesn't silently flip to unlabelled VW values.
+            _lg_cr = _account_totals_last_good.get("portfolio_cr")
+            if _lg_cr is not None:
+                _vw_cr = analytics.get_portfolio_cumulative_return(
+                    symphonies_list, bot_state, trading_day=trading_day
+                )
+                cumulative_return = analytics.get_portfolio_cumulative_return_account_basis(
+                    _vw_cr, _lg_cr, account_value, _symphony_value_sum
+                )
+                _live_basis_stale = True
+            else:
+                # Tier 2 — no last-good: fall back to VW (label applied below).
+                cumulative_return = analytics.get_portfolio_cumulative_return(
+                    symphonies_list, bot_state, trading_day=trading_day
+                )
 
         # D-01 / B-2 fix: use the Composer-sourced today-change (includes cash in
         # denominator) when available, and put Bot on the same account basis so that
@@ -1211,9 +1260,21 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
                 _symphony_value_sum,
             )
         else:
-            today_change = analytics.get_portfolio_today_change(
-                symphonies_list, bot_state, trading_day=trading_day
-            )
+            # Tier 1 — last-good present.
+            _lg_tc = _account_totals_last_good.get("portfolio_tc")
+            if _lg_tc is not None:
+                _vw_tc = analytics.get_portfolio_today_change(
+                    symphonies_list, bot_state, trading_day=trading_day
+                )
+                today_change = analytics.get_portfolio_today_change_account_basis(
+                    _vw_tc, _lg_tc, account_value, _symphony_value_sum
+                )
+                _live_basis_stale = True
+            else:
+                # Tier 2 — no last-good: fall back to VW (label applied below).
+                today_change = analytics.get_portfolio_today_change(
+                    symphonies_list, bot_state, trading_day=trading_day
+                )
 
         # D-02: use Composer portfolio-level MDD (peak-to-trough on aggregate equity
         # curve) when available. The value-weighted average of per-symphony MDDs is
@@ -1320,6 +1381,28 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
             "hist_held": hist_held,
             "data_as_of": _data_as_of,
         }
+
+        # Tier 2 honest-floor marker: fires when EITHER field has no basis at all (no
+        # cache, no last-good) — a missing TC must not mask an independently-missing CR
+        # and vice versa (each field's own cache+last-good state is checked). `is None`
+        # (not a falsy check) — a real last-good value of 0.0 (a genuine flat-day
+        # reading) must count as present, not fully-missing.
+        _tc_fully_missing = (
+            _cached_tc is None and _account_totals_last_good.get("portfolio_tc") is None
+        )
+        _cr_fully_missing = (
+            _cached_cr is None and _account_totals_last_good.get("portfolio_cr") is None
+        )
+        if _tc_fully_missing or _cr_fully_missing:
+            _strip["basis"] = "value_weighted"
+        # Tier 1 stale stamps: using last-good account totals for either field. Falls
+        # back to a fresh ET timestamp string when _account_totals_last_success_at was
+        # never set by a real refresh (mirrors the frozen path's fallback).
+        if _live_basis_stale:
+            _strip["account_basis_stale"] = True
+            _strip["account_basis_as_of"] = _account_totals_last_success_at or datetime.now(
+                _ET
+            ).strftime(_ACCOUNT_BASIS_TS_FMT)
 
         # Option A: surface the Composer account-lifetime CR as its OWN non-windowed stat
         # ("Account · all-time"). It is the cash-inclusive simple_return scalar — there is
@@ -1799,23 +1882,82 @@ def get_state():
                     _snap_data_as_of = snapshot.get("data_as_of")
 
                 try:
-                    _snap_cr = analytics.get_portfolio_cumulative_return(
+                    # Compute symphony value sum for account-basis scaling (mirrors live path).
+                    _snap_symphony_value_sum = sum(
+                        s.get("value", 0.0) or 0.0 for s in _snap_symphonies_list
+                    )
+
+                    # Resolve account totals with two-tier stale-cache fallback. TC, CR,
+                    # and value are each resolved INDEPENDENTLY (mirrors the live path's
+                    # per-field checks) — a missing field must never collaterally degrade
+                    # an independently-warm sibling field.
+                    # Use .get() to avoid TOCTOU: mark_stale() can fire between calls.
+                    _snap_account_tc = _account_totals_cache.get("portfolio_tc")
+                    _snap_tc_stale = False
+                    if _snap_account_tc is None and _account_totals_last_good:
+                        _snap_account_tc = _account_totals_last_good.get("portfolio_tc")
+                        _snap_tc_stale = _snap_account_tc is not None
+
+                    _snap_account_cr = _account_totals_cache.get("portfolio_cr")
+                    _snap_cr_stale = False
+                    if _snap_account_cr is None and _account_totals_last_good:
+                        _snap_account_cr = _account_totals_last_good.get("portfolio_cr")
+                        _snap_cr_stale = _snap_account_cr is not None
+
+                    _snap_cached_value = _account_totals_cache.get("portfolio_value")
+                    if _snap_cached_value is None and _account_totals_last_good:
+                        _snap_cached_value = _account_totals_last_good.get("portfolio_value")
+
+                    # Tier 1 — fires when EITHER field fell back to last-good.
+                    _snap_basis_stale = _snap_tc_stale or _snap_cr_stale
+                    _snap_basis_as_of = (
+                        (
+                            _account_totals_last_success_at
+                            or datetime.now(_ET).strftime(_ACCOUNT_BASIS_TS_FMT)
+                        )
+                        if _snap_basis_stale
+                        else None
+                    )
+
+                    # VW intermediates (same calls as live path).
+                    _snap_vw_tc = analytics.get_portfolio_today_change(
                         _snap_symphonies_list, _snap_bot_state, trading_day=_snap_trading_day
                     )
-                    # Use .get() to avoid TOCTOU between __contains__ and __getitem__:
-                    # _StaleFlagDict.mark_stale() can fire between the two calls.
-                    _snap_cached_cr = _account_totals_cache.get("portfolio_cr")
-                    if _snap_cached_cr is not None:
-                        _snap_cr = {
-                            "if_held": _snap_cached_cr,
-                            "dry_run": _snap_cr.get("dry_run") if _snap_cr else None,
-                        }
-                    _snap_cached_value = _account_totals_cache.get("portfolio_value")
+                    _snap_vw_cr = analytics.get_portfolio_cumulative_return(
+                        _snap_symphonies_list, _snap_bot_state, trading_day=_snap_trading_day
+                    )
+
+                    # Wrap TC and CR through the account-basis helpers INDEPENDENTLY
+                    # (mirrors live path ~1183-1212) — a missing sibling field must never
+                    # null a warm field's if_held.
+                    if _snap_account_tc is not None:
+                        _snap_tc_final = analytics.get_portfolio_today_change_account_basis(
+                            _snap_vw_tc,
+                            _snap_account_tc,
+                            _snap_cached_value or 0.0,
+                            _snap_symphony_value_sum,
+                        )
+                    else:
+                        # No TC basis at all (no cache, no last-good): surface raw VW
+                        # (honesty signalled below via the Tier-2 basis marker), matching
+                        # the CR branch + the live path + the plan's documented default.
+                        _snap_tc_final = _snap_vw_tc
+
+                    if _snap_account_cr is not None:
+                        _snap_cr_final = analytics.get_portfolio_cumulative_return_account_basis(
+                            _snap_vw_cr,
+                            _snap_account_cr,
+                            _snap_cached_value or 0.0,
+                            _snap_symphony_value_sum,
+                        )
+                    else:
+                        # No CR basis at all: surface raw VW (honesty signalled below via
+                        # the Tier-2 basis marker, since if_held stays a real number here).
+                        _snap_cr_final = _snap_vw_cr
+
                     _portfolio_strip = {
-                        "today_change": analytics.get_portfolio_today_change(
-                            _snap_symphonies_list, _snap_bot_state, trading_day=_snap_trading_day
-                        ),
-                        "cumulative_return": _snap_cr,
+                        "today_change": _snap_tc_final,
+                        "cumulative_return": _snap_cr_final,
                         "max_drawdown": analytics.get_portfolio_max_drawdown(
                             _snap_symphonies_list, _snap_bot_state, trading_day=_snap_trading_day
                         ),
@@ -1832,6 +1974,15 @@ def get_state():
                         # sees data age, not dashboard render time.
                         "data_as_of": _snap_data_as_of,
                     }
+                    # Tier 2 honest-floor marker — fires when EITHER field has no basis
+                    # at all (no cache, no last-good), signalling to the UI that at
+                    # least one value on the strip is raw VW, not account basis.
+                    if _snap_account_tc is None or _snap_account_cr is None:
+                        _portfolio_strip["basis"] = "value_weighted"
+                    # Tier 1 stale stamps — signals that last-good data (not current) was used.
+                    if _snap_basis_stale:
+                        _portfolio_strip["account_basis_stale"] = True
+                        _portfolio_strip["account_basis_as_of"] = _snap_basis_as_of
                     # Mirror _compute_portfolio_strip: surface the Composer account-lifetime
                     # CR as the "Account · all-time" stat so the template's
                     # {% if _acct_cr is not none %} guard includes the element.

@@ -215,6 +215,17 @@ def _reset_account_totals_cache():
     defines an identically-named fixture whose narrower scope overrides this one
     for realtime_push tests — that is intentional (the local fixture is fully
     compatible and adds realtime_push-specific documentation).
+
+    Also resets app._account_totals_last_good (DE-EOD-BASIS-001 /review revise).
+    Production intentionally NEVER clears this plain dict — it is a Tier-1
+    last-good snapshot that must survive mark_stale() calls so a transient
+    Composer timeout still has a fallback. But that means a REAL
+    _refresh_account_totals() call in one test (e.g.
+    tests/app/test_account_totals_cache.py) writes real values into it, and
+    without a reset those values leak into every later render test on the same
+    xdist worker — pushing them onto the Tier-1 last-good branch instead of the
+    cold-cache path they intended to exercise. Mirrors the _account_totals_cache
+    handling above: clear() before and after every test.
     """
     import threading
 
@@ -235,6 +246,9 @@ def _reset_account_totals_cache():
         if callable(_rw):
             _rw()  # belt-and-suspenders: ensure _stale=False even if a thread
             # squeezed in a mark_stale() between the join and the clear
+        last_good = getattr(_app_module, "_account_totals_last_good", None)
+        if last_good is not None:
+            last_good.clear()
 
     _drain_and_reset()
     yield
