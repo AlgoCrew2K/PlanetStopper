@@ -20,6 +20,17 @@ tests/ai_advisor/test_prism_scheduling.py (module-object identity preserved via
 importlib.reload rather than del+reimport, so patch() targets in other test files stay
 valid).
 
+Test-hygiene fix (nvimpl cross-check, post-RED): the 3 success-path tests mock the 5
+ai_advisor._build_*_section builders directly. main()'s real (unmocked) shared
+lens_sections fetch calls these builders — without mocking them, these would-be "unit"
+tests would make REAL FRED/Alpaca/GDELT/SEC/Mongo network calls in-process (this
+worktree's .env carries live credentials, loaded by _load_env()), which is slow, flaky,
+and an env-gap/rate-limit trap in CI. Only _patch_provenance/verify_cited_numbers/
+persist_verification are mocked as before — main() itself always runs for real. The
+builder mocks double as the proof that each is invoked exactly once across the full
+main() run (the AC-4 "one shared fetch feeds both SOURCES and VERIFICATION" contract) —
+call-count assertions on a mock are how "invoked once" is proven WITHOUT a real fetch.
+
 DB isolation: conftest._isolate_db autouse fixture. Run protocol: targeted -n0 only.
 """
 
@@ -81,6 +92,11 @@ def _mock_subprocess_result() -> MagicMock:
     return result
 
 
+def _canned_lens_block(lens: str) -> dict:
+    """Minimal available=True lens block — canned so no real fetch is needed."""
+    return {"lens": lens, "available": True, "payload": {"stub": True}, "sources": []}
+
+
 # ===========================================================================
 # AC-8: main() calls verify_cited_numbers after _patch_provenance
 # ===========================================================================
@@ -89,8 +105,16 @@ def _mock_subprocess_result() -> MagicMock:
 class TestVerifierWiring:
     def test_main_calls_verify_cited_numbers_after_patch_provenance(self):
         """AC-8: verify_cited_numbers must be invoked, and strictly AFTER _patch_provenance
-        in the same main() run (order-checked via a shared call-order list)."""
+        in the same main() run (order-checked via a shared call-order list).
+
+        Test-hygiene (nvimpl cross-check): the 5 ai_advisor._build_*_section builders are
+        mocked here so main()'s (real, unmocked) shared lens_sections fetch never makes a
+        real FRED/Alpaca/GDELT/SEC/Mongo network call — only _patch_provenance and
+        verify_cited_numbers themselves are mocked, main() runs for real.
+        """
         mod = _import_scheduler()
+        import ai_advisor
+
         call_order: list[str] = []
 
         def _patch_prov_side_effect(*_a, **_kw):
@@ -117,6 +141,21 @@ class TestVerifierWiring:
                 create=True,
             ),
             patch.object(mod, "_persist_spend"),
+            patch.object(
+                ai_advisor, "_build_derivatives_section", return_value=_canned_lens_block("derivatives")
+            ) as m_deriv,
+            patch.object(
+                ai_advisor, "_build_macro_section", return_value=_canned_lens_block("macro")
+            ) as m_macro,
+            patch.object(
+                ai_advisor, "_build_sentiment_section", return_value=_canned_lens_block("sentiment")
+            ) as m_sent,
+            patch.object(
+                ai_advisor, "_build_technicals_section", return_value=_canned_lens_block("technicals")
+            ) as m_tech,
+            patch.object(
+                ai_advisor, "_build_fundamentals_section", return_value=_canned_lens_block("fundamentals")
+            ) as m_fund,
         ):
             with pytest.raises(SystemExit) as exc_info:
                 mod.main()
@@ -129,12 +168,33 @@ class TestVerifierWiring:
             f"AC-8: verify_cited_numbers must be called AFTER _patch_provenance in the "
             f"same main() run; observed call order: {call_order!r}"
         )
+        for name, mock in (
+            ("derivatives", m_deriv),
+            ("macro", m_macro),
+            ("sentiment", m_sent),
+            ("technicals", m_tech),
+            ("fundamentals", m_fund),
+        ):
+            assert mock.call_count == 1, (
+                f"AC-4: ai_advisor._build_{name}_section must be invoked exactly once "
+                f"across the full main() run (one shared fetch feeds both SOURCES and "
+                f"VERIFICATION) — got {mock.call_count} call(s). No real network call "
+                f"was made (builder is mocked); this asserts the SHARED-FETCH contract, "
+                f"not network hermeticity."
+            )
 
     def test_verifier_called_with_populated_lens_sections(self):
         """AC-4: the verifier must be called with a non-None, non-empty lens_sections
         payload — proving the shared patch-time fetch is threaded through, not left to
-        the verifier's own internal-refetch fallback on every nightly run."""
+        the verifier's own internal-refetch fallback on every nightly run.
+
+        Test-hygiene (nvimpl cross-check): the 5 ai_advisor._build_*_section builders
+        are mocked so main()'s real shared-fetch step never makes a real FRED/Alpaca/
+        GDELT/SEC/Mongo network call. The mock is also how "invoked exactly once" (the
+        AC-4 shared-fetch contract) is proven WITHOUT a real fetch.
+        """
         mod = _import_scheduler()
+        import ai_advisor
 
         with (
             patch.object(mod, "_get_summary", return_value=None),
@@ -152,6 +212,21 @@ class TestVerifierWiring:
                 create=True,
             ),
             patch.object(mod, "_persist_spend"),
+            patch.object(
+                ai_advisor, "_build_derivatives_section", return_value=_canned_lens_block("derivatives")
+            ) as m_deriv,
+            patch.object(
+                ai_advisor, "_build_macro_section", return_value=_canned_lens_block("macro")
+            ) as m_macro,
+            patch.object(
+                ai_advisor, "_build_sentiment_section", return_value=_canned_lens_block("sentiment")
+            ) as m_sent,
+            patch.object(
+                ai_advisor, "_build_technicals_section", return_value=_canned_lens_block("technicals")
+            ) as m_tech,
+            patch.object(
+                ai_advisor, "_build_fundamentals_section", return_value=_canned_lens_block("fundamentals")
+            ) as m_fund,
         ):
             with pytest.raises(SystemExit):
                 mod.main()
@@ -166,11 +241,32 @@ class TestVerifierWiring:
             "payload (reusing the same builder fetch _patch_provenance performs) — "
             f"got lens_sections={lens_sections_arg!r} from call {_call!r}"
         )
+        for name, mock in (
+            ("derivatives", m_deriv),
+            ("macro", m_macro),
+            ("sentiment", m_sent),
+            ("technicals", m_tech),
+            ("fundamentals", m_fund),
+        ):
+            assert mock.call_count == 1, (
+                f"AC-4: ai_advisor._build_{name}_section must be invoked exactly once "
+                f"across the full main() run (shared fetch feeds both SOURCES and "
+                f"VERIFICATION, never a duplicate re-fetch) — got {mock.call_count} "
+                f"call(s)."
+            )
 
     def test_verifier_exception_does_not_change_exit_code(self):
         """AC-8: a verifier exception must never change sys.exit(0) — the nightly run
-        must still succeed even when the verifier itself blows up."""
+        must still succeed even when the verifier itself blows up.
+
+        Test-hygiene (nvimpl cross-check): the 5 ai_advisor._build_*_section builders
+        (main()'s real shared-fetch step runs before the verifier call raises) and
+        persist_verification (defensive — never reached on this path, but mocked so no
+        real DB/network call is possible regardless of exact try/except shape) are
+        mocked so this test makes zero real network calls.
+        """
         mod = _import_scheduler()
+        import ai_advisor
 
         with (
             patch.object(mod, "_get_summary", return_value=None),
@@ -182,7 +278,25 @@ class TestVerifierWiring:
                 side_effect=RuntimeError("verifier blew up"),
                 create=True,
             ),
+            patch(
+                "advisors.prism_numeric_verifier.persist_verification",
+                return_value=None,
+                create=True,
+            ),
             patch.object(mod, "_persist_spend"),
+            patch.object(
+                ai_advisor, "_build_derivatives_section", return_value=_canned_lens_block("derivatives")
+            ),
+            patch.object(ai_advisor, "_build_macro_section", return_value=_canned_lens_block("macro")),
+            patch.object(
+                ai_advisor, "_build_sentiment_section", return_value=_canned_lens_block("sentiment")
+            ),
+            patch.object(
+                ai_advisor, "_build_technicals_section", return_value=_canned_lens_block("technicals")
+            ),
+            patch.object(
+                ai_advisor, "_build_fundamentals_section", return_value=_canned_lens_block("fundamentals")
+            ),
         ):
             with pytest.raises(SystemExit) as exc_info:
                 mod.main()
