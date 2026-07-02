@@ -875,6 +875,62 @@
             color: var(--studio-ink-dim);
             font-size: 0.875rem;
         }
+
+        /* Numeric verification overlay (DE-PRISM-NUMERIC-VERIFY-001, AC-10) */
+        .prism-verification {
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--studio-border);
+        }
+
+        .prism-verification-header {
+            font-size: 0.5625rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-dim);
+            margin-bottom: 0.5rem;
+        }
+
+        .prism-verify-check {
+            padding: 0.375rem 0;
+        }
+
+        .prism-verify-badge {
+            display: inline-block;
+            font-size: 0.6875rem;
+            font-weight: 700;
+            border: 1px solid;
+            border-radius: 999px;
+            padding: 0.05rem 0.5rem;
+        }
+
+        .prism-verify-badge--pass {
+            color: var(--studio-pos);
+            border-color: var(--studio-pos);
+        }
+
+        .prism-verify-badge--flagged {
+            color: var(--studio-warn);
+            border-color: var(--studio-warn);
+        }
+
+        .prism-verify-badge--overridden {
+            color: var(--studio-neg);
+            border-color: var(--studio-neg);
+        }
+
+        .prism-verify-badge--unverifiable {
+            color: var(--studio-ink-dim);
+            border-color: var(--studio-border);
+        }
+
+        .prism-verify-annotation {
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+            line-height: 1.5;
+            margin-top: 0.25rem;
+        }
     </style>
 </head>
 
@@ -1081,6 +1137,36 @@
                                     </div>
                                 </div>
                             {% endif %}
+                        {% endfor %}
+                    </div>
+                {% endif %}
+
+                {# Numeric verification overlay (DE-PRISM-NUMERIC-VERIFY-001, AC-10).
+                   Additive fact-check badges — flags/overrides cited numbers against
+                   ground-truth sources.  Honest empty-state: renders nothing when no
+                   VERIFICATION row exists yet for this run_id (no fabricated badges).
+                   XSS-safe: all values escaped with | e, no | safe used. #}
+                {% if market_prism_verification and market_prism_verification.get('checks') %}
+                    <div data-testid="prism-verification" class="prism-verification">
+                        <div class="prism-verification-header">Numeric Verification</div>
+                        {% for _chk in market_prism_verification.get('checks', []) %}
+                            {% set _cls = _chk.get('classification', 'unverifiable') %}
+                            {% set _badge_class = {
+                                'pass':         'prism-verify-badge--pass',
+                                'flagged':      'prism-verify-badge--flagged',
+                                'overridden':   'prism-verify-badge--overridden',
+                                'unverifiable': 'prism-verify-badge--unverifiable',
+                            }.get(_cls, 'prism-verify-badge--unverifiable') %}
+                            <div class="prism-verify-check"
+                                 data-testid="prism-verify-check-{{ _chk.get('indicator', '') }}">
+                                <span class="prism-verify-badge {{ _badge_class }}">
+                                    {{ _chk.get('indicator', '') | e }} — {{ _cls | e }}
+                                </span>
+                                {% if _chk.get('annotation') %}
+                                    <p class="prism-verify-annotation"
+                                       data-testid="prism-verify-annotation">{{ _chk.get('annotation') | e }}</p>
+                                {% endif %}
+                            </div>
                         {% endfor %}
                     </div>
                 {% endif %}

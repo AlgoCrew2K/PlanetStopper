@@ -3903,6 +3903,67 @@ def ai_advisor_tab():
                 type(_merge_exc).__name__,
             )
 
+    # ------------------------------------------------------------------ #
+    # Additively fetch the MARKET_PRISM_VERIFICATION row (numeric fact-   #
+    # check overlay, DE-PRISM-NUMERIC-VERIFY-001, AC-10) and attach       #
+    # per-check annotations for the Overview render.  Matched by run_id — #
+    # no stale bleed if run_ids differ (mirrors the SOURCES merge guard). #
+    # Deep-copy before reading/attaching so the original DB row object   #
+    # is never mutated in-place (defense-in-depth — market_prism_summary #
+    # is already a fresh copy from the SOURCES block above).             #
+    # Honest empty-state: stays None when no VERIFICATION row exists yet #
+    # for this run_id.                                                    #
+    # ------------------------------------------------------------------ #
+    market_prism_verification: dict | None = None
+    if market_prism_summary:
+        try:
+            import copy as _copy  # noqa: PLC0415
+
+            market_prism_summary = _copy.deepcopy(market_prism_summary)
+            _mpv_raw = market_prism_summary.get("raw_response") or {}
+            if isinstance(_mpv_raw, str):
+                import json as _json  # noqa: PLC0415
+
+                _mpv_raw = _json.loads(_mpv_raw)
+                market_prism_summary["raw_response"] = _mpv_raw
+            _mpv_run_id = _mpv_raw.get("run_id") if isinstance(_mpv_raw, dict) else None
+            if _mpv_run_id:
+                _verification_row = database.get_latest_market_prism_verification_for_run(
+                    _mpv_run_id
+                )
+                if _verification_row is not None:
+                    _ver_raw = _verification_row.get("raw_response") or {}
+                    if isinstance(_ver_raw, str):
+                        import json as _json  # noqa: PLC0415
+
+                        _ver_raw = _json.loads(_ver_raw)
+                    _ver_checks = _ver_raw.get("checks", []) if isinstance(_ver_raw, dict) else []
+                    _annotated_checks = []
+                    for _chk in _ver_checks:
+                        if not isinstance(_chk, dict):
+                            continue
+                        _annotated = dict(_chk)
+                        if _annotated.get("classification") == "overridden":
+                            _annotated["annotation"] = (
+                                f"council cited {_annotated.get('cited_value')}; "
+                                f"source says {_annotated.get('ground_truth_value')}"
+                            )
+                        _annotated_checks.append(_annotated)
+                    market_prism_verification = {
+                        "checks": _annotated_checks,
+                        "summary": _ver_raw.get("summary", {})
+                        if isinstance(_ver_raw, dict)
+                        else {},
+                        "verdict": _ver_raw.get("verdict") if isinstance(_ver_raw, dict) else None,
+                    }
+        except Exception as _verify_exc:
+            # Log type-only at WARNING — no exc args/message; honest empty-state
+            # is still rendered (no re-raise).
+            _daemon_log.warning(
+                "market-prism verification merge skipped: %s",
+                type(_verify_exc).__name__,
+            )
+
     # Pre-humanize per_lens_digest summaries so the template never sees raw JSON.
     # Council prose passes through unchanged; lens_pipeline JSON is humanized to
     # readable text.  Null summaries become an honest empty-state string so the
@@ -3993,6 +4054,7 @@ def ai_advisor_tab():
         sb_observations=sb_observations,
         sb_card_artifacts=sb_card_artifacts,
         market_prism_summary=market_prism_summary,
+        market_prism_verification=market_prism_verification,
     )
 
 
