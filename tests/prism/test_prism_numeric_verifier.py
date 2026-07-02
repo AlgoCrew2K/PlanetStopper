@@ -349,6 +349,215 @@ class TestRegistry:
             f"got {result['checks'][0]!r}"
         )
 
+    @pytest.mark.parametrize(
+        "indicator",
+        [
+            "VIX",
+            "VIXCLS",
+            "VXVCLS",
+            "VIX3M",
+            "DGS10",
+            "10Y",
+            "UNRATE",
+            "CPIAUCSL",
+            "CPI",
+            "FEDFUNDS",
+            "tone",
+            "breadth",
+        ],
+    )
+    def test_registry_comparison_type_is_absolute_for_non_fundamentals_indicators(self, indicator):
+        """AC-5 sufficiency (PM sufficiency review, post-GREEN): every non-fundamentals
+        indicator's registry entry must use "absolute" comparison_type, never "relative".
+
+        Only the fundamentals wildcard (dollar-magnitude figures) should use "relative"
+        (AC-5's own worked example — see test_relative_tolerance_used_for_large_magnitude_
+        fundamentals). A "relative" mixup on e.g. a rate/VIX/tone/breadth indicator would
+        silently widen or narrow its effective tolerance depending on the ground-truth
+        magnitude — direct registry introspection catches this regardless of the specific
+        truth/cited values a behavioral test happens to pick.
+        """
+        mod = _import_verifier()
+        _lens, _path, comparison_type, _tolerance = mod._INDICATOR_REGISTRY[indicator]
+        assert comparison_type == "absolute", (
+            f"AC-5: indicator {indicator!r} must use comparison_type='absolute' — only "
+            f"the fundamentals <TICKER>.<CONCEPT> wildcard uses 'relative'. Got "
+            f"{comparison_type!r}."
+        )
+
+    def test_registry_comparison_type_is_relative_for_fundamentals_wildcard(self):
+        """AC-5: the fundamentals wildcard entry (large-magnitude dollar figures) must
+        use comparison_type='relative' — a fixed absolute tolerance would either falsely
+        flag routine rounding on a $391B figure or pass a real error on a $1M one."""
+        mod = _import_verifier()
+        registry = mod._INDICATOR_REGISTRY
+        wildcard_entries = [
+            entry
+            for key, entry in registry.items()
+            if key not in (
+                "VIX", "VIXCLS", "VXVCLS", "VIX3M", "DGS10", "10Y", "UNRATE",
+                "CPIAUCSL", "CPI", "FEDFUNDS", "tone", "breadth",
+            )
+        ]
+        assert wildcard_entries, (
+            "Expected a registry entry beyond the 12 literal indicators (the "
+            "fundamentals <TICKER>.<CONCEPT> wildcard) — none found."
+        )
+        for entry in wildcard_entries:
+            _lens, _path, comparison_type, _tolerance = entry
+            assert comparison_type == "relative", (
+                f"AC-5: the fundamentals wildcard registry entry must use "
+                f"comparison_type='relative'; got {comparison_type!r} for entry {entry!r}"
+            )
+
+
+# ===========================================================================
+# TestProseVsTupleResidualGap — D-1 residual-gap, plan Scope Boundaries "OUT"
+# ===========================================================================
+
+
+class TestProseVsTupleResidualGap:
+    def test_prose_only_number_produces_no_check_declared_tuples_only(self):
+        """Plan Scope Boundaries (OUT): "Full NLP prose-extraction of numbers not
+        declared in cited_numbers ... is OUT; mitigated by the prompt rule only."
+
+        This test turns that documented, accepted limitation into a permanent
+        regression guard: a number stated in prose (sentiment_rationale) but absent
+        from cited_numbers must produce NO check for that indicator — the verifier's
+        coverage is "declared tuples only", never a silent assumption of full prose
+        coverage. If a future dev adds prose-scanning, this test's expectation
+        changes deliberately (not by accident).
+        """
+        mod = _import_verifier()
+        row = {
+            "id": 1,
+            "advisor_role": "MARKET_PRISM",
+            "subject_id": "",
+            "verdict": "neutral",
+            "raw_response": {
+                "run_id": _RUN_ID,
+                "run_ts": _RUN_ID,
+                "overall_sentiment": "neutral",
+                "sentiment_rationale": "VIX is 22, a calm print given the macro backdrop.",
+                "cited_numbers": [],  # analyst stated VIX in prose but did NOT cite it
+            },
+        }
+        result = mod.verify_cited_numbers(_RUN_ID, row, lens_sections=_FULL_LENS_SECTIONS)
+        assert result["checks"] == [], (
+            "The verifier must only check DECLARED cited_numbers tuples — a number "
+            "stated only in prose (sentiment_rationale here) and absent from "
+            f"cited_numbers must produce zero checks. Got {result['checks']!r}. "
+            "(This is the plan's own documented D-1 residual-gap, mitigated only by "
+            "the analyst/synthesizer prompt rule — not by prose NLP extraction.)"
+        )
+
+
+# ===========================================================================
+# TestMalformedCitedNumbersContainer — nvreview Finding 1 (code-fix RED)
+#
+# A truthy-but-malformed cited_numbers value (not a list, or a list of non-dict/
+# keyless entries) must never silently produce verdict="clean" — that is a silent
+# pass in an anti-fabrication feature (a "clean" verdict implies "checked and all
+# passed"; zero real checks were performed). Contract pinned here, not implementation
+# shape: non-list container -> a verdict distinct from "clean" (e.g. no-numeric-claims
+# or an explicit malformed-input verdict); a list containing non-dict/keyless entries
+# -> each entry surfaces as an "unverifiable" check (never a silent drop) and the
+# overall verdict is not "clean".
+# ===========================================================================
+
+
+class TestMalformedCitedNumbersContainer:
+    def test_dict_shaped_cited_numbers_container_verdict_not_clean(self):
+        """nvreview Finding 1: cited_numbers = {"indicator": "VIX"} (a dict, not a
+        list) must not silently produce verdict="clean".
+
+        RED on current code: list({"indicator": "VIX"}) yields ["indicator"] (the
+        dict's keys) -> every entry is a bare string, filtered out by the
+        isinstance(entry, dict) check -> checks=[] -> _derive_verdict([]) -> "clean".
+        A dict-shaped cited_numbers is malformed input, not zero verified claims.
+        """
+        mod = _import_verifier()
+        row = {
+            "id": 1,
+            "advisor_role": "MARKET_PRISM",
+            "subject_id": "",
+            "verdict": "neutral",
+            "raw_response": {
+                "run_id": _RUN_ID,
+                "run_ts": _RUN_ID,
+                "cited_numbers": {"indicator": "VIX"},  # malformed: dict, not a list
+            },
+        }
+        result = mod.verify_cited_numbers(_RUN_ID, row, lens_sections=_FULL_LENS_SECTIONS)
+        assert result["verdict"] != "clean", (
+            "A dict-shaped (malformed) cited_numbers container must never produce "
+            f"verdict='clean' — that is a silent pass. Got {result!r}"
+        )
+
+    def test_string_shaped_cited_numbers_container_verdict_not_clean(self):
+        """nvreview Finding 1: cited_numbers = "garbage-string" must not silently
+        produce verdict="clean".
+
+        RED on current code: list("garbage-string") yields individual characters,
+        all filtered out by isinstance(entry, dict) -> checks=[] -> "clean".
+        """
+        mod = _import_verifier()
+        row = {
+            "id": 1,
+            "advisor_role": "MARKET_PRISM",
+            "subject_id": "",
+            "verdict": "neutral",
+            "raw_response": {
+                "run_id": _RUN_ID,
+                "run_ts": _RUN_ID,
+                "cited_numbers": "garbage-string",  # malformed: string, not a list
+            },
+        }
+        result = mod.verify_cited_numbers(_RUN_ID, row, lens_sections=_FULL_LENS_SECTIONS)
+        assert result["verdict"] != "clean", (
+            "A string-shaped (malformed) cited_numbers container must never produce "
+            f"verdict='clean' — that is a silent pass. Got {result!r}"
+        )
+
+    def test_list_of_malformed_entries_verdict_not_clean_and_no_silent_drop(self):
+        """nvreview Finding 1: cited_numbers = [42, "foo", {"nope": 1}] — a real list,
+        but every entry is either non-dict or a dict missing indicator/value — must
+        not silently produce verdict="clean", AND no entry should be silently dropped
+        (each of the 3 entries must surface as an unverifiable check).
+
+        RED on current code: the list comprehension's `if isinstance(entry, dict)`
+        guard drops 42 and "foo" silently (never become checks at all); only
+        {"nope": 1} survives and produces one "unverifiable" check (indicator=None
+        is unmapped) -> n_checks=1, n_overridden=0, n_flagged=0 -> _derive_verdict
+        falls through to "clean" even though nothing was actually verified clean.
+        """
+        mod = _import_verifier()
+        row = {
+            "id": 1,
+            "advisor_role": "MARKET_PRISM",
+            "subject_id": "",
+            "verdict": "neutral",
+            "raw_response": {
+                "run_id": _RUN_ID,
+                "run_ts": _RUN_ID,
+                "cited_numbers": [42, "foo", {"nope": 1}],
+            },
+        }
+        result = mod.verify_cited_numbers(_RUN_ID, row, lens_sections=_FULL_LENS_SECTIONS)
+        assert result["verdict"] != "clean", (
+            "A list of entirely malformed/unverifiable entries must never produce "
+            f"verdict='clean' — that is a silent pass. Got {result!r}"
+        )
+        assert len(result["checks"]) == 3, (
+            "Every entry in cited_numbers must surface as a check (classified "
+            "unverifiable if malformed) — never a silent drop. Expected 3 checks "
+            f"(one per input entry); got {len(result['checks'])}: {result['checks']!r}"
+        )
+        assert all(c.get("classification") == "unverifiable" for c in result["checks"]), (
+            "Every malformed entry (non-dict or missing indicator/value) must "
+            f"classify as unverifiable; got {result['checks']!r}"
+        )
+
 
 # ===========================================================================
 # TestGroundTruthResolution — AC-4 / AC-5

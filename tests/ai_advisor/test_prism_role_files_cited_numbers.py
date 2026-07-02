@@ -39,6 +39,14 @@ _SYNTHESIZER_FILE = "prism-synthesizer.md"
 # Instruction markers that indicate a MANDATE (not just a passing mention).
 _INSTRUCTION_MARKERS = ("must", "MUST", "every", "each", "required")
 
+# Hedge/negation phrases that, if co-located with an instruction marker, invalidate
+# an otherwise-matching window (PM sufficiency review, Probe 5): a naive co-occurrence
+# check on bare "cited_numbers" + "must"/"required"/"every" would be satisfied by a
+# hypothetical hedged edit like "cited_numbers exists but is not required" — which
+# means the OPPOSITE of a mandate. This guards against that specific false-positive
+# without inventing a full NLP negation detector.
+_NEGATION_MARKERS = ("not required", "optional", "no need to", "not necessary", "need not")
+
 # Window (chars) within which "cited_numbers" and an instruction marker must co-occur —
 # large enough to span one sentence/bullet, small enough to reject an accidental
 # co-occurrence from unrelated file sections (mirrors the 300-char window used by
@@ -58,19 +66,45 @@ def _read_agent_file(filename: str) -> str:
         return fh.read()
 
 
-def _has_cooccurrence(text: str, marker_a: str, marker_b_options: tuple[str, ...], window: int) -> bool:
-    """True iff marker_a and any of marker_b_options appear within `window` chars of
-    each other, anywhere in text (case-insensitive)."""
+def _find_cooccurrence_window(
+    text: str,
+    marker_a: str,
+    marker_b_options: tuple[str, ...],
+    window: int,
+    negation_markers: tuple[str, ...] = (),
+) -> str | None:
+    """Return the first genuine (non-hedged) co-occurrence window text, or None.
+
+    A window "counts" only when marker_a and some marker_b_options entry co-occur
+    AND none of negation_markers appears in that same window — a hedged/negated
+    mention (e.g. "cited_numbers ... not required") does not satisfy this, even
+    though the bare marker words are present.
+    """
     text_lower = text.lower()
     marker_a_lower = marker_a.lower()
     positions_a = [m.start() for m in re.finditer(re.escape(marker_a_lower), text_lower)]
-    if not positions_a:
-        return False
     for pos_a in positions_a:
         window_text = text_lower[max(0, pos_a - window) : pos_a + window]
         if any(b.lower() in window_text for b in marker_b_options):
-            return True
-    return False
+            if negation_markers and any(neg.lower() in window_text for neg in negation_markers):
+                continue  # hedged/negated — does not count as a genuine mandate
+            return window_text
+    return None
+
+
+def _has_cooccurrence(
+    text: str,
+    marker_a: str,
+    marker_b_options: tuple[str, ...],
+    window: int,
+    negation_markers: tuple[str, ...] = (),
+) -> bool:
+    """True iff a genuine (non-hedged) co-occurrence window exists — see
+    _find_cooccurrence_window."""
+    return (
+        _find_cooccurrence_window(text, marker_a, marker_b_options, window, negation_markers)
+        is not None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -109,15 +143,23 @@ class TestSynthesizerCitedNumbersSchema:
         """AC-2: the file must instruct — not just schema-declare — that every numeric
         indicator stated in prose also appears as a cited_numbers tuple. Requires
         'cited_numbers' to co-occur with a mandate marker within a bounded window,
-        so a bare JSON-example mention does not satisfy this."""
+        so a bare JSON-example mention does not satisfy this. A hedged/negated mention
+        (e.g. "cited_numbers is not required") does NOT satisfy this either (Probe 5
+        hardening — see _NEGATION_MARKERS)."""
         content = _read_agent_file(_SYNTHESIZER_FILE)
-        found = _has_cooccurrence(content, "cited_numbers", _INSTRUCTION_MARKERS, _COOCCURRENCE_WINDOW)
+        found = _has_cooccurrence(
+            content,
+            "cited_numbers",
+            _INSTRUCTION_MARKERS,
+            _COOCCURRENCE_WINDOW,
+            negation_markers=_NEGATION_MARKERS,
+        )
         assert found, (
             "prism-synthesizer.md must instruct that EVERY numeric indicator stated in "
             "prose (summary/sentiment_rationale) MUST also appear as a cited_numbers "
-            "tuple — a schema field alone (with no mandate) is insufficient; the "
-            "verifier only sees what's in cited_numbers, so an unenforced field would "
-            "let numbers slip through unverified. "
+            "tuple — a schema field alone (with no mandate), or a hedged/negated "
+            "mention, is insufficient; the verifier only sees what's in cited_numbers, "
+            "so an unenforced field would let numbers slip through unverified. "
             "Add e.g.: 'Every numeric indicator you state in prose MUST also appear as "
             "a {indicator, value, lens} tuple in cited_numbers.'"
         )
@@ -142,11 +184,16 @@ class TestAnalystFilesCitedNumbersInstruction:
         Requires 'cited_numbers' (or the literal tuple shape 'indicator'+'value'+'lens'
         co-occurring) alongside a mandate marker within a bounded window — a stray
         mention of any one of these words elsewhere in the file does not satisfy this.
+        A hedged/negated mention does NOT satisfy this either (Probe 5 hardening).
         """
         content = _read_agent_file(filename)
 
         has_cited_numbers_mandate = _has_cooccurrence(
-            content, "cited_numbers", _INSTRUCTION_MARKERS, _COOCCURRENCE_WINDOW
+            content,
+            "cited_numbers",
+            _INSTRUCTION_MARKERS,
+            _COOCCURRENCE_WINDOW,
+            negation_markers=_NEGATION_MARKERS,
         )
 
         assert has_cited_numbers_mandate, (
@@ -154,7 +201,7 @@ class TestAnalystFilesCitedNumbersInstruction:
             "tuple (cited_numbers) for every numeric indicator it states in prose to "
             "the synthesizer — required so the post-council numeric verifier "
             "(DE-PRISM-NUMERIC-VERIFY-001) has structured claims to check against the "
-            "authoritative source payloads. "
+            "authoritative source payloads (a hedged/negated mention does not count). "
             "Add e.g.: 'For every numeric indicator you state, also report it as a "
             "{indicator, value, lens} tuple so the synthesizer can include it in "
             "cited_numbers.'"
@@ -162,13 +209,34 @@ class TestAnalystFilesCitedNumbersInstruction:
 
     @pytest.mark.parametrize("filename", _ANALYST_FILES)
     def test_analyst_file_tuple_shape_mentions_indicator_value_lens(self, filename):
-        """AC-2: the instruction must name the actual tuple shape (indicator/value/lens),
-        not just the field name — an analyst told only 'cited_numbers exists' without
-        the shape cannot reliably produce a well-formed tuple."""
-        content_lower = _read_agent_file(filename).lower()
+        """AC-2: the instruction must name the actual tuple shape (indicator/value/lens)
+        WITHIN the same mandate window as the cited_numbers instruction — not just
+        somewhere else in the file (Probe 5 hardening).
+
+        RED-safety note: "value" and "lens" are common words that already appear
+        elsewhere in every analyst file for unrelated reasons (confirmed: e.g. "the
+        lens", "this value") — a whole-file presence check would be satisfied
+        trivially regardless of whether the cited_numbers instruction actually
+        documents the tuple shape. Scoping to the matched mandate window closes that.
+        """
+        content = _read_agent_file(filename)
+        window_text = _find_cooccurrence_window(
+            content,
+            "cited_numbers",
+            _INSTRUCTION_MARKERS,
+            _COOCCURRENCE_WINDOW,
+            negation_markers=_NEGATION_MARKERS,
+        )
+        assert window_text is not None, (
+            f"{filename}: no genuine cited_numbers mandate window found — see "
+            "test_analyst_file_instructs_emitting_cited_number_tuples for the primary "
+            "assertion; this test depends on that window existing."
+        )
         for field in ("indicator", "value", "lens"):
-            assert field in content_lower, (
+            assert field in window_text, (
                 f"{filename} must mention '{field}' (part of the {{indicator, value, "
-                "lens}} cited_numbers tuple shape) so the analyst knows what to emit — "
-                f"got no occurrence of {field!r} in the file."
+                "lens}} cited_numbers tuple shape) WITHIN the same instruction window "
+                "as the cited_numbers mandate — so the analyst knows the concrete "
+                f"shape to emit, not just that the field exists. Got no occurrence of "
+                f"{field!r} in the matched window: {window_text!r}"
             )

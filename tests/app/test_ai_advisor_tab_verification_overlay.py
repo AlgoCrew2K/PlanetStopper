@@ -248,6 +248,126 @@ def test_ai_advisor_tab_does_not_mutate_market_prism_row_in_place(client):
 
 
 # ---------------------------------------------------------------------------
+# Security (PM sufficiency review, Probe 4): unlike cited_value/ground_truth_value
+# (which _build_check normalizes to float-or-None), the "indicator" field is stored
+# verbatim from the untrusted LLM council output — it must be HTML-escaped on render,
+# never injected as live markup. Mirrors the exact existing precedent in
+# tests/ai_advisor/test_overview_sources_carousel.py::test_card_fields_present_and_html_escaped
+# (inject <b>Inject</b> into a title field, assert it renders escaped not live).
+# ---------------------------------------------------------------------------
+
+_VERIFICATION_ROW_WITH_XSS_INDICATOR = {
+    "id": 702,
+    "advisor_role": "MARKET_PRISM_VERIFICATION",
+    "subject_id": "global",
+    "verdict": None,
+    "created_at": "2026-07-02 03:05:00",
+    "raw_response": {
+        "run_id": _RUN_ID_CURRENT,
+        "verified_at": "2026-07-02T03:05:00Z",
+        "checks": [
+            {
+                # Untrusted LLM-authored field — never normalized like cited_value/
+                # ground_truth_value are. A hostile/malformed indicator string must
+                # still render HTML-escaped, never as live markup.
+                "indicator": "<script>alert(1)</script>",
+                "lens": "derivatives",
+                "cited_value": None,
+                "ground_truth_value": None,
+                "classification": "unverifiable",
+            },
+        ],
+        "summary": {
+            "n_checks": 1,
+            "n_pass": 0,
+            "n_flagged": 0,
+            "n_overridden": 0,
+            "n_unverifiable": 1,
+        },
+        "verdict": "flags-detected",
+    },
+}
+
+
+def test_ai_advisor_tab_escapes_hostile_indicator_field(client):
+    """Security (Probe 4): a VERIFICATION check's "indicator" field containing
+    ``<script>alert(1)</script>`` must render HTML-escaped — never as a live
+    ``<script>`` tag. The indicator field is untrusted LLM council output and is
+    NOT normalized the way cited_value/ground_truth_value are (those pass through
+    _safe_normalize and can only ever be float-or-None); the render layer's
+    escaping is the only defense for this field.
+
+    RED intent: proves the template's ``| e`` usage on the indicator field
+    (rather than an accidental ``| safe``) — mirrors the exact precedent at
+    test_overview_sources_carousel.py::test_card_fields_present_and_html_escaped.
+    """
+    with (
+        patch("database.get_latest_market_prism_summary", return_value=_MARKET_PRISM_ROW),
+        patch("database.get_latest_market_prism_sources_for_run", return_value=None),
+        patch(
+            "database.get_latest_market_prism_verification_for_run",
+            return_value=_VERIFICATION_ROW_WITH_XSS_INDICATOR,
+            create=True,
+        ),
+    ):
+        resp = client.get("/ai-advisor")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+
+    assert "<script>alert(1)</script>" not in html, (
+        "The hostile indicator '<script>alert(1)</script>' must be HTML-escaped, "
+        "not injected as live markup. Do not use `| safe` on the indicator field — "
+        "use `| e` or rely on Jinja auto-escaping so `<script>` becomes "
+        "`&lt;script&gt;`. "
+        f"HTML snippet (first 3000 chars): {html[:3000]!r}"
+    )
+    assert "alert(1)" in html, (
+        "The indicator text 'alert(1)' must still appear in the rendered HTML "
+        "(entity-encoded form is fine) — if it's missing entirely, the check isn't "
+        "rendering the indicator field at all."
+    )
+
+
+def test_verification_overlay_template_block_never_uses_safe_filter():
+    """Security (Probe 4), static scan: the numeric-verification overlay region of
+    templates/ai_advisor.html must never use the Jinja `| safe` filter — every
+    value must go through `| e` / auto-escaping. Belt-and-suspenders alongside the
+    behavioral XSS test above.
+
+    Scoped to the verification-overlay block only (between its opening comment and
+    the matching `{% endif %}`) so this cannot be satisfied/defeated by `| safe`
+    usage elsewhere in the (large) shared template.
+    """
+    import pathlib
+
+    repo_root = pathlib.Path(__file__).resolve().parent.parent.parent
+    template_path = repo_root / "templates" / "ai_advisor.html"
+    assert template_path.exists(), f"templates/ai_advisor.html not found at {template_path}"
+    content = template_path.read_text(encoding="utf-8")
+
+    marker = "Numeric verification overlay (DE-PRISM-NUMERIC-VERIFY-001, AC-10)"
+    start = content.find(marker)
+    assert start != -1, (
+        "Could not find the numeric-verification overlay block marker "
+        f"{marker!r} in templates/ai_advisor.html — has the block been renamed or "
+        "removed? Update this test's marker to match."
+    )
+    # Scope to a generous window from the marker — comfortably covers both the
+    # inline <style> rules and the render block itself without spilling into
+    # unrelated template regions.
+    _SCAN_WINDOW = 4000
+    section = content[start : start + _SCAN_WINDOW]
+
+    assert "| safe" not in section and "|safe" not in section, (
+        "The numeric-verification overlay block must never use the `| safe` Jinja "
+        "filter — every value (indicator, classification, annotation) must be "
+        "escaped via `| e` or Jinja auto-escaping. Found `| safe` in the scanned "
+        f"section: {section!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # AC-9: MARKET_PRISM_VERIFICATION excluded from _ADVISOR_ROLES
 # ---------------------------------------------------------------------------
 
