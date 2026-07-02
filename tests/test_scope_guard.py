@@ -181,8 +181,7 @@ def test_scope_guard_diff_command_is_runnable() -> None:
 
     # Log for diagnosis (shown only on failure or -s)
     print(
-        f"\n[scope_guard] {len(changed)} file(s) changed since EOD cycle start "
-        f"({eod_sha[:8]}):",
+        f"\n[scope_guard] {len(changed)} file(s) changed since EOD cycle start ({eod_sha[:8]}):",
         file=sys.stderr,
     )
     for f in changed:
