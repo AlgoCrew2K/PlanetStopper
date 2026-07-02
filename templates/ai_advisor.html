@@ -1158,7 +1158,7 @@
                                 'unverifiable': 'prism-verify-badge--unverifiable',
                             }.get(_cls, 'prism-verify-badge--unverifiable') %}
                             <div class="prism-verify-check"
-                                 data-testid="prism-verify-check-{{ _chk.get('indicator', '') }}">
+                                 data-testid="prism-verify-check-{{ _chk.get('indicator', '') | e }}">
                                 <span class="prism-verify-badge {{ _badge_class }}">
                                     {{ _chk.get('indicator', '') | e }} — {{ _cls | e }}
                                 </span>
