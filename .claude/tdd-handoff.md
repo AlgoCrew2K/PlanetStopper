@@ -1,104 +1,155 @@
-# TDD Handoff — per-lens Market Prism sources carousels
-Plan: feature-plans/prism-sources-per-lens-carousels.md
-Branch: feat/prism-sources-per-lens-carousels
+# TDD Handoff — DE-EOD-BASIS-001 (EOD Account-Basis Unification)
+
+Plan: feature-plans/eod-today-change-account-basis.md
+Branch: fix/eod-today-change-account-basis
+Worktree: C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\eod-basis
 Phase: red
+RED commit: 95055bb
+RED result: 17 FAIL / 13 PASS / 3 SKIP
 
 ## Test Files
-- tests/ai_advisor/test_prism_per_lens_carousels.py (10 tests)
 
-## Behavioral Test Plan
-1. GET /ai-advisor with multi-lens fixture → 3 `.prism-sources-carousel` containers, not 1 flat
-2. GET /ai-advisor → shared URL appears inside BOTH the technicals AND sentiment per-lens sections
-3. GET /ai-advisor → tech-only URL confined to technicals section, absent from sentiment section
-4. GET /ai-advisor → `.prism-source-lens-tag` class absent from rendered HTML entirely
-5. GET /ai-advisor → `data-testid="prism-sources-lens-{lens}"` present for technicals/sentiment/macro; absent for derivatives/fundamentals (no sources)
-6. GET /ai-advisor → technicals testid position < sentiment testid position < macro testid position
-7. GET /ai-advisor with no MARKET_PRISM row → `prism-empty-state` present, no carousel rendered
-8. GET /ai-advisor → lens name appears as visible text content (between tags) in its section
-9. GET /ai-advisor → macro plain-citation string rendered inside the macro per-lens section
-10. GET /ai-advisor with XSS title → raw `<b>Inject</b>` absent; "Inject" text present escaped
+- tests/dashboard/test_eod_account_basis.py   — AC-1, AC-2, AC-3, AC-6, AC-8, AC-9
+- tests/app/test_eod_account_basis_refresh.py  — AC-4, AC-10
+- tests/test_scope_guard.py                    — AC-5 (activates post-commit)
 
-## Implementation Notes for ph-impl (flask-dashboard-specialist)
+Fixture: tests/fixtures/dashboard/frozen_portfolio_strip/eod_account_basis_parity.json
 
-### What GREEN must do — TEMPLATE-ONLY (AC-7 confirmed by recon at cf93826)
+## What is broken
 
-**Replace the flat single-carousel block** (lines 982–1083 of `templates/ai_advisor.html`)
-with a per-lens loop. Specifically:
+Two bugs in the frozen/EOD branch of /api/state (app.py:1750-1834):
 
-**1. Remove the `_all_sources` aggregation list** — the entire `{% set _all_sources = [] %}`
-and the loop that populates it are deleted.
+Bug 1 — today_change uses raw VW (app.py:1815-1817):
+  "today_change": analytics.get_portfolio_today_change(...)
+  No account-basis wrap. Denominator = invested capital (cash excluded).
 
-**2. Add a per-lens outer loop** over `_lens_names` (the canonical list at template line 1025:
-`['technicals', 'sentiment', 'derivatives', 'macro', 'fundamentals']`) in that fixed order.
-For each lens:
-  a. Collect that lens's sources: `article_corpus` list entries + plain `sources` strings.
-  b. If the lens has ZERO sources (both lists empty / absent), SKIP — no carousel, no label (AC-2).
-  c. If the lens has ≥1 source, emit:
-     ```html
-     <div data-testid="prism-sources-lens-{lens_name}">
-         <div class="prism-lens-carousel-label">{lens_name}</div>
-         <div class="prism-sources-carousel">
-             ... per-card loop (same logic as old flat loop, minus lens tag) ...
-         </div>
-     </div>
-     ```
+Bug 2 — cumulative_return is half-converted (app.py:1807-1812):
+  if_held = _snap_cached_cr  (account basis — correct)
+  dry_run = _snap_cr.get("dry_run")  (VW basis — wrong)
+  Mixed-basis dict; guard_alpha is a phantom artefact.
 
-**3. Remove `.prism-source-lens-tag` spans** from BOTH card variants (AC-5) — the parent
-group label already identifies the lens.
+Root cause: the live path calls account-basis helpers at app.py:1183-1212, but
+the frozen branch was never wired through them.
 
-**4. Preserve all escaping** — keep `| e` on url/title/published/citation fields. No `| safe`.
+## What GREEN must add to app.py
 
-**5. Outer structure preserved** — the existing `<div data-testid="prism-sources">` with
-`<div class="prism-sources-header">Sources</div>` must be kept as the outer wrapper
-(existing `test_overview_sources_carousel.py` pins `data-testid="prism-sources"`).
-The entire per-lens loop goes inside it, gated on whether ANY lens has sources.
+### 1. Three new module-level variables (near the existing _account_totals_cache block, ~line 527)
 
-**6. Empty-state rule (AC-6)** — when ALL lenses have zero sources, render NO carousel
-headers, NO groups, NO "Sources" heading (existing outer `{% if ... %}` guard must cover all).
-The `{% if market_prism_summary %}` guard for the no-row case is unchanged.
+  _account_totals_last_good: dict = {}            # plain dict, NOT _StaleFlagDict
+  _account_totals_last_success_at: str | None = None
+  _ACCOUNT_TOTALS_HTTP_TIMEOUT_S = 10             # promotes timeout=10 literal at line 769
 
-**7. URL guard preserved** — `{% if _src.get('url') and _src.get('url').startswith(('http://', 'https://')) %}`
-on anchor cards MUST stay as-is (prevents `javascript:` URLs, guards `url=None` crash).
+_account_totals_last_good MUST be a plain dict. It must survive mark_stale() calls
+on _account_totals_cache (that is the entire point of last-good retention).
 
-**8. CSS rules** — `.prism-sources-carousel`, `.prism-source-card`, `.prism-source-card--citation`,
-`a.prism-source-card:hover` all keep their existing rules. Remove the `.prism-source-lens-tag`
-CSS rule from the `<style>` block.
+### 2. In _refresh_account_totals (~line 769)
 
-### Data shape at cf93826 (confirmed by test-writer recon)
-- `market_prism_summary['raw_response']['per_lens_digest']` is the per-lens dict.
-- After `ai_advisor_tab()` merges the SOURCES row (app.py lines 3718–3754), each lens entry
-  MAY have `article_corpus: list[{url, title, published}]` AND/OR `sources: list[str]`.
-- Both fields may exist on the same lens entry; treat independently.
-- JS files (`static/ai_advisor.js`, `static/index.js`) have ZERO references to sources.
-  No JS changes needed.
+  - Replace `timeout=10` with `timeout=_ACCOUNT_TOTALS_HTTP_TIMEOUT_S`.
+  - On successful 200 response (inside the `if resp.status_code == 200:` block):
+      _account_totals_last_good.clear()
+      _account_totals_last_good.update(<the values being written to cache>)
+      _account_totals_last_success_at = <ET timestamp string>
+    The timestamp can be any string (e.g., "2026-07-02 09:15:33 ET").
+    Do NOT update these on a failed / non-200 response.
 
-### Structural discriminators (what tests enforce)
-- `html.count('class="prism-sources-carousel"') == 3` for the 3-lens fixture
-- `data-testid="prism-sources-lens-technicals"` in html; `"prism-sources-lens-derivatives"` NOT in html
-- Shared URL present in BOTH technicals and sentiment sections (section-parsed)
-- Tech-only URL absent from sentiment section (section-parsed)
-- `prism-source-lens-tag` class absent from entire HTML
-- Lens name as visible text `>[Tt]echnicals<` between tags in its section
-- Macro citation string present in macro section
+### 3. Stale-cache two-tier fallback (applies to BOTH frozen and live paths)
 
-## A/C Coverage Matrix
-| A/C | Description | Test(s) | Status |
-|-----|-------------|---------|--------|
-| AC-1 | One carousel per non-empty lens, each labeled | test_1_carousel_count, test_8_lens_label | RED |
-| AC-2 | Empty lens renders no carousel | test_5_testid_per_lens (absent for derivatives/fundamentals) | RED |
-| AC-3 | Shared URL in each of its lens carousels | test_2_shared_url_in_both_sections | RED |
-| AC-4 | `.prism-sources-carousel` + `.prism-source-card--citation` preserved | test_1_carousel_count, test_9_macro_citation | RED |
-| AC-5 | `.prism-source-lens-tag` removed | test_4_lens_tag_absent | RED |
-| AC-6 | No-sources honest empty-state | test_7_empty_state | GUARD |
-| AC-7 | Template-only (no route/data change) | Recon finding — no test needed | N/A |
-| AC-8 | Canonical ordering | test_6_canonical_ordering | RED |
-| Security | XSS escaping preserved through restructure | test_10_xss_escaped | GUARD |
+When _account_totals_cache.get(key) returns None (stale), the render path must:
 
-## Import Stubs Created
-None — template-only change, no new Python modules.
+  Tier 1 — last-good present (_account_totals_last_good is non-empty):
+    Use _account_totals_last_good.get(key).
+    Stamp on portfolio_strip:
+      portfolio_strip["account_basis_stale"] = True
+      portfolio_strip["account_basis_as_of"] = _account_totals_last_success_at
 
-## Questions for User / PM
-None — recon at cf93826 was conclusive. AC-7 confirmed template-only.
+  Tier 2 — no last-good (fresh restart, dict empty):
+    Emit portfolio_strip["basis"] = "value_weighted"
+    OR set today_change["if_held"] = None.
+    Never return an unlabelled VW value (operator cannot tell it from account basis).
 
-## Status Log
-- [2026-06-30] test-writer: Starting RED phase — per-lens Market Prism sources carousels
+### 4. Frozen branch fix (app.py:1750-1834) — primary fix
+
+After resolving account totals (using warm cache OR last-good fallback):
+
+  # today_change: replace the raw VW call with the account-basis wrap
+  _snap_vw_tc = analytics.get_portfolio_today_change(_snap_symphonies_list, ...)
+  "today_change": analytics.get_portfolio_cumulative_return_account_basis(
+      _snap_vw_tc,
+      _snap_portfolio_tc,     # from cache or last-good
+      _snap_account_value,
+      _snap_symphony_value_sum,
+  ),
+
+  # cumulative_return: replace the half-conversion with the account-basis wrap
+  _snap_vw_cr = analytics.get_portfolio_cumulative_return(...)
+  "cumulative_return": analytics.get_portfolio_cumulative_return_account_basis(
+      _snap_vw_cr,
+      _snap_portfolio_cr,     # from cache or last-good
+      _snap_account_value,
+      _snap_symphony_value_sum,
+  ),
+
+  _snap_symphony_value_sum = sum(s.get("current_value", 0.0) or 0.0
+                                  for s in _snap_symphonies_list)
+
+### 5. Live path fix (app.py:1202-1216) — AC-10 (same bug pattern)
+
+The live path (_compute_portfolio_strip) also silently flips to VW when
+_account_totals_cache.get("portfolio_tc") returns None (stale).
+Apply the identical two-tier fallback there too.
+
+## Analytics helper signatures (already correct — do not modify these)
+
+  # analytics.py:1083-1157
+  def get_portfolio_today_change_account_basis(
+      vw_tc: dict,                    # {"if_held": float, "dry_run": float}
+      account_if_held_tc: float | None,
+      account_value: float,
+      symphony_value_sum: float,
+  ) -> dict:  # {"if_held": float, "dry_run": float}
+
+  # analytics.py:1024-1080
+  def get_portfolio_cumulative_return_account_basis(
+      vw_cr: dict,                    # {"if_held": float, "dry_run": float}
+      account_if_held: float,
+      account_value: float,
+      symphony_value_sum: float,
+  ) -> dict:  # {"if_held": float, "dry_run": float}
+
+Both have a division guard: return vw_* unchanged when account_value <= 0 or
+symphony_value_sum <= 0. Do not add extra guards around these calls.
+
+## Running the tests (run ONLY these 3 files, with -n0)
+
+  cd C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\eod-basis
+  python -m pytest tests/dashboard/test_eod_account_basis.py tests/app/test_eod_account_basis_refresh.py tests/test_scope_guard.py -n0 -v
+
+Do NOT run the full test suite. The PM owns the full-tree gate.
+Target: 0 FAIL / >=30 PASS / 3 SKIP (scope guard skips already counted in the 3).
+
+## Scope boundaries (AC-5)
+
+DO NOT touch:
+  alpha_bot_execution.py
+  math_engine.py
+
+The scope guard activates post-commit and FAILS if those files appear in EOD-cycle commits.
+If the scope guard FAILS after your GREEN commit: stop, revert the offending file, recommit.
+
+Permitted files:
+  app.py           — primary fix location
+  analytics.py     — only if a bug is found in the existing helpers (unlikely)
+
+## Hard rules
+
+- NEVER merge to main. NEVER run `git merge`, `git checkout main`, or any command
+  that lands cycle work on the main branch. The PM owns the merge gate.
+- Verify branch before every commit: `git -C <worktree-path> branch --show-current`
+  must print fix/eod-today-change-account-basis, never main.
+- Commit prefix: fix(dashboard):
+- After GREEN: SendMessage to PM (main) with HEAD SHA and counts. Do NOT push or merge.
+
+## Status log
+
+- [2026-07-02] quant-test-writer: RED committed (95055bb). 17 FAIL / 13 PASS / 3 SKIP.
+  All failures for the right reason. Handing off to eodimpl.
