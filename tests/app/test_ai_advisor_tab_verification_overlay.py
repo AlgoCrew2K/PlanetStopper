@@ -127,10 +127,13 @@ def test_ai_advisor_tab_fetches_verification_row_by_run_id(client):
         resp = client.get("/ai-advisor")
 
     assert resp.status_code == 200
-    mock_accessor.assert_called_once_with(_RUN_ID_CURRENT), (
-        f"AC-10: get_latest_market_prism_verification_for_run must be called with the "
-        f"MARKET_PRISM row's run_id={_RUN_ID_CURRENT!r}; actual calls: "
-        f"{mock_accessor.call_args_list!r}"
+    (
+        mock_accessor.assert_called_once_with(_RUN_ID_CURRENT),
+        (
+            f"AC-10: get_latest_market_prism_verification_for_run must be called with the "
+            f"MARKET_PRISM row's run_id={_RUN_ID_CURRENT!r}; actual calls: "
+            f"{mock_accessor.call_args_list!r}"
+        ),
     )
 
 
@@ -162,7 +165,7 @@ def test_ai_advisor_tab_renders_overridden_annotation(client):
     )
     assert str(truth) in html, (
         f"AC-10: the overridden check's ground-truth value ({truth!r}) must appear in "
-        f"the rendered HTML annotation (\"council cited X; source says Y\"). "
+        f'the rendered HTML annotation ("council cited X; source says Y"). '
         f"HTML snippet (first 3000 chars): {html[:3000]!r}"
     )
 

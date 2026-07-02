@@ -205,8 +205,7 @@ class TestClassification:
         result = mod.verify_cited_numbers(_RUN_ID, row, lens_sections=lens_sections)
         check = result["checks"][0]
         assert check["classification"] == "overridden", (
-            f"AC-6: cited 22 vs truth 18.1 (VIX) is a gross mismatch -> overridden; "
-            f"got {check!r}"
+            f"AC-6: cited 22 vs truth 18.1 (VIX) is a gross mismatch -> overridden; got {check!r}"
         )
         assert check.get("ground_truth_value") == pytest.approx(18.1, abs=1e-6), (
             "AC-6: an overridden check must record the ground-truth value for render "
@@ -394,9 +393,20 @@ class TestRegistry:
         wildcard_entries = [
             entry
             for key, entry in registry.items()
-            if key not in (
-                "VIX", "VIXCLS", "VXVCLS", "VIX3M", "DGS10", "10Y", "UNRATE",
-                "CPIAUCSL", "CPI", "FEDFUNDS", "tone", "breadth",
+            if key
+            not in (
+                "VIX",
+                "VIXCLS",
+                "VXVCLS",
+                "VIX3M",
+                "DGS10",
+                "10Y",
+                "UNRATE",
+                "CPIAUCSL",
+                "CPI",
+                "FEDFUNDS",
+                "tone",
+                "breadth",
             )
         ]
         assert wildcard_entries, (
@@ -580,7 +590,9 @@ class TestGroundTruthResolution:
     def test_breadth_normalized_as_0_to_1_fraction(self):
         """AC-5: breadth is a fraction (0-1), not a percentage — normalize accordingly."""
         mod = _import_verifier()
-        row = _make_market_prism_row([{"indicator": "breadth", "value": 0.60, "lens": "technicals"}])
+        row = _make_market_prism_row(
+            [{"indicator": "breadth", "value": 0.60, "lens": "technicals"}]
+        )
         result = mod.verify_cited_numbers(_RUN_ID, row, lens_sections=_FULL_LENS_SECTIONS)
         check = result["checks"][0]
         assert check["classification"] in ("pass", "flagged"), (
@@ -648,8 +660,7 @@ class TestHonestDegradation:
         result = mod.verify_cited_numbers(_RUN_ID, row, lens_sections=lens_sections)
         check = result["checks"][0]
         assert check["classification"] == "unverifiable", (
-            f"AC-12: macro unavailable -> UNRATE citation must be unverifiable; "
-            f"got {check!r}"
+            f"AC-12: macro unavailable -> UNRATE citation must be unverifiable; got {check!r}"
         )
         assert check["classification"] not in ("flagged", "overridden"), (
             "AC-12: a source-unavailable citation must NEVER be flagged/overridden — "
@@ -677,7 +688,9 @@ class TestHonestDegradation:
         import ai_advisor
 
         row = _make_market_prism_row([{"indicator": "VIX", "value": 21.8, "lens": "derivatives"}])
-        with patch.object(ai_advisor, "_build_derivatives_section", side_effect=RuntimeError("boom")):
+        with patch.object(
+            ai_advisor, "_build_derivatives_section", side_effect=RuntimeError("boom")
+        ):
             result = mod.verify_cited_numbers(_RUN_ID, row, lens_sections=None)
         assert isinstance(result, dict), (
             "AC-1: verify_cited_numbers must never raise, even when an internal "
@@ -710,7 +723,9 @@ class TestHonestDegradation:
 
         secret_marker = "FRED_API_KEY=zzz-fake-secret-marker-9f8e7d21"
         row = _make_market_prism_row([{"indicator": "DGS10", "value": 4.3, "lens": "macro"}])
-        with patch.object(ai_advisor, "_build_macro_section", side_effect=RuntimeError(secret_marker)):
+        with patch.object(
+            ai_advisor, "_build_macro_section", side_effect=RuntimeError(secret_marker)
+        ):
             result = mod.verify_cited_numbers(_RUN_ID, row, lens_sections=None)
         serialized = json.dumps(result, default=str)
         assert secret_marker not in serialized, (
@@ -745,8 +760,7 @@ class TestDuplicateAndDrift:
         )
         by_lens = {c["lens"]: c["classification"] for c in result["checks"]}
         assert by_lens.get("derivatives") == "pass", (
-            f"AC-14: the correct derivatives citation of VIX must still pass; "
-            f"got {by_lens!r}"
+            f"AC-14: the correct derivatives citation of VIX must still pass; got {by_lens!r}"
         )
         assert by_lens.get("sentiment") in ("flagged", "overridden"), (
             f"AC-14: the grossly wrong sentiment citation of VIX must NOT be masked "
@@ -812,7 +826,10 @@ class TestPersistence:
 
         with (
             patch.object(
-                database, "get_latest_market_prism_verification_for_run", return_value=None, create=True
+                database,
+                "get_latest_market_prism_verification_for_run",
+                return_value=None,
+                create=True,
             ),
             patch.object(database, "insert_advisor_observation", return_value=99) as mock_insert,
         ):
@@ -837,7 +854,10 @@ class TestPersistence:
 
         with (
             patch.object(
-                database, "get_latest_market_prism_verification_for_run", return_value=None, create=True
+                database,
+                "get_latest_market_prism_verification_for_run",
+                return_value=None,
+                create=True,
             ),
             patch.object(database, "insert_advisor_observation", return_value=1) as mock_insert,
         ):
@@ -885,7 +905,10 @@ class TestPersistence:
 
         with (
             patch.object(
-                database, "get_latest_market_prism_verification_for_run", return_value=None, create=True
+                database,
+                "get_latest_market_prism_verification_for_run",
+                return_value=None,
+                create=True,
             ),
             patch.object(database, "insert_advisor_observation", return_value=1) as mock_insert,
         ):
@@ -972,6 +995,5 @@ class TestGoldenFixture:
             )
 
         assert result["verdict"] != "no-numeric-claims", (
-            "Golden fixture has non-empty cited_numbers — verdict must not be "
-            "'no-numeric-claims'."
+            "Golden fixture has non-empty cited_numbers — verdict must not be 'no-numeric-claims'."
         )

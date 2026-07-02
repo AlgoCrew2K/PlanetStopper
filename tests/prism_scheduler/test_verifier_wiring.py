@@ -128,7 +128,9 @@ class TestVerifierWiring:
         with (
             patch.object(mod, "_get_summary", return_value=None),
             patch("subprocess.run", return_value=_mock_subprocess_result()),
-            patch.object(mod, "_get_market_prism_row_for_run", return_value=_SAMPLE_ROW, create=True),
+            patch.object(
+                mod, "_get_market_prism_row_for_run", return_value=_SAMPLE_ROW, create=True
+            ),
             patch.object(mod, "_patch_provenance", side_effect=_patch_prov_side_effect),
             patch(
                 "advisors.prism_numeric_verifier.verify_cited_numbers",
@@ -142,7 +144,9 @@ class TestVerifierWiring:
             ),
             patch.object(mod, "_persist_spend"),
             patch.object(
-                ai_advisor, "_build_derivatives_section", return_value=_canned_lens_block("derivatives")
+                ai_advisor,
+                "_build_derivatives_section",
+                return_value=_canned_lens_block("derivatives"),
             ) as m_deriv,
             patch.object(
                 ai_advisor, "_build_macro_section", return_value=_canned_lens_block("macro")
@@ -151,10 +155,14 @@ class TestVerifierWiring:
                 ai_advisor, "_build_sentiment_section", return_value=_canned_lens_block("sentiment")
             ) as m_sent,
             patch.object(
-                ai_advisor, "_build_technicals_section", return_value=_canned_lens_block("technicals")
+                ai_advisor,
+                "_build_technicals_section",
+                return_value=_canned_lens_block("technicals"),
             ) as m_tech,
             patch.object(
-                ai_advisor, "_build_fundamentals_section", return_value=_canned_lens_block("fundamentals")
+                ai_advisor,
+                "_build_fundamentals_section",
+                return_value=_canned_lens_block("fundamentals"),
             ) as m_fund,
         ):
             with pytest.raises(SystemExit) as exc_info:
@@ -199,7 +207,9 @@ class TestVerifierWiring:
         with (
             patch.object(mod, "_get_summary", return_value=None),
             patch("subprocess.run", return_value=_mock_subprocess_result()),
-            patch.object(mod, "_get_market_prism_row_for_run", return_value=_SAMPLE_ROW, create=True),
+            patch.object(
+                mod, "_get_market_prism_row_for_run", return_value=_SAMPLE_ROW, create=True
+            ),
             patch.object(mod, "_patch_provenance", return_value=True),
             patch(
                 "advisors.prism_numeric_verifier.verify_cited_numbers",
@@ -213,7 +223,9 @@ class TestVerifierWiring:
             ),
             patch.object(mod, "_persist_spend"),
             patch.object(
-                ai_advisor, "_build_derivatives_section", return_value=_canned_lens_block("derivatives")
+                ai_advisor,
+                "_build_derivatives_section",
+                return_value=_canned_lens_block("derivatives"),
             ) as m_deriv,
             patch.object(
                 ai_advisor, "_build_macro_section", return_value=_canned_lens_block("macro")
@@ -222,10 +234,14 @@ class TestVerifierWiring:
                 ai_advisor, "_build_sentiment_section", return_value=_canned_lens_block("sentiment")
             ) as m_sent,
             patch.object(
-                ai_advisor, "_build_technicals_section", return_value=_canned_lens_block("technicals")
+                ai_advisor,
+                "_build_technicals_section",
+                return_value=_canned_lens_block("technicals"),
             ) as m_tech,
             patch.object(
-                ai_advisor, "_build_fundamentals_section", return_value=_canned_lens_block("fundamentals")
+                ai_advisor,
+                "_build_fundamentals_section",
+                return_value=_canned_lens_block("fundamentals"),
             ) as m_fund,
         ):
             with pytest.raises(SystemExit):
@@ -271,7 +287,9 @@ class TestVerifierWiring:
         with (
             patch.object(mod, "_get_summary", return_value=None),
             patch("subprocess.run", return_value=_mock_subprocess_result()),
-            patch.object(mod, "_get_market_prism_row_for_run", return_value=_SAMPLE_ROW, create=True),
+            patch.object(
+                mod, "_get_market_prism_row_for_run", return_value=_SAMPLE_ROW, create=True
+            ),
             patch.object(mod, "_patch_provenance", return_value=True),
             patch(
                 "advisors.prism_numeric_verifier.verify_cited_numbers",
@@ -285,17 +303,25 @@ class TestVerifierWiring:
             ),
             patch.object(mod, "_persist_spend"),
             patch.object(
-                ai_advisor, "_build_derivatives_section", return_value=_canned_lens_block("derivatives")
+                ai_advisor,
+                "_build_derivatives_section",
+                return_value=_canned_lens_block("derivatives"),
             ),
-            patch.object(ai_advisor, "_build_macro_section", return_value=_canned_lens_block("macro")),
+            patch.object(
+                ai_advisor, "_build_macro_section", return_value=_canned_lens_block("macro")
+            ),
             patch.object(
                 ai_advisor, "_build_sentiment_section", return_value=_canned_lens_block("sentiment")
             ),
             patch.object(
-                ai_advisor, "_build_technicals_section", return_value=_canned_lens_block("technicals")
+                ai_advisor,
+                "_build_technicals_section",
+                return_value=_canned_lens_block("technicals"),
             ),
             patch.object(
-                ai_advisor, "_build_fundamentals_section", return_value=_canned_lens_block("fundamentals")
+                ai_advisor,
+                "_build_fundamentals_section",
+                return_value=_canned_lens_block("fundamentals"),
             ),
         ):
             with pytest.raises(SystemExit) as exc_info:

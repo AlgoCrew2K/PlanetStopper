@@ -201,12 +201,16 @@ def test_get_latest_market_prism_verification_for_run_returns_expected_shape():
     for key in ("id", "advisor_role", "raw_response", "subject_id"):
         assert key in row, f"Returned row is missing key {key!r}. Row keys: {list(row.keys())!r}"
 
-    assert isinstance(row["id"], int) and row["id"] > 0, f"id must be a positive int; got {row['id']!r}"
+    assert isinstance(row["id"], int) and row["id"] > 0, (
+        f"id must be a positive int; got {row['id']!r}"
+    )
     assert row["advisor_role"] == "MARKET_PRISM_VERIFICATION"
     assert isinstance(row["raw_response"], dict), (
         f"raw_response must be a parsed dict (not a JSON string); got {type(row['raw_response'])}"
     )
-    assert row["subject_id"] == "global", f"subject_id must be 'global'; got {row.get('subject_id')!r}"
+    assert row["subject_id"] == "global", (
+        f"subject_id must be 'global'; got {row.get('subject_id')!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +231,13 @@ def test_get_latest_market_prism_verification_for_run_finds_match_regardless_of_
         "run_id": _RUN_ID_NOISE,
         "verified_at": "2026-07-01T03:05:00Z",
         "checks": [],
-        "summary": {"n_checks": 0, "n_pass": 0, "n_flagged": 0, "n_overridden": 0, "n_unverifiable": 0},
+        "summary": {
+            "n_checks": 0,
+            "n_pass": 0,
+            "n_flagged": 0,
+            "n_overridden": 0,
+            "n_unverifiable": 0,
+        },
         "verdict": "no-numeric-claims",
     }
     for _ in range(_NOISE_ROW_COUNT + 1):

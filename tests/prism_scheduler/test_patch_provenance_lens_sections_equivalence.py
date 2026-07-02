@@ -131,15 +131,11 @@ def test_patch_provenance_lens_sections_reuse_matches_live_fetch_sources_row():
     with (
         patch("ai_advisor._build_sentiment_section", return_value=canned_sections["sentiment"]),
         patch("ai_advisor._build_macro_section", return_value=canned_sections["macro"]),
-        patch(
-            "ai_advisor._build_derivatives_section", return_value=canned_sections["derivatives"]
-        ),
+        patch("ai_advisor._build_derivatives_section", return_value=canned_sections["derivatives"]),
         patch(
             "ai_advisor._build_fundamentals_section", return_value=canned_sections["fundamentals"]
         ),
-        patch(
-            "ai_advisor._build_technicals_section", return_value=canned_sections["technicals"]
-        ),
+        patch("ai_advisor._build_technicals_section", return_value=canned_sections["technicals"]),
         patch("ai_advisor.persist_market_lens_cache", return_value=None),
     ):
         prism_scheduler._patch_provenance(_RUN_ID_LIVE, _make_row(_RUN_ID_LIVE))
