@@ -826,6 +826,122 @@ class TestLivePathStaleCachePolicy:
             f"Got {ps.get('account_basis_stale')!r}."
         )
 
+    def test_live_path_tier2_marker_not_fooled_by_zero_last_good_tc(self, live_client, monkeypatch):
+        """
+        Finding 1 (/review PR #89): the Tier-2 honest-floor marker
+        (app.py:1388-1395) uses a FALSY check (`not (...)`) on last-good
+        portfolio_tc, not an `is None` check. When last-good portfolio_tc == 0.0
+        (a real flat-day value — the account genuinely had zero today-change) and
+        the primary cache is stale, the Tier-1 wrap block a few lines up correctly
+        treats 0.0 as present (`if _lg_tc is not None:`) and wraps today_change to
+        account basis + sets account_basis_stale=True. But the marker's
+        `not (0.0)` == True fires the SAME as a genuinely-absent value, falsely
+        labelling a correctly-wrapped account-basis number as basis='value_weighted'.
+        The frozen path (app.py:1895/1901/1977) uses `is None` throughout and does
+        NOT have this bug — this is live-path only.
+
+        portfolio_cr is set to a non-missing fixture value so this test isolates
+        the TC leg specifically (see the CR-leg symmetric test immediately below).
+
+        RED: current code stamps basis='value_weighted' even though today_change
+        was genuinely wrapped via the Tier-1 last-good fallback.
+        Fix: the marker must use `is None`, not falsy-check, on last-good values.
+        """
+        client, app_module = live_client
+        if not hasattr(app_module, "_account_totals_last_good"):
+            pytest.fail("_account_totals_last_good absent.")
+
+        fx = _load_parity_fixture()
+        bot_state = {"date": "2026-07-01", "holdings": {}}
+
+        app_module._account_totals_last_good["portfolio_value"] = fx["account_value"]
+        app_module._account_totals_last_good["portfolio_tc"] = 0.0  # real flat-day value
+        app_module._account_totals_last_good["portfolio_cr"] = fx["account_cr"]  # non-missing
+        app_module._account_totals_cache.mark_stale()
+
+        try:
+            body = self._drive_live_branch(
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
+            )
+        finally:
+            self._clear_live_cache(app_module)
+            app_module._account_totals_last_good.clear()
+
+        ps = body.get("portfolio_strip", {})
+
+        assert ps.get("basis") != "value_weighted", (
+            f"Live Tier 1 (last-good portfolio_tc==0.0, a real flat-day value): the "
+            f"strip must NOT be marked basis='value_weighted' — today_change was "
+            f"genuinely wrapped to account basis via the Tier-1 last-good fallback. "
+            f"Got basis={ps.get('basis')!r}. "
+            f"Fix: the Tier-2 marker must use `is None`, not a falsy `not (...)` "
+            f"check, on last-good portfolio_tc (mirrors the frozen path)."
+        )
+        assert ps.get("account_basis_stale") is True, (
+            f"Companion: account_basis_stale must be True (the Tier-1 last-good "
+            f"fallback genuinely fired for this scenario). "
+            f"Got {ps.get('account_basis_stale')!r}."
+        )
+
+    def test_live_path_tier2_marker_not_fooled_by_zero_last_good_cr(self, live_client, monkeypatch):
+        """
+        Finding 1 (/review PR #89), CR-leg symmetric case: last-good
+        portfolio_cr == 0.0 (a real flat-day cumulative-return value). The same
+        falsy-check bug (`_cr_fully_missing`, app.py:1391-1393) fires the Tier-2
+        marker despite cumulative_return being genuinely wrapped via the Tier-1
+        last-good fallback a few lines up.
+
+        portfolio_tc is set to a non-missing fixture value so this test isolates
+        the CR leg specifically (companion to the TC-leg test above).
+        """
+        client, app_module = live_client
+        if not hasattr(app_module, "_account_totals_last_good"):
+            pytest.fail("_account_totals_last_good absent.")
+
+        fx = _load_parity_fixture()
+        bot_state = {"date": "2026-07-01", "holdings": {}}
+
+        app_module._account_totals_last_good["portfolio_value"] = fx["account_value"]
+        app_module._account_totals_last_good["portfolio_tc"] = fx[
+            "account_if_held_tc"
+        ]  # non-missing
+        app_module._account_totals_last_good["portfolio_cr"] = 0.0  # real flat-day value
+        app_module._account_totals_cache.mark_stale()
+
+        try:
+            body = self._drive_live_branch(
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
+            )
+        finally:
+            self._clear_live_cache(app_module)
+            app_module._account_totals_last_good.clear()
+
+        ps = body.get("portfolio_strip", {})
+
+        assert ps.get("basis") != "value_weighted", (
+            f"Live Tier 1 (last-good portfolio_cr==0.0, a real flat-day value): the "
+            f"strip must NOT be marked basis='value_weighted' — cumulative_return "
+            f"was genuinely wrapped to account basis via the Tier-1 last-good "
+            f"fallback. Got basis={ps.get('basis')!r}. "
+            f"Fix: the Tier-2 marker must use `is None`, not a falsy `not (...)` "
+            f"check, on last-good portfolio_cr (mirrors the frozen path)."
+        )
+        assert ps.get("account_basis_stale") is True, (
+            f"Companion: account_basis_stale must be True (the Tier-1 last-good "
+            f"fallback genuinely fired for this scenario). "
+            f"Got {ps.get('account_basis_stale')!r}."
+        )
+
     def test_live_path_stale_tier2_marks_basis_value_weighted(self, live_client, monkeypatch):
         """
         AC-10 Tier 2: stale + no last-good → live TC must be labelled basis='value_weighted'
@@ -1036,6 +1152,77 @@ class TestLivePathStaleCachePolicy:
 
         assert resp.status_code == 200, f"Frozen /api/state must return 200; got {resp.status_code}"
         return resp.get_json()
+
+    def test_frozen_tc_if_held_matches_live_when_tc_fully_missing(self, live_client, monkeypatch):
+        """
+        Finding 3 (/review PR #89): for an IDENTICAL fully-missing-TC state (no
+        cache, no last-good for portfolio_tc — CR is kept warm via cache so this
+        test isolates the TC leg specifically), the frozen path currently returns
+        today_change.if_held=None while the live path returns the real raw-VW
+        if_held — a cross-path inconsistency. The plan's documented DEFAULT for
+        the honest floor is raw-VW + basis marker (the live behavior); frozen's
+        TC Tier-2 branch (app.py:1938-1941, `{**_snap_vw_tc, "if_held": None}`)
+        deviates from it. Frozen's own CR-leg Tier-2 branch (app.py:1950-1953)
+        does NOT null — this asymmetry is TC-only.
+
+        RED: frozen today_change.if_held (None) != live today_change.if_held
+        (a real number, fx["vw_tc"]["if_held"]).
+        Fix: eodimpl changes the frozen TC Tier-2 branch to surface raw
+        _snap_vw_tc unchanged, matching the frozen CR branch + live path + plan.
+        """
+        client, app_module = live_client
+        fx = _load_parity_fixture()
+
+        # Fully-missing TC (no cache, no last-good for TC); CR warm via cache so
+        # only the TC leg is under test.
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_cache["portfolio_value"] = fx["account_value"]
+        app_module._account_totals_cache["portfolio_cr"] = fx["account_cr"]
+        app_module._account_totals_last_good.clear()
+
+        live_bot_state = {"date": "2026-07-01", "holdings": {}}
+        try:
+            live_body = self._drive_live_branch(
+                client,
+                app_module,
+                monkeypatch,
+                bot_state=live_bot_state,
+                vw_tc=fx["vw_tc"],
+                vw_cr=fx["vw_cr"],
+            )
+        finally:
+            self._clear_live_cache(app_module)
+            app_module._account_totals_last_good.clear()
+
+        # Re-establish the IDENTICAL cache state for the frozen branch (shared
+        # module-level cache; re-populate since the live drive cleared it above).
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_cache["portfolio_value"] = fx["account_value"]
+        app_module._account_totals_cache["portfolio_cr"] = fx["account_cr"]
+        app_module._account_totals_last_good.clear()
+        try:
+            frozen_body = self._drive_frozen_minimal(
+                client, app_module, monkeypatch, vw_tc=fx["vw_tc"], vw_cr=fx["vw_cr"]
+            )
+        finally:
+            self._clear_live_cache(app_module)
+
+        live_tc_if_held = live_body["portfolio_strip"]["today_change"].get("if_held")
+        frozen_tc_if_held = frozen_body["portfolio_strip"]["today_change"].get("if_held")
+
+        assert live_tc_if_held is not None, (
+            "Precondition: live path's fully-missing-TC today_change.if_held must "
+            "be a real raw-VW number (the plan's documented Tier-2 default), not "
+            "None — if this fails, the live-path behavior itself has regressed "
+            "and the cross-path comparison below is meaningless."
+        )
+        assert frozen_tc_if_held == pytest.approx(live_tc_if_held, rel=1e-6), (
+            f"Cross-path consistency: for an identical fully-missing-TC state, "
+            f"frozen today_change.if_held ({frozen_tc_if_held!r}) must match live "
+            f"today_change.if_held ({live_tc_if_held!r}) — both should be the raw "
+            f"VW if_held value (the plan's documented Tier-2 default), not None. "
+            f"Frozen currently nulls if_held on this branch; live does not."
+        )
 
     def test_live_path_and_frozen_path_stale_tier2_are_consistent(self, live_client, monkeypatch):
         """
