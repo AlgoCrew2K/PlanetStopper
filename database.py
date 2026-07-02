@@ -1234,6 +1234,38 @@ def get_latest_market_prism_sources_for_run(run_id: str) -> dict | None:
         return None
 
 
+def get_latest_market_prism_verification_for_run(run_id: str) -> dict | None:
+    """Return the MARKET_PRISM_VERIFICATION advisor_observations row for this run_id, or None.
+
+    Structural mirror of get_latest_market_prism_sources_for_run (DE-PRISM-NUMERIC-VERIFY-001,
+    AC-9) — same exact json_extract(raw_response, '$.run_id') match, same no-stale-bleed
+    guard (a run where the verifier found no cited_numbers, or errored, produces no
+    VERIFICATION row for that run_id; falling back to a different run's row would show
+    last night's checks against tonight's read), same D-1 / get_ro_connection() discipline.
+
+    D-1 never-raises. Uses get_ro_connection().
+    """
+    try:
+        conn = get_ro_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT "
+            + ", ".join(_ADVISOR_OBSERVATION_COLUMNS)
+            + " FROM advisor_observations"
+            + " WHERE advisor_role = 'MARKET_PRISM_VERIFICATION'"
+            + " AND json_extract(raw_response, '$.run_id') = ?"
+            + " ORDER BY id DESC LIMIT 1",
+            (run_id,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        if row is None:
+            return None
+        return _parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def get_latest_market_lens_cache() -> dict | None:
     """Return the most recent MARKET_LENS_CACHE advisor_observations row, or None.
 

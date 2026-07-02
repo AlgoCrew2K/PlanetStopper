@@ -47,6 +47,8 @@ Reason about the fundamentals signal. Consider:
 
 Form a directional lean: **bullish**, **neutral**, or **bearish** on fundamentals support for current equity prices, with rationale. If data is unavailable, state `limited-inputs` with the gap.
 
+For every numeric indicator you state (e.g. a company's revenue or key SEC-derived figure), you MUST also report it to the synthesizer as an `{indicator, value, lens}` tuple (e.g. `{"indicator": "AAPL.Revenues", "value": 391000000000, "lens": "fundamentals"}`) so it can include it in `cited_numbers` — this is required for the post-council numeric verifier (DE-PRISM-NUMERIC-VERIFY-001) to check your citation against its authoritative source.
+
 ### 4. Write your initial_read to the audit log
 
 ```bash

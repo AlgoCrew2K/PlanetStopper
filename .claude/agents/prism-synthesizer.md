@@ -120,7 +120,9 @@ echo "<your integrated synthesis text>" | python -m advisors.prism_audit_write \
 
 ### 9. Write the MARKET_PRISM observation row
 
-Only after the synthesis audit entry is confirmed (positive row id returned), write the observation row:
+Only after the synthesis audit entry is confirmed (positive row id returned), write the observation row.
+
+**Every numeric indicator you or an analyst state in prose (in `sentiment_rationale` or any lens `summary`) MUST also appear as a `{indicator, value, lens}` tuple in `cited_numbers`.** This is required so the post-council numeric verifier (DE-PRISM-NUMERIC-VERIFY-001) can recompute each cited figure against its authoritative source — a number that only exists in prose is invisible to it. Collect these tuples from each analyst's initial read / clarification / debate contributions as you integrate the synthesis: every indicator an analyst reported to you belongs in this list.
 
 ```python
 import sys, json
@@ -139,6 +141,12 @@ raw_response = {
         "macro":        {"available": True/False, "summary": "...", "sources": []},
         "fundamentals": {"available": True/False, "summary": "...", "sources": []},
     },
+    "cited_numbers": [
+        # every numeric figure named in prose above, structured for the numeric verifier
+        {"indicator": "VIX", "value": 22.0, "lens": "derivatives"},
+        {"indicator": "DGS10", "value": 4.35, "lens": "macro"},
+        # ... one tuple per numeric indicator stated anywhere in this row
+    ],
     "debate_occurred": True/False,
     "debate_rounds_used": 0,       # actual count, 0–3
     "available_lens_count": <int>, # count of available=True lenses
