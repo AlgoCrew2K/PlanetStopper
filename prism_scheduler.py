@@ -325,6 +325,48 @@ def _run_prism(run_id: str = "unknown") -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Lens builder registry (single source of truth for _patch_provenance +
+# _fetch_lens_sections, DE-PRISM-NUMERIC-VERIFY-001 F3)
+# ---------------------------------------------------------------------------
+
+# lens -> ai_advisor builder attribute name. All 5 lenses are listed here.
+# Stored as attribute-name strings (not bound function references) so ai_advisor
+# stays a lazy, function-body-local import (CC-2) — each caller does its own
+# `import ai_advisor; getattr(ai_advisor, _BUILDERS[lens])()`.
+#
+# _fetch_lens_sections uses all 5 unconditionally. _patch_provenance's
+# citation-collection loop explicitly SKIPS "technicals" (Alpaca bar data has
+# no public URL for citations, AC-2) while still using this same dict to
+# populate the MARKET_LENS_CACHE technicals block.
+_BUILDERS: dict[str, str] = {
+    "sentiment": "_build_sentiment_section",
+    "macro": "_build_macro_section",
+    "derivatives": "_build_derivatives_section",
+    "technicals": "_build_technicals_section",
+    "fundamentals": "_build_fundamentals_section",
+}
+
+
+def _coerce_raw_response(row: "dict | None") -> dict:
+    """Return row['raw_response'] coerced to a dict.
+
+    Deserializes a JSON string; degrades to {} on a None row, a missing/falsy
+    raw_response, or unparseable JSON. Never raises. Shared by _patch_provenance
+    and _extract_per_lens_digest (both need the row's raw_response coerced to a
+    dict before reading per_lens_digest).
+    """
+    if row is None:
+        return {}
+    raw = row.get("raw_response") or {}
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except Exception:  # noqa: BLE001
+            return {}
+    return raw
+
+
+# ---------------------------------------------------------------------------
 # Post-council provenance patch
 # ---------------------------------------------------------------------------
 
@@ -357,27 +399,12 @@ def _patch_provenance(run_id: str, row: "dict | None", lens_sections: "dict | No
     try:
         if row is None:
             return False
-        raw = row.get("raw_response") or {}
-        if isinstance(raw, str):
-            try:
-                import json as _json  # noqa: PLC0415
-
-                raw = _json.loads(raw)
-            except Exception:  # noqa: BLE001
-                return False
+        raw = _coerce_raw_response(row)
         pld = raw.get("per_lens_digest")
         if not isinstance(pld, dict):
             return False
 
         import ai_advisor  # noqa: PLC0415
-
-        # technicals intentionally absent — AC-2: Alpaca bar data has no public urls.
-        _BUILDERS: dict = {
-            "sentiment": ai_advisor._build_sentiment_section,
-            "macro": ai_advisor._build_macro_section,
-            "derivatives": ai_advisor._build_derivatives_section,
-            "fundamentals": ai_advisor._build_fundamentals_section,
-        }
 
         # Accumulate per-lens citations into a SEPARATE dict — never mutate the
         # MARKET_PRISM row (v2: INSERT-only; the MARKET_PRISM raw_response is
@@ -387,7 +414,12 @@ def _patch_provenance(run_id: str, row: "dict | None", lens_sections: "dict | No
         # technicals is populated separately below (excluded from SOURCES — no public URLs).
         _lens_cache_sections: dict = {}
 
-        for lens, builder in _BUILDERS.items():
+        for lens, attr in _BUILDERS.items():
+            if lens == "technicals":
+                # AC-2: Alpaca bar data has no public urls — technicals never
+                # contributes citations to SOURCES (populated separately below,
+                # for MARKET_LENS_CACHE only).
+                continue
             _unavailable_block = {
                 "lens": lens,
                 "available": False,
@@ -410,7 +442,7 @@ def _patch_provenance(run_id: str, row: "dict | None", lens_sections: "dict | No
                 section = lens_sections[lens]
             else:
                 try:
-                    section = builder()
+                    section = getattr(ai_advisor, attr)()
                 except Exception:  # noqa: BLE001
                     _lens_cache_sections[lens] = _unavailable_block
                     continue  # D-1: this lens contributes no citations
@@ -470,8 +502,9 @@ def _patch_provenance(run_id: str, row: "dict | None", lens_sections: "dict | No
         )
 
         # Persist the 5-lens MARKET_LENS_CACHE bundle (AC-2).
-        # technicals was excluded from _BUILDERS (no public URLs for SOURCES) but belongs
-        # in the lens cache so the advisor can serve breadth/momentum without a live fetch.
+        # technicals is skipped in the citation loop above (no public URLs for
+        # SOURCES) but belongs in the lens cache so the advisor can serve
+        # breadth/momentum without a live fetch.
         # Extra isolation: wrap in its own try/except so any failure here cannot prevent
         # the `return True` below — the SOURCES row is already written at this point and
         # the council must always be recorded as successful regardless of the cache write.
@@ -480,7 +513,7 @@ def _patch_provenance(run_id: str, row: "dict | None", lens_sections: "dict | No
                 _tech_block = lens_sections["technicals"]
             else:
                 try:
-                    _tech_block = ai_advisor._build_technicals_section()
+                    _tech_block = getattr(ai_advisor, _BUILDERS["technicals"])()
                 except Exception:  # noqa: BLE001
                     _tech_block = {
                         "lens": "technicals",
@@ -519,14 +552,7 @@ def _extract_per_lens_digest(row: "dict | None") -> "dict | None":
     (e.g. a test-fixture placeholder row) — mirrors _patch_provenance's own
     early-exit check so a degraded row never triggers a live builder fetch.
     """
-    if row is None:
-        return None
-    raw = row.get("raw_response") or {}
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except Exception:  # noqa: BLE001
-            return None
+    raw = _coerce_raw_response(row)
     pld = raw.get("per_lens_digest")
     return pld if isinstance(pld, dict) else None
 
@@ -546,17 +572,10 @@ def _fetch_lens_sections() -> dict:
     """
     import ai_advisor  # noqa: PLC0415
 
-    _BUILDERS: dict = {
-        "sentiment": ai_advisor._build_sentiment_section,
-        "macro": ai_advisor._build_macro_section,
-        "derivatives": ai_advisor._build_derivatives_section,
-        "technicals": ai_advisor._build_technicals_section,
-        "fundamentals": ai_advisor._build_fundamentals_section,
-    }
     sections: dict = {}
-    for lens, builder in _BUILDERS.items():
+    for lens, attr in _BUILDERS.items():
         try:
-            sections[lens] = builder()
+            sections[lens] = getattr(ai_advisor, attr)()
         except Exception as exc:  # noqa: BLE001
             sections[lens] = {
                 "lens": lens,

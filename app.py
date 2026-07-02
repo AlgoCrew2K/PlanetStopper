@@ -3917,9 +3917,8 @@ def ai_advisor_tab():
     market_prism_verification: dict | None = None
     if market_prism_summary:
         try:
-            import copy as _copy  # noqa: PLC0415
-
-            market_prism_summary = _copy.deepcopy(market_prism_summary)
+            # No deepcopy here — market_prism_summary is already a fresh copy
+            # from the SOURCES block above (see the block comment above).
             _mpv_raw = market_prism_summary.get("raw_response") or {}
             if isinstance(_mpv_raw, str):
                 import json as _json  # noqa: PLC0415
@@ -3932,11 +3931,11 @@ def ai_advisor_tab():
                     _mpv_run_id
                 )
                 if _verification_row is not None:
+                    # raw_response is pre-deserialized by
+                    # database._parse_advisor_observation_row — always a dict or
+                    # None here, never a JSON string. Do not "restore" a
+                    # str-coercion branch for this row.
                     _ver_raw = _verification_row.get("raw_response") or {}
-                    if isinstance(_ver_raw, str):
-                        import json as _json  # noqa: PLC0415
-
-                        _ver_raw = _json.loads(_ver_raw)
                     _ver_checks = _ver_raw.get("checks", []) if isinstance(_ver_raw, dict) else []
                     _annotated_checks = []
                     for _chk in _ver_checks:
