@@ -3744,3 +3744,109 @@ No new attack surface. The `startswith(('http://', 'https://'))` URL guard from 
 ### Reference
 
 DE-PRISM-SOURCES-PER-LENS-001; branch `feat/prism-sources-per-lens-carousels`; commit `4260c2b`; supersedes DE-SOURCES-CAROUSEL-001 (PR #85).
+
+## DE-PRISM-NUMERIC-VERIFY-001 — Post-council numeric verifier: anti-fabrication recompute + source override (2026-07-02)
+
+Branch: `feat/prism-numeric-verifier` | Base: `origin/main` 848acf94 | HEAD: 55a7723
+
+### Problem
+
+The Market Prism council had two existing anti-fabrication guards — citation *shape* validation (`ai_advisor.build_citation`) and a post-council *source-list* re-fetch (`prism_scheduler._patch_provenance`, DE-PRISM-SOURCES-001) — but nothing checked that a NUMBER the council stated actually matched its authoritative source. A council that writes "VIX is 22" when FRED (VIXCLS) says 18.1 sailed through uncaught. The synthesizer writes the `MARKET_PRISM` row from LLM deliberation prose; an honest transcription error or an outright hallucination in that prose was indistinguishable from a correct read.
+
+### Decision (D-1 in the feature plan): verify STRUCTURED `cited_numbers` tuples (Option b), not prose regex-extraction (Option a)
+
+The council output schema gains a `cited_numbers: list[{indicator, value, lens, source_hint?}]` array inside `MARKET_PRISM.raw_response`. The synthesizer + all 5 analyst role files (`.claude/agents/prism-*.md`) now instruct that every numeric indicator stated anywhere in prose (`summary`, `sentiment_rationale`, etc.) must ALSO be emitted as a `cited_numbers` tuple. A new deterministic verifier (`advisors/prism_numeric_verifier.verify_cited_numbers`) resolves each tuple's ground truth via a named indicator registry and classifies it.
+
+**Why Option (b) over prose regex-extraction:**
+
+| Option | Problem |
+|--------|---------|
+| Prose regex-extraction (Option a) | Brittle: "VIX ~22", "the vol index near 22", "22-ish" all defeat a regex; fuzzy indicator-name matching produces false mismatches and cannot be bounded — the antithesis of this codebase's deterministic/testable/never-fabricate ethos. |
+| Structured cited-number tuples (Option b, chosen) | The synthesizer already writes a structured `raw_response` dict (`prism-synthesizer.md` step 9) — adding a `cited_numbers` array is a small additive schema change. Every check becomes a deterministic path lookup + numeric compare, fully unit-testable. |
+
+**Threat model:** the council is error-prone, not adversarial. An honest hallucination or transcription error emits the same wrong number into both the prose and the tuple, so Option (b) still catches it. The residual gap — a number stated in prose but never emitted as a tuple — is mitigated (not eliminated) by the AC-2 prompt mandate on all 6 role files, and is a documented, deliberate, out-of-scope limitation (see "Residual limitation" below). Full NLP prose-extraction was explicitly rejected as future work, not this cycle's job.
+
+### Decision: separate append-only `MARKET_PRISM_VERIFICATION` row; render-layer "override" — never mutate the `MARKET_PRISM` row (mirrors D-2/D-3 in the feature plan)
+
+The append-only invariant on `advisor_observations` is load-bearing here — this codebase already *deleted* `update_advisor_observation_raw_response` to enforce it (DE-PRISM-SOURCES-001 v1 rejection). The verifier runs post-council, reusing the `_patch_provenance` hook after the `MARKET_PRISM` row is already written, so it structurally cannot edit that row. `persist_verification` writes exactly one idempotent append-only row per `run_id` with `advisor_role="MARKET_PRISM_VERIFICATION"` via the existing `insert_advisor_observation` accessor — the same zero-schema-change pattern `MARKET_PRISM_SOURCES` already proved out. "Override" therefore means the Overview render *prefers* the ground-truth value with a "council cited X; source says Y" annotation — never an in-place edit of the council's own row. **No schema migration** — current highest migration stays `032_prism_audit_log.sql`.
+
+### Decision: reuse `_patch_provenance`'s existing patch-time lens fetch as ground truth; no LLM re-ask
+
+`prism_scheduler._patch_provenance` already invokes all 5 `ai_advisor._build_*_section()` builders at patch time (minutes after the council exits) to build the SOURCES row. A new `_fetch_lens_sections()` helper extracts that fetch into a shared, single-invocation call; `main()` now calls it once per successful run and threads the SAME `{lens: section}` bundle into BOTH `_patch_provenance` (via a new optional `lens_sections=` kwarg — `lens_sections=None` default is byte-identical to pre-existing behavior, verified by a dedicated equivalence test) AND the new `_run_numeric_verification`. This keeps AC-4 (no duplicate external fetch) satisfied with zero added network calls on the happy path. A bounded LLM re-ask on a detected mismatch (asking the council to reconcile) was explicitly deferred — this cycle's verifier is fully deterministic, no second LLM round-trip.
+
+### Verdict taxonomy — five verdicts, never a silent "clean"
+
+`verify_cited_numbers` reduces the check list to exactly one of five verdicts (precedence: overrides-detected → flags-detected → no-verifiable-claims → clean, with no-numeric-claims handled as an early return before any checks run):
+
+| Verdict | Fires when | Meaning |
+|---------|-----------|---------|
+| `no-numeric-claims` | `raw_response` has no `cited_numbers` key, the key is falsy, or the container is not a `list` | The council declared no numeric citations — including every legacy row and every `lens_pipeline`-produced fallback row (AC-11). Never an error. |
+| `no-verifiable-claims` | `n_checks > 0` and every check resolved `unverifiable` (no `pass`, `flagged`, or `overridden` present) | **nvreview Finding 1 fix.** Something was declared and checked, but nothing could actually be verified (malformed entries, unmapped indicators, or every referenced lens unavailable). Distinguishes "checked, but couldn't verify anything" from "checked and all passed" — returning `clean` here would be a silent pass in an anti-fabrication feature. |
+| `overrides-detected` | `n_overridden > 0` | At least one cited number is a gross mismatch. Highest severity; checked first. |
+| `flags-detected` | `n_overridden == 0` and `n_flagged > 0` | At least one bounded mismatch; no gross mismatch present. |
+| `clean` | `n_checks > 0`, zero flagged, zero overridden, at least one `pass` | Every checkable citation passed. |
+
+Per-check classifications (`pass` / `flagged` / `overridden` / `unverifiable`) are governed by a named-constant tolerance registry (`_INDICATOR_REGISTRY`) covering VIX/VIXCLS, VXVCLS/VIX3M, DGS10/10Y, UNRATE, CPIAUCSL/CPI, FEDFUNDS, GDELT `tone`, technicals `breadth`, and a `<TICKER>.<CONCEPT>` fundamentals wildcard (regex-matched, relative tolerance for large-magnitude $ figures). An indicator with no registry entry is `unverifiable` — never a silent pass. See [advisors/prism_numeric_verifier](docs/generated/advisors_prism_numeric_verifier.md) for the full registry table and per-constant source comments.
+
+### AC-6 magnitude-only classification — DELIBERATE deviation from the feature-plan text
+
+The feature plan's AC-6 text described the override trigger as "gross mismatch **or sign/regime flip**." The shipped `_classify()` does **not** special-case a sign flip — it classifies purely on `|cited − truth|` against `tolerance` and `_OVERRIDE_FACTOR * tolerance` (both boundaries inclusive: `pass` iff `diff <= tolerance`; `flagged` iff `tolerance < diff <= _OVERRIDE_FACTOR * tolerance`; else `overridden`).
+
+**This is a deliberate correction to the plan, not an oversight.** Forcing `overridden` on any sign change would false-override legitimate near-zero drift — the canonical example is GDELT `tone`, which is drift-tolerant by design (AC-13: `_TONE_TOLERANCE=0.15`, wider than `_RATE_TOLERANCE=0.05`, precisely because the rolling artlist window can legitimately move tone-of-sentiment between council-time and verify-time, including crossing zero on a genuinely neutral day). A sign-aware check would treat "tone drifted from +0.05 to -0.05" (a trivial, expected wobble) identically to "tone drifted from +0.05 to -0.95" (a real problem) — both cross zero, but only one is a real mismatch. Magnitude alone already catches the second case via the ordinary `_OVERRIDE_FACTOR` threshold, and it does NOT falsely flag the first. Magnitude-only is therefore a strictly more conservative and equally correct classifier for this feature's threat model (an error-prone-but-not-adversarial LLM council) — no separate sign check was added, and none should be added without also revisiting AC-13's drift-tolerance design.
+
+### Finding-1 hardening (nvreview sufficiency review, post-RED)
+
+A sufficiency review of the initial implementation found two silent-pass paths for a malformed `cited_numbers` container:
+
+1. **Non-list container** (`cited_numbers` present but a `dict`/`str`/other non-list) could be silently misread — iterating a dict's keys or a string's characters as if they were `{indicator, value, lens}` tuples. **Fix:** any non-`list` container now degrades identically to "absent" (`verdict="no-numeric-claims"`), never iterated as tuples.
+2. **Non-dict list entries** (e.g. a bare `42` or `"foo"` mixed into the list) could be silently dropped rather than surfaced. **Fix:** every non-dict entry is coerced to `{}` before classification, so it produces its own explicit `unverifiable` check (with `indicator: None`) — it is counted, not vanished. This is what allows `no-verifiable-claims` (rather than a false `clean`) to fire correctly when every declared entry turns out to be garbage.
+
+Both fixes are covered by dedicated RED tests (`test_dict_shaped_cited_numbers_container_verdict_not_clean`, `test_string_shaped_cited_numbers_container_verdict_not_clean`, `test_list_of_malformed_entries_verdict_not_clean_and_no_silent_drop`).
+
+### Residual limitation (documented, out of scope)
+
+The verifier only checks numbers the council **declares** as `cited_numbers` tuples. A number stated in prose (a lens `summary`, `sentiment_rationale`, etc.) but never emitted as a tuple is invisible to this module — there is no NLP/regex prose-extraction fallback (see the Option-(a)-vs-(b) rejection above). This gap is mitigated, not closed, by the AC-2 prompt mandate on the synthesizer and all 5 analyst role files. Full NLP prose-extraction of undeclared numbers remains explicitly OUT of scope for a future cycle, as does bad-bar/data-quality gating on the source payloads themselves, empirical tolerance calibration from historical runs, and a bounded LLM re-ask on detected mismatches.
+
+### Implementation contract
+
+- **New module** `advisors/prism_numeric_verifier.py`: `verify_cited_numbers(run_id, market_prism_row, lens_sections=None) -> dict` (pure orchestrator, D-1 never-raises) + `persist_verification(run_id, result) -> int | None` (idempotent append-only INSERT, skips when a VERIFICATION row already exists for this `run_id`). Off-execution-path (never imported from `alpha_bot_execution.py`); advisory-only.
+- **`prism_scheduler.py`**: new `_fetch_lens_sections()` (the single shared patch-time fetch, per-lens exception isolation), `_extract_per_lens_digest()` (cheap "is this real council output" guard before triggering a live fetch), `_run_numeric_verification()` (D-1, never gates `sys.exit(0)` — the council's own MARKET_PRISM row is already F-4-confirmed by the time this runs). `_patch_provenance` gains the optional `lens_sections=` kwarg described above.
+- **`database.py`**: new `get_latest_market_prism_verification_for_run(run_id) -> dict | None` — a structural mirror of `get_latest_market_prism_sources_for_run` (exact `json_extract(raw_response,'$.run_id')=?` match, no stale-bleed fallback, D-1, `get_ro_connection()`). No migration.
+- **`app.py:ai_advisor_tab()`** (AC-10): additively fetches the VERIFICATION row by the same `run_id` used for the SOURCES merge, on the same `copy.deepcopy`'d `market_prism_summary`; attaches `market_prism_verification = {"checks": [...], "summary": {...}, "verdict": ...}` to the template context; `overridden` checks gain a rendered `annotation` string. Wrapped in `try/except`, logs `type(exc).__name__` only; honest empty-state (`None`) on any failure, absent row, or missing `run_id`. Never mutates the underlying `MARKET_PRISM` row.
+- **`templates/ai_advisor.html`**: additive `data-testid="prism-verification"` block, rendered only when checks are present; per-check badge (`prism-verify-badge--pass|flagged|overridden|unverifiable`); `overridden` checks additionally render the annotation `<p>`. All interpolated values escaped with `| e`; no `| safe` anywhere in the block (asserted by a dedicated test).
+- **`"MARKET_PRISM_VERIFICATION"` is NOT added to `app.py`'s `_ADVISOR_ROLES`** — stays out of the Overview `observations` loop and the R2 `_preview_text` stamp, exactly like `MARKET_PRISM_SOURCES` and `MARKET_LENS_CACHE` (asserted by a dedicated test).
+- **`.claude/agents/prism-synthesizer.md`** (step 9) and all 5 **`prism-*-analyst.md`** files gain the `cited_numbers` tuple mandate (AC-2). Existing prose fields are unchanged.
+
+### Security
+
+- **D-1 error contract:** every degraded path in the new module and its `prism_scheduler` wiring logs `type(exc).__name__` only — never `str(exc)`, which for the macro/derivatives lenses can embed a FRED-API-key-bearing URL (same discipline `ai_advisor._build_macro_section` already follows).
+- **Untrusted LLM input:** `cited_numbers` originates from the council. `_safe_normalize` defensively coerces (rejects `bool`, dict, list; `float()` in `try/except` for strings); the list is bounded by `_MAX_CITED_NUMBERS=100` before any per-entry work — a DoS guard against a malicious or buggy oversized array.
+- **Append-only / parameterized:** all writes go through the existing `insert_advisor_observation` accessor; the new accessor's `json_extract(..., ?)` match uses parameter binding, no string interpolation; `MARKET_PRISM` is never mutated.
+- **XSS:** the new template block escapes every interpolated value with `| e`; no `| safe` (test-asserted).
+
+### Files changed
+
+- `advisors/prism_numeric_verifier.py` (new)
+- `prism_scheduler.py` (`_fetch_lens_sections`, `_extract_per_lens_digest`, `_run_numeric_verification`, `_patch_provenance(lens_sections=)`, `main()` wiring)
+- `database.py` (`get_latest_market_prism_verification_for_run`)
+- `app.py` (`ai_advisor_tab()` AC-10 render overlay)
+- `templates/ai_advisor.html` (numeric-verification overlay block + CSS)
+- `.claude/agents/prism-synthesizer.md` + 5 `prism-*-analyst.md` files (`cited_numbers` tuple mandate)
+
+### Tests
+
+`tests/prism/test_prism_numeric_verifier.py` (34 tests) — classification boundaries (pass/flagged/overridden, exact-tolerance and exact-override-factor edges), registry resolution (documented indicators, `<TICKER>.<CONCEPT>` wildcard, unmapped indicators), FRED string-value normalization, relative-vs-absolute comparison typing, no-cited-numbers / source-unavailable / malformed-value degradation, the 3 Finding-1 malformed-container/entry tests, duplicate-indicator independence, drift-tolerant tone vs strict macro tolerance, `persist_verification` idempotency + row-shape + never-mutates-MARKET_PRISM, off-execution-path guard, named-constant exposure, and the golden-fixture end-to-end run (`tests/fixtures/prism_verifier/verify_cited_numbers_mixed_classifications.json` — schema-derived, not parser+fixture co-design, provenance noted in the fixture's own `_provenance` key: VIX → pass, UNRATE → flagged, DGS10 → overridden, an unmapped `2s10s_yoy_inflation_pct` → unverifiable).
+
+`tests/prism_scheduler/test_verifier_wiring.py` (4 tests) — `main()` calls the verifier after `_patch_provenance`; the shared `lens_sections` are reused so the 5 builders are invoked exactly once (AC-4, no double fetch); a verifier exception never changes the exit code; the verifier is skipped when no MARKET_PRISM row was found.
+
+`tests/prism_scheduler/test_patch_provenance_lens_sections_equivalence.py` (1 test) — the SOURCES row is byte-equivalent whether `_patch_provenance` fetches its own sections or reuses a caller-supplied `lens_sections` bundle (proves the `lens_sections=None` default path is behavior-preserving).
+
+`tests/database/test_market_prism_verification_accessor.py` (9 tests) — exact-match, `None`-on-mismatch, correct-row-among-many, empty-table, `get_ro_connection` usage, expected shape, nested-table robustness, cross-role isolation from `get_latest_market_prism_summary`.
+
+`tests/ai_advisor/test_prism_role_files_cited_numbers.py` (6 tests) — each of the 6 `.claude/agents/prism-*.md` role files exists and references the `cited_numbers` tuple contract.
+
+`tests/app/test_ai_advisor_tab_verification_overlay.py` (8 tests) — fetch-by-run_id, overridden-annotation rendering, honest empty-state, no-stale-bleed on run_id mismatch, no in-place mutation of the `MARKET_PRISM` row, hostile-indicator-field escaping, no `| safe` filter in the template block, `MARKET_PRISM_VERIFICATION` absent from `_ADVISOR_ROLES`.
+
+### Reference
+
+DE-PRISM-NUMERIC-VERIFY-001; branch `feat/prism-numeric-verifier`; HEAD `55a7723`; reuses the `MARKET_PRISM_SOURCES` no-migration append-only pattern from DE-PRISM-SOURCES-001 and the shared-fetch discipline from DE-ADVISOR-LATENCY.

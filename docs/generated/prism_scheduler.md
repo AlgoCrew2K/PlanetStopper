@@ -3,7 +3,7 @@
 > Nightly Market Prism scheduler wrapper — invokes the Market Prism council via a vanilla-primary headless Claude session, triggered by Windows Task Scheduler (Option B, daemon-decoupled).
 
 **Source:** `prism_scheduler.py`
-**Last updated:** 2026-06-29 (DE-ADVISOR-LATENCY: `_patch_provenance` now captures `_lens_cache_sections` per builder and calls `ai_advisor.persist_market_lens_cache` in an isolated `try/except` after the SOURCES row; prior: DE-PRISM-DIAG-001 redacted stderr/stdout logging; DE-PRISM-SOURCES-001 `_patch_provenance` MARKET_PRISM_SOURCES row; DE-PRISM-SUB-AUTH-001 subprocess pops ANTHROPIC_API_KEY)
+**Last updated:** 2026-07-02 (DE-PRISM-NUMERIC-VERIFY-001: `main()` now shares one patch-time lens-section fetch between `_patch_provenance` and a new post-council numeric verifier — `_fetch_lens_sections`, `_extract_per_lens_digest`, `_run_numeric_verification`; `_patch_provenance` gained an optional `lens_sections=` kwarg, default-`None` behavior byte-identical to before; prior: DE-ADVISOR-LATENCY `_patch_provenance` MARKET_LENS_CACHE write; DE-PRISM-DIAG-001 redacted stderr/stdout logging; DE-PRISM-SOURCES-001 `_patch_provenance` MARKET_PRISM_SOURCES row; DE-PRISM-SUB-AUTH-001 subprocess pops ANTHROPIC_API_KEY)
 
 ## Overview
 
@@ -12,6 +12,8 @@
 The script enforces three guards: an idempotency guard (skips if today's MARKET_PRISM row already exists), bounded retry with exponential backoff (prevents the persistent-429 infinite-loop crash that caused prior PC crashes), and the D-1 error contract (only `type(exc).__name__` is logged — never raw exception messages or paths).
 
 Per-run Opus spend is captured from the `--output-format json` subprocess stdout and persisted to `prism_audit_log` via `_persist_spend()`. A hard per-run budget cap (`MAX_BUDGET_USD`) is passed as `--max-budget-usd` to the subprocess.
+
+Since DE-PRISM-NUMERIC-VERIFY-001, a confirmed successful run also drives a post-council **numeric verifier** (`advisors/prism_numeric_verifier.py`) that fact-checks every number the council declared it cited against the same lens payloads `_patch_provenance` already fetches — see "Numeric Verifier Wiring" below.
 
 ## Constants
 
@@ -43,6 +45,8 @@ The full prompt passed as the final positional argument to `claude -p`. It encod
 
 **Why the primary spawns all 6 (not prism-synthesizer):** `prism-synthesizer` has no Agent/spawn tool in its toolset — it coordinates the analysts via SendMessage only. Giving it spawn responsibility would require adding a general-purpose tool that blurs its role boundary. The primary session is the only session with the full Agent tool surface; it spawns all council members, then hands control to `prism-synthesizer` to coordinate. This keeps each agent's role clean: primary = dispatcher, synthesizer = coordinator, analysts = producers.
 
+**Council contract (DE-PRISM-NUMERIC-VERIFY-001, AC-2):** the synthesizer's raw_response block and all 5 analyst role files (`.claude/agents/prism-*.md`) additionally instruct that every numeric indicator stated in prose must also be reported as a `{indicator, value, lens}` tuple, collected into the `MARKET_PRISM` row's `cited_numbers` array. This is what makes the numeric verifier's checks possible — see [advisors/prism_numeric_verifier](advisors_prism_numeric_verifier.md).
+
 ## API Reference
 
 ### `main() -> None`
@@ -57,7 +61,14 @@ Main entry point. Exits 0 on success (row already exists today, or subprocess co
 3. Calls `_get_summary()` → `database.get_latest_market_prism_summary()`
 4. If today's row exists (UTC date comparison) → prints skip message and `sys.exit(0)`
 5. Otherwise: attempts `_run_prism(run_id)` up to `MAX_ATTEMPTS` times with exponential backoff
-6. For each `_run_prism` call that returns `True` (rc==0): calls `_get_market_prism_row_for_run(run_id)`. If the row is present → calls `_patch_provenance(run_id, row)` → `sys.exit(0)`. If absent → logs diagnostic to stderr, continues retry loop.
+6. For each `_run_prism` call that returns `True` (rc==0): calls `_get_market_prism_row_for_run(run_id)`. If the row is present:
+   - Calls `_extract_per_lens_digest(row)` to check the row is real council output (not a degraded/placeholder row).
+   - If a valid digest is present, calls `_fetch_lens_sections()` **once** — the single shared patch-time fetch (AC-4) — else `lens_sections = None`.
+   - Calls `_patch_provenance(run_id, row, lens_sections=lens_sections)` (D-1 never-raises; does not gate `sys.exit(0)`).
+   - If `lens_sections` is truthy, calls `_run_numeric_verification(run_id, row, lens_sections)` (AC-8: D-1 never-raises; does not gate `sys.exit(0)`).
+   - `sys.exit(0)`.
+
+   If the row is absent → logs diagnostic to stderr, continues retry loop.
 7. On exhaustion of all `MAX_ATTEMPTS` without a confirmed row → `sys.exit(1)`
 
 ### `_load_env() -> None`
@@ -84,15 +95,17 @@ Calls `database.get_latest_market_prism_summary()` and confirms `raw_response["r
 
 Patchable in tests as `patch.object(mod, "_get_market_prism_row_for_run", ...)`. Pre-existing happy-path tests supply a `_SAMPLE_MARKET_PRISM_ROW` fixture; `TestMarketPrismRowVerification` tests exercise the `None` path (false-green kill) and the retry-on-empty path.
 
-### `_patch_provenance(run_id: str, row: dict | None) -> bool`
+### `_patch_provenance(run_id: str, row: dict | None, lens_sections: dict | None = None) -> bool`
 
-Post-council citation and lens-cache builder (DE-PRISM-SOURCES-001 v2 + DE-ADVISOR-LATENCY). Called by `main()` after F-4 row-verification confirms the MARKET_PRISM row exists. Performs two additive writes:
+Post-council citation and lens-cache builder (DE-PRISM-SOURCES-001 v2 + DE-ADVISOR-LATENCY + DE-PRISM-NUMERIC-VERIFY-001). Called by `main()` after F-4 row-verification confirms the MARKET_PRISM row exists. Performs two additive writes:
 
 **1. MARKET_PRISM_SOURCES row (existing — DE-PRISM-SOURCES-001):**
 Re-fetches live lens data via `ai_advisor._build_*_section()` builders at patch time (minutes after the council exits) for the url-bearing lenses (`sentiment`, `macro`, `derivatives`, `fundamentals`), collects `{url, title, published}` dicts from `section["sources"]` and `section["article_corpus"]`, deduplicates by url (first occurrence wins), and inserts an append-only `advisor_observations` row with `advisor_role="MARKET_PRISM_SOURCES"`.
 
 **2. MARKET_LENS_CACHE row (added DE-ADVISOR-LATENCY, `prism_scheduler.py:443-474`):**
 As each builder runs in the `_BUILDERS` loop, its structured output (or an `_unavailable_block` on build failure or missing lens) is captured into `_lens_cache_sections[lens]`. After the SOURCES row is written, a separate nested `try/except` block fetches `ai_advisor._build_technicals_section()` (technicals is excluded from `_BUILDERS` — Alpaca bar data has no public URLs for SOURCES — but IS needed in the lens cache for the advisor's MA posture / breadth / momentum context), sets `_lens_cache_sections["technicals"]`, and calls `ai_advisor.persist_market_lens_cache(_lens_cache_sections)`. **Council-safety isolation:** any failure in this inner block is caught and printed to stderr as `[prism_scheduler] LensCacheError: {type}` — it never propagates to the outer `try/except`, so a cache-write failure can never prevent the `return True` that records the council run as successful.
+
+**`lens_sections` parameter (added DE-PRISM-NUMERIC-VERIFY-001, AC-4):** optional pre-fetched `{lens: section}` bundle from the caller — `main()`'s single shared patch-time fetch (`_fetch_lens_sections()`), also reused by the numeric verifier. For each lens in the `_BUILDERS` loop (and separately for `technicals`), if the lens key is present in `lens_sections`, that payload is reused verbatim and the corresponding live builder is **not** re-invoked. When `lens_sections is None` — the default, and the shape of every call site that existed prior to this feature — behavior is byte-identical to before this parameter existed: each builder is called internally. A dedicated equivalence test (`tests/prism_scheduler/test_patch_provenance_lens_sections_equivalence.py`) asserts the SOURCES row is the same whether `_patch_provenance` fetches its own sections or reuses a caller-supplied bundle.
 
 **Key properties common to both writes:**
 
@@ -103,6 +116,24 @@ As each builder runs in the `_BUILDERS` loop, its structured output (or an `_una
 - **AC-6 idempotency guard (SOURCES only):** checks for an existing SOURCES row for this `run_id` before inserting. The MARKET_LENS_CACHE write is append-only; latest row wins on serve.
 
 **Provenance note (SOURCES):** The `article_corpus` entries are rebuilt at patch time from current live data — NOT a guaranteed snapshot of the exact articles the council analyzed. `macro`, `fundamentals`, and `derivatives` source URLs are stable across the patch window; `sentiment` artlist top-N may drift slightly. UI copy must not imply "the exact articles the council read." See DE-PRISM-SOURCES-001 §Provenance honesty in `DECISIONS.md` for the full stability breakdown.
+
+## Numeric Verifier Wiring (DE-PRISM-NUMERIC-VERIFY-001)
+
+### `_extract_per_lens_digest(row: dict | None) -> dict | None`
+
+Returns `row["raw_response"]["per_lens_digest"]` iff it is a `dict`, else `None` (handles `raw_response` arriving as a JSON string too). Used by `main()` as a cheap "is this real council output?" guard before triggering the shared live lens fetch — mirrors `_patch_provenance`'s own early-exit check, so a degraded/placeholder row (e.g. a bare test fixture) never causes a live builder fetch.
+
+### `_fetch_lens_sections() -> dict`
+
+The single shared "patch-time fetch" (AC-4). Calls all 5 `ai_advisor._build_*_section()` builders (`sentiment`, `macro`, `derivatives`, `technicals`, `fundamentals`) once and returns `{lens: section}`. Per-lens exception isolation: one builder raising degrades only that lens to an unavailable block (`{"lens": ..., "available": False, "reason": type(exc).__name__, "payload": None, "sources": []}`) — it never aborts the other 4 fetches.
+
+`main()` calls this once per successful run and threads the same result into **both** `_patch_provenance` (SOURCES + MARKET_LENS_CACHE) and `_run_numeric_verification` (MARKET_PRISM_VERIFICATION) — one live fetch feeds both downstream writes, instead of each doing its own independent re-fetch.
+
+### `_run_numeric_verification(run_id: str, row: dict, lens_sections: dict) -> None`
+
+Lazy-imports `advisors.prism_numeric_verifier` (CC-2), calls `verify_cited_numbers(run_id, row, lens_sections=lens_sections)`, then `persist_verification(run_id, result)`. See [advisors/prism_numeric_verifier](advisors_prism_numeric_verifier.md) for the full classification and persistence contract.
+
+**Never gates `sys.exit(0)` (AC-8):** the entire call is wrapped in `try/except Exception`; any failure logs `[prism_scheduler] NumericVerifierError: {type(exc).__name__}` to stderr and returns — by the time this runs, the council's own MARKET_PRISM row is already written and F-4-confirmed, so a verifier failure can never fail the nightly run.
 
 ### `_redact_secrets(text: str, secret_values: list[str]) -> str`
 
@@ -186,12 +217,13 @@ On each successful subprocess invocation (`returncode == 0`), `_persist_spend()`
 
 ## D-1 Error Contract
 
-All error paths surface `type(exc).__name__` only — no raw exception messages, file paths, or tracebacks are logged or propagated. This applies to `.env` load failures, DB query failures, subprocess exceptions, spend-log parse/write failures, and the MARKET_LENS_CACHE write inside `_patch_provenance`.
+All error paths surface `type(exc).__name__` only — no raw exception messages, file paths, or tracebacks are logged or propagated. This applies to `.env` load failures, DB query failures, subprocess exceptions, spend-log parse/write failures, the MARKET_LENS_CACHE write inside `_patch_provenance`, and the numeric verifier call inside `_run_numeric_verification`.
 
 ## Internal Dependencies
 
 - `database` — `get_latest_market_prism_summary()` (idempotency check + F-4 row verification in `_get_market_prism_row_for_run`) + `insert_prism_audit_entry()` (spend logging) + `insert_advisor_observation()` (MARKET_PRISM_SOURCES row + MARKET_LENS_CACHE row written by `_patch_provenance`); all lazy-imported inside their respective wrappers
-- `ai_advisor` — `_build_*_section()` builders (called by `_patch_provenance` for SOURCES citations); `_build_technicals_section()` (called in the isolated MARKET_LENS_CACHE inner block); `persist_market_lens_cache()` (called to write the MARKET_LENS_CACHE row — DE-ADVISOR-LATENCY)
+- `ai_advisor` — `_build_*_section()` builders (called by `_fetch_lens_sections()` for the shared patch-time fetch, and internally by `_patch_provenance` when no `lens_sections` is supplied); `persist_market_lens_cache()` (called to write the MARKET_LENS_CACHE row — DE-ADVISOR-LATENCY)
+- `advisors.prism_numeric_verifier` — `verify_cited_numbers()` + `persist_verification()`, lazy-imported inside `_run_numeric_verification` (CC-2, DE-PRISM-NUMERIC-VERIFY-001)
 - `dotenv` — `.env` loading (lazy import inside `_load_env()`)
 - `subprocess` — headless `claude` invocation
 - `uuid` — `uuid4()` run_id generation in `main()`
@@ -204,3 +236,7 @@ All error paths surface `type(exc).__name__` only — no raw exception messages,
 `tests/prism_scheduler/test_council_sub_auth.py` — 3 tests (DE-PRISM-SUB-AUTH-001): AC-1 (`ANTHROPIC_API_KEY` excluded from subprocess env), AC-2 (`CLAUDE_CODE_OAUTH_TOKEN` passes through unchanged), AC-3 (all other env vars including `DB_PATH` preserved — surgical removal, not an allowlist). Tests use `monkeypatch.setenv` and patch `prism_scheduler.subprocess.run` to inspect the `env` kwarg.
 
 `tests/prism_scheduler/test_run_prism_diagnostics.py` — hermetic test module (DE-PRISM-DIAG-001); all tests mock `subprocess.run` and capture output via `capsys` — no real `claude -p`, no network, no LLM spend. Covers: non-zero exit logs returncode + stderr/stdout tails to `sys.stderr` (AC-1/AC-2/AC-3); empty stderr/stdout logs explicit `(empty)` markers; truncation marker present when output exceeds cap; `_redact_secrets` replaces live OAuth token, `ANTHROPIC_API_KEY` value, and `sk-ant-`/`sk-`/`oat_` token-shaped patterns with `***REDACTED***`; `_CREDENTIAL_KEY_MARKERS` sweep redacts `COMPOSER_SECRET`/`ALPACA_SECRET_KEY`/`DISCORD_WEBHOOK_URL` (reviewer Finding 1); values shorter than `_MIN_SWEEP_SECRET_LEN=8` are NOT swept (over-redaction guard, reviewer Finding 2); success path (`rc==0`) emits no diagnostic log and calls `_persist_spend` unchanged; `subprocess.run` raise path logs type-only `SubprocessError`; monkeypatching `_redact_secrets` to raise causes `_run_prism` to log `(diagnostic suppressed: ...)` without raising (AC-7); `_redact_secrets` direct unit tests (empty input, no secrets, value at start/middle/end, multiple occurrences, overlapping patterns).
+
+`tests/prism_scheduler/test_verifier_wiring.py` — 4 tests (DE-PRISM-NUMERIC-VERIFY-001, AC-8): `main()` calls `verify_cited_numbers`/`persist_verification` after `_patch_provenance`; the shared `lens_sections` are passed through so the 5 builders are invoked exactly once (AC-4 — no double fetch); a verifier exception does not change `sys.exit(0)`; the verifier is not invoked when no MARKET_PRISM row was found for the run.
+
+`tests/prism_scheduler/test_patch_provenance_lens_sections_equivalence.py` — 1 test: `_patch_provenance`'s MARKET_PRISM_SOURCES row is byte-equivalent whether it performs its own live fetch or reuses a caller-supplied `lens_sections` bundle (proves the `lens_sections=None` default path is behavior-preserving).

@@ -47,6 +47,8 @@ Reason about the macro signal. Consider:
 
 Form a directional lean: **bullish**, **neutral**, or **bearish** for equities given the macro regime, with rationale. State explicitly what the rate/growth regime means for risk assets. If data is unavailable, state `limited-inputs` with the gap.
 
+For every numeric indicator you state (e.g. 10-year yield, unemployment rate, CPI, Fed funds rate), you MUST also report it to the synthesizer as an `{indicator, value, lens}` tuple (e.g. `{"indicator": "DGS10", "value": 4.35, "lens": "macro"}`) so it can include it in `cited_numbers` — this is required for the post-council numeric verifier (DE-PRISM-NUMERIC-VERIFY-001) to check your citation against its authoritative source.
+
 ### 4. Write your initial_read to the audit log
 
 ```bash

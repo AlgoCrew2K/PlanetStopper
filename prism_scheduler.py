@@ -325,11 +325,53 @@ def _run_prism(run_id: str = "unknown") -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Lens builder registry (single source of truth for _patch_provenance +
+# _fetch_lens_sections, DE-PRISM-NUMERIC-VERIFY-001 F3)
+# ---------------------------------------------------------------------------
+
+# lens -> ai_advisor builder attribute name. All 5 lenses are listed here.
+# Stored as attribute-name strings (not bound function references) so ai_advisor
+# stays a lazy, function-body-local import (CC-2) — each caller does its own
+# `import ai_advisor; getattr(ai_advisor, _BUILDERS[lens])()`.
+#
+# _fetch_lens_sections uses all 5 unconditionally. _patch_provenance's
+# citation-collection loop explicitly SKIPS "technicals" (Alpaca bar data has
+# no public URL for citations, AC-2) while still using this same dict to
+# populate the MARKET_LENS_CACHE technicals block.
+_BUILDERS: dict[str, str] = {
+    "sentiment": "_build_sentiment_section",
+    "macro": "_build_macro_section",
+    "derivatives": "_build_derivatives_section",
+    "technicals": "_build_technicals_section",
+    "fundamentals": "_build_fundamentals_section",
+}
+
+
+def _coerce_raw_response(row: "dict | None") -> dict:
+    """Return row['raw_response'] coerced to a dict.
+
+    Deserializes a JSON string; degrades to {} on a None row, a missing/falsy
+    raw_response, or unparseable JSON. Never raises. Shared by _patch_provenance
+    and _extract_per_lens_digest (both need the row's raw_response coerced to a
+    dict before reading per_lens_digest).
+    """
+    if row is None:
+        return {}
+    raw = row.get("raw_response") or {}
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except Exception:  # noqa: BLE001
+            return {}
+    return raw
+
+
+# ---------------------------------------------------------------------------
 # Post-council provenance patch
 # ---------------------------------------------------------------------------
 
 
-def _patch_provenance(run_id: str, row: "dict | None") -> bool:
+def _patch_provenance(run_id: str, row: "dict | None", lens_sections: "dict | None" = None) -> bool:
     """Post-council patch: rebuild per-lens validated article_corpus citations
     and INSERT a new MARKET_PRISM_SOURCES advisor_observations row (v2).
 
@@ -342,33 +384,27 @@ def _patch_provenance(run_id: str, row: "dict | None") -> bool:
 
     technicals is intentionally excluded: Alpaca bar data has no public urls (AC-2).
 
+    lens_sections (DE-PRISM-NUMERIC-VERIFY-001, AC-4): optional pre-fetched
+    {lens: section} bundle from the caller (main()'s single shared patch-time
+    fetch, reused by the numeric verifier too). When a lens is present in
+    lens_sections, its live builder is NOT re-invoked here — the caller's
+    payload is reused verbatim. When None (the default — every existing call
+    site prior to DE-PRISM-NUMERIC-VERIFY-001 uses this 2-positional-arg
+    shape), behavior is byte-identical to before this parameter existed: each
+    builder is called internally.
+
     D-1 never-raises; AC-4: does not gate or prevent sys.exit(0) in main().
     Returns True if the patch was attempted and persisted, False on no-op/error.
     """
     try:
         if row is None:
             return False
-        raw = row.get("raw_response") or {}
-        if isinstance(raw, str):
-            try:
-                import json as _json  # noqa: PLC0415
-
-                raw = _json.loads(raw)
-            except Exception:  # noqa: BLE001
-                return False
+        raw = _coerce_raw_response(row)
         pld = raw.get("per_lens_digest")
         if not isinstance(pld, dict):
             return False
 
         import ai_advisor  # noqa: PLC0415
-
-        # technicals intentionally absent — AC-2: Alpaca bar data has no public urls.
-        _BUILDERS: dict = {
-            "sentiment": ai_advisor._build_sentiment_section,
-            "macro": ai_advisor._build_macro_section,
-            "derivatives": ai_advisor._build_derivatives_section,
-            "fundamentals": ai_advisor._build_fundamentals_section,
-        }
 
         # Accumulate per-lens citations into a SEPARATE dict — never mutate the
         # MARKET_PRISM row (v2: INSERT-only; the MARKET_PRISM raw_response is
@@ -378,7 +414,12 @@ def _patch_provenance(run_id: str, row: "dict | None") -> bool:
         # technicals is populated separately below (excluded from SOURCES — no public URLs).
         _lens_cache_sections: dict = {}
 
-        for lens, builder in _BUILDERS.items():
+        for lens, attr in _BUILDERS.items():
+            if lens == "technicals":
+                # AC-2: Alpaca bar data has no public urls — technicals never
+                # contributes citations to SOURCES (populated separately below,
+                # for MARKET_LENS_CACHE only).
+                continue
             _unavailable_block = {
                 "lens": lens,
                 "available": False,
@@ -393,11 +434,18 @@ def _patch_provenance(run_id: str, row: "dict | None") -> bool:
             # operational; storing BuildError without calling the builder would cause
             # assemble_advisor_context to serve a false "unavailable" block until the
             # next successful council run.
-            try:
-                section = builder()
-            except Exception:  # noqa: BLE001
-                _lens_cache_sections[lens] = _unavailable_block
-                continue  # D-1: this lens contributes no citations
+            #
+            # AC-4: when the caller already fetched this lens (lens_sections), reuse
+            # it verbatim instead of calling the builder again — one fetch feeds both
+            # SOURCES/MARKET_LENS_CACHE and the numeric verifier.
+            if lens_sections is not None and lens in lens_sections:
+                section = lens_sections[lens]
+            else:
+                try:
+                    section = getattr(ai_advisor, attr)()
+                except Exception:  # noqa: BLE001
+                    _lens_cache_sections[lens] = _unavailable_block
+                    continue  # D-1: this lens contributes no citations
 
             _lens_cache_sections[lens] = section  # capture for MARKET_LENS_CACHE
 
@@ -454,22 +502,26 @@ def _patch_provenance(run_id: str, row: "dict | None") -> bool:
         )
 
         # Persist the 5-lens MARKET_LENS_CACHE bundle (AC-2).
-        # technicals was excluded from _BUILDERS (no public URLs for SOURCES) but belongs
-        # in the lens cache so the advisor can serve breadth/momentum without a live fetch.
+        # technicals is skipped in the citation loop above (no public URLs for
+        # SOURCES) but belongs in the lens cache so the advisor can serve
+        # breadth/momentum without a live fetch.
         # Extra isolation: wrap in its own try/except so any failure here cannot prevent
         # the `return True` below — the SOURCES row is already written at this point and
         # the council must always be recorded as successful regardless of the cache write.
         try:
-            try:
-                _tech_block = ai_advisor._build_technicals_section()
-            except Exception:  # noqa: BLE001
-                _tech_block = {
-                    "lens": "technicals",
-                    "available": False,
-                    "reason": "BuildError",
-                    "payload": None,
-                    "sources": [],
-                }
+            if lens_sections is not None and "technicals" in lens_sections:
+                _tech_block = lens_sections["technicals"]
+            else:
+                try:
+                    _tech_block = getattr(ai_advisor, _BUILDERS["technicals"])()
+                except Exception:  # noqa: BLE001
+                    _tech_block = {
+                        "lens": "technicals",
+                        "available": False,
+                        "reason": "BuildError",
+                        "payload": None,
+                        "sources": [],
+                    }
             _lens_cache_sections["technicals"] = _tech_block
             ai_advisor.persist_market_lens_cache(_lens_cache_sections)
         except Exception as _cache_exc:  # noqa: BLE001
@@ -485,6 +537,77 @@ def _patch_provenance(run_id: str, row: "dict | None") -> bool:
             file=sys.stderr,
         )
         return False
+
+
+# ---------------------------------------------------------------------------
+# Numeric verifier wiring (DE-PRISM-NUMERIC-VERIFY-001)
+# ---------------------------------------------------------------------------
+
+
+def _extract_per_lens_digest(row: "dict | None") -> "dict | None":
+    """Return row's raw_response['per_lens_digest'] iff it is a dict, else None.
+
+    Shared guard used by main() to decide whether to run the shared lens fetch
+    at all: a row lacking a valid per_lens_digest is not real council output
+    (e.g. a test-fixture placeholder row) — mirrors _patch_provenance's own
+    early-exit check so a degraded row never triggers a live builder fetch.
+    """
+    raw = _coerce_raw_response(row)
+    pld = raw.get("per_lens_digest")
+    return pld if isinstance(pld, dict) else None
+
+
+def _fetch_lens_sections() -> dict:
+    """Fetch all 5 lens sections once via the live ai_advisor builders.
+
+    AC-4: the single shared "patch-time fetch" — main() calls this once per
+    successful run and threads the result into BOTH _patch_provenance
+    (SOURCES + MARKET_LENS_CACHE) and the numeric verifier
+    (MARKET_PRISM_VERIFICATION), instead of each doing its own independent
+    live re-fetch.
+
+    Per-lens exception isolation (D-1): one builder raising never aborts the
+    other fetches or propagates — that lens degrades to an unavailable block
+    with reason=type(exc).__name__ only.
+    """
+    import ai_advisor  # noqa: PLC0415
+
+    sections: dict = {}
+    for lens, attr in _BUILDERS.items():
+        try:
+            sections[lens] = getattr(ai_advisor, attr)()
+        except Exception as exc:  # noqa: BLE001
+            sections[lens] = {
+                "lens": lens,
+                "available": False,
+                "reason": type(exc).__name__,
+                "payload": None,
+                "sources": [],
+            }
+    return sections
+
+
+def _run_numeric_verification(run_id: str, row: dict, lens_sections: dict) -> None:
+    """Post-council numeric verification (AC-8): recompute every cited_numbers
+    claim in the MARKET_PRISM row against the authoritative source payloads
+    and persist an append-only MARKET_PRISM_VERIFICATION row.
+
+    D-1 never-raises; a verifier failure NEVER fails the nightly run — the
+    council's own MARKET_PRISM row is already written and confirmed by the
+    time this is called, so this never gates sys.exit(0) in main().
+    """
+    try:
+        from advisors import prism_numeric_verifier  # noqa: PLC0415
+
+        result = prism_numeric_verifier.verify_cited_numbers(
+            run_id, row, lens_sections=lens_sections
+        )
+        prism_numeric_verifier.persist_verification(run_id, result)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[prism_scheduler] NumericVerifierError: {type(exc).__name__}",
+            file=sys.stderr,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -518,7 +641,19 @@ def main() -> None:
             row = _get_market_prism_row_for_run(run_id)
             if row is not None:
                 print("[prism_scheduler] Run completed successfully.")
-                _patch_provenance(run_id, row)  # AC-4: D-1 never-raises; does not gate sys.exit(0)
+                # AC-4: one shared fetch feeds both SOURCES/MARKET_LENS_CACHE and the
+                # numeric verifier. Gated on a valid per_lens_digest (mirrors
+                # _patch_provenance's own early-exit) so a degraded/placeholder row
+                # never triggers a live builder fetch.
+                per_lens_digest = _extract_per_lens_digest(row)
+                lens_sections = _fetch_lens_sections() if per_lens_digest is not None else None
+                _patch_provenance(
+                    run_id, row, lens_sections=lens_sections
+                )  # D-1 never-raises; does not gate sys.exit(0)
+                if lens_sections:
+                    _run_numeric_verification(
+                        run_id, row, lens_sections
+                    )  # AC-8: D-1 never-raises; does not gate sys.exit(0)
                 sys.exit(0)
             # rc==0 but no row — council ran but wrote nothing.
             # Treat as a failed attempt; the retry loop continues.

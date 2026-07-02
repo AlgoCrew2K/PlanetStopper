@@ -46,6 +46,8 @@ Reason about the derivatives signal. Consider:
 
 Form a directional lean: **bullish**, **neutral**, or **bearish**, with rationale. If data is unavailable, state `limited-inputs` with the gap.
 
+For every numeric indicator you state (e.g. VIX spot level, VIX term-structure 3-month print), you MUST also report it to the synthesizer as an `{indicator, value, lens}` tuple (e.g. `{"indicator": "VIX", "value": 22.0, "lens": "derivatives"}`) so it can include it in `cited_numbers` — this is required for the post-council numeric verifier (DE-PRISM-NUMERIC-VERIFY-001) to check your citation against its authoritative source.
+
 ### 4. Write your initial_read to the audit log
 
 ```bash

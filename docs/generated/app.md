@@ -3,7 +3,7 @@
 > Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
 **Source:** `app.py`
-**Last updated:** 2026-07-02 (DE-EOD-BASIS-001: EOD/frozen account-basis unification + per-field stale-cache hardening; prior: 2026-06-30 DE-PRISM-SOURCES-PER-LENS-001, per-lens Market Prism sources carousels; 2026-06-26 fix/today-change-account-basis, DE-TODAY-BASIS-001)
+**Last updated:** 2026-07-02 (DE-PRISM-NUMERIC-VERIFY-001: `ai_advisor_tab()` additively fetches the MARKET_PRISM_VERIFICATION row and attaches per-check fact-check badges to the Overview render; prior: 2026-07-02 DE-EOD-BASIS-001, EOD/frozen account-basis unification + per-field stale-cache hardening; 2026-06-30 DE-PRISM-SOURCES-PER-LENS-001, per-lens Market Prism sources carousels; 2026-06-26 fix/today-change-account-basis, DE-TODAY-BASIS-001)
 
 ## Overview
 
@@ -368,6 +368,7 @@ Unified single-page render for all 6 in-place tab panels. Server-side assembles 
 | `sb_observations` | `database.get_advisor_observations_for_role("STRATEGY_BUILDER")`, reversed (oldest-first); empty list on error | Strategy Builder |
 | `sb_card_artifacts` | dict keyed by `obs["id"]`; each value is an M6 `strategy_proposal` artifact dict for the Discuss/Chat affordance; built from `raw_response` fields per observation | Strategy Builder |
 | `market_prism_summary` | `database.get_latest_market_prism_summary()`; `dict` or `None`; wrapped in `try/except` — `None` on failure renders an informative empty state; **RF-1:** `per_lens_digest` summaries are pre-humanized in-place by `advisors.prism_render.humanize_lens_summary` before template render (no new context key — template's existing `_lens.get('summary')` reads humanized prose); **DE-PRISM-SOURCES-001:** if non-None, a `copy.deepcopy` is taken, then `run_id` from `raw_response` is used to fetch the matching MARKET_PRISM_SOURCES row via `database.get_latest_market_prism_sources_for_run(run_id)`; matching `article_corpus` lists are merged into `per_lens_digest` entries **before RF-1 humanization** — honest empty-state (no article links) when SOURCES row is absent, run_id mismatches, or merge raises | Overview (Market Prism block) |
+| `market_prism_verification` | **New (DE-PRISM-NUMERIC-VERIFY-001, AC-10).** `dict` (`{"checks": [...], "summary": {...}, "verdict": ...}`) or `None`. Fetched via `database.get_latest_market_prism_verification_for_run(run_id)` — the same `run_id` extracted for the SOURCES merge — after a fresh `copy.deepcopy` of `market_prism_summary`; each `overridden` check gains a rendered `annotation` string (`"council cited {cited}; source says {truth}"`). `None` when `market_prism_summary` is `None`, `run_id` is absent, no VERIFICATION row exists yet, or the merge raises (wrapped `try/except`, logs `type(exc).__name__` only) | Overview (Market Prism block, numeric verification overlay) |
 
 The Correlations, API-key, Symphonies, Strategy Builder, and Market Prism data assembly sections are wrapped in `try/except` — if those panels' data fails, the others still render. The Overview observations loop is not wrapped.
 
@@ -390,6 +391,23 @@ If `market_prism_summary` is non-None, `ai_advisor_tab()` runs the SOURCES merge
 5. Entire block is wrapped in `try/except Exception: pass` — merge failure never crashes the route; honest empty-state (no article links) on any error, run_id mismatch, or absent SOURCES row.
 
 Template updated first in **DE-SOURCES-CAROUSEL-001** (2026-06-29, superseded) and then in **DE-PRISM-SOURCES-PER-LENS-001** (2026-06-30): the Sources section now renders **one carousel per non-empty prism lens** in canonical order (technicals, sentiment, derivatives, macro, fundamentals), each prefixed with a `.prism-lens-carousel-label` and wrapped in `data-testid="prism-sources-lens-{lens}"`. A source attributed to multiple lenses appears in each matching carousel. Empty lenses are suppressed. The per-card `.prism-source-lens-tag` was removed (redundant inside a lens-labeled strip). The data path (article_corpus merge into per_lens_digest) is unchanged; only the Jinja render block and its CSS were updated. See `DECISIONS.md` §DE-PRISM-SOURCES-PER-LENS-001.
+
+**DE-PRISM-NUMERIC-VERIFY-001 (Overview numeric verification overlay):**
+
+Additive to the SOURCES merge above — runs as a second, independent block (also before RF-1 humanization, also on the same `copy.deepcopy`'d `market_prism_summary`):
+
+1. Re-decodes `raw_response` from JSON string if needed and re-extracts `run_id` (the same `run_id` the SOURCES merge used — the MARKET_PRISM row's own identifier, not the verification row's).
+2. If `run_id` is present, calls `database.get_latest_market_prism_verification_for_run(run_id)`.
+3. If a VERIFICATION row is found, decodes its `raw_response` (string-or-dict, same guard pattern) and builds `market_prism_verification = {"checks": [...], "summary": {...}, "verdict": ...}` from it — the `checks` list is copied (never the original row's list object) and each `overridden` check gains a rendered `"annotation"` string: `f"council cited {cited_value}; source says {ground_truth_value}"`. `pass`/`flagged`/`unverifiable` checks pass through without an annotation.
+4. Entire block is wrapped in `try/except Exception` — logs `type(exc).__name__` only (`_daemon_log.warning`, no exception args/message) and leaves `market_prism_verification = None`; honest empty-state, never crashes the route.
+
+**Never mutates the underlying MARKET_PRISM row:** operates on the same `copy.deepcopy` taken for the SOURCES merge — the original DB row object referenced elsewhere (e.g. by a shared cache) is untouched.
+
+**Render (`templates/ai_advisor.html`):** a `data-testid="prism-verification"` block renders only `{% if market_prism_verification and market_prism_verification.get('checks') %}` (honest empty-state — no block at all when no VERIFICATION row exists yet). Each check renders as a `data-testid="prism-verify-check-{indicator}"` badge (`prism-verify-badge--pass|flagged|overridden|unverifiable` CSS modifier keyed off `classification`) plus, for `overridden` checks only, a `data-testid="prism-verify-annotation"` `<p>` with the "council cited X; source says Y" text. **XSS-safe:** every interpolated value (`indicator`, `classification`, `annotation`) is escaped with `| e`; the template block uses no `| safe` filter anywhere (asserted by a dedicated test, `test_verification_overlay_template_block_never_uses_safe_filter`).
+
+`"MARKET_PRISM_VERIFICATION"` is not added to `_ADVISOR_ROLES` — it never appears in the Overview `observations` loop or receives an R2 `_preview_text` stamp (asserted by `test_market_prism_verification_not_in_advisor_roles`).
+
+See `DECISIONS.md` §`DE-PRISM-NUMERIC-VERIFY-001` and [advisors/prism_numeric_verifier](advisors_prism_numeric_verifier.md).
 
 #### `GET /ai-advisor/correlations` → 302 redirect to `/ai-advisor`
 #### `GET /ai-advisor/asset-swaps` → 302 redirect to `/ai-advisor`
@@ -528,7 +546,7 @@ Normalizes an `autotune_runs` DB row for the `/api/autotune-runs` JSON response.
 ## Internal Dependencies
 
 - `ai_advisor` — context assembly, Claude call, C2 safety gates, assessment builder
-- `database` — all state-DB reads and writes for advisor routes
+- `database` — all state-DB reads and writes for advisor routes, including `get_latest_market_prism_verification_for_run` (DE-PRISM-NUMERIC-VERIFY-001 Overview overlay)
 - `analytics` — symphony history, correlation data, symphony list; account-basis translation helpers (`get_portfolio_today_change_account_basis`, `get_portfolio_cumulative_return_account_basis`, DE-TODAY-BASIS-001) consumed by both the live and frozen portfolio-strip paths
 - `advisors.correlation_diagnostic` — `compute_pairwise_correlations`, `CRISIS_CAVEAT`
 - `advisors.asset_swap_engine` — `propose_operator_swap`, `SwapObjective`, `_has_composer_key`
