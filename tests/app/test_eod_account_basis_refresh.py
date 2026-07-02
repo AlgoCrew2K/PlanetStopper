@@ -104,14 +104,23 @@ class TestRefreshAccountTotalsHardening:
 
         expected_timeout = app_module._ACCOUNT_TOTALS_HTTP_TIMEOUT_S
 
-        # Fake Composer response that passes all validation in _refresh_account_totals
+        # Fake Composer /portfolio/accounts/{id}/total-stats response — matches the REAL
+        # schema consumed by _refresh_account_totals (app.py:770-794):
+        #   data["portfolio_value"]          (line 777, UNGUARDED — KeyError if absent)
+        #   data["simple_return"] * 100      (line 782) → portfolio_cr
+        #   data["todays_percent_change"]    (line 787, guarded by key-presence check)
+        #   data.get("metrics")["max_drawdown"] (lines 790-792, guarded)
+        # Values derived from eod_account_basis_parity.json:
+        #   portfolio_value = account_value = 100000.0
+        #   simple_return * 100 = account_cr = 25.0 → 0.25
+        #   todays_percent_change * 100 = account_if_held_tc = 0.50 → 0.005
         fake_response = MagicMock()
         fake_response.status_code = 200
         fake_response.json.return_value = {
+            "portfolio_value": 100000.0,
             "simple_return": 0.25,
-            "today_change": 0.005,
-            "max_drawdown": 0.08,
-            "total_equity": 100000.0,
+            "todays_percent_change": 0.005,
+            "metrics": {"max_drawdown": 0.08},
         }
 
         with patch.object(app_module, "_account_totals_cache") as mock_cache:
@@ -168,13 +177,19 @@ class TestRefreshAccountTotalsHardening:
         original = app_module._account_totals_last_success_at
         app_module._account_totals_last_success_at = None
 
+        # Real Composer schema — same fix as test_timeout_constant_used_by_refresh_fn.
+        # data["portfolio_value"] at app.py:777 is UNGUARDED; wrong field name → KeyError
+        # → fn exits without writing anything → timestamp never set (test would false-PASS).
+        # Values derived from eod_account_basis_parity.json:
+        #   portfolio_value = 100000.0, simple_return=0.25 → cr=25.0,
+        #   todays_percent_change=0.005 → tc=0.50.
         fake_response = MagicMock()
         fake_response.status_code = 200
         fake_response.json.return_value = {
+            "portfolio_value": 100000.0,
             "simple_return": 0.25,
-            "today_change": 0.005,
-            "max_drawdown": 0.08,
-            "total_equity": 100000.0,
+            "todays_percent_change": 0.005,
+            "metrics": {"max_drawdown": 0.08},
         }
 
         try:
