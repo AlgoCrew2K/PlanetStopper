@@ -269,6 +269,12 @@ def _derive_verdict(summary: dict) -> str:
         return "overrides-detected"
     if summary["n_flagged"] > 0:
         return "flags-detected"
+    if summary["n_checks"] > 0 and summary["n_pass"] == 0:
+        # nvreview Finding 1: every check resolved unverifiable (malformed entries,
+        # unmapped indicators, or every source unavailable) — nothing was actually
+        # verified clean. "clean" implies "checked and all passed"; returning it
+        # here would be a silent pass in an anti-fabrication feature.
+        return "no-verifiable-claims"
     return "clean"
 
 
@@ -306,6 +312,12 @@ def verify_cited_numbers(
         cited_numbers = raw.get("cited_numbers")
         if not cited_numbers:
             return {"checks": [], "summary": _empty_summary(), "verdict": "no-numeric-claims"}
+        if not isinstance(cited_numbers, list):
+            # nvreview Finding 1: a truthy-but-malformed container (dict, string, ...)
+            # has nothing iterable as {indicator, value, lens} tuples — degrade the
+            # same as "no numeric claims" rather than silently reading its dict keys
+            # or string characters as entries.
+            return {"checks": [], "summary": _empty_summary(), "verdict": "no-numeric-claims"}
 
         bounded = list(cited_numbers)[:_MAX_CITED_NUMBERS]
 
@@ -320,7 +332,12 @@ def verify_cited_numbers(
             _lens_cache[lens] = section
             return section
 
-        checks = [_build_check(entry, _get_lens) for entry in bounded if isinstance(entry, dict)]
+        # nvreview Finding 1: never silently drop a malformed entry — a non-dict
+        # entry (e.g. 42, "foo") is coerced to {} so it surfaces as its own
+        # "unverifiable" check instead of vanishing from the list entirely.
+        checks = [
+            _build_check(entry if isinstance(entry, dict) else {}, _get_lens) for entry in bounded
+        ]
         summary = _summarize(checks)
         verdict = _derive_verdict(summary)
         return {"checks": checks, "summary": summary, "verdict": verdict}
