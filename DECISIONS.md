@@ -3322,6 +3322,61 @@ Three contract refinements landed on top of the core fix:
 
 All three cases are covered by RED tests in `tests/analytics/test_account_basis_tc.py`: `TestDivisionGuardAccountBasis`, `TestInvestedFracClamp`, and `TestNoneGuard`.
 
+## DE-EOD-BASIS-001 — EOD/frozen account-basis unification + per-field stale-cache hardening (fix/eod-today-change-account-basis, 2026-07-02)
+
+Branch: fix/eod-today-change-account-basis | Base: 30b89c0 (PR #88, per-lens Prism sources carousels)
+
+### Root cause
+
+The dashboard hero "Today's Change (Held)" and "Cumulative Return (Held)" silently changed BASIS depending on market state, making the EOD number not comparable to the intraday number nor to Composer.
+
+- The live/intraday path (`_compute_portfolio_strip`) was CORRECT — DE-TODAY-BASIS-001 (2026-06-26) had already wrapped it through the account-basis helpers.
+- The frozen/EOD path (`/api/state` closed-branch recompute in `get_state()`) was NOT: `today_change` was raw value-weighted (cash-EXCLUDED denominator), and `cumulative_return` was half-converted (`if_held` on account basis, `dry_run` left on VW basis) — a mixed-basis dict whose `guard_alpha` was a scope artefact, not a real guard delta.
+
+Root cause of the flip: the frozen branch was never routed through the account-basis helpers DE-TODAY-BASIS-001 wired into the live path. The engine (`alpha_bot_execution.py`) writes a VW strip into `last_market_close_snapshot`, but the app's frozen branch explicitly RECOMPUTES the strip at read time (never a pass-through) and has no way to reach `_account_totals_cache` from the engine process — so the fix belongs entirely at APP READ TIME, mirroring the live path. The engine is untouched (AC-5, verified byte-identical).
+
+Aggravating factor (the reported 6/30 incident): `_refresh_account_totals` timed out against Composer; because `mark_stale()` fires every minute and `_StaleFlagDict.get()` returned `None` with no last-good retention, a single timeout nulled ALL account-totals reads, collapsing the account basis to VW even after the wrap was added — motivating the two-tier stale-cache policy below.
+
+### Decision: read-time wrap + two-tier stale-cache policy, mirrored across both paths
+
+Route the frozen/EOD `today_change` and `cumulative_return` through the SAME `analytics.get_portfolio_today_change_account_basis` / `get_portfolio_cumulative_return_account_basis` helpers the live path already uses (DE-TODAY-BASIS-001), and add a two-tier fallback so a transient Composer outage never silently degrades the account basis to VW:
+
+- **Tier 1 (last-good retention):** `_account_totals_last_good` (plain `dict`, survives `_account_totals_cache.mark_stale()`) + `_account_totals_last_success_at` (ET timestamp) are written inside `_refresh_account_totals()` on every genuine 200 response. When the live cache read is masked, both paths fall back to `_account_totals_last_good` and stamp `portfolio_strip["account_basis_stale"] = True` + `account_basis_as_of`.
+- **Tier 2 (honest floor):** when `_account_totals_last_good` has never been populated for a field (fresh process restart, Composer unreachable since boot), the raw VW value is used with an explicit `portfolio_strip["basis"] = "value_weighted"` marker — never an unlabelled value the UI could misread as account basis.
+- `_ACCOUNT_TOTALS_HTTP_TIMEOUT_S` promotes the bare `timeout=10` literal in `_refresh_account_totals()` to a named constant.
+
+Display/aggregation only — `alpha_bot_execution.py` and `math_engine.py` are byte-identical after this cycle (AC-5).
+
+### The 5 findings (in-cycle Toxic-Pair review pass, GREEN `8e8c5d9` + regression hardening `68c9aae`)
+
+The first GREEN (`1f91c9f`, 33/33) implemented the wrap and the two-tier policy but a Red/Green/Revise review pass (cross-confirmed by an independent reviewer via SendMessage before any RED was written) found the SAME root defect from two different starting points: **both paths tracked TC's own cache/last-good state as a proxy for overall account-basis status, instead of resolving TC, CR, and `account_value` independently.**
+
+1. **Frozen combined gate (headline finding).** The frozen branch's wrap fired only when BOTH TC and CR were non-`None` (a single combined `and` gate) — so a cold CR could discard a fresh CR conversion or collaterally leave a warm TC un-wrapped, contradicting the plan's documented "independently guarded, mirrors the live path" requirement.
+2. **Frozen Tier-2 marker scoped to TC only.** The honest-floor `basis="value_weighted"` marker checked only TC's state; a CR-only degradation to raw VW could ship with zero signal on the strip.
+3. **Live `account_basis_as_of` had no string fallback.** When `account_basis_stale=True` fired via Tier 1 but `_account_totals_last_success_at` had never been set, the live path could stamp a `None` timestamp (the frozen path already had the fallback). Fixed to fall back to a fresh `datetime.now(_ET)` string, matching the frozen path.
+4. **Live Tier-2 marker scoped to TC only.** Same defect as #2, on the live path (`_compute_portfolio_strip`) — extended to fire when EITHER TC or CR is fully missing.
+5. **Live `account_value` had no Tier-1 last-good fallback.** Unlike TC and CR, `account_value` fell straight from a masked cache read to the cash-EXCLUDED per-symphony sum with no last-good check at all. This mis-scales guard_alpha's `invested_frac` denominator (`symphony_value_sum / account_value`) toward 1.0 during a stale-cache window on a TRIGGERED guard event — a real (not cosmetic) dollar-magnitude error, and reachable on the same every-minute stale window as the other findings. The regression test for this (`test_live_path_stale_tier1_account_value_uses_last_good`) was itself revised in `68c9aae` after review: the original used an empty `bot_state`, which drove the buggy pre-fix fallback to `account_value=0.0` and tripped a SAFE division guard — proving the fallback was absent but not that its absence caused real harm. The revised test uses a realistic triggered `bot_state` (`invested_frac` 0.8-correct vs. 1.0-wrong), pinning the actual dollar-magnitude regression.
+
+**Reachability correction (methodology note for the record):** these findings were initially characterized as "latent" / theoretical edge cases on an unverified assumption that TC and CR are co-cached (both present or both absent together). That assumption was WRONG and was corrected after reading the source directly: `app.py` caches `portfolio_cr` UNCONDITIONALLY on every successful 200 response, but caches `portfolio_tc` CONDITIONALLY — only when `"todays_percent_change"` is present in the Composer response body. TC and CR can therefore be independently present/absent in `_account_totals_cache`, most reachable in the fresh-start / partial-response window — this is a real, reachable defect class, not a hypothetical. Lesson: verify reachability at the source (the actual cache-write conditionals) before downgrading a finding to "latent" — an unverified co-caching assumption almost shipped these findings as low-priority.
+
+### 2 open items (staleness-badge precision, NOT correctness bugs — conservative direction, deliberately scoped out)
+
+Both leave the underlying NUMBER correct; they only affect how visibly the staleness badge lights up in an unscoped corner. Flagged for a future cycle, not blocking this one:
+
+1. **`_live_basis_stale` is a single flag covering both fields.** If only ONE of TC/CR used Tier-1 last-good, the live path still stamps `account_basis_stale=True` for the whole strip rather than per-field. This OVER-discloses staleness (shows the badge when only one field needed it) — the safe direction, never under-discloses.
+2. **Neither path's Tier-1 stale badge reacts to `account_value` alone falling back to last-good.** `portfolio_value` is written first and unconditionally in both paths, so in practice it can't independently diverge from the TC/CR staleness state within the current write ordering — the number itself stays correct, but if a future change made `account_value` divergence possible in isolation, the badge would not currently light up for it. Documented as a scope boundary, not exercised by a failing test.
+
+### Files changed
+
+- `app.py` — `_account_totals_last_good` / `_account_totals_last_success_at` / `_ACCOUNT_TOTALS_HTTP_TIMEOUT_S` module-level constructs; `_refresh_account_totals()` last-good snapshot write; `_compute_portfolio_strip()` (live path) per-field Tier-1/Tier-2 fallback for TC, CR, and `account_value`; `get_state()` frozen/EOD snapshot recompute — same per-field fallback + independent CR/TC wrap blocks (replaces the prior combined gate and the half-converted CR override)
+- `tests/dashboard/test_eod_account_basis.py` — AC-1, AC-2, AC-3, AC-6, AC-8, AC-9 + the 9-case Red/Green/Revise sufficiency pass (independent per-field gating, CR coverage, cross-path Tier-2 marker consistency)
+- `tests/app/test_eod_account_basis_refresh.py` — AC-4, AC-10 (last-good snapshot write, timeout constant, live-path parity) + the F6 realistic-regression revision
+- `tests/fixtures/dashboard/frozen_portfolio_strip/eod_account_basis_parity.json` — golden fixture (captured-from-producer / schema-derived), frozen == live parity (AC-6)
+- `tests/test_scope_guard.py` — AC-5 hard scope guard (`alpha_bot_execution.py` / `math_engine.py` byte-unchanged)
+- `feature-plans/eod-today-change-account-basis.md` — plan (Status: ready at time of writing; not renamed `.completed.md` by this doc pass — out of doc-writer scope)
+
+Result: 42/42 GREEN. AC-5 scope guard clean. Independently re-verified by executing the real pytest suite at both the pre-fix and post-fix SHAs in throwaway worktrees (5-fail→5-pass transition reproduced, incl. the F6 account_value 80000-wrong→100000-correct scaling).
+
 ## DE-PRISM-SOURCES-001 — Append-only MARKET_PRISM_SOURCES row for Overview sources provenance (2026-06-24)
 
 ### Problem
