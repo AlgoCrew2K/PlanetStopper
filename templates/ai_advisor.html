@@ -1150,7 +1150,12 @@
                     <div data-testid="prism-verification" class="prism-verification">
                         <div class="prism-verification-header">Numeric Verification</div>
                         {% for _chk in market_prism_verification.get('checks', []) %}
-                            {% set _cls = _chk.get('classification', 'unverifiable') %}
+                            {# .get(key, default)'s default only fires when the key is
+                               ABSENT — a malformed check can have indicator/classification
+                               present with value None, so `or` is required to catch that
+                               case too (F1, /review PR #90). #}
+                            {% set _cls = _chk.get('classification') or 'unverifiable' %}
+                            {% set _indicator = _chk.get('indicator') or '' %}
                             {% set _badge_class = {
                                 'pass':         'prism-verify-badge--pass',
                                 'flagged':      'prism-verify-badge--flagged',
@@ -1158,9 +1163,9 @@
                                 'unverifiable': 'prism-verify-badge--unverifiable',
                             }.get(_cls, 'prism-verify-badge--unverifiable') %}
                             <div class="prism-verify-check"
-                                 data-testid="prism-verify-check-{{ _chk.get('indicator', '') | e }}">
+                                 data-testid="prism-verify-check-{{ _indicator | e }}">
                                 <span class="prism-verify-badge {{ _badge_class }}">
-                                    {{ _chk.get('indicator', '') | e }} — {{ _cls | e }}
+                                    {{ _indicator | e }} — {{ _cls | e }}
                                 </span>
                                 {% if _chk.get('annotation') %}
                                     <p class="prism-verify-annotation"
