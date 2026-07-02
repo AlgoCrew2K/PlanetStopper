@@ -3,9 +3,10 @@
 Plan: feature-plans/eod-today-change-account-basis.md
 Branch: fix/eod-today-change-account-basis
 Worktree: C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\eod-basis
-Phase: red
+Phase: green
 RED commit: 95055bb
 RED result: 17 FAIL / 13 PASS / 3 SKIP
+GREEN result: 33 PASS / 0 FAIL / 0 SKIP
 
 ## Test Files
 
@@ -149,7 +150,35 @@ Permitted files:
 - Commit prefix: fix(dashboard):
 - After GREEN: SendMessage to PM (main) with HEAD SHA and counts. Do NOT push or merge.
 
+## Implementation Notes
+
+- Change 1: Added `_account_totals_last_good: dict = {}`, `_account_totals_last_success_at: str | None = None`,
+  `_ACCOUNT_TOTALS_HTTP_TIMEOUT_S = 10` after `_account_totals_cache_lock` at module level (app.py ~530).
+- Change 2: `_refresh_account_totals` — replaced `timeout=10` with constant; added last-good snapshot
+  (`_account_totals_last_good.clear(); .update(_account_totals_cache)`) inside the lock after
+  `refresh_written()`; advanced `_account_totals_last_success_at` (with `global`) after the lock block
+  completes without exception (genuine success only, per PM revision).
+- Change 3: Frozen branch (~1860-1930 after offsets) — two-tier stale fallback; compute
+  `_snap_symphony_value_sum`; wrap both TC and CR through account-basis helpers; single clean
+  `_snap_tc_final`/`_snap_cr_final` assignment (no double-assignment, per PM feedback);
+  `basis="value_weighted"` + `today_change.if_held=None` on Tier 2; `account_basis_stale=True` +
+  `account_basis_as_of` (with `datetime.now()` fallback when `_account_totals_last_success_at` is None)
+  on Tier 1.
+- Change 4: Live path `_compute_portfolio_strip` — added `_live_basis_stale = False` flag; Tier-1
+  last-good fallback on both `_cached_cr` and `_cached_tc` else branches; `basis="value_weighted"`
+  on Tier-2; `account_basis_stale`/`account_basis_as_of` stamped on `_strip` when stale.
+- `analytics.py` untouched. `alpha_bot_execution.py` untouched. `math_engine.py` untouched.
+- One minor scope needed beyond the handoff: `_account_totals_last_success_at` fallback to
+  `datetime.now(_ET)` when None (test manually populates `_account_totals_last_good` without
+  a prior successful refresh, so the timestamp variable is None at that point).
+
+## Test File Issues (for test-writer to fix)
+
+None. All 33 tests pass cleanly. No test bugs found.
+
 ## Status log
 
 - [2026-07-02] quant-test-writer: RED committed (95055bb). 17 FAIL / 13 PASS / 3 SKIP.
   All failures for the right reason. Handing off to eodimpl.
+- [2026-07-02] eodimpl: GREEN complete — 33/33 tests passing, 0 test bugs. Lint ✓ Format ✓.
+  Handing back to eodtest for sufficiency review (Red/Green/Revise).
