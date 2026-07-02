@@ -1174,9 +1174,18 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
     if _cached_portfolio_value is not None:
         account_value = _cached_portfolio_value
     else:
-        account_value = sum(
-            v.get("current_value") or 0.0 for v in bot_state.values() if isinstance(v, dict)
+        # Tier 1 — last-good present: use the retained cash-inclusive account total
+        # rather than falling straight to the cash-EXCLUDED per-symphony sum (mirrors
+        # the frozen path's account_value fallback).
+        _lg_portfolio_value = (
+            _account_totals_last_good.get("portfolio_value") if _account_totals_last_good else None
         )
+        if _lg_portfolio_value is not None:
+            account_value = _lg_portfolio_value
+        else:
+            account_value = sum(
+                v.get("current_value") or 0.0 for v in bot_state.values() if isinstance(v, dict)
+            )
 
     try:
         # Use .get() for all cache reads below to eliminate TOCTOU between __contains__
@@ -1373,15 +1382,25 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
             "data_as_of": _data_as_of,
         }
 
-        # Tier 2 honest-floor marker: both cache and last-good are absent.
-        if _cached_tc is None and not (
+        # Tier 2 honest-floor marker: fires when EITHER field has no basis at all (no
+        # cache, no last-good) — a missing TC must not mask an independently-missing CR
+        # and vice versa (each field's own cache+last-good state is checked).
+        _tc_fully_missing = _cached_tc is None and not (
             _account_totals_last_good.get("portfolio_tc") if _account_totals_last_good else None
-        ):
+        )
+        _cr_fully_missing = _cached_cr is None and not (
+            _account_totals_last_good.get("portfolio_cr") if _account_totals_last_good else None
+        )
+        if _tc_fully_missing or _cr_fully_missing:
             _strip["basis"] = "value_weighted"
-        # Tier 1 stale stamps: using last-good account totals.
+        # Tier 1 stale stamps: using last-good account totals for either field. Falls
+        # back to a fresh ET timestamp string when _account_totals_last_success_at was
+        # never set by a real refresh (mirrors the frozen path's fallback).
         if _live_basis_stale:
             _strip["account_basis_stale"] = True
-            _strip["account_basis_as_of"] = _account_totals_last_success_at
+            _strip["account_basis_as_of"] = _account_totals_last_success_at or datetime.now(
+                _ET
+            ).strftime("%Y-%m-%d %H:%M:%S ET")
 
         # Option A: surface the Composer account-lifetime CR as its OWN non-windowed stat
         # ("Account · all-time"). It is the cash-inclusive simple_return scalar — there is
@@ -1866,28 +1885,37 @@ def get_state():
                         s.get("value", 0.0) or 0.0 for s in _snap_symphonies_list
                     )
 
-                    # Resolve account totals with two-tier stale-cache fallback.
+                    # Resolve account totals with two-tier stale-cache fallback. TC, CR,
+                    # and value are each resolved INDEPENDENTLY (mirrors the live path's
+                    # per-field checks) — a missing field must never collaterally degrade
+                    # an independently-warm sibling field.
                     # Use .get() to avoid TOCTOU: mark_stale() can fire between calls.
                     _snap_account_tc = _account_totals_cache.get("portfolio_tc")
-                    _snap_account_cr = _account_totals_cache.get("portfolio_cr")
-                    _snap_cached_value = _account_totals_cache.get("portfolio_value")
-                    _snap_basis_stale = False
-                    _snap_basis_as_of = None
+                    _snap_tc_stale = False
+                    if _snap_account_tc is None and _account_totals_last_good:
+                        _snap_account_tc = _account_totals_last_good.get("portfolio_tc")
+                        _snap_tc_stale = _snap_account_tc is not None
 
-                    if _snap_account_tc is None or _snap_account_cr is None:
-                        # Tier 1 — last-good present: use retained snapshot rather than
-                        # silently flipping to unlabelled value-weighted values.
-                        if _account_totals_last_good:
-                            _snap_account_tc = _account_totals_last_good.get("portfolio_tc")
-                            _snap_account_cr = _account_totals_last_good.get("portfolio_cr")
-                            if _snap_cached_value is None:
-                                _snap_cached_value = _account_totals_last_good.get(
-                                    "portfolio_value"
-                                )
-                            _snap_basis_stale = True
-                            _snap_basis_as_of = _account_totals_last_success_at or datetime.now(
-                                _ET
-                            ).strftime("%Y-%m-%d %H:%M:%S ET")
+                    _snap_account_cr = _account_totals_cache.get("portfolio_cr")
+                    _snap_cr_stale = False
+                    if _snap_account_cr is None and _account_totals_last_good:
+                        _snap_account_cr = _account_totals_last_good.get("portfolio_cr")
+                        _snap_cr_stale = _snap_account_cr is not None
+
+                    _snap_cached_value = _account_totals_cache.get("portfolio_value")
+                    if _snap_cached_value is None and _account_totals_last_good:
+                        _snap_cached_value = _account_totals_last_good.get("portfolio_value")
+
+                    # Tier 1 — fires when EITHER field fell back to last-good.
+                    _snap_basis_stale = _snap_tc_stale or _snap_cr_stale
+                    _snap_basis_as_of = (
+                        (
+                            _account_totals_last_success_at
+                            or datetime.now(_ET).strftime("%Y-%m-%d %H:%M:%S ET")
+                        )
+                        if _snap_basis_stale
+                        else None
+                    )
 
                     # VW intermediates (same calls as live path).
                     _snap_vw_tc = analytics.get_portfolio_today_change(
@@ -1897,14 +1925,22 @@ def get_state():
                         _snap_symphonies_list, _snap_bot_state, trading_day=_snap_trading_day
                     )
 
-                    # Wrap through account-basis helpers (mirrors live path at ~1183-1212).
-                    if _snap_account_tc is not None and _snap_account_cr is not None:
+                    # Wrap TC and CR through the account-basis helpers INDEPENDENTLY
+                    # (mirrors live path ~1183-1212) — a missing sibling field must never
+                    # null a warm field's if_held.
+                    if _snap_account_tc is not None:
                         _snap_tc_final = analytics.get_portfolio_today_change_account_basis(
                             _snap_vw_tc,
                             _snap_account_tc,
                             _snap_cached_value or 0.0,
                             _snap_symphony_value_sum,
                         )
+                    else:
+                        # No TC basis at all (no cache, no last-good): surface raw VW with
+                        # a null if_held so the UI never reads it as account basis.
+                        _snap_tc_final = {**_snap_vw_tc, "if_held": None}
+
+                    if _snap_account_cr is not None:
                         _snap_cr_final = analytics.get_portfolio_cumulative_return_account_basis(
                             _snap_vw_cr,
                             _snap_account_cr,
@@ -1912,9 +1948,8 @@ def get_state():
                             _snap_symphony_value_sum,
                         )
                     else:
-                        # Tier 2 — no last-good (fresh restart): surface raw VW with a null
-                        # if_held so the UI never reads an unlabelled value as account basis.
-                        _snap_tc_final = {**_snap_vw_tc, "if_held": None}
+                        # No CR basis at all: surface raw VW (honesty signalled below via
+                        # the Tier-2 basis marker, since if_held stays a real number here).
                         _snap_cr_final = _snap_vw_cr
 
                     _portfolio_strip = {
@@ -1936,8 +1971,10 @@ def get_state():
                         # sees data age, not dashboard render time.
                         "data_as_of": _snap_data_as_of,
                     }
-                    # Tier 2 honest-floor marker — signals to the UI that values are VW.
-                    if _snap_account_tc is None:
+                    # Tier 2 honest-floor marker — fires when EITHER field has no basis
+                    # at all (no cache, no last-good), signalling to the UI that at
+                    # least one value on the strip is raw VW, not account basis.
+                    if _snap_account_tc is None or _snap_account_cr is None:
                         _portfolio_strip["basis"] = "value_weighted"
                     # Tier 1 stale stamps — signals that last-good data (not current) was used.
                     if _snap_basis_stale:
