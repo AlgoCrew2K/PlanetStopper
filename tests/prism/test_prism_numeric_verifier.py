@@ -597,10 +597,24 @@ class TestMomentumRegistryExpansion:
     def test_momentum_boundary_exactly_at_tolerance_is_pass(self):
         """AC-5 boundary, mirrors the VIX pattern: abs(cited-truth) == tolerance
         (inclusive) must still be pass. Derived from the module's own tolerance
-        constant, never a guessed literal."""
+        constant, never a guessed literal.
+
+        truth=0.0 is a deliberate choice, not a placeholder: _MOMENTUM_TOLERANCE
+        (0.001) has no exact binary representation, so `truth - tolerance`
+        followed by _classify()'s internal `abs(cited - truth)` does not
+        reliably round-trip back to exactly `tolerance` for an arbitrary
+        nonzero truth (subtract-then-resubtract can accumulate a 1-ulp error —
+        confirmed live, see the override-factor test below, where this exact
+        pattern misclassified with truth=-0.0124). Using truth=0.0 makes the
+        round-trip EXACT: IEEE-754 subtraction-from-zero and negation lose no
+        bits, so `abs(cited - 0.0)` recovers `tolerance` bit-for-bit — and 0.0
+        is itself a perfectly plausible flat 20d-return reading, unlike VIX's
+        22.0/0.5 pairing which happens to round-trip exactly by coincidence
+        (both are dyadic rationals).
+        """
         mod = _import_verifier()
         _lens, _path, _cmp, tolerance = mod._INDICATOR_REGISTRY["momentum_SPY_20d"]
-        truth = -0.0124
+        truth = 0.0
         cited = truth - tolerance
         lens_sections = copy.deepcopy(_FULL_LENS_SECTIONS)
         lens_sections["technicals"]["payload"]["momentum"]["SPY"] = truth
@@ -615,10 +629,23 @@ class TestMomentumRegistryExpansion:
 
     def test_momentum_boundary_exactly_at_override_factor_is_flagged(self):
         """AC-6 boundary, mirrors the VIX pattern: abs(diff) == _OVERRIDE_FACTOR *
-        tolerance must be flagged (inclusive upper bound), not overridden."""
+        tolerance must be flagged (inclusive upper bound), not overridden.
+
+        truth=0.0 for the same float-exactness reason as the tolerance-boundary
+        test above. Confirmed live during GREEN review: with truth=-0.0124,
+        `cited = truth - (OVERRIDE_FACTOR * tolerance)` then _classify()'s
+        `abs(cited - truth)` computed 0.003000000000000001 — 1 ulp past the
+        freshly-computed 0.003 boundary — misclassifying overridden instead of
+        flagged. That is a test-construction float artifact, not a _classify()
+        defect: 0.001 has no exact binary representation, so the subtract-then-
+        resubtract round-trip isn't guaranteed lossless for an arbitrary truth.
+        truth=0.0 sidesteps it entirely (negation and subtraction-from-zero are
+        exact in IEEE-754), so this tests the real inclusive-boundary contract
+        rather than an artifact of which truth value happened to be picked.
+        """
         mod = _import_verifier()
         _lens, _path, _cmp, tolerance = mod._INDICATOR_REGISTRY["momentum_SPY_20d"]
-        truth = -0.0124
+        truth = 0.0
         cited = truth - (mod._OVERRIDE_FACTOR * tolerance)
         lens_sections = copy.deepcopy(_FULL_LENS_SECTIONS)
         lens_sections["technicals"]["payload"]["momentum"]["SPY"] = truth
@@ -736,8 +763,7 @@ class TestMomentumRegistryExpansion:
             indicator = f"momentum_{ticker}_20d"
             _lens, _path, comparison_type, _tolerance = mod._INDICATOR_REGISTRY[indicator]
             assert comparison_type == "absolute", (
-                f"{indicator!r} must use comparison_type='absolute'; got "
-                f"{comparison_type!r}"
+                f"{indicator!r} must use comparison_type='absolute'; got {comparison_type!r}"
             )
 
 
