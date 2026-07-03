@@ -3,7 +3,7 @@
 > Post-council anti-fabrication numeric verifier: recomputes every number the Prism council declares it cited against the authoritative source payload and classifies the citation pass / flagged / overridden / unverifiable.
 
 **Source:** `advisors/prism_numeric_verifier.py`
-**Last updated:** 2026-07-03 (DE-PRISM-MOMENTUM-REGISTRY-001: +10 technicals-momentum `_INDICATOR_REGISTRY` entries; module created 2026-07-02, DE-PRISM-NUMERIC-VERIFY-001)
+**Last updated:** 2026-07-03 (DE-PRISM-MOMENTUM-REGISTRY-001: +10 technicals-momentum `_INDICATOR_REGISTRY` entries + `/review` PR #91 producer-naming-contract follow-up; module created 2026-07-02, DE-PRISM-NUMERIC-VERIFY-001)
 
 ## Overview
 
@@ -134,6 +134,8 @@ Before this cycle, every `momentum_<TICKER>_20d` citation from the council resol
 
 **Literal, not wildcard.** Unlike the fundamentals `<TICKER>.<CONCEPT>` shape, the 10 momentum entries are registered as literal keys — a ticker outside the fixed proxy universe (e.g. `momentum_TSLA_20d`) is never silently matched; it resolves `unverifiable`, same as any other unmapped indicator.
 
+**Producer-side naming contract (`/review` PR #91 follow-up).** A literal registry only works if the council actually emits the exact key it expects. `.claude/agents/prism-technicals-analyst.md` originally pinned a concrete worked example only for `breadth` — momentum was described in prose ("momentum reading") with no concrete indicator-string format, so `momentum_<TICKER>_20d` had been reverse-engineered from one live council run's incidental choice, never enforced. Fixed by adding a second concrete worked example (`{"indicator": "momentum_SPY_20d", "value": -0.0124, "lens": "technicals"}`, with an explicit "use the naming exactly" instruction), mirroring how macro pins `DGS10` and derivatives pins `VIX`. See `DECISIONS.md` §DE-PRISM-MOMENTUM-REGISTRY-001 for the full rationale.
+
 ## Security Considerations
 
 - **D-1 error contract:** every degraded path (both `verify_cited_numbers` and `persist_verification`) prints `type(exc).__name__` only to `sys.stderr` — never `str(exc)`, which for the macro/derivatives lenses may embed a FRED-API-key-bearing URL.
@@ -147,7 +149,7 @@ The verifier only checks numbers the council **declares** as `cited_numbers` tup
 
 ## Council Contract (AC-2)
 
-`.claude/agents/prism-synthesizer.md` (step 9, the `raw_response` block) and all 5 `.claude/agents/prism-*-analyst.md` role files were extended to instruct: **every numeric indicator stated in prose must also appear as a `{indicator, value, lens}` tuple in `cited_numbers`.** Existing prose fields (`summary`, `sentiment_rationale`) are unchanged — this is additive schema only. See [prism_scheduler](prism_scheduler.md) for the council orchestration this contract lives alongside.
+`.claude/agents/prism-synthesizer.md` (step 9, the `raw_response` block) and all 5 `.claude/agents/prism-*-analyst.md` role files were extended to instruct: **every numeric indicator stated in prose must also appear as a `{indicator, value, lens}` tuple in `cited_numbers`.** Existing prose fields (`summary`, `sentiment_rationale`) are unchanged — this is additive schema only. See [prism_scheduler](prism_scheduler.md) for the council orchestration this contract lives alongside. `.claude/agents/prism-technicals-analyst.md` additionally pins a concrete `momentum_<TICKER>_20d` worked example (DE-PRISM-MOMENTUM-REGISTRY-001, `/review` PR #91 follow-up) alongside its pre-existing `breadth` example — a bare-prose description isn't enough for a literal (non-wildcard) registry entry to be reliably hit.
 
 ## Related
 
@@ -166,5 +168,5 @@ The verifier only checks numbers the council **declares** as `cited_numbers` tup
 - `tests/prism_scheduler/test_verifier_wiring.py` — 4 tests: `main()` calls the verifier after `_patch_provenance`, the shared `lens_sections` are reused (builders invoked once, not twice), a verifier exception never changes the exit code, and the verifier is skipped when no MARKET_PRISM row was found.
 - `tests/prism_scheduler/test_patch_provenance_lens_sections_equivalence.py` — 1 test: `_patch_provenance`'s SOURCES row is byte-equivalent whether it fetches its own lens sections or reuses a caller-supplied `lens_sections` bundle.
 - `tests/database/test_market_prism_verification_accessor.py` — 9 tests: exact-match, `None`-on-mismatch, correct-row-among-many, empty-table, `get_ro_connection` usage, expected shape, nested-table robustness, and cross-role isolation from `get_latest_market_prism_summary`.
-- `tests/ai_advisor/test_prism_role_files_cited_numbers.py` — 6 tests: each of the 6 `.claude/agents/prism-*.md` role files exists and references the `cited_numbers` tuple contract.
-- `tests/app/test_ai_advisor_tab_verification_overlay.py` — 8 tests: the AC-10 render overlay (see [app](app.md)) — fetch-by-run_id, overridden-annotation rendering, honest empty-state, no-stale-bleed on run_id mismatch, no in-place mutation of the `MARKET_PRISM` row, hostile-indicator-field escaping, no `| safe` filter in the template block, and `MARKET_PRISM_VERIFICATION` absent from `_ADVISOR_ROLES`.
+- `tests/ai_advisor/test_prism_role_files_cited_numbers.py` — 19 tests (corrected count; previously documented as 6, which undercounted the parametrization across the 6 role files): each of the 6 `.claude/agents/prism-*.md` role files exists and references the `cited_numbers` tuple contract, plus (DE-PRISM-MOMENTUM-REGISTRY-001, `/review` PR #91 follow-up) `TestTechnicalsAnalystMomentumNamingContract` — pins that `prism-technicals-analyst.md` carries a concrete `momentum_<TICKER>_20d`-shaped worked example, not just the bare word "momentum" in prose.
+- `tests/app/test_ai_advisor_tab_verification_overlay.py` — 9 tests (corrected count; previously documented as 8, missing the Finding-1 empty-label regression test added in the PR #90 review-fix cycle): the AC-10 render overlay (see [app](app.md)) — fetch-by-run_id, overridden-annotation rendering, honest empty-state, no-stale-bleed on run_id mismatch, no in-place mutation of the `MARKET_PRISM` row, a null `indicator` field rendering an empty label rather than the literal string `"None"` (nvreview Finding 1 — `dict.get`'s default only applies when the key is absent, not when its stored value is `None`), hostile-indicator-field escaping, no `| safe` filter in the template block, and `MARKET_PRISM_VERIFICATION` absent from `_ADVISOR_ROLES`.
