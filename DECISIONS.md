@@ -3373,7 +3373,7 @@ Both leave the underlying NUMBER correct; they only affect how visibly the stale
 - `tests/app/test_eod_account_basis_refresh.py` — AC-4, AC-10 (last-good snapshot write, timeout constant, live-path parity) + the F6 realistic-regression revision
 - `tests/fixtures/dashboard/frozen_portfolio_strip/eod_account_basis_parity.json` — golden fixture (captured-from-producer / schema-derived), frozen == live parity (AC-6)
 - `tests/test_scope_guard.py` — AC-5 hard scope guard (`alpha_bot_execution.py` / `math_engine.py` byte-unchanged)
-- `feature-plans/eod-today-change-account-basis.md` — plan (Status: ready at time of writing; not renamed `.completed.md` by this doc pass — out of doc-writer scope)
+- `feature-plans/eod-today-change-account-basis.completed.md` — plan, renamed `.completed.md` (doc-writer housekeeping pass, 2026-07-03) now that PR #89 has shipped
 
 Result: 42/42 GREEN. AC-5 scope guard clean. Independently re-verified by executing the real pytest suite at both the pre-fix and post-fix SHAs in throwaway worktrees (5-fail→5-pass transition reproduced, incl. the F6 account_value 80000-wrong→100000-correct scaling).
 
