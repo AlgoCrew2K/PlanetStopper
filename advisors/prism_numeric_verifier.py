@@ -43,6 +43,12 @@ _CPI_TOLERANCE = 1.0  # CPI index points (index ~300-level, not a percent)
 # false-override failure mode DE-PRISM-SOURCES-001 already warned against).
 _TONE_TOLERANCE = 0.15
 _BREADTH_TOLERANCE = 0.05  # breadth is a 0-1 fraction
+# Absolute (not relative): momentum is a naturally bounded 20d-return fraction
+# that legitimately sits near zero, where a relative tolerance would blow
+# honest rounding noise up into a spurious "error". Live council citations
+# round to ~4 decimals, so honest rounding noise tops out at 0.00005 (half
+# the last digit) -- 0.001 gives 20x headroom over that floor.
+_MOMENTUM_TOLERANCE = 0.001
 # Large-magnitude fundamentals figures ($ revenue, etc.) use a RELATIVE
 # tolerance — a fixed absolute tolerance would either falsely flag routine
 # rounding on a $391B figure or pass a real error on a $1M one.
@@ -81,6 +87,16 @@ _INDICATOR_REGISTRY: dict[str, tuple[str, str | None, str, float]] = {
     "FEDFUNDS": ("macro", "series.FEDFUNDS.value", "absolute", _RATE_TOLERANCE),
     "tone": ("sentiment", "tone_score", "absolute", _TONE_TOLERANCE),
     "breadth": ("technicals", "breadth", "absolute", _BREADTH_TOLERANCE),
+    "momentum_SPY_20d": ("technicals", "momentum.SPY", "absolute", _MOMENTUM_TOLERANCE),
+    "momentum_QQQ_20d": ("technicals", "momentum.QQQ", "absolute", _MOMENTUM_TOLERANCE),
+    "momentum_IWM_20d": ("technicals", "momentum.IWM", "absolute", _MOMENTUM_TOLERANCE),
+    "momentum_EFA_20d": ("technicals", "momentum.EFA", "absolute", _MOMENTUM_TOLERANCE),
+    "momentum_AGG_20d": ("technicals", "momentum.AGG", "absolute", _MOMENTUM_TOLERANCE),
+    "momentum_GLD_20d": ("technicals", "momentum.GLD", "absolute", _MOMENTUM_TOLERANCE),
+    "momentum_XLF_20d": ("technicals", "momentum.XLF", "absolute", _MOMENTUM_TOLERANCE),
+    "momentum_XLE_20d": ("technicals", "momentum.XLE", "absolute", _MOMENTUM_TOLERANCE),
+    "momentum_XLV_20d": ("technicals", "momentum.XLV", "absolute", _MOMENTUM_TOLERANCE),
+    "momentum_XLI_20d": ("technicals", "momentum.XLI", "absolute", _MOMENTUM_TOLERANCE),
     _FUNDAMENTALS_WILDCARD_KEY: (
         "fundamentals",
         None,
