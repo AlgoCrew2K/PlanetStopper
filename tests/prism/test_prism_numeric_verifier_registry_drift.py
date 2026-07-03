@@ -264,6 +264,42 @@ class TestIndicatorRegistryMatchesRealBuilderShapes:
             f"Real payload: {payload!r}"
         )
 
+    def test_technicals_momentum_resolves_against_real_builder_for_all_proxy_tickers(self):
+        """momentum_<TICKER>_20d (all 10 proxy-universe tickers, DE-PRISM-MOMENTUM-
+        REGISTRY-001) resolves against the real _build_technicals_section() output
+        — same network-mocking boundary as the breadth sub-test above
+        (advisors.lens_technicals._get_bars, its own documented test-mockable
+        seam); 21+ bars needed so _compute_momentum (needs close[-1]/close[-21])
+        actually produces a value instead of None for every ticker."""
+        mod = _import_verifier()
+        import ai_advisor
+        from advisors import lens_technicals
+
+        bar_sequence = _make_bar_sequence([100.0] * 250 + [110.0])
+        mock_bars = {ticker: bar_sequence for ticker in lens_technicals._PROXY_UNIVERSE}
+
+        with (
+            patch.object(lens_technicals, "_get_bars", return_value=mock_bars),
+            patch("requests.get", side_effect=AssertionError(_NO_REAL_HTTP_MSG)),
+        ):
+            section = ai_advisor._build_technicals_section()
+
+        assert section.get("available") is True, (
+            f"Precondition: the real builder must report available=True with the "
+            f"network mocked; got {section!r}"
+        )
+        payload = section.get("payload") or {}
+        for ticker in lens_technicals._PROXY_UNIVERSE:
+            indicator = f"momentum_{ticker}_20d"
+            path = _resolve_registry_path(mod, indicator)
+            resolved = mod._resolve_dotted_path(payload, path)
+            assert resolved is not None, (
+                f"F2 registry-drift guard: indicator {indicator!r}'s registry path "
+                f"{path!r} did not resolve against the REAL _build_technicals_section "
+                f"payload — the registry and the real builder shape have drifted. "
+                f"Real payload: {payload!r}"
+            )
+
     def test_fundamentals_wildcard_resolves_against_real_builder(self):
         """The <TICKER>.<CONCEPT> wildcard (e.g. AAPL.Revenues) resolves against
         the real _build_fundamentals_section() output — called WITHOUT a ticker

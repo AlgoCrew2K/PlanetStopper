@@ -136,7 +136,24 @@ _FULL_LENS_SECTIONS: dict = {
     "technicals": {
         "lens": "technicals",
         "available": True,
-        "payload": {"ma_posture": {}, "breadth": 0.58, "momentum": {}},
+        "payload": {
+            "ma_posture": {},
+            "breadth": 0.58,
+            # 20d-return truths for the full 10-ticker proxy universe
+            # (lens_technicals._PROXY_UNIVERSE) — DE-PRISM-MOMENTUM-REGISTRY-001.
+            "momentum": {
+                "SPY": -0.0124,
+                "QQQ": 0.0562,
+                "IWM": -0.0310,
+                "EFA": 0.0080,
+                "AGG": -0.0015,
+                "GLD": 0.0450,
+                "XLF": 0.0120,
+                "XLE": -0.0670,
+                "XLV": 0.0030,
+                "XLI": 0.0210,
+            },
+        },
         "sources": [],
     },
     "fundamentals": {
@@ -302,6 +319,16 @@ class TestRegistry:
             ("FEDFUNDS", "macro"),
             ("tone", "sentiment"),
             ("breadth", "technicals"),
+            ("momentum_SPY_20d", "technicals"),
+            ("momentum_QQQ_20d", "technicals"),
+            ("momentum_IWM_20d", "technicals"),
+            ("momentum_EFA_20d", "technicals"),
+            ("momentum_AGG_20d", "technicals"),
+            ("momentum_GLD_20d", "technicals"),
+            ("momentum_XLF_20d", "technicals"),
+            ("momentum_XLE_20d", "technicals"),
+            ("momentum_XLV_20d", "technicals"),
+            ("momentum_XLI_20d", "technicals"),
         ],
     )
     def test_documented_indicator_never_resolves_unverifiable_when_source_available(
@@ -363,6 +390,16 @@ class TestRegistry:
             "FEDFUNDS",
             "tone",
             "breadth",
+            "momentum_SPY_20d",
+            "momentum_QQQ_20d",
+            "momentum_IWM_20d",
+            "momentum_EFA_20d",
+            "momentum_AGG_20d",
+            "momentum_GLD_20d",
+            "momentum_XLF_20d",
+            "momentum_XLE_20d",
+            "momentum_XLV_20d",
+            "momentum_XLI_20d",
         ],
     )
     def test_registry_comparison_type_is_absolute_for_non_fundamentals_indicators(self, indicator):
@@ -407,10 +444,20 @@ class TestRegistry:
                 "FEDFUNDS",
                 "tone",
                 "breadth",
+                "momentum_SPY_20d",
+                "momentum_QQQ_20d",
+                "momentum_IWM_20d",
+                "momentum_EFA_20d",
+                "momentum_AGG_20d",
+                "momentum_GLD_20d",
+                "momentum_XLF_20d",
+                "momentum_XLE_20d",
+                "momentum_XLV_20d",
+                "momentum_XLI_20d",
             )
         ]
         assert wildcard_entries, (
-            "Expected a registry entry beyond the 12 literal indicators (the "
+            "Expected a registry entry beyond the 22 literal indicators (the "
             "fundamentals <TICKER>.<CONCEPT> wildcard) — none found."
         )
         for entry in wildcard_entries:
@@ -418,6 +465,279 @@ class TestRegistry:
             assert comparison_type == "relative", (
                 f"AC-5: the fundamentals wildcard registry entry must use "
                 f"comparison_type='relative'; got {comparison_type!r} for entry {entry!r}"
+            )
+
+
+# ===========================================================================
+# TestMomentumRegistryExpansion — DE-PRISM-MOMENTUM-REGISTRY-001
+#
+# Extends _INDICATOR_REGISTRY to cover the technicals "momentum" family: the
+# council cites momentum_<TICKER>_20d (confirmed live for SPY/QQQ/XLV/XLF) but
+# the verifier previously had no registry entry for any of them, so every such
+# citation silently resolved "unverifiable" — a blind spot in the anti-
+# fabrication guard. This adds one literal entry per proxy-universe ticker
+# (SPY, QQQ, IWM, EFA, AGG, GLD, XLF, XLE, XLV, XLI — lens_technicals.py's own
+# _PROXY_UNIVERSE), payload_path "momentum.<TICKER>", comparison_type
+# "absolute", tolerance = new named constant _MOMENTUM_TOLERANCE.
+#
+# TOLERANCE GROUNDING (documented here so the rationale is auditable, not
+# just asserted):
+#   - comparison_type is "absolute", NOT "relative". Momentum is a naturally
+#     bounded 20d-return fraction (~+/-0.15), the same family as `breadth`
+#     (also absolute) — not a large-magnitude dollar figure like fundamentals.
+#     Relative would be actively WRONG here for a second reason beyond scale:
+#     _classify()'s relative branch divides by abs(truth), and momentum
+#     legitimately sits near zero (e.g. 0.0003) — a relative tolerance would
+#     make trivial rounding noise near zero look like a huge relative error.
+#     See test_momentum_absolute_tolerance_correct_near_zero below.
+#   - Magnitude (_MOMENTUM_TOLERANCE = 0.001): live council citations round to
+#     ~4 decimals (e.g. -0.0124, 0.1102), so honest rounding noise tops out at
+#     0.00005 (half the last digit) — 0.001 gives 20x headroom over that floor.
+#   - Data-flow grounding (verified against prism_scheduler.py:560-657, not
+#     assumed): the ground truth the verifier compares against is a POST-
+#     council re-fetch (`_fetch_lens_sections()`, prism_scheduler.py:560),
+#     not literally the same payload object the 6-agent council read at
+#     synthesis time — the council gets its own market data independently,
+#     before this patch-time re-fetch runs. This re-fetch is safe for momentum
+#     specifically because momentum and breadth are computed inside the SAME
+#     `_build_technicals_section()` call, from the SAME Alpaca daily-bar fetch
+#     — identical code path, identical granularity. A completed trading day's
+#     daily bar is immutable once posted, so two calls to that same code path
+#     within one overnight window return identical values (unlike `tone`,
+#     which genuinely drifts because GDELT's rolling artlist window moves
+#     between council-time and verify-time — hence tone's deliberately wider
+#     tolerance). This is why 0.001 only needs to absorb citation-rounding
+#     noise, not re-fetch drift.
+#   - Adversarial anchor: a hallucinated -0.02 cited against a true -0.0124
+#     (diff 0.0076) must NOT pass — this is what rules out a looser guessed
+#     tolerance like 0.01 (which would wrongly pass it). See
+#     test_momentum_near_miss_hallucination_is_not_pass.
+# ===========================================================================
+
+_MOMENTUM_TICKERS = (
+    "SPY",
+    "QQQ",
+    "IWM",
+    "EFA",
+    "AGG",
+    "GLD",
+    "XLF",
+    "XLE",
+    "XLV",
+    "XLI",
+)
+
+
+class TestMomentumRegistryExpansion:
+    def test_momentum_ticker_outside_proxy_universe_is_unmapped(self):
+        """A ticker NOT in the 10-ticker proxy universe (e.g. TSLA) must resolve
+        unverifiable — these are literal registry entries, not a wildcard regex
+        (unlike the fundamentals <TICKER>.<CONCEPT> shape), so an unregistered
+        ticker is never silently matched."""
+        mod = _import_verifier()
+        row = _make_market_prism_row(
+            [{"indicator": "momentum_TSLA_20d", "value": 0.05, "lens": "technicals"}]
+        )
+        result = mod.verify_cited_numbers(_RUN_ID, row, lens_sections=_FULL_LENS_SECTIONS)
+        assert result["checks"][0]["classification"] == "unverifiable", (
+            "momentum_TSLA_20d (outside the 10-ticker proxy universe) must be "
+            f"unverifiable, not silently matched by a wildcard; got {result['checks'][0]!r}"
+        )
+
+    def test_registry_grows_by_exactly_ten_momentum_entries(self):
+        """Regression pin: the 10 momentum entries are additive — the original 12
+        literal indicators + 1 fundamentals wildcard (13 keys) must still be
+        present and untouched; registry totals exactly 23 keys."""
+        mod = _import_verifier()
+        original_keys = {
+            "VIX",
+            "VIXCLS",
+            "VXVCLS",
+            "VIX3M",
+            "DGS10",
+            "10Y",
+            "UNRATE",
+            "CPIAUCSL",
+            "CPI",
+            "FEDFUNDS",
+            "tone",
+            "breadth",
+            mod._FUNDAMENTALS_WILDCARD_KEY,
+        }
+        assert original_keys.issubset(mod._INDICATOR_REGISTRY.keys()), (
+            "Adding the momentum entries must not remove/rename any of the "
+            f"original 13 registry keys; missing: "
+            f"{original_keys - mod._INDICATOR_REGISTRY.keys()!r}"
+        )
+        assert len(mod._INDICATOR_REGISTRY) == 23, (
+            "Expected 13 original keys + 10 momentum keys == 23 total; got "
+            f"{len(mod._INDICATOR_REGISTRY)}: {sorted(mod._INDICATOR_REGISTRY.keys())!r}"
+        )
+
+    def test_momentum_correctly_rounded_citation_passes(self):
+        """PASS-side anchor: the council cites momentum at ~4-decimal precision
+        (confirmed live: -0.0124, 0.1102). A citation that is the payload's true
+        value rounded to 4 decimals must pass — the only legitimate source of
+        cited-vs-truth diff for an honest citation is the council's own
+        rounding, never a tolerance-driven false flag."""
+        mod = _import_verifier()
+        truth = -0.012419283  # unrounded internal float, as _compute_momentum would produce
+        cited = round(truth, 4)  # -0.0124, matches the live citation precision
+        lens_sections = copy.deepcopy(_FULL_LENS_SECTIONS)
+        lens_sections["technicals"]["payload"]["momentum"]["SPY"] = truth
+        row = _make_market_prism_row(
+            [{"indicator": "momentum_SPY_20d", "value": cited, "lens": "technicals"}]
+        )
+        result = mod.verify_cited_numbers(_RUN_ID, row, lens_sections=lens_sections)
+        assert result["checks"][0]["classification"] == "pass", (
+            f"A 4-decimal-rounded honest citation ({cited!r} of truth {truth!r}) "
+            f"must pass; got {result['checks'][0]!r}"
+        )
+
+    def test_momentum_boundary_exactly_at_tolerance_is_pass(self):
+        """AC-5 boundary, mirrors the VIX pattern: abs(cited-truth) == tolerance
+        (inclusive) must still be pass. Derived from the module's own tolerance
+        constant, never a guessed literal."""
+        mod = _import_verifier()
+        _lens, _path, _cmp, tolerance = mod._INDICATOR_REGISTRY["momentum_SPY_20d"]
+        truth = -0.0124
+        cited = truth - tolerance
+        lens_sections = copy.deepcopy(_FULL_LENS_SECTIONS)
+        lens_sections["technicals"]["payload"]["momentum"]["SPY"] = truth
+        row = _make_market_prism_row(
+            [{"indicator": "momentum_SPY_20d", "value": cited, "lens": "technicals"}]
+        )
+        result = mod.verify_cited_numbers(_RUN_ID, row, lens_sections=lens_sections)
+        assert result["checks"][0]["classification"] == "pass", (
+            f"At exactly tolerance={tolerance!r}, classification must be pass; "
+            f"got {result['checks'][0]!r}"
+        )
+
+    def test_momentum_boundary_exactly_at_override_factor_is_flagged(self):
+        """AC-6 boundary, mirrors the VIX pattern: abs(diff) == _OVERRIDE_FACTOR *
+        tolerance must be flagged (inclusive upper bound), not overridden."""
+        mod = _import_verifier()
+        _lens, _path, _cmp, tolerance = mod._INDICATOR_REGISTRY["momentum_SPY_20d"]
+        truth = -0.0124
+        cited = truth - (mod._OVERRIDE_FACTOR * tolerance)
+        lens_sections = copy.deepcopy(_FULL_LENS_SECTIONS)
+        lens_sections["technicals"]["payload"]["momentum"]["SPY"] = truth
+        row = _make_market_prism_row(
+            [{"indicator": "momentum_SPY_20d", "value": cited, "lens": "technicals"}]
+        )
+        result = mod.verify_cited_numbers(_RUN_ID, row, lens_sections=lens_sections)
+        assert result["checks"][0]["classification"] == "flagged", (
+            f"At exactly _OVERRIDE_FACTOR({mod._OVERRIDE_FACTOR!r}) x "
+            f"tolerance({tolerance!r}), classification must be flagged, not "
+            f"overridden; got {result['checks'][0]!r}"
+        )
+
+    def test_momentum_flagged_bounded_mismatch(self):
+        """Middle tier: a diff strictly between tolerance and _OVERRIDE_FACTOR *
+        tolerance must be flagged (bounded mismatch), not overridden — mirrors
+        the plan's own UNRATE 4.3-vs-4.0 worked example for this indicator
+        family."""
+        mod = _import_verifier()
+        _lens, _path, _cmp, tolerance = mod._INDICATOR_REGISTRY["momentum_SPY_20d"]
+        truth = 0.0110
+        cited = truth + (2 * tolerance)  # strictly inside (tolerance, 3*tolerance]
+        lens_sections = copy.deepcopy(_FULL_LENS_SECTIONS)
+        lens_sections["technicals"]["payload"]["momentum"]["SPY"] = truth
+        row = _make_market_prism_row(
+            [{"indicator": "momentum_SPY_20d", "value": cited, "lens": "technicals"}]
+        )
+        result = mod.verify_cited_numbers(_RUN_ID, row, lens_sections=lens_sections)
+        assert result["checks"][0]["classification"] == "flagged", (
+            f"A bounded mismatch (diff={abs(cited - truth)!r}, tolerance="
+            f"{tolerance!r}) must be flagged; got {result['checks'][0]!r}"
+        )
+
+    def test_momentum_near_miss_hallucination_is_not_pass(self):
+        """THE CRUX adversarial case: a hallucinated citation that is numerically
+        CLOSE to the truth (-0.02 cited vs -0.0124 actual, diff 0.0076) must
+        still NOT pass. This is the exact case that rules out a looser guessed
+        tolerance (e.g. 0.01, under which this would wrongly pass) — the anti-
+        fabrication guard must not be so loose that a plausible-looking wrong
+        number slides through as a correct citation."""
+        mod = _import_verifier()
+        truth = -0.0124
+        cited = -0.02  # diff 0.0076 — "close" in magnitude but a real mismatch
+        lens_sections = copy.deepcopy(_FULL_LENS_SECTIONS)
+        lens_sections["technicals"]["payload"]["momentum"]["SPY"] = truth
+        row = _make_market_prism_row(
+            [{"indicator": "momentum_SPY_20d", "value": cited, "lens": "technicals"}]
+        )
+        result = mod.verify_cited_numbers(_RUN_ID, row, lens_sections=lens_sections)
+        check = result["checks"][0]
+        assert check["classification"] != "pass", (
+            f"A hallucinated citation ({cited!r}) close to but meaningfully off "
+            f"from the truth ({truth!r}, diff={abs(cited - truth)!r}) must not "
+            f"pass; got {check!r}"
+        )
+        assert check["classification"] == "overridden", (
+            f"At _MOMENTUM_TOLERANCE=0.001, diff=0.0076 is > 3x tolerance (0.003) "
+            f"-> overridden is the expected tier; got {check!r}"
+        )
+
+    def test_momentum_gross_hallucination_overridden(self):
+        """A grossly wrong citation (council cites 0.05 when the payload says
+        -0.0124, diff 0.0624) -> overridden (gross mismatch), and the ground-
+        truth value is recorded for render preference."""
+        mod = _import_verifier()
+        truth = -0.0124
+        cited = 0.05
+        lens_sections = copy.deepcopy(_FULL_LENS_SECTIONS)
+        lens_sections["technicals"]["payload"]["momentum"]["SPY"] = truth
+        row = _make_market_prism_row(
+            [{"indicator": "momentum_SPY_20d", "value": cited, "lens": "technicals"}]
+        )
+        result = mod.verify_cited_numbers(_RUN_ID, row, lens_sections=lens_sections)
+        check = result["checks"][0]
+        assert check["classification"] == "overridden", (
+            f"cited {cited!r} vs truth {truth!r} (diff {abs(cited - truth)!r}) is "
+            f"a gross mismatch -> overridden; got {check!r}"
+        )
+        assert check.get("ground_truth_value") == pytest.approx(truth, abs=1e-6), (
+            "An overridden check must record the ground-truth value for render "
+            f"preference; got {check.get('ground_truth_value')!r}"
+        )
+
+    def test_momentum_absolute_tolerance_correct_near_zero(self):
+        """Design-rationale regression: momentum legitimately sits near zero
+        (e.g. a flat 20d return). A correctly-rounded citation of a near-zero
+        truth must still pass under the ABSOLUTE tolerance — proves the choice
+        of comparison_type='absolute' (not 'relative') is load-bearing: under
+        'relative', _classify() divides by abs(truth), and a tiny rounding diff
+        against a near-zero truth would spuriously blow up to a huge relative
+        error and misclassify honest rounding as a mismatch."""
+        mod = _import_verifier()
+        truth = 0.00031415  # near-zero, plausible flat-momentum reading
+        cited = round(truth, 4)  # 0.0003
+        lens_sections = copy.deepcopy(_FULL_LENS_SECTIONS)
+        lens_sections["technicals"]["payload"]["momentum"]["AGG"] = truth
+        row = _make_market_prism_row(
+            [{"indicator": "momentum_AGG_20d", "value": cited, "lens": "technicals"}]
+        )
+        result = mod.verify_cited_numbers(_RUN_ID, row, lens_sections=lens_sections)
+        assert result["checks"][0]["classification"] == "pass", (
+            f"A near-zero truth ({truth!r}) with an honestly-rounded citation "
+            f"({cited!r}) must pass under absolute tolerance; got "
+            f"{result['checks'][0]!r}"
+        )
+
+    def test_momentum_comparison_type_is_absolute(self):
+        """Direct registry introspection (mirrors the existing non-fundamentals
+        comparison-type test): every momentum_<TICKER>_20d entry must use
+        comparison_type='absolute', matching breadth/VIX/tone/rates — never
+        'relative' (only the fundamentals dollar-magnitude wildcard uses
+        that)."""
+        mod = _import_verifier()
+        for ticker in _MOMENTUM_TICKERS:
+            indicator = f"momentum_{ticker}_20d"
+            _lens, _path, comparison_type, _tolerance = mod._INDICATOR_REGISTRY[indicator]
+            assert comparison_type == "absolute", (
+                f"{indicator!r} must use comparison_type='absolute'; got "
+                f"{comparison_type!r}"
             )
 
 
