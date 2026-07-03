@@ -3373,7 +3373,7 @@ Both leave the underlying NUMBER correct; they only affect how visibly the stale
 - `tests/app/test_eod_account_basis_refresh.py` — AC-4, AC-10 (last-good snapshot write, timeout constant, live-path parity) + the F6 realistic-regression revision
 - `tests/fixtures/dashboard/frozen_portfolio_strip/eod_account_basis_parity.json` — golden fixture (captured-from-producer / schema-derived), frozen == live parity (AC-6)
 - `tests/test_scope_guard.py` — AC-5 hard scope guard (`alpha_bot_execution.py` / `math_engine.py` byte-unchanged)
-- `feature-plans/eod-today-change-account-basis.md` — plan (Status: ready at time of writing; not renamed `.completed.md` by this doc pass — out of doc-writer scope)
+- `feature-plans/eod-today-change-account-basis.completed.md` — plan, renamed `.completed.md` (doc-writer housekeeping pass, 2026-07-03) now that PR #89 has shipped
 
 Result: 42/42 GREEN. AC-5 scope guard clean. Independently re-verified by executing the real pytest suite at both the pre-fix and post-fix SHAs in throwaway worktrees (5-fail→5-pass transition reproduced, incl. the F6 account_value 80000-wrong→100000-correct scaling).
 
@@ -3850,3 +3850,47 @@ The verifier only checks numbers the council **declares** as `cited_numbers` tup
 ### Reference
 
 DE-PRISM-NUMERIC-VERIFY-001; branch `feat/prism-numeric-verifier`; HEAD `55a7723`; reuses the `MARKET_PRISM_SOURCES` no-migration append-only pattern from DE-PRISM-SOURCES-001 and the shared-fetch discipline from DE-ADVISOR-LATENCY.
+
+### Post-deploy verified (2026-07-03)
+
+Real-world confirmation, not a code change. main (PM) queried a read-only `/tmp` copy of the live droplet's `alphabot_state.db` (never touched the live DB) after the 2026-07-03 07:00-07:08 UTC council run. MARKET_PRISM row id=45 (run_id `6af05c3d`, created 07:06:45 UTC) carried `raw_response.cited_numbers` = 24 `{indicator,value,lens}` tuples — AC-2 is effective in production, not just under test. MARKET_PRISM_VERIFICATION row id=48 (same run_id, created 07:08:05 UTC, no stale-bleed) recorded `verdict=clean, n_checks=24`: 20 pass (incl. exact-match `VIX 16.59==16.59`, `VXVCLS 19.16==19.16`, `DGS10 4.48==4.48`, `breadth 0.7==0.7`) and 4 unverifiable — `momentum_SPY/QQQ/XLV/XLF_20d`, the entire unverifiable count that run, all technicals-momentum citations with no registry entry at the time. This is the direct empirical trigger for DE-PRISM-MOMENTUM-REGISTRY-001 (below): that cycle closes exactly the gap this run exposed. Provenance: `.claude/PM-ACTIVE-WORK.md`, "THREAD D — POST-DEPLOY VERIFIED... @ 2026-07-03 10:13 UTC" ledger entry.
+
+## DE-PRISM-MOMENTUM-REGISTRY-001 — Technicals momentum family closes the last `_INDICATOR_REGISTRY` gap (2026-07-03)
+
+Branch: `feat/prism-momentum-registry` | Base: `origin/main` d2fff55 (DE-PRISM-NUMERIC-VERIFY-001, PR #90) | HEAD: a621497
+
+### Problem
+
+The 2026-07-03 post-deploy verification of DE-PRISM-NUMERIC-VERIFY-001 (see addendum above) found the numeric verifier's only real-world gap: every `momentum_<TICKER>_20d` citation the council emits resolves `unverifiable` — 4 of 24 real citations that day, 100% of the unverifiable count — because `_INDICATOR_REGISTRY` had no entry for the technicals `momentum` family (only `breadth` was registered from that lens).
+
+### Decision: 10 literal registry entries, absolute tolerance, magnitude derived from live citation precision
+
+`advisors/prism_numeric_verifier.py` gains one named constant (`_MOMENTUM_TOLERANCE = 0.001`) and 10 literal `_INDICATOR_REGISTRY` entries — `momentum_<TICKER>_20d -> ("technicals", "momentum.<TICKER>", "absolute", _MOMENTUM_TOLERANCE)` — one per ticker in `lens_technicals._PROXY_UNIVERSE` (SPY, QQQ, IWM, EFA, AGG, GLD, XLF, XLE, XLV, XLI). Registered as literal keys, not the fundamentals wildcard shape — a ticker outside the fixed proxy universe (e.g. `momentum_TSLA_20d`) stays `unverifiable`, never silently matched. Total diff: 16 lines; `_classify`, `_resolve_dotted_path`, `_lookup_registry_entry` untouched.
+
+**Scope decision (PM, over the recon's narrower default): register all 10 proxy tickers, not just the 4 seen live.** The recon that scoped this cycle found only 4 tickers (SPY/QQQ/XLV/XLF) actually cited in the one verified production run. Registering only those 4 would have left the other 6 proxy-universe tickers silently unverifiable the first time the council happened to cite one of them on a future night. All 10 are registered up front.
+
+**Absolute, not relative, tolerance — same reasoning as `breadth`.** Momentum is a naturally bounded ~+/-0.15 20-day-return fraction that legitimately sits near and crosses zero. A relative tolerance (`_classify()`'s relative branch divides by `|truth|`) would make ordinary rounding noise near zero look like a large relative error — the same category error the fundamentals wildcard deliberately avoids by being relative for the opposite reason (large-magnitude $ figures).
+
+**Tolerance grounding — the adversarial crux mrtest owned.** `0.001` is derived from the live citation precision (~4 decimals, e.g. `-0.0124`), so honest rounding noise tops out at `0.00005` (half the last digit) — `0.001` gives 20x headroom over that floor. Verified against both ends: a correctly-rounded citation of a true value passes; a hallucinated citation representative of the kind the council could plausibly produce (e.g. `-0.02` cited against a true `-0.0124`, diff `0.0076`) lands outside even the `_OVERRIDE_FACTOR`-widened band and is correctly `overridden` — a looser guessed tolerance (e.g. `0.01`) would have wrongly passed that hallucination.
+
+**Ground-truth stability, verified against the data flow (not assumed).** The verifier's ground truth is a post-council re-fetch (`prism_scheduler._fetch_lens_sections()`, prism_scheduler.py:560-657), not the payload the council read at synthesis time. This re-fetch is safe for momentum specifically because momentum and `breadth` come from the same `_build_technicals_section()` call over the same Alpaca daily-bar fetch, and a completed trading day's daily bar is immutable once posted — unlike `tone`, whose rolling GDELT window genuinely drifts between council-time and verify-time (the reason `_TONE_TOLERANCE` is deliberately wider). Momentum's tolerance only has to absorb citation-rounding noise, not re-fetch drift.
+
+### Test-boundary correction found during GREEN (float-precision, not a `_classify()` bug)
+
+The two tolerance-boundary tests (`test_momentum_boundary_exactly_at_tolerance_is_pass`, `test_momentum_boundary_exactly_at_override_factor_is_flagged`) originally used `truth=-0.0124` and constructed `cited` via `truth - offset`, relying on `_classify()`'s internal `abs(cited - truth)` to recover the offset exactly. `_MOMENTUM_TOLERANCE` (0.001) has no exact binary (IEEE-754) representation — unlike VIX's `0.5`, which is dyadic and round-trips exactly — so the override-factor test's subtract-then-resubtract produced a 1-ulp miss (`diff=0.003000000000000001` against a freshly computed `0.003` boundary), misclassifying `overridden` instead of `flagged`. Root cause was the test's boundary construction, not `_classify()` — a real citation is never within 1 ulp of a mathematical boundary — and mrimpl correctly declined to touch the shared classify function for a momentum-only tolerance quirk. Fixed by using `truth=0.0` for both boundary tests: IEEE-754 negation and subtraction-from-zero are exact, so the round-trip is bit-for-bit lossless regardless of the tolerance's binary representability, and `0.0` is itself a plausible flat 20d-return reading.
+
+### Files changed
+
+- `advisors/prism_numeric_verifier.py` — `_MOMENTUM_TOLERANCE` constant + 10 `_INDICATOR_REGISTRY` entries (16 lines, pure data addition)
+- `tests/prism/test_prism_numeric_verifier.py` — `TestMomentumRegistryExpansion` (10 new tests: out-of-universe-ticker unmapped, exact registry-size pin at 23 keys, correctly-rounded-citation passes, tolerance/override-factor boundaries, near-miss-hallucination rejected, absolute-not-relative correctness near zero) + the 10 momentum indicators added to the two existing registry-wide parametrized tests (never-unverifiable-when-available, comparison-type-is-absolute) + populated the `_FULL_LENS_SECTIONS` fixture's previously-empty `technicals.momentum` dict with per-ticker truths for all 10 proxy tickers
+- `tests/prism/test_prism_numeric_verifier_registry_drift.py` — extended the pre-existing F2 registry-drift guard (from the DE-PRISM-NUMERIC-VERIFY-001 review-fix cycle) with `test_technicals_momentum_resolves_against_real_builder_for_all_proxy_tickers`, resolving all 10 momentum entries against the REAL `_build_technicals_section()` output (network mocked at `lens_technicals._get_bars`, its own documented test-mockable seam)
+
+Result: 92/92 GREEN (`tests/prism`, `-n0 -o addopts=`). AC-5 scope guard held: zero diff on `alpha_bot_execution.py`/`math_engine.py` across the whole cycle (RED `8cd20c3` -> float-boundary fix `f939080` -> GREEN `a621497`).
+
+### Reference
+
+DE-PRISM-MOMENTUM-REGISTRY-001; branch `feat/prism-momentum-registry`; HEAD `a621497`; extends the `_INDICATOR_REGISTRY` established in DE-PRISM-NUMERIC-VERIFY-001; direct empirical trigger was that entry's 2026-07-03 post-deploy-verified addendum.
+
+### `/review` follow-up (PR #91): momentum naming pinned in the producer contract
+
+`/review` found the momentum registry's consumer half (`_INDICATOR_REGISTRY`) had no matching producer-side contract: `.claude/agents/prism-technicals-analyst.md` pinned a concrete worked example for `breadth` but described momentum only in prose ("momentum reading") — the `momentum_<TICKER>_20d` naming had been reverse-engineered from one live council run's incidental choice, never enforced. Since the registry's momentum entries are literal (not wildcard-matched), any producer drift (`momentum_IWM`, `IWM_momentum_20d`, ...) would resolve `unverifiable` forever with no CI signal. Fixed by adding a second concrete worked example to the role file (`{"indicator": "momentum_SPY_20d", "value": -0.0124, "lens": "technicals"}`, with an explicit "use the naming exactly" instruction) — mirroring how macro's example pins `DGS10` and derivatives' pins `VIX`. RED `c7d5800` → GREEN `c3fdaa8`; new `TestTechnicalsAnalystMomentumNamingContract` in `tests/ai_advisor/test_prism_role_files_cited_numbers.py` (19/19 total in that file — corrects this codebase's prior "6 tests" miscount for the same file, which undercounted the parametrization across the 6 role files; see `docs/generated/advisors_prism_numeric_verifier.md`). AC-5 held (zero diff on `alpha_bot_execution.py`/`math_engine.py` across the whole cycle).

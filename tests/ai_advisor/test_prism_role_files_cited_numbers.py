@@ -240,3 +240,61 @@ class TestAnalystFilesCitedNumbersInstruction:
                 f"shape to emit, not just that the field exists. Got no occurrence of "
                 f"{field!r} in the matched window: {window_text!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Technicals analyst: momentum indicator naming contract
+# (DE-PRISM-MOMENTUM-REGISTRY-001 /review finding on PR #91.) macro's worked
+# example IS its exact _INDICATOR_REGISTRY key (DGS10); derivatives' worked
+# example IS its exact key (VIX) — their naming is contracted by the prompt
+# itself. Technicals' worked example only ever pinned "breadth"; momentum was
+# left as bare prose ("momentum reading") with no concrete indicator-string
+# format. advisors/prism_numeric_verifier.py's momentum_<TICKER>_20d format
+# (DE-PRISM-MOMENTUM-REGISTRY-001) was reverse-engineered from a live council
+# run where the LLM happened to choose it — never pinned, so any drift
+# (momentum_IWM, IWM_momentum_20d, ...) resolves unverifiable forever (the
+# registry's momentum entries are literal, not a wildcard — the exact blind
+# spot this feature closes). This closes the producer half of that gap.
+# ---------------------------------------------------------------------------
+
+# window_text from _find_cooccurrence_window is always lowercased (see its
+# implementation); [a-z] (not [A-Z]) matches that, with IGNORECASE as a
+# defensive belt-and-suspenders in case this is ever pointed at raw content.
+_MOMENTUM_NAMING_PATTERN = re.compile(r"momentum_[a-z]+_20d", re.IGNORECASE)
+
+
+class TestTechnicalsAnalystMomentumNamingContract:
+    def test_technicals_analyst_pins_concrete_momentum_indicator_naming(self):
+        """The technicals analyst file's cited_numbers mandate must pin a CONCRETE
+        momentum_<TICKER>_20d-shaped worked example — mirroring how macro pins
+        DGS10 and derivatives pins VIX — not just the bare word "momentum" in
+        prose.
+
+        RED on current HEAD: line ~50 lists momentum only as "momentum reading"
+        in the parenthetical examples, and the worked JSON example is
+        {"indicator": "breadth", ...} only — no momentum_<TICKER>_20d-shaped
+        string appears anywhere in the file.
+        """
+        content = _read_agent_file("prism-technicals-analyst.md")
+        window_text = _find_cooccurrence_window(
+            content,
+            "cited_numbers",
+            _INSTRUCTION_MARKERS,
+            _COOCCURRENCE_WINDOW,
+            negation_markers=_NEGATION_MARKERS,
+        )
+        assert window_text is not None, (
+            "prism-technicals-analyst.md: no genuine cited_numbers mandate window "
+            "found — see test_analyst_file_instructs_emitting_cited_number_tuples "
+            "for the primary assertion; this test depends on that window existing."
+        )
+        assert _MOMENTUM_NAMING_PATTERN.search(window_text), (
+            "prism-technicals-analyst.md's cited_numbers mandate must pin a concrete "
+            "momentum_<TICKER>_20d-shaped worked example (e.g. "
+            '\'{"indicator": "momentum_SPY_20d", "value": -0.0124, "lens": '
+            '"technicals"}\'), mirroring how macro pins DGS10 and derivatives pin '
+            "VIX. Without a concrete example, the analyst's exact naming choice is "
+            "unenforced — any drift (momentum_IWM, IWM_momentum_20d, ...) resolves "
+            "unverifiable forever since _INDICATOR_REGISTRY's momentum entries are "
+            f"literal, not a wildcard. Matched mandate window: {window_text!r}"
+        )

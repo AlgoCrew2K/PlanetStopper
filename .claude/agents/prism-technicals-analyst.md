@@ -47,7 +47,7 @@ Reason about the technicals signal. Consider:
 
 Form a clear directional lean: **bullish**, **neutral**, or **bearish**, with a concise rationale. If data is unavailable, state `limited-inputs` with the specific gap.
 
-For every numeric indicator you state (e.g. breadth fraction, SMA50/SMA200 posture level, momentum reading), you MUST also report it to the synthesizer as an `{indicator, value, lens}` tuple (e.g. `{"indicator": "breadth", "value": 0.58, "lens": "technicals"}`) so it can include it in `cited_numbers` — this is required for the post-council numeric verifier (DE-PRISM-NUMERIC-VERIFY-001) to check your citation against its authoritative source.
+For every numeric indicator you state (e.g. breadth fraction, SMA50/SMA200 posture level, per-ticker momentum reading), you MUST also report it to the synthesizer as an `{indicator, value, lens}` tuple (e.g. `{"indicator": "breadth", "value": 0.58, "lens": "technicals"}`, or for a momentum reading `{"indicator": "momentum_SPY_20d", "value": -0.0124, "lens": "technicals"}` — use the `momentum_<TICKER>_20d` naming exactly, since it must match the numeric verifier's registered indicators) so it can include it in `cited_numbers` — this is required for the post-council numeric verifier (DE-PRISM-NUMERIC-VERIFY-001) to check your citation against its authoritative source.
 
 ### 4. Write your initial_read to the audit log
 
