@@ -931,6 +931,61 @@
             line-height: 1.5;
             margin-top: 0.25rem;
         }
+
+        /* Compact verdict-first summary (2026-07 redesign): a single verdict
+           pill + short count line replaces the flat wall of pass/unverifiable
+           badges — only flagged/overridden checks render individually below. */
+        .prism-verify-summary {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .prism-verify-summary-count {
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+        }
+
+        .prism-verify-badge--clean {
+            color: var(--studio-pos);
+            border-color: var(--studio-pos);
+        }
+
+        .prism-verify-badge--flags-detected {
+            color: var(--studio-warn);
+            border-color: var(--studio-warn);
+        }
+
+        .prism-verify-badge--overrides-detected {
+            color: var(--studio-neg);
+            border-color: var(--studio-neg);
+        }
+
+        .prism-verify-badge--no-verifiable-claims,
+        .prism-verify-badge--no-numeric-claims {
+            color: var(--studio-ink-dim);
+            border-color: var(--studio-border);
+        }
+
+        .prism-verify-details {
+            margin-top: 0.5rem;
+        }
+
+        .prism-verify-details > summary {
+            cursor: pointer;
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+            user-select: none;
+        }
+
+        .prism-verify-details > summary:hover {
+            color: var(--studio-ink);
+        }
+
+        .prism-verify-details-list {
+            margin-top: 0.5rem;
+        }
     </style>
 </head>
 
@@ -1142,14 +1197,39 @@
                 {% endif %}
 
                 {# Numeric verification overlay (DE-PRISM-NUMERIC-VERIFY-001, AC-10).
-                   Additive fact-check badges — flags/overrides cited numbers against
-                   ground-truth sources.  Honest empty-state: renders nothing when no
-                   VERIFICATION row exists yet for this run_id (no fabricated badges).
+                   2026-07 redesign: the day-to-day signal is the VERDICT, not 27
+                   individual passes — default render is one verdict pill + a
+                   short count line; only flagged/overridden checks (the actionable
+                   anti-fabrication catches) render as individual badges, with a
+                   collapsed "show all" disclosure for full transparency.
+                   Honest empty-state: renders nothing when no VERIFICATION row
+                   exists yet for this run_id (no fabricated badges).
                    XSS-safe: all values escaped with | e, no | safe used. #}
-                {% if market_prism_verification and market_prism_verification.get('checks') %}
+                {% if market_prism_verification is not none %}
                     <div data-testid="prism-verification" class="prism-verification">
                         <div class="prism-verification-header">Numeric Verification</div>
-                        {% for _chk in market_prism_verification.get('checks', []) %}
+
+                        {% set _verdict = market_prism_verification.get('verdict') or 'no-numeric-claims' %}
+                        {% set _verdict_badge_class = {
+                            'clean':                'prism-verify-badge--clean',
+                            'flags-detected':        'prism-verify-badge--flags-detected',
+                            'overrides-detected':    'prism-verify-badge--overrides-detected',
+                            'no-verifiable-claims':  'prism-verify-badge--no-verifiable-claims',
+                            'no-numeric-claims':     'prism-verify-badge--no-numeric-claims',
+                        }.get(_verdict, 'prism-verify-badge--no-numeric-claims') %}
+                        <div class="prism-verify-summary" data-testid="prism-verify-summary">
+                            <span class="prism-verify-badge {{ _verdict_badge_class }}"
+                                  data-testid="prism-verify-verdict">{{ _verdict | e }}</span>
+                            {% if market_prism_verification.get('count_line') %}
+                                <span class="prism-verify-summary-count"
+                                      data-testid="prism-verify-count-line">{{ market_prism_verification.get('count_line') | e }}</span>
+                            {% endif %}
+                        </div>
+
+                        {# Only the actionable catches (flagged/overridden) render as
+                           individual badges by default — pass/unverifiable stay folded
+                           into the count line above. #}
+                        {% for _chk in market_prism_verification.get('actionable_checks', []) %}
                             {# .get(key, default)'s default only fires when the key is
                                ABSENT, not when it's present with value None (F1, /review
                                PR #90). indicator can be None (Finding-1's `{}`-coercion
@@ -1177,6 +1257,33 @@
                                 {% endif %}
                             </div>
                         {% endfor %}
+
+                        {% if market_prism_verification.get('checks') %}
+                            <details class="prism-verify-details" data-testid="prism-verify-details">
+                                <summary>Show all {{ market_prism_verification.get('checks') | length }} checks</summary>
+                                <div class="prism-verify-details-list">
+                                    {% for _chk in market_prism_verification.get('checks', []) %}
+                                        {% set _cls = _chk.get('classification') or 'unverifiable' %}
+                                        {% set _indicator = _chk.get('indicator') or '' %}
+                                        {% set _badge_class = {
+                                            'pass':         'prism-verify-badge--pass',
+                                            'flagged':      'prism-verify-badge--flagged',
+                                            'overridden':   'prism-verify-badge--overridden',
+                                            'unverifiable': 'prism-verify-badge--unverifiable',
+                                        }.get(_cls, 'prism-verify-badge--unverifiable') %}
+                                        <div class="prism-verify-check"
+                                             data-testid="prism-verify-check-full-{{ _indicator | e }}">
+                                            <span class="prism-verify-badge {{ _badge_class }}">
+                                                {{ _indicator | e }} — {{ _cls | e }}
+                                            </span>
+                                            {% if _chk.get('annotation') %}
+                                                <p class="prism-verify-annotation">{{ _chk.get('annotation') | e }}</p>
+                                            {% endif %}
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                            </details>
+                        {% endif %}
                     </div>
                 {% endif %}
 

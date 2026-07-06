@@ -3741,6 +3741,33 @@ def _translate_backtest_error(err: "str | None") -> "str | None":
     return err
 
 
+def _build_verification_count_line(summary: "dict") -> str:
+    """Format the MARKET_PRISM_VERIFICATION summary counts into a compact,
+    human-readable status line for the Overview tab's Numeric Verification
+    section (2026-07 redesign, replaces a flat wall of 25+ pass badges).
+
+    e.g. "25 verified · 2 unverifiable", or with actionable catches present,
+    "23 verified · 2 unverifiable · 1 flagged · 1 overridden" — zero flagged/
+    overridden counts are omitted so a clean run reads as just two numbers.
+    Returns "" when there are no checks at all (the no-numeric-claims /
+    no-verifiable-claims verdict states), where "0 verified · 0 unverifiable"
+    would be noise rather than signal.
+    """
+    n_checks = summary.get("n_checks", 0) or 0
+    if not n_checks:
+        return ""
+    n_pass = summary.get("n_pass", 0) or 0
+    n_flagged = summary.get("n_flagged", 0) or 0
+    n_overridden = summary.get("n_overridden", 0) or 0
+    n_unverifiable = summary.get("n_unverifiable", 0) or 0
+    parts = [f"{n_pass} verified", f"{n_unverifiable} unverifiable"]
+    if n_flagged:
+        parts.append(f"{n_flagged} flagged")
+    if n_overridden:
+        parts.append(f"{n_overridden} overridden")
+    return " · ".join(parts)
+
+
 @app.route("/ai-advisor", methods=["GET"])
 def ai_advisor_tab():
     """Render the single unified AI Advisor page with all 5 in-place tab panels.
@@ -3942,18 +3969,34 @@ def ai_advisor_tab():
                         if not isinstance(_chk, dict):
                             continue
                         _annotated = dict(_chk)
-                        if _annotated.get("classification") == "overridden":
+                        # Annotate both actionable classifications — flagged and
+                        # overridden both carry a real cited/ground-truth pair
+                        # from _build_check (only pass/unverifiable don't have a
+                        # meaningful diff to report). 2026-07 UI redesign: these
+                        # are the only checks rendered as individual badges.
+                        if _annotated.get("classification") in ("flagged", "overridden"):
                             _annotated["annotation"] = (
                                 f"council cited {_annotated.get('cited_value')}; "
                                 f"source says {_annotated.get('ground_truth_value')}"
                             )
                         _annotated_checks.append(_annotated)
+                    _ver_summary = (
+                        _ver_raw.get("summary", {}) if isinstance(_ver_raw, dict) else {}
+                    ) or {}
                     market_prism_verification = {
                         "checks": _annotated_checks,
-                        "summary": _ver_raw.get("summary", {})
-                        if isinstance(_ver_raw, dict)
-                        else {},
+                        "summary": _ver_summary,
                         "verdict": _ver_raw.get("verdict") if isinstance(_ver_raw, dict) else None,
+                        # Compact verdict-first summary (2026-07 redesign): the
+                        # day-to-day signal is the verdict pill + a short count
+                        # line, not a wall of 25+ pass/unverifiable badges.
+                        # Computed here (testable Python) rather than in Jinja.
+                        "count_line": _build_verification_count_line(_ver_summary),
+                        "actionable_checks": [
+                            _c
+                            for _c in _annotated_checks
+                            if _c.get("classification") in ("flagged", "overridden")
+                        ],
                     }
         except Exception as _verify_exc:
             # Log type-only at WARNING — no exc args/message; honest empty-state
