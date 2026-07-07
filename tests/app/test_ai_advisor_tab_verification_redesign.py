@@ -23,21 +23,36 @@ redesign surface:
   4. Bonus: the render guard now fires whenever a VERIFICATION row exists at all
      (not only when `checks` is non-empty) — pins a real behavior change called out
      in the ef9bba1 commit message.
+  5. `_build_verdict_display(verdict)` (app.py, /review PR #92 fix, commit 8688bbf)
+     — the honest-verdict-fallback helper: a recognized verdict renders its label
+     verbatim with the matching (deduped) check-badge class; a falsy verdict
+     renders ("unknown", unverifiable-class); an unrecognized/future verdict
+     string renders ITS OWN raw string verbatim — never silently coerced to the
+     misleading "no-numeric-claims" label.
+  6. Route-level: a VERIFICATION row with `raw_response.verdict` missing/None
+     renders '>unknown<' on the verdict pill (the F1 correctness fix) — the old
+     Jinja default would have rendered the misleading '>no-numeric-claims<'.
+  7. Macro-equivalence guard (/review PR #92's `render_verify_check` extraction):
+     a flagged/overridden check present in BOTH `actionable_checks` and the full
+     `checks` list renders via BOTH macro call sites — both testid families and
+     the annotation text (appearing twice, once per site) are still produced.
 
-Why these are meaningful — verified via `git show ef9bba1^:templates/ai_advisor.html`
-and `git show ef9bba1^:app.py` (the pre-redesign state) — every test below would
-FAIL against that old design:
-  - The old template's guard was `{% if market_prism_verification and
-    market_prism_verification.get('checks') %}`, with a single `{% for %}` over
-    ALL checks rendering EVERY pass/unverifiable/flagged/overridden entry as a
-    top-level `data-testid="prism-verify-check-{indicator}"` badge. There was no
-    `prism-verify-verdict`, `prism-verify-count-line`, `prism-verify-summary`, or
-    `prism-verify-details` testid anywhere in the old template — every assertion
-    on those testids below fails outright (content simply absent) against old HTML.
-  - The old app.py had no `_build_verification_count_line` function at all (the
-    `from app import _build_verification_count_line` in every helper test below
-    raises ImportError against the old commit), and `market_prism_verification`
-    never carried `count_line`/`actionable_checks` keys.
+Why these are meaningful — verified via `git show ef9bba1^:templates/ai_advisor.html`,
+`git show ef9bba1^:app.py`, and `git show 8688bbf^:app.py` (the pre-redesign and
+pre-dedup states respectively) — every test below would FAIL against the
+relevant prior commit:
+  - The old (pre-ef9bba1) template's guard was `{% if market_prism_verification
+    and market_prism_verification.get('checks') %}`, with a single `{% for %}`
+    over ALL checks rendering EVERY pass/unverifiable/flagged/overridden entry
+    as a top-level `data-testid="prism-verify-check-{indicator}"` badge. There
+    was no `prism-verify-verdict`, `prism-verify-count-line`, `prism-verify-
+    summary`, or `prism-verify-details` testid anywhere in the old template —
+    every assertion on those testids below fails outright (content simply
+    absent) against old HTML.
+  - The old (pre-ef9bba1) app.py had no `_build_verification_count_line`
+    function at all (the `from app import _build_verification_count_line` in
+    every helper test below raises ImportError against that commit), and
+    `market_prism_verification` never carried `count_line`/`actionable_checks`.
   - Test 2's "zero top-level actionable badges for a clean run" is the direct
     inverse of the old behavior (old design rendered all 27 as top-level badges,
     so `_TOP_LEVEL_CHECK_TESTID_RE.findall(html)` would return 27 matches, not []).
@@ -45,6 +60,15 @@ FAIL against that old design:
     design, which promoted every classification to a top-level badge.
   - Test 4's "overlay renders even with empty checks" fails against the old guard,
     which short-circuits (renders nothing) whenever `checks` is falsy.
+  - The old (pre-8688bbf) app.py had no `_build_verdict_display` function at all
+    (ImportError against ef9bba1) — section 5's tests fail outright.
+  - Section 6's route test fails against ef9bba1's Jinja default
+    (`market_prism_verification.get('verdict') or 'no-numeric-claims'`), which
+    renders '>no-numeric-claims<' for a null verdict, not '>unknown<'.
+  - Section 7's macro-equivalence test is a REGRESSION/equivalence guard, not a
+    new-behavior pin — it is expected to pass against both ef9bba1 and 8688bbf
+    (the refactor is explicitly behavior-preserving for these two testid
+    families); its value is catching a FUTURE regression in the shared macro.
 
 DB isolation: N/A — route-level test, DB accessors are mocked (mirrors
 test_ai_advisor_tab_verification_overlay.py exactly). tests/conftest.py's
@@ -488,3 +512,130 @@ def test_overlay_renders_even_when_checks_list_is_empty(client):
     )
     assert 'data-testid="prism-verify-verdict"' in html
     assert ">no-numeric-claims<" in html
+
+
+# ---------------------------------------------------------------------------
+# 5. _build_verdict_display(verdict) -> (label, css_class) — /review PR #92's
+#    honest-verdict-fallback fix (commit 8688bbf). Direct unit tests.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "verdict,expected_label,expected_class",
+    [
+        ("clean", "clean", "prism-verify-badge--pass"),
+        ("flags-detected", "flags-detected", "prism-verify-badge--flagged"),
+        ("overrides-detected", "overrides-detected", "prism-verify-badge--overridden"),
+        ("no-verifiable-claims", "no-verifiable-claims", "prism-verify-badge--unverifiable"),
+        ("no-numeric-claims", "no-numeric-claims", "prism-verify-badge--unverifiable"),
+    ],
+)
+def test_verdict_display_recognized_verdict_renders_label_verbatim_with_mapped_class(
+    verdict, expected_label, expected_class
+):
+    from app import _build_verdict_display
+
+    label, css_class = _build_verdict_display(verdict)
+    assert label == expected_label, f"expected label {expected_label!r}, got {label!r}"
+    assert css_class == expected_class, f"expected css_class {expected_class!r}, got {css_class!r}"
+
+
+@pytest.mark.parametrize("falsy_verdict", [None, ""])
+def test_verdict_display_falsy_verdict_renders_unknown_unverifiable(falsy_verdict):
+    from app import _build_verdict_display
+
+    label, css_class = _build_verdict_display(falsy_verdict)
+    assert label == "unknown", f"a falsy verdict ({falsy_verdict!r}) must render label 'unknown'"
+    assert css_class == "prism-verify-badge--unverifiable"
+
+
+def test_verdict_display_unrecognized_verdict_renders_raw_string_not_coerced():
+    """F1 (/review PR #92): a future/unrecognized verdict string must render its
+    OWN raw string verbatim as the label — never silently coerced to the
+    misleading 'no-numeric-claims' label, which would falsely assert 'nothing
+    was checked' when the data doesn't say that at all.
+
+    RED intent: would FAIL against 8688bbf^ two ways — the helper doesn't exist
+    yet (ImportError), and the old Jinja `.get(_verdict, 'prism-verify-badge--
+    no-numeric-claims')` map (pre-dedup) plus the `or 'no-numeric-claims'`
+    default would have coerced an unrecognized string's CSS class (not its
+    label) toward the no-numeric-claims styling.
+    """
+    from app import _build_verdict_display
+
+    label, css_class = _build_verdict_display("some-future-verdict")
+    assert label == "some-future-verdict", (
+        f"an unrecognized verdict must render its own raw string verbatim as the "
+        f"label — got {label!r}"
+    )
+    assert label != "no-numeric-claims", (
+        "an unrecognized verdict must NOT be coerced to the 'no-numeric-claims' label"
+    )
+    assert css_class == "prism-verify-badge--unverifiable", (
+        "an unrecognized verdict must fall back to the neutral unverifiable-class pill"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 6. Route-level: a VERIFICATION row with a missing/None verdict renders
+#    '>unknown<' on the verdict pill (the F1 correctness fix, /review PR #92).
+#    Old design's Jinja default (`... or 'no-numeric-claims'`) would have
+#    rendered the misleading '>no-numeric-claims<' label instead.
+# ---------------------------------------------------------------------------
+
+
+def test_route_renders_unknown_label_when_verdict_is_none(client):
+    row_null_verdict = _make_verification_row([], verdict=None)
+    resp = _get_ai_advisor(client, row_null_verdict)
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+
+    assert 'data-testid="prism-verify-verdict"' in html
+    assert ">unknown<" in html, (
+        "a null verdict must render the honest 'unknown' label on the verdict pill "
+        f"(F1 fix). HTML snippet (first 3000 chars): {html[:3000]!r}"
+    )
+    assert ">no-numeric-claims<" not in html, (
+        "the OLD design's Jinja default (`market_prism_verification.get('verdict') or "
+        "'no-numeric-claims'`) coerced a null verdict to the misleading "
+        "'no-numeric-claims' label — this must no longer happen."
+    )
+
+
+# ---------------------------------------------------------------------------
+# 7. Macro-equivalence guard (/review PR #92's render_verify_check extraction):
+#    a check present in BOTH actionable_checks and the full checks list must
+#    render via BOTH macro call sites — the top-level actionable testid AND
+#    the <details> full-list testid — with its annotation appearing at both.
+# ---------------------------------------------------------------------------
+
+
+def test_actionable_case_flagged_and_overridden_appear_in_both_actionable_and_full_lists(client):
+    """A flagged/overridden check is a member of BOTH `actionable_checks` (top-
+    level list) and `checks` (the <details> full list) — the shared
+    render_verify_check macro must be called for it from both sites, producing
+    both testid families and rendering the annotation text at both (the
+    top-level copy carries the prism-verify-annotation testid; the <details>
+    copy does not, per `show_annotation_testid=False` at that call site — same
+    as the pre-extraction behavior)."""
+    resp = _get_ai_advisor(client, _VERIFICATION_ROW_ACTIONABLE)
+    html = resp.get_data(as_text=True)
+
+    flagged_chk = next(c for c in _ACTIONABLE_CHECKS if c["classification"] == "flagged")
+    overridden_chk = next(c for c in _ACTIONABLE_CHECKS if c["classification"] == "overridden")
+
+    for chk in (flagged_chk, overridden_chk):
+        assert f'data-testid="prism-verify-check-{chk["indicator"]}"' in html, (
+            f"{chk['indicator']!r} must render via the top-level actionable macro call site"
+        )
+        assert f'data-testid="prism-verify-check-full-{chk["indicator"]}"' in html, (
+            f"{chk['indicator']!r} must ALSO render inside <details> via the full-list "
+            "macro call site — the macro extraction must not have dropped either site."
+        )
+        annotation = f"council cited {chk['cited_value']}; source says {chk['ground_truth_value']}"
+        assert html.count(annotation) == 2, (
+            f"the annotation for {chk['indicator']!r} must appear exactly twice — once "
+            f"from each macro call site (top-level + <details>); found "
+            f"{html.count(annotation)} occurrences. HTML snippet (first 3000 chars): "
+            f"{html[:3000]!r}"
+        )
