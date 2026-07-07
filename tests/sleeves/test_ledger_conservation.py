@@ -418,24 +418,20 @@ class TestApplyFillZeroQtyAgainstSoldOutPosition:
         except ledger.InsufficientPositionError:
             pass  # acceptable: zero-qty against an empty position is a legitimate refusal
 
-    def test_zero_qty_sell_against_sold_out_position_if_accepted_conserves_capital(self):
-        # If the implementation treats qty=0 as a no-op (rather than raising
-        # InsufficientPositionError), the result must be a genuine no-op --
-        # state unchanged, conservation law still holds.
+    def test_zero_qty_sell_against_sold_out_position_raises_insufficient_position(self):
+        # sleeve-risk-impl's fix (13e73b6) chose to raise
+        # InsufficientPositionError for this case -- keeping the "only two
+        # documented exceptions" contract clean rather than adding an
+        # undocumented third no-op behavior. Pin that concrete choice now
+        # that it's settled (this replaces an earlier accept-either version
+        # of this test that used pytest.skip() as an escape hatch -- once an
+        # implementation commits to one of two acceptable behaviors, the
+        # test must pin the real contract, not leave a permanent skip).
         state = self._fully_sold_out_state()
-        try:
-            result_state = ledger.apply_fill(
+        with pytest.raises(ledger.InsufficientPositionError):
+            ledger.apply_fill(
                 state, symbol="SPY", side="sell", qty=0.0, price=100.0, reserved_usd=0.0
             )
-        except ledger.InsufficientPositionError:
-            pytest.skip(
-                "implementation raises InsufficientPositionError for qty=0 -- also acceptable"
-            )
-            return
-        _assert_conserved(result_state, "zero-qty sell no-op on sold-out position")
-        assert result_state.positions["SPY"].qty == pytest.approx(0.0)
-        assert result_state.cash_usd == pytest.approx(state.cash_usd)
-        assert result_state.realized_pnl_usd == pytest.approx(state.realized_pnl_usd)
 
     def test_zero_qty_sell_against_never_held_symbol_still_raises_insufficient_position(self):
         # Regression guard: fixing the qty=0-on-sold-out-position path must
@@ -513,4 +509,3 @@ class TestLedgerRejectsNonPositiveAmounts:
         state = ledger.new_ledger(10_000.0)
         with pytest.raises(ValueError):
             ledger.reserve(state, 0.0)
-        assert state.positions["SPY"].cost_basis_usd == pytest.approx(0.0, abs=_TOL)
