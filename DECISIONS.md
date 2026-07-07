@@ -3939,3 +3939,7 @@ Plan approved 2026-07-07 (`feature-plans/managed-sleeves.md`, commit `4f665df`).
 ### Reference
 
 Supersedes `feature-plans/guard-rules-engine.md` (rule-engine core carried into P2 unchanged — a single plan artifact prevents divergent plans feeding the TDD skills). See `feature-plans/managed-sleeves.md` for the full acceptance criteria (AC-1..AC-24), architecture, edge cases, and testing strategy.
+
+### Addendum (2026-07-07): `sleeve_rule_fires` deferred to a P2 migration
+
+Migration 033 (commit `7126eb7`, shipped) creates five tables — `sleeves`, `sleeve_rules`, `sleeve_orders`, `sleeve_fills`, `sleeve_runtime` — not the six originally sketched in the plan's Architecture section. `sleeve_rule_fires` is DEFERRED from P1 to a P2 migration (034): additive-first migration discipline makes the deferral free (no P1 code path writes fires), and the fires row shape (sensed snapshot, episode semantics) is better designed against the real P2 rule-runner than guessed at now. `feature-plans/managed-sleeves.md`'s Architecture DB line and Decisions table are updated to match the shipped migration.
