@@ -3768,6 +3768,35 @@ def _build_verification_count_line(summary: "dict") -> str:
     return " · ".join(parts)
 
 
+# Verdict -> the 4 existing check-badge CSS classes (/review PR #92): the
+# verdict pill reuses --pass/--flagged/--overridden/--unverifiable rather than
+# duplicating the same 4 --studio-* color pairs under 5 new class names.
+_VERDICT_BADGE_CLASS = {
+    "clean": "prism-verify-badge--pass",
+    "flags-detected": "prism-verify-badge--flagged",
+    "overrides-detected": "prism-verify-badge--overridden",
+    "no-verifiable-claims": "prism-verify-badge--unverifiable",
+    "no-numeric-claims": "prism-verify-badge--unverifiable",
+}
+
+
+def _build_verdict_display(verdict: "str | None") -> "tuple[str, str]":
+    """Map a MARKET_PRISM_VERIFICATION verdict string to (label, css_class) for
+    the Overview tab's verdict pill (2026-07 redesign, /review PR #92).
+
+    A recognized verdict (clean/flags-detected/overrides-detected/
+    no-verifiable-claims/no-numeric-claims) renders with its label verbatim and
+    the matching check-badge class. An unrecognized or missing verdict must
+    NOT silently render as "no-numeric-claims" (that would misleadingly assert
+    "nothing was checked" when the data doesn't say so) — it renders a neutral
+    unverifiable-class pill labeled with the raw string, or "unknown" when
+    verdict itself is falsy.
+    """
+    label = verdict if verdict else "unknown"
+    css_class = _VERDICT_BADGE_CLASS.get(verdict, "prism-verify-badge--unverifiable")
+    return label, css_class
+
+
 @app.route("/ai-advisor", methods=["GET"])
 def ai_advisor_tab():
     """Render the single unified AI Advisor page with all 5 in-place tab panels.
@@ -3983,14 +4012,18 @@ def ai_advisor_tab():
                     _ver_summary = (
                         _ver_raw.get("summary", {}) if isinstance(_ver_raw, dict) else {}
                     ) or {}
+                    _ver_verdict = _ver_raw.get("verdict") if isinstance(_ver_raw, dict) else None
+                    _verdict_label, _verdict_class = _build_verdict_display(_ver_verdict)
                     market_prism_verification = {
                         "checks": _annotated_checks,
                         "summary": _ver_summary,
-                        "verdict": _ver_raw.get("verdict") if isinstance(_ver_raw, dict) else None,
+                        "verdict": _ver_verdict,
                         # Compact verdict-first summary (2026-07 redesign): the
                         # day-to-day signal is the verdict pill + a short count
                         # line, not a wall of 25+ pass/unverifiable badges.
                         # Computed here (testable Python) rather than in Jinja.
+                        "verdict_label": _verdict_label,
+                        "verdict_class": _verdict_class,
                         "count_line": _build_verification_count_line(_ver_summary),
                         "actionable_checks": [
                             _c

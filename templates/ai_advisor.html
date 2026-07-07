@@ -947,26 +947,11 @@
             color: var(--studio-ink-dim);
         }
 
-        .prism-verify-badge--clean {
-            color: var(--studio-pos);
-            border-color: var(--studio-pos);
-        }
-
-        .prism-verify-badge--flags-detected {
-            color: var(--studio-warn);
-            border-color: var(--studio-warn);
-        }
-
-        .prism-verify-badge--overrides-detected {
-            color: var(--studio-neg);
-            border-color: var(--studio-neg);
-        }
-
-        .prism-verify-badge--no-verifiable-claims,
-        .prism-verify-badge--no-numeric-claims {
-            color: var(--studio-ink-dim);
-            border-color: var(--studio-border);
-        }
+        /* /review PR #92: the verdict pill reuses the 4 check-badge classes
+           above (--pass/--flagged/--overridden/--unverifiable) via the
+           verdict_class mapping computed in ai_advisor_tab() — no separate
+           --clean/--flags-detected/--overrides-detected/--no-*-claims classes,
+           those were pixel-identical dupes of the same 4 --studio-* pairs. */
 
         .prism-verify-details {
             margin-top: 0.5rem;
@@ -1205,21 +1190,51 @@
                    Honest empty-state: renders nothing when no VERIFICATION row
                    exists yet for this run_id (no fabricated badges).
                    XSS-safe: all values escaped with | e, no | safe used. #}
+                {# /review PR #92: one macro renders a single check badge (indicator
+                   + classification + optional annotation) — shared by the top-level
+                   actionable list and the <details> full list below, instead of two
+                   near-identical inline loops differing only by testid prefix. #}
+                {% macro render_verify_check(chk, testid_prefix, show_annotation_testid=false) %}
+                    {# .get(key, default)'s default only fires when the key is
+                       ABSENT, not when it's present with value None (F1, /review
+                       PR #90). indicator can be None (Finding-1's `{}`-coercion
+                       path for a malformed cited_numbers entry); classification
+                       cannot be None from the real _build_check/_classify producer
+                       chain (always one of pass/flagged/overridden/unverifiable) —
+                       this guard is defense-in-depth only, against a hand-authored
+                       or legacy DB row bypassing the normal write path. #}
+                    {% set _cls = chk.get('classification') or 'unverifiable' %}
+                    {% set _indicator = chk.get('indicator') or '' %}
+                    {% set _badge_class = {
+                        'pass':         'prism-verify-badge--pass',
+                        'flagged':      'prism-verify-badge--flagged',
+                        'overridden':   'prism-verify-badge--overridden',
+                        'unverifiable': 'prism-verify-badge--unverifiable',
+                    }.get(_cls, 'prism-verify-badge--unverifiable') %}
+                    <div class="prism-verify-check"
+                         data-testid="{{ testid_prefix }}{{ _indicator | e }}">
+                        <span class="prism-verify-badge {{ _badge_class }}">
+                            {{ _indicator | e }} — {{ _cls | e }}
+                        </span>
+                        {% if chk.get('annotation') %}
+                            <p class="prism-verify-annotation"
+                               {% if show_annotation_testid %}data-testid="prism-verify-annotation"{% endif %}>{{ chk.get('annotation') | e }}</p>
+                        {% endif %}
+                    </div>
+                {% endmacro %}
                 {% if market_prism_verification is not none %}
                     <div data-testid="prism-verification" class="prism-verification">
                         <div class="prism-verification-header">Numeric Verification</div>
 
-                        {% set _verdict = market_prism_verification.get('verdict') or 'no-numeric-claims' %}
-                        {% set _verdict_badge_class = {
-                            'clean':                'prism-verify-badge--clean',
-                            'flags-detected':        'prism-verify-badge--flags-detected',
-                            'overrides-detected':    'prism-verify-badge--overrides-detected',
-                            'no-verifiable-claims':  'prism-verify-badge--no-verifiable-claims',
-                            'no-numeric-claims':     'prism-verify-badge--no-numeric-claims',
-                        }.get(_verdict, 'prism-verify-badge--no-numeric-claims') %}
+                        {# verdict_label/verdict_class computed in ai_advisor_tab()
+                           (single source of truth — /review PR #92): the pill
+                           reuses the 4 existing check-badge classes, and an
+                           unknown/missing verdict renders a neutral pill labeled
+                           with the raw string (or "unknown") rather than
+                           defaulting to the specific "no-numeric-claims" claim. #}
                         <div class="prism-verify-summary" data-testid="prism-verify-summary">
-                            <span class="prism-verify-badge {{ _verdict_badge_class }}"
-                                  data-testid="prism-verify-verdict">{{ _verdict | e }}</span>
+                            <span class="prism-verify-badge {{ market_prism_verification.get('verdict_class', 'prism-verify-badge--unverifiable') }}"
+                                  data-testid="prism-verify-verdict">{{ market_prism_verification.get('verdict_label', 'unknown') | e }}</span>
                             {% if market_prism_verification.get('count_line') %}
                                 <span class="prism-verify-summary-count"
                                       data-testid="prism-verify-count-line">{{ market_prism_verification.get('count_line') | e }}</span>
@@ -1230,32 +1245,7 @@
                            individual badges by default — pass/unverifiable stay folded
                            into the count line above. #}
                         {% for _chk in market_prism_verification.get('actionable_checks', []) %}
-                            {# .get(key, default)'s default only fires when the key is
-                               ABSENT, not when it's present with value None (F1, /review
-                               PR #90). indicator can be None (Finding-1's `{}`-coercion
-                               path for a malformed cited_numbers entry); classification
-                               cannot be None from the real _build_check/_classify producer
-                               chain (always one of pass/flagged/overridden/unverifiable) —
-                               this guard is defense-in-depth only, against a hand-authored
-                               or legacy DB row bypassing the normal write path. #}
-                            {% set _cls = _chk.get('classification') or 'unverifiable' %}
-                            {% set _indicator = _chk.get('indicator') or '' %}
-                            {% set _badge_class = {
-                                'pass':         'prism-verify-badge--pass',
-                                'flagged':      'prism-verify-badge--flagged',
-                                'overridden':   'prism-verify-badge--overridden',
-                                'unverifiable': 'prism-verify-badge--unverifiable',
-                            }.get(_cls, 'prism-verify-badge--unverifiable') %}
-                            <div class="prism-verify-check"
-                                 data-testid="prism-verify-check-{{ _indicator | e }}">
-                                <span class="prism-verify-badge {{ _badge_class }}">
-                                    {{ _indicator | e }} — {{ _cls | e }}
-                                </span>
-                                {% if _chk.get('annotation') %}
-                                    <p class="prism-verify-annotation"
-                                       data-testid="prism-verify-annotation">{{ _chk.get('annotation') | e }}</p>
-                                {% endif %}
-                            </div>
+                            {{ render_verify_check(_chk, 'prism-verify-check-', show_annotation_testid=true) }}
                         {% endfor %}
 
                         {% if market_prism_verification.get('checks') %}
@@ -1263,23 +1253,7 @@
                                 <summary>Show all {{ market_prism_verification.get('checks') | length }} checks</summary>
                                 <div class="prism-verify-details-list">
                                     {% for _chk in market_prism_verification.get('checks', []) %}
-                                        {% set _cls = _chk.get('classification') or 'unverifiable' %}
-                                        {% set _indicator = _chk.get('indicator') or '' %}
-                                        {% set _badge_class = {
-                                            'pass':         'prism-verify-badge--pass',
-                                            'flagged':      'prism-verify-badge--flagged',
-                                            'overridden':   'prism-verify-badge--overridden',
-                                            'unverifiable': 'prism-verify-badge--unverifiable',
-                                        }.get(_cls, 'prism-verify-badge--unverifiable') %}
-                                        <div class="prism-verify-check"
-                                             data-testid="prism-verify-check-full-{{ _indicator | e }}">
-                                            <span class="prism-verify-badge {{ _badge_class }}">
-                                                {{ _indicator | e }} — {{ _cls | e }}
-                                            </span>
-                                            {% if _chk.get('annotation') %}
-                                                <p class="prism-verify-annotation">{{ _chk.get('annotation') | e }}</p>
-                                            {% endif %}
-                                        </div>
+                                        {{ render_verify_check(_chk, 'prism-verify-check-full-') }}
                                     {% endfor %}
                                 </div>
                             </details>
