@@ -1503,6 +1503,7 @@ _MIGRATION_FILES = [
     "030_per_symphony_live_mode.sql",
     "031_shadow_history_sym_ts_index.sql",
     "032_prism_audit_log.sql",
+    "033_sleeves.sql",
 ]
 
 
@@ -3263,6 +3264,394 @@ def prune_old_triggers(retention_days: int) -> int:
     except Exception as exc:
         logging.error("prune_old_triggers failed: %s", exc)
     return deleted_total
+
+
+# --- Managed Sleeves P1: sleeve infrastructure + order layer (migration 033) ---
+# All read paths below use get_ro_connection() (arch constraint 5); all writes use
+# get_connection(). Every query is parameterized (? placeholders) -- no f-string
+# SQL interpolation of caller-supplied values anywhere in this section.
+
+_SLEEVE_COLUMNS = [
+    "id",
+    "name",
+    "capital_usd",
+    "status",
+    "envelope_json",
+    "created_at",
+    "updated_at",
+]
+_SLEEVE_RULE_COLUMNS = [
+    "id",
+    "sleeve_id",
+    "name",
+    "json_doc",
+    "mode",
+    "enabled",
+    "created_at",
+    "updated_at",
+]
+_SLEEVE_ORDER_COLUMNS = [
+    "id",
+    "alpaca_order_id",
+    "sleeve_id",
+    "rule_id",
+    "symbol",
+    "side",
+    "qty",
+    "order_class",
+    "status",
+    "submitted_at",
+    "raw_json",
+    "updated_at",
+]
+_SLEEVE_FILL_COLUMNS = ["id", "order_id", "fill_price", "filled_qty", "filled_at", "created_at"]
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def create_sleeve(name: str, capital_usd: float, envelope_json: str = "{}") -> int:
+    """Insert one sleeve row (starts in SHADOW status) and return its new id.
+
+    capital_usd is the fixed-dollar allocation set once at creation (AC-1);
+    envelope_json is the caller-serialized hard-box JSON (ticker allowlist,
+    per-position/per-order/turnover caps, long-only/no-margin flags) -- schema
+    validation happens at the application layer, not here.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO sleeves (name, capital_usd, status, envelope_json) "
+            "VALUES (?, ?, 'SHADOW', ?)",
+            (name, capital_usd, envelope_json),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def get_sleeve(sleeve_id: int) -> "dict | None":
+    """Return one sleeve row as a dict, or None when absent."""
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT " + ", ".join(_SLEEVE_COLUMNS) + " FROM sleeves WHERE id = ?",
+            (sleeve_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(zip(_SLEEVE_COLUMNS, row)) if row else None
+
+
+def get_sleeve_by_name(name: str) -> "dict | None":
+    """Return one sleeve row by its unique name, or None when absent."""
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT " + ", ".join(_SLEEVE_COLUMNS) + " FROM sleeves WHERE name = ?",
+            (name,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(zip(_SLEEVE_COLUMNS, row)) if row else None
+
+
+def get_all_sleeves() -> "list[dict]":
+    """Return all sleeve rows ordered by id ascending."""
+    conn = get_ro_connection()
+    try:
+        rows = conn.execute(
+            "SELECT " + ", ".join(_SLEEVE_COLUMNS) + " FROM sleeves ORDER BY id ASC"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_SLEEVE_COLUMNS, row)) for row in rows]
+
+
+def update_sleeve_status(sleeve_id: int, status: str) -> None:
+    """Update one sleeve's status column and stamp updated_at to now UTC."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE sleeves SET status = ?, updated_at = ? WHERE id = ?",
+            (status, _utcnow_iso(), sleeve_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_sleeve_envelope(sleeve_id: int, envelope_json: str) -> None:
+    """Replace one sleeve's envelope_json and stamp updated_at to now UTC.
+
+    Widening vs. narrowing the envelope is an application-layer ceremony
+    decision (AC-3) -- this accessor performs the write unconditionally.
+    """
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE sleeves SET envelope_json = ?, updated_at = ? WHERE id = ?",
+            (envelope_json, _utcnow_iso(), sleeve_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# --- sleeve_rules: schema-ready for the P2 rule engine ---
+# Not written or read by any P1 code path; provisioned now so sleeve_orders.rule_id
+# and sleeve_runtime.rule_id have a real FK target and P2 can build directly on it.
+
+
+def create_sleeve_rule(
+    sleeve_id: int,
+    name: str,
+    json_doc: str = "{}",
+    mode: str = "SHADOW",
+    enabled: bool = True,
+) -> int:
+    """Insert one sleeve_rules row and return its new id."""
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO sleeve_rules (sleeve_id, name, json_doc, mode, enabled) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (sleeve_id, name, json_doc, mode, 1 if enabled else 0),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def get_sleeve_rule(rule_id: int) -> "dict | None":
+    """Return one sleeve_rules row as a dict, or None when absent."""
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT " + ", ".join(_SLEEVE_RULE_COLUMNS) + " FROM sleeve_rules WHERE id = ?",
+            (rule_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(zip(_SLEEVE_RULE_COLUMNS, row)) if row else None
+
+
+def get_sleeve_rules_for_sleeve(sleeve_id: int) -> "list[dict]":
+    """Return all sleeve_rules rows for one sleeve, ordered by id ascending."""
+    conn = get_ro_connection()
+    try:
+        rows = conn.execute(
+            "SELECT "
+            + ", ".join(_SLEEVE_RULE_COLUMNS)
+            + " FROM sleeve_rules WHERE sleeve_id = ? ORDER BY id ASC",
+            (sleeve_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_SLEEVE_RULE_COLUMNS, row)) for row in rows]
+
+
+# --- sleeve_orders / sleeve_fills: the P1 order layer ---
+
+
+def insert_sleeve_order(
+    alpaca_order_id: str,
+    sleeve_id: int,
+    symbol: str,
+    side: str,
+    qty: float,
+    order_class: str = "simple",
+    status: str = "new",
+    rule_id: "int | None" = None,
+    raw_json: str = "{}",
+) -> int:
+    """Insert one sleeve_orders row for a just-submitted broker order.
+
+    alpaca_order_id is UNIQUE (schema-enforced) -- re-submitting the same
+    broker order id raises sqlite3.IntegrityError rather than silently
+    duplicating the row.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO sleeve_orders "
+            "(alpaca_order_id, sleeve_id, rule_id, symbol, side, qty, order_class, status, raw_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (alpaca_order_id, sleeve_id, rule_id, symbol, side, qty, order_class, status, raw_json),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def update_sleeve_order_status(
+    alpaca_order_id: str, status: str, raw_json: "str | None" = None
+) -> None:
+    """Update one sleeve_orders row's status (and optionally raw_json) by broker order id.
+
+    Stamps updated_at to now UTC. No-op (no row touched) if alpaca_order_id is unknown --
+    callers should check reconciliation state separately rather than relying on this
+    raising for an unknown order.
+    """
+    conn = get_connection()
+    try:
+        if raw_json is not None:
+            conn.execute(
+                "UPDATE sleeve_orders SET status = ?, raw_json = ?, updated_at = ? "
+                "WHERE alpaca_order_id = ?",
+                (status, raw_json, _utcnow_iso(), alpaca_order_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE sleeve_orders SET status = ?, updated_at = ? WHERE alpaca_order_id = ?",
+                (status, _utcnow_iso(), alpaca_order_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_sleeve_order(alpaca_order_id: str) -> "dict | None":
+    """Return one sleeve_orders row by broker order id, or None when absent."""
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT "
+            + ", ".join(_SLEEVE_ORDER_COLUMNS)
+            + " FROM sleeve_orders WHERE alpaca_order_id = ?",
+            (alpaca_order_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(zip(_SLEEVE_ORDER_COLUMNS, row)) if row else None
+
+
+def get_sleeve_orders(
+    sleeve_id: "int | None" = None,
+    rule_id: "int | None" = None,
+    status: "str | None" = None,
+    limit: int = 100,
+) -> "list[dict]":
+    """Read sleeve_orders rows with optional filters, newest-submitted first.
+
+    limit is server-side clamped to 500 max (get_triggers precedent, database.py).
+    """
+    limit = min(limit, 500)
+    conn = get_ro_connection()
+    clauses: list[str] = []
+    params: list = []
+    if sleeve_id is not None:
+        clauses.append("sleeve_id = ?")
+        params.append(sleeve_id)
+    if rule_id is not None:
+        clauses.append("rule_id = ?")
+        params.append(rule_id)
+    if status is not None:
+        clauses.append("status = ?")
+        params.append(status)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    try:
+        rows = conn.execute(
+            "SELECT " + ", ".join(_SLEEVE_ORDER_COLUMNS) + f" FROM sleeve_orders {where} "
+            "ORDER BY submitted_at DESC LIMIT ?",
+            params + [limit],
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_SLEEVE_ORDER_COLUMNS, row)) for row in rows]
+
+
+def insert_sleeve_fill(order_id: int, fill_price: float, filled_qty: float, filled_at: str) -> int:
+    """Insert one sleeve_fills row against an existing sleeve_orders.id and return its new id.
+
+    order_id is the INTERNAL sleeve_orders.id, not the broker alpaca_order_id --
+    callers resolve the internal id via get_sleeve_order() first.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO sleeve_fills (order_id, fill_price, filled_qty, filled_at) "
+            "VALUES (?, ?, ?, ?)",
+            (order_id, fill_price, filled_qty, filled_at),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def get_fills_for_order(order_id: int) -> "list[dict]":
+    """Return all sleeve_fills rows for one sleeve_orders.id, ordered by id ascending."""
+    conn = get_ro_connection()
+    try:
+        rows = conn.execute(
+            "SELECT "
+            + ", ".join(_SLEEVE_FILL_COLUMNS)
+            + " FROM sleeve_fills WHERE order_id = ? ORDER BY id ASC",
+            (order_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_SLEEVE_FILL_COLUMNS, row)) for row in rows]
+
+
+# --- sleeve_runtime: durable pacing/latch/bench state for the P2 rule engine ---
+# Schema-ready now (P1); not read or written by any P1 code path. The engine
+# is a fresh subprocess per minute, so P2's runner reads/writes this table on
+# every tick rather than holding state in memory.
+
+
+def get_sleeve_runtime(rule_id: int, key: str) -> "str | None":
+    """Return the stored value for (rule_id, key), or None when absent."""
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT value FROM sleeve_runtime WHERE rule_id = ? AND key = ?",
+            (rule_id, key),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else None
+
+
+def set_sleeve_runtime(rule_id: int, key: str, value: str) -> None:
+    """Upsert one sleeve_runtime row for (rule_id, key); stamps updated_at to now UTC."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO sleeve_runtime (rule_id, key, value, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            (rule_id, key, value, _utcnow_iso()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_all_sleeve_runtime_for_rule(rule_id: int) -> "dict[str, str]":
+    """Return all sleeve_runtime key/value pairs for one rule as a dict."""
+    conn = get_ro_connection()
+    try:
+        rows = conn.execute(
+            "SELECT key, value FROM sleeve_runtime WHERE rule_id = ?", (rule_id,)
+        ).fetchall()
+    finally:
+        conn.close()
+    return {k: v for k, v in rows}
+
+
+def delete_sleeve_runtime(rule_id: int, key: str) -> None:
+    """Delete one sleeve_runtime row for (rule_id, key). Idempotent -- safe when absent."""
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM sleeve_runtime WHERE rule_id = ? AND key = ?", (rule_id, key))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # Initialize tables on import
