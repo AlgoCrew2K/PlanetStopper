@@ -3703,14 +3703,19 @@ def get_daily_turnover_usd(sleeve_id: int, trading_day: str) -> float:
     duplicate sleeves.ledger's cost-basis/realized-P&L arithmetic.
 
     Terminal-status classification (denylist -- everything NOT in this set is
-    treated as still-reserving) is a first cut from Alpaca's documented order
-    status enum (tests/sleeves/_alpaca_fixtures.py ALPACA_ORDER_STATUS_VALUES)
-    plus this schema's own pre-ack 'RESERVED' value. Deliberately fails
-    CLOSED: an unrecognized/future status is treated as still-reserving
-    (over-counts turnover, the conservative direction for a risk cap) rather
-    than silently excluded (which would under-count and let a sleeve exceed
-    its turnover budget). sleeve-integration-impl owns Alpaca status
-    semantics -- flag if this classification is wrong.
+    treated as still-reserving) is from Alpaca's documented order status enum
+    (tests/sleeves/_alpaca_fixtures.py ALPACA_ORDER_STATUS_VALUES) plus this
+    schema's own pre-ack 'RESERVED' value. Deliberately fails CLOSED: an
+    unrecognized/future status is treated as still-reserving (over-counts
+    turnover, the conservative direction for a risk cap) rather than silently
+    excluded (which would under-count and let a sleeve exceed its turnover
+    budget). 'stopped' and 'suspended' are intentionally NOT terminal here
+    (corrected per sleeve-integration-impl, who owns Alpaca status semantics):
+    'stopped' means a trade is GUARANTEED but has not yet occurred (still
+    pending execution -- classifying it terminal would under-count real
+    turnover about to happen, the unsafe direction); 'suspended' means "not
+    eligible for trading" with no guarantee it can't later resume, so the
+    fail-closed default (still-open, worst case over-counts) applies to it too.
     """
     _TERMINAL_STATUSES = (
         "filled",
@@ -3718,8 +3723,6 @@ def get_daily_turnover_usd(sleeve_id: int, trading_day: str) -> float:
         "expired",
         "replaced",
         "done_for_day",
-        "stopped",
-        "suspended",
         "rejected",
     )
     conn = get_ro_connection()
