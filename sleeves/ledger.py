@@ -98,9 +98,14 @@ def reserve(ledger: LedgerState, notional_usd: float) -> LedgerState:
     durably persisted, BEFORE the broker call -- see sleeves/alpaca_orders.py
     sequencing). Raises InsufficientCashError if notional_usd exceeds
     available cash -- AC-1's "never spend beyond allocation" enforced here,
-    not just advised by the envelope clamp.
+    not just advised by the envelope clamp. Raises ValueError if
+    notional_usd is not strictly positive -- a zero-or-negative reservation
+    is meaningless (no order is free) and likely signals a caller bug (e.g.
+    an uninitialized price variable) rather than a legitimate no-op.
     """
     _reject_non_finite(notional_usd=notional_usd)
+    if notional_usd <= 0:
+        raise ValueError(f"notional_usd must be > 0; got {notional_usd!r}")
     if notional_usd > ledger.cash_usd:
         raise InsufficientCashError(
             f"cannot reserve {notional_usd!r}: only {ledger.cash_usd!r} cash available"
@@ -151,9 +156,21 @@ def apply_fill(
     share-availability is enforced by sleeves.envelope / the caller, not
     here); callers pass reserved_usd=0.0 for sells. Raises
     InsufficientPositionError if qty exceeds the currently held qty for
-    symbol (long-only: no shorting).
+    symbol, OR if the symbol's position is already fully sold out
+    (qty <= 0) -- this also covers a qty=0 sell against a sold-out
+    position, which would otherwise divide by zero computing an average
+    cost per share that no longer exists (long-only: no shorting).
+
+    Raises ValueError if price is not strictly positive, or if qty is
+    negative. qty == 0 is permitted (a degenerate no-op fill) specifically
+    so that a zero-qty sell reaches the InsufficientPositionError check
+    above rather than being rejected here with an undifferentiated error.
     """
     _reject_non_finite(qty=qty, price=price, reserved_usd=reserved_usd)
+    if qty < 0:
+        raise ValueError(f"qty must be >= 0; got {qty!r}")
+    if price <= 0:
+        raise ValueError(f"price must be > 0; got {price!r}")
 
     if side == "buy":
         fill_notional = qty * price
@@ -172,7 +189,7 @@ def apply_fill(
 
     if side == "sell":
         existing = ledger.positions.get(symbol)
-        if existing is None or qty > existing.qty:
+        if existing is None or existing.qty <= 0 or qty > existing.qty:
             held = existing.qty if existing is not None else 0.0
             raise InsufficientPositionError(f"cannot sell {qty!r} {symbol}: only {held!r} held")
         avg_cost_per_share = existing.cost_basis_usd / existing.qty

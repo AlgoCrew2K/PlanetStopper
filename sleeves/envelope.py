@@ -70,9 +70,13 @@ def clamp_order(
          "max_daily_turnover_usd": float, "long_only": bool}
 
     Processing order:
-      1. Allowlist -- a categorical gate, not a magnitude clamp. A symbol
-         outside the allowlist is refused outright with its own specific
-         reason (REASON_NOT_IN_ALLOWLIST), independent of qty magnitude.
+      1. Allowlist -- a categorical gate, not a magnitude clamp, and BUY-SIDE
+         ONLY. The allowlist governs entries; it must never block an exit.
+         A sell of a symbol the sleeve currently holds is never refused for
+         REASON_NOT_IN_ALLOWLIST -- narrowing the allowlist (or a delisting)
+         must not trap an existing position with no sanctioned way out. A
+         sell is still subject to the long-only/position-qty cap below, just
+         not the allowlist.
       2. Per-side magnitude caps, each expressed as a ceiling on qty:
          - sell: capped at current_position_qty (long-only -- v1 never
            permits shorting, so this cap always applies on the sell side).
@@ -89,15 +93,16 @@ def clamp_order(
     """
     original_qty = float(qty)
 
-    allowlist = envelope.get("allowlist", [])
-    if symbol not in allowlist:
-        return ClampResult(
-            approved=False,
-            qty=0.0,
-            original_qty=original_qty,
-            clamped=True,
-            reason=REASON_NOT_IN_ALLOWLIST,
-        )
+    if side == "buy":
+        allowlist = envelope.get("allowlist", [])
+        if symbol not in allowlist:
+            return ClampResult(
+                approved=False,
+                qty=0.0,
+                original_qty=original_qty,
+                clamped=True,
+                reason=REASON_NOT_IN_ALLOWLIST,
+            )
 
     # Each candidate is (reason, max_allowed_qty) -- a ceiling this single
     # limit dimension places on qty. Reduce-only: candidates only ever
@@ -157,6 +162,13 @@ def is_envelope_widened(old_envelope: dict, new_envelope: dict) -> bool:
     dimension -- used by the P3 arming route to decide whether the
     widen-requires-re-ceremony gate (AC-3) fires. Narrowing (or an identical
     envelope) returns False; any single widened dimension returns True.
+
+    A cap of None (or an absent key -- clamp_order's envelope.get() treats
+    both identically) means "unlimited" to clamp_order, so REMOVING a cap
+    entirely (old value present, new value None/absent) is the single most
+    extreme possible widen. The reverse direction (old absent, new present)
+    is a narrowing -- going from unlimited to bounded -- and must NOT be
+    flagged.
     """
     old_allowlist = set(old_envelope.get("allowlist", []))
     new_allowlist = set(new_envelope.get("allowlist", []))
@@ -166,6 +178,8 @@ def is_envelope_widened(old_envelope: dict, new_envelope: dict) -> bool:
     for key in ("max_position_pct", "max_order_usd", "max_daily_turnover_usd"):
         old_val = old_envelope.get(key)
         new_val = new_envelope.get(key)
+        if old_val is not None and new_val is None:
+            return True
         if old_val is not None and new_val is not None and new_val > old_val:
             return True
 

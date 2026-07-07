@@ -43,7 +43,15 @@ def _floor_to_whole_share(raw_qty: float, fractionable: bool) -> tuple[float, st
     would silently exceed the risk budget the operator configured. A result
     that floors to 0 shares is reported as an explicit error
     ("qty_rounds_to_zero"), never a silent zero-qty order.
+
+    A negative raw_qty (from a negative risk_pct/pct_of_sleeve/dollars/
+    shares input) is ALWAYS an explicit error ("negative_qty"), regardless
+    of fractionable — a negative qty is never a valid sizing result, and
+    fractionable=True must not bypass that check by returning raw_qty
+    verbatim.
     """
+    if raw_qty < 0:
+        return 0.0, "negative_qty"
     if fractionable:
         return raw_qty, None
     floored = math.floor(raw_qty)
