@@ -27,6 +27,7 @@ CONTRACT this file specifies for the GREEN implementer (sleeve-integration-impl)
     def submit_bracket_order(
         *, symbol: str, qty: float, side: str,
         take_profit_price: float, stop_loss_price: float,
+        client_order_id: str | None = None,
         time_in_force: str = "day",
         live_mode: bool = False, live_keys_present: bool = False,
         max_retries: int = 4,
@@ -35,6 +36,7 @@ CONTRACT this file specifies for the GREEN implementer (sleeve-integration-impl)
     def submit_trailing_stop_order(
         *, symbol: str, qty: float, side: str,
         trail_percent: float | None = None, trail_price: float | None = None,
+        client_order_id: str | None = None,
         time_in_force: str = "day",
         live_mode: bool = False, live_keys_present: bool = False,
         max_retries: int = 4,
@@ -42,6 +44,19 @@ CONTRACT this file specifies for the GREEN implementer (sleeve-integration-impl)
 
     def cancel_order(*, order_id: str, live_mode: bool = False, live_keys_present: bool = False) -> OrderResult: ...
     def get_order(*, order_id: str, live_mode: bool = False, live_keys_present: bool = False) -> OrderResult: ...
+    def get_order_by_client_order_id(
+        *, client_order_id: str, live_mode: bool = False, live_keys_present: bool = False,
+    ) -> OrderResult:
+        # PM steering (2026-07-07): the network-side half of the lost-ack
+        # recovery pattern. Queries Alpaca's documented
+        # `GET /v2/orders:by_client_order_id?client_order_id=<id>` endpoint —
+        # a caller that minted a client_order_id BEFORE submitting can always
+        # ask the broker "did this order actually get created?" independent
+        # of whether our own HTTP response round-trip completed. Pairs with
+        # database.attach_alpaca_order_id() (tests/database/
+        # test_033_sleeves_client_order_id.py) which persists the recovered
+        # alpaca_order_id/status onto the pre-existing RESERVED row.
+        ...
     def get_account(*, live_mode: bool = False, live_keys_present: bool = False) -> OrderResult: ...
     def get_positions(*, live_mode: bool = False, live_keys_present: bool = False) -> OrderResult: ...
 
@@ -426,7 +441,168 @@ class TestBoundedRetryBackoff:
 
 
 # ---------------------------------------------------------------------------
-# 7. D-1 — no secrets in error/result objects
+# 7. Lost-ack recovery via client_order_id (PM steering, 2026-07-07)
+#
+# DB-side half (RESERVED row + attach_alpaca_order_id) is pinned in
+# tests/database/test_033_sleeves_client_order_id.py. This class covers the
+# NETWORK-side half: recovering an order from the BROKER by client_order_id
+# after our own process lost the submit response.
+# ---------------------------------------------------------------------------
+
+
+class TestLostAckRecovery:
+    def test_submit_bracket_order_accepts_and_forwards_client_order_id(self):
+        fixture = load_order_fixture("bracket_new.json")
+        with patch.object(
+            alpaca_orders.requests, "post", return_value=_mock_response(200, fixture)
+        ) as mock_post:
+            alpaca_orders.submit_bracket_order(
+                symbol="SPY",
+                qty=10,
+                side="buy",
+                take_profit_price=512.0,
+                stop_loss_price=495.0,
+                client_order_id="sleeve-test-bracket-new-001",
+            )
+        body = mock_post.call_args.kwargs.get("json") or {}
+        assert body.get("client_order_id") == "sleeve-test-bracket-new-001", (
+            "submit_bracket_order must forward client_order_id verbatim in the request "
+            "body — Alpaca echoes it back on the Order object, and it is the ONLY "
+            "correlation key available before the broker assigns its own order id."
+        )
+
+    def test_submit_trailing_stop_order_accepts_and_forwards_client_order_id(self):
+        fixture = load_order_fixture("trailing_stop_new.json")
+        with patch.object(
+            alpaca_orders.requests, "post", return_value=_mock_response(200, fixture)
+        ) as mock_post:
+            alpaca_orders.submit_trailing_stop_order(
+                symbol="SPY",
+                qty=10,
+                side="sell",
+                trail_percent=2.0,
+                client_order_id="sleeve-test-trailing-new-001",
+            )
+        body = mock_post.call_args.kwargs.get("json") or {}
+        assert body.get("client_order_id") == "sleeve-test-trailing-new-001"
+
+    def test_submit_without_client_order_id_still_works(self):
+        # client_order_id is optional at the alpaca_orders.py layer (the P2/P3
+        # runner mints and passes it, but a bare call must not require it —
+        # AC-7's bracket-order path predates this steering item).
+        fixture = load_order_fixture("bracket_new.json")
+        with patch.object(
+            alpaca_orders.requests, "post", return_value=_mock_response(200, fixture)
+        ):
+            result = alpaca_orders.submit_bracket_order(
+                symbol="SPY",
+                qty=10,
+                side="buy",
+                take_profit_price=512.0,
+                stop_loss_price=495.0,
+            )
+        assert result.error is None
+
+    def test_get_order_by_client_order_id_exists(self):
+        assert hasattr(alpaca_orders, "get_order_by_client_order_id"), (
+            "sleeves/alpaca_orders.py must expose get_order_by_client_order_id — "
+            "the network-side recovery lookup (PM steering, 2026-07-07)."
+        )
+        assert callable(alpaca_orders.get_order_by_client_order_id)
+
+    def test_get_order_by_client_order_id_queries_the_by_client_order_id_endpoint(self):
+        fixture = load_order_fixture("bracket_new.json")
+        with patch.object(
+            alpaca_orders.requests, "get", return_value=_mock_response(200, fixture)
+        ) as mock_get:
+            result = alpaca_orders.get_order_by_client_order_id(
+                client_order_id=fixture["client_order_id"]
+            )
+        assert result.error is None
+        call_args = mock_get.call_args
+        url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
+        assert "orders:by_client_order_id" in url, (
+            f"get_order_by_client_order_id must hit Alpaca's documented "
+            f"GET /v2/orders:by_client_order_id endpoint; got url={url!r}"
+        )
+        assert fixture["client_order_id"] in url, (
+            f"the client_order_id must be present in the request (query param or path); "
+            f"got url={url!r}"
+        )
+
+    def test_get_order_by_client_order_id_returns_order_on_success(self):
+        fixture = load_order_fixture("bracket_new.json")
+        with patch.object(alpaca_orders.requests, "get", return_value=_mock_response(200, fixture)):
+            result = alpaca_orders.get_order_by_client_order_id(
+                client_order_id=fixture["client_order_id"]
+            )
+        assert result.error is None
+        assert result.order["client_order_id"] == fixture["client_order_id"]
+
+    def test_get_order_by_client_order_id_returns_error_when_broker_has_no_such_order(self):
+        # A genuinely-lost submit (never reached the broker at all) must
+        # surface as a clean error, never a crash — the caller (reconciliation
+        # / recovery sweep) decides what to do (re-submit vs. give up).
+        with patch.object(
+            alpaca_orders.requests,
+            "get",
+            return_value=_mock_response(404, {"message": "not found"}),
+        ):
+            result = alpaca_orders.get_order_by_client_order_id(client_order_id="never-existed-001")
+        assert result.error is not None
+        assert result.order is None
+
+    def test_lost_ack_recovery_end_to_end_submit_fails_then_recovery_finds_it(self):
+        """
+        The full scenario PM steering asked for: submit succeeds AT THE
+        BROKER, but our read of the HTTP response is lost (connection reset
+        after the broker already processed the request) — submit_bracket_order
+        returns error=not-None. A later recovery lookup by the SAME
+        client_order_id we generated before submitting finds the order the
+        broker actually placed.
+        """
+        client_order_id = "sleeve-test-recovery-e2e-001"
+        recovered_fixture = dict(load_order_fixture("bracket_new.json"))
+        recovered_fixture["client_order_id"] = client_order_id
+
+        import requests as real_requests
+
+        with (
+            patch.object(
+                alpaca_orders.requests, "post", side_effect=real_requests.ConnectionError("boom")
+            ),
+            patch.object(alpaca_orders.time, "sleep"),
+        ):
+            submit_result = alpaca_orders.submit_bracket_order(
+                symbol="SPY",
+                qty=10,
+                side="buy",
+                take_profit_price=512.0,
+                stop_loss_price=495.0,
+                client_order_id=client_order_id,
+                max_retries=1,
+            )
+        assert submit_result.error is not None, (
+            "the lost-ack scenario requires submit to report failure"
+        )
+        assert submit_result.order is None
+
+        with patch.object(
+            alpaca_orders.requests, "get", return_value=_mock_response(200, recovered_fixture)
+        ):
+            recovery_result = alpaca_orders.get_order_by_client_order_id(
+                client_order_id=client_order_id
+            )
+
+        assert recovery_result.error is None, (
+            "recovery lookup must succeed even though the original submit call reported an error — "
+            "the whole point of client_order_id is that it survives a lost response"
+        )
+        assert recovery_result.order["client_order_id"] == client_order_id
+
+
+# ---------------------------------------------------------------------------
+# 8. D-1 — no secrets in error/result objects
 # ---------------------------------------------------------------------------
 
 
