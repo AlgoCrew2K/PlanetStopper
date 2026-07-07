@@ -481,3 +481,129 @@ class TestEnvelopeWidening:
         old = _base_envelope(long_only=True)
         new = _base_envelope(long_only=False)
         assert envelope.is_envelope_widened(old, new) is True
+
+
+# ---------------------------------------------------------------------------
+# 8. Review finding BLOCK #1 (sleeve-review, commit 2200c66): the allowlist
+# gate must never block an EXIT. AC-3 narrowing takes effect immediately;
+# AC-10's "protective exits are never blocked" precedence principle applies
+# to the envelope just as it does to pacing/benching. An operator removing a
+# ticker from the allowlist while the sleeve still holds a position in it
+# must not trap that position -- the only path to flatten it is a sell
+# through clamp_order, and REASON_NOT_IN_ALLOWLIST must never be the reason
+# a sell is refused.
+# ---------------------------------------------------------------------------
+
+
+class TestAllowlistNeverBlocksExits:
+    def test_sell_of_held_position_not_in_allowlist_is_not_refused_for_allowlist_reason(self):
+        env = _base_envelope(allowlist=["SPY"])  # TSLA is NOT on the allowlist
+        result = envelope.clamp_order(
+            symbol="TSLA",
+            side="sell",
+            qty=10,
+            price=200.0,
+            envelope=env,
+            sleeve_equity=100_000.0,
+            current_position_qty=10,
+        )
+        assert result.reason != envelope.REASON_NOT_IN_ALLOWLIST, (
+            "a sell order for a symbol the sleeve currently holds must never be refused "
+            "via REASON_NOT_IN_ALLOWLIST -- the allowlist gates entries only, never exits. "
+            "Trapping a position an operator can no longer buy (narrowed allowlist) but "
+            "also cannot sell is a stuck-exposure defect."
+        )
+        assert result.approved is True
+        assert result.qty == 10
+
+    def test_sell_of_delisted_symbol_still_respects_position_qty_cap(self):
+        # The allowlist bypass for exits must not become a bypass for the
+        # long-only/no-short cap -- a sell of a delisted symbol is still
+        # clamped to current_position_qty, just not refused for allowlist.
+        env = _base_envelope(allowlist=["SPY"])
+        result = envelope.clamp_order(
+            symbol="TSLA",
+            side="sell",
+            qty=25,
+            price=200.0,
+            envelope=env,
+            sleeve_equity=100_000.0,
+            current_position_qty=10,
+        )
+        assert result.qty <= 10
+        assert result.reason != envelope.REASON_NOT_IN_ALLOWLIST
+
+    def test_buy_of_symbol_not_in_allowlist_is_still_refused(self):
+        # Regression guard: fixing the sell-side bypass must not accidentally
+        # also stop gating entries -- a BUY for a delisted/never-listed
+        # symbol must still be refused via REASON_NOT_IN_ALLOWLIST.
+        env = _base_envelope(allowlist=["SPY"])
+        result = envelope.clamp_order(
+            symbol="TSLA",
+            side="buy",
+            qty=10,
+            price=200.0,
+            envelope=env,
+            sleeve_equity=100_000.0,
+        )
+        assert result.approved is False
+        assert result.reason == envelope.REASON_NOT_IN_ALLOWLIST
+
+
+# ---------------------------------------------------------------------------
+# 9. Review finding BLOCK #3 (sleeve-review, commit 2200c66): removing a cap
+# entirely (old value present, new value None/absent) must count as a widen.
+# clamp_order treats a None cap as "unlimited", so nulling out a cap is the
+# MOST extreme possible widen -- is_envelope_widened's "both sides present"
+# guard must not let this bypass the AC-3 re-ceremony gate.
+# ---------------------------------------------------------------------------
+
+
+class TestEnvelopeWideningCapRemoval:
+    def test_nulling_out_max_position_pct_is_a_widen(self):
+        old = _base_envelope(max_position_pct=0.25)
+        new = dict(old)
+        new["max_position_pct"] = None
+        assert envelope.is_envelope_widened(old, new) is True, (
+            "removing a max_position_pct cap (0.25 -> unlimited) is the most extreme "
+            "possible widen and must require re-ceremony (AC-3)"
+        )
+
+    def test_omitting_max_position_pct_key_entirely_is_a_widen(self):
+        old = _base_envelope(max_position_pct=0.25)
+        new = {k: v for k, v in old.items() if k != "max_position_pct"}
+        assert envelope.is_envelope_widened(old, new) is True, (
+            "an absent key must be treated the same as an explicit None -- both mean "
+            "'no cap' to clamp_order, so both must be detected as a widen"
+        )
+
+    def test_nulling_out_max_order_usd_is_a_widen(self):
+        old = _base_envelope(max_order_usd=500.0)
+        new = dict(old)
+        new["max_order_usd"] = None
+        assert envelope.is_envelope_widened(old, new) is True
+
+    def test_nulling_out_max_daily_turnover_usd_is_a_widen(self):
+        old = _base_envelope(max_daily_turnover_usd=500.0)
+        new = dict(old)
+        new["max_daily_turnover_usd"] = None
+        assert envelope.is_envelope_widened(old, new) is True
+
+    def test_both_caps_absent_from_the_start_is_not_a_widen(self):
+        # A cap that was ALREADY unlimited on both sides (None -> None) must
+        # not be flagged -- only a present-to-absent TRANSITION is a widen.
+        old = _base_envelope(max_position_pct=None)
+        new = _base_envelope(max_position_pct=None)
+        assert envelope.is_envelope_widened(old, new) is False
+
+    def test_adding_a_cap_where_none_existed_is_not_a_widen(self):
+        # The asymmetric case a naive "either side is None -> widen" fix
+        # would get WRONG: going from unlimited (None) to a fixed cap (0.25)
+        # is NARROWING (strictly more restrictive), not a widen -- it must
+        # never force an unnecessary re-ceremony.
+        old = _base_envelope(max_position_pct=None)
+        new = _base_envelope(max_position_pct=0.25)
+        assert envelope.is_envelope_widened(old, new) is False, (
+            "adding a cap where none existed before is narrowing, not widening -- "
+            "must not require re-ceremony"
+        )

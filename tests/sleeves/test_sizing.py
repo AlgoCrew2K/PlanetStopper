@@ -388,3 +388,98 @@ class TestSizingProperties:
         assert result.qty >= 0
         if result.error is None:
             assert result.notional_usd >= 0
+
+
+# ---------------------------------------------------------------------------
+# 7. Review finding FLAG #4, sizing half (sleeve-review, commit 2200c66):
+# _floor_to_whole_share's fractionable=True branch returns raw_qty verbatim
+# with no sign check ("if fractionable: return raw_qty, None") -- a negative
+# risk_pct or pct_of_sleeve under fractionable=True currently produces a
+# NEGATIVE qty with error=None. Dormant in P1 (fractionable=False is the only
+# live path -- AC-7 defaults every entry to a bracket) but a real gap the
+# moment anything sets fractionable=True.
+# ---------------------------------------------------------------------------
+
+
+class TestNegativeFractionalInputsAreErrorsNotNegativeQty:
+    @pytest.mark.parametrize("fractionable", [True, False])
+    def test_negative_risk_pct_is_always_an_explicit_error(self, fractionable):
+        result = sizing.size_order(
+            mode="risk_pct",
+            sleeve_equity=10_000.0,
+            price=100.0,
+            stop_price=95.0,
+            risk_pct=-0.01,
+            fractionable=fractionable,
+        )
+        assert result.error is not None, (
+            f"negative risk_pct must always produce an explicit error (fractionable="
+            f"{fractionable}); got qty={result.qty}, error={result.error}. The "
+            f"fractionable=True path currently skips the floor-to-zero safety net "
+            f"entirely, letting a negative input through as a negative qty with "
+            f"error=None."
+        )
+        assert result.qty == 0
+
+    @pytest.mark.parametrize("fractionable", [True, False])
+    def test_negative_pct_of_sleeve_is_always_an_explicit_error(self, fractionable):
+        result = sizing.size_order(
+            mode="pct_of_sleeve",
+            sleeve_equity=10_000.0,
+            price=100.0,
+            pct_of_sleeve=-0.10,
+            fractionable=fractionable,
+        )
+        assert result.error is not None
+        assert result.qty == 0
+
+    @pytest.mark.parametrize("fractionable", [True, False])
+    def test_negative_dollars_is_always_an_explicit_error(self, fractionable):
+        result = sizing.size_order(
+            mode="dollars",
+            sleeve_equity=10_000.0,
+            price=100.0,
+            dollars=-500.0,
+            fractionable=fractionable,
+        )
+        assert result.error is not None
+        assert result.qty == 0
+
+    @pytest.mark.parametrize("fractionable", [True, False])
+    def test_negative_shares_is_always_an_explicit_error(self, fractionable):
+        result = sizing.size_order(
+            mode="shares",
+            sleeve_equity=10_000.0,
+            price=100.0,
+            shares=-5,
+            fractionable=fractionable,
+        )
+        assert result.error is not None
+        assert result.qty == 0
+
+    @given(
+        sleeve_equity=st.floats(
+            min_value=100.0, max_value=1_000_000.0, allow_nan=False, allow_infinity=False
+        ),
+        price=st.floats(min_value=0.01, max_value=10_000.0, allow_nan=False, allow_infinity=False),
+        pct=st.floats(min_value=-1.0, max_value=-0.0001, allow_nan=False, allow_infinity=False),
+    )
+    def test_negative_pct_of_sleeve_under_fractionable_true_never_yields_negative_qty(
+        self, sleeve_equity, price, pct
+    ):
+        # Widened property-test range vs. the original (which only drew
+        # positive pct >= 0.0001) -- this is the exact hypothesis coverage
+        # gap sleeve-review identified as letting the bug through unexercised.
+        result = sizing.size_order(
+            mode="pct_of_sleeve",
+            sleeve_equity=sleeve_equity,
+            price=price,
+            pct_of_sleeve=pct,
+            fractionable=True,
+        )
+        assert result.qty >= 0, (
+            f"negative pct_of_sleeve={pct} under fractionable=True produced qty="
+            f"{result.qty} (negative) -- must be an explicit error instead."
+        )
+        if result.qty == 0:
+            assert result.error is not None

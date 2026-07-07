@@ -377,4 +377,140 @@ class TestLedgerConservationProperty:
         )
         _assert_conserved(state, "after final sell-out")
         assert state.positions["SPY"].qty == pytest.approx(0)
+
+
+# ---------------------------------------------------------------------------
+# 6. Review finding BLOCK #2 (sleeve-review, commit 2200c66): a zero-qty sell
+# fill against a fully-sold-out (qty==0, still-present) position must not
+# raise ZeroDivisionError -- that is an undocumented exception type outside
+# apply_fill's two-exception contract (InsufficientCashError /
+# InsufficientPositionError).
+# ---------------------------------------------------------------------------
+
+
+class TestApplyFillZeroQtyAgainstSoldOutPosition:
+    def _fully_sold_out_state(self) -> ledger.LedgerState:
+        state = ledger.new_ledger(10_000.0)
+        state = ledger.reserve(state, 1_000.0)
+        state = ledger.apply_fill(
+            state, symbol="SPY", side="buy", qty=10, price=100.0, reserved_usd=1_000.0
+        )
+        state = ledger.apply_fill(
+            state, symbol="SPY", side="sell", qty=10, price=100.0, reserved_usd=0.0
+        )
+        assert state.positions["SPY"].qty == pytest.approx(0.0)
+        return state
+
+    def test_zero_qty_sell_against_sold_out_position_never_raises_zero_division_error(self):
+        state = self._fully_sold_out_state()
+        try:
+            ledger.apply_fill(
+                state, symbol="SPY", side="sell", qty=0.0, price=100.0, reserved_usd=0.0
+            )
+        except ZeroDivisionError:
+            pytest.fail(
+                "apply_fill(side='sell', qty=0.0) against a fully-sold-out (qty=0) "
+                "position raised ZeroDivisionError. This is outside apply_fill's "
+                "documented two-exception contract (InsufficientCashError / "
+                "InsufficientPositionError) -- either raise InsufficientPositionError "
+                "or treat qty=0 as a documented no-op, never an undocumented crash."
+            )
+        except ledger.InsufficientPositionError:
+            pass  # acceptable: zero-qty against an empty position is a legitimate refusal
+
+    def test_zero_qty_sell_against_sold_out_position_if_accepted_conserves_capital(self):
+        # If the implementation treats qty=0 as a no-op (rather than raising
+        # InsufficientPositionError), the result must be a genuine no-op --
+        # state unchanged, conservation law still holds.
+        state = self._fully_sold_out_state()
+        try:
+            result_state = ledger.apply_fill(
+                state, symbol="SPY", side="sell", qty=0.0, price=100.0, reserved_usd=0.0
+            )
+        except ledger.InsufficientPositionError:
+            pytest.skip(
+                "implementation raises InsufficientPositionError for qty=0 -- also acceptable"
+            )
+            return
+        _assert_conserved(result_state, "zero-qty sell no-op on sold-out position")
+        assert result_state.positions["SPY"].qty == pytest.approx(0.0)
+        assert result_state.cash_usd == pytest.approx(state.cash_usd)
+        assert result_state.realized_pnl_usd == pytest.approx(state.realized_pnl_usd)
+
+    def test_zero_qty_sell_against_never_held_symbol_still_raises_insufficient_position(self):
+        # Regression guard: fixing the qty=0-on-sold-out-position path must
+        # not weaken the existing qty=0-against-a-NEVER-held-symbol case,
+        # which must still raise (existing is None, not a qty=0 Position).
+        state = ledger.new_ledger(10_000.0)
+        with pytest.raises(ledger.InsufficientPositionError):
+            ledger.apply_fill(
+                state, symbol="QQQ", side="sell", qty=0.0, price=100.0, reserved_usd=0.0
+            )
+
+
+# ---------------------------------------------------------------------------
+# 7. Review finding FLAG #4, ledger half (sleeve-review, commit 2200c66):
+# _reject_non_finite only rejects NaN/Inf, never non-positive qty/price --
+# apply_fill/reserve must reject qty<=0 or price<=0 explicitly rather than
+# silently accepting nonsensical money-movement inputs.
+# ---------------------------------------------------------------------------
+
+
+class TestLedgerRejectsNonPositiveAmounts:
+    def test_apply_fill_buy_rejects_zero_price(self):
+        state = ledger.new_ledger(10_000.0)
+        state = ledger.reserve(state, 1_000.0)
+        with pytest.raises(ValueError):
+            ledger.apply_fill(
+                state, symbol="SPY", side="buy", qty=10, price=0.0, reserved_usd=1_000.0
+            )
+
+    def test_apply_fill_buy_rejects_negative_price(self):
+        state = ledger.new_ledger(10_000.0)
+        state = ledger.reserve(state, 1_000.0)
+        with pytest.raises(ValueError):
+            ledger.apply_fill(
+                state, symbol="SPY", side="buy", qty=10, price=-50.0, reserved_usd=1_000.0
+            )
+
+    def test_apply_fill_buy_rejects_negative_qty(self):
+        state = ledger.new_ledger(10_000.0)
+        state = ledger.reserve(state, 1_000.0)
+        with pytest.raises(ValueError):
+            ledger.apply_fill(
+                state, symbol="SPY", side="buy", qty=-10, price=100.0, reserved_usd=1_000.0
+            )
+
+    def test_apply_fill_sell_rejects_negative_qty(self):
+        state = ledger.new_ledger(10_000.0)
+        state = ledger.reserve(state, 1_000.0)
+        state = ledger.apply_fill(
+            state, symbol="SPY", side="buy", qty=10, price=100.0, reserved_usd=1_000.0
+        )
+        with pytest.raises(ValueError):
+            ledger.apply_fill(
+                state, symbol="SPY", side="sell", qty=-5, price=100.0, reserved_usd=0.0
+            )
+
+    def test_apply_fill_sell_rejects_zero_or_negative_price(self):
+        state = ledger.new_ledger(10_000.0)
+        state = ledger.reserve(state, 1_000.0)
+        state = ledger.apply_fill(
+            state, symbol="SPY", side="buy", qty=10, price=100.0, reserved_usd=1_000.0
+        )
+        with pytest.raises(ValueError):
+            ledger.apply_fill(state, symbol="SPY", side="sell", qty=5, price=0.0, reserved_usd=0.0)
+
+    def test_reserve_rejects_negative_notional(self):
+        state = ledger.new_ledger(10_000.0)
+        with pytest.raises(ValueError):
+            ledger.reserve(state, -100.0)
+
+    def test_reserve_rejects_zero_notional(self):
+        # A zero-dollar reservation is meaningless (no order is free) and
+        # must be rejected rather than silently accepted as a no-op that
+        # could mask a caller bug (e.g. an uninitialized price variable).
+        state = ledger.new_ledger(10_000.0)
+        with pytest.raises(ValueError):
+            ledger.reserve(state, 0.0)
         assert state.positions["SPY"].cost_basis_usd == pytest.approx(0.0, abs=_TOL)
