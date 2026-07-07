@@ -1,0 +1,14 @@
+{
+  "id": "d5c3e4f6-0001-4c33-9e33-333333333001",
+  "account_number": "PA0000SLEEVE1",
+  "status": "ACTIVE",
+  "currency": "USD",
+  "cash": "4820.50",
+  "portfolio_value": "10000.00",
+  "buying_power": "4820.50",
+  "equity": "10000.00",
+  "pattern_day_trader": false,
+  "trading_blocked": false,
+  "account_blocked": false,
+  "shorting_enabled": false
+}
