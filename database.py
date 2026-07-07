@@ -3292,19 +3292,29 @@ _SLEEVE_RULE_COLUMNS = [
 ]
 _SLEEVE_ORDER_COLUMNS = [
     "id",
+    "client_order_id",
     "alpaca_order_id",
     "sleeve_id",
     "rule_id",
     "symbol",
     "side",
     "qty",
+    "reserved_price",
     "order_class",
     "status",
     "submitted_at",
     "raw_json",
     "updated_at",
 ]
-_SLEEVE_FILL_COLUMNS = ["id", "order_id", "fill_price", "filled_qty", "filled_at", "created_at"]
+_SLEEVE_FILL_COLUMNS = [
+    "id",
+    "order_id",
+    "broker_fill_id",
+    "fill_price",
+    "filled_qty",
+    "filled_at",
+    "created_at",
+]
 
 
 def _utcnow_iso() -> str:
@@ -3455,32 +3465,60 @@ def get_sleeve_rules_for_sleeve(sleeve_id: int) -> "list[dict]":
 
 
 # --- sleeve_orders / sleeve_fills: the P1 order layer ---
+#
+# client_order_id is the durable correlation key across the whole order
+# lifecycle (minted by the caller BEFORE the broker call, so a row exists at
+# reserve-time for crash recovery). alpaca_order_id is populated later, once
+# the broker acks, via attach_alpaca_order_id(). Both a client-id lookup and
+# an alpaca-id lookup are exposed since callers correlate from either side
+# (the runner mints client_order_id; broker poll/webhook responses key off
+# alpaca_order_id).
 
 
 def insert_sleeve_order(
-    alpaca_order_id: str,
+    client_order_id: str,
     sleeve_id: int,
     symbol: str,
     side: str,
     qty: float,
     order_class: str = "simple",
-    status: str = "new",
+    status: str = "RESERVED",
     rule_id: "int | None" = None,
+    reserved_price: "float | None" = None,
+    alpaca_order_id: "str | None" = None,
     raw_json: str = "{}",
 ) -> int:
-    """Insert one sleeve_orders row for a just-submitted broker order.
+    """Insert one sleeve_orders row, normally at reserve-time (pre-broker-call).
 
-    alpaca_order_id is UNIQUE (schema-enforced) -- re-submitting the same
-    broker order id raises sqlite3.IntegrityError rather than silently
-    duplicating the row.
+    client_order_id is UNIQUE (schema-enforced) -- re-inserting the same
+    client_order_id raises sqlite3.IntegrityError rather than silently
+    duplicating the row. alpaca_order_id is optional here (defaults to NULL)
+    because the whole point of client_order_id is supporting a row that
+    exists BEFORE the broker has acked and assigned one; pass it only if
+    the caller already has it (e.g. a synchronous submit path that got an
+    immediate broker response). Otherwise call attach_alpaca_order_id() once
+    the broker ack arrives.
     """
     conn = get_connection()
     try:
         cursor = conn.execute(
             "INSERT INTO sleeve_orders "
-            "(alpaca_order_id, sleeve_id, rule_id, symbol, side, qty, order_class, status, raw_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (alpaca_order_id, sleeve_id, rule_id, symbol, side, qty, order_class, status, raw_json),
+            "(client_order_id, alpaca_order_id, sleeve_id, rule_id, symbol, side, qty, "
+            "reserved_price, order_class, status, raw_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                client_order_id,
+                alpaca_order_id,
+                sleeve_id,
+                rule_id,
+                symbol,
+                side,
+                qty,
+                reserved_price,
+                order_class,
+                status,
+                raw_json,
+            ),
         )
         conn.commit()
         return cursor.lastrowid
@@ -3488,35 +3526,85 @@ def insert_sleeve_order(
         conn.close()
 
 
-def update_sleeve_order_status(
-    alpaca_order_id: str, status: str, raw_json: "str | None" = None
+def attach_alpaca_order_id(
+    client_order_id: str,
+    alpaca_order_id: str,
+    status: "str | None" = None,
+    raw_json: "str | None" = None,
 ) -> None:
-    """Update one sleeve_orders row's status (and optionally raw_json) by broker order id.
+    """Populate alpaca_order_id on an existing RESERVED row once the broker acks.
 
-    Stamps updated_at to now UTC. No-op (no row touched) if alpaca_order_id is unknown --
-    callers should check reconciliation state separately rather than relying on this
-    raising for an unknown order.
+    Looks up by client_order_id (the pre-ack correlation key). Optionally also
+    updates status/raw_json in the same write. Stamps updated_at to now UTC.
+    No-op (no row touched) if client_order_id is unknown.
+    """
+    conn = get_connection()
+    try:
+        set_clauses = ["alpaca_order_id = ?", "updated_at = ?"]
+        params: list = [alpaca_order_id, _utcnow_iso()]
+        if status is not None:
+            set_clauses.append("status = ?")
+            params.append(status)
+        if raw_json is not None:
+            set_clauses.append("raw_json = ?")
+            params.append(raw_json)
+        params.append(client_order_id)
+        conn.execute(
+            f"UPDATE sleeve_orders SET {', '.join(set_clauses)} WHERE client_order_id = ?",
+            params,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_sleeve_order_status(
+    client_order_id: str, status: str, raw_json: "str | None" = None
+) -> None:
+    """Update one sleeve_orders row's status (and optionally raw_json) by client_order_id.
+
+    client_order_id (not alpaca_order_id) is the lookup key because it is
+    populated for the entire lifecycle, including the pre-ack RESERVED window
+    where alpaca_order_id is still NULL. Stamps updated_at to now UTC. No-op
+    (no row touched) if client_order_id is unknown -- callers should check
+    reconciliation state separately rather than relying on this raising for
+    an unknown order.
     """
     conn = get_connection()
     try:
         if raw_json is not None:
             conn.execute(
                 "UPDATE sleeve_orders SET status = ?, raw_json = ?, updated_at = ? "
-                "WHERE alpaca_order_id = ?",
-                (status, raw_json, _utcnow_iso(), alpaca_order_id),
+                "WHERE client_order_id = ?",
+                (status, raw_json, _utcnow_iso(), client_order_id),
             )
         else:
             conn.execute(
-                "UPDATE sleeve_orders SET status = ?, updated_at = ? WHERE alpaca_order_id = ?",
-                (status, _utcnow_iso(), alpaca_order_id),
+                "UPDATE sleeve_orders SET status = ?, updated_at = ? WHERE client_order_id = ?",
+                (status, _utcnow_iso(), client_order_id),
             )
         conn.commit()
     finally:
         conn.close()
 
 
-def get_sleeve_order(alpaca_order_id: str) -> "dict | None":
-    """Return one sleeve_orders row by broker order id, or None when absent."""
+def get_sleeve_order_by_client_id(client_order_id: str) -> "dict | None":
+    """Return one sleeve_orders row by our own pre-broker correlation key, or None when absent."""
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT "
+            + ", ".join(_SLEEVE_ORDER_COLUMNS)
+            + " FROM sleeve_orders WHERE client_order_id = ?",
+            (client_order_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(zip(_SLEEVE_ORDER_COLUMNS, row)) if row else None
+
+
+def get_sleeve_order_by_alpaca_id(alpaca_order_id: str) -> "dict | None":
+    """Return one sleeve_orders row by broker order id, or None when absent (incl. pre-ack rows)."""
     conn = get_ro_connection()
     try:
         row = conn.execute(
@@ -3565,18 +3653,128 @@ def get_sleeve_orders(
     return [dict(zip(_SLEEVE_ORDER_COLUMNS, row)) for row in rows]
 
 
-def insert_sleeve_fill(order_id: int, fill_price: float, filled_qty: float, filled_at: str) -> int:
+def get_sleeve_order_history(sleeve_id: int) -> "list[dict]":
+    """Return every sleeve_orders row for a sleeve, oldest-submitted first, each
+    augmented with a "fills" key holding its sleeve_fills rows (oldest-filled first).
+
+    This is raw event data only -- no cost-basis/P&L/reservation arithmetic is
+    performed here. It exists so sleeves.ledger (which owns that arithmetic in
+    tested pure functions -- reserve/release/apply_fill) can fold over a
+    sleeve's full order+fill history to reconstruct current LedgerState,
+    without database.py re-deriving conservation-critical math independently
+    in SQL. Deliberately not sliced by date/limit -- full replay needs the
+    complete history.
+    """
+    conn = get_ro_connection()
+    try:
+        order_rows = conn.execute(
+            "SELECT "
+            + ", ".join(_SLEEVE_ORDER_COLUMNS)
+            + " FROM sleeve_orders WHERE sleeve_id = ? ORDER BY submitted_at ASC",
+            (sleeve_id,),
+        ).fetchall()
+        orders = [dict(zip(_SLEEVE_ORDER_COLUMNS, row)) for row in order_rows]
+        for order in orders:
+            fill_rows = conn.execute(
+                "SELECT "
+                + ", ".join(_SLEEVE_FILL_COLUMNS)
+                + " FROM sleeve_fills WHERE order_id = ? ORDER BY filled_at ASC, id ASC",
+                (order["id"],),
+            ).fetchall()
+            order["fills"] = [dict(zip(_SLEEVE_FILL_COLUMNS, row)) for row in fill_rows]
+    finally:
+        conn.close()
+    return orders
+
+
+def get_daily_turnover_usd(sleeve_id: int, trading_day: str) -> float:
+    """Return one sleeve's total dollar turnover for trading_day ('YYYY-MM-DD').
+
+    Turnover = already-executed notional (SUM(filled_qty * fill_price) for
+    fills on trading_day) + still-reserved notional for orders submitted on
+    trading_day that have not reached a terminal status (their UNFILLED
+    remainder only: (qty - filled_so_far) * reserved_price, so a partially
+    filled order's executed portion is never double-counted against its
+    remaining reservation). Orders with reserved_price IS NULL (e.g. a sell,
+    which reserves shares rather than cash -- envelope.py/sizing.py concern,
+    not this sleeve's cash conservation) contribute 0 to the reserved term.
+
+    This is a plain SUM/JOIN aggregation, not P&L bookkeeping -- it does not
+    duplicate sleeves.ledger's cost-basis/realized-P&L arithmetic.
+
+    Terminal-status classification (denylist -- everything NOT in this set is
+    treated as still-reserving) is a first cut from Alpaca's documented order
+    status enum (tests/sleeves/_alpaca_fixtures.py ALPACA_ORDER_STATUS_VALUES)
+    plus this schema's own pre-ack 'RESERVED' value. Deliberately fails
+    CLOSED: an unrecognized/future status is treated as still-reserving
+    (over-counts turnover, the conservative direction for a risk cap) rather
+    than silently excluded (which would under-count and let a sleeve exceed
+    its turnover budget). sleeve-integration-impl owns Alpaca status
+    semantics -- flag if this classification is wrong.
+    """
+    _TERMINAL_STATUSES = (
+        "filled",
+        "canceled",
+        "expired",
+        "replaced",
+        "done_for_day",
+        "stopped",
+        "suspended",
+        "rejected",
+    )
+    conn = get_ro_connection()
+    try:
+        executed_row = conn.execute(
+            "SELECT COALESCE(SUM(sf.filled_qty * sf.fill_price), 0.0) "
+            "FROM sleeve_fills sf JOIN sleeve_orders so ON sf.order_id = so.id "
+            "WHERE so.sleeve_id = ? AND date(sf.filled_at) = ?",
+            (sleeve_id, trading_day),
+        ).fetchone()
+        executed_usd = float(executed_row[0])
+
+        placeholders = ",".join("?" * len(_TERMINAL_STATUSES))
+        reserved_row = conn.execute(
+            "SELECT COALESCE(SUM("
+            "  (so.qty - COALESCE("
+            "    (SELECT SUM(sf.filled_qty) FROM sleeve_fills sf WHERE sf.order_id = so.id), 0.0"
+            "  )) * so.reserved_price"
+            "), 0.0) "
+            "FROM sleeve_orders so "
+            "WHERE so.sleeve_id = ? AND date(so.submitted_at) = ? "
+            f"AND so.status NOT IN ({placeholders}) "
+            "AND so.reserved_price IS NOT NULL",
+            (sleeve_id, trading_day, *_TERMINAL_STATUSES),
+        ).fetchone()
+        reserved_remaining_usd = float(reserved_row[0])
+    finally:
+        conn.close()
+    return executed_usd + reserved_remaining_usd
+
+
+def insert_sleeve_fill(
+    order_id: int,
+    fill_price: float,
+    filled_qty: float,
+    filled_at: str,
+    broker_fill_id: "str | None" = None,
+) -> int:
     """Insert one sleeve_fills row against an existing sleeve_orders.id and return its new id.
 
-    order_id is the INTERNAL sleeve_orders.id, not the broker alpaca_order_id --
-    callers resolve the internal id via get_sleeve_order() first.
+    order_id is the INTERNAL sleeve_orders.id, not client_order_id/alpaca_order_id --
+    callers resolve the internal id via get_sleeve_order_by_client_id() or
+    get_sleeve_order_by_alpaca_id() first.
+
+    broker_fill_id (the Alpaca Account Activities `id` for this discrete fill
+    event) is UNIQUE when present (schema-enforced) -- re-inserting the same
+    broker_fill_id raises sqlite3.IntegrityError, which callers polling
+    overlapping activity windows should catch/ignore as "already recorded".
     """
     conn = get_connection()
     try:
         cursor = conn.execute(
-            "INSERT INTO sleeve_fills (order_id, fill_price, filled_qty, filled_at) "
-            "VALUES (?, ?, ?, ?)",
-            (order_id, fill_price, filled_qty, filled_at),
+            "INSERT INTO sleeve_fills (order_id, broker_fill_id, fill_price, filled_qty, filled_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (order_id, broker_fill_id, fill_price, filled_qty, filled_at),
         )
         conn.commit()
         return cursor.lastrowid

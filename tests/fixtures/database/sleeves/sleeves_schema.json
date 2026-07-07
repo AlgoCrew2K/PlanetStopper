@@ -40,12 +40,14 @@
     "table_name": "sleeve_orders",
     "columns": {
       "id":              { "notnull": true,  "is_pk": true,  "type_affinity": "INTEGER", "autoincrement": true },
-      "alpaca_order_id": { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "client_order_id": { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "alpaca_order_id": { "notnull": false, "has_default": true,  "type_affinity": "TEXT" },
       "sleeve_id":       { "notnull": true,  "has_default": false, "type_affinity": "INTEGER" },
       "rule_id":         { "notnull": false, "has_default": true,  "type_affinity": "INTEGER" },
       "symbol":          { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
       "side":            { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
       "qty":             { "notnull": true,  "has_default": false, "type_affinity": "REAL" },
+      "reserved_price":  { "notnull": false, "has_default": true,  "type_affinity": "REAL" },
       "order_class":     { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
       "status":          { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
       "submitted_at":    { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
@@ -53,10 +55,22 @@
       "updated_at":      { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" }
     },
     "order_class_default": "simple",
-    "status_default": "new",
+    "status_default": "RESERVED",
+    "status_values_app_level": {
+      "pre_ack_sleeve_side": ["RESERVED"],
+      "post_ack_alpaca_native_verbatim": [
+        "new", "partially_filled", "filled", "done_for_day", "canceled", "expired",
+        "replaced", "pending_cancel", "pending_replace", "accepted", "pending_new",
+        "accepted_for_bidding", "stopped", "rejected", "suspended", "calculated", "held"
+      ],
+      "_note": "No separate SUBMITTED/OPEN/PARTIALLY_FILLED synonyms invented for post-ack states -- Alpaca already names those; only the pre-ack window (before any alpaca_order_id exists) needed a new sleeve-side value."
+    },
     "side_values_app_level": ["buy", "sell"],
-    "_note": "rule_id is nullable -- P1 has no rules yet, so every P1 order carries rule_id=NULL. qty is REAL (fractional shares). alpaca_order_id is UNIQUE (idx_sleeve_orders_alpaca_order_id) so re-submitting the same broker order id raises sqlite3.IntegrityError rather than duplicating the row.",
-    "unique_indexes": ["idx_sleeve_orders_alpaca_order_id (alpaca_order_id)"],
+    "_note": "client_order_id is the durable correlation key, minted BEFORE the broker call so a row exists at reserve-time for crash-safe recovery (subprocess-per-minute engine, no in-memory-only state). alpaca_order_id is nullable and populated only once the broker acks. rule_id is nullable -- P1 has no rules yet, so every P1 order carries rule_id=NULL. qty is REAL (fractional shares). reserved_price is the estimate used to size the cash reservation at insert time -- distinct from the actual fill price in sleeve_fills. Sell orders (long-only, reduce-only) reserve SHARES not cash, so reserved_price is NULL for sells.",
+    "unique_indexes": [
+      "idx_sleeve_orders_client_order_id (client_order_id)",
+      "idx_sleeve_orders_alpaca_order_id (alpaca_order_id) WHERE alpaca_order_id IS NOT NULL"
+    ],
     "non_unique_indexes": [
       "idx_sleeve_orders_sleeve_id (sleeve_id)",
       "idx_sleeve_orders_rule_id (rule_id) WHERE rule_id IS NOT NULL"
@@ -66,14 +80,16 @@
   "sleeve_fills": {
     "table_name": "sleeve_fills",
     "columns": {
-      "id":         { "notnull": true,  "is_pk": true,  "type_affinity": "INTEGER", "autoincrement": true },
-      "order_id":   { "notnull": true,  "has_default": false, "type_affinity": "INTEGER" },
-      "fill_price": { "notnull": true,  "has_default": false, "type_affinity": "REAL" },
-      "filled_qty": { "notnull": true,  "has_default": false, "type_affinity": "REAL" },
-      "filled_at":  { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
-      "created_at": { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" }
+      "id":             { "notnull": true,  "is_pk": true,  "type_affinity": "INTEGER", "autoincrement": true },
+      "order_id":       { "notnull": true,  "has_default": false, "type_affinity": "INTEGER" },
+      "broker_fill_id": { "notnull": false, "has_default": true,  "type_affinity": "TEXT" },
+      "fill_price":     { "notnull": true,  "has_default": false, "type_affinity": "REAL" },
+      "filled_qty":     { "notnull": true,  "has_default": false, "type_affinity": "REAL" },
+      "filled_at":      { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "created_at":     { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" }
     },
-    "_note": "order_id is a soft FK to sleeve_orders.id (the internal id, not alpaca_order_id). filled_at is the broker-reported fill timestamp; created_at is row-insert time. Multiple fills per order are expected (partial fills) -- no uniqueness constraint on order_id.",
+    "_note": "order_id is a soft FK to sleeve_orders.id (the internal id, not alpaca_order_id/client_order_id). broker_fill_id is the Alpaca Account Activities (activity_type=FILL) `id` -- one row per discrete fill event including partials; nullable, UNIQUE when present, for dedup across overlapping reconciliation poll windows. filled_at is the broker-reported fill timestamp; created_at is row-insert time. Multiple fills per order are expected (partial fills) -- no uniqueness constraint on order_id.",
+    "unique_indexes": ["idx_sleeve_fills_broker_fill_id (broker_fill_id) WHERE broker_fill_id IS NOT NULL"],
     "non_unique_indexes": ["idx_sleeve_fills_order_id (order_id)"]
   },
 
