@@ -1,5 +1,7 @@
 Your keys:
 .env
+.env.*
+!.env.example
 
 # Local Databases (Your personal strategy locks and bot state)
 alphabot_state.db
