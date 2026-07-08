@@ -3636,12 +3636,38 @@ def disarm_sleeve(sleeve_id):
     return jsonify({"status": "success", "sleeve": database.get_sleeve(sleeve_id)})
 
 
+# Reuses database.get_daily_turnover_usd's / sleeves/tick_orchestrator.py's
+# exact terminal-status denylist so "is this order done, one way or another"
+# stays consistent with the rest of the codebase's Alpaca-status
+# classification. "RESERVED" (the pre-ack sleeve_orders default, broker
+# hasn't responded yet) is deliberately NOT in this tuple, so a single
+# "status not in this tuple" check covers both an accepted-but-unfilled
+# order and a still-RESERVED pre-ack row with no separate branch needed.
+_DELETE_TERMINAL_ORDER_STATUSES = (
+    "filled",
+    "canceled",
+    "expired",
+    "replaced",
+    "done_for_day",
+    "rejected",
+)
+
+
 @app.route("/api/sleeves/<int:sleeve_id>/delete", methods=["POST"])
 def delete_sleeve_route(sleeve_id):
     """Delete a sleeve (AC-16 delete control). Refuses unless flat -- a
-    sleeve holding any nonzero position is never deleted (delete never
-    liquidates, plan Edge Cases: "refuse unless flat"). Ledger reconstruction
-    mirrors _build_sleeves_panel_context's own zero-new-schema mechanism.
+    sleeve holding any nonzero position OR any non-terminal (still-open)
+    order is never deleted (delete never liquidates, plan Edge Cases:
+    "refuse unless flat"). The order-status check exists because a position
+    is only ever created by ledger.apply_fill() -- an order the broker has
+    accepted but not yet filled, or a still-RESERVED pre-ack row, produces
+    zero positions and would otherwise read as falsely flat (s3-review BLOCK
+    finding against the initial 821b385 GREEN) even though it's a live,
+    unrecoverable broker exposure: once the sleeve row is gone,
+    database.get_all_sleeves() never includes it again, so nothing would
+    ever poll/cancel/reconcile that order for the rest of the process's
+    life. Ledger reconstruction mirrors _build_sleeves_panel_context's own
+    zero-new-schema mechanism.
     """
     sleeve_row = database.get_sleeve(sleeve_id)
     if sleeve_row is None:
@@ -3655,17 +3681,22 @@ def delete_sleeve_route(sleeve_id):
             sleeve_row.get("capital_usd") or 0.0, order_history
         )
         has_open_position = any(pos.qty != 0 for pos in ledger_state.positions.values())
+        has_non_terminal_order = any(
+            order.get("status") not in _DELETE_TERMINAL_ORDER_STATUSES for order in order_history
+        )
     except Exception:
-        # Fail closed: an unreconstructable ledger can't prove the sleeve is
-        # flat -- refuse the delete rather than risk losing a real position's
-        # record.
+        # Fail closed: an unreconstructable ledger/order-history read can't
+        # prove the sleeve is flat -- refuse the delete rather than risk
+        # losing a real position's or a live order's only record.
         has_open_position = True
+        has_non_terminal_order = True
 
-    if has_open_position:
+    if has_open_position or has_non_terminal_order:
         return jsonify(
             {
                 "status": "error",
-                "message": "sleeve holds an open position — delete refused (delete never liquidates)",
+                "message": "sleeve holds an open position or a still-open order — "
+                "delete refused (delete never liquidates)",
             }
         ), 409
 
