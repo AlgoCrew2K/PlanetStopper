@@ -75,6 +75,31 @@ Action dict shapes (`then` list entries), "type" enum-closed to exactly:
     "buy" / "sell":  requires "sizing": {"mode": "risk_pct"|"pct_of_sleeve"|
                      "dollars"|"shares", ...} -- mode drawn from the same
                      closed set sleeves.sizing.size_order already defines.
+
+    "buy" ADDITIONALLY requires an explicit declared exit (PM decision,
+    2026-07-08, AC-7 "no position ever exists without its exit"): at least
+    one of "stop_loss_pct" | "trailing_stop_pct" (float, 0 < pct < 1 --
+    fraction of entry price, e.g. 0.05 == 5%) MUST be present. Missing BOTH
+    is a schema validation error, never a defaulted/invisible bracket --
+    there is deliberately no fallback constant anywhere in this codepath.
+    "take_profit_pct" is OPTIONAL (float, 0 < pct if present); when absent,
+    actions.py derives the take-profit distance as a fixed, documented
+    multiple of the DECLARED stop distance (never an independent, unrelated
+    percentage constant) -- see test_actions_dispatch.py's
+    TestBracketExitParamsFromDeclaredStops for the derivation proof.
+    Rationale (recorded per PM decision):
+      1. risk_pct sizing's own formula (qty = risk_dollars / stop_distance)
+         already requires a stop distance -- an entry without one is
+         unsizeable by the primary sizing mode regardless of schema.
+      2. AC-7's exit is part of the entry's DEFINITION, owned by the rule
+         author, never an invisible module-level constant.
+      3. A silent default stop couples directly into position sizing -- an
+         untested percentage constant would silently determine real
+         position sizes on paper/live.
+    "sell"/"go_to_cash"/"set_stop"/"notify" are UNCHANGED by this decision --
+    they close/manage an existing position rather than opening one, so
+    AC-7's "no position without its exit" does not apply to them.
+
     "go_to_cash":    no extra fields required (sells the sleeve's entire
                      current position in the rule's `when.symbol`).
     "set_stop":      requires exactly one of "trail_percent"/"trail_price"
@@ -294,7 +319,9 @@ class TestEnumClosedFields:
         assert result.rule_class == schema.RULE_CLASS_DEFENSIVE
 
     def test_unknown_sizing_mode_on_buy_is_invalid(self):
-        doc = make_rule_doc(then=[{"type": "buy", "sizing": {"mode": "yolo_all_in"}}])
+        doc = make_rule_doc(
+            then=[{"type": "buy", "sizing": {"mode": "yolo_all_in"}, "stop_loss_pct": 0.05}]
+        )
         result = schema.validate_rule_doc(doc)
         assert not result.valid
 
@@ -329,6 +356,96 @@ class TestEnumClosedFields:
 
 
 # ---------------------------------------------------------------------------
+# 4b. Entries require a declared exit — PM decision 2026-07-08, AC-7
+#
+# "A buy action without a declared stop is a SCHEMA VALIDATION ERROR, not a
+# defaulted bracket." At least one of stop_loss_pct/trailing_stop_pct is
+# required; take_profit_pct is optional. No other action type is affected
+# (sell/go_to_cash/set_stop/notify manage or close an existing position —
+# AC-7's "no position without its exit" only binds a position-OPENING action).
+# ---------------------------------------------------------------------------
+
+
+def _buy_action(**exit_fields) -> dict:
+    return {"type": "buy", "sizing": {"mode": "shares", "shares": 10}, **exit_fields}
+
+
+class TestEntryRequiresDeclaredExit:
+    def test_buy_with_neither_stop_loss_pct_nor_trailing_stop_pct_is_invalid(self):
+        doc = make_rule_doc(then=[_buy_action()])
+        result = schema.validate_rule_doc(doc)
+        assert not result.valid
+        assert result.rule_class is None
+        assert any(
+            "stop_loss_pct" in e.message or "trailing_stop_pct" in e.message for e in result.errors
+        ), f"expected an error naming the required exit field, got: {result.errors}"
+
+    def test_buy_with_only_stop_loss_pct_is_valid(self):
+        doc = make_rule_doc(then=[_buy_action(stop_loss_pct=0.05)])
+        result = schema.validate_rule_doc(doc)
+        assert result.valid, f"expected valid, got errors: {result.errors}"
+        assert result.rule_class == schema.RULE_CLASS_ENTRY
+
+    def test_buy_with_only_trailing_stop_pct_is_valid(self):
+        doc = make_rule_doc(then=[_buy_action(trailing_stop_pct=0.08)])
+        result = schema.validate_rule_doc(doc)
+        assert result.valid, f"expected valid, got errors: {result.errors}"
+
+    def test_buy_with_both_stop_loss_pct_and_trailing_stop_pct_is_valid(self):
+        # Not forbidden -- the PM decision requires AT LEAST one, not exactly one.
+        doc = make_rule_doc(then=[_buy_action(stop_loss_pct=0.05, trailing_stop_pct=0.08)])
+        result = schema.validate_rule_doc(doc)
+        assert result.valid, f"expected valid, got errors: {result.errors}"
+
+    def test_take_profit_pct_alone_never_substitutes_for_a_stop(self):
+        doc = make_rule_doc(then=[_buy_action(take_profit_pct=0.10)])
+        result = schema.validate_rule_doc(doc)
+        assert not result.valid, "take_profit_pct must never satisfy the stop requirement"
+
+    def test_take_profit_pct_is_genuinely_optional_alongside_a_declared_stop(self):
+        doc = make_rule_doc(then=[_buy_action(stop_loss_pct=0.05)])
+        result = schema.validate_rule_doc(doc)
+        assert result.valid, (
+            f"expected valid (take_profit_pct omitted), got errors: {result.errors}"
+        )
+
+    def test_take_profit_pct_present_alongside_a_declared_stop_is_valid(self):
+        doc = make_rule_doc(then=[_buy_action(stop_loss_pct=0.05, take_profit_pct=0.10)])
+        result = schema.validate_rule_doc(doc)
+        assert result.valid, f"expected valid, got errors: {result.errors}"
+
+    @pytest.mark.parametrize("bad_pct", [0.0, -0.05, 1.0, 1.5])
+    def test_out_of_bounds_stop_loss_pct_is_invalid(self, bad_pct):
+        doc = make_rule_doc(then=[_buy_action(stop_loss_pct=bad_pct)])
+        result = schema.validate_rule_doc(doc)
+        assert not result.valid, f"stop_loss_pct={bad_pct} should be invalid (must be 0 < pct < 1)"
+
+    @pytest.mark.parametrize("bad_pct", [0.0, -0.1])
+    def test_out_of_bounds_take_profit_pct_is_invalid(self, bad_pct):
+        doc = make_rule_doc(then=[_buy_action(stop_loss_pct=0.05, take_profit_pct=bad_pct)])
+        result = schema.validate_rule_doc(doc)
+        assert not result.valid, f"take_profit_pct={bad_pct} should be invalid (must be > 0)"
+
+    @pytest.mark.parametrize("action_type", ["sell", "go_to_cash", "set_stop", "notify"])
+    def test_non_entry_action_types_never_require_a_declared_stop(self, action_type):
+        # AC-7 only binds position-OPENING actions -- closing/managing/notify
+        # actions must validate exactly as before this decision, unaffected.
+        if action_type == "sell":
+            action = {"type": "sell", "sizing": {"mode": "shares", "shares": 1}}
+        elif action_type == "go_to_cash":
+            action = {"type": "go_to_cash"}
+        elif action_type == "set_stop":
+            action = {"type": "set_stop", "trail_percent": 0.05}
+        else:
+            action = {"type": "notify", "template": "fired", "fields": {"symbol": "SPY"}}
+        doc = make_rule_doc(then=[action])
+        result = schema.validate_rule_doc(doc)
+        assert result.valid, (
+            f"{action_type} must not require stop_loss_pct/trailing_stop_pct: {result.errors}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # 5. Rule-class derivation + declared-vs-derived mismatch (AC-20)
 # ---------------------------------------------------------------------------
 
@@ -345,7 +462,11 @@ class TestRuleClassDerivation:
     def test_mixed_buy_and_sell_rule_doc_is_invalid_at_the_schema_level(self):
         doc = make_rule_doc(
             then=[
-                {"type": "buy", "sizing": {"mode": "risk_pct", "risk_pct": 0.01}},
+                {
+                    "type": "buy",
+                    "sizing": {"mode": "risk_pct", "risk_pct": 0.01},
+                    "stop_loss_pct": 0.05,
+                },
                 {"type": "sell", "sizing": {"mode": "shares", "shares": 1}},
             ]
         )
@@ -363,7 +484,13 @@ class TestRuleClassDerivation:
     def test_declared_class_contradicting_derivation_is_invalid(self):
         # AC-20: "a rule cannot claim DEFENSIVE while holding entry actions."
         doc = make_rule_doc(
-            then=[{"type": "buy", "sizing": {"mode": "risk_pct", "risk_pct": 0.01}}]
+            then=[
+                {
+                    "type": "buy",
+                    "sizing": {"mode": "risk_pct", "risk_pct": 0.01},
+                    "stop_loss_pct": 0.05,
+                }
+            ]
         )
         doc["class"] = schema.RULE_CLASS_DEFENSIVE
         result = schema.validate_rule_doc(doc)

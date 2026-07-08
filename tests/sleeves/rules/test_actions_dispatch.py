@@ -64,6 +64,24 @@ shape for a plain closing sell) and submit_trailing_stop_order. A "sell" /
         # it there, not a new module, keeps the whole-repo containment
         # invariant intact (it already allowlists this exact name).
 
+NO DEFAULTED BRACKET (PM decision, 2026-07-08, AC-7): schema.py guarantees
+every "buy" action carries at least one of "stop_loss_pct"/"trailing_stop_pct"
+before it ever reaches dispatch_action. actions.py MUST have NO fallback
+constant for either leg of the bracket:
+  - stop_loss_price = ctx.price * (1 - (action.get("stop_loss_pct") or
+    action.get("trailing_stop_pct"))) -- whichever of the two the rule
+    declared; this value is ALSO passed as sizing.size_order's `stop_price`
+    for risk_pct-mode sizing (closing the loop: the SAME declared exit
+    distance drives both the bracket's protective leg AND the position size).
+  - take_profit_price: action.get("take_profit_pct") when present
+    (price * (1 + take_profit_pct)); when ABSENT, derived as a FIXED,
+    documented multiple of the stop distance (price + (price - stop_loss_price)
+    * <a named reward:risk ratio constant>) -- tied to the trade's OWN
+    declared risk, never an independent/disconnected percentage. There must
+    be NO module-level `_DEFAULT_BRACKET_STOP_LOSS_PCT` or
+    `_DEFAULT_BRACKET_TAKE_PROFIT_PCT` (or equivalently-named constants)
+    anywhere in this module — see TestPlaceholderConstantsRemoved.
+
 Action dispatch per type:
     "buy":           sizing.size_order(...) -> envelope.clamp_order(...) ->
                      (shadow: no-op) | (armed: alpaca_orders.submit_bracket_order
@@ -134,7 +152,11 @@ def _ctx(**overrides) -> actions.ActionContext:
 
 class TestClampIsNonBypassable:
     def test_armed_buy_never_reaches_alpaca_orders_when_clamp_refuses(self):
-        action = {"type": "buy", "sizing": {"mode": "shares", "shares": 10}}
+        action = {
+            "type": "buy",
+            "sizing": {"mode": "shares", "shares": 10},
+            "stop_loss_pct": 0.05,
+        }
         with (
             patch.object(
                 envelope,
@@ -181,7 +203,11 @@ class TestClampIsNonBypassable:
     def test_armed_buy_forwards_the_CLAMPED_qty_never_the_raw_sizing_qty(self):
         # sizing asks for 10 shares; the clamp cuts it down to 3. The order
         # actually constructed must carry 3, never 10.
-        action = {"type": "buy", "sizing": {"mode": "shares", "shares": 10}}
+        action = {
+            "type": "buy",
+            "sizing": {"mode": "shares", "shares": 10},
+            "stop_loss_pct": 0.05,
+        }
         clamped = envelope.ClampResult(
             approved=True,
             qty=3.0,
@@ -229,7 +255,11 @@ class TestClampIsNonBypassable:
         assert result.executed is True
 
     def test_shadow_buy_never_calls_alpaca_orders_even_when_clamp_approves(self):
-        action = {"type": "buy", "sizing": {"mode": "shares", "shares": 10}}
+        action = {
+            "type": "buy",
+            "sizing": {"mode": "shares", "shares": 10},
+            "stop_loss_pct": 0.05,
+        }
         approved = envelope.ClampResult(
             approved=True, qty=10.0, original_qty=10.0, clamped=False, reason=None
         )
@@ -264,7 +294,11 @@ class TestBuyNeverRoutesThroughThePlainSubmitOrderPath:
     def test_buy_never_calls_plain_submit_order_in_any_mode_or_clamp_outcome(
         self, shadow, clamp_approved
     ):
-        action = {"type": "buy", "sizing": {"mode": "shares", "shares": 10}}
+        action = {
+            "type": "buy",
+            "sizing": {"mode": "shares", "shares": 10},
+            "stop_loss_pct": 0.05,
+        }
         clamp = (
             envelope.ClampResult(
                 approved=True, qty=10.0, original_qty=10.0, clamped=False, reason=None
@@ -299,7 +333,11 @@ class TestBuyNeverRoutesThroughThePlainSubmitOrderPath:
     def test_armed_approved_buy_reaches_bracket_construction_not_the_plain_path(self):
         # Positive complement to the negative proof above: confirm the ONE
         # broker call an armed, approved buy DOES make is the bracket path.
-        action = {"type": "buy", "sizing": {"mode": "shares", "shares": 10}}
+        action = {
+            "type": "buy",
+            "sizing": {"mode": "shares", "shares": 10},
+            "stop_loss_pct": 0.05,
+        }
         approved = envelope.ClampResult(
             approved=True, qty=10.0, original_qty=10.0, clamped=False, reason=None
         )
@@ -316,6 +354,203 @@ class TestBuyNeverRoutesThroughThePlainSubmitOrderPath:
         assert mock_bracket.called
         mock_submit_order.assert_not_called()
         assert result.executed is True
+
+
+# ---------------------------------------------------------------------------
+# 1c. Bracket exit params come from the DECLARED stop -- never a constant
+#
+# PM decision (2026-07-08, AC-7): _DEFAULT_BRACKET_STOP_LOSS_PCT and
+# _DEFAULT_BRACKET_TAKE_PROFIT_PCT are removed entirely. A buy's bracket
+# prices are derived exclusively from what the rule itself declared.
+# ---------------------------------------------------------------------------
+
+
+class TestBracketExitParamsFromDeclaredStops:
+    def test_bracket_stop_loss_price_derives_from_declared_stop_loss_pct(self):
+        # ctx price is 100.0 (see _ctx defaults) -- stop_loss_pct=0.05 must
+        # produce stop_loss_price == 100 * (1 - 0.05) == 95.0, computed via
+        # the SAME formula here, never a hardcoded literal.
+        action = {
+            "type": "buy",
+            "sizing": {"mode": "shares", "shares": 10},
+            "stop_loss_pct": 0.05,
+        }
+        approved = envelope.ClampResult(
+            approved=True, qty=10.0, original_qty=10.0, clamped=False, reason=None
+        )
+        ctx = _ctx()
+        expected_stop_price = ctx.price * (1 - 0.05)
+        with (
+            patch.object(envelope, "clamp_order", return_value=approved),
+            patch.object(
+                alpaca_orders,
+                "submit_bracket_order",
+                return_value=alpaca_orders.OrderResult(order={"id": "abc"}, error=None),
+            ) as mock_bracket,
+        ):
+            actions.dispatch_action(action, ctx=ctx, shadow=False)
+        _, kwargs = mock_bracket.call_args
+        assert kwargs.get("stop_loss_price") == pytest.approx(expected_stop_price)
+
+    def test_bracket_stop_loss_price_derives_from_declared_trailing_stop_pct_when_stop_loss_pct_absent(
+        self,
+    ):
+        action = {
+            "type": "buy",
+            "sizing": {"mode": "shares", "shares": 10},
+            "trailing_stop_pct": 0.08,
+        }
+        approved = envelope.ClampResult(
+            approved=True, qty=10.0, original_qty=10.0, clamped=False, reason=None
+        )
+        ctx = _ctx()
+        expected_stop_price = ctx.price * (1 - 0.08)
+        with (
+            patch.object(envelope, "clamp_order", return_value=approved),
+            patch.object(
+                alpaca_orders,
+                "submit_bracket_order",
+                return_value=alpaca_orders.OrderResult(order={"id": "abc"}, error=None),
+            ) as mock_bracket,
+        ):
+            actions.dispatch_action(action, ctx=ctx, shadow=False)
+        _, kwargs = mock_bracket.call_args
+        assert kwargs.get("stop_loss_price") == pytest.approx(expected_stop_price)
+
+    def test_bracket_take_profit_price_uses_declared_take_profit_pct_when_present(self):
+        action = {
+            "type": "buy",
+            "sizing": {"mode": "shares", "shares": 10},
+            "stop_loss_pct": 0.05,
+            "take_profit_pct": 0.10,
+        }
+        approved = envelope.ClampResult(
+            approved=True, qty=10.0, original_qty=10.0, clamped=False, reason=None
+        )
+        ctx = _ctx()
+        expected_take_profit_price = ctx.price * (1 + 0.10)
+        with (
+            patch.object(envelope, "clamp_order", return_value=approved),
+            patch.object(
+                alpaca_orders,
+                "submit_bracket_order",
+                return_value=alpaca_orders.OrderResult(order={"id": "abc"}, error=None),
+            ) as mock_bracket,
+        ):
+            actions.dispatch_action(action, ctx=ctx, shadow=False)
+        _, kwargs = mock_bracket.call_args
+        assert kwargs.get("take_profit_price") == pytest.approx(expected_take_profit_price)
+
+    def test_take_profit_absent_derives_as_a_fixed_ratio_of_the_declared_stop_distance(self):
+        # THE derivation proof: with no take_profit_pct declared, the
+        # take-profit distance must be a CONSTANT MULTIPLE of the stop
+        # distance the rule itself declared -- never an independent/absolute
+        # percentage disconnected from the trade's own risk. Proven by
+        # checking the ratio is IDENTICAL across two different stop
+        # distances, without this test ever asserting what that ratio is.
+        ctx = _ctx()
+        approved_qty = 10.0
+
+        def _bracket_prices_for(stop_loss_pct: float) -> tuple[float, float]:
+            action = {
+                "type": "buy",
+                "sizing": {"mode": "shares", "shares": approved_qty},
+                "stop_loss_pct": stop_loss_pct,
+            }
+            approved = envelope.ClampResult(
+                approved=True,
+                qty=approved_qty,
+                original_qty=approved_qty,
+                clamped=False,
+                reason=None,
+            )
+            with (
+                patch.object(envelope, "clamp_order", return_value=approved),
+                patch.object(
+                    alpaca_orders,
+                    "submit_bracket_order",
+                    return_value=alpaca_orders.OrderResult(order={"id": "abc"}, error=None),
+                ) as mock_bracket,
+            ):
+                actions.dispatch_action(action, ctx=ctx, shadow=False)
+            _, kwargs = mock_bracket.call_args
+            return kwargs["stop_loss_price"], kwargs["take_profit_price"]
+
+        stop_price_a, take_profit_price_a = _bracket_prices_for(0.05)
+        stop_price_b, take_profit_price_b = _bracket_prices_for(0.10)
+
+        # Guard against a vacuous pass: if the implementation ignored
+        # stop_loss_pct entirely (e.g. still reading a hardcoded constant),
+        # both calls would return IDENTICAL prices regardless of input, and
+        # the ratio check below would trivially "pass" for the wrong reason.
+        # Confirm the declared stop actually changed the stop price first.
+        assert stop_price_a != pytest.approx(stop_price_b), (
+            "stop_loss_price did not change between stop_loss_pct=0.05 and 0.10 -- "
+            "the declared stop is not being read at all (this test's ratio check "
+            "would otherwise pass vacuously)."
+        )
+
+        ratio_a = (take_profit_price_a - ctx.price) / (ctx.price - stop_price_a)
+        ratio_b = (take_profit_price_b - ctx.price) / (ctx.price - stop_price_b)
+        assert ratio_a == pytest.approx(ratio_b), (
+            f"take-profit distance must scale proportionally with the DECLARED stop "
+            f"distance (a fixed reward:risk ratio), not an independent absolute "
+            f"percentage -- got ratio_a={ratio_a}, ratio_b={ratio_b}"
+        )
+
+    def test_declared_stop_loss_pct_feeds_risk_pct_sizings_own_stop_distance_requirement(self):
+        # Closes the PM's motivating point #1: risk_pct sizing's formula
+        # (qty = risk_dollars / stop_distance) needs a stop_price -- that
+        # price must come from the SAME declared stop_loss_pct that sizes
+        # the bracket, not a separate/absent sizing.stop_price field.
+        ctx = _ctx(sleeve_equity_usd=10_000.0, price=100.0)
+        action = {
+            "type": "buy",
+            "sizing": {"mode": "risk_pct", "risk_pct": 0.02},
+            "stop_loss_pct": 0.05,
+        }
+        expected_stop_price = ctx.price * (1 - 0.05)
+        expected_risk_dollars = 0.02 * ctx.sleeve_equity_usd
+        expected_qty = expected_risk_dollars / (ctx.price - expected_stop_price)
+
+        with patch.object(envelope, "clamp_order") as mock_clamp:
+            mock_clamp.return_value = envelope.ClampResult(
+                approved=True,
+                qty=expected_qty,
+                original_qty=expected_qty,
+                clamped=False,
+                reason=None,
+            )
+            actions.dispatch_action(action, ctx=ctx, shadow=True)
+        assert mock_clamp.called, (
+            "envelope.clamp_order was never called -- sizing.size_order must have errored "
+            "before reaching the clamp, meaning risk_pct sizing did not receive a stop_price "
+            "derived from the declared stop_loss_pct (it likely fell back to an absent/None "
+            "sizing.stop_price and hit sizing.py's degenerate_stop_distance error instead)."
+        )
+        _, clamp_kwargs = mock_clamp.call_args
+        assert clamp_kwargs.get("qty") == pytest.approx(expected_qty), (
+            f"risk_pct sizing did not use the declared stop_loss_pct's derived stop "
+            f"price -- expected qty={expected_qty}, clamp_order was called with "
+            f"qty={clamp_kwargs.get('qty')}"
+        )
+
+
+class TestPlaceholderConstantsRemoved:
+    def test_no_default_bracket_constants_remain_in_actions_module(self):
+        import inspect
+
+        source = inspect.getsource(actions)
+        for forbidden_name in (
+            "_DEFAULT_BRACKET_STOP_LOSS_PCT",
+            "_DEFAULT_BRACKET_TAKE_PROFIT_PCT",
+        ):
+            assert forbidden_name not in source, (
+                f"{forbidden_name} still present in sleeves/rules/actions.py -- PM decision "
+                f"(2026-07-08) removed this fallback constant entirely; a buy action's exit "
+                f"parameters must come exclusively from the rule's own declared "
+                f"stop_loss_pct/trailing_stop_pct/take_profit_pct fields."
+            )
 
 
 # ---------------------------------------------------------------------------

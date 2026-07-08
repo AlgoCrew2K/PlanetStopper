@@ -73,11 +73,10 @@ pytest.importorskip(
     "sleeves.rules.runner", reason="RED phase — sleeves.rules.runner not implemented yet"
 )
 
-import sleeves.rules.runner as runner  # noqa: E402
-
 import database  # noqa: E402
 import market_calendar  # noqa: E402
 import sleeves.alpaca_orders as alpaca_orders  # noqa: E402
+import sleeves.rules.runner as runner  # noqa: E402
 
 from .conftest import ET, make_stored_rule  # noqa: E402
 
@@ -122,12 +121,24 @@ class TestPrecedenceOrdering:
         entry_high_id = make_stored_rule(
             id=5,
             mode="SHADOW",
-            then=[{"type": "buy", "sizing": {"mode": "shares", "shares": 1}}],
+            then=[
+                {
+                    "type": "buy",
+                    "sizing": {"mode": "shares", "shares": 1},
+                    "stop_loss_pct": 0.05,
+                }
+            ],
         )
         entry_low_id = make_stored_rule(
             id=2,
             mode="SHADOW",
-            then=[{"type": "buy", "sizing": {"mode": "shares", "shares": 1}}],
+            then=[
+                {
+                    "type": "buy",
+                    "sizing": {"mode": "shares", "shares": 1},
+                    "stop_loss_pct": 0.05,
+                }
+            ],
         )
         defensive_rule = make_stored_rule(
             id=10,
@@ -165,7 +176,13 @@ class TestShadowPurityEndToEnd:
         rule = make_stored_rule(
             id=101,
             mode="SHADOW",
-            then=[{"type": "buy", "sizing": {"mode": "shares", "shares": 2}}],
+            then=[
+                {
+                    "type": "buy",
+                    "sizing": {"mode": "shares", "shares": 2},
+                    "stop_loss_pct": 0.05,
+                }
+            ],
         )
         with (
             patch.object(alpaca_orders, "submit_bracket_order") as mock_bracket,

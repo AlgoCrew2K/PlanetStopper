@@ -86,7 +86,17 @@ def make_rule_doc(
         },
         "then": then
         if then is not None
-        else [{"type": "buy", "sizing": {"mode": "risk_pct", "risk_pct": 0.01}}],
+        else [
+            {
+                "type": "buy",
+                "sizing": {"mode": "risk_pct", "risk_pct": 0.01},
+                # AC-7 (PM decision 2026-07-08): an entry action MUST declare
+                # its own exit distance -- stop_loss_pct or trailing_stop_pct
+                # is required, never a defaulted/invisible constant. This
+                # also feeds risk_pct sizing's own stop-distance requirement.
+                "stop_loss_pct": 0.05,
+            }
+        ],
         "limits": limits
         if limits is not None
         else {
