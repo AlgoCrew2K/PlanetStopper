@@ -257,3 +257,164 @@ class TestReconcileSleeveCombined:
         assert clean.verdict in (_OK, _PAUSED)
         assert breached.verdict in (_OK, _PAUSED)
         assert clean.verdict != breached.verdict
+
+
+# ---------------------------------------------------------------------------
+# 4. reconcile_aggregate_cash / reconcile_aggregate_position — shared-account
+#    semantics (BLOCK, s3-ux live finding + PM ruling, 2026-07-08)
+#
+# CONTRACT this section specifies for the GREEN implementer (s3-engine):
+#
+#     def reconcile_aggregate_cash(
+#         *, total_sleeve_cash_claim_usd: float, broker_cash_usd: float,
+#         cash_tolerance_usd: float,
+#     ) -> ReconciliationResult:
+#         # ONE-SIDED. The broker has no concept of per-sleeve cash — only
+#         # ONE account-level cash figure exists, shared by every sleeve. The
+#         # money-safety invariant that matters: sleeves must never
+#         # COLLECTIVELY believe they can spend more than the account
+#         # actually holds. Breach iff total_sleeve_cash_claim_usd exceeds
+#         # broker_cash_usd + cash_tolerance_usd. The REVERSE — broker cash
+#         # exceeding the sleeves' combined claim — is explicitly NOT a
+#         # breach: unallocated float, or the operator's own money sharing
+#         # the same account, is normal and expected. breach reason string
+#         # must contain "aggregate_cash_exceeds_account".
+#
+#     def reconcile_aggregate_position(
+#         *, symbol: str, total_sleeve_qty: float, broker_qty: float,
+#         position_tolerance_pct: float,
+#     ) -> ReconciliationResult:
+#         # ONE-SIDED, per-symbol. Breach iff the sleeves' COMBINED qty for
+#         # this symbol (summed across every sleeve that has ANY history in
+#         # it) exceeds the broker's own qty for that symbol beyond
+#         # tolerance. total_sleeve_qty <= broker_qty is NEVER a breach —
+#         # broker surplus in a symbol (an operator-external holding sharing
+#         # the account, or a symbol no sleeve tracks at all, i.e.
+#         # total_sleeve_qty == 0) is explicitly ignored by design. breach
+#         # reason string must contain "aggregate_position_exceeds_broker:<SYMBOL>".
+# ---------------------------------------------------------------------------
+
+
+class TestReconcileAggregateCash:
+    def test_matching_aggregate_cash_is_ok(self):
+        result = reconciliation.reconcile_aggregate_cash(
+            total_sleeve_cash_claim_usd=3000.0,
+            broker_cash_usd=3000.0,
+            cash_tolerance_usd=1.0,
+        )
+        assert result.ok is True
+        assert result.verdict == _OK
+
+    def test_broker_cash_exceeding_sleeve_claim_is_fine_not_a_breach(self):
+        """The load-bearing one-sided invariant: unallocated float in the
+        shared account (broker holds MORE than sleeves collectively claim)
+        must never pause anything — this is normal, not drift."""
+        result = reconciliation.reconcile_aggregate_cash(
+            total_sleeve_cash_claim_usd=3000.0,
+            broker_cash_usd=50000.0,  # a large operator float sharing the account
+            cash_tolerance_usd=1.0,
+        )
+        assert result.ok is True, (
+            f"broker cash exceeding the sleeves' combined claim must NEVER "
+            f"breach — got {result.breaches}"
+        )
+        assert result.verdict == _OK
+
+    def test_sleeve_claim_exceeding_broker_cash_beyond_tolerance_breaches(self):
+        """The actual money-safety invariant: sleeves collectively believing
+        they hold more cash than the account actually has must breach."""
+        result = reconciliation.reconcile_aggregate_cash(
+            total_sleeve_cash_claim_usd=3000.0,
+            broker_cash_usd=100.0,
+            cash_tolerance_usd=1.0,
+        )
+        assert result.ok is False
+        assert result.verdict == _PAUSED
+        assert any("aggregate_cash_exceeds_account" in b for b in result.breaches)
+
+    def test_sleeve_claim_within_tolerance_of_broker_cash_is_ok(self):
+        result = reconciliation.reconcile_aggregate_cash(
+            total_sleeve_cash_claim_usd=3000.50,
+            broker_cash_usd=3000.00,
+            cash_tolerance_usd=1.0,
+        )
+        assert result.ok is True
+
+
+class TestReconcileAggregatePosition:
+    def test_matching_aggregate_qty_is_ok(self):
+        result = reconciliation.reconcile_aggregate_position(
+            symbol="SPY",
+            total_sleeve_qty=15.0,
+            broker_qty=15.0,
+            position_tolerance_pct=0.005,
+        )
+        assert result.ok is True
+
+    def test_broker_surplus_in_symbol_is_fine_not_a_breach(self):
+        """An operator-external holding (or slack) in a symbol the sleeves
+        also partially hold must never breach — only a sleeve claim
+        EXCEEDING the broker's truth is drift."""
+        result = reconciliation.reconcile_aggregate_position(
+            symbol="SPY",
+            total_sleeve_qty=15.0,
+            broker_qty=100.0,  # operator holds 85 more shares of SPY outright
+            position_tolerance_pct=0.005,
+        )
+        assert result.ok is True, (
+            f"broker qty exceeding the sleeves' combined claim must never "
+            f"breach; got {result.breaches}"
+        )
+
+    def test_symbol_no_sleeve_tracks_is_ignored_entirely(self):
+        """total_sleeve_qty=0 (no sleeve has ever touched this symbol) vs any
+        broker qty must never breach — this is the "operator-external
+        position" scenario from the plan's shared-account model."""
+        result = reconciliation.reconcile_aggregate_position(
+            symbol="TSLA",
+            total_sleeve_qty=0.0,
+            broker_qty=200.0,
+            position_tolerance_pct=0.005,
+        )
+        assert result.ok is True
+
+    def test_sleeve_claim_exceeding_broker_qty_beyond_tolerance_breaches(self):
+        result = reconciliation.reconcile_aggregate_position(
+            symbol="SPY",
+            total_sleeve_qty=15.0,
+            broker_qty=10.0,
+            position_tolerance_pct=0.005,
+        )
+        assert result.ok is False
+        assert result.verdict == _PAUSED
+        assert any("aggregate_position_exceeds_broker:SPY" in b for b in result.breaches)
+
+    def test_sleeve_claim_exceeding_zero_broker_qty_always_breaches(self):
+        """Mirrors the old missing_position semantics: sleeves collectively
+        claim a symbol the broker shows ZERO of — always a breach,
+        regardless of the relative tolerance (there's no meaningful
+        percentage of zero)."""
+        result = reconciliation.reconcile_aggregate_position(
+            symbol="QQQ",
+            total_sleeve_qty=3.0,
+            broker_qty=0.0,
+            position_tolerance_pct=0.005,
+        )
+        assert result.ok is False
+        assert any("aggregate_position_exceeds_broker:QQQ" in b for b in result.breaches)
+
+    def test_tiny_drift_within_tolerance_is_ok(self):
+        # 15.0 vs 15.02 broker => ~0.13% over-claim relative to broker qty, within 0.5% tolerance.
+        result = reconciliation.reconcile_aggregate_position(
+            symbol="SPY",
+            total_sleeve_qty=15.02,
+            broker_qty=15.0,
+            position_tolerance_pct=0.005,
+        )
+        assert result.ok is True
+
+    def test_both_sides_zero_is_ok(self):
+        result = reconciliation.reconcile_aggregate_position(
+            symbol="SPY", total_sleeve_qty=0.0, broker_qty=0.0, position_tolerance_pct=0.005
+        )
+        assert result.ok is True

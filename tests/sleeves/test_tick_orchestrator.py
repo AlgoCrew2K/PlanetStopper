@@ -26,19 +26,20 @@ CONTRACT this file specifies for the GREEN implementer (s3-engine):
         # stack that can surface a persistent broker outage/auth failure on
         # the fill-polling path to an operator.
 
-    def reconcile_sleeve_or_pause(
-        sleeve_id: int, *, position_tolerance_pct: float, cash_tolerance_usd: float,
-        live_mode: bool = False, live_keys_present: bool = False,
-        discord_webhook_url: str | None = None,
-    ) -> sleeves.reconciliation.ReconciliationResult:
-        # Reconstructs the sleeve's ledger from database.get_sleeve_order_history
-        # via sleeves.ledger.reconstruct_from_history, fetches broker truth via
-        # sleeves.alpaca_orders.get_account/get_positions, and calls
-        # sleeves.reconciliation.reconcile_sleeve. On breach
-        # (verdict == "PAUSED_RECONCILIATION"), calls
-        # database.update_sleeve_status(sleeve_id, "PAUSED_RECONCILIATION") and
-        # best-effort posts a Discord alert (never raises on webhook failure).
-        # Returns the ReconciliationResult either way.
+    RETIRED (BLOCK, s3-ux live finding + PM ruling, 2026-07-08):
+    reconcile_sleeve_or_pause -- the per-sleeve function that compared ONE
+    sleeve's ledger cash against sleeves.alpaca_orders.get_account's
+    WHOLE-ACCOUNT cash figure. The broker has no concept of our virtual
+    per-sleeve partitioning, so every sleeve's own (necessarily smaller)
+    capital differed from the full account total by far more than any
+    tolerance -- s3-ux's live render against a real 7-sleeve seeded DB
+    reproduced exactly this: all 7 sleeves paused within one tick. See the
+    "Shared-account reconciliation semantics" section below (and
+    tests/sleeves/test_reconciliation.py's reconcile_aggregate_cash /
+    reconcile_aggregate_position) for the correct replacement contract.
+    Whatever internal function(s) the GREEN implementer uses to replace it
+    are an implementation detail this file does not pin by name -- only the
+    end-to-end behavior via run_sleeve_tick_for_all_sleeves is pinned.
 
     def cancel_open_orders_for_shadow_sleeve(
         sleeve_id: int, *, live_mode: bool = False, live_keys_present: bool = False,
@@ -76,25 +77,26 @@ CONTRACT this file specifies for the GREEN implementer (s3-engine):
         #      discord_webhook_url through.
         #
         #      BLOCK 1 fix (s3-review, 2026-07-08): a SHADOW-status sleeve is
-        #      NOT exempt from poll_and_apply_fills / reconcile_sleeve_or_pause
-        #      — every disarmed sleeve stays SHADOW permanently until
-        #      re-armed, and can still hold real residual broker-side
-        #      exposure (an order that filled at the broker in the TOCTOU
-        #      window between the disarm click and this tick's cancel
-        #      attempt, or a position from before it was disarmed). Skipping
-        #      reconciliation entirely for every SHADOW sleeve meant that
-        #      exposure could drift forever with NOTHING ever catching it
-        #      again. So steps 1-2 below now run for EVERY sleeve regardless
-        #      of status (SHADOW included) — only "already
-        #      PAUSED_RECONCILIATION coming into this tick" skips them, same
-        #      as before. A SHADOW sleeve that breaches reconciliation still
-        #      transitions to PAUSED_RECONCILIATION exactly like any other
-        #      sleeve — SHADOW is not a drift-detection exemption.
+        #      NOT exempt from fill-polling/reconciliation — every disarmed
+        #      sleeve stays SHADOW permanently until re-armed, and can still
+        #      hold real residual broker-side exposure (an order that filled
+        #      at the broker in the TOCTOU window between the disarm click
+        #      and this tick's cancel attempt, or a position from before it
+        #      was disarmed). So steps 1-2 below now run for EVERY sleeve
+        #      regardless of status (SHADOW included) — only "already
+        #      PAUSED_RECONCILIATION coming into this tick" skips them.
         #   1. poll_and_apply_fills — for every sleeve (see BLOCK 1 above).
-        #   2. reconcile_sleeve_or_pause — for every sleeve not already
-        #      PAUSED_RECONCILIATION coming in (see BLOCK 1 above). If this
-        #      call PAUSES the sleeve this tick (or it was already paused
-        #      coming in), rule evaluation is skipped for it this tick.
+        #   2. AGGREGATE reconciliation (BLOCK, s3-ux live finding + PM
+        #      ruling, 2026-07-08 — see the "Shared-account reconciliation
+        #      semantics" section below): computed ONCE per tick across ALL
+        #      non-already-paused sleeves together, never per sleeve against
+        #      the whole account. A cash breach pauses EVERY sleeve; a
+        #      per-symbol position breach pauses only the sleeves holding
+        #      that symbol. Either pause this tick (or a sleeve already
+        #      PAUSED_RECONCILIATION coming in) skips rule evaluation for
+        #      that sleeve this tick. SHADOW sleeves participate in this
+        #      aggregate check exactly like any other sleeve — SHADOW is not
+        #      a drift-detection exemption.
         #   3. otherwise, assembles the sleeve's enabled rules + sense context
         #      and calls sleeves.rules.runner.evaluate_rules for it — this
         #      still includes SHADOW-status sleeves (AC-6: a SHADOW rule
@@ -146,6 +148,27 @@ def _make_sleeve(capital_usd: float = 10000.0, name: str | None = None) -> int:
     if name is None:
         name = f"test-sleeve-{uuid.uuid4().hex}"
     return database.create_sleeve(name, capital_usd, envelope_json="{}")
+
+
+def _make_matching_account(cash_usd: float) -> dict:
+    """A minimal Alpaca Account fixture shape whose cash matches cash_usd —
+    used by tests that need a CLEAN (non-breaching) broker-truth double so
+    the aggregate reconciliation step doesn't interfere with whatever else
+    the test is actually checking (never live network; house rule)."""
+    return {
+        "id": f"acct-clean-{uuid.uuid4().hex}",
+        "account_number": "PA0000CLEANTEST",
+        "status": "ACTIVE",
+        "currency": "USD",
+        "cash": str(cash_usd),
+        "portfolio_value": str(cash_usd),
+        "buying_power": str(cash_usd),
+        "equity": str(cash_usd),
+        "pattern_day_trader": False,
+        "trading_blocked": False,
+        "account_blocked": False,
+        "shorting_enabled": False,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -297,96 +320,309 @@ class TestPollAndApplyFills:
 
 
 # ---------------------------------------------------------------------------
-# reconcile_sleeve_or_pause
+# Shared-account reconciliation semantics (BLOCK: s3-ux live finding + PM
+# ruling, 2026-07-08) — supersedes the retired per-sleeve-vs-whole-account
+# reconcile_sleeve_or_pause tests that used to live here.
+#
+# s3-ux's visual-gate render, driven against a REAL 7-sleeve seeded DB
+# (not read-only code inspection), reproduced a genuine BLOCK: every one of
+# the 7 sleeves paused within a single tick. Root cause: reconcile_sleeve_or_
+# pause compared ONE sleeve's ledger cash against the alpaca_orders.get_account
+# call's WHOLE-ACCOUNT cash figure — since the broker has no concept of our
+# virtual per-sleeve partitioning, every sleeve's own (necessarily smaller)
+# capital differed from the full account total by far more than any
+# reasonable tolerance, guaranteeing a breach the moment more than one sleeve
+# existed. The retired test_matching_broker_truth_within_tolerance_does_not_
+# pause only ever passed because it faked the WHOLE-ACCOUNT cash to equal
+# ONE sleeve's own capital — a fixture that is only coherent with exactly one
+# sleeve in the database, i.e. the tacit assumption s3-ux's live repro broke.
+#
+# PM ruling — the correct shared-account semantics:
+#   1. CASH becomes an AGGREGATE, ONE-SIDED check across ALL sleeves:
+#      Sigma(every sleeve's ledger cash_usd + reserved_usd) <= account_cash +
+#      cash_tolerance_usd. Account cash EXCEEDING the sleeve sum is FINE by
+#      design (unallocated float / the operator's own money sharing the same
+#      account) — the breach direction is one-sided.
+#   2. An aggregate cash breach pauses ALL sleeves (+ alerts) — blame is
+#      unattributable across virtual slices of one real account; pausing
+#      everyone is the conservative direction.
+#   3. POSITION reconciliation stays per-symbol but is ALSO aggregated across
+#      sleeves: for each symbol with sleeve-attributed history, Sigma(every
+#      sleeve's qty for that symbol) <= broker's own qty for that symbol +
+#      tolerance. A breach pauses only the sleeves holding that symbol.
+#      Broker positions NOT attributable to any sleeve (a symbol no sleeve
+#      has ever touched) are IGNORED entirely — the operator's own holdings
+#      sharing the account, never drift.
+#   4. Per-sleeve cash conservation remains sleeves.ledger's OWN internal law
+#      (already enforced there) — it is simply no longer checked against the
+#      broker on a PER-sleeve basis.
+#
+# See sleeves/reconciliation.py's new reconcile_aggregate_cash /
+# reconcile_aggregate_position pure functions (tests/sleeves/
+# test_reconciliation.py) for the underlying one-sided comparison contract
+# this section exercises end-to-end via run_sleeve_tick_for_all_sleeves.
 # ---------------------------------------------------------------------------
 
 
-class TestReconcileSleeveOrPause:
-    def test_position_drift_against_broker_truth_pauses_the_sleeve(self):
-        sleeve_id = _make_sleeve()
-        positions_fixture = load_positions_fixture("positions.json")
-        account_fixture = load_account_fixture("account.json")
-
-        # Sleeve's own ledger has zero order history -> ledger believes it
-        # holds NOTHING, while the broker fixture reports a real SPY position.
-        # That mismatch is a genuine unknown_position breach.
-        with (
-            patch.object(
-                alpaca_orders,
-                "get_positions",
-                return_value=alpaca_orders.OrderResult(order=positions_fixture, error=None),
-            ),
-            patch.object(
-                alpaca_orders,
-                "get_account",
-                return_value=alpaca_orders.OrderResult(order=account_fixture, error=None),
-            ),
-        ):
-            result = tick_orchestrator.reconcile_sleeve_or_pause(
-                sleeve_id,
-                position_tolerance_pct=0.005,
-                cash_tolerance_usd=1.0,
-            )
-
-        assert result.ok is False, (
-            f"broker reports a position ({positions_fixture[0]['symbol']}) the "
-            f"sleeve's own ledger has zero record of — this must be a breach"
+class TestAggregateSharedAccountReconciliation:
+    def _seed_sleeve_with_position(self, sleeve_id: int, *, symbol: str, qty: float, price: float):
+        """Give a sleeve a REAL position via a filled buy order + matching
+        fill, so sleeves.ledger.reconstruct_from_history reconstructs it —
+        exercises the real ledger-reconstruction path, not a mocked
+        shortcut."""
+        client_order_id = f"agg-test-{uuid.uuid4().hex}"
+        order_pk = database.insert_sleeve_order(
+            client_order_id=client_order_id,
+            sleeve_id=sleeve_id,
+            symbol=symbol,
+            side="buy",
+            qty=qty,
+            status="filled",
+            reserved_price=price,
         )
-        assert result.verdict == "PAUSED_RECONCILIATION"
-
-        sleeve_row = database.get_sleeve(sleeve_id)
-        assert sleeve_row["status"] == "PAUSED_RECONCILIATION", (
-            "a reconciliation breach must persist PAUSED_RECONCILIATION onto "
-            "the sleeve's own status column — a mismatch must never be silently "
-            "swallowed."
+        database.insert_sleeve_fill(
+            order_id=order_pk,
+            fill_price=price,
+            filled_qty=qty,
+            filled_at="2026-07-08T14:00:00Z",
         )
 
-    def test_matching_broker_truth_within_tolerance_does_not_pause(self):
-        sleeve_id = _make_sleeve()
-        # Both sides agree: zero positions, matching cash (using the sleeve's
-        # own freshly-created capital as both the ledger's and broker's cash,
-        # so this scenario is guaranteed within tolerance regardless of the
-        # sleeve fixture's exact capital value).
-        sleeve_row = database.get_sleeve(sleeve_id)
-        matching_account = {
-            "id": "acct-match-001",
-            "account_number": "PA0000MATCH1",
+    def _make_account(self, cash_usd: float) -> dict:
+        return {
+            "id": f"acct-agg-{uuid.uuid4().hex}",
+            "account_number": "PA0000AGGTEST",
             "status": "ACTIVE",
             "currency": "USD",
-            "cash": str(sleeve_row["capital_usd"]),
-            "portfolio_value": str(sleeve_row["capital_usd"]),
-            "buying_power": str(sleeve_row["capital_usd"]),
-            "equity": str(sleeve_row["capital_usd"]),
+            "cash": str(cash_usd),
+            "portfolio_value": str(cash_usd),
+            "buying_power": str(cash_usd),
+            "equity": str(cash_usd),
             "pattern_day_trader": False,
             "trading_blocked": False,
             "account_blocked": False,
             "shorting_enabled": False,
         }
 
+    def test_multi_sleeve_account_cash_equals_sum_of_capitals_does_not_pause(self):
+        """The baseline shared-account scenario the old per-sleeve check got
+        wrong 100% of the time: 3 unequal-capital sleeves, broker cash ==
+        the EXACT sum of their capitals (fully allocated, zero float). None
+        of them should pause."""
+        capitals = [1000.0, 2500.0, 4000.0]
+        sleeve_ids = [_make_sleeve(capital_usd=c) for c in capitals]
+        account = self._make_account(sum(capitals))
+
         with (
+            patch.object(
+                alpaca_orders,
+                "get_account",
+                return_value=alpaca_orders.OrderResult(order=account, error=None),
+            ),
             patch.object(
                 alpaca_orders,
                 "get_positions",
                 return_value=alpaca_orders.OrderResult(order=[], error=None),
             ),
+        ):
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=_NOW_UTC)
+
+        for sid in sleeve_ids:
+            assert database.get_sleeve(sid)["status"] != "PAUSED_RECONCILIATION", (
+                f"sleeve {sid} was incorrectly paused — account cash exactly "
+                f"matches the sum of all sleeve capitals, a clean "
+                f"shared-account state (this is the exact scenario the old "
+                f"per-sleeve-vs-whole-account check always broke on)."
+            )
+
+    def test_account_cash_exceeding_sleeve_sum_float_does_not_pause(self):
+        """Unallocated float (or the operator's own money) sharing the
+        account must never pause anyone — the breach direction is
+        one-sided."""
+        capitals = [1000.0, 2000.0]
+        sleeve_ids = [_make_sleeve(capital_usd=c) for c in capitals]
+        account = self._make_account(sum(capitals) + 50000.0)  # large float
+
+        with (
             patch.object(
                 alpaca_orders,
                 "get_account",
-                return_value=alpaca_orders.OrderResult(order=matching_account, error=None),
+                return_value=alpaca_orders.OrderResult(order=account, error=None),
+            ),
+            patch.object(
+                alpaca_orders,
+                "get_positions",
+                return_value=alpaca_orders.OrderResult(order=[], error=None),
             ),
         ):
-            result = tick_orchestrator.reconcile_sleeve_or_pause(
-                sleeve_id,
-                position_tolerance_pct=0.005,
-                cash_tolerance_usd=1.0,
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=_NOW_UTC)
+
+        for sid in sleeve_ids:
+            assert database.get_sleeve(sid)["status"] != "PAUSED_RECONCILIATION", (
+                f"sleeve {sid} was incorrectly paused despite a large "
+                f"account cash SURPLUS over the sleeve sum — surplus float "
+                f"must never breach."
             )
 
-        assert result.ok is True, f"matching broker truth must not breach; got {result.breaches}"
-        assert result.verdict == "OK"
+    def test_sleeve_sum_exceeding_account_cash_pauses_all_sleeves(self):
+        """The real money-safety invariant: sleeves collectively believe
+        they hold more cash than the account actually has -> ALL sleeves
+        are paused (blame is unattributable across virtual slices of one
+        real account — pausing everyone is the conservative direction)."""
+        capitals = [1000.0, 2000.0, 3000.0]
+        sleeve_ids = [_make_sleeve(capital_usd=c) for c in capitals]
+        account = self._make_account(500.0)  # far less than the 6000 claimed
 
-        sleeve_row_after = database.get_sleeve(sleeve_id)
-        assert sleeve_row_after["status"] != "PAUSED_RECONCILIATION", (
-            "a clean reconciliation must never pause the sleeve"
+        with (
+            patch.object(
+                alpaca_orders,
+                "get_account",
+                return_value=alpaca_orders.OrderResult(order=account, error=None),
+            ),
+            patch.object(
+                alpaca_orders,
+                "get_positions",
+                return_value=alpaca_orders.OrderResult(order=[], error=None),
+            ),
+        ):
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=_NOW_UTC)
+
+        for sid in sleeve_ids:
+            assert database.get_sleeve(sid)["status"] == "PAUSED_RECONCILIATION", (
+                f"sleeve {sid} must be paused — an aggregate cash breach "
+                f"pauses ALL sleeves, since blame is unattributable across "
+                f"virtual slices of one real account."
+            )
+
+    def test_operator_external_position_in_untouched_symbol_is_ignored(self):
+        """A broker position in a symbol NO sleeve has ever touched (the
+        operator's own holding sharing the account) must never pause
+        anyone."""
+        sleeve_id = _make_sleeve(capital_usd=1000.0)
+        account = self._make_account(1000.0)
+        broker_positions = [
+            {
+                "asset_id": "ext-position-asset-id",
+                "symbol": "TSLA",
+                "asset_class": "us_equity",
+                "qty": "50",
+                "avg_entry_price": "200.00",
+                "side": "long",
+                "market_value": "10000.00",
+                "cost_basis": "10000.00",
+                "unrealized_pl": "0.00",
+                "current_price": "200.00",
+            }
+        ]
+
+        with (
+            patch.object(
+                alpaca_orders,
+                "get_account",
+                return_value=alpaca_orders.OrderResult(order=account, error=None),
+            ),
+            patch.object(
+                alpaca_orders,
+                "get_positions",
+                return_value=alpaca_orders.OrderResult(order=broker_positions, error=None),
+            ),
+        ):
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=_NOW_UTC)
+
+        assert database.get_sleeve(sleeve_id)["status"] != "PAUSED_RECONCILIATION", (
+            "an operator-external position (TSLA, which no sleeve has ever "
+            "touched) must be ignored entirely, never treated as drift"
+        )
+
+    def test_two_sleeves_sharing_a_symbol_combined_qty_exceeding_broker_pauses_both(self):
+        """Two sleeves both hold SPY; their COMBINED qty exceeds what the
+        broker actually shows for SPY -> both sleeves holding it are
+        paused. A third, unrelated sleeve with no SPY exposure at all is
+        unaffected — pausing is attributable, not blanket, for a
+        position-specific breach."""
+        sleeve_a = _make_sleeve(capital_usd=5000.0)
+        sleeve_b = _make_sleeve(capital_usd=5000.0)
+        sleeve_c_unrelated = _make_sleeve(capital_usd=1000.0)
+
+        self._seed_sleeve_with_position(sleeve_a, symbol="SPY", qty=10.0, price=500.0)
+        self._seed_sleeve_with_position(sleeve_b, symbol="SPY", qty=10.0, price=500.0)
+        # sleeve_c holds nothing at all -- its capital sits entirely as cash.
+
+        # After a fully-filled $5000 buy each, A and B's own cash nets to 0;
+        # only sleeve_c's untouched 1000 capital remains a real cash claim.
+        account = self._make_account(1000.0)
+        broker_positions = [
+            {
+                "asset_id": "spy-asset-id",
+                "symbol": "SPY",
+                "asset_class": "us_equity",
+                "qty": "15",  # broker shows only 15; sleeves combined claim 20
+                "avg_entry_price": "500.00",
+                "side": "long",
+                "market_value": "7500.00",
+                "cost_basis": "7500.00",
+                "unrealized_pl": "0.00",
+                "current_price": "500.00",
+            }
+        ]
+
+        with (
+            patch.object(
+                alpaca_orders,
+                "get_account",
+                return_value=alpaca_orders.OrderResult(order=account, error=None),
+            ),
+            patch.object(
+                alpaca_orders,
+                "get_positions",
+                return_value=alpaca_orders.OrderResult(order=broker_positions, error=None),
+            ),
+        ):
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=_NOW_UTC)
+
+        assert database.get_sleeve(sleeve_a)["status"] == "PAUSED_RECONCILIATION", (
+            "sleeve A holds SPY and the combined SPY claim (20) exceeds "
+            "broker truth (15) -- it must be paused"
+        )
+        assert database.get_sleeve(sleeve_b)["status"] == "PAUSED_RECONCILIATION", (
+            "sleeve B holds SPY too -- same breach, same pause"
+        )
+        assert database.get_sleeve(sleeve_c_unrelated)["status"] != "PAUSED_RECONCILIATION", (
+            "sleeve C has zero SPY exposure and must be unaffected by a "
+            "SPY-specific breach -- pausing must be attributable to the "
+            "sleeves actually holding the breached symbol, never blanket"
+        )
+
+    def test_broker_account_and_positions_are_fetched_once_per_tick_not_per_sleeve(self):
+        """Efficiency + correctness: with N sleeves, get_account/get_positions
+        must be called ONCE for the whole tick's aggregate check, not N
+        times -- calling per-sleeve was the root cause of the original bug
+        (each sleeve independently compared itself against a redundant fresh
+        whole-account fetch) and is also wasteful broker API usage."""
+        sleeve_ids = [_make_sleeve(capital_usd=1000.0) for _ in range(4)]
+        account = self._make_account(sum(1000.0 for _ in sleeve_ids))
+
+        with (
+            patch.object(
+                alpaca_orders,
+                "get_account",
+                return_value=alpaca_orders.OrderResult(order=account, error=None),
+            ) as mock_get_account,
+            patch.object(
+                alpaca_orders,
+                "get_positions",
+                return_value=alpaca_orders.OrderResult(order=[], error=None),
+            ) as mock_get_positions,
+        ):
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=_NOW_UTC)
+
+        assert mock_get_account.call_count == 1, (
+            f"get_account must be called exactly ONCE per tick for the "
+            f"aggregate check across all {len(sleeve_ids)} sleeves, not once "
+            f"per sleeve; got {mock_get_account.call_count} calls"
+        )
+        assert mock_get_positions.call_count == 1, (
+            f"get_positions must be called exactly ONCE per tick; got "
+            f"{mock_get_positions.call_count} calls"
         )
 
 
@@ -598,22 +834,18 @@ class TestRunSleeveTickForAllSleeves:
         the disarm route, is what actually calls cancel_open_orders_for_
         shadow_sleeve for a SHADOW-status sleeve.
 
-        poll_and_apply_fills and reconcile_sleeve_or_pause are ALSO mocked
-        here (in addition to cancel_open_orders_for_shadow_sleeve) even
-        though this test isn't about them -- after the BLOCK 1 fix
-        (9d8e46c) they now run for every sleeve including SHADOW ones, and
-        left unmocked they'd reach the real sleeves.alpaca_orders.get_order/
-        get_positions/get_account, which attempt genuine outbound network
-        calls to Alpaca's API. That's both a house-rule violation (zero live
-        network in tests) and a real flakiness/slowness risk in an
-        environment where the connection doesn't fail fast (alpaca_orders.py's
-        own retry/backoff schedule can add up to ~15s per call) --
-        s3-engine flagged this exact risk while landing the BLOCK 1 fix.
-        See test_shadow_sleeve_still_gets_reconciled_not_just_cancelled /
-        test_shadow_sleeve_also_gets_polled_for_fills_not_just_cancelled
-        below for the dedicated, correctly-mocked reconciliation/poll tests."""
+        poll_and_apply_fills is mocked, and the broker account/positions
+        calls are mocked with data matching the sleeve's own capital (via
+        _make_matching_account) -- both to keep this a clean, focused unit
+        check of exactly what it claims (cancel_open_orders_for_shadow_sleeve
+        gets called for a SHADOW sleeve) and to avoid a genuine outbound
+        network call to Alpaca (house rule: zero live network in tests).
+        See TestAggregateSharedAccountReconciliation for the dedicated
+        aggregate-reconciliation coverage (SHADOW sleeves participate in it
+        exactly like any other sleeve -- every sleeve there starts SHADOW)."""
         sleeve_id = _make_sleeve()
-        assert database.get_sleeve(sleeve_id)["status"] == "SHADOW"
+        sleeve_row = database.get_sleeve(sleeve_id)
+        assert sleeve_row["status"] == "SHADOW"
 
         with (
             patch.object(
@@ -621,9 +853,16 @@ class TestRunSleeveTickForAllSleeves:
             ) as mock_cancel_shadow,
             patch.object(tick_orchestrator, "poll_and_apply_fills", return_value=[]),
             patch.object(
-                tick_orchestrator,
-                "reconcile_sleeve_or_pause",
-                return_value=MagicMock(ok=True, verdict="OK", breaches=[]),
+                alpaca_orders,
+                "get_account",
+                return_value=alpaca_orders.OrderResult(
+                    order=_make_matching_account(sleeve_row["capital_usd"]), error=None
+                ),
+            ),
+            patch.object(
+                alpaca_orders,
+                "get_positions",
+                return_value=alpaca_orders.OrderResult(order=[], error=None),
             ),
         ):
             tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=_NOW_UTC)
@@ -640,48 +879,17 @@ class TestRunSleeveTickForAllSleeves:
             "reaches sleeves.alpaca_orders."
         )
 
-    def test_shadow_sleeve_still_gets_reconciled_not_just_cancelled(self):
-        """BLOCK 1 (s3-review): a SHADOW-status sleeve (every disarmed sleeve,
-        permanently, until re-armed) must ALSO be reconciled each tick, not
-        just have its open orders cancelled. A TOCTOU race (an order fills
-        at the broker between the disarm click and this tick's cancel
-        attempt) or a real residual position from before disarm would
-        otherwise NEVER be caught again — reconciliation is the plan's own
-        safety net for exactly this drift, and "no live-armed rules" does
-        not mean "nothing at the broker to track"."""
-        sleeve_id = _make_sleeve()
-        assert database.get_sleeve(sleeve_id)["status"] == "SHADOW"
-
-        with (
-            patch.object(
-                tick_orchestrator, "cancel_open_orders_for_shadow_sleeve", return_value=[]
-            ),
-            patch.object(tick_orchestrator, "poll_and_apply_fills", return_value=[]),
-            patch.object(
-                tick_orchestrator,
-                "reconcile_sleeve_or_pause",
-                return_value=MagicMock(ok=True, verdict="OK", breaches=[]),
-            ) as mock_reconcile,
-        ):
-            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=_NOW_UTC)
-
-        called_sleeve_ids = {
-            call.args[0] if call.args else call.kwargs.get("sleeve_id")
-            for call in mock_reconcile.call_args_list
-        }
-        assert sleeve_id in called_sleeve_ids, (
-            "reconcile_sleeve_or_pause must be called for a SHADOW-status "
-            "sleeve too, not only non-SHADOW ones — SHADOW is not an "
-            "exemption from drift detection (a disarmed sleeve can still "
-            "hold real broker-side exposure)."
-        )
-
     def test_shadow_sleeve_also_gets_polled_for_fills_not_just_cancelled(self):
-        """Companion to the reconciliation fix above: poll_and_apply_fills
+        """Companion to the AC-12 design correction: poll_and_apply_fills
         must also run for a SHADOW sleeve (a fill that lands in the TOCTOU
         window right before this tick's cancel attempt must still be
-        recorded, not silently dropped because the sleeve is SHADOW)."""
+        recorded, not silently dropped because the sleeve is SHADOW). The
+        broker account/positions calls are mocked clean (matching the
+        sleeve's own capital) so this test stays isolated to the poll
+        behavior — see TestAggregateSharedAccountReconciliation for the
+        dedicated aggregate-reconciliation coverage."""
         sleeve_id = _make_sleeve()
+        sleeve_row = database.get_sleeve(sleeve_id)
 
         with (
             patch.object(
@@ -689,9 +897,16 @@ class TestRunSleeveTickForAllSleeves:
             ),
             patch.object(tick_orchestrator, "poll_and_apply_fills", return_value=[]) as mock_poll,
             patch.object(
-                tick_orchestrator,
-                "reconcile_sleeve_or_pause",
-                return_value=MagicMock(ok=True, verdict="OK", breaches=[]),
+                alpaca_orders,
+                "get_account",
+                return_value=alpaca_orders.OrderResult(
+                    order=_make_matching_account(sleeve_row["capital_usd"]), error=None
+                ),
+            ),
+            patch.object(
+                alpaca_orders,
+                "get_positions",
+                return_value=alpaca_orders.OrderResult(order=[], error=None),
             ),
         ):
             tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=_NOW_UTC)
@@ -704,41 +919,6 @@ class TestRunSleeveTickForAllSleeves:
             "poll_and_apply_fills must be called for a SHADOW-status sleeve "
             "too — a fill landing right before this tick's cancellation "
             "attempt must still be recorded."
-        )
-
-    def test_shadow_sleeve_reconciliation_breach_still_pauses_it(self):
-        """A SHADOW sleeve with a genuine broker-truth mismatch must still
-        transition to PAUSED_RECONCILIATION — SHADOW status is not a
-        drift-detection exemption. Uses the REAL reconcile_sleeve_or_pause
-        (only the broker calls are mocked, via the P1 fixtures) so this is a
-        genuine end-to-end breach, not a mocked verdict."""
-        sleeve_id = _make_sleeve()
-        positions_fixture = load_positions_fixture("positions.json")
-        account_fixture = load_account_fixture("account.json")
-
-        with (
-            patch.object(
-                tick_orchestrator, "cancel_open_orders_for_shadow_sleeve", return_value=[]
-            ),
-            patch.object(
-                alpaca_orders,
-                "get_positions",
-                return_value=alpaca_orders.OrderResult(order=positions_fixture, error=None),
-            ),
-            patch.object(
-                alpaca_orders,
-                "get_account",
-                return_value=alpaca_orders.OrderResult(order=account_fixture, error=None),
-            ),
-        ):
-            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=_NOW_UTC)
-
-        sleeve_row = database.get_sleeve(sleeve_id)
-        assert sleeve_row["status"] == "PAUSED_RECONCILIATION", (
-            f"a SHADOW sleeve with a genuine broker-truth mismatch (the "
-            f"broker fixture reports a {positions_fixture[0]['symbol']} "
-            f"position the sleeve's own ledger has zero record of) must "
-            f"still be paused for reconciliation; got {sleeve_row['status']!r}"
         )
 
     def test_paused_sleeve_skips_rule_evaluation_for_this_tick(self):
@@ -784,14 +964,27 @@ class TestRunSleeveTickForAllSleeves:
                 raise RuntimeError("simulated broker polling failure")
             return []
 
+        # Both sleeves used the _make_sleeve() default capital (10000.0
+        # each); mock the broker account/positions clean (matching the
+        # combined 20000.0 total) so the aggregate reconciliation step
+        # doesn't interfere with the exception-isolation behavior this test
+        # actually checks, and so no genuine outbound network call is made
+        # (house rule: zero live network in tests).
         with (
             patch.object(
                 tick_orchestrator, "poll_and_apply_fills", side_effect=_poll_side_effect
             ) as mock_poll,
             patch.object(
-                tick_orchestrator,
-                "reconcile_sleeve_or_pause",
-                return_value=MagicMock(ok=True, verdict="OK", breaches=[]),
+                alpaca_orders,
+                "get_account",
+                return_value=alpaca_orders.OrderResult(
+                    order=_make_matching_account(20000.0), error=None
+                ),
+            ),
+            patch.object(
+                alpaca_orders,
+                "get_positions",
+                return_value=alpaca_orders.OrderResult(order=[], error=None),
             ),
             patch(
                 "sleeves.rules.runner.evaluate_rules", MagicMock(return_value=[])
