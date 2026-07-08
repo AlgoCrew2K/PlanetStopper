@@ -1892,6 +1892,26 @@ def main():
         except (OSError, RuntimeError, ValueError, TypeError, AttributeError) as _fleet_exc:
             logging.error("[fleet-correlation] detection error: %s", _fleet_exc)
 
+        # P3: managed sleeves tick -- runs strictly AFTER the exit machine's own
+        # per-symphony execution queue above (absolute precedence,
+        # feature-plans/managed-sleeves.md Architecture: "a sleeve can never
+        # delay/preempt symphony protection"). Lazy import (CC-2 convention,
+        # matching the ai_advisor/lens_pipeline precedent elsewhere in this
+        # file) -- module-level imports are pinned by the port-removal guard
+        # tests. Runs before save_state so a sleeve fire this tick lands in
+        # the same atomic write cycle (mirrors the fleet-correlation block
+        # above). Any exception anywhere in sleeve processing is caught here:
+        # sleeve code must never be able to break symphony trading.
+        try:
+            from sleeves import tick_orchestrator
+
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(
+                now_utc=current_et,
+                discord_webhook_url=DISCORD_WEBHOOK_URL,
+            )
+        except Exception as _sleeves_exc:
+            logging.error("[sleeves] tick processing error: %s", _sleeves_exc)
+
         database.save_state(bot_state)
 
         database.save_chart_history(chart_history)
