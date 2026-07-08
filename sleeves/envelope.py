@@ -94,8 +94,15 @@ def clamp_order(
     original_qty = float(qty)
 
     if side == "buy":
-        allowlist = envelope.get("allowlist", [])
-        if symbol not in allowlist:
+        allowlist = envelope.get("allowlist")
+        # Empty or absent allowlist = NO ticker confinement (PM ruling,
+        # done-bar fix, 2026-07-08): refusing every buy for a sleeve whose
+        # operator never populated an allowlist would make the rule's own
+        # when.symbol unreachable -- the real money-safety bounds are the
+        # dollar/position/turnover caps below, which still apply
+        # unconditionally. A NON-EMPTY allowlist continues to confine
+        # exactly as before; this only changes the vacuous-list case.
+        if allowlist and symbol not in allowlist:
             return ClampResult(
                 approved=False,
                 qty=0.0,
@@ -169,10 +176,21 @@ def is_envelope_widened(old_envelope: dict, new_envelope: dict) -> bool:
     extreme possible widen. The reverse direction (old absent, new present)
     is a narrowing -- going from unlimited to bounded -- and must NOT be
     flagged.
+
+    An empty or absent allowlist means NO ticker confinement to clamp_order
+    (#34 fix, 2026-07-08 -- the same None/absent-means-unlimited pattern as
+    every other cap here). Clearing a genuinely populated allowlist down to
+    empty/absent is therefore the single most extreme possible allowlist
+    widen (confined -> the whole universe) and must be flagged, mirroring
+    the cap-removal cases below; the reverse (empty/absent -> populated) is
+    a narrowing and must NOT be flagged. Only when BOTH sides already
+    confine to a real, non-empty set does the subset comparison apply.
     """
-    old_allowlist = set(old_envelope.get("allowlist", []))
-    new_allowlist = set(new_envelope.get("allowlist", []))
-    if not new_allowlist.issubset(old_allowlist):
+    old_allowlist = old_envelope.get("allowlist") or []
+    new_allowlist = new_envelope.get("allowlist") or []
+    if old_allowlist and not new_allowlist:
+        return True
+    if old_allowlist and new_allowlist and not set(new_allowlist).issubset(set(old_allowlist)):
         return True
 
     for key in ("max_position_pct", "max_order_usd", "max_daily_turnover_usd"):
