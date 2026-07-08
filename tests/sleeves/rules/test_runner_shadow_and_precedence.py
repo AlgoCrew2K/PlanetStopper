@@ -58,6 +58,17 @@ Fail-safe (AC-4): when conditions.evaluate_condition reports an unavailable
 sense anywhere in a rule's `if` tree, OR limits.check_and_advance_pacing
 reports not-fireable, the rule's FireOutcome has fired=False and NO
 sleeve_rule_fires row is written for it — there is nothing to record.
+
+MONEY-SAFETY WIRING (PM ruling, 2026-07-08, AC-1/AC-19 — see
+test_ledger_reservation.py for the full actions.py-level contract):
+`sleeve_row` must carry a `capital_usd` key -- runner.py threads it into
+every rule's `actions.ActionContext.capital_usd` (the fixed allocation
+`sleeves.ledger.reconstruct_from_history` reconstructs against), and
+`rule["id"]` into `ActionContext.rule_id`. An armed fire's `ActionResult.
+order_id` (the internal sleeve_orders.id once a RESERVED row exists) is
+passed through to `database.insert_sleeve_rule_fire`'s `order_id` kwarg --
+AC-19's "every trade traces to a named rule + fire row + order" requires the
+fire row and the order row to be linked, not just co-located in time.
 """
 
 from __future__ import annotations
@@ -92,7 +103,7 @@ _ENVELOPE = {
 def _base_kwargs(**overrides):
     base = dict(
         rules=[],
-        sleeve_row={"id": 1, "status": "SHADOW"},
+        sleeve_row={"id": 1, "status": "SHADOW", "capital_usd": 10_000.0},
         sleeve_equity_usd=10_000.0,
         now_utc=datetime(2026, 7, 8, 15, 0, 0, tzinfo=ZoneInfo("UTC")),  # 11:00 ET, a Wednesday
         closes_by_symbol={},
@@ -268,6 +279,43 @@ class TestArmedPathReachableEndToEnd:
             "must support it structurally)."
         )
         assert outcomes[0].action_results[0].executed is True
+
+    def test_armed_fire_row_links_the_real_sleeve_orders_row_id(self, indicator_fixture):
+        # AC-19: "every trade traces to a named rule + fire row + order" --
+        # the fire row's order_id must point at a REAL sleeve_orders row
+        # (not just co-exist with one). Only the broker call is mocked; the
+        # RESERVED-row insert and the fire-row insert both hit the real
+        # (test-isolated) DB, proving the id genuinely round-trips.
+        closes = _rising_closes(indicator_fixture)
+        rule = make_stored_rule(
+            id=606,
+            mode="PAPER",
+            then=[{"type": "sell", "sizing": {"mode": "shares", "shares": 3}}],
+        )
+        with patch.object(
+            alpaca_orders,
+            "submit_order",
+            return_value=alpaca_orders.OrderResult(order={"id": "paper-order-2"}, error=None),
+        ):
+            outcomes = runner.evaluate_rules(
+                **_base_kwargs(
+                    rules=[rule], closes_by_symbol={"SPY": closes}, positions={"SPY": 10.0}
+                )
+            )
+        assert outcomes[0].fired is True
+        action_result = outcomes[0].action_results[0]
+        assert action_result.order_id is not None, (
+            "an armed, executed action must carry an order_id"
+        )
+
+        fire_rows = database.get_sleeve_rule_fires(rule_id=606)
+        assert len(fire_rows) == 1
+        assert fire_rows[0]["order_id"] == action_result.order_id
+
+        order_row = database.get_sleeve_orders(sleeve_id=1)
+        matching = [o for o in order_row if o["id"] == action_result.order_id]
+        assert len(matching) == 1, "the fire row's order_id must reference a REAL sleeve_orders row"
+        assert matching[0]["alpaca_order_id"] == "paper-order-2"
 
 
 # ---------------------------------------------------------------------------

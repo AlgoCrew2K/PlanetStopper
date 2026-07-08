@@ -8,9 +8,16 @@ CONTRACT this file specifies for the GREEN implementer (s2-rules-impl):
     @dataclass(frozen=True)
     class ActionContext:
         sleeve_id: int
+        rule_id: int                        # NEW (PM ruling 2026-07-08) -- needed
+                                              # for insert_sleeve_order's rule_id and
+                                              # the fire row's AC-19 order_id trace
         symbol: str
         price: float
         sleeve_equity_usd: float
+        capital_usd: float                  # NEW -- the sleeve's FIXED capital
+                                              # allocation (ledger.reconstruct_from_
+                                              # history's seed); distinct from
+                                              # sleeve_equity_usd, never changes
         current_position_qty: float
         turnover_used_usd: float
         envelope: dict                      # sleeves.envelope's envelope dict shape
@@ -29,10 +36,33 @@ CONTRACT this file specifies for the GREEN implementer (s2-rules-impl):
                                                 # (always False when shadow=True)
         order_result: "alpaca_orders.OrderResult | None"
         clamp: "envelope.ClampResult | None"   # None for notify/set_stop (no sizing)
-        refused_reason: str | None             # populated when sizing errored or
-                                                # the clamp refused (approved=False)
+        refused_reason: str | None             # populated when sizing errored,
+                                                # the clamp refused (approved=False),
+                                                # or ledger.reserve() raised
+                                                # InsufficientCashError ("insufficient_cash")
+        order_id: int | None = None            # NEW (PM ruling) -- the INTERNAL
+                                                # sleeve_orders.id once a RESERVED
+                                                # row is inserted (armed only, before
+                                                # the broker call); None for shadow/
+                                                # refused/no-order actions (notify)
 
     def dispatch_action(action: dict, *, ctx: ActionContext, shadow: bool) -> ActionResult: ...
+
+MONEY-SAFETY SEQUENCE (PM ruling, 2026-07-08, closing s2-review's BLOCK
+finding — AC-1/AC-19): see test_ledger_reservation.py for the full contract.
+Summary: "buy" additionally reconstructs the sleeve's current LedgerState via
+`sleeves.ledger.reconstruct_from_history(ctx.capital_usd,
+database.get_sleeve_order_history(ctx.sleeve_id))` and attempts
+`sleeves.ledger.reserve(...)` on the clamped notional BEFORE any broker call,
+in BOTH shadow and armed mode (shadow needs the would-have-been outcome for
+its snapshot) — `InsufficientCashError` becomes `refused_reason=
+"insufficient_cash"`, no order constructed either way. Every order-placing
+action (buy/sell/go_to_cash/set_stop), when armed, mints a client_order_id
+and inserts a 'RESERVED' sleeve_orders row (capturing the internal id into
+`ActionResult.order_id`) BEFORE the broker call (P1 invariant #6); on ack,
+attaches the broker's own order id; on rejection, marks the row terminal
+(this IS the "release" mechanism, since LedgerState is never itself
+persisted — a terminal-status row is what the next reconstruction release()s).
 
 STRUCTURAL NON-BYPASSABILITY (the load-bearing security contract, plan's
 "Order-path containment... envelope clamp is structurally on every order
@@ -125,9 +155,11 @@ import sleeves.sizing as sizing  # noqa: E402
 def _ctx(**overrides) -> actions.ActionContext:
     base = dict(
         sleeve_id=1,
+        rule_id=7,
         symbol="SPY",
         price=100.0,
         sleeve_equity_usd=10_000.0,
+        capital_usd=10_000.0,
         current_position_qty=0.0,
         turnover_used_usd=0.0,
         envelope={

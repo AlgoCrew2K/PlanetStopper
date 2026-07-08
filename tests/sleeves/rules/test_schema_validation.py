@@ -40,6 +40,11 @@ Rule doc shape (operator-authored):
       "then": [<action dict>, ...],
       "limits": {"cooldown_sec": int|None, "max_fires_per_day": int|None,
                  "rearm_ticks": int, "market_hours_only": bool},
+                 # market_hours_only: False is PERMITTED ONLY when the rule's
+                 # entire `then` action set is "notify" (PM ruling,
+                 # 2026-07-08 -- off-hours macro alerts are legitimate; any
+                 # order-placing action, entry or defensive, must stay
+                 # market-hours-gated). See TestMarketHoursOverrideRestrictedToNotifyOnly.
       "mode": "SHADOW" | "PAPER" | "LIVE",
       "class": "DEFENSIVE" | "ENTRY" | <absent>,    # OPTIONAL operator-declared
                                                        # label; when present MUST
@@ -532,6 +537,80 @@ class TestNoCodeStrings:
         # Must not raise (no eval/exec of the string) regardless of validity.
         result = schema.validate_rule_doc(doc)
         assert isinstance(result.valid, bool)
+
+
+# ---------------------------------------------------------------------------
+# 7. market_hours_only override restricted to NOTIFY-only rules (PM ruling,
+#    2026-07-08 — s2-review non-blocking finding #2, upgraded to a ruling)
+#
+# The plan's v1 posture is market-hours-only evaluation. limits.market_hours_only:
+# false is permitted ONLY when a rule's ENTIRE action set is "notify" (off-hours
+# macro alerts are legitimate observability). Any rule whose action set could
+# place a real order -- buy/sell/go_to_cash/set_stop, entry OR defensive -- is
+# hard-gated to market hours regardless of the flag; the presence of even ONE
+# non-notify action anywhere in `then` forbids the override.
+# ---------------------------------------------------------------------------
+
+
+def _limits_with_market_hours_only(value: bool) -> dict:
+    return {
+        "cooldown_sec": None,
+        "max_fires_per_day": None,
+        "rearm_ticks": 3,
+        "market_hours_only": value,
+    }
+
+
+class TestMarketHoursOverrideRestrictedToNotifyOnly:
+    def test_market_hours_false_on_a_pure_notify_rule_is_valid(self):
+        doc = make_rule_doc(
+            then=[{"type": "notify", "template": "fired", "fields": {"symbol": "SPY"}}],
+            limits=_limits_with_market_hours_only(False),
+        )
+        result = schema.validate_rule_doc(doc)
+        assert result.valid, f"expected valid, got errors: {result.errors}"
+
+    @pytest.mark.parametrize(
+        "action",
+        [
+            {"type": "buy", "sizing": {"mode": "shares", "shares": 1}, "stop_loss_pct": 0.05},
+            {"type": "sell", "sizing": {"mode": "shares", "shares": 1}},
+            {"type": "go_to_cash"},
+            {"type": "set_stop", "trail_percent": 0.05},
+        ],
+        ids=["buy", "sell", "go_to_cash", "set_stop"],
+    )
+    def test_market_hours_false_on_any_order_placing_action_is_invalid(self, action):
+        doc = make_rule_doc(then=[action], limits=_limits_with_market_hours_only(False))
+        result = schema.validate_rule_doc(doc)
+        assert not result.valid, (
+            f"market_hours_only=False must be rejected for an action set containing "
+            f"{action['type']!r} -- only pure-notify rules may bypass market-hours gating"
+        )
+        assert any(
+            "market_hours" in e.field or "market_hours" in e.message.lower() for e in result.errors
+        )
+
+    def test_market_hours_false_with_notify_plus_an_order_placing_action_is_invalid(self):
+        # notify+sell is a schema-valid DEFENSIVE action set on its own -- this
+        # isolates that the market_hours_only restriction is what fails it,
+        # not an unrelated class-derivation problem.
+        doc = make_rule_doc(
+            then=[
+                {"type": "notify", "template": "fired", "fields": {"symbol": "SPY"}},
+                {"type": "sell", "sizing": {"mode": "shares", "shares": 1}},
+            ],
+            limits=_limits_with_market_hours_only(False),
+        )
+        result = schema.validate_rule_doc(doc)
+        assert not result.valid
+
+    def test_market_hours_true_default_is_unaffected_for_any_action_type(self):
+        # Sanity: the restriction only fires on an explicit False -- the
+        # default (True, market-hours-gated) remains valid for entry rules.
+        doc = make_rule_doc()  # default buy action, default limits (market_hours_only=True)
+        result = schema.validate_rule_doc(doc)
+        assert result.valid, f"expected valid, got errors: {result.errors}"
 
     def test_comparator_field_rejects_a_python_expression_string(self):
         condition = {"op": "compare", "sense": "sma_20", "comparator": "> 1 or True", "value": 1.0}
