@@ -551,6 +551,118 @@ class TestAllowlistNeverBlocksExits:
 
 
 # ---------------------------------------------------------------------------
+# 8b. PM ruling (2026-07-08, real paper-smoke defect #34): an EMPTY or ABSENT
+# allowlist means NO ticker confinement, not deny-all. `symbol not in []` is
+# always True, so the prior behavior refused every single buy for a
+# default/simple sleeve authored with no allowlist -- a done-bar-blocking
+# footgun the operator's live paper smoke caught (an armed entry rule could
+# never trade its own rule's symbol). The rule's own when.symbol plus the
+# dollar/position/turnover caps are the real money-safety bounds; the
+# allowlist is an OPTIONAL additional ticker-confinement layer, not a
+# mandatory allowlist-or-nothing gate. A NON-EMPTY allowlist continues to
+# confine exactly as before (TestAllowlist/TestAllowlistNeverBlocksExits
+# above are unchanged and re-pinned here for visibility alongside the fix).
+# ---------------------------------------------------------------------------
+
+
+class TestEmptyOrAbsentAllowlistMeansNoConfinement:
+    def test_empty_allowlist_allows_a_buy_for_any_symbol(self):
+        env = _base_envelope(allowlist=[])
+        result = envelope.clamp_order(
+            symbol="AAPL",
+            side="buy",
+            qty=1,
+            price=100.0,
+            envelope=env,
+            sleeve_equity=10_000.0,
+        )
+        assert result.reason != envelope.REASON_NOT_IN_ALLOWLIST, (
+            "an EMPTY allowlist must mean NO ticker confinement -- refusing "
+            "every buy for an empty allowlist is the exact done-bar defect "
+            "the PM's real paper smoke found (a default sleeve authored with "
+            "no allowlist could never trade its own rule's symbol)."
+        )
+        assert result.approved is True
+
+    def test_absent_allowlist_key_allows_a_buy_for_any_symbol(self):
+        env = _base_envelope()
+        del env["allowlist"]
+        result = envelope.clamp_order(
+            symbol="AAPL",
+            side="buy",
+            qty=1,
+            price=100.0,
+            envelope=env,
+            sleeve_equity=10_000.0,
+        )
+        assert result.reason != envelope.REASON_NOT_IN_ALLOWLIST, (
+            "an ABSENT allowlist key must behave identically to an empty "
+            "allowlist -- no ticker confinement, matching clamp_order's own "
+            "None-means-unlimited convention already used for every other cap."
+        )
+        assert result.approved is True
+
+    def test_empty_allowlist_buy_is_still_subject_to_other_caps(self):
+        # No ticker confinement must not mean no money-safety bounds at all
+        # -- the dollar/position/turnover caps still apply exactly as today.
+        env = _base_envelope(
+            allowlist=[],
+            max_order_usd=500.0,
+            max_position_pct=1.0,
+            max_daily_turnover_usd=1_000_000.0,
+        )
+        result = envelope.clamp_order(
+            symbol="AAPL",
+            side="buy",
+            qty=10,  # 10 * 100 = $1000, exceeds the $500 max_order_usd cap
+            price=100.0,
+            envelope=env,
+            sleeve_equity=100_000.0,
+        )
+        assert result.reason != envelope.REASON_NOT_IN_ALLOWLIST
+        assert result.clamped is True
+        assert result.reason == envelope.REASON_MAX_ORDER_USD, (
+            "an empty allowlist must not bypass the OTHER caps -- this buy still "
+            "needed clamping down to the $500 max_order_usd limit"
+        )
+        assert result.qty <= 5  # $500 / $100 = 5 shares, the real cap-derived ceiling
+
+    def test_nonempty_allowlist_still_confines_symbols_outside_it(self):
+        env = _base_envelope(allowlist=["SPY"])
+        result = envelope.clamp_order(
+            symbol="AAPL",
+            side="buy",
+            qty=1,
+            price=100.0,
+            envelope=env,
+            sleeve_equity=10_000.0,
+        )
+        assert result.approved is False, (
+            "fixing the empty/absent case must not accidentally weaken a "
+            "genuinely non-empty allowlist's confinement"
+        )
+        assert result.reason == envelope.REASON_NOT_IN_ALLOWLIST
+
+    def test_nonempty_allowlist_still_never_blocks_an_exit(self):
+        env = _base_envelope(allowlist=["SPY"])
+        result = envelope.clamp_order(
+            symbol="TSLA",
+            side="sell",
+            qty=5,
+            price=200.0,
+            envelope=env,
+            sleeve_equity=100_000.0,
+            current_position_qty=5,
+        )
+        assert result.reason != envelope.REASON_NOT_IN_ALLOWLIST, (
+            "fixing the empty/absent-allowlist case must not disturb the "
+            "existing sell-never-blocked-by-allowlist invariant for a "
+            "genuinely non-empty allowlist"
+        )
+        assert result.approved is True
+
+
+# ---------------------------------------------------------------------------
 # 9. Review finding BLOCK #3 (sleeve-review, commit 2200c66): removing a cap
 # entirely (old value present, new value None/absent) must count as a widen.
 # clamp_order treats a None cap as "unlimited", so nulling out a cap is the

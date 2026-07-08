@@ -231,6 +231,157 @@ class TestSubmitBracketOrder:
 
 
 # ---------------------------------------------------------------------------
+# 2b. PM ruling (2026-07-08, real paper-smoke defect #35): bracket leg prices
+# must be rounded to the Alpaca EQUITY TICK at this order-client boundary,
+# never left as raw floats. Proven via a direct live repro: a bracket with
+# clean 2-decimal legs (tp 20.00 / sl 12.00) = HTTP 200 ACCEPTED; the SAME
+# order with unrounded computed legs (tp=14.839, stop=12.8155, straight from
+# actions.py's price * (1 +/- pct) math) = HTTP 422 code 42210000 "invalid
+# take_profit.limit_price 14.839. sub-penny increment does not fulfill
+# minimum pricing criteria." Every real bracket entry was rejected at the
+# broker even after task #33 made the rest of the path reach submission.
+#
+# Rounding rule: 2 decimals for a leg price >= $1.00, 4 decimals for a leg
+# price < $1.00 (Alpaca's own equity tick convention). take_profit.limit_
+# price rounds to the NEAREST tick (not a protective boundary in the same
+# tightening sense). stop_loss.stop_price rounds DOWN (floor) -- for a
+# long's protective sell-stop, rounding UP would move the trigger price
+# CLOSER to entry, tightening the stop beyond what sizing/stop_loss_pct
+# actually intended; rounding down keeps the stop at least as wide as
+# authored, never tighter.
+#
+# The fix belongs HERE (the order-client boundary, where broker-format
+# concerns live), never in sleeves/rules/actions.py, which keeps its own
+# price math pure and broker-format-agnostic.
+# ---------------------------------------------------------------------------
+
+
+class TestBracketLegPriceRoundedToEquityTick:
+    @staticmethod
+    def _submitted_leg_prices(mock_post) -> tuple[float, float]:
+        body = mock_post.call_args.kwargs.get("json") or {}
+        return (
+            float(body["take_profit"]["limit_price"]),
+            float(body["stop_loss"]["stop_price"]),
+        )
+
+    def test_sub_penny_legs_round_to_2_decimals_for_a_dollar_plus_symbol(self):
+        """The EXACT sub-penny values from the PM's live 422 repro."""
+        fixture = load_order_fixture("bracket_new.json")
+        with patch.object(
+            alpaca_orders.requests, "post", return_value=_mock_response(200, fixture)
+        ) as mock_post:
+            alpaca_orders.submit_bracket_order(
+                symbol="F",
+                qty=10,
+                side="buy",
+                take_profit_price=14.839,
+                stop_loss_price=12.8155,
+            )
+        tp_price, sl_price = self._submitted_leg_prices(mock_post)
+        assert round(tp_price, 2) == tp_price, (
+            f"take_profit.limit_price must be rounded to 2 decimals for a >=$1 "
+            f"symbol -- got {tp_price!r}, the exact class of sub-penny price that "
+            f"produced a real HTTP 422 (code 42210000) in the PM's live repro."
+        )
+        assert round(sl_price, 2) == sl_price, (
+            f"stop_loss.stop_price must be rounded to 2 decimals for a >=$1 "
+            f"symbol -- got {sl_price!r}"
+        )
+
+    def test_sub_penny_legs_round_to_4_decimals_for_a_sub_dollar_symbol(self):
+        fixture = load_order_fixture("bracket_new.json")
+        with patch.object(
+            alpaca_orders.requests, "post", return_value=_mock_response(200, fixture)
+        ) as mock_post:
+            alpaca_orders.submit_bracket_order(
+                symbol="PENNY",
+                qty=100,
+                side="buy",
+                take_profit_price=0.123456,
+                stop_loss_price=0.098765,
+            )
+        tp_price, sl_price = self._submitted_leg_prices(mock_post)
+        assert round(tp_price, 4) == tp_price, (
+            f"take_profit.limit_price must be rounded to 4 decimals for a <$1 "
+            f"symbol -- got {tp_price!r}"
+        )
+        assert round(sl_price, 4) == sl_price, (
+            f"stop_loss.stop_price must be rounded to 4 decimals for a <$1 "
+            f"symbol -- got {sl_price!r}"
+        )
+
+    def test_an_already_tick_valid_price_is_left_unchanged(self):
+        fixture = load_order_fixture("bracket_new.json")
+        with patch.object(
+            alpaca_orders.requests, "post", return_value=_mock_response(200, fixture)
+        ) as mock_post:
+            alpaca_orders.submit_bracket_order(
+                symbol="SPY",
+                qty=10,
+                side="buy",
+                take_profit_price=512.00,
+                stop_loss_price=495.00,
+            )
+        tp_price, sl_price = self._submitted_leg_prices(mock_post)
+        assert tp_price == pytest.approx(512.00, abs=1e-9), (
+            # tolerance: guards against float round-trip noise through the
+            # rounding function, not a numerically-sensitive comparison --
+            # a price already at the 2-decimal tick must pass through as-is.
+            "a take_profit price already at the equity tick must not be altered"
+        )
+        assert sl_price == pytest.approx(495.00, abs=1e-9), (
+            "a stop_loss price already at the equity tick must not be altered"
+        )
+
+    def test_stop_loss_rounds_down_never_tightening_the_protective_stop(self):
+        fixture = load_order_fixture("bracket_new.json")
+        raw_stop = 12.8199  # nearest-cent would round UP to 12.82; floor is 12.81
+        with patch.object(
+            alpaca_orders.requests, "post", return_value=_mock_response(200, fixture)
+        ) as mock_post:
+            alpaca_orders.submit_bracket_order(
+                symbol="F",
+                qty=10,
+                side="buy",
+                take_profit_price=14.85,
+                stop_loss_price=raw_stop,
+            )
+        _tp_price, sl_price = self._submitted_leg_prices(mock_post)
+        assert sl_price <= raw_stop, (
+            f"stop_loss.stop_price ({sl_price}) must round DOWN from the raw "
+            f"computed value ({raw_stop}) -- rounding UP would tighten a long's "
+            f"protective sell-stop closer to entry than sizing/stop_loss_pct "
+            f"actually intended."
+        )
+        assert sl_price == pytest.approx(12.81, abs=1e-9), (
+            f"expected the floor-to-2-decimals value 12.81, got {sl_price}"
+        )
+
+    def test_take_profit_rounds_to_nearest_tick(self):
+        """take_profit is not a protective boundary in the same tightening
+        sense as stop_loss -- nearest-tick rounding (which may round up OR
+        down) is the correct behavior here, unlike stop_loss's mandatory
+        floor."""
+        fixture = load_order_fixture("bracket_new.json")
+        raw_tp = 14.8399  # nearest-cent rounds UP to 14.84
+        with patch.object(
+            alpaca_orders.requests, "post", return_value=_mock_response(200, fixture)
+        ) as mock_post:
+            alpaca_orders.submit_bracket_order(
+                symbol="F",
+                qty=10,
+                side="buy",
+                take_profit_price=raw_tp,
+                stop_loss_price=12.80,
+            )
+        tp_price, _sl_price = self._submitted_leg_prices(mock_post)
+        assert tp_price == pytest.approx(14.84, abs=1e-9), (
+            f"expected take_profit to round to the nearest cent (14.84), got {tp_price}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # 3. submit_trailing_stop_order
 # ---------------------------------------------------------------------------
 
