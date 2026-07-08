@@ -510,12 +510,21 @@ def _build_fred_cache() -> dict[str, list[dict]]:
     precedent, database.get_latest_market_lens_cache()).
 
     Reads the nightly MARKET_LENS_CACHE bundle's "macro" lens block
-    (ai_advisor.py's build_macro_lens_section: raw_response["lenses"]["macro"]
-    ["payload"]["series"], shaped {series_id: {"label", "value", "date"}} --
-    ONE latest observation per series) and wraps each series' single
-    observation into the one-element-list shape
-    sleeves.rules.senses.sense_fred_series expects
+    (ai_advisor.py's _build_macro_section, ai_advisor.py:768:
+    raw_response["lenses"]["macro"]["payload"]["series"], shaped
+    {series_id: {"label", "value", "date"}} -- ONE latest observation per
+    series) and wraps each series' single observation into the
+    one-element-list shape sleeves.rules.senses.sense_fred_series expects
     ({series_id: [{"date": ..., "value": ...}]}).
+
+    FRED's own API returns the literal string "." for a missing/gap
+    observation, never null and never an omitted key (s3-review follow-up,
+    2026-07-08) -- a bare "." threaded into fred_cache would reach
+    conditions.py's numeric comparator as a string, raising TypeError
+    instead of degrading through the intended "unavailable sense -> not
+    fireable" fail-safe path. Coercing through float() here excludes that
+    sentinel (and any other non-numeric value) the same way a missing
+    observation already would.
     """
     cached_row = database.get_latest_market_lens_cache()
     if not cached_row:
@@ -526,8 +535,13 @@ def _build_fred_cache() -> dict[str, list[dict]]:
 
     fred_cache: dict[str, list[dict]] = {}
     for series_id, obs in series_data.items():
-        if isinstance(obs, dict) and obs.get("date") is not None and obs.get("value") is not None:
-            fred_cache[series_id] = [{"date": obs["date"], "value": obs["value"]}]
+        if not isinstance(obs, dict) or obs.get("date") is None:
+            continue
+        try:
+            numeric_value = float(obs["value"])
+        except (KeyError, TypeError, ValueError):
+            continue  # FRED "." sentinel (or any other non-numeric value)
+        fred_cache[series_id] = [{"date": obs["date"], "value": numeric_value}]
     return fred_cache
 
 
