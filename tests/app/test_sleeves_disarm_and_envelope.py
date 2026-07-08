@@ -4,17 +4,30 @@ RED tests — Managed Sleeves P3: disarm (AC-12) and envelope widen/narrow (AC-3
 CONTRACT this file specifies for the GREEN implementer (s3-dashboard):
 
     POST /api/sleeves/<sleeve_id>/disarm
-        One-click, per-sleeve kill switch (AC-12):
-          - every OPEN (non-terminal) sleeve_orders row for the sleeve is
-            cancelled via sleeves.alpaca_orders.cancel_order; a FILLED order
-            is left alone (nothing to cancel).
-          - positions and broker-side stops are NEVER touched — no call to
-            any position-closing/liquidating function.
-          - the sleeve's status AND every one of its rules' mode revert to
-            "SHADOW" — autonomy stops; re-arming requires going through the
-            arm ceremony again (this file does not re-test AC-13/AC-14's own
-            gates, only that disarm actually reverts state so a subsequent
-            arm attempt is required).
+        One-click, per-sleeve kill switch (AC-12). SYNCHRONOUS, DB-only, and
+        route-local: reverts the sleeve's own status AND every one of its
+        rules' mode to "SHADOW" — autonomy stops immediately; re-arming
+        requires going through the arm ceremony again (this file does not
+        re-test AC-13/AC-14's own gates, only that disarm actually reverts
+        state so a subsequent arm attempt is required).
+
+        DESIGN CORRECTION (s3-dashboard pre-read finding, 2026-07-08,
+        resolved before any GREEN landed): the route must NEVER itself call
+        sleeves.alpaca_orders.cancel_order (or any order-capable function)
+        directly — tests/app/test_dashboard_no_order_path.py's whole-app.py
+        AST scan denylists cancel_order in every route except sell_account,
+        and a route-level call would trip that pre-existing containment
+        invariant. Actual cancellation of a disarmed sleeve's lingering open
+        (non-terminal) broker orders is the ENGINE's job, not the route's:
+        sleeves/tick_orchestrator.py's run_sleeve_tick_for_all_sleeves (see
+        tests/sleeves/test_tick_orchestrator.py) cancels any non-terminal
+        sleeve_orders row it finds for a SHADOW-status sleeve on the very
+        next tick, via sleeves.alpaca_orders.cancel_order — never touching
+        positions or broker-side stops either way (AC-12 holds regardless of
+        which module performs the cancellation). This file pins ONLY the
+        route's own contract (immediate SHADOW revert + never reaching the
+        order module itself); the engine-side cancellation behavior is
+        pinned in tests/sleeves/test_tick_orchestrator.py instead.
 
     POST /api/sleeves/<sleeve_id>/envelope
         body: {"envelope": {...}}                      -- narrow: applies immediately
@@ -32,7 +45,7 @@ fixtures in tests/conftest.py); DB is isolated per-test.
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -71,59 +84,6 @@ def client():
 
 
 class TestDisarmSleeve:
-    def test_disarm_cancels_open_orders_but_never_closes_positions(self, client):
-        sleeve_id = database.create_sleeve("disarm-test-sleeve-1", 5000.0, envelope_json="{}")
-
-        open_client_order_id = "disarm-test-open-order"
-        database.insert_sleeve_order(
-            client_order_id=open_client_order_id,
-            sleeve_id=sleeve_id,
-            symbol="SPY",
-            side="buy",
-            qty=5.0,
-            status="accepted",
-            reserved_price=500.0,
-        )
-        database.attach_alpaca_order_id(open_client_order_id, "alpaca-open-order-id-1")
-
-        filled_client_order_id = "disarm-test-filled-order"
-        database.insert_sleeve_order(
-            client_order_id=filled_client_order_id,
-            sleeve_id=sleeve_id,
-            symbol="SPY",
-            side="buy",
-            qty=3.0,
-            status="filled",
-            reserved_price=500.0,
-        )
-        database.attach_alpaca_order_id(filled_client_order_id, "alpaca-filled-order-id-1")
-
-        with (
-            patch("sleeves.alpaca_orders.cancel_order") as mock_cancel,
-            patch("sleeves.alpaca_orders.close_position", create=True) as mock_close,
-            patch("sleeves.alpaca_orders.liquidate_position", create=True) as mock_liquidate,
-        ):
-            resp = client.post(f"/api/sleeves/{sleeve_id}/disarm")
-
-        assert resp.status_code == 200, (
-            f"disarm on a sleeve with open orders must succeed; got "
-            f"{resp.status_code}: {resp.get_data(as_text=True)[:300]!r}"
-        )
-
-        cancelled_ids = {
-            c.kwargs.get("order_id") or (c.args[0] if c.args else None)
-            for c in mock_cancel.call_args_list
-        }
-        assert "alpaca-open-order-id-1" in cancelled_ids, (
-            "the open (non-terminal) order must be cancelled by disarm"
-        )
-        assert "alpaca-filled-order-id-1" not in cancelled_ids, (
-            "an already-filled order must NOT be cancelled — nothing to cancel"
-        )
-
-        mock_close.assert_not_called()
-        mock_liquidate.assert_not_called()
-
     def test_disarm_reverts_sleeve_and_rule_modes_to_shadow(self, client):
         sleeve_id = database.create_sleeve("disarm-test-sleeve-2", 5000.0, envelope_json="{}")
         rule_id = database.create_sleeve_rule(sleeve_id, "disarm-test-rule", json_doc="{}")
@@ -139,9 +99,10 @@ class TestDisarmSleeve:
             "fixture setup sanity: the rule must be PAPER before testing disarm"
         )
 
-        with patch("sleeves.alpaca_orders.cancel_order"):
-            resp = client.post(f"/api/sleeves/{sleeve_id}/disarm")
-        assert resp.status_code == 200
+        resp = client.post(f"/api/sleeves/{sleeve_id}/disarm")
+        assert resp.status_code == 200, (
+            f"disarm must succeed; got {resp.status_code}: {resp.get_data(as_text=True)[:300]!r}"
+        )
 
         assert database.get_sleeve(sleeve_id)["status"] == "SHADOW", (
             "disarm must revert the sleeve's own status to SHADOW"
@@ -151,14 +112,77 @@ class TestDisarmSleeve:
             "re-arming requires going through the arm ceremony again"
         )
 
+    def test_disarm_on_sleeve_with_open_orders_still_succeeds_synchronously(self, client):
+        """The route itself is DB-only and synchronous — an open order present
+        must never block or delay the immediate SHADOW revert. Actual broker
+        cancellation is the engine tick's job (see test_tick_orchestrator.py),
+        not this route's."""
+        sleeve_id = database.create_sleeve("disarm-test-sleeve-1", 5000.0, envelope_json="{}")
+        open_client_order_id = "disarm-test-open-order"
+        database.insert_sleeve_order(
+            client_order_id=open_client_order_id,
+            sleeve_id=sleeve_id,
+            symbol="SPY",
+            side="buy",
+            qty=5.0,
+            status="accepted",
+            reserved_price=500.0,
+        )
+        database.attach_alpaca_order_id(open_client_order_id, "alpaca-open-order-id-1")
+
+        resp = client.post(f"/api/sleeves/{sleeve_id}/disarm")
+
+        assert resp.status_code == 200, (
+            f"disarm on a sleeve with open orders must succeed synchronously "
+            f"(cancellation is deferred to the engine tick, not this route); "
+            f"got {resp.status_code}: {resp.get_data(as_text=True)[:300]!r}"
+        )
+        assert database.get_sleeve(sleeve_id)["status"] == "SHADOW"
+
+    def test_disarm_route_never_calls_cancel_order_or_any_order_capable_function(self, client):
+        """Structural containment guard, in-file: mirrors (and pre-empts a
+        conflict with) tests/app/test_dashboard_no_order_path.py's whole-repo
+        AST scan, which denylists cancel_order/submit_order/place_order/
+        liquidate in every app.py route except sell_account. The disarm
+        route must never reach sleeves.alpaca_orders directly — cancellation
+        is the engine's responsibility."""
+        sleeve_id = database.create_sleeve("disarm-test-sleeve-4", 5000.0, envelope_json="{}")
+        open_client_order_id = "disarm-test-containment-order"
+        database.insert_sleeve_order(
+            client_order_id=open_client_order_id,
+            sleeve_id=sleeve_id,
+            symbol="SPY",
+            side="buy",
+            qty=5.0,
+            status="accepted",
+            reserved_price=500.0,
+        )
+        database.attach_alpaca_order_id(open_client_order_id, "alpaca-containment-order-id-1")
+
+        with (
+            patch("sleeves.alpaca_orders.cancel_order") as mock_cancel,
+            patch("sleeves.alpaca_orders.close_position", create=True) as mock_close,
+            patch("sleeves.alpaca_orders.liquidate_position", create=True) as mock_liquidate,
+        ):
+            client.post(f"/api/sleeves/{sleeve_id}/disarm")
+
+        assert not mock_cancel.called, (
+            "the disarm ROUTE must never call sleeves.alpaca_orders.cancel_order "
+            "directly — doing so would trip the existing whole-app.py "
+            "containment invariant (test_dashboard_no_order_path.py). Broker "
+            "cancellation of a disarmed sleeve's lingering orders happens on "
+            "the next engine tick instead."
+        )
+        mock_close.assert_not_called()
+        mock_liquidate.assert_not_called()
+
     def test_disarm_on_sleeve_with_no_open_orders_is_a_no_op_success(self, client):
         sleeve_id = database.create_sleeve("disarm-test-sleeve-3", 5000.0, envelope_json="{}")
 
-        with patch("sleeves.alpaca_orders.cancel_order") as mock_cancel:
-            resp = client.post(f"/api/sleeves/{sleeve_id}/disarm")
+        resp = client.post(f"/api/sleeves/{sleeve_id}/disarm")
 
         assert resp.status_code == 200
-        mock_cancel.assert_not_called()
+        assert database.get_sleeve(sleeve_id)["status"] == "SHADOW"
 
 
 # ---------------------------------------------------------------------------

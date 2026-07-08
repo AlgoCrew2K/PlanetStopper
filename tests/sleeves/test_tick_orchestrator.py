@@ -32,10 +32,32 @@ CONTRACT this file specifies for the GREEN implementer (s3-engine):
         # best-effort posts a Discord alert (never raises on webhook failure).
         # Returns the ReconciliationResult either way.
 
+    def cancel_open_orders_for_shadow_sleeve(
+        sleeve_id: int, *, live_mode: bool = False, live_keys_present: bool = False,
+    ) -> list[dict]:
+        # AC-12 disarm support (design correction, 2026-07-08 — see
+        # tests/app/test_sleeves_disarm_and_envelope.py's module docstring):
+        # the POST /api/sleeves/<id>/disarm ROUTE never itself reaches
+        # sleeves.alpaca_orders (would trip test_dashboard_no_order_path.py's
+        # whole-app.py containment scan) — it only reverts the sleeve/rules
+        # to SHADOW synchronously. THIS function is where the actual broker
+        # cancellation happens: called by run_sleeve_tick_for_all_sleeves for
+        # every SHADOW-status sleeve, it cancels every non-terminal
+        # sleeve_orders row via sleeves.alpaca_orders.cancel_order and NEVER
+        # touches positions or broker-side stops (no close_position/
+        # liquidate_position call). A sleeve that has always been SHADOW and
+        # never armed simply has zero non-terminal orders, so this is a
+        # no-op for it. Returns the list of order dicts that were cancelled.
+
     def run_sleeve_tick_for_all_sleeves(
         *, now_utc: datetime, discord_webhook_url: str | None = None,
     ) -> list:
         # For every sleeve returned by database.get_all_sleeves():
+        #   0. if the sleeve's status is "SHADOW", calls
+        #      cancel_open_orders_for_shadow_sleeve for it (cleans up any
+        #      lingering orders from a just-disarmed sleeve) and then skips
+        #      straight to rule evaluation for it (no fill-polling/
+        #      reconciliation needed for a sleeve with no live-armed rules).
         #   1. poll_and_apply_fills
         #   2. reconcile_sleeve_or_pause — if this call PAUSES the sleeve this
         #      tick (or the sleeve was ALREADY paused coming in), rule
@@ -148,12 +170,9 @@ class TestPollAndApplyFills:
         with patch.object(alpaca_orders, "get_order") as mock_get_order:
             tick_orchestrator.poll_and_apply_fills(sleeve_id)
 
-        (
-            mock_get_order.assert_not_called(),
-            (
-                "a pre-ack RESERVED order (alpaca_order_id still NULL) must never "
-                "be polled — there is no broker order id to poll yet."
-            ),
+        assert not mock_get_order.called, (
+            "a pre-ack RESERVED order (alpaca_order_id still NULL) must never "
+            "be polled — there is no broker order id to poll yet."
         )
 
     def test_polling_the_same_fill_twice_does_not_duplicate_the_fill_row(self):
@@ -290,11 +309,134 @@ class TestReconcileSleeveOrPause:
 
 
 # ---------------------------------------------------------------------------
+# cancel_open_orders_for_shadow_sleeve — the disarm route's actual broker
+# cancellation, deferred to the engine tick (AC-12 design correction)
+# ---------------------------------------------------------------------------
+
+
+class TestCancelOpenOrdersForShadowSleeve:
+    def test_open_order_on_a_shadow_sleeve_is_cancelled(self):
+        sleeve_id = _make_sleeve()
+        assert database.get_sleeve(sleeve_id)["status"] == "SHADOW", (
+            "fixture sanity: a freshly created sleeve starts SHADOW"
+        )
+
+        client_order_id = "cancel-test-open-order"
+        database.insert_sleeve_order(
+            client_order_id=client_order_id,
+            sleeve_id=sleeve_id,
+            symbol="SPY",
+            side="buy",
+            qty=5.0,
+            status="accepted",
+            reserved_price=500.0,
+        )
+        database.attach_alpaca_order_id(client_order_id, "alpaca-cancel-test-id-1")
+
+        with patch.object(
+            alpaca_orders,
+            "cancel_order",
+            return_value=alpaca_orders.OrderResult(order={"status": "canceled"}, error=None),
+        ) as mock_cancel:
+            cancelled = tick_orchestrator.cancel_open_orders_for_shadow_sleeve(sleeve_id)
+
+        mock_cancel.assert_called()
+        called_ids = {
+            call.kwargs.get("order_id") or (call.args[0] if call.args else None)
+            for call in mock_cancel.call_args_list
+        }
+        assert "alpaca-cancel-test-id-1" in called_ids, (
+            "the open order's broker order id must be passed to cancel_order"
+        )
+        assert cancelled, "the function must return the cancelled order(s)"
+
+    def test_filled_order_on_a_shadow_sleeve_is_never_cancelled(self):
+        sleeve_id = _make_sleeve()
+        client_order_id = "cancel-test-filled-order"
+        database.insert_sleeve_order(
+            client_order_id=client_order_id,
+            sleeve_id=sleeve_id,
+            symbol="SPY",
+            side="buy",
+            qty=5.0,
+            status="filled",
+            reserved_price=500.0,
+        )
+        database.attach_alpaca_order_id(client_order_id, "alpaca-cancel-test-filled-id")
+
+        with patch.object(alpaca_orders, "cancel_order") as mock_cancel:
+            tick_orchestrator.cancel_open_orders_for_shadow_sleeve(sleeve_id)
+
+        assert not mock_cancel.called, "an already-filled order must never be cancelled"
+
+    def test_cancellation_never_touches_positions_or_broker_side_stops(self):
+        sleeve_id = _make_sleeve()
+        client_order_id = "cancel-test-no-position-touch"
+        database.insert_sleeve_order(
+            client_order_id=client_order_id,
+            sleeve_id=sleeve_id,
+            symbol="SPY",
+            side="buy",
+            qty=5.0,
+            status="accepted",
+            reserved_price=500.0,
+        )
+        database.attach_alpaca_order_id(client_order_id, "alpaca-cancel-test-id-2")
+
+        with (
+            patch.object(
+                alpaca_orders,
+                "cancel_order",
+                return_value=alpaca_orders.OrderResult(order={"status": "canceled"}, error=None),
+            ),
+            patch.object(alpaca_orders, "close_position", create=True) as mock_close,
+            patch.object(alpaca_orders, "liquidate_position", create=True) as mock_liquidate,
+        ):
+            tick_orchestrator.cancel_open_orders_for_shadow_sleeve(sleeve_id)
+
+        mock_close.assert_not_called()
+        mock_liquidate.assert_not_called()
+
+    def test_shadow_sleeve_with_no_open_orders_is_a_no_op(self):
+        sleeve_id = _make_sleeve()
+
+        with patch.object(alpaca_orders, "cancel_order") as mock_cancel:
+            cancelled = tick_orchestrator.cancel_open_orders_for_shadow_sleeve(sleeve_id)
+
+        mock_cancel.assert_not_called()
+        assert not cancelled
+
+
+# ---------------------------------------------------------------------------
 # run_sleeve_tick_for_all_sleeves — per-sleeve orchestration
 # ---------------------------------------------------------------------------
 
 
 class TestRunSleeveTickForAllSleeves:
+    def test_shadow_sleeve_gets_its_open_orders_cancelled_via_the_tick(self):
+        """Integration check for the AC-12 design correction: the tick, not
+        the disarm route, is what actually calls cancel_open_orders_for_
+        shadow_sleeve for a SHADOW-status sleeve."""
+        sleeve_id = _make_sleeve()
+        assert database.get_sleeve(sleeve_id)["status"] == "SHADOW"
+
+        with patch.object(
+            tick_orchestrator, "cancel_open_orders_for_shadow_sleeve", return_value=[]
+        ) as mock_cancel_shadow:
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=_NOW_UTC)
+
+        called_sleeve_ids = {
+            call.args[0] if call.args else call.kwargs.get("sleeve_id")
+            for call in mock_cancel_shadow.call_args_list
+        }
+        assert sleeve_id in called_sleeve_ids, (
+            "run_sleeve_tick_for_all_sleeves must call "
+            "cancel_open_orders_for_shadow_sleeve for every SHADOW-status "
+            "sleeve — this is how a disarmed sleeve's lingering open orders "
+            "actually get cancelled, since the disarm ROUTE itself never "
+            "reaches sleeves.alpaca_orders."
+        )
+
     def test_paused_sleeve_skips_rule_evaluation_for_this_tick(self):
         sleeve_id = _make_sleeve()
         database.update_sleeve_status(sleeve_id, "PAUSED_RECONCILIATION")
