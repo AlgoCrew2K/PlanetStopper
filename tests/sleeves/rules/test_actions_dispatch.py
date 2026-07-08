@@ -146,6 +146,7 @@ pytest.importorskip(
     "sleeves.rules.actions", reason="RED phase — sleeves.rules.actions not implemented yet"
 )
 
+import database  # noqa: E402
 import sleeves.alpaca_orders as alpaca_orders  # noqa: E402
 import sleeves.envelope as envelope  # noqa: E402
 import sleeves.rules.actions as actions  # noqa: E402
@@ -480,6 +481,17 @@ class TestBracketExitParamsFromDeclaredStops:
         # percentage disconnected from the trade's own risk. Proven by
         # checking the ratio is IDENTICAL across two different stop
         # distances, without this test ever asserting what that ratio is.
+        #
+        # This test dispatches TWO separate armed buys in one test body
+        # (one per stop_loss_pct) purely to compare bracket PRICES -- it has
+        # no interest in the reservation/persistence side effects the
+        # money-safety sequence (07c07ca) now performs on every armed
+        # dispatch. database.insert_sleeve_order/attach_alpaca_order_id are
+        # mocked out here (rather than left to hit the real test DB) so two
+        # dispatches sharing the same fake broker order id never collide on
+        # sleeve_orders' genuine UNIQUE(alpaca_order_id) constraint -- a real
+        # invariant that must NOT be weakened to accommodate this test
+        # (s2-rules-impl finding, 2026-07-08).
         ctx = _ctx()
         approved_qty = 10.0
 
@@ -503,6 +515,8 @@ class TestBracketExitParamsFromDeclaredStops:
                     "submit_bracket_order",
                     return_value=alpaca_orders.OrderResult(order={"id": "abc"}, error=None),
                 ) as mock_bracket,
+                patch.object(database, "insert_sleeve_order", return_value=1),
+                patch.object(database, "attach_alpaca_order_id"),
             ):
                 actions.dispatch_action(action, ctx=ctx, shadow=False)
             _, kwargs = mock_bracket.call_args
