@@ -453,6 +453,80 @@ class TestDeleteControl:
             "the sleeve must NOT be deleted when it still holds an open position"
         )
 
+    def test_delete_route_refuses_a_sleeve_with_an_open_unfilled_order(self, client):
+        """s3-review BLOCK (821b385 review): the refuse-unless-flat check reads
+        only ledger_state.positions, but a position is created ONLY by
+        apply_fill() -- an order the broker has ACCEPTED but not yet FILLED
+        (non-terminal status, zero fills, real reserved_usd exposure) produces
+        an EMPTY positions dict and reads as flat. If the delete proceeded
+        here, the sleeve row disappears from database.get_all_sleeves() and
+        nothing will ever poll_and_apply_fills/cancel/reconcile this order
+        again for the life of the process -- a permanent orphan, unlike the
+        (already-handled) disarm TOCTOU gap which is still revisited every
+        tick since that sleeve row survives."""
+        sleeve_id = database.create_sleeve(
+            "delete-test-open-unfilled-order", 5000.0, envelope_json="{}"
+        )
+        client_order_id = f"delete-test-open-order-{sleeve_id}"
+        database.insert_sleeve_order(
+            client_order_id=client_order_id,
+            sleeve_id=sleeve_id,
+            symbol="SPY",
+            side="buy",
+            qty=10.0,
+            status="accepted",
+            reserved_price=500.0,
+        )
+        database.attach_alpaca_order_id(client_order_id, f"alpaca-open-order-{sleeve_id}")
+
+        resp = client.post(f"/api/sleeves/{sleeve_id}/delete")
+
+        assert resp.status_code in (400, 409), (
+            f"deleting a sleeve with a live, non-terminal, unfilled order must "
+            f"be refused -- the order has zero positions (nothing has filled "
+            f"yet) but real broker exposure via reserved_usd; got "
+            f"{resp.status_code}: {resp.get_data(as_text=True)[:300]!r}"
+        )
+        assert database.get_sleeve(sleeve_id) is not None, (
+            "the sleeve row must survive -- once deleted, "
+            "database.get_all_sleeves() never includes it again, so the "
+            "still-open order at the broker would never be polled, "
+            "cancelled, or reconciled for the rest of the process's life"
+        )
+
+    def test_delete_route_refuses_a_sleeve_with_a_still_reserved_preack_order(self, client):
+        """s3-review's second, even-less-recoverable case: a pre-ack row
+        (default status="RESERVED", alpaca_order_id still NULL -- the broker
+        hasn't even responded yet) must ALSO refuse deletion. Worse than the
+        acked-unfilled case: a lost-ack client_order_id whose eventual broker
+        response would arrive to find no sleeve left to attach to."""
+        sleeve_id = database.create_sleeve(
+            "delete-test-preack-reserved-order", 5000.0, envelope_json="{}"
+        )
+        database.insert_sleeve_order(
+            client_order_id=f"delete-test-preack-order-{sleeve_id}",
+            sleeve_id=sleeve_id,
+            symbol="SPY",
+            side="buy",
+            qty=10.0,
+            reserved_price=500.0,
+            # status defaults to "RESERVED"; alpaca_order_id defaults to NULL
+            # -- the broker has not yet acked this order at all.
+        )
+
+        resp = client.post(f"/api/sleeves/{sleeve_id}/delete")
+
+        assert resp.status_code in (400, 409), (
+            f"deleting a sleeve with a still-RESERVED, pre-ack order (no "
+            f"alpaca_order_id yet) must be refused; got {resp.status_code}: "
+            f"{resp.get_data(as_text=True)[:300]!r}"
+        )
+        assert database.get_sleeve(sleeve_id) is not None, (
+            "the sleeve row must survive a pending pre-ack reservation -- "
+            "deleting it now would leave a future broker ack with no sleeve "
+            "to attach to"
+        )
+
     def test_delete_route_for_unknown_sleeve_returns_404(self, client):
         resp = client.post("/api/sleeves/999999/delete")
         assert resp.status_code == 404
