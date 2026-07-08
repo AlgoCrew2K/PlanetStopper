@@ -1,0 +1,50 @@
+{
+  "_comment": "Golden fixture for sleeves.rules.limits pacing state machine (AC-5, AC-11-adjacent episode latch). Each 'tick' advances now_utc by tick_offset_sec from t0 and feeds condition_true into limits.check_and_advance_pacing. expected_fireable/expected_reason are DERIVED from the exact algorithm pinned in limits.py's docstring contract (test_limits_pacing.py replays this same algorithm in a reference Python implementation and cross-checks it against this fixture before asserting against the real module, so this table is never a bare producer-output literal).",
+  "params": {
+    "cooldown_sec": 60,
+    "max_fires_per_day": 2,
+    "rearm_ticks": 3
+  },
+  "restart_before_tick_index": 7,
+  "_restart_comment": "A restart is simulated between ticks[6] and ticks[7] (0-indexed) -- the test must reconstruct all pacing state from the DB only at that point (fresh module import / cleared in-process state) and the trace must continue identically, proving AC-5.",
+  "ticks": [
+    {"index": 0, "tick_offset_sec": 0,   "condition_true": true,  "expected_fireable": true,  "expected_reason": null},
+    {"index": 1, "tick_offset_sec": 30,  "condition_true": true,  "expected_fireable": false, "expected_reason": "episode_latched"},
+    {"index": 2, "tick_offset_sec": 60,  "condition_true": true,  "expected_fireable": false, "expected_reason": "episode_latched"},
+    {"index": 3, "tick_offset_sec": 90,  "condition_true": false, "expected_fireable": false, "expected_reason": null},
+    {"index": 4, "tick_offset_sec": 120, "condition_true": false, "expected_fireable": false, "expected_reason": null},
+    {"index": 5, "tick_offset_sec": 150, "condition_true": false, "expected_fireable": false, "expected_reason": null},
+    {"index": 6, "tick_offset_sec": 180, "condition_true": true,  "expected_fireable": true,  "expected_reason": null},
+    {"index": 7, "tick_offset_sec": 210, "condition_true": true,  "expected_fireable": false, "expected_reason": "episode_latched"},
+    {"index": 8, "tick_offset_sec": 240, "condition_true": true,  "expected_fireable": false, "expected_reason": "episode_latched"},
+    {"index": 9, "tick_offset_sec": 270, "condition_true": true,  "expected_fireable": false, "expected_reason": "episode_latched"},
+    {"index": 10, "tick_offset_sec": 300, "condition_true": false, "expected_fireable": false, "expected_reason": null},
+    {"index": 11, "tick_offset_sec": 330, "condition_true": false, "expected_fireable": false, "expected_reason": null},
+    {"index": 12, "tick_offset_sec": 360, "condition_true": false, "expected_fireable": false, "expected_reason": null},
+    {"index": 13, "tick_offset_sec": 390, "condition_true": true,  "expected_fireable": false, "expected_reason": "max_fires_per_day_reached"},
+    {"index": 14, "tick_offset_sec": 420, "condition_true": true,  "expected_fireable": false, "expected_reason": "max_fires_per_day_reached"}
+  ],
+  "_trace_annotation": [
+    "tick0: no prior fire, condition true -> FIRES (1st fire today). latch engages.",
+    "tick1-2: condition stays true while latched -> blocked by episode_latched (never re-fires mid-episode).",
+    "tick3-5: condition goes false for 3 consecutive ticks == rearm_ticks -> latch clears exactly on tick5.",
+    "tick6: condition true again, cooldown_sec=60 satisfied (180s since tick0's fire), fires_today_count=1 < max 2 -> FIRES (2nd fire today). latch re-engages.",
+    "tick7-9: condition stays true while latched -> blocked by episode_latched.",
+    "tick10-12: condition false for 3 consecutive ticks -> latch clears again on tick12.",
+    "tick13-14: condition true, latch clear, cooldown satisfied, but fires_today_count=2 already == max_fires_per_day(2) -> blocked by max_fires_per_day_reached, not cooldown or latch."
+  ],
+  "day_rollover_case": {
+    "_comment": "Isolates fires_today_count reset on a trading-day boundary. max_fires_per_day=1 so a 2nd same-day fire is blocked, but the 3rd tick (next calendar day) fires again because the day rolled over.",
+    "params": {"cooldown_sec": 0, "max_fires_per_day": 1, "rearm_ticks": 3},
+    "ticks": [
+      {"index": 0, "day_offset": 0, "tick_offset_sec": 0,    "condition_true": true, "expected_fireable": true,  "expected_reason": null},
+      {"index": 1, "day_offset": 0, "tick_offset_sec": 60,   "condition_true": true, "expected_fireable": false, "expected_reason": "episode_latched"},
+      {"index": 2, "day_offset": 1, "tick_offset_sec": 0,    "condition_true": true, "expected_fireable": false, "expected_reason": "episode_latched"},
+      {"index": 3, "day_offset": 1, "tick_offset_sec": 30,   "condition_true": false, "expected_fireable": false, "expected_reason": null},
+      {"index": 4, "day_offset": 1, "tick_offset_sec": 60,   "condition_true": false, "expected_fireable": false, "expected_reason": null},
+      {"index": 5, "day_offset": 1, "tick_offset_sec": 90,   "condition_true": false, "expected_fireable": false, "expected_reason": null},
+      {"index": 6, "day_offset": 1, "tick_offset_sec": 120,  "condition_true": true,  "expected_fireable": true,  "expected_reason": null}
+    ],
+    "_annotation": "tick2 still shows episode_latched (not max_fires) because the latch from day0's fire is still engaged going into day1 until 3 consecutive false ticks clear it (tick3-5) -- day-rollover resets the FIRE COUNT, not the latch, which is a distinct piece of state. tick6 fires because both the latch is clear (rearmed at tick5) AND fires_today_count reset to 0 when the day rolled over at tick2."
+  }
+}
