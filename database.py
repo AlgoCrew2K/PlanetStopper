@@ -3957,7 +3957,9 @@ def get_sleeve_rule_fire(fire_id: int) -> "dict | None":
     conn = get_ro_connection()
     try:
         row = conn.execute(
-            "SELECT " + ", ".join(_SLEEVE_RULE_FIRE_COLUMNS) + " FROM sleeve_rule_fires WHERE id = ?",
+            "SELECT "
+            + ", ".join(_SLEEVE_RULE_FIRE_COLUMNS)
+            + " FROM sleeve_rule_fires WHERE id = ?",
             (fire_id,),
         ).fetchone()
     finally:
