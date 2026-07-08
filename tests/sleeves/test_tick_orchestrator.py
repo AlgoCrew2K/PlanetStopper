@@ -17,6 +17,14 @@ CONTRACT this file specifies for the GREEN implementer (s3-engine):
         # and advances the order's status to the broker's own status string
         # (database.update_sleeve_order_status) — never invents a status.
         # Returns the list of newly-inserted fill dicts (empty if nothing new).
+        #
+        # BLOCK 2 fix (s3-review, 2026-07-08): a broker error
+        # (OrderResult.error is not None) is no longer a silent `continue` —
+        # it must log a WARNING (module logger) before moving to the next
+        # order. sleeves/alpaca_orders.py never logs internally by design
+        # (its own never-raises contract), so this is the ONLY place in the
+        # stack that can surface a persistent broker outage/auth failure on
+        # the fill-polling path to an operator.
 
     def reconcile_sleeve_or_pause(
         sleeve_id: int, *, position_tolerance_pct: float, cash_tolerance_usd: float,
@@ -34,6 +42,7 @@ CONTRACT this file specifies for the GREEN implementer (s3-engine):
 
     def cancel_open_orders_for_shadow_sleeve(
         sleeve_id: int, *, live_mode: bool = False, live_keys_present: bool = False,
+        discord_webhook_url: str | None = None,
     ) -> list[dict]:
         # AC-12 disarm support (design correction, 2026-07-08 — see
         # tests/app/test_sleeves_disarm_and_envelope.py's module docstring):
@@ -48,22 +57,49 @@ CONTRACT this file specifies for the GREEN implementer (s3-engine):
         # liquidate_position call). A sleeve that has always been SHADOW and
         # never armed simply has zero non-terminal orders, so this is a
         # no-op for it. Returns the list of order dicts that were cancelled.
+        #
+        # BLOCK 2 fix (s3-review, 2026-07-08): a broker error on cancel_order
+        # is no longer a silent `continue`. It must (a) log a WARNING, and
+        # (b) best-effort post a Discord alert (new discord_webhook_url
+        # param, mirrors reconcile_sleeve_or_pause's own alert pattern —
+        # never raises on webhook failure). This path is safety-critical: an
+        # operator who clicked disarm must never be left believing an order
+        # is cancelled when the broker actually rejected the cancel request.
 
     def run_sleeve_tick_for_all_sleeves(
         *, now_utc: datetime, discord_webhook_url: str | None = None,
     ) -> list:
         # For every sleeve returned by database.get_all_sleeves():
-        #   0. if the sleeve's status is "SHADOW", calls
+        #   0. if the sleeve's status is "SHADOW", ALSO calls
         #      cancel_open_orders_for_shadow_sleeve for it (cleans up any
-        #      lingering orders from a just-disarmed sleeve) and then skips
-        #      straight to rule evaluation for it (no fill-polling/
-        #      reconciliation needed for a sleeve with no live-armed rules).
-        #   1. poll_and_apply_fills
-        #   2. reconcile_sleeve_or_pause — if this call PAUSES the sleeve this
-        #      tick (or the sleeve was ALREADY paused coming in), rule
-        #      evaluation is skipped for it this tick.
+        #      lingering orders from a just-disarmed sleeve), passing
+        #      discord_webhook_url through.
+        #
+        #      BLOCK 1 fix (s3-review, 2026-07-08): a SHADOW-status sleeve is
+        #      NOT exempt from poll_and_apply_fills / reconcile_sleeve_or_pause
+        #      — every disarmed sleeve stays SHADOW permanently until
+        #      re-armed, and can still hold real residual broker-side
+        #      exposure (an order that filled at the broker in the TOCTOU
+        #      window between the disarm click and this tick's cancel
+        #      attempt, or a position from before it was disarmed). Skipping
+        #      reconciliation entirely for every SHADOW sleeve meant that
+        #      exposure could drift forever with NOTHING ever catching it
+        #      again. So steps 1-2 below now run for EVERY sleeve regardless
+        #      of status (SHADOW included) — only "already
+        #      PAUSED_RECONCILIATION coming into this tick" skips them, same
+        #      as before. A SHADOW sleeve that breaches reconciliation still
+        #      transitions to PAUSED_RECONCILIATION exactly like any other
+        #      sleeve — SHADOW is not a drift-detection exemption.
+        #   1. poll_and_apply_fills — for every sleeve (see BLOCK 1 above).
+        #   2. reconcile_sleeve_or_pause — for every sleeve not already
+        #      PAUSED_RECONCILIATION coming in (see BLOCK 1 above). If this
+        #      call PAUSES the sleeve this tick (or it was already paused
+        #      coming in), rule evaluation is skipped for it this tick.
         #   3. otherwise, assembles the sleeve's enabled rules + sense context
-        #      and calls sleeves.rules.runner.evaluate_rules for it.
+        #      and calls sleeves.rules.runner.evaluate_rules for it — this
+        #      still includes SHADOW-status sleeves (AC-6: a SHADOW rule
+        #      senses/evaluates/records fires; only PAUSED_RECONCILIATION
+        #      skips rule evaluation).
         # A single sleeve's exception during any of the above is caught and
         # logged; processing continues for the remaining sleeves (mirrors the
         # engine-wiring fail-safe contract in alpha_bot_execution.main()).
@@ -75,6 +111,7 @@ never a hardcoded literal expectation (feedback_no_hardcoded_test_values).
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
@@ -221,6 +258,41 @@ class TestPollAndApplyFills:
         assert total_recorded_qty == pytest.approx(float(fixture["filled_qty"]), rel=1e-9), (
             "total recorded fill quantity must still equal the fixture's "
             "filled_qty exactly once, not double-counted across two polls"
+        )
+
+    def test_broker_error_on_get_order_is_logged_not_silently_swallowed(self, caplog):
+        """BLOCK 2 (s3-review): sleeves.alpaca_orders never logs internally
+        by design (its own never-raises contract) -- a broker error here
+        must be logged at WARNING+ level, or a persistent Alpaca outage/auth
+        failure on the fill-polling path has ZERO observability anywhere in
+        the stack."""
+        sleeve_id = _make_sleeve()
+        client_order_id = "poll-test-broker-error"
+        database.insert_sleeve_order(
+            client_order_id=client_order_id,
+            sleeve_id=sleeve_id,
+            symbol="SPY",
+            side="buy",
+            qty=5.0,
+            status="accepted",
+            reserved_price=500.0,
+        )
+        database.attach_alpaca_order_id(client_order_id, "alpaca-poll-broker-error-id")
+
+        with (
+            patch.object(
+                alpaca_orders,
+                "get_order",
+                return_value=alpaca_orders.OrderResult(order=None, error="HTTP 500"),
+            ),
+            caplog.at_level(logging.WARNING),
+        ):
+            tick_orchestrator.poll_and_apply_fills(sleeve_id)
+
+        assert any(r.levelno >= logging.WARNING for r in caplog.records), (
+            "a broker error from alpaca_orders.get_order must be logged at "
+            "WARNING level or higher — silently continuing leaves zero "
+            "observability for a persistent Alpaca outage/auth failure."
         )
 
 
@@ -416,6 +488,104 @@ class TestCancelOpenOrdersForShadowSleeve:
         mock_cancel.assert_not_called()
         assert not cancelled
 
+    def _seed_open_order(self, sleeve_id: int, *, client_order_id: str, alpaca_order_id: str):
+        database.insert_sleeve_order(
+            client_order_id=client_order_id,
+            sleeve_id=sleeve_id,
+            symbol="SPY",
+            side="buy",
+            qty=5.0,
+            status="accepted",
+            reserved_price=500.0,
+        )
+        database.attach_alpaca_order_id(client_order_id, alpaca_order_id)
+
+    def test_broker_error_on_cancel_order_is_logged_not_silently_swallowed(self, caplog):
+        """BLOCK 2 (s3-review): a cancel_order failure on the disarm path is
+        safety-critical -- silently continuing means an operator who clicked
+        disarm has zero way to learn the broker actually rejected the
+        cancellation. Must be logged at WARNING+ level."""
+        sleeve_id = _make_sleeve()
+        self._seed_open_order(
+            sleeve_id,
+            client_order_id="cancel-test-broker-error",
+            alpaca_order_id="alpaca-cancel-broker-error-id",
+        )
+
+        with (
+            patch.object(
+                alpaca_orders,
+                "cancel_order",
+                return_value=alpaca_orders.OrderResult(order=None, error="HTTP 500"),
+            ),
+            caplog.at_level(logging.WARNING),
+        ):
+            tick_orchestrator.cancel_open_orders_for_shadow_sleeve(sleeve_id)
+
+        assert any(r.levelno >= logging.WARNING for r in caplog.records), (
+            "a broker error from alpaca_orders.cancel_order must be logged "
+            "at WARNING level or higher on the disarm-cancellation path."
+        )
+
+    def test_broker_error_on_cancel_order_fires_a_discord_alert(self):
+        """BLOCK 2 (s3-review): a failed disarm-cancellation must alert the
+        operator via Discord (mirrors reconcile_sleeve_or_pause's own
+        alert-on-breach pattern) -- the dashboard could otherwise show a
+        disarmed/safe sleeve while a real order stays live at the broker,
+        with no signal anywhere that the cancel attempt failed."""
+        sleeve_id = _make_sleeve()
+        self._seed_open_order(
+            sleeve_id,
+            client_order_id="cancel-test-broker-error-discord",
+            alpaca_order_id="alpaca-cancel-broker-error-discord-id",
+        )
+
+        with (
+            patch.object(
+                alpaca_orders,
+                "cancel_order",
+                return_value=alpaca_orders.OrderResult(order=None, error="HTTP 500"),
+            ),
+            patch.object(tick_orchestrator, "requests") as mock_requests,
+        ):
+            tick_orchestrator.cancel_open_orders_for_shadow_sleeve(
+                sleeve_id, discord_webhook_url="https://discord.test/webhook"
+            )
+
+        (
+            mock_requests.post.assert_called(),
+            (
+                "a cancel_order failure must post a Discord alert when "
+                "discord_webhook_url is supplied — silent failure on the "
+                "safety-critical disarm path is not acceptable."
+            ),
+        )
+
+    def test_no_discord_alert_attempted_without_a_webhook_url_configured(self):
+        """Never crash / never attempt a None-URL POST when no webhook is
+        configured — mirrors reconcile_sleeve_or_pause's/actions.py's own
+        `if not discord_webhook_url: return` convention."""
+        sleeve_id = _make_sleeve()
+        self._seed_open_order(
+            sleeve_id,
+            client_order_id="cancel-test-broker-error-no-webhook",
+            alpaca_order_id="alpaca-cancel-broker-error-no-webhook-id",
+        )
+
+        with (
+            patch.object(
+                alpaca_orders,
+                "cancel_order",
+                return_value=alpaca_orders.OrderResult(order=None, error="HTTP 500"),
+            ),
+            patch.object(tick_orchestrator, "requests") as mock_requests,
+        ):
+            tick_orchestrator.cancel_open_orders_for_shadow_sleeve(
+                sleeve_id, discord_webhook_url=None
+            )
+
+        mock_requests.post.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # run_sleeve_tick_for_all_sleeves — per-sleeve orchestration
@@ -445,6 +615,107 @@ class TestRunSleeveTickForAllSleeves:
             "sleeve — this is how a disarmed sleeve's lingering open orders "
             "actually get cancelled, since the disarm ROUTE itself never "
             "reaches sleeves.alpaca_orders."
+        )
+
+    def test_shadow_sleeve_still_gets_reconciled_not_just_cancelled(self):
+        """BLOCK 1 (s3-review): a SHADOW-status sleeve (every disarmed sleeve,
+        permanently, until re-armed) must ALSO be reconciled each tick, not
+        just have its open orders cancelled. A TOCTOU race (an order fills
+        at the broker between the disarm click and this tick's cancel
+        attempt) or a real residual position from before disarm would
+        otherwise NEVER be caught again — reconciliation is the plan's own
+        safety net for exactly this drift, and "no live-armed rules" does
+        not mean "nothing at the broker to track"."""
+        sleeve_id = _make_sleeve()
+        assert database.get_sleeve(sleeve_id)["status"] == "SHADOW"
+
+        with (
+            patch.object(
+                tick_orchestrator, "cancel_open_orders_for_shadow_sleeve", return_value=[]
+            ),
+            patch.object(tick_orchestrator, "poll_and_apply_fills", return_value=[]),
+            patch.object(
+                tick_orchestrator,
+                "reconcile_sleeve_or_pause",
+                return_value=MagicMock(ok=True, verdict="OK", breaches=[]),
+            ) as mock_reconcile,
+        ):
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=_NOW_UTC)
+
+        called_sleeve_ids = {
+            call.args[0] if call.args else call.kwargs.get("sleeve_id")
+            for call in mock_reconcile.call_args_list
+        }
+        assert sleeve_id in called_sleeve_ids, (
+            "reconcile_sleeve_or_pause must be called for a SHADOW-status "
+            "sleeve too, not only non-SHADOW ones — SHADOW is not an "
+            "exemption from drift detection (a disarmed sleeve can still "
+            "hold real broker-side exposure)."
+        )
+
+    def test_shadow_sleeve_also_gets_polled_for_fills_not_just_cancelled(self):
+        """Companion to the reconciliation fix above: poll_and_apply_fills
+        must also run for a SHADOW sleeve (a fill that lands in the TOCTOU
+        window right before this tick's cancel attempt must still be
+        recorded, not silently dropped because the sleeve is SHADOW)."""
+        sleeve_id = _make_sleeve()
+
+        with (
+            patch.object(
+                tick_orchestrator, "cancel_open_orders_for_shadow_sleeve", return_value=[]
+            ),
+            patch.object(tick_orchestrator, "poll_and_apply_fills", return_value=[]) as mock_poll,
+            patch.object(
+                tick_orchestrator,
+                "reconcile_sleeve_or_pause",
+                return_value=MagicMock(ok=True, verdict="OK", breaches=[]),
+            ),
+        ):
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=_NOW_UTC)
+
+        called_sleeve_ids = {
+            call.args[0] if call.args else call.kwargs.get("sleeve_id")
+            for call in mock_poll.call_args_list
+        }
+        assert sleeve_id in called_sleeve_ids, (
+            "poll_and_apply_fills must be called for a SHADOW-status sleeve "
+            "too — a fill landing right before this tick's cancellation "
+            "attempt must still be recorded."
+        )
+
+    def test_shadow_sleeve_reconciliation_breach_still_pauses_it(self):
+        """A SHADOW sleeve with a genuine broker-truth mismatch must still
+        transition to PAUSED_RECONCILIATION — SHADOW status is not a
+        drift-detection exemption. Uses the REAL reconcile_sleeve_or_pause
+        (only the broker calls are mocked, via the P1 fixtures) so this is a
+        genuine end-to-end breach, not a mocked verdict."""
+        sleeve_id = _make_sleeve()
+        positions_fixture = load_positions_fixture("positions.json")
+        account_fixture = load_account_fixture("account.json")
+
+        with (
+            patch.object(
+                tick_orchestrator, "cancel_open_orders_for_shadow_sleeve", return_value=[]
+            ),
+            patch.object(
+                alpaca_orders,
+                "get_positions",
+                return_value=alpaca_orders.OrderResult(order=positions_fixture, error=None),
+            ),
+            patch.object(
+                alpaca_orders,
+                "get_account",
+                return_value=alpaca_orders.OrderResult(order=account_fixture, error=None),
+            ),
+        ):
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=_NOW_UTC)
+
+        sleeve_row = database.get_sleeve(sleeve_id)
+        assert sleeve_row["status"] == "PAUSED_RECONCILIATION", (
+            f"a SHADOW sleeve with a genuine broker-truth mismatch (the "
+            f"broker fixture reports a {positions_fixture[0]['symbol']} "
+            f"position the sleeve's own ledger has zero record of) must "
+            f"still be paused for reconciliation; got {sleeve_row['status']!r}"
         )
 
     def test_paused_sleeve_skips_rule_evaluation_for_this_tick(self):
