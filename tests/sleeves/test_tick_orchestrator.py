@@ -596,13 +596,36 @@ class TestRunSleeveTickForAllSleeves:
     def test_shadow_sleeve_gets_its_open_orders_cancelled_via_the_tick(self):
         """Integration check for the AC-12 design correction: the tick, not
         the disarm route, is what actually calls cancel_open_orders_for_
-        shadow_sleeve for a SHADOW-status sleeve."""
+        shadow_sleeve for a SHADOW-status sleeve.
+
+        poll_and_apply_fills and reconcile_sleeve_or_pause are ALSO mocked
+        here (in addition to cancel_open_orders_for_shadow_sleeve) even
+        though this test isn't about them -- after the BLOCK 1 fix
+        (9d8e46c) they now run for every sleeve including SHADOW ones, and
+        left unmocked they'd reach the real sleeves.alpaca_orders.get_order/
+        get_positions/get_account, which attempt genuine outbound network
+        calls to Alpaca's API. That's both a house-rule violation (zero live
+        network in tests) and a real flakiness/slowness risk in an
+        environment where the connection doesn't fail fast (alpaca_orders.py's
+        own retry/backoff schedule can add up to ~15s per call) --
+        s3-engine flagged this exact risk while landing the BLOCK 1 fix.
+        See test_shadow_sleeve_still_gets_reconciled_not_just_cancelled /
+        test_shadow_sleeve_also_gets_polled_for_fills_not_just_cancelled
+        below for the dedicated, correctly-mocked reconciliation/poll tests."""
         sleeve_id = _make_sleeve()
         assert database.get_sleeve(sleeve_id)["status"] == "SHADOW"
 
-        with patch.object(
-            tick_orchestrator, "cancel_open_orders_for_shadow_sleeve", return_value=[]
-        ) as mock_cancel_shadow:
+        with (
+            patch.object(
+                tick_orchestrator, "cancel_open_orders_for_shadow_sleeve", return_value=[]
+            ) as mock_cancel_shadow,
+            patch.object(tick_orchestrator, "poll_and_apply_fills", return_value=[]),
+            patch.object(
+                tick_orchestrator,
+                "reconcile_sleeve_or_pause",
+                return_value=MagicMock(ok=True, verdict="OK", breaches=[]),
+            ),
+        ):
             tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=_NOW_UTC)
 
         called_sleeve_ids = {
