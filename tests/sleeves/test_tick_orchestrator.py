@@ -469,8 +469,18 @@ class TestRunSleeveTickForAllSleeves:
             )
 
     def test_one_sleeves_exception_does_not_block_processing_of_another(self):
+        """Both sleeves are moved to PAPER (never SHADOW) so this test
+        actually exercises the poll_and_apply_fills failure path it claims
+        to: run_sleeve_tick_for_all_sleeves routes a SHADOW-status sleeve
+        through cancel_open_orders_for_shadow_sleeve instead of
+        poll_and_apply_fills (AC-12 design correction), which would make the
+        injected poll_and_apply_fills exception below silently never fire for
+        two default-SHADOW sleeves — a real gap s3-engine's GREEN
+        implementation flagged in this exact test."""
         failing_sleeve_id = _make_sleeve()
+        database.update_sleeve_status(failing_sleeve_id, "PAPER")
         healthy_sleeve_id = _make_sleeve()
+        database.update_sleeve_status(healthy_sleeve_id, "PAPER")
         database.create_sleeve_rule(
             healthy_sleeve_id, "healthy-sleeve-rule", json_doc="{}", mode="SHADOW"
         )
@@ -481,7 +491,9 @@ class TestRunSleeveTickForAllSleeves:
             return []
 
         with (
-            patch.object(tick_orchestrator, "poll_and_apply_fills", side_effect=_poll_side_effect),
+            patch.object(
+                tick_orchestrator, "poll_and_apply_fills", side_effect=_poll_side_effect
+            ) as mock_poll,
             patch.object(
                 tick_orchestrator,
                 "reconcile_sleeve_or_pause",
@@ -498,6 +510,20 @@ class TestRunSleeveTickForAllSleeves:
                     f"run_sleeve_tick_for_all_sleeves must not propagate a "
                     f"single sleeve's exception — got {type(exc).__name__}: {exc}"
                 )
+
+        # Fixture-sanity: proves the injected exception was actually reached
+        # for the failing sleeve (not silently routed around it, e.g. by a
+        # SHADOW-status sleeve taking the cancel-orders branch instead —
+        # exactly the bug class this test's docstring documents).
+        polled_sleeve_ids = {
+            call.args[0] if call.args else call.kwargs.get("sleeve_id")
+            for call in mock_poll.call_args_list
+        }
+        assert failing_sleeve_id in polled_sleeve_ids, (
+            "fixture sanity: poll_and_apply_fills must actually have been "
+            "called for the failing sleeve — if this fails, the injected "
+            "exception never fired and the test below would pass vacuously."
+        )
 
         healthy_sleeve_evaluated = any(
             call.kwargs.get("sleeve_row", {}).get("id") == healthy_sleeve_id
