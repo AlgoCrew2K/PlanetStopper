@@ -29,15 +29,18 @@ _NOTIFY_FIELD_WHITELIST = frozenset(
     {"symbol", "action", "qty", "price", "reason", "rule_name", "sleeve_name"}
 )
 
-# Structural safety-net bracket band for a bare "buy" action: AC-7 only
-# requires that "no position exists without a broker-side exit" -- the rule
-# schema's `buy` action carries no per-order take-profit/stop-loss price
-# fields of its own (a paired "set_stop" rule is the operator's real
-# per-position risk tool). These are a wide, deliberately permissive
-# backstop, not a tuned risk parameter -- open design point for P3's real
-# PAPER/LIVE wiring, flagged to the team rather than silently finalized.
-_DEFAULT_BRACKET_STOP_LOSS_PCT = 0.10
-_DEFAULT_BRACKET_TAKE_PROFIT_PCT = 0.20
+# PM decision (2026-07-08, AC-7): a "buy" action MUST declare its own exit
+# distance (schema.py enforces stop_loss_pct/trailing_stop_pct presence at
+# authoring time) -- there is no fallback/default stop or take-profit
+# percentage here. When the rule declares no take_profit_pct, the
+# take-profit distance is still derived, but ONLY as a fixed multiple of
+# the rule's OWN declared stop distance -- never an independent absolute
+# percentage disconnected from the trade's own risk. 2:1 reward:risk is a
+# standard position-sizing heuristic (Van Tharp); it scales with whatever
+# stop the rule declares, so it is not itself a "default risk parameter" in
+# the sense the PM decision forbids -- it never substitutes for a missing
+# stop, only for a missing take-profit target.
+_TAKE_PROFIT_REWARD_RISK_RATIO = 2.0
 
 
 @dataclass(frozen=True)
@@ -66,16 +69,23 @@ class ActionResult:
 
 
 def _size_and_clamp(
-    action: dict, *, ctx: ActionContext, side: str
+    action: dict, *, ctx: ActionContext, side: str, stop_price: float | None = None
 ) -> tuple[envelope.ClampResult, None] | tuple[None, str]:
     """Returns (clamp_result, None) on a successful size+clamp, or
-    (None, error) if sizing itself failed before a clamp was even attempted."""
+    (None, error) if sizing itself failed before a clamp was even attempted.
+
+    ``stop_price``, when supplied, feeds sizing.size_order's own stop_price
+    parameter (required by risk_pct mode's qty = risk_dollars / stop_distance
+    formula) -- for a "buy", this is derived from the action's OWN declared
+    stop_loss_pct/trailing_stop_pct (see _dispatch_buy), never a separate
+    sizing.stop_price field.
+    """
     sizing_spec = action.get("sizing") or {}
     sizing_result = sizing.size_order(
         mode=sizing_spec.get("mode"),
         sleeve_equity=ctx.sleeve_equity_usd,
         price=ctx.price,
-        stop_price=sizing_spec.get("stop_price"),
+        stop_price=stop_price,
         risk_pct=sizing_spec.get("risk_pct"),
         pct_of_sleeve=sizing_spec.get("pct_of_sleeve"),
         dollars=sizing_spec.get("dollars"),
@@ -97,7 +107,13 @@ def _size_and_clamp(
 
 
 def _dispatch_buy(action: dict, *, ctx: ActionContext, shadow: bool) -> ActionResult:
-    clamp_result, sizing_error = _size_and_clamp(action, ctx=ctx, side="buy")
+    # schema.py guarantees a schema-valid "buy" declares at least one of
+    # these, each in (0, 1) -- this module trusts that shape and never
+    # falls back to a default of its own (PM decision, AC-7).
+    declared_stop_pct = action.get("stop_loss_pct") or action.get("trailing_stop_pct")
+    stop_price = ctx.price * (1 - declared_stop_pct)
+
+    clamp_result, sizing_error = _size_and_clamp(action, ctx=ctx, side="buy", stop_price=stop_price)
     if sizing_error is not None:
         return ActionResult("buy", None, None, False, None, None, sizing_error)
 
@@ -118,12 +134,19 @@ def _dispatch_buy(action: dict, *, ctx: ActionContext, shadow: bool) -> ActionRe
             "buy", would_have_qty, would_have_notional, False, None, clamp_result, None
         )
 
+    declared_take_profit_pct = action.get("take_profit_pct")
+    if declared_take_profit_pct is not None:
+        take_profit_price = ctx.price * (1 + declared_take_profit_pct)
+    else:
+        stop_distance = ctx.price - stop_price
+        take_profit_price = ctx.price + stop_distance * _TAKE_PROFIT_REWARD_RISK_RATIO
+
     order_result = alpaca_orders.submit_bracket_order(
         symbol=ctx.symbol,
         qty=clamp_result.qty,
         side="buy",
-        take_profit_price=ctx.price * (1 + _DEFAULT_BRACKET_TAKE_PROFIT_PCT),
-        stop_loss_price=ctx.price * (1 - _DEFAULT_BRACKET_STOP_LOSS_PCT),
+        take_profit_price=take_profit_price,
+        stop_loss_price=stop_price,
         live_mode=ctx.live_mode,
         live_keys_present=ctx.live_keys_present,
     )

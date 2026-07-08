@@ -143,6 +143,8 @@ def _validate_action(action: object, path: str) -> list[FieldError]:
             errors.append(
                 FieldError(f"{path}.sizing.mode", "buy/sell requires a known sizing.mode")
             )
+        if action_type == "buy":
+            errors.extend(_validate_buy_exit_fields(action, path))
     elif action_type == "set_stop":
         has_trail_pct = "trail_percent" in action
         has_trail_price = "trail_price" in action
@@ -163,6 +165,45 @@ def _validate_action(action: object, path: str) -> list[FieldError]:
                     )
                 )
     # go_to_cash: no extra fields required.
+    return errors
+
+
+def _is_pct_in_unit_interval(value: object) -> bool:
+    """0 < value < 1, rejecting non-numeric input (a stop/entry distance of
+    0% or >=100% is never a meaningful risk parameter)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 < value < 1
+
+
+def _validate_buy_exit_fields(action: dict, path: str) -> list[FieldError]:
+    """PM decision (2026-07-08, AC-7): a "buy" MUST declare its own exit
+    distance -- stop_loss_pct or trailing_stop_pct, at least one -- never a
+    defaulted/invisible constant. take_profit_pct is optional and, alone,
+    never satisfies the stop requirement."""
+    errors: list[FieldError] = []
+    stop_loss_pct = action.get("stop_loss_pct")
+    trailing_stop_pct = action.get("trailing_stop_pct")
+
+    if stop_loss_pct is None and trailing_stop_pct is None:
+        errors.append(
+            FieldError(
+                f"{path}.stop_loss_pct",
+                "buy requires stop_loss_pct or trailing_stop_pct (an entry declares its exit)",
+            )
+        )
+    if stop_loss_pct is not None and not _is_pct_in_unit_interval(stop_loss_pct):
+        errors.append(FieldError(f"{path}.stop_loss_pct", "stop_loss_pct must satisfy 0 < pct < 1"))
+    if trailing_stop_pct is not None and not _is_pct_in_unit_interval(trailing_stop_pct):
+        errors.append(
+            FieldError(f"{path}.trailing_stop_pct", "trailing_stop_pct must satisfy 0 < pct < 1")
+        )
+
+    take_profit_pct = action.get("take_profit_pct")
+    if take_profit_pct is not None:
+        is_positive_number = isinstance(take_profit_pct, (int, float)) and not isinstance(
+            take_profit_pct, bool
+        )
+        if not is_positive_number or take_profit_pct <= 0:
+            errors.append(FieldError(f"{path}.take_profit_pct", "take_profit_pct must be > 0"))
     return errors
 
 
