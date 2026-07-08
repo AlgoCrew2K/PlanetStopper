@@ -3,7 +3,7 @@
 > Managed Sleeves: sleeve infrastructure + the direct Alpaca order layer (P1), and the rule engine that senses/evaluates/dispatches through it (P2) — the only part of the codebase permitted to place broker orders.
 
 **Source:** `sleeves/__init__.py`, `sleeves/alpaca_orders.py`, `sleeves/reconciliation.py`, `sleeves/envelope.py`, `sleeves/sizing.py`, `sleeves/ledger.py` (P1); `sleeves/rules/{schema,senses,conditions,limits,actions,runner}.py` (P2); plus the `sleeve_*` accessors in `database.py` and `migrations/033_sleeves.sql` + `migrations/034_sleeve_rule_fires.sql`
-**Last updated:** 2026-07-08 (P1 GREEN tip `0c5c4df`, review-approved; P2 GREEN tip `7e0efe1`, 314 passed / 0 failed / 0 skipped across `tests/sleeves/` — s2-review verdict pending)
+**Last updated:** 2026-07-08 (P1 GREEN tip `0c5c4df`, review-approved; P2 GREEN tip `ef34848`, 449 passed / 0 failed / 0 skipped across `tests/sleeves/` + all 5 P1 containment canary files, ruff clean, s2-review APPROVE)
 
 ## Overview
 
@@ -176,6 +176,8 @@ Applies one fill (or partial fill). **BUY:** the reservation resolves into a pos
 
 #### `reconstruct_from_history(capital_usd: float, order_history: list[dict]) -> LedgerState`
 Folds a sleeve's full order+fill history (as returned by `database.get_sleeve_order_history`, oldest-submitted-first, each order's fills oldest-filled-first) into its **current** `LedgerState` — zero I/O of its own, matching the module's invariant. Per buy order (identified by a non-`None` `reserved_price`, since a sell's `reserved_price` is always `NULL`): `reserve()`s the full `qty * reserved_price` at fold-start, `apply_fill()`s each fill in order with `reserved_usd` proportional to that fill's share of the original reservation, then — only if the order's current status is in a terminal-status set and some qty remains unfilled — `release()`s the unfilled remainder (reject/cancel/expire are released identically). The terminal-status set reuses `database.get_daily_turnover_usd`'s exact denylist (`filled`/`canceled`/`expired`/`replaced`/`done_for_day`/`rejected`), so an unrecognized or future order status fails closed — stays reserved, the conservative direction — rather than silently releasing. A sell order never reserves; each of its fills applies directly with `reserved_usd=0.0`.
+
+**Known limitation (tracked, non-blocking; s2-review, `DECISIONS.md` `DE-SLEEVES-P2-001`):** P2 never advances an acked order's status past `'RESERVED'` and never records a fill (fill-polling is AC-9/P3 scope) — so an acked order's reservation never naturally releases via this function until P3's reconciliation loop lands. Safe direction (over-reserves, never under-reserves), but reservations will visibly accumulate once real order flow starts.
 
 ## Managed Sleeves P2: the rule engine
 
@@ -375,6 +377,17 @@ All read paths use `get_ro_connection()`; all writes use `get_connection()`. Eve
 - **FLAG #4** (`ledger.py` + `sizing.py`) — non-finite rejection never checked sign, so `reserve()`/`apply_fill()` silently accepted non-positive `notional_usd`/`price`/`qty`, and `sizing.py`'s `fractionable=True` early-return path had no sign check at all. Fixed: `reserve()` rejects `notional_usd <= 0`; `apply_fill()` rejects `price <= 0` and `qty < 0` (`qty == 0` stays legal, reaching BLOCK #2's check instead); `_floor_to_whole_share` rejects any negative `raw_qty` before the `fractionable` branch.
 
 The one initially-skipped test (`test_zero_qty_sell_against_sold_out_position_...`) was later pinned to a hard assertion (`raises_insufficient_position`) once `sleeve-risk-impl` concretely chose the raise-over-no-op resolution for BLOCK #2 — see commit `0c5c4df`. Final state: 220 passed / 0 failed / 0 skipped across the full P1 verification scope — `tests/sleeves/` (179) + `tests/database/test_033_sleeves_client_order_id.py` (24) + the two no-order-path canaries `test_m2_no_order_path.py` + `test_dashboard_no_order_path.py` (17) = 220.
+
+## Notes from the P2 review cycle
+
+`s2-review` found two BLOCK-level gaps in the initial P2 rule-engine GREEN (`083526f`), encoded as RED (`07c07ca`, fixture fix `df47c84`) and fixed in `ef34848`:
+
+- **BLOCK** (`actions.py`) — the armed path placed real broker orders with zero cash-safety enforcement and no durable reservation row: a `buy` never checked available cash before sizing/clamping an order, and no order-placing action recorded the P1 invariant #6 reservation sequence. Fixed: `sleeves.ledger.reconstruct_from_history` + `ledger.reserve()` now gate every `buy` in both shadow and armed mode (see [architecture invariant 9](#architecture-invariants-binding-enforced-by-testssleevestest_containment_invariantspy)); `_place_order_with_reservation` centralizes the `RESERVED`-row-before-broker-call sequence for every order-placing action.
+- **BLOCK** (`schema.py`) — `market_hours_only=False` was an unrestricted override, letting an order-placing rule bypass market-hours gating entirely (drift from the plan's v1 market-hours-only-evaluation posture). Fixed: the override is now schema-rejected unless the rule's entire `then` action set is pure-`notify`.
+
+s2-review's re-verdict at `ef34848` was **APPROVE** (both findings closed), independently confirmed: 449 passed / 0 failed / 0 skipped across `tests/sleeves/` (363) plus all 5 P1 containment canary files (`test_m2_no_order_path.py`, `test_dashboard_no_order_path.py`, `test_orphan_port_modules_removed.py`, `test_port_dispatch_removal.py`, `test_port_engine_module_removal.py`), ruff clean.
+
+One non-blocking, tracked follow-up came with that approval: fill-polling isn't wired in P2 (AC-9/P3 scope), so a successfully-placed order's cash reservation won't naturally release until P3's reconciliation loop lands — safe direction (over-reserves, never under-reserves), but reservations will visibly accumulate once real order flow starts. See `DECISIONS.md` `DE-SLEEVES-P2-001`'s "Known limitation" note and [`reconstruct_from_history`](#reconstruct_from_historycapital_usd-float-order_history-listdict---ledgerstate) above for the full mechanism.
 
 ## Internal Dependencies
 
