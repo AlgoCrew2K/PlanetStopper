@@ -52,6 +52,7 @@ Adversarial RED intent:
 
 from __future__ import annotations
 
+import ast
 import importlib
 import json
 import logging
@@ -854,13 +855,50 @@ class TestImportBoundary:
     """AC-6: alpha_bot_execution.py must not import advisors.lens_pipeline or any advisors.*."""
 
     def test_alpha_bot_execution_does_not_import_lens_pipeline(self):
-        """Static scan: alpha_bot_execution.py source must not contain 'lens_pipeline'."""
+        """AST-based scan: alpha_bot_execution.py must contain no ast.Import/
+        ast.ImportFrom node whose dotted module path (or, for a `from X
+        import lens_pipeline` submodule-as-name form, the imported name)
+        references lens_pipeline -- module-level OR nested inside a
+        function body, since a lazy/deferred import must be caught just as
+        surely as a top-level one (the guard's real intent, AC-6: lens_
+        pipeline must never be reachable from the 1-minute execution path
+        via ANY import route).
+
+        Hardened from a naive `"lens_pipeline" not in source` substring
+        check (CI false positive, 2026-07-08, PR #94): a P3 CC-2 lazy-
+        import comment on the sleeves tick-orchestrator hook merely NAMED
+        "lens_pipeline" as a precedent ("matching the ai_advisor/
+        lens_pipeline precedent elsewhere in this file") -- no actual
+        import existed anywhere in the file -- and the substring check
+        tripped CI red on a genuinely clean commit. AST parsing
+        distinguishes a real import statement from a comment or string
+        that merely mentions the module's name, without weakening what the
+        guard actually checks for.
+        """
         source_path = _REPO_ROOT / "alpha_bot_execution.py"
         assert source_path.exists(), f"alpha_bot_execution.py not found at {source_path}"
         source = source_path.read_text(encoding="utf-8")
-        assert "lens_pipeline" not in source, (
-            "CC-2 violation: alpha_bot_execution.py imports lens_pipeline. "
-            "The lens pipeline must NEVER be on the 1-minute execution path."
+        tree = ast.parse(source, filename=str(source_path))
+
+        offending_imports: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if "lens_pipeline" in alias.name.split("."):
+                        offending_imports.append(alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                if "lens_pipeline" in module.split("."):
+                    offending_imports.append(module)
+                for alias in node.names:
+                    if alias.name == "lens_pipeline":
+                        offending_imports.append(f"{module}.{alias.name}" if module else alias.name)
+
+        assert not offending_imports, (
+            f"CC-2 violation: alpha_bot_execution.py imports lens_pipeline "
+            f"(found: {offending_imports}). The lens pipeline must NEVER be "
+            f"reachable from the 1-minute execution path -- module-level or "
+            f"lazy/nested inside a function body."
         )
 
     def test_alpha_bot_execution_does_not_import_advisors_module(self):
