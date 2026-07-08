@@ -98,10 +98,9 @@ pytest.importorskip(
     "sleeves.rules.actions", reason="RED phase — sleeves.rules.actions not implemented yet"
 )
 
-import sleeves.rules.actions as actions  # noqa: E402
-
 import sleeves.alpaca_orders as alpaca_orders  # noqa: E402
 import sleeves.envelope as envelope  # noqa: E402
+import sleeves.rules.actions as actions  # noqa: E402
 import sleeves.sizing as sizing  # noqa: E402
 
 
@@ -242,6 +241,81 @@ class TestClampIsNonBypassable:
         mock_submit.assert_not_called()
         assert result.executed is False
         assert result.would_have_qty == 10.0
+
+
+# ---------------------------------------------------------------------------
+# 1b. No naked entries — a "buy" NEVER reaches the plain submit_order path
+#
+# AC-7: "every entry defaults to a bracket... no position ever exists without
+# its exit." sleeves.alpaca_orders.submit_order (added this cycle for
+# sell/go_to_cash) is a PLAIN order with no take-profit/stop-loss legs — it
+# is side-agnostic at the alpaca_orders layer (nothing there stops a caller
+# from passing side="buy"), so the ONLY thing preventing a rule from opening
+# an unprotected naked position is actions.py's OWN dispatch logic never
+# routing "buy" through it. Proven behaviorally across every clamp/mode
+# combination, not just the happy path — PM-flagged gap (2026-07-08),
+# fixing before this lands in a GREEN commit.
+# ---------------------------------------------------------------------------
+
+
+class TestBuyNeverRoutesThroughThePlainSubmitOrderPath:
+    @pytest.mark.parametrize("shadow", [True, False])
+    @pytest.mark.parametrize("clamp_approved", [True, False])
+    def test_buy_never_calls_plain_submit_order_in_any_mode_or_clamp_outcome(
+        self, shadow, clamp_approved
+    ):
+        action = {"type": "buy", "sizing": {"mode": "shares", "shares": 10}}
+        clamp = (
+            envelope.ClampResult(
+                approved=True, qty=10.0, original_qty=10.0, clamped=False, reason=None
+            )
+            if clamp_approved
+            else envelope.ClampResult(
+                approved=False,
+                qty=0.0,
+                original_qty=10.0,
+                clamped=True,
+                reason=envelope.REASON_REDUCED_TO_ZERO,
+            )
+        )
+        with (
+            patch.object(envelope, "clamp_order", return_value=clamp),
+            patch.object(
+                alpaca_orders,
+                "submit_bracket_order",
+                return_value=alpaca_orders.OrderResult(order={"id": "abc"}, error=None),
+            ),
+            patch.object(alpaca_orders, "submit_order") as mock_submit_order,
+        ):
+            actions.dispatch_action(action, ctx=_ctx(), shadow=shadow)
+        assert not mock_submit_order.called, (
+            f"a 'buy' action reached the plain (non-bracket) submit_order path "
+            f"(shadow={shadow}, clamp_approved={clamp_approved}) -- AC-7 naked-entry "
+            f"violation: an ENTRY must be structurally unable to exist without a "
+            f"broker-side exit, which submit_bracket_order guarantees and plain "
+            f"submit_order does not."
+        )
+
+    def test_armed_approved_buy_reaches_bracket_construction_not_the_plain_path(self):
+        # Positive complement to the negative proof above: confirm the ONE
+        # broker call an armed, approved buy DOES make is the bracket path.
+        action = {"type": "buy", "sizing": {"mode": "shares", "shares": 10}}
+        approved = envelope.ClampResult(
+            approved=True, qty=10.0, original_qty=10.0, clamped=False, reason=None
+        )
+        with (
+            patch.object(envelope, "clamp_order", return_value=approved),
+            patch.object(
+                alpaca_orders,
+                "submit_bracket_order",
+                return_value=alpaca_orders.OrderResult(order={"id": "abc"}, error=None),
+            ) as mock_bracket,
+            patch.object(alpaca_orders, "submit_order") as mock_submit_order,
+        ):
+            result = actions.dispatch_action(action, ctx=_ctx(), shadow=False)
+        assert mock_bracket.called
+        mock_submit_order.assert_not_called()
+        assert result.executed is True
 
 
 # ---------------------------------------------------------------------------
