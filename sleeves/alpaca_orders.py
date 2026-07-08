@@ -309,6 +309,43 @@ def submit_trailing_stop_order(
     )
 
 
+def submit_order(
+    *,
+    symbol: str,
+    qty: float,
+    side: str,
+    order_type: str = "market",
+    client_order_id: str | None = None,
+    time_in_force: str = "day",
+    live_mode: bool = False,
+    live_keys_present: bool = False,
+    max_retries: int = 4,
+) -> OrderResult:
+    """Submit a plain, non-bracket order (P2: sleeve rule "sell"/"go_to_cash"
+    actions closing an existing position -- submit_bracket_order's mandatory
+    take-profit/stop-loss legs are the wrong shape for a plain closing sell).
+
+    Same conventions as submit_bracket_order/submit_trailing_stop_order: raw
+    requests, D-1 error redaction, client_order_id lost-ack recovery, bounded
+    retry/backoff.
+    """
+    host = resolve_host(live_mode=live_mode, live_keys_present=live_keys_present)
+    url = f"{host}/v2/orders"
+    body: dict = {
+        "symbol": symbol,
+        "qty": str(qty),
+        "side": side,
+        "type": order_type,
+        "time_in_force": time_in_force,
+    }
+    if client_order_id is not None:
+        body["client_order_id"] = client_order_id
+    headers = _credential_headers(live_mode=live_mode, live_keys_present=live_keys_present)
+    return _request_with_retry(
+        "post", url, headers=headers, json_body=body, max_retries=max_retries
+    )
+
+
 def cancel_order(
     *, order_id: str, live_mode: bool = False, live_keys_present: bool = False
 ) -> OrderResult:
