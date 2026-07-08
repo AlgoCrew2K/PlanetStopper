@@ -663,6 +663,84 @@ class TestEmptyOrAbsentAllowlistMeansNoConfinement:
 
 
 # ---------------------------------------------------------------------------
+# 8c. PM ruling (2026-07-08, folded into #34): is_envelope_widened's own
+# allowlist-subset check has the INVERSE gap from clamp_order's -- an empty
+# set is a subset of every set, so `not new_allowlist.issubset(old_allowlist)`
+# never flags "populated -> empty/absent" as a widen. Under the #34 semantic
+# (empty/absent allowlist = confines NOTHING, i.e. the universe of all
+# symbols), clearing a populated allowlist to empty/absent is the SINGLE
+# MOST EXTREME possible widen -- and until this is fixed, an operator could
+# silently strip all ticker confinement without tripping the AC-3
+# re-ceremony gate. Unified semantic: old_permitted = UNIVERSE if the old
+# allowlist is empty/absent else set(old); same for new_permitted; a widen
+# is new_permitted NOT a subset of old_permitted. (test-writer found this
+# while investigating #34's clamp_order fix; PM ruled it ships together
+# with #34, not as a separate task, since #34 without this fix opens the
+# bypass.)
+# ---------------------------------------------------------------------------
+
+
+class TestAllowlistWidenDetectionTreatsEmptyAsUniverse:
+    def test_clearing_a_populated_allowlist_to_empty_is_a_widen(self):
+        old = _base_envelope(allowlist=["SPY"])
+        new = _base_envelope(allowlist=[])
+        assert envelope.is_envelope_widened(old, new) is True, (
+            "clearing a populated allowlist to EMPTY must register as a widen "
+            "-- under the #34 semantic (empty = no ticker confinement, i.e. "
+            "the universe of all symbols) this is the single most extreme "
+            "possible widen. Without this, an operator could silently strip "
+            "all ticker confinement and bypass the AC-3 re-ceremony gate."
+        )
+
+    def test_clearing_a_populated_allowlist_by_omitting_the_key_is_a_widen(self):
+        old = _base_envelope(allowlist=["SPY"])
+        new = {k: v for k, v in old.items() if k != "allowlist"}
+        assert envelope.is_envelope_widened(old, new) is True, (
+            "omitting the allowlist key entirely must behave identically to "
+            "an explicit empty list -- both mean 'no confinement' under #34"
+        )
+
+    def test_going_from_empty_allowlist_to_populated_is_not_a_widen(self):
+        old = _base_envelope(allowlist=[])
+        new = _base_envelope(allowlist=["SPY"])
+        assert envelope.is_envelope_widened(old, new) is False, (
+            "going from an empty allowlist (confines nothing -- the "
+            "universe) to a populated one (confines to just SPY) is a "
+            "NARROWING, not a widen -- must not require re-ceremony"
+        )
+
+    def test_going_from_absent_allowlist_key_to_populated_is_not_a_widen(self):
+        old = _base_envelope()
+        del old["allowlist"]
+        new = _base_envelope(allowlist=["SPY"])
+        assert envelope.is_envelope_widened(old, new) is False, (
+            "an absent allowlist key must behave identically to an explicit "
+            "empty list on the OLD side too -- going to a populated "
+            "allowlist is a narrowing"
+        )
+
+    def test_two_empty_allowlists_are_not_a_widen(self):
+        old = _base_envelope(allowlist=[])
+        new = _base_envelope(allowlist=[])
+        assert envelope.is_envelope_widened(old, new) is False, (
+            "empty -> empty (universe -> universe) is unchanged, not a widen"
+        )
+
+    def test_adding_a_ticker_to_an_already_nonempty_allowlist_is_still_a_widen(self):
+        # Regression guard: fixing the empty-allowlist widen semantic must
+        # not disturb the existing non-empty-to-non-empty widen behavior
+        # already covered by TestEnvelopeWidening.
+        old = _base_envelope(allowlist=["SPY"])
+        new = _base_envelope(allowlist=["SPY", "QQQ"])
+        assert envelope.is_envelope_widened(old, new) is True
+
+    def test_removing_a_ticker_from_a_still_nonempty_allowlist_is_still_not_a_widen(self):
+        old = _base_envelope(allowlist=["SPY", "QQQ"])
+        new = _base_envelope(allowlist=["SPY"])
+        assert envelope.is_envelope_widened(old, new) is False
+
+
+# ---------------------------------------------------------------------------
 # 9. Review finding BLOCK #3 (sleeve-review, commit 2200c66): removing a cap
 # entirely (old value present, new value None/absent) must count as a widen.
 # clamp_order treats a None cap as "unlimited", so nulling out a cap is the
