@@ -3256,6 +3256,359 @@ def sell_account():
     )
 
 
+# ---------------------------------------------------------------------------
+# Managed Sleeves (P3): sleeve/rule CRUD, arming ladder, disarm, envelope,
+# condition-replay routes (feature-plans/managed-sleeves.md).
+#
+# These are operator-config writes -- create/arm/disarm a sleeve or rule --
+# NEVER trade actions.  The only code path that ever places a broker order is
+# the engine tick (sleeves.rules.runner, wired into alpha_bot_execution.main());
+# these routes mutate sleeves/sleeve_rules status columns and read
+# sleeve_orders/sleeve_rule_fires, matching the dashboard's prime directive
+# that it is never a live-trade-action surface.  disarm_sleeve below is
+# SYNCHRONOUS and DB-only (reverts sleeve/rule status to SHADOW immediately)
+# -- it deliberately never calls sleeves.alpaca_orders.cancel_order or any
+# other order-capable function, since doing so would trip the pre-existing
+# whole-app.py containment invariant (tests/app/test_dashboard_no_order_path.py,
+# which denylists cancel_order in every route except sell_account).  Actual
+# cancellation of a disarmed sleeve's lingering open broker orders happens on
+# the engine's very next tick (sleeves/tick_orchestrator.py).
+# ---------------------------------------------------------------------------
+
+_ARM_LIVE_PHRASE = "ARM LIVE TRADING"
+_WIDEN_ENVELOPE_PHRASE = "WIDEN ENVELOPE"
+
+
+@app.route("/api/sleeves", methods=["GET"])
+def list_sleeves():
+    """Return every sleeve row (AC-16 panel data source)."""
+    return jsonify({"sleeves": database.get_all_sleeves()})
+
+
+@app.route("/api/sleeves", methods=["POST"])
+def create_sleeve_route():
+    """Create a sleeve (AC-1). Starts SHADOW; capital_usd is fixed at creation."""
+    payload = request.json or {}
+    name = payload.get("name")
+    if not name:
+        return jsonify({"status": "error", "message": "name is required"}), 400
+    capital_usd = payload.get("capital_usd")
+    if capital_usd is None:
+        return jsonify({"status": "error", "message": "capital_usd is required"}), 400
+    try:
+        capital_usd = float(capital_usd)
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "capital_usd must be numeric"}), 400
+
+    import json as _json  # noqa: PLC0415 — stdlib, lazy for locality
+
+    envelope = payload.get("envelope") or {}
+    sleeve_id = database.create_sleeve(name, capital_usd, envelope_json=_json.dumps(envelope))
+    return jsonify({"status": "success", "sleeve": database.get_sleeve(sleeve_id)})
+
+
+@app.route("/api/sleeves/<int:sleeve_id>/rules", methods=["GET"])
+def list_sleeve_rules(sleeve_id):
+    """Return every rule for one sleeve (AC-16 panel data source)."""
+    return jsonify({"rules": database.get_sleeve_rules_for_sleeve(sleeve_id)})
+
+
+@app.route("/api/sleeves/<int:sleeve_id>/rules", methods=["POST"])
+def create_sleeve_rule_route(sleeve_id):
+    """Create a rule for one sleeve (AC-4/AC-6). Always born SHADOW."""
+    if database.get_sleeve(sleeve_id) is None:
+        return jsonify({"status": "error", "message": "sleeve not found"}), 404
+
+    payload = request.json or {}
+
+    from sleeves.rules import schema as sleeve_schema  # noqa: PLC0415
+
+    validation = sleeve_schema.validate_rule_doc(payload)
+    if not validation.valid:
+        return jsonify(
+            {
+                "status": "error",
+                "message": "rule doc failed schema validation",
+                "errors": [{"field": e.field, "message": e.message} for e in validation.errors],
+            }
+        ), 400
+
+    import json as _json  # noqa: PLC0415 — stdlib, lazy for locality
+
+    # AC-6: every rule is BORN in SHADOW regardless of any "mode" the client
+    # sent in the create payload -- arming is a separate ceremony (see the
+    # arm route below).
+    rule_id = database.create_sleeve_rule(
+        sleeve_id, payload.get("name", ""), json_doc=_json.dumps(payload), mode="SHADOW"
+    )
+    return jsonify({"status": "success", "rule": database.get_sleeve_rule(rule_id)})
+
+
+@app.route("/api/sleeves/<int:sleeve_id>/rules/<int:rule_id>/arm", methods=["POST"])
+def arm_sleeve_rule(sleeve_id, rule_id):
+    """SHADOW -> PAPER arming (AC-13): rejected without >=1 recorded SHADOW fire.
+
+    Never touches SLEEVE_LIVE_EXECUTION/ALPACA_LIVE_* -- PAPER stays
+    structurally confined to the paper host via sleeves.alpaca_orders.resolve_host.
+    """
+    rule_row = database.get_sleeve_rule(rule_id)
+    if rule_row is None or rule_row.get("sleeve_id") != sleeve_id:
+        return jsonify({"status": "error", "message": "rule not found"}), 404
+
+    payload = request.json or {}
+    if payload.get("target_mode") != "PAPER":
+        return jsonify(
+            {"status": "error", "message": "arm only supports target_mode=PAPER (SHADOW->PAPER)"}
+        ), 400
+
+    has_shadow_fire = any(
+        fire.get("mode_at_fire") == "SHADOW"
+        for fire in database.get_sleeve_rule_fires(rule_id=rule_id)
+    )
+    if not has_shadow_fire:
+        return jsonify(
+            {
+                "status": "error",
+                "message": "AC-13: no recorded SHADOW evaluation for this rule yet — arm rejected",
+            }
+        ), 400
+
+    database.update_sleeve_rule_mode(rule_id, "PAPER")
+    return jsonify({"status": "success", "rule": database.get_sleeve_rule(rule_id)})
+
+
+@app.route("/api/sleeves/<int:sleeve_id>/arm-live", methods=["POST"])
+def arm_sleeve_live(sleeve_id):
+    """PAPER -> LIVE panic-flow ceremony (AC-14), modeled on sell_account's
+    6-gate chain (app.py, sell_account): confirm id + exact phrase, then
+    live keys + SLEEVE_LIVE_EXECUTION -- impossible by construction without
+    both. Every genuine ceremony attempt (gates 1-4 passed) is audited via
+    Discord + an ERROR log entry regardless of whether gates 5/6 subsequently
+    block the arm.
+    """
+    if database.get_sleeve(sleeve_id) is None:
+        return jsonify({"status": "error", "message": "sleeve not found"}), 404
+
+    payload = request.json or {}
+    confirm_sleeve_id = payload.get("confirm_sleeve_id")
+    confirm_phrase = payload.get("confirm_phrase")
+
+    # Gates 1-4: confirmation validation before any env/credential check.
+    if not confirm_sleeve_id:
+        return jsonify({"status": "error", "message": "confirm_sleeve_id is required"}), 400
+    if confirm_sleeve_id != sleeve_id:
+        return jsonify(
+            {"status": "error", "message": "confirm_sleeve_id does not match sleeve_id"}
+        ), 400
+    if not confirm_phrase:
+        return jsonify({"status": "error", "message": "confirm_phrase is required"}), 400
+    try:
+        phrase_matches = secrets.compare_digest(str(confirm_phrase), _ARM_LIVE_PHRASE)
+    except TypeError:
+        phrase_matches = False
+    if not phrase_matches:
+        return jsonify(
+            {"status": "error", "message": f"confirm_phrase must be exactly {_ARM_LIVE_PHRASE!r}"}
+        ), 400
+
+    env_vars = dotenv_values(ENV_FILE_PATH)
+    ts_et = datetime.now(_ET).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Audit: Discord alert + ERROR log on every genuine ceremony attempt
+    # (gates 1-4 passed) regardless of live-keys/flag outcome below --
+    # mirrors sell_account's "audit always fires" contract.
+    discord_url = env_vars.get("DISCORD_WEBHOOK_URL", "")
+    if discord_url:
+        try:
+            requests.post(
+                discord_url,
+                json={"content": f"SLEEVE LIVE-ARM CEREMONY on sleeve {sleeve_id} at {ts_et} ET"},
+                timeout=5,
+            )
+        except Exception:
+            pass
+    _daemon_log.error("SLEEVE LIVE-ARM CEREMONY attempted on sleeve %s at %s ET", sleeve_id, ts_et)
+
+    live_key = (env_vars.get("ALPACA_LIVE_KEY") or "").strip()
+    live_secret = (env_vars.get("ALPACA_LIVE_SECRET") or "").strip()
+    if not (live_key and live_secret):
+        return jsonify(
+            {
+                "status": "error",
+                "message": "ALPACA_LIVE_KEY/ALPACA_LIVE_SECRET are not both configured "
+                "— LIVE arming is impossible by construction",
+            }
+        ), 400
+
+    sleeve_live_execution = (env_vars.get("SLEEVE_LIVE_EXECUTION", "False") or "False").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+    if not sleeve_live_execution:
+        return jsonify({"status": "error", "message": "SLEEVE_LIVE_EXECUTION is not enabled"}), 400
+
+    database.update_sleeve_status(sleeve_id, "LIVE")
+    return jsonify({"status": "success", "sleeve": database.get_sleeve(sleeve_id)})
+
+
+@app.route("/api/sleeves/<int:sleeve_id>/disarm", methods=["POST"])
+def disarm_sleeve(sleeve_id):
+    """One-click per-sleeve kill switch (AC-12). SYNCHRONOUS, DB-only, and
+    route-local: reverts the sleeve's own status and every one of its rules'
+    mode back to SHADOW immediately -- autonomy stops right away; re-arming
+    requires the arm ceremony again.
+
+    This route deliberately never calls sleeves.alpaca_orders.cancel_order
+    (or any order-capable function) -- doing so would trip the pre-existing
+    whole-app.py containment invariant (tests/app/test_dashboard_no_order_path.py,
+    which denylists cancel_order in every route except sell_account).
+    Cancelling a disarmed sleeve's lingering open (non-terminal) broker
+    orders is the ENGINE's job instead: sleeves/tick_orchestrator.py cancels
+    any non-terminal sleeve_orders row it finds for a SHADOW-status sleeve on
+    the very next tick (see tests/sleeves/test_tick_orchestrator.py) --
+    positions and broker-side stops are never touched either way.
+    """
+    if database.get_sleeve(sleeve_id) is None:
+        return jsonify({"status": "error", "message": "sleeve not found"}), 404
+
+    database.update_sleeve_status(sleeve_id, "SHADOW")
+    for rule in database.get_sleeve_rules_for_sleeve(sleeve_id):
+        database.update_sleeve_rule_mode(rule["id"], "SHADOW")
+
+    return jsonify({"status": "success", "sleeve": database.get_sleeve(sleeve_id)})
+
+
+@app.route("/api/sleeves/<int:sleeve_id>/envelope", methods=["POST"])
+def update_sleeve_envelope_route(sleeve_id):
+    """Envelope widen/narrow (AC-3): narrowing applies immediately; widening
+    requires the same confirm-id + confirm-phrase ceremony shape as arm-live.
+    """
+    sleeve_row = database.get_sleeve(sleeve_id)
+    if sleeve_row is None:
+        return jsonify({"status": "error", "message": "sleeve not found"}), 404
+
+    payload = request.json or {}
+    new_envelope = payload.get("envelope")
+    if not isinstance(new_envelope, dict):
+        return jsonify({"status": "error", "message": "envelope (object) is required"}), 400
+
+    import json as _json  # noqa: PLC0415 — stdlib, lazy for locality
+
+    import sleeves.envelope  # noqa: PLC0415
+
+    old_envelope = _json.loads(sleeve_row.get("envelope_json") or "{}")
+    widened = sleeves.envelope.is_envelope_widened(old_envelope, new_envelope)
+
+    if widened:
+        confirm_sleeve_id = payload.get("confirm_sleeve_id")
+        confirm_phrase = payload.get("confirm_phrase")
+        if not confirm_sleeve_id or confirm_sleeve_id != sleeve_id:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": "AC-3: widening the envelope requires confirm_sleeve_id to match",
+                }
+            ), 400
+        if not confirm_phrase:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": "AC-3: widening the envelope requires confirm_phrase",
+                }
+            ), 400
+        try:
+            phrase_matches = secrets.compare_digest(str(confirm_phrase), _WIDEN_ENVELOPE_PHRASE)
+        except TypeError:
+            phrase_matches = False
+        if not phrase_matches:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"confirm_phrase must be exactly {_WIDEN_ENVELOPE_PHRASE!r}",
+                }
+            ), 400
+
+    database.update_sleeve_envelope(sleeve_id, _json.dumps(new_envelope))
+    return jsonify({"status": "success", "sleeve": database.get_sleeve(sleeve_id)})
+
+
+@app.route("/api/sleeves/<int:sleeve_id>/rules/<int:rule_id>/replay", methods=["GET"])
+def replay_sleeve_rule(sleeve_id, rule_id):
+    """Condition-replay diagnostic (AC-18) — NEVER an arming input, NEVER a
+    P&L claim (fill-simulating backtest is explicitly out of scope). Runs the
+    rule's OWN condition tree through the real sleeves.rules.conditions/senses
+    modules -- the same engine a live tick uses -- over the trailing N daily
+    bars, returning the dates it WOULD have fired plus the sensed values at
+    each.
+
+    P3 ships no historical daily-bar source of its own (out of this route's
+    committed scope — see feature-plans/managed-sleeves.md); with no cached
+    closes available, every indicator sense correctly reports
+    insufficient_history (senses.py's own fail-safe contract), so the
+    response is always an honest empty result rather than a fabricated fire.
+    """
+    rule_row = database.get_sleeve_rule(rule_id)
+    if rule_row is None or rule_row.get("sleeve_id") != sleeve_id:
+        return jsonify({"status": "error", "message": "rule not found"}), 404
+
+    days_raw = request.args.get("days", "30")
+    try:
+        days = int(days_raw)
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "days must be an integer"}), 400
+    if not (1 <= days <= 60):
+        return jsonify({"status": "error", "message": "days must satisfy 1 <= days <= 60"}), 400
+
+    import json as _json  # noqa: PLC0415 — stdlib, lazy for locality
+    from datetime import timedelta  # noqa: PLC0415 — stdlib, lazy for locality
+
+    from sleeves.rules import conditions as sleeve_conditions  # noqa: PLC0415
+    from sleeves.rules import senses as sleeve_senses  # noqa: PLC0415
+    from sleeves.rules.runner import _collect_sense_keys  # noqa: PLC0415
+
+    try:
+        doc = _json.loads(rule_row.get("json_doc") or "{}")
+    except (TypeError, ValueError):
+        doc = {}
+
+    condition_tree = doc.get("if")
+    would_have_fired: list[dict] = []
+
+    if isinstance(condition_tree, dict) and condition_tree.get("op"):
+        sense_keys = _collect_sense_keys(condition_tree)
+        today_et = datetime.now(_ET).date()
+        for offset in range(days, 0, -1):
+            as_of_date = today_et - timedelta(days=offset)
+            now_et = datetime(as_of_date.year, as_of_date.month, as_of_date.day, 16, 0, tzinfo=_ET)
+            sense_ctx = sleeve_senses.SenseContext(
+                now_et=now_et,
+                sleeve_row={},
+                closes=[],  # no historical daily-bar source wired in P3 — see docstring
+                fred_cache={},
+                as_of=as_of_date,
+            )
+            sensed = {key: sleeve_senses.resolve_sense(key, ctx=sense_ctx) for key in sense_keys}
+            eval_result = sleeve_conditions.evaluate_condition(condition_tree, sensed)
+            if eval_result.fireable:
+                would_have_fired.append(
+                    {
+                        "date": as_of_date.isoformat(),
+                        "sensed": {k: v.value for k, v in sensed.items()},
+                    }
+                )
+
+    return jsonify(
+        {
+            "status": "success",
+            "label": "condition_replay_diagnostic",
+            "rule_id": rule_id,
+            "days": days,
+            "would_have_fired": would_have_fired,
+        }
+    )
+
+
 # --- 3b. Settings Page Route ---
 @app.route("/settings")
 def settings_page():

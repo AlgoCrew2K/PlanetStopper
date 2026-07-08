@@ -3481,6 +3481,25 @@ def get_sleeve_rules_for_sleeve(sleeve_id: int) -> "list[dict]":
     return [dict(zip(_SLEEVE_RULE_COLUMNS, row)) for row in rows]
 
 
+def update_sleeve_rule_mode(rule_id: int, mode: str) -> None:
+    """Update one sleeve_rules row's mode column and stamp updated_at to now UTC.
+
+    Mode-transition ceremony gating (AC-13 shadow-fire gate, AC-14 panic-flow
+    ceremony, AC-12 disarm revert-to-SHADOW) is an application-layer decision
+    -- this accessor performs the write unconditionally, mirroring
+    update_sleeve_status's contract.
+    """
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE sleeve_rules SET mode = ?, updated_at = ? WHERE id = ?",
+            (mode, _utcnow_iso(), rule_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 # --- sleeve_orders / sleeve_fills: the P1 order layer ---
 #
 # client_order_id is the durable correlation key across the whole order
