@@ -172,3 +172,72 @@ class TestSleeveNameXSSEscaping:
             "(&lt;script&gt;...) — proof autoescaping actually ran, not just "
             "that the raw tag is absent (e.g. via silent truncation)."
         )
+
+
+# ---------------------------------------------------------------------------
+# Live-credential leakage: dashboard() must never expose ALPACA_LIVE_KEY/
+# ALPACA_LIVE_SECRET to the rendered panel (s3-review pre-GREEN finding,
+# 2026-07-08 — plan Security Considerations: "keys never in logs/fire
+# snapshots/Discord/client responses", D-1 contract)
+# ---------------------------------------------------------------------------
+
+
+class TestNoLiveCredentialLeakage:
+    def test_live_key_and_secret_never_appear_in_rendered_dashboard_html(self, client, monkeypatch):
+        """Even when live keys ARE configured (operator has provisioned them),
+        their literal values must never reach the rendered dashboard HTML —
+        the Atlas health badge / sleeve status badges / arm-live affordance
+        only need to know keys ARE present, never what they equal."""
+        sentinel_live_key = "SENTINEL-LIVE-KEY-VALUE-MUST-NEVER-RENDER"
+        sentinel_live_secret = "SENTINEL-LIVE-SECRET-VALUE-MUST-NEVER-RENDER"
+
+        original_dotenv_values = app_module.dotenv_values
+
+        def _fake_dotenv_values(*args, **kwargs):
+            env = dict(original_dotenv_values(*args, **kwargs))
+            env["ALPACA_LIVE_KEY"] = sentinel_live_key
+            env["ALPACA_LIVE_SECRET"] = sentinel_live_secret
+            env["SLEEVE_LIVE_EXECUTION"] = "True"
+            return env
+
+        monkeypatch.setattr(app_module, "dotenv_values", _fake_dotenv_values)
+        database.create_sleeve("credential-leak-test-sleeve", 1000.0, envelope_json="{}")
+
+        resp = client.get("/")
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+
+        assert sentinel_live_key not in html, (
+            "ALPACA_LIVE_KEY's literal value must NEVER appear anywhere in "
+            "the rendered dashboard HTML, even when live keys are configured — "
+            "the panel may only reflect presence/absence, never the value "
+            "(D-1 contract, plan Security Considerations)."
+        )
+        assert sentinel_live_secret not in html, (
+            "ALPACA_LIVE_SECRET's literal value must NEVER appear anywhere in "
+            "the rendered dashboard HTML, for the same reason."
+        )
+
+    def test_live_key_and_secret_never_appear_when_absent_either(self, client, monkeypatch):
+        """Regression-direction guard: absence must render as absence, not as
+        an empty-but-present field that could later be populated with a raw
+        value in the same template slot without a test catching it."""
+        original_dotenv_values = app_module.dotenv_values
+
+        def _fake_dotenv_values(*args, **kwargs):
+            env = dict(original_dotenv_values(*args, **kwargs))
+            env.pop("ALPACA_LIVE_KEY", None)
+            env.pop("ALPACA_LIVE_SECRET", None)
+            return env
+
+        monkeypatch.setattr(app_module, "dotenv_values", _fake_dotenv_values)
+        database.create_sleeve("credential-leak-test-sleeve-absent", 1000.0, envelope_json="{}")
+
+        resp = client.get("/")
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "ALPACA_LIVE_KEY" not in html and "ALPACA_LIVE_SECRET" not in html, (
+            "the raw env-var NAMES must never leak into the rendered HTML "
+            "either — the panel must render a derived presence/absence "
+            "signal, never echo the underlying key names or values."
+        )

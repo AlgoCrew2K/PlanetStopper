@@ -75,6 +75,7 @@ never a hardcoded literal expectation (feedback_no_hardcoded_test_values).
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
@@ -84,9 +85,8 @@ pytest.importorskip(
     "sleeves.tick_orchestrator", reason="RED phase — sleeves.tick_orchestrator not implemented yet"
 )
 
-import sleeves.tick_orchestrator as tick_orchestrator  # noqa: E402
-
 import database  # noqa: E402
+import sleeves.tick_orchestrator as tick_orchestrator  # noqa: E402
 from sleeves import alpaca_orders  # noqa: E402
 from tests.sleeves._alpaca_fixtures import (  # noqa: E402
     load_account_fixture,
@@ -97,8 +97,18 @@ from tests.sleeves._alpaca_fixtures import (  # noqa: E402
 _NOW_UTC = datetime(2026, 7, 8, 14, 31, 0, tzinfo=UTC)
 
 
-def _make_sleeve(capital_usd: float = 10000.0) -> int:
-    return database.create_sleeve("test-sleeve", capital_usd, envelope_json="{}")
+def _make_sleeve(capital_usd: float = 10000.0, name: str | None = None) -> int:
+    """Create a sleeve with a guaranteed-unique name (sleeves.name is UNIQUE).
+
+    A caller-supplied name is honored verbatim; otherwise a fresh uuid4-suffixed
+    name is generated so multiple calls within the SAME test (e.g. a two-sleeve
+    scenario) never collide on the UNIQUE constraint — bit us for real once
+    tests/sleeves/test_tick_orchestrator.py stopped being importorskip-skipped
+    and this file's tests started actually running against real GREEN code.
+    """
+    if name is None:
+        name = f"test-sleeve-{uuid.uuid4().hex}"
+    return database.create_sleeve(name, capital_usd, envelope_json="{}")
 
 
 # ---------------------------------------------------------------------------
