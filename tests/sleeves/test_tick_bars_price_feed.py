@@ -488,3 +488,49 @@ class TestFredCacheReadFromLensStore:
             "accessor is never called from the tick at all. No live FRED call "
             "is required or permitted here (cache-only, D-1)."
         )
+
+    def test_fred_dot_sentinel_for_a_missing_observation_is_excluded_not_passed_through(self):
+        """s3-review finding (d62348a review, non-blocking but real): FRED's
+        own API returns the literal string "." for a missing/gap observation
+        -- not null, not omitted. _build_fred_cache's own filter
+        (`obs.get("value") is not None`) does not exclude that sentinel, so
+        "." would be threaded into fred_cache and, on a rule that senses that
+        series, would reach conditions.py's numeric comparator as a bare
+        string -- a TypeError, not the intended "unavailable sense -> not
+        fireable" fail-safe path AC-4 promises elsewhere. This is already
+        CONTAINED (Step 3's per-sleeve try/except logs and skips that
+        sleeve's tick rather than crashing the whole run), so this is a
+        quality/graceful-degradation regression guard, not a money-safety
+        gate -- unlike the delete-route BLOCK earlier this cycle, this test
+        is not a cycle-complete blocker."""
+        cached_row = {
+            "raw_response": {
+                "lenses": {
+                    "macro": {
+                        "lens": "macro",
+                        "available": True,
+                        "payload": {
+                            "series": {
+                                "DGS10": {
+                                    "label": "10-Year Treasury",
+                                    "value": ".",
+                                    "date": "2026-07-07",
+                                }
+                            }
+                        },
+                        "sources": [],
+                    }
+                }
+            }
+        }
+
+        with patch.object(database, "get_latest_market_lens_cache", return_value=cached_row):
+            fred_cache = tick_orchestrator._build_fred_cache()
+
+        assert "DGS10" not in fred_cache, (
+            f"a FRED '.' sentinel (missing observation) must be excluded from "
+            f"fred_cache, not passed through as a fake numeric value -- got "
+            f"{fred_cache!r}. A rule sensing this series must fail safe "
+            f"(unavailable, not fireable), not raise a TypeError comparing a "
+            f"string against a numeric threshold."
+        )
