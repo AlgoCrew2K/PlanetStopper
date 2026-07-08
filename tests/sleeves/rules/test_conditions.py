@@ -233,12 +233,23 @@ class TestFailSafeUnavailableOperand:
         assert "c" in result.reason
 
     def test_leftmost_unavailable_leaf_reported_when_multiple_are_unavailable(self):
-        sensed = {"a": _unavailable("reason_a"), "b": _unavailable("reason_b")}
-        node = {"op": "AND", "children": [_leaf("a", ">", 0.0), _leaf("b", ">", 0.0)]}
+        # Distinctive multi-char key names (not "a"/"b") -- a single-letter
+        # key risks colliding with an unrelated substring inside the reason
+        # message's own fixed vocabulary (e.g. "b" is a substring of the word
+        # "unavailable" itself, which would make a naive "'b' not in reason"
+        # assertion fail for a reason that has nothing to do with the test).
+        sensed = {
+            "sense_alpha": _unavailable("reason_alpha"),
+            "sense_beta": _unavailable("reason_beta"),
+        }
+        node = {
+            "op": "AND",
+            "children": [_leaf("sense_alpha", ">", 0.0), _leaf("sense_beta", ">", 0.0)],
+        }
         result = conditions.evaluate_condition(node, sensed)
         assert result.fireable is False
-        assert "a" in result.reason
-        assert "b" not in result.reason
+        assert "sense_alpha" in result.reason
+        assert "sense_beta" not in result.reason
 
 
 # ---------------------------------------------------------------------------

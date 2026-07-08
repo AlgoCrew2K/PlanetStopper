@@ -23,24 +23,27 @@ CONTRACT this file specifies for the GREEN implementer (s2-rules-impl):
         rearm_ticks: int = DEFAULT_REARM_TICKS,
     ) -> PacingResult: ...
 
-ALL pacing state lives in the DB (AC-5 — the engine is a fresh subprocess per
-minute, app.py:572-587,697). This function holds NO caller-visible or
-module-level cache of its own; every call re-reads whatever it needs:
+ALL pacing state lives in `sleeve_runtime` (AC-5 — the engine is a fresh
+subprocess per minute, app.py:572-587,697), via the P1 `database.get_sleeve_runtime`/
+`set_sleeve_runtime` accessors, keyed per rule_id. This matches the scheme
+s2-rules-impl and s2-db converged on for migration 034: `sleeve_rule_fires`
+is the durable AUDIT log the runner writes to after a permitted fire; it is
+NOT this function's own pacing source — this function never reads or writes
+`sleeve_rule_fires` at all. It holds NO caller-visible or module-level cache
+of its own; every call re-reads whatever it needs from these five
+string-valued keys:
 
-  - `database.get_sleeve_runtime(rule_id, "current_episode_id")` /
-    `database.set_sleeve_runtime(...)` — the ONLY state the fires table can't
-    hold, because a tick where the condition is false leaves NO fires row.
-    Empty/absent = no active episode (latch clear).
-  - `database.get_sleeve_runtime(rule_id, "consecutive_false_count")` /
-    `set_sleeve_runtime(...)` — rearm bookkeeping (same reason as above).
-  - `database.get_fires_for_rule(rule_id, limit=1)` — most recent fire's
-    `fired_at`, for the cooldown check. NOT a separate "last_fire_ts" runtime
-    key — the fires table is the one source of truth for "did this rule
-    actually fire and when."
-  - `database.get_fire_count_for_rule_on_day(rule_id, trading_day)` — for
-    max_fires_per_day. `trading_day` is derived INTERNALLY from `now_utc`
-    (converted to America/New_York, `.date().isoformat()`) — callers never
-    pass a redundant trading_day of their own.
+  - "last_fire_ts"            — ISO datetime string (UTC) of the most recent
+                                  permitted fire, or absent if never fired.
+  - "fires_today_date"        — 'YYYY-MM-DD' (America/New_York trading day)
+                                  the "fires_today_count" below was counted
+                                  against; a mismatch against the CURRENT
+                                  tick's trading day means the day rolled
+                                  over and the count resets to 0.
+  - "fires_today_count"       — string int, fires permitted on fires_today_date.
+  - "episode_latched"         — the CURRENT episode_id string when an episode
+                                  is open (latched); empty/absent when clear.
+  - "consecutive_false_count" — string int, rearm bookkeeping.
 
 ALGORITHM (pinned exactly; this is what the golden fixture trace below
 replays tick-by-tick):
@@ -48,12 +51,12 @@ replays tick-by-tick):
     1. market_open is False -> PacingResult(False, "market_closed", None).
        NO state is read or written at all -- a closed-market tick doesn't
        consume the rearm counter or otherwise perturb the state machine.
-    2. Read current_episode_id and consecutive_false_count.
+    2. Read all five keys above.
     3. condition_true is False:
        a. increment consecutive_false_count.
-       b. if an episode IS latched (current_episode_id non-empty) AND the
-          incremented count >= rearm_ticks: clear the episode (episode_id ->
-          empty/absent) and reset consecutive_false_count to 0.
+       b. if an episode IS latched (episode_latched non-empty) AND the
+          incremented count >= rearm_ticks: clear the episode (episode_latched
+          -> empty/absent) and reset consecutive_false_count to 0.
        c. else: persist the incremented count.
        d. return PacingResult(False, None, None) -- a legitimate "condition
           not met" is not a reason to log, it's just nothing happening.
@@ -61,13 +64,17 @@ replays tick-by-tick):
        a. reset consecutive_false_count to 0 (a true tick always breaks the
           false streak, latched or not).
        b. if an episode IS latched: return PacingResult(False, "episode_latched", None).
-       c. cooldown_sec is set AND a prior fire exists AND
-          (now_utc - prior_fire.fired_at).total_seconds() < cooldown_sec:
+       c. cooldown_sec is set AND last_fire_ts is set AND
+          (now_utc - parse(last_fire_ts)).total_seconds() < cooldown_sec:
           return PacingResult(False, "cooldown_active", None).
-       d. max_fires_per_day is set AND
-          get_fire_count_for_rule_on_day(rule_id, trading_day) >= max_fires_per_day:
+       d. compute trading_day = now_utc converted to America/New_York,
+          `.date().isoformat()`. today_count = fires_today_count IF
+          fires_today_date == trading_day ELSE 0 (day rolled over).
+          max_fires_per_day is set AND today_count >= max_fires_per_day:
           return PacingResult(False, "max_fires_per_day_reached", None).
-       e. PERMIT: mint a new episode_id, persist it as current_episode_id,
+       e. PERMIT: mint a new episode_id, persist last_fire_ts=now_utc (ISO),
+          fires_today_date=trading_day, fires_today_count=today_count + 1,
+          episode_latched=new_episode_id, consecutive_false_count=0.
           return PacingResult(True, None, new_episode_id).
 
 Callers (runner.py) are responsible for calling `database.insert_sleeve_rule_fire`
@@ -81,7 +88,6 @@ import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -93,36 +99,19 @@ import sleeves.rules.limits as limits  # noqa: E402
 
 import database  # noqa: E402
 
-from .conftest import UTC, backdate_fire  # noqa: E402
+from .conftest import UTC  # noqa: E402
 
 _WORKTREE_ROOT = Path(__file__).resolve().parents[3]
 
 _RULE_ID = 42
-_SLEEVE_ID = 1
 
 
 def _t0() -> datetime:
-    # Mid-session UTC instant (14:30 UTC == 09:30 ET during EST-ish offset;
+    # Mid-session UTC instant (14:30 UTC == 09:30-10:30 ET depending on DST;
     # exact ET wall-clock time is irrelevant here since market_open is always
     # passed explicitly — this file tests pacing logic, not the market-hours
     # gate itself, which is exercised in test_runner_shadow_and_precedence.py).
     return datetime(2026, 7, 8, 14, 30, 0, tzinfo=UTC)
-
-
-def _record_fire_if_permitted(result: limits.PacingResult, *, rule_id: int, now: datetime) -> None:
-    """Mimics what runner.py does after a permitted fire: insert a
-    sleeve_rule_fires row (backdated to the simulated `now`, since
-    insert_sleeve_rule_fire always stamps real wall-clock time)."""
-    if not result.fireable:
-        return
-    fire_id = database.insert_sleeve_rule_fire(
-        rule_id=rule_id,
-        sleeve_id=_SLEEVE_ID,
-        action="buy",
-        mode_at_fire="SHADOW",
-        episode_id=result.episode_id,
-    )
-    backdate_fire(fire_id, now)
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +121,7 @@ def _record_fire_if_permitted(result: limits.PacingResult, *, rule_id: int, now:
 
 class TestMarketClosedGate:
     def test_market_closed_blocks_with_no_state_mutation(self):
-        before = database.get_sleeve_runtime(_RULE_ID, "current_episode_id")
+        before = database.get_all_sleeve_runtime_for_rule(_RULE_ID)
         result = limits.check_and_advance_pacing(
             rule_id=_RULE_ID,
             now_utc=_t0(),
@@ -145,7 +134,7 @@ class TestMarketClosedGate:
         assert result.fireable is False
         assert result.reason == "market_closed"
         assert result.episode_id is None
-        after = database.get_sleeve_runtime(_RULE_ID, "current_episode_id")
+        after = database.get_all_sleeve_runtime_for_rule(_RULE_ID)
         assert after == before, "a market-closed tick must not mutate any pacing state"
 
     def test_market_closed_does_not_consume_a_rearm_tick(self):
@@ -162,7 +151,6 @@ class TestMarketClosedGate:
             rearm_ticks=3,
         )
         assert r1.fireable is True
-        _record_fire_if_permitted(r1, rule_id=_RULE_ID, now=_t0())
 
         # A market-closed tick with condition_true=False must not count toward rearm.
         limits.check_and_advance_pacing(
@@ -190,8 +178,8 @@ class TestFullPacingTraceGoldenFixture:
         and reloads sleeves.rules.limits (simulating a fresh subprocess import)
         at the fixture's `restart_before_tick_index` -- the trace MUST
         continue identically, proving every bit of pacing state survives a
-        process boundary because it lives in the DB, never in a module-level
-        Python object."""
+        process boundary because it lives in the DB (sleeve_runtime), never in
+        a module-level Python object."""
         import importlib
 
         params = pacing_trace_fixture["params"]
@@ -221,7 +209,6 @@ class TestFullPacingTraceGoldenFixture:
                 f"tick {tick['index']}: reason={result.reason!r}, "
                 f"expected={tick['expected_reason']!r}"
             )
-            _record_fire_if_permitted(result, rule_id=_RULE_ID, now=now)
 
     def test_day_rollover_resets_fire_count_but_not_the_latch(self, pacing_trace_fixture):
         """Replays the fixture's `day_rollover_case` -- isolates that
@@ -247,7 +234,6 @@ class TestFullPacingTraceGoldenFixture:
             )
             assert result.fireable == tick["expected_fireable"], f"tick {tick['index']}"
             assert result.reason == tick["expected_reason"], f"tick {tick['index']}"
-            _record_fire_if_permitted(result, rule_id=_RULE_ID + 1, now=now)
 
 
 # ---------------------------------------------------------------------------
@@ -258,29 +244,15 @@ _SUBPROCESS_SCRIPT = """
 import sys
 sys.path.insert(0, {worktree_root!r})
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 
-import database
 import sleeves.rules.limits as limits
 
-rule_id = {rule_id!r}
-now = datetime.fromisoformat({now_iso!r})
 result = limits.check_and_advance_pacing(
-    rule_id=rule_id, now_utc=now, market_open=True, condition_true={condition_true!r},
-    cooldown_sec={cooldown_sec!r}, max_fires_per_day={max_fires_per_day!r}, rearm_ticks={rearm_ticks!r},
+    rule_id={rule_id!r}, now_utc=datetime.fromisoformat({now_iso!r}), market_open=True,
+    condition_true={condition_true!r}, cooldown_sec={cooldown_sec!r},
+    max_fires_per_day={max_fires_per_day!r}, rearm_ticks={rearm_ticks!r},
 )
-if result.fireable:
-    fire_id = database.insert_sleeve_rule_fire(
-        rule_id=rule_id, sleeve_id=1, action="buy", mode_at_fire="SHADOW", episode_id=result.episode_id,
-    )
-    conn = database.get_connection()
-    conn.execute(
-        "UPDATE sleeve_rule_fires SET fired_at = ? WHERE id = ?",
-        (now.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), fire_id),
-    )
-    conn.commit()
-    conn.close()
-
 print(json.dumps({{"fireable": result.fireable, "reason": result.reason}}))
 """
 
@@ -314,9 +286,10 @@ class TestGenuineCrossProcessPersistence:
     def test_cooldown_and_latch_survive_across_real_os_process_boundaries(self):
         """Five GENUINE separate `python` subprocess invocations, each with a
         fresh interpreter and a fresh module import -- state can ONLY survive
-        via the shared sqlite DB (DB_PATH is inherited from the test's
-        already-isolated environment). This is the most literal possible
-        proof of AC-5's 'fresh subprocess per minute' engine model."""
+        via the shared sqlite `sleeve_runtime` table (DB_PATH is inherited
+        from the test's already-isolated environment). This is the most
+        literal possible proof of AC-5's 'fresh subprocess per minute' engine
+        model."""
         rule_id = 777
         t0 = _t0()
 
@@ -344,9 +317,9 @@ class TestGenuineCrossProcessPersistence:
             assert r["fireable"] is False
 
         # inv5: condition true again, latch is clear (rearmed), but still
-        # within cooldown_sec of inv1's REAL fires-table row -- must be
-        # blocked by cooldown, proving the fires-table cooldown state (not
-        # just the runtime latch) survived every process boundary.
+        # within cooldown_sec of inv1's fire -- must be blocked by cooldown,
+        # proving the cooldown state (last_fire_ts in sleeve_runtime, not just
+        # the latch) survived every process boundary.
         r5 = _run_subprocess_tick(
             rule_id=rule_id,
             now=t0 + timedelta(seconds=100),
@@ -357,5 +330,5 @@ class TestGenuineCrossProcessPersistence:
         )
         assert r5["fireable"] is False
         assert r5["reason"] == "cooldown_active", (
-            f"expected cooldown_active (proving cross-process fires-table persistence), got {r5}"
+            f"expected cooldown_active (proving cross-process sleeve_runtime persistence), got {r5}"
         )

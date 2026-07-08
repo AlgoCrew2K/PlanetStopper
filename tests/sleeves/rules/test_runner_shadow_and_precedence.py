@@ -190,7 +190,7 @@ class TestShadowPurityEndToEnd:
         assert len(outcome.fire_ids) == 1
 
         # The fire row genuinely landed in the DB (not just an in-memory result).
-        rows = database.get_fires_for_rule(101)
+        rows = database.get_sleeve_rule_fires(rule_id=101)
         assert len(rows) == 1
         assert rows[0]["mode_at_fire"] == "SHADOW"
         assert rows[0]["order_id"] is None, "a SHADOW fire must never carry a real order_id"
@@ -217,7 +217,7 @@ class TestFailSafeWritesNoFireRow:
         assert len(outcomes) == 1
         assert outcomes[0].fired is False
         assert outcomes[0].reason is not None
-        assert database.get_fires_for_rule(202) == []
+        assert database.get_sleeve_rule_fires(rule_id=202) == []
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +303,7 @@ class TestMarketHoursAndHolidayGating:
         assert "market_closed" in (outcomes[0].reason or ""), (
             f"expected a market_closed reason on an observed NYSE holiday, got {outcomes[0].reason!r}"
         )
-        assert database.get_fires_for_rule(404) == []
+        assert database.get_sleeve_rule_fires(rule_id=404) == []
 
 
 # ---------------------------------------------------------------------------

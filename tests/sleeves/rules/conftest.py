@@ -56,30 +56,6 @@ def et_datetime(
     return datetime(year, month, day, hour, minute, second, tzinfo=ET)
 
 
-def backdate_fire(fire_id: int, fired_at_utc: datetime) -> None:
-    """Rewrite a sleeve_rule_fires row's fired_at to a caller-chosen UTC instant.
-
-    insert_sleeve_rule_fire has no fired_at override (the column always
-    defaults to sqlite's own datetime('now')) -- this test-only helper backdates
-    a row directly so pacing tests can drive a deterministic simulated
-    timeline (cooldown-elapsed / day-rollover scenarios) without needing a
-    production signature change. Uses the exact "YYYY-MM-DD HH:MM:SS" format
-    sqlite's own datetime('now') produces, so limits.py never has to parse a
-    format it wouldn't see in production.
-    """
-    import database as _db
-
-    conn = _db.get_connection()
-    try:
-        conn.execute(
-            "UPDATE sleeve_rule_fires SET fired_at = ? WHERE id = ?",
-            (fired_at_utc.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S"), fire_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
 def make_rule_doc(
     *,
     name: str = "test_rule",
