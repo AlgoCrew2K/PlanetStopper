@@ -24,14 +24,18 @@ Node shapes (schema-validated upstream by schema.py; this module trusts shape):
 THE FAIL-SAFE RULE (pinned exactly, this is the load-bearing AC-4 contract):
     If ANY leaf anywhere in the whole tree references a sense-key whose
     SenseResult.available is False, the ENTIRE evaluate_condition call
-    returns fireable=False, reason="sense_unavailable:<key>" for the FIRST
-    such leaf encountered in a deterministic left-to-right, depth-first
+    returns fireable=False, reason=<a string containing that key> for the
+    FIRST such leaf encountered in a deterministic left-to-right, depth-first
     traversal (children visited in list order; NOT's single child visited
-    like a one-element AND). This holds REGARDLESS of the boolean shape —
-    an OR with one TRUE available branch and one unavailable branch is
-    STILL not-fireable. Never "smart short-circuit" past an unavailable
-    operand; the fail-safe rule is deliberately more conservative than
-    Python's own `or`/`and` short-circuit semantics.
+    like a one-element AND). The exact reason-string PREFIX is an
+    implementation choice (e.g. f"sense_missing:{key}") — these tests assert
+    only that the leftmost unavailable key's name appears in `reason` and
+    that no OTHER unavailable key's name does, never a literal prefix
+    string, so any prefix wording is free to change. This holds REGARDLESS
+    of the boolean shape — an OR with one TRUE available branch and one
+    unavailable branch is STILL not-fireable. Never "smart short-circuit"
+    past an unavailable operand; the fail-safe rule is deliberately more
+    conservative than Python's own `or`/`and` short-circuit semantics.
 
 When every leaf's sense IS available: standard boolean evaluation applies
 (AND = all children true, OR = any child true, NOT = negation of the single
