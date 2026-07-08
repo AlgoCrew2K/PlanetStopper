@@ -56,8 +56,33 @@ re-raises. Audit at authoring time:
 No whitelist exemptions are encoded in this test. If a legitimate
 top-level "log everything and re-raise" exception barrier is added
 later (e.g., wrapping the main() entry point), the implementer should
-explicitly add a line-number entry to `WHITELISTED_LINENOS` below with
-a code-comment justification — never silently widen the regex.
+explicitly add a `(function_name, ordinal)` entry to
+`WHITELISTED_BROAD_HANDLERS` below with a code-comment justification —
+never silently widen the regex.
+
+WHITELIST KEYING — (function_name, ordinal), NOT raw line number
+------------------------------------------------------------------
+Root-caused 2026-07-08 (CI run 28976339166): the whitelist originally
+keyed on hardcoded `lineno` values. The Managed Sleeves epic inserted an
+unrelated ~20-line block above two already-whitelisted, unchanged
+barriers, shifting both down (`seed_symphonies_into_bot_state`'s barrier
+1923→1943, `ensure_bot_state_seeded`'s 2012→2032) — their hardcoded
+whitelist entries silently went stale and both correctly-reviewed,
+unmodified broad catches were false-positive-flagged as new violations.
+A line-number whitelist breaks on ANY unrelated edit anywhere above it
+in the file; that is not a one-off, it is structurally guaranteed to
+recur on the next such edit.
+
+Re-keyed on `(enclosing_function_name, ordinal)`, where `ordinal` is the
+zero-based position of that handler among all broad handlers found
+within the SAME enclosing function, in source-line order. This is
+immune to line shifts anywhere else in the file (a function's own
+internal structure — and therefore its handlers' relative ordinals —
+only changes when that function itself is edited), while remaining more
+precise than whitelisting by bare function name alone: if an
+already-whitelisted function later gains an unreviewed SECOND broad
+catch, it gets the next ordinal and is NOT silently exempted — only the
+specific, previously-reviewed occurrence stays whitelisted.
 
 DESIGN DECISION — AST WALK, NOT REGEX
 -------------------------------------
@@ -95,24 +120,36 @@ ALPHA_BOT_PATH = REPO_ROOT / "alpha_bot_execution.py"
 # ---------------------------------------------------------------------------
 # Whitelist policy
 # ---------------------------------------------------------------------------
-# Set of `lineno` values for `ExceptHandler` nodes that are explicitly
-# allowed to be broad. Empty at authoring time. Future additions must
-# come with an inline code-comment justifying WHY the broad catch is
-# safe (immediate re-raise, top-level barrier with full traceback log,
-# etc.). NEVER widen this set as a quick-fix to make the test pass;
-# the fix is to narrow the except clause in production code instead.
-WHITELISTED_LINENOS: frozenset[int] = frozenset(
+# Set of (enclosing_function_name, ordinal) pairs for `ExceptHandler` nodes
+# that are explicitly allowed to be broad -- see the module docstring's
+# "WHITELIST KEYING" section for why this is keyed by function+ordinal
+# rather than a raw line number (line numbers broke on the very first
+# unrelated edit that shifted them). Future additions must come with an
+# inline code-comment justifying WHY the broad catch is safe (immediate
+# re-raise, top-level barrier with full traceback log, etc.). NEVER widen
+# this set as a quick-fix to make the test pass; the fix is to narrow the
+# except clause in production code instead.
+WHITELISTED_BROAD_HANDLERS: frozenset[tuple[str, int]] = frozenset(
     {
         # seed_symphonies_into_bot_state: per-account AC-4 partial-success barrier.
         # fetch_symphony_stats may raise any exception type (e.g. RuntimeError);
-        # narrowing is infeasible and would break AC-4. If this line shifts, re-grep
-        # "except Exception" inside seed_symphonies_into_bot_state to find the new lineno.
-        1923,
+        # narrowing is infeasible and would break AC-4. Ordinal 0 = this function's
+        # first (only) broad `except Exception`.
+        ("seed_symphonies_into_bot_state", 0),
         # ensure_bot_state_seeded: top-level daemon startup fail-safe barrier (AC-4).
         # Wraps load_state + presence-check + seed + save; must swallow all exception
-        # types to prevent daemon crash at startup. If this line shifts, re-grep
-        # "except Exception" inside ensure_bot_state_seeded to find the new lineno.
-        2012,
+        # types to prevent daemon crash at startup. Ordinal 0 = this function's
+        # first (only) broad `except Exception`.
+        ("ensure_bot_state_seeded", 0),
+        # main: P3 Managed Sleeves engine-tick isolation barrier (2026-07-08,
+        # s3-review-approved as the epic's own AC-4-equivalent safety invariant).
+        # Wraps the sleeves tick_orchestrator call; ANY exception raised anywhere in
+        # sleeve processing must be caught here so a sleeve bug can never break the
+        # exit machine's own symphony trading on the same 1-minute cycle -- narrowing
+        # this catch would defeat the exact safety guarantee it exists to provide.
+        # Logs via logging.error before continuing. Ordinal 0 = this function's
+        # first broad `except Exception` (main() has exactly one).
+        ("main", 0),
     }
 )
 
@@ -170,17 +207,30 @@ def _find_broad_handlers(source: str) -> list[ast.ExceptHandler]:
     """Walk the AST and return every ExceptHandler that matches the
     broad-catch pattern AND is not in the whitelist.
 
-    A non-empty whitelist would be applied here. With WHITELISTED_LINENOS
-    currently empty, every match is returned.
+    Whitelisted by (enclosing_function_name, ordinal) -- see the module
+    docstring's "WHITELIST KEYING" section. `ordinal` is the zero-based
+    position of a handler among all broad handlers found within the SAME
+    enclosing function, determined by sorting all broad handlers by
+    `lineno` first (never by ast.walk's own traversal order, which is
+    breadth-first and not guaranteed to match source order for sibling
+    handlers) -- this makes ordinal assignment fully deterministic and
+    immune to any line shift anywhere else in the file.
     """
     tree = ast.parse(source)
+    all_broad = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ExceptHandler) and _is_bare_exception_handler(node)
+    ]
+    all_broad.sort(key=lambda node: node.lineno)
+
+    ordinal_by_function: dict[str, int] = {}
     broad: list[ast.ExceptHandler] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ExceptHandler):
-            continue
-        if not _is_bare_exception_handler(node):
-            continue
-        if node.lineno in WHITELISTED_LINENOS:
+    for node in all_broad:
+        func_name = _enclosing_function_name(tree, node)
+        ordinal = ordinal_by_function.get(func_name, 0)
+        ordinal_by_function[func_name] = ordinal + 1
+        if (func_name, ordinal) in WHITELISTED_BROAD_HANDLERS:
             continue
         broad.append(node)
     return broad
@@ -264,7 +314,7 @@ def test_broad_exception_handler_count_is_zero():
     Paired with Test 1: gives a single-line "found N, expected 0"
     diagnostic on regression. Counts ONLY non-whitelisted handlers, so
     a future legitimate broad-catch-with-reraise entry in
-    WHITELISTED_LINENOS does not break this assertion.
+    WHITELISTED_BROAD_HANDLERS does not break this assertion.
     """
     source = _read_source(ALPHA_BOT_PATH)
     offenders = _find_broad_handlers(source)
