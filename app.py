@@ -873,6 +873,104 @@ def run_scheduler():
         time.sleep(1)
 
 
+def _build_sleeves_panel_context() -> list[dict]:
+    """Assemble per-sleeve panel rows for dashboard() (AC-16): status, capital,
+    and per-rule today/lifetime fire counts. Never raises -- a read failure on
+    one sleeve/rule degrades that row rather than 500ing the whole dashboard
+    (dashboard-truth rule). Real per-rule realized-P&L attribution from fills
+    is not yet wired (no fill-polling/attribution machinery exists yet -- P3
+    scope note, docs/generated/sleeves.md's reconstruct_from_history known
+    limitation) -- rendering a fabricated number would be worse than omitting
+    it, so the panel shows fire counts only for now.
+    """
+    panel_sleeves: list[dict] = []
+    try:
+        sleeve_rows = database.get_all_sleeves()
+    except Exception:
+        return panel_sleeves
+
+    today_str = datetime.now(_ET).strftime("%Y-%m-%d")
+    for sleeve in sleeve_rows:
+        sleeve_id = sleeve.get("id")
+        try:
+            rule_rows = (
+                database.get_sleeve_rules_for_sleeve(sleeve_id) if sleeve_id is not None else []
+            )
+        except Exception:
+            rule_rows = []
+
+        rules_panel = []
+        for rule in rule_rows:
+            rule_id = rule.get("id")
+            try:
+                fires = (
+                    database.get_sleeve_rule_fires(rule_id=rule_id) if rule_id is not None else []
+                )
+            except Exception:
+                fires = []
+            today_fires = sum(1 for f in fires if str(f.get("fired_at", "")).startswith(today_str))
+            rules_panel.append(
+                {
+                    "id": rule_id,
+                    "name": rule.get("name", ""),
+                    "mode": rule.get("mode", ""),
+                    "today_fires": today_fires,
+                    "lifetime_fires": len(fires),
+                }
+            )
+
+        panel_sleeves.append(
+            {
+                "id": sleeve_id,
+                "name": sleeve.get("name", ""),
+                "status": sleeve.get("status", ""),
+                "capital_usd": sleeve.get("capital_usd"),
+                "rules": rules_panel,
+            }
+        )
+    return panel_sleeves
+
+
+def _atlas_cache_health() -> dict:
+    """Read-only cache-row age + availability summary for the Atlas/Front
+    Runner weekly-cached catalog (audit MEDIUM-2). Reads directly from the
+    atlas_cache SQLite DB (advisors/atlas_cache.py's schema, opened read-only)
+    -- never calls the live loader/fetch path from this request handler (the
+    dashboard is never a live-trade-action surface, and the loader's own
+    weekly-cache refresh is triggered elsewhere, never from a Flask route).
+    Never raises -- returns a structural "no cache row yet"-style reason
+    rather than fabricating an error cause.
+    """
+    import sqlite3  # noqa: PLC0415 — stdlib, lazy for locality
+
+    db_path = os.environ.get("ATLAS_CACHE_DB_PATH", "alphabot_atlas_cache.db")
+    collection = "captplanet.strategies"
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.OperationalError:
+        return {"available": False, "age_days": None, "reason": "no_cache_db_yet"}
+    try:
+        row = conn.execute(
+            "SELECT fetched_at FROM atlas_cache WHERE collection = ?", (collection,)
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return {"available": False, "age_days": None, "reason": "no_cache_table_yet"}
+    finally:
+        conn.close()
+
+    if row is None:
+        return {"available": False, "age_days": None, "reason": "no_cache_row_yet"}
+
+    try:
+        fetched_at = datetime.fromisoformat(row[0])
+        if fetched_at.tzinfo is None:
+            fetched_at = fetched_at.replace(tzinfo=ZoneInfo("UTC"))
+        age_days = (datetime.now(ZoneInfo("UTC")) - fetched_at).total_seconds() / 86400.0
+        return {"available": True, "age_days": round(age_days, 1), "reason": None}
+    except (ValueError, TypeError):
+        return {"available": False, "age_days": None, "reason": "unparseable_fetched_at"}
+
+
 # --- 2. Web Dashboard Routes ---
 @app.route("/")
 def dashboard():
@@ -1002,6 +1100,8 @@ def dashboard():
         accounts_map=accounts_map,
         cvar_diagnostic=cvar_diagnostic,
         session_close_display=session_close_display,
+        sleeves=_build_sleeves_panel_context(),
+        atlas_cache_health=_atlas_cache_health(),
     )
 
 

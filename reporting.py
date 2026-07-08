@@ -153,6 +153,98 @@ def generate_eod_snapshot(
         # It is handled by send_eod_discord_post() after the autotuner completes.
 
 
+def build_sleeves_digest_section(sleeve_summaries: list[dict]) -> str:
+    """Pure, never-raising EOD digest formatter for Managed Sleeves (AC-17).
+
+    sleeve_summaries: [{"name": str, "status": str, "rules": [{"name": str,
+    "today_fires": int, "lifetime_fires": int, "realized_pnl_usd": float,
+    "benched": bool}, ...]}, ...]. Returns "" (falsy) for an empty list -- no
+    phantom section when no sleeves exist. Every optional key is read
+    defensively so a minimal/incomplete summary dict degrades gracefully
+    rather than raising -- this is an EOD report, not a critical path.
+    """
+    if not sleeve_summaries:
+        return ""
+
+    lines = ["**Managed Sleeves**"]
+    for summary in sleeve_summaries:
+        if not isinstance(summary, dict):
+            continue
+        name = summary.get("name") or "unnamed sleeve"
+        status = summary.get("status") or "?"
+        lines.append(f"• **{name}** ({status})")
+        for rule in summary.get("rules") or []:
+            if not isinstance(rule, dict):
+                continue
+            rule_name = rule.get("name") or "unnamed rule"
+            today_fires = rule.get("today_fires", 0) or 0
+            lifetime_fires = rule.get("lifetime_fires", 0) or 0
+            realized_pnl = rule.get("realized_pnl_usd", 0.0) or 0.0
+            benched_note = " — BENCHED" if rule.get("benched") else ""
+            lines.append(
+                f"    ◦ {rule_name}: today {today_fires} · lifetime {lifetime_fires} "
+                f"· realized ${realized_pnl:+,.2f}{benched_note}"
+            )
+    return "\n".join(lines)
+
+
+def _build_sleeve_digest_summaries(current_date_str: str) -> list[dict]:
+    """Assemble sleeve_summaries for build_sleeves_digest_section from live DB
+    rows (AC-17). Never raises -- a per-sleeve/per-rule read failure omits
+    that sleeve/rule rather than crashing the EOD scheduler thread.
+
+    realized_pnl_usd/benched are honest placeholders (0.0/False) -- no
+    fill-attribution or churn-brake machinery is wired yet (P3 scope note,
+    docs/generated/sleeves.md's reconstruct_from_history known limitation);
+    fabricating either would be worse than omitting them.
+    """
+    summaries: list[dict] = []
+    try:
+        sleeve_rows = database.get_all_sleeves()
+    except Exception:
+        return summaries
+
+    for sleeve in sleeve_rows or []:
+        sleeve_id = sleeve.get("id")
+        try:
+            rule_rows = (
+                database.get_sleeve_rules_for_sleeve(sleeve_id) if sleeve_id is not None else []
+            )
+        except Exception:
+            rule_rows = []
+
+        rule_summaries = []
+        for rule in rule_rows:
+            rule_id = rule.get("id")
+            try:
+                fires = (
+                    database.get_sleeve_rule_fires(rule_id=rule_id) if rule_id is not None else []
+                )
+            except Exception:
+                fires = []
+            today_fires = sum(
+                1 for f in fires if str(f.get("fired_at", "")).startswith(current_date_str)
+            )
+            rule_summaries.append(
+                {
+                    "name": rule.get("name", ""),
+                    "today_fires": today_fires,
+                    "lifetime_fires": len(fires),
+                    "realized_pnl_usd": 0.0,
+                    "benched": False,
+                }
+            )
+
+        summaries.append(
+            {
+                "name": sleeve.get("name", ""),
+                "status": sleeve.get("status", ""),
+                "rules": rule_summaries,
+            }
+        )
+    return summaries
+
+
 def send_eod_discord_post(current_date_str, report_file, optimization_results, discord_webhook_url):
     """Sends the finalized EOD report to Discord, including a multi-timeframe summary, historical chart, and optimization changes."""  # noqa: E501  # un-wrappable long line
     if not discord_webhook_url:
@@ -476,6 +568,20 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
                     "title": "⚙️ Optimization",
                     "color": 10181046,
                     "description": "No optimization changes.",
+                }
+            )
+
+        # 3. Managed Sleeves digest extension (AC-17): per-rule fires + benched
+        # rules. Silent when zero sleeves exist -- no phantom section.
+        sleeves_section = build_sleeves_digest_section(
+            _build_sleeve_digest_summaries(current_date_str)
+        )
+        if sleeves_section:
+            embeds.append(
+                {
+                    "title": "🗂️ Managed Sleeves",
+                    "color": 3447003,
+                    "description": sleeves_section[:4096],
                 }
             )
 

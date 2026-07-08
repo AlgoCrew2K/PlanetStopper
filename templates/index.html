@@ -1443,6 +1443,93 @@
   </section>
   {% endif %}
 
+  {# Managed Sleeves panel (AC-16) — sleeve/rule status, per-rule fire counts, #}
+  {# arm-to-paper/disarm controls, and the Atlas cache-health badge (audit #}
+  {# MEDIUM-2). Server-rendered read-only from app.py's dashboard() context; #}
+  {# all mutations route through the CSRF-protected /api/sleeves* endpoints #}
+  {# (static/index.js). No sleeve-creation UI yet (no committed RED requires #}
+  {# it) and no arm-live/envelope-widen one-click control — those ceremonies #}
+  {# need a dedicated confirm-phrase modal, deliberately deferred rather than #}
+  {# built as a bare button that could fat-finger a live-trading arm. #}
+  <section
+    data-testid="sleeves-panel"
+    aria-label="Managed Sleeves"
+    style="margin:24px 32px;padding:18px 24px;border:1px solid var(--studio-rule);border-radius:10px;background:var(--studio-paper);font-family:var(--studio-sans);font-size:13px;color:var(--studio-ink);"
+  >
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">
+      <div style="font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--studio-ink-faint);">
+        Managed Sleeves
+      </div>
+      <span
+        data-testid="atlas-cache-health-badge"
+        class="status-pill {% if atlas_cache_health and atlas_cache_health.available %}standby{% else %}stop{% endif %}"
+        title="Atlas/Front Runner weekly catalog cache health (audit MEDIUM-2)"
+      >
+        {% if atlas_cache_health and atlas_cache_health.available %}Atlas cache: {{ "%.1f"|format(atlas_cache_health.age_days) }}d old
+        {%- else %}Atlas cache: {{ ((atlas_cache_health.reason if atlas_cache_health else None) or "unavailable") | replace("_", " ") }}{% endif %}
+      </span>
+    </div>
+
+    {% if sleeves %}
+    <div class="cards-grid">
+      {% for sleeve in sleeves %}
+      <div
+        data-testid="sleeve-card"
+        data-sleeve-id="{{ sleeve.id }}"
+        style="background:var(--studio-paper);border:1px solid var(--studio-rule);border-radius:12px;padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,0.06);"
+      >
+        <div style="display:flex;justify-content:space-between;align-items:baseline;">
+          <span class="card-name">{{ sleeve.name }}</span>
+          <span
+            data-testid="sleeve-status-badge"
+            class="status-pill {% if sleeve.status == 'LIVE' %}triggered{% elif sleeve.status == 'PAPER' %}armed{% else %}standby{% endif %}"
+          >{{ sleeve.status }}</span>
+        </div>
+        <div style="margin-top:6px;color:var(--studio-ink-dim);font-size:12px;">
+          Capital: {% if sleeve.capital_usd is not none %}${{ "%.2f"|format(sleeve.capital_usd) }}{% else %}&mdash;{% endif %}
+        </div>
+
+        {% if sleeve.rules %}
+        <div style="margin-top:8px;">
+          {% for rule in sleeve.rules %}
+          <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:12px;padding:5px 0;border-top:1px solid var(--studio-rule);gap:8px;">
+            <span>{{ rule.name }} <span style="color:var(--studio-ink-faint);">({{ rule.mode }})</span></span>
+            <span style="display:flex;align-items:center;gap:8px;">
+              <span style="color:var(--studio-ink-dim);">today {{ rule.today_fires }} &middot; lifetime {{ rule.lifetime_fires }}</span>
+              {% if rule.mode == 'SHADOW' %}
+              <button
+                type="button"
+                data-testid="sleeve-arm-control"
+                data-sleeve-id="{{ sleeve.id }}"
+                data-rule-id="{{ rule.id }}"
+                style="padding:3px 10px;border-radius:6px;background:transparent;color:var(--studio-pos);font-size:10.5px;font-weight:600;border:1px solid var(--studio-pos);cursor:pointer;"
+                onclick="armSleeveRuleToPaper({{ sleeve.id }}, {{ rule.id }}, this)"
+              >Arm Paper</button>
+              {% endif %}
+            </span>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        <div style="margin-top:10px;">
+          <button
+            type="button"
+            data-testid="sleeve-disarm-control"
+            data-sleeve-id="{{ sleeve.id }}"
+            style="padding:4px 12px;border-radius:6px;background:transparent;color:var(--studio-neg);font-size:10.5px;font-weight:600;border:1px solid var(--studio-neg);cursor:pointer;"
+            onclick="disarmSleeve({{ sleeve.id }}, this)"
+            {% if sleeve.status == 'SHADOW' %}disabled{% endif %}
+          >Disarm</button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div style="color:var(--studio-ink-faint);font-size:12px;">No sleeves configured yet.</div>
+    {% endif %}
+  </section>
+
   <script>
     function pctColor(v) {
       if (v == null) return 'text-slate-400';
