@@ -50,6 +50,7 @@ an unbounded call.
 
 from __future__ import annotations
 
+import decimal
 import os
 import time
 from dataclasses import dataclass
@@ -85,6 +86,21 @@ _RETRYABLE_HTTP_STATUSES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 # Default total-attempt count for read-only endpoints (get_order/get_account/
 # get_positions/cancel_order) that do not expose max_retries to the caller.
 _DEFAULT_READ_MAX_RETRIES: int = 4
+
+# ---------------------------------------------------------------------------
+# Bracket-leg price rounding to Alpaca's equity tick size (done-bar fix,
+# 2026-07-08 -- PM's direct Alpaca repro: unrounded legs (e.g. tp=14.839,
+# stop=12.8155) returned HTTP 422 code 42210000 "sub-penny increment does not
+# fulfill minimum pricing criteria"; clean 2-decimal legs returned HTTP 200).
+# Source: Alpaca's own documented minimum equity price increment -- 2
+# decimals at/above $1.00, 4 decimals below (docs.alpaca.markets order
+# limits). Rounded HERE, at the broker boundary, never in sleeves/rules/
+# actions.py -- that module's own price math stays pure/unrounded.
+# ---------------------------------------------------------------------------
+
+_EQUITY_TICK_HIGH_PRICE_THRESHOLD: float = 1.00
+_EQUITY_TICK_HIGH_PRICE_DECIMALS: int = 2
+_EQUITY_TICK_LOW_PRICE_DECIMALS: int = 4
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +239,35 @@ def _request_with_retry(
 # ---------------------------------------------------------------------------
 
 
+def _round_to_equity_tick(price: float, *, rounding: str) -> float:
+    """Round one bracket-leg price to Alpaca's equity tick size (2 decimals
+    at/above $1.00, 4 decimals below -- see the module-level constants above
+    for provenance).
+
+    ``rounding`` is ``"floor"`` (never round up -- a long's protective
+    stop_loss must never tighten closer to entry than sizing intended) or
+    ``"nearest"`` (may go either way -- take_profit is not a protective
+    boundary in the same tightening sense, so nearest-tick is correct).
+
+    Uses decimal.Decimal quantization rather than float division + floor --
+    IEEE-754 float division against a tick size like 0.01 is not exact
+    (e.g. ``495.00 / 0.01`` is ``49499.999999999993``, not ``49500.0``),
+    which would silently floor an already-valid price down a full tick.
+    Constructing the Decimal from ``str(price)`` (not the float directly)
+    preserves the decimal value the caller intended rather than its binary
+    floating-point representation.
+    """
+    decimals = (
+        _EQUITY_TICK_HIGH_PRICE_DECIMALS
+        if price >= _EQUITY_TICK_HIGH_PRICE_THRESHOLD
+        else _EQUITY_TICK_LOW_PRICE_DECIMALS
+    )
+    quantum = decimal.Decimal(1).scaleb(-decimals)
+    mode = decimal.ROUND_FLOOR if rounding == "floor" else decimal.ROUND_HALF_UP
+    quantized = decimal.Decimal(str(price)).quantize(quantum, rounding=mode)
+    return float(quantized)
+
+
 def submit_bracket_order(
     *,
     symbol: str,
@@ -246,9 +291,18 @@ def submit_bracket_order(
     ``client_order_id`` order field -- the caller (P2/P3 runner) mints this
     BEFORE the call so a lost HTTP response can still be recovered via
     ``get_order_by_client_order_id`` (lost-ack recovery pattern).
+
+    Both leg prices are rounded to Alpaca's equity tick size before
+    submission (done-bar fix, 2026-07-08): an unrounded sub-penny price
+    (e.g. from risk-sizing math) is rejected by Alpaca with HTTP 422. This
+    is the only rounding point -- sleeves/rules/actions.py's own price math
+    stays pure/unrounded. stop_loss floors (never tightens the protective
+    stop closer to entry than intended); take_profit rounds to nearest.
     """
     host = resolve_host(live_mode=live_mode, live_keys_present=live_keys_present)
     url = f"{host}/v2/orders"
+    rounded_take_profit_price = _round_to_equity_tick(take_profit_price, rounding="nearest")
+    rounded_stop_loss_price = _round_to_equity_tick(stop_loss_price, rounding="floor")
     body = {
         "symbol": symbol,
         "qty": str(qty),
@@ -256,8 +310,8 @@ def submit_bracket_order(
         "type": "market",
         "time_in_force": time_in_force,
         "order_class": "bracket",
-        "take_profit": {"limit_price": str(take_profit_price)},
-        "stop_loss": {"stop_price": str(stop_loss_price)},
+        "take_profit": {"limit_price": str(rounded_take_profit_price)},
+        "stop_loss": {"stop_price": str(rounded_stop_loss_price)},
     }
     if client_order_id is not None:
         body["client_order_id"] = client_order_id
