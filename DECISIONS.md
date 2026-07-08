@@ -3988,3 +3988,46 @@ Flagged by s2-review as a non-blocking follow-up alongside their APPROVE verdict
 ### Reference
 
 See `feature-plans/managed-sleeves.md` §"P2 — Rule engine core" and AC-4/AC-5/AC-6. Predecessor: `DE-SLEEVES-P1-001`. Docs: `docs/generated/sleeves.md` (P2 rules-package section lands alongside P2 GREEN commits).
+
+## DE-SLEEVES-P3-001 — Managed Sleeves P3: wiring + surfaces (2026-07-08, cycle in progress — skeleton, no P3 code landed yet)
+
+Branch: `feature/managed-sleeves` | Base: origin/main `0bcbd1a` (carried from P1/P2) | Plan: `feature-plans/managed-sleeves.md` §"P3 — Wiring + surfaces" | Predecessor: `DE-SLEEVES-P2-001`
+
+### Context
+
+P1 shipped the order-capable infrastructure; P2 shipped the rule engine itself (`sleeves/rules/`) with full SHADOW+armed dispatch capability, but zero production reachability — no route, ceremony, or `alpha_bot_execution.main()` wiring exists to ever create, arm, or invoke a PAPER/LIVE rule (see `DE-SLEEVES-P2-001`). P3 closes that gap: hooking the P2 runner into the live engine tick, building the Flask route surface + dashboard panel + replay endpoint + Discord digest extension, and building the two arming ceremonies (SHADOW→PAPER, PAPER→LIVE) that are the only way a rule can ever leave SHADOW in production.
+
+This entry is drafted as a skeleton at cycle start, per kickoff instruction, before any P3 code has landed — branch tip is still `758a577` (P2's last gate-finding commit) and PR #94 (open, 35 commits) is still titled as P1-only. It records the scope carried from the plan and will be extended in place — Decisions/Status filled in, never rewritten — as `s3-engine`/`s3-dashboard`/`s3-test-writer` land RED/GREEN commits and `s3-review` renders a verdict.
+
+### Scope carried from the plan (AC-9, AC-10, AC-13, AC-14, AC-15, AC-16, AC-17, AC-18, AC-19)
+
+- **Engine hook:** `sleeves.rules.runner.evaluate_rules` called from `alpha_bot_execution.main()`, placed AFTER the existing exit machine (absolute precedence preserved — the plan is explicit this ordering is non-negotiable), via the lazy-import convention already used for `ai_advisor.py` (import inside `main()`, never module-level).
+- **Reconciliation wiring:** pre-trade and post-fill broker-truth reconciliation (AC-9) — P2 left fill-polling and reservation release entirely unwired (see `DE-SLEEVES-P2-001`'s "Known limitation" note); P3 is where a `sleeve_orders` row advances past `RESERVED` for a real fill, and where `sleeves.reconciliation.reconcile_sleeve` actually gets called against live broker state and can set a sleeve to `PAUSED_RECONCILIATION`.
+- **Route surface:** `GET/POST /api/sleeves`, `POST /api/sleeves/<id>/arm-paper|arm-live|disarm|delete`, `GET/POST /api/sleeves/<id>/rules`, `POST .../rules/<id>/arm|disarm|delete`, `GET .../rules/<id>/replay` — CSRF pattern from `POST /api/settings`.
+- **Ceremony gates:** SHADOW→PAPER requires a recorded shadow-evaluation-window minimum (AC-13, no arm-on-faith); PAPER→LIVE replicates the `sell_account` 6-gate chain (AC-14) and additionally requires a recorded culling verdict for ENTRY-class rules (AC-21/23 — P4 scope, but the arming route's *check* for a verdict is P3's to build even before P4 ships the verdict producer).
+- **Whole-repo invariant extension:** AC-15's containment scan must keep passing once a real production caller exists — this is the point where "no production caller" (P2's own docs note) becomes false, and the scan needs to prove the *new* caller still only reaches the broker through `sleeves/alpaca_orders.py` and only via `envelope.clamp`.
+- **Dashboard panel + Atlas badge:** AC-16 (sleeve status, cash ledger vs. broker truth, per-rule fire/P&L attribution, arm/disarm controls, Atlas cache-health badge).
+- **Discord + digest:** AC-17 (fires, fills, clamps/refusals, reconciliation pauses, churn-bench events; EOD digest extension; dedup to one alert/day for repeated identical conditions).
+- **Replay endpoint:** AC-18 (`GET .../replay?days=N`, N≤60, diagnostics-only — condition-replay, never an arming input per the plan's explicit decision).
+- **Trade traceability:** AC-19 (every trade traces rule→fire→order→fill; every sleeve/rule/envelope mutation in the config-audit pattern) — P2 built the fire→order half of this trace (`ActionResult.order_id`); P3 is where a real armed fire actually produces one in production.
+
+### Status
+
+Skeleton only, as of this entry — no P3 code landed. `s3-engine`/`s3-dashboard` build in progress; `s3-ux` (task #25) is queued behind an `s3-dashboard` GREEN flag for a Playwright visual gate of the Sleeves panel across every status (SHADOW, PAPER-armed, BENCHED, PAUSED_RECONCILIATION, stale-symbol). This section will be replaced with a real Status paragraph (commit SHAs, pass/fail counts) once GREEN lands, following the P1/P2 entries' convention.
+
+### Decisions
+
+(To be filled in as they settle during the cycle — no entries fabricated ahead of the code that decides them.)
+
+| Decision | Rationale |
+|----------|-----------|
+| *(pending)* | *(pending)* |
+
+### Carried forward from P2 (to close, not to re-decide)
+
+- **Reservation self-release.** `DE-SLEEVES-P2-001`'s "Known limitation" note — an acked order's `sleeve_orders` row stays `'RESERVED'` forever without fill-polling — is P3's to resolve. Once fill-polling lands, both `DE-SLEEVES-P2-001` and `docs/generated/sleeves.md`'s `reconstruct_from_history` section get a **correction** (not a rewrite): the note changes from "won't naturally release until P3" to a description of the actual P3 mechanism.
+- **Take-profit reward:risk default.** `DE-SLEEVES-P2-001`'s entry-exit-fields decision flagged the stop-only `OTO`-order-class alternative to the hardcoded 2:1 default as "a candidate P3+/operator decision, surfaced here rather than buried." This stays an **open operator decision** for PR review — not something the doc-writer resolves unilaterally.
+
+### Reference
+
+See `feature-plans/managed-sleeves.md` §"P3 — Wiring + surfaces" and AC-9/10/13/14/15/16/17/18/19. Predecessor: `DE-SLEEVES-P2-001`. Docs: `docs/generated/sleeves.md`'s P3 section lands alongside P3 GREEN commits.
