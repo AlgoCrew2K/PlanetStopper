@@ -3,20 +3,42 @@
 The single function a fresh-subprocess-per-minute engine tick calls
 (``run_sleeve_tick_for_all_sleeves``). For every sleeve it, in order:
 
+  0. SHADOW-status sleeves ALSO get cancel_open_orders_for_shadow_sleeve
+     (AC-12 disarm support -- the disarm route can never itself reach
+     sleeves.alpaca_orders, so this tick is where a disarmed sleeve's
+     lingering open orders actually get cancelled).
   1. Polls the broker for fills on already-acked, non-terminal orders
-     (``poll_and_apply_fills``) and records any newly-reported fill.
+     (``poll_and_apply_fills``) and records any newly-reported fill. Runs for
+     EVERY sleeve, SHADOW included (s3-review BLOCK 1): a disarmed sleeve
+     stays SHADOW permanently until re-armed and can still hold real
+     residual broker-side exposure (a TOCTOU fill between the disarm click
+     and this tick's cancel attempt, or a pre-disarm position) -- "no
+     live-armed rules" does not mean "nothing at the broker to track".
   2. Reconciles the sleeve's own ledger against broker-truth positions/cash
-     (``reconcile_sleeve_or_pause``) -- a breach (or a sleeve already
+     (``reconcile_sleeve_or_pause``) -- also runs for EVERY sleeve, SHADOW
+     included, for the same reason. A breach (or a sleeve already
      PAUSED_RECONCILIATION coming into this tick) skips rule evaluation
-     entirely for that sleeve this tick.
+     entirely for that sleeve this tick. Only "already PAUSED_RECONCILIATION
+     coming into this tick" skips steps 1-2 themselves.
   3. Otherwise assembles the sleeve's sense context and dispatches through
-     ``sleeves.rules.runner.evaluate_rules`` (the P2 rule engine).
+     ``sleeves.rules.runner.evaluate_rules`` (the P2 rule engine) -- this
+     still includes SHADOW-status sleeves (AC-6: a SHADOW rule
+     senses/evaluates/records fires; only PAUSED_RECONCILIATION skips it).
 
 A single sleeve's exception at any of these steps is caught and logged;
 processing continues for the remaining sleeves -- mirrors the fail-safe
 containment contract ``alpha_bot_execution.main()`` applies to this whole
 module (a sleeve bug must never cost a symphony its exit, and here, one
 sleeve's bug must never cost another sleeve its tick).
+
+Broker-error observability (s3-review BLOCK 2): sleeves/alpaca_orders.py
+never logs internally by design (its own never-raises contract) -- a broker
+error surfaced to ``poll_and_apply_fills`` or
+``cancel_open_orders_for_shadow_sleeve`` is logged at WARNING here, the only
+place in the stack that can. A cancel failure on the disarm path additionally
+posts a best-effort Discord alert: an operator who clicked disarm must never
+be left believing an order is cancelled when the broker actually rejected
+the request.
 
 Known limitation (tracked, non-blocking; no bars/FRED-cache accessor is wired
 into the engine tick yet): ``closes_by_symbol``/``fred_cache`` are passed as
@@ -140,6 +162,15 @@ def poll_and_apply_fills(
             live_keys_present=live_keys_present,
         )
         if result.error is not None or result.order is None:
+            # BLOCK 2 (s3-review): alpaca_orders never logs internally --
+            # this is the only place a persistent outage/auth failure on the
+            # fill-polling path becomes observable.
+            logger.warning(
+                "poll_and_apply_fills: broker error polling order %s (sleeve %s): %s",
+                order["alpaca_order_id"],
+                sleeve_id,
+                result.error,
+            )
             continue  # broker unreachable this tick -- retry next tick
 
         broker_order = result.order
@@ -190,7 +221,11 @@ def poll_and_apply_fills(
 
 
 def cancel_open_orders_for_shadow_sleeve(
-    sleeve_id: int, *, live_mode: bool = False, live_keys_present: bool = False
+    sleeve_id: int,
+    *,
+    live_mode: bool = False,
+    live_keys_present: bool = False,
+    discord_webhook_url: str | None = None,
 ) -> list[dict]:
     """AC-12 disarm support: cancel every non-terminal broker order for a
     SHADOW-status sleeve.
@@ -205,6 +240,11 @@ def cancel_open_orders_for_shadow_sleeve(
     liquidate_position call) -- disarm is non-destructive by design. A
     sleeve with zero non-terminal orders is a no-op. Returns the list of
     sleeve_orders rows that were cancelled.
+
+    A broker error on cancel_order (s3-review BLOCK 2) is logged at WARNING
+    and best-effort posts a Discord alert -- this path is safety-critical: an
+    operator who clicked disarm must never be left believing an order is
+    cancelled when the broker actually rejected the cancel request.
     """
     cancelled: list[dict] = []
     for order in database.get_sleeve_orders(sleeve_id=sleeve_id, limit=500):
@@ -219,6 +259,20 @@ def cancel_open_orders_for_shadow_sleeve(
             live_keys_present=live_keys_present,
         )
         if result.error is not None:
+            logger.warning(
+                "cancel_open_orders_for_shadow_sleeve: broker error cancelling "
+                "order %s (sleeve %s): %s",
+                order["alpaca_order_id"],
+                sleeve_id,
+                result.error,
+            )
+            _post_discord_alert(
+                discord_webhook_url,
+                f"Sleeve {sleeve_id} disarm: failed to cancel order "
+                f"{order['alpaca_order_id']} ({order.get('symbol')}) -- broker "
+                f"error: {result.error}. The order may still be live at the "
+                f"broker despite the disarm.",
+            )
             continue  # broker unreachable this tick -- retry next tick
 
         database.update_sleeve_order_status(order["client_order_id"], "canceled")
@@ -344,22 +398,27 @@ def run_sleeve_tick_for_all_sleeves(
     """The single entry point one engine tick calls for every managed sleeve.
 
     Per sleeve:
-      0. SHADOW-status sleeves: cancel_open_orders_for_shadow_sleeve cleans
-         up any lingering broker orders from a just-disarmed sleeve (AC-12
-         design correction -- the disarm ROUTE can never itself reach
+      0. SHADOW-status sleeves ALSO get cancel_open_orders_for_shadow_sleeve
+         (AC-12 design correction -- the disarm ROUTE can never itself reach
          sleeves.alpaca_orders, so this tick is where that cancellation
-         actually happens). A SHADOW sleeve has no live-armed rules, so
-         fill-polling/reconciliation is skipped entirely; it goes straight
-         to rule evaluation below.
-      1-2. Any other status: poll_and_apply_fills, then
-         reconcile_sleeve_or_pause (skipped entirely if the sleeve is
-         already PAUSED_RECONCILIATION coming into this tick -- an operator
-         clears a reconciliation pause explicitly via a dedicated route, out
-         of this module's concern; auto-retrying every tick would otherwise
-         hammer the broker on a standing breach). A breach this tick also
-         skips rule evaluation.
+         actually happens). This is an ADDITIONAL step, not a replacement
+         for steps 1-2 below (s3-review BLOCK 1): a disarmed sleeve stays
+         SHADOW permanently until re-armed and can still hold real
+         broker-side exposure, so it is not exempt from fill-polling or
+         reconciliation.
+      1. poll_and_apply_fills -- runs for EVERY sleeve regardless of status.
+      2. reconcile_sleeve_or_pause -- runs for every sleeve not already
+         PAUSED_RECONCILIATION coming into this tick (an operator clears a
+         reconciliation pause explicitly via a dedicated route, out of this
+         module's concern; auto-retrying every tick would otherwise hammer
+         the broker on a standing breach). A breach this tick also skips
+         rule evaluation. SHADOW is not a drift-detection exemption -- a
+         SHADOW sleeve that breaches still transitions to
+         PAUSED_RECONCILIATION exactly like any other sleeve.
       3. Otherwise assembles the sleeve's sense context and dispatches
-         through sleeves.rules.runner.evaluate_rules.
+         through sleeves.rules.runner.evaluate_rules -- this still includes
+         SHADOW-status sleeves (AC-6: a SHADOW rule senses/evaluates/records
+         fires; only PAUSED_RECONCILIATION skips rule evaluation).
 
     A single sleeve's exception anywhere in this sequence is caught and
     logged; processing continues for the remaining sleeves.
@@ -372,26 +431,29 @@ def run_sleeve_tick_for_all_sleeves(
 
             if sleeve_row["status"] == "SHADOW":
                 cancel_open_orders_for_shadow_sleeve(
-                    sleeve_id, live_mode=live_mode, live_keys_present=live_keys_present
-                )
-            else:
-                poll_and_apply_fills(
-                    sleeve_id, live_mode=live_mode, live_keys_present=live_keys_present
-                )
-
-                if sleeve_row["status"] == "PAUSED_RECONCILIATION":
-                    continue
-
-                reconciliation_result = reconcile_sleeve_or_pause(
                     sleeve_id,
-                    position_tolerance_pct=_DEFAULT_POSITION_TOLERANCE_PCT,
-                    cash_tolerance_usd=_DEFAULT_CASH_TOLERANCE_USD,
                     live_mode=live_mode,
                     live_keys_present=live_keys_present,
                     discord_webhook_url=discord_webhook_url,
                 )
-                if not reconciliation_result.ok:
-                    continue
+
+            if sleeve_row["status"] == "PAUSED_RECONCILIATION":
+                continue
+
+            poll_and_apply_fills(
+                sleeve_id, live_mode=live_mode, live_keys_present=live_keys_present
+            )
+
+            reconciliation_result = reconcile_sleeve_or_pause(
+                sleeve_id,
+                position_tolerance_pct=_DEFAULT_POSITION_TOLERANCE_PCT,
+                cash_tolerance_usd=_DEFAULT_CASH_TOLERANCE_USD,
+                live_mode=live_mode,
+                live_keys_present=live_keys_present,
+                discord_webhook_url=discord_webhook_url,
+            )
+            if not reconciliation_result.ok:
+                continue
 
             rules = _load_enabled_rules(sleeve_id)
             if not rules:
