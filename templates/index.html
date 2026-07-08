@@ -383,8 +383,14 @@
     .status-pill.sleeve-stale { background: color-mix(in srgb, var(--studio-cyan) 12%, transparent); color: var(--studio-ink-faint); border: 1px dashed var(--studio-ink-faint); }
 
     /* Generic inert-control marker (AC-16 finding #5) -- a disabled sleeve
-       control must never look identical to its enabled counterpart. */
-    .control-disabled { opacity: 0.4; cursor: not-allowed; }
+       control must never look identical to its enabled counterpart.
+       cursor is !important because the Disarm button's own inline style
+       sets cursor:pointer unconditionally (enabled case) -- a class
+       selector alone can never out-specificity an inline style, so without
+       !important the cursor silently never actually switches to
+       not-allowed even though opacity correctly does (s3-ux re-render
+       finding, 2026-07-08: opacity worked, cursor didn't). */
+    .control-disabled { opacity: 0.4; cursor: not-allowed !important; }
 
     /* Per-symphony settings gear button */
     .sym-settings-btn {
