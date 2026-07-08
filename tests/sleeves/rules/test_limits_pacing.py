@@ -95,9 +95,8 @@ pytest.importorskip(
     "sleeves.rules.limits", reason="RED phase — sleeves.rules.limits not implemented yet"
 )
 
-import sleeves.rules.limits as limits  # noqa: E402
-
 import database  # noqa: E402
+import sleeves.rules.limits as limits  # noqa: E402
 
 from .conftest import UTC  # noqa: E402
 
