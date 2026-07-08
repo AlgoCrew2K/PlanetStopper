@@ -132,9 +132,11 @@ def _evaluate_one_rule(
 
     action_ctx = actions.ActionContext(
         sleeve_id=rule["sleeve_id"],
+        rule_id=rule["id"],
         symbol=symbol,
         price=price,
         sleeve_equity_usd=sleeve_equity_usd,
+        capital_usd=sleeve_row["capital_usd"],
         current_position_qty=position_qty,
         turnover_used_usd=turnover_used_by_symbol.get(symbol, 0.0),
         envelope=envelope_dict,
@@ -171,9 +173,9 @@ def _evaluate_one_rule(
             clamped=bool(clamp.clamped) if clamp else False,
             clamp_reason=clamp.reason if clamp else None,
             episode_id=pacing_result.episode_id,
-            # P2 does not wire real sleeve_orders persistence into the runner
-            # (that's P3 scope) -- every P2 fire's order_id is NULL.
-            order_id=None,
+            # AC-19: an armed, executed action's real sleeve_orders.id
+            # (None for shadow / refused / no-order actions).
+            order_id=action_result.order_id,
             fired_at=fired_at,
         )
         fire_ids.append(fire_id)

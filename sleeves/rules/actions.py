@@ -1,4 +1,4 @@
-"""sleeves/rules/actions.py -- action dispatch (AC-6, AC-7, Security).
+"""sleeves/rules/actions.py -- action dispatch (AC-1, AC-6, AC-7, AC-19, Security).
 
 `dispatch_action` is the ONE place a rule's `then` action turns into either a
 "would-have-ordered" shadow record or a real broker call. The load-bearing
@@ -8,17 +8,32 @@ sleeves.sizing.size_order, THEN sleeves.envelope.clamp_order on the result,
 and may only reach sleeves.alpaca_orders (when shadow=False) using the qty
 envelope.clamp_order returned -- never the raw sizing qty, and never when the
 clamp refused.
+
+PM ruling (2026-07-08, AC-1/AC-19) closing a wiring gap s2-review found: the
+armed path now also (1) enforces cash-safety via sleeves.ledger before ANY
+order is placed -- a "buy" reconstructs current ledger state from the
+sleeve's real order/fill history and attempts a reservation; insufficient
+cash refuses with zero broker calls and zero DB writes, in both shadow and
+armed mode -- and (2) durably records the P1 invariant #6 reservation
+sequence for every order-placing action: a RESERVED sleeve_orders row is
+inserted (with a freshly minted client_order_id) BEFORE the broker call,
+then attached to the broker's own order id on ack, or marked terminal on
+rejection (which IS how a reservation is released -- LedgerState is never
+itself persisted, only reconstructed from order/fill rows).
 """
 
 from __future__ import annotations
 
 import contextlib
+import uuid
 from dataclasses import dataclass
 
 import requests
 
+import database
 import sleeves.alpaca_orders as alpaca_orders
 import sleeves.envelope as envelope
+import sleeves.ledger as ledger
 import sleeves.sizing as sizing
 
 # Matches sleeves/alpaca_orders.py's own explicit-timeout convention -- a
@@ -28,6 +43,8 @@ _NOTIFY_REQUEST_TIMEOUT_S = 10.0
 _NOTIFY_FIELD_WHITELIST = frozenset(
     {"symbol", "action", "qty", "price", "reason", "rule_name", "sleeve_name"}
 )
+
+_REASON_INSUFFICIENT_CASH = "insufficient_cash"  # mirrors envelope.py's REASON_* naming
 
 # PM decision (2026-07-08, AC-7): a "buy" action MUST declare its own exit
 # distance (schema.py enforces stop_loss_pct/trailing_stop_pct presence at
@@ -46,9 +63,11 @@ _TAKE_PROFIT_REWARD_RISK_RATIO = 2.0
 @dataclass(frozen=True)
 class ActionContext:
     sleeve_id: int
+    rule_id: int
     symbol: str
     price: float
     sleeve_equity_usd: float
+    capital_usd: float
     current_position_qty: float
     turnover_used_usd: float
     envelope: dict
@@ -66,6 +85,8 @@ class ActionResult:
     order_result: alpaca_orders.OrderResult | None
     clamp: envelope.ClampResult | None
     refused_reason: str | None
+    order_id: int | None = None  # internal sleeve_orders.id (AC-19 fire trace);
+    # None for shadow / refused / no-order (notify) outcomes.
 
 
 def _size_and_clamp(
@@ -106,6 +127,53 @@ def _size_and_clamp(
     return clamp_result, None
 
 
+def _place_order_with_reservation(
+    *,
+    ctx: ActionContext,
+    symbol: str,
+    side: str,
+    qty: float,
+    order_class: str,
+    reserved_price: float | None,
+    submit_fn,
+) -> tuple[int, alpaca_orders.OrderResult]:
+    """P1 invariant #6 (lost-ack recovery), applied to every order-placing
+    action: insert a RESERVED sleeve_orders row using a client_order_id
+    minted HERE, before the broker call; on ack, attach the broker's own
+    order id; on rejection, mark the row terminal -- this IS the "release
+    the reservation" mechanism, since LedgerState is never itself persisted,
+    only reconstructed from order/fill rows (a terminal row is what the next
+    reconstruct_from_history() call treats as released).
+
+    ``submit_fn`` receives the minted client_order_id and must return an
+    alpaca_orders.OrderResult.
+    """
+    client_order_id = uuid.uuid4().hex
+    order_id = database.insert_sleeve_order(
+        client_order_id=client_order_id,
+        sleeve_id=ctx.sleeve_id,
+        rule_id=ctx.rule_id,
+        symbol=symbol,
+        side=side,
+        qty=qty,
+        order_class=order_class,
+        status="RESERVED",
+        reserved_price=reserved_price,
+    )
+    order_result = submit_fn(client_order_id)
+    if order_result.error is None:
+        alpaca_order_id = (order_result.order or {}).get("id")
+        database.attach_alpaca_order_id(
+            client_order_id=client_order_id, alpaca_order_id=alpaca_order_id
+        )
+    else:
+        # Reject and cancel are modeled identically by ledger.release() --
+        # any terminal status makes the next reconstruction release this
+        # row's unfilled reservation.
+        database.update_sleeve_order_status(client_order_id=client_order_id, status="rejected")
+    return order_id, order_result
+
+
 def _dispatch_buy(action: dict, *, ctx: ActionContext, shadow: bool) -> ActionResult:
     # schema.py guarantees a schema-valid "buy" declares at least one of
     # these, each in (0, 1) -- this module trusts that shape and never
@@ -129,6 +197,28 @@ def _dispatch_buy(action: dict, *, ctx: ActionContext, shadow: bool) -> ActionRe
             clamp_result,
             clamp_result.reason,
         )
+
+    # AC-1 cash-safety: reconstruct the sleeve's REAL current ledger state
+    # (from its actual order/fill history, never a caller-supplied belief)
+    # and attempt the reservation -- computed identically in shadow and
+    # armed mode so a SHADOW fire's snapshot reflects the true would-have-
+    # been outcome. Zero broker calls / zero sleeve_orders writes either way.
+    ledger_state = ledger.reconstruct_from_history(
+        ctx.capital_usd, database.get_sleeve_order_history(ctx.sleeve_id)
+    )
+    try:
+        ledger.reserve(ledger_state, clamp_result.qty * ctx.price)
+    except ledger.InsufficientCashError:
+        return ActionResult(
+            "buy",
+            would_have_qty,
+            would_have_notional,
+            False,
+            None,
+            clamp_result,
+            _REASON_INSUFFICIENT_CASH,
+        )
+
     if shadow:
         return ActionResult(
             "buy", would_have_qty, would_have_notional, False, None, clamp_result, None
@@ -141,14 +231,23 @@ def _dispatch_buy(action: dict, *, ctx: ActionContext, shadow: bool) -> ActionRe
         stop_distance = ctx.price - stop_price
         take_profit_price = ctx.price + stop_distance * _TAKE_PROFIT_REWARD_RISK_RATIO
 
-    order_result = alpaca_orders.submit_bracket_order(
+    order_id, order_result = _place_order_with_reservation(
+        ctx=ctx,
         symbol=ctx.symbol,
-        qty=clamp_result.qty,
         side="buy",
-        take_profit_price=take_profit_price,
-        stop_loss_price=stop_price,
-        live_mode=ctx.live_mode,
-        live_keys_present=ctx.live_keys_present,
+        qty=clamp_result.qty,
+        order_class="bracket",
+        reserved_price=ctx.price,
+        submit_fn=lambda client_order_id: alpaca_orders.submit_bracket_order(
+            symbol=ctx.symbol,
+            qty=clamp_result.qty,
+            side="buy",
+            take_profit_price=take_profit_price,
+            stop_loss_price=stop_price,
+            client_order_id=client_order_id,
+            live_mode=ctx.live_mode,
+            live_keys_present=ctx.live_keys_present,
+        ),
     )
     return ActionResult(
         "buy",
@@ -158,6 +257,7 @@ def _dispatch_buy(action: dict, *, ctx: ActionContext, shadow: bool) -> ActionRe
         order_result,
         clamp_result,
         order_result.error,
+        order_id=order_id,
     )
 
 
@@ -188,12 +288,24 @@ def _finish_sell_like(
             action_type, would_have_qty, would_have_notional, False, None, clamp_result, None
         )
 
-    order_result = alpaca_orders.submit_order(
+    # sell/go_to_cash never reserve cash (ledger.py's reservation bookkeeping
+    # is buy-side-only) but still get the SAME reservation-row sequence as
+    # any other order-placing action (P1 invariant #6 is not entry-only).
+    order_id, order_result = _place_order_with_reservation(
+        ctx=ctx,
         symbol=ctx.symbol,
-        qty=clamp_result.qty,
         side="sell",
-        live_mode=ctx.live_mode,
-        live_keys_present=ctx.live_keys_present,
+        qty=clamp_result.qty,
+        order_class="simple",
+        reserved_price=None,
+        submit_fn=lambda client_order_id: alpaca_orders.submit_order(
+            symbol=ctx.symbol,
+            qty=clamp_result.qty,
+            side="sell",
+            client_order_id=client_order_id,
+            live_mode=ctx.live_mode,
+            live_keys_present=ctx.live_keys_present,
+        ),
     )
     return ActionResult(
         action_type,
@@ -203,6 +315,7 @@ def _finish_sell_like(
         order_result,
         clamp_result,
         order_result.error,
+        order_id=order_id,
     )
 
 
@@ -229,14 +342,23 @@ def _dispatch_set_stop(action: dict, *, ctx: ActionContext, shadow: bool) -> Act
     if shadow:
         return ActionResult("set_stop", qty, would_have_notional, False, None, None, None)
 
-    order_result = alpaca_orders.submit_trailing_stop_order(
+    order_id, order_result = _place_order_with_reservation(
+        ctx=ctx,
         symbol=ctx.symbol,
-        qty=qty,
         side="sell",
-        trail_percent=action.get("trail_percent"),
-        trail_price=action.get("trail_price"),
-        live_mode=ctx.live_mode,
-        live_keys_present=ctx.live_keys_present,
+        qty=qty,
+        order_class="trailing_stop",
+        reserved_price=None,
+        submit_fn=lambda client_order_id: alpaca_orders.submit_trailing_stop_order(
+            symbol=ctx.symbol,
+            qty=qty,
+            side="sell",
+            trail_percent=action.get("trail_percent"),
+            trail_price=action.get("trail_price"),
+            client_order_id=client_order_id,
+            live_mode=ctx.live_mode,
+            live_keys_present=ctx.live_keys_present,
+        ),
     )
     return ActionResult(
         "set_stop",
@@ -246,12 +368,13 @@ def _dispatch_set_stop(action: dict, *, ctx: ActionContext, shadow: bool) -> Act
         order_result,
         None,
         order_result.error,
+        order_id=order_id,
     )
 
 
 def _dispatch_notify(action: dict, *, ctx: ActionContext) -> ActionResult:
     # Never touches sleeves.alpaca_orders, shadow or armed -- a notify is a
-    # pure side-effect, never a trade action.
+    # pure side-effect, never a trade action, and gets no order row.
     raw_fields = action.get("fields") or {}
     # Defense-in-depth beyond schema.py's authoring-time whitelist check:
     # drop any non-whitelisted key even if it somehow reached this call.

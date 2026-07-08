@@ -273,6 +273,20 @@ def validate_rule_doc(doc: dict) -> ValidationResult:
                 FieldError("class", f"declared {declared_class!r} != derived {derived_class!r}")
             )
 
+    limits_doc = doc.get("limits") or {}
+    if limits_doc.get("market_hours_only", True) is False:
+        # PM ruling: bypassing the market-hours gate is only ever safe for a
+        # rule that places no order at all -- any order-placing action type
+        # (entry or defensive) mixed in still requires market-hours gating.
+        non_notify_types = [t for t in action_types if t is not None and t != "notify"]
+        if non_notify_types:
+            errors.append(
+                FieldError(
+                    "limits.market_hours_only",
+                    "market_hours_only=False is only permitted for a pure-notify action set",
+                )
+            )
+
     valid = not errors
     return ValidationResult(
         valid=valid, errors=tuple(errors), rule_class=derived_class if valid else None

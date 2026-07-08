@@ -208,3 +208,75 @@ def apply_fill(
         )
 
     raise ValueError(f"side must be 'buy' or 'sell'; got {side!r}")
+
+
+# Identical denylist to database.get_daily_turnover_usd's own fail-closed
+# convention (database.py) -- an unrecognized/future order status is treated
+# as STILL reserving (the conservative, over-reserve direction), never
+# silently released.
+_RESERVATION_TERMINAL_STATUSES = (
+    "filled",
+    "canceled",
+    "expired",
+    "replaced",
+    "done_for_day",
+    "rejected",
+)
+
+
+def reconstruct_from_history(capital_usd: float, order_history: list[dict]) -> LedgerState:
+    """Fold a sleeve's full order+fill history into its CURRENT LedgerState.
+
+    Zero I/O -- the caller fetches `database.get_sleeve_order_history(sleeve_id)`
+    (oldest-submitted-first, each order's fills oldest-filled-first) and
+    passes the result straight through. This is what lets a fresh-subprocess-
+    per-tick engine know how much cash is actually available right now,
+    without this module ever persisting a LedgerState snapshot of its own.
+
+    Per buy order (reserved_price is not None -- a sell's reserved_price is
+    always NULL, since sells reserve SHARES not cash): reserve() the full
+    qty*reserved_price at fold-start (the reservation made before the broker
+    call, per sleeves/alpaca_orders.py's invariant #6), apply_fill() each
+    fill in order with reserved_usd proportional to that fill's share of the
+    original reservation, then -- only if the order's current status is in
+    _RESERVATION_TERMINAL_STATUSES and qty was not fully filled -- release()
+    the unfilled remainder (reject/cancel/expire all release identically).
+    A sell order never reserves; each of its fills applies directly with
+    reserved_usd=0.0.
+    """
+    state = new_ledger(capital_usd)
+    for order in order_history:
+        symbol = order["symbol"]
+        side = order["side"]
+        qty = order["qty"]
+        reserved_price = order.get("reserved_price")
+        fills = order.get("fills") or []
+
+        if side == "buy" and reserved_price is not None:
+            state = reserve(state, qty * reserved_price)
+            filled_qty_total = 0.0
+            for fill in fills:
+                filled_qty = fill["filled_qty"]
+                state = apply_fill(
+                    state,
+                    symbol=symbol,
+                    side="buy",
+                    qty=filled_qty,
+                    price=fill["fill_price"],
+                    reserved_usd=filled_qty * reserved_price,
+                )
+                filled_qty_total += filled_qty
+            unfilled_qty = qty - filled_qty_total
+            if order.get("status") in _RESERVATION_TERMINAL_STATUSES and unfilled_qty > 0:
+                state = release(state, unfilled_qty * reserved_price)
+        else:
+            for fill in fills:
+                state = apply_fill(
+                    state,
+                    symbol=symbol,
+                    side=side,
+                    qty=fill["filled_qty"],
+                    price=fill["fill_price"],
+                    reserved_usd=0.0,
+                )
+    return state
