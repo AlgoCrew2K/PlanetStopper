@@ -434,6 +434,70 @@ class TestAggregateSharedAccountReconciliation:
                 f"per-sleeve-vs-whole-account check always broke on)."
             )
 
+    def test_open_unfilled_order_does_not_cause_a_false_aggregate_cash_breach(self):
+        """s3-review open point (post-APPROVE, c178ee2): the aggregate cash
+        claim sums cash_usd + reserved_usd per sleeve. Verifies this is safe
+        for a sleeve holding a GENUINELY OPEN (non-terminal, unfilled) order
+        -- reserve() only moves money between our own cash_usd and
+        reserved_usd buckets (their SUM is invariant across a reservation;
+        sleeves.ledger.reserve() proves this: cash_usd decreases by exactly
+        what reserved_usd increases), so a sleeve with a pending-but-unfilled
+        order still contributes its full original capital_usd to the
+        aggregate claim -- no more, no less. This mirrors real broker
+        semantics: an order's OWN existence (accepted, not yet filled) does
+        not move a broker's settled `cash` figure either -- that only
+        happens at fill/settlement (the exact reason sleeves.ledger needed a
+        separate reserved_usd bucket in the first place, rather than only
+        ever tracking cash_usd). Pins that reasoning as a real test, not an
+        unverified assumption, per s3-review's recommendation."""
+        sleeve_id = _make_sleeve(capital_usd=5000.0)
+        reserved_notional = 2000.0
+        database.insert_sleeve_order(
+            client_order_id=f"open-order-cash-claim-{sleeve_id}",
+            sleeve_id=sleeve_id,
+            symbol="SPY",
+            side="buy",
+            qty=4.0,
+            status="accepted",  # non-terminal: accepted by the broker, NOT yet filled
+            reserved_price=reserved_notional / 4.0,
+        )
+        database.attach_alpaca_order_id(
+            f"open-order-cash-claim-{sleeve_id}", f"alpaca-open-cash-claim-{sleeve_id}"
+        )
+
+        # The broker's real cash has NOT moved for an unfilled order -- so a
+        # clean broker-truth account still shows the sleeve's full original
+        # capital as available cash.
+        account = self._make_account(5000.0)
+
+        with (
+            patch.object(
+                alpaca_orders,
+                "get_account",
+                return_value=alpaca_orders.OrderResult(order=account, error=None),
+            ),
+            patch.object(
+                alpaca_orders,
+                "get_positions",
+                return_value=alpaca_orders.OrderResult(order=[], error=None),
+            ),
+            # poll_and_apply_fills is mocked so this test is purely about
+            # the aggregate cash claim's treatment of an OPEN order -- it
+            # must never independently invent a fill.
+            patch.object(tick_orchestrator, "poll_and_apply_fills", return_value=[]),
+        ):
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=_NOW_UTC)
+
+        assert database.get_sleeve(sleeve_id)["status"] != "PAUSED_RECONCILIATION", (
+            f"a sleeve with a genuinely OPEN, unfilled order (${reserved_notional:.2f} "
+            f"reserved, not yet filled) must NOT falsely breach the aggregate "
+            f"cash check against a broker-truth account showing the sleeve's "
+            f"full original capital ($5000.00) still available — cash_usd + "
+            f"reserved_usd is invariant across a reservation with no fill, so "
+            f"the aggregate claim must still equal exactly the original "
+            f"capital, matching the broker's own unmoved cash figure."
+        )
+
     def test_account_cash_exceeding_sleeve_sum_float_does_not_pause(self):
         """Unallocated float (or the operator's own money) sharing the
         account must never pause anyone — the breach direction is
