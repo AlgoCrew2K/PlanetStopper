@@ -3950,7 +3950,7 @@ Branch: `feature/managed-sleeves` | Base: origin/main `0bcbd1a` (carried from P1
 
 ### Context
 
-P1 shipped the order-capable infrastructure (`sleeves/alpaca_orders.py`, `reconciliation.py`, `envelope.py`, `sizing.py`, `ledger.py` + migration 033) with zero production callers — `sleeve_rules` schema-ready but unread by any P1 code path, and `sleeve_rule_fires` explicitly deferred (see the P1 addendum above). P2 builds the rule engine itself — `sleeves/rules/` (schema validation, senses, condition-tree evaluation, pacing/limits, the runner) plus a migration 034 shipping `sleeve_rule_fires` — carrying the v1 `guard-rules-engine.md` rule-engine design verbatim per AC-4/AC-5/AC-6. Every rule is born in SHADOW: this phase produces record-only shadow fires end-to-end (sensed snapshot + the envelope-clamped order the rule would have placed) and executes nothing. The direct trade path (P1's `sleeves/alpaca_orders.py`) is untouched by P2; wiring a live runner to it is P3 scope.
+P1 shipped the order-capable infrastructure (`sleeves/alpaca_orders.py`, `reconciliation.py`, `envelope.py`, `sizing.py`, `ledger.py` + migration 033) with zero production callers — `sleeve_rules` schema-ready but unread by any P1 code path, and `sleeve_rule_fires` explicitly deferred (see the P1 addendum above). P2 builds the rule engine itself — `sleeves/rules/` (schema validation, senses, condition-tree evaluation, pacing/limits, the runner) plus a migration 034 shipping `sleeve_rule_fires` — carrying the v1 `guard-rules-engine.md` rule-engine design verbatim per AC-4/AC-5/AC-6. Every rule is born in SHADOW (AC-6), and P2 ships SHADOW fires end-to-end (sensed snapshot + the envelope-clamped order the rule would have placed), executing nothing. The runner/actions layer built this phase is not itself SHADOW-restricted, though: it structurally supports a non-SHADOW (PAPER/LIVE-mode rule) path that reaches P1's `sleeves/alpaca_orders.py` — but only through `envelope.clamp`, never around it, extending P1's own containment invariant. What is genuinely P3-only is *production reachability*: no route, arming ceremony, or `alpha_bot_execution.main()` integration exists yet to ever create, arm, or invoke a PAPER/LIVE rule in production — the capability is being built this cycle, but nothing calls it non-SHADOW outside the test suite until P3 (see Decisions below).
 
 ### Status
 
@@ -3963,15 +3963,15 @@ Cycle in progress. This entry is a skeleton opened at cycle start per the doc-wr
 - **Condition-tree evaluation** over those senses.
 - **Pacing/limits** (cooldown_sec, max_fires_per_day, episode latch, churn-brake state) persisted in `sleeve_runtime` across the fresh-subprocess-per-minute engine model (app.py:572-587,697) — proven by a test simulating consecutive one-shot engine invocations.
 - **Migration 034:** `sleeve_rule_fires` (sensed snapshot + the exact envelope-clamped order a SHADOW rule would have produced) — resolves the P1 deferral; see the Addendum below once shipped.
-- **SHADOW-only in this phase:** rules record fires and execute nothing; the P2 runner never calls `sleeves/alpaca_orders.py`. PAPER/LIVE wiring and arming ceremonies are P3.
+- **Capability vs. production reachability:** the runner/actions modules structurally support an armed (PAPER/LIVE-mode rule) path — order construction reaches `sleeves/alpaca_orders.py` only through `envelope.clamp` (never around it), pinned by a RED test asserting non-bypassability. What's P3-only is the *production caller*: no route/ceremony/`alpha_bot_execution.main()` wiring exists yet to arm a rule or ever invoke `evaluate_rules()` non-SHADOW in production — every rule that can exist in production this phase is still SHADOW, by absence of any arming path, not because the runner code is incapable of more.
 
 ### Decisions
 
-(Populated as the cycle's Toxic Pair / review settle open design points — e.g., the condition-tree's internal representation, the sense fail-safe dedup key, and the `sleeve_runtime` KV key scheme for pacing/latch/bench state. Update this table in place; do not leave it as a placeholder once those land.)
-
 | Decision | Rationale |
 |----------|-----------|
-| _pending_ | _pending_ |
+| Runner/actions build full SHADOW+armed capability in P2; only production *reachability* (routes/ceremony/`alpha_bot_execution.main()` wiring) is P3-gated | Resolved 2026-07-08 (s2-test-writer flagged a contradiction between this skeleton's original "SHADOW-only" framing and both the kickoff brief's armed-path RED-test requirement and migration 034's `order_id` column, which exists for PAPER/LIVE fires per its own header comment). The runner/actions modules are being RED-tested (task #12, in progress) to reach `sleeves/alpaca_orders.py` only through `envelope.clamp` for a non-SHADOW rule — a capability, not a production hole, since no route/ceremony/`main()` integration exists yet to ever create, arm, or invoke a PAPER/LIVE rule in production until P3. |
+
+(Remaining open design points populate below as the cycle's Toxic Pair / review settle them — e.g., the condition-tree's internal representation, the sense fail-safe dedup key, and the `sleeve_runtime` KV key scheme for pacing/latch/bench state. Update this table in place; do not leave a row unresolved once those land.)
 
 ### Addendum: P1 deferral resolution (pending)
 
