@@ -651,6 +651,27 @@ class TestNotifyAction:
         mock_bracket.assert_not_called()
         mock_trail.assert_not_called()
 
+    @pytest.mark.parametrize("shadow", [True, False])
+    def test_notify_fires_regardless_of_shadow_mode(self, shadow):
+        # s2-review finding (2026-07-08): the prior test patched requests.post
+        # but never asserted on it, leaving notify's shadow-mode behavior
+        # unpinned. Pinning it explicitly: AC-6's "SHADOW executes nothing"
+        # means places no ORDER -- notify never touches sleeves.alpaca_orders
+        # in either mode (confirmed above), so suppressing it in SHADOW would
+        # defeat the whole point of a SHADOW rule (operator observability of
+        # what it WOULD have done). notify fires identically in both modes.
+        action = {"type": "notify", "template": "fired", "fields": {"symbol": "SPY"}}
+        with patch("requests.post") as mock_post:
+            actions.dispatch_action(
+                action,
+                ctx=_ctx(discord_webhook_url="https://discord.example/webhook"),
+                shadow=shadow,
+            )
+        assert mock_post.called, (
+            f"notify (shadow={shadow}) must fire a Discord alert regardless of shadow mode -- "
+            f"SHADOW suppresses ORDER placement (AC-6), not operator-facing notifications."
+        )
+
     def test_notify_drops_any_non_whitelisted_field_defense_in_depth(self):
         # Even if a field bypassed schema.py's authoring-time whitelist check
         # (e.g. an older rule authored before a stricter schema landed),
