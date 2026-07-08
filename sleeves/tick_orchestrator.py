@@ -71,14 +71,23 @@ See sleeves/reconciliation.py's reconcile_aggregate_cash/
 reconcile_aggregate_position for the underlying one-sided pure-function
 contract.
 
-Known limitation (tracked, non-blocking; no bars/FRED-cache accessor is wired
-into the engine tick yet): ``closes_by_symbol``/``fred_cache`` are passed as
-empty dicts to ``evaluate_rules``. This is safe by construction, not a silent
-gap -- ``sleeves.rules.senses``/``conditions`` fail closed on missing sense
-data (``not fireable``, no fire recorded), so a rule referencing a daily-bar
-or FRED sense simply never fires until a real data source is wired in a
-follow-up cycle. A DEFENSIVE/ENTRY rule that only senses ``sleeve_status``/
-``sleeve_equity_usd``/``position_qty``/time-of-day is unaffected.
+Daily-bar/FRED sense wiring (epic-done-bar fix, task #33, 2026-07-08): the
+PM's real paper-account smoke found ``closes_by_symbol``/``fred_cache`` were
+hardcoded ``{}`` literals, so ``price = closes[-1] if closes else 0.0``
+always yielded ``0.0`` and every entry action refused with
+``error="invalid_price"`` -- an armed sleeve could never genuinely trade.
+Fixed: ``run_sleeve_tick_for_all_sleeves`` now collects every symbol
+referenced by an ENABLED rule across every evaluable sleeve, fetches daily
+closes for that whole set via ``synthetic_history.fetch_bars`` EXACTLY ONCE
+per tick (the same daily-bar path P1/P2 already use for history -- never a
+second HTTP client), and reads cached FRED observations from
+``database.get_latest_market_lens_cache()`` (cache-only, D-1 -- no live FRED
+call from the tick, matching ``ai_advisor.py``'s own cache-serve path). A
+symbol with no bars available (omitted from the fetch response, or the
+fetch itself failing) still fails safe through the existing
+``sleeves.rules.senses``/``conditions`` empty-closes contract (unavailable
+sense -> not fireable, no fire recorded) -- never a crash, never a
+fabricated price.
 """
 
 from __future__ import annotations
@@ -87,7 +96,7 @@ import contextlib
 import json
 import logging
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import requests
@@ -97,6 +106,7 @@ import sleeves.alpaca_orders as alpaca_orders
 import sleeves.ledger as ledger
 import sleeves.reconciliation as reconciliation
 import sleeves.rules.runner as runner
+import synthetic_history
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +134,13 @@ _ALERT_REQUEST_TIMEOUT_S = 10.0
 # for the arming/CRUD routes to expose these on the sleeve record itself.
 _DEFAULT_POSITION_TOLERANCE_PCT = 0.005
 _DEFAULT_CASH_TOLERANCE_USD = 1.0
+
+# Daily-bar lookback window passed to synthetic_history.fetch_bars. 270
+# calendar days covers ~250 trading days (weekends/holidays) -- matches
+# advisors/lens_technicals.py's own _HISTORY_DAYS window exactly, so the
+# longest sleeve-rule indicator (e.g. a 200-day SMA) has the same history
+# depth already proven sufficient for that lens.
+_BARS_HISTORY_DAYS = 270
 
 
 def _utcnow_iso() -> str:
@@ -455,6 +472,65 @@ def _load_enabled_rules(sleeve_id: int) -> list[dict]:
     return rules
 
 
+def _fetch_closes_for_symbols(symbols: set[str], *, now_et: datetime) -> dict[str, list[float]]:
+    """Fetch daily closes for every referenced symbol, ONCE per tick.
+
+    Delegates to synthetic_history.fetch_bars -- the SAME daily-bar path
+    P1/P2 already use for history, never a second HTTP client. Never raises:
+    a network failure or a symbol the response omitted both degrade to an
+    empty closes list for that symbol, which sleeves.rules.senses/conditions
+    already treats as an unavailable sense (not fireable, no fire recorded)
+    -- the existing fail-safe contract, not a new one.
+    """
+    if not symbols:
+        return {}
+    end_dt = now_et.date()
+    start_dt = end_dt - timedelta(days=_BARS_HISTORY_DAYS)
+    try:
+        bars_by_symbol = synthetic_history.fetch_bars(
+            sorted(symbols), start_dt.isoformat(), end_dt.isoformat(), timeframe="1Day"
+        )
+    except Exception:
+        logger.exception(
+            "bar fetch failed for this tick's symbol set %s -- all referenced "
+            "symbols fail safe (no closes) rather than crash the tick",
+            sorted(symbols),
+        )
+        return {}
+    return {
+        symbol: [bar["c"] for bar in bar_list]
+        for symbol, bar_list in (bars_by_symbol or {}).items()
+        if bar_list
+    }
+
+
+def _build_fred_cache() -> dict[str, list[dict]]:
+    """Cache-only FRED bundle for the tick's sense context (D-1: no live FRED
+    call from the engine tick -- matches ai_advisor.py's own cache-serve
+    precedent, database.get_latest_market_lens_cache()).
+
+    Reads the nightly MARKET_LENS_CACHE bundle's "macro" lens block
+    (ai_advisor.py's build_macro_lens_section: raw_response["lenses"]["macro"]
+    ["payload"]["series"], shaped {series_id: {"label", "value", "date"}} --
+    ONE latest observation per series) and wraps each series' single
+    observation into the one-element-list shape
+    sleeves.rules.senses.sense_fred_series expects
+    ({series_id: [{"date": ..., "value": ...}]}).
+    """
+    cached_row = database.get_latest_market_lens_cache()
+    if not cached_row:
+        return {}
+    raw_response = cached_row.get("raw_response") or {}
+    macro_lens = (raw_response.get("lenses") or {}).get("macro") or {}
+    series_data = (macro_lens.get("payload") or {}).get("series") or {}
+
+    fred_cache: dict[str, list[dict]] = {}
+    for series_id, obs in series_data.items():
+        if isinstance(obs, dict) and obs.get("date") is not None and obs.get("value") is not None:
+            fred_cache[series_id] = [{"date": obs["date"], "value": obs["value"]}]
+    return fred_cache
+
+
 def _book_equity_usd(ledger_state: ledger.LedgerState) -> float:
     """Sleeve equity from the ledger's own conservation law (capital_usd +
     realized_pnl_usd == cash_usd + reserved_usd + sum(cost_basis_usd)) --
@@ -574,22 +650,58 @@ def run_sleeve_tick_for_all_sleeves(
                 )
                 skip_rule_eval_ids |= {row["id"] for row in host_rows}
 
-    # --- Step 3: rule evaluation for every sleeve not skipped above. -----
-    for sleeve_row in all_sleeve_rows:
+    # --- Step 3: rule evaluation, using bars/FRED fetched ONCE for the whole
+    # tick (epic-done-bar fix, task #33) -- never per sleeve.
+    now_et = now_utc.astimezone(_ET)
+    evaluable_rows = [row for row in all_sleeve_rows if row["id"] not in skip_rule_eval_ids]
+
+    rules_by_sleeve: dict[int, list[dict]] = {}
+    referenced_symbols: set[str] = set()
+    for sleeve_row in evaluable_rows:
         sleeve_id = sleeve_row["id"]
-        if sleeve_id in skip_rule_eval_ids:
-            continue
         try:
             rules = _load_enabled_rules(sleeve_id)
-            if not rules:
-                continue
+        except Exception:
+            logger.exception(
+                "sleeve %s tick processing failed (rule-loading phase); other sleeves unaffected",
+                sleeve_id,
+            )
+            continue
+        rules_by_sleeve[sleeve_id] = rules
+        for rule in rules:
+            when = rule.get("when")
+            if isinstance(when, dict) and "symbol" in when:
+                referenced_symbols.add(when["symbol"])
 
+    try:
+        closes_by_symbol = _fetch_closes_for_symbols(referenced_symbols, now_et=now_et)
+    except Exception:
+        logger.exception(
+            "bar-fetch phase failed unexpectedly this tick; all referenced "
+            "symbols fail safe (no closes)"
+        )
+        closes_by_symbol = {}
+
+    if any(rules_by_sleeve.values()):
+        try:
+            fred_cache = _build_fred_cache()
+        except Exception:
+            logger.exception("FRED-cache read failed unexpectedly this tick; FRED senses fail safe")
+            fred_cache = {}
+    else:
+        fred_cache = {}
+
+    for sleeve_row in evaluable_rows:
+        sleeve_id = sleeve_row["id"]
+        rules = rules_by_sleeve.get(sleeve_id)
+        if not rules:
+            continue
+        try:
             order_history = database.get_sleeve_order_history(sleeve_id)
             ledger_state = ledger.reconstruct_from_history(sleeve_row["capital_usd"], order_history)
             positions = {symbol: pos.qty for symbol, pos in ledger_state.positions.items()}
             envelope_dict = json.loads(sleeve_row.get("envelope_json") or "{}")
 
-            now_et = now_utc.astimezone(_ET)
             trading_day = now_et.strftime("%Y-%m-%d")
             turnover_used_usd = database.get_daily_turnover_usd(sleeve_id, trading_day)
             symbols = {
@@ -606,9 +718,9 @@ def run_sleeve_tick_for_all_sleeves(
                     sleeve_row=sleeve_row,
                     sleeve_equity_usd=_book_equity_usd(ledger_state),
                     now_utc=now_utc,
-                    closes_by_symbol={},
+                    closes_by_symbol=closes_by_symbol,
                     positions=positions,
-                    fred_cache={},
+                    fred_cache=fred_cache,
                     envelope=envelope_dict,
                     live_mode=live_mode,
                     live_keys_present=live_keys_present,
