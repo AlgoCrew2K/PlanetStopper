@@ -3943,3 +3943,40 @@ Supersedes `feature-plans/guard-rules-engine.md` (rule-engine core carried into 
 ### Addendum (2026-07-07): `sleeve_rule_fires` deferred to a P2 migration
 
 Migration 033 (commit `7126eb7`, shipped) creates five tables — `sleeves`, `sleeve_rules`, `sleeve_orders`, `sleeve_fills`, `sleeve_runtime` — not the six originally sketched in the plan's Architecture section. `sleeve_rule_fires` is DEFERRED from P1 to a P2 migration (034): additive-first migration discipline makes the deferral free (no P1 code path writes fires), and the fires row shape (sensed snapshot, episode semantics) is better designed against the real P2 rule-runner than guessed at now. `feature-plans/managed-sleeves.md`'s Architecture DB line and Decisions table are updated to match the shipped migration.
+
+## DE-SLEEVES-P2-001 — Managed Sleeves P2: rule engine core (schema/senses/conditions/limits/runner) (2026-07-08, cycle in progress)
+
+Branch: `feature/managed-sleeves` | Base: origin/main `0bcbd1a` (carried from P1) | Plan: `feature-plans/managed-sleeves.md` §"P2 — Rule engine core" | Predecessor: `DE-SLEEVES-P1-001`
+
+### Context
+
+P1 shipped the order-capable infrastructure (`sleeves/alpaca_orders.py`, `reconciliation.py`, `envelope.py`, `sizing.py`, `ledger.py` + migration 033) with zero production callers — `sleeve_rules` schema-ready but unread by any P1 code path, and `sleeve_rule_fires` explicitly deferred (see the P1 addendum above). P2 builds the rule engine itself — `sleeves/rules/` (schema validation, senses, condition-tree evaluation, pacing/limits, the runner) plus a migration 034 shipping `sleeve_rule_fires` — carrying the v1 `guard-rules-engine.md` rule-engine design verbatim per AC-4/AC-5/AC-6. Every rule is born in SHADOW: this phase produces record-only shadow fires end-to-end (sensed snapshot + the envelope-clamped order the rule would have placed) and executes nothing. The direct trade path (P1's `sleeves/alpaca_orders.py`) is untouched by P2; wiring a live runner to it is P3 scope.
+
+### Status
+
+Cycle in progress. This entry is a skeleton opened at cycle start per the doc-writer's standing early-draft mandate — the sections below are filled in as the Toxic Pair (s2-test-writer / s2-rules-impl), s2-db, and s2-review settle the open design points, and finalized before cycle-complete.
+
+### Scope carried from the plan (AC-4, AC-5, AC-6)
+
+- **Rule schema:** `when/if/then/limits`; size/depth/enum-closed validation; field-level errors; no code strings (no `eval`).
+- **Senses:** symphony state, portfolio state, daily-bar indicators (SMA/EMA/RSI/momentum/realized vol/drawdown-from-high), time-of-day/day-of-week (ET, XNYS-holiday-aware per `market_calendar.py` — never hours-only), cached FRED series. Missing/stale sense data is fail-safe: not-fireable, logged deduped — never a crash, never a silent skip that looks like "no signal."
+- **Condition-tree evaluation** over those senses.
+- **Pacing/limits** (cooldown_sec, max_fires_per_day, episode latch, churn-brake state) persisted in `sleeve_runtime` across the fresh-subprocess-per-minute engine model (app.py:572-587,697) — proven by a test simulating consecutive one-shot engine invocations.
+- **Migration 034:** `sleeve_rule_fires` (sensed snapshot + the exact envelope-clamped order a SHADOW rule would have produced) — resolves the P1 deferral; see the Addendum below once shipped.
+- **SHADOW-only in this phase:** rules record fires and execute nothing; the P2 runner never calls `sleeves/alpaca_orders.py`. PAPER/LIVE wiring and arming ceremonies are P3.
+
+### Decisions
+
+(Populated as the cycle's Toxic Pair / review settle open design points — e.g., the condition-tree's internal representation, the sense fail-safe dedup key, and the `sleeve_runtime` KV key scheme for pacing/latch/bench state. Update this table in place; do not leave it as a placeholder once those land.)
+
+| Decision | Rationale |
+|----------|-----------|
+| _pending_ | _pending_ |
+
+### Addendum: P1 deferral resolution (pending)
+
+`DE-SLEEVES-P1-001` deferred `sleeve_rule_fires` from migration 033 to a P2 migration (034), reasoning that the row shape should be designed against the real P2 rule-runner rather than guessed at during P1. This addendum will be updated with the shipping commit and final row shape once migration 034 lands, and `feature-plans/managed-sleeves.md`'s deferral line will get a "resolved in P2" note (not a deletion).
+
+### Reference
+
+See `feature-plans/managed-sleeves.md` §"P2 — Rule engine core" and AC-4/AC-5/AC-6. Predecessor: `DE-SLEEVES-P1-001`. Docs: `docs/generated/sleeves.md` (P2 rules-package section lands alongside P2 GREEN commits).
