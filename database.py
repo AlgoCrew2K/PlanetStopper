@@ -3427,6 +3427,25 @@ def update_sleeve_envelope(sleeve_id: int, envelope_json: str) -> None:
         conn.close()
 
 
+def delete_sleeve(sleeve_id: int) -> None:
+    """Delete one sleeve row by id (AC-16 delete control).
+
+    Refuse-unless-flat gating (open-position check via sleeves.ledger) is an
+    application-layer decision (app.py) -- this accessor performs the row
+    delete unconditionally. Soft-FK rows in sleeve_rules/sleeve_orders/
+    sleeve_fills/sleeve_runtime/sleeve_rule_fires referencing this sleeve_id
+    are left in place (no PRAGMA foreign_keys=ON anywhere in this schema --
+    matches every other cross-table reference's soft-FK convention); they
+    become orphaned history, never queried without a live sleeve_id match.
+    """
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM sleeves WHERE id = ?", (sleeve_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 # --- sleeve_rules: schema-ready for the P2 rule engine ---
 # Not written or read by any P1 code path; provisioned now so sleeve_orders.rule_id
 # and sleeve_runtime.rule_id have a real FK target and P2 can build directly on it.

@@ -371,6 +371,21 @@
     .status-pill.tp-armed { background: color-mix(in srgb, var(--studio-plum) 18%, transparent); color: var(--studio-plum); }
     .status-pill.para-armed { background: color-mix(in srgb, var(--studio-cyan) 18%, transparent); color: var(--studio-cyan); }
 
+    /* Managed Sleeves status pills (AC-16) -- each of the 6 named statuses
+       (SHADOW/PAPER/LIVE/BENCHED/PAUSED_RECONCILIATION/stale) gets its own
+       pairwise-distinct background/color/border combo, never collapsing
+       into a shared "standby" look (s3-ux live-render finding #1) --
+       PAUSED_RECONCILIATION additionally gets a bordered/bold treatment so
+       it reads as the serious operational state it is, never mistaken for
+       a mundane fresh SHADOW sleeve. */
+    .status-pill.sleeve-benched { background: color-mix(in srgb, var(--studio-warn) 18%, transparent); color: var(--studio-warn); }
+    .status-pill.sleeve-paused { background: color-mix(in srgb, var(--studio-neg) 18%, transparent); color: var(--studio-neg); border: 1px solid var(--studio-neg); font-weight: 800; }
+    .status-pill.sleeve-stale { background: color-mix(in srgb, var(--studio-cyan) 12%, transparent); color: var(--studio-ink-faint); border: 1px dashed var(--studio-ink-faint); }
+
+    /* Generic inert-control marker (AC-16 finding #5) -- a disabled sleeve
+       control must never look identical to its enabled counterpart. */
+    .control-disabled { opacity: 0.4; cursor: not-allowed; }
+
     /* Per-symphony settings gear button */
     .sym-settings-btn {
       width: 28px;
@@ -1456,7 +1471,11 @@
     aria-label="Managed Sleeves"
     style="margin:24px 32px;padding:18px 24px;border:1px solid var(--studio-rule);border-radius:10px;background:var(--studio-paper);font-family:var(--studio-sans);font-size:13px;color:var(--studio-ink);"
   >
-    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">
+    {# flex-wrap+gap on every flex row below (s3-ux mobile-375px re-render finding #6): #}
+    {# a long sleeve/rule name wrapping to a second line must never misalign its #}
+    {# sibling badge/buttons -- center-aligned wrapping rows degrade gracefully #}
+    {# instead of the baseline-aligned single-line assumption breaking at narrow widths. #}
+    <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;margin-bottom:12px;">
       <div style="font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--studio-ink-faint);">
         Managed Sleeves
       </div>
@@ -1478,24 +1497,26 @@
         data-sleeve-id="{{ sleeve.id }}"
         style="background:var(--studio-paper);border:1px solid var(--studio-rule);border-radius:12px;padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,0.06);"
       >
-        <div style="display:flex;justify-content:space-between;align-items:baseline;">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;">
           <span class="card-name">{{ sleeve.name }}</span>
           <span
             data-testid="sleeve-status-badge"
-            class="status-pill {% if sleeve.status == 'LIVE' %}triggered{% elif sleeve.status == 'PAPER' %}armed{% else %}standby{% endif %}"
+            class="status-pill {{ sleeve.status_badge_class }}"
           >{{ sleeve.status }}</span>
         </div>
         <div style="margin-top:6px;color:var(--studio-ink-dim);font-size:12px;">
           Capital: {% if sleeve.capital_usd is not none %}${{ "%.2f"|format(sleeve.capital_usd) }}{% else %}&mdash;{% endif %}
+          &middot;
+          Ledger cash: ${{ "%.2f"|format(sleeve.ledger_cash_usd) }}
         </div>
 
         {% if sleeve.rules %}
         <div style="margin-top:8px;">
           {% for rule in sleeve.rules %}
-          <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:12px;padding:5px 0;border-top:1px solid var(--studio-rule);gap:8px;">
+          <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;font-size:12px;padding:5px 0;border-top:1px solid var(--studio-rule);gap:8px;">
             <span>{{ rule.name }} <span style="color:var(--studio-ink-faint);">({{ rule.mode }})</span></span>
-            <span style="display:flex;align-items:center;gap:8px;">
-              <span style="color:var(--studio-ink-dim);">today {{ rule.today_fires }} &middot; lifetime {{ rule.lifetime_fires }}</span>
+            <span style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
+              <span style="color:var(--studio-ink-dim);">today {{ rule.today_fires }} &middot; lifetime {{ rule.lifetime_fires }} &middot; realized ${{ "%.2f"|format(rule.realized_pnl_usd) }}</span>
               {% if rule.mode == 'SHADOW' %}
               <button
                 type="button"
@@ -1512,15 +1533,23 @@
         </div>
         {% endif %}
 
-        <div style="margin-top:10px;">
+        <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;">
           <button
             type="button"
             data-testid="sleeve-disarm-control"
             data-sleeve-id="{{ sleeve.id }}"
+            class="{% if sleeve.status == 'SHADOW' %}control-disabled{% endif %}"
             style="padding:4px 12px;border-radius:6px;background:transparent;color:var(--studio-neg);font-size:10.5px;font-weight:600;border:1px solid var(--studio-neg);cursor:pointer;"
             onclick="disarmSleeve({{ sleeve.id }}, this)"
             {% if sleeve.status == 'SHADOW' %}disabled{% endif %}
           >Disarm</button>
+          <button
+            type="button"
+            data-testid="sleeve-delete-control"
+            data-sleeve-id="{{ sleeve.id }}"
+            style="padding:4px 12px;border-radius:6px;background:transparent;color:var(--studio-ink-faint);font-size:10.5px;font-weight:600;border:1px solid var(--studio-rule);cursor:pointer;"
+            onclick="deleteSleeve({{ sleeve.id }}, this)"
+          >Delete</button>
         </div>
       </div>
       {% endfor %}

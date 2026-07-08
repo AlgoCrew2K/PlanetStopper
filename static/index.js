@@ -1488,4 +1488,27 @@
         });
     }
     window.disarmSleeve = disarmSleeve;
+
+    function deleteSleeve(sleeveId, btn) {
+        if (!window.confirm('Delete this sleeve? Refused unless it is flat (no open position) — delete never liquidates.')) return;
+        btn.disabled = true;
+        fetch('/api/sleeves/' + sleeveId + '/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' }
+        })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return { ok: r.ok, body: b }; }); })
+        .then(function (res) {
+            if (!res.ok) {
+                window.alert('Delete rejected: ' + ((res.body && res.body.message) || 'unknown error'));
+                btn.disabled = false;
+                return;
+            }
+            location.reload();
+        })
+        .catch(function (err) {
+            console.error('deleteSleeve failed', err);
+            btn.disabled = false;
+        });
+    }
+    window.deleteSleeve = deleteSleeve;
 })();

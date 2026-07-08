@@ -873,16 +873,42 @@ def run_scheduler():
         time.sleep(1)
 
 
+# AC-16 s3-ux live-render finding #1: all 6 named statuses must map to a
+# pairwise visually-distinct status-pill class -- PAUSED_RECONCILIATION in
+# particular must never collapse into the same class as a mundane fresh
+# SHADOW sleeve. Unrecognized statuses fail safe to "standby".
+_SLEEVE_STATUS_BADGE_CLASSES = {
+    "SHADOW": "standby",
+    "PAPER": "armed",
+    "LIVE": "triggered",
+    "BENCHED": "sleeve-benched",
+    "PAUSED_RECONCILIATION": "sleeve-paused",
+    "stale": "sleeve-stale",
+}
+
+
+def _sleeve_status_badge_class(status: str) -> str:
+    return _SLEEVE_STATUS_BADGE_CLASSES.get(status, "standby")
+
+
 def _build_sleeves_panel_context() -> list[dict]:
-    """Assemble per-sleeve panel rows for dashboard() (AC-16): status, capital,
-    and per-rule today/lifetime fire counts. Never raises -- a read failure on
-    one sleeve/rule degrades that row rather than 500ing the whole dashboard
-    (dashboard-truth rule). Real per-rule realized-P&L attribution from fills
-    is not yet wired (no fill-polling/attribution machinery exists yet -- P3
-    scope note, docs/generated/sleeves.md's reconstruct_from_history known
-    limitation) -- rendering a fabricated number would be worse than omitting
-    it, so the panel shows fire counts only for now.
+    """Assemble per-sleeve panel rows for dashboard() (AC-16): status,
+    capital, ledger cash (vs the static capital_usd -- "cash ledger vs
+    broker truth"; the broker-truth-mismatch signal itself is the existing
+    sleeve.status column, PAUSED_RECONCILIATION already meaning "known
+    mismatch"), and per-rule mode/today-lifetime fire counts/realized P&L.
+    Never raises -- a read failure on one sleeve/rule degrades that row
+    rather than 500ing the whole dashboard (dashboard-truth rule).
+
+    Ledger cash and per-rule realized P&L are both derived with ZERO new
+    schema by folding sleve_orders/sleeve_fills through
+    sleeves.ledger.reconstruct_from_history -- sleeve-wide for the ledger
+    cash figure, filtered to sleeve_orders.rule_id (already present) for a
+    single rule's own attributed realized P&L (s3-test-writer's scope
+    decision, tests/app/test_sleeves_panel_render.py TestPanelFinancialData).
     """
+    from sleeves import ledger as sleeve_ledger  # noqa: PLC0415
+
     panel_sleeves: list[dict] = []
     try:
         sleeve_rows = database.get_all_sleeves()
@@ -892,12 +918,27 @@ def _build_sleeves_panel_context() -> list[dict]:
     today_str = datetime.now(_ET).strftime("%Y-%m-%d")
     for sleeve in sleeve_rows:
         sleeve_id = sleeve.get("id")
+        capital_usd = sleeve.get("capital_usd") or 0.0
         try:
             rule_rows = (
                 database.get_sleeve_rules_for_sleeve(sleeve_id) if sleeve_id is not None else []
             )
         except Exception:
             rule_rows = []
+
+        try:
+            order_history = (
+                database.get_sleeve_order_history(sleeve_id) if sleeve_id is not None else []
+            )
+        except Exception:
+            order_history = []
+
+        try:
+            ledger_cash_usd = sleeve_ledger.reconstruct_from_history(
+                capital_usd, order_history
+            ).cash_usd
+        except Exception:
+            ledger_cash_usd = capital_usd
 
         rules_panel = []
         for rule in rule_rows:
@@ -909,6 +950,19 @@ def _build_sleeves_panel_context() -> list[dict]:
             except Exception:
                 fires = []
             today_fires = sum(1 for f in fires if str(f.get("fired_at", "")).startswith(today_str))
+
+            rule_orders = [o for o in order_history if o.get("rule_id") == rule_id]
+            try:
+                rule_realized_pnl = (
+                    sleeve_ledger.reconstruct_from_history(
+                        capital_usd, rule_orders
+                    ).realized_pnl_usd
+                    if rule_orders
+                    else 0.0
+                )
+            except Exception:
+                rule_realized_pnl = 0.0
+
             rules_panel.append(
                 {
                     "id": rule_id,
@@ -916,6 +970,7 @@ def _build_sleeves_panel_context() -> list[dict]:
                     "mode": rule.get("mode", ""),
                     "today_fires": today_fires,
                     "lifetime_fires": len(fires),
+                    "realized_pnl_usd": rule_realized_pnl,
                 }
             )
 
@@ -924,7 +979,9 @@ def _build_sleeves_panel_context() -> list[dict]:
                 "id": sleeve_id,
                 "name": sleeve.get("name", ""),
                 "status": sleeve.get("status", ""),
+                "status_badge_class": _sleeve_status_badge_class(sleeve.get("status", "")),
                 "capital_usd": sleeve.get("capital_usd"),
+                "ledger_cash_usd": ledger_cash_usd,
                 "rules": rules_panel,
             }
         )
@@ -3577,6 +3634,43 @@ def disarm_sleeve(sleeve_id):
         database.update_sleeve_rule_mode(rule["id"], "SHADOW")
 
     return jsonify({"status": "success", "sleeve": database.get_sleeve(sleeve_id)})
+
+
+@app.route("/api/sleeves/<int:sleeve_id>/delete", methods=["POST"])
+def delete_sleeve_route(sleeve_id):
+    """Delete a sleeve (AC-16 delete control). Refuses unless flat -- a
+    sleeve holding any nonzero position is never deleted (delete never
+    liquidates, plan Edge Cases: "refuse unless flat"). Ledger reconstruction
+    mirrors _build_sleeves_panel_context's own zero-new-schema mechanism.
+    """
+    sleeve_row = database.get_sleeve(sleeve_id)
+    if sleeve_row is None:
+        return jsonify({"status": "error", "message": "sleeve not found"}), 404
+
+    from sleeves import ledger as sleeve_ledger  # noqa: PLC0415
+
+    try:
+        order_history = database.get_sleeve_order_history(sleeve_id)
+        ledger_state = sleeve_ledger.reconstruct_from_history(
+            sleeve_row.get("capital_usd") or 0.0, order_history
+        )
+        has_open_position = any(pos.qty != 0 for pos in ledger_state.positions.values())
+    except Exception:
+        # Fail closed: an unreconstructable ledger can't prove the sleeve is
+        # flat -- refuse the delete rather than risk losing a real position's
+        # record.
+        has_open_position = True
+
+    if has_open_position:
+        return jsonify(
+            {
+                "status": "error",
+                "message": "sleeve holds an open position — delete refused (delete never liquidates)",
+            }
+        ), 409
+
+    database.delete_sleeve(sleeve_id)
+    return jsonify({"status": "success"})
 
 
 @app.route("/api/sleeves/<int:sleeve_id>/envelope", methods=["POST"])
