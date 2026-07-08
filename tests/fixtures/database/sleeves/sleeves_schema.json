@@ -104,5 +104,36 @@
     "_note": "Composite PK (rule_id, key) -- no surrogate id column. Pure key/value runtime store, upserted via INSERT OR REPLACE (port_state precedent, migration 010). Schema-ready for the P2 rule engine's pacing/latch/bench state; not written or read by any P1 code path."
   },
 
+  "sleeve_rule_fires": {
+    "table_name": "sleeve_rule_fires",
+    "_provenance": "Managed Sleeves P2: schema-derived from feature-plans/managed-sleeves.md + the DE-SLEEVES-P1-001 addendum (sleeve_rule_fires deferred from migration 033), authored against migrations/034_sleeve_rule_fires.sql. Reconciled 2026-07-08 across independent s2-db/s2-rules-impl/s2-test-writer proposals (SendMessage thread) -- s2-rules-impl signed off on clamp/episode/outcome_json; s2-test-writer contributed rule_class + created_at. No producer-computed values are captured; all assertions are shape/presence/constraint checks.",
+    "columns": {
+      "id":                   { "notnull": true,  "is_pk": true,  "type_affinity": "INTEGER", "autoincrement": true },
+      "rule_id":              { "notnull": true,  "has_default": false, "type_affinity": "INTEGER" },
+      "sleeve_id":            { "notnull": true,  "has_default": false, "type_affinity": "INTEGER" },
+      "fired_at":             { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
+      "action":               { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "rule_class":           { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "mode_at_fire":         { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "sensed_snapshot_json": { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
+      "outcome_json":         { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
+      "clamped":              { "notnull": true,  "has_default": true,  "type_affinity": "INTEGER" },
+      "clamp_reason":         { "notnull": false, "has_default": true,  "type_affinity": "TEXT" },
+      "episode_id":           { "notnull": false, "has_default": true,  "type_affinity": "TEXT" },
+      "order_id":             { "notnull": false, "has_default": true,  "type_affinity": "INTEGER" },
+      "created_at":           { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" }
+    },
+    "clamped_default": 0,
+    "mode_at_fire_values_app_level": ["SHADOW", "PAPER", "LIVE"],
+    "rule_class_values_app_level": ["DEFENSIVE", "ENTRY"],
+    "_note": "One row per tick evaluation that fired ('when'/'if' matched, 'then' attempted). rule_id/sleeve_id are soft FKs (sleeve_rules.id / sleeves.id); sleeve_id is denormalized off rule_id to avoid a join for per-sleeve panel queries, mirroring sleeve_orders' sleeve_id+rule_id pairing. rule_class and mode_at_fire snapshot the rule's AC-20 class derivation and mode AT FIRE TIME so a later rule edit or SHADOW->PAPER->LIVE transition never rewrites history. order_id is a soft FK to sleeve_orders.id (the internal id, NOT client_order_id/alpaca_order_id -- matches sleeve_fills.order_id's precedent), NULL for SHADOW fires and for actions that placed no order (notify/skip/envelope refusal). episode_id groups fires in one latch episode (AC-10 flat-latch / AC-11 churn-brake round-trip grouping) and is free-form TEXT -- format owned by the P2 runner, not presumed here. clamped/clamp_reason record whether envelope.clamp() reduced the attempted sizing (AC-2); clamp_reason is populated only when clamped=1. created_at is row-insert time, distinct from fired_at (the tick's own logical timestamp) -- mirrors sleeve_fills.filled_at/created_at.",
+    "non_unique_indexes": [
+      "idx_sleeve_rule_fires_rule_id (rule_id, fired_at)",
+      "idx_sleeve_rule_fires_sleeve_id (sleeve_id)",
+      "idx_sleeve_rule_fires_order_id (order_id) WHERE order_id IS NOT NULL",
+      "idx_sleeve_rule_fires_episode_id (episode_id) WHERE episode_id IS NOT NULL"
+    ]
+  },
+
   "no_foreign_key_pragma": "PRAGMA foreign_keys is never set ON anywhere in this codebase (verified). All *_id references above are soft FKs: documented, not DB-enforced."
 }

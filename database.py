@@ -1504,6 +1504,7 @@ _MIGRATION_FILES = [
     "031_shadow_history_sym_ts_index.sql",
     "032_prism_audit_log.sql",
     "033_sleeves.sql",
+    "034_sleeve_rule_fires.sql",
 ]
 
 
@@ -3315,6 +3316,22 @@ _SLEEVE_FILL_COLUMNS = [
     "filled_at",
     "created_at",
 ]
+_SLEEVE_RULE_FIRE_COLUMNS = [
+    "id",
+    "rule_id",
+    "sleeve_id",
+    "fired_at",
+    "action",
+    "rule_class",
+    "mode_at_fire",
+    "sensed_snapshot_json",
+    "outcome_json",
+    "clamped",
+    "clamp_reason",
+    "episode_id",
+    "order_id",
+    "created_at",
+]
 
 
 def _utcnow_iso() -> str:
@@ -3853,6 +3870,157 @@ def delete_sleeve_runtime(rule_id: int, key: str) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+# --- sleeve_rule_fires: P2 rule engine fire log (migration 034) ---
+# One row per tick evaluation that fired (`when`/`if` matched, `then` attempted).
+# SHADOW rules record the fire + the would-have-ordered sizing and execute
+# nothing (AC-6); PAPER/LIVE fires additionally carry order_id once an order is
+# placed. Durable source for per-rule/per-sleeve attribution (AC-16, AC-19) and
+# an independent (ground-truth) fire count for the dashboard -- limits.py's own
+# pacing bookkeeping (cooldown/max_fires_per_day/episode latch/churn-brake
+# state) lives entirely in sleeve_runtime (P1's get/set_sleeve_runtime), not
+# on this table.
+
+
+def insert_sleeve_rule_fire(
+    rule_id: int,
+    sleeve_id: int,
+    action: str,
+    rule_class: str,
+    mode_at_fire: str,
+    sensed_snapshot_json: str = "{}",
+    outcome_json: str = "{}",
+    clamped: bool = False,
+    clamp_reason: "str | None" = None,
+    episode_id: "str | None" = None,
+    order_id: "int | None" = None,
+    fired_at: "str | None" = None,
+) -> int:
+    """Insert one sleeve_rule_fires row and return its new id.
+
+    rule_class ('DEFENSIVE'|'ENTRY') and mode_at_fire ('SHADOW'|'PAPER'|'LIVE')
+    are snapshots taken AT THIS TICK -- pass the caller's current derivation/
+    mode explicitly rather than re-deriving them later, so a subsequent rule
+    edit or SHADOW->PAPER->LIVE mode change never rewrites history. order_id
+    is the INTERNAL sleeve_orders.id (not client_order_id/alpaca_order_id,
+    matching sleeve_fills.order_id's precedent); leave it None for SHADOW
+    fires and for fires whose action placed no order (notify, skip, envelope
+    refusal). fired_at defaults to the SQL insert-time (schema DEFAULT) when
+    omitted; pass it explicitly to record the tick's own logical timestamp
+    instead of the moment this row happened to be written.
+    """
+    conn = get_connection()
+    try:
+        columns = [
+            "rule_id",
+            "sleeve_id",
+            "action",
+            "rule_class",
+            "mode_at_fire",
+            "sensed_snapshot_json",
+            "outcome_json",
+            "clamped",
+            "clamp_reason",
+            "episode_id",
+            "order_id",
+        ]
+        values: list = [
+            rule_id,
+            sleeve_id,
+            action,
+            rule_class,
+            mode_at_fire,
+            sensed_snapshot_json,
+            outcome_json,
+            1 if clamped else 0,
+            clamp_reason,
+            episode_id,
+            order_id,
+        ]
+        if fired_at is not None:
+            columns.append("fired_at")
+            values.append(fired_at)
+        placeholders = ", ".join("?" * len(values))
+        cursor = conn.execute(
+            f"INSERT INTO sleeve_rule_fires ({', '.join(columns)}) VALUES ({placeholders})",
+            values,
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def get_sleeve_rule_fire(fire_id: int) -> "dict | None":
+    """Return one sleeve_rule_fires row by its internal id, or None when absent."""
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT " + ", ".join(_SLEEVE_RULE_FIRE_COLUMNS) + " FROM sleeve_rule_fires WHERE id = ?",
+            (fire_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(zip(_SLEEVE_RULE_FIRE_COLUMNS, row)) if row else None
+
+
+def get_sleeve_rule_fires(
+    rule_id: "int | None" = None,
+    sleeve_id: "int | None" = None,
+    limit: int = 100,
+) -> "list[dict]":
+    """Read sleeve_rule_fires rows with optional filters, newest-fired first.
+
+    limit is server-side clamped to 500 max (get_sleeve_orders precedent).
+    """
+    limit = min(limit, 500)
+    conn = get_ro_connection()
+    clauses: list[str] = []
+    params: list = []
+    if rule_id is not None:
+        clauses.append("rule_id = ?")
+        params.append(rule_id)
+    if sleeve_id is not None:
+        clauses.append("sleeve_id = ?")
+        params.append(sleeve_id)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    try:
+        rows = conn.execute(
+            "SELECT " + ", ".join(_SLEEVE_RULE_FIRE_COLUMNS) + f" FROM sleeve_rule_fires {where} "
+            "ORDER BY fired_at DESC, id DESC LIMIT ?",
+            params + [limit],
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_SLEEVE_RULE_FIRE_COLUMNS, row)) for row in rows]
+
+
+def get_fire_count_for_rule_on_day(rule_id: int, trading_day: str) -> int:
+    """Return the count of sleeve_rule_fires rows for one rule on trading_day
+    ('YYYY-MM-DD'), a ground-truth fire count for the dashboard panel's
+    today/lifetime attribution (AC-16) independent of limits.py's own
+    max_fires_per_day pacing counter (that pacing state lives entirely in
+    sleeve_runtime -- see get_sleeve_runtime/set_sleeve_runtime -- so this
+    accessor is a cross-check, not the runner's live pacing gate).
+
+    trading_day is caller-supplied (the runner computes it via
+    market_calendar.py, XNYS calendar) -- this accessor never derives "today"
+    from naive UTC/local date, matching get_daily_turnover_usd's contract.
+    Counts every fire regardless of action/outcome -- a rule that fired and
+    was clamped-to-zero or rejected still counts; callers that need an
+    entries-only or exits-only count should filter on `action` at the
+    application layer.
+    """
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM sleeve_rule_fires WHERE rule_id = ? AND date(fired_at) = ?",
+            (rule_id, trading_day),
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row[0])
 
 
 # Initialize tables on import
