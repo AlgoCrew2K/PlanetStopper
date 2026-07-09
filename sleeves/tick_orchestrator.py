@@ -3,17 +3,24 @@
 The single function a fresh-subprocess-per-minute engine tick calls
 (``run_sleeve_tick_for_all_sleeves``). For every sleeve it, in order:
 
-  0. SHADOW-status sleeves ALSO get cancel_open_orders_for_shadow_sleeve
-     (AC-12 disarm support -- the disarm route can never itself reach
-     sleeves.alpaca_orders, so this tick is where a disarmed sleeve's
-     lingering open orders actually get cancelled).
-  1. Polls the broker for fills on already-acked, non-terminal orders
+  0. Polls the broker for fills on already-acked, non-terminal orders
      (``poll_and_apply_fills``) and records any newly-reported fill. Runs for
      EVERY sleeve, SHADOW included (s3-review BLOCK 1): a disarmed sleeve
      stays SHADOW permanently until re-armed and can still hold real
      residual broker-side exposure (a TOCTOU fill between the disarm click
      and this tick's cancel attempt, or a pre-disarm position) -- "no
      live-armed rules" does not mean "nothing at the broker to track".
+  1. SHADOW-status sleeves THEN get cancel_open_orders_for_shadow_sleeve
+     (AC-12 disarm support -- the disarm route can never itself reach
+     sleeves.alpaca_orders, so this tick is where a disarmed sleeve's
+     lingering open orders actually get cancelled). Fill-poll runs STRICTLY
+     BEFORE this cleanup (audit 2026-07-09 #4, live-observed): cancel-first
+     marked a broker-FILLED order "canceled", permanently lost the fill,
+     and released its reservation while the broker held the shares. The
+     cleanup itself also re-polls after every accepted DELETE (INFO-002:
+     Alpaca cancels the LEGS of a filled bracket parent and reports
+     success) so a fill landing inside this tick's poll->cancel window is
+     still recorded, never overwritten.
   2. AGGREGATE reconciliation across every non-already-paused sleeve
      (``_run_aggregate_reconciliation``, grouped by resolved broker host) --
      see "Shared-account reconciliation semantics" below. A cash breach
@@ -63,7 +70,11 @@ exactly once per broker-host group, never per sleeve):
     such sleeve's qty) <= the broker's own qty for that symbol + tolerance.
     A breach pauses only the sleeves holding that symbol. A broker position
     in a symbol NO sleeve has ever touched (an operator-external holding
-    sharing the account) is ignored entirely.
+    sharing the account) is ignored entirely. A broker position in a symbol
+    some sleeve has ORDER HISTORY in while no ledger currently holds it is
+    an unexplained NAKED position (audit 2026-07-09 #4 residue) and pauses
+    the sleeves with history in that symbol -- see the inline note in
+    _run_aggregate_reconciliation for the accepted false-positive class.
   - Per-sleeve cash conservation remains sleeves.ledger's own internal law
     (already enforced there); it is simply no longer checked against the
     broker on a per-sleeve basis.
@@ -107,6 +118,7 @@ import sleeves.ledger as ledger
 import sleeves.reconciliation as reconciliation
 import sleeves.rules.runner as runner
 import synthetic_history
+from sleeves.rules.limits import STALE_NO_BARS_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -184,31 +196,147 @@ def _compute_live_gates(sleeve_row: dict) -> tuple[bool, bool]:
 # ---------------------------------------------------------------------------
 
 
+# Sentinel returned by _record_new_fill_delta when the broker reports new
+# filled quantity WITHOUT a usable price (propagation lag): the caller must
+# NOT advance the order's status -- especially not to a terminal one, since
+# terminal rows are never re-polled and the fill would be lost permanently.
+_FILL_DELTA_DEFERRED = object()
+
+
+def _record_new_fill_delta(order: dict, broker_order: dict) -> dict | object | None:
+    """Record any broker-reported fill quantity beyond what ``sleeve_fills``
+    already holds for this order. Returns the newly-recorded fill dict; None
+    when the broker reports nothing new; or ``_FILL_DELTA_DEFERRED`` when a
+    new quantity exists but carries no usable price yet -- the caller must
+    leave the row's status untouched (non-terminal) and retry next tick.
+
+    The delta math (broker cumulative filled_qty minus already-recorded qty)
+    is the load-bearing idempotency mechanism; the deterministic
+    ``broker_fill_id`` -- ``{alpaca_order_id}:{cumulative qty}`` -- is
+    schema-UNIQUE defense-in-depth on top. Shared by the fill poll AND the
+    cancel path (audit 2026-07-09 #4/INFO-002: Alpaca accepts DELETE on a
+    FILLED bracket parent, so a cancel must reconcile fill truth before any
+    terminal status write).
+    """
+    recorded_fills = database.get_fills_for_order(order["id"])
+    already_recorded_qty = sum(f["filled_qty"] for f in recorded_fills)
+    broker_filled_qty = float(broker_order.get("filled_qty") or 0.0)
+    delta_qty = broker_filled_qty - already_recorded_qty
+    if delta_qty <= 0:
+        return None
+
+    filled_at = broker_order.get("filled_at") or broker_order.get("updated_at") or _utcnow_iso()
+    # Audit 2026-07-09 #6: Alpaca's filled_avg_price is the CUMULATIVE
+    # average across every fill of the order, not this delta's own price --
+    # booking the delta at the average drifts cost basis/cash from broker
+    # truth by q1*q2*(p1-p2)/(q1+q2) on every multi-price partial fill. The
+    # delta's own implied price falls out of the two cumulative notionals:
+    # (broker cumulative notional - already-recorded notional) / delta qty.
+    broker_avg_price = float(broker_order.get("filled_avg_price") or 0.0)
+    already_recorded_notional = sum(f["filled_qty"] * f["fill_price"] for f in recorded_fills)
+    delta_notional = broker_filled_qty * broker_avg_price - already_recorded_notional
+    if delta_notional <= 0.0:
+        # Broker reports new filled qty but no coherent price for it (null
+        # filled_avg_price during propagation lag, or a cumulative notional
+        # below what is already recorded). Never book a fill at a zero/
+        # negative price -- the ledger rejects price <= 0 and a poisoned row
+        # would brick every subsequent reconstruction for this sleeve.
+        logger.warning(
+            "_record_new_fill_delta: deferring fill delta for order %s "
+            "(qty delta %s) -- non-positive delta notional %s from broker avg %s; "
+            "status left untouched, retry next poll",
+            order["alpaca_order_id"],
+            delta_qty,
+            delta_notional,
+            broker_avg_price,
+        )
+        return _FILL_DELTA_DEFERRED
+    fill_price = delta_notional / delta_qty
+    broker_fill_id = f"{order['alpaca_order_id']}:{broker_filled_qty}"
+    database.insert_sleeve_fill(
+        order_id=order["id"],
+        fill_price=fill_price,
+        filled_qty=delta_qty,
+        filled_at=filled_at,
+        broker_fill_id=broker_fill_id,
+    )
+    return {
+        "order_id": order["id"],
+        "symbol": order["symbol"],
+        "filled_qty": delta_qty,
+        "fill_price": fill_price,
+        "filled_at": filled_at,
+    }
+
+
 def poll_and_apply_fills(
     sleeve_id: int, *, live_mode: bool = False, live_keys_present: bool = False
 ) -> list[dict]:
-    """Poll broker-truth status for every non-terminal, post-ack sleeve order.
+    """Poll broker-truth status for every non-terminal sleeve order.
 
-    A still-RESERVED pre-ack row (``alpaca_order_id`` still NULL) is skipped
-    -- there is no broker order id to poll yet. When the broker reports a
-    filled quantity beyond what is already recorded in ``sleeve_fills`` for
-    that order, the delta is inserted as a new fill row and the order's
-    status advances to the broker's own status string verbatim (never an
-    invented synonym). Returns the list of newly-inserted fill dicts (empty
-    if nothing new).
+    A non-terminal row with no ``alpaca_order_id`` (a submit whose ack was
+    lost, or a crash between reserve and submit) goes through lost-ack
+    recovery via its minted client_order_id (audit 2026-07-09 #10): found at
+    the broker -> the broker order is adopted (id attached, fills/status
+    below apply); HTTP 404 -> the submit definitively never landed, the row
+    is marked "rejected" (releasing the reservation); any other error ->
+    retried next tick with the reservation still held. When the broker
+    reports a filled quantity beyond what is already recorded in
+    ``sleeve_fills`` for an order, the delta is inserted as a new fill row
+    and the order's status advances to the broker's own status string
+    verbatim (never an invented synonym). Returns the list of
+    newly-inserted fill dicts (empty if nothing new).
     """
     new_fills: list[dict] = []
     for order in database.get_sleeve_orders(sleeve_id=sleeve_id, limit=500):
-        if not order.get("alpaca_order_id"):
-            continue  # pre-ack RESERVED row -- nothing to poll yet
         if order["status"] in _TERMINAL_ORDER_STATUSES:
             continue  # already terminal -- nothing further to poll
 
-        result = alpaca_orders.get_order(
-            order_id=order["alpaca_order_id"],
-            live_mode=live_mode,
-            live_keys_present=live_keys_present,
-        )
+        if not order.get("alpaca_order_id"):
+            # Non-terminal row with no broker order id: a submit whose ack
+            # was lost (timeout -- "the server may still be processing"), or
+            # a crash between the RESERVED insert and the broker call. Both
+            # hold a cash reservation that only broker truth can resolve --
+            # lost-ack recovery via the client_order_id minted before the
+            # submit (audit 2026-07-09 #10: this helper existed with zero
+            # production callers while timeouts released reservations on
+            # possibly-live orders).
+            recovery = alpaca_orders.get_order_by_client_order_id(
+                client_order_id=order["client_order_id"],
+                live_mode=live_mode,
+                live_keys_present=live_keys_present,
+            )
+            if recovery.error is None and recovery.order:
+                broker_order_id = recovery.order.get("id")
+                database.attach_alpaca_order_id(
+                    client_order_id=order["client_order_id"], alpaca_order_id=broker_order_id
+                )
+                order = {**order, "alpaca_order_id": broker_order_id}
+                # Fall through to the normal poll flow below with the
+                # recovered broker state -- fills recorded, status verbatim.
+                result = alpaca_orders.OrderResult(order=recovery.order, error=None)
+            elif recovery.error == "HTTP 404":
+                # The broker has no order under our minted client_order_id:
+                # the submit definitively never landed. Terminal "rejected"
+                # releases the reservation on the next reconstruction.
+                database.update_sleeve_order_status(order["client_order_id"], "rejected")
+                continue
+            else:
+                logger.warning(
+                    "poll_and_apply_fills: lost-ack recovery failed for "
+                    "client_order_id %s (sleeve %s): %s -- reservation held, "
+                    "retry next tick",
+                    order["client_order_id"],
+                    sleeve_id,
+                    recovery.error,
+                )
+                continue
+        else:
+            result = alpaca_orders.get_order(
+                order_id=order["alpaca_order_id"],
+                live_mode=live_mode,
+                live_keys_present=live_keys_present,
+            )
         if result.error is not None or result.order is None:
             # BLOCK 2 (s3-review): alpaca_orders never logs internally --
             # this is the only place a persistent outage/auth failure on the
@@ -222,43 +350,43 @@ def poll_and_apply_fills(
             continue  # broker unreachable this tick -- retry next tick
 
         broker_order = result.order
-        already_recorded_qty = sum(
-            f["filled_qty"] for f in database.get_fills_for_order(order["id"])
-        )
-        broker_filled_qty = float(broker_order.get("filled_qty") or 0.0)
-        delta_qty = broker_filled_qty - already_recorded_qty
-
-        if delta_qty > 0:
-            filled_at = (
-                broker_order.get("filled_at") or broker_order.get("updated_at") or _utcnow_iso()
-            )
-            fill_price = float(broker_order.get("filled_avg_price") or 0.0)
-            # Deterministic per (broker order, cumulative broker-reported
-            # qty) -- defense-in-depth dedup on top of the delta math above,
-            # which is already the load-bearing idempotency mechanism.
-            broker_fill_id = f"{order['alpaca_order_id']}:{broker_filled_qty}"
-            database.insert_sleeve_fill(
-                order_id=order["id"],
-                fill_price=fill_price,
-                filled_qty=delta_qty,
-                filled_at=filled_at,
-                broker_fill_id=broker_fill_id,
-            )
-            new_fills.append(
-                {
-                    "order_id": order["id"],
-                    "symbol": order["symbol"],
-                    "filled_qty": delta_qty,
-                    "fill_price": fill_price,
-                    "filled_at": filled_at,
-                }
-            )
+        delta_outcome = _record_new_fill_delta(order, broker_order)
+        if delta_outcome is _FILL_DELTA_DEFERRED:
+            # A broker-reported fill exists but could not be honestly priced
+            # yet -- leave the status untouched (advancing to a terminal
+            # status here would lose the fill permanently) and retry next
+            # tick.
+            continue
+        if delta_outcome is not None:
+            new_fills.append(delta_outcome)
 
         broker_status = broker_order.get("status")
         if broker_status:
             database.update_sleeve_order_status(
                 order["client_order_id"], broker_status, raw_json=json.dumps(broker_order)
             )
+
+    if new_fills:
+        # Audit 2026-07-09 #13: AC-1's cash floor is enforced at reserve time
+        # (qty x tick price), but entries are MARKET orders -- an unfavorable
+        # fill books the shortfall floor-lessly and sleeve cash goes negative
+        # with no signal anywhere (the one-sided aggregate cash check only
+        # sees OVER-claims; a negative claim is an under-claim). The recorder
+        # is the one place that knows a new fill just landed, so it owns the
+        # operator signal.
+        sleeve_row = database.get_sleeve(sleeve_id)
+        if sleeve_row:
+            state = ledger.reconstruct_from_history(
+                sleeve_row["capital_usd"], database.get_sleeve_order_history(sleeve_id)
+            )
+            if state.cash_usd < 0:
+                logger.warning(
+                    "sleeve %s cash is NEGATIVE (%.2f USD) after recording fills -- "
+                    "AC-1's allocation floor was breached by market slippage between "
+                    "the reserve-time price and the actual fill price",
+                    sleeve_id,
+                    state.cash_usd,
+                )
 
     return new_fills
 
@@ -293,6 +421,20 @@ def cancel_open_orders_for_shadow_sleeve(
     and best-effort posts a Discord alert -- this path is safety-critical: an
     operator who clicked disarm must never be left believing an order is
     cancelled when the broker actually rejected the cancel request.
+
+    Fill-safety on the cancel path (audit 2026-07-09 #4, live-observed money
+    loss; INFO-002): Alpaca accepts DELETE on a FILLED bracket parent (it
+    cancels the LEGS), so a successful cancel must NEVER be read as "the
+    order didn't fill". After every accepted DELETE this function re-polls
+    broker truth, records any fill delta, and only then writes a terminal
+    status: the broker's own status verbatim when the broker is already
+    terminal (a FILLED order stays "filled" -- its reservation resolves into
+    the position instead of releasing), or "canceled" when the broker is
+    still non-terminal (the cancel is merely propagating and no fill exists
+    as of this poll). If the post-cancel re-poll itself fails, the row is
+    left NON-terminal so the next tick's poll can still reconcile a possible
+    fill -- a blind "canceled" write here is exactly how the audit's live
+    smoke lost a real fill.
     """
     cancelled: list[dict] = []
     for order in database.get_sleeve_orders(sleeve_id=sleeve_id, limit=500):
@@ -323,6 +465,47 @@ def cancel_open_orders_for_shadow_sleeve(
             )
             continue  # broker unreachable this tick -- retry next tick
 
+        poll_result = alpaca_orders.get_order(
+            order_id=order["alpaca_order_id"],
+            live_mode=live_mode,
+            live_keys_present=live_keys_present,
+        )
+        if poll_result.error is not None or poll_result.order is None:
+            # Fail closed: the DELETE was accepted but broker truth is
+            # unknowable right now -- leave the row non-terminal so the next
+            # tick's poll reconciles any fill before a terminal status lands.
+            logger.warning(
+                "cancel_open_orders_for_shadow_sleeve: cancel accepted but "
+                "post-cancel poll failed for order %s (sleeve %s): %s -- "
+                "leaving status non-terminal for next tick's reconciliation",
+                order["alpaca_order_id"],
+                sleeve_id,
+                poll_result.error,
+            )
+            continue
+
+        broker_order = poll_result.order
+        if _record_new_fill_delta(order, broker_order) is _FILL_DELTA_DEFERRED:
+            # An unrecordable (price-less) fill exists on this order: writing
+            # ANY terminal status now would strand it forever. Leave the row
+            # non-terminal; next tick's poll re-reconciles before this
+            # cleanup sees the order again.
+            continue
+        broker_status = broker_order.get("status")
+        if broker_status in _TERMINAL_ORDER_STATUSES:
+            # Broker already reached its own verdict (e.g. "filled" before
+            # our DELETE landed) -- record it verbatim, never overwrite a
+            # fill with "canceled".
+            database.update_sleeve_order_status(
+                order["client_order_id"], broker_status, raw_json=json.dumps(broker_order)
+            )
+            if broker_status == "canceled":
+                cancelled.append(order)
+            continue
+
+        # Broker still non-terminal: the accepted DELETE is propagating and
+        # no unrecorded fill exists as of the poll above -- "canceled" is the
+        # correct terminal verdict for our books.
         database.update_sleeve_order_status(order["client_order_id"], "canceled")
         cancelled.append(order)
 
@@ -361,11 +544,17 @@ def _run_aggregate_reconciliation(
     Returns the set of sleeve_ids paused during this call.
     """
     ledger_states: dict[int, ledger.LedgerState] = {}
+    # symbol -> sleeve_ids with ANY recorded order history in it -- the
+    # reconciliation scope extension of audit #4 (review gap G1): history,
+    # not just current ledger qty, defines which symbols are "ours".
+    history_symbols: dict[str, set[int]] = {}
     for sleeve_row in sleeve_rows:
         order_history = database.get_sleeve_order_history(sleeve_row["id"])
         ledger_states[sleeve_row["id"]] = ledger.reconstruct_from_history(
             sleeve_row["capital_usd"], order_history
         )
+        for order in order_history:
+            history_symbols.setdefault(order["symbol"], set()).add(sleeve_row["id"])
 
     positions_result = alpaca_orders.get_positions(
         live_mode=live_mode, live_keys_present=live_keys_present
@@ -444,6 +633,35 @@ def _run_aggregate_reconciliation(
                 )
                 paused_ids.add(sleeve_id)
 
+    # Naked-position detection (audit #4's reconciliation-scope half, review
+    # gap G1): a broker position in a symbol some checked sleeve has ORDER
+    # history in, while NO checked sleeve's ledger currently holds it, is
+    # unexplained drift -- the audit's live residue was exactly this state
+    # (order marked canceled, zero fills recorded, ledger full-cash/flat,
+    # broker holding shares bought with sleeve cash), structurally invisible
+    # while operator float absorbed the one-sided cash check. Pause the
+    # sleeves with history in that symbol. The operator-external exemption
+    # survives untouched for symbols NO sleeve ever traded. Accepted
+    # false-positive class (ratified with this pin): an operator's own
+    # holding in a symbol a now-flat sleeve once traded will pause that
+    # sleeve -- distinguishing the two is impossible from one shared
+    # account, and pausing is the fail-closed direction.
+    for symbol, history_sleeve_ids in history_symbols.items():
+        if symbol in symbol_holders:
+            continue  # a ledger holds it -- the one-sided check above owns it
+        if not broker_positions.get(symbol):
+            continue  # broker flat too -- a legitimately closed position
+        for sleeve_id in history_sleeve_ids:
+            if sleeve_id in paused_ids:
+                continue
+            _pause_sleeve_for_aggregate_breach(
+                sleeve_id,
+                sleeve_names[sleeve_id],
+                f"naked_position:{symbol}",
+                discord_webhook_url,
+            )
+            paused_ids.add(sleeve_id)
+
     return paused_ids
 
 
@@ -454,7 +672,14 @@ def _run_aggregate_reconciliation(
 
 def _load_enabled_rules(sleeve_id: int) -> list[dict]:
     """DB rows -> the rule-dict shape sleeves.rules.runner.evaluate_rules
-    expects: each row's id/mode merged with its parsed json_doc fields."""
+    expects: each row's parsed json_doc fields merged with the ROW's own
+    id/sleeve_id/mode -- row columns are AUTHORITATIVE (audit 2026-07-09
+    CRIT #1/#2). The create route stores the operator's raw payload as
+    json_doc; sleeve_id lives only in the URL and the sleeve_rules.sleeve_id
+    column, and the row's mode is forced SHADOW at creation and changed only
+    by the arm ceremony. A doc-supplied copy of id/sleeve_id/mode is either
+    an import artifact or an attack payload and must be inert: merging the
+    doc FIRST means the row values always win."""
     rules: list[dict] = []
     for row in database.get_sleeve_rules_for_sleeve(sleeve_id):
         if not row.get("enabled"):
@@ -468,7 +693,7 @@ def _load_enabled_rules(sleeve_id: int) -> list[dict]:
                 sleeve_id,
             )
             continue
-        rules.append({"id": row["id"], "mode": row["mode"], **doc})
+        rules.append({**doc, "id": row["id"], "sleeve_id": row["sleeve_id"], "mode": row["mode"]})
     return rules
 
 
@@ -545,21 +770,31 @@ def _build_fred_cache() -> dict[str, list[dict]]:
     return fred_cache
 
 
-def _book_equity_usd(ledger_state: ledger.LedgerState) -> float:
-    """Sleeve equity from the ledger's own conservation law (capital_usd +
-    realized_pnl_usd == cash_usd + reserved_usd + sum(cost_basis_usd)) --
-    deliberately NOT a broker mark-to-market figure, so computing it needs no
-    additional broker round-trip beyond the one aggregate reconciliation
-    already performs this same tick. Unrealized gains/losses on open
-    positions are not reflected: a rule sized off this figure is sized
-    conservatively LOW when the sleeve is sitting on unrealized gains (never
-    conservatively high) -- the safe direction for a risk-sizing input.
+def _book_equity_usd(
+    ledger_state: ledger.LedgerState, closes_by_symbol: dict[str, list[float]]
+) -> float:
+    """Sleeve equity for risk sizing: cash + reservations + open positions
+    MARKED TO THE TICK'S OWN FETCHED CLOSES (audit 2026-07-09 #12).
+
+    The earlier cost-basis-only figure claimed to be "never conservatively
+    high" -- false in exactly the dangerous direction: with unrealized
+    LOSSES, cost basis EXCEEDS market value, so risk_pct sizing and the
+    max_position_pct cap both overshoot true equity precisely when the
+    sleeve is drawn down. Marking to the closes already fetched once per
+    tick fixes that with zero additional broker round-trips. A position
+    whose symbol has no closes THIS tick falls back to its cost basis --
+    the only figure available without a broker call; the fallback is
+    stale-priced, not directionally safe, which is why the daily-bar fetch
+    covers every enabled rule's symbol in the first place.
     """
-    return (
-        ledger_state.cash_usd
-        + ledger_state.reserved_usd
-        + sum(p.cost_basis_usd for p in ledger_state.positions.values())
-    )
+    equity_usd = ledger_state.cash_usd + ledger_state.reserved_usd
+    for symbol, position in ledger_state.positions.items():
+        closes = closes_by_symbol.get(symbol)
+        if closes:
+            equity_usd += position.qty * closes[-1]
+        else:
+            equity_usd += position.cost_basis_usd
+    return equity_usd
 
 
 def run_sleeve_tick_for_all_sleeves(
@@ -568,16 +803,19 @@ def run_sleeve_tick_for_all_sleeves(
     """The single entry point one engine tick calls for every managed sleeve.
 
     Per sleeve:
-      0. SHADOW-status sleeves ALSO get cancel_open_orders_for_shadow_sleeve
+      0. poll_and_apply_fills -- runs for every sleeve not already
+         PAUSED_RECONCILIATION coming into this tick, STRICTLY BEFORE the
+         SHADOW cleanup below (audit 2026-07-09 #4: cancel-before-poll
+         marked a broker-FILLED order "canceled" and lost the fill).
+      1. SHADOW-status sleeves THEN get cancel_open_orders_for_shadow_sleeve
          (AC-12 design correction -- the disarm ROUTE can never itself reach
          sleeves.alpaca_orders, so this tick is where that cancellation
          actually happens). This is an ADDITIONAL step, not a replacement
-         for step 1 below (s3-review BLOCK 1): a disarmed sleeve stays
+         for step 0 above (s3-review BLOCK 1): a disarmed sleeve stays
          SHADOW permanently until re-armed and can still hold real
          broker-side exposure, so it is not exempt from fill-polling or
-         reconciliation.
-      1. poll_and_apply_fills -- runs for every sleeve not already
-         PAUSED_RECONCILIATION coming into this tick.
+         reconciliation. A PAPER/LIVE-status sleeve is NEVER cleanup-eligible
+         -- armed sleeves keep their resting orders (audit #3).
       2. AGGREGATE reconciliation, once per tick, across every sleeve that
          is neither already-paused-coming-in nor failed step 1 above
          (grouped by resolved broker host -- see the module docstring's
@@ -605,6 +843,20 @@ def run_sleeve_tick_for_all_sleeves(
         try:
             live_mode, live_keys_present = _compute_live_gates(sleeve_row)
 
+            if sleeve_row["status"] == "PAUSED_RECONCILIATION":
+                already_paused_ids.add(sleeve_id)
+                continue
+
+            # Fill-poll STRICTLY BEFORE the SHADOW cleanup (audit 2026-07-09
+            # #4, live-observed): a fill that landed between ack and this
+            # tick must be recorded (advancing the order to its terminal
+            # broker status) before any cancel attempt can touch the order --
+            # cancel-first marked a broker-FILLED order "canceled", lost the
+            # fill forever, and released its reservation.
+            poll_and_apply_fills(
+                sleeve_id, live_mode=live_mode, live_keys_present=live_keys_present
+            )
+
             if sleeve_row["status"] == "SHADOW":
                 cancel_open_orders_for_shadow_sleeve(
                     sleeve_id,
@@ -612,14 +864,6 @@ def run_sleeve_tick_for_all_sleeves(
                     live_keys_present=live_keys_present,
                     discord_webhook_url=discord_webhook_url,
                 )
-
-            if sleeve_row["status"] == "PAUSED_RECONCILIATION":
-                already_paused_ids.add(sleeve_id)
-                continue
-
-            poll_and_apply_fills(
-                sleeve_id, live_mode=live_mode, live_keys_present=live_keys_present
-            )
         except Exception:
             logger.exception(
                 "sleeve %s tick processing failed (fill-poll phase); other sleeves unaffected",
@@ -696,6 +940,31 @@ def run_sleeve_tick_for_all_sleeves(
         )
         closes_by_symbol = {}
 
+    # Stale-rule visibility (feature-plan edge case "delisted/renamed symbol
+    # -> rule flagged stale"; AC-16's 'stale' badge): a rule whose symbol
+    # produced no bars while OTHER symbols did is durably flagged in
+    # sleeve_runtime so the panel can tell a dead rule from a quiet one; a
+    # tick where the WHOLE feed returned nothing flags nobody (a feed outage
+    # is not per-symbol staleness), and a symbol that recovers clears its
+    # flag the same way.
+    if closes_by_symbol:
+        for rules in rules_by_sleeve.values():
+            for rule in rules:
+                when = rule.get("when")
+                if not (isinstance(when, dict) and "symbol" in when):
+                    continue
+                is_stale = when["symbol"] not in closes_by_symbol
+                try:
+                    database.set_sleeve_runtime(
+                        rule["id"], STALE_NO_BARS_KEY, "1" if is_stale else "0"
+                    )
+                except Exception:
+                    logger.exception(
+                        "failed to persist stale flag for rule %s; flag stays "
+                        "as-was, evaluation unaffected",
+                        rule.get("id"),
+                    )
+
     if any(rules_by_sleeve.values()):
         try:
             fred_cache = _build_fred_cache()
@@ -730,7 +999,7 @@ def run_sleeve_tick_for_all_sleeves(
                 runner.evaluate_rules(
                     rules=rules,
                     sleeve_row=sleeve_row,
-                    sleeve_equity_usd=_book_equity_usd(ledger_state),
+                    sleeve_equity_usd=_book_equity_usd(ledger_state, closes_by_symbol),
                     now_utc=now_utc,
                     closes_by_symbol=closes_by_symbol,
                     positions=positions,

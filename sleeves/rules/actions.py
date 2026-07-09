@@ -25,6 +25,7 @@ itself persisted, only reconstructed from order/fill rows).
 from __future__ import annotations
 
 import contextlib
+import decimal
 import uuid
 from dataclasses import dataclass
 
@@ -166,10 +167,38 @@ def _place_order_with_reservation(
         database.attach_alpaca_order_id(
             client_order_id=client_order_id, alpaca_order_id=alpaca_order_id
         )
+    elif order_result.error.startswith("timeout"):
+        # INDETERMINATE, not a rejection (audit 2026-07-09 #10):
+        # sleeves/alpaca_orders.py converts requests.Timeout to a
+        # "timeout: ..." error precisely because the server may still be
+        # processing the original request -- the broker order may be LIVE.
+        # Marking the row terminal would release the cash reservation while
+        # the broker may be spending it. Resolve via the client_order_id
+        # minted above (lost-ack recovery): found -> the normal ack path,
+        # one step late; HTTP 404 -> the broker definitively never saw the
+        # order (terminal "rejected" releases the reservation -- holding
+        # cash for a proven-nonexistent order strands it forever); any
+        # other lookup outcome -> the row stays RESERVED (non-terminal,
+        # reservation held, the fail-closed direction) and the next tick's
+        # poll_and_apply_fills retries the same recovery.
+        recovery = alpaca_orders.get_order_by_client_order_id(
+            client_order_id=client_order_id,
+            live_mode=ctx.live_mode,
+            live_keys_present=ctx.live_keys_present,
+        )
+        if recovery.error is None and recovery.order:
+            database.attach_alpaca_order_id(
+                client_order_id=client_order_id,
+                alpaca_order_id=recovery.order.get("id"),
+            )
+        elif recovery.error == "HTTP 404":
+            database.update_sleeve_order_status(client_order_id=client_order_id, status="rejected")
     else:
-        # Reject and cancel are modeled identically by ledger.release() --
-        # any terminal status makes the next reconstruction release this
-        # row's unfilled reservation.
+        # Unambiguous rejection (an HTTP status the broker actually
+        # returned, or transport failure before the request ever went out
+        # after retries). Reject and cancel are modeled identically by
+        # ledger.release() -- any terminal status makes the next
+        # reconstruction release this row's unfilled reservation.
         database.update_sleeve_order_status(client_order_id=client_order_id, status="rejected")
     return order_id, order_result
 
@@ -179,7 +208,18 @@ def _dispatch_buy(action: dict, *, ctx: ActionContext, shadow: bool) -> ActionRe
     # these, each in (0, 1) -- this module trusts that shape and never
     # falls back to a default of its own (PM decision, AC-7).
     declared_stop_pct = action.get("stop_loss_pct") or action.get("trailing_stop_pct")
-    stop_price = ctx.price * (1 - declared_stop_pct)
+    # Audit 2026-07-09 #5/#19: the stop used for SIZING and the stop the
+    # broker EXECUTES must be the SAME number, or the worst-case loss at the
+    # broker's (floored) stop exceeds the declared risk budget by up to
+    # tick/stop-distance -- unbounded as stops tighten (repro: +33% on a
+    # $100 budget). Derive the stop in exact decimal arithmetic (both inputs
+    # are operator-authored short decimals; float multiplication lands 1 ulp
+    # low often enough that ROUND_FLOOR drops mathematically exact on-tick
+    # stops a full tick -- finding #19), floor it to the broker's equity
+    # tick FIRST via the single shared rounding authority, then feed the
+    # rounded value to sizing and the order submission alike.
+    exact_stop = decimal.Decimal(str(ctx.price)) * (1 - decimal.Decimal(str(declared_stop_pct)))
+    stop_price = alpaca_orders.round_to_equity_tick(exact_stop, rounding="floor")
 
     clamp_result, sizing_error = _size_and_clamp(action, ctx=ctx, side="buy", stop_price=stop_price)
     if sizing_error is not None:

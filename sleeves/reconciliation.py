@@ -152,8 +152,16 @@ def reconcile_aggregate_cash(
     cash figure beyond ``cash_tolerance_usd``. The reverse -- broker cash
     exceeding the combined claim -- is explicitly NOT a breach: unallocated
     float, or the operator's own money sharing the same account, is normal.
+
+    NaN fails CLOSED (audit 2026-07-09 #11): the check is written as
+    ``not (claim <= threshold)`` rather than ``claim > threshold`` because
+    every comparison against NaN is False -- the naive form reads garbage
+    input (e.g. a broker account body carrying cash="NaN", which ``float()``
+    parses happily) as a clean reconciliation. A money-PAUSE gate's failure
+    direction on garbage must be "pause", matching this module's own
+    broker-unreachable fail-closed convention.
     """
-    if total_sleeve_cash_claim_usd > broker_cash_usd + cash_tolerance_usd:
+    if not (total_sleeve_cash_claim_usd <= broker_cash_usd + cash_tolerance_usd):
         return ReconciliationResult(
             ok=False, verdict=_PAUSED, breaches=["aggregate_cash_exceeds_account"]
         )
@@ -178,8 +186,11 @@ def reconcile_aggregate_position(
     design. A sleeve claim against a broker qty of exactly zero always
     breaches when the claim is nonzero (there is no meaningful percentage of
     zero, mirroring reconcile_positions' missing_position semantics).
+
+    NaN fails CLOSED (audit 2026-07-09 #11) -- same ``not (claim <= ...)``
+    construction and rationale as reconcile_aggregate_cash above.
     """
-    if total_sleeve_qty > broker_qty * (1.0 + position_tolerance_pct):
+    if not (total_sleeve_qty <= broker_qty * (1.0 + position_tolerance_pct)):
         return ReconciliationResult(
             ok=False,
             verdict=_PAUSED,

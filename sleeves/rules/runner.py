@@ -30,6 +30,12 @@ import sleeves.rules.senses as senses
 _ET = ZoneInfo("America/New_York")
 _UTC = ZoneInfo("UTC")
 
+# Sleeve statuses under which an armed rule may actually dispatch armed --
+# the sleeve-level key of the two-key gate below. (LIVE additionally needs
+# the AC-14 env gates to resolve a live host; that is host selection, not
+# armed-vs-shadow.)
+_ARMED_SLEEVE_STATUSES = ("PAPER", "LIVE")
+
 
 @dataclass(frozen=True)
 class FireOutcome:
@@ -113,8 +119,28 @@ def _evaluate_one_rule(
             rule["id"], rule_class or "", False, eval_result.reason, sensed_snapshot, (), ()
         )
 
+    # AC-11 churn brake -- ENTRY rules only, checked before pacing so a
+    # benched rule neither latches an episode nor records a fire. DEFENSIVE
+    # (and unclassifiable) rules never route here: exits are never benched
+    # (AC-10/AC-11) -- insurance must not be silenced by its own cost.
+    if rule_class == schema.RULE_CLASS_ENTRY and eval_result.fireable:
+        bench_reason = limits.check_and_engage_churn_brake(
+            rule_id=rule["id"],
+            sleeve_id=rule["sleeve_id"],
+            now_utc=now_utc,
+            capital_usd=sleeve_row["capital_usd"],
+            discord_webhook_url=discord_webhook_url,
+        )
+        if bench_reason is not None:
+            return FireOutcome(
+                rule["id"], rule_class or "", False, bench_reason, sensed_snapshot, (), ()
+            )
+
     limits_doc = rule.get("limits") or {}
     rule_market_open = market_open if limits_doc.get("market_hours_only", True) else True
+    # Snapshot BEFORE the pacing check so a dispatch crash that produced
+    # nothing can compensate the consumed episode (audit 2026-07-09 #9).
+    pacing_snapshot = limits.snapshot_pacing_state(rule["id"])
     pacing_result = limits.check_and_advance_pacing(
         rule_id=rule["id"],
         now_utc=now_utc,
@@ -144,41 +170,64 @@ def _evaluate_one_rule(
         live_keys_present=live_keys_present,
         discord_webhook_url=discord_webhook_url,
     )
-    shadow = rule["mode"] == "SHADOW"
+    # Two-key armed-dispatch gate (ratified defense-in-depth, 2026-07-09):
+    # an armed dispatch requires the RULE mode (arm ceremony) AND the SLEEVE
+    # status (route promotion) to agree. A drift state -- a PAPER/LIVE rule
+    # inside a SHADOW-status sleeve, unreachable via routes but seedable by
+    # DB drift -- fails toward shadow: evaluate, record, place nothing.
+    # Placing an order there is exactly the audit #3/#4 money-loser (step-0
+    # cleanup cancels the armed sleeve's own orders every tick).
+    sleeve_armed = sleeve_row.get("status") in _ARMED_SLEEVE_STATUSES
+    shadow = rule["mode"] == "SHADOW" or not sleeve_armed
     fired_at = now_utc.astimezone(_UTC).strftime("%Y-%m-%d %H:%M:%S")
 
     action_results: list[actions.ActionResult] = []
     fire_ids: list[int] = []
-    for action in rule["then"]:
-        action_result = actions.dispatch_action(action, ctx=action_ctx, shadow=shadow)
-        action_results.append(action_result)
+    try:
+        for action in rule["then"]:
+            action_result = actions.dispatch_action(action, ctx=action_ctx, shadow=shadow)
+            action_results.append(action_result)
 
-        outcome_dict = {
-            "would_have_qty": action_result.would_have_qty,
-            "would_have_notional_usd": action_result.would_have_notional_usd,
-            "executed": action_result.executed,
-            "refused_reason": action_result.refused_reason,
-            "order": action_result.order_result.order if action_result.order_result else None,
-            "order_error": action_result.order_result.error if action_result.order_result else None,
-        }
-        clamp = action_result.clamp
-        fire_id = database.insert_sleeve_rule_fire(
-            rule_id=rule["id"],
-            sleeve_id=rule["sleeve_id"],
-            action=action["type"],
-            rule_class=rule_class or "",
-            mode_at_fire=rule["mode"],
-            sensed_snapshot_json=json.dumps(sensed_snapshot),
-            outcome_json=json.dumps(outcome_dict),
-            clamped=bool(clamp.clamped) if clamp else False,
-            clamp_reason=clamp.reason if clamp else None,
-            episode_id=pacing_result.episode_id,
-            # AC-19: an armed, executed action's real sleeve_orders.id
-            # (None for shadow / refused / no-order actions).
-            order_id=action_result.order_id,
-            fired_at=fired_at,
-        )
-        fire_ids.append(fire_id)
+            outcome_dict = {
+                "would_have_qty": action_result.would_have_qty,
+                "would_have_notional_usd": action_result.would_have_notional_usd,
+                "executed": action_result.executed,
+                "refused_reason": action_result.refused_reason,
+                "order": action_result.order_result.order if action_result.order_result else None,
+                "order_error": (
+                    action_result.order_result.error if action_result.order_result else None
+                ),
+            }
+            clamp = action_result.clamp
+            fire_id = database.insert_sleeve_rule_fire(
+                rule_id=rule["id"],
+                sleeve_id=rule["sleeve_id"],
+                action=action["type"],
+                rule_class=rule_class or "",
+                mode_at_fire=rule["mode"],
+                sensed_snapshot_json=json.dumps(sensed_snapshot),
+                outcome_json=json.dumps(outcome_dict),
+                clamped=bool(clamp.clamped) if clamp else False,
+                clamp_reason=clamp.reason if clamp else None,
+                episode_id=pacing_result.episode_id,
+                # AC-19: an armed, executed action's real sleeve_orders.id
+                # (None for shadow / refused / no-order actions).
+                order_id=action_result.order_id,
+                fired_at=fired_at,
+            )
+            fire_ids.append(fire_id)
+    except Exception:
+        # Audit 2026-07-09 #9: the pacing episode was latched above, BEFORE
+        # dispatch -- a crash here with a still-true condition would silence
+        # the rule permanently (rearm needs consecutive FALSE ticks).
+        # Compensate ONLY when the crashed tick produced nothing at all: no
+        # fire row recorded AND no broker order placed. If any order landed,
+        # the episode was genuinely consumed -- restoring it would re-fire
+        # next tick and double the order, a worse failure than one lost
+        # episode.
+        if not fire_ids and not any(r.order_id is not None for r in action_results):
+            limits.restore_pacing_state(rule["id"], pacing_snapshot)
+        raise
 
     return FireOutcome(
         rule["id"],

@@ -239,8 +239,8 @@ def _request_with_retry(
 # ---------------------------------------------------------------------------
 
 
-def _round_to_equity_tick(price: float, *, rounding: str) -> float:
-    """Round one bracket-leg price to Alpaca's equity tick size (2 decimals
+def round_to_equity_tick(price: float | decimal.Decimal, *, rounding: str) -> float:
+    """Round one order-leg price to Alpaca's equity tick size (2 decimals
     at/above $1.00, 4 decimals below -- see the module-level constants above
     for provenance).
 
@@ -256,6 +256,15 @@ def _round_to_equity_tick(price: float, *, rounding: str) -> float:
     Constructing the Decimal from ``str(price)`` (not the float directly)
     preserves the decimal value the caller intended rather than its binary
     floating-point representation.
+
+    PUBLIC (audit 2026-07-09 #5/#19): sleeves/rules/actions.py must size a
+    buy against the SAME rounded stop the broker will execute, so the tick
+    logic is exposed here -- one rounding authority, never a second copy of
+    the tick constants. A caller carrying exact decimal arithmetic (e.g. a
+    stop derived as Decimal(price) * (1 - Decimal(pct)), which avoids the
+    float-ulp error that made ROUND_FLOOR drop mathematically exact on-tick
+    stops a full tick -- finding #19) passes the Decimal straight through:
+    ``str()`` of a Decimal round-trips exactly.
     """
     decimals = (
         _EQUITY_TICK_HIGH_PRICE_DECIMALS
@@ -294,15 +303,19 @@ def submit_bracket_order(
 
     Both leg prices are rounded to Alpaca's equity tick size before
     submission (done-bar fix, 2026-07-08): an unrounded sub-penny price
-    (e.g. from risk-sizing math) is rejected by Alpaca with HTTP 422. This
-    is the only rounding point -- sleeves/rules/actions.py's own price math
-    stays pure/unrounded. stop_loss floors (never tightens the protective
-    stop closer to entry than intended); take_profit rounds to nearest.
+    is rejected by Alpaca with HTTP 422. The rounding here is a boundary
+    guarantee (nothing sub-tick ever reaches the wire); since the #5/#19
+    audit fix, sleeves/rules/actions.py ALSO pre-rounds the stop it sizes
+    against via the shared round_to_equity_tick, so for the stop leg this
+    call is an idempotent re-application of the same quantization -- never
+    a second, different number. stop_loss floors (never tightens the
+    protective stop closer to entry than intended); take_profit rounds to
+    nearest.
     """
     host = resolve_host(live_mode=live_mode, live_keys_present=live_keys_present)
     url = f"{host}/v2/orders"
-    rounded_take_profit_price = _round_to_equity_tick(take_profit_price, rounding="nearest")
-    rounded_stop_loss_price = _round_to_equity_tick(stop_loss_price, rounding="floor")
+    rounded_take_profit_price = round_to_equity_tick(take_profit_price, rounding="nearest")
+    rounded_stop_loss_price = round_to_equity_tick(stop_loss_price, rounding="floor")
     body = {
         "symbol": symbol,
         "qty": str(qty),
