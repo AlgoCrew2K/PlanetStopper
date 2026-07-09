@@ -143,12 +143,14 @@ def regenerate_file(
     trading_day = report.get("date") or os.path.basename(report_path)[len("post_mortem_") : -5]
     changes: list[dict] = []
     unresolved: list[str] = []
+    positive_count = 0
 
     for entry in report.get("triggers", []):
         key = (entry.get("symphony_name"), entry.get("account_id"))
         sym_id = name_map.get(key)
         if sym_id is None:
             unresolved.append(f"{trading_day}: no symphony_id for (name, account) {key!r}")
+            positive_count += 1 if entry.get("saved_pct_guard_alpha", 0) > 0 else 0
             continue
 
         if_held = true_if_held(db_path, sym_id, trading_day)
@@ -157,6 +159,7 @@ def regenerate_file(
                 f"{trading_day}: {sym_id} ({entry.get('symphony_name')}) has no finite "
                 f"shadow_history row at cutoff {SNAPSHOT_CUTOFF_ET}"
             )
+            positive_count += 1 if entry.get("saved_pct_guard_alpha", 0) > 0 else 0
             continue
 
         exit_return = entry.get("exit_return", 0.0)
@@ -165,6 +168,10 @@ def regenerate_file(
         # points, dollars from the unrounded pct, positive-only value guard.
         saved_pct = exit_return - if_held
         saved_dollars = sym_val * (saved_pct / 100.0) if sym_val > 0 else 0.0
+        # Classify win/loss from the UNROUNDED saved_pct, matching Stage-1
+        # (reporting.py counts saved_pct > 0 before rounding) — counting the
+        # stored rounded field would flip entries with 0 < saved_pct < 0.005.
+        positive_count += 1 if saved_pct > 0 else 0
 
         old = {
             "shadow_return": entry.get("shadow_return"),
@@ -188,11 +195,12 @@ def regenerate_file(
                 }
             )
 
-    # Producer semantic (reporting.py Stage 1 + Stage 2): count of entries
-    # with positive guard alpha, from the per-entry saved_pct field.
-    report["summary"]["positive_guard_alpha_count"] = sum(
-        1 for t in report.get("triggers", []) if t.get("saved_pct_guard_alpha", 0) > 0
-    )
+    # Producer semantic (reporting.py Stage 1): count of entries whose UNROUNDED
+    # recomputed saved_pct is positive (pf-review finding 3 — the rounded stored
+    # field misclassifies 0 < saved_pct < 0.005). Unresolved/unmapped entries
+    # contribute their stored classification (best available; --apply refuses on
+    # any unresolved anyway).
+    report["summary"]["positive_guard_alpha_count"] = positive_count
     if changes:
         report["regenerated"] = {
             "at_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
