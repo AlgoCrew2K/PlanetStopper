@@ -10,8 +10,13 @@ import sqlite3
 import sys
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo
+
+# Eastern (XNYS) calendar zone for trading-day <-> stored-UTC conversions
+# (see get_fire_count_for_rule_on_day).
+_ET_ZONE = ZoneInfo("America/New_York")
 
 
 def _finite_or_none(x):
@@ -4036,6 +4041,24 @@ def get_sleeve_rule_fires(
     return [dict(zip(_SLEEVE_RULE_FIRE_COLUMNS, row)) for row in rows]
 
 
+def get_sleeve_rule_fire_count(rule_id: int) -> int:
+    """Ground-truth COUNT(*) of one rule's lifetime sleeve_rule_fires rows --
+    the panel/digest "lifetime" figure. Exists because rendering
+    len(get_sleeve_rule_fires(...)) silently caps the figure at that
+    accessor's default limit=100 (audit finding #14); a count must never be
+    derived from a limited row fetch.
+    """
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM sleeve_rule_fires WHERE rule_id = ?",
+            (rule_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row[0])
+
+
 def get_fire_count_for_rule_on_day(rule_id: int, trading_day: str) -> int:
     """Return the count of sleeve_rule_fires rows for one rule on trading_day
     ('YYYY-MM-DD'), a ground-truth fire count for the dashboard panel's
@@ -4045,18 +4068,26 @@ def get_fire_count_for_rule_on_day(rule_id: int, trading_day: str) -> int:
     accessor is a cross-check, not the runner's live pacing gate).
 
     trading_day is caller-supplied (the runner computes it via
-    market_calendar.py, XNYS calendar) -- this accessor never derives "today"
-    from naive UTC/local date, matching get_daily_turnover_usd's contract.
-    Counts every fire regardless of action/outcome -- a rule that fired and
-    was clamped-to-zero or rejected still counts; callers that need an
-    entries-only or exits-only count should filter on `action` at the
-    application layer.
+    market_calendar.py, XNYS calendar) and is an EASTERN (America/New_York)
+    calendar day; fired_at is stored UTC (runner.py + the schema DEFAULT), so
+    the count spans the ET day's exact UTC instant window
+    [00:00 ET, next 00:00 ET) -- DST-correct via zoneinfo, matching the
+    stored "%Y-%m-%d %H:%M:%S" format lexicographically. Comparing the raw
+    UTC date prefix against an ET day misattributes evening fires to the
+    next day (audit finding #15). Counts every fire regardless of
+    action/outcome -- a rule that fired and was clamped-to-zero or rejected
+    still counts; callers that need an entries-only or exits-only count
+    should filter on `action` at the application layer.
     """
+    day_start_et = datetime.strptime(trading_day, "%Y-%m-%d").replace(tzinfo=_ET_ZONE)
+    start_utc = day_start_et.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    end_utc = (day_start_et + timedelta(days=1)).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_ro_connection()
     try:
         row = conn.execute(
-            "SELECT COUNT(*) FROM sleeve_rule_fires WHERE rule_id = ? AND date(fired_at) = ?",
-            (rule_id, trading_day),
+            "SELECT COUNT(*) FROM sleeve_rule_fires "
+            "WHERE rule_id = ? AND fired_at >= ? AND fired_at < ?",
+            (rule_id, start_utc, end_utc),
         ).fetchone()
     finally:
         conn.close()

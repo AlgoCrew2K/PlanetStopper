@@ -961,13 +961,23 @@ def _build_sleeves_panel_context() -> list[dict]:
         rules_panel = []
         for rule in rule_rows:
             rule_id = rule.get("id")
+            # COUNT accessors, never len(limited rows): the fires accessor's
+            # default limit=100 silently capped "lifetime" (audit #14), and
+            # prefix-comparing the ET day against UTC-stored fired_at
+            # misattributed evening fires (audit #15 -- the day accessor
+            # converts the ET day to its exact UTC window).
             try:
-                fires = (
-                    database.get_sleeve_rule_fires(rule_id=rule_id) if rule_id is not None else []
+                lifetime_fires = (
+                    database.get_sleeve_rule_fire_count(rule_id) if rule_id is not None else 0
+                )
+                today_fires = (
+                    database.get_fire_count_for_rule_on_day(rule_id, today_str)
+                    if rule_id is not None
+                    else 0
                 )
             except Exception:
-                fires = []
-            today_fires = sum(1 for f in fires if str(f.get("fired_at", "")).startswith(today_str))
+                lifetime_fires = 0
+                today_fires = 0
 
             rule_realized_pnl = (
                 realized_by_rule.get(rule_id, 0.0) if realized_by_rule is not None else None
@@ -979,7 +989,7 @@ def _build_sleeves_panel_context() -> list[dict]:
                     "name": rule.get("name", ""),
                     "mode": rule.get("mode", ""),
                     "today_fires": today_fires,
-                    "lifetime_fires": len(fires),
+                    "lifetime_fires": lifetime_fires,
                     "realized_pnl_usd": rule_realized_pnl,
                 }
             )
