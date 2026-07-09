@@ -295,3 +295,83 @@ class TestFullLadderEndToEnd:
             f"{final_status!r} — the audit's live smoke lost a real filled "
             f"bracket to exactly this cancellation"
         )
+
+
+class TestArmRouteGuards:
+    """Ratified interface pins (sf-dash <-> sf-test, 2026-07-09): the
+    promotion in the arm route is guarded — it only ever lifts a SHADOW
+    sleeve. Neither guard may regress."""
+
+    def test_arm_while_paused_reconciliation_returns_conflict_and_mutates_nothing(self, client):
+        """PAUSED_RECONCILIATION is a money-truth pause — arming a rule must
+        never silently clear it (promotion would re-enable rule evaluation
+        while the drift that paused the sleeve is uninvestigated)."""
+        sleeve_id = create_sleeve_via_route(client)
+        rule_id = create_rule_via_route(client, sleeve_id, valid_route_rule_payload())
+        _seed_shadow_fire(rule_id, sleeve_id)
+        database.update_sleeve_status(sleeve_id, "PAUSED_RECONCILIATION")
+
+        resp = _arm(client, sleeve_id, rule_id)
+
+        assert resp.status_code == 409, (
+            f"arming inside a PAUSED_RECONCILIATION sleeve must be refused "
+            f"with 409; got {resp.status_code} — a successful arm here would "
+            f"silently clear a money-truth pause"
+        )
+        assert database.get_sleeve(sleeve_id)["status"] == "PAUSED_RECONCILIATION", (
+            "the pause must survive the refused arm untouched"
+        )
+        assert database.get_sleeve_rule(rule_id)["mode"] == "SHADOW", (
+            "the rule must stay SHADOW after the refused arm"
+        )
+
+    def test_arming_a_rule_in_a_live_sleeve_never_demotes_sleeve_status(self, client):
+        """Promotion lifts SHADOW->PAPER only: a LIVE sleeve gaining a newly
+        paper-armed rule keeps its LIVE status (writing PAPER over LIVE would
+        demote the whole sleeve as a side effect of a rule-level action)."""
+        sleeve_id = create_sleeve_via_route(client)
+        rule_id = create_rule_via_route(client, sleeve_id, valid_route_rule_payload())
+        _seed_shadow_fire(rule_id, sleeve_id)
+        database.update_sleeve_status(sleeve_id, "LIVE")
+
+        resp = _arm(client, sleeve_id, rule_id)
+
+        assert resp.status_code == 200
+        assert database.get_sleeve_rule(rule_id)["mode"] == "PAPER"
+        assert database.get_sleeve(sleeve_id)["status"] == "LIVE", (
+            "arm must never DEMOTE a LIVE sleeve to PAPER — promotion is strictly SHADOW->PAPER"
+        )
+
+
+class TestTwoKeyArmedDispatchGate:
+    """Ratified defense-in-depth pin (sf-eng proposal, sf-test ratified,
+    2026-07-09 — flagged to PM): the armed order path requires BOTH keys to
+    agree — rule mode PAPER/LIVE AND sleeve status PAPER/LIVE. A DB-drift
+    state (paper rule inside a SHADOW-status sleeve — unreachable via routes
+    after the promotion fix, but exactly the state audit #3/#4 lost money in)
+    fails toward shadow: evaluate, record, place NOTHING."""
+
+    def test_paper_rule_in_shadow_status_sleeve_places_no_order(self, client):
+        sleeve_id = create_sleeve_via_route(client)
+        rule_id = create_rule_via_route(client, sleeve_id, valid_route_rule_payload())
+        # Seed the drift state directly: rule armed, sleeve NOT promoted.
+        database.update_sleeve_rule_mode(rule_id, "PAPER")
+        assert database.get_sleeve(sleeve_id)["status"] == "SHADOW", (
+            "fixture sanity: the sleeve status must be the stale SHADOW side of the drift"
+        )
+
+        with tick_patches(
+            account_cash_usd=10_000.0,
+            closes_by_symbol={"SPY": 500.0},
+            submit_bracket_result=alpaca_orders.OrderResult(order=None, error="HTTP 500"),
+        ) as mocks:
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=MARKET_OPEN_NOW_UTC)
+
+        mocks["submit_bracket_order"].assert_not_called()
+        assert database.get_sleeve_orders(sleeve_id=sleeve_id) == [], (
+            "a PAPER-mode rule inside a SHADOW-status sleeve is an "
+            "inconsistent two-key state and must fail toward shadow (no "
+            "broker order) — placing an order here recreates the audit's "
+            "cancel-the-armed-order money-loser the moment step-0 cleanup "
+            "runs"
+        )

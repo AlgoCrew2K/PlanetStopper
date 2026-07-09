@@ -130,10 +130,21 @@ class TestSubmitTimeoutIsIndeterminate:
         outcome must stay NON-terminal (recoverable via the minted
         client_order_id) until broker truth resolves it."""
         ctx = self._armed_buy_ctx()
-        with patch.object(
-            alpaca_orders,
-            "submit_bracket_order",
-            return_value=alpaca_orders.OrderResult(order=None, error="timeout: Timeout"),
+        with (
+            patch.object(
+                alpaca_orders,
+                "submit_bracket_order",
+                return_value=alpaca_orders.OrderResult(order=None, error="timeout: Timeout"),
+            ),
+            # The lost-ack recovery lookup ALSO fails (broker unreachable) —
+            # the most ambiguous outcome, and the one that must fail closed.
+            patch.object(
+                alpaca_orders,
+                "get_order_by_client_order_id",
+                return_value=alpaca_orders.OrderResult(
+                    order=None, error="transport error: ConnectionError"
+                ),
+            ),
         ):
             actions.dispatch_action(self._BUY_ACTION, ctx=ctx, shadow=False)
 
@@ -174,6 +185,120 @@ class TestSubmitTimeoutIsIndeterminate:
             ctx.capital_usd, database.get_sleeve_order_history(ctx.sleeve_id)
         )
         assert state.reserved_usd == pytest.approx(0.0, abs=1e-6)
+
+    def test_timeout_with_successful_lostack_recovery_attaches_the_broker_order(self):
+        """Ratified recovery contract (sf-eng plan, 2026-07-09): when the
+        submit response is lost but the by-client-order-id lookup finds the
+        broker's order, the row proceeds down the normal ack path — broker
+        order id attached, non-terminal, reservation held."""
+        ctx = self._armed_buy_ctx()
+        recovered = dict(load_order_fixture("bracket_new.json"))
+        with (
+            patch.object(
+                alpaca_orders,
+                "submit_bracket_order",
+                return_value=alpaca_orders.OrderResult(order=None, error="timeout: Timeout"),
+            ),
+            patch.object(
+                alpaca_orders,
+                "get_order_by_client_order_id",
+                return_value=alpaca_orders.OrderResult(order=recovered, error=None),
+            ),
+        ):
+            actions.dispatch_action(self._BUY_ACTION, ctx=ctx, shadow=False)
+
+        orders = database.get_sleeve_orders(sleeve_id=ctx.sleeve_id)
+        assert len(orders) == 1
+        assert orders[0]["alpaca_order_id"] == recovered["id"], (
+            "the recovered broker order id must be attached to the RESERVED "
+            "row (lost-ack recovery = the normal ack path, one step late)"
+        )
+        assert orders[0]["status"] not in ("rejected", "canceled"), (
+            "a recovered live order is not terminal"
+        )
+        state = ledger.reconstruct_from_history(
+            ctx.capital_usd, database.get_sleeve_order_history(ctx.sleeve_id)
+        )
+        assert state.reserved_usd == pytest.approx(2 * ctx.price, abs=1e-6), (
+            "the reservation backs a now-confirmed-live broker order"
+        )
+
+    def test_timeout_with_definitive_404_marks_rejected_and_releases(self):
+        """The lookup answering HTTP 404 is DEFINITIVE: the broker never saw
+        the client_order_id, the order does not exist — terminal 'rejected'
+        and the reservation released (holding cash for a proven-nonexistent
+        order would strand it forever)."""
+        ctx = self._armed_buy_ctx()
+        with (
+            patch.object(
+                alpaca_orders,
+                "submit_bracket_order",
+                return_value=alpaca_orders.OrderResult(order=None, error="timeout: Timeout"),
+            ),
+            patch.object(
+                alpaca_orders,
+                "get_order_by_client_order_id",
+                return_value=alpaca_orders.OrderResult(order=None, error="HTTP 404"),
+            ),
+        ):
+            actions.dispatch_action(self._BUY_ACTION, ctx=ctx, shadow=False)
+
+        orders = database.get_sleeve_orders(sleeve_id=ctx.sleeve_id)
+        assert len(orders) == 1
+        assert orders[0]["status"] == "rejected", (
+            "404 on the client-order-id lookup proves the order never "
+            "reached the broker — the row is terminally rejected"
+        )
+        state = ledger.reconstruct_from_history(
+            ctx.capital_usd, database.get_sleeve_order_history(ctx.sleeve_id)
+        )
+        assert state.reserved_usd == pytest.approx(0.0, abs=1e-6)
+
+    def test_poll_recovers_a_stuck_reserved_row_with_no_broker_order_id(self):
+        """The tail of the indeterminate branch: a RESERVED row whose
+        alpaca_order_id is still NULL (dispatch-time recovery also failed)
+        would hold its cash reservation FOREVER — poll_and_apply_fills must
+        attempt the client-order-id lookup for such rows instead of skipping
+        them unconditionally."""
+        capital_usd = 10_000.0
+        sleeve_id = database.create_sleeve(
+            f"stuck-reserved-{uuid.uuid4().hex}", capital_usd, envelope_json="{}"
+        )
+        recovered = dict(load_order_fixture("bracket_new.json"))
+        client_order_id = f"stuck-{uuid.uuid4().hex}"
+        database.insert_sleeve_order(
+            client_order_id=client_order_id,
+            sleeve_id=sleeve_id,
+            symbol=recovered["symbol"],
+            side=recovered["side"],
+            qty=float(recovered["qty"]),
+            order_class=recovered["order_class"],
+            status="RESERVED",
+            reserved_price=500.0,
+            # alpaca_order_id deliberately NULL — the stuck state.
+        )
+
+        with (
+            patch.object(
+                alpaca_orders,
+                "get_order_by_client_order_id",
+                return_value=alpaca_orders.OrderResult(order=recovered, error=None),
+            ),
+            patch.object(
+                alpaca_orders,
+                "get_order",
+                return_value=alpaca_orders.OrderResult(order=recovered, error=None),
+            ),
+        ):
+            tick_orchestrator.poll_and_apply_fills(sleeve_id)
+
+        row = database.get_sleeve_order_by_client_id(client_order_id)
+        assert row["alpaca_order_id"] == recovered["id"], (
+            "the poll must recover a NULL-broker-id RESERVED row via its "
+            "client_order_id — otherwise the row (and its cash reservation) "
+            "is stuck forever, invisible to every later tick (audit #10's "
+            "second half, ratified with sf-eng)"
+        )
 
 
 class TestNaNFailsClosed:

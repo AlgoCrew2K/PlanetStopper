@@ -285,3 +285,54 @@ class TestStaleRuleVisibility:
             "stale — staleness is per-symbol truth, not a blanket state"
         )
         assert healthy_entry["status_badge_class"] != badge_map["stale"]
+
+
+class TestChurnBrakeIsConjunctive:
+    def test_five_profitable_round_trips_never_bench(self, client):
+        """AC-11's trigger is '>=5 same-day round trips AT A MEANINGFUL NET
+        LOSS' — conjunctive. High-frequency WINNING turnover is not churn;
+        benching it would silence a working rule. (The exact loss threshold
+        is GREEN's named constant, PM-ratified separately — this pin only
+        forbids benching on trip COUNT alone.)"""
+        sleeve_id = create_sleeve_via_route(client, capital_usd=_CAPITAL_USD)
+        rule_id = create_rule_via_route(client, sleeve_id, valid_route_rule_payload())
+
+        # Same 5-trip cadence as the losing seeds, but each trip PROFITS
+        # (sell above buy) — net +5% of capital on the day.
+        profit_sell_price = _BUY_PRICE + (_BUY_PRICE - _SELL_PRICE)
+        for trip in range(_TRIPS):
+            for side, price in (("buy", _BUY_PRICE), ("sell", profit_sell_price)):
+                client_order_id = f"churn-win-{rule_id}-{trip}-{side}-{uuid.uuid4().hex[:8]}"
+                filled_at = (
+                    MARKET_OPEN_NOW_UTC
+                    - timedelta(minutes=60 - trip * 10 - (5 if side == "sell" else 0))
+                ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                order_pk = database.insert_sleeve_order(
+                    client_order_id=client_order_id,
+                    sleeve_id=sleeve_id,
+                    rule_id=rule_id,
+                    symbol="SPY",
+                    side=side,
+                    qty=_TRIP_QTY,
+                    status="filled",
+                    reserved_price=price if side == "buy" else None,
+                )
+                database.insert_sleeve_fill(
+                    order_id=order_pk,
+                    fill_price=price,
+                    filled_qty=_TRIP_QTY,
+                    filled_at=filled_at,
+                )
+
+        net_gain = _TRIPS * _TRIP_QTY * (profit_sell_price - _BUY_PRICE)
+        with tick_patches(
+            account_cash_usd=_CAPITAL_USD + net_gain, closes_by_symbol={"SPY": 500.0}
+        ):
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=MARKET_OPEN_NOW_UTC)
+
+        assert database.get_sleeve_rule_fires(rule_id=rule_id), (
+            f"an ENTRY rule with {_TRIPS} same-day round trips at a NET GAIN "
+            f"of ${net_gain:+.2f} must NOT be benched — AC-11's condition is "
+            f"conjunctive (trips AND meaningful loss); benching on turnover "
+            f"alone silences a working rule"
+        )

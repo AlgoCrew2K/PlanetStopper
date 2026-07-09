@@ -171,3 +171,79 @@ class TestDeltaFillPricing:
             f"broker's cumulative spend; anything else surfaces as phantom "
             f"aggregate-cash drift (false group pause) or hidden P&L error"
         )
+
+
+class TestMissingAvgPriceNeverPoisonsTheLedger:
+    def test_fill_with_null_avg_price_is_deferred_not_booked_at_zero(self):
+        """Ratified edge pin (sf-eng proposal, 2026-07-09): a broker snapshot
+        reporting filled_qty > 0 with filled_avg_price still null (Alpaca
+        propagation lag) currently books a fill at price 0.0 — which later
+        CRASHES ledger reconstruction (price <= 0 rejected) for every
+        consumer of this sleeve's history, forever. Contract: defer — record
+        nothing for that order this tick, do NOT advance it to a terminal
+        status (a terminal row is never re-polled, so its fill would be lost
+        permanently), and retry next poll."""
+        capital_usd = 10_000.0
+        sleeve_id = database.create_sleeve(
+            f"nullavg-{uuid.uuid4().hex}", capital_usd, envelope_json="{}"
+        )
+
+        base = load_order_fixture("bracket_partial_fill.json")
+        laggy = dict(base)
+        laggy["filled_qty"] = "4"
+        laggy["filled_avg_price"] = None  # broker propagation lag
+        assert not validate_alpaca_order_shape(laggy), (
+            "fixture sanity: null filled_avg_price is a valid Alpaca Order "
+            "shape (bracket_new.json ships exactly that)"
+        )
+
+        client_order_id = f"nullavg-{uuid.uuid4().hex}"
+        order_pk = database.insert_sleeve_order(
+            client_order_id=client_order_id,
+            sleeve_id=sleeve_id,
+            symbol=laggy["symbol"],
+            side=laggy["side"],
+            qty=float(laggy["qty"]),
+            order_class=laggy["order_class"],
+            status="accepted",
+            reserved_price=500.0,
+        )
+        database.attach_alpaca_order_id(client_order_id, laggy["id"])
+
+        with patch.object(
+            alpaca_orders,
+            "get_order",
+            return_value=alpaca_orders.OrderResult(order=laggy, error=None),
+        ):
+            tick_orchestrator.poll_and_apply_fills(sleeve_id)
+
+        fills = database.get_fills_for_order(order_pk)
+        assert all(f["fill_price"] > 0 for f in fills), (
+            "a 0.0-price fill row is poison — every later "
+            "reconstruct_from_history call raises on it (price <= 0), "
+            "killing panel, reconciliation, and P&L for this sleeve forever"
+        )
+        assert fills == [], (
+            "with no honest price available, no fill may be recorded this "
+            "tick — the delta stays pending for the next poll"
+        )
+        row = database.get_sleeve_order_by_client_id(client_order_id)
+        assert row["status"] not in (
+            "filled",
+            "canceled",
+            "expired",
+            "replaced",
+            "done_for_day",
+            "rejected",
+        ), (
+            f"the row must stay NON-terminal while its broker-reported fill "
+            f"is unrecorded (got {row['status']!r}) — a terminal row is "
+            f"never re-polled, so advancing it here loses the fill "
+            f"permanently"
+        )
+
+        # The ledger must still fold cleanly (nothing poisoned).
+        state = ledger.reconstruct_from_history(
+            capital_usd, database.get_sleeve_order_history(sleeve_id)
+        )
+        assert state.capital_usd == capital_usd

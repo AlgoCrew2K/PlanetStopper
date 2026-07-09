@@ -698,6 +698,14 @@ class TestAggregateSharedAccountReconciliation:
 
 class TestCancelOpenOrdersForShadowSleeve:
     def test_open_order_on_a_shadow_sleeve_is_cancelled(self):
+        """Re-pointed 2026-07-09 (fill-safe cancel contract, audit #4): after
+        an accepted DELETE the orchestrator re-polls broker truth before
+        writing any terminal status — a filled parent must never be
+        blind-marked "canceled" (tests/sleeves/test_fill_poll_before_cancel.py
+        pins the money side). This happy-path test therefore supplies the
+        broker's own canceled, zero-fill truth via get_order; the original
+        version mocked only cancel_order and pinned the superseded
+        blind-"canceled" write."""
         sleeve_id = _make_sleeve()
         assert database.get_sleeve(sleeve_id)["status"] == "SHADOW", (
             "fixture sanity: a freshly created sleeve starts SHADOW"
@@ -715,11 +723,22 @@ class TestCancelOpenOrdersForShadowSleeve:
         )
         database.attach_alpaca_order_id(client_order_id, "alpaca-cancel-test-id-1")
 
-        with patch.object(
-            alpaca_orders,
-            "cancel_order",
-            return_value=alpaca_orders.OrderResult(order={"status": "canceled"}, error=None),
-        ) as mock_cancel:
+        canceled_unfilled = dict(load_order_fixture("bracket_canceled.json"))
+        canceled_unfilled["filled_qty"] = "0"
+        canceled_unfilled["filled_avg_price"] = None
+
+        with (
+            patch.object(
+                alpaca_orders,
+                "cancel_order",
+                return_value=alpaca_orders.OrderResult(order={"status": "canceled"}, error=None),
+            ) as mock_cancel,
+            patch.object(
+                alpaca_orders,
+                "get_order",
+                return_value=alpaca_orders.OrderResult(order=canceled_unfilled, error=None),
+            ),
+        ):
             cancelled = tick_orchestrator.cancel_open_orders_for_shadow_sleeve(sleeve_id)
 
         mock_cancel.assert_called()
@@ -731,6 +750,14 @@ class TestCancelOpenOrdersForShadowSleeve:
             "the open order's broker order id must be passed to cancel_order"
         )
         assert cancelled, "the function must return the cancelled order(s)"
+        row = database.get_sleeve_order_by_client_id(client_order_id)
+        assert row["status"] == "canceled", (
+            "an unfilled order the broker itself confirms canceled must "
+            "advance to the broker's own terminal status"
+        )
+        assert database.get_fills_for_order(row["id"]) == [], (
+            "a zero-fill cancel must record no fill rows"
+        )
 
     def test_filled_order_on_a_shadow_sleeve_is_never_cancelled(self):
         sleeve_id = _make_sleeve()
