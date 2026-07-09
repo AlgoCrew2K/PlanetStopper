@@ -31,8 +31,9 @@ PAPER/BENCHED/stale badges must all be reachable).
 from __future__ import annotations
 
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -75,16 +76,21 @@ def _seed_round_trips(
     qty: float = _TRIP_QTY,
     buy_price: float = _BUY_PRICE,
     sell_price: float = _SELL_PRICE,
+    base: datetime | None = None,
 ) -> float:
     """Write the order+fill rows ``trips`` completed round trips leave
-    behind, all on MARKET_OPEN_NOW_UTC's ET trading day, attributed to
-    rule_id. Returns the net realized P&L (negative for losses)."""
+    behind, all on ``base``'s ET trading day (default: the canonical fixed
+    market-open instant), attributed to rule_id. Returns the net realized
+    P&L (negative for losses). Fills spread SECONDS backward from ``base``
+    so they share its ET day except within the first ~2 minutes after ET
+    midnight — negligible for a wall-clock-now base, irrelevant for the
+    fixed one."""
+    base = base or MARKET_OPEN_NOW_UTC
     for trip in range(trips):
         for side, price in (("buy", buy_price), ("sell", sell_price)):
             client_order_id = f"churn-{rule_id}-{trip}-{side}-{uuid.uuid4().hex[:8]}"
             filled_at = (
-                MARKET_OPEN_NOW_UTC
-                - timedelta(minutes=60 - trip * 10 - (5 if side == "sell" else 0))
+                base - timedelta(seconds=120 - trip * 20 - (10 if side == "sell" else 0))
             ).strftime("%Y-%m-%dT%H:%M:%SZ")
             order_pk = database.insert_sleeve_order(
                 client_order_id=client_order_id,
@@ -171,16 +177,31 @@ class TestChurnBrakeBenchesTheEntryRule:
         )
 
     def test_bench_state_is_visible_on_panel_and_digest(self, client):
-        churned_sleeve, churned_rule, _clean_sleeve, _clean_rule, cash = (
-            self._make_churned_and_clean_pair(client)
-        )
+        """Re-pointed 2026-07-09 (sf-dash finding, verified against
+        limits.is_rule_benched): a bench is valid for its OWN ET trading day
+        — expiry IS the AC-11 auto re-arm — so a render-time (wall-clock)
+        panel read only ever shows a bench engaged by a SAME-day tick. The
+        bench tick therefore runs at a wall-clock-now instant with the
+        market calendar mocked open (a time boundary, the one mock this
+        needs); the round-trip seeds share that instant's ET day. The
+        original fixed-instant version demanded yesterday's bench render
+        today — satisfiable only by a benched-forever bug."""
+        now_tick = datetime.now(UTC)
+        sleeve_id = create_sleeve_via_route(client, capital_usd=_CAPITAL_USD)
+        rule_id = create_rule_via_route(client, sleeve_id, valid_route_rule_payload())
+        net_loss = _seed_round_trips(sleeve_id, rule_id, base=now_tick)
 
-        with tick_patches(account_cash_usd=cash, closes_by_symbol={"SPY": 500.0}):
-            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=MARKET_OPEN_NOW_UTC)
+        with (
+            tick_patches(
+                account_cash_usd=_post_churn_cash(net_loss), closes_by_symbol={"SPY": 500.0}
+            ),
+            patch("market_calendar.get_market_state", return_value="open"),
+        ):
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=now_tick)
 
         panel = app_module._build_sleeves_panel_context()
-        sleeve_entry = next(s for s in panel if s["id"] == churned_sleeve)
-        rule_entry = next(r for r in sleeve_entry["rules"] if r["id"] == churned_rule)
+        sleeve_entry = next(s for s in panel if s["id"] == sleeve_id)
+        rule_entry = next(r for r in sleeve_entry["rules"] if r["id"] == rule_id)
         assert rule_entry.get("benched"), (
             "AC-11 requires a VISIBLE bench status — the panel rule entry "
             "must expose benched-truthy while the brake is engaged"
@@ -194,13 +215,10 @@ class TestChurnBrakeBenchesTheEntryRule:
             f"(audit #17)"
         )
 
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-
         today_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
         summaries = reporting._build_sleeve_digest_summaries(today_str)
         digest_entry = next(
-            s for s in summaries if s["name"] == database.get_sleeve(churned_sleeve)["name"]
+            s for s in summaries if s["name"] == database.get_sleeve(sleeve_id)["name"]
         )
         digest_rule = next(r for r in digest_entry["rules"] if r["name"] == rule_entry["name"])
         assert digest_rule.get("benched") is True, (
@@ -442,7 +460,10 @@ class TestBadgePrecedence:
     def test_bench_outranks_the_calm_paper_base_pill(self, client):
         """A PAPER-armed sleeve whose entry rule just got benched must show
         the BENCHED pill, not the calm 'armed' base pill — the operator is
-        owed the at-a-glance signal that the brake engaged."""
+        owed the at-a-glance signal that the brake engaged. (Re-pointed
+        2026-07-09: bench tick at wall-clock now, calendar mocked open —
+        same day-alignment law as test_bench_state_is_visible above.)"""
+        now_tick = datetime.now(UTC)
         sleeve_id = create_sleeve_via_route(client, capital_usd=_CAPITAL_USD)
         rule_id = create_rule_via_route(client, sleeve_id, valid_route_rule_payload())
         database.insert_sleeve_rule_fire(
@@ -458,13 +479,16 @@ class TestBadgePrecedence:
         assert resp.status_code == 200, "fixture sanity: the arm ceremony must succeed"
         assert database.get_sleeve(sleeve_id)["status"] == "PAPER"
 
-        net_loss = _seed_same_day_losing_round_trips(sleeve_id, rule_id)
-        with tick_patches(
-            account_cash_usd=_post_churn_cash(net_loss),
-            closes_by_symbol={"SPY": 500.0},
-            submit_bracket_result=alpaca_orders.OrderResult(order=None, error="HTTP 500"),
+        net_loss = _seed_round_trips(sleeve_id, rule_id, base=now_tick)
+        with (
+            tick_patches(
+                account_cash_usd=_post_churn_cash(net_loss),
+                closes_by_symbol={"SPY": 500.0},
+                submit_bracket_result=alpaca_orders.OrderResult(order=None, error="HTTP 500"),
+            ),
+            patch("market_calendar.get_market_state", return_value="open"),
         ):
-            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=MARKET_OPEN_NOW_UTC)
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=now_tick)
 
         panel = app_module._build_sleeves_panel_context()
         entry = next(s for s in panel if s["id"] == sleeve_id)
