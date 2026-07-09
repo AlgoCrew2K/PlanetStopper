@@ -67,12 +67,20 @@ _BUY_PRICE = 100.0
 _SELL_PRICE = 90.0
 
 
-def _seed_same_day_losing_round_trips(sleeve_id: int, rule_id: int) -> float:
-    """Write the order+fill rows _TRIPS completed losing round trips leave
+def _seed_round_trips(
+    sleeve_id: int,
+    rule_id: int,
+    *,
+    trips: int = _TRIPS,
+    qty: float = _TRIP_QTY,
+    buy_price: float = _BUY_PRICE,
+    sell_price: float = _SELL_PRICE,
+) -> float:
+    """Write the order+fill rows ``trips`` completed round trips leave
     behind, all on MARKET_OPEN_NOW_UTC's ET trading day, attributed to
-    rule_id. Returns the net realized loss (negative)."""
-    for trip in range(_TRIPS):
-        for side, price in (("buy", _BUY_PRICE), ("sell", _SELL_PRICE)):
+    rule_id. Returns the net realized P&L (negative for losses)."""
+    for trip in range(trips):
+        for side, price in (("buy", buy_price), ("sell", sell_price)):
             client_order_id = f"churn-{rule_id}-{trip}-{side}-{uuid.uuid4().hex[:8]}"
             filled_at = (
                 MARKET_OPEN_NOW_UTC
@@ -84,17 +92,22 @@ def _seed_same_day_losing_round_trips(sleeve_id: int, rule_id: int) -> float:
                 rule_id=rule_id,
                 symbol="SPY",
                 side=side,
-                qty=_TRIP_QTY,
+                qty=qty,
                 status="filled",
                 reserved_price=price if side == "buy" else None,
             )
             database.insert_sleeve_fill(
                 order_id=order_pk,
                 fill_price=price,
-                filled_qty=_TRIP_QTY,
+                filled_qty=qty,
                 filled_at=filled_at,
             )
-    return _TRIPS * _TRIP_QTY * (_SELL_PRICE - _BUY_PRICE)
+    return trips * qty * (sell_price - buy_price)
+
+
+def _seed_same_day_losing_round_trips(sleeve_id: int, rule_id: int) -> float:
+    """The unambiguous bench case: _TRIPS round trips losing 5% of capital."""
+    return _seed_round_trips(sleeve_id, rule_id)
 
 
 def _post_churn_cash(net_loss: float) -> float:
@@ -336,6 +349,59 @@ class TestChurnBrakeIsConjunctive:
             f"of ${net_gain:+.2f} must NOT be benched — AC-11's condition is "
             f"conjunctive (trips AND meaningful loss); benching on turnover "
             f"alone silences a working rule"
+        )
+
+
+class TestChurnThresholdBoundary:
+    def test_loss_on_either_side_of_the_ratified_threshold(self, client):
+        """PM-ratified operational policy (2026-07-09): 'meaningful net loss'
+        = CHURN_MEANINGFUL_LOSS_PCT_OF_CAPITAL of sleeve capital — a NAMED,
+        operator-tunable constant in sleeves.rules.limits. ONE on/off pair,
+        per the PM's scope ruling, and DERIVED from the constant itself so
+        tuning the knob never breaks this test: a same-day loss clearly
+        beyond the threshold (3x) benches; a loss clearly inside it (0.5x)
+        does not. Deliberately off-boundary multiples — exact-boundary float
+        comparison is the implementation's concern, not a test surface."""
+        import sleeves.rules.limits as limits
+
+        loss_pct = getattr(limits, "CHURN_MEANINGFUL_LOSS_PCT_OF_CAPITAL", None)
+        min_trips = getattr(limits, "CHURN_BENCH_MIN_ROUND_TRIPS", None)
+        assert loss_pct is not None and min_trips is not None, (
+            "the ratified named constants CHURN_MEANINGFUL_LOSS_PCT_OF_CAPITAL "
+            "and CHURN_BENCH_MIN_ROUND_TRIPS must exist in "
+            "sleeves.rules.limits — the threshold is PM-ratified operational "
+            "policy, never an anonymous inline number"
+        )
+        threshold_usd = loss_pct * _CAPITAL_USD
+
+        def _make_sleeve_with_day_loss(total_loss_usd: float) -> int:
+            sleeve_id = create_sleeve_via_route(client, capital_usd=_CAPITAL_USD)
+            rule_id = create_rule_via_route(client, sleeve_id, valid_route_rule_payload())
+            per_trip_loss = total_loss_usd / min_trips
+            _seed_round_trips(
+                sleeve_id,
+                rule_id,
+                trips=min_trips,
+                sell_price=_BUY_PRICE - per_trip_loss / _TRIP_QTY,
+            )
+            return rule_id
+
+        beyond_rule = _make_sleeve_with_day_loss(3.0 * threshold_usd)
+        inside_rule = _make_sleeve_with_day_loss(0.5 * threshold_usd)
+
+        combined_cash = 2 * _CAPITAL_USD - 3.0 * threshold_usd - 0.5 * threshold_usd
+        with tick_patches(account_cash_usd=combined_cash, closes_by_symbol={"SPY": 500.0}):
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=MARKET_OPEN_NOW_UTC)
+
+        assert database.get_sleeve_rule_fires(rule_id=inside_rule), (
+            f"a day's loss at 0.5x the ratified threshold "
+            f"(${0.5 * threshold_usd:.2f} of ${_CAPITAL_USD:.0f} capital) is "
+            f"NOT meaningful — the rule must keep firing"
+        )
+        assert database.get_sleeve_rule_fires(rule_id=beyond_rule) == [], (
+            f"a day's loss at 3x the ratified threshold "
+            f"(${3.0 * threshold_usd:.2f}) with {min_trips} round trips must "
+            f"bench the rule for the day"
         )
 
 
