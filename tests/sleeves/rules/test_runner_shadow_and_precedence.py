@@ -254,6 +254,18 @@ class TestFailSafeWritesNoFireRow:
 
 
 class TestArmedPathReachableEndToEnd:
+    """Re-pointed 2026-07-09 (two-key armed-dispatch contract, audit fix
+    cycle): placing an order now requires BOTH keys — rule mode PAPER/LIVE
+    AND sleeve status PAPER/LIVE (tests/sleeves/test_paper_arm_status_
+    promotion.py::TestTwoKeyArmedDispatchGate pins the drift state as
+    must-not-dispatch). These armed-path tests originally fed PAPER rules
+    into _base_kwargs's SHADOW-status sleeve_row — exactly that drift state
+    — so they now supply the coherent PAPER-status row a real arm ceremony
+    produces. The SHADOW base fixture stays correct for every other test in
+    this file (they exercise SHADOW rules)."""
+
+    _PAPER_SLEEVE_ROW = {"id": 1, "status": "PAPER", "capital_usd": 10_000.0}
+
     def test_paper_mode_rule_reaches_alpaca_orders_through_the_clamp(self, indicator_fixture):
         closes = _rising_closes(indicator_fixture)
         rule = make_stored_rule(
@@ -268,15 +280,16 @@ class TestArmedPathReachableEndToEnd:
         ) as mock_order:
             outcomes = runner.evaluate_rules(
                 **_base_kwargs(
-                    rules=[rule], closes_by_symbol={"SPY": closes}, positions={"SPY": 10.0}
+                    rules=[rule],
+                    sleeve_row=self._PAPER_SLEEVE_ROW,
+                    closes_by_symbol={"SPY": closes},
+                    positions={"SPY": 10.0},
                 )
             )
         assert outcomes[0].fired is True
         assert mock_order.called, (
-            "a PAPER-mode rule's armed action must reach sleeves.alpaca_orders.submit_order "
-            "(P2 builds this capability; nothing in production calls evaluate_rules in "
-            "non-SHADOW mode yet — that production wiring is P3 — but the module itself "
-            "must support it structurally)."
+            "a PAPER-mode rule in a PAPER-status sleeve (both keys armed) "
+            "must reach sleeves.alpaca_orders.submit_order through the clamp."
         )
         assert outcomes[0].action_results[0].executed is True
 
@@ -299,7 +312,10 @@ class TestArmedPathReachableEndToEnd:
         ):
             outcomes = runner.evaluate_rules(
                 **_base_kwargs(
-                    rules=[rule], closes_by_symbol={"SPY": closes}, positions={"SPY": 10.0}
+                    rules=[rule],
+                    sleeve_row=self._PAPER_SLEEVE_ROW,
+                    closes_by_symbol={"SPY": closes},
+                    positions={"SPY": 10.0},
                 )
             )
         assert outcomes[0].fired is True
