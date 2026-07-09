@@ -6,9 +6,10 @@
  *   - Renders cumulative-return curves (live vs Planet Stopper-exited) via Chart.js.
  *   - Renders a 7-metric quantstats table with delta column.
  *
- * Auto-refresh floor is 60s (post-mortem snapshots land once a day; polling
- * faster burns CPU re-parsing the same JSON — well above the 15s live-cycle
- * floor).
+ * Auto-refresh floor is 60s (the aggregate series derives from shadow_history's
+ * daily portfolio returns — the day's point moves at most once per engine cycle;
+ * polling faster burns CPU re-parsing near-identical JSON — well above the 15s
+ * live-cycle floor).
  */
 (function () {
     'use strict';

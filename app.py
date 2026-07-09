@@ -3049,8 +3049,8 @@ def api_performance():
         {
           "scope": "aggregate" | "symphony",
           "dates": [...],
-          "live_returns": [...],
-          "shadow_returns": [...],
+          "live_returns": [...],    # if-held: the still-held Composer account (current_return)
+          "shadow_returns": [...],  # Planet-Stopper-exited counterfactual (shadow_return)
           "live_metrics":   {8 documented keys — Phase 2 adds 'volatility'},
           "shadow_metrics": {8 documented keys — Phase 2 adds 'volatility'},
           "observation_count": int,
@@ -3103,7 +3103,10 @@ def api_performance():
         try:
             _series = analytics.get_portfolio_bot_and_held_daily_returns(days=days)
             if _series is not None:
-                dates, live_returns, shadow_returns = _series
+                # Producer returns (dates, bot, held); the payload vocabulary is
+                # live_returns = if-held (held), shadow_returns = PS-exited (bot) —
+                # the mapping every performance.js label + the docstring agree on.
+                dates, shadow_returns, live_returns = _series
         except Exception:
             _daemon_log.debug("api_performance: canonical shadow series failed", exc_info=True)
     else:
@@ -3121,7 +3124,9 @@ def api_performance():
         try:
             _fallback = analytics.get_portfolio_bot_and_held_daily_returns()
             if _fallback is not None:
-                dates, live_returns, shadow_returns = _fallback
+                # (dates, bot, held) -> held is live_returns (if-held), bot is
+                # shadow_returns. This fallback was the ORIGINAL inverted surface.
+                dates, shadow_returns, live_returns = _fallback
         except Exception:
             _daemon_log.debug("api_performance: shadow_history fallback failed", exc_info=True)
 
@@ -3133,7 +3138,8 @@ def api_performance():
         try:
             _single = analytics.get_single_day_shadow_returns()
             if _single is not None:
-                dates, live_returns, shadow_returns = _single
+                # Same (dates, bot, held) -> (shadow_returns, live_returns) mapping.
+                dates, shadow_returns, live_returns = _single
         except Exception:
             _daemon_log.debug(
                 "api_performance: single-day shadow_history fallback failed", exc_info=True
