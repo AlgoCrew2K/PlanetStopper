@@ -396,6 +396,85 @@ class TestSnapshotBasisCutoff:
                 f"if-held (expected {c['expected_dollars']:.2f})"
             )
 
+    def test_all_post_cutoff_day_books_earliest_shadow_row_not_bot_state(
+        self, positions, snapshot_rows, postclose_rows, tmp_path, monkeypatch
+    ):
+        """pf-eng's flagged corner, ruled: a day whose shadow rows are ALL after
+        the cutoff (daemon started after 15:55) must book the EARLIEST post-cutoff
+        row — the row nearest the declared basis — under the distinct honest
+        marker "shadow_history_post_cutoff". Real off-basis shadow data beats the
+        clobbered bot_state value; "row-less fallback" means NO rows for the day
+        at all, not "no rows on basis".
+
+        (Producer degrades honestly; the repair script may still refuse such
+        days — a repair tool can afford strictness the nightly producer cannot.)
+        """
+        day = "2026-06-24"
+        cases = _cases(day, positions, snapshot_rows)
+
+        def _earliest_postclose(sym_id: str) -> float | None:
+            rows = [
+                r for r in postclose_rows if r["symphony_id"] == sym_id and r["trading_day"] == day
+            ]
+            return min(rows, key=lambda r: r["ts_utc"])["current_return"] if rows else None
+
+        covered = [c for c in cases if _earliest_postclose(c["sym_id"]) is not None]
+        decisive = [
+            c
+            for c in covered
+            if abs(_earliest_postclose(c["sym_id"]) - c["clobbered_if_held"]) > 0.05
+        ]
+        assert decisive, (
+            "fixture integrity: need a case where the post-cutoff shadow row is "
+            "distinguishable from the clobbered bot_state value"
+        )
+
+        # Seed ONLY the post-cutoff rows: no row qualifies at/before the cutoff.
+        _seed_shadow(postclose_rows, day)
+        report = _run_stage1(_bot_state_for(covered, positions), day, tmp_path, monkeypatch)
+
+        for c in decisive:
+            booked = _booked(report, c["pm"]["symphony_name"])
+            truth = _earliest_postclose(c["sym_id"])
+            expected_dollars = c["pm"]["symphony_value"] * (c["pm"]["exit_return"] - truth) / 100.0
+            # abs=0.011 / 0.02: producer 2dp rounding, as elsewhere in this file.
+            assert booked["shadow_return"] == pytest.approx(truth, abs=0.011), (
+                f"{c['pm']['symphony_name'][:40]!r}: booked if-held "
+                f"{booked['shadow_return']} is not the earliest post-cutoff shadow row "
+                f"{truth:.2f} — the clobbered bot_state value "
+                f"{c['clobbered_if_held']} was booked despite real shadow data existing"
+            )
+            assert booked["saved_dollars"] == pytest.approx(expected_dollars, abs=0.02)
+            assert booked.get("if_held_source") == "shadow_history_post_cutoff", (
+                f"off-basis booking must be declared: got {booked.get('if_held_source')!r}"
+            )
+
+    def test_producer_and_regen_script_share_one_cutoff_constant(self):
+        """Drift guard (pf-review): reporting.STAGE1_SNAPSHOT_CUTOFF_ET and the
+        regeneration script's SNAPSHOT_CUTOFF_ET must be equal forever. The
+        script deliberately stays import-free (standalone droplet use), so the
+        invariant is pinned here instead of by a shared import — AST-extracted
+        so a comment or string cannot satisfy it.
+        """
+        import ast as _ast
+
+        script = Path(__file__).parent.parent.parent / "scripts" / "regenerate_post_mortems.py"
+        tree = _ast.parse(script.read_text(encoding="utf-8"))
+        script_values = [
+            node.value.value
+            for node in _ast.walk(tree)
+            if isinstance(node, _ast.Assign)
+            and isinstance(node.value, _ast.Constant)
+            and any(isinstance(t, _ast.Name) and t.id == "SNAPSHOT_CUTOFF_ET" for t in node.targets)
+        ]
+        assert len(script_values) == 1, (
+            "regenerate_post_mortems.py must define SNAPSHOT_CUTOFF_ET exactly once"
+        )
+        assert getattr(reporting, "STAGE1_SNAPSHOT_CUTOFF_ET", None) == script_values[0], (
+            f"producer cutoff {getattr(reporting, 'STAGE1_SNAPSHOT_CUTOFF_ET', None)!r} != "
+            f"regen script cutoff {script_values[0]!r} — the two bases must never diverge"
+        )
+
 
 # ---------------------------------------------------------------------------
 # 4. Row-less degradation — the ONLY case bot_state may be trusted.
