@@ -68,15 +68,24 @@ def generate_eod_snapshot(
                 # 11 audited days sign-flipped (VERDICT-droplet 2026-07-09 Finding
                 # 2; the #80 comment claimed this sourcing but never queried the
                 # table). The cutoff holds the declared snapshot basis on
-                # off-schedule runs. Fall back to bot_state ONLY when no qualifying
-                # shadow row exists.
+                # off-schedule runs.
                 shadow_row = database.load_latest_shadow_row(
                     sym_id, current_date_str, et_cutoff=STAGE1_SNAPSHOT_CUTOFF_ET
                 )
+                if_held_source = "shadow_history"
+                if shadow_row is None or shadow_row.get("current_return") is None:
+                    # All-post-cutoff day (daemon started after the cutoff): the
+                    # earliest row of the day is nearest the declared basis —
+                    # real off-basis shadow data beats the clobbered bot_state
+                    # value. Distinct marker keeps the off-basis booking
+                    # auditable.
+                    shadow_row = database.load_earliest_shadow_row(sym_id, current_date_str)
+                    if_held_source = "shadow_history_post_cutoff"
                 if shadow_row is not None and shadow_row.get("current_return") is not None:
                     live_ret = float(shadow_row["current_return"])
-                    if_held_source = "shadow_history"
                 else:
+                    # Zero shadow rows for the (symphony, day) — the ONLY case
+                    # bot_state may be trusted.
                     live_ret = sym.get("current_return", 0.0)
                     if_held_source = "bot_state_fallback"
                 saved_pct = f_ret - live_ret

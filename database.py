@@ -3126,6 +3126,34 @@ def load_latest_shadow_row(
         return None
 
 
+def load_earliest_shadow_row(symphony_id: str, trading_day: str) -> "dict | None":
+    """Return the EARLIEST shadow_history row for a symphony+day, or None.
+
+    Stage-1's degradation tier for an all-post-cutoff day (daemon started after
+    the snapshot cutoff): when no row qualifies at/before the cutoff, the
+    earliest row of the day is the one nearest the declared basis — real
+    off-basis shadow data beats the action-phase-clobbered bot_state value.
+    """
+    try:
+        conn = sqlite3.connect(_db_file(), timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM shadow_history "
+            "WHERE symphony_id = ? AND trading_day = ? "
+            "ORDER BY ts_utc ASC LIMIT 1",
+            (symphony_id, trading_day),
+        ).fetchone()
+        conn.close()
+        if row is None:
+            return None
+        return dict(row)
+    except Exception as exc:
+        logging.error(
+            "load_earliest_shadow_row failed for %s %s: %s", symphony_id, trading_day, exc
+        )
+        return None
+
+
 def resume_shadow_baselines(bot_state: dict, trading_day: str) -> None:
     """Reconcile in-memory shadow_hwm cache against shadow_history on daemon restart.
 
