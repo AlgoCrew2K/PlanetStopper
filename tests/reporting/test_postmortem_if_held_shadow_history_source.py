@@ -24,7 +24,11 @@ CONTRACT PINNED:
      rows, Stage-1 books if-held from the LATEST such row's current_return —
      bot_state's current_return must not be trusted.
   2. Only when NO shadow row exists for the (symphony, day) may Stage-1 degrade to
-     bot_state.current_return (row-less fallback — pinned as a regression anchor).
+     bot_state.current_return (row-less fallback).
+  3. Every trigger entry declares its provenance in an ``if_held_source`` field
+     ("shadow_history" | "bot_state_fallback") so a silent degradation is
+     impossible — the marker semantics agreed with pf-eng (risk-engine) before
+     GREEN.
 
 FIXTURE PROVENANCE (captured-from-producer):
   tests/fixtures/prod_droplet/ — real droplet data, deployed SHA 0bcbd1a, captured
@@ -292,7 +296,34 @@ class TestSavedDollarsSourcedFromShadowHistoryTable:
 
 
 # ---------------------------------------------------------------------------
-# 2. Row-less degradation — the ONLY case bot_state may be trusted.
+# 2. Provenance marker — no silent degradation.
+# ---------------------------------------------------------------------------
+
+
+class TestIfHeldProvenanceMarker:
+    def test_trigger_entries_declare_shadow_history_provenance(
+        self, positions, snapshot_rows, tmp_path, monkeypatch
+    ):
+        """With shadow rows present, every booked trigger entry must carry
+        if_held_source == "shadow_history" — the operator-auditable proof of which
+        source produced the money math (the #80 regression was invisible precisely
+        because provenance lived only in a comment).
+        """
+        day = "2026-06-24"
+        cases = _cases(day, positions, snapshot_rows)
+        _seed_shadow(snapshot_rows, day)
+        report = _run_stage1(_bot_state_for(cases, positions), day, tmp_path, monkeypatch)
+
+        for c in cases:
+            booked = _booked(report, c["pm"]["symphony_name"])
+            assert booked.get("if_held_source") == "shadow_history", (
+                f"{c['pm']['symphony_name'][:40]!r}: trigger entry must declare "
+                f"if_held_source='shadow_history'; got {booked.get('if_held_source')!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# 3. Row-less degradation — the ONLY case bot_state may be trusted.
 # ---------------------------------------------------------------------------
 
 
@@ -300,12 +331,11 @@ class TestRowlessFallbackDegradation:
     def test_stage1_degrades_to_bot_state_only_when_no_shadow_row_exists(
         self, positions, snapshot_rows, tmp_path, monkeypatch
     ):
-        """With NO shadow_history row for the (symphony, day), Stage-1 may fall back
-        to bot_state.current_return (there is no better source). Pins the degradation
-        so the fix cannot silently zero out row-less symphonies (no swallow-to-zero).
-
-        Regression anchor: PASSES today (current code always reads bot_state);
-        must STAY green after the fix.
+        """With NO shadow_history row for the (symphony, day), Stage-1 falls back
+        to bot_state.current_return (there is no better source) and DECLARES it via
+        if_held_source == "bot_state_fallback". Pins the degradation so the fix can
+        neither silently zero out row-less symphonies (no swallow-to-zero) nor
+        degrade without a trace.
         """
         day = "2026-06-24"
         case = _cases(day, positions, snapshot_rows)[0]
@@ -317,4 +347,8 @@ class TestRowlessFallbackDegradation:
         expected_dollars = case["pm"]["symphony_value"] * expected_pct / 100.0
         assert booked["saved_dollars"] == pytest.approx(expected_dollars, abs=0.02), (
             "row-less fallback must book from bot_state.current_return, not zero"
+        )
+        assert booked.get("if_held_source") == "bot_state_fallback", (
+            "the row-less degradation must be declared via "
+            f"if_held_source='bot_state_fallback'; got {booked.get('if_held_source')!r}"
         )

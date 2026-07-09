@@ -19,6 +19,10 @@ CONTRACT PINNED:
   4. Fallback rows carry the exact consumed shape: ts (truthy), symphony_name
      (the human name, not the hash), reason (truthy), detail (numeric — the
      row's at_return, renderable as a percent).
+  5. (Finding 11) The POST-MORTEM path's Time column works too: the producer
+     writes ``time_triggered`` but the aggregator reads ``timestamp``/``ts``
+     (analytics.py:1749), so ts is ALWAYS empty even after the 15:54 write —
+     today's exits must carry the entry's trigger time on both paths.
 
 FIXTURE PROVENANCE (captured-from-producer):
   tests/fixtures/prod_droplet/ — the real production exit_triggers table (87 rows,
@@ -256,4 +260,54 @@ class TestFallbackRowsMatchConsumedShape:
             assert rec["symphony_name"] in known_names, (
                 f"symphony_name {rec['symphony_name']!r} is not a human name from "
                 "bot_state — the raw hash id is leaking to the Symphony column"
+            )
+
+
+# ---------------------------------------------------------------------------
+# 5 (Finding 11): the post-mortem path's Time column
+# ---------------------------------------------------------------------------
+
+
+class TestPostMortemPathTimeColumn:
+    def test_todays_exits_from_post_mortem_file_carry_the_trigger_time(self, client, pm_dir):
+        """When today's post-mortem file exists (the 15:54+ window), todays_exits
+        must map each entry's ``time_triggered`` into the consumed ``ts`` field.
+
+        RED today: analytics reads ``timestamp``/``ts`` keys the producer never
+        writes, so the Time column renders an em-dash even on the healthy path.
+
+        A real production file is copied to today's filename so the PM path (not
+        the fallback) serves the rows; only the time MAPPING is asserted — the
+        file's money values are known-wrong (Finding 2) and never used as oracle.
+        """
+        source_file = max(
+            pm_dir.glob("post_mortem_*.json"),
+            key=lambda f: len(json.loads(f.read_text(encoding="utf-8")).get("triggers", [])),
+        )
+        pm_data = json.loads(source_file.read_text(encoding="utf-8"))
+        expected_times = {
+            t["symphony_name"]: t["time_triggered"]
+            for t in pm_data["triggers"]
+            if t.get("time_triggered")
+        }
+        assert expected_times, "fixture integrity: source file must carry trigger times"
+        # get_history_summary looks the today-file up by the LOCAL date.
+        today_local = date.today().isoformat()
+        (pm_dir / f"post_mortem_{today_local}.json").write_text(
+            json.dumps(pm_data), encoding="utf-8"
+        )
+
+        resp = client.get(f"/api/history/{_WIDE_WINDOW_DAYS}")
+        assert resp.status_code == 200
+        exits = resp.get_json()["todays_exits"]
+        assert exits, "the post-mortem path must serve today's exits when the file exists"
+
+        for rec in exits:
+            expected = expected_times.get(rec.get("symphony_name"))
+            if expected is None:
+                continue
+            assert rec.get("ts") == expected, (
+                f"{rec.get('symphony_name')!r}: ts={rec.get('ts')!r} does not carry the "
+                f"entry's time_triggered {expected!r} — the Time column renders an "
+                "em-dash on the post-mortem path"
             )
