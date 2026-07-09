@@ -11,6 +11,8 @@ cache/
 history_cache.json
 symphony_logs.json
 post_mortem_*.json
+# ...but captured-from-producer test fixtures are versioned
+!tests/fixtures/**/post_mortem_*.json
 
 # Test / lint artefacts
 .coverage
