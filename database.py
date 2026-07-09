@@ -4041,18 +4041,26 @@ def get_sleeve_rule_fires(
     return [dict(zip(_SLEEVE_RULE_FIRE_COLUMNS, row)) for row in rows]
 
 
-def get_sleeve_rule_fire_count(rule_id: int) -> int:
-    """Ground-truth COUNT(*) of one rule's lifetime sleeve_rule_fires rows --
-    the panel/digest "lifetime" figure. Exists because rendering
-    len(get_sleeve_rule_fires(...)) silently caps the figure at that
-    accessor's default limit=100 (audit finding #14); a count must never be
-    derived from a limited row fetch.
+def get_sleeve_rule_fire_count(rule_id: int, mode_at_fire: "str | None" = None) -> int:
+    """Ground-truth COUNT(*) of one rule's lifetime sleeve_rule_fires rows,
+    optionally filtered to one mode_at_fire ('SHADOW'|'PAPER'|'LIVE') -- the
+    panel/digest "lifetime" figure and the AC-13 arm gate's shadow-evidence
+    check. Exists because rendering len(get_sleeve_rule_fires(...)) silently
+    caps the figure at that accessor's default limit=100 (audit finding #14),
+    and any()-ing over that same limited page let 100+ newer PAPER fires push
+    every SHADOW fire out of the arm gate's view (review gap G8); a count or
+    existence check must never be derived from a limited row fetch.
     """
+    clauses = ["rule_id = ?"]
+    params: list = [rule_id]
+    if mode_at_fire is not None:
+        clauses.append("mode_at_fire = ?")
+        params.append(mode_at_fire)
     conn = get_ro_connection()
     try:
         row = conn.execute(
-            "SELECT COUNT(*) FROM sleeve_rule_fires WHERE rule_id = ?",
-            (rule_id,),
+            "SELECT COUNT(*) FROM sleeve_rule_fires WHERE " + " AND ".join(clauses),
+            params,
         ).fetchone()
     finally:
         conn.close()

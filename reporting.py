@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 
 import requests
 
@@ -207,10 +207,13 @@ def _build_sleeve_digest_summaries(current_date_str: str) -> list[dict]:
     finding #8 pinned panel/digest agreement), so the two operator surfaces
     can never disagree on the same quantity. On fold failure the value is
     None and the formatter renders "n/a" -- never a fabricated $0.00. benched
-    stays an honest placeholder (False) until the churn-brake machinery
-    (AC-11) lands.
+    is real churn-brake state read through the engine's own
+    sleeves.rules.limits.is_rule_benched (AC-11 -- bench is keyed by ET
+    trading day, so the flag auto-clears in lockstep with the engine's
+    next-trading-day auto re-arm; never re-derived here).
     """
     from sleeves import ledger as sleeve_ledger  # noqa: PLC0415
+    from sleeves.rules import limits as sleeve_limits  # noqa: PLC0415
 
     summaries: list[dict] = []
     try:
@@ -218,6 +221,7 @@ def _build_sleeve_digest_summaries(current_date_str: str) -> list[dict]:
     except Exception:
         return summaries
 
+    now_utc = datetime.now(UTC)
     for sleeve in sleeve_rows or []:
         sleeve_id = sleeve.get("id")
         try:
@@ -260,6 +264,12 @@ def _build_sleeve_digest_summaries(current_date_str: str) -> list[dict]:
             except Exception:
                 lifetime_fires = 0
                 today_fires = 0
+            try:
+                benched = rule_id is not None and sleeve_limits.is_rule_benched(
+                    rule_id, now_utc=now_utc
+                )
+            except Exception:
+                benched = False
             rule_summaries.append(
                 {
                     "name": rule.get("name", ""),
@@ -268,7 +278,7 @@ def _build_sleeve_digest_summaries(current_date_str: str) -> list[dict]:
                     "realized_pnl_usd": (
                         realized_by_rule.get(rule_id, 0.0) if realized_by_rule is not None else None
                     ),
-                    "benched": False,
+                    "benched": benched,
                 }
             )
 

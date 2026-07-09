@@ -13,7 +13,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import dotenv as _dotenv_module
@@ -911,8 +911,20 @@ def _build_sleeves_panel_context() -> list[dict]:
     the sleeve figure by construction. On fold failure the value is None and
     the template renders an explicit "n/a" marker -- $0.00 is a value claim,
     never a degraded state.
+
+    Bench/stale visibility (AC-11/AC-16): per-rule benched comes from
+    sleeves.rules.limits.is_rule_benched (the engine's OWN read API -- bench
+    is keyed by ET trading day in sleeve_runtime, so the flag auto-clears
+    next trading day in lockstep with the engine's auto re-arm) and per-rule
+    stale from the STALE_NO_BARS_KEY runtime flag the tick writes. Both are
+    read-only lookups of engine-computed state -- the panel never reruns the
+    brake. The sleeve pill applies the ratified display precedence
+    (2026-07-09): PAUSED_RECONCILIATION > BENCHED (any rule benched) > stale
+    (EVERY enabled rule stale) > base status -- display-level only, the DB
+    sleeve.status is never rewritten by a badge.
     """
     from sleeves import ledger as sleeve_ledger  # noqa: PLC0415
+    from sleeves.rules import limits as sleeve_limits  # noqa: PLC0415
 
     panel_sleeves: list[dict] = []
     try:
@@ -920,6 +932,7 @@ def _build_sleeves_panel_context() -> list[dict]:
     except Exception:
         return panel_sleeves
 
+    now_utc = datetime.now(UTC)
     today_str = datetime.now(_ET).strftime("%Y-%m-%d")
     for sleeve in sleeve_rows:
         sleeve_id = sleeve.get("id")
@@ -959,6 +972,8 @@ def _build_sleeves_panel_context() -> list[dict]:
             realized_by_rule = None
 
         rules_panel = []
+        any_rule_benched = False
+        enabled_stale_flags: list[bool] = []
         for rule in rule_rows:
             rule_id = rule.get("id")
             # COUNT accessors, never len(limited rows): the fires accessor's
@@ -983,6 +998,23 @@ def _build_sleeves_panel_context() -> list[dict]:
                 realized_by_rule.get(rule_id, 0.0) if realized_by_rule is not None else None
             )
 
+            try:
+                benched = rule_id is not None and sleeve_limits.is_rule_benched(
+                    rule_id, now_utc=now_utc
+                )
+            except Exception:
+                benched = False
+            try:
+                stale = rule_id is not None and (
+                    database.get_sleeve_runtime(rule_id, sleeve_limits.STALE_NO_BARS_KEY) == "1"
+                )
+            except Exception:
+                stale = False
+            if benched:
+                any_rule_benched = True
+            if rule.get("enabled"):
+                enabled_stale_flags.append(stale)
+
             rules_panel.append(
                 {
                     "id": rule_id,
@@ -991,15 +1023,25 @@ def _build_sleeves_panel_context() -> list[dict]:
                     "today_fires": today_fires,
                     "lifetime_fires": lifetime_fires,
                     "realized_pnl_usd": rule_realized_pnl,
+                    "benched": benched,
+                    "stale": stale,
                 }
             )
+
+        status = sleeve.get("status", "")
+        badge_class = _sleeve_status_badge_class(status)
+        if status != "PAUSED_RECONCILIATION":
+            if any_rule_benched:
+                badge_class = _SLEEVE_STATUS_BADGE_CLASSES["BENCHED"]
+            elif enabled_stale_flags and all(enabled_stale_flags):
+                badge_class = _SLEEVE_STATUS_BADGE_CLASSES["stale"]
 
         panel_sleeves.append(
             {
                 "id": sleeve_id,
                 "name": sleeve.get("name", ""),
-                "status": sleeve.get("status", ""),
-                "status_badge_class": _sleeve_status_badge_class(sleeve.get("status", "")),
+                "status": status,
+                "status_badge_class": badge_class,
                 "capital_usd": sleeve.get("capital_usd"),
                 "ledger_cash_usd": ledger_cash_usd,
                 "realized_pnl_usd": sleeve_realized_pnl_usd,
@@ -3560,10 +3602,11 @@ def arm_sleeve_rule(sleeve_id, rule_id):
             }
         ), 409
 
-    has_shadow_fire = any(
-        fire.get("mode_at_fire") == "SHADOW"
-        for fire in database.get_sleeve_rule_fires(rule_id=rule_id)
-    )
+    # Mode-filtered COUNT, never any() over get_sleeve_rule_fires' limited
+    # page (review gap G8): 100+ newer PAPER fires from a previous armed life
+    # would push every SHADOW fire out of the page and spuriously 400 a
+    # legitimately re-armable rule.
+    has_shadow_fire = database.get_sleeve_rule_fire_count(rule_id, mode_at_fire="SHADOW") > 0
     if not has_shadow_fire:
         return jsonify(
             {
