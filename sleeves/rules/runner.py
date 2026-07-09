@@ -181,6 +181,20 @@ def _evaluate_one_rule(
     shadow = rule["mode"] == "SHADOW" or not sleeve_armed
     fired_at = now_utc.astimezone(_UTC).strftime("%Y-%m-%d %H:%M:%S")
 
+    # DB-grounded evidence baseline for the crash-compensation decision
+    # below (reviewer finding SF-R-1): runner-local containers (fire_ids /
+    # action_results) lose their evidence when dispatch crashes INSIDE
+    # dispatch_action after the broker submit -- e.g. the post-ack
+    # attach_alpaca_order_id write raising -- but the sleeve_orders rows do
+    # not: the RESERVED insert precedes every broker submit, so any row for
+    # this rule that is not in this baseline proves an order path STARTED,
+    # whether or not the broker call itself completed.
+    pre_dispatch_order_ids = {
+        order["id"]
+        for order in database.get_sleeve_orders(sleeve_id=rule["sleeve_id"], limit=500)
+        if order.get("rule_id") == rule["id"]
+    }
+
     action_results: list[actions.ActionResult] = []
     fire_ids: list[int] = []
     try:
@@ -217,16 +231,31 @@ def _evaluate_one_rule(
             )
             fire_ids.append(fire_id)
     except Exception:
-        # Audit 2026-07-09 #9: the pacing episode was latched above, BEFORE
-        # dispatch -- a crash here with a still-true condition would silence
-        # the rule permanently (rearm needs consecutive FALSE ticks).
-        # Compensate ONLY when the crashed tick produced nothing at all: no
-        # fire row recorded AND no broker order placed. If any order landed,
-        # the episode was genuinely consumed -- restoring it would re-fire
-        # next tick and double the order, a worse failure than one lost
-        # episode.
+        # Audit 2026-07-09 #9 + reviewer finding SF-R-1: the pacing episode
+        # was latched above, BEFORE dispatch -- a crash here with a
+        # still-true condition would silence the rule permanently (rearm
+        # needs consecutive FALSE ticks). Compensate ONLY when the crashed
+        # tick provably produced nothing: no fire row recorded, no
+        # ActionResult carrying an order, AND no new sleeve_orders row for
+        # this rule in the DB. The DB check is the load-bearing one
+        # (SF-R-1): a crash inside dispatch_action after the broker submit
+        # discards the runner-local evidence, but the RESERVED row inserted
+        # before every submit survives -- if it exists, the broker MAY hold
+        # the order, and restoring the episode would re-fire next tick into
+        # a SECOND live order. Fail closed: when evidence is present or
+        # unknowable, eat the lost episode, never risk a doubled order.
         if not fire_ids and not any(r.order_id is not None for r in action_results):
-            limits.restore_pacing_state(rule["id"], pacing_snapshot)
+            try:
+                order_path_started = any(
+                    order["id"] not in pre_dispatch_order_ids
+                    for order in database.get_sleeve_orders(sleeve_id=rule["sleeve_id"], limit=500)
+                    if order.get("rule_id") == rule["id"]
+                )
+            except Exception:
+                # Cannot prove absence of an order -> keep the episode.
+                order_path_started = True
+            if not order_path_started:
+                limits.restore_pacing_state(rule["id"], pacing_snapshot)
         raise
 
     return FireOutcome(
