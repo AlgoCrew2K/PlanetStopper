@@ -196,6 +196,52 @@ class TestSaveStatePersistsNumpyScalars:
 
 
 # ---------------------------------------------------------------------------
+# Non-finite policy: NaN/inf must persist as None, never as poison.
+# ---------------------------------------------------------------------------
+
+
+class TestNonFinitePersistencePolicy:
+    @pytest.mark.parametrize(
+        ("field", "poison"),
+        [
+            # math_engine division/annualisation paths can emit non-finite floats
+            # at these engine keys; plain json.dumps would emit a non-strict NaN
+            # token that round-trips straight back into the money math.
+            ("mc_prob", np.float64("nan")),
+            ("symphony_vol", np.float32("nan")),
+            ("current_return", np.float64("inf")),
+            ("high_water_mark", np.float64("-inf")),
+            ("prev_return", float("nan")),
+        ],
+    )
+    def test_nonfinite_floats_persist_as_none_not_poison(
+        self, positions, exit_trigger_rows, field, poison
+    ):
+        """Policy pin (reviewer finding, agreed pre-GREEN): a non-finite float in
+        bot_state persists as None — the repo's established isfinite-or-None idiom
+        (database.py:19-24) — NOT as a NaN/Infinity token and NOT a crash.
+
+        None is null-guarded by every consumer (HWM sentinel handling, strip
+        fallbacks); a NaN token silently poisons downstream arithmetic and breaks
+        strict-JSON consumers of the blob. A save-time crash is worse still: it
+        loses triggered=True and re-fires the exit (the Finding-1 loop).
+        """
+        sym_id = _crashed_symphony_id(exit_trigger_rows)
+        state = _trigger_cycle_state(positions, sym_id)
+        state[sym_id][field] = poison
+
+        database.save_state(state)  # must not raise
+        loaded = database.load_state()
+
+        assert loaded[sym_id][field] is None, (
+            f"non-finite {field}={poison!r} persisted as {loaded[sym_id][field]!r}; "
+            "policy: non-finite floats round-trip to None (isfinite-or-None idiom), "
+            "never as NaN/Infinity poison"
+        )
+        assert loaded[sym_id]["triggered"] is True
+
+
+# ---------------------------------------------------------------------------
 # Property: any mix of numpy scalar leaves round-trips.
 # ---------------------------------------------------------------------------
 
