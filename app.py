@@ -2696,7 +2696,9 @@ def guard_alpha_summary():
         earliest = min(dates)
         latest = max(dates)
         date_range = {"earliest": earliest, "latest": latest}
-        basis_label = f"snapshot-time basis, since {earliest}"
+        # Finding 8: name the LATEST covered date so a number that excludes today
+        # cannot read as current ("the number doesn't move while triggers fire").
+        basis_label = f"snapshot-time basis, since {earliest} · through {latest}"
         source = "post_mortem_eod"
     else:
         date_range = {"earliest": None, "latest": None}
@@ -2961,31 +2963,45 @@ def get_history(days):
     stats = analytics.get_history_summary(days=days, base_dir=analytics._POST_MORTEMS_DIR)
     stats["window_days"] = days
 
-    # AC-3: when post-mortem files do not yet exist (day-1 droplet), todays_exits
-    # will be empty in the stats dict.  Backfill from exit_triggers so the History
-    # tab shows live exits on day one.
+    # AC-3 (Finding 3): todays_exits is empty every trading day until the 15:54 ET
+    # post-mortem write — not just on a day-1 droplet.  Backfill from exit_triggers
+    # filtered to the CURRENT ET trading day, shaped exactly as history.js consumes
+    # (ts / symphony_name / reason / detail — the same shape the post-mortem path
+    # emits).  A zero-exit day stays honestly empty, and the windowed trigger_count
+    # is never overwritten by the feed length (total_saved/win_rate derive from the
+    # same windowed post-mortem entries).
     if not stats.get("todays_exits"):
         try:
+            _today_et = datetime.now(_ET).date().isoformat()
             _conn = database.get_connection()
             try:
                 _rows = _conn.execute(
-                    "SELECT symphony_id, ts_utc, at_return, triggered_reason "
-                    "FROM exit_triggers ORDER BY ts_utc DESC LIMIT 50"
+                    "SELECT symphony_id, ts_et, at_return, triggered_reason "
+                    "FROM exit_triggers WHERE substr(ts_et, 1, 10) = ? "
+                    "ORDER BY ts_utc DESC",
+                    (_today_et,),
                 ).fetchall()
             finally:
                 _conn.close()
             if _rows:
+                try:
+                    _name_map = {
+                        _sid: _entry.get("name")
+                        for _sid, _entry in database.load_state().items()
+                        if isinstance(_entry, dict) and _entry.get("name")
+                    }
+                except Exception:
+                    _name_map = {}
                 stats["todays_exits"] = [
                     {
+                        "ts": (r[1] or "").split("T")[-1],
                         "symphony_id": r[0],
-                        "ts_utc": r[1],
-                        "at_return": r[2],
-                        "triggered_reason": r[3],
+                        "symphony_name": _name_map.get(r[0]) or r[0],
+                        "reason": r[3],
+                        "detail": r[2],
                     }
                     for r in _rows
                 ]
-                # AC-3b: keep trigger_count consistent with the backfilled todays_exits.
-                stats["trigger_count"] = len(stats["todays_exits"])
         except Exception:
             _daemon_log.debug("get_history: exit_triggers fallback failed", exc_info=True)
 
@@ -3077,18 +3093,28 @@ def api_performance():
             }
         ), 400
 
-    history = analytics.get_history_with_cache_invalidation(
-        days=days, base_dir=analytics._POST_MORTEMS_DIR
-    )
-
     if scope == "aggregate":
-        dates, live_returns, shadow_returns = analytics.compute_aggregate_returns(history)
+        # Finding 4: the aggregate series is the CANONICAL value-weighted portfolio
+        # series from shadow_history — the same series /api/hero-chart compounds —
+        # never the post-mortem trigger arrays (a selection-biased exit-snapshot
+        # event sample that dropped zero-trigger days and contradicted the Overview
+        # chart on the same screen).  Every shadow_history trading day appears.
+        dates, live_returns, shadow_returns = [], [], []
+        try:
+            _series = analytics.get_portfolio_bot_and_held_daily_returns(days=days)
+            if _series is not None:
+                dates, live_returns, shadow_returns = _series
+        except Exception:
+            _daemon_log.debug("api_performance: canonical shadow series failed", exc_info=True)
     else:
+        history = analytics.get_history_with_cache_invalidation(
+            days=days, base_dir=analytics._POST_MORTEMS_DIR
+        )
         dates, live_returns, shadow_returns = analytics.compute_per_symphony_returns(
             history, symphony_id
         )
 
-    # AC-2: when post-mortem history is empty (day-1 droplet), fall back to
+    # AC-2: when the series is still empty (day-1 droplet), fall back to
     # shadow_history for the series so the chart is non-empty from day one.
     # The insufficient_history / quantstats-min-obs guard is unchanged.
     if not dates:
