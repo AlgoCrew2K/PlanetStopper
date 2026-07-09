@@ -20,9 +20,18 @@ CONTRACT PINNED:
      uses current_return, both under the SAME weights.
   2. When no position values are available (day-1 droplet), the series degrades to
      EQUAL weight — never to the abs(return) proxy.
-  3. /api/performance (scope=aggregate) serves THAT series: every shadow_history
-     trading day appears (including zero-trigger days), and compounding its daily
-     returns reproduces the hero chart's curve exactly — one series, two surfaces.
+  3. /api/performance (scope=aggregate) serves THAT series under the project's
+     field vocabulary — ``live_returns`` = the still-held Composer account
+     (weighted current_return; "Live (if held)"), ``shadow_returns`` = the
+     Planet-Stopper-exited counterfactual (weighted shadow_return): every
+     shadow_history trading day appears (including zero-trigger days), and
+     compounding shadow_returns / live_returns reproduces the hero chart's
+     bot / held curves exactly — one series, two surfaces. The old day-1
+     fallback silently inverted this mapping; the route docstring and every
+     performance.js label agree on it, so the payload adopts it.
+  4. The field semantics reach the screen: the if-held legend label binds to
+     the live_returns dataset, and the tab's subtitle no longer claims a
+     post-mortem-snapshot basis the series no longer has.
 
 FIXTURE PROVENANCE (captured-from-producer):
   tests/fixtures/prod_droplet/ — the real droplet's last shadow_history row per
@@ -36,6 +45,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from collections import defaultdict
 from pathlib import Path
@@ -47,6 +57,7 @@ import app as app_module
 import database
 
 _FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "prod_droplet"
+_PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 # Hero route rounds each compounded point to 4dp; a 13-point compounding chain
 # accumulates at most a few 1e-4 rounding steps.
@@ -296,8 +307,18 @@ class TestPerformanceTabServesCanonicalSeries:
     def test_aggregate_series_values_are_the_value_weighted_portfolio_returns(
         self, client, seeded_shadow_db, positions, pm_dir, shadow_last_rows
     ):
-        """The aggregate live/shadow series must be the canonical value-weighted
-        (bot, held) daily returns — not exit-snapshot event values."""
+        """The aggregate payload must carry the canonical value-weighted series
+        under the project's field vocabulary: ``live_returns`` is the STILL-HELD
+        Composer account (weighted current_return — "Live (if held)" in every UI
+        label and the route docstring), ``shadow_returns`` is the Planet-Stopper-
+        exited counterfactual (weighted shadow_return).
+
+        Field-semantics note (pf-dash flag, 2026-07-09): the first GREEN mapped
+        bot->live_returns because THIS test inherited the old day-1 fallback's
+        inverted assignment — which made every performance.js legend label
+        describe the other line. The fallback was the mislabeled side; this
+        assignment matches the route docstring and all existing consumers.
+        """
         database.save_state(
             {
                 sym_id: {"name": entry["name"], "current_value": entry["current_value"]}
@@ -310,16 +331,17 @@ class TestPerformanceTabServesCanonicalSeries:
         assert resp.status_code == 200
         body = resp.get_json()
 
-        _assert_series_close(body["live_returns"], bot_daily, "live_returns")
-        _assert_series_close(body["shadow_returns"], held_daily, "shadow_returns")
+        _assert_series_close(body["live_returns"], held_daily, "live_returns(=if-held)")
+        _assert_series_close(body["shadow_returns"], bot_daily, "shadow_returns(=PS-exited)")
 
     def test_performance_and_hero_chart_agree_on_one_series(
         self, client, seeded_shadow_db, positions, pm_dir
     ):
         """Cross-surface invariant, independent of the expected recompute:
-        compounding the Performance tab's daily bot returns must reproduce the
-        hero chart's bot curve point-for-point. One canonical series, two views.
-        RED today: Performance says +3.1% where the hero says -3.43%.
+        compounding the Performance tab's daily series must reproduce the hero
+        chart's curves point-for-point — shadow_returns (PS-exited) compounds to
+        hist_bot, live_returns (if-held) compounds to hist_held. One canonical
+        series, two views.
         """
         database.save_state(
             {
@@ -334,8 +356,58 @@ class TestPerformanceTabServesCanonicalSeries:
             "Performance and Overview must window the same trading days"
         )
         _assert_series_close(
-            _compound(list(perf["live_returns"])), hero["hist_bot"], "compound(perf.live)"
+            _compound(list(perf["shadow_returns"])), hero["hist_bot"], "compound(perf.shadow)"
         )
         _assert_series_close(
-            _compound(list(perf["shadow_returns"])), hero["hist_held"], "compound(perf.shadow)"
+            _compound(list(perf["live_returns"])), hero["hist_held"], "compound(perf.live)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 4. Field semantics reach the screen: legend bindings + basis subtitle
+# ---------------------------------------------------------------------------
+
+
+class TestPerformanceLegendAndBasisLabels:
+    def test_chart_binds_if_held_label_to_live_returns_dataset(self):
+        """Regression tripwire (passes once the field mapping above is honoured):
+        the dataset built from payload.live_returns must carry the if-held label
+        and the one from payload.shadow_returns the Planet-Stopper/shadow label.
+        Guards against any future 'fix' that swaps the LABELS instead of the
+        data mapping.
+        """
+        js = (_PROJECT_ROOT / "static" / "performance.js").read_text(encoding="utf-8")
+
+        live_var = re.search(r"var\s+(\w+)\s*=\s*cumulative\(payload\.live_returns\)", js)
+        shadow_var = re.search(r"var\s+(\w+)\s*=\s*cumulative\(payload\.shadow_returns\)", js)
+        assert live_var and shadow_var, (
+            "performance.js must build one dataset from each payload series"
+        )
+
+        def _label_bound_to(var: str) -> str:
+            m = re.search(r"label:\s*'([^']+)'\s*,\s*data:\s*" + var + r"\b", js)
+            assert m, f"no chart dataset binds data: {var}"
+            return m.group(1).lower()
+
+        live_label = _label_bound_to(live_var.group(1))
+        shadow_label = _label_bound_to(shadow_var.group(1))
+        assert "if held" in live_label and "if held" not in shadow_label, (
+            f"live_returns dataset label {live_label!r} must be the if-held line "
+            f"(shadow label: {shadow_label!r}) — the legend describes the other "
+            "series otherwise"
+        )
+        assert "shadow" in shadow_label or "planet stopper" in shadow_label, (
+            f"shadow_returns dataset label {shadow_label!r} must be the Planet-Stopper-exited line"
+        )
+
+    def test_subtitle_does_not_claim_post_mortem_snapshot_basis(self):
+        """The tab's aggregate series now comes from the continuous shadow_history
+        portfolio series; the header subtitle still declares 'post-mortem
+        snapshots' — a basis label that is no longer true (the exact
+        unlabeled-basis defect class of VERDICT Findings 4/5).
+        """
+        html = (_PROJECT_ROOT / "templates" / "performance.html").read_text(encoding="utf-8")
+        assert "post-mortem snapshot" not in html.lower(), (
+            "performance.html still declares a post-mortem-snapshot basis; the "
+            "aggregate series is the continuous shadow_history portfolio series"
         )

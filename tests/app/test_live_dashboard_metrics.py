@@ -102,11 +102,16 @@ def db_with_exit_triggers(tmp_path, monkeypatch):
     # Full schema is owned by database.py migrations; we create the tables
     # directly here to avoid importing the full migration stack in tests.
     conn = sqlite3.connect(db_path)
+    # ts_et is part of the REAL exit_triggers schema and the history route's
+    # today-filter queries it — a fixture without the column makes the route's
+    # SELECT fail silently (the fixture-provenance gap that hid the Finding-3
+    # date filter from this file's original tests).
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS exit_triggers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             symphony_id TEXT NOT NULL,
             ts_utc TEXT NOT NULL,
+            ts_et TEXT NOT NULL,
             at_return REAL NOT NULL,
             triggered_reason TEXT NOT NULL,
             gate_state_json TEXT
@@ -128,15 +133,29 @@ def db_with_exit_triggers(tmp_path, monkeypatch):
     """)
 
     # Two triggered symphonies with real divergence: bot locked in gains,
-    # held continued to fall.
+    # held continued to fall. Dated TODAY (ET) — the history route's
+    # todays_exits backfill is filtered to the current ET trading day
+    # (DE-PROD-ACCURACY-001 Finding 3), so day-1 rows must be today's.
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZoneInfo
+
+    _today_et = _dt.now(_ZoneInfo("America/New_York")).date().isoformat()
     trigger_rows = [
         # symphony_id, ts_utc, at_return, triggered_reason
-        ("SYM_ALPHA", "2026-06-22T13:43:00Z", 2.5, "TAKE_PROFIT"),
-        ("SYM_BETA", "2026-06-22T14:23:00Z", 1.8, "VWAP_BREAKDOWN"),
+        ("SYM_ALPHA", f"{_today_et}T13:43:00Z", 2.5, "TAKE_PROFIT"),
+        ("SYM_BETA", f"{_today_et}T14:23:00Z", 1.8, "VWAP_BREAKDOWN"),
     ]
+    _ts_et_by_sym = {
+        "SYM_ALPHA": f"{_today_et}T09:43:00",
+        "SYM_BETA": f"{_today_et}T10:23:00",
+    }
     conn.executemany(
-        "INSERT INTO exit_triggers (symphony_id, ts_utc, at_return, triggered_reason) VALUES (?,?,?,?)",
-        trigger_rows,
+        "INSERT INTO exit_triggers (symphony_id, ts_utc, ts_et, at_return, triggered_reason) "
+        "VALUES (?,?,?,?,?)",
+        [
+            (sid, ts_utc, _ts_et_by_sym[sid], ret, reason)
+            for sid, ts_utc, ret, reason in trigger_rows
+        ],
     )
 
     # Latest shadow_history rows for each triggered symphony (is_post_trigger=1).
@@ -1054,16 +1073,27 @@ class TestGuardAlphaSummaryBotStateBlob:
 
 
 class TestHistoryRouteTriggerCountBackfill:
-    """AC-3b: when exit_triggers is backfilled into todays_exits, trigger_count
-    must also be updated in the stats dict.
+    """Day-1 contract for the todays_exits backfill.
 
-    ld-ux live audit: History tab shows 'Today's exits (0)' despite 11 exit_triggers
-    rows because stats['trigger_count'] is never updated by the AC-3 backfill code.
+    Re-pointed (DE-PROD-ACCURACY-001 Finding 3): the original AC-3b behavior —
+    overwriting stats['trigger_count'] with the backfill feed length — was
+    itself a production defect (it clobbered the windowed post-mortem count 76
+    -> 50 while total_saved/win_rate still derived from 76, making the headline
+    internally inconsistent). The ratified contract: trigger_count is ALWAYS
+    the windowed post-mortem aggregate (0 on a day-1 droplet with no files),
+    todays_exits is the live intraday feed, and the two are different
+    quantities by design. The 'Today's exits (N)' heading derives from
+    todays_exits.length in history.js, not from trigger_count.
     """
 
     @pytest.fixture
     def db_with_exit_triggers_only(self, tmp_path, monkeypatch):
-        """Minimal DB: exit_triggers rows, no post_mortem files."""
+        """Minimal DB: today's exit_triggers rows (real schema incl. ts_et), no
+        post_mortem files. Rows dated today ET — the backfill is date-filtered."""
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo as _ZoneInfo
+
+        _today_et = _dt.now(_ZoneInfo("America/New_York")).date().isoformat()
         db_path = str(tmp_path / "test_history_triggers.db")
         conn = sqlite3.connect(db_path)
         conn.executescript("""
@@ -1071,6 +1101,7 @@ class TestHistoryRouteTriggerCountBackfill:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symphony_id TEXT NOT NULL,
                 ts_utc TEXT NOT NULL,
+                ts_et TEXT NOT NULL,
                 at_return REAL NOT NULL,
                 triggered_reason TEXT NOT NULL
             );
@@ -1080,11 +1111,12 @@ class TestHistoryRouteTriggerCountBackfill:
             );
         """)
         conn.executemany(
-            "INSERT INTO exit_triggers (symphony_id, ts_utc, at_return, triggered_reason) VALUES (?,?,?,?)",
+            "INSERT INTO exit_triggers (symphony_id, ts_utc, ts_et, at_return, triggered_reason) "
+            "VALUES (?,?,?,?,?)",
             [
-                ("SYM_A", "2026-06-22T13:43:00Z", 2.5, "TAKE_PROFIT"),
-                ("SYM_B", "2026-06-22T14:23:00Z", 1.8, "VWAP_BREAKDOWN"),
-                ("SYM_C", "2026-06-22T15:01:00Z", 0.9, "VWAP_BREAKDOWN"),
+                ("SYM_A", f"{_today_et}T13:43:00Z", f"{_today_et}T09:43:00", 2.5, "TAKE_PROFIT"),
+                ("SYM_B", f"{_today_et}T14:23:00Z", f"{_today_et}T10:23:00", 1.8, "VWAP_BREAKDOWN"),
+                ("SYM_C", f"{_today_et}T15:01:00Z", f"{_today_et}T11:01:00", 0.9, "VWAP_BREAKDOWN"),
             ],
         )
         conn.execute("INSERT INTO bot_state (id, data) VALUES (1, '{}')")
@@ -1093,14 +1125,13 @@ class TestHistoryRouteTriggerCountBackfill:
         monkeypatch.setenv("DB_PATH", db_path)
         return db_path
 
-    def test_history_trigger_count_reflects_exit_triggers(
+    def test_history_day1_backfills_todays_exits_without_clobbering_windowed_count(
         self, client, db_with_exit_triggers_only, tmp_path, monkeypatch
     ):
-        """AC-3b: /api/history/<days> trigger_count must equal exit_triggers row count
-        when no post_mortem files exist.
-
-        Fails RED because the AC-3 backfill populates todays_exits but never updates
-        stats['trigger_count'] — it remains 0 from get_history_summary().
+        """Day-1 droplet (no post_mortem files, 3 live exits today): todays_exits
+        carries all 3 rows while trigger_count stays 0 — the windowed post-mortem
+        aggregate, which has nothing to aggregate yet. The old assertion
+        (trigger_count == feed length) pinned the Finding-3 clobber defect.
         """
         import analytics as analytics_module
 
@@ -1112,18 +1143,23 @@ class TestHistoryRouteTriggerCountBackfill:
         assert resp.status_code == 200
         data = resp.get_json()
 
-        assert data.get("trigger_count", 0) == 3, (
-            f"trigger_count must be 3 (from 3 exit_triggers rows). "
-            f"Got trigger_count={data.get('trigger_count')}. "
-            "RED: AC-3 backfill sets todays_exits but not trigger_count."
+        assert len(data.get("todays_exits", [])) == 3, (
+            f"todays_exits must carry today's 3 live exits on day-1; got "
+            f"{data.get('todays_exits')!r}"
+        )
+        assert data.get("trigger_count") == 0, (
+            f"trigger_count={data.get('trigger_count')} must stay the windowed "
+            "post-mortem count (0 with no files) — never the backfill feed length "
+            "(total_saved/win_rate derive from the same windowed entries)"
         )
 
-    def test_history_todays_exits_length_matches_trigger_count(
+    def test_history_day1_backfill_rows_carry_consumer_shape(
         self, client, db_with_exit_triggers_only, tmp_path, monkeypatch
     ):
-        """AC-3b: len(todays_exits) must match trigger_count — they must be consistent.
-
-        Fails RED if one is backfilled but not the other.
+        """Day-1 backfill rows must carry the history.js-consumed shape
+        (ts / symphony_name / reason / detail) so the table renders instead of
+        em-dashes. Replaces the retired todays_exits-length == trigger_count
+        invariant, which is false by design (intraday feed vs windowed aggregate).
         """
         import analytics as analytics_module
 
@@ -1133,37 +1169,25 @@ class TestHistoryRouteTriggerCountBackfill:
 
         resp = client.get("/api/history/30")
         assert resp.status_code == 200
-        data = resp.get_json()
+        todays_exits = resp.get_json().get("todays_exits", [])
+        assert todays_exits, "day-1 backfill must return today's rows"
 
-        todays_exits = data.get("todays_exits", [])
-        trigger_count = data.get("trigger_count", 0)
-        assert len(todays_exits) == trigger_count, (
-            f"len(todays_exits)={len(todays_exits)} must equal "
-            f"trigger_count={trigger_count}. "
-            "RED: backfill sets one but not the other."
-        )
-        assert trigger_count > 0, (
-            f"trigger_count must be > 0 when exit_triggers has rows. Got {trigger_count}."
-        )
+        for rec in todays_exits:
+            missing = {"ts", "symphony_name", "reason", "detail"} - set(rec)
+            assert not missing, f"backfill row missing consumed keys {missing}: {rec}"
+            assert rec["ts"], "ts must be renderable (Time column)"
+            assert isinstance(rec["detail"], (int, float)), (
+                "detail must be numeric (rendered as a signed percent)"
+            )
 
-    def test_history_todays_exits_use_triggered_reason_column(
+    def test_history_backfill_reads_triggered_reason_column_into_reason_field(
         self, client, db_with_exit_triggers_only, tmp_path, monkeypatch
     ):
-        """AC-3c: each exit in todays_exits must carry key 'triggered_reason'
-        (the real exit_triggers column name), not 'trigger_reason' (a typo).
-
-        ld-ux live audit (2026-06-22): app.py:2589 SELECT uses 'trigger_reason'
-        but the real DB column is 'triggered_reason' (database.py migration 022,
-        line 222).  On the real droplet this raises OperationalError which the
-        outer except swallows → todays_exits=[], trigger_count=0.
-
-        The corrected fixtures (db_with_exit_triggers, db_with_exit_triggers_only)
-        now use 'triggered_reason' to match the real schema.  This test goes RED
-        because the app.py query still selects 'trigger_reason' — an OperationalError
-        is swallowed and todays_exits stays empty.
-
-        Fix: app.py:2589 must change 'trigger_reason' → 'triggered_reason' in the
-        SELECT clause AND in the result dict key at app.py:2600.
+        """The backfill SELECT must read the real 'triggered_reason' column (the
+        original AC-3c guard against the 'trigger_reason' typo — an
+        OperationalError here is swallowed and yields an empty list) and map it
+        into the consumer-shaped 'reason' field history.js renders. Values must
+        be the seeded production-schema reasons, order-independent.
         """
         import analytics as analytics_module
 
@@ -1173,26 +1197,23 @@ class TestHistoryRouteTriggerCountBackfill:
 
         resp = client.get("/api/history/30")
         assert resp.status_code == 200
-        data = resp.get_json()
-
-        todays_exits = data.get("todays_exits", [])
+        todays_exits = resp.get_json().get("todays_exits", [])
         assert len(todays_exits) > 0, (
-            "todays_exits must be non-empty when exit_triggers has rows. "
-            f"Got todays_exits={todays_exits!r}. "
-            "RED: app.py:2589 selects 'trigger_reason' (no such column in real schema) "
-            "→ OperationalError swallowed → empty list."
+            "todays_exits must be non-empty when today's exit_triggers rows exist — "
+            "an empty list here means the SELECT references a non-existent column "
+            "and the OperationalError was swallowed"
         )
-        # Each exit dict must carry the real column name as its key.
-        for exit_item in todays_exits:
-            assert "triggered_reason" in exit_item, (
-                f"Each exit dict must have key 'triggered_reason' (real column name). "
-                f"Got keys: {list(exit_item.keys())}. "
-                "RED: app.py:2600 emits 'trigger_reason' (typo) as the dict key."
+
+        with sqlite3.connect(db_with_exit_triggers_only) as _conn:
+            expected_reasons = sorted(
+                r[0] for r in _conn.execute("SELECT triggered_reason FROM exit_triggers")
             )
-            assert "trigger_reason" not in exit_item, (
-                f"Exit dict must NOT have key 'trigger_reason' (wrong column name). "
-                f"Got keys: {list(exit_item.keys())}."
-            )
+        got_reasons = sorted(str(rec.get("reason", "")) for rec in todays_exits)
+        assert got_reasons == expected_reasons, (
+            f"reason values {got_reasons} != seeded triggered_reason column values "
+            f"{expected_reasons} — the backfill is not reading the real column into "
+            "the consumed field"
+        )
 
 
 # ===========================================================================
