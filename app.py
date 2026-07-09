@@ -3505,6 +3505,17 @@ def create_sleeve_rule_route(sleeve_id):
 def arm_sleeve_rule(sleeve_id, rule_id):
     """SHADOW -> PAPER arming (AC-13): rejected without >=1 recorded SHADOW fire.
 
+    A successful arm ALSO promotes the owning sleeve's status SHADOW -> PAPER
+    (PM design ruling, audit finding #3): sleeve status is the signal the
+    tick's step-0 cleanup, the panel badge, and the Disarm control all key
+    off, so a paper-armed rule inside a SHADOW-status sleeve had its orders
+    cancelled every tick while rendering a calm standby badge with Disarm
+    disabled. Promotion happens ONLY from SHADOW -- a LIVE sleeve is never
+    demoted by arming one more rule, and an arm while PAUSED_RECONCILIATION
+    is refused outright (409) so a money-truth pause can never be cleared as
+    a side effect of arming. disarm_sleeve below is the inverse (sleeve + all
+    rules back to SHADOW).
+
     Never touches SLEEVE_LIVE_EXECUTION/ALPACA_LIVE_* -- PAPER stays
     structurally confined to the paper host via sleeves.alpaca_orders.resolve_host.
     """
@@ -3517,6 +3528,16 @@ def arm_sleeve_rule(sleeve_id, rule_id):
         return jsonify(
             {"status": "error", "message": "arm only supports target_mode=PAPER (SHADOW->PAPER)"}
         ), 400
+
+    sleeve_status = (database.get_sleeve(sleeve_id) or {}).get("status")
+    if sleeve_status == "PAUSED_RECONCILIATION":
+        return jsonify(
+            {
+                "status": "error",
+                "message": "sleeve is PAUSED_RECONCILIATION — resolve the reconciliation "
+                "breach before arming (arming must never clear a money-truth pause)",
+            }
+        ), 409
 
     has_shadow_fire = any(
         fire.get("mode_at_fire") == "SHADOW"
@@ -3531,6 +3552,8 @@ def arm_sleeve_rule(sleeve_id, rule_id):
         ), 400
 
     database.update_sleeve_rule_mode(rule_id, "PAPER")
+    if sleeve_status == "SHADOW":
+        database.update_sleeve_status(sleeve_id, "PAPER")
     return jsonify({"status": "success", "rule": database.get_sleeve_rule(rule_id)})
 
 
