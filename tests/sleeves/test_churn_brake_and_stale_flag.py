@@ -39,6 +39,7 @@ import pytest
 import app as app_module
 import database
 import reporting
+import sleeves.alpaca_orders as alpaca_orders
 import sleeves.tick_orchestrator as tick_orchestrator
 from tests.sleeves._route_shaped import (
     MARKET_OPEN_NOW_UTC,
@@ -335,4 +336,76 @@ class TestChurnBrakeIsConjunctive:
             f"of ${net_gain:+.2f} must NOT be benched — AC-11's condition is "
             f"conjunctive (trips AND meaningful loss); benching on turnover "
             f"alone silences a working rule"
+        )
+
+
+class TestBadgePrecedence:
+    """Ratified display precedence (sf-dash proposal, sf-test ratified,
+    2026-07-09; review gap G5): PAUSED_RECONCILIATION > BENCHED > stale >
+    base status. The money-truth pause outranks every other pill state; a
+    brake outranks the calm base pill."""
+
+    def test_paused_reconciliation_outranks_bench_on_the_pill(self, client):
+        """A benched rule inside a sleeve that LATER pauses for
+        reconciliation must render the PAUSED pill — a bench flag masking a
+        money-truth pause would hide the one state that demands immediate
+        operator attention."""
+        sleeve_id = create_sleeve_via_route(client, capital_usd=_CAPITAL_USD)
+        rule_id = create_rule_via_route(client, sleeve_id, valid_route_rule_payload())
+        net_loss = _seed_same_day_losing_round_trips(sleeve_id, rule_id)
+
+        # Bench engages on this tick (sleeve still SHADOW)...
+        with tick_patches(
+            account_cash_usd=_post_churn_cash(net_loss), closes_by_symbol={"SPY": 500.0}
+        ):
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=MARKET_OPEN_NOW_UTC)
+        # ...then drift pauses the sleeve.
+        database.update_sleeve_status(sleeve_id, "PAUSED_RECONCILIATION")
+
+        panel = app_module._build_sleeves_panel_context()
+        entry = next(s for s in panel if s["id"] == sleeve_id)
+        badge_map = app_module._SLEEVE_STATUS_BADGE_CLASSES
+        assert entry["status_badge_class"] == badge_map["PAUSED_RECONCILIATION"], (
+            f"the pill must show the reconciliation pause "
+            f"({badge_map['PAUSED_RECONCILIATION']!r}) even while a rule is "
+            f"benched; got {entry['status_badge_class']!r} — "
+            f"PAUSED_RECONCILIATION outranks BENCHED in the ratified "
+            f"precedence"
+        )
+
+    def test_bench_outranks_the_calm_paper_base_pill(self, client):
+        """A PAPER-armed sleeve whose entry rule just got benched must show
+        the BENCHED pill, not the calm 'armed' base pill — the operator is
+        owed the at-a-glance signal that the brake engaged."""
+        sleeve_id = create_sleeve_via_route(client, capital_usd=_CAPITAL_USD)
+        rule_id = create_rule_via_route(client, sleeve_id, valid_route_rule_payload())
+        database.insert_sleeve_rule_fire(
+            rule_id=rule_id,
+            sleeve_id=sleeve_id,
+            action="buy",
+            rule_class="ENTRY",
+            mode_at_fire="SHADOW",
+        )
+        resp = client.post(
+            f"/api/sleeves/{sleeve_id}/rules/{rule_id}/arm", json={"target_mode": "PAPER"}
+        )
+        assert resp.status_code == 200, "fixture sanity: the arm ceremony must succeed"
+        assert database.get_sleeve(sleeve_id)["status"] == "PAPER"
+
+        net_loss = _seed_same_day_losing_round_trips(sleeve_id, rule_id)
+        with tick_patches(
+            account_cash_usd=_post_churn_cash(net_loss),
+            closes_by_symbol={"SPY": 500.0},
+            submit_bracket_result=alpaca_orders.OrderResult(order=None, error="HTTP 500"),
+        ):
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=MARKET_OPEN_NOW_UTC)
+
+        panel = app_module._build_sleeves_panel_context()
+        entry = next(s for s in panel if s["id"] == sleeve_id)
+        badge_map = app_module._SLEEVE_STATUS_BADGE_CLASSES
+        assert entry["status_badge_class"] == badge_map["BENCHED"], (
+            f"a PAPER sleeve with a benched rule must surface the BENCHED "
+            f"pill ({badge_map['BENCHED']!r}); got "
+            f"{entry['status_badge_class']!r} — BENCHED outranks the calm "
+            f"base status in the ratified precedence"
         )

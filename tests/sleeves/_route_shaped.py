@@ -28,6 +28,10 @@ from datetime import UTC, datetime
 from unittest.mock import patch
 
 from sleeves import alpaca_orders
+from tests.sleeves._alpaca_fixtures import (
+    validate_alpaca_account_shape,
+    validate_alpaca_position_shape,
+)
 
 # Canonical market-open tick instant (Wednesday 2026-07-08, 10:31 ET) — the
 # same convention tests/sleeves/test_tick_orchestrator.py established; NYSE is
@@ -107,9 +111,9 @@ def create_rule_via_route(client, sleeve_id: int, payload: dict) -> int:
 
 def make_account(cash_usd: float) -> dict:
     """Minimal Alpaca Account double whose cash matches the caller's intended
-    broker truth (shape mirrors tests/sleeves/_alpaca_fixtures.py's required
-    account fields)."""
-    return {
+    broker truth — self-validated against the documented Account schema so
+    the double can never drift from the real API contract (review gap G7)."""
+    account = {
         "id": f"acct-{uuid.uuid4().hex}",
         "account_number": "PA0000ROUTETEST",
         "status": "ACTIVE",
@@ -123,11 +127,15 @@ def make_account(cash_usd: float) -> dict:
         "account_blocked": False,
         "shorting_enabled": False,
     }
+    problems = validate_alpaca_account_shape(account)
+    assert not problems, f"account double fails Alpaca Account shape: {problems}"
+    return account
 
 
 def make_broker_position(symbol: str, qty: float, price: float) -> dict:
-    """Minimal Alpaca Position double (documented required fields)."""
-    return {
+    """Minimal Alpaca Position double, self-validated against the documented
+    Position schema (review gap G7)."""
+    position = {
         "asset_id": f"asset-{uuid.uuid4().hex}",
         "symbol": symbol,
         "asset_class": "us_equity",
@@ -139,6 +147,9 @@ def make_broker_position(symbol: str, qty: float, price: float) -> dict:
         "unrealized_pl": "0.00",
         "current_price": str(price),
     }
+    problems = validate_alpaca_position_shape(position)
+    assert not problems, f"position double fails Alpaca Position shape: {problems}"
+    return position
 
 
 @contextmanager

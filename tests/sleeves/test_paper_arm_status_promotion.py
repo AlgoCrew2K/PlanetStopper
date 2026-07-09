@@ -26,7 +26,7 @@ Pinned contracts:
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -375,3 +375,47 @@ class TestTwoKeyArmedDispatchGate:
             "cancel-the-armed-order money-loser the moment step-0 cleanup "
             "runs"
         )
+
+
+class TestArmGateFireWindow:
+    def test_arm_gate_sees_shadow_fires_beyond_the_accessor_default_window(self, client):
+        """Review gap G8: the AC-13 gate any()s over
+        get_sleeve_rule_fires(rule_id) — default limit 100, newest first. A
+        rule re-armed after an active PAPER life carries 100+ newer PAPER
+        fires that push every SHADOW fire out of the page, spuriously 400ing
+        a legitimately re-armable rule. The gate must consult SHADOW-fire
+        EXISTENCE (mode-filtered count/exists), never a limited page."""
+        sleeve_id = create_sleeve_via_route(client)
+        rule_id = create_rule_via_route(client, sleeve_id, valid_route_rule_payload())
+
+        # One genuine SHADOW fire, older than everything else (now-derived).
+        old_fired_at = (datetime.now(UTC) - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+        database.insert_sleeve_rule_fire(
+            rule_id=rule_id,
+            sleeve_id=sleeve_id,
+            action="buy",
+            rule_class="ENTRY",
+            mode_at_fire="SHADOW",
+            fired_at=old_fired_at,
+        )
+        # 120 newer PAPER fires from the rule's previous armed life (default
+        # fired_at = insert time = now) — enough to flood the 100-row page.
+        for _ in range(120):
+            database.insert_sleeve_rule_fire(
+                rule_id=rule_id,
+                sleeve_id=sleeve_id,
+                action="buy",
+                rule_class="ENTRY",
+                mode_at_fire="PAPER",
+            )
+
+        resp = _arm(client, sleeve_id, rule_id)
+
+        assert resp.status_code == 200, (
+            f"the rule HAS a recorded SHADOW fire — the AC-13 gate must see "
+            f"it regardless of how many newer PAPER fires exist; got "
+            f"{resp.status_code}: {resp.get_data(as_text=True)[:200]!r} "
+            f"(the any()-over-limited-page gate silently forgets shadow "
+            f"history after ~100 armed fires)"
+        )
+        assert database.get_sleeve_rule(rule_id)["mode"] == "PAPER"

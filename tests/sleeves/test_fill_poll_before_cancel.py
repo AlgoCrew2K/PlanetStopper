@@ -205,3 +205,83 @@ class TestCanceledAfterPartialFill:
             f"filled portion spent; got {state.cash_usd:.2f}"
         )
         assert abs(state.reserved_usd) <= 1e-6
+
+
+class TestNakedPositionVisibleToReconciliation:
+    def test_broker_position_in_history_symbol_with_zero_ledger_qty_pauses(self):
+        """The reconciliation-SCOPE half of audit #4 (review gap G1): the
+        aggregate position check only inspects symbols where some LEDGER
+        holds nonzero qty (tick_orchestrator symbol_holders), so the exact
+        naked-position state the audit produced live — order marked
+        canceled, ZERO fills recorded, ledger says full cash / no position,
+        while the broker holds shares bought with sleeve cash — is
+        structurally invisible: the symbol never enters the check, and
+        operator float absorbs the one-sided cash comparison.
+
+        Pinned contract (the audit's own fix guidance): reconciliation scope
+        extends to symbols with recorded sleeve ORDER history. A broker
+        position in such a symbol while every sleeve's ledger qty is zero is
+        unexplained drift -> the sleeves with history in that symbol pause.
+        (A symbol NO sleeve ever touched remains ignored — the
+        operator-external-holding exemption is untouched; how GREEN bounds
+        the history window for legitimately-closed positions is design
+        freedom, but THIS state — terminal order, zero fills, broker holds —
+        must pause.)"""
+        capital_usd = 10_000.0
+        sleeve_id = _make_shadow_sleeve(capital_usd)
+
+        # The audit's exact residue: a canceled order with ZERO recorded
+        # fills (the lost-fill state finding #4's other half prevents going
+        # FORWARD; this pin makes the already-corrupted state DETECTABLE).
+        naked_qty, naked_price = 10.0, 500.0
+        database.insert_sleeve_order(
+            client_order_id=f"naked-{uuid.uuid4().hex}",
+            sleeve_id=sleeve_id,
+            symbol="SPY",
+            side="buy",
+            qty=naked_qty,
+            order_class="bracket",
+            status="canceled",
+            reserved_price=naked_price,
+        )
+        state = ledger.reconstruct_from_history(
+            capital_usd, database.get_sleeve_order_history(sleeve_id)
+        )
+        assert not any(p.qty for p in state.positions.values()), (
+            "fixture sanity: the ledger must believe the sleeve is flat"
+        )
+
+        # Broker truth: the shares exist, and OPERATOR FLOAT covers the cash
+        # gap so the one-sided aggregate cash check cannot catch it — the
+        # exact masking the audit called out.
+        with tick_patches(
+            account_cash_usd=capital_usd + 5_000.0,  # float absorbs the drift
+            broker_positions=[make_broker_position("SPY", naked_qty, naked_price)],
+        ):
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=MARKET_OPEN_NOW_UTC)
+
+        assert database.get_sleeve(sleeve_id)["status"] == "PAUSED_RECONCILIATION", (
+            "a broker position in a symbol this sleeve has ORDER history in, "
+            "with zero ledger qty anywhere, is an unexplained naked position "
+            "— it must pause the sleeve, not vanish into the "
+            "operator-external exemption (audit #4's 'invisible to "
+            "reconciliation by design' + review gap G1)"
+        )
+
+    def test_symbol_no_sleeve_ever_touched_is_still_ignored(self):
+        """Companion guard: extending scope to history symbols must NOT
+        revoke the operator-external exemption — a broker holding in a
+        symbol with zero sleeve order history stays invisible."""
+        sleeve_id = _make_shadow_sleeve(1_000.0)
+
+        with tick_patches(
+            account_cash_usd=1_000.0,
+            broker_positions=[make_broker_position("TSLA", 50.0, 200.0)],
+        ):
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=MARKET_OPEN_NOW_UTC)
+
+        assert database.get_sleeve(sleeve_id)["status"] != "PAUSED_RECONCILIATION", (
+            "TSLA has zero sleeve order history — the operator's own holding "
+            "sharing the account must never pause anyone (the exemption the "
+            "G1 fix must preserve)"
+        )

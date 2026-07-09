@@ -62,11 +62,14 @@ def _seed_filled_order(
         status="filled",
         reserved_price=price if side == "buy" else None,
     )
+    # filled_at derives from the test's own runtime (review gap G6): these
+    # tests assert LIFETIME semantics, so the seeds must never accidentally
+    # depend on a fixed calendar date if the digest ever becomes day-scoped.
     database.insert_sleeve_fill(
         order_id=order_pk,
         fill_price=price,
         filled_qty=qty,
-        filled_at="2026-07-08T14:35:00Z",
+        filled_at=datetime.now(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
 
 
@@ -84,17 +87,24 @@ def _panel_entry(sleeve_id: int) -> dict:
 def _surface_exposes_truth(entry: dict, truth: float) -> bool:
     """True iff this panel/digest sleeve entry carries the sleeve's real
     realized P&L — as a sleeve-level figure, or as per-rule numeric values
-    summing to it (both GREEN designs the PM ruling allows)."""
-    sleeve_level = entry.get("realized_pnl_usd")
-    if isinstance(sleeve_level, (int, float)) and sleeve_level == pytest.approx(truth, abs=1e-6):
-        return True
+    summing to it (both GREEN designs the PM ruling allows).
+
+    Escape hatch closed (review gap G4): a truthful sleeve-level figure does
+    NOT excuse per-rule entries that still render numeric $0.00 against a
+    nonzero truth — per-rule numerics must be honest attributions (sum to
+    truth) or explicit non-numeric n/a markers, never residual value claims.
+    """
     rule_values = [
         r.get("realized_pnl_usd")
         for r in entry.get("rules", [])
         if isinstance(r.get("realized_pnl_usd"), (int, float))
     ]
     # abs 1e-6 dollars: float bookkeeping of short-decimal seeded values.
-    return bool(rule_values) and sum(rule_values) == pytest.approx(truth, abs=1e-6)
+    rules_sum_to_truth = bool(rule_values) and sum(rule_values) == pytest.approx(truth, abs=1e-6)
+    sleeve_level = entry.get("realized_pnl_usd")
+    if isinstance(sleeve_level, (int, float)) and sleeve_level == pytest.approx(truth, abs=1e-6):
+        return rules_sum_to_truth or not rule_values
+    return rules_sum_to_truth
 
 
 def _make_cross_rule_profitable_sleeve() -> tuple[int, float, float]:
@@ -328,10 +338,11 @@ class TestAttributionFoldContract:
 
         panel_rules = _panel_entry(sleeve_id)["rules"]
         panel_value = next(r for r in panel_rules if r["id"] == rule_id).get("realized_pnl_usd")
-        assert not (isinstance(panel_value, (int, float)) and panel_value == 0), (
-            f"an unattributable history must render an explicit n/a marker; "
-            f"the panel shows {panel_value!r} — a fabricated $0.00 on a fold "
-            f"failure is the exact swallow this cycle removed (audit #7)"
+        assert not isinstance(panel_value, (int, float)), (
+            f"an unattributable history must render an explicit non-numeric "
+            f"n/a marker; the panel shows {panel_value!r} — ANY numeric here "
+            f"is fabricated (no truth is computable), and $0.00 specifically "
+            f"is the exact swallow this cycle removed (audit #7)"
         )
 
         today_str = datetime.now(_ET).strftime("%Y-%m-%d")
@@ -340,6 +351,6 @@ class TestAttributionFoldContract:
             s for s in summaries if s["name"] == database.get_sleeve(sleeve_id)["name"]
         )
         digest_value = next(iter(digest_entry["rules"])).get("realized_pnl_usd")
-        assert not (isinstance(digest_value, (int, float)) and digest_value == 0), (
-            f"the digest must carry the same n/a marker; got {digest_value!r}"
+        assert not isinstance(digest_value, (int, float)), (
+            f"the digest must carry the same non-numeric n/a marker; got {digest_value!r}"
         )
