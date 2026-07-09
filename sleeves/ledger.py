@@ -280,3 +280,128 @@ def reconstruct_from_history(capital_usd: float, order_history: list[dict]) -> L
                     reserved_usd=0.0,
                 )
     return state
+
+
+@dataclasses.dataclass(frozen=True)
+class RealizedFillAttribution:
+    """One sell fill's realized P&L portion, attributed to the rule whose BUY
+    lots it closes (buy-side attribution -- see attribute_realized_fills).
+
+    opening_rule_id: the sleeve_orders.rule_id of the BUY that opened the lots
+        this portion closes; None for an unattributed (NULL rule_id) buy.
+    qty: the portion of the sell fill's qty drawn from this rule's lots.
+    realized_delta_usd: proceeds minus average-cost basis for that portion.
+    filled_at: the SELL fill's filled_at, UTC verbatim as stored -- callers
+        needing a trading-day cut convert to ET themselves.
+    """
+
+    opening_rule_id: int | None
+    symbol: str
+    qty: float
+    realized_delta_usd: float
+    filled_at: str | None
+
+
+def attribute_realized_fills(order_history: list[dict]) -> list[RealizedFillAttribution]:
+    """Fold a sleeve's order+fill history into fill-level realized-P&L records
+    attributed to the rule that OPENED the lots being closed (buy-side
+    attribution) -- the per-rule P&L truth behind the dashboard panel, the EOD
+    digest, and the churn brake's net-loss test (audit findings #7/#8).
+
+    ATTRIBUTION LAW: realized P&L belongs to the ENTRY rule whose buy fills
+    created the position, not to the rule whose sell closed it -- a defensive
+    go_to_cash rule selling an entry rule's position is the DESIGN case, and
+    its value is loss avoidance, not realized alpha. Each sell fill is
+    prorated across the opening rules' lot buckets by held-qty share at each
+    bucket's own average cost; the last drawn-from bucket receives the exact
+    remainder (clamped to its holding) so the sold qty is conserved exactly in
+    float -- naive per-bucket proration drifts by ulps per sell and could make
+    a full flatten spuriously raise on a history reconstruct_from_history
+    replays cleanly.
+
+    CONSERVATION IDENTITY: sum(r.realized_delta_usd for r in records) equals
+    reconstruct_from_history(capital, order_history).realized_pnl_usd -- the
+    qty-share proration at per-bucket average cost algebraically reproduces
+    apply_fill's symbol-wide average-cost booking (compare approximately;
+    float summation order differs).
+
+    Same ordering caveat as reconstruct_from_history: replay follows
+    order-history order (orders oldest-submitted first, fills oldest-first per
+    order), not the wall-clock interleave of fills across orders.
+
+    Records deliberately carry NO buy-side timing -- lot buckets mix buy days,
+    so a per-record "opened today" is ill-defined; round-trip counting derives
+    from sleeve_orders/sleeve_fills directly, never from this fold.
+
+    Raises InsufficientPositionError on a sell exceeding the symbol's held qty
+    (guarded at the SYMBOL level, mirroring apply_fill) and ValueError on
+    degenerate qty/price -- callers must surface a distinct "n/a" marker on
+    failure, never a fabricated $0.00 (a value claim, the exact bug this fold
+    replaces). Pure, zero I/O; input is not mutated.
+    """
+    # symbol -> {opening_rule_id: [held_qty, cost_basis_usd]} (insertion order
+    # = first-buy order, which fixes which bucket is "last drawn-from").
+    lot_buckets: dict[str, dict] = {}
+    # Symbol-level running qty maintained exactly the way apply_fill maintains
+    # Position.qty, so the over-sell guard can never fire on a history the
+    # LedgerState fold accepts.
+    held_qty: dict[str, float] = {}
+    records: list[RealizedFillAttribution] = []
+
+    for order in order_history:
+        symbol = order["symbol"]
+        side = order["side"]
+        rule_id = order.get("rule_id")
+        for fill in order.get("fills") or []:
+            qty = fill["filled_qty"]
+            price = fill["fill_price"]
+            _reject_non_finite(qty=qty, price=price)
+            if qty < 0:
+                raise ValueError(f"filled_qty must be >= 0; got {qty!r}")
+            if price <= 0:
+                raise ValueError(f"fill_price must be > 0; got {price!r}")
+
+            if side == "buy":
+                bucket = lot_buckets.setdefault(symbol, {}).setdefault(rule_id, [0.0, 0.0])
+                bucket[0] += qty
+                bucket[1] += qty * price
+                held_qty[symbol] = held_qty.get(symbol, 0.0) + qty
+                continue
+            if side != "sell":
+                raise ValueError(f"side must be 'buy' or 'sell'; got {side!r}")
+
+            total_held = held_qty.get(symbol, 0.0)
+            if total_held <= 0 or qty > total_held:
+                raise InsufficientPositionError(
+                    f"cannot sell {qty!r} {symbol}: only {total_held!r} held"
+                )
+            drawn = [
+                (opening_rule_id, bucket)
+                for opening_rule_id, bucket in lot_buckets.get(symbol, {}).items()
+                if bucket[0] > 0
+            ]
+            bucket_total = sum(bucket[0] for _, bucket in drawn)
+            allocated = 0.0
+            for i, (opening_rule_id, bucket) in enumerate(drawn):
+                if i < len(drawn) - 1:
+                    sold = qty * (bucket[0] / bucket_total)
+                else:
+                    sold = min(max(qty - allocated, 0.0), bucket[0])
+                if sold <= 0:
+                    continue
+                avg_cost_per_share = bucket[1] / bucket[0]
+                cost_removed = sold * avg_cost_per_share
+                records.append(
+                    RealizedFillAttribution(
+                        opening_rule_id=opening_rule_id,
+                        symbol=symbol,
+                        qty=sold,
+                        realized_delta_usd=sold * price - cost_removed,
+                        filled_at=fill.get("filled_at"),
+                    )
+                )
+                bucket[0] -= sold
+                bucket[1] -= cost_removed
+                allocated += sold
+            held_qty[symbol] = total_held - qty
+    return records

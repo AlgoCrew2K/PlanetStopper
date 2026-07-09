@@ -179,11 +179,20 @@ def build_sleeves_digest_section(sleeve_summaries: list[dict]) -> str:
             rule_name = rule.get("name") or "unnamed rule"
             today_fires = rule.get("today_fires", 0) or 0
             lifetime_fires = rule.get("lifetime_fires", 0) or 0
-            realized_pnl = rule.get("realized_pnl_usd", 0.0) or 0.0
+            # A non-numeric realized value (None = the attribution fold
+            # failed upstream) renders as an explicit "n/a" -- never a dollar
+            # figure fabricated from a placeholder (audit finding #8: "$+0.00"
+            # is a value claim).
+            realized_pnl = rule.get("realized_pnl_usd", 0.0)
+            realized_txt = (
+                f"${realized_pnl:+,.2f}"
+                if isinstance(realized_pnl, (int, float)) and not isinstance(realized_pnl, bool)
+                else "n/a"
+            )
             benched_note = " — BENCHED" if rule.get("benched") else ""
             lines.append(
                 f"    ◦ {rule_name}: today {today_fires} · lifetime {lifetime_fires} "
-                f"· realized ${realized_pnl:+,.2f}{benched_note}"
+                f"· realized {realized_txt}{benched_note}"
             )
     return "\n".join(lines)
 
@@ -193,11 +202,16 @@ def _build_sleeve_digest_summaries(current_date_str: str) -> list[dict]:
     rows (AC-17). Never raises -- a per-sleeve/per-rule read failure omits
     that sleeve/rule rather than crashing the EOD scheduler thread.
 
-    realized_pnl_usd/benched are honest placeholders (0.0/False) -- no
-    fill-attribution or churn-brake machinery is wired yet (P3 scope note,
-    docs/generated/sleeves.md's reconstruct_from_history known limitation);
-    fabricating either would be worse than omitting them.
+    realized_pnl_usd is derived from the SAME fold as the dashboard panel
+    (sleeves.ledger.attribute_realized_fills, buy-side attribution -- audit
+    finding #8 pinned panel/digest agreement), so the two operator surfaces
+    can never disagree on the same quantity. On fold failure the value is
+    None and the formatter renders "n/a" -- never a fabricated $0.00. benched
+    stays an honest placeholder (False) until the churn-brake machinery
+    (AC-11) lands.
     """
+    from sleeves import ledger as sleeve_ledger  # noqa: PLC0415
+
     summaries: list[dict] = []
     try:
         sleeve_rows = database.get_all_sleeves()
@@ -212,6 +226,20 @@ def _build_sleeve_digest_summaries(current_date_str: str) -> list[dict]:
             )
         except Exception:
             rule_rows = []
+
+        try:
+            order_history = (
+                database.get_sleeve_order_history(sleeve_id) if sleeve_id is not None else []
+            )
+            realized_by_rule = {}
+            for record in sleeve_ledger.attribute_realized_fills(order_history):
+                realized_by_rule[record.opening_rule_id] = (
+                    realized_by_rule.get(record.opening_rule_id, 0.0) + record.realized_delta_usd
+                )
+        except Exception:
+            # None (not {}): the fold FAILED -- every rule renders "n/a"; an
+            # empty dict would render $0.00 value claims (audit finding #8).
+            realized_by_rule = None
 
         rule_summaries = []
         for rule in rule_rows:
@@ -230,7 +258,9 @@ def _build_sleeve_digest_summaries(current_date_str: str) -> list[dict]:
                     "name": rule.get("name", ""),
                     "today_fires": today_fires,
                     "lifetime_fires": len(fires),
-                    "realized_pnl_usd": 0.0,
+                    "realized_pnl_usd": (
+                        realized_by_rule.get(rule_id, 0.0) if realized_by_rule is not None else None
+                    ),
                     "benched": False,
                 }
             )

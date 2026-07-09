@@ -900,12 +900,17 @@ def _build_sleeves_panel_context() -> list[dict]:
     Never raises -- a read failure on one sleeve/rule degrades that row
     rather than 500ing the whole dashboard (dashboard-truth rule).
 
-    Ledger cash and per-rule realized P&L are both derived with ZERO new
-    schema by folding sleve_orders/sleeve_fills through
-    sleeves.ledger.reconstruct_from_history -- sleeve-wide for the ledger
-    cash figure, filtered to sleeve_orders.rule_id (already present) for a
-    single rule's own attributed realized P&L (s3-test-writer's scope
-    decision, tests/app/test_sleeves_panel_render.py TestPanelFinancialData).
+    Ledger cash, the sleeve-level realized P&L, and per-rule realized P&L are
+    all derived with ZERO new schema from sleeve_orders/sleeve_fills:
+    sleeves.ledger.reconstruct_from_history (sleeve-wide) for cash + the
+    sleeve's true realized figure, and sleeves.ledger.attribute_realized_fills
+    for the per-rule split -- BUY-side attribution (realized P&L belongs to
+    the entry rule whose lots the sell closed, not the rule that fired the
+    sell), so a defensive rule exiting another rule's position no longer
+    collapses every rule to $0.00 (audit finding #7). Per-rule values sum to
+    the sleeve figure by construction. On fold failure the value is None and
+    the template renders an explicit "n/a" marker -- $0.00 is a value claim,
+    never a degraded state.
     """
     from sleeves import ledger as sleeve_ledger  # noqa: PLC0415
 
@@ -934,11 +939,24 @@ def _build_sleeves_panel_context() -> list[dict]:
             order_history = []
 
         try:
-            ledger_cash_usd = sleeve_ledger.reconstruct_from_history(
-                capital_usd, order_history
-            ).cash_usd
+            ledger_state = sleeve_ledger.reconstruct_from_history(capital_usd, order_history)
+            ledger_cash_usd = ledger_state.cash_usd
+            sleeve_realized_pnl_usd = ledger_state.realized_pnl_usd
         except Exception:
             ledger_cash_usd = capital_usd
+            sleeve_realized_pnl_usd = None
+
+        try:
+            realized_by_rule = {}
+            for record in sleeve_ledger.attribute_realized_fills(order_history):
+                realized_by_rule[record.opening_rule_id] = (
+                    realized_by_rule.get(record.opening_rule_id, 0.0) + record.realized_delta_usd
+                )
+        except Exception:
+            # None (not {}): the fold FAILED, which must render as "n/a" per
+            # rule -- an empty dict would render every rule as a $0.00 value
+            # claim, the exact audit-#7 bug this replaces.
+            realized_by_rule = None
 
         rules_panel = []
         for rule in rule_rows:
@@ -951,17 +969,9 @@ def _build_sleeves_panel_context() -> list[dict]:
                 fires = []
             today_fires = sum(1 for f in fires if str(f.get("fired_at", "")).startswith(today_str))
 
-            rule_orders = [o for o in order_history if o.get("rule_id") == rule_id]
-            try:
-                rule_realized_pnl = (
-                    sleeve_ledger.reconstruct_from_history(
-                        capital_usd, rule_orders
-                    ).realized_pnl_usd
-                    if rule_orders
-                    else 0.0
-                )
-            except Exception:
-                rule_realized_pnl = 0.0
+            rule_realized_pnl = (
+                realized_by_rule.get(rule_id, 0.0) if realized_by_rule is not None else None
+            )
 
             rules_panel.append(
                 {
@@ -982,6 +992,7 @@ def _build_sleeves_panel_context() -> list[dict]:
                 "status_badge_class": _sleeve_status_badge_class(sleeve.get("status", "")),
                 "capital_usd": sleeve.get("capital_usd"),
                 "ledger_cash_usd": ledger_cash_usd,
+                "realized_pnl_usd": sleeve_realized_pnl_usd,
                 "rules": rules_panel,
             }
         )

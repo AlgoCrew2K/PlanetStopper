@@ -1514,6 +1514,9 @@
           Capital: {% if sleeve.capital_usd is not none %}${{ "%.2f"|format(sleeve.capital_usd) }}{% else %}&mdash;{% endif %}
           &middot;
           Ledger cash: ${{ "%.2f"|format(sleeve.ledger_cash_usd) }}
+          &middot;
+          {# None = the ledger fold failed; render "n/a", never a $0.00 value claim (audit #7) #}
+          Realized: {% if sleeve.realized_pnl_usd is not none %}${{ "%.2f"|format(sleeve.realized_pnl_usd) }}{% else %}n/a{% endif %}
         </div>
 
         {% if sleeve.rules %}
@@ -1522,7 +1525,7 @@
           <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;font-size:12px;padding:5px 0;border-top:1px solid var(--studio-rule);gap:8px;">
             <span>{{ rule.name }} <span style="color:var(--studio-ink-faint);">({{ rule.mode }})</span></span>
             <span style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
-              <span style="color:var(--studio-ink-dim);">today {{ rule.today_fires }} &middot; lifetime {{ rule.lifetime_fires }} &middot; realized ${{ "%.2f"|format(rule.realized_pnl_usd) }}</span>
+              <span style="color:var(--studio-ink-dim);">today {{ rule.today_fires }} &middot; lifetime {{ rule.lifetime_fires }} &middot; realized {% if rule.realized_pnl_usd is not none %}${{ "%.2f"|format(rule.realized_pnl_usd) }}{% else %}n/a{% endif %}</span>
               {% if rule.mode == 'SHADOW' %}
               <button
                 type="button"
