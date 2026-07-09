@@ -13,6 +13,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
+import numpy as np
+
 
 def _finite_or_none(x):
     """Coerce non-finite float sentinels to None for RFC 8259 JSON compliance."""
@@ -290,10 +292,36 @@ def load_state():
     return json.loads(row[0]) if row else {}
 
 
+def _numpy_native_default(obj):
+    """``json.dumps`` default= hook: coerce numpy scalars to native Python.
+
+    2026-07-09 production crash (VERDICT-droplet Finding 1, CRITICAL): a numpy
+    int64 reached bot_state on a Take-Profit path and every save_state raised
+    ``TypeError: Object of type int64 is not JSON serializable``. Each failed
+    save lost that cycle's ``triggered=True``; the next cycle reloaded
+    pre-trigger state and re-fired the same exit — 4 duplicate exit_triggers
+    rows in one morning (ids 80-83), up to 4 duplicate sell submissions in
+    LIVE_EXECUTION. Engine write sites feed math_engine products (tick
+    counters, MC probabilities, price levels) straight into bot_state, so the
+    single persistence choke point sanitizes. Anything non-numpy still raises:
+    no silent serialization of unknown types.
+    """
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
 def save_state(state_dict):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE bot_state SET data = ? WHERE id = 1", (json.dumps(state_dict),))
+    cursor.execute(
+        "UPDATE bot_state SET data = ? WHERE id = 1",
+        (json.dumps(state_dict, default=_numpy_native_default),),
+    )
     conn.commit()
     conn.close()
 

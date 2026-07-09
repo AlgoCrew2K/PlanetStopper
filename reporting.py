@@ -49,12 +49,23 @@ def generate_eod_snapshot(
 
                 f_ret = sym.get("triggered_at_return", 0.0)
 
-                # Source if-held from shadow_history.current_return (the engine's live
-                # trajectory), recorded accurately post-trigger by alpha_bot_execution.py.
-                # The basket reconstruction (triggered_basket_snapshot + live_prices) collapsed
-                # to ~f_ret when basket prices were frozen at exit level, producing ~$0 saved
-                # despite large actual divergence. Diagnosis: a7601fb / guard-alpha-saved-diagnosis.md.
-                live_ret = sym.get("current_return", 0.0)
+                # Source if-held from the shadow_history TABLE (latest row for this
+                # symphony+day) — the data-phase truth from Composer. bot_state's
+                # current_return must NOT be trusted here: the action phase clobbers
+                # it every cycle with the frozen-basket reconstruction
+                # (alpha_bot_execution.py TRUE SHADOW RETURN OVERRIDE), which
+                # collapses to ~f_ret on basket misses (booking exactly $0 saved)
+                # and fabricates values otherwise — 7 of 11 audited days sign-flipped
+                # (VERDICT-droplet 2026-07-09 Finding 2; the #80 comment claimed this
+                # sourcing but never queried the table). Fall back to bot_state ONLY
+                # when the (symphony, day) has no shadow row at all.
+                shadow_row = database.load_latest_shadow_row(sym_id, current_date_str)
+                if shadow_row is not None and shadow_row.get("current_return") is not None:
+                    live_ret = float(shadow_row["current_return"])
+                    if_held_source = "shadow_history"
+                else:
+                    live_ret = sym.get("current_return", 0.0)
+                    if_held_source = "bot_state_fallback"
                 saved_pct = f_ret - live_ret
 
                 sym_val = sym.get("current_value", 0.0)
@@ -88,6 +99,11 @@ def generate_eod_snapshot(
                         "shadow_hwm": round(sym.get("shadow_hwm", 0.0), 2),
                         "saved_pct_guard_alpha": round(saved_pct, 2),
                         "saved_dollars": round(saved_dollars, 2),
+                        # Money-math provenance: "shadow_history" (table truth) or
+                        # "bot_state_fallback" (row-less degradation) — no silent
+                        # source switching (contract: test_postmortem_if_held_
+                        # shadow_history_source.py).
+                        "if_held_source": if_held_source,
                         "hwm_at_trigger": round(sym.get("triggered_at_hwm", 0.0), 2),
                         "time_triggered": sym.get("triggered_at_time", ""),
                         "symphony_vol": round(sym.get("symphony_vol", 0.0), 2),
