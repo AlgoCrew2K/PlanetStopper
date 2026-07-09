@@ -587,3 +587,98 @@ class TestTodayFireCountUsesEasternDates:
             f"digest today count must also be ET-correct; got "
             f"{digest_rule['today_fires']} (audit #15)"
         )
+
+
+class TestLatchCompensationFailsClosedOnPostAckCrash:
+    def test_crash_after_broker_ack_never_restores_pacing_or_doubles_the_order(self, client):
+        """Reviewer finding SF-R-1 (BLOCK, upheld by PM): the #9 latch
+        compensation reads runner-local evidence (fire_ids / action_results
+        order_ids), but a crash INSIDE dispatch_action AFTER a successful
+        broker submit — e.g. database.attach_alpaca_order_id raising post-ack
+        — discards that evidence: both look empty, pacing is wrongly
+        restored, and a still-true condition submits a SECOND live order next
+        tick while the first sits at the broker. Duplicated money.
+
+        Pinned invariant: a crash anywhere around submit never doubles an
+        order. When the broker may have received the order, the compensation
+        must fail CLOSED — one lost episode (the documented #9 trade-off) is
+        acceptable; a doubled order is not. Mechanism (evidence persisted
+        before/atomically-with submit, or a DB-grounded restore criterion) is
+        GREEN's choice; this test pins only the two-tick outcome."""
+        sleeve_id = create_sleeve_via_route(client, capital_usd=10_000.0)
+        rule_id = create_rule_via_route(client, sleeve_id, valid_route_rule_payload())
+        database.insert_sleeve_rule_fire(
+            rule_id=rule_id,
+            sleeve_id=sleeve_id,
+            action="buy",
+            rule_class="ENTRY",
+            mode_at_fire="SHADOW",
+        )
+        arm = client.post(
+            f"/api/sleeves/{sleeve_id}/rules/{rule_id}/arm", json={"target_mode": "PAPER"}
+        )
+        assert arm.status_code == 200, "fixture sanity: the arm ceremony must succeed"
+
+        ack = load_order_fixture("bracket_new.json")
+
+        # Tick 1: broker ACKS the order, then the post-ack DB write crashes.
+        # Only attach_alpaca_order_id is patched — the pre-submit RESERVED
+        # insert must succeed for this to be the real SF-R-1 window.
+        with (
+            tick_patches(
+                account_cash_usd=10_000.0,
+                closes_by_symbol={"SPY": 500.0},
+                submit_bracket_result=alpaca_orders.OrderResult(order=ack, error=None),
+            ) as tick1_mocks,
+            patch.object(
+                database,
+                "attach_alpaca_order_id",
+                side_effect=RuntimeError("simulated DB failure after broker ack"),
+            ),
+        ):
+            tick_orchestrator.run_sleeve_tick_for_all_sleeves(now_utc=MARKET_OPEN_NOW_UTC)
+
+        tick1_mocks["submit_bracket_order"].assert_called_once()
+        orders_after_crash = database.get_sleeve_orders(sleeve_id=sleeve_id)
+        assert len(orders_after_crash) == 1, (
+            "fixture sanity: the pre-submit RESERVED row must exist — the "
+            "crash landed AFTER the broker accepted the order"
+        )
+        assert orders_after_crash[0]["alpaca_order_id"] is None, (
+            "fixture sanity: the post-ack attach crashed, so the broker id "
+            "was never persisted — the exact evidence gap SF-R-1 exploits"
+        )
+        fires_after_crash = database.get_sleeve_rule_fires(rule_id=rule_id)
+        assert [f["mode_at_fire"] for f in fires_after_crash] == ["SHADOW"], (
+            "fixture sanity: the crashed tick recorded no NEW fire row — "
+            "only the seeded arm-gate SHADOW fire exists"
+        )
+
+        # Tick 2: condition STILL TRUE; the first order is LIVE at the
+        # broker (the lost-ack recovery finds it by client_order_id). The
+        # rule must stay latched — no second fire, no second submit.
+        with tick_patches(
+            account_cash_usd=10_000.0,
+            closes_by_symbol={"SPY": 500.0},
+            get_order_result=alpaca_orders.OrderResult(order=ack, error=None),
+            submit_bracket_result=alpaca_orders.OrderResult(order=ack, error=None),
+        ) as tick2_mocks:
+            with patch.object(
+                alpaca_orders,
+                "get_order_by_client_order_id",
+                return_value=alpaca_orders.OrderResult(order=ack, error=None),
+            ):
+                tick_orchestrator.run_sleeve_tick_for_all_sleeves(
+                    now_utc=MARKET_OPEN_NOW_UTC + timedelta(minutes=1)
+                )
+
+        tick2_mocks["submit_bracket_order"].assert_not_called()
+        final_orders = database.get_sleeve_orders(sleeve_id=sleeve_id)
+        assert len(final_orders) == 1, (
+            f"exactly ONE sleeve_orders row may exist across both ticks; got "
+            f"{len(final_orders)} — the latch compensation read the crash-"
+            f"discarded runner-local evidence, saw 'no order', restored the "
+            f"episode, and re-fired into a SECOND live broker order "
+            f"(SF-R-1): the one failure the #9 design comment itself calls "
+            f"worse than a lost episode"
+        )
