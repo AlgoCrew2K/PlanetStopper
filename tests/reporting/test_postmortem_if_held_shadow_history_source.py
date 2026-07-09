@@ -29,6 +29,12 @@ CONTRACT PINNED:
      ("shadow_history" | "bot_state_fallback") so a silent degradation is
      impossible — the marker semantics agreed with pf-eng (risk-engine) before
      GREEN.
+  4. The sourced row honours the SNAPSHOT-BASIS CUTOFF (ET time-of-day <=
+     15:54:59 — the Stage-1 schedule, and the constant the regeneration script
+     declares load-bearing): an off-schedule run (manual regeneration, late
+     daemon) must not silently drift to an EOD basis when post-close rows
+     (the engine ticks to ~16:04) exist. Reviewer finding B, adopted pre-GREEN
+     so producer and repair tool share one basis everywhere.
 
 FIXTURE PROVENANCE (captured-from-producer):
   tests/fixtures/prod_droplet/ — real droplet data, deployed SHA 0bcbd1a, captured
@@ -62,6 +68,13 @@ _AUDIT_DAYS = ("2026-06-23", "2026-06-24")
 @pytest.fixture(scope="module")
 def snapshot_rows() -> list[dict]:
     return json.loads((_FIXTURE_DIR / "shadow_snapshot_rows.json").read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="module")
+def postclose_rows() -> list[dict]:
+    """Real rows AFTER the 15:54:59 ET cutoff (engine ticks to ~16:04) — present
+    in the DB only when Stage-1 runs off-schedule."""
+    return json.loads((_FIXTURE_DIR / "shadow_postclose_rows.json").read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
@@ -323,7 +336,69 @@ class TestIfHeldProvenanceMarker:
 
 
 # ---------------------------------------------------------------------------
-# 3. Row-less degradation — the ONLY case bot_state may be trusted.
+# 3. Snapshot-basis cutoff — off-schedule runs must not drift to an EOD basis.
+# ---------------------------------------------------------------------------
+
+
+class TestSnapshotBasisCutoff:
+    def test_off_schedule_run_books_the_snapshot_basis_not_eod(
+        self, positions, snapshot_rows, postclose_rows, tmp_path, monkeypatch
+    ):
+        """With post-cutoff rows present (the DB state of any run AFTER ~16:04 —
+        manual regeneration, late daemon), the booked if-held must still be the
+        latest row at/before the 15:54:59 ET cutoff, not the newest row outright.
+
+        The panel's label declares a "snapshot-time basis" and the regeneration
+        script hard-codes the same cutoff as load-bearing; a bare
+        latest-row-per-day read silently re-bases those runs to EOD — on the
+        captured 2026-06-24 data that moves the LQD if-held from -0.67 (15:52)
+        to -0.15 (16:04), shifting saved by ~$6 per position.
+
+        Decisive cases derived from the fixture: pairs whose EOD row diverges
+        from the snapshot row by > 0.05 (indistinguishable at 2dp below that).
+        """
+        day = "2026-06-24"
+        cases = _cases(day, positions, snapshot_rows)
+
+        def _eod_return(sym_id: str) -> float | None:
+            rows = [
+                r for r in postclose_rows if r["symphony_id"] == sym_id and r["trading_day"] == day
+            ]
+            return max(rows, key=lambda r: r["ts_utc"])["current_return"] if rows else None
+
+        decisive = [
+            c
+            for c in cases
+            if _eod_return(c["sym_id"]) is not None
+            and abs(_eod_return(c["sym_id"]) - c["shadow_truth"]) > 0.05
+        ]
+        assert decisive, (
+            "fixture integrity: the audit day must contain a pair whose EOD row "
+            "diverges from the 15:54 snapshot row"
+        )
+
+        _seed_shadow(snapshot_rows, day)
+        _seed_shadow(postclose_rows, day)
+        report = _run_stage1(_bot_state_for(cases, positions), day, tmp_path, monkeypatch)
+
+        for c in decisive:
+            booked = _booked(report, c["pm"]["symphony_name"])
+            # abs=0.011: the producer books round(if_held, 2).
+            assert booked["shadow_return"] == pytest.approx(c["shadow_truth"], abs=0.011), (
+                f"{c['pm']['symphony_name'][:40]!r}: booked if-held "
+                f"{booked['shadow_return']} drifted off the snapshot basis "
+                f"{c['shadow_truth']:.2f} — an off-schedule run silently re-based "
+                f"to the EOD row {_eod_return(c['sym_id']):.2f}"
+            )
+            assert booked["saved_dollars"] == pytest.approx(c["expected_dollars"], abs=0.02), (
+                f"{c['pm']['symphony_name'][:40]!r}: saved_dollars "
+                f"{booked['saved_dollars']:.2f} not derived from the snapshot-basis "
+                f"if-held (expected {c['expected_dollars']:.2f})"
+            )
+
+
+# ---------------------------------------------------------------------------
+# 4. Row-less degradation — the ONLY case bot_state may be trusted.
 # ---------------------------------------------------------------------------
 
 

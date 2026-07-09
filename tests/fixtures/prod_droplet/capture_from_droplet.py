@@ -20,6 +20,11 @@ Outputs (all into this directory):
                                 money-math audit days (2026-06-23 / 2026-06-24): the
                                 last 3 rows at/before the 15:54 ET Stage-1 snapshot —
                                 the DB state visible when the post-mortem is generated
+    shadow_postclose_rows.json  same (symphony, day) pairs: every row AFTER the 15:54
+                                cutoff (the engine ticks to ~16:04) — present in the DB
+                                only when Stage-1 runs off-schedule; proves the producer
+                                honours the snapshot-basis cutoff instead of drifting
+                                to an EOD basis
     bot_state_positions.json    per-symphony position snapshot from the bot_state blob
                                 (name, account, current_value, current_return, trigger
                                 fields) — real key shapes for state-persistence tests
@@ -135,6 +140,34 @@ def capture(db_copy: str, pm_dir: str) -> None:
             )
     (_OUT_DIR / "shadow_snapshot_rows.json").write_text(
         json.dumps(snapshot_rows, indent=1), encoding="utf-8"
+    )
+
+    # --- shadow_history: post-cutoff rows for the same audited exits ---------
+    postclose_rows: list[dict] = []
+    for day in _MONEY_MATH_AUDIT_DAYS:
+        triggered_ids = [
+            r["symphony_id"]
+            for r in conn.execute(
+                "SELECT DISTINCT symphony_id FROM exit_triggers WHERE substr(ts_et, 1, 10) = ?",
+                (day,),
+            )
+        ]
+        for sid in triggered_ids:
+            postclose_rows.extend(
+                dict(r)
+                for r in conn.execute(
+                    "SELECT trading_day, symphony_id, account_id, cycle_id, ts_utc, "
+                    "       ts_et, current_return, shadow_return, is_post_trigger, "
+                    "       position_epoch "
+                    "FROM shadow_history "
+                    "WHERE symphony_id = ? AND trading_day = ? "
+                    "  AND substr(ts_et, 12, 8) > ? "
+                    "ORDER BY ts_utc ASC",
+                    (sid, day, _STAGE1_CUTOFF_ET_TIME),
+                )
+            )
+    (_OUT_DIR / "shadow_postclose_rows.json").write_text(
+        json.dumps(postclose_rows, indent=1), encoding="utf-8"
     )
 
     # --- bot_state: per-symphony position snapshot -------------------------
