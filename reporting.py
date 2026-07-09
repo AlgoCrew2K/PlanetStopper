@@ -12,6 +12,15 @@ import database
 # Canonical post-mortem directory — anchored to project root regardless of CWD.
 _POST_MORTEMS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "post_mortems")
 
+# Stage-1 snapshot-basis cutoff (ET time-of-day): Stage 1 fires in the 15:54 ET
+# minute (rebalance-blackout schedule), and the $-saved panel declares a
+# "snapshot-time basis". The engine keeps ticking past close (~16:04), so an
+# off-schedule Stage-1 run (manual regeneration, late daemon) would otherwise
+# silently re-base if-held onto EOD rows. One basis everywhere: this value must
+# match SNAPSHOT_CUTOFF_ET in scripts/regenerate_post_mortems.py (the historical
+# repair tool), which was verified against the 2026-07-09 audit ground truth.
+STAGE1_SNAPSHOT_CUTOFF_ET = "15:54:59"
+
 
 def generate_eod_snapshot(
     bot_state, current_date_str, is_post_rebalance=False, discord_webhook_url=None, live_prices=None
@@ -50,16 +59,20 @@ def generate_eod_snapshot(
                 f_ret = sym.get("triggered_at_return", 0.0)
 
                 # Source if-held from the shadow_history TABLE (latest row for this
-                # symphony+day) — the data-phase truth from Composer. bot_state's
-                # current_return must NOT be trusted here: the action phase clobbers
-                # it every cycle with the frozen-basket reconstruction
-                # (alpha_bot_execution.py TRUE SHADOW RETURN OVERRIDE), which
-                # collapses to ~f_ret on basket misses (booking exactly $0 saved)
-                # and fabricates values otherwise — 7 of 11 audited days sign-flipped
-                # (VERDICT-droplet 2026-07-09 Finding 2; the #80 comment claimed this
-                # sourcing but never queried the table). Fall back to bot_state ONLY
-                # when the (symphony, day) has no shadow row at all.
-                shadow_row = database.load_latest_shadow_row(sym_id, current_date_str)
+                # symphony+day at/before the snapshot cutoff) — the data-phase truth
+                # from Composer. bot_state's current_return must NOT be trusted
+                # here: the action phase clobbers it every cycle with the
+                # frozen-basket reconstruction (alpha_bot_execution.py TRUE SHADOW
+                # RETURN OVERRIDE), which collapses to ~f_ret on basket misses
+                # (booking exactly $0 saved) and fabricates values otherwise — 7 of
+                # 11 audited days sign-flipped (VERDICT-droplet 2026-07-09 Finding
+                # 2; the #80 comment claimed this sourcing but never queried the
+                # table). The cutoff holds the declared snapshot basis on
+                # off-schedule runs. Fall back to bot_state ONLY when no qualifying
+                # shadow row exists.
+                shadow_row = database.load_latest_shadow_row(
+                    sym_id, current_date_str, et_cutoff=STAGE1_SNAPSHOT_CUTOFF_ET
+                )
                 if shadow_row is not None and shadow_row.get("current_return") is not None:
                     live_ret = float(shadow_row["current_return"])
                     if_held_source = "shadow_history"

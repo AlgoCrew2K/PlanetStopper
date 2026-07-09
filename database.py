@@ -3091,16 +3091,31 @@ def prune_old_shadow_history(retention_days: int) -> int:
     return total_deleted
 
 
-def load_latest_shadow_row(symphony_id: str, trading_day: str) -> "dict | None":
-    """Return the most-recent shadow_history row for a symphony+day, or None."""
+def load_latest_shadow_row(
+    symphony_id: str, trading_day: str, et_cutoff: "str | None" = None
+) -> "dict | None":
+    """Return the most-recent shadow_history row for a symphony+day, or None.
+
+    et_cutoff: optional ET time-of-day string ("HH:MM:SS") — when given, only
+    rows at/before that time qualify. Used by the Stage-1 post-mortem to hold
+    its declared snapshot basis when it runs off-schedule (the engine ticks
+    past close to ~16:04; a bare latest-row read would silently re-base a late
+    run onto EOD values).
+    """
     try:
         conn = sqlite3.connect(_db_file(), timeout=10.0)
         conn.row_factory = sqlite3.Row
+        params: list = [symphony_id, trading_day]
+        cutoff_clause = ""
+        if et_cutoff is not None:
+            cutoff_clause = "AND substr(ts_et, 12, 8) <= ? "
+            params.append(et_cutoff)
         row = conn.execute(
             "SELECT * FROM shadow_history "
             "WHERE symphony_id = ? AND trading_day = ? "
-            "ORDER BY ts_utc DESC LIMIT 1",
-            (symphony_id, trading_day),
+            + cutoff_clause
+            + "ORDER BY ts_utc DESC LIMIT 1",
+            params,
         ).fetchone()
         conn.close()
         if row is None:
