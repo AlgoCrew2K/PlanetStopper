@@ -3,7 +3,7 @@
 > Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
 **Source:** `app.py`
-**Last updated:** 2026-07-02 (DE-PRISM-NUMERIC-VERIFY-001: `ai_advisor_tab()` additively fetches the MARKET_PRISM_VERIFICATION row and attaches per-check fact-check badges to the Overview render; prior: 2026-07-02 DE-EOD-BASIS-001, EOD/frozen account-basis unification + per-field stale-cache hardening; 2026-06-30 DE-PRISM-SOURCES-PER-LENS-001, per-lens Market Prism sources carousels; 2026-06-26 fix/today-change-account-basis, DE-TODAY-BASIS-001)
+**Last updated:** 2026-07-09 (DE-PROD-ACCURACY-001: `/api/history/<days>` fallback now date-filters to the current ET trading day and never clobbers the windowed `trigger_count`; `/api/performance` scope=aggregate now serves the canonical value-weighted `shadow_history` series with corrected `live_returns`/`shadow_returns` field semantics; `/api/guard-alpha-summary` basis_label gains freshness stamping; prior: 2026-07-02 DE-PRISM-NUMERIC-VERIFY-001, `ai_advisor_tab()` additively fetches the MARKET_PRISM_VERIFICATION row and attaches per-check fact-check badges to the Overview render; 2026-07-02 DE-EOD-BASIS-001, EOD/frozen account-basis unification + per-field stale-cache hardening; 2026-06-30 DE-PRISM-SOURCES-PER-LENS-001, per-lens Market Prism sources carousels; 2026-06-26 fix/today-change-account-basis, DE-TODAY-BASIS-001)
 
 ## Overview
 
@@ -217,15 +217,18 @@ Render performance analytics page.
 
 Returns per-day time-series + quantstats metrics. Accepts `scope` ("aggregate"/"symphony"), `days` (int), and `symphony_id` (required when scope=symphony) query params.
 
-**Data-source precedence (AC-2/AC-2b, DE-LIVE-DASH-001):** Three-tier fallback:
+**Data-source precedence, scope=aggregate (corrected 2026-07-09, DE-PROD-ACCURACY-001 Finding 4):** the canonical aggregate series is `analytics.get_portfolio_bot_and_held_daily_returns(days=days)` -- the SAME value-weighted `shadow_history` series `/api/hero-chart` compounds. Every `shadow_history` trading day appears, including zero-trigger days. This REPLACES the pre-2026-07-09 primary path (below), which served only post-mortem `triggers` arrays -- a selection-biased sample of symphonies that triggered that day, valued at exit-moment snapshot, that silently dropped zero-trigger days and could show a materially different picture than the Overview hero chart over the identical period. `scope=symphony` still uses the post-mortem-history path unchanged (`analytics.get_history_with_cache_invalidation` + `analytics.compute_per_symphony_returns`).
 
-1. **Post-mortem history (primary):** `analytics.get_history_with_cache_invalidation(base_dir=analytics._POST_MORTEMS_DIR)` -- used when EOD files exist.
-2. **Multi-day shadow_history:** `analytics.get_portfolio_bot_and_held_daily_returns()` or `analytics.get_portfolio_daily_returns_from_shadow()` -- used on day-1 when no post-mortem files exist and shadow_history has >= 2 distinct trading days.
-3. **Single-day shadow_history (AC-2b):** `analytics.get_single_day_shadow_returns()` -- used when both tier-2 functions return `None` (fewer than 2 distinct trading days, i.e. fresh droplet on its first trading day). Returns a 1-element `([date], [bot_pct], [held_pct])` tuple so the chart is never blank. `insufficient_history` remains `True` (honest -- 1 < `_PERFORMANCE_MIN_HISTORY_DAYS`).
+**Day-1 fallback tiers (AC-2/AC-2b, DE-LIVE-DASH-001), field-mapping corrected 2026-07-09:** when the canonical series above is still empty (fresh droplet, shadow_history not yet populated for scope=aggregate; or scope=symphony's post-mortem-history path is empty):
 
-The `< 2` guard in the tier-2 functions is correct and unchanged; tier-3 handles day-one without weakening the statistical guard.
+1. **Multi-day shadow_history:** `analytics.get_portfolio_bot_and_held_daily_returns()` (no `days` arg) -- used when shadow_history has >= 2 distinct trading days.
+2. **Single-day shadow_history (AC-2b):** `analytics.get_single_day_shadow_returns()` -- used when the multi-day function returns `None` (fewer than 2 distinct trading days, i.e. fresh droplet on its first trading day). Returns a 1-element `([date], [bot_pct], [held_pct])` tuple so the chart is never blank. `insufficient_history` remains `True` (honest -- 1 < `_PERFORMANCE_MIN_HISTORY_DAYS`).
 
-**Response shape:** `{scope, dates, live_returns, shadow_returns, live_metrics, shadow_metrics, observation_count, insufficient_history}`.
+The `< 2` guard in the tier-1 fallback is correct and unchanged; tier-2 handles day-one without weakening the statistical guard.
+
+**Response field semantics (option B, corrected 2026-07-09, DE-PROD-ACCURACY-001 Finding 4 Revise):** all three producer paths above return a `(dates, bot, held)` tuple. The route maps this to the payload as **`live_returns` = if-held, the still-held Composer account** (`held` -- weighted `current_return`) and **`shadow_returns` = the Planet-Stopper-exited counterfactual** (`bot` -- weighted `shadow_return`) -- matching every `performance.js` legend label and the route's own docstring. Prior to this fix, the two day-1 fallback paths mapped this tuple INVERTED relative to the canonical path and every UI label; this is now consistent across all three producer paths. `live_metrics`/`shadow_metrics` (quantstats dicts) follow their corrected series.
+
+**Response shape:** `{scope, dates, live_returns, shadow_returns, live_metrics, shadow_metrics, observation_count, insufficient_history, window_days}`.
 
 Read-only: no DB writes, no network I/O, not in `_SETTINGS_WRITE_ALLOWLIST`.
 
@@ -239,11 +242,11 @@ Returns historical portfolio summary for the last `days` days.
 
 **Bug fix (AC-3, DE-LIVE-DASH-001):** Previously called `analytics.get_history_summary(days=days)` without the `base_dir` argument, which defaulted to the process CWD and found no files. Now calls `analytics.get_history_summary(days=days, base_dir=analytics._POST_MORTEMS_DIR)` -- the same constant used by every other post-mortem reader.
 
-**`todays_exits` fallback (AC-3):** When `stats["todays_exits"]` is empty (no post-mortem written yet today), the route reads the 50 most-recent rows from `exit_triggers` and backfills them into the response. This ensures live exits appear in the History tab on day one, before the EOD post-mortem is written.
+**`todays_exits` fallback (corrected 2026-07-09, DE-PROD-ACCURACY-001 Finding 3):** When `stats["todays_exits"]` is empty (no post-mortem written yet today -- true EVERY trading day before the 15:54 ET write, not just day-one), the route reads `exit_triggers` filtered to the current ET trading day (`WHERE substr(ts_et, 1, 10) = <today ET date>`) and backfills them into the response, mapped to the shape `history.js` consumes: `ts` (time-of-day substring of `ts_et`), `symphony_id`, `symphony_name` (resolved via a name map built from `database.load_state()`, falling back to the raw id), `reason` (`triggered_reason`), `detail` (`at_return`). A zero-exit day today renders honestly empty rather than backfilling stale historical rows.
 
-**`trigger_count` backfill (AC-3b):** `stats["trigger_count"]` is updated to `len(stats["todays_exits"])` immediately after the AC-3 backfill so the two fields stay consistent. Previously `trigger_count` was left at 0 from `get_history_summary()` while `todays_exits` had rows, causing the History tab to show "Today's exits (0)".
+**Prior bug (fixed 2026-07-09):** the original fallback had no date filter at all (`SELECT ... ORDER BY ts_utc DESC LIMIT 50`) and ran every trading morning before 15:54 ET, not just on a fresh droplet's first day as its comment claimed -- so the History tab rendered up to 50 all-time triggers labeled "Today's exits," with most cells blank because the old fallback's field shape (`ts_utc`/`at_return`/`triggered_reason`) didn't match what `history.js` reads (`ts`/`reason`/`detail`), and the Symphony column showed the raw hash id with no name resolution. The old fallback also overwrote `stats["trigger_count"]` with the 50-row feed length while `total_saved`/`win_rate` still derived from the true windowed count -- headline stats were internally inconsistent. The current fallback never overwrites `trigger_count`. Verified against the real droplet DB copy: the corrected fallback returns exactly today's 11 exits (of 87 all-time) with 11/11 names resolved.
 
-**Column name fix (AC-3c):** The backfill query and response dict used `trigger_reason`; the real `exit_triggers` column is `triggered_reason` (PRAGMA-confirmed on live droplet). Fixed in 56901e0 -- both the `SELECT` (`app.py:2589`) and the dict key (`app.py:2600`) use `triggered_reason`.
+**Post-mortem-path Time-column fix (DE-PROD-ACCURACY-001 Finding 11):** on the healthy EOD path (`stats["todays_exits"]` populated from a written post-mortem file, not this fallback), the producer now maps `time_triggered` into the `ts` field the table consumes -- previously the Time column rendered an em-dash even when a post-mortem file existed for today.
 
 #### `GET /api/logs/<symphony_id>`
 Returns symphony execution logs.
