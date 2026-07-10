@@ -100,13 +100,19 @@ def _already_ran_this_week() -> bool:
 
 
 def run_weekly_build() -> None:
-    """Run the real builder for all four objectives; skip if already ran this week.
+    """Run the real builder for all four objectives, then the Frontrunner
+    Builder over all live symphonies; skip if already ran this week.
 
     Orchestration contract:
       1. Idempotency check: if _already_ran_this_week() → log + return (no-op).
       2. For each of the four objectives: call propose_strategies; on any failure
          log type(exc).__name__ only (D-1) and continue to the next objective.
-      3. Never raises (D-1).
+      3. Run the Frontrunner Builder (advisors.frontrunner_builder.run_frontrunner_build)
+         over ALL live symphonies (feature-plans/frontrunner-builder.md AC-1). This
+         call NEVER creates a Composer symphony directly — accepted candidates are
+         only queued for operator approval (frontrunner_proposals table); the actual
+         Composer create happens exclusively via the operator-driven /approve route.
+      4. Never raises (D-1).
     """
     try:
         # CC-2 lazy imports — off-execution-path.
@@ -177,6 +183,21 @@ def run_weekly_build() -> None:
                         MAX_ATTEMPTS,
                     )
                     # D-1: do NOT re-raise — continue to the next objective.
+
+    # AC-1: run the Frontrunner Builder over all live symphonies. Isolated in
+    # its own try/except so a failure here never blocks/aborts the objective
+    # loop above (which already completed) — same D-1 per-phase isolation
+    # pattern used for the Atlas load above.
+    try:
+        import advisors.frontrunner_builder as _fbld  # noqa: PLC0415
+
+        logger.info("strategy_builder_scheduler: starting frontrunner build")
+        _fbld.run_frontrunner_build()
+        logger.info("strategy_builder_scheduler: frontrunner build complete")
+    except Exception as exc:
+        logger.warning(
+            "strategy_builder_scheduler: frontrunner build failed (%s)", type(exc).__name__
+        )
 
     logger.info("strategy_builder_scheduler: weekly build complete")
 
