@@ -120,68 +120,128 @@ def test_detects_at_least_one_cascade_on_every_real_tree(fd, real_tree):
     )
 
 
-def test_detected_cascade_boundary_is_smaller_than_the_remaining_tree(fd, real_tree):
-    """The size-cliff invariant: whatever subtree the detector marks as the
-    incumbent cascade/overlay must be substantially smaller than the total
-    tree (baskets <=~16 nodes vs a tree with thousands — the plan's own
-    grounding ratio). We don't hardcode ~16; we assert the detected overlay is
-    a small minority of the total node count for these specific real trees,
-    which is the structural signature the boundary heuristic is built on."""
+def _if_child_branches(overlay_root: dict) -> tuple[dict, dict] | None:
+    """Return (condition_branch, continuation_branch) for an overlay's root
+    ``if`` node, using the real node shape (is-else-condition? discriminator)
+    documented by fb-eng and consumed by the detector's own
+    _get_condition_branch_pair. Returns None if the overlay's root is not
+    (or no longer) a two-if-child ``if`` node."""
+    if not isinstance(overlay_root, dict) or overlay_root.get("step") != "if":
+        return None
+    if_children = [c for c in (overlay_root.get("children") or []) if c.get("step") == "if-child"]
+    if len(if_children) != 2:
+        return None
+    cond = next((c for c in if_children if c.get("is-else-condition?") is False), None)
+    cont = next((c for c in if_children if c.get("is-else-condition?") is True), None)
+    if cond is None or cont is None:
+        return None
+    return cond, cont
+
+
+def test_detected_cascade_fire_branch_is_smaller_than_the_remaining_tree(fd, real_tree):
+    """The size-cliff invariant: overlay_tree spans the WHOLE detected if-node
+    (both branches — the fire branch AND the continuation branch that carries
+    on toward the core, per the detector's own documented contract, so a
+    caller can splice the node wholesale). The size-cliff signature the plan
+    describes lives specifically in the FIRE branch (whichever of the two
+    top-level branches is smaller): it must be a small minority of the total
+    tree (baskets <=~16 nodes for a single rung vs a tree with thousands — we
+    don't hardcode ~16, but assert the fire branch stays a small fraction)."""
     total_nodes = _count_nodes(real_tree)
     result = fd.detect_frontrunner_cascades(real_tree)
     for cascade in result.cascades:
-        overlay_nodes = _count_nodes(cascade.overlay_tree)
-        assert overlay_nodes < total_nodes, (
-            "detected overlay is not smaller than the whole tree — the "
-            "size-cliff boundary was not respected"
+        branches = _if_child_branches(cascade.overlay_tree)
+        assert branches is not None, (
+            "cascade.overlay_tree's root is not a two-if-child 'if' node — "
+            "the detector's own documented contract requires this shape"
         )
-        # The plan's grounding note puts fire baskets at <=~16 nodes for a
-        # single rung; a whole cascade (all tiers) is necessarily larger but
-        # still a small minority of an 800-8000+ node real tree.
-        assert overlay_nodes <= total_nodes * 0.25, (
-            f"detected overlay ({overlay_nodes} nodes) is not a small minority "
-            f"of the total tree ({total_nodes} nodes) — likely swallowed core logic"
+        cond_branch, cont_branch = branches
+        fire_nodes = min(_count_nodes(cond_branch), _count_nodes(cont_branch))
+        assert fire_nodes <= total_nodes * 0.25, (
+            f"the smaller (fire) branch ({fire_nodes} nodes) is not a small "
+            f"minority of the total tree ({total_nodes} nodes) — the size-cliff "
+            f"signature was not respected for this cascade root"
         )
 
 
-def test_detected_cascade_contains_at_least_one_vix_family_ticker(fd, real_tree):
-    """Grounding: 'fire baskets always contain >=1 VIX-family instrument'."""
+def test_detected_cascade_fire_branch_contains_at_least_one_vix_family_ticker(fd, real_tree):
+    """Grounding: 'fire baskets always contain >=1 VIX-family instrument'.
+    Scoped to the fire branch specifically — the invariant is about what the
+    hedge basket FIRES, not about the continuation branch (which legitimately
+    carries on toward unrelated core content)."""
     vix_family = {"VIXY", "VIXM", "UVXY", "UVIX", "VXX", "SVXY", "SVIX"}
     result = fd.detect_frontrunner_cascades(real_tree)
     for cascade in result.cascades:
-        overlay_tickers = _all_tickers(cascade.overlay_tree)
-        assert overlay_tickers & vix_family, (
-            f"detected cascade overlay has no VIX-family ticker "
-            f"(found: {sorted(overlay_tickers)})"
+        branches = _if_child_branches(cascade.overlay_tree)
+        if branches is None:
+            continue  # covered by the dedicated shape assertion elsewhere
+        cond_branch, cont_branch = branches
+        fire_branch = (
+            cond_branch
+            if _count_nodes(cond_branch) <= _count_nodes(cont_branch)
+            else cont_branch
+        )
+        fire_tickers = _all_tickers(fire_branch)
+        assert fire_tickers & vix_family, (
+            f"detected cascade's fire branch has no VIX-family ticker "
+            f"(found: {sorted(fire_tickers)})"
         )
 
 
-def test_detected_cascade_never_includes_a_core_asset_placeholder_ticker(fd, real_tree):
+def test_detected_cascade_fire_branch_never_includes_a_core_asset_placeholder(fd, real_tree):
     """The trimmed fixtures mark stubbed core logic with CORE_ASSET_NNNN
     placeholders. A correct detector never classifies stubbed-core content as
-    part of the frontrunner overlay — this is the fixture-level proxy for
-    'the cascade never swallows the core' (AC-2)."""
+    part of the frontrunner FIRE basket — this is the fixture-level proxy for
+    'the cascade never swallows the core' (AC-2).
+
+    Scoped to the fire branch specifically (not the whole overlay_tree, which
+    legitimately spans the continuation branch too, per the detector's
+    documented contract — the continuation branch IS core content by design;
+    the invariant that matters is that the actual hedge-firing branch stays
+    pure hedge/VIX content)."""
     result = fd.detect_frontrunner_cascades(real_tree)
     for cascade in result.cascades:
-        assert not _has_core_asset_placeholder(cascade.overlay_tree), (
-            "detected cascade overlay includes a CORE_ASSET_ placeholder — "
-            "the detector has swallowed core logic across the size-cliff boundary"
+        branches = _if_child_branches(cascade.overlay_tree)
+        if branches is None:
+            continue  # covered by the dedicated shape assertion elsewhere
+        cond_branch, cont_branch = branches
+        fire_branch = (
+            cond_branch
+            if _count_nodes(cond_branch) <= _count_nodes(cont_branch)
+            else cont_branch
+        )
+        assert not _has_core_asset_placeholder(fire_branch), (
+            "the fire (hedge-firing) branch of a detected cascade includes a "
+            "CORE_ASSET_ placeholder — the detector has swallowed core logic "
+            "into the hedge basket itself"
         )
 
 
 def test_detected_cascade_rsi_thresholds_fall_in_the_grounded_range(fd, real_tree):
     """Grounding note: 'RSI(ticker) gt ~77-82.5'. Every real tree's leading
-    cascade is gated by an RSI-overbought if-node (that is the whole premise
-    of AC-2), so the detector must report at least one rsi_threshold per real
-    fixture, and each one must fall in a plausible overbought RSI range — not
-    exactly 77-82.5 (some real trees may legitimately vary), but sanity-bounded
-    well inside [50, 100] to catch a detector that's mis-attributing an
-    unrelated gate (e.g. a moving-average crossover) as the frontrunner cascade."""
+    cascade is gated by an RSI-OVERBOUGHT if-node — comparator='gt' against a
+    high threshold, never 'lt' against a low one (that would be an oversold /
+    unrelated regime-timing gate, not a frontrunner hedge trigger; AC-2's
+    whole premise is triggering on overbought conditions). This test asserts
+    at least one rsi_threshold per real fixture, and each one both (a) uses
+    comparator='gt' and (b) falls in a plausible overbought range — not
+    exactly 77-82.5 (some real trees may legitimately vary), but
+    sanity-bounded well inside [50, 100] to catch a detector that's
+    mis-attributing an unrelated gate as the frontrunner cascade."""
     result = fd.detect_frontrunner_cascades(real_tree)
     found_any_threshold = False
     for cascade in result.cascades:
+        branches = _if_child_branches(cascade.overlay_tree)
+        cond_branch = branches[0] if branches else None
+        comparator = cond_branch.get("comparator") if cond_branch else None
         for threshold in getattr(cascade, "rsi_thresholds", []) or []:
             found_any_threshold = True
+            if comparator is not None:
+                assert comparator == "gt", (
+                    f"cascade root condition comparator is {comparator!r}, not 'gt' — "
+                    f"AC-2's frontrunner trigger is RSI-OVERBOUGHT ('gt'), not an "
+                    f"oversold/unrelated regime gate"
+                )
             assert 50 <= threshold <= 100, (
                 f"cascade RSI threshold {threshold} is outside a plausible "
                 f"overbought range — likely mis-attributed gate"
@@ -211,8 +271,16 @@ def _synthetic_tree_with_inverse_vix_timing_substrategy() -> dict:
     watches the inverse-VIX ticker's OWN indicator (self-referential SVXY
     momentum) to decide its own allocation — there is no hedge basket being
     inserted ahead of unrelated core logic.
+
+    NODE SHAPE (real, per fb-eng's confirmed real-tree inspection + the
+    detector's own _get_condition_branch_pair/_parse_rsi_threshold): an
+    ``if`` node's two ``if-child`` entries are distinguished by
+    ``is-else-condition?`` (False = condition branch carrying the flat
+    lhs-fn/lhs-val/comparator/rhs-fixed-value?/rhs-val fields; True = the
+    continuation/else branch, no condition fields). ``rhs-val`` is a STRING
+    in the real trees (parsed via float() by the detector).
     """
-    core_leaf = {"step": "asset", "ticker": "CORE_ASSET_0001", "id": "core-1"}
+    core_leaf = {"step": "asset", "ticker": "CORE_ASSET_0001", "id": "core-1", "children": []}
 
     frontrunner_cascade = {
         "step": "if",
@@ -220,10 +288,12 @@ def _synthetic_tree_with_inverse_vix_timing_substrategy() -> dict:
         "children": [
             {
                 "step": "if-child",
+                "is-else-condition?": False,
                 "lhs-fn": "relative-strength-index",
                 "lhs-val": "SPY",
                 "comparator": "gt",
-                "rhs-fixed-value": 80,
+                "rhs-fixed-value?": True,
+                "rhs-val": "80",
                 "id": "cascade-true",
                 "children": [
                     {
@@ -236,6 +306,7 @@ def _synthetic_tree_with_inverse_vix_timing_substrategy() -> dict:
             },
             {
                 "step": "if-child",
+                "is-else-condition?": True,
                 "id": "cascade-false",
                 "children": [core_leaf],
             },
@@ -248,15 +319,18 @@ def _synthetic_tree_with_inverse_vix_timing_substrategy() -> dict:
         "children": [
             {
                 "step": "if-child",
+                "is-else-condition?": False,
                 "lhs-fn": "relative-strength-index",
                 "lhs-val": "SVXY",
                 "comparator": "gt",
-                "rhs-fixed-value": 70,
+                "rhs-fixed-value?": True,
+                "rhs-val": "70",
                 "id": "timing-true",
                 "children": [{"step": "asset", "ticker": "SVXY", "id": "svxy-in", "children": []}],
             },
             {
                 "step": "if-child",
+                "is-else-condition?": True,
                 "id": "timing-false",
                 "children": [{"step": "asset", "ticker": "BIL", "id": "svxy-out", "children": []}],
             },
