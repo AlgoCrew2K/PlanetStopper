@@ -109,11 +109,52 @@ def _has_core_asset_placeholder(node) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def test_detects_at_least_one_cascade_on_every_real_tree(fd, real_tree):
-    """Every one of the 11 real trees is a live frontrunner'd symphony (per the
-    plan's own grounding note) — the detector must find at least one cascade,
-    never silently report zero on a tree that structurally contains one."""
+# real_tree_08 (orig lW4ZzWuqR8tEO2DhXbil) ground-truthed exception: its leading
+# structure has NO AC-2-shaped flat-RSI-gt-overbought -> VIX/hedge-basket cascade.
+# Independently verified (fb-test, not taking fb-eng's report at face value) by
+# direct inspection of the RAW (untrimmed) fixture:
+#   - The tree's only flat RSI-gt candidate with a nearby VIX-family ticker is
+#     "RSI(SPY) gt 31" (id 643351b6...) — its fire branch (28 nodes vs a 35-node
+#     sibling; not even a real size-cliff) is ENTIRELY an internal inverse-VIX
+#     timing sub-structure: a nested if gated on SVXY's own condition, choosing
+#     between {UVIX, BTAL} vs {UVXY, SOXS/TECS/SQQQ/OILD, BTAL} blends. This is
+#     the AC-2 self-referential-timing-gate exclusion working correctly, not a
+#     detector gap.
+#   - Every other genuine VIX-bearing if-node in this tree (RSI(VIXY)/RSI(UVXY)/
+#     RSI(SVXY) watching its own product) is likewise self-referential.
+#   - The tree's actual leading gate (id ec7eef6a...) uses a COMPOUND condition
+#     ("RSI(UVXY) gt 85 OR (RSI(QQQ,SPY) lt 30 AND RSI(GLD) lt 60)") and fires
+#     TQQQ vs a nested fallback to SH — NO VIX-family ticker anywhere in what it
+#     fires. This is a crisis-exit/regime-timing gate (a DIFFERENT construct
+#     from AC-2's flat RSI-gt -> VIX-basket cascade), not a frontrunner overlay.
+# AC-11 explicitly allows "no incumbent FR -> skip w/ reason" as a legitimate
+# outcome; this is that case for this one fixture. The other 10 real trees are
+# NOT exempted — this carve-out is narrow and fixture-specific, not a general
+# loosening.
+_NO_CASCADE_EXPECTED_FIXTURE_STEMS = frozenset({"real_tree_08_lW4ZzWuqR8tEO2DhXbil"})
+
+
+def test_detects_at_least_one_cascade_on_every_real_tree(fd, real_tree, request):
+    """Every real tree except the ground-truthed real_tree_08 exception (see
+    _NO_CASCADE_EXPECTED_FIXTURE_STEMS above) is a live frontrunner'd symphony
+    (per the plan's own grounding note) — the detector must find at least one
+    cascade, never silently report zero on a tree that structurally contains
+    one."""
+    stem = request.node.callspec.id
     result = fd.detect_frontrunner_cascades(real_tree)
+    if stem in _NO_CASCADE_EXPECTED_FIXTURE_STEMS:
+        assert not result.cascades, (
+            f"{stem} was ground-truthed to have NO AC-2-shaped cascade (see the "
+            f"comment above this test) but the detector now reports "
+            f"{len(result.cascades)} — either the ground-truth changed (update "
+            f"this carve-out with a new investigation) or the detector is "
+            f"over-admitting a construct it should still exclude"
+        )
+        assert result.skip_reason, (
+            f"{stem} correctly found zero cascades but skip_reason is falsy — "
+            f"AC-11 requires an explicit reason whenever the detector declines"
+        )
+        return
     assert result.cascades, (
         "detector found zero cascades on a real tree known to contain a "
         "frontrunner overlay (feature-plans/frontrunner-builder.md grounding note)"
@@ -217,17 +258,20 @@ def test_detected_cascade_fire_branch_never_includes_a_core_asset_placeholder(fd
         )
 
 
-def test_detected_cascade_rsi_thresholds_fall_in_the_grounded_range(fd, real_tree):
+def test_detected_cascade_rsi_thresholds_fall_in_the_grounded_range(fd, real_tree, request):
     """Grounding note: 'RSI(ticker) gt ~77-82.5'. Every real tree's leading
     cascade is gated by an RSI-OVERBOUGHT if-node — comparator='gt' against a
     high threshold, never 'lt' against a low one (that would be an oversold /
     unrelated regime-timing gate, not a frontrunner hedge trigger; AC-2's
     whole premise is triggering on overbought conditions). This test asserts
-    at least one rsi_threshold per real fixture, and each one both (a) uses
-    comparator='gt' and (b) falls in a plausible overbought range — not
-    exactly 77-82.5 (some real trees may legitimately vary), but
-    sanity-bounded well inside [50, 100] to catch a detector that's
-    mis-attributing an unrelated gate as the frontrunner cascade."""
+    at least one rsi_threshold per real fixture that HAS a detected cascade
+    (see _NO_CASCADE_EXPECTED_FIXTURE_STEMS for the one ground-truthed
+    exception), and each one both (a) uses comparator='gt' and (b) falls in a
+    plausible overbought range — not exactly 77-82.5 (some real trees may
+    legitimately vary), but sanity-bounded well inside [50, 100] to catch a
+    detector that's mis-attributing an unrelated gate as the frontrunner
+    cascade."""
+    stem = request.node.callspec.id
     result = fd.detect_frontrunner_cascades(real_tree)
     found_any_threshold = False
     for cascade in result.cascades:
@@ -246,6 +290,8 @@ def test_detected_cascade_rsi_thresholds_fall_in_the_grounded_range(fd, real_tre
                 f"cascade RSI threshold {threshold} is outside a plausible "
                 f"overbought range — likely mis-attributed gate"
             )
+    if stem in _NO_CASCADE_EXPECTED_FIXTURE_STEMS:
+        return  # no cascade at all on this fixture (see the carve-out comment) — nothing to check
     assert found_any_threshold, (
         "detector reported no rsi_thresholds for any cascade on a real tree — "
         "every real fixture's cascade is RSI-gated per the plan's grounding note"
