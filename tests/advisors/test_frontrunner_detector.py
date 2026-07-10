@@ -520,6 +520,43 @@ def test_tree_with_no_incumbent_frontrunner_skips_with_reason(fd):
 
 
 # ---------------------------------------------------------------------------
+# D-1 never-raises contract on entirely malformed input (fb-review finding,
+# c175c78 approval note: the docstring promises "never raises. A malformed
+# tree degrades to an empty result with a reason" and the module structurally
+# defends it (isinstance guard + top-level try/except), but nothing pinned
+# the contract directly before this test. This covers "malformed input
+# entirely" — distinct from test_ambiguous_tree_fails_loud_never_guesses and
+# test_tree_with_no_incumbent_frontrunner_skips_with_reason, which cover
+# "well-formed tree, no cascade" cases.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "malformed_input",
+    [
+        None,
+        {},
+        "not a dict",
+        {"children": "not a list"},
+        [],
+        42,
+    ],
+    ids=["none", "empty_dict", "string", "children_not_a_list", "list", "int"],
+)
+def test_malformed_input_never_raises_and_sets_skip_reason(fd, malformed_input):
+    """Every kind of entirely-malformed input must degrade to an empty
+    DetectionResult with skip_reason set — never raise, never return a
+    silently-empty result with no explanation (D-1)."""
+    result = fd.detect_frontrunner_cascades(malformed_input)
+    assert result.cascades == []
+    assert result.skip_reason, (
+        f"malformed input {malformed_input!r} produced zero cascades but no "
+        f"skip_reason — D-1 requires an explicit reason whenever the detector "
+        f"declines, even on garbage input"
+    )
+
+
+# ---------------------------------------------------------------------------
 # AC-2: recurses into parallel sub-strategy groups — one cascade per detected
 # cascade, surfaced individually (real_tree_10 / nOyb55RMGVCKPiYXv7TI has 5
 # parallel top-level groups, hand-verified by direct fixture inspection: each
