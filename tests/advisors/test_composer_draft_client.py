@@ -320,9 +320,19 @@ def test_save_symphony_is_a_noop_when_an_idempotency_key_was_already_used(cdc, m
 
 def test_module_exposes_no_invest_or_deploy_callable(cdc):
     """composer_draft_client must not implement invest/deploy at all — the
-    no-auto-trade boundary is structural, not merely unused."""
+    no-auto-trade boundary is structural, not merely unused.
+
+    Word-boundary check, not a bare substring: 'deploy' as a substring would
+    also flag verify_undeployed, the plan-mandated (feature-plans/
+    frontrunner-builder.md §Architecture) post-create SAFETY-VERIFICATION
+    read — it confirms zero allocation and never POSTs to /deploy or /invest
+    (covered separately by the source-scan tests below). Only a genuine
+    'deploy'/'invest' ACTION token — as a whole word or a _-delimited
+    component, e.g. 'deploy_symphony', 'invest', 'go_to_deploy' — is a hit;
+    'undeployed' is explicitly not.
+    """
     public_names = [n for n in dir(cdc) if not n.startswith("_")]
     for name in public_names:
-        lowered = name.lower()
-        assert "invest" not in lowered, f"found an invest-shaped symbol: {name}"
-        assert "deploy" not in lowered, f"found a deploy-shaped symbol: {name}"
+        tokens = name.lower().split("_")
+        assert "invest" not in tokens, f"found an invest-shaped symbol: {name}"
+        assert "deploy" not in tokens, f"found a deploy-shaped symbol: {name}"

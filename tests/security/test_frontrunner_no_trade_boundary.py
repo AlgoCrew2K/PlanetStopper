@@ -20,6 +20,7 @@ advisors/frontrunner_builder.py exist and satisfy the boundary.
 
 from __future__ import annotations
 
+import ast
 import inspect
 import pathlib
 
@@ -40,35 +41,99 @@ def _read_source(relative_path: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _read_executable_source(relative_path: str) -> str:
+    """Return the module source with docstrings and comments stripped.
+
+    A module is allowed to DOCUMENT the no-trade boundary in prose (its own
+    module docstring may legitimately say "never call /deploy/.../invest" as
+    an explanation of what it deliberately omits — composer_draft_client.py
+    does exactly this). Scanning raw source text would flag that
+    documentation as if it were the violation. Stripping docstrings/comments
+    via the AST keeps the check on ACTUAL CODE — string literals used in
+    expressions/calls (f-strings, concatenation, a URL passed to
+    requests.post) — which is what the boundary is really about.
+    """
+    source = _read_source(relative_path)
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        pytest.fail(f"{relative_path} has a syntax error — cannot source-scan")
+
+    # Strip every docstring (module/class/function Expr-Constant-str as the
+    # first statement of its body) by blanking its literal value.
+    docstring_ranges: list[tuple[int, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            body = getattr(node, "body", None)
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+                const = body[0].value
+                if isinstance(const.value, str):
+                    docstring_ranges.append(
+                        (const.lineno, const.end_lineno if const.end_lineno else const.lineno)
+                    )
+
+    lines = source.splitlines()
+    for start, end in docstring_ranges:
+        for lineno in range(start, end + 1):
+            if 1 <= lineno <= len(lines):
+                lines[lineno - 1] = ""  # blank the whole docstring line range
+
+    # Also strip full-line `#` comments (a simple heuristic — good enough for
+    # this repo's style; a `#` inside a string literal on an otherwise-code
+    # line is left alone, which only makes the check MORE conservative, never
+    # less, since it would still flag a real fragment inside actual code).
+    stripped_lines = []
+    for line in lines:
+        no_comment = line.split("#", 1)[0] if line.lstrip().startswith("#") is False else ""
+        stripped_lines.append(no_comment if line.lstrip().startswith("#") else line)
+    return "\n".join(stripped_lines)
+
+
 # ---------------------------------------------------------------------------
 # composer_draft_client — no invest/deploy symbol, no invest/deploy URL literal
 # ---------------------------------------------------------------------------
 
 
 def test_composer_draft_client_module_has_no_invest_or_deploy_attribute():
+    """Word-boundary check, not a bare substring: 'deploy' as a substring would
+    also flag verify_undeployed, the plan-mandated post-create SAFETY-
+    VERIFICATION read (confirms zero allocation; never POSTs to /deploy or
+    /invest — covered separately by the source-scan tests in this file).
+    Only a genuine 'deploy'/'invest' ACTION token — as a whole underscore-
+    delimited component — is a hit; 'undeployed' is explicitly not."""
     import advisors.composer_draft_client as cdc  # noqa: PLC0415
 
     public_names = [n for n in dir(cdc) if not n.startswith("_")]
-    offending = [n for n in public_names if "invest" in n.lower() or "deploy" in n.lower()]
+    offending = [
+        n
+        for n in public_names
+        if "invest" in n.lower().split("_") or "deploy" in n.lower().split("_")
+    ]
     assert offending == [], f"composer_draft_client exposes trade-shaped symbols: {offending}"
 
 
 def test_composer_draft_client_source_never_constructs_the_invest_url():
     """Source-scan (not just symbol-table) so a future author can't hand-roll
     a raw requests.post(f'{BASE}/deploy/.../invest') without a public symbol
-    naming it 'invest' or 'deploy'."""
-    source = _read_source("advisors/composer_draft_client.py")
+    naming it 'invest' or 'deploy'.
+
+    Scans EXECUTABLE code only (docstrings/comments stripped) — the module's
+    own docstring legitimately documents this exact exclusion in prose
+    ("...invest_in_symphony -> POST /deploy/.../invest, an entirely separate
+    call..."), which must not itself trip the scan."""
+    source = _read_executable_source("advisors/composer_draft_client.py")
     assert _DEPLOY_PATH_FRAGMENT not in source, (
-        "composer_draft_client.py source contains a '/deploy/' path fragment — "
-        "this module must never reference the deploy/invest endpoint"
+        "composer_draft_client.py contains a '/deploy/' path fragment in "
+        "EXECUTABLE code — this module must never reference the deploy/invest endpoint"
     )
 
 
 def test_composer_draft_client_source_never_calls_invest_in_symphony():
     """invest_in_symphony is the named function in alpha_bot_execution that
     performs the actual funded deploy (mirrors the go-to-cash call at
-    alpha_bot_execution.py:263). composer_draft_client must not import or call it."""
-    source = _read_source("advisors/composer_draft_client.py")
+    alpha_bot_execution.py:263). composer_draft_client must not import or call
+    it (executable code only — the module docstring may name it in prose)."""
+    source = _read_executable_source("advisors/composer_draft_client.py")
     assert "invest_in_symphony" not in source
 
 
@@ -79,15 +144,18 @@ def test_composer_draft_client_source_never_calls_invest_in_symphony():
 
 
 def test_frontrunner_builder_source_never_constructs_the_invest_url():
-    source = _read_source("advisors/frontrunner_builder.py")
+    """Executable code only — a module docstring may legitimately document
+    this exclusion in prose (as composer_draft_client.py's does) without
+    tripping the scan."""
+    source = _read_executable_source("advisors/frontrunner_builder.py")
     assert _DEPLOY_PATH_FRAGMENT not in source, (
-        "frontrunner_builder.py source contains a '/deploy/' path fragment — "
-        "this module must never reference the deploy/invest endpoint"
+        "frontrunner_builder.py contains a '/deploy/' path fragment in "
+        "EXECUTABLE code — this module must never reference the deploy/invest endpoint"
     )
 
 
 def test_frontrunner_builder_source_never_calls_invest_in_symphony():
-    source = _read_source("advisors/frontrunner_builder.py")
+    source = _read_executable_source("advisors/frontrunner_builder.py")
     assert "invest_in_symphony" not in source
 
 
