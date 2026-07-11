@@ -49,17 +49,27 @@ def _atlas_cache_db() -> str:
     return os.environ.get("ATLAS_CACHE_DB_PATH", "alphabot_atlas_cache.db")
 
 
+def _ensure_atlas_cache_schema(conn: sqlite3.Connection) -> None:
+    """Idempotently create the atlas_cache table + enable WAL on an open connection.
+
+    Shared by init_atlas_cache() and cached_pull() so cached_pull is
+    self-sufficient — it must not depend on a caller having invoked
+    init_atlas_cache() first (community_strats.py never does).
+    """
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS atlas_cache "
+        "(collection TEXT PRIMARY KEY, fetched_at TEXT, payload TEXT)"
+    )
+    conn.commit()
+
+
 def init_atlas_cache() -> None:
     """Create the atlas_cache table and enable WAL mode (idempotent)."""
     db_path = _atlas_cache_db()
     conn = sqlite3.connect(db_path)
     try:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS atlas_cache "
-            "(collection TEXT PRIMARY KEY, fetched_at TEXT, payload TEXT)"
-        )
-        conn.commit()
+        _ensure_atlas_cache_schema(conn)
     finally:
         conn.close()
 
@@ -107,6 +117,10 @@ def cached_pull(
     try:
         conn = sqlite3.connect(db_path)
         try:
+            # Self-sufficient: ensure schema exists before the SELECT so this
+            # call never depends on a prior init_atlas_cache() (community_strats.py
+            # calls cached_pull directly and never calls init_atlas_cache()).
+            _ensure_atlas_cache_schema(conn)
             row = conn.execute(
                 "SELECT fetched_at, payload FROM atlas_cache WHERE collection=?",
                 (collection_name,),
