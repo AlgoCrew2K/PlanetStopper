@@ -43,8 +43,12 @@ splice_candidate_into_symphony(incumbent_symphony, incumbent_cascade, candidate)
 
 run_frontrunner_build(symphony_ids: list[str] | None = None) -> None
     D-1 never-raises entry point for the scheduler/route: detect -> generate
-    -> splice -> backtest -> gate -> Calmar-accept -> queue for approval, for
-    each live symphony. NEVER calls composer_draft_client.save_symphony.
+    -> splice -> INDEPENDENTLY re-backtest both incumbent and candidate ->
+    gate (backtest_gate_engine.evaluate_candidate_batch, mandatory, never
+    bypassed) -> Calmar-accept (frontrunner_acceptance) -> queue for
+    approval, for each live symphony. A candidate that fails EITHER the gate
+    or Calmar acceptance is rejected and never reaches the approval queue
+    (AC-6/7). NEVER calls composer_draft_client.save_symphony.
 
 Design constraints
 ------------------
@@ -802,17 +806,32 @@ def _resolve_live_symphony_roster() -> list[str]:
         return []
 
 
-def _run_build_for_symphony(symphony_id: str) -> None:
-    """Detect -> generate -> splice -> backtest -> gate -> accept -> queue for
-    ONE symphony. Never calls composer_draft_client.save_symphony — that is
-    reserved for the operator-driven approval route.
+def _count_tree_nodes(node) -> int:
+    """Total node count of a Composer raw_value tree (for the Calmar
+    acceptance gate's node_count_delta / material-simplification signal)."""
+    if not isinstance(node, dict):
+        return 0
+    return 1 + sum(_count_tree_nodes(c) for c in node.get("children") or [])
 
-    This is the orchestration seam; the individual steps (fetch_symphony_score,
-    Atlas pattern loading, independent re-backtest, gate evaluation, Calmar
-    acceptance, and approval-queue persistence) are wired incrementally as
-    the corresponding downstream modules land — see feature-plans/
-    frontrunner-builder.md for the full pipeline. Never raises (D-1); any
-    step's failure degrades to a logged skip for this symphony only.
+
+def _run_build_for_symphony(symphony_id: str) -> None:
+    """Detect -> generate -> splice -> INDEPENDENTLY re-backtest BOTH incumbent
+    and candidate -> gate (evaluate_candidate_batch, mandatory) -> Calmar
+    accept -> queue for approval, for ONE symphony.
+
+    AC-6 (non-negotiable): a candidate reaches the approval queue ONLY if it
+    (a) independently re-backtests cleanly, (b) is the BHY/FDR-gate survivor
+    of a batch containing BOTH the incumbent and the candidate (never trusts
+    the incumbent's own pre-computed oos_metrics — both sides are backtested
+    fresh here), AND (c) passes the Calmar acceptance gate
+    (frontrunner_acceptance.evaluate_calmar_acceptance). An un-gated or
+    un-accepted candidate is REJECTED and never queued — this function does
+    not call composer_draft_client.save_symphony; only
+    approve_frontrunner_proposal (the operator-driven approval route) does
+    that.
+
+    Never raises (D-1); any step's failure degrades to a logged skip for this
+    symphony/candidate only — it never aborts the batch.
     """
     from advisors import frontrunner_detector  # noqa: PLC0415 - CC-2 lazy
 
@@ -865,11 +884,20 @@ def _run_build_for_symphony(symphony_id: str) -> None:
             )
             continue
 
-        # Independent re-backtest + gate + Calmar acceptance are wired in a
-        # follow-on cycle (see feature plan AC-6/7) — this seam intentionally
-        # stops short of that for now. NOTHING in this function calls
-        # composer_draft_client.save_symphony; only approve_frontrunner_proposal
-        # (the operator-driven approval path) does that.
+        accepted, metrics = _gate_and_accept_candidate(
+            symphony_id=symphony_id,
+            incumbent_tree=tree,
+            candidate_tree=spliced,
+        )
+        if not accepted:
+            logger.info(
+                "_run_build_for_symphony: symphony_id=%s candidate rejected by "
+                "gate/acceptance (%s) — not queued",
+                symphony_id,
+                metrics.get("reject_reason"),
+            )
+            continue
+
         try:
             import database  # noqa: PLC0415 - CC-2 lazy
 
@@ -877,10 +905,10 @@ def _run_build_for_symphony(symphony_id: str) -> None:
                 symphony_id=symphony_id,
                 proposal_source="frontrunner_builder",
                 candidate_tree=spliced,
+                metrics_json=metrics,
             )
             logger.info(
-                "_run_build_for_symphony: symphony_id=%s candidate queued for "
-                "approval (gate/acceptance wiring pending)",
+                "_run_build_for_symphony: symphony_id=%s candidate queued for approval",
                 symphony_id,
             )
         except Exception as exc:
@@ -889,6 +917,119 @@ def _run_build_for_symphony(symphony_id: str) -> None:
                 symphony_id,
                 type(exc).__name__,
             )
+
+
+def _gate_and_accept_candidate(
+    *,
+    symphony_id: str,
+    incumbent_tree: dict,
+    candidate_tree: dict,
+) -> tuple[bool, dict]:
+    """AC-6/AC-7: independently re-backtest BOTH incumbent and candidate,
+    run them through evaluate_candidate_batch (mandatory, never bypassed),
+    and — only for the candidate if it's the gate's ADOPT_CANDIDATE survivor
+    — apply the Calmar acceptance gate.
+
+    Returns (accepted, metrics) where metrics is a dict suitable for
+    frontrunner_proposals.metrics_json (incumbent-vs-candidate Calmar/CAGR/
+    MDD/node-count deltas, AC-8) or, on rejection, a dict carrying only
+    'reject_reason' for logging. Never raises (D-1) — any failure degrades
+    to (False, {"reject_reason": <reason>}).
+    """
+    try:
+        from advisors.backtest_gate_engine import BacktestCandidate, evaluate_candidate_batch
+        from advisors.composer_backtest_client import run_backtest
+        from advisors.frontrunner_acceptance import evaluate_calmar_acceptance
+        from analytics import compute_quantstats_metrics
+
+        # Independent re-backtest of BOTH sides — never trust the incumbent's
+        # own pre-computed oos_metrics (AC-3/AC-6).
+        incumbent_bt = run_backtest(incumbent_tree, symphony_id=symphony_id)
+        if incumbent_bt.error or not incumbent_bt.daily_returns:
+            return False, {"reject_reason": f"incumbent backtest failed: {incumbent_bt.error}"}
+
+        candidate_bt = run_backtest(candidate_tree, symphony_id=symphony_id)
+        if candidate_bt.error or not candidate_bt.daily_returns:
+            return False, {"reject_reason": f"candidate backtest failed: {candidate_bt.error}"}
+
+        incumbent_returns_pct = [r * 100.0 for r in incumbent_bt.daily_returns.values()]
+        incumbent_dated_pct = {d: r * 100.0 for d, r in incumbent_bt.daily_returns.items()}
+        candidate_returns_pct = [r * 100.0 for r in candidate_bt.daily_returns.values()]
+        candidate_dated_pct = {d: r * 100.0 for d, r in candidate_bt.daily_returns.items()}
+
+        incumbent_metrics = compute_quantstats_metrics(incumbent_returns_pct)
+        candidate_metrics = compute_quantstats_metrics(candidate_returns_pct)
+
+        # Batch of 2 (incumbent + candidate) through the SAME mandatory gate —
+        # AC-6's "independently re-backtested ... run through
+        # backtest_gate_engine.evaluate_candidate_batch (mandatory attach
+        # point)". The incumbent's own oos_alpha (sum of its fold returns)
+        # anchors the gate's KEEP_INCUMBENT baseline.
+        incumbent_oos_alpha = sum(incumbent_returns_pct)
+        bt_candidates = [
+            BacktestCandidate(
+                candidate_id="incumbent",
+                daily_returns_pct=incumbent_returns_pct,
+                candidate_params={},
+                incumbent_params={},
+                theory_prior_params={},
+                dated_returns=incumbent_dated_pct,
+            ),
+            BacktestCandidate(
+                candidate_id="candidate",
+                daily_returns_pct=candidate_returns_pct,
+                candidate_params={},
+                incumbent_params={},
+                theory_prior_params={},
+                dated_returns=candidate_dated_pct,
+            ),
+        ]
+        gated_batch = evaluate_candidate_batch(
+            bt_candidates,
+            incumbent_oos_alpha=incumbent_oos_alpha,
+            default_oos_alpha=incumbent_oos_alpha,
+        )
+        candidate_gate_result = next(
+            (r for r in gated_batch.results if r.candidate_id == "candidate"), None
+        )
+        if candidate_gate_result is None or candidate_gate_result.verdict.decision != "ADOPT_CANDIDATE":
+            reason = (
+                candidate_gate_result.rejection_reason
+                if candidate_gate_result is not None
+                else "gate_result_missing"
+            )
+            return False, {"reject_reason": f"gate rejected candidate: {reason}"}
+
+        # AC-7: Calmar acceptance — gate survival is necessary but not
+        # sufficient; the candidate must ALSO improve or preserve+simplify.
+        incumbent_node_count = _count_tree_nodes(incumbent_tree)
+        candidate_node_count = _count_tree_nodes(candidate_tree)
+        acceptance = evaluate_calmar_acceptance(
+            incumbent_metrics,
+            candidate_metrics,
+            incumbent_node_count=incumbent_node_count,
+            candidate_node_count=candidate_node_count,
+        )
+        if not acceptance.accepted:
+            return False, {"reject_reason": "calmar_acceptance_rejected"}
+
+        metrics = {
+            "incumbent_cagr": incumbent_metrics.get("annualized_return"),
+            "incumbent_max_drawdown": incumbent_metrics.get("max_drawdown"),
+            "incumbent_calmar": acceptance.incumbent_calmar,
+            "candidate_cagr": candidate_metrics.get("annualized_return"),
+            "candidate_max_drawdown": candidate_metrics.get("max_drawdown"),
+            "candidate_calmar": acceptance.candidate_calmar,
+            "candidate_sharpe": acceptance.candidate_sharpe,
+            "candidate_volatility": acceptance.candidate_volatility,
+            "node_count_delta": acceptance.node_count_delta,
+            "tags": sorted(acceptance.tags),
+        }
+        return True, metrics
+
+    except Exception as exc:
+        logger.debug("_gate_and_accept_candidate: unexpected error", exc_info=True)
+        return False, {"reject_reason": type(exc).__name__}
 
 
 # ---------------------------------------------------------------------------
