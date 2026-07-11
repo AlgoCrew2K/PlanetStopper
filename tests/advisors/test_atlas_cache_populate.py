@@ -15,11 +15,15 @@ AC-2 — defense-in-depth serialization in `atlas_cache`:
   or an explicit sanitiser so a BSON/datetime value caches successfully.
   The universe_provider payload (plain ticker strings) must be byte-stable.
 
-AC-3 — memory-bounded fetch:
-  `_fetch_fn` must NOT pull all 11k docs. A named cap constant (e.g.
-  `_MAX_FETCH_DOCS`) via `.limit()` must be applied; the returned doc count
-  must be ≤ the cap. The public `limit`/`min_oos_sharpe` post-fetch params
-  must NOT be confused with the server-side .limit() (no double-apply).
+AC-3 — memory-bounded fetch (AMENDED, DE-ATLAS-SLOW-QUERY-001 /
+DE-ATLAS-SHARPE-FIELD-001 — see TestBoundedFetch for the full rationale):
+  `_fetch_fn` must NOT pull the full-document (edn_string, ~153KB/doc) payload
+  for more than a named cap constant (`_MAX_FETCH_DOCS`) worth of docs — the
+  bound applies to the heavy fetch specifically, not via a server-side
+  `.limit()` on a single query (that design was live-proven to still time out
+  — ANY server-side sort on this collection is an unindexed COLLSCAN). The
+  public `limit`/`min_oos_sharpe` post-fetch params must NOT be confused with
+  this fetch-level cap (no double-apply).
 
 AC-4 — cache HIT serves without a live fetch:
   After one successful populate, a subsequent call within the 7-day TTL must
@@ -40,8 +44,9 @@ ADVERSARIAL FOCUS:
     docs with a Python object that simulates an ObjectId (not JSON-serializable
     by the default json encoder). The test FAILS on the unpatched code because
     json.dumps throws TypeError and the row is never written.
-  - AC-3: we intercept the pymongo `find()` call and assert a `.limit()` value
-    was set; we assert the returned list length ≤ the cap constant.
+  - AC-3: we intercept the pymongo `find()` calls and assert the full-document
+    (edn_string) fetch's `$in` filter never exceeds the cap constant, and that
+    a separate, lightweight (no edn_string) selection scan exists.
   - AC-4: we count `_bounded_fetch_fn` invocations to prove the second call
     hits the cache row, not Atlas.
 
@@ -426,7 +431,11 @@ class TestAtlasCacheSerializationRobustness:
 
 
 class TestBoundedFetch:
-    """AC-3: _fetch_fn must apply a server-side .limit() cap; doc count must be ≤ the cap."""
+    """AC-3 (amended, DE-ATLAS-SLOW-QUERY-001): _fetch_fn must bound the OOM-risk
+    fetch; doc count must be ≤ the cap. The bounding mechanism moved from a
+    server-side `.limit()` on a single query to a client-side cap applied after
+    an unbounded, lightweight (no edn_string) selection scan — see
+    test_full_document_fetch_is_bounded_to_max_fetch_docs for why."""
 
     def _make_pymongo_mock_capturing_find_args(
         self,
@@ -503,48 +512,68 @@ class TestBoundedFetch:
             f"(the total live docs) to actually bound the fetch."
         )
 
-    def test_find_is_called_with_limit(self, monkeypatch):
-        """The pymongo collection.find() call must chain .limit() or pass a limit argument.
+    def test_full_document_fetch_is_bounded_to_max_fetch_docs(self, monkeypatch):
+        """AC-3 (amended after the live-Atlas gate proved the old design still
+        timed out — DE-ATLAS-SLOW-QUERY-001 / DE-ATLAS-SHARPE-FIELD-001): the
+        DE-ATLAS-CACHE-001 Bug-2 OOM guard (an unbounded ~11k-doc fetch
+        OOM-killed the 4GB droplet) still applies under the corrected
+        architecture — just aimed at a DIFFERENT query.
 
-        ADVERSARIAL: on un-fixed code, _fetch_fn calls list(collection.find({}, _PROJECTION))
-        with no limit. This test FAILS on the unfixed code.
+        The lightweight selection scan (step 1: {_id, oos_metrics.Sharpe} over
+        the WHOLE collection, no sort, no limit) is cheap regardless of doc
+        count — it never requests edn_string, so its per-doc payload is tiny.
+        The full-document $in fetch (step 2, edn_string ~153KB/doc live) is
+        the query that actually carries the OOM risk, and MUST be bounded to
+        _MAX_FETCH_DOCS.
 
-        Strategy: intercept pymongo.MongoClient, capture how collection.find() is
-        called, and verify a limit is applied — either via .limit(N) chained on
-        the cursor, or by a $maxN sort-limit pattern, or by passing limit= as a
-        find() kwarg.
+        ADVERSARIAL: replaces the pre-amendment version of this test, which
+        asserted a server-side `.limit()` + `sort=[("oos_metrics.sharpe", -1)]`
+        on a SINGLE query — that design was proven live to still time out
+        (ANY server-side sort on this collection is an unindexed COLLSCAN,
+        independent of projection size) and is no longer correct; it also
+        guarded the WRONG query (the selection scan, which was never the OOM
+        risk once edn_string moved off it). This test targets the query that
+        actually carries the OOM risk, which the old version never checked.
 
-        CI-hermetic: MONGO_URI is set to a dummy value so the code reaches the
-        mocked pymongo.MongoClient instead of raising KeyError before the mock runs.
-        The mock intercepts the connection, so no live Atlas call is made.
+        Strategy: supply _MAX_FETCH_DOCS + 25 docs; intercept
+        pymongo.MongoClient with a filter-aware mock; verify (a) at least one
+        find() call carries a lightweight (no edn_string) projection, and (b)
+        every find() call requesting edn_string is filtered to no more than
+        _MAX_FETCH_DOCS ids.
         """
-        # Provide a dummy MONGO_URI so _fetch_fn's os.environ["MONGO_URI"] read
-        # succeeds and the code proceeds into the mocked pymongo path.
         monkeypatch.setenv("MONGO_URI", "mongodb+srv://ci-dummy:ci-dummy@test.example.com/db")
 
+        import advisors.community_strats as cs  # noqa: PLC0415
+
+        cap = cs._MAX_FETCH_DOCS
+        n_docs = cap + 25
+        docs = [
+            {
+                "_id": f"id-{i}",
+                "sid": f"sid-{i}",
+                "name": f"Strat {i}",
+                "edn_string": "{}",
+                "oos_metrics": {"Sharpe": str(float(i))},
+            }
+            for i in range(n_docs)
+        ]
+
         captured_find_calls: list = []
-        limit_calls: list = []
 
-        mock_cursor = MagicMock()
-        # Support list() conversion.
-        mock_cursor.__iter__ = MagicMock(return_value=iter([]))
-
-        mock_cursor_limited = MagicMock()
-        mock_cursor_limited.__iter__ = MagicMock(return_value=iter([]))
-
-        def _cursor_limit(n):
-            limit_calls.append(n)
-            return mock_cursor_limited
-
-        mock_cursor.limit.side_effect = _cursor_limit
+        def _capture_find(filter_doc=None, projection=None, **kwargs):
+            filter_doc = filter_doc or {}
+            captured_find_calls.append({"filter": filter_doc, "projection": projection})
+            id_clause = filter_doc.get("_id")
+            if isinstance(id_clause, dict) and "$in" in id_clause:
+                wanted = set(id_clause["$in"])
+                matched = [d for d in docs if d["_id"] in wanted]
+            else:
+                matched = docs
+            cursor = MagicMock()
+            cursor.__iter__ = MagicMock(return_value=iter(matched))
+            return cursor
 
         mock_collection = MagicMock()
-        mock_collection.find.return_value = mock_cursor
-
-        def _capture_find(*args, **kwargs):
-            captured_find_calls.append({"args": args, "kwargs": kwargs})
-            return mock_cursor
-
         mock_collection.find.side_effect = _capture_find
 
         mock_db = MagicMock()
@@ -555,88 +584,46 @@ class TestBoundedFetch:
         mock_client.__getitem__ = MagicMock(return_value=mock_db)
         mock_client.captplanet = mock_db
 
-        import advisors.community_strats as cs  # noqa: PLC0415
-
-        with patch("pymongo.MongoClient", return_value=mock_client):
+        with (
+            patch("pymongo.MongoClient", return_value=mock_client),
             # Force the fetch path by bypassing the cache (make cached_pull call fetch_fn directly).
-            with patch(
-                "advisors.atlas_cache.cached_pull",
-                side_effect=lambda col, fn, **kw: fn(),
-            ):
-                cs.load_community_strategies()
+            patch("advisors.atlas_cache.cached_pull", side_effect=lambda col, fn, **kw: fn()),
+        ):
+            cs.load_community_strategies()
 
         # find() MUST have been called — a skip here would hide a regression where
-        # the fetch path silently stops issuing the query. This is RED on unfixed
-        # code (it DOES call find, just without a limit), so we assert, not skip.
+        # the fetch path silently stops issuing the query.
         assert captured_find_calls, (
             "pymongo collection.find() was never called — the fetch path did not run. "
             "This hides the OOM-bounding contract entirely; the test must exercise the "
             "real _fetch_fn query."
         )
 
-        # A limit must have been applied. Two valid approaches:
-        # (a) .limit(N) called on the cursor returned by find()
-        # (b) find() called with a 'limit' kwarg or positional limit arg
-        # (c) sort + limit via sort(...).limit(N)
+        def _has_heavy_field(projection) -> bool:
+            return bool(projection) and any(
+                "edn_string" in str(key) for key, want in projection.items() if want
+            )
 
-        find_call = captured_find_calls[0]
-        limit_in_kwargs = find_call["kwargs"].get("limit")
-        # limit as a positional arg (find(filter, projection, limit=N) or similar):
-        # pymongo's find signature: find(filter={}, projection=None, **kwargs)
-        # so limit would be in kwargs.
-
-        limit_applied = bool(limit_calls) or (limit_in_kwargs is not None and limit_in_kwargs > 0)
-        assert limit_applied, (
-            "The pymongo find() call must apply a server-side .limit() "
-            "(either via cursor.limit(N) or the 'limit' kwarg). "
-            "Without this, all 11,193 docs are fetched, OOM-killing the 4GB droplet. "
-            f"captured find kwargs: {find_call['kwargs']!r}, "
-            f"cursor.limit() calls: {limit_calls!r}"
+        selection_calls = [c for c in captured_find_calls if not _has_heavy_field(c["projection"])]
+        assert selection_calls, (
+            "no find() call carries a lightweight (no edn_string) projection — the "
+            "cheap selection scan is missing entirely; without it, ranking would "
+            "require the full (heavy) document for every doc."
         )
 
-        # TIGHTER: the limit value must equal the module's named cap constant
-        # (_MAX_FETCH_DOCS) — not an arbitrary positive number. A naive fix that
-        # hardcodes a different number, or applies the public `limit` param here,
-        # would pass the loose check above but fail this one.
-        cap = cs._MAX_FETCH_DOCS
-        observed_limit = limit_calls[0] if limit_calls else limit_in_kwargs
-        assert observed_limit == cap, (
-            f"The server-side limit must equal _MAX_FETCH_DOCS ({cap}); "
-            f"observed {observed_limit!r}. The fetch cap must use the named constant, "
-            "not a hardcoded or caller-supplied value."
+        full_doc_calls = [c for c in captured_find_calls if _has_heavy_field(c["projection"])]
+        assert full_doc_calls, (
+            "no find() call requests the full document (edn_string) — candidates "
+            "would have no tree to validate"
         )
-
-        # The OOM fix's intent is 'top-N by sharpe' — assert the server-side sort
-        # is on oos_metrics.sharpe DESCENDING so the cap keeps the BEST docs, not
-        # an arbitrary 500. Accept either the `sort=` kwarg on find() or a
-        # cursor.sort(...) chain.
-        sort_in_find = find_call["kwargs"].get("sort")
-        cursor_sort_calls = mock_cursor.sort.call_args_list
-        sort_spec = None
-        if sort_in_find is not None:
-            sort_spec = sort_in_find
-        elif cursor_sort_calls:
-            # cursor.sort(spec) — spec is the first positional arg of the first call.
-            sort_spec = cursor_sort_calls[0].args[0] if cursor_sort_calls[0].args else None
-
-        assert sort_spec is not None, (
-            "The fetch must apply a server-side sort so the .limit() keeps the BEST "
-            "candidates, not an arbitrary slice. No sort= kwarg or cursor.sort() found. "
-            f"find kwargs: {find_call['kwargs']!r}"
-        )
-        # The sort must reference oos_metrics.sharpe descending. pymongo.DESCENDING == -1.
-        sort_pairs = list(sort_spec) if isinstance(sort_spec, (list, tuple)) else []
-        sharpe_desc = any(
-            isinstance(pair, (list, tuple))
-            and len(pair) == 2
-            and "sharpe" in str(pair[0])
-            and pair[1] == -1
-            for pair in sort_pairs
-        )
-        assert sharpe_desc, (
-            "The server-side sort must be on oos_metrics.sharpe DESCENDING (-1) so the "
-            f"cap keeps the highest-sharpe docs. Observed sort spec: {sort_spec!r}"
-        )
+        for call in full_doc_calls:
+            in_list = (call["filter"] or {}).get("_id", {}).get("$in", [])
+            assert len(in_list) <= cap, (
+                f"the full-document (edn_string) fetch — the actual OOM-risk query, "
+                f"~153KB/doc live — requested {len(in_list)} ids, exceeding "
+                f"_MAX_FETCH_DOCS={cap}. This is the DE-ATLAS-CACHE-001 Bug-2 OOM "
+                "guard, re-aimed at the query that now carries the risk."
+            )
 
     def test_returned_doc_count_does_not_exceed_cap(self, monkeypatch):
         """load_community_strategies must not return more candidates than the fetch cap allows.

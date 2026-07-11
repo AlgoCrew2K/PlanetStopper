@@ -75,9 +75,15 @@ def _make_mongo_doc(
     ticker: str = "SPY",
     sharpe: float | None = 1.2,
 ) -> dict:
-    """Return a projected Mongo doc shape {sid, name, edn_string, oos_metrics}."""
+    """Return a projected Mongo doc shape {sid, name, edn_string, oos_metrics}.
+
+    oos_metrics uses the REAL captplanet.strategies field shape
+    (DE-ATLAS-SHARPE-FIELD-001): capital-S 'Sharpe', STRING-valued — not the
+    lowercase numeric 'sharpe' the pre-amendment code read, which exists on
+    0 of 11,227 live docs.
+    """
     tree = _make_minimal_tree(name=name, ticker=ticker)
-    oos_metrics = {"sharpe": sharpe} if sharpe is not None else {}
+    oos_metrics = {"Sharpe": str(sharpe)} if sharpe is not None else {}
     return {
         "sid": sid,
         "name": name,
@@ -508,7 +514,11 @@ class TestDeduplication:
     retaining the higher OOS Sharpe."""
 
     def _make_duplicate_pair(self, sharpe_a: float = 0.5, sharpe_b: float = 1.8) -> list:
-        """Return two docs whose trees hash identically (same ticker = same hash)."""
+        """Return two docs whose trees hash identically (same ticker = same hash).
+
+        oos_metrics uses the REAL captplanet.strategies field shape
+        (DE-ATLAS-SHARPE-FIELD-001): capital-S 'Sharpe', STRING-valued.
+        """
         # Same ticker → same tree structure → same composition_hash.
         tree = _make_minimal_tree(name="Dup Strategy", ticker="IVV")
         edn = _tree_as_edn_string(tree)
@@ -516,13 +526,13 @@ class TestDeduplication:
             "sid": "sid-dup-a",
             "name": "Dup A",
             "edn_string": edn,
-            "oos_metrics": {"sharpe": sharpe_a},
+            "oos_metrics": {"Sharpe": str(sharpe_a)},
         }
         doc_b = {
             "sid": "sid-dup-b",
             "name": "Dup B",
             "edn_string": edn,
-            "oos_metrics": {"sharpe": sharpe_b},
+            "oos_metrics": {"Sharpe": str(sharpe_b)},
         }
         return [doc_a, doc_b]
 
@@ -543,9 +553,11 @@ class TestDeduplication:
         )
         surviving = result["candidates"][0]
         # The surviving candidate must have the HIGHER sharpe, not the lower one.
-        actual_sharpe = surviving["oos_metrics"].get("sharpe")
+        # oos_metrics['Sharpe'] is stored as a string (real Mongo shape) — cast
+        # to float for the numeric comparison.
+        actual_sharpe = float(surviving["oos_metrics"].get("Sharpe"))
         assert actual_sharpe == pytest.approx(high_sharpe, rel=1e-6), (
-            # Tolerance: rel=1e-6 because sharpe is a float round-trip from JSON.
+            # Tolerance: rel=1e-6 because sharpe is a float round-trip through a string.
             f"dedup must retain the higher sharpe ({high_sharpe}); got {actual_sharpe!r}"
         )
 
@@ -572,7 +584,7 @@ class TestDeduplication:
             "sid": "sid-has-sharpe",
             "name": "Has sharpe",
             "edn_string": edn,
-            "oos_metrics": {"sharpe": 0.9},
+            "oos_metrics": {"Sharpe": "0.9"},
         }
         doc_without_sharpe = {
             "sid": "sid-no-sharpe",
@@ -589,7 +601,7 @@ class TestDeduplication:
         assert result["available"] is True
         assert len(result["candidates"]) == 1
         surviving = result["candidates"][0]
-        assert "sharpe" in surviving["oos_metrics"], (
+        assert "Sharpe" in surviving["oos_metrics"], (
             "dedup must keep the doc that HAS a sharpe over the one without"
         )
 
