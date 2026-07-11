@@ -19,6 +19,7 @@ import concurrent.futures
 import hashlib
 import json
 import logging
+import math
 import os
 from typing import Any
 
@@ -60,13 +61,17 @@ _PROJECTION: dict = {
     "oos_metrics": 1,
 }
 
-# Server-side fetch cap: top-N docs by oos_metrics.sharpe desc.
+# Client-side-ranked fetch cap: top-N docs by oos_metrics.Sharpe desc.
 # Bounds memory and latency — captplanet.strategies holds ~11k docs; fetching
 # all would OOM the 4GB droplet (multi-MB edn_string fields × 11k = several GB).
-# 500 covers MAX_COMMUNITY_CANDIDATES_PER_RUN=20 with generous headroom for
-# dedup/validation loss. The public `limit` param (post-fetch, post-dedup)
-# is a separate, independent caller-level control — not the same as this cap.
-_MAX_FETCH_DOCS: int = 500
+# Reduced 500 -> 100 (DE-ATLAS-SLOW-QUERY-001 amendment): edn_string is
+# ~153KB/doc live, so even an indexed _id fetch of 500 full docs was
+# live-observed to dominate the 45s timeout budget on its own, independent of
+# sort/index. 100 still covers MAX_COMMUNITY_CANDIDATES_PER_RUN=20 with 5x
+# headroom for dedup/validation loss while cutting the fetch payload 5x. The
+# public `limit` param (post-fetch, post-dedup) is a separate, independent
+# caller-level control — not the same as this cap.
+_MAX_FETCH_DOCS: int = 100
 
 # Atlas collection identifier — key used in the atlas_cache table.
 _COLLECTION_NAME = "captplanet.strategies"
@@ -105,19 +110,42 @@ def _composition_hash(tree: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _oos_sharpe(doc: dict) -> float:
-    """Return the OOS sharpe from a doc's oos_metrics, or -inf if absent.
+def _parse_sharpe(oos_metrics: Any) -> float | None:
+    """Parse oos_metrics['Sharpe'] (capital-S, string-valued on live
+    captplanet.strategies docs — DE-ATLAS-SHARPE-FIELD-001) defensively to a float.
 
-    A missing sharpe is never 'better' than any present sharpe; -inf ensures
-    docs with a present sharpe always win dedup ties.
+    Returns None — never raises — when the field is missing, or the value is
+    non-numeric (e.g. 'N/A'), percent-formatted (e.g. '12.3%'), or NaN/Infinity.
+    Python's bare float() accepts 'nan'/'inf' as valid floats, but neither is a
+    valid Sharpe ratio, so both are explicitly rejected here.
+
+    Shared by all 3 sharpe-consumption sites (client-side selection ranking via
+    _oos_sharpe, the dedup tie-break via _oos_sharpe, and the min_oos_sharpe
+    filter) so a single parse contract governs every read of this field.
     """
-    oos = doc.get("oos_metrics")
-    if oos and isinstance(oos, dict) and "sharpe" in oos:
-        try:
-            return float(oos["sharpe"])
-        except (TypeError, ValueError):
-            pass
-    return float("-inf")
+    if not isinstance(oos_metrics, dict):
+        return None
+    raw = oos_metrics.get("Sharpe")
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(value) or math.isinf(value):
+        return None
+    return value
+
+
+def _oos_sharpe(doc: dict) -> float:
+    """Return the OOS sharpe from a doc's oos_metrics, or -inf if absent/invalid.
+
+    A missing or unparseable sharpe is never 'better' than any present, valid
+    sharpe; -inf ensures such docs always lose dedup ties and sort to the
+    bottom of the client-side selection ranking (both consumers of this fn).
+    """
+    parsed = _parse_sharpe(doc.get("oos_metrics"))
+    return parsed if parsed is not None else float("-inf")
 
 
 # ---------------------------------------------------------------------------
@@ -140,8 +168,10 @@ def load_community_strategies(
         If not None, cap the number of returned candidates (applied after
         dedup and sharpe filtering).
     min_oos_sharpe:
-        If not None, exclude docs whose oos_metrics['sharpe'] is below this
-        floor. Docs that lack oos_metrics or lack the 'sharpe' key are KEPT.
+        If not None, exclude docs whose oos_metrics['Sharpe'] is below this
+        floor. Docs that lack oos_metrics, lack the 'Sharpe' key, or whose
+        Sharpe value is unparseable (non-numeric/percent-formatted/NaN/Infinity)
+        are KEPT — the floor only ever excludes a genuinely-parsed low value.
     client:
         Reserved for interface compatibility. Not used in this implementation.
     force_refresh:
@@ -179,20 +209,24 @@ def load_community_strategies(
         def _fetch_fn() -> list:
             """Connect to Atlas and return the projected strategy documents.
 
-            Two-step fetch (DE-ATLAS-SLOW-QUERY-001): oos_metrics.sharpe has no
-            index on captplanet.strategies, and _PROJECTION includes edn_string
-            (a multi-KB field per doc) — sorting the full ~11k-doc corpus at full
-            document size, unindexed, on disk was observed to take ~50s in
-            production, blowing through _ATLAS_FETCH_TIMEOUT_S on every pull.
+            Two-step fetch (DE-ATLAS-SLOW-QUERY-001, amended after a live-Atlas
+            gate failure): captplanet.strategies has no usable index besides
+            _id, so ANY server-side sort — even over a lightweight projection,
+            which is what the pre-amendment version did — is an unindexed
+            COLLSCAN across the full ~11,227-doc corpus and still blows through
+            _ATLAS_FETCH_TIMEOUT_S. edn_string is also ~153KB/doc, so even an
+            indexed _id fetch of too many full docs dominates the timeout
+            budget on its own (independent of sort/index) — see _MAX_FETCH_DOCS.
 
-            Step 1 — lightweight selection: sort by oos_metrics.sharpe descending
-            (missing-sharpe docs sort to the bottom in Mongo's collation) over a
-            small projection (no edn_string), capped to _MAX_FETCH_DOCS.
-            allowDiskUse=True prevents the 32 MB in-memory sort limit from
-            aborting the query on the large collection — sorting the small
-            projection is cheap even though the field stays unindexed.
-            Step 2 — targeted full-document fetch by the _id's selected in step 1,
-            an indexed _id lookup, so it needs no server-side sort.
+            Step 1 — lightweight, UNSORTED, uncapped selection: pull only
+            {_id, oos_metrics.Sharpe} for the whole collection. No sort=, no
+            .limit() — no server-side sort of any kind runs against Mongo.
+            Step 2 — client-side rank + bound: parse each doc's Sharpe
+            defensively (via _oos_sharpe, missing/unparseable -> -inf, sorts to
+            the bottom, never raises), sort descending in Python, slice to the
+            top _MAX_FETCH_DOCS ids.
+            Step 3 — targeted full-document fetch by the ids selected in step
+            2, an indexed _id lookup, so it needs no server-side sort.
             """
             import pymongo  # noqa: PLC0415
 
@@ -203,15 +237,12 @@ def load_community_strategies(
             )
             collection = mongo_client["captplanet"]["strategies"]
 
-            selection_cursor = collection.find(
-                {},
-                {"_id": 1, "oos_metrics.sharpe": 1},
-                sort=[("oos_metrics.sharpe", pymongo.DESCENDING)],
-                allow_disk_use=True,
-            ).limit(_MAX_FETCH_DOCS)
-            selected_ids = [doc["_id"] for doc in selection_cursor]
+            selection_cursor = collection.find({}, {"_id": 1, "oos_metrics.Sharpe": 1})
+            selection_docs = list(selection_cursor)
+            selection_docs.sort(key=_oos_sharpe, reverse=True)
+            top_ids = [doc["_id"] for doc in selection_docs[:_MAX_FETCH_DOCS]]
 
-            full_cursor = collection.find({"_id": {"$in": selected_ids}}, _PROJECTION)
+            full_cursor = collection.find({"_id": {"$in": top_ids}}, _PROJECTION)
             return list(full_cursor)
 
         def _bounded_fetch_fn() -> list:
@@ -317,17 +348,14 @@ def load_community_strategies(
             validate_rejected += 1
             continue
 
-        # Sharpe filter — docs LACKING sharpe are KEPT regardless of floor.
+        # Sharpe filter — docs with a missing/unparseable Sharpe are KEPT
+        # regardless of floor; only a genuinely-parsed low value is excluded.
         oos_metrics = doc.get("oos_metrics")
         if min_oos_sharpe is not None:
-            oos = oos_metrics if isinstance(oos_metrics, dict) else {}
-            if "sharpe" in oos:
-                try:
-                    if float(oos["sharpe"]) < min_oos_sharpe:
-                        sharpe_filtered += 1
-                        continue
-                except (TypeError, ValueError):
-                    pass  # unparseable sharpe → keep the doc
+            parsed_sharpe = _parse_sharpe(oos_metrics)
+            if parsed_sharpe is not None and parsed_sharpe < min_oos_sharpe:
+                sharpe_filtered += 1
+                continue
 
         # Composition hash: tree-structural (strips uuid4 'id' keys so identical
         # logic always hashes identically, regardless of node id generation).
