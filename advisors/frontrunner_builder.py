@@ -109,6 +109,25 @@ _PCT_PLACEHOLDER = "%"
 # the per-symphony Optuna walk-forward and must never inflate its FDR bar.
 _DOF_LEDGER_SPEC_BUNDLE_SENTINEL: str = "frontrunner_builder"
 
+# AC-6/7: acceptance_gate's Stage-2 discretionary panel (backtest_gate_engine's
+# _compute_parameter_stability_score / _compute_prior_anchor_score) was designed
+# to compare an Optuna-tuned candidate's PARAMETER VECTOR against the incumbent's
+# — a frontrunner tree-splice candidate has no such vector. Passing empty dicts
+# is structurally disadvantageous, not neutral: backtest_gate_engine.py's own
+# inc_stability is hardcoded to 1.0 ("the incumbent is, by definition, stable
+# against itself") while an empty candidate_params/incumbent_params pair falls
+# back to the 0.5 neutral-prior short-circuit — giving incumbent_panel_score
+# (0.75) a floor the candidate (0.5) can never clear (verified via a direct
+# evaluate_candidate_batch probe: vetoes_passed=True, panel_score stuck at 0.5,
+# decision=KEEP_INCUMBENT regardless of how large the OOS-alpha gap is).
+# Passing an IDENTICAL non-empty dict for candidate_params/incumbent_params/
+# theory_prior_params makes every parameter-distance sub-score resolve to a
+# perfect match (1.0/1.0 on both sides) — a genuine, honest TIE — so the panel
+# becomes a neutral pass-through for tree-splice candidates instead of an
+# unwinnable brake, while the REAL vetoes (BHY/FDR significance, PBO,
+# OOS-alpha-beats-both-baselines) remain fully load-bearing and unaffected.
+_TREE_SPLICE_PANEL_PARAMS_SENTINEL: dict = {"tree_splice_candidate": 1.0}
+
 
 # ---------------------------------------------------------------------------
 # Public result type
@@ -908,6 +927,32 @@ def _run_build_for_symphony(symphony_id: str) -> None:
                 symphony_id,
                 metrics.get("reject_reason"),
             )
+            # AC-11 "fails gates or fails to improve Calmar → rejected item w/
+            # reason+deltas": record an audit observation whenever real
+            # comparison data exists (a gate or Calmar reject — signaled by
+            # "candidate_cagr" being present). A pre-gate backtest failure has
+            # no valid deltas to report (metrics carries only reject_reason),
+            # so it stays a log-only skip — nothing to persist a reason
+            # against beyond the log line, mirroring the no-incumbent /
+            # generation-exhausted skips just above.
+            if "candidate_cagr" in metrics:
+                try:
+                    import database  # noqa: PLC0415 - CC-2 lazy
+
+                    database.insert_advisor_observation(
+                        advisor_role="FRONTRUNNER_BUILDER",
+                        subject_type="frontrunner_candidate",
+                        subject_id=symphony_id,
+                        verdict=metrics.get("reject_reason", "rejected"),
+                        raw_response=metrics,
+                        symphony_id=symphony_id,
+                    )
+                except Exception:
+                    logger.debug(
+                        "_run_build_for_symphony: failed to record rejected-candidate "
+                        "observation — proceeding (never blocks the build loop)",
+                        exc_info=True,
+                    )
             continue
 
         try:
@@ -942,11 +987,16 @@ def _gate_and_accept_candidate(
     and — only for the candidate if it's the gate's ADOPT_CANDIDATE survivor
     — apply the Calmar acceptance gate.
 
-    Returns (accepted, metrics) where metrics is a dict suitable for
-    frontrunner_proposals.metrics_json (incumbent-vs-candidate Calmar/CAGR/
-    MDD/node-count deltas, AC-8) or, on rejection, a dict carrying only
-    'reject_reason' for logging. Never raises (D-1) — any failure degrades
-    to (False, {"reject_reason": <reason>}).
+    Returns (accepted, metrics). On acceptance, metrics is a dict suitable
+    for frontrunner_proposals.metrics_json (incumbent-vs-candidate Calmar/
+    CAGR/MDD/node-count deltas, AC-8). On a gate or Calmar rejection, metrics
+    carries 'reject_reason' PLUS the same incumbent-vs-candidate CAGR/MDD/
+    node-count deltas (AC-11: "rejected item w/ reason+deltas") — the caller
+    uses their presence (e.g. "candidate_cagr" in metrics) to decide whether
+    a rejected-candidate audit record is persistable. A pre-gate failure
+    (either backtest call erroring) has no valid comparison data yet, so its
+    metrics dict carries ONLY 'reject_reason' — same for the catch-all
+    unexpected-error path. Never raises (D-1).
     """
     try:
         from advisors.backtest_gate_engine import BacktestCandidate, evaluate_candidate_batch
@@ -987,12 +1037,23 @@ def _gate_and_accept_candidate(
             BacktestCandidate(
                 candidate_id="candidate",
                 daily_returns_pct=candidate_returns_pct,
-                candidate_params={},
-                incumbent_params={},
-                theory_prior_params={},
+                # Identical non-empty params on both sides — see
+                # _TREE_SPLICE_PANEL_PARAMS_SENTINEL's module-level comment: a
+                # tree-splice candidate has no real parameter vector, so this
+                # makes the discretionary panel a neutral tie rather than a
+                # structurally-unwinnable brake.
+                candidate_params=_TREE_SPLICE_PANEL_PARAMS_SENTINEL,
+                incumbent_params=_TREE_SPLICE_PANEL_PARAMS_SENTINEL,
+                theory_prior_params=_TREE_SPLICE_PANEL_PARAMS_SENTINEL,
                 dated_returns=candidate_dated_pct,
             ),
         ]
+        # Node counts (AC-8's "node-count deltas") are needed on EVERY return
+        # path — including a gate/Calmar reject — so AC-11's rejected-item
+        # deltas can be persisted. Computed once, up front, and reused below.
+        incumbent_node_count = _count_tree_nodes(incumbent_tree)
+        candidate_node_count = _count_tree_nodes(candidate_tree)
+
         gated_batch = evaluate_candidate_batch(
             bt_candidates,
             incumbent_oos_alpha=incumbent_oos_alpha,
@@ -1032,12 +1093,21 @@ def _gate_and_accept_candidate(
                 if candidate_gate_result is not None
                 else "gate_result_missing"
             )
-            return False, {"reject_reason": f"gate rejected candidate: {reason}"}
+            # AC-11 "fails gates ... → rejected item w/ reason+deltas": the
+            # gate reject still carries the incumbent-vs-candidate deltas
+            # (both backtests + quantstats already ran) so the caller can
+            # persist an audit record, not just a log line.
+            return False, {
+                "reject_reason": f"gate rejected candidate: {reason}",
+                "incumbent_cagr": incumbent_metrics.get("annualized_return"),
+                "incumbent_max_drawdown": incumbent_metrics.get("max_drawdown"),
+                "candidate_cagr": candidate_metrics.get("annualized_return"),
+                "candidate_max_drawdown": candidate_metrics.get("max_drawdown"),
+                "node_count_delta": candidate_node_count - incumbent_node_count,
+            }
 
         # AC-7: Calmar acceptance — gate survival is necessary but not
         # sufficient; the candidate must ALSO improve or preserve+simplify.
-        incumbent_node_count = _count_tree_nodes(incumbent_tree)
-        candidate_node_count = _count_tree_nodes(candidate_tree)
         acceptance = evaluate_calmar_acceptance(
             incumbent_metrics,
             candidate_metrics,
@@ -1045,7 +1115,17 @@ def _gate_and_accept_candidate(
             candidate_node_count=candidate_node_count,
         )
         if not acceptance.accepted:
-            return False, {"reject_reason": "calmar_acceptance_rejected"}
+            # AC-11 "fails to improve Calmar → rejected item w/ reason+deltas".
+            return False, {
+                "reject_reason": "calmar_acceptance_rejected",
+                "incumbent_cagr": incumbent_metrics.get("annualized_return"),
+                "incumbent_max_drawdown": incumbent_metrics.get("max_drawdown"),
+                "incumbent_calmar": acceptance.incumbent_calmar,
+                "candidate_cagr": candidate_metrics.get("annualized_return"),
+                "candidate_max_drawdown": candidate_metrics.get("max_drawdown"),
+                "candidate_calmar": acceptance.candidate_calmar,
+                "node_count_delta": acceptance.node_count_delta,
+            }
 
         metrics = {
             "incumbent_cagr": incumbent_metrics.get("annualized_return"),
