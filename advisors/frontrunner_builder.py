@@ -524,18 +524,125 @@ _EMIT_OVERLAY_TOOL = {
         "Emit a single candidate frontrunner overlay: a leading RSI-overbought "
         "-> VIX/hedge-basket cascade node conforming to the Planet Stopper "
         "build-plan DSL. The node's kind is 'if' (flat condition) or "
-        "'if_compound' (compound condition)."
+        "'if_compound' (compound condition). The condition ALWAYS lives under "
+        "a nested 'condition' key on the node — never as bare fields directly "
+        "on the node itself."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
             "overlay": {
                 "type": "object",
-                "description": "A single build-plan-DSL 'if'/'if_compound' NODE.",
+                "description": (
+                    "A single build-plan-DSL 'if'/'if_compound' NODE. kind must "
+                    "be 'if' or 'if_compound'."
+                ),
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["if", "if_compound"],
+                    },
+                    "condition": {
+                        "type": "object",
+                        "description": (
+                            "REQUIRED, nested under this key — never bare fields "
+                            "on the node. For kind='if': lhs_fn, lhs_ticker, "
+                            "window, comparator, rhs:{fixed: number}. For "
+                            "kind='if_compound': a typed union via 'type': "
+                            "binary / binary_compound / compound."
+                        ),
+                        "properties": {
+                            "lhs_fn": {"type": "string"},
+                            "lhs_ticker": {"type": "string"},
+                            "window": {"type": "integer"},
+                            "comparator": {
+                                "type": "string",
+                                "enum": ["gt", "lt", "gte", "lte"],
+                            },
+                            "rhs": {"type": "object"},
+                            "type": {
+                                "type": "string",
+                                "enum": ["binary", "binary_compound", "compound"],
+                            },
+                        },
+                    },
+                    "then": {
+                        "type": "array",
+                        "description": (
+                            "Fire branch — the hedge basket. Each entry is a "
+                            "NODE: kind='weight' (scheme: equal/specified/"
+                            "inverse_vol; specified children are "
+                            "{node: NODE, pct: number}, never flat "
+                            "{ticker, weight}), kind='asset' (ticker), or a "
+                            "nested kind='if'/'if_compound' for a scale-in tier."
+                        ),
+                    },
+                    "else": {
+                        "type": "array",
+                        "description": (
+                            "Continuation toward the core strategy — use a "
+                            "single placeholder kind='asset' node here."
+                        ),
+                    },
+                },
+                "required": ["kind", "condition", "then", "else"],
             }
         },
         "required": ["overlay"],
     },
+}
+
+
+# Conforming worked example embedded in the generation prompt — a 2-tier
+# scale-in overlay verified to compile clean through the real
+# plan_tree_compiler (tree not None, validate_tree == []). Mirrors
+# build_plan_generator._EXAMPLE_IF_PLAN's role: this module previously had
+# zero worked examples, and the prompt's free-text description alone had
+# drifted from the compiler's actual contract (RC#1/#2).
+_EXAMPLE_OVERLAY: dict = {
+    "kind": "if",
+    "condition": {
+        "lhs_fn": "relative-strength-index",
+        "lhs_ticker": "SPY",
+        "window": 10,
+        "comparator": "gt",
+        "rhs": {"fixed": 79},
+    },
+    "then": [
+        {
+            "kind": "if",
+            "condition": {
+                "lhs_fn": "relative-strength-index",
+                "lhs_ticker": "SPY",
+                "window": 10,
+                "comparator": "gt",
+                "rhs": {"fixed": 83},
+            },
+            "then": [
+                {
+                    "kind": "weight",
+                    "scheme": "specified",
+                    "children": [
+                        {"node": {"kind": "asset", "ticker": "UVXY"}, "pct": 60},
+                        {"node": {"kind": "asset", "ticker": "VIXM"}, "pct": 25},
+                        {"node": {"kind": "asset", "ticker": "BIL"}, "pct": 15},
+                    ],
+                }
+            ],
+            "else": [
+                {
+                    "kind": "weight",
+                    "scheme": "specified",
+                    "children": [
+                        {"node": {"kind": "asset", "ticker": "UVXY"}, "pct": 25},
+                        {"node": {"kind": "asset", "ticker": "VIXM"}, "pct": 25},
+                        {"node": {"kind": "asset", "ticker": "BIL"}, "pct": 50},
+                    ],
+                }
+            ],
+        }
+    ],
+    "else": [{"kind": "asset", "ticker": "CORE_STRATEGY_PLACEHOLDER"}],
 }
 
 
@@ -564,15 +671,24 @@ def _build_generation_prompt(signal_context: dict) -> str:
         "nested if-nodes — a downstream step collapses mergeable rungs.\n"
         "4. If you use a scale-in structure (a lower RSI threshold firing a light "
         "hedge blend, a higher nested threshold firing a heavier hedge), preserve "
-        "it as TIERED nested if-nodes — never flatten multiple thresholds into a "
-        "single OR condition.\n\n"
+        "it as TIERED nested if-nodes, nested inside the OUTER node's 'then' "
+        "branch — never flatten multiple thresholds into a single OR condition, "
+        "and never nest another tier inside 'else'.\n\n"
         f"Watched core signal tickers to consider: {watched_hint}\n"
         f"Atlas-derived frontrunner patterns for reference: {atlas_hint}\n\n"
         "Emit exactly ONE candidate overlay node using the emit_frontrunner_overlay "
-        "tool. The node's 'kind' is 'if' (a flat RSI condition: lhs_fn, lhs_ticker, "
-        "window, comparator, rhs:{fixed: number}) or 'if_compound' (condition: "
-        "{type: binary/binary_compound/compound, ...}). 'then' fires the hedge "
-        "basket; 'else' continues toward the core (use a placeholder asset there)."
+        "tool. The node's 'kind' is 'if' or 'if_compound' — EITHER WAY the "
+        "condition fields live under a nested 'condition' key: lhs_fn, "
+        "lhs_ticker, window, comparator, rhs:{fixed: number} for 'if', or a "
+        "{type: binary/binary_compound/compound, ...} block for 'if_compound' — "
+        "NEVER as bare fields directly on the node. Weight nodes use "
+        "kind='weight' with a 'scheme' field (equal/specified/inverse_vol); "
+        "scheme='specified' children are {node: NODE, pct: number} pairs, "
+        "never flat {ticker, weight} pairs. 'then' fires the hedge basket; "
+        "'else' continues toward the core (use a single placeholder asset node "
+        "there — only the OUTERMOST node's 'else' is ever the placeholder; a "
+        "nested tier's own 'else' is real hedge content, not a placeholder). "
+        f"Conforming example (compiles clean): {json.dumps(_EXAMPLE_OVERLAY)}"
     )
 
 
@@ -675,6 +791,20 @@ def generate_candidate_overlay(
                 "root": collapsed,
             }
             compile_result = plan_tree_compiler.compile_plan(plan_envelope)
+            if compile_result.tree is None:
+                # RC#1/#2: a failed compile must never be reported as a
+                # silent success with a None .compiled_tree — treat it as a
+                # rejected candidate (same idiom as the VIX-rejection /
+                # truncation continues above) and retry.
+                last_reason = f"candidate failed to compile: {compile_result.reason}"
+                logger.warning(
+                    "generate_candidate_overlay: compile failed on attempt "
+                    "%d/%d (%s)",
+                    attempt + 1,
+                    n_attempts,
+                    compile_result.reason,
+                )
+                continue
 
             return GenerationResult(
                 candidate=collapsed,
@@ -738,6 +868,84 @@ def _replace_node_by_id(tree: dict, target_id: str, replacement: dict) -> dict |
     return new_tree if found else None
 
 
+def _find_terminal_else_child(node: dict) -> dict | None:
+    """Return a compiled if/if_compound node's TERMINAL else if-child — the
+    real continuation/placeholder slot.
+
+    This DSL's established scale-in convention (``_build_generation_prompt``,
+    ``_dsl_scale_in_tiers_overlay`` in test_frontrunner_builder.py, and both
+    real captured fixtures in tests/fixtures/advisors/frontrunner/) nests
+    every successive tier as the SOLE child of the PRECEDING tier's true
+    (fire) branch — i.e. tiers nest ONLY inside 'then', never inside 'else'.
+    A nested tier's own else is legitimate lower-intensity hedge content
+    (e.g. a lighter VIX blend fired when only the outer, not the inner,
+    threshold is met) — NOT a placeholder. Only the OUTERMOST node's else is
+    ever the placeholder Fable was told to emit — there is exactly one
+    terminal slot per candidate, and it is always the top-level one. (Verified
+    empirically: descending into a nested tier's own else here, instead of
+    stopping at the top level, grafts over real hedge content and leaves the
+    true placeholder untouched — the opposite of RC#3's fix.)
+
+    ``make_if`` and ``make_if_compound`` both emit ``{"step": "if", ...}``,
+    so this is agnostic to flat vs compound conditions. Returns None if
+    ``node`` isn't shaped as an if-node with both branches present — never
+    raises.
+    """
+    if not isinstance(node, dict) or node.get("step") != "if":
+        return None
+    children = node.get("children") or []
+    return next(
+        (c for c in children if isinstance(c, dict) and c.get("is-else-condition?") is True),
+        None,
+    )
+
+
+def _graft_incumbent_core(original_node: dict, compiled_node: dict) -> dict:
+    """Return a deep copy of ``compiled_node`` with its TERMINAL else
+    (continuation) branch replaced by ``original_node``'s real else branch.
+
+    ``_replace_node_by_id`` swaps the WHOLE incumbent if-node (condition +
+    real fire branch + real continuation/core branch, potentially thousands
+    of nodes) for the candidate's compiled node, whose own terminal else
+    branch is only the placeholder Fable was told to emit there. Grafting
+    the incumbent's real else-branch children back in before the replace
+    preserves the incumbent's core strategy content (RC#3): the result is
+    IF (rsi cascade) THEN (frontrunner hedge) ELSE (incumbent's real core) —
+    never a structurally-present-but-semantically-broken graft that only
+    happens to satisfy a ticker-presence check.
+
+    ``original_node`` is the untouched incumbent if-node (the cascade's own
+    top-level, which — like the compiled candidate — has exactly one real
+    continuation, at its own top-level else; frontrunner_detector never
+    recurses tiers into 'else'). Never raises — a node shaped unexpectedly
+    (on either side) degrades to returning ``compiled_node`` unchanged
+    (deep-copied); this is the rare-exception path, not the common case, for
+    every real if/if_compound node this module's own compiler produces.
+    """
+    grafted = copy.deepcopy(compiled_node)
+    try:
+        original_else = next(
+            (
+                c
+                for c in original_node.get("children") or []
+                if isinstance(c, dict) and c.get("is-else-condition?") is True
+            ),
+            None,
+        )
+        terminal_else = _find_terminal_else_child(grafted)
+        if original_else is not None and terminal_else is not None:
+            terminal_else["children"] = copy.deepcopy(original_else.get("children") or [])
+        else:
+            logger.warning(
+                "_graft_incumbent_core: could not locate a graftable else slot "
+                "on %s side — incumbent core NOT preserved",
+                "original_node" if original_else is None else "compiled_node",
+            )
+    except Exception:
+        logger.debug("_graft_incumbent_core: unexpected error", exc_info=True)
+    return grafted
+
+
 def splice_candidate_into_symphony(
     incumbent_symphony: dict,
     incumbent_cascade,
@@ -773,6 +981,11 @@ def splice_candidate_into_symphony(
             logger.warning("splice_candidate_into_symphony: incumbent cascade has no id")
             return None
 
+        # RC#3: resolve the REAL incumbent node (not the detector's own
+        # reporting copy) BEFORE it's replaced below, so its real
+        # continuation/core content can be grafted into the candidate.
+        original_node = _find_node_by_id(incumbent_symphony, target_id)
+
         # Compile the candidate if it's still a raw DSL node (kind=...);
         # accept an already-compiled Composer node (step=...) as-is.
         if isinstance(candidate, dict) and "kind" in candidate:
@@ -806,6 +1019,12 @@ def splice_candidate_into_symphony(
         else:
             logger.warning("splice_candidate_into_symphony: candidate is not a valid node")
             return None
+
+        # RC#3: graft the incumbent's real continuation/core branch into the
+        # candidate's placeholder terminal-else slot before the whole-node
+        # replace below — without this, the replace silently discards it.
+        if original_node is not None:
+            compiled_node = _graft_incumbent_core(original_node, compiled_node)
 
         spliced = _replace_node_by_id(incumbent_symphony, target_id, compiled_node)
         if spliced is None:
