@@ -122,10 +122,20 @@ MAX_FRONTRUNNER_UPLOADS_PENDING_REVIEW: int = 25
 
 # VIX-family tickers recognized as hedge/fire-basket instruments — same
 # vocabulary as frontrunner_detector.VIX_FAMILY_TICKERS (imported, not
-# duplicated, so the two modules can never drift on this list).
-from advisors.frontrunner_detector import VIX_FAMILY_TICKERS  # noqa: E402
+# duplicated, so the two modules can never drift on this list). AC-8:
+# _collect_tickers is imported alongside it — the step-aware asset-ticker
+# collector _collect_step_keyed_signal_tickers (below) builds on it.
+from advisors.frontrunner_detector import VIX_FAMILY_TICKERS, _collect_tickers  # noqa: E402
 
 _PCT_PLACEHOLDER = "%"
+
+# frontrunner_detector's internal reporting-stub ticker for the collapsed
+# core-continuation branch (frontrunner_detector.py ~:548) — a synthetic
+# placeholder for SIZE only, explicitly documented there as "never a
+# placeholder for scale that could be mistaken for a real ticker". Excluded
+# from watched_tickers so it never leaks into a generation prompt as a fake
+# "core signal ticker".
+_STUBBED_CONTINUATION_TICKER = "_STUBBED_CORE_CONTINUATION"
 
 # AC-6: DoF-ledger isolation for frontrunner-builder search-breadth rows.
 #
@@ -326,6 +336,53 @@ def _walk_condition_tickers(cond: dict, out: set[str]) -> None:
     elif ctype == "compound":
         for sub in cond.get("conditions", []) or []:
             _walk_condition_tickers(sub, out)
+
+
+def _collect_step_keyed_signal_tickers(node) -> set[str]:
+    """AC-8: step-aware ticker collector for a Composer step-keyed overlay
+    tree (``frontrunner_detector.Cascade.overlay_tree``) — replaces the
+    permanently-False ``"kind" in cascade.overlay_tree`` guard, which tested
+    for the DSL-shape key vocabulary (``kind``/``then``/``else``) that a real
+    Composer tree never carries (it is ``step``-keyed: ``step``, ``children``,
+    ``is-else-condition?``).
+
+    Collects two signal sources, matching what ``_walk_overlay_tickers``
+    captures for the DSL shape: (a) real asset tickers via
+    ``frontrunner_detector._collect_tickers`` (fire/else basket holdings,
+    excluding the detector's own internal size-stub ticker), and (b) each
+    flat if-child condition's own watched ticker(s) — ``lhs-val``, and
+    ``rhs-val`` when the rhs is itself a ticker comparison
+    (``rhs-fixed-value?`` is False) — which is the "core signal ticker" (the
+    RSI(ticker) trigger) a real Composer tree stores entirely inside the
+    condition, never as an asset node. (b) is what makes two symphonies
+    watching different core tickers (same fire-basket asset) actually
+    distinguishable.
+
+    Iterative (explicit stack), never raises (D-1) — malformed input
+    degrades to a partial/empty set.
+    """
+    out: set[str] = {t for t in _collect_tickers(node) if t != _STUBBED_CONTINUATION_TICKER}
+    try:
+        if not isinstance(node, dict):
+            return out
+        stack: list = [node]
+        while stack:
+            current = stack.pop()
+            if not isinstance(current, dict):
+                continue
+            if current.get("step") == "if-child" and isinstance(current.get("lhs-fn"), str):
+                lhs_val = current.get("lhs-val")
+                if isinstance(lhs_val, str) and lhs_val:
+                    out.add(lhs_val)
+                if current.get("rhs-fixed-value?") is False:
+                    rhs_val = current.get("rhs-val")
+                    if isinstance(rhs_val, str) and rhs_val:
+                        out.add(rhs_val)
+            for child in current.get("children") or []:
+                stack.append(child)
+    except Exception:  # pragma: no cover - defensive; never raises
+        logger.debug("_collect_step_keyed_signal_tickers: unexpected error", exc_info=True)
+    return out
 
 
 def _fire_branch_tickers(node: dict) -> set[str]:
@@ -646,6 +703,51 @@ _EXAMPLE_OVERLAY: dict = {
 }
 
 
+# AC-1b: a second worked example — genuinely compound (kind='if_compound',
+# condition type='compound') combining TWO distinct signal functions (RSI
+# plus a non-RSI KNOWN_INDICATOR_FNS entry), so anchoring pulls Fable toward
+# multi-signal sophistication instead of only the flat 2-tier RSI-only shape
+# above. Verified to compile clean through the real plan_tree_compiler (tree
+# not None, validate_tree == []) before being hardcoded here — same
+# provenance discipline as _EXAMPLE_OVERLAY.
+_EXAMPLE_COMPOUND_OVERLAY: dict = {
+    "kind": "if_compound",
+    "condition": {
+        "type": "compound",
+        "operator": "all",
+        "conditions": [
+            {
+                "type": "binary",
+                "lhs_fn": "relative-strength-index",
+                "lhs_ticker": "QQQ",
+                "window": 10,
+                "comparator": "gt",
+                "rhs": {"fixed": 80},
+            },
+            {
+                "type": "binary",
+                "lhs_fn": "cumulative-return",
+                "lhs_ticker": "QQQ",
+                "window": 5,
+                "comparator": "lt",
+                "rhs": {"fixed": 0},
+            },
+        ],
+    },
+    "then": [
+        {
+            "kind": "weight",
+            "scheme": "specified",
+            "children": [
+                {"node": {"kind": "asset", "ticker": "UVXY"}, "pct": 60},
+                {"node": {"kind": "asset", "ticker": "VIXM"}, "pct": 40},
+            ],
+        }
+    ],
+    "else": [{"kind": "asset", "ticker": "CORE_STRATEGY_PLACEHOLDER"}],
+}
+
+
 def _build_generation_prompt(signal_context: dict) -> str:
     """Build the SDK prompt for candidate overlay generation.
 
@@ -673,7 +775,17 @@ def _build_generation_prompt(signal_context: dict) -> str:
         "hedge blend, a higher nested threshold firing a heavier hedge), preserve "
         "it as TIERED nested if-nodes, nested inside the OUTER node's 'then' "
         "branch — never flatten multiple thresholds into a single OR condition, "
-        "and never nest another tier inside 'else'.\n\n"
+        "and never nest another tier inside 'else'.\n"
+        "5. The trigger does not need to be a single RSI rung — you may combine "
+        "two signals into one compound condition when a second signal genuinely "
+        "sharpens the trigger, for example pairing an RSI-overbought reading with "
+        "a confirming secondary indicator such as cumulative-return, "
+        "max-drawdown, or moving-average-price. Consider a compound condition "
+        "(kind='if_compound', condition type='compound' joining two binary "
+        "sub-conditions with any/all, or type='binary_compound' broadcasting one "
+        "indicator over several watched tickers) whenever it captures the "
+        "pattern better than a flat single-signal if — this is optional, a flat "
+        "if is equally valid when that is what the pattern calls for.\n\n"
         f"Watched core signal tickers to consider: {watched_hint}\n"
         f"Atlas-derived frontrunner patterns for reference: {atlas_hint}\n\n"
         "Emit exactly ONE candidate overlay node using the emit_frontrunner_overlay "
@@ -688,7 +800,9 @@ def _build_generation_prompt(signal_context: dict) -> str:
         "'else' continues toward the core (use a single placeholder asset node "
         "there — only the OUTERMOST node's 'else' is ever the placeholder; a "
         "nested tier's own 'else' is real hedge content, not a placeholder). "
-        f"Conforming example (compiles clean): {json.dumps(_EXAMPLE_OVERLAY)}"
+        f"Conforming single-signal example (compiles clean): {json.dumps(_EXAMPLE_OVERLAY)}\n\n"
+        f"Conforming compound/multi-signal example (compiles clean): "
+        f"{json.dumps(_EXAMPLE_COMPOUND_OVERLAY)}"
     )
 
 
@@ -1150,16 +1264,25 @@ def _gather_atlas_frontrunner_patterns(watched_tickers: list[str]) -> list[dict]
     Returns
     -------
     list[dict]
-        One pattern dict per detected cascade across the whole corpus, each
+        One pattern dict per DISTINCT detected cascade across the whole
+        corpus (near-identical patterns collapsed — see below), each
         carrying ``vix_tickers`` (list[str]), ``rsi_thresholds`` (list[float]),
         ``watched_tickers`` (list[str], structurally extracted from the
         ATLAS candidate's own cascade — never the caller's ``watched_tickers``
-        parameter), and ``basket_node_count`` (int, via ``_count_tree_nodes``
-        — the "basket shapes" signal). NEVER carries ``oos_metrics``/``sharpe``
-        — every field is derived purely from structural detection, per AC-3's
-        "never trusts incoming oos_metrics.sharpe". Empty list when Atlas is
-        unavailable, the corpus is empty, no candidate is frontrunner-shaped,
-        or any failure occurs (D-1 — never raises).
+        parameter), ``basket_node_count`` (int, via ``_count_tree_nodes`` —
+        the "basket shapes" signal), and ``overlay_render`` (str, AC-4: the
+        cascade's real STRUCTURE — nesting/tier content — via
+        ``symphony_schema.render_rules_text``, not just the 4 flattened
+        scalars above, which alone cannot distinguish a genuine multi-tier
+        scale-in from N unrelated single-tier cascades merged). NEVER
+        carries ``oos_metrics``/``sharpe`` — every field is derived purely
+        from structural detection, per AC-3's "never trusts incoming
+        oos_metrics.sharpe". AC-4 dedup: cascades whose full pattern
+        signature (all 5 fields above) exactly matches one already
+        collected are skipped, so a corpus of near-identical candidates
+        does not surface as N raw near-duplicate entries. Empty list when
+        Atlas is unavailable, the corpus is empty, no candidate is
+        frontrunner-shaped, or any failure occurs (D-1 — never raises).
     """
     try:
         from advisors import community_strats, frontrunner_detector
@@ -1169,6 +1292,7 @@ def _gather_atlas_frontrunner_patterns(watched_tickers: list[str]) -> list[dict]
             return []
 
         patterns: list[dict] = []
+        seen_signatures: set[tuple] = set()
         for doc in result.get("candidates") or []:
             try:
                 tree = doc.get("tree") if isinstance(doc, dict) else None
@@ -1176,18 +1300,25 @@ def _gather_atlas_frontrunner_patterns(watched_tickers: list[str]) -> list[dict]
                     continue
                 detection = frontrunner_detector.detect_frontrunner_cascades(tree)
                 for cascade in detection.cascades:
-                    patterns.append(
-                        {
-                            "vix_tickers": sorted(cascade.vix_tickers),
-                            "rsi_thresholds": list(cascade.rsi_thresholds),
-                            "watched_tickers": sorted(
-                                _walk_overlay_tickers(cascade.overlay_tree)
-                                if "kind" in cascade.overlay_tree
-                                else []
-                            ),
-                            "basket_node_count": _count_tree_nodes(cascade.overlay_tree),
-                        }
+                    overlay_tree = cascade.overlay_tree
+                    pattern = {
+                        "vix_tickers": sorted(cascade.vix_tickers),
+                        "rsi_thresholds": list(cascade.rsi_thresholds),
+                        "watched_tickers": sorted(_collect_step_keyed_signal_tickers(overlay_tree)),
+                        "basket_node_count": _count_tree_nodes(overlay_tree),
+                        "overlay_render": symphony_schema.render_rules_text(overlay_tree),
+                    }
+                    signature = (
+                        tuple(pattern["vix_tickers"]),
+                        tuple(pattern["rsi_thresholds"]),
+                        tuple(pattern["watched_tickers"]),
+                        pattern["basket_node_count"],
+                        pattern["overlay_render"],
                     )
+                    if signature in seen_signatures:
+                        continue
+                    seen_signatures.add(signature)
+                    patterns.append(pattern)
             except Exception:
                 # One malformed/undetectable candidate doc must never abort
                 # the rest of the corpus (D-1) — skip it and continue.
@@ -1286,9 +1417,7 @@ def _run_build_for_symphony(symphony_id: str) -> None:
     atlas_patterns = _gather_atlas_frontrunner_patterns(watched_tickers=[])
 
     for cascade in cascades:
-        watched_tickers = sorted(
-            _walk_overlay_tickers(cascade.overlay_tree) if "kind" in cascade.overlay_tree else []
-        )
+        watched_tickers = sorted(_collect_step_keyed_signal_tickers(cascade.overlay_tree))
         signal_context = {
             "watched_tickers": watched_tickers,
             "atlas_patterns": atlas_patterns,
