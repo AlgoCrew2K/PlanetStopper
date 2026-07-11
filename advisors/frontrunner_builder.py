@@ -891,10 +891,24 @@ def _resolve_live_symphony_roster() -> list[str]:
 
 def _count_tree_nodes(node) -> int:
     """Total node count of a Composer raw_value tree (for the Calmar
-    acceptance gate's node_count_delta / material-simplification signal)."""
+    acceptance gate's node_count_delta / material-simplification signal).
+
+    Iterative (explicit stack) — mirrors symphony_schema.py's established
+    pattern (P2-1, frreview finding) — so the operator's real 8,000+ node
+    trees (which can be deep, not just wide) never trigger RecursionError.
+    """
     if not isinstance(node, dict):
         return 0
-    return 1 + sum(_count_tree_nodes(c) for c in node.get("children") or [])
+    count = 0
+    stack: list = [node]
+    while stack:
+        current = stack.pop()
+        if not isinstance(current, dict):
+            continue
+        count += 1
+        for child in current.get("children") or []:
+            stack.append(child)
+    return count
 
 
 def _gather_atlas_frontrunner_patterns(watched_tickers: list[str]) -> list[dict]:

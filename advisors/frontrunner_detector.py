@@ -151,22 +151,43 @@ class DetectionResult:
 
 
 def _count_nodes(node) -> int:
+    """Total node count of a subtree. Iterative (explicit stack) — mirrors
+    symphony_schema.py's established pattern (P2-1, frreview finding) — so
+    a very deep real tree never triggers RecursionError."""
     if not isinstance(node, dict):
         return 0
-    return 1 + sum(_count_nodes(c) for c in node.get("children") or [])
+    count = 0
+    stack: list = [node]
+    while stack:
+        current = stack.pop()
+        if not isinstance(current, dict):
+            continue
+        count += 1
+        for child in current.get("children") or []:
+            stack.append(child)
+    return count
 
 
 def _collect_tickers(node, out: set[str] | None = None) -> set[str]:
+    """Collect every asset ticker in a subtree into ``out`` (a fresh set when
+    not supplied) and return it. Iterative (explicit stack) — mirrors
+    symphony_schema.py's established pattern (P2-1, frreview finding) — so a
+    very deep real tree never triggers RecursionError."""
     if out is None:
         out = set()
     if not isinstance(node, dict):
         return out
-    if node.get("step") == _STEP_ASSET:
-        ticker = node.get("ticker")
-        if isinstance(ticker, str) and ticker:
-            out.add(ticker)
-    for child in node.get("children") or []:
-        _collect_tickers(child, out)
+    stack: list = [node]
+    while stack:
+        current = stack.pop()
+        if not isinstance(current, dict):
+            continue
+        if current.get("step") == _STEP_ASSET:
+            ticker = current.get("ticker")
+            if isinstance(ticker, str) and ticker:
+                out.add(ticker)
+        for child in current.get("children") or []:
+            stack.append(child)
     return out
 
 
@@ -382,50 +403,65 @@ def _is_internal_hedge_subgate(node: dict) -> bool:
 
 
 def _find_cascade_roots(node, group_name: str | None, out: list[tuple[dict, str | None]]) -> None:
-    """Recursively find every candidate cascade-root ``if`` node in the tree.
+    """Find every candidate cascade-root ``if`` node in the tree.
 
     A candidate is an ``if`` node whose condition is RSI-gated and whose
     SMALLER branch (by node count) contains >=1 VIX-family ticker and is not
     a self-referential inverse-VIX timing gate. Once a cascade root is found,
-    recursion does NOT descend further into that node's small branch (its
+    the walk does NOT descend further into that node's small branch (its
     nested tiers are resolved separately when building the overlay) nor its
     large branch (the large branch is core content past this cascade's own
     boundary for THIS rung — but a sibling rung deeper in the large branch,
     belonging to the SAME leading chain, is resolved by the tier-walk in
-    ``_build_cascade_overlay``, not by this top-level scan). Recursion DOES
+    ``_build_cascade_overlay``, not by this top-level scan). The walk DOES
     continue into a node's children when the node itself is not a candidate
     root (e.g. group/weight containers, or an if-node that fails the RSI/VIX
     signature — which may still contain a genuine cascade nested inside its
     own branches, most commonly a different parallel sub-strategy).
+
+    Iterative (explicit stack, carrying (node, group_name) pairs — mirrors
+    symphony_schema.py's established (node, depth) stack pattern) — P2-1,
+    frreview finding — so a very deep real tree never triggers
+    RecursionError. Children are pushed in REVERSED order so the LIFO pop
+    order matches the original left-to-right, depth-first recursion exactly
+    — ``out``'s append order (and therefore cascade-detection order on
+    multi-cascade real trees) is unchanged.
     """
     if not isinstance(node, dict):
         return
 
-    step = node.get("step")
-    next_group_name = group_name
-    if step == _STEP_GROUP:
-        name = node.get("name")
-        if isinstance(name, str) and name:
-            next_group_name = name
+    stack: list[tuple[dict, str | None]] = [(node, group_name)]
+    while stack:
+        current, current_group_name = stack.pop()
+        if not isinstance(current, dict):
+            continue
 
-    if step == _STEP_IF:
-        if _qualifies_as_cascade_rung(node):
-            out.append((node, next_group_name))
-            # This node is a confirmed cascade root — its own subtree (both
-            # branches) is fully consumed by the cascade-overlay builder
-            # below; do not re-scan it as a nested candidate.
-            return
+        step = current.get("step")
+        next_group_name = current_group_name
+        if step == _STEP_GROUP:
+            name = current.get("name")
+            if isinstance(name, str) and name:
+                next_group_name = name
 
-        # Not a valid/qualifying if-node (or ambiguous shape) — keep scanning
-        # both branches for a nested cascade (e.g. this if-node is itself deep
-        # inside another sub-strategy's core, or is an unrelated core RSI gate
-        # like the "QQQ lt 30" regime check observed in real trees).
-        for child in node.get("children") or []:
-            _find_cascade_roots(child, next_group_name, out)
-        return
+        if step == _STEP_IF:
+            if _qualifies_as_cascade_rung(current):
+                out.append((current, next_group_name))
+                # This node is a confirmed cascade root — its own subtree
+                # (both branches) is fully consumed by the cascade-overlay
+                # builder below; do not re-scan it as a nested candidate.
+                continue
 
-    for child in node.get("children") or []:
-        _find_cascade_roots(child, next_group_name, out)
+            # Not a valid/qualifying if-node (or ambiguous shape) — keep
+            # scanning both branches for a nested cascade (e.g. this if-node
+            # is itself deep inside another sub-strategy's core, or is an
+            # unrelated core RSI gate like the "QQQ lt 30" regime check
+            # observed in real trees).
+            for child in reversed(current.get("children") or []):
+                stack.append((child, next_group_name))
+            continue
+
+        for child in reversed(current.get("children") or []):
+            stack.append((child, next_group_name))
 
 
 def _build_cascade_overlay(root_if_node: dict) -> tuple[dict, list[float], set[str]]:
