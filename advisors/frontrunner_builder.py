@@ -97,6 +97,18 @@ from advisors.frontrunner_detector import VIX_FAMILY_TICKERS  # noqa: E402
 
 _PCT_PLACEHOLDER = "%"
 
+# AC-6: DoF-ledger spec_bundle_id sentinel for frontrunner-builder search-breadth
+# rows. researcher_dof_ledger.spec_bundle_id is a SOFT FK ("soft FK to
+# spec_bundles.bundle_hash", migrations/018_researcher_dof_ledger.sql:33 — no
+# SQL FOREIGN KEY constraint, enforcement is app-level only per
+# database.insert_dof_ledger_row's own docstring). A distinct sentinel string
+# (never a real theory spec_bundle_id) keeps these rows OUT of any future
+# bundle-scoped count_dof_backtest_selections(spec_bundle_id=...) read, and out
+# of the autotuner's own global (spec_bundle_id=None) N_effective haircut —
+# the frontrunner builder's search breadth is a distinct search process from
+# the per-symphony Optuna walk-forward and must never inflate its FDR bar.
+_DOF_LEDGER_SPEC_BUNDLE_SENTINEL: str = "frontrunner_builder"
+
 
 # ---------------------------------------------------------------------------
 # Public result type
@@ -953,28 +965,25 @@ def _gate_and_accept_candidate(
             return False, {"reject_reason": f"candidate backtest failed: {candidate_bt.error}"}
 
         incumbent_returns_pct = [r * 100.0 for r in incumbent_bt.daily_returns.values()]
-        incumbent_dated_pct = {d: r * 100.0 for d, r in incumbent_bt.daily_returns.items()}
         candidate_returns_pct = [r * 100.0 for r in candidate_bt.daily_returns.values()]
         candidate_dated_pct = {d: r * 100.0 for d, r in candidate_bt.daily_returns.items()}
 
         incumbent_metrics = compute_quantstats_metrics(incumbent_returns_pct)
         candidate_metrics = compute_quantstats_metrics(candidate_returns_pct)
 
-        # Batch of 2 (incumbent + candidate) through the SAME mandatory gate —
-        # AC-6's "independently re-backtested ... run through
+        # The candidate alone goes through the mandatory gate — AC-6's
+        # "independently re-backtested ... run through
         # backtest_gate_engine.evaluate_candidate_batch (mandatory attach
-        # point)". The incumbent's own oos_alpha (sum of its fold returns)
-        # anchors the gate's KEEP_INCUMBENT baseline.
+        # point)". The incumbent's own FRESH backtest (never its stored
+        # oos_metrics) supplies incumbent_oos_alpha as the scalar KEEP_INCUMBENT
+        # baseline — the same shape as the established
+        # strategy_builder_engine.propose_strategies call (bt_candidates holds
+        # only the proposed candidate(s); the incumbent is never a batch
+        # member). Putting the incumbent INTO the batch would make it compete
+        # with the candidate for the single BHY-winner slot instead of serving
+        # as the baseline — a distinct bug, not this gate's intended usage.
         incumbent_oos_alpha = sum(incumbent_returns_pct)
         bt_candidates = [
-            BacktestCandidate(
-                candidate_id="incumbent",
-                daily_returns_pct=incumbent_returns_pct,
-                candidate_params={},
-                incumbent_params={},
-                theory_prior_params={},
-                dated_returns=incumbent_dated_pct,
-            ),
             BacktestCandidate(
                 candidate_id="candidate",
                 daily_returns_pct=candidate_returns_pct,
@@ -989,6 +998,31 @@ def _gate_and_accept_candidate(
             incumbent_oos_alpha=incumbent_oos_alpha,
             default_oos_alpha=incumbent_oos_alpha,
         )
+
+        # AC-6: record this candidate's search breadth to the DoF ledger — a
+        # backtest-selection search happened (the candidate was independently
+        # backtested and put through the gate) regardless of the gate's
+        # verdict. Never lets a ledger-write failure affect the accept/reject
+        # decision (D-1) — logged and swallowed on its own.
+        try:
+            import database  # noqa: PLC0415 - CC-2 lazy
+
+            database.insert_dof_ledger_row(
+                facet_name="frontrunner_candidate_search",
+                facet_category="specification",
+                decision_type="SEARCHED",
+                evidence_source="BACKTEST_SELECTION",
+                n_configs_searched=1,
+                spec_bundle_id=_DOF_LEDGER_SPEC_BUNDLE_SENTINEL,
+                justification=f"frontrunner_builder candidate search for symphony_id={symphony_id}",
+            )
+        except Exception:
+            logger.debug(
+                "_gate_and_accept_candidate: DoF ledger write failed — proceeding "
+                "(never blocks the accept/reject decision)",
+                exc_info=True,
+            )
+
         candidate_gate_result = next(
             (r for r in gated_batch.results if r.candidate_id == "candidate"), None
         )
