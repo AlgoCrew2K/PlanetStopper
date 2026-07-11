@@ -16,49 +16,43 @@ This file does — only the Fable NETWORK call is mocked (same
 `_build_client` patch idiom as test_frontrunner_builder.py); the compiler
 and splice are always the real, unmocked functions.
 
-FIXTURE PROVENANCE: both candidate DSL fixtures below are captured from a
-real live 6-symphony frontrunner run against symphony n2ooAZTvBRN6ZzpMmWmU's
-"Ballast" cascade (frtest fix-cycle diagnostic, 2026-07-11):
-  - real_candidate_raw_flat_n2ooAZTvBRN6ZzpMmWmU.json: Fable's UNMODIFIED
-    real output (flat condition shape, `weighting`+flat `{ticker,weight}`
-    children) — this is what the CURRENT prompt actually produces.
-  - real_candidate_repaired_n2ooAZTvBRN6ZzpMmWmU.json: the same candidate,
-    hand-repaired to the documented nested-condition / `scheme`+`{node,pct}`
-    shape plan_tree_compiler requires. Compiles clean. Used ONLY to isolate
-    the RC#3 core-preservation defect (test 2 below) from the RC#1/#2
-    compile-shape defect (test 1) — test 2 needs a candidate that survives
-    compilation to reach the splice step at all.
-real_tree_09_n2ooAZTvBRN6ZzpMmWmU.json (already committed, previously
-unused by any test) is the matching REAL incumbent symphony for the same
-run — verified empirically to detect 8 cascades, cascade[0].group_name==
-"Ballast", rsi_thresholds==[80.0], vix_tickers=={"UVXY","VXX"}, exactly
-matching the captured run's own summary.
+FIXTURE PROVENANCE: real_candidate_repaired_n2ooAZTvBRN6ZzpMmWmU.json is
+captured from a real live 6-symphony frontrunner run against symphony
+n2ooAZTvBRN6ZzpMmWmU's "Ballast" cascade (frtest fix-cycle diagnostic,
+2026-07-11) — the same real candidate (SPY RSI(10) overbought cascade ->
+tiered UVXY/VIXM hedge), authored in the nested `condition:{...}` /
+`scheme`+`{node,pct}` shape. real_tree_09_n2ooAZTvBRN6ZzpMmWmU.json (already
+committed, previously unused by any test) is the matching REAL incumbent
+symphony for the same run — verified empirically to detect 8 cascades,
+cascade[0].group_name=="Ballast", rsi_thresholds==[80.0],
+vix_tickers=={"UVXY","VXX"}, exactly matching the captured run's own
+summary.
 
-FIX-DIRECTION NOTE (guidance for frimpl, not enforced here): the clean fix
-for RC#1/#2 is to UNIFY `_EMIT_OVERLAY_TOOL`'s declared shape (currently an
-unconstrained `{"type": "object"}` — no property schema at all) and
-`_build_generation_prompt`'s prompt TEXT onto the SAME nested-`condition` /
-`scheme`+`{node,pct}` contract that build_plan_generator + plan_tree_compiler
-already share — NOT fork plan_tree_compiler to also accept flat, and NOT
-bolt on a flat->nested adapter. Notably, frontrunner_builder.py's OWN
-internal ticker-walking/collapse helpers (`_walk_overlay_tickers`,
-`_collect_mergeable_chain`, `_condition_signature`) ALREADY read
-`node.get("condition")` (nested) — only the prompt text + the trivially
-permissive tool schema disagree with the rest of the module.
+RC#1/#2 FIX (landed, commit 519d16a): `_EMIT_OVERLAY_TOOL`'s schema and
+`_build_generation_prompt`'s prose were unified onto the nested-`condition`
+/ `scheme`+`{node,pct}` contract that build_plan_generator +
+plan_tree_compiler already required and this module's own internal
+ticker-walking/collapse helpers already assumed. `generate_candidate_overlay`
+no longer reports a failed compile as a silent success — it retries and
+surfaces `compile_result.reason` on exhaustion.
 
-TEST 1 CAVEAT (raised with team-lead, accepted): `_EMIT_OVERLAY_TOOL`'s
-`input_schema` has NO shape-constraining properties to derive a candidate
-from programmatically (it is a bare unconstrained object) — the flat/nested
-divergence lives entirely in `_build_generation_prompt`'s free-text prose,
-which is not mechanically parseable into a fixture. Test 1 below therefore
-uses the REAL CAPTURED flat-shape fixture (real evidence of what Fable
-currently, in fact, produces) rather than a schema-derived one. THIS FIXTURE
-IS EXPECTED TO GO STALE the moment the prompt is corrected to document the
-nested shape (per the fix-direction above) — at GREEN, frimpl must either
-(a) re-capture a real Fable candidate under the corrected prompt and swap
-this fixture, or (b) hand-author a fixture matching the new canonical nested
-prompt contract and note the swap in the handoff/commit. Do not leave this
-test permanently pinned to the pre-fix flat shape.
+TEST 1 FIXTURE MIGRATION (frtest, post-GREEN, 2026-07-11): the original
+`real_candidate_raw_flat_n2ooAZTvBRN6ZzpMmWmU.json` fixture (Fable's real
+pre-fix output, flat shape) is DELETED — it went stale the moment the fix
+landed, exactly as flagged in the RED commit. `_EMIT_OVERLAY_TOOL`'s
+`input_schema` still has no MECHANICALLY-derivable single canonical shape to
+generate a fixture from (it's a JSON-schema description, not a strict
+one-shape grammar), so test 1 below re-uses
+real_candidate_repaired_n2ooAZTvBRN6ZzpMmWmU.json directly — hand-verified
+line-by-line against the new schema's declared `properties`/`required`
+(`kind`, `condition` nested with `lhs_fn`/`lhs_ticker`/`window`/
+`comparator`/`rhs`, `then`/`else` arrays, weight nodes with `scheme`+
+`{node,pct}` children) and against `_build_generation_prompt`'s new
+`_EXAMPLE_OVERLAY`: shape-identical. This is now the single canonical
+candidate shape post-fix, so both tests sharing one fixture file is
+intentional, not laziness — a future re-divergence between "what test 1
+exercises" and "what test 2 exercises" would itself be a signal worth
+investigating.
 """
 
 from __future__ import annotations
@@ -139,12 +133,12 @@ def _patch_fable_client(fbld_module, client: MagicMock):
 def test_realistic_fable_shaped_candidate_round_trips_generate_compile_splice(
     fbld, real_incumbent_symphony, real_incumbent_cascade
 ):
-    """A candidate shaped exactly as real Fable output currently is (flat
-    condition, `weighting`+flat weight children — see fixture provenance in
-    the module docstring) must compile via the REAL plan_tree_compiler and
-    splice via the REAL splice_candidate_into_symphony into a REAL incumbent
-    tree. Only the Fable NETWORK call is mocked."""
-    raw_overlay = _load_fixture("real_candidate_raw_flat_n2ooAZTvBRN6ZzpMmWmU.json")
+    """A candidate shaped per the current (post-fix) contract — nested
+    `condition:{...}`, `scheme`+`{node,pct}` weight children, see fixture
+    provenance in the module docstring — must compile via the REAL
+    plan_tree_compiler and splice via the REAL splice_candidate_into_symphony
+    into a REAL incumbent tree. Only the Fable NETWORK call is mocked."""
+    raw_overlay = _load_fixture("real_candidate_repaired_n2ooAZTvBRN6ZzpMmWmU.json")
     client = _client_returning_overlay(raw_overlay)
 
     with _patch_fable_client(fbld, client):
@@ -185,16 +179,55 @@ def test_realistic_fable_shaped_candidate_round_trips_generate_compile_splice(
 # ---------------------------------------------------------------------------
 
 
+def _find_node_by_id(tree: dict, target_id: str):
+    """Iterative DFS returning the node with id==target_id, or None.
+
+    Test-owned traversal, deliberately independent of
+    frontrunner_builder._find_node_by_id — this test's ground truth for
+    "which incumbent node is the real cascade root" must not be coupled to
+    the implementation under test."""
+    if not isinstance(tree, dict):
+        return None
+    stack = [tree]
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, dict):
+            continue
+        if node.get("id") == target_id:
+            return node
+        for child in node.get("children") or []:
+            stack.append(child)
+    return None
+
+
 def test_splice_preserves_incumbent_core_tickers_beyond_the_cascade_boundary(
     fbld, real_incumbent_symphony, real_incumbent_cascade
 ):
     """Splicing a candidate into a REAL, large incumbent symphony must
-    preserve every incumbent ticker OUTSIDE the detected cascade boundary
+    preserve every incumbent ticker OUTSIDE the cascade's real fire branch
     (the incumbent's real core strategy) and must not leak the candidate's
     own continuation placeholder ticker into the result (RC#3). Verified
-    empirically against this exact fixture pair: the incumbent has 941
-    tickers outside the detected cascade; on bf3d3b8, 207 of them go
-    missing post-splice."""
+    empirically against this exact fixture pair: the incumbent has 931
+    tickers outside the real fire branch; a whole-node replace with no
+    graft (the pre-fix behavior) loses 197 of them.
+
+    NOTE on "outside the real fire branch" (frtest, post-GREEN diagnostic,
+    2026-07-11): this is deliberately computed from the REAL cascade root
+    node (found by id in the untouched incumbent tree) and its
+    is-else-condition?=False (fire) if-child — NOT from
+    `real_incumbent_cascade.overlay_tree`. That field is
+    frontrunner_detector's own COMPACT/STUBBED reporting copy: it further
+    stubs nested internal-hedge sub-gates found WITHIN the fire branch
+    itself (this exact fixture has a self-referential VIXY-timing
+    sub-structure nested inside the cascade's own hedge logic), so
+    subtracting the stub's tickers from the incumbent's full set wrongly
+    counted 10 fire-branch-only tickers (CORE_ASSET_0001..0010, despite the
+    misleading "CORE_ASSET" naming — they live exclusively inside the fire
+    branch that the candidate is SUPPOSED to replace, not the
+    else/continuation branch the graft preserves) as "core" that must
+    survive. Diagnosed by frimpl during the GREEN cycle; verified
+    independently here by resolving the real fire branch directly before
+    adopting the fix — do not revert to `overlay_tree`-based subtraction."""
     repaired_overlay = _load_fixture("real_candidate_repaired_n2ooAZTvBRN6ZzpMmWmU.json")
 
     # Sanity: this fixture is expected to compile clean (isolates RC#3).
@@ -219,22 +252,45 @@ def test_splice_preserves_incumbent_core_tickers_beyond_the_cascade_boundary(
     )
     assert spliced is not None, "splice_candidate_into_symphony returned None unexpectedly"
 
+    # Resolve the REAL cascade root node (untouched incumbent tree, found by
+    # id) and its real fire (is-else-condition?=False) branch — see the
+    # docstring above for why this must NOT be derived from
+    # real_incumbent_cascade.overlay_tree.
+    real_cascade_root = _find_node_by_id(
+        real_incumbent_symphony, real_incumbent_cascade.overlay_tree.get("id")
+    )
+    assert real_cascade_root is not None, (
+        "fixture setup: could not locate the real cascade root node by id "
+        "in the incumbent tree"
+    )
+    real_fire_branch = next(
+        (
+            c
+            for c in real_cascade_root.get("children") or []
+            if isinstance(c, dict) and c.get("is-else-condition?") is False
+        ),
+        None,
+    )
+    assert real_fire_branch is not None, (
+        "fixture setup: could not locate the real cascade's fire "
+        "(is-else-condition?=False) branch"
+    )
+
     incumbent_tickers = symphony_schema.extract_tickers(real_incumbent_symphony)
-    cascade_tickers = symphony_schema.extract_tickers(real_incumbent_cascade.overlay_tree)
-    core_tickers = incumbent_tickers - cascade_tickers
+    real_fire_tickers = symphony_schema.extract_tickers(real_fire_branch)
+    core_tickers = incumbent_tickers - real_fire_tickers
     spliced_tickers = symphony_schema.extract_tickers(spliced)
 
     missing_core_tickers = core_tickers - spliced_tickers
     assert not missing_core_tickers, (
         f"RC#3: splice_candidate_into_symphony discarded "
         f"{len(missing_core_tickers)} of the incumbent's {len(core_tickers)} "
-        f"real core tickers (outside the detected cascade boundary) — the "
-        f"whole detected cascade if-node (condition + real fire branch + "
-        f"real continuation/core branch) was replaced by the candidate's "
-        f"compiled node, whose own else branch is only a placeholder stub. "
-        f"No step grafts the incumbent's real core back into the "
-        f"candidate's placeholder slot. Sample missing: "
-        f"{sorted(missing_core_tickers)[:10]}"
+        f"real core tickers (everything outside the cascade's real fire "
+        f"branch) — the whole detected cascade if-node (condition + real "
+        f"fire branch + real continuation/core branch) was replaced by the "
+        f"candidate's compiled node without grafting the incumbent's real "
+        f"continuation/core content into the candidate's placeholder slot. "
+        f"Sample missing: {sorted(missing_core_tickers)[:10]}"
     )
 
     assert "CORE_STRATEGY_PLACEHOLDER" not in spliced_tickers, (
