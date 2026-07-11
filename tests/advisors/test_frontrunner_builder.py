@@ -119,9 +119,16 @@ def _dsl_flat_if_overlay(
     signal_ticker: str,
     threshold: float,
     vix_ticker: str,
-    core_placeholder: str = "CORE_ASSET_0001",
+    core_placeholder: str = "CANDIDATE_PLACEHOLDER_ASSET",
 ) -> dict:
-    """A single-rung RSI-gt -> VIX-fire overlay candidate (build-plan DSL)."""
+    """A single-rung RSI-gt -> VIX-fire overlay candidate (build-plan DSL).
+
+    core_placeholder defaults to a ticker DISTINCT from
+    incumbent_symphony's own core ticker (CORE_ASSET_0001) on purpose — a
+    prior default coincidentally reused CORE_ASSET_0001 here too, which made
+    test_splice_preserves_the_core_content_past_the_boundary pass whether or
+    not splice actually preserved the incumbent's real core (the candidate's
+    own placeholder ticker happened to match it). Keep these distinct."""
     return {
         "kind": "if",
         "condition": {
@@ -512,7 +519,18 @@ def test_splice_into_incumbent_yields_a_validate_tree_clean_symphony(fbld, incum
 def test_splice_preserves_the_core_content_past_the_boundary(fbld, incumbent_symphony):
     """The splice must replace ONLY the detected cascade — the core content
     beyond the size-cliff boundary (CORE_ASSET_0001 in the fixture) must
-    survive untouched."""
+    survive untouched.
+
+    STRENGTHENED (fix cycle, 2026-07-11): the candidate built here via
+    _dsl_flat_if_overlay's default core_placeholder now uses a ticker
+    (CANDIDATE_PLACEHOLDER_ASSET) DISTINCT from the incumbent fixture's own
+    core ticker (CORE_ASSET_0001). Previously both defaulted to the SAME
+    literal ("CORE_ASSET_0001"), so this assertion passed by coincidence —
+    the candidate's own placeholder ticker happened to equal the ticker
+    being checked for, regardless of whether splice actually preserved any
+    real incumbent content. See RC#3 in
+    tests/advisors/test_frontrunner_real_boundary_contract.py for the same
+    defect reproduced against a real, large incumbent tree."""
     from advisors import frontrunner_detector
 
     detection = frontrunner_detector.detect_frontrunner_cascades(incumbent_symphony)

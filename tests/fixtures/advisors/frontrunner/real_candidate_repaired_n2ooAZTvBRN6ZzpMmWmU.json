@@ -1,0 +1,92 @@
+{
+  "kind": "if",
+  "name": "FRONTRUNNER: SPY RSI(10) overbought cascade -> tiered UVXY/VIXM hedge",
+  "condition": {
+    "lhs_fn": "relative-strength-index",
+    "lhs_ticker": "SPY",
+    "window": 10,
+    "comparator": "gt",
+    "rhs": {
+      "fixed": 79.0
+    }
+  },
+  "then": [
+    {
+      "kind": "if",
+      "name": "Tier 2: SPY RSI(10) extreme overbought -> heavy hedge",
+      "condition": {
+        "lhs_fn": "relative-strength-index",
+        "lhs_ticker": "SPY",
+        "window": 10,
+        "comparator": "gt",
+        "rhs": {
+          "fixed": 83.0
+        }
+      },
+      "then": [
+        {
+          "kind": "weight",
+          "scheme": "specified",
+          "children": [
+            {
+              "node": {
+                "kind": "asset",
+                "ticker": "UVXY"
+              },
+              "pct": 60
+            },
+            {
+              "node": {
+                "kind": "asset",
+                "ticker": "VIXM"
+              },
+              "pct": 25
+            },
+            {
+              "node": {
+                "kind": "asset",
+                "ticker": "BIL"
+              },
+              "pct": 15
+            }
+          ]
+        }
+      ],
+      "else": [
+        {
+          "kind": "weight",
+          "scheme": "specified",
+          "children": [
+            {
+              "node": {
+                "kind": "asset",
+                "ticker": "UVXY"
+              },
+              "pct": 25
+            },
+            {
+              "node": {
+                "kind": "asset",
+                "ticker": "VIXM"
+              },
+              "pct": 25
+            },
+            {
+              "node": {
+                "kind": "asset",
+                "ticker": "BIL"
+              },
+              "pct": 50
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "else": [
+    {
+      "kind": "asset",
+      "ticker": "CORE_STRATEGY_PLACEHOLDER"
+    }
+  ]
+}
