@@ -110,66 +110,6 @@ def _get_csrf_token(client) -> str:
     return token
 
 
-# ---------------------------------------------------------------------------
-# Fable client stub — mirrors test_frontrunner_gate_wiring.py's own
-# _mocked_fable_overlay_client idiom, kept local (not imported cross-file)
-# since route tests intentionally stay independent of the advisors-layer
-# test suite's fixtures.
-# ---------------------------------------------------------------------------
-
-
-def _mocked_fable_client(vix_ticker: str = "UVXY") -> MagicMock:
-    overlay = {
-        "kind": "if",
-        "condition": {
-            "lhs_fn": "relative-strength-index",
-            "lhs_ticker": "SPY",
-            "window": 10,
-            "comparator": "gt",
-            "rhs": {"fixed": 81},
-        },
-        "then": [
-            {"kind": "weight", "scheme": "equal", "children": [{"kind": "asset", "ticker": vix_ticker}]}
-        ],
-        "else": [
-            {"kind": "weight", "scheme": "equal", "children": [{"kind": "asset", "ticker": "CORE_ASSET_0001"}]}
-        ],
-    }
-    block = MagicMock()
-    block.type = "tool_use"
-    block.input = {"overlay": overlay}
-    response = MagicMock()
-    response.stop_reason = "tool_use"
-    response.content = [block]
-    client_mock = MagicMock()
-    client_mock.messages.create.return_value = response
-    return client_mock
-
-
-def _real_incumbent_symphony() -> dict:
-    """A minimal but genuinely-detectable frontrunner cascade tree — same
-    construction as tests/advisors/test_frontrunner_gate_wiring.py's own
-    incumbent_symphony fixture."""
-    from advisors import symphony_schema
-
-    cascade = symphony_schema.make_if(
-        symphony_schema.make_condition(
-            symphony_schema.make_indicator("relative-strength-index", "SPY", window=10),
-            "gt",
-            80,
-        ),
-        then_children=[symphony_schema.make_weight_equal([symphony_schema.make_asset("VIXY")])],
-        else_children=[
-            symphony_schema.make_weight_equal([symphony_schema.make_asset("CORE_ASSET_0001")])
-        ],
-    )
-    return symphony_schema.make_root("Incumbent Test Symphony", "daily", [cascade])
-
-
-def _no_op_atlas_result() -> dict:
-    return {"available": False, "candidates": [], "stats": {}, "source": "captplanet"}
-
-
 # ===========================================================================
 # Group A: POST /ai-advisor/frontrunner-builder/run — CSRF enforcement
 # ===========================================================================
@@ -198,9 +138,21 @@ def test_run_with_wrong_csrf_token_returns_403(client, _reenable_csrf):
     assert resp.status_code == 403
 
 
-def test_run_with_valid_csrf_token_returns_200(client, _reenable_csrf):
+def test_run_with_valid_csrf_token_returns_202(client, _reenable_csrf):
+    """RULING (team-lead, 2026-07-11): /run is ASYNC — a dedicated
+    _FRONTRUNNER_BUILD_EXECUTOR (max_workers=1, atexit-registered) accepts
+    the dispatch; the route returns 202 immediately, never blocking the
+    request thread on run_frontrunner_build's genuinely multi-minute
+    full-roster work (up to MAX_CASCADES_PER_SYMPHONY_RUN cascades x every
+    live symphony x rate-limited Fable/Composer calls). Results persist to
+    SQLite; the operator 'polls' by reloading /ai-advisor for the
+    server-rendered pending-proposal cards — there is no synchronous result
+    body to return."""
     token = _get_csrf_token(client)
-    with patch("advisors.frontrunner_builder.run_frontrunner_build") as mock_run:
+    with (
+        patch("os.environ.get", side_effect=lambda k, d=None: "fake-key" if k == "ANTHROPIC_API_KEY" else d),
+        patch("app._FRONTRUNNER_BUILD_EXECUTOR") as mock_executor,
+    ):
         resp = client.post(
             "/ai-advisor/frontrunner-builder/run",
             json={},
@@ -208,8 +160,18 @@ def test_run_with_valid_csrf_token_returns_200(client, _reenable_csrf):
             headers={"X-CSRF-Token": token},
         )
     _assert_route_exists(resp, "POST /ai-advisor/frontrunner-builder/run")
-    assert resp.status_code == 200
-    assert mock_run.called
+    assert resp.status_code == 202, (
+        f"expected 202 (accepted, background-dispatched) per the async ruling, "
+        f"got {resp.status_code}"
+    )
+    data = resp.get_json()
+    assert data is not None and data.get("status") == "started", (
+        f"expected {{'status': 'started'}}, got {data!r}"
+    )
+    assert mock_executor.submit.called, (
+        "the route did not dispatch to _FRONTRUNNER_BUILD_EXECUTOR.submit — "
+        "the build must be fired into the background executor, not run inline"
+    )
 
 
 # ===========================================================================
@@ -218,10 +180,10 @@ def test_run_with_valid_csrf_token_returns_200(client, _reenable_csrf):
 
 
 def test_run_requires_authentication(auth_client):
-    """Unauthenticated POST to the run route must not execute the build —
+    """Unauthenticated POST to the run route must not dispatch the build —
     mirrors the dashboard auth gate (DE-AUTH-001) already enforced on every
     other route via the global _auth_before_request hook."""
-    with patch("advisors.frontrunner_builder.run_frontrunner_build") as mock_run:
+    with patch("app._FRONTRUNNER_BUILD_EXECUTOR") as mock_executor:
         resp = auth_client.post(
             "/ai-advisor/frontrunner-builder/run",
             json={},
@@ -232,16 +194,58 @@ def test_run_requires_authentication(auth_client):
         f"unauthenticated POST to the run route returned {resp.status_code}, "
         f"expected a 302 redirect (HTML) or 401 (XHR/API) per the auth gate contract"
     )
-    mock_run.assert_not_called()
+    mock_executor.submit.assert_not_called()
 
 
 # ===========================================================================
-# Group C: POST /ai-advisor/frontrunner-builder/run — response shape + D-1
+# Group C: POST /ai-advisor/frontrunner-builder/run — dispatch contract + D-1
 # ===========================================================================
+
+
+def test_run_never_calls_run_frontrunner_build_synchronously_in_request(client):
+    """The load-bearing async assertion: run_frontrunner_build itself must
+    NEVER be invoked directly on the request thread — only ever handed to
+    the executor's .submit(). A regression back to a synchronous call would
+    block a Flask worker for potentially minutes on the operator's full
+    live-symphony roster."""
+    with (
+        patch("app._FRONTRUNNER_BUILD_EXECUTOR"),
+        patch("advisors.frontrunner_builder.run_frontrunner_build") as mock_run_direct,
+    ):
+        client.post("/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json")
+
+    mock_run_direct.assert_not_called()
+
+
+def test_run_dispatches_the_real_run_frontrunner_build_function_to_the_executor(client):
+    """Route-level RED for mocked fns, adapted for the async model: since
+    the actual multi-minute work is no longer exercised synchronously in a
+    request/response cycle, the meaningful route-level proof shifts to
+    'did the route correctly import and reference the REAL
+    run_frontrunner_build callable when submitting it' — an
+    AttributeError/ImportError-shaped bug here would otherwise only
+    surface asynchronously, inside the executor thread, invisible to the
+    operator's request."""
+    with patch("app._FRONTRUNNER_BUILD_EXECUTOR") as mock_executor:
+        client.post("/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json")
+
+    assert mock_executor.submit.called
+    submitted_args = mock_executor.submit.call_args.args
+    assert submitted_args, "executor.submit() was called with no arguments"
+
+    from advisors.frontrunner_builder import run_frontrunner_build as real_run_frontrunner_build
+
+    assert submitted_args[0] is real_run_frontrunner_build, (
+        f"the route must submit the REAL advisors.frontrunner_builder."
+        f"run_frontrunner_build function object to the executor, got "
+        f"{submitted_args[0]!r} — an undefined/wrong reference here would "
+        f"only fail inside the background thread, invisible to the operator's "
+        f"request/response cycle"
+    )
 
 
 def test_run_response_never_contains_live_execution_key(client):
-    with patch("advisors.frontrunner_builder.run_frontrunner_build"):
+    with patch("app._FRONTRUNNER_BUILD_EXECUTOR"):
         resp = client.post("/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json")
 
     _assert_route_exists(resp, "POST /ai-advisor/frontrunner-builder/run")
@@ -254,16 +258,21 @@ def test_run_response_never_contains_live_execution_key(client):
     )
 
 
-def test_run_engine_exception_returns_static_error_token_never_str_exc(client):
-    """D-1 security contract: the route's own except-clause must never echo
-    str(exc) (which can carry API keys/internal paths) — only
-    type(exc).__name__, same pattern as ai_advisor_strategy_builder_run's own
-    outer except (app.py, mirrored above at ~line 4565)."""
-    secret_bearing_message = "connection failed: api_key=sk-super-secret-12345"
+def test_run_submission_exception_returns_static_error_token_never_str_exc(client):
+    """D-1 security contract: if the executor SUBMISSION itself raises (the
+    only synchronous failure mode left in the async model —
+    run_frontrunner_build's own internal exceptions are D-1/never-raise and
+    happen off-thread, invisible to this response), the route's own
+    except-clause must never echo str(exc) — only type(exc).__name__, same
+    pattern as ai_advisor_strategy_builder_run's own outer except (app.py,
+    ~line 4565)."""
+    secret_bearing_message = "executor pool exhausted: internal_path=/etc/secrets/x"
 
-    with patch(
-        "advisors.frontrunner_builder.run_frontrunner_build",
-        side_effect=RuntimeError(secret_bearing_message),
+    mock_executor = MagicMock()
+    mock_executor.submit.side_effect = RuntimeError(secret_bearing_message)
+    with (
+        patch("os.environ.get", side_effect=lambda k, d=None: "fake-key" if k == "ANTHROPIC_API_KEY" else d),
+        patch("app._FRONTRUNNER_BUILD_EXECUTOR", mock_executor),
     ):
         resp = client.post("/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json")
 
@@ -271,76 +280,78 @@ def test_run_engine_exception_returns_static_error_token_never_str_exc(client):
     data = resp.get_json()
     assert data is not None
     payload_str = str(data)
-    assert "sk-super-secret-12345" not in payload_str, (
-        f"the route echoed the raw exception message (leaking a secret-shaped "
-        f"string) instead of a static type(exc).__name__ token: {data!r}"
+    assert "internal_path" not in payload_str and "/etc/secrets/x" not in payload_str, (
+        f"the route echoed the raw exception message instead of a static "
+        f"type(exc).__name__ token: {data!r}"
     )
     assert data.get("error") == "RuntimeError", (
         f"expected error='RuntimeError' (type(exc).__name__ only), got {data.get('error')!r}"
     )
 
 
-def test_run_accepts_optional_symphony_id_for_a_scoped_run(client):
-    """AC-1: 'Also invokable on demand via a route' — scoped to one symphony
-    when a symphony_id is supplied, mirroring the strategy-builder run
-    route's own optional symphony_id parameter."""
-    with patch("advisors.frontrunner_builder.run_frontrunner_build") as mock_run:
+def test_run_accepts_optional_symphony_ids_for_a_scoped_run(client):
+    """AC-1: 'Also invokable on demand via a route' — scoped to specific
+    symphonies when symphony_ids is supplied in the body, threaded through
+    to the submitted run_frontrunner_build call."""
+    with patch("app._FRONTRUNNER_BUILD_EXECUTOR") as mock_executor:
         resp = client.post(
             "/ai-advisor/frontrunner-builder/run",
-            json={"symphony_id": "sym-test-123"},
+            json={"symphony_ids": ["sym-test-123"]},
             content_type="application/json",
         )
 
     _assert_route_exists(resp, "POST /ai-advisor/frontrunner-builder/run")
-    assert resp.status_code == 200
-    assert mock_run.called
-    _, call_kwargs = mock_run.call_args
-    call_args = mock_run.call_args.args
-    scoped_ids = call_kwargs.get("symphony_ids") or (call_args[0] if call_args else None)
+    assert resp.status_code == 202
+    assert mock_executor.submit.called
+    call_args = mock_executor.submit.call_args.args
+    call_kwargs = mock_executor.submit.call_args.kwargs
+    scoped_ids = call_kwargs.get("symphony_ids") or (call_args[1] if len(call_args) > 1 else None)
     assert scoped_ids == ["sym-test-123"], (
-        f"a symphony_id in the request body must scope the build to that one "
-        f"symphony (run_frontrunner_build(symphony_ids=['sym-test-123'])), got "
-        f"call args={call_args!r} kwargs={call_kwargs!r}"
+        f"symphony_ids in the request body must be threaded through to the "
+        f"submitted run_frontrunner_build call, got call_args={call_args!r} "
+        f"call_kwargs={call_kwargs!r}"
     )
 
 
-# ===========================================================================
-# Group D: POST /ai-advisor/frontrunner-builder/run — route-level RED
-# against the REAL frontrunner_builder module (not a blanket module mock).
-# ===========================================================================
-
-
-def test_run_end_to_end_against_the_real_module_never_500s(client):
-    """The decisive 'route-level RED for mocked fns' guard: hit the route
-    with the REAL advisors.frontrunner_builder module loaded and exercised
-    (only its network/DB leaves mocked) — a route calling an undefined
-    attribute on the real module 500s here even though a whole-module-mock
-    test would stay green."""
-    incumbent = _real_incumbent_symphony()
-
+def test_run_missing_api_key_returns_200_error_and_does_not_submit(client):
+    """The fast pre-check (frdash's design decision-1): a missing
+    ANTHROPIC_API_KEY is detected BEFORE dispatch — the route must fail fast
+    with a 200 error response (matching ai_advisor_strategy_builder_run's
+    own no-key-check-delegated-to-the-engine convention, surfaced here at
+    the route since the engine call never even happens) and must NEVER
+    submit a doomed job to the executor."""
     with (
-        patch("database.load_state", return_value={"test-symphony-id": {"live": True}}),
-        patch("symphony_logic.fetch_symphony_score", return_value=incumbent),
-        patch("advisors.frontrunner_builder._build_client", return_value=_mocked_fable_client()),
-        patch("advisors.community_strats.load_community_strategies", return_value=_no_op_atlas_result()),
-        patch("advisors.composer_backtest_client.run_backtest") as mock_backtest,
-        patch("database.insert_frontrunner_proposal"),
-        patch("database.insert_advisor_observation"),
-        patch("database.insert_dof_ledger_row"),
+        patch("os.environ.get", side_effect=lambda k, d=None: d if k == "ANTHROPIC_API_KEY" else d),
+        patch("app._FRONTRUNNER_BUILD_EXECUTOR") as mock_executor,
     ):
-        from advisors.composer_backtest_client import BacktestResult
-
-        mock_backtest.return_value = BacktestResult(
-            stats={"sharpe": 0.5, "cagr": 0.08}, data_warnings=[], daily_returns={}, error="no history"
-        )
         resp = client.post("/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json")
 
     _assert_route_exists(resp, "POST /ai-advisor/frontrunner-builder/run")
     assert resp.status_code == 200, (
-        f"POST /ai-advisor/frontrunner-builder/run against the REAL "
-        f"frontrunner_builder module returned {resp.status_code} (not 200) — "
-        f"this is the exact defect class a whole-module mock would hide: "
-        f"body={resp.get_data(as_text=True)[:500]!r}"
+        f"a missing ANTHROPIC_API_KEY must fail fast with 200+error (never a "
+        f"202 promising background work that cannot succeed), got {resp.status_code}"
+    )
+    data = resp.get_json()
+    assert data is not None and data.get("error"), (
+        f"expected a non-empty error field on the no-key fast-fail response, got {data!r}"
+    )
+    mock_executor.submit.assert_not_called()
+
+
+# ===========================================================================
+# Group D: GET /ai-advisor/frontrunner-builder — redirect stub
+# ===========================================================================
+
+
+def test_get_frontrunner_builder_returns_302(client):
+    """Mirrors every other Advisor sub-route: the frontrunner-builder tab
+    lives inside the unified /ai-advisor SPA, never as its own standalone
+    200 page."""
+    resp = client.get("/ai-advisor/frontrunner-builder")
+    _assert_route_exists(resp, "GET /ai-advisor/frontrunner-builder")
+    assert resp.status_code == 302, (
+        f"GET /ai-advisor/frontrunner-builder returned {resp.status_code}, expected "
+        f"a 302 redirect to /ai-advisor (SPA model — no standalone page)"
     )
 
 
@@ -489,6 +500,29 @@ def test_approve_never_calls_composer_draft_client_directly_only_via_the_functio
     mock_save.assert_not_called()
 
 
+def test_approve_missing_proposal_id_returns_invalid_error_without_calling_the_engine(client):
+    """Input validation: a missing/malformed proposal_id must fail fast with
+    a shaped error response and must NEVER reach
+    approve_frontrunner_proposal (which would raise or misbehave on a
+    non-int id)."""
+    with patch("advisors.frontrunner_builder.approve_frontrunner_proposal") as mock_approve:
+        resp = client.post(
+            "/ai-advisor/proposal/approve",
+            json={},  # no proposal_id at all
+            content_type="application/json",
+        )
+
+    _assert_route_exists(resp, "POST /ai-advisor/proposal/approve")
+    assert resp.status_code == 200, (
+        f"a missing proposal_id must fail fast with 200+error, got {resp.status_code}"
+    )
+    data = resp.get_json()
+    assert data is not None
+    assert data.get("success") is False, f"expected success=False, got {data!r}"
+    assert data.get("error"), f"expected a non-empty error field, got {data!r}"
+    mock_approve.assert_not_called()
+
+
 # ===========================================================================
 # Group G: POST /ai-advisor/proposal/reject
 # ===========================================================================
@@ -566,6 +600,27 @@ def test_reject_engine_error_returns_static_error_token_never_str_exc(client):
     assert data is not None
     assert "secret.db" not in str(data)
     assert data.get("error") == "RuntimeError"
+
+
+def test_reject_missing_proposal_id_returns_invalid_error_without_touching_the_db(client):
+    """Input validation: a missing/malformed proposal_id must fail fast and
+    must NEVER reach database.update_frontrunner_proposal_status."""
+    with patch("database.update_frontrunner_proposal_status") as mock_update:
+        resp = client.post(
+            "/ai-advisor/proposal/reject",
+            json={},  # no proposal_id at all
+            content_type="application/json",
+        )
+
+    _assert_route_exists(resp, "POST /ai-advisor/proposal/reject")
+    assert resp.status_code == 200, (
+        f"a missing proposal_id must fail fast with 200+error, got {resp.status_code}"
+    )
+    data = resp.get_json()
+    assert data is not None
+    assert data.get("success") is False, f"expected success=False, got {data!r}"
+    assert data.get("error"), f"expected a non-empty error field, got {data!r}"
+    mock_update.assert_not_called()
 
 
 # ===========================================================================
