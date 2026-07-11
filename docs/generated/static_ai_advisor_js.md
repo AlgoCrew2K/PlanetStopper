@@ -3,7 +3,7 @@
 > Client-side logic for the AI Advisor single-page SPA: in-place tab switching, suggestion card rendering with per-symphony assessment and lens-cache staleness stamp (AC-3), accept/reject lifecycle, autotune run feed, symphony selection, and Strategy Builder run/chat affordances.
 
 **Source:** `static/ai_advisor.js`
-**Last updated:** 2026-06-29 (DE-ADVISOR-LATENCY AC-3: `#advisor-lens-as-of` staleness stamp populated on suggest completion; prior: spa-port cycle 2026-06-13)
+**Last updated:** 2026-07-11 (frontrunner-builder wave-2 -- DE-FRONTRUNNER-002: `frRunBuild`/`frApprove`/`frReject`/`frDispatchProposalAction` added for the Frontrunner Builder tab; prior: 2026-06-29 DE-ADVISOR-LATENCY AC-3, `#advisor-lens-as-of` staleness stamp populated on suggest completion; spa-port cycle 2026-06-13)
 
 ## Overview
 
@@ -18,6 +18,7 @@ Key responsibilities:
 - **Autotune run feed** (`loadRecentRuns`) — polls `GET /api/autotune-runs` every 15 seconds; renders run cards with decision pills, Sortino/selection t-stat, and frozen-eval verdict; renders a Chart.js sparkline of historical Sortino values.
 - **Symphony selection** (`loadSymphonies`) — populates the `#symphony-id-input` select from `GET /api/performance/symphonies`; fires `getSuggestions` automatically on select change.
 - **Strategy Builder tab** (`sbRunAnalysis`, `openChatWithArtifact`) — operator-initiated proposal run and artifact-to-chat navigation for the 6th tab panel. Moved from the deleted `templates/ai_advisor_strategy_builder.html` inline script in the spa-port cycle (2026-06-13); live inside the IIFE to share the `_csrfToken` closure, then exposed on `window`.
+- **Frontrunner Builder tab** (`frRunBuild`, `frApprove`, `frReject`) — operator-initiated on-demand build trigger and per-proposal approve/reject dispatch for the 7th tab panel (frontrunner-builder wave-2, 2026-07-11). Live inside the IIFE to share the `_csrfToken` closure, then exposed on `window`.
 
 ## API Reference
 
@@ -139,6 +140,30 @@ This is pure JS navigation — no form submission, no POST. Buttons invoking thi
 
 *Moved from inline `<script>` in the deleted `templates/ai_advisor_strategy_builder.html`; exposed as `window.openChatWithArtifact` for Jinja `onclick` handlers (spa-port cycle, 2026-06-13).*
 
+### `window.frRunBuild()` (Frontrunner Builder tab)
+
+Operator-initiated on-demand build trigger. Obtains the CSRF token from the cached `_csrfToken` or fetches fresh from `GET /api/csrf-token` on a miss. POSTs to `POST /ai-advisor/frontrunner-builder/run` with `X-CSRF-Token` header and an empty JSON body.
+
+**Deliberately does NOT auto-navigate** (unlike `sbRunAnalysis`) -- the route dispatches the build to a background executor and returns `202` immediately; there is no synchronous result to render yet. On success, shows a status message (`#fr-run-status`) telling the operator to reload the page later. On an `{error}` response or a fetch failure, shows the error inline in `#fr-run-error` -- no page navigation either way.
+
+Disables `#fr-run-btn` during the request; re-enables it in the `finally` block regardless of outcome.
+
+---
+
+### `frDispatchProposalAction(action, proposalId)` (Frontrunner Builder tab, internal)
+
+Shared approve/reject dispatch for one `frontrunner_proposals` row. `action` is `'approve'` or `'reject'`; routes to `POST /ai-advisor/proposal/approve` or `POST /ai-advisor/proposal/reject` respectively with `{ proposal_id: proposalId }`.
+
+Immediately disables both the card's `[data-testid="fr-approve-btn"]` and `[data-testid="fr-reject-btn"]` buttons and dims the card (`opacity: 0.6`) -- prevents a double-submit while the request is in flight. On `{success: true}`, replaces the card's `.proposal-actions` row with a confirmation message (echoing `symphony_id` on approve via `escHtml()` -- no raw interpolation) and leaves the card dimmed permanently (an already-actioned card). On any failure (`{success: false}`, non-2xx, or a thrown error), restores full opacity and re-enables both buttons, then `alert()`s the error -- the operator can retry.
+
+Not exposed on `window` directly; called only via the two wrappers below.
+
+---
+
+### `window.frApprove(proposalId)` / `window.frReject(proposalId)` (Frontrunner Builder tab)
+
+Thin wrappers calling `frDispatchProposalAction('approve', proposalId)` / `frDispatchProposalAction('reject', proposalId)`. Exposed on `window` for Jinja `onclick="frApprove({{ p.id }})"` / `onclick="frReject({{ p.id }})"` handlers.
+
 ## Internal Dependencies
 
 - `GET /api/csrf-token` — CSRF token fetch
@@ -146,10 +171,14 @@ This is pure JS navigation — no form submission, no POST. Buttons invoking thi
 - `POST /ai-advisor/accept` — suggestion acceptance
 - `POST /ai-advisor/reject` — suggestion rejection
 - `POST /ai-advisor/strategy-builder/run` — strategy-builder proposal run (Strategy Builder tab)
+- `POST /ai-advisor/frontrunner-builder/run` — on-demand build trigger (Frontrunner Builder tab, async 202)
+- `POST /ai-advisor/proposal/approve` / `POST /ai-advisor/proposal/reject` — per-proposal approve/reject (Frontrunner Builder tab, shared by both proposal sources)
 - `GET /api/autotune-runs` — autotune run history feed
 - `GET /api/performance/symphonies` — symphony list
 - `Chart.js` (global) — autotune sparkline; guarded by `typeof Chart === 'undefined'` check
 - `openChatPanel` (global, optional) — chat slide-in panel; defined in the SPA template's inline script; falls back to navigation if absent
 - `sessionStorage` — used by `openChatWithArtifact` to pass a strategy-proposal artifact to the Chat tab across the navigation boundary
 - `#advisor-lens-as-of` DOM element (from `templates/ai_advisor.html`) — AC-3 lens-cache staleness stamp; `class="prism-as-of"`, `style="display:none"` initially; JS manages `textContent` and `display`
+- `#fr-run-btn` / `#fr-run-status` / `#fr-run-error` DOM elements (from `templates/ai_advisor.html`) — Frontrunner Builder run-controls panel, wired by `frRunBuild()`
+- `escHtml()` / `cssVar()` (pre-existing internal helpers, this file) — used by `frDispatchProposalAction` for the post-approve confirmation message
 - CSS custom properties: `--studio-pos`, `--studio-neg`, `--studio-warn`, `--studio-accent`, `--studio-ink`, `--studio-ink-dim`, `--studio-surface`, `--studio-border`, `--studio-chip-bg`, `--studio-white`, `--studio-surface-raised`, `--studio-rule`, `--studio-swatch-1`

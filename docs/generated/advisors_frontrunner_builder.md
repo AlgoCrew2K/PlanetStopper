@@ -3,7 +3,7 @@
 > Orchestrates the Frontrunner Builder pipeline: detect the incumbent frontrunner overlay, generate a candidate via Fable, splice it into the symphony, independently re-backtest and gate both sides, apply Calmar acceptance, and queue survivors for operator approval.
 
 **Source:** `advisors/frontrunner_builder.py`
-**Last updated:** 2026-07-11 (Wave-1 backend, frreview-APPROVED, P2-1 iterative-traversal hardening landed at `26c1364`)
+**Last updated:** 2026-07-11 (Wave-2 UI shipped in-branch at `eb1b612` -- see DE-FRONTRUNNER-002 and "Wave-2 UI (built, 2026-07-11)" below; prior: Wave-1 backend, frreview-APPROVED, P2-1 iterative-traversal hardening landed at `26c1364`)
 
 ## Overview
 
@@ -11,7 +11,7 @@
 
 **detect** (`frontrunner_detector`) → **gather Atlas patterns** (`community_strats`, 7-day cache, once per run) → **generate** a candidate overlay via **Fable** (`claude-fable-5`) → **compile** (`plan_tree_compiler`) → **splice** into the incumbent symphony → **independently re-backtest BOTH incumbent and candidate** (`composer_backtest_client`) → **gate** (`backtest_gate_engine.evaluate_candidate_batch`, mandatory, never bypassed) → **Calmar acceptance** (`frontrunner_acceptance`) → **queue for operator approval** (`database.insert_frontrunner_proposal`).
 
-This is wave-1 **backend**. The pipeline is already wired into the existing **weekly** scheduler (`advisors/strategy_builder_scheduler.run_weekly_build` calls `run_frontrunner_build()` over all live symphonies after the four Strategy-Builder objectives complete, AC-1) and the `propose_strategies` **retrofit** already queues its own accepted candidates onto the same `frontrunner_proposals` table (`proposal_source="strategy_builder_retrofit"`, AC-10). What's still missing (wave-2): the on-demand `POST /ai-advisor/frontrunner-builder/run` route, the `/approve`/`/reject` routes, and the new Advisor-tab UI that surfaces pending proposals and lets the operator actually click Approve/Reject — see "Not Yet Built" below.
+This module is the **backend** (wave-1). The pipeline is wired into the existing **weekly** scheduler (`advisors/strategy_builder_scheduler.run_weekly_build` calls `run_frontrunner_build()` over all live symphonies after the four Strategy-Builder objectives complete, AC-1) and the `propose_strategies` **retrofit** queues its own accepted candidates onto the same `frontrunner_proposals` table (`proposal_source="strategy_builder_retrofit"`, AC-10). The on-demand `POST /ai-advisor/frontrunner-builder/run` route, the `/approve`/`/reject` routes, and the Advisor-tab UI that surfaces pending proposals for the operator to Approve/Reject were shipped in wave-2 (2026-07-11, `eb1b612`) -- see "Wave-2 UI (built, 2026-07-11)" below.
 
 **Review status:** `frreview` (quant-code-reviewer) reviewed the full `0bcbd1a..4daf0fe` wave-1 backend diff (28 commits, 32 files, +7304/-2) and returned **APPROVE** — no P0/P1 findings. Three non-blocking P2 items were dispositioned before doc-writing: P2-1 (iterative-traversal hardening, landed `26c1364`, see Internal Mechanics below), P2-2 (a landmine comment on the Atlas-hoist call site, landed `07bdc8c`, see Internal Mechanics below), and a pre-existing unrelated test-hygiene item (2 stale skips in `test_community_strats.py`, out of scope for this cycle).
 
@@ -19,7 +19,7 @@ Off-execution-path, advisory-only. Never raises anywhere on the module's public 
 
 ### No-auto-trade boundary (structural)
 
-This module never calls `composer_draft_client.save_symphony` from the unattended build/run path (`run_frontrunner_build` → `_run_build_for_symphony`) — **only** `approve_frontrunner_proposal`, the operator-driven approval function, may do that. It does not implement, import, or reference `invest_in_symphony` or any `/deploy/` endpoint. Enforced both structurally (by omission — see `advisors/composer_draft_client.py`) and by an adversarial source-scan security suite, `tests/security/test_frontrunner_no_trade_boundary.py` (10 tests), which fails if a future edit reintroduces an invest/deploy-shaped symbol, URL fragment, or a run-path call to `save_symphony`. **This boundary already matters today**, not just once a route exists: the weekly scheduler is live-wired and calls `run_frontrunner_build()` unattended every week — a candidate reaching the approval queue is the pipeline's actual current ceiling; nothing uploads to Composer without a human calling `approve_frontrunner_proposal` directly (currently only reachable via tests/a Python shell, since no route exists yet).
+This module never calls `composer_draft_client.save_symphony` from the unattended build/run path (`run_frontrunner_build` → `_run_build_for_symphony`) — **only** `approve_frontrunner_proposal`, the operator-driven approval function, may do that. It does not implement, import, or reference `invest_in_symphony` or any `/deploy/` endpoint. Enforced both structurally (by omission — see `advisors/composer_draft_client.py`) and by an adversarial source-scan security suite, `tests/security/test_frontrunner_no_trade_boundary.py` (10 tests), which fails if a future edit reintroduces an invest/deploy-shaped symbol, URL fragment, or a run-path call to `save_symphony`. **This boundary matters continuously**, including now that a route exists: the weekly scheduler is live-wired and calls `run_frontrunner_build()` unattended every week -- a candidate reaching the approval queue never auto-uploads. Nothing uploads to Composer without a human calling `POST /ai-advisor/proposal/approve` (wave-2, `app.py`), which is the only route in the app that calls `approve_frontrunner_proposal` -- see [app.md §Frontrunner Builder Routes](app.md) for the route-level contract.
 
 ## Named Constants
 
@@ -91,7 +91,7 @@ Accepts either a raw build-plan-DSL node (`"kind"` key — compiled here via `pl
 
 ### `run_frontrunner_build(symphony_ids: list[str] | None = None) -> None`
 
-**D-1 never-raises entry point.** Called by `strategy_builder_scheduler.run_weekly_build()` (AC-1, weekly, already wired) and available for the not-yet-built on-demand route. Detects → generates → splices → gates → accepts → queues, for each live symphony. Never calls `composer_draft_client.save_symphony`.
+**D-1 never-raises entry point.** Called by `strategy_builder_scheduler.run_weekly_build()` (AC-1, weekly) and by the on-demand `POST /ai-advisor/frontrunner-builder/run` route (wave-2, `app.py`, async-dispatched via a dedicated `_FRONTRUNNER_BUILD_EXECUTOR` -- see app.md). Detects → generates → splices → gates → accepts → queues, for each live symphony. Never calls `composer_draft_client.save_symphony`.
 
 **Parameters:**
 
@@ -105,7 +105,7 @@ A per-symphony exception is logged and skipped — it never aborts the batch.
 
 ### `approve_frontrunner_proposal(proposal_id: int) -> ApprovalResult`
 
-**Operator-approved.** The ONLY function in the whole frontrunner surface that may call `composer_draft_client.save_symphony` (AC-9). Intended to be invoked exclusively from the operator-driven `/approve` route (wave-2, not yet built) — never from the unattended weekly build path. Today it is only reachable directly (tests / a Python shell) since no route calls it yet.
+**Operator-approved.** The ONLY function in the whole frontrunner surface that may call `composer_draft_client.save_symphony` (AC-9). Invoked exclusively from the operator-driven `POST /ai-advisor/proposal/approve` route (wave-2, `app.py`, shipped 2026-07-11) -- never from the unattended weekly build path. See [app.md §Frontrunner Builder Routes](app.md) for the route-level contract.
 
 Sequence: look up the `frontrunner_proposals` row → idempotent no-op if already `uploaded` → **AC-12 local-count guard** (`database.count_uploaded_frontrunner_proposals()` against `MAX_FRONTRUNNER_UPLOADS_PENDING_REVIEW`; fails **closed** — refuses to create — both when the cap is reached and when the count itself can't be determined) → `composer_draft_client.save_symphony(...)` → **AC-9 belt-and-suspenders**: `composer_draft_client.verify_undeployed(symphony_id)` before marking `'uploaded'` → persists an `advisor_observations` audit row on success.
 
@@ -175,11 +175,29 @@ Independently re-backtests both incumbent and candidate (never trusts the incumb
 - `advisors/strategy_builder_scheduler.py::run_weekly_build` — calls `run_frontrunner_build()` unconditionally after the four Strategy-Builder objectives complete (AC-1, weekly, isolated in its own try/except so a frontrunner failure never blocks the objective loop above it)
 - `advisors/strategy_builder_engine.py::_persist_survivor` — does NOT call anything in this module directly; it writes its own `frontrunner_proposals` row via `database.insert_frontrunner_proposal(proposal_source="strategy_builder_retrofit")`, which later flows through THIS module's `approve_frontrunner_proposal` on operator approval (AC-10)
 
-## Not Yet Built (wave-2)
+## Wave-2 UI (built, 2026-07-11)
 
-- `POST /ai-advisor/frontrunner-builder/run` on-demand trigger route (`app.py`) — `run_frontrunner_build` itself is ready to be called from it
-- `POST /ai-advisor/frontrunner-builder/approve` / `/reject` routes (`app.py`) — `approve_frontrunner_proposal` itself is ready to be called from it; a reject path (`database.update_frontrunner_proposal_status(..., approval_status="rejected")`) has no dedicated helper function yet either
-- The new Frontrunner-builder Advisor tab (`templates/ai_advisor.html`, `static/ai_advisor.js`) — no template/JS references `frontrunner` anywhere yet; pending proposals are only queryable via `database.get_pending_frontrunner_proposals`
-- Operator-gated task-zero live `save_symphony` test (one real create against the operator's Composer account, verify-undeployed, delete) — required before `approve_frontrunner_proposal` is exercised against the real Composer API for the first time
+The Advisor-tab UI and its three POST action routes are built and reviewed as part of this branch (`feature/frontrunner-builder`, wave-2, `eb1b612`):
 
-**Already wired (not wave-2, contrary to the feature plan's own phrasing which reads as if these were still pending):** the weekly scheduler cadence (AC-1) and the `propose_strategies` retrofit's proposal-queuing (AC-10, the "closes an existing gap" summary-line goal). Both call the exact same backend this doc describes; what's missing for them is purely the UI surface (AC-8) that lets the operator act on what they already queue.
+- `POST /ai-advisor/frontrunner-builder/run` -- on-demand trigger, async 202 dispatch via a dedicated executor (`app.py`; see [app.md §Frontrunner Builder Routes](app.md))
+- `POST /ai-advisor/proposal/approve` / `POST /ai-advisor/proposal/reject` -- generic, source-agnostic, shared by both `frontrunner_builder` and `strategy_builder_retrofit` rows (`app.py`)
+- The Frontrunner Builder Advisor tab (`templates/ai_advisor.html`, 7th tab panel) -- pending-approval cards with incumbent-vs-candidate Calmar/CAGR/MDD/node-count deltas, Approve/Reject buttons (`static/ai_advisor.js`: `frRunBuild`, `frApprove`, `frReject` -- see [static/ai_advisor.js](static_ai_advisor_js.md))
+
+`run_frontrunner_build` and `approve_frontrunner_proposal` are both now operator-reachable through the dashboard, not just via tests or a Python shell.
+
+**Still open -- operator-gated task-zero live test.** One real `save_symphony` create against the operator's Composer account, then immediately `verify_undeployed`, then delete the throwaway symphony (feature-plans/frontrunner-builder.md §Architecture "Build task ZERO"). **The wave-2 UI being built and reviewed does NOT mean the approve→create path has been exercised against the real Composer API** -- `approve_frontrunner_proposal` has to date only been called against mocked Composer responses in tests. This gate must pass before the operator's first real "Approve" click in production.
+
+See `DE-FRONTRUNNER-002` in `DECISIONS.md` for the wave-2 UI decisions (async-202 dispatch rationale, generic source-agnostic route shape, `candidate_tree` preview-bounding, render-security posture).
+
+## Pending CLAUDE.md Key-Files amendments (apply at ship -- operator-gated)
+
+Not applied. For PM/team-lead review and manual application to `.claude/CLAUDE.md`'s `## Key Files` table at ship. Three amendments -- append the bracketed text to the existing cell for each row (all three rows already exist in the table).
+
+**`app.py` row** -- append:
+> **Frontrunner Builder wave-2 routes (2026-07-11, `eb1b612`):** `GET /ai-advisor/frontrunner-builder` → 302 redirect (no standalone page, mirrors the strategy-builder stub); `POST /ai-advisor/frontrunner-builder/run` -- async 202 dispatch to a dedicated `_FRONTRUNNER_BUILD_EXECUTOR` (single-worker, `atexit`-registered, deliberately separate from `_DISMISS_EXECUTOR`), fail-fast on missing `ANTHROPIC_API_KEY` before submit, submitted work wrapped in a log-and-swallow closure (`_run_frontrunner_build_background`) as defense-in-depth against a D-1 contract violation on an unawaited `Future`; `POST /ai-advisor/proposal/approve` -- generic/source-agnostic (`proposal_id`-keyed), the ONLY route in the app that can reach `composer_draft_client.save_symphony` (exclusively via `advisors.frontrunner_builder.approve_frontrunner_proposal`); `POST /ai-advisor/proposal/reject` -- status-only DB write. `ai_advisor_tab()` additively prefetches `database.get_pending_frontrunner_proposals()`, bounding each row's `candidate_tree` to a 4000-char JSON preview (`candidate_tree_preview`) before template render -- the full spliced tree (potentially 8,000+ nodes) is never passed to Jinja. See `docs/generated/app.md` §"Frontrunner Builder Routes" and `DE-FRONTRUNNER-002` in `DECISIONS.md`.
+
+**`templates/ai_advisor.html` row** -- append:
+> **Frontrunner Builder tab (2026-07-11, `eb1b612`):** 7th tab panel (`tab-panel-frontrunner-builder`), following the same in-place-tab pattern as Strategy Builder. Persistent non-dismissible risk banner (this is the one tab on the page where an operator action -- Approve -- creates a real Composer symphony). Pending-approval cards render incumbent-vs-candidate Calmar/CAGR/MDD deltas + node-count delta (columns conditionally shown via `is_fr = p.proposal_source == 'frontrunner_builder'` -- `strategy_builder_retrofit` rows have no incumbent to compare against, so the Incumbent column and node-count-delta strip are structurally omitted, not blanked); a collapsible raw-candidate-preview `<details>` block renders the server-bounded `candidate_tree_preview` string (never raw JSON, no `| safe` anywhere on this panel). Approve/Reject buttons call `frApprove`/`frReject` (JS).
+
+**`static/ai_advisor.js` row** -- append:
+> **Frontrunner Builder tab functions (2026-07-11, `eb1b612`):** `frRunBuild()` -- on-demand build trigger, POSTs to `/ai-advisor/frontrunner-builder/run`, does NOT auto-navigate (unlike `sbRunAnalysis`) since the route returns 202 before results exist; shows a "reload later" status message. `frDispatchProposalAction(action, proposalId)` -- shared approve/reject dispatch (internal); disables both card buttons + dims the card during the request (prevents double-submit); on success replaces the card's action row with a confirmation message, on failure restores the card and alerts the error. `frApprove`/`frReject` -- thin `window`-exposed wrappers for Jinja `onclick` handlers.

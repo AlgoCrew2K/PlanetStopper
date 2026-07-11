@@ -4142,3 +4142,56 @@ PM-authoritative gate (quiet window, single `-n0`, unique `DB_PATH`, process tab
 ### Reference
 
 DE-FRONTRUNNER-001; branch `feature/frontrunner-builder`; wave-1 backend HEAD `26c1364`; plan `feature-plans/frontrunner-builder.md`; full session reasoning trail in `.claude/PM-ACTIVE-WORK.md` THREAD G. Wave-2 (AC-8 UI + on-demand/approve/reject routes) and the operator-gated task-zero live Composer create test are NOT covered by this entry -- see `docs/generated/advisors_frontrunner_builder.md` "Not Yet Built".
+
+## DE-FRONTRUNNER-002 -- Frontrunner Builder wave-2 UI: routes, dispatch model, render-security posture (2026-07-11)
+
+Branch: `feature/frontrunner-builder` | Base: `origin/main` 0bcbd1a | HEAD (this entry): `eb1b612`
+
+### Summary
+
+Wave-2 of the Frontrunner Builder (feature-plans/frontrunner-builder.md) ships the Advisor-tab UI and its three POST action routes on top of the wave-1 backend recorded in `DE-FRONTRUNNER-001`: `POST /ai-advisor/frontrunner-builder/run`, `POST /ai-advisor/proposal/approve`, `POST /ai-advisor/proposal/reject`, plus a `GET /ai-advisor/frontrunner-builder` redirect stub, the 7th Advisor-tab panel in `templates/ai_advisor.html`, and four JS functions in `static/ai_advisor.js` (`frRunBuild`, `frApprove`, `frReject`, `frDispatchProposalAction`). This entry records the load-bearing UI-layer decisions; see `docs/generated/app.md` §"Frontrunner Builder Routes", `docs/generated/static_ai_advisor_js.md`, and `docs/generated/advisors_frontrunner_builder.md` §"Wave-2 UI (built, 2026-07-11)" for the full API-reference-level detail.
+
+### Decision: `/run` is async 202 dispatch, not a blocking request (team-lead ruling)
+
+**Problem:** `run_frontrunner_build` iterates every live symphony (up to `MAX_CASCADES_PER_SYMPHONY_RUN=40` cascades each) with rate-limited Fable + Composer calls -- genuinely multi-minute. The dashboard's own architecture constraint (`.claude/CLAUDE.md` "Engine runs 1-minute cadence during market hours -- no blocking I/O on the execution path") and the existing `POST /ai-advisor/strategy-builder/run` precedent (synchronous, because its own pipeline is bounded) both had to be weighed.
+
+**Ruling (team-lead, 2026-07-11):** `/run` dispatches to a dedicated single-worker `ThreadPoolExecutor` (`_FRONTRUNNER_BUILD_EXECUTOR`, `atexit`-registered) and returns `202` immediately -- no synchronous result body, no new JSON polling endpoint. The operator "polls" by reloading `/ai-advisor`; newly-queued proposals render server-side from `frontrunner_proposals` on the next page load. Rationale: a Flask request thread blocked for multiple minutes is a worse operator experience and a bigger blast radius (thread-pool exhaustion under a double-click) than an async fire-and-forget with a clear "reload later" status message. The executor is deliberately **not** shared with `_DISMISS_EXECUTOR` -- co-locating a multi-minute job with latency-sensitive dismiss/flush writes would queue those behind it; single-worker also serializes overlapping run requests instead of hammering Fable/Composer concurrently.
+
+**Log-and-swallow closure, added as a follow-up fix (`e3948fd`) after the initial GREEN (`e3e7387`):** the work submitted to the executor is wrapped in a closure (`_run_frontrunner_build_background`) that catches any exception and logs it via `_daemon_log.error(..., exc_info=True)`. `run_frontrunner_build` is documented D-1/never-raises, so this is defense-in-depth, not a normal path: an unawaited `concurrent.futures.Future` silently drops any exception that somehow escapes the D-1 contract, and a silently-dropped exception in a background job is strictly worse than a logged one. Mirrors the existing `_dismiss_async` pattern in `app.py`.
+
+**`/run`'s fast-pre-check is ANTHROPIC_API_KEY-only, not Composer-inclusive (frreview-confirmed deliberate).** The route returns `200 {"error": "advisor unavailable: ANTHROPIC_API_KEY not configured"}` without submitting to the executor when the Fable-generation key is absent -- a doomed job should never be queued. It does NOT pre-check Composer credentials: Composer infra is assumed present, matching the posture of every other advisor route in the app, and a missing/invalid Composer key degrades per-symphony inside `run_frontrunner_build`'s own D-1 contract (that symphony is skipped and logged) rather than failing the whole route pre-flight. `frreview` reviewed this asymmetry and confirmed it is intentional, not an oversight.
+
+### Decision: generic, source-agnostic `proposal_id`-keyed approve/reject routes (team-lead ruling)
+
+**Problem:** `frontrunner_proposals` (migration 033) holds rows from two distinct producers -- `frontrunner_builder` (this feature's own pipeline) and `strategy_builder_retrofit` (AC-10's retrofit onto the pre-existing Strategy Builder). Both need an approve/reject affordance.
+
+**Ruling (team-lead, 2026-07-11):** ONE pair of routes, `POST /ai-advisor/proposal/approve` and `POST /ai-advisor/proposal/reject`, keyed purely by an opaque `proposal_id` int -- no `source` disambiguation parameter, no `/frontrunner-builder/approve` vs `/strategy-builder/approve` split. Both proposal sources flow through the identical `advisors.frontrunner_builder.approve_frontrunner_proposal`, which is itself source-agnostic (looks up the row, branches on nothing source-specific). A split-by-source route pair would have been redundant ceremony for zero behavioral difference. The template mirrors this: one card-rendering loop, branching only on `is_fr = p.proposal_source == 'frontrunner_builder'` for which columns to show (see render-security posture below), never on which route to call.
+
+`POST /ai-advisor/proposal/approve` is **the only route in the entire app that can reach `composer_draft_client.save_symphony`** -- exclusively via `approve_frontrunner_proposal`, never called directly from the route body. This is unchanged from wave-1's structural no-auto-trade boundary (`DE-FRONTRUNNER-001`); wave-2 adds the human-operated front door to that boundary, not a new path around it.
+
+### Decision: `candidate_tree` preview-bounding at prefetch time, never a live dict in template context
+
+**Problem:** `frontrunner_proposals.candidate_tree` is the full spliced candidate symphony -- potentially 8,000+ nodes (the operator's real trees run that deep; see `DE-FRONTRUNNER-001`'s cascade-count calibration). Passing this as a live Python dict into Jinja context is both a rendering-cost risk and an unnecessary information-density problem for a debug/audit affordance that only needs to show "the candidate tree exists and here's a sample."
+
+**Fix:** `ai_advisor_tab()` pops `candidate_tree` off each prefetched row and replaces it with a JSON-dumped, truncated preview string (`_FR_TREE_PREVIEW_MAX_CHARS = 4000`) stamped as `candidate_tree_preview` -- computed once at prefetch time, never re-serialized per-render. The whole prefetch block is wrapped in `try/except`, degrading to `frontrunner_proposals = []` (the template's existing empty-state) on any failure rather than a 500. The template renders `candidate_tree_preview` inside a collapsed `<details>` element (`fr-raw-preview`), not expanded by default.
+
+### Decision: render-security posture -- zero `| safe`, structural column omission (not blanking) for retrofit rows
+
+**No `| safe` anywhere on the Frontrunner Builder panel.** Every interpolated value (`symphony_id`, metrics, `candidate_tree_preview`, `error_message`) goes through Jinja's default auto-escaping; the JS-side confirmation message (`frDispatchProposalAction`) uses the file's pre-existing `escHtml()` helper for the one place a server value (`symphony_id`) is interpolated into an HTML string client-side, matching the existing render-security convention established by `DE-RF1-PROSE-RENDER` (never dump raw JSON / never trust a value into markup unescaped).
+
+**Structural column omission for `strategy_builder_retrofit` rows, not blanking.** A `strategy_builder_retrofit` proposal has no incumbent to compare against (`strategy_builder_engine`'s candidates are generated from scratch, not spliced onto an existing overlay) -- so the template's Incumbent table column and the node-count-delta strip are wrapped in `{% if is_fr %}` and never rendered at all for those rows, rather than rendered with a placeholder dash. This is a deliberate honesty choice mirroring the project's honest-availability convention elsewhere (never fabricate a comparison that doesn't exist) -- a dash in an Incumbent column would imply "we tried to compute this and got nothing," which is false; the correct statement is "there is no incumbent for this row's provenance."
+
+### Files changed (this cycle, `a6eea48..eb1b612`)
+
+- `app.py` -- 4 new routes (`ai_advisor_frontrunner_builder`, `ai_advisor_frontrunner_builder_run`, `ai_advisor_proposal_approve`, `ai_advisor_proposal_reject`), `_FRONTRUNNER_BUILD_EXECUTOR`, `ai_advisor_tab()` `frontrunner_proposals` prefetch + bounding
+- `templates/ai_advisor.html` -- 7th tab panel (`tab-panel-frontrunner-builder`), risk banner, run controls, empty state, proposal cards
+- `static/ai_advisor.js` -- `frRunBuild`, `frDispatchProposalAction`, `frApprove`, `frReject`
+- `tests/app/test_frontrunner_builder_template.py` (new) -- 28 route/template/security tests
+
+### Verification
+
+`frtest`'s TDD-review independently re-ran the full route (57/57) and template/JS (104 passed / 9 pre-existing skips, no regressions) test surface and confirmed the RED test files are byte-unchanged across the RED→GREEN commits (no weakening), the structural `{% if %}` Incumbent-column omission (not blank-then-hidden), the `candidate_tree` 4000-char bounding, zero `| safe` usage, buttons never anchors, and JS-side `escHtml()` escaping of `symphony_id` before DOM insertion. `frreview` (quant-code-reviewer, route-security + no-trade-boundary lens) was dispatched for an independent security pass over the wave-2 diff; the ANTHROPIC_API_KEY-only `/run` fast-pre-check (Composer deliberately NOT pre-checked) was confirmed deliberate, matching the existing advisor-availability gate posture. `tests/app/test_frontrunner_builder_template.py` (28 tests) covers all 4 routes, the empty/populated card states, source-branching, and the zero-`| safe` render-security assertion.
+
+### Reference
+
+DE-FRONTRUNNER-002; branch `feature/frontrunner-builder`; wave-2 UI HEAD `eb1b612`; plan `feature-plans/frontrunner-builder.md`; supersedes the "Not Yet Built (wave-2)" framing in `DE-FRONTRUNNER-001` and `docs/generated/advisors_frontrunner_builder.md` (now "Wave-2 UI (built, 2026-07-11)"). The operator-gated task-zero live Composer create test is still NOT covered by this entry -- `approve_frontrunner_proposal` has only been exercised against mocked Composer responses to date.
