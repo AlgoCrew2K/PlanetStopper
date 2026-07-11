@@ -384,6 +384,17 @@ _DISMISS_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 # CC-003: register shutdown so in-flight dismiss writes are not abandoned on exit.
 atexit.register(_DISMISS_EXECUTOR.shutdown, wait=True)
 
+# Dedicated single-worker executor for the Frontrunner Builder's on-demand
+# /run trigger (feature-plans/frontrunner-builder.md AC-8/AC-1). Deliberately
+# NOT the _DISMISS_EXECUTOR above: run_frontrunner_build iterates every live
+# symphony (up to MAX_CASCADES_PER_SYMPHONY_RUN cascades each) with
+# rate-limited Fable + Composer calls and is genuinely multi-minute — sharing
+# a pool with the latency-sensitive dismiss/flush writes would queue those
+# behind a long-running build. Single-worker serialises overlapping run
+# requests rather than hammering Fable/Composer concurrently.
+_FRONTRUNNER_BUILD_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+atexit.register(_FRONTRUNNER_BUILD_EXECUTOR.shutdown, wait=True)
+
 # CC-NEW-001: serializes flush_resync's background load+modify+save against any
 # other intra-process writer of the state DB.  This is an INTRA-PROCESS guard
 # only: it serializes concurrent _flush_state_async submissions running on the
@@ -4632,6 +4643,147 @@ def ai_advisor_strategy_builder_run():
             "error": None,
         }
     ), 200
+
+
+@app.route("/ai-advisor/frontrunner-builder", methods=["GET"])
+def ai_advisor_frontrunner_builder():
+    """Redirect to the unified /ai-advisor page (SPA model — no standalone page).
+
+    Mirrors the existing redirect-stub pattern for every other Advisor
+    sub-route (correlations/asset-swaps/logic-changes/chat/strategy-builder).
+    """
+    return redirect(url_for("ai_advisor_tab"), code=302)
+
+
+@app.route("/ai-advisor/frontrunner-builder/run", methods=["POST"])
+def ai_advisor_frontrunner_builder_run():
+    """Operator-initiated Frontrunner Builder run (AC-1 on-demand, AC-8).
+
+    Dispatches advisors.frontrunner_builder.run_frontrunner_build to a
+    dedicated background executor (_FRONTRUNNER_BUILD_EXECUTOR) and returns
+    202 immediately. run_frontrunner_build iterates every live symphony (up
+    to MAX_CASCADES_PER_SYMPHONY_RUN cascades each) with rate-limited Fable +
+    Composer calls — genuinely multi-minute — and must never block a Flask
+    request thread (dashboard Prime Directive: never a live-trade-action
+    surface, never blocks/slows the minute-by-minute execution loop). Results
+    persist straight to frontrunner_proposals (SQLite); the operator "polls"
+    by reloading /ai-advisor to see newly-queued server-rendered proposal
+    cards — there is no synchronous result body and no new JSON polling
+    endpoint.
+
+    Accepts JSON: { symphony_ids?: [str] }. Omitted/empty -> full live
+    roster (run_frontrunner_build's own default).
+
+    Fails fast (200 + error, never submits to the executor) when
+    ANTHROPIC_API_KEY is absent — the build needs it for Fable candidate
+    generation; a doomed background job should never be queued.
+
+    CSRF is enforced by _csrf_before_request @before_request hook — not
+    called here. NOT added to _SETTINGS_WRITE_ALLOWLIST (not a settings
+    write). No LIVE_EXECUTION interaction anywhere.
+    """
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return jsonify({"error": "advisor unavailable: ANTHROPIC_API_KEY not configured"}), 200
+
+    body = request.get_json(silent=True) or {}
+    symphony_ids_raw = body.get("symphony_ids")
+    symphony_ids = (
+        [str(s).strip() for s in symphony_ids_raw if str(s).strip()] if symphony_ids_raw else None
+    )
+
+    # CC-2 lazy import — keeps advisors.frontrunner_builder off app.py's
+    # module-scope import graph / the live 1-minute execution path.
+    from advisors.frontrunner_builder import run_frontrunner_build  # noqa: PLC0415
+
+    try:
+        _FRONTRUNNER_BUILD_EXECUTOR.submit(run_frontrunner_build, symphony_ids=symphony_ids)
+    except Exception as exc:
+        _daemon_log.error(
+            "ai_advisor_frontrunner_builder_run: dispatch failed: %s", exc, exc_info=True
+        )
+        # D-1 security contract: do NOT echo str(exc) — same rationale as
+        # ai_advisor_strategy_builder_run's own outer except above.
+        return jsonify({"error": type(exc).__name__}), 200
+
+    return jsonify({"status": "started"}), 202
+
+
+@app.route("/ai-advisor/proposal/approve", methods=["POST"])
+def ai_advisor_proposal_approve():
+    """Generic approval route for frontrunner_proposals rows (AC-9/AC-10).
+
+    Serves BOTH proposal sources — 'frontrunner_builder' and
+    'strategy_builder_retrofit' — since both land in the SAME
+    frontrunner_proposals table (migration 033) and both flow through the
+    identical advisors.frontrunner_builder.approve_frontrunner_proposal,
+    which is itself source-agnostic (keyed purely by row id). RULED
+    (team-lead, 2026-07-11): a single opaque proposal_id, no source
+    disambiguation param.
+
+    THIS IS THE ONLY ROUTE IN THE APP THAT CAN REACH
+    composer_draft_client.save_symphony — exclusively via
+    approve_frontrunner_proposal, never called directly here. Approval
+    creates a NEW UNDEPLOYED Composer symphony (verify_undeployed enforced
+    inside the called function) — never a trade, never a deploy/invest call.
+
+    Accepts JSON: { proposal_id: <int> }. Bounded (1-2 Composer calls) — safe
+    to run synchronously in-request, unlike /run.
+
+    CSRF is enforced by _csrf_before_request @before_request hook — not
+    called here. NOT added to _SETTINGS_WRITE_ALLOWLIST. No LIVE_EXECUTION
+    interaction.
+    """
+    body = request.get_json(silent=True) or {}
+    try:
+        proposal_id = int(body.get("proposal_id"))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "invalid proposal_id"}), 200
+
+    # CC-2 lazy import — keeps advisors.frontrunner_builder off app.py's
+    # module-scope import graph / the live 1-minute execution path.
+    from advisors.frontrunner_builder import approve_frontrunner_proposal  # noqa: PLC0415
+
+    try:
+        result = approve_frontrunner_proposal(proposal_id)
+    except Exception as exc:
+        _daemon_log.error("ai_advisor_proposal_approve failed: %s", exc, exc_info=True)
+        # D-1 security contract: do NOT echo str(exc) — may carry Composer
+        # credentials or internal paths.
+        return jsonify({"error": type(exc).__name__}), 200
+
+    return jsonify(
+        {"success": result.success, "symphony_id": result.symphony_id, "error": result.error}
+    ), 200
+
+
+@app.route("/ai-advisor/proposal/reject", methods=["POST"])
+def ai_advisor_proposal_reject():
+    """Generic rejection route for frontrunner_proposals rows (AC-9/AC-10).
+
+    Status-only DB write — never touches composer_draft_client (same
+    shared-table rationale as ai_advisor_proposal_approve above).
+
+    Accepts JSON: { proposal_id: <int> }.
+
+    CSRF is enforced by _csrf_before_request @before_request hook — not
+    called here. NOT added to _SETTINGS_WRITE_ALLOWLIST. No LIVE_EXECUTION
+    interaction.
+    """
+    body = request.get_json(silent=True) or {}
+    try:
+        proposal_id = int(body.get("proposal_id"))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "invalid proposal_id"}), 200
+
+    try:
+        updated = database.update_frontrunner_proposal_status(
+            proposal_id, approval_status="rejected"
+        )
+    except Exception as exc:
+        _daemon_log.error("ai_advisor_proposal_reject failed: %s", exc, exc_info=True)
+        return jsonify({"error": type(exc).__name__}), 200
+
+    return jsonify({"success": bool(updated)}), 200
 
 
 def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:
