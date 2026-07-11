@@ -1040,6 +1040,16 @@ def _run_build_for_symphony(symphony_id: str) -> None:
     # times) — the exact "hitting Mongo" failure mode this hoist fixes, on
     # top of being the correct production pattern regardless of test
     # exposure (a warm weekly cache still doesn't need N redundant reads).
+    #
+    # watched_tickers=[] is INTENTIONAL, not a placeholder to fill in later:
+    # _gather_atlas_frontrunner_patterns' watched_tickers param is currently
+    # UNUSED (no ticker-relevance filtering implemented — see that function's
+    # own docstring), so [] costs nothing today. LANDMINE (frreview P2-2):
+    # this call is now run-scoped, not cascade-scoped — if ticker-relevance
+    # filtering is ever wired up against that param, THIS call site is the
+    # one that must be updated to pass real tickers (e.g. the union of every
+    # cascade's watched_tickers, computed before this call), or filtering
+    # will silently no-op forever with an empty list.
     atlas_patterns = _gather_atlas_frontrunner_patterns(watched_tickers=[])
 
     for cascade in cascades:
