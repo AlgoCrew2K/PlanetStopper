@@ -67,11 +67,14 @@ _PROJECTION: dict = {
 # Reduced 500 -> 100 (DE-ATLAS-SLOW-QUERY-001 amendment): edn_string is
 # ~153KB/doc live, so even an indexed _id fetch of 500 full docs was
 # live-observed to dominate the 45s timeout budget on its own, independent of
-# sort/index. 100 still covers MAX_COMMUNITY_CANDIDATES_PER_RUN=20 with 5x
-# headroom for dedup/validation loss while cutting the fetch payload 5x. The
-# public `limit` param (post-fetch, post-dedup) is a separate, independent
-# caller-level control — not the same as this cap.
-_MAX_FETCH_DOCS: int = 100
+# sort/index. Tightened further 100 -> 50 (droplet-headroom margin,
+# DE-ATLAS-SHARPE-FIELD-001 follow-up): the 100-cap live gate left only ~11s
+# of margin under the 45s bound (33.95s observed). 50 roughly halves
+# fetch+parse cost with zero functional impact — still covers
+# MAX_COMMUNITY_CANDIDATES_PER_RUN=20 with 2.5x headroom for dedup/validation
+# loss. The public `limit` param (post-fetch, post-dedup) is a separate,
+# independent caller-level control — not the same as this cap.
+_MAX_FETCH_DOCS: int = 50
 
 # Atlas collection identifier — key used in the atlas_cache table.
 _COLLECTION_NAME = "captplanet.strategies"
