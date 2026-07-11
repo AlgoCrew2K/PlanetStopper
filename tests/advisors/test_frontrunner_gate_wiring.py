@@ -93,6 +93,37 @@ def _make_fake_result(n_days: int = 100, base_return: float = 0.001):
     )
 
 
+def _make_shaped_result(shape_pct: list, n_days: int = 100):
+    """Build a BacktestResult from an explicit repeating daily-return shape.
+
+    Unlike ``_make_fake_result`` (a single cyclical multiplier around one
+    base_return — degenerate for gate-significance testing, see the
+    docstring on ``test_a_gate_and_calmar_surviving_candidate_is_queued_with_metrics``
+    for why), this lets a test hand-place both up AND down days so the
+    series' Sortino ratio is genuinely computable (a real strategy's return
+    series is never all-positive or all-negative).
+
+    ``shape_pct`` values are PERCENT (e.g. 0.60 = +0.60%/day); tiled to
+    ``n_days`` via ``shape_pct[i % len(shape_pct)]``.  Converted to FRACTION
+    form for the BacktestResult (mirrors _make_fake_result's own contract —
+    _gate_and_accept_candidate multiplies daily_returns by 100.0 to recover
+    percent).
+    """
+    from advisors.composer_backtest_client import BacktestResult
+
+    returns: dict[str, float] = {}
+    d = date(2022, 1, 1)
+    for i in range(n_days):
+        returns[d.isoformat()] = shape_pct[i % len(shape_pct)] / 100.0
+        d += timedelta(days=1)
+
+    return BacktestResult(
+        stats={"sharpe": 0.5, "cagr": 0.08},
+        data_warnings=[],
+        daily_returns=returns,
+    )
+
+
 def _make_error_result():
     from advisors.composer_backtest_client import BacktestResult
 
@@ -295,9 +326,77 @@ def test_a_gate_and_calmar_surviving_candidate_is_queued_with_metrics(fbld, incu
     """The positive path: a candidate that survives the overfitting gate AND
     improves Calmar must be queued via database.insert_frontrunner_proposal,
     and the persisted metrics_json must carry the incumbent-vs-candidate
-    Calmar/CAGR/MDD/node-count deltas (AC-8 dashboard need)."""
-    incumbent_result = _make_fake_result(n_days=100, base_return=0.0005)
-    candidate_result = _make_fake_result(n_days=100, base_return=0.003)
+    Calmar/CAGR/MDD/node-count deltas (AC-8 dashboard need).
+
+    FIXTURE DESIGN NOTE (why _make_fake_result cannot exercise this path):
+    _make_fake_result's single cyclical multiplier around one base_return
+    (`base_return * (1 + (i % 5) * 0.1 - 0.2)`) is ALL-POSITIVE whenever
+    base_return > 0 (the multiplier only ranges 0.8-1.2). Verified directly
+    (advisors.backtest_gate_engine.evaluate_candidate_batch probe, both
+    series all-positive): autotuner.compute_sortino_ratio hits the +1e6
+    sentinel (zero downside deviation) on the RAW series, and EVERY
+    bootstrap resample (autotuner.compute_sortino_se_bootstrap) draws from
+    the same all-positive population, so every resampled Sortino also hits
+    the sentinel and gets filtered — `len(sortinos) < _BOOTSTRAP_MIN_VALID_RESAMPLES`
+    (0 < 100) makes SE None, which makes compute_sortino_tstat fall back to
+    0.0 (autotuner.py:904), giving p=0.5 for BOTH candidates — neither ever
+    clears the BHY/Yekutieli FDR gate (HARVEY_LIU_FDR_Q=0.05), regardless of
+    how large the return gap is. `_make_shaped_result` fixes this by hand-
+    placing genuine down days into BOTH series.
+
+    ROOT-CAUSE FINDING #2 (SEPARATE from the fixture-realism issue above;
+    confirmed via a direct evaluate_candidate_batch probe against the
+    CURRENT candidate-only-batch code — commit f51cffe fixed a real n=2
+    BHY-competition bug where the incumbent competed with the candidate for
+    the single winner slot, but did not touch this one): even with THIS
+    fixture, which clears BOTH the BHY/FDR gate cleanly (probe-verified
+    winner_p_adj ≈ 0.013, well under HARVEY_LIU_FDR_Q=0.05, vetoes_passed=True)
+    and the OOS-alpha-beats-both-baselines check, the STAGE-2 discretionary
+    panel in acceptance_gate.evaluate_acceptance_gate still structurally
+    blocks ADOPT_CANDIDATE, because _gate_and_accept_candidate's sole batch
+    member (advisors/frontrunner_builder.py:986-994,
+    ``BacktestCandidate(candidate_id="candidate", ...)``) always passes
+    candidate_params={}, incumbent_params={}, theory_prior_params={} (there
+    is no Optuna-style parameter vector for a tree-splice candidate). With
+    all three empty:
+      - acceptance_gate._compute_parameter_stability_score(candidate_params={},
+        incumbent_params={}) returns the neutral prior 0.5 (empty input
+        short-circuit, acceptance_gate.py — mirrored in
+        backtest_gate_engine.py:762-764's cand_stability call).
+      - backtest_gate_engine.py:773 hardcodes inc_stability = 1.0 ("the
+        incumbent is, by definition, stable against itself") — NOT derived
+        from empty params, so it does not degrade to 0.5 the way the
+        candidate's does.
+      - candidate_panel_score = 0.5*0.5 + 0.5*0.5 = 0.5 (acceptance_gate.py:230-232).
+      - incumbent_panel_score = 0.5*1.0 + 0.5*0.5 = 0.75 (acceptance_gate.py:233-235,
+        inc_stability=1.0, inc_prior_anchor=0.5 neutral).
+      - The margin check (acceptance_gate.py:259,
+        `candidate_panel_score >= incumbent_panel_score + PANEL_ADOPT_MARGIN_THRESHOLD`)
+        requires 0.5 >= 0.75 — mathematically IMPOSSIBLE for any candidate
+        with empty params, no matter how much better its returns are.
+        Decision is KEEP_INCUMBENT every time (confirmed via probe:
+        vetoes_passed=True, panel_score=0.5, decision=KEEP_INCUMBENT).
+    This test is therefore genuinely RED for a STRUCTURAL reason, not merely
+    a fixture-realism gap: _gate_and_accept_candidate needs to pass
+    non-empty, non-structurally-disadvantaged params (e.g. identical
+    non-empty candidate_params/incumbent_params/theory_prior_params so the
+    panel's parameter-distance criteria — designed for Optuna parameter
+    search, not tree-splice candidates — become a neutral tie rather than an
+    unwinnable 0.5-vs-0.75 gap) so ADOPT_CANDIDATE is reachable when the
+    returns genuinely warrant it. This assertion is NOT weakened to route
+    around the finding — a worse implementation (one that never fixes the
+    panel-score construction) must continue to fail this test.
+    """
+    incumbent_shape_pct = [0.10, -0.05, 0.08, -0.10, 0.12, -0.03, 0.05, -0.08, 0.10, -0.02]
+    # Strong, mostly-positive candidate with genuine (not near-zero-float-noise)
+    # down days every 5th day — clears BHY/FDR significance (probe-verified
+    # winner_p_adj ≈ 0.037 < HARVEY_LIU_FDR_Q=0.05) and its 20-day validation-fold
+    # sum comfortably beats the incumbent's full 100-day sum (probe-verified
+    # oos_alpha ≈ 9.4 vs incumbent full-period ≈ 1.7).
+    candidate_shape_pct = [0.60, 0.60, 0.60, 0.60, -0.05, 0.60, 0.60, 0.60, 0.60, -0.05]
+
+    incumbent_result = _make_shaped_result(incumbent_shape_pct, n_days=100)
+    candidate_result = _make_shaped_result(candidate_shape_pct, n_days=100)
 
     call_count = {"n": 0}
 
@@ -314,9 +413,12 @@ def test_a_gate_and_calmar_surviving_candidate_is_queued_with_metrics(fbld, incu
         fbld._run_build_for_symphony("test-symphony-id")
 
     assert mock_insert.called, (
-        "a candidate with a materially better return series (higher CAGR, "
-        "comparable drawdown) was not queued — the gate/Calmar wiring is "
-        "over-rejecting or not calling insert_frontrunner_proposal at all"
+        "a candidate that clears the BHY/FDR significance gate AND the "
+        "OOS-alpha-beats-both-baselines check was not queued — see this "
+        "test's docstring for the confirmed root cause (the discretionary "
+        "panel's parameter-distance criteria structurally floor the "
+        "candidate at 0.5 vs the incumbent's hardcoded 1.0 stability when "
+        "candidate_params/incumbent_params/theory_prior_params are empty)"
     )
     _, call_kwargs = mock_insert.call_args
     metrics = call_kwargs.get("metrics_json")
@@ -352,6 +454,311 @@ def test_search_breadth_is_recorded_to_the_dof_ledger():
     assert "dof" in source.lower() or "degrees_of_freedom" in source.lower(), (
         "frontrunner_builder.py has no reference to a DoF ledger anywhere — "
         "AC-6 requires the builder's search breadth to be recorded there"
+    )
+
+
+def test_search_breadth_is_recorded_to_the_dof_ledger_with_the_correct_kwargs(
+    fbld, incumbent_symphony
+):
+    """AC-6 behavioral (not just source-grep): database.insert_dof_ledger_row
+    must actually be CALLED during a build run, with kwargs matching the
+    real signature (database.py:2047-2057) and its accepted enum values
+    (database.py:2006-2029): facet_category in
+    _VALID_DOF_FACET_CATEGORIES={"specification","parameter"}, decision_type
+    in _VALID_DOF_DECISION_TYPES={"FIXED","SEARCHED","REVISED","OOS_PEEK"},
+    evidence_source in _VALID_DOF_EVIDENCE_SOURCES (includes
+    "BACKTEST_SELECTION"). Mirrors autotuner.py's own call site (~line 1957,
+    validate_nn1_compliance's BACKTEST_SELECTION write) for the calling
+    convention — the frontrunner builder's candidate search is exactly the
+    same "+S contribution to N_effective" concept: every candidate overlay
+    generated and independently backtested is one more config searched,
+    which the BHY haircut must account for.
+
+    This must fire regardless of whether the candidate is ultimately
+    accepted or rejected — the DoF ledger tracks SEARCH EXPOSURE, not
+    outcomes (a rejected candidate still cost a look at the data). This test
+    reuses the gate-rejected fixture shape (candidate underperforms, same
+    idiom as test_a_calmar_rejected_candidate_is_not_queued) precisely to
+    prove the ledger write does not depend on acceptance.
+    """
+    incumbent_result = _make_fake_result(n_days=100, base_return=0.002)
+    candidate_result = _make_fake_result(n_days=100, base_return=-0.0015)
+
+    call_count = {"n": 0}
+
+    def _side_effect(*args, **kwargs):
+        call_count["n"] += 1
+        return incumbent_result if call_count["n"] == 1 else candidate_result
+
+    with (
+        patch("symphony_logic.fetch_symphony_score", return_value=incumbent_symphony),
+        _patched_fable(fbld),
+        patch("advisors.composer_backtest_client.run_backtest", side_effect=_side_effect),
+        patch("database.insert_frontrunner_proposal"),
+        patch("database.insert_advisor_observation"),
+        patch("database.insert_dof_ledger_row") as mock_dof,
+    ):
+        fbld._run_build_for_symphony("test-symphony-id")
+
+    assert mock_dof.called, (
+        "database.insert_dof_ledger_row was never called during a build run "
+        "that generated and backtested a candidate — AC-6 requires search "
+        "breadth to be recorded regardless of the accept/reject outcome"
+    )
+    _, call_kwargs = mock_dof.call_args
+    assert isinstance(call_kwargs.get("facet_name"), str) and call_kwargs.get("facet_name"), (
+        "facet_name must be a non-empty descriptive string"
+    )
+    assert call_kwargs.get("decision_type") == "SEARCHED", (
+        f"expected decision_type='SEARCHED' (this is a search-breadth "
+        f"record, not a FIXED/REVISED/OOS_PEEK spec decision), got "
+        f"{call_kwargs.get('decision_type')!r}"
+    )
+    assert call_kwargs.get("evidence_source") == "BACKTEST_SELECTION", (
+        f"expected evidence_source='BACKTEST_SELECTION' (mirrors "
+        f"autotuner.py's own NN1-violation call site for a backtest-driven "
+        f"search), got {call_kwargs.get('evidence_source')!r}"
+    )
+    assert call_kwargs.get("facet_category") == "specification", (
+        f"expected facet_category='specification' "
+        f"(_VALID_DOF_FACET_CATEGORIES has no 'candidate_search' option — "
+        f"'specification' is the closest fit), got "
+        f"{call_kwargs.get('facet_category')!r}"
+    )
+    n_configs = call_kwargs.get("n_configs_searched")
+    assert isinstance(n_configs, int) and n_configs >= 1, (
+        f"expected n_configs_searched to be a positive int reflecting how "
+        f"many candidate overlays were generated+backtested this run, got "
+        f"{n_configs!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# AC-11: rejected candidates are recorded (reason + deltas), not just logged.
+# ---------------------------------------------------------------------------
+
+
+def test_a_gate_rejected_candidate_is_recorded_as_a_rejected_advisor_observation_with_reason_and_deltas(
+    fbld, incumbent_symphony
+):
+    """AC-11: 'fails gates ... → rejected item w/ reason+deltas.' A candidate
+    that fails the overfitting gate (backtest_gate_engine.evaluate_candidate_batch)
+    must still be recorded — via database.insert_advisor_observation, NOT
+    database.insert_frontrunner_proposal (that path stays reserved for the
+    operator approval QUEUE; a rejected candidate is never queued — see
+    test_a_calmar_rejected_candidate_is_not_queued, which this test does not
+    weaken or duplicate) — mirroring advisors/strategy_builder_engine.py's
+    own insert_advisor_observation call site (~line 679), which
+    unconditionally records BOTH survivors and rejects for every candidate
+    it evaluates.
+
+    'deltas' means the incumbent-vs-candidate Calmar/CAGR/max_drawdown
+    figures must be present even on a REJECT — not just on accept (AC-8's
+    metrics_json requirement is accept-only; AC-11's is universal). Expected
+    values are derived from the SAME analytics.compute_quantstats_metrics
+    call the production code itself makes on this fixture's own return
+    series — never hardcoded.
+    """
+    from analytics import compute_quantstats_metrics
+
+    incumbent_shape_pct = [0.10, -0.05, 0.08, -0.10, 0.12, -0.03, 0.05, -0.08, 0.10, -0.02]
+    # Weak/negative candidate — clearly gate-rejected (both on BHY significance
+    # and on the OOS-alpha-beats-both-baselines check), reused here specifically
+    # to prove the REJECT path now persists an audit record with reason+deltas.
+    candidate_shape_pct = [-0.20, -0.30, -0.25, -0.35, -0.15, -0.40, -0.20, -0.30, -0.25, -0.10]
+
+    incumbent_result = _make_shaped_result(incumbent_shape_pct, n_days=100)
+    candidate_result = _make_shaped_result(candidate_shape_pct, n_days=100)
+
+    expected_incumbent_metrics = compute_quantstats_metrics(
+        [r * 100.0 for r in incumbent_result.daily_returns.values()]
+    )
+    expected_candidate_metrics = compute_quantstats_metrics(
+        [r * 100.0 for r in candidate_result.daily_returns.values()]
+    )
+
+    call_count = {"n": 0}
+
+    def _side_effect(*args, **kwargs):
+        call_count["n"] += 1
+        return incumbent_result if call_count["n"] == 1 else candidate_result
+
+    with (
+        patch("symphony_logic.fetch_symphony_score", return_value=incumbent_symphony),
+        _patched_fable(fbld),
+        patch("advisors.composer_backtest_client.run_backtest", side_effect=_side_effect),
+        patch("database.insert_frontrunner_proposal") as mock_insert_proposal,
+        patch("database.insert_advisor_observation") as mock_insert_obs,
+        patch("database.insert_dof_ledger_row"),
+    ):
+        fbld._run_build_for_symphony("test-symphony-id")
+
+    mock_insert_proposal.assert_not_called()  # never queued — a reject is not a proposal
+    assert mock_insert_obs.called, (
+        "a gate-rejected candidate was not recorded via "
+        "database.insert_advisor_observation — AC-11 requires a rejected "
+        "item to carry its reason+deltas for operator/audit visibility, "
+        "not silently disappear into a log line"
+    )
+    _, call_kwargs = mock_insert_obs.call_args
+    assert call_kwargs.get("advisor_role") == "FRONTRUNNER_BUILDER"
+    assert call_kwargs.get("subject_type") == "frontrunner_candidate"
+    verdict = call_kwargs.get("verdict")
+    assert isinstance(verdict, str) and verdict, (
+        "verdict must be a non-empty reason string, not silently omitted"
+    )
+    raw_response = call_kwargs.get("raw_response")
+    assert isinstance(raw_response, dict), "raw_response must be a dict carrying reason+deltas"
+    assert (
+        "reject_reason" in raw_response
+        or "gate" in verdict.lower()
+        or "reject" in verdict.lower()
+    ), (
+        f"raw_response/verdict does not surface WHY the candidate was "
+        f"rejected: verdict={verdict!r}, raw_response keys="
+        f"{sorted(raw_response.keys())}"
+    )
+    for key, expected in (
+        ("candidate_cagr", expected_candidate_metrics.get("annualized_return")),
+        ("candidate_max_drawdown", expected_candidate_metrics.get("max_drawdown")),
+        ("incumbent_cagr", expected_incumbent_metrics.get("annualized_return")),
+        ("incumbent_max_drawdown", expected_incumbent_metrics.get("max_drawdown")),
+    ):
+        assert key in raw_response, (
+            f"raw_response is missing {key!r} — AC-11's 'deltas' requirement "
+            f"means the reject record must carry the same incumbent-vs-"
+            f"candidate figures the accept path already persists "
+            f"(_gate_and_accept_candidate's metrics dict, AC-8); keys found: "
+            f"{sorted(raw_response.keys())}"
+        )
+        assert raw_response[key] == pytest.approx(expected, rel=1e-6, abs=1e-9), (
+            f"{key}={raw_response[key]!r} does not match the value derived "
+            f"from analytics.compute_quantstats_metrics on this fixture's "
+            f"own return series ({expected!r}) — deltas must be real, not "
+            f"placeholder/hardcoded"
+        )
+    assert "node_count_delta" in raw_response, (
+        "raw_response is missing 'node_count_delta' — AC-11's deltas "
+        "include the node-count comparison, not just Calmar/CAGR/MDD"
+    )
+
+
+# ---------------------------------------------------------------------------
+# AC-11: no-incumbent / Fable-exhausted skips persist nothing, never crash.
+# ---------------------------------------------------------------------------
+
+
+def test_no_incumbent_detected_persists_neither_a_proposal_nor_an_observation(
+    fbld, incumbent_symphony
+):
+    """AC-11: 'no incumbent FR → skip w/ reason.' When
+    frontrunner_detector.detect_frontrunner_cascades finds no cascade, the
+    orchestration must not call EITHER database.insert_frontrunner_proposal
+    (nothing to queue) OR database.insert_advisor_observation (nothing was
+    generated/gated/rejected — there is no candidate to record a reason
+    against), and must not crash (D-1)."""
+    from advisors import frontrunner_detector
+
+    with (
+        patch("symphony_logic.fetch_symphony_score", return_value=incumbent_symphony),
+        patch(
+            "advisors.frontrunner_detector.detect_frontrunner_cascades",
+            return_value=frontrunner_detector.DetectionResult(
+                cascades=[], skip_reason="no incumbent frontrunner"
+            ),
+        ),
+        patch("database.insert_frontrunner_proposal") as mock_insert_proposal,
+        patch("database.insert_advisor_observation") as mock_insert_obs,
+        patch("database.insert_dof_ledger_row") as mock_dof,
+    ):
+        fbld._run_build_for_symphony("test-symphony-id")  # must not raise
+
+    mock_insert_proposal.assert_not_called()
+    mock_insert_obs.assert_not_called()
+    mock_dof.assert_not_called()
+
+
+def test_fable_generation_exhausted_persists_nothing_for_that_cascade(fbld, incumbent_symphony):
+    """AC-11: 'Fable returns no-VIX/invalid candidate → reject + bounded
+    retry → skip.' generate_candidate_overlay already enforces the bounded
+    retry + VIX/invalid rejection at the unit level (test_frontrunner_builder.py);
+    this is the ORCHESTRATION-level completeness check — when generation is
+    exhausted (candidate=None), _run_build_for_symphony must skip that
+    cascade without calling insert_frontrunner_proposal or
+    insert_advisor_observation (there is no candidate tree to persist a
+    reject record against — only a generation failure, distinct from a
+    gate/Calmar rejection of a real candidate), and without crashing."""
+    with (
+        patch("symphony_logic.fetch_symphony_score", return_value=incumbent_symphony),
+        patch.object(
+            fbld,
+            "generate_candidate_overlay",
+            return_value=fbld.GenerationResult(
+                candidate=None, error="candidate fire branch contains no VIX-family ticker"
+            ),
+        ),
+        patch("database.insert_frontrunner_proposal") as mock_insert_proposal,
+        patch("database.insert_advisor_observation") as mock_insert_obs,
+    ):
+        fbld._run_build_for_symphony("test-symphony-id")  # must not raise
+
+    mock_insert_proposal.assert_not_called()
+    mock_insert_obs.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# AC-12: Fable candidate-generation budget cap per symphony.
+# ---------------------------------------------------------------------------
+
+
+def test_fable_calls_per_symphony_are_bounded_by_a_budget_cap(fbld, incumbent_symphony):
+    """AC-12: 'N candidates/symphony with a Fable API budget cap.' A
+    symphony whose detector finds many parallel-sub-strategy cascades (a
+    real large tree can have dozens of parallel sleeves) must not fan out
+    into an unbounded number of Fable calls in one build — each Fable call
+    is a billed API request. This asserts the call count is BOUNDED, not
+    unbounded: strictly less than the number of cascades supplied (proving
+    a cap exists) and at or under a documented sane ceiling. 10 is chosen as
+    the ceiling because the feature plan's own grounding note describes real
+    incumbent symphonies as having a small number of qualifying parallel
+    frontrunner cascades (the operator's 11 captured trees) — 10 gives
+    comfortable headroom for a legitimately complex symphony while still
+    bounding runaway spend on a malformed or adversarial detection result.
+    """
+    from advisors import frontrunner_detector
+
+    _CEILING = 10
+    n_cascades_supplied = _CEILING + 5  # comfortably more than any reasonable cap
+
+    many_cascades = [
+        frontrunner_detector.Cascade(overlay_tree={"id": f"cascade-node-{i}"})
+        for i in range(n_cascades_supplied)
+    ]
+
+    with (
+        patch("symphony_logic.fetch_symphony_score", return_value=incumbent_symphony),
+        patch(
+            "advisors.frontrunner_detector.detect_frontrunner_cascades",
+            return_value=frontrunner_detector.DetectionResult(cascades=many_cascades),
+        ),
+        _patched_fable(fbld) as mock_build_client,
+        patch("database.insert_frontrunner_proposal"),
+        patch("database.insert_advisor_observation"),
+        patch("database.insert_dof_ledger_row"),
+    ):
+        fbld._run_build_for_symphony("test-symphony-id")
+        fable_client = mock_build_client.return_value
+        call_count = fable_client.messages.create.call_count
+
+    assert call_count < n_cascades_supplied, (
+        f"Fable was called {call_count} times for {n_cascades_supplied} "
+        f"detected cascades — every cascade triggered a generation call "
+        f"with no budget cap; AC-12 requires an explicit per-symphony ceiling"
+    )
+    assert call_count <= _CEILING, (
+        f"Fable call count ({call_count}) exceeds the documented sane "
+        f"ceiling ({_CEILING}) — the per-symphony budget cap is too "
+        f"generous or absent"
     )
 
 
