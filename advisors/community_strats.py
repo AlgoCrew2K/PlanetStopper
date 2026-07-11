@@ -179,12 +179,20 @@ def load_community_strategies(
         def _fetch_fn() -> list:
             """Connect to Atlas and return the projected strategy documents.
 
-            Server-side sort + limit applied at query time:
-            - sort by oos_metrics.sharpe descending so the cap takes the best-sharpe
-              docs (missing-sharpe docs sort to the bottom in Mongo's collation).
-            - allowDiskUse=True prevents the 32 MB in-memory sort limit from
-              aborting the query on a large collection.
-            - .limit(_MAX_FETCH_DOCS) caps the network transfer and avoids OOM.
+            Two-step fetch (DE-ATLAS-SLOW-QUERY-001): oos_metrics.sharpe has no
+            index on captplanet.strategies, and _PROJECTION includes edn_string
+            (a multi-KB field per doc) — sorting the full ~11k-doc corpus at full
+            document size, unindexed, on disk was observed to take ~50s in
+            production, blowing through _ATLAS_FETCH_TIMEOUT_S on every pull.
+
+            Step 1 — lightweight selection: sort by oos_metrics.sharpe descending
+            (missing-sharpe docs sort to the bottom in Mongo's collation) over a
+            small projection (no edn_string), capped to _MAX_FETCH_DOCS.
+            allowDiskUse=True prevents the 32 MB in-memory sort limit from
+            aborting the query on the large collection — sorting the small
+            projection is cheap even though the field stays unindexed.
+            Step 2 — targeted full-document fetch by the _id's selected in step 1,
+            an indexed _id lookup, so it needs no server-side sort.
             """
             import pymongo  # noqa: PLC0415
 
@@ -194,13 +202,17 @@ def load_community_strategies(
                 connectTimeoutMS=10_000,
             )
             collection = mongo_client["captplanet"]["strategies"]
-            cursor = collection.find(
+
+            selection_cursor = collection.find(
                 {},
-                _PROJECTION,
+                {"_id": 1, "oos_metrics.sharpe": 1},
                 sort=[("oos_metrics.sharpe", pymongo.DESCENDING)],
                 allow_disk_use=True,
             ).limit(_MAX_FETCH_DOCS)
-            return list(cursor)
+            selected_ids = [doc["_id"] for doc in selection_cursor]
+
+            full_cursor = collection.find({"_id": {"$in": selected_ids}}, _PROJECTION)
+            return list(full_cursor)
 
         def _bounded_fetch_fn() -> list:
             """Wrap _fetch_fn with a wall-clock timeout.
