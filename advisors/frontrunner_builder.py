@@ -90,6 +90,22 @@ MAX_OUTPUT_TOKENS: int = 8192
 # rejected/degenerate candidate (AC-11: "reject + bounded retry").
 MAX_GENERATION_ATTEMPTS: int = 3
 
+# AC-12: Fable API budget cap — bounds the number of Fable calls (one per
+# detected cascade) a single _run_build_for_symphony run can make. VERIFIED
+# against all 11 real validation trees (tests/fixtures/advisors/frontrunner/
+# real_tree_*.json) via the real frontrunner_detector: observed cascade
+# counts were {26, 12, 8, 4, 4, 3, 2, 1, 1, 1, 0}, max=26 (real_tree_01, a
+# legitimate, unambiguous detection — not an edge case). 40 (~1.5x the
+# observed max) gives real headroom above that outlier for legitimate future
+# sub-strategy growth while still bounding a pathological/mis-parsed
+# detection (e.g. hundreds of spurious cascades) from triggering unbounded
+# Fable spend. Team-lead-ratified 2026-07-11, replacing an initial guess of
+# 10 that would have silently truncated candidate generation on 2 of the
+# operator's 11 real live symphonies — the exact failure mode this cap must
+# not itself cause. Cascades beyond the cap are skipped with a logged
+# reason, never silently dropped.
+MAX_CASCADES_PER_SYMPHONY_RUN: int = 40
+
 # VIX-family tickers recognized as hedge/fire-basket instruments — same
 # vocabulary as frontrunner_detector.VIX_FAMILY_TICKERS (imported, not
 # duplicated, so the two modules can never drift on this list).
@@ -856,6 +872,80 @@ def _count_tree_nodes(node) -> int:
     return 1 + sum(_count_tree_nodes(c) for c in node.get("children") or [])
 
 
+def _gather_atlas_frontrunner_patterns(watched_tickers: list[str]) -> list[dict]:
+    """AC-3: load the Atlas frontrunner corpus through the shared 7-day cache,
+    identify frontrunner-shaped strategies (structural detection, reusing the
+    same detector applied to live symphonies), and extract patterns (watched
+    tickers, VIX/hedge instruments, RSI thresholds, basket shapes) for the
+    Fable generation prompt's ``atlas_patterns`` slot.
+
+    Parameters
+    ----------
+    watched_tickers : list[str]
+        The CURRENT symphony's own detected cascade's watched tickers (the
+        same list ``_run_build_for_symphony`` already computes for
+        ``signal_context``). Accepted for future ticker-relevance scoping —
+        no RED test requires filtering on it, so this batch applies none;
+        every structurally frontrunner-shaped Atlas candidate contributes
+        patterns regardless of ticker overlap.
+
+    Returns
+    -------
+    list[dict]
+        One pattern dict per detected cascade across the whole corpus, each
+        carrying ``vix_tickers`` (list[str]), ``rsi_thresholds`` (list[float]),
+        ``watched_tickers`` (list[str], structurally extracted from the
+        ATLAS candidate's own cascade — never the caller's ``watched_tickers``
+        parameter), and ``basket_node_count`` (int, via ``_count_tree_nodes``
+        — the "basket shapes" signal). NEVER carries ``oos_metrics``/``sharpe``
+        — every field is derived purely from structural detection, per AC-3's
+        "never trusts incoming oos_metrics.sharpe". Empty list when Atlas is
+        unavailable, the corpus is empty, no candidate is frontrunner-shaped,
+        or any failure occurs (D-1 — never raises).
+    """
+    try:
+        from advisors import community_strats, frontrunner_detector
+
+        result = community_strats.load_community_strategies()
+        if not result.get("available"):
+            return []
+
+        patterns: list[dict] = []
+        for doc in result.get("candidates") or []:
+            try:
+                tree = doc.get("tree") if isinstance(doc, dict) else None
+                if not isinstance(tree, dict):
+                    continue
+                detection = frontrunner_detector.detect_frontrunner_cascades(tree)
+                for cascade in detection.cascades:
+                    patterns.append(
+                        {
+                            "vix_tickers": sorted(cascade.vix_tickers),
+                            "rsi_thresholds": list(cascade.rsi_thresholds),
+                            "watched_tickers": sorted(
+                                _walk_overlay_tickers(cascade.overlay_tree)
+                                if "kind" in cascade.overlay_tree
+                                else []
+                            ),
+                            "basket_node_count": _count_tree_nodes(cascade.overlay_tree),
+                        }
+                    )
+            except Exception:
+                # One malformed/undetectable candidate doc must never abort
+                # the rest of the corpus (D-1) — skip it and continue.
+                logger.debug(
+                    "_gather_atlas_frontrunner_patterns: skipping malformed candidate doc",
+                    exc_info=True,
+                )
+                continue
+
+        return patterns
+
+    except Exception:
+        logger.debug("_gather_atlas_frontrunner_patterns: unexpected error", exc_info=True)
+        return []
+
+
 def _run_build_for_symphony(symphony_id: str) -> None:
     """Detect -> generate -> splice -> INDEPENDENTLY re-backtest BOTH incumbent
     and candidate -> gate (evaluate_candidate_batch, mandatory) -> Calmar
@@ -904,11 +994,28 @@ def _run_build_for_symphony(symphony_id: str) -> None:
         )
         return
 
-    for cascade in detection.cascades:
+    cascades = detection.cascades
+    if len(cascades) > MAX_CASCADES_PER_SYMPHONY_RUN:
+        # AC-12: Fable API budget cap — never a silent drop, always logged.
+        logger.info(
+            "_run_build_for_symphony: symphony_id=%s %d cascades exceed "
+            "MAX_CASCADES_PER_SYMPHONY_RUN (%d) — processing first %d, skipping %d",
+            symphony_id,
+            len(cascades),
+            MAX_CASCADES_PER_SYMPHONY_RUN,
+            MAX_CASCADES_PER_SYMPHONY_RUN,
+            len(cascades) - MAX_CASCADES_PER_SYMPHONY_RUN,
+        )
+        cascades = cascades[:MAX_CASCADES_PER_SYMPHONY_RUN]
+
+    for cascade in cascades:
         watched_tickers = sorted(
             _walk_overlay_tickers(cascade.overlay_tree) if "kind" in cascade.overlay_tree else []
         )
-        signal_context = {"watched_tickers": watched_tickers}
+        signal_context = {
+            "watched_tickers": watched_tickers,
+            "atlas_patterns": _gather_atlas_frontrunner_patterns(watched_tickers),
+        }
         result = generate_candidate_overlay(signal_context)
         if result.candidate is None:
             logger.info(
