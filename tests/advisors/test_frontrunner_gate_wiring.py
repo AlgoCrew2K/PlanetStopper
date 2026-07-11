@@ -322,6 +322,62 @@ def test_a_calmar_rejected_candidate_is_not_queued(fbld, incumbent_symphony):
     mock_insert.assert_not_called()
 
 
+def test_a_weak_candidate_that_clears_the_fdr_veto_is_still_rejected_on_oos_alpha(
+    fbld, incumbent_symphony
+):
+    """ADVERSARIAL SAFETY NET (team-lead directive, 2026-07-11): guards
+    against frimpl's upcoming panel-score-construction fix (the fix for
+    test_a_gate_and_calmar_surviving_candidate_is_queued_with_metrics's
+    documented root cause) accidentally making the gate too permissive — a
+    fix that makes GOOD candidates adoptable must NOT also make BAD
+    candidates adoptable. This test exercises the SAME depth of the accept
+    path as the positive-path test (a candidate that clears Stage-1 vetoes,
+    i.e. reaches the Stage-2 discretionary-panel decision point) but with a
+    candidate that is genuinely too weak to beat the incumbent's baseline —
+    it must remain REJECTED regardless of how the panel-score construction
+    is resolved, because the oos_alpha-superiority check
+    (acceptance_gate.py:257, `oos_alpha <= fallback_oos_alpha or
+    oos_alpha <= default_oos_alpha`) is evaluated BEFORE the panel
+    comparison and is untouched by that fix.
+
+    Fixture design: a clean, low-relative-variance, but MODEST-magnitude
+    candidate (mostly +0.10%/day with small -0.02%/day dips) — significant
+    enough to clear BHY/FDR (probe-verified vetoes_passed=True,
+    winner_p_adj≈0.017 < HARVEY_LIU_FDR_Q=0.05) but too small in absolute
+    terms to beat the incumbent's full-100-day baseline from just its
+    20-day validation fold (probe-verified oos_alpha=1.52 vs incumbent
+    full-period=1.7 → KEEP_INCUMBENT). Directly probed BOTH against the
+    current (pre-fix) empty-params construction AND a simulated post-fix
+    tied-panel construction (identical non-empty candidate_params/
+    incumbent_params/theory_prior_params, panel_score=1.0 for both sides)
+    — decision is KEEP_INCUMBENT in BOTH cases, confirming this reject is
+    genuinely panel-independent, not an artifact of the current bug.
+    """
+    incumbent_shape_pct = [0.10, -0.05, 0.08, -0.10, 0.12, -0.03, 0.05, -0.08, 0.10, -0.02]
+    candidate_shape_pct = [0.10, 0.10, 0.10, 0.10, -0.02, 0.10, 0.10, 0.10, 0.10, -0.02]
+
+    incumbent_result = _make_shaped_result(incumbent_shape_pct, n_days=100)
+    candidate_result = _make_shaped_result(candidate_shape_pct, n_days=100)
+
+    call_count = {"n": 0}
+
+    def _side_effect(*args, **kwargs):
+        call_count["n"] += 1
+        return incumbent_result if call_count["n"] == 1 else candidate_result
+
+    with (
+        patch("symphony_logic.fetch_symphony_score", return_value=incumbent_symphony),
+        _patched_fable(fbld),
+        patch("advisors.composer_backtest_client.run_backtest", side_effect=_side_effect),
+        patch("database.insert_frontrunner_proposal") as mock_insert,
+        patch("database.insert_advisor_observation"),
+        patch("database.insert_dof_ledger_row"),
+    ):
+        fbld._run_build_for_symphony("test-symphony-id")
+
+    mock_insert.assert_not_called()
+
+
 def test_a_gate_and_calmar_surviving_candidate_is_queued_with_metrics(fbld, incumbent_symphony):
     """The positive path: a candidate that survives the overfitting gate AND
     improves Calmar must be queued via database.insert_frontrunner_proposal,
