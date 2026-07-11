@@ -5,16 +5,18 @@ diagnosis). The original two-step fix (b2afe1b) still had step-1 do a SERVER-SID
 on a lightweight projection — but `captplanet.strategies` has no usable index besides
 `_id`, so ANY server-side sort is an unindexed COLLSCAN over all ~11,227 docs regardless
 of payload size. The live gate still timed out. This amendment removes server-side
-sorting entirely (rank client-side in Python) and reduces `_MAX_FETCH_DOCS` 500 -> 100
+sorting entirely (rank client-side in Python) and reduces `_MAX_FETCH_DOCS` 500 -> 50
 (edn_string is ~153KB/doc live, so even an indexed `_id` fetch of 500 full docs
-dominates the timeout budget on its own).
+dominates the timeout budget on its own; 50 was further tightened from an initial
+100 after the live-gate PASS left only ~11s headroom under the 45s bound on the
+PM's machine — the 2vCPU droplet's slower single-thread parse could eat that).
 
 THE FIX SHAPE (prescribed):
   1. A LIGHTWEIGHT, UNSORTED, UNCAPPED selection query: `{"_id": 1,
      "oos_metrics.Sharpe": 1}` over the full collection — no `sort=`, no `.limit()`.
   2. Client-side: parse each doc's Sharpe string defensively (missing/non-numeric/
      percent-formatted/"nan"/"inf" -> unparseable -> bottom, never raise), sort
-     descending, slice to `_MAX_FETCH_DOCS` (100) ids.
+     descending, slice to `_MAX_FETCH_DOCS` (50) ids.
   3. A targeted full-document query, filtered by those ids (an indexed `_id` lookup —
      no sort needed), requesting the full `_PROJECTION` — unchanged from b2afe1b.
 
@@ -24,7 +26,7 @@ ADVERSARIAL FOCUS:
   - TestTwoStepQueryStructure: REWRITTEN for the amendment — NO find() call may carry
     ANY server-side sort at all (not just "not combined with the heavy projection"),
     plus the lightweight-selection / full-identity-fetch two-step shape still holds.
-  - TestBoundedTopNCap: NEW — `_MAX_FETCH_DOCS` is pinned to 100, and the full-doc
+  - TestBoundedTopNCap: NEW — `_MAX_FETCH_DOCS` is pinned to 50, and the full-doc
     fetch's `$in` list never exceeds it.
   - TestTopNSharpeOrderPreserved: the restructure must not change WHICH docs get selected
     — still exactly the top-N by sharpe (verified against an independently-computed
@@ -372,23 +374,28 @@ class TestTwoStepQueryStructure:
 
 
 # ---------------------------------------------------------------------------
-# Bounded fetch cap — reduced 500 -> 100 (edn_string is ~153KB/doc live)
+# Bounded fetch cap — reduced 500 -> 100 -> 50 (edn_string is ~153KB/doc live)
 # ---------------------------------------------------------------------------
 
 
 class TestBoundedTopNCap:
-    """AC1c (amendment): the full-document fetch is bounded to the REDUCED
-    _MAX_FETCH_DOCS cap. edn_string is ~153KB/doc live — even an indexed _id lookup
-    over 500 such docs was live-observed to dominate the 45s timeout budget on its
-    own, independent of sort/index. 100 keeps 5x headroom over
-    MAX_COMMUNITY_CANDIDATES_PER_RUN=20 while cutting the fetch payload 5x.
+    """AC1c (amendment, tightened after the live-gate PASS): the full-document
+    fetch is bounded to the REDUCED _MAX_FETCH_DOCS cap. edn_string is ~153KB/doc
+    live — even an indexed _id lookup over 500 such docs was live-observed to
+    dominate the 45s timeout budget on its own, independent of sort/index. An
+    initial 100 passed the live gate (33.95s) but left only ~11s headroom under
+    the 45s bound on the PM's machine — the droplet's slower 2vCPU single-thread
+    parse could eat that. 50 keeps 2.5x headroom over
+    MAX_COMMUNITY_CANDIDATES_PER_RUN=20 while roughly halving the fetch+parse cost.
     """
 
-    def test_max_fetch_docs_reduced_to_100(self, mod):
-        assert mod._MAX_FETCH_DOCS == 100, (
-            "_MAX_FETCH_DOCS must be 100 (reduced from 500 — live-observed edn_string "
-            "~153KB/doc dominates fetch cost independent of sort/index); got "
-            f"{mod._MAX_FETCH_DOCS!r}"
+    def test_max_fetch_docs_reduced_to_50(self, mod):
+        assert mod._MAX_FETCH_DOCS == 50, (
+            "_MAX_FETCH_DOCS must be 50 (tightened from 100, originally reduced from "
+            "500 — live-observed edn_string ~153KB/doc dominates fetch cost "
+            "independent of sort/index; 100 passed the live gate at 33.95s but left "
+            "only ~11s headroom under the 45s bound on the PM's machine, insufficient "
+            f"margin for the slower 2vCPU droplet); got {mod._MAX_FETCH_DOCS!r}"
         )
 
     def test_full_doc_fetch_is_capped_to_max_fetch_docs(self, mod, monkeypatch):
