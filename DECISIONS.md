@@ -3899,6 +3899,7 @@ DE-PRISM-MOMENTUM-REGISTRY-001; branch `feat/prism-momentum-registry`; HEAD `a62
 
 ---
 
+<<<<<<< HEAD
 ## DE-ATLAS-SLOW-QUERY-001 — Atlas community-strategies fetch, unindexed sort eliminated (2026-07-11)
 
 Branch: `fix/atlas-fetch-slow-query` | Base: `origin/main` b7e61b6 | HEAD: eb53a19
@@ -4063,3 +4064,81 @@ All 3 numeric-stat objectives (`cut_drawdown`, `volatility_mitigation`, `lift_ri
 ### Reference
 
 DE-ATLAS-STAT-FIELD-002; branch `fix/atlas-fetch-slow-query`; HEAD `81a8d46`; supersedes the single-key form used in `DE-ATLAS-STAT-FIELD-001`; see `docs/generated/advisors_build_plan_generator.md` for the current reference.
+
+---
+
+## DE-FRONTRUNNER-001 -- Frontrunner Builder wave-1 backend: shared-infrastructure fixes + real-money guard (2026-07-11)
+
+Branch: `feature/frontrunner-builder` | Base: `origin/main` 0bcbd1a | HEAD (this entry): `26c1364`
+
+### Summary
+
+Wave-1 backend of the Frontrunner Builder (feature-plans/frontrunner-builder.md) -- detect the incumbent frontrunner cascade, generate a candidate via Fable, splice+gate+Calmar-accept it, queue for operator approval, and (on approval) create an undeployed Composer symphony. Four new modules: `advisors/frontrunner_detector.py`, `advisors/frontrunner_builder.py`, `advisors/frontrunner_acceptance.py`, `advisors/composer_draft_client.py`; migration 033 (`frontrunner_proposals`). `frreview` (quant-code-reviewer) reviewed the full diff (28 commits, 32 files, +7304/-2) and returned **APPROVE**, no P0/P1. This entry records the load-bearing decisions made during the cycle -- see `.claude/PM-ACTIVE-WORK.md` THREAD G for the full session-by-session reasoning trail.
+
+### Decision: gate-reachability fix -- `_TREE_SPLICE_PANEL_PARAMS_SENTINEL`
+
+**Problem found (frtest, probed against the real unmocked gate, pre-ship):** `backtest_gate_engine`'s discretionary panel (`_compute_parameter_stability_score`/`_compute_prior_anchor_score`) exists to compare an Optuna-tuned candidate's parameter vector against the incumbent's. A frontrunner tree-splice candidate has no parameter vector -- passing empty `candidate_params`/`incumbent_params` was not neutral, it was structurally disadvantageous: the incumbent's own `inc_stability` is hardcoded to `1.0` ("stable against itself") while an empty-input pair falls back to the `0.5` neutral-prior short-circuit. `0.5 (candidate) >= 0.75 (incumbent panel floor)` is mathematically impossible regardless of return quality -- the feature would have shipped with every candidate rejected in production, undetectable by any unit test that mocked the gate.
+
+**Fix (PM-gated -- required before implementation, per the four constraints below):** `frontrunner_builder._gate_and_accept_candidate` passes an IDENTICAL non-empty dict (`_TREE_SPLICE_PANEL_PARAMS_SENTINEL = {"tree_splice_candidate": 1.0}`) for `candidate_params`/`incumbent_params`/`theory_prior_params`. Every parameter-distance sub-score resolves to a genuine 1.0/1.0 N/A-tie -- the panel becomes a neutral pass-through for tree-splice candidates specifically, while the real vetoes (BHY/FDR significance, PBO, OOS-alpha-beats-both-baselines) remain fully load-bearing.
+
+**Ratification constraints (all verified, not assumed):**
+(a) exact file/fn identified before implementation;
+(b) NO-OP for every non-empty-param candidate (autotuner, strategy_builder) -- **PM independently verified**: `git diff f51cffe 8d0b18d -- acceptance_gate.py advisors/backtest_gate_engine.py autotuner.py` is EMPTY, i.e. zero bytes changed in any shared gate file across the whole fix;
+(c) semantic correctness -- a tree-splice has no tunable params, so a neutral N/A-tie is the honest representation, not a weakening (a genuinely bad candidate still fails on the real vetoes);
+(d) a bad candidate still gets rejected -- `frtest` added an adversarial safety-net test (`ac8d313`) asserting a weak candidate stays rejected regardless of the panel fix.
+
+`frreview` independently re-traced the same code path at review (hand-verified against actual source, not the ratification notes) and confirmed `ADOPT_CANDIDATE` was provably unreachable pre-fix and that the sentinel produces a genuine tie.
+
+### Decision: DoF-ledger isolation -- `evidence_source="OVERLAY_BACKTEST_SELECTION"`, not `spec_bundle_id`
+
+**First attempt (f51cffe) was wrong, caught by the test-writer refusing to bake a false assertion into GREEN.** The initial design isolated frontrunner DoF-ledger rows from the autotuner's N_effective overfitting haircut via a distinct `spec_bundle_id` sentinel (`"frontrunner_builder"`). `frtest`'s RCA (`10af53c`) proved this does NOT isolate: the real consumer `database.get_researcher_dof_ledger_for_run` (the production N_effective feed at `autotuner.py:2487`) excludes ONLY rows matching the CURRENT run's own winning `spec_bundle_id` -- any OTHER value, including a sentinel, still sweeps into every symphony's real N_effective. Net effect if shipped: every frontrunner search-breadth row would silently inflate the BHY/Yekutieli FDR bar for EVERY symphony's autotuner walk-forward, compounding weekly (append-only ledger, no pruning) -- a silent core-engine degradation, not a frontrunner-local bug.
+
+**Audit (frtest + frimpl independently, converged):** every real consumer of `researcher_dof_ledger` was enumerated. THREE consumers key on the literal `evidence_source='BACKTEST_SELECTION'` and are therefore polluted by any row sharing that value: `database.count_dof_backtest_selections` (global branch), `database.get_researcher_dof_ledger_for_run` (the production N_effective feed), and (transitively) `compute_n_effective`/`d_spec` in `run_autotuner`. Already-isolated with no fix needed: `get_dof_ledger_for_bundle`, the Overfitting-Conscience feed, and `query_wall_breach_tripwire` (all exact `spec_bundle_id`/JOIN match -- a sentinel never collides with a real 64-char hash); `compute_n_effective` at `run_calibration_sweep` (its `ledger_query` is a no-op lambda).
+
+**Mechanism (ratified):** frontrunner rows write `evidence_source="OVERLAY_BACKTEST_SELECTION"` -- an ADDITIVE member of `database._VALID_DOF_EVIDENCE_SOURCES` (app-layer frozenset, no SQL CHECK constraint; no consumer enumerates the full set). A distinct evidence_source value is excluded from every polluting consumer BY CONSTRUCTION (literal-string mismatch) -- zero schema change, zero query change. The `spec_bundle_id` sentinel is KEPT as belt-and-suspenders audit legibility only (a scoped `count_dof_backtest_selections(spec_bundle_id="frontrunner_builder")` read correctly excludes these rows too) -- it is not, and was never, the load-bearing guarantee; the in-source comment overclaiming it as such (f51cffe) was corrected (`8d0b18d`) before the isolation fix itself landed (`6a5065a`).
+
+**Verification standard (PM-set, non-negotiable given this is a shared overfitting guardrail):** the RED test is a REAL non-mocked DB integration test (`tests/advisors/test_frontrunner_dof_isolation.py`) that inserts a real autotuner-shaped `BACKTEST_SELECTION` row alongside a frontrunner `OVERLAY_BACKTEST_SELECTION` row and asserts every consumer's output is byte-identical to what it would be without the frontrunner row present -- not a mocked assertion that the isolation "should" work. `frreview` independently re-traced the SQL filters at review and confirmed the exclusion holds. Semantic ruling: frontrunner overlay-search is structurally different from autotuner param-search (it has its own per-batch FDR gate in `evaluate_candidate_batch`) -- recorded per AC-6's audit-trail requirement, but correctly isolated from the autotuner's own overfitting accounting.
+
+### Decision: AC-12 caps are self-imposed, not Composer-documented
+
+**`fetch_symphony_stats` cannot serve as a symphony-count guard denominator.** `composer-api-researcher` triangulated Tier-1 OpenAPI + Tier-2 MCP inventory + the help center: no public Composer endpoint lists an account's saved/undeployed symphony library, and no per-account symphony cap is documented anywhere. `fetch_symphony_stats`/`symphony-stats-meta` is DEPLOYED-scoped (invested symphonies only, confirmed via a live pull showing all 11 real symphonies are deployed) -- it cannot see the UNDEPLOYED symphonies the Frontrunner Builder creates, so it is the wrong denominator for a creation-volume guard even though it superficially looked like a ready-made "account-wide" signal.
+
+**Resulting design: `MAX_FRONTRUNNER_UPLOADS_PENDING_REVIEW=25`, a local-count guard against the `frontrunner_proposals` table's own `uploaded` rows.** Not a Composer limit -- Composer imposes none, so this is a self-imposed, conservative ceiling on how many candidate symphonies the approval path can accumulate before requiring manual operator cleanup. `approve_frontrunner_proposal` fails CLOSED both when the cap is reached and when the count itself cannot be determined (never silently lets an unbounded create through on a DB-read failure).
+
+**`MAX_CASCADES_PER_SYMPHONY_RUN=40`** (the Fable-call budget cap per symphony run) is calibrated, not guessed: verified against the detector's real output on all 11 of the operator's captured trees (observed cascade counts `{26, 12, 8, 4, 4, 3, 2, 1, 1, 1, 0}`, max=26). The team-lead-ratified value of 40 replaced an initial guess of 10 that would have silently truncated candidate generation on 2 of the 11 real symphonies -- the exact failure mode a budget cap must not itself cause.
+
+### Decision: real-money structural guard -- session-autouse `pymongo.MongoClient` sentinel
+
+Operator escalation (2026-07-11, "no more hitting the mongo"): live Atlas/Mongo reads during development and test runs cost the community-strategies provider real money and must never happen incidentally. `tests/test_no_live_mongo_guard.py` installs a session-autouse fixture that makes ANY live `pymongo.MongoClient` construction under pytest fail loud, regardless of which test file or module attempts it -- not a per-test opt-in mock, a structural fail-closed net. Diagnosed root cause of the incidental live hits this cycle: AC-3's Atlas-corpus load (`1b3e9fb`) was originally placed INSIDE the per-cascade loop, so an unmocked test made up to `MAX_CASCADES_PER_SYMPHONY_RUN` real Mongo calls; fixed by hoisting the load to once-per-symphony-run (see below) AND by adding the sentinel as defense-in-depth so a future regression fails the test suite immediately rather than silently billing the provider. PM-verified the sentinel composes suite-wide: `community_strats`/`atlas_cache`'s own tests still pass under it (proving mocks are already correct there), and it was exercised as part of the wave-1 gate run.
+
+### Decision: Atlas corpus load -- once per symphony run, never per cascade
+
+`_gather_atlas_frontrunner_patterns` (AC-3) is called exactly once per `_run_build_for_symphony` invocation, hoisted out of the per-cascade loop it was originally placed inside. Two independent justifications converge on the same fix: (1) correctness under the confirmed cadence model (below) -- the corpus is weekly-cached and run-wide, not cascade-specific, so re-loading it per cascade is redundant even on a warm cache; (2) it was also the direct cause of the incidental live-Mongo hits diagnosed above. `watched_tickers=[]` is passed at the hoisted call site deliberately (the function's `watched_tickers` param has no filtering behavior implemented yet, so `[]` costs nothing today) -- flagged in-source as a landmine (P2-2) for whoever wires ticker-relevance filtering later, since that person must also move this call site back to a scope where real tickers are available, or filtering will silently no-op forever.
+
+### Decision: confirmed cadence model (operator, final -- supersedes two earlier PM misreads)
+
+The PM misread the operator's cadence directive twice in this cycle before landing on the correct model (both misreads corrected same-day, no rework required since the team's actual code changes were cadence-independent throughout). Final, operator-confirmed model:
+- **Community-strategies (db-strats) Atlas corpus: WEEKLY cache** (7-day TTL, existing default, unchanged).
+- **Fine-grained data: DAILY local refresh** -- a SEPARATE component (not yet scoped; no fine-grained-daily data source exists in current AC-3 scope).
+- **Both suggestion engines (Strategy Builder AND Frontrunner Builder) run WEEKLY**, reading whatever local cache is freshest at run time.
+This cycle's frontrunner work is cadence-INDEPENDENT and required no rework under the final model: `load_community_strategies` stays on the weekly default, and the AC-1 scheduler hook (`strategy_builder_scheduler.run_weekly_build` -> `run_frontrunner_build()`) is already weekly.
+
+### Files changed (this cycle, 0bcbd1a..26c1364)
+
+- `advisors/frontrunner_detector.py` (new) -- AC-2 cascade detection; iterative traversal (P2-1)
+- `advisors/frontrunner_builder.py` (new) -- AC-4/5/6/7/9/11/12 orchestration
+- `advisors/frontrunner_acceptance.py` (new) -- AC-7 Calmar gate
+- `advisors/composer_draft_client.py` (new) -- AC-9 shared Composer write client
+- `database.py` -- migration 033 wiring, `frontrunner_proposals` accessors, `_VALID_DOF_EVIDENCE_SOURCES` gains `OVERLAY_BACKTEST_SELECTION`
+- `migrations/033_frontrunner_proposals.sql` (new)
+- `advisors/strategy_builder_scheduler.py` -- AC-1 hook (`run_weekly_build` calls `run_frontrunner_build()`)
+- `advisors/strategy_builder_engine.py` -- AC-10 retrofit (`_persist_survivor` queues `frontrunner_proposals` rows)
+- `tests/test_no_live_mongo_guard.py` (new), `tests/security/test_frontrunner_no_trade_boundary.py` (new), plus the full `tests/advisors/test_frontrunner_*.py` suite (8 files)
+
+### Verification
+
+PM-authoritative gate (quiet window, single `-n0`, unique `DB_PATH`, process table checked clear before running) at `26c1364`: **207 passed, 2 skipped, 44.31s** across all 9 frontrunner-adjacent test files plus `test_community_strats.py` + `test_atlas_cache.py`. The 2 skips are pre-existing and unrelated (stale `test_community_strats.py` assertions that the module doesn't exist -- it does; not fixed this cycle). `frreview` verdict: APPROVE, no P0/P1, 3 non-blocking P2 items dispositioned before this doc cycle (P2-1 iterative traversal `26c1364`, P2-2 landmine comment `07bdc8c`, a third unrelated pre-existing test-hygiene item left out of scope).
+
+### Reference
+
+DE-FRONTRUNNER-001; branch `feature/frontrunner-builder`; wave-1 backend HEAD `26c1364`; plan `feature-plans/frontrunner-builder.md`; full session reasoning trail in `.claude/PM-ACTIVE-WORK.md` THREAD G. Wave-2 (AC-8 UI + on-demand/approve/reject routes) and the operator-gated task-zero live Composer create test are NOT covered by this entry -- see `docs/generated/advisors_frontrunner_builder.md` "Not Yet Built".
