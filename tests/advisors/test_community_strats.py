@@ -1027,21 +1027,37 @@ class TestProjection:
                 "pymongo.find() was not called — stub does not call pymongo yet (RED expected)"
             )
 
-        projection = captured_projections[0]
-        if projection is None:
+        if any(p is None for p in captured_projections):
             pytest.fail(
                 "find() was called with no projection argument — "
                 "AC-9 requires a projection to exclude heavy fields"
             )
 
-        # The projection must not include any 'backtest' or 'quantstats' keys.
+        # DE-ATLAS-SLOW-QUERY-001: _fetch_fn now issues TWO find() calls (a
+        # lightweight sharpe-sorted selection query, then a full-document query
+        # keyed by the selected ids) — see test_community_strats_fetch_query.py
+        # for the query-shape tests. AC-9's "no heavy backtest/quantstats fields"
+        # guard applies across BOTH calls; the "must include sid/name/edn_string/
+        # oos_metrics" guard applies to whichever call actually carries the full
+        # document (identified by requesting 'edn_string'), not call index 0 —
+        # the lightweight selection query legitimately omits those fields.
         heavy_field_substrings = ("backtest", "quantstats")
-        for key in projection or {}:
-            for heavy in heavy_field_substrings:
-                assert heavy.lower() not in str(key).lower(), (
-                    f"projection must exclude heavy field {key!r} "
-                    f"(matches forbidden substring {heavy!r}) — AC-9"
-                )
+        for captured in captured_projections:
+            for key in captured or {}:
+                for heavy in heavy_field_substrings:
+                    assert heavy.lower() not in str(key).lower(), (
+                        f"projection must exclude heavy field {key!r} "
+                        f"(matches forbidden substring {heavy!r}) — AC-9"
+                    )
+
+        full_doc_projections = [p for p in captured_projections if p and "edn_string" in p]
+        if not full_doc_projections:
+            pytest.fail(
+                "no find() call carried a projection containing 'edn_string' — AC-9 "
+                f"requires the full-document query to request it; captured "
+                f"projections={captured_projections!r}"
+            )
+        projection = full_doc_projections[0]
 
         # The projection MUST include the 4 lightweight required fields.
         required_projection_fields = {"sid", "name", "edn_string", "oos_metrics"}

@@ -809,9 +809,17 @@ class TestCacheHitOnSecondCall:
         import advisors.community_strats as cs  # noqa: PLC0415
 
         plain_doc = _make_mongo_doc_plain(sid="hit-002", ticker="QQQ")
+        # DE-ATLAS-SLOW-QUERY-001: _fetch_fn now issues TWO find() calls (a
+        # lightweight sharpe-sorted selection query that extracts doc["_id"],
+        # then a full-document query) against this one static mock_cursor. The
+        # doc must carry an _id (real Mongo always returns one for a
+        # projection that requests it) and the cursor must yield a FRESH
+        # iterator per find() call (side_effect) since it's now iterated
+        # twice per load_community_strategies() call instead of once.
+        doc_with_id = {"_id": "hit-002", **plain_doc}
 
         mock_cursor = MagicMock()
-        mock_cursor.__iter__ = MagicMock(return_value=iter([plain_doc]))
+        mock_cursor.__iter__ = MagicMock(side_effect=lambda: iter([doc_with_id]))
         mock_cursor.limit = MagicMock(return_value=mock_cursor)
         mock_cursor.sort = MagicMock(return_value=mock_cursor)
 
@@ -831,9 +839,10 @@ class TestCacheHitOnSecondCall:
         with patch("pymongo.MongoClient", ctor):
             # First call: cold cache → real cached_pull writes the row via default=str.
             result1 = cs.load_community_strategies()
-            # Re-arm the cursor iterator in case the fetch path is hit again (it must NOT be).
-            mock_cursor.__iter__ = MagicMock(return_value=iter([plain_doc]))
             # Second call within TTL: must HIT the persisted row, no new MongoClient.
+            # (No manual iterator re-arm needed — the cursor's side_effect above
+            # always hands out a fresh iterator, so it survives being consumed
+            # by the first call's two find() calls too.)
             result2 = cs.load_community_strategies(force_refresh=False)
 
         assert result1["available"] is True, (
@@ -882,11 +891,19 @@ class TestCacheHitOnSecondCall:
 
         fetch_invocations = Counter()
         plain_docs = [_make_mongo_doc_plain(sid="inv-001", ticker="SPY")]
+        # DE-ATLAS-SLOW-QUERY-001: _fetch_fn now issues TWO find() calls (a
+        # lightweight sharpe-sorted selection query that extracts doc["_id"],
+        # then a full-document query) against this one static mock_cursor. The
+        # docs must carry an _id (real Mongo always returns one for a
+        # projection that requests it) and the cursor must yield a FRESH
+        # iterator per find() call (side_effect) since it's now iterated
+        # twice per load_community_strategies() call instead of once.
+        docs_with_id = [{"_id": d["sid"], **d} for d in plain_docs]
 
         # We patch pymongo.MongoClient so the live Atlas call never fires.
-        # The mock cursor returns plain_docs (JSON-serializable — no ObjectId).
+        # The mock cursor returns docs_with_id (JSON-serializable — no ObjectId).
         mock_cursor = MagicMock()
-        mock_cursor.__iter__ = MagicMock(return_value=iter(plain_docs))
+        mock_cursor.__iter__ = MagicMock(side_effect=lambda: iter(docs_with_id))
         mock_cursor.limit = MagicMock(return_value=mock_cursor)
         mock_cursor.sort = MagicMock(return_value=mock_cursor)
 
