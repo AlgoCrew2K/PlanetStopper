@@ -69,6 +69,29 @@ def fbld():
     return _fbld
 
 
+@pytest.fixture(autouse=True)
+def _no_live_atlas_calls():
+    """AC-3 landed (1b3e9fb) mid-cycle: _run_build_for_symphony now calls
+    _gather_atlas_frontrunner_patterns once per cascade, which calls the REAL
+    community_strats.load_community_strategies unless patched — that in turn
+    can attempt a genuine MongoClient connection (serverSelectionTimeoutMS,
+    atlas_cache.cached_pull's fetch_fn) when no fresh cache row exists.
+    DISCOVERED THE HARD WAY: a test with 40+ synthetic cascades
+    (test_fable_calls_per_symphony_are_bounded_by_a_budget_cap) without this
+    guard took minutes and multiple hundred MB of growing memory — up to 40
+    real, slow, unmocked network attempts, once per cascade. Autouse so every
+    test in this file (present and future) is protected without needing to
+    remember the patch per-test; scoped to THIS file only, not conftest.py
+    (test_frontrunner_atlas_patterns.py has its own explicit, deliberate
+    community_strats mocking per test and must not be affected by this).
+    """
+    with patch(
+        "advisors.community_strats.load_community_strategies",
+        return_value={"available": False, "candidates": [], "stats": {}, "source": "captplanet"},
+    ):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # Realistic BacktestResult fixture builder — verbatim pattern from
 # test_strategy_builder_engine.py's _make_fake_result (n_days>=65 is the
@@ -521,14 +544,33 @@ def test_search_breadth_is_recorded_to_the_dof_ledger_with_the_correct_kwargs(
     real signature (database.py:2047-2057) and its accepted enum values
     (database.py:2006-2029): facet_category in
     _VALID_DOF_FACET_CATEGORIES={"specification","parameter"}, decision_type
-    in _VALID_DOF_DECISION_TYPES={"FIXED","SEARCHED","REVISED","OOS_PEEK"},
-    evidence_source in _VALID_DOF_EVIDENCE_SOURCES (includes
-    "BACKTEST_SELECTION"). Mirrors autotuner.py's own call site (~line 1957,
-    validate_nn1_compliance's BACKTEST_SELECTION write) for the calling
-    convention — the frontrunner builder's candidate search is exactly the
-    same "+S contribution to N_effective" concept: every candidate overlay
-    generated and independently backtested is one more config searched,
-    which the BHY haircut must account for.
+    in _VALID_DOF_DECISION_TYPES={"FIXED","SEARCHED","REVISED","OOS_PEEK"}.
+
+    evidence_source="OVERLAY_BACKTEST_SELECTION" (NOT the autotuner's own
+    "BACKTEST_SELECTION" literal — team-lead-ratified 2026-07-11, cff1264c).
+    HISTORY: this test originally asserted "BACKTEST_SELECTION" (mirroring
+    autotuner.py's own NN1-violation call site literally), which was
+    CORRECT for the "search breadth recorded" half of AC-6 but created a
+    real cross-subsystem contamination bug — every autotuner-side consumer
+    that aggregates the ledger for the REAL N_effective/FDR haircut
+    (database.get_researcher_dof_ledger_for_run, the production feed at
+    autotuner.py:2487, and database.count_dof_backtest_selections) filters
+    on that exact literal string with no producer/subsystem distinction, so
+    a frontrunner row sharing it inflated N_effective for EVERY symphony's
+    real autotune run, indefinitely (append-only ledger, never pruned). Full
+    consumer audit + the isolation mechanism (a distinct evidence_source,
+    since every polluting consumer keys on the literal string and none use
+    IN/!=) is proven against the REAL production queries in
+    tests/advisors/test_frontrunner_dof_isolation.py — read that file for
+    the complete isolation proof; this test only pins the WRITE-SIDE
+    contract (which value gets written), not the read-side isolation.
+
+    spec_bundle_id is KEPT as a distinct sentinel too (belt-and-suspenders +
+    audit legibility for count_dof_backtest_selections(spec_bundle_id=...)
+    scoped queries and get_dof_ledger_for_bundle) — the evidence_source
+    distinction is the mechanism that actually isolates the autotuner's
+    N_effective; the sentinel alone was never sufficient (see git history on
+    this docstring / test_frontrunner_dof_isolation.py for why).
 
     This must fire regardless of whether the candidate is ultimately
     accepted or rejected — the DoF ledger tracks SEARCH EXPOSURE, not
@@ -536,27 +578,6 @@ def test_search_breadth_is_recorded_to_the_dof_ledger_with_the_correct_kwargs(
     reuses the gate-rejected fixture shape (candidate underperforms, same
     idiom as test_a_calmar_rejected_candidate_is_not_queued) precisely to
     prove the ledger write does not depend on acceptance.
-
-    spec_bundle_id: asserted to be a non-None, non-empty, DISTINCT string
-    (never a real theory spec_bundle_id hash) rather than None — this is a
-    real, useful floor (audit legibility; scoped bundle_id != <this
-    sentinel> queries via count_dof_backtest_selections(spec_bundle_id=...)
-    correctly exclude it) worth pinning on its own. IMPORTANT CAVEAT (do not
-    oversell this assertion): it does NOT achieve isolation from the
-    autotuner's own per-symphony N_effective haircut. Verified by reading
-    the actual production consumer, database.get_researcher_dof_ledger_for_run
-    (database.py:2163-2199) — its query excludes ONLY rows matching the
-    CURRENT run's winning_spec_bundle_id; every OTHER row with
-    evidence_source='BACKTEST_SELECTION' is swept in unconditionally,
-    including rows with spec_bundle_id=NULL or ANY other string (this
-    sentinel included) — the run_timestamp parameter is accepted but never
-    referenced in the SQL. So a distinct sentinel does NOT keep frontrunner
-    rows out of a real symphony's autotuner haircut the way frimpl's f51cffe
-    comment (frontrunner_builder.py:105-107) claims; that is a separate,
-    pre-existing cross-subsystem gap in the ledger schema/query (no
-    subsystem/producer column exists to filter on) — out of scope for this
-    feature to fix, flagged to the team rather than silently asserted as
-    true here.
     """
     incumbent_result = _make_fake_result(n_days=100, base_return=0.002)
     candidate_result = _make_fake_result(n_days=100, base_return=-0.0015)
@@ -591,10 +612,13 @@ def test_search_breadth_is_recorded_to_the_dof_ledger_with_the_correct_kwargs(
         f"record, not a FIXED/REVISED/OOS_PEEK spec decision), got "
         f"{call_kwargs.get('decision_type')!r}"
     )
-    assert call_kwargs.get("evidence_source") == "BACKTEST_SELECTION", (
-        f"expected evidence_source='BACKTEST_SELECTION' (mirrors "
-        f"autotuner.py's own NN1-violation call site for a backtest-driven "
-        f"search), got {call_kwargs.get('evidence_source')!r}"
+    assert call_kwargs.get("evidence_source") == "OVERLAY_BACKTEST_SELECTION", (
+        f"expected evidence_source='OVERLAY_BACKTEST_SELECTION' — a DISTINCT "
+        f"value from the autotuner's own 'BACKTEST_SELECTION' literal "
+        f"(team-lead-ratified isolation fix, cff1264c; see this test's "
+        f"docstring + test_frontrunner_dof_isolation.py). Reusing the "
+        f"autotuner's exact literal would re-pollute its N_effective/FDR "
+        f"haircut for every symphony, got {call_kwargs.get('evidence_source')!r}"
     )
     assert call_kwargs.get("facet_category") == "specification", (
         f"expected facet_category='specification' "
@@ -804,16 +828,22 @@ def test_fable_calls_per_symphony_are_bounded_by_a_budget_cap(fbld, incumbent_sy
     into an unbounded number of Fable calls in one build — each Fable call
     is a billed API request. This asserts the call count is BOUNDED, not
     unbounded: strictly less than the number of cascades supplied (proving
-    a cap exists) and at or under a documented sane ceiling. 10 is chosen as
-    the ceiling because the feature plan's own grounding note describes real
-    incumbent symphonies as having a small number of qualifying parallel
-    frontrunner cascades (the operator's 11 captured trees) — 10 gives
-    comfortable headroom for a legitimately complex symphony while still
-    bounding runaway spend on a malformed or adversarial detection result.
+    a cap exists) and at or under a documented sane ceiling.
+
+    40 is the team-lead-ratified ceiling (2026-07-11, replacing this test's
+    original 10): the real maximum qualifying-cascade count across the
+    operator's captured trees was independently verified at 26 — a ceiling
+    of 10 would have TRUNCATED, and silently dropped candidate generation
+    for, 2 of the operator's legitimately complex live symphonies (the exact
+    failure mode a budget cap must not itself cause). 40 gives real headroom
+    above the verified real-world max while still bounding a malformed or
+    adversarial detection result (e.g. hundreds of spurious cascades) from
+    triggering unbounded Fable spend. The implementer's named constant is
+    MAX_CASCADES_PER_SYMPHONY_RUN.
     """
     from advisors import frontrunner_detector
 
-    _CEILING = 10
+    _CEILING = 40
     n_cascades_supplied = _CEILING + 5  # comfortably more than any reasonable cap
 
     many_cascades = [
