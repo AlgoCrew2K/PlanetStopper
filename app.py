@@ -4678,6 +4678,13 @@ def ai_advisor_frontrunner_builder_run():
     ANTHROPIC_API_KEY is absent — the build needs it for Fable candidate
     generation; a doomed background job should never be queued.
 
+    The submitted work is a log-and-swallow closure wrapping
+    run_frontrunner_build (RULING, team-lead, 2026-07-11 — mirrors
+    _dismiss_async above): run_frontrunner_build is documented D-1/
+    never-raises, but an unawaited Future silently drops any exception that
+    somehow escapes that contract — the wrapper makes a D-1 violation
+    observable in the logs (defense-in-depth) instead of silently lost.
+
     CSRF is enforced by _csrf_before_request @before_request hook — not
     called here. NOT added to _SETTINGS_WRITE_ALLOWLIST (not a settings
     write). No LIVE_EXECUTION interaction anywhere.
@@ -4695,8 +4702,25 @@ def ai_advisor_frontrunner_builder_run():
     # module-scope import graph / the live 1-minute execution path.
     from advisors.frontrunner_builder import run_frontrunner_build  # noqa: PLC0415
 
+    def _run_frontrunner_build_background(*, symphony_ids=None):
+        try:
+            run_frontrunner_build(symphony_ids=symphony_ids)
+        except Exception as exc:
+            # Log-and-swallow (mirrors _dismiss_async, app.py:2831): this is
+            # a defense-in-depth net for a D-1 contract violation, not a
+            # normal path — server-side log only, never surfaced to a
+            # response (the 202 was already sent before this can fire).
+            _daemon_log.error(
+                "ai_advisor_frontrunner_builder_run: background run failed: %s: %s",
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
+
     try:
-        _FRONTRUNNER_BUILD_EXECUTOR.submit(run_frontrunner_build, symphony_ids=symphony_ids)
+        _FRONTRUNNER_BUILD_EXECUTOR.submit(
+            _run_frontrunner_build_background, symphony_ids=symphony_ids
+        )
     except Exception as exc:
         _daemon_log.error(
             "ai_advisor_frontrunner_builder_run: dispatch failed: %s", exc, exc_info=True
