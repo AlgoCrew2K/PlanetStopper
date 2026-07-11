@@ -106,6 +106,20 @@ MAX_GENERATION_ATTEMPTS: int = 3
 # reason, never silently dropped.
 MAX_CASCADES_PER_SYMPHONY_RUN: int = 40
 
+# AC-12: self-imposed runaway-creation safety valve for the operator-approved
+# Composer upload path. Composer documents NO per-account symphony-count cap
+# or create-time quota (Tier-1 OpenAPI + Tier-2 MCP + help-center
+# triangulation — composer-api-researcher); fetch_symphony_stats is
+# DEPLOYED-scoped and cannot see the undeployed symphonies this feature
+# creates, so it cannot serve as the guard's denominator either
+# (team-lead-ruled 2026-07-11). This bounds how many candidate symphonies the
+# operator-approved upload path can accumulate in the operator's Composer
+# account before requiring manual cleanup — a generous lifetime ceiling given
+# the overfitting gates reject most candidates (mirrors the AI Advisor's own
+# "empty suggestions is the common case" behavior), and a fine runaway-bug
+# blast-radius cap either way. NOT a Composer limit — ours alone.
+MAX_FRONTRUNNER_UPLOADS_PENDING_REVIEW: int = 25
+
 # VIX-family tickers recognized as hedge/fire-basket instruments — same
 # vocabulary as frontrunner_detector.VIX_FAMILY_TICKERS (imported, not
 # duplicated, so the two modules can never drift on this list).
@@ -1337,6 +1351,41 @@ def approve_frontrunner_proposal(proposal_id: int) -> ApprovalResult:
         if proposal["approval_status"] == "uploaded" and proposal.get("created_symphony_id"):
             # Idempotent no-op: already uploaded.
             return ApprovalResult(success=True, symphony_id=proposal["created_symphony_id"])
+
+        # AC-12: self-imposed local-count runaway-creation guard — checked
+        # BEFORE every save_symphony call (never for the idempotent no-op
+        # above, which creates nothing new). Fails CLOSED (skip) if the count
+        # itself can't be determined — same posture as verify_undeployed's
+        # own fail-closed-on-any-error contract; an approval this module
+        # can't confidently bound is not one it silently lets through.
+        try:
+            uploaded_count = database.count_uploaded_frontrunner_proposals()
+        except Exception as exc:
+            logger.warning(
+                "approve_frontrunner_proposal: proposal_id=%s upload-count check failed "
+                "(%s) — failing closed, refusing to create",
+                proposal_id,
+                type(exc).__name__,
+            )
+            return ApprovalResult(success=False, error=type(exc).__name__)
+
+        if uploaded_count >= MAX_FRONTRUNNER_UPLOADS_PENDING_REVIEW:
+            database.update_frontrunner_proposal_status(
+                proposal_id,
+                approval_status="approved",
+                error_message=(
+                    f"upload cap reached ({uploaded_count}/"
+                    f"{MAX_FRONTRUNNER_UPLOADS_PENDING_REVIEW}) — manual review required"
+                ),
+            )
+            logger.warning(
+                "approve_frontrunner_proposal: proposal_id=%s upload cap reached "
+                "(%d/%d) — refusing to create",
+                proposal_id,
+                uploaded_count,
+                MAX_FRONTRUNNER_UPLOADS_PENDING_REVIEW,
+            )
+            return ApprovalResult(success=False, error="upload_cap_reached")
 
         candidate_tree = proposal["candidate_tree"]
         draft_result = composer_draft_client.save_symphony(

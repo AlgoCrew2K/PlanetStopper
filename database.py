@@ -3433,5 +3433,28 @@ def get_pending_frontrunner_proposals(limit: int = 50) -> list[dict]:
     return [_parse_frontrunner_proposal_row(row, _FRONTRUNNER_PROPOSAL_COLUMNS) for row in rows]
 
 
+def count_uploaded_frontrunner_proposals() -> int:
+    """Return the count of frontrunner_proposals rows with approval_status='uploaded'.
+
+    AC-12's self-imposed local-count guard: Composer documents no per-account
+    symphony-count cap or create-time quota, and fetch_symphony_stats is
+    DEPLOYED-scoped (cannot see the undeployed symphonies this feature
+    creates) — so this LOCAL count of already-uploaded proposals substitutes
+    as the runaway-creation safety valve, checked by
+    advisors.frontrunner_builder.approve_frontrunner_proposal before every
+    composer_draft_client.save_symphony call.
+
+    Uses a read-only connection (architecture constraint 5).
+    """
+    conn = get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COUNT(*) FROM frontrunner_proposals WHERE approval_status = 'uploaded'"
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return int(row[0]) if row and row[0] is not None else 0
+
+
 # Initialize tables on import
 init_db()
