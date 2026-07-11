@@ -480,6 +480,27 @@ def test_search_breadth_is_recorded_to_the_dof_ledger_with_the_correct_kwargs(
     reuses the gate-rejected fixture shape (candidate underperforms, same
     idiom as test_a_calmar_rejected_candidate_is_not_queued) precisely to
     prove the ledger write does not depend on acceptance.
+
+    spec_bundle_id: asserted to be a non-None, non-empty, DISTINCT string
+    (never a real theory spec_bundle_id hash) rather than None — this is a
+    real, useful floor (audit legibility; scoped bundle_id != <this
+    sentinel> queries via count_dof_backtest_selections(spec_bundle_id=...)
+    correctly exclude it) worth pinning on its own. IMPORTANT CAVEAT (do not
+    oversell this assertion): it does NOT achieve isolation from the
+    autotuner's own per-symphony N_effective haircut. Verified by reading
+    the actual production consumer, database.get_researcher_dof_ledger_for_run
+    (database.py:2163-2199) — its query excludes ONLY rows matching the
+    CURRENT run's winning_spec_bundle_id; every OTHER row with
+    evidence_source='BACKTEST_SELECTION' is swept in unconditionally,
+    including rows with spec_bundle_id=NULL or ANY other string (this
+    sentinel included) — the run_timestamp parameter is accepted but never
+    referenced in the SQL. So a distinct sentinel does NOT keep frontrunner
+    rows out of a real symphony's autotuner haircut the way frimpl's f51cffe
+    comment (frontrunner_builder.py:105-107) claims; that is a separate,
+    pre-existing cross-subsystem gap in the ledger schema/query (no
+    subsystem/producer column exists to filter on) — out of scope for this
+    feature to fix, flagged to the team rather than silently asserted as
+    true here.
     """
     incumbent_result = _make_fake_result(n_days=100, base_return=0.002)
     candidate_result = _make_fake_result(n_days=100, base_return=-0.0015)
@@ -524,6 +545,15 @@ def test_search_breadth_is_recorded_to_the_dof_ledger_with_the_correct_kwargs(
         f"(_VALID_DOF_FACET_CATEGORIES has no 'candidate_search' option — "
         f"'specification' is the closest fit), got "
         f"{call_kwargs.get('facet_category')!r}"
+    )
+    spec_bundle_id = call_kwargs.get("spec_bundle_id")
+    assert isinstance(spec_bundle_id, str) and spec_bundle_id, (
+        f"spec_bundle_id must be a distinct non-empty sentinel string, NOT "
+        f"None — a bare None row is indistinguishable from a real "
+        f"pre-bundle-era autotuner row in any future audit query, got "
+        f"{spec_bundle_id!r} (see this test's docstring for the isolation "
+        f"caveat — a distinct sentinel is a real but PARTIAL floor, not a "
+        f"guarantee against N_effective cross-subsystem pollution)"
     )
     n_configs = call_kwargs.get("n_configs_searched")
     assert isinstance(n_configs, int) and n_configs >= 1, (
