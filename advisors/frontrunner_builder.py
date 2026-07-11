@@ -127,27 +127,38 @@ from advisors.frontrunner_detector import VIX_FAMILY_TICKERS  # noqa: E402
 
 _PCT_PLACEHOLDER = "%"
 
-# AC-6: DoF-ledger spec_bundle_id sentinel for frontrunner-builder search-breadth
-# rows. researcher_dof_ledger.spec_bundle_id is a SOFT FK ("soft FK to
+# AC-6: DoF-ledger isolation for frontrunner-builder search-breadth rows.
+#
+# THE ACTUAL ISOLATION MECHANISM is evidence_source="OVERLAY_BACKTEST_SELECTION"
+# (database._VALID_DOF_EVIDENCE_SOURCES), not spec_bundle_id. Every real
+# consumer that aggregates across researcher_dof_ledger —
+# database.count_dof_backtest_selections and database.get_researcher_dof_ledger_for_run
+# (the production N_effective feed at autotuner.py:2487) — filters on the
+# literal string evidence_source='BACKTEST_SELECTION'. A distinct evidence_source
+# value is therefore excluded from EVERY such consumer by construction: zero
+# schema/query change, no producer/subsystem column needed. Verified via a
+# real-DB integration suite (tests/advisors/test_frontrunner_dof_isolation.py)
+# that inserts a real autotuner-shaped BACKTEST_SELECTION row alongside a
+# frontrunner OVERLAY_BACKTEST_SELECTION row and asserts every consumer's
+# output is byte-identical to before the frontrunner row existed.
+#
+# CORRECTION HISTORY: an earlier design (f51cffe) attempted isolation via a
+# distinct spec_bundle_id sentinel alone — frtest's RCA (10af53c) proved this
+# does NOT isolate: get_researcher_dof_ledger_for_run excludes ONLY rows
+# matching the CURRENT run's own winning_spec_bundle_id, so any OTHER
+# spec_bundle_id value (including a sentinel) still sweeps into every
+# symphony's real N_effective. Team-lead-ratified fix (cff1264c, 2026-07-11):
+# switch the ISOLATION mechanism to evidence_source; KEEP the spec_bundle_id
+# sentinel below as belt-and-suspenders audit legibility ONLY (a scoped
+# count_dof_backtest_selections(spec_bundle_id="frontrunner_builder") read
+# correctly excludes these rows too, and it's never indistinguishable from a
+# pre-bundle-era NULL row) — it is not, and was never, the load-bearing
+# guarantee.
+#
+# researcher_dof_ledger.spec_bundle_id is a SOFT FK ("soft FK to
 # spec_bundles.bundle_hash", migrations/018_researcher_dof_ledger.sql:33 — no
 # SQL FOREIGN KEY constraint, enforcement is app-level only per
-# database.insert_dof_ledger_row's own docstring). A distinct, non-empty,
-# never-a-real-theory-spec_bundle_id sentinel string is real but PARTIAL audit
-# legibility: it makes a scoped count_dof_backtest_selections(spec_bundle_id=
-# "frontrunner_builder") read correctly exclude these rows, and it is never
-# indistinguishable from a pre-bundle-era NULL row.
-# CORRECTION (frtest RCA, 10af53c — this comment previously overclaimed
-# isolation from the autotuner's own N_effective haircut; that claim was
-# WRONG and has been removed): the actual production consumer,
-# database.get_researcher_dof_ledger_for_run (database.py:2163-2199), excludes
-# ONLY rows matching the CURRENT run's own winning_spec_bundle_id — every
-# OTHER BACKTEST_SELECTION row (NULL spec_bundle_id, or any other string,
-# this sentinel included) is swept into every symphony's real autotune
-# N_effective unconditionally; run_timestamp is accepted but unused in the
-# SQL. There is no subsystem/producer column on researcher_dof_ledger to
-# filter on. That is a pre-existing cross-subsystem schema/query gap, NOT
-# fixable from this module — tracked as a follow-on decision for the team,
-# not silently asserted as solved here.
+# database.insert_dof_ledger_row's own docstring).
 _DOF_LEDGER_SPEC_BUNDLE_SENTINEL: str = "frontrunner_builder"
 
 # AC-6/7: acceptance_gate's Stage-2 discretionary panel (backtest_gate_engine's
@@ -1204,7 +1215,10 @@ def _gate_and_accept_candidate(
                 facet_name="frontrunner_candidate_search",
                 facet_category="specification",
                 decision_type="SEARCHED",
-                evidence_source="BACKTEST_SELECTION",
+                # OVERLAY_BACKTEST_SELECTION (not the autotuner's own
+                # BACKTEST_SELECTION) — the actual isolation mechanism, see
+                # _DOF_LEDGER_SPEC_BUNDLE_SENTINEL's module-level comment.
+                evidence_source="OVERLAY_BACKTEST_SELECTION",
                 n_configs_searched=1,
                 spec_bundle_id=_DOF_LEDGER_SPEC_BUNDLE_SENTINEL,
                 justification=f"frontrunner_builder candidate search for symphony_id={symphony_id}",

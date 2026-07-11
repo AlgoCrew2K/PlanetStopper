@@ -2027,6 +2027,24 @@ _VALID_DOF_EVIDENCE_SOURCES: frozenset[str] = frozenset(
         "CALIBRATION",
         "BACKTEST_SELECTION",
         "OOS",
+        # Distinct evidence KIND (not a producer/subsystem tag — mirrors the
+        # enum's existing kind-not-producer convention) for the frontrunner
+        # builder's overlay-candidate search breadth (AC-6). A structurally
+        # different search from the autotuner's own parameter optimization
+        # (separate search space; its own multiple-testing is handled
+        # per-batch by evaluate_candidate_batch) — recorded to the DoF ledger
+        # per AC-6, but ISOLATED from the autotuner's N_effective haircut:
+        # every real consumer (count_dof_backtest_selections,
+        # get_researcher_dof_ledger_for_run — the production N_effective feed
+        # at autotuner.py:2487) filters on the literal string
+        # 'BACKTEST_SELECTION', so a distinct value is excluded by
+        # construction, zero schema/query change. Team-lead-ratified
+        # 2026-07-11 (cff1264c) after a full researcher_dof_ledger consumer
+        # audit found the distinct-spec_bundle_id-only approach (the original
+        # f51cffe design) did NOT achieve isolation — every consumer
+        # excludes only the CURRENT run's own winning spec_bundle_id, never
+        # an arbitrary sentinel string.
+        "OVERLAY_BACKTEST_SELECTION",
     }
 )
 
