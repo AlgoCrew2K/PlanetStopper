@@ -2771,6 +2771,8 @@ Three changes working together:
 
 The public `limit` parameter (caller-level, post-dedup) is a separate control and is not affected.
 
+**Superseded (2026-07-11):** the server-side sort described above was found live to be an unindexed COLLSCAN regardless of projection size and was removed entirely (client-side ranking in Python instead). See `DE-ATLAS-SLOW-QUERY-001` below.
+
 ### Invariants preserved
 
 - D-1 never-raises contract: unchanged for both `load_community_strategies` and `cached_pull`.
@@ -3894,3 +3896,88 @@ DE-PRISM-MOMENTUM-REGISTRY-001; branch `feat/prism-momentum-registry`; HEAD `a62
 ### `/review` follow-up (PR #91): momentum naming pinned in the producer contract
 
 `/review` found the momentum registry's consumer half (`_INDICATOR_REGISTRY`) had no matching producer-side contract: `.claude/agents/prism-technicals-analyst.md` pinned a concrete worked example for `breadth` but described momentum only in prose ("momentum reading") — the `momentum_<TICKER>_20d` naming had been reverse-engineered from one live council run's incidental choice, never enforced. Since the registry's momentum entries are literal (not wildcard-matched), any producer drift (`momentum_IWM`, `IWM_momentum_20d`, ...) would resolve `unverifiable` forever with no CI signal. Fixed by adding a second concrete worked example to the role file (`{"indicator": "momentum_SPY_20d", "value": -0.0124, "lens": "technicals"}`, with an explicit "use the naming exactly" instruction) — mirroring how macro's example pins `DGS10` and derivatives' pins `VIX`. RED `c7d5800` → GREEN `c3fdaa8`; new `TestTechnicalsAnalystMomentumNamingContract` in `tests/ai_advisor/test_prism_role_files_cited_numbers.py` (19/19 total in that file — corrects this codebase's prior "6 tests" miscount for the same file, which undercounted the parametrization across the 6 role files; see `docs/generated/advisors_prism_numeric_verifier.md`). AC-5 held (zero diff on `alpha_bot_execution.py`/`math_engine.py` across the whole cycle).
+
+---
+
+## DE-ATLAS-SLOW-QUERY-001 — Atlas community-strategies fetch, unindexed sort eliminated (2026-07-11)
+
+Branch: `fix/atlas-fetch-slow-query` | Base: `origin/main` b7e61b6 | HEAD: eb53a19
+
+### Problem
+
+Every live Atlas pull in `advisors/community_strats.py::load_community_strategies` timed out with `reason="AtlasFetchTimeout"`, so `captplanet.strategies` candidates were never cached and the Strategy Builder's community-suggested path silently degraded to built-new-only on every run. `_fetch_fn` issued a single `find()` with a server-side `sort=[("oos_metrics.sharpe", DESCENDING)]` over a projection that included `edn_string` (a multi-KB field per doc). `oos_metrics.sharpe` has no index on the live collection (only `_id_` is indexed), so this sorted the full ~11,227-doc corpus, at full document size, unindexed, on disk -- observed to take ~50 s in production, exceeding `_ATLAS_FETCH_TIMEOUT_S` (45 s) on every call.
+
+### First attempt (commit b2afe1b) and why it was insufficient
+
+The initial fix split the query in two: a lightweight, `edn_string`-free selection query carrying the sort + `.limit(_MAX_FETCH_DOCS)`, followed by an indexed `_id: {"$in": ...}` full-document fetch with no sort. The theory: sorting small documents (two fields) would be cheap even though `oos_metrics.sharpe` stays unindexed.
+
+The PM's live-Atlas gate against this version failed: **45.03 s timeout, 0 candidates returned.** Direct Mongo reads during diagnosis found the real cause -- `captplanet.strategies` has no usable index besides `_id`. A server-side sort is an unindexed COLLSCAN regardless of projection size; shrinking the projection reduces disk I/O per document but does not touch the (dominant) unindexed-sort cost across all ~11,227 docs.
+
+### Fix (commit dd1406e): eliminate server-side sorting entirely
+
+`_fetch_fn` was restructured into three steps, with no `sort=` anywhere in the Mongo query:
+
+1. **Lightweight, unsorted, uncapped selection** -- `collection.find({}, {"_id": 1, "oos_metrics.Sharpe": 1})` over the whole collection. No `sort=`, no `.limit()`.
+2. **Client-side rank + bound** -- the selection docs are parsed and sorted descending in Python (`selection_docs.sort(key=_oos_sharpe, reverse=True)`), then sliced to the top `_MAX_FETCH_DOCS` ids.
+3. **Targeted full-document fetch** -- `collection.find({"_id": {"$in": top_ids}}, _PROJECTION)`, an indexed `_id` lookup requiring no sort.
+
+Moving the sort into Python is safe here because step 1 only transfers two small fields per document (cheap even unindexed); the ranking cost that was dominating the timeout moves to an in-memory Python sort of a small list.
+
+### `_MAX_FETCH_DOCS` retuned for live timing (500 -> 100 -> 50)
+
+Even with the sort eliminated, `edn_string` averages ~153 KB/doc live -- an indexed `_id` fetch of too many full documents dominates the 45 s budget on its own. `_MAX_FETCH_DOCS` was reduced 500 -> 100 in the same commit as the query restructure (still 5x headroom over `MAX_COMMUNITY_CANDIDATES_PER_RUN=20`), then tightened 100 -> 50 (commit eb53a19) after the PM's live gate against the 100-cap version passed but at 33.95 s -- only ~11 s headroom under the 45 s bound, judged insufficient margin for the droplet's slower 2 vCPU single-thread parse. The public `limit` parameter (post-fetch, post-dedup, caller-level) is unaffected -- a separate, independent control.
+
+### Result (PM-verified live, not self-reported)
+
+Live Atlas pull against the real `captplanet.strategies` collection: **19.93 s** (was infinite / always-timeout at 45 s pre-fix; 33.95 s at the intermediate `_MAX_FETCH_DOCS=100` step), returning 50 real strategies ranked on the real Sharpe field (see `DE-ATLAS-SHARPE-FIELD-001` below) -- ~25 s / 56% headroom under the 45 s bound. `-n0` targeted suite: 89 passed / 2 skipped / 0 failed at HEAD `eb53a19`.
+
+### Invariants preserved
+
+- `_bounded_fetch_fn` (the `ThreadPoolExecutor` wall-clock wrapper), `atlas_cache.py`, and `_PROJECTION` (the step-3 projection) are unchanged.
+- D-1 never-raises contract unchanged; no live Mongo/network calls in tests (`pymongo.MongoClient` mocked throughout).
+- No new HTTP surface, no retry-policy change, no `is_live` propagation -- advisory-only, off-execution-path, never live-write.
+
+### Files changed
+
+- `advisors/community_strats.py` -- `_fetch_fn` restructured (three-step, no server-side sort); `_MAX_FETCH_DOCS` 500 -> 100 -> 50.
+- `tests/advisors/test_community_strats_fetch_query.py` -- RED -> amended-GREEN: `TestSlowPatternEliminated` (no `find()` call combines a full-document projection with the sharpe sort), `TestTwoStepQueryStructure` (amended to `test_no_find_call_carries_any_server_side_sort` + lightweight/full-identity structure), `TestBoundedTopNCap` (`_MAX_FETCH_DOCS==50`, full-doc fetch never exceeds the cap), `TestTopNSharpeOrderPreserved`, `TestBehaviorPreservedD1AndPipeline` (regression-safety nets, unchanged pass/fail status before and after).
+- `tests/advisors/test_community_strats.py`, `tests/advisors/test_community_strats_timeout.py`, `tests/advisors/test_atlas_cache_populate.py` -- sibling suites repaired for the new query shape; behavior unchanged.
+
+### Reference
+
+DE-ATLAS-SLOW-QUERY-001; branch `fix/atlas-fetch-slow-query`; HEAD `eb53a19`; supersedes the server-side-sort approach in `DE-ATLAS-CACHE-001` Fix 3 (see the superseded-pointer note there); see `docs/generated/advisors_community_strats.md` for the current fetch-mechanics reference.
+
+---
+
+## DE-ATLAS-SHARPE-FIELD-001 -- Community-strategies Sharpe field correction: sharpe -> Sharpe (2026-07-11)
+
+Branch: `fix/atlas-fetch-slow-query` | HEAD: eb53a19
+
+### Problem (pre-existing, cycle-independent -- found while diagnosing DE-ATLAS-SLOW-QUERY-001's live-gate failure)
+
+Direct Mongo reads against the live `captplanet.strategies` collection, taken while diagnosing the timeout above, found a second, unrelated defect: all three Sharpe-consumption sites in `advisors/community_strats.py` (client-side selection ranking, the dedup tie-break, and the `min_oos_sharpe` filter) read `oos_metrics['sharpe']` (lowercase) -- a key present on **0 of 11,227** live docs. The real field is `oos_metrics['Sharpe']` (capital S), **string-valued**, present on **10,067 of 11,227** docs. Every community candidate was being ranked, deduped, and filtered as if it had no Sharpe at all -- the sharpe-based selection was effectively a no-op ordering (all docs tied at `-inf`), silently degrading candidate quality without any error, exception, or D-1 signal.
+
+### Fix
+
+A single shared helper, `_parse_sharpe(oos_metrics) -> float | None`, now backs every consumption site:
+
+- Reads the corrected `oos_metrics['Sharpe']` key.
+- Defensively parses to `float`, returning `None` (never raising) for: missing field, non-numeric string (`"N/A"`), percent-formatted string (`"12.3%"`), or `"nan"`/`"inf"` -- Python's bare `float()` accepts the latter two as valid floats, but neither is a valid Sharpe ratio, so both are explicitly rejected via `math.isnan`/`math.isinf`.
+
+`_oos_sharpe(doc)` wraps `_parse_sharpe(doc.get("oos_metrics"))`, returning `float("-inf")` on `None` -- preserving the pre-existing "missing/unparseable sharpe never wins a tie, never gets excluded by `min_oos_sharpe`" contract, now pointed at a field that actually has data.
+
+### Invariants preserved
+
+- D-1 never-raises: `_parse_sharpe` never raises regardless of input shape.
+- `min_oos_sharpe` keep-rule unchanged: docs lacking a genuinely-parseable Sharpe are always kept, never excluded by the floor.
+- No change to `_PROJECTION`, `_bounded_fetch_fn`, or the validate/dedup/filter/limit pipeline structure -- only the field path + parsing.
+
+### Files changed
+
+- `advisors/community_strats.py` -- new `_parse_sharpe()` helper (adds `import math`); `_oos_sharpe()` rewritten to use it; `min_oos_sharpe` filter in `load_community_strategies` rewritten to use it.
+- `tests/advisors/test_community_strats_sharpe_field.py` (new) -- `TestRealSharpeFieldPath` (ranking/filtering/dedup actually select on the real field), `TestDefensiveSharpeParsing` (malformed variants sort to bottom, never raise; numeric-string comparison correctness).
+- `tests/advisors/test_community_strats.py` -- sibling assertions re-pointed to the corrected field where they had encoded the stale `sharpe` key.
+
+### Reference
+
+DE-ATLAS-SHARPE-FIELD-001; branch `fix/atlas-fetch-slow-query`; HEAD `eb53a19`; found and fixed in the same cycle as `DE-ATLAS-SLOW-QUERY-001` above; see `docs/generated/advisors_community_strats.md` for the current field-parsing reference.
