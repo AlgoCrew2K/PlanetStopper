@@ -23,6 +23,7 @@ from __future__ import annotations
 import ast
 import inspect
 import pathlib
+from unittest.mock import patch
 
 import pytest
 
@@ -216,7 +217,17 @@ def test_frontrunner_builder_run_entrypoint_does_not_call_save_symphony(monkeypa
     the separate approve() path may. We assert this by patching save_symphony
     to explode and driving the module's own 'run' function with all
     externals (Fable/backtest/Atlas) neutralised, then confirming no explosion
-    occurred, i.e. save_symphony was never reached."""
+    occurred, i.e. save_symphony was never reached.
+
+    Atlas mock (2026-07-11 hardening): community_strats.load_community_strategies
+    is explicitly patched to an unavailable result. Previously this test's
+    "Atlas neutralised" claim was true only by coincidence — the isolated
+    test DB's empty live-symphony roster meant _run_build_for_symphony's
+    per-cascade loop (and therefore any Atlas call inside it) never actually
+    executed. That is a fragile, implicit safety net, not a real guard: if
+    the roster were ever non-empty here, this test would attempt a genuine
+    live Atlas/Mongo fetch. Explicit mocking makes the guarantee hold
+    regardless of roster state."""
     import advisors.composer_draft_client as cdc
     import advisors.frontrunner_builder as fb
 
@@ -232,17 +243,21 @@ def test_frontrunner_builder_run_entrypoint_does_not_call_save_symphony(monkeypa
     )
 
     # The run function must be D-1 never-raises regardless of environment —
-    # calling it with no further mocking (Fable/backtest/Atlas absent/misconfigured)
+    # calling it with no further mocking (Fable/backtest absent/misconfigured)
     # must degrade cleanly, not explode, and critically must never reach save_symphony.
-    try:
-        run_fn()
-    except AssertionError:
-        raise
-    except Exception:
-        # Any other exception is a pre-existing D-1 contract violation, out of
-        # scope for THIS test (covered by test_frontrunner_integration.py);
-        # what matters here is that save_symphony specifically was not hit.
-        pass
+    with patch(
+        "advisors.community_strats.load_community_strategies",
+        return_value={"available": False, "candidates": [], "stats": {}, "source": "captplanet"},
+    ):
+        try:
+            run_fn()
+        except AssertionError:
+            raise
+        except Exception:
+            # Any other exception is a pre-existing D-1 contract violation, out of
+            # scope for THIS test (covered by test_frontrunner_integration.py);
+            # what matters here is that save_symphony specifically was not hit.
+            pass
 
 
 # ---------------------------------------------------------------------------

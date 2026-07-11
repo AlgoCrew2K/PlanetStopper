@@ -1033,13 +1033,22 @@ def _run_build_for_symphony(symphony_id: str) -> None:
         )
         cascades = cascades[:MAX_CASCADES_PER_SYMPHONY_RUN]
 
+    # AC-3/AC-12: the Atlas corpus is run-wide (weekly-cached, not
+    # cascade-specific) — load it ONCE per symphony run, never per cascade.
+    # Loading it inside the loop below made every unmocked test attempt a
+    # live Atlas fetch once per cascade (up to MAX_CASCADES_PER_SYMPHONY_RUN
+    # times) — the exact "hitting Mongo" failure mode this hoist fixes, on
+    # top of being the correct production pattern regardless of test
+    # exposure (a warm weekly cache still doesn't need N redundant reads).
+    atlas_patterns = _gather_atlas_frontrunner_patterns(watched_tickers=[])
+
     for cascade in cascades:
         watched_tickers = sorted(
             _walk_overlay_tickers(cascade.overlay_tree) if "kind" in cascade.overlay_tree else []
         )
         signal_context = {
             "watched_tickers": watched_tickers,
-            "atlas_patterns": _gather_atlas_frontrunner_patterns(watched_tickers),
+            "atlas_patterns": atlas_patterns,
         }
         result = generate_candidate_overlay(signal_context)
         if result.candidate is None:
