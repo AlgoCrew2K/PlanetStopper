@@ -101,12 +101,23 @@ _PCT_PLACEHOLDER = "%"
 # rows. researcher_dof_ledger.spec_bundle_id is a SOFT FK ("soft FK to
 # spec_bundles.bundle_hash", migrations/018_researcher_dof_ledger.sql:33 — no
 # SQL FOREIGN KEY constraint, enforcement is app-level only per
-# database.insert_dof_ledger_row's own docstring). A distinct sentinel string
-# (never a real theory spec_bundle_id) keeps these rows OUT of any future
-# bundle-scoped count_dof_backtest_selections(spec_bundle_id=...) read, and out
-# of the autotuner's own global (spec_bundle_id=None) N_effective haircut —
-# the frontrunner builder's search breadth is a distinct search process from
-# the per-symphony Optuna walk-forward and must never inflate its FDR bar.
+# database.insert_dof_ledger_row's own docstring). A distinct, non-empty,
+# never-a-real-theory-spec_bundle_id sentinel string is real but PARTIAL audit
+# legibility: it makes a scoped count_dof_backtest_selections(spec_bundle_id=
+# "frontrunner_builder") read correctly exclude these rows, and it is never
+# indistinguishable from a pre-bundle-era NULL row.
+# CORRECTION (frtest RCA, 10af53c — this comment previously overclaimed
+# isolation from the autotuner's own N_effective haircut; that claim was
+# WRONG and has been removed): the actual production consumer,
+# database.get_researcher_dof_ledger_for_run (database.py:2163-2199), excludes
+# ONLY rows matching the CURRENT run's own winning_spec_bundle_id — every
+# OTHER BACKTEST_SELECTION row (NULL spec_bundle_id, or any other string,
+# this sentinel included) is swept into every symphony's real autotune
+# N_effective unconditionally; run_timestamp is accepted but unused in the
+# SQL. There is no subsystem/producer column on researcher_dof_ledger to
+# filter on. That is a pre-existing cross-subsystem schema/query gap, NOT
+# fixable from this module — tracked as a follow-on decision for the team,
+# not silently asserted as solved here.
 _DOF_LEDGER_SPEC_BUNDLE_SENTINEL: str = "frontrunner_builder"
 
 # AC-6/7: acceptance_gate's Stage-2 discretionary panel (backtest_gate_engine's
