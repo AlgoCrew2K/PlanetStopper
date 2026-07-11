@@ -43,12 +43,21 @@ function, same rationale.
 
 from __future__ import annotations
 
+import logging
 import pathlib
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import app as app_module
+
+# Bounded wait for tests that let the REAL app._FRONTRUNNER_BUILD_EXECUTOR
+# run a submitted closure (not mocked) — mirrors
+# tests/app/test_fleet_dismiss_background_dispatch.py's own
+# durable_write.wait_timeout_seconds convention (a fixture there; a plain
+# module constant here since this file has no JSON fixture of its own).
+_BACKGROUND_WAIT_TIMEOUT_SECONDS = 10.0
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -217,30 +226,110 @@ def test_run_never_calls_run_frontrunner_build_synchronously_in_request(client):
     mock_run_direct.assert_not_called()
 
 
-def test_run_dispatches_the_real_run_frontrunner_build_function_to_the_executor(client):
-    """Route-level RED for mocked fns, adapted for the async model: since
-    the actual multi-minute work is no longer exercised synchronously in a
-    request/response cycle, the meaningful route-level proof shifts to
-    'did the route correctly import and reference the REAL
-    run_frontrunner_build callable when submitting it' — an
-    AttributeError/ImportError-shaped bug here would otherwise only
-    surface asynchronously, inside the executor thread, invisible to the
-    operator's request."""
-    with patch("app._FRONTRUNNER_BUILD_EXECUTOR") as mock_executor:
-        client.post("/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json")
+def test_run_background_closure_actually_invokes_run_frontrunner_build(client):
+    """Route-level RED for mocked fns, adapted for the async model AND for
+    the ruled log-and-swallow closure design (team-lead, 2026-07-11):
+    frdash's submitted work wraps run_frontrunner_build in a closure (defense-
+    in-depth try/except, mirroring _dismiss_async at app.py:2831) rather than
+    submitting the bare function object — so asserting object IDENTITY on
+    the first arg to .submit() would break against the correct implementation.
+    The real, robust guarantee this test needs is BEHAVIORAL: does the REAL
+    app._FRONTRUNNER_BUILD_EXECUTOR (not mocked) actually reach and invoke
+    the REAL run_frontrunner_build when it runs the submitted closure — an
+    undefined-attribute/wrong-reference bug inside that closure would
+    otherwise only surface asynchronously, on the worker thread, invisible
+    to the operator's request/response cycle.
 
-    assert mock_executor.submit.called
-    submitted_args = mock_executor.submit.call_args.args
-    assert submitted_args, "executor.submit() was called with no arguments"
+    Uses the threading.Event-wait-inside-the-patch-block pattern already
+    established in tests/app/test_fleet_dismiss_background_dispatch.py
+    (its own module docstring, lines 32-39): the executor's worker thread
+    runs AFTER the Flask handler returns, so any assertion that needs to
+    observe the background call must wait for it while the mock is still
+    active.
+    """
+    invoked = threading.Event()
 
-    from advisors.frontrunner_builder import run_frontrunner_build as real_run_frontrunner_build
+    def _mark_invoked(*_a, **_k):
+        invoked.set()
 
-    assert submitted_args[0] is real_run_frontrunner_build, (
-        f"the route must submit the REAL advisors.frontrunner_builder."
-        f"run_frontrunner_build function object to the executor, got "
-        f"{submitted_args[0]!r} — an undefined/wrong reference here would "
-        f"only fail inside the background thread, invisible to the operator's "
-        f"request/response cycle"
+    with (
+        patch("os.environ.get", side_effect=lambda k, d=None: "fake-key" if k == "ANTHROPIC_API_KEY" else d),
+        patch("advisors.frontrunner_builder.run_frontrunner_build", side_effect=_mark_invoked) as mock_run,
+    ):
+        resp = client.post("/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json")
+        # Wait INSIDE the patch context — the real (unmocked) executor's
+        # worker thread runs after the handler returns; the mock must
+        # remain active until the worker calls through it.
+        reached = invoked.wait(timeout=_BACKGROUND_WAIT_TIMEOUT_SECONDS)
+
+    assert resp.status_code == 202
+    assert reached, (
+        f"run_frontrunner_build was never invoked by the background closure "
+        f"within {_BACKGROUND_WAIT_TIMEOUT_SECONDS}s — either the route never "
+        f"dispatches to the real executor, or the submitted closure references "
+        f"an undefined/wrong attribute (an AttributeError/ImportError-shaped "
+        f"bug here would otherwise only fail inside the worker thread, "
+        f"invisible to the operator's request)"
+    )
+    assert mock_run.called
+
+
+def test_run_background_closure_logs_and_swallows_an_unexpected_exception(client, caplog):
+    """RULING (team-lead, 2026-07-11, repurposing frdash's original flag on
+    this test rather than deleting it): under async dispatch the route
+    itself cannot catch run_frontrunner_build's exception — by the time the
+    202 response is sent, the work hasn't run yet, and any raise happens
+    later, on the worker thread. run_frontrunner_build is documented
+    D-1/never-raises by its own contract, so this scenario is a genuine
+    defense-in-depth case (an UNEXPECTED bug defeating the D-1 contract),
+    not a normal path. The submitted closure must wrap the call in its own
+    try/except (mirroring _dismiss_async, app.py:2831) so an unexpected
+    raise is LOGGED, not silently lost in an unawaited Future — an
+    unobserved background-thread exception is exactly the kind of silent
+    failure this test exists to prevent.
+
+    This test does NOT assert anything about the HTTP response body (the
+    response was already sent before the raise occurs — that assertion was
+    the structural incompatibility frdash correctly flagged in the original
+    version of this test). It asserts the OBSERVABLE, correct outcome:
+    the exception is logged and the worker thread does not crash silently.
+    """
+    raised = threading.Event()
+
+    def _raise_unexpectedly(*_a, **_k):
+        raised.set()
+        raise RuntimeError("unexpected worker-thread failure despite D-1 contract")
+
+    with (
+        patch("os.environ.get", side_effect=lambda k, d=None: "fake-key" if k == "ANTHROPIC_API_KEY" else d),
+        patch("advisors.frontrunner_builder.run_frontrunner_build", side_effect=_raise_unexpectedly),
+        caplog.at_level(logging.ERROR),
+    ):
+        resp = client.post("/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json")
+        # Wait INSIDE the patch context — same rationale as the sibling test
+        # above: the real executor's worker thread runs after the handler
+        # returns, and the mock (which signals via the Event) must still be
+        # active when it does.
+        fired = raised.wait(timeout=_BACKGROUND_WAIT_TIMEOUT_SECONDS)
+
+    assert resp.status_code == 202, (
+        "the response must already be sent (202) regardless of what happens "
+        "later on the worker thread — this is the whole point of async dispatch"
+    )
+    assert fired, (
+        f"run_frontrunner_build was never invoked within "
+        f"{_BACKGROUND_WAIT_TIMEOUT_SECONDS}s — cannot verify log-and-swallow "
+        f"behavior if the closure never reached the call"
+    )
+    assert any(
+        record.levelno >= logging.ERROR
+        and ("RuntimeError" in record.getMessage() or "unexpected" in record.getMessage().lower())
+        for record in caplog.records
+    ), (
+        f"the background closure must LOG an unexpected exception from "
+        f"run_frontrunner_build, not silently swallow it into an unawaited "
+        f"Future — no matching ERROR-level log record found. Captured: "
+        f"{[r.getMessage() for r in caplog.records]!r}"
     )
 
 
