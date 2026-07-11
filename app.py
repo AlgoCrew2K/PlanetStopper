@@ -4125,6 +4125,36 @@ def ai_advisor_tab():
             # Inject sparkline points directly onto obs for template rendering.
             _obs["sparkline_points"] = _rr.get("equity_curve_downsampled")
 
+    # ------------------------------------------------------------------ #
+    # Frontrunner Builder panel: prefetch pending frontrunner_proposals    #
+    # rows (AC-9-route). Shared by both proposal_source values             #
+    # ('frontrunner_builder' and 'strategy_builder_retrofit') — one query, #
+    # the template branches per-card on proposal_source. candidate_tree    #
+    # (the full spliced symphony, potentially 8,000+ nodes) is popped and  #
+    # replaced with a bounded truncated preview string before it ever      #
+    # reaches the template — never rendered as a live dict in context.     #
+    # ------------------------------------------------------------------ #
+    _FR_TREE_PREVIEW_MAX_CHARS = 4000
+    frontrunner_proposals: list[dict] = []
+    try:
+        frontrunner_proposals = database.get_pending_frontrunner_proposals()
+        for _fr_p in frontrunner_proposals:
+            _fr_tree = _fr_p.pop("candidate_tree", None)
+            try:
+                import json as _fr_json  # noqa: PLC0415
+
+                _fr_tree_str = _fr_json.dumps(_fr_tree, indent=2) if _fr_tree is not None else ""
+            except Exception:
+                _fr_tree_str = str(_fr_tree)
+            if len(_fr_tree_str) > _FR_TREE_PREVIEW_MAX_CHARS:
+                _fr_tree_str = (
+                    _fr_tree_str[:_FR_TREE_PREVIEW_MAX_CHARS]
+                    + f"\n... truncated ({len(_fr_tree_str)} total chars)"
+                )
+            _fr_p["candidate_tree_preview"] = _fr_tree_str
+    except Exception:
+        pass  # Empty-state rendered by template on [].
+
     return render_template(
         "ai_advisor.html",
         active_route="advisor",
@@ -4141,6 +4171,7 @@ def ai_advisor_tab():
         sb_card_artifacts=sb_card_artifacts,
         market_prism_summary=market_prism_summary,
         market_prism_verification=market_prism_verification,
+        frontrunner_proposals=frontrunner_proposals,
     )
 
 
