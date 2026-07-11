@@ -1,9 +1,9 @@
 # advisors/strategy_builder_engine
 
-> Phase-2 Strategy Builder proposal engine: drives the real C1→C2→C3 builder pipeline to generate candidates, backtests them, gates via Harvey-Liu FDR + C5b PBO veto + SPY-OOS baseline, and persists survivors as advisory observations.
+> Phase-2 Strategy Builder proposal engine: drives the real C1→C2→C3 builder pipeline to generate candidates, backtests them, gates via Harvey-Liu FDR + C5b PBO veto + SPY-OOS baseline, persists survivors as advisory observations, and (AC-10) queues survivors for the Frontrunner Builder's shared approval-to-Composer-create path.
 
 **Source:** `advisors/strategy_builder_engine.py`
-**Last updated:** 2026-06-20
+**Last updated:** 2026-07-11 (AC-10 Frontrunner Builder retrofit, `f1592a2`; prior: 2026-06-20)
 
 ## Overview
 
@@ -212,6 +212,10 @@ Pre-C5, `run.error` was echoed verbatim in the route JSON response. `run.error` 
 
 ---
 
+## Frontrunner Builder Retrofit (AC-10, 2026-07-11, commit f1592a2)
+
+`_persist_survivor` additionally queues every non-rejected candidate onto the `frontrunner_proposals` table via `database.insert_frontrunner_proposal(symphony_id, proposal_source="strategy_builder_retrofit", candidate_tree=info.tree, metrics_json={cagr, sharpe, calmar, max_drawdown})`, immediately after the existing `advisor_observations` persist. This closes the pre-existing gap where a Strategy Builder survivor could only ever be an advisory observation, never a Composer upload. `proposal_source` distinguishes these rows from the Frontrunner Builder's own (`"frontrunner_builder"`); both flow through the SAME `advisors.frontrunner_builder.approve_frontrunner_proposal` on operator approval -- one shared approval-to-Composer-create path for the whole feature, not two. This module does NOT import `advisors.frontrunner_builder` -- the queue write goes through `database.insert_frontrunner_proposal` directly, so there is no cross-module coupling beyond the shared table + shared approval function (called from elsewhere, not from here). D-1: a queue-write failure is logged and swallowed -- it never breaks the `advisor_observations` persist that already succeeded above it. See `DE-FRONTRUNNER-001` in `DECISIONS.md` and `docs/generated/advisors_frontrunner_builder.md`.
+
 ## Internal Dependencies
 
 - `advisors.universe_provider` — `get_tradeable_set()` (C1, CC-2 lazy import inside `_generate_candidate_trees`)
@@ -221,6 +225,6 @@ Pre-C5, `run.error` was echoed verbatim in the route JSON response. `run.error` 
 - `advisors.backtest_gate_engine` — `evaluate_candidate_batch`, `BacktestCandidate`, `CandidateGateResult`, `GatedBatch`, `HARVEY_LIU_FDR_Q`, `SURVIVOR_OVERFITTING_CAVEAT`
 - `advisors.composer_backtest_client` — `run_backtest` (1 req/s pacing; also used for SPY benchmark sourcing, Step 2a, AC-25)
 - `analytics` — `compute_quantstats_metrics`
-- `database` — `insert_advisor_observation`
+- `database` — `insert_advisor_observation`, `insert_frontrunner_proposal` (AC-10 retrofit)
 
 No import of `alpha_bot_execution`, `autotuner`, or any execution module. Off-execution-path; advisory-only. The sole production callers are `app.py:3813` (`ai_advisor_strategy_builder_run` route) and `advisors/strategy_builder_scheduler.py` (`run_weekly_build`). `autotuner.py` does NOT call `propose_strategies` — a prior doc claim to the contrary was stale (corrected in C4 doc pass).
