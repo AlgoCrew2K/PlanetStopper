@@ -293,16 +293,31 @@ def test_run_background_closure_logs_and_swallows_an_unexpected_exception(client
     the structural incompatibility frdash correctly flagged in the original
     version of this test). It asserts the OBSERVABLE, correct outcome:
     the exception is logged and the worker thread does not crash silently.
+
+    Synchronization note (self-caught race, fixed before commit): the
+    signaling Event must fire from the LOG CALL itself (app._daemon_log.
+    error), not from inside the raising mock — a raise happens BEFORE the
+    wrapping closure's except block has actually logged anything, so
+    signaling at the raise point lets the main thread check caplog.records
+    before the background thread has finished writing the record. Wrapping
+    app._daemon_log.error (still calling the real bound method so the
+    record genuinely reaches caplog) makes the Event fire exactly when the
+    observable behavior under test has happened.
     """
-    raised = threading.Event()
+    logged = threading.Event()
+    _real_error = app_module._daemon_log.error
+
+    def _error_and_signal(*args, **kwargs):
+        _real_error(*args, **kwargs)
+        logged.set()
 
     def _raise_unexpectedly(*_a, **_k):
-        raised.set()
         raise RuntimeError("unexpected worker-thread failure despite D-1 contract")
 
     with (
         patch("os.environ.get", side_effect=lambda k, d=None: "fake-key" if k == "ANTHROPIC_API_KEY" else d),
         patch("advisors.frontrunner_builder.run_frontrunner_build", side_effect=_raise_unexpectedly),
+        patch.object(app_module._daemon_log, "error", side_effect=_error_and_signal),
         caplog.at_level(logging.ERROR),
     ):
         resp = client.post("/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json")
@@ -310,25 +325,25 @@ def test_run_background_closure_logs_and_swallows_an_unexpected_exception(client
         # above: the real executor's worker thread runs after the handler
         # returns, and the mock (which signals via the Event) must still be
         # active when it does.
-        fired = raised.wait(timeout=_BACKGROUND_WAIT_TIMEOUT_SECONDS)
+        fired = logged.wait(timeout=_BACKGROUND_WAIT_TIMEOUT_SECONDS)
 
     assert resp.status_code == 202, (
         "the response must already be sent (202) regardless of what happens "
         "later on the worker thread — this is the whole point of async dispatch"
     )
     assert fired, (
-        f"run_frontrunner_build was never invoked within "
-        f"{_BACKGROUND_WAIT_TIMEOUT_SECONDS}s — cannot verify log-and-swallow "
-        f"behavior if the closure never reached the call"
+        f"app._daemon_log.error was never called within "
+        f"{_BACKGROUND_WAIT_TIMEOUT_SECONDS}s — the background closure must "
+        f"LOG an unexpected exception from run_frontrunner_build, not "
+        f"silently swallow it into an unawaited Future"
     )
     assert any(
         record.levelno >= logging.ERROR
         and ("RuntimeError" in record.getMessage() or "unexpected" in record.getMessage().lower())
         for record in caplog.records
     ), (
-        f"the background closure must LOG an unexpected exception from "
-        f"run_frontrunner_build, not silently swallow it into an unawaited "
-        f"Future — no matching ERROR-level log record found. Captured: "
+        f"app._daemon_log.error was called but no ERROR-level record naming "
+        f"the RuntimeError/failure was captured — Captured: "
         f"{[r.getMessage() for r in caplog.records]!r}"
     )
 
