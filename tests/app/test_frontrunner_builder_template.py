@@ -259,6 +259,59 @@ class TestTabStructure:
             "after adding the Frontrunner Builder tab (AC-8)."
         )
 
+    def test_frontrunner_builder_tab_badge_tooltip_does_not_say_advisory_gated(
+        self, client, monkeypatch
+    ):
+        """RULING (team-lead, 2026-07-11, both frreview Nit 1 and frux Item 7
+        independently flagged this): the tab badge tooltip previously read
+        "Composer write on approval — advisory-gated" — "advisory-gated"
+        softens the ONE tab in this SPA whose approve action performs a REAL
+        (undeployed) Composer write, unlike every sibling tab which is
+        advisory-only end to end. The word must not appear on this badge.
+        """
+        html = _render_advisor_page(client, monkeypatch)
+        idx = html.find('data-testid="frontrunner-builder-tab"')
+        assert idx != -1, "frontrunner-builder-tab not found — cannot verify badge copy."
+        # The badge <span> is a sibling inside the same <button>; bound the
+        # search to the button's own markup (next </button> close).
+        button_end = html.find("</button>", idx)
+        button_html = html[idx : button_end if button_end != -1 else idx + 500]
+        assert "advisory-gated" not in button_html, (
+            "The frontrunner-builder tab badge tooltip still contains "
+            "'advisory-gated' — this tab's approve action performs a REAL "
+            "Composer write (undeployed symphony), unlike every other tab in "
+            "the SPA. The tooltip must not soften that into an advisory-only "
+            "claim (team-lead ruling, frreview Nit 1 / frux Item 7)."
+        )
+
+    def test_frontrunner_builder_tab_badge_tooltip_names_real_write_and_approval(
+        self, client, monkeypatch
+    ):
+        """The replacement copy must convey BOTH facts the old copy obscured:
+        this is a real Composer write, and it only happens with operator
+        approval. Locked wording (coordinated with frdash, UI-copy owner,
+        matching the terse em-dash voice of the 5 sibling badges — e.g.
+        "Highest overfitting risk — building from scratch"):
+        "Real Composer write — approval required"
+        """
+        html = _render_advisor_page(client, monkeypatch)
+        idx = html.find('data-testid="frontrunner-builder-tab"')
+        assert idx != -1, "frontrunner-builder-tab not found — cannot verify badge copy."
+        button_end = html.find("</button>", idx)
+        button_html = html[idx : button_end if button_end != -1 else idx + 500]
+        assert "Real Composer write" in button_html, (
+            "The frontrunner-builder tab badge tooltip must name the real "
+            "Composer write explicitly — locked wording: "
+            "'Real Composer write — approval required'. "
+            f"Found button markup: {button_html!r}"
+        )
+        assert "approval required" in button_html, (
+            "The frontrunner-builder tab badge tooltip must state that "
+            "approval is required before the write happens — locked wording: "
+            "'Real Composer write — approval required'. "
+            f"Found button markup: {button_html!r}"
+        )
+
 
 # ===========================================================================
 # Group B: route prefetch — database.get_pending_frontrunner_proposals wired
