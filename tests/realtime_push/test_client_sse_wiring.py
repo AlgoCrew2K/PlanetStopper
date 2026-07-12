@@ -65,22 +65,27 @@ class TestClientEventSourceWiring:
 
         Fails until rt-impl calls loadState() (or equivalent) inside the event handler.
         """
-        # Look for loadState() called in proximity to 'cycle-complete'.
-        # We search for a region that contains both the event name and loadState.
-        # Allow a generous 300-char window around the event name occurrence.
-        cycle_complete_idx = index_js_source.find("cycle-complete")
-        assert cycle_complete_idx >= 0, (
-            "static/index.js must contain 'cycle-complete'. See previous test."
+        # Locate the ACTUAL addEventListener('cycle-complete', ...) call, not just any
+        # occurrence of the substring "cycle-complete" — a doc-comment elsewhere in the
+        # file (e.g. describing the $-saved panel's refresh timing, Finding 8) can also
+        # mention the event name, and a bare .find() would anchor its 300-char window on
+        # that comment instead of the real handler, producing a false RED/false GREEN
+        # depending on file layout. Anchoring on the addEventListener call itself is
+        # layout-stable regardless of what prose precedes it in the file.
+        match = re.search(r"addEventListener\(\s*['\"]cycle-complete['\"]", index_js_source)
+        assert match is not None, (
+            "static/index.js must register a real addEventListener('cycle-complete', ...) "
+            "call — not just mention 'cycle-complete' in a comment or string. See previous test."
         )
 
-        # Check for loadState within ±300 chars of the event name
-        window_start = max(0, cycle_complete_idx - 100)
-        window_end = min(len(index_js_source), cycle_complete_idx + 300)
-        window = index_js_source[window_start:window_end]
+        # Check for loadState within 300 chars AFTER the addEventListener call — the
+        # handler body follows the call site, so we only need a forward window.
+        window_end = min(len(index_js_source), match.end() + 300)
+        window = index_js_source[match.start() : window_end]
 
         assert "loadState" in window, (
             "The 'cycle-complete' event handler in static/index.js must call `loadState()` "
-            "within 300 characters of the event name. "
+            "within 300 characters of the addEventListener('cycle-complete', ...) call. "
             "rt-impl: `_es.addEventListener('cycle-complete', function() { loadState(); })`."
         )
 

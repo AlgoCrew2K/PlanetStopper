@@ -105,14 +105,19 @@ WHITELISTED_LINENOS: frozenset[int] = frozenset(
     {
         # seed_symphonies_into_bot_state: per-account AC-4 partial-success barrier.
         # fetch_symphony_stats may raise any exception type (e.g. RuntimeError);
-        # narrowing is infeasible and would break AC-4. If this line shifts, re-grep
-        # "except Exception" inside seed_symphonies_into_bot_state to find the new lineno.
-        1923,
+        # narrowing is infeasible and would break AC-4. Re-pointed after a reconciliation
+        # merge shifted the handler from L1923 to L1929. If this line shifts again,
+        # re-grep "except Exception" inside seed_symphonies_into_bot_state to find the
+        # new lineno (the handler spans multiple lines — `except (\n    Exception\n) as exc:`
+        # — so a literal substring grep for "except Exception" will miss it; use the AST
+        # walk in _find_broad_handlers, or parse and print ExceptHandler linenos directly).
+        1929,
         # ensure_bot_state_seeded: top-level daemon startup fail-safe barrier (AC-4).
         # Wraps load_state + presence-check + seed + save; must swallow all exception
-        # types to prevent daemon crash at startup. If this line shifts, re-grep
-        # "except Exception" inside ensure_bot_state_seeded to find the new lineno.
-        2012,
+        # types to prevent daemon crash at startup. Re-pointed after a reconciliation
+        # merge shifted the handler from L2012 to L2018. If this line shifts again,
+        # re-grep "except Exception" inside ensure_bot_state_seeded to find the new lineno.
+        2018,
     }
 )
 
