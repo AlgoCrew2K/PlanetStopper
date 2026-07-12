@@ -2187,8 +2187,7 @@ class TestPhase3FallbackDirectionRespected:
             f"'reduce'). Got new_value={tweak.new_value}."
         )
         assert tweak.new_value < 10, (
-            f"'reduce the window size' must decrease the value. "
-            f"Got new_value={tweak.new_value}."
+            f"'reduce the window size' must decrease the value. Got new_value={tweak.new_value}."
         )
 
     @pytest.mark.parametrize("keyword", ["reduce", "decrease"])
@@ -2263,8 +2262,7 @@ class TestPhase3FallbackDirectionRespected:
             )
 
         assert len(result.proposals) == 1, (
-            f"Expected exactly one proposal for a single-param tree. "
-            f"Got {len(result.proposals)}."
+            f"Expected exactly one proposal for a single-param tree. Got {len(result.proposals)}."
         )
         tweak = result.proposals[0].tweak
         assert tweak is not None, "The change_description must parse into a tweak."
