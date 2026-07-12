@@ -57,6 +57,20 @@
     <span id="next-run-countdown" data-testid="next-run-countdown" style="font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:0.04em;color:var(--studio-ink-dim);white-space:nowrap;flex-shrink:0;{% if not (meta is defined and meta.system_online) %}display:none;{% endif %}">{% if meta is defined and meta.system_online %}NEXT {{ meta.next_run }}{% endif %}</span>
   </div>
 
+  <!-- Right-rail: candidate-alert indicator (header badge, AC-1/AC-2/AC-4 —
+       feature-plans/candidate-alert.md). Server-rendered link to the AI Advisor
+       view so a click routes there even before chrome.js runs; chrome.js
+       populates the badge count + tooltip and fires the mark-viewed POST on
+       click (progressive enhancement — navigation works without it). -->
+  <a data-testid="candidate-alert-indicator" id="candidate-alert-indicator"
+     href="{{ url_for('ai_advisor_tab') }}"
+     style="display:flex;align-items:center;gap:2px;padding:4px 8px;border-radius:6px;text-decoration:none;color:var(--studio-ink-dim);flex-shrink:0;position:relative;"
+     title="No weekly run yet">
+    <span aria-hidden="true" style="font-size:14px;line-height:1;">&#x1F514;</span>
+    <span data-testid="candidate-alert-badge" id="candidate-alert-badge"
+          style="display:none;min-width:16px;height:16px;padding:0 4px;margin-left:2px;border-radius:8px;background:var(--studio-neg);color:var(--studio-white);font-size:10px;font-weight:700;line-height:16px;text-align:center;"></span>
+  </a>
+
   <!-- Right-rail: workspace switcher chip (B-08: real dropdown on click) -->
   <div id="ws-wrap" class="studio-nav-wide" style="position:relative;flex-shrink:0;">
     <button data-testid="workspace-switcher" type="button"

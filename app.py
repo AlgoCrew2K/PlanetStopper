@@ -2758,6 +2758,58 @@ def guard_alpha_summary():
     )
 
 
+@app.route("/api/candidate-alert")
+def candidate_alert():
+    """Return the header candidate-alert badge count + latest weekly-run status.
+
+    AC-2: new_valid_count — count of NEW, UNVIEWED weekly-suggestion candidates
+    (ASSET_SWAP/LOGIC_CHANGE/STRATEGY_BUILDER, verdict=='ADOPT_CANDIDATE' only —
+    see database.get_candidate_alert_new_valid_count for the verdict-classification
+    trace; KEEP_INCUMBENT/REJECT_VETO_FAILED never count).
+    AC-3: last_run — the latest weekly-batch aggregate (ran_at/evaluated/survivors),
+    visible even at survivors==0 so a rejected-everything run still proves the
+    subsystem is alive. None when no weekly-suggestion row has ever been written.
+    AC-6: never raises — a DB accessor failure degrades to the honest empty state
+    (new_valid_count=0, last_run=None), still 200.
+
+    Read-only (both accessors use get_ro_connection — architecture constraint 5).
+    Auth: covered by the global _auth_before_request hook (AC-8) — no additional
+    decorator needed, same as guard_alpha_summary.
+    """
+    try:
+        new_valid_count = database.get_candidate_alert_new_valid_count()
+    except Exception:
+        _daemon_log.debug("candidate_alert: new_valid_count lookup failed", exc_info=True)
+        new_valid_count = 0
+
+    try:
+        last_run = database.get_candidate_alert_last_run()
+    except Exception:
+        _daemon_log.debug("candidate_alert: last_run lookup failed", exc_info=True)
+        last_run = None
+
+    return jsonify({"new_valid_count": new_valid_count, "last_run": last_run})
+
+
+@app.route("/api/candidate-alert/mark-viewed", methods=["POST"])
+def candidate_alert_mark_viewed():
+    """Advance the candidate-alert viewed-marker so currently-visible survivors stop badging.
+
+    AC-5: the marker is server-computed only (database.mark_candidate_alert_viewed
+    takes no arguments) — any caller-supplied observation id in the request body is
+    ignored, so a malicious/buggy client cannot set the marker to an arbitrary value.
+    Idempotent — a repeat call never raises and never regresses the marker.
+
+    Advisory-only write: NOT gated by _SETTINGS_WRITE_ALLOWLIST (that allowlist is
+    exclusively for the separate /api/settings env-key write path) and never touches
+    LIVE_EXECUTION. CSRF is enforced globally by _csrf_before_request; the explicit
+    _validate_csrf() call below mirrors the save_symphony_settings pattern (app.py:3545).
+    """
+    _validate_csrf()
+    last_viewed_observation_id = database.mark_candidate_alert_viewed()
+    return jsonify({"status": "ok", "last_viewed_observation_id": last_viewed_observation_id})
+
+
 @app.route("/api/chart/<symphony_id>")
 def get_chart_data(symphony_id):
     _ro_conn = database.get_ro_connection()
