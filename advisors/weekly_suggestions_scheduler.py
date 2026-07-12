@@ -221,6 +221,51 @@ def _build_correlation_data(tickers: set) -> dict:
     return correlation_data
 
 
+def _fetch_lens_scores() -> dict:
+    """Read-only fetch of market-wide lens evidence, ONCE per weekly run.
+
+    Lenses are market-wide, not per-symphony, so this is called once (not
+    once per symphony) and the same lens_scores dict is passed to every
+    suggest_swaps call in the loop below.
+
+    Sourced from the nightly MARKET_LENS_CACHE bundle
+    (database.get_latest_market_lens_cache()) -- NEVER a live lens-API fetch.
+    The 5 lens producers are the nightly lens_pipeline's job (run once daily
+    at 03:00); re-fetching them live here would blow the weekly run's bounded
+    Composer/Alpaca budget and duplicate that pipeline's work.
+
+    Honest degradation (never fabricates evidence): a cold cache (no row yet)
+    or a row whose lenses are all available=False both degrade to {} --
+    which _apply_lens_blend already treats as a no-op (falsy check, same
+    as the pre-existing lens_scores=None path).
+    """
+    import database  # noqa: PLC0415 - CC-2 lazy, off-execution-path
+    from advisors.asset_swap_engine import extract_lens_scores  # noqa: PLC0415
+
+    try:
+        cache_row = database.get_latest_market_lens_cache()
+    except Exception as exc:  # noqa: BLE001 - D-1 (get_latest_market_lens_cache is
+        # itself D-1 never-raising; this is defense-in-depth against an
+        # unexpected future change, matching the belt-and-suspenders pattern
+        # used elsewhere in this cycle, e.g. strategy_builder_scheduler's
+        # guarded load_atlas_candidates call).
+        logger.warning(
+            "run_weekly_asset_swap_suggestions: lens cache read failed (%s)",
+            type(exc).__name__,
+        )
+        return {}
+
+    if not cache_row:
+        return {}
+
+    raw_response = cache_row.get("raw_response") or {}
+    lenses = raw_response.get("lenses")
+    if not isinstance(lenses, dict):
+        return {}
+
+    return extract_lens_scores(lenses)
+
+
 def run_weekly_asset_swap_suggestions() -> None:
     """Enumerate live symphonies and call suggest_swaps once per symphony.
 
@@ -232,10 +277,12 @@ def run_weekly_asset_swap_suggestions() -> None:
     D-1: one symphony's score-fetch/universe/bar-fetch failure or suggest_swaps
     exception never blocks the others. Never raises.
 
-    lens_scores wiring (via extract_lens_scores) is intentionally NOT included
-    here -- per the plan, it lands in a follow-up cycle now that Workstream D
-    is GREEN, tracked separately so this weekly path never ships "looks wired,
-    does nothing" ahead of D landing.
+    lens_scores is wired through _fetch_lens_scores() (read-only
+    MARKET_LENS_CACHE read, once per run -- see that function's docstring) and
+    passed to every suggest_swaps call, now that Workstream D (the lens-blend
+    fix) is GREEN -- this closes the "fixed math, dead in production" gap
+    (extract_lens_scores/_apply_lens_blend were previously unreachable via any
+    real weekly path).
     """
     import database  # noqa: PLC0415 - CC-2 lazy, off-execution-path
     import symphony_logic  # noqa: PLC0415
@@ -264,6 +311,11 @@ def run_weekly_asset_swap_suggestions() -> None:
     # Deterministic bounded sample -- see _ASSET_SWAP_CANDIDATE_POOL_SIZE.
     candidate_pool = sorted(tradeable)[:_ASSET_SWAP_CANDIDATE_POOL_SIZE]
 
+    # Market-wide lens evidence, fetched ONCE for the whole run (not per
+    # symphony) -- see _fetch_lens_scores(). Falsy (None/{}) degrades to the
+    # pre-existing no-op path inside _apply_lens_blend.
+    lens_scores = _fetch_lens_scores()
+
     for symphony_hash in symphony_hashes:
         try:
             score_tree = symphony_logic.fetch_symphony_score(symphony_hash)
@@ -290,6 +342,7 @@ def run_weekly_asset_swap_suggestions() -> None:
                 objective,
                 correlation_data,
                 candidate_pool,
+                lens_scores=lens_scores,
             )
         except Exception as exc:  # noqa: BLE001 - D-1: contain, log class name only
             logger.warning(
