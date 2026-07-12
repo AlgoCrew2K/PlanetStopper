@@ -3899,7 +3899,6 @@ DE-PRISM-MOMENTUM-REGISTRY-001; branch `feat/prism-momentum-registry`; HEAD `a62
 
 ---
 
-<<<<<<< HEAD
 ## DE-ATLAS-SLOW-QUERY-001 — Atlas community-strategies fetch, unindexed sort eliminated (2026-07-11)
 
 Branch: `fix/atlas-fetch-slow-query` | Base: `origin/main` b7e61b6 | HEAD: eb53a19
