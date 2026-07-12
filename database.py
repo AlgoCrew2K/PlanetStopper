@@ -649,6 +649,9 @@ def save_autotune_run(
     overfitting_verdict=None,
     # migration 028: Phase-3 PBO acceptance gate result.
     pbo=None,
+    # migration 023: S accumulator (SUM n_configs_searched over BACKTEST_SELECTION
+    # researcher_dof_ledger rows for this run's spec_bundle_id) — see AC-E1/E2.
+    s_count: int | None = None,
 ) -> int:
     """Persist one row of per-run Optuna validation metrics to autotune_runs.
 
@@ -685,6 +688,17 @@ def save_autotune_run(
       pbo: Probability of Backtest Overfitting from CSCV (Bailey et al. 2017).
            In (0, 1); higher means more overfitting evidence.  None when PBO
            could not be computed (insufficient CSCV paths).
+
+    S accumulator column (migration 023):
+      s_count: SUM of n_configs_searched over BACKTEST_SELECTION rows in
+               researcher_dof_ledger for this run's spec_bundle_id (distinct
+               from d_spec, which is COUNT DISTINCT bundles). None for legacy
+               pre-023 rows / callers that haven't been wired yet; 0 is the
+               honest NN1-compliant value (no BACKTEST_SELECTION evidence) and
+               must be persisted as literal 0, never coerced to NULL — callers
+               use `s_count=0`, not an omitted kwarg, to record that case.
+               Feeds overfitting_conscience Indicator-3 (operator drift) via
+               each run's prior_runs query.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -695,8 +709,8 @@ def save_autotune_run(
              baseline_decision, fallback_oos_alpha, default_oos_alpha,
              selection_tstat, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
              spec_bundle_id, n_effective, d_spec, gamma, overfitting_verdict,
-             pbo)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             pbo, s_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_timestamp,
@@ -716,6 +730,7 @@ def save_autotune_run(
             gamma,
             overfitting_verdict,
             pbo,
+            s_count,
         ),
     )
     conn.commit()
