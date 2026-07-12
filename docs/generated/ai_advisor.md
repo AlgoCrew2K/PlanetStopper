@@ -3,7 +3,7 @@
 > Claude-backed config advisor: context assembly, per-symphony assessment, structured-output Claude call via ADVISOR_SYNTHESIS_MODEL, safety gates (7-item allowlist, risk-direction check, OOS re-validation), and market-wide lens cache-serve (nightly MARKET_LENS_CACHE bundle; no per-click live lens fetches for the 5 market-wide lens blocks).
 
 **Source:** `ai_advisor.py`
-**Last updated:** 2026-06-29 (DE-ADVISOR-LATENCY: MARKET_LENS_CACHE cache-serve path; persist_market_lens_cache producer; build_assessment_from_context empty-state reword; prior: DE-FUND-002 vintage-correct fundamentals)
+**Last updated:** 2026-07-12 (DE-TECH-SMA200-HISTORY-001: stale ai_advisor.py:439-482 line-range + _fetch_technicals([]) claim corrected in the technicals lens section, swept while documenting the lens_technicals._HISTORY_DAYS fix; prior: DE-ADVISOR-LATENCY MARKET_LENS_CACHE cache-serve path; persist_market_lens_cache producer; build_assessment_from_context empty-state reword; prior: DE-FUND-002 vintage-correct fundamentals)
 
 ## Overview
 
@@ -209,7 +209,7 @@ All five are wired as top-level keys in the dict returned by `assemble_advisor_c
 
 | Helper | Key in context | Status | Producer |
 |--------|----------------|--------|----------|
-| `_build_technicals_section()` (`ai_advisor.py:439-482`) | `"technicals"` | **Wired** (2026-06-15); served from nightly cache (2026-06-29) | `advisors/lens_technicals.py` — MA posture, breadth, momentum |
+| `_build_technicals_section()` (`ai_advisor.py:489-560`) | `"technicals"` | **Wired** (2026-06-15); served from nightly cache (2026-06-29) | `advisors/lens_technicals.py` — MA posture, breadth, momentum |
 | `_build_sentiment_section()` | `"sentiment"` | **Wired** (2026-06-15); served from nightly cache (2026-06-29) | `advisors/lens_gdelt.py` — GDELT 2.0 tone + citations |
 | `_build_derivatives_section()` | `"derivatives"` | **Wired** (2026-06-16) — freshness-guarded; served from nightly cache (2026-06-29) | `advisors/lens_options_proxy.py` — FRED VIXCLS/VXVCLS; VIX level, term-structure regime, risk read; staleness guard (`_OPTIONS_PROXY_MAX_STALENESS_DAYS=10`) |
 | `_build_macro_section()` | `"macro"` | **Wired** — FRED producer (DGS10/UNRATE/CPIAUCSL/FEDFUNDS); served from nightly cache (2026-06-29) | FRED API — 10-Year Treasury, Unemployment Rate, CPI-U, Federal Funds Rate; per-series value+date + clickable fred.stlouisfed.org citation; degrades to `available=False` when `FRED_API_KEY` absent |
@@ -217,9 +217,9 @@ All five are wired as top-level keys in the dict returned by `assemble_advisor_c
 
 Each accepts an optional `_data` argument (reserved for caller pre-injection; unused in current implementations) so future producers can be wired in without changing call sites in `assemble_advisor_context`.
 
-### `_build_technicals_section(_data=None) → dict` (ai_advisor.py:439-482)
+### `_build_technicals_section(_data=None) → dict` (ai_advisor.py:489-560)
 
-Wired (2026-06-15). Lazy-imports `advisors.lens_technicals` (CC-2) and calls `_fetch_technicals([])`. Returns the lens block with `available=True` and `payload={ma_posture, breadth, momentum}` when bars are available; `available=False` with a named reason otherwise. Defense-in-depth: wraps the import+call in `try/except` — any unexpected exception returns `available=False, reason=type(exc).__name__`.
+Wired (2026-06-15). Lazy-imports `advisors.lens_technicals` (CC-2), derives the universe from the UNION of live `database.load_state()` `logic_holdings` and `lens_technicals._PROXY_UNIVERSE` (a named market-proxy floor basket -- DE-TECH-002, corrects a stale doc claim that this called `_fetch_technicals([])` with an empty universe), and calls `_fetch_technicals(universe)`. Returns the lens block with `available=True` and `payload={ma_posture, breadth, momentum}` when bars are available; `available=False` with a named reason otherwise. Defense-in-depth: wraps the import+call in `try/except` — any unexpected exception returns `available=False, reason=type(exc).__name__`. See DE-TECH-SMA200-HISTORY-001 (2026-07-12) for the `_HISTORY_DAYS` fix that made `above_sma200` computable on real fetches.
 
 Called nightly by `prism_scheduler._patch_provenance` to populate the MARKET_LENS_CACHE bundle. NOT called per advisor click as of DE-ADVISOR-LATENCY.
 

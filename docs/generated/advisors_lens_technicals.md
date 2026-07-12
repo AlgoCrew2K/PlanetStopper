@@ -3,13 +3,13 @@
 > Technicals lens producer: MA posture (50/200-day SMA), market breadth, and 20-day momentum from Alpaca daily bars — reuses synthetic_history cache, never raises, honest-availability contract.
 
 **Source:** `advisors/lens_technicals.py`
-**Last updated:** 2026-06-16
+**Last updated:** 2026-07-12
 
 ## Overview
 
 `advisors/lens_technicals.py` is the technicals lens producer for the off-hours Market Prism pipeline (`advisors/lens_pipeline.py`). It is called via `ai_advisor._build_technicals_section()` (Pass 1 of the pipeline) and computes three price/trend/breadth indicators from Alpaca v2 daily bar history.
 
-**No new Alpaca client is introduced.** Bar history is fetched through `synthetic_history.fetch_bars` — the same 270-calendar-day (≈250 trading days) window already used by the autotuner. No new credential requirement.
+**No new Alpaca client is introduced.** Bar history is fetched through `synthetic_history.fetch_bars` — the same historical fetcher already used by the autotuner, over a `_HISTORY_DAYS`-day window (see DE-TECH-SMA200-HISTORY-001 below for the current window size and why it was raised).
 
 **Honest-availability contract (CC-3):** the module never fabricates a payload. Every failure path — transient network error, authoritative empty bars response, insufficient bar history — returns `available=False` with a named `reason`. A successful fetch with valid indicators returns `available=True`.
 
@@ -127,7 +127,7 @@ All constants carry inline source comments (math_engine.py coding standard / AC-
 | `_MAX_ATTEMPTS` | `3` | Max fetch attempts (1 initial + 2 retries) | GDELT RCA — unbounded 429 loops caused a crash; finite bound is mandatory (AC-4) |
 | `_RETRY_BACKOFF_S` | `2.0` | Seconds between retries | Short for a nightly advisory lens; not on the execution path |
 | `_TECHNICALS_SOURCE` | `"Alpaca Markets v2 daily bars — reused synthetic_history cache"` | Citation string | Always present for `lens_pipeline.build_citation` consumption |
-| `_HISTORY_DAYS` | `270` | Calendar days of bar history to fetch | 270 calendar days ≈ 250 trading days after weekends + holidays; matches synthetic_history.py window |
+| `_HISTORY_DAYS` | `320` | Calendar days of bar history to fetch | 320 calendar days × (252/365 trading-day ratio) ≈ 221 NYSE trading bars — clears `_SMA_200_WINDOW=200` with ≈21-day margin for holidays. Raised from 270 (DE-TECH-SMA200-HISTORY-001 — 270 implied only ≈187 trading bars, below the 200-day requirement). |
 | `_PROXY_UNIVERSE` | `["SPY","QQQ","IWM","EFA","AGG","GLD","XLF","XLE","XLV","XLI"]` | Market-proxy breadth basket — stable floor universe for off-hours runs (03:00 nightly Prism, weekends, flat markets) | Standard institutional breadth-monitoring basket (Investopedia "market breadth indicators"); covers US large-cap, tech, small-cap, international, bond, and sector breadth |
 
 ---
@@ -171,6 +171,18 @@ After `_MAX_ATTEMPTS` exhaustion, returns `available=False, reason=type(last_exc
 
 ---
 
+## Bug Fix — Sufficient History for the 200-Day SMA (DE-TECH-SMA200-HISTORY-001)
+
+**The bug:** `_HISTORY_DAYS` was `270` calendar days. Using the standard NYSE trading-day ratio (252 trading days / 365 calendar days ≈ 0.6904), 270 calendar days implies only ≈186.6 trading bars — below `_SMA_200_WINDOW=200`. Since `_compute_sma` returns `None` whenever `len(closes) < window`, `above_sma200` was **unconditionally `None` for every ticker, on every real Alpaca fetch, forever** — while the lens still reported `available=True` (silent degradation, live-verified across 10 tickers including SPY and QQQ). The 50-day SMA and 20-day momentum indicators were unaffected — only the 200-day indicator was structurally unreachable.
+
+**Why the existing test suite didn't catch it:** every unit test mocks `_get_bars` directly with a synthetic bar sequence of 250+ bars (well above 200), bypassing the real `_HISTORY_DAYS` calendar-window math entirely. The gap only manifested on a real Alpaca fetch, where `_get_bars` requests `today - _HISTORY_DAYS` calendar days and Alpaca returns however many trading bars actually fall in that window.
+
+**The fix:** raised `_HISTORY_DAYS` from `270` to `320` calendar days, implying ≈221 trading bars (320 × 252/365) — a ≈21-trading-day margin above the 200-day requirement, enough to absorb NYSE holidays without falling short. Confirmed live post-fix: SPY and QQQ both return non-`None` `above_sma200` from a real Alpaca fetch.
+
+**Blast radius:** confined to `above_sma200` (and, transitively, any caller reading it — the Market Prism per-lens digest, `ai_advisor._build_technicals_section` payload). `above_sma50`, `breadth`, and `momentum` were always computable from a 270-day window and are unaffected.
+
+---
+
 ## Design Invariants
 
 | Code | Invariant |
@@ -186,15 +198,17 @@ After `_MAX_ATTEMPTS` exhaustion, returns `available=False, reason=type(last_exc
 
 ## Internal Dependencies
 
-- `synthetic_history` — `fetch_bars` (lazy import inside `_get_bars`; provides the 270-day daily bar cache)
+- `synthetic_history` — `fetch_bars` (lazy import inside `_get_bars`; provides the `_HISTORY_DAYS`-day daily bar cache)
 - `time` — `sleep` for retry backoff
 - `logging` — structured log at `WARNING` (retry), `INFO` (success); no exception text in logs (D-1)
 
 ## Wiring in `ai_advisor.py`
 
-`ai_advisor._build_technicals_section()` (`ai_advisor.py:439-482`) is the only production caller. It lazy-imports this module (CC-2), derives the universe from the UNION of `database.load_state()` `logic_holdings` tickers and `_PROXY_UNIVERSE` (a named market-proxy basket), and calls `_fetch_technicals(universe)`, wrapping the result into the lens block shape consumed by `lens_pipeline.run_pipeline()`.
+`ai_advisor._build_technicals_section()` (`ai_advisor.py:489-560`) is the only production caller. It lazy-imports this module (CC-2), derives the universe from the UNION of `database.load_state()` `logic_holdings` tickers and `_PROXY_UNIVERSE` (a named market-proxy basket), and calls `_fetch_technicals(universe)`, wrapping the result into the lens block shape consumed by `lens_pipeline.run_pipeline()`.
 
 **Universe = live holdings UNION `_PROXY_UNIVERSE` (floor).** `logic_holdings` is a runtime field — empty at 03:00 / weekends / flat markets (all 11 live symphonies confirmed empty in PM live-gate test). `_PROXY_UNIVERSE` is applied unconditionally after `load_state()` extraction so the nightly Prism pipeline always receives a real breadth universe. Live holdings are merged on top of the proxy, not replaced (DE-TECH-002).
+
+**Cache-serve wrapper (DE-ADVISOR-LATENCY, 2026-06-29):** `assemble_advisor_context` no longer calls `_build_technicals_section()` per advisor click — it serves the technicals block from a nightly `MARKET_LENS_CACHE` row instead (see [ai_advisor](ai_advisor.md)). `_build_technicals_section()` itself is unchanged and still runs nightly, called from `prism_scheduler._patch_provenance`.
 
 ```python
 {

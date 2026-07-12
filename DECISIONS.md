@@ -4063,3 +4063,97 @@ All 3 numeric-stat objectives (`cut_drawdown`, `volatility_mitigation`, `lift_ri
 ### Reference
 
 DE-ATLAS-STAT-FIELD-002; branch `fix/atlas-fetch-slow-query`; HEAD `81a8d46`; supersedes the single-key form used in `DE-ATLAS-STAT-FIELD-001`; see `docs/generated/advisors_build_plan_generator.md` for the current reference.
+
+## DE-LOGIC-CHANGE-DIRECTION-001 -- Logic-change description parser: direction-blind fallback fixed (2026-07-12)
+
+Branch: fix/advisor-livepath-bugs | Base: b2865d7 | Fix commit: a62e673
+
+### The bug: fallback tweak ignored the stated direction
+
+`advisors/logic_change_engine._parse_change_description_to_tweak` parses an operator plain-text `change_description` (e.g. `"Reduce window from 20d to 16d"`) into a `LogicTweak` via four phases. Phases 1-2 extract explicit `"from X to Y"` numeric values and were never affected -- the stated values are used verbatim. Phases 3 and 4 (no explicit numbers in the description -- direction must be inferred from keywords alone) both applied a flat `old_val * 1.20` (unconditional +20% increase) regardless of what the description said.
+
+Reality-audit finding, live-verified: `"reduce the window size"` on `old_value=10` produced `new_value=12` -- an INCREASE despite the word "reduce". This reached the operator-initiated live path (`propose_operator_logic_change(change_description=...)`) whenever a description was worded without explicit before/after numbers -- a realistic, likely-common input shape.
+
+**Why the existing test suite did not catch it:** coverage exercised Phases 1-2 (explicit-number descriptions) and the objective-directed generator (`generate_objective_directed_candidates`, which already carried correct per-objective signs via named constants), but had no test forcing Phase 3/4 with a direction-only, no-numbers description -- exactly the shape most likely to come from a real operator.
+
+### The fix
+
+New `_fallback_direction_factor(desc_lower) -> float` helper scans the FULL description text (not just the substring matched to a `param_key`) for direction keywords:
+
+```python
+_FALLBACK_INCREASE_FACTOR: float = 1.20
+_FALLBACK_DECREASE_FACTOR: float = 0.80
+_REDUCE_DIRECTION_KEYWORDS: tuple[str, ...] = ("reduce", "lower", "decrease", "shrink")
+_INCREASE_DIRECTION_KEYWORDS: tuple[str, ...] = ("increase", "raise", "grow")
+
+def _fallback_direction_factor(desc_lower: str) -> float:
+    if any(kw in desc_lower for kw in _REDUCE_DIRECTION_KEYWORDS):
+        return _FALLBACK_DECREASE_FACTOR
+    if any(kw in desc_lower for kw in _INCREASE_DIRECTION_KEYWORDS):
+        return _FALLBACK_INCREASE_FACTOR
+    return _FALLBACK_INCREASE_FACTOR
+```
+
+Applied identically in Phase 3 (preferred-key match) and Phase 4 (first-numeric-parameter fallback) -- they share identical math, so the fix is one helper called from both sites. Defaults to `_FALLBACK_INCREASE_FACTOR` when no direction keyword is present, preserving the prior behavior for direction-less descriptions (e.g. `"tweak the window a bit"`).
+
+`old_value=10` with `"reduce the window size"` now yields `new_value=8` (`round(10 * 0.80)`), not `12`.
+
+### Blast radius
+
+Confined to the plain-text-description fallback path (Phases 3-4 of `_parse_change_description_to_tweak`), reached only through `propose_operator_logic_change(change_description=...)` with no explicit numbers in the description.
+
+**Not affected:**
+- Phases 1-2 of the same parser (explicit `"from X to Y"` numbers) -- direction is inherent to the stated values.
+- `generate_objective_directed_candidates` (the advisor-suggested candidate generator) -- its five named per-objective scaling factors (`_REDUCE_DRAWDOWN_TIGHTEN_FACTOR=0.80`, `_LIFT_RISK_ADJUSTED_LOOSEN_FACTOR=1.25`, etc.) already carried objective-correct signs.
+- `propose_operator_logic_change(tweak=...)` (explicit `LogicTweak` object) -- direction is caller-supplied, not parsed.
+
+### Result
+
+`tests/ai_advisor/test_logic_change_engine.py::TestPhase3FallbackDirectionRespected` (11 tests: Phase-3 reduce/increase keyword parametrization, Phase-4 reduce/increase with no `param_key` keyword match, the exact audit-regression pin (`old_value=10` must not yield `new_value=12`), and one live end-to-end test through `propose_operator_logic_change`) plus the pair authoritative 125-test run and `ruff format`/`check` all GREEN at a62e673.
+
+### Files changed
+
+- `advisors/logic_change_engine.py` -- `_fallback_direction_factor` helper + 4 new named constants + Phase 3/4 call sites (+31/-4 lines, commit a62e673)
+- `tests/ai_advisor/test_logic_change_engine.py` -- `TestPhase3FallbackDirectionRespected` (new class, 11 tests, commit 404fc02)
+- `docs/generated/advisors_logic_change_engine.md` -- new module reference doc (was previously undocumented)
+- `docs/generated/INDEX.md` -- new module-index row + dated Architecture Notes bullet
+
+## DE-TECH-SMA200-HISTORY-001 -- Technicals lens: _HISTORY_DAYS raised so the 200-day SMA is actually computable (2026-07-12)
+
+Branch: fix/advisor-livepath-bugs | Base: b2865d7 | Fix commit: a62e673
+
+### The bug: above_sma200 was structurally unreachable on every real fetch
+
+`advisors/lens_technicals._HISTORY_DAYS` was `270` calendar days. Using the standard NYSE trading-day ratio (252 trading days per 365 calendar days, approximately 0.6904), 270 calendar days implies only approximately 186.6 trading bars -- below `_SMA_200_WINDOW=200`. `_compute_sma` returns `None` whenever `len(closes) < window`, so `above_sma200` was unconditionally `None` for every ticker, on every real Alpaca fetch, forever -- while the lens still reported `available=True` (silent degradation). Reality-audit live-verified across 10 tickers (including SPY and QQQ) that `above_sma200` never resolved to a boolean. `above_sma50` and `momentum` (20-day) were unaffected -- only the 200-day indicator was structurally unreachable.
+
+**Why the existing test suite did not catch it:** every unit test mocks `_get_bars` directly with a synthetic bar sequence of 250+ bars (well above 200), bypassing the real `_HISTORY_DAYS` calendar-window math entirely. The gap only manifests on a real Alpaca fetch, where `_get_bars` requests `today - _HISTORY_DAYS` calendar days and Alpaca returns however many trading bars actually fall in that window -- fewer than the mocked fixtures assumed.
+
+### The fix
+
+Raised `_HISTORY_DAYS` from `270` to `320` calendar days:
+
+```python
+# 320 calendar days covers ~221 trading days (320 * 252/365), clearing
+# _SMA_200_WINDOW=200 with margin for NYSE holidays.  270 was too short
+# (~186 trading days) and left above_sma200 permanently None
+# (DE-TECH-SMA200-HISTORY-001).
+_HISTORY_DAYS: int = 320
+```
+
+320 calendar days implies approximately 221 trading bars (320 * 252/365) -- roughly a 21-trading-day margin above the 200-day requirement, enough to absorb NYSE holidays without falling short. Live-confirmed post-fix: SPY and QQQ both return non-`None` `above_sma200` from a real Alpaca fetch.
+
+### Blast radius
+
+Confined to `above_sma200` and any consumer reading it (the Market Prism per-lens digest, `ai_advisor._build_technicals_section` payload `ma_posture` field). `above_sma50`, `breadth`, and `momentum` were always computable from a 270-day window and are unaffected. No change to retry logic, honest-availability contract, or the universe-sourcing wiring (DE-TECH-002, unrelated, already correct).
+
+### Result
+
+`tests/ai_advisor/test_lens_technicals.py::TestHistoryDaysSufficientForSma200` (2 tests: `_HISTORY_DAYS * 252/365 >= _SMA_200_WINDOW` arithmetic check, and a realistic-weekday-bar-count golden test replaying the module own date-range math) plus the pair authoritative 125-test run and `ruff format`/`check` all GREEN at a62e673.
+
+### Files changed
+
+- `advisors/lens_technicals.py` -- `_HISTORY_DAYS` 270 -> 320 + updated source comment (+5/-3 lines, commit a62e673)
+- `tests/ai_advisor/test_lens_technicals.py` -- `TestHistoryDaysSufficientForSma200` (new class, 2 tests, commit 404fc02)
+- `docs/generated/advisors_lens_technicals.md` -- constants table + new Bug Fix section + wiring line-number correction
+- `docs/generated/ai_advisor.md` -- stale line-number + stale `_fetch_technicals([])` claim corrected while sweeping this section (pre-existing drift, unrelated to this fix, corrected in the same pass)
+- `docs/generated/INDEX.md` -- module-index row + dated Architecture Notes bullet
