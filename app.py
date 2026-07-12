@@ -2802,10 +2802,11 @@ def candidate_alert_mark_viewed():
 
     Advisory-only write: NOT gated by _SETTINGS_WRITE_ALLOWLIST (that allowlist is
     exclusively for the separate /api/settings env-key write path) and never touches
-    LIVE_EXECUTION. CSRF is enforced globally by _csrf_before_request; the explicit
-    _validate_csrf() call below mirrors the save_symphony_settings pattern (app.py:3545).
+    LIVE_EXECUTION. CSRF is enforced by the global _csrf_before_request @before_request
+    hook (app.py:439-443) — not called here (same convention as the strategy-builder
+    /run route, app.py:4544-4546; save_symphony_settings's explicit call is
+    redundant/historical, not the pattern to copy).
     """
-    _validate_csrf()
     last_viewed_observation_id = database.mark_candidate_alert_viewed()
     return jsonify({"status": "ok", "last_viewed_observation_id": last_viewed_observation_id})
 

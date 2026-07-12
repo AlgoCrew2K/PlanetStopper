@@ -150,6 +150,18 @@ def init_db():
         )
     """)
 
+    # H1 DUAL-WRITE: candidate_alert_state is also created by migration 033.
+    # Single-row (id=1) viewed-marker for the header candidate-alert indicator
+    # (feature-plans/candidate-alert.md) — see database.py's Candidate Alert
+    # accessors section below.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS candidate_alert_state (
+            id                          INTEGER PRIMARY KEY CHECK (id = 1),
+            last_viewed_observation_id  INTEGER NOT NULL DEFAULT 0,
+            updated_at                  TEXT
+        )
+    """)
+
     # P1: Per-run Optuna validation metrics — durable audit trail for Claude context-assembly
     # H1 DUAL-WRITE: the nine EUT audit columns below are also added by migration
     # 020_autotune_runs_eut.sql via ALTER TABLE.  The duplicate-column-name swallow in
@@ -1519,6 +1531,174 @@ def get_cached_regime_label(
     return label
 
 
+# --- Candidate Alert (header indicator) — viewed-marker + survivor accessors ---
+# feature-plans/candidate-alert.md. Migration 033 (candidate_alert_state).
+#
+# Verdict-classification note: acceptance_gate.py:80-82 defines exactly three
+# decision strings (ADOPT_CANDIDATE / KEEP_INCUMBENT / REJECT_VETO_FAILED).
+# KEEP_INCUMBENT is the common "nothing changed" outcome for ASSET_SWAP/
+# LOGIC_CHANGE (asset_swap_engine.py / logic_change_engine.py persist it
+# verbatim, RC-4) — it must NOT count as a valid new candidate, so
+# ADOPT_CANDIDATE is the ONLY survivor condition below.
+
+# Role scope for the weekly-suggestion advisor_observations rows this feature
+# cares about. Deliberately excludes MARKET_PRISM/OVERFITTING_CONSCIENCE/
+# SPEC_CRITIC/NARRATOR/etc — those never count toward the marker, the survivor
+# count, or the last-run aggregate, even if a verdict string coincidentally
+# matches ADOPT_CANDIDATE.
+_CANDIDATE_ALERT_WEEKLY_ROLES = ("ASSET_SWAP", "LOGIC_CHANGE", "STRATEGY_BUILDER")
+
+# The sole verdict string that counts as a survivor (acceptance_gate.py:80
+# DECISION_ADOPT_CANDIDATE) — see the verdict-classification note above.
+_CANDIDATE_ALERT_SURVIVOR_VERDICT = "ADOPT_CANDIDATE"
+
+
+def get_candidate_alert_viewed_marker() -> int:
+    """Return the last-viewed advisor_observations.id for the candidate-alert
+    indicator, or 0 when unset (nothing viewed yet).
+
+    Read-only (architecture constraint 5). Never raises: a missing table/row
+    (e.g. a DB that predates migration 033) degrades to 0, the same value as
+    a freshly-migrated, never-viewed marker.
+    """
+    try:
+        conn = get_ro_connection()
+        try:
+            row = conn.execute(
+                "SELECT last_viewed_observation_id FROM candidate_alert_state WHERE id = 1"
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+    return row[0] if row else 0
+
+
+def set_candidate_alert_viewed_marker(observation_id: int) -> int:
+    """UPSERT the candidate-alert viewed-marker; returns the resulting value.
+
+    Monotonic: the stored marker becomes max(existing, observation_id) — a
+    call with a lower id (an out-of-order request, a stale client re-POSTing)
+    can never regress a marker that has already advanced further (AC-5
+    idempotency). Single-row table (id=1); ON CONFLICT DO UPDATE avoids a PK
+    collision on repeat calls.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO candidate_alert_state "
+            "(id, last_viewed_observation_id, updated_at) "
+            "VALUES (1, ?, datetime('now')) "
+            "ON CONFLICT(id) DO UPDATE SET "
+            "last_viewed_observation_id = MAX(last_viewed_observation_id, "
+            "                              excluded.last_viewed_observation_id), "
+            "updated_at = datetime('now')",
+            (observation_id,),
+        )
+        conn.commit()
+        row = cursor.execute(
+            "SELECT last_viewed_observation_id FROM candidate_alert_state WHERE id = 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else observation_id
+
+
+def mark_candidate_alert_viewed() -> int:
+    """Advance the candidate-alert viewed-marker to the current max weekly-
+    suggestion observation id.
+
+    Zero required arguments — server-computed only: a caller can never inject
+    an arbitrary observation id (the marker must not be settable to a value
+    the operator hasn't actually seen). Role-scoped to
+    _CANDIDATE_ALERT_WEEKLY_ROLES — a higher-id row from an unrelated role
+    (e.g. MARKET_PRISM) must never influence the marker. Returns 0 (no-op)
+    when no weekly-suggestion row has ever been written.
+    """
+    placeholders = ", ".join("?" for _ in _CANDIDATE_ALERT_WEEKLY_ROLES)
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            f"SELECT MAX(id) FROM advisor_observations WHERE advisor_role IN ({placeholders})",
+            _CANDIDATE_ALERT_WEEKLY_ROLES,
+        ).fetchone()
+    finally:
+        conn.close()
+    max_id = row[0] if row and row[0] is not None else 0
+    return set_candidate_alert_viewed_marker(max_id)
+
+
+def get_candidate_alert_new_valid_count() -> int:
+    """Count NEW survivor (verdict=='ADOPT_CANDIDATE') weekly-suggestion rows.
+
+    "New" = advisor_observations.id strictly greater than the current viewed
+    marker (id > marker, not >= — a row at the marker was already viewed).
+    Role-scoped to _CANDIDATE_ALERT_WEEKLY_ROLES; fail-closed on NULL/odd/
+    unrecognised verdicts (never counted). Read-only (architecture
+    constraint 5); never raises (degrades to 0).
+    """
+    try:
+        marker = get_candidate_alert_viewed_marker()
+        placeholders = ", ".join("?" for _ in _CANDIDATE_ALERT_WEEKLY_ROLES)
+        conn = get_ro_connection()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM advisor_observations "
+                f"WHERE advisor_role IN ({placeholders}) "
+                "AND verdict = ? AND id > ?",
+                (*_CANDIDATE_ALERT_WEEKLY_ROLES, _CANDIDATE_ALERT_SURVIVOR_VERDICT, marker),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+    return row[0] if row else 0
+
+
+def get_candidate_alert_last_run() -> dict | None:
+    """Return the latest weekly-suggestion batch's status, or None if never run.
+
+    No run_id/batch column exists for ASSET_SWAP/LOGIC_CHANGE/STRATEGY_BUILDER
+    rows — the three weekly engines run back-to-back within one invocation of
+    run_weekly_suggestions() (advisors/weekly_suggestions_scheduler.py), so the
+    calendar date (UTC) of the most recent row is a sound proxy for "one run".
+
+    Returns {"ran_at": <max created_at that date>, "evaluated": <row count
+    that date>, "survivors": <subset verdict=='ADOPT_CANDIDATE'>}. survivors=0
+    is a valid, honest result (AC-3 "know it's working" — an all-rejected
+    batch still proves the job ran); only a table with ZERO weekly-suggestion
+    rows ever returns None. Read-only; never raises.
+    """
+    try:
+        placeholders = ", ".join("?" for _ in _CANDIDATE_ALERT_WEEKLY_ROLES)
+        conn = get_ro_connection()
+        try:
+            row = conn.execute(
+                "SELECT MAX(created_at), COUNT(*), "
+                "SUM(CASE WHEN verdict = ? THEN 1 ELSE 0 END) "
+                "FROM advisor_observations "
+                f"WHERE advisor_role IN ({placeholders}) "
+                "AND substr(created_at, 1, 10) = ("
+                "  SELECT substr(MAX(created_at), 1, 10) FROM advisor_observations "
+                f"  WHERE advisor_role IN ({placeholders})"
+                ")",
+                (
+                    _CANDIDATE_ALERT_SURVIVOR_VERDICT,
+                    *_CANDIDATE_ALERT_WEEKLY_ROLES,
+                    *_CANDIDATE_ALERT_WEEKLY_ROLES,
+                ),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+    ran_at, evaluated, survivors = row
+    if ran_at is None:
+        return None
+    return {"ran_at": ran_at, "evaluated": evaluated or 0, "survivors": survivors or 0}
+
+
 # --- H1: Schema Migration Runner ---
 
 _MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations")
@@ -1561,6 +1741,7 @@ _MIGRATION_FILES = [
     "030_per_symphony_live_mode.sql",
     "031_shadow_history_sym_ts_index.sql",
     "032_prism_audit_log.sql",
+    "033_candidate_alert_state.sql",
 ]
 
 
