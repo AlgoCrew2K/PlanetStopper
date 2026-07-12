@@ -3,7 +3,7 @@
 > Weekly Strategy Builder Scheduler (AC-18): runs the real dual-mode builder (built-new + atlas-suggested) unattended for all four objectives with same-ISO-week idempotency and bounded retry; advisory-only, never raises.
 
 **Source:** `advisors/strategy_builder_scheduler.py`
-**Last updated:** 2026-06-20 (C5 dual-mode Atlas injection 147a181)
+**Last updated:** 2026-07-12 (AC-A1 — dedup TypeError fix, advisor-rewire cycle)
 
 ## Overview
 
@@ -42,7 +42,9 @@ Run the real dual-mode builder for all four objectives; skip if already ran this
 
 ### `_already_ran_this_week() -> bool`
 
-Patchable idempotency seam. Checks `database.get_advisor_observations_for_symphony(symphony_id="", advisor_role="STRATEGY_BUILDER", limit=50)` for any row whose `created_at` falls in the current ISO year/week. Degrades to `False` (run anyway) on any DB error (D-1). Tests monkeypatch this to `True` (same-week no-op) or `False` (fresh run).
+Patchable idempotency seam. Checks `database.get_advisor_observations_for_role("STRATEGY_BUILDER", limit=50)` (real signature: `get_advisor_observations_for_role(advisor_role: str, limit: int = 50) -> list[dict]`, `database.py:1133`) for any row whose `created_at` falls in the current ISO year/week. Degrades to `False` (run anyway) on any DB error (D-1). Tests monkeypatch this to `True` (same-week no-op) or `False` (fresh run).
+
+**Bug fix (AC-A1, advisor-rewire cycle, 2026-07-12):** this function previously called `database.get_advisor_observations_for_symphony(symphony_id="", advisor_role="STRATEGY_BUILDER", limit=50)` — a signature that does not exist (`get_advisor_observations_for_symphony` takes only `symphony_id`). Every call raised `TypeError`, which was silently caught by the surrounding `except Exception` (the D-1 degrade at the bottom of this function), so `_already_ran_this_week()` always returned `False` — the same-ISO-week dedup guard never actually fired, and (before the AC-B3/AC-B1 weekly-suggestions orchestrator existed) a re-run of `run_weekly_build()` in the same week would have re-triggered a full 4-objective builder run with no idempotency protection. The ISO-week comparison logic itself (lines 64-87) was always correct — it was simply unreachable behind the swallowed exception. Fixed by calling the real `get_advisor_observations_for_role` accessor.
 
 ## Design Decisions
 
@@ -54,12 +56,16 @@ Patchable idempotency seam. Checks `database.get_advisor_observations_for_sympho
 
 **D-1 contract is stricter than `prism_scheduler.py`'s bounded retry.** `prism_scheduler.py` fails loudly after exhausting attempts (exit 1). The strategy scheduler continues to the next objective after exhaustion — a single objective's persistent failure should not block the others from running.
 
-**`symphony_id=""` for all scheduler observations.** The scheduler has no per-symphony context; all observations are keyed to the empty-string symphony ID. This matches the `_already_ran_this_week` check, which queries `symphony_id=""`.
+**`symphony_id=""` for all scheduler observations.** The scheduler has no per-symphony context; all observations are keyed to the empty-string symphony ID. This matches the `_already_ran_this_week` check, which queries the role-wide accessor rather than filtering by symphony.
+
+## Composition with the weekly orchestrator (advisor-rewire cycle, Workstream B)
+
+`advisors/weekly_suggestions_scheduler.py::run_weekly_suggestions()` calls `run_weekly_build()` as the first of three D-1-isolated steps in the weekly sweep (Strategy Builder, then Asset Swap, then Logic Change). This module was NOT modified to accommodate that orchestrator — it remains Strategy-Builder-only per its own AC-18 scope (verified by a static test asserting `strategy_builder_scheduler` does not gain a `run_weekly_suggestions` attribute). It can still be invoked standalone via `python -m advisors.strategy_builder_scheduler`.
 
 ## Internal Dependencies
 
 - `advisors.strategy_builder_engine` — `Objective`, `ScreenConfig`, `propose_strategies` (CC-2 lazy import)
 - `advisors.build_plan_generator` — `load_atlas_candidates` (CC-2 lazy import as `_bpg`, per-objective Atlas injection)
-- `database` — `get_advisor_observations_for_symphony` (inside `_already_ran_this_week`)
+- `database` — `get_advisor_observations_for_role` (inside `_already_ran_this_week`, fixed AC-A1)
 
 No import of `alpha_bot_execution`, `app`, `autotuner`, or any execution module. Off-execution-path; advisory-only.

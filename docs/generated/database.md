@@ -3,7 +3,7 @@
 > SQLite state management for Planet Stopper: schema, migrations, all read/write accessors for the state DB, and a pytest sentinel guard that structurally prevents tests from writing to the production DB.
 
 **Source:** `database.py`
-**Last updated:** 2026-07-02 (DE-PRISM-NUMERIC-VERIFY-001: `get_latest_market_prism_verification_for_run` accessor; prior: DE-ADVISOR-LATENCY `get_latest_market_lens_cache()`; DE-PRISM-SOURCES-001 `get_latest_market_prism_sources_for_run`)
+**Last updated:** 2026-07-12 (Workstream E, advisor-rewire cycle: `save_autotune_run` gains `s_count`; prior: 2026-07-02 DE-PRISM-NUMERIC-VERIFY-001 `get_latest_market_prism_verification_for_run` accessor; prior: DE-ADVISOR-LATENCY `get_latest_market_lens_cache()`; DE-PRISM-SOURCES-001 `get_latest_market_prism_sources_for_run`)
 
 ## Overview
 
@@ -27,6 +27,8 @@ Migrations 026–032:
 - `030_per_symphony_live_mode.sql` — `live_mode` on `symphony_strategies`, `config_audit_log` table
 - `031_shadow_history_sym_ts_index.sql` — composite index on `shadow_history (symphony_id, ts_utc)`
 - `032_prism_audit_log.sql` — `prism_audit_log` table + `idx_prism_audit_log_run_id` index (Prism Phase 1)
+
+An earlier migration, `023_autotune_runs_s_count.sql`, added the `s_count` column to `autotune_runs` — but until the advisor-rewire cycle (2026-07-12, Workstream E) no caller ever populated it; see `save_autotune_run` below.
 
 **DE-PRISM-NUMERIC-VERIFY-001 adds no migration.** `MARKET_PRISM_VERIFICATION` is a new `advisor_role` value on the existing `advisor_observations` table — same no-schema-change pattern as `MARKET_PRISM_SOURCES` and `MARKET_LENS_CACHE`.
 
@@ -137,6 +139,7 @@ Inserts one `autotune_runs` row and returns the new `cursor.lastrowid`. Sprint 3
 | `gamma` | `float \| None` | Frozen CRRA risk-aversion coefficient |
 | `overfitting_verdict` | `str \| None` | Overfitting Conscience summary string |
 | `pbo` | `float \| None` | Probability of backtest overfitting from CSCV gate (Phase-3; migration 028) |
+| `s_count` | `int \| None` | **Wired 2026-07-12 (Workstream E, AC-E1/E2).** SUM of `n_configs_searched` over `BACKTEST_SELECTION` rows in `researcher_dof_ledger` for this run's `spec_bundle_id` — distinct from `d_spec` (which is `COUNT DISTINCT` bundles). Migration `023_autotune_runs_s_count.sql` added the column, but no caller populated it until this cycle — every row's `s_count` was `NULL` forever, so a later run's `prior_runs` query always saw `None` and `overfitting_conscience`'s Indicator-3 (operator drift) could structurally never fire on live data. Uses `is not None`, not a truthiness check, so `s_count=0` (the honest NN1-compliant no-BACKTEST_SELECTION-evidence case) persists as literal `0`, never coerced to `NULL` — callers must pass `s_count=0` explicitly, not omit the kwarg, to record that case. Default `None` (legacy pre-023 rows / not-yet-wired callers). |
 
 **Returns:** `int` — the new row id.
 
@@ -158,7 +161,7 @@ Inserts one `advisor_observations` row. Returns the new row id. `is_advisory_onl
 **Parameters:**
 | Name | Type | Description |
 |------|------|-------------|
-| `advisor_role` | `str` | `"OVERFITTING_CONSCIENCE"`, `"SPEC_CRITIC"`, `"DIVERGENCE_EXPLAINER"`, `"WALL_BREACH"`, `"MARKET_PRISM"`, `"MARKET_PRISM_SOURCES"`, `"MARKET_LENS_CACHE"`, or `"MARKET_PRISM_VERIFICATION"` |
+| `advisor_role` | `str` | `"OVERFITTING_CONSCIENCE"`, `"SPEC_CRITIC"`, `"DIVERGENCE_EXPLAINER"`, `"WALL_BREACH"`, `"MARKET_PRISM"`, `"MARKET_PRISM_SOURCES"`, `"MARKET_LENS_CACHE"`, `"MARKET_PRISM_VERIFICATION"`, `"ASSET_SWAP"`, or `"LOGIC_CHANGE"` (the latter two producers pre-date this list but gained their first production caller and dashboard surfacing in the advisor-rewire cycle, 2026-07-12 — see `app.py`'s `_ADVISOR_ROLES`) |
 | `subject_type` | `str` | `"autotune_run"`, `"spec_bundle"`, `"fold_role_wall"`, or `"portfolio"` |
 | `subject_id` | `str` | String PK of the observed entity |
 | `verdict` | `str \| None` | `"CLEAR"`, `"WATCH"`, `"BREACH"`, `"INFORMATIONAL"`, `"NOT_APPLICABLE"`, `"neutral"`, `"bullish"`, `"bearish"`, or `"limited-inputs"` |
@@ -168,7 +171,7 @@ Inserts one `advisor_observations` row. Returns the new row id. `is_advisory_onl
 **Returns:** `int` — new row id.
 
 #### `get_advisor_observations_for_symphony(symphony_id: str) → list[dict]`
-Returns all `advisor_observations` rows whose `symphony_id` column matches, oldest-first. Uses `get_ro_connection()`.
+Returns all `advisor_observations` rows whose `symphony_id` column matches, oldest-first. Uses `get_ro_connection()`. **Takes only `symphony_id`** — a caller passing `advisor_role=`/`limit=` kwargs raises `TypeError` (this was the AC-A1 dedup bug in `advisors/strategy_builder_scheduler.py` — see `docs/generated/advisors_strategy_builder_scheduler.md`).
 
 #### `get_advisor_observations_for_subject(subject_type: str, subject_id: str) → list[dict]`
 Returns all rows for a given subject, oldest-first.
@@ -198,7 +201,7 @@ D-1 never-raises: any exception (DB error, parse failure) degrades to `None`. Se
 
 Returns the most recent `MARKET_LENS_CACHE` advisor_observations row as a fully-parsed dict (with `raw_response` deserialized from JSON), or `None`.
 
-Used by `ai_advisor.assemble_advisor_context` to serve the 5 market-wide lens blocks from the nightly cache instead of making 17–29 live external API calls per advisor click (DE-ADVISOR-LATENCY).
+Used by `ai_advisor.assemble_advisor_context` to serve the 5 market-wide lens blocks from the nightly cache instead of making 17–29 live external API calls per advisor click (DE-ADVISOR-LATENCY). **Also used (advisor-rewire cycle, 2026-07-12) by `advisors.weekly_suggestions_scheduler._fetch_lens_scores()`** to source the market-wide `lens_scores` dict passed into the weekly asset-swap loop's `suggest_swaps` calls — see `docs/generated/advisors_weekly_suggestions_scheduler.md`.
 
 **Row shape when present:**
 ```

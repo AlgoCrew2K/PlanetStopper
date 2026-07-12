@@ -3,7 +3,7 @@
 > Offline asset-swap proposal engine: objective-directed candidate generation, lens-informed ranking, BHY-FDR gating, and audit-trail persistence — advise-only, never executes.
 
 **Source:** `advisors/asset_swap_engine.py`
-**Last updated:** 2026-06-13
+**Last updated:** 2026-07-12 (Workstream D — lens-blend efficacy fix, DE-ADVISOR-REWIRE-D)
 
 ## Overview
 
@@ -15,6 +15,8 @@
 
 **Cycle-3 addition (lens-informed ranking):** `generate_objective_directed_candidates` now accepts an optional `lens_scores` dict. When provided, multi-lens evidence (technicals, sentiment, derivatives, macro, fundamentals) is blended into candidate ranking via `_apply_lens_blend`. Lens scoring influences ranking only — the BHY-FDR gate is unchanged. Both entry points (`propose_operator_swap`, `suggest_swaps`) accept `lens_scores` and `lens_sources` kwargs; the pre-Cycle-3 call paths remain byte-identical when `lens_scores=None`.
 
+**Advisor-rewire cycle (2026-07-12, Workstream D):** the Cycle-3 blend formula was **mathematically inert in production** — see "Lens Blend — How Ranking Works" below for the closed-form proof and the fix. As of this cycle the blend genuinely reorders candidates, AND (Workstream C.2, `advisors/weekly_suggestions_scheduler.py`) the fixed math is reachable from the real weekly production path via a new `_fetch_lens_scores()` helper — previously `generate_objective_directed_candidates`/`_apply_lens_blend` had no caller passing real `lens_scores` anywhere in the codebase, so even a correct blend formula would have stayed dead. Both the math and the wiring landed together in this cycle.
+
 **Hard constraints:**
 - This module MUST NOT be imported from `alpha_bot_execution.py` — it is an offline advise-only post-backtest layer.
 - Only read + inline-backtest Composer endpoints are called (`GET /score`, stateless `POST /backtest`). No write, mutate, or trade-placement calls.
@@ -25,10 +27,11 @@
 
 | Name | Value | Purpose |
 |------|-------|---------|
-| `LENS_BLEND_WEIGHT` | `0.25` | Additive weight for lens evidence in `_apply_lens_blend`. Keeps lens signal as supporting evidence — the primary objective metric anchors ranking. |
+| `LENS_BLEND_WEIGHT` | `0.25` | Weight for lens evidence in `_apply_lens_blend`'s cumulative-gap formula. Keeps lens signal as supporting evidence — the primary objective metric anchors ranking. Unchanged by the D fix (existence + value both preserved per the handoff's explicit constraint). |
 | `SWAP_SURVIVOR_CAVEAT` | (from backtest_gate_engine) | Caveat attached to every ADOPT_CANDIDATE survivor. |
 | `NO_SURVIVORS_MESSAGE` | `"no swap cleared the gate this run"` | Message in `SwapRunResult` when zero candidates pass the gate. |
 | `_LENS_CONTEXT_KEYS` | `("technicals", "sentiment", "derivatives", "macro", "fundamentals")` | Ordered tuple of lens block keys expected in the assembled advisor context. |
+| `_LENS_NEUTRAL_SCORE` | `0.5` | Neutral lens value used both for tickers absent from `lens_scores` and as the deviation baseline in the D-fixed blend formula. |
 
 ## API Reference
 
@@ -101,6 +104,8 @@ Evaluate one operator-specified asset swap (AC-2.1). Backtests the variant, gate
 
 Evaluate advisor-suggested objective-directed swap candidates (AC-2.2). Generates candidates via `generate_objective_directed_candidates` (with lens blend when `lens_scores` is provided), backtests the full batch together for honest n_effective BHY-FDR gating, and returns survivors. An absent Composer API key returns `no_api_key=True` and writes nothing (AC-X4). Never raises.
 
+**Live production caller (advisor-rewire cycle, Workstream C.2):** `advisors.weekly_suggestions_scheduler.run_weekly_asset_swap_suggestions()` calls this once per live symphony, weekly, passing a real `lens_scores` dict sourced from the nightly `MARKET_LENS_CACHE` row via `_fetch_lens_scores()`. This is the first production caller this function has ever had — previously it existed with a full test suite but no scheduled/automatic invocation.
+
 **Parameters:**
 
 | Name | Type | Description |
@@ -157,20 +162,35 @@ Top-level result of a swap pipeline run.
 | `no_api_key` | `bool` | `True` when Composer credentials are absent. |
 | `persistence_error` | `str \| None` | Non-None when the `advisor_observation` write failed (RC-5). The survivor is still returned. |
 
-## Lens Blend — How Ranking Works (Cycle-3)
+## Lens Blend — How Ranking Works (fixed 2026-07-12, DE-ADVISOR-REWIRE-D)
 
-The lens blend is additive and position-based, applied after the primary objective sort:
+**Prior design (Cycle-3, position-based — now REPLACED, was mathematically inert):**
 
 ```
 blended_key[i] = position[i] - LENS_BLEND_WEIGHT * mean_lens_score[i]
 ```
 
-- `position` is the 0-based rank from the primary objective sort.
-- `mean_lens_score` is the mean of all available lens scores for the ticker, in `[0, 1]`.
-- Tickers absent from `lens_scores` receive a neutral `0.5` (no data → no penalty, no bonus).
-- Subtracting the lens contribution moves high-lens-score tickers toward position 0 regardless of whether the primary sort is ascending or descending.
-- `LENS_BLEND_WEIGHT = 0.25` keeps the lens as supporting evidence — the primary objective metric anchors the ranking.
+This never worked: for any two adjacent 0-based `position` values the integer gap is always `>= 1`, and `LENS_BLEND_WEIGHT = 0.25 < 1`, so the maximum possible lens contribution could never exceed the minimum possible position gap. Lens evidence could not change the order for **any** input — a closed-form proof of this inertness lives in `tests/ai_advisor/test_lens_blend_efficacy.py`'s module docstring. This was live and shipped for the entire Cycle-3 cycle without being caught, because the existing `test_lens_scores_reranks_candidates` test never actually asserted a reorder occurred.
+
+**Current design (cumulative absolute score-distance):**
+
+```
+cum_gap[0] = 0
+cum_gap[i] = cum_gap[i-1] + |score[i] - score[i-1]|     (walked in the caller's
+                                                           own pre-sorted order,
+                                                           index 0 = best)
+blended_key[i] = cum_gap[i] - LENS_BLEND_WEIGHT * (mean_lens[i] - _LENS_NEUTRAL_SCORE)
+```
+
+- `score[i]` is each candidate's CONTINUOUS primary `"score"` field (already present on every candidate dict from `generate_objective_directed_candidates`) — never the discrete `enumerate()` position.
+- `cum_gap` accumulates the RAW absolute distance between neighbours, deliberately NOT a per-batch min-max normalization. Min-max would always rescale a 2-candidate gap to fill `[0, 1]` regardless of true magnitude (a 0.0001 gap and a 0.90 gap would look identical after min-max) — that would defeat the "small gap can move, large gap cannot invert" invariant. Raw absolute-gap accumulation preserves magnitude information.
+- A near-tied primary pair (small `cum_gap` increment) sits within `LENS_BLEND_WEIGHT`'s max possible swing and CAN be reordered by strong lens evidence.
+- A commanding primary lead (large `cum_gap` increment) CANNOT be overcome by any lens evidence, no matter how extreme — lens evidence is supporting, never overriding.
+- Tickers absent from `lens_scores` fall back to `_LENS_NEUTRAL_SCORE` (0.5) via `_primary_score`'s missing/non-numeric-score guard — no penalty, no bonus.
+- Ties in `blended_key` break on original index (stable sort) for determinism.
 - The blend does NOT eliminate candidates. Only the BHY-FDR gate eliminates candidates.
+
+**Gate order-independence (AC-D3, `advisors/backtest_gate_engine.py`):** fixing the blend surfaced a second, pre-existing bug — `evaluate_candidate_batch` seeded its Sortino bootstrap with `seed=idx` (the candidate's list position), so re-sorting the SAME candidate set into a different submission order produced a different bootstrap seed per candidate, hence a different t-stat/p-value for the identical candidate. This violated the "gate output is unchanged for a fixed candidate set" invariant the new blend now actually exercises (a reordering blend needs the gate to be truly order-independent downstream). Fixed by seeding from a stable SHA-256 hash of the candidate's own `candidate_id` instead of its batch position — see `docs/generated/advisors_backtest_gate_engine.md`.
 
 ## Persistence (AC-4)
 
@@ -190,3 +210,4 @@ Persistence is verdict-agnostic (RC-4) — the operator sees the engine ran even
 - `advisors.composer_backtest_client` — `run_backtest`
 - `database` — `insert_advisor_observation`
 - `ai_advisor` — `assemble_advisor_context` (callers pass the assembled context; `extract_lens_scores` consumes it)
+- `advisors.weekly_suggestions_scheduler` — the sole live production caller of `suggest_swaps` (Workstream C.2), including the `_fetch_lens_scores()` wiring that makes this module's lens blend reachable on real data

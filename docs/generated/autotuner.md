@@ -3,7 +3,7 @@
 > Optuna walk-forward optimizer: runs 500 trials per symphony over a 250-day sliding window, selects the best trial via the CRRA-EU objective + Harvey & Liu BHY haircut + CSCV PBO acceptance gate, and enforces NN1 spec-freeze discipline throughout. Also provides `run_calibration_sweep` — a separate, advisory-only 2-param sweep over `PARABOLIC_VELOCITY_THRESHOLD` and `VWAP_CROSS_HWM_PCT`.
 
 **Source:** `autotuner.py`
-**Last updated:** 2026-06-29
+**Last updated:** 2026-07-12 (Workstream E, advisor-rewire cycle — DoF-ledger S sum hoisted before `save_autotune_run` so `s_count` is actually persisted; prior: 2026-06-29)
 
 ## Overview
 
@@ -16,8 +16,9 @@
 5. Applies the Harvey & Liu BHY selection haircut via `_haircut_select`, using `compute_n_effective` to compute the honest `N_effective = N_optuna + S` multiple-testing count.
 6. Applies STAGE-1 PBO veto gate via `math_engine.compute_pbo` on the top-`_CSCV_TOP_K` (20) pre-BHY configs: rejects if PBO > `PBO_REJECT_THRESHOLD` (0.5).
 7. Enforces NN1 spec-freeze: the caller must supply `spec_bundle_id`; `run_autotuner` raises `ValueError` if it is `None`. The caller resolves it via `database.get_or_create_phase1_theory_bundle_id` before calling.
-8. Post-walk-forward: invokes `run_overfitting_conscience`, `run_spec_critic` (with `symphony_id=None`, called once per bundle), `run_divergence_explainer` (each wrapped in `try/except logger.warning` — Advisor failures are non-fatal).
-9. Persists the autotune run row via `database.save_autotune_run` (returns int row id used by OC producer).
+8. **Queries the DoF ledger** (`researcher_dof_ledger WHERE spec_bundle_id = ?` via `advisor_ro_query`) and sums `n_configs_searched` over `BACKTEST_SELECTION` rows into `s_count` (Workstream E, AC-E2, hoisted 2026-07-12 to run BEFORE step 9 so the sum is available to persist — previously this query ran only after the save, feeding solely the in-memory Overfitting Conscience call in step 10 below).
+9. Persists the autotune run row via `database.save_autotune_run(..., s_count=...)` (returns int row id used by the OC producer). `s_count` feeds Indicator-3 (operator drift) on LATER runs via their own `prior_runs` query — see "s_count Wiring" below.
+10. Post-walk-forward: invokes `run_overfitting_conscience`, `run_spec_critic` (with `symphony_id=None`, called once per bundle), `run_divergence_explainer` (each wrapped in `try/except logger.warning` — Advisor failures are non-fatal). `run_overfitting_conscience` reuses the SAME ledger rows queried in step 8 — the query was hoisted, not duplicated.
 
 ## API Reference
 
@@ -129,7 +130,7 @@ Steps per trial:
 **Returns:** `(winner_trial, winner_p_adj, winner_tstat)` — all `None` when no trial clears the gate.
 
 #### `compute_sortino_tstat(returns, seed: int = 0) → float`
-Per-trial t-statistic via nonparametric bootstrap SE (Efron 1979): `Sortino / SE_bootstrap`. Returns `0.0` (conservative rejection) when bootstrap SE is unavailable.
+Per-trial t-statistic via nonparametric bootstrap SE (Efron 1979): `Sortino / SE_bootstrap`. Returns `0.0` (conservative rejection) when bootstrap SE is unavailable. **Not the same seed-derivation context as `advisors.backtest_gate_engine.evaluate_candidate_batch`'s AC-D3 fix** — that call site now derives its seed from a stable hash of each candidate's own id (not batch position); this module's own `_haircut_select` caller uses `seed=trial_idx` within one fixed, never-reordered Optuna study, which was never order-dependent and was intentionally left untouched by the AC-D3 fix.
 
 #### `compute_haircut_pvalue(t_stat: float) → float`
 One-sided p-value `1 - Φ(t)`, clamped to `[_HAIRCUT_PVALUE_EPSILON, 1 - _HAIRCUT_PVALUE_EPSILON]`.
@@ -139,6 +140,8 @@ BHY step-up adjustment with Yekutieli `c(N) = sum(1/j)` arbitrary-dependence fac
 
 #### `compute_n_effective(n_optuna: int, ledger_query, winning_spec_bundle_id: str | None = None) → int`
 Returns `N_optuna + S`, the honest multiple-testing count. `S` = sum of `n_configs_searched` over `BACKTEST_SELECTION` ledger rows, excluding frozen-eval-tainted rows and the winning bundle. `ledger_query` is a callable injected for testability.
+
+**Distinct from `s_count` (Workstream E):** `compute_n_effective`'s `S` is computed for THIS RUN's own N_effective (current-run I-1/I-2 math, unchanged by Workstream E) and excludes the winning bundle; the `s_count` persisted via `save_autotune_run` (see below) is a separate accumulator over ALL `BACKTEST_SELECTION` rows for the run's `spec_bundle_id` (no winning-bundle exclusion), consumed by LATER runs' `overfitting_conscience` drift check, not by this run's own haircut.
 
 ---
 
@@ -225,9 +228,17 @@ Sortino ratio: `mean(r) / downside_deviation`. Population denominator. Returns 1
 
 ---
 
+### s_count Wiring (Workstream E, advisor-rewire cycle, 2026-07-12)
+
+**The gap:** migration `023_autotune_runs_s_count.sql` added the `s_count` column to `autotune_runs` long before this cycle, but no caller ever populated it — every row's `s_count` stayed `NULL` forever. `advisors.overfitting_conscience`'s Indicator-3 (operator drift — comparing this run's `S` accumulation against PRIOR runs' `s_count`) requires `>= 2` prior runs with non-`NULL`, increasing `s_count` to fire; with every historical row `NULL`, `drift_signal_available` could structurally never become `True` on live data, no matter how much genuine researcher drift had occurred.
+
+**The fix:** the DoF-ledger query (`SELECT evidence_source, n_configs_searched, ... FROM researcher_dof_ledger WHERE spec_bundle_id = ?`, run via `advisor_ro_query`) was hoisted from AFTER `save_autotune_run` (where it fed only the in-memory Overfitting Conscience call) to BEFORE it. The same query result is now used for BOTH: (a) `_s_count_for_persistence = sum(n_configs_searched for BACKTEST_SELECTION rows)`, passed as `save_autotune_run(s_count=...)`; (b) the pre-existing Overfitting Conscience call, unchanged. **This is a control-flow reorder only** — the current-run I-1/I-2 `S` computation and verdict logic in `overfitting_conscience.py` were NOT modified; they re-derive their own `S` from the same ledger rows independently of the persisted `s_count`.
+
+**NULL tolerance (AC-E4):** legacy rows with `s_count IS NULL` (everything written before this cycle) are tolerated — `overfitting_conscience`'s prior-runs scan skips `NULL` entries rather than crashing; drift detection needs `>= 2` non-`NULL` priors, so it will not fire until enough post-fix runs accumulate, which is expected and correct (no retroactive backfill of historical rows).
+
 ### Advisor Invocations (Sprint 3)
 
-Post-walk-forward, after `save_autotune_run`:
+Post-walk-forward, after `save_autotune_run` (see "s_count Wiring" above for the 2026-07-12 hoist that now feeds `s_count` into that same call):
 
 1. **Overfitting Conscience** — `run_overfitting_conscience(autotune_run, ledger_rows, prior_runs=advisor_ro_query(...))`.
 2. **Spec Critic** — `run_spec_critic(stored_hash, sc_facets_rows, symphony_id=None)`. Called once per bundle; `symphony_id=None` is intentional.
@@ -320,7 +331,7 @@ The calibration sweep uses a SEPARATE, narrower 2-key space (`PARABOLIC_VELOCITY
 ## Internal Dependencies
 
 - `math_engine` — all per-tick decision primitives, `WEALTH_ARG_FLOOR`, `_SORTINO_SENTINEL`, `compute_pbo`, `compute_crra_eu_objective`
-- `database` — `get_spec_bundle_by_id`, `save_autotune_run`, `advisor_ro_query`
+- `database` — `get_spec_bundle_by_id`, `save_autotune_run` (now called with `s_count=`, Workstream E), `advisor_ro_query`
 - `synthetic_history` — `generate_synthetic_history`
 - `acceptance_gate` — reusable overfitting acceptance gate
 - `advisors.overfitting_conscience` — `run_overfitting_conscience`

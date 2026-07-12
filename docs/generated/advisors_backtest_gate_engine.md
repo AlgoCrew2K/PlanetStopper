@@ -1,9 +1,9 @@
 # advisors/backtest_gate_engine
 
-> M2 backtest-and-gate engine: fold-transforms Composer backtest return series into walk-forward folds and runs batch BHY/Yekutieli FDR + acceptance gate over the full candidate set; C5b (2026-06-20) adds batch PBO veto and real SPY-OOS-fold baseline.
+> M2 backtest-and-gate engine: fold-transforms Composer backtest return series into walk-forward folds and runs batch BHY/Yekutieli FDR + acceptance gate over the full candidate set; C5b (2026-06-20) adds batch PBO veto and real SPY-OOS-fold baseline; AC-D3 (2026-07-12) fixes candidate-order dependence in the bootstrap seed.
 
 **Source:** `advisors/backtest_gate_engine.py`
-**Last updated:** 2026-06-20
+**Last updated:** 2026-07-12 (AC-D3 — stable per-candidate bootstrap seed)
 
 ## Overview
 
@@ -27,6 +27,7 @@ Off-execution-path: MUST NOT be imported or called from `alpha_bot_execution.py`
 - **NN1 compliance:** Composer backtest trees are not BACKTEST_SELECTION-spec facets; `nn1_compliant=True` is correct for all Composer backtest paths.
 - **C5b SPY date-alignment (not positional):** SPY is aligned to the candidate date span via date intersection BEFORE fold-transform; positional-only alignment would land the fold window on different calendar dates for a longer SPY series, producing a wrong baseline.
 - **C5b edge-14 (+inf, not -inf):** `_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA = float("+inf")`. Using `-inf` would make the `oos_alpha <= default_oos_alpha` withhold-clause in `acceptance_gate.py:257` always-false for finite candidates, collapsing to beats-zero — the exact behaviour AC-25 edge-14 forbids. With `+inf` the clause is always-true → KEEP_INCUMBENT (conservative WITHHOLD) for every finite candidate when SPY is unavailable.
+- **AC-D3 order-independence (2026-07-12):** `evaluate_candidate_batch`'s output for a FIXED candidate set must not depend on the order those candidates were submitted in. See "Bug Fix — Order-Dependent Bootstrap Seed" below.
 
 ## Constants
 
@@ -52,6 +53,12 @@ Off-execution-path: MUST NOT be imported or called from `alpha_bot_execution.py`
 | `_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA` | `float("+inf")` | Conservative SPY-unavailable sentinel. `+inf` makes `oos_alpha <= default_oas_alpha` always-true for every finite candidate → KEEP_INCUMBENT (conservative WITHHOLD). `-inf` would make it always-false → beats-zero fallback, which AC-25 edge-14 forbids. Withheld candidates carry `rejection_reason="below_spy_alpha"`. |
 | `SPY_BENCHMARK_TICKER` | `"SPY"` | US equity broad-market benchmark ticker (SPDR S&P 500 ETF) for the AC-25 OOS-fold baseline |
 
+### AC-D3 constants (2026-07-12)
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `_STABLE_SEED_DIGEST_BYTES` | `4` | Number of leading SHA-256 digest bytes used to derive a candidate's bootstrap seed — 4 bytes → a 32-bit unsigned int, comfortably within `numpy.random.default_rng`'s accepted seed range. |
+
 ### Caveat constants
 
 | Constant | Description |
@@ -67,7 +74,7 @@ One advisor-proposed variant to be fold-transformed and gated.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `candidate_id` | `str` | Opaque identifier for operator traceability |
+| `candidate_id` | `str` | Opaque identifier for operator traceability. **AC-D3: also the sole input to `_stable_seed_from_candidate_id` — the bootstrap seed source.** |
 | `daily_returns_pct` | `list[float]` | Chronologically ordered daily returns in percent; used for fold-transform and BHY t-stat |
 | `candidate_params` | `dict` | Parameter vector for panel stability scoring (D2) |
 | `incumbent_params` | `dict` | Live incumbent's parameter dict for stability comparison |
@@ -139,7 +146,7 @@ Fold-transform a batch of Composer backtest candidates and run them through the 
 C5b Step 0a: batch PBO (math_engine.compute_pbo over dated_returns intersection)
 C5b Step 0b: SPY-fold baseline (align SPY to candidate dates → _fold_transform_single)
 Step 1: _fold_transform_single per candidate (60/20/20 + purge)
-Step 2: compute_sortino_tstat per candidate (seed=idx, deterministic)
+Step 2: compute_sortino_tstat per candidate (seed=_stable_seed_from_candidate_id(cand.candidate_id) — AC-D3, see below)
 Step 3: BHY/Yekutieli FDR over full batch (n_effective = N)
 Step 4: BHY winner = argmin p_adj over veto-eligible candidates
 Step 5: evaluate_acceptance_gate per candidate (pbo=_batch_pbo, default_oos_alpha=_effective_default_oos_alpha)
@@ -168,7 +175,21 @@ Step 5: evaluate_acceptance_gate per candidate (pbo=_batch_pbo, default_oos_alph
 
 Atlas community candidates and built-new (Opus) candidates flow through the SAME call, receive the SAME batch PBO, the SAME SPY-fold baseline, and the SAME BHY/Yekutieli FDR correction. Advertised community `oos_metrics` are structurally inert in the gate (parameter stability scoring only float-coerces shared param keys; dict metrics never influence survival). Identical fresh return series produce identical gate verdicts regardless of provenance.
 
+## Bug Fix — Order-Dependent Bootstrap Seed (AC-D3, 2026-07-12)
+
+**The bug:** Step 2 above seeded `compute_sortino_tstat`'s nonparametric bootstrap with `seed=idx`, where `idx` was the candidate's `enumerate()` position within the `candidates` argument — a property of the BATCH SUBMISSION ORDER, not of the candidate itself. `compute_sortino_tstat` forwards `seed` into `compute_sortino_se_bootstrap` (`autotuner.py`, `numpy.random.default_rng(seed)`), so reordering (e.g. reversing) the SAME candidate set reassigned different seeds to each candidate — producing a different bootstrap standard error, t-stat, and BHY-adjusted p-value for the IDENTICAL candidate and return series, purely as a function of submission order. This violated the "`evaluate_candidate_batch` output is unchanged for a fixed candidate set" invariant (AC-D3), and became directly observable once Workstream D's lens-blend fix started genuinely reordering candidates ahead of the gate call.
+
+**The fix:** `_stable_seed_from_candidate_id(candidate_id: str) -> int` — a new helper that derives the seed from a SHA-256 hash of the candidate's own `candidate_id` (truncated to `_STABLE_SEED_DIGEST_BYTES` = 4 bytes → a 32-bit unsigned int), not the builtin `hash()` (CPython randomizes `hash(str)` per-process via `PYTHONHASHSEED` unless disabled, so it would not be reproducible across process restarts — violating `compute_sortino_tstat`'s own "reproducible under a fixed trial set" contract). The same candidate now always gets the same seed regardless of what order it was submitted in or who else is in the batch.
+
+**Scope:** minimal, single call site (`evaluate_candidate_batch`'s Step 2 loop). `autotuner.py` (`compute_sortino_se_bootstrap`, and `_haircut_select`'s own `seed=trial_idx` for its DIFFERENT never-reordered-Optuna-study context) was explicitly NOT touched — different seed-derivation context, different owning module.
+
+**Authorization:** this was outside Workstream D's stated scope boundary ("do NOT change `evaluate_candidate_batch`") but was authorized by the PM as a scoped exception specifically for this order-dependence bug, discovered while verifying Workstream D's own AC-D3 test.
+
 ## Internal Helpers
+
+### `_stable_seed_from_candidate_id(candidate_id: str) -> int` (AC-D3, 2026-07-12)
+
+Deterministic bootstrap seed derived from a candidate's own `candidate_id` via `hashlib.sha256(candidate_id.encode("utf-8")).digest()[:_STABLE_SEED_DIGEST_BYTES]`, big-endian int conversion. Returns a non-negative int in `[0, 2**32)` suitable for `numpy.random.default_rng`. See "Bug Fix" above.
 
 ### `_fold_transform_single(daily_returns_pct) -> _FoldResult`
 
@@ -189,5 +210,6 @@ Panel criterion D4 (prior-anchor / theory-consistency). Same normalised-L1 formu
 - `acceptance_gate` — `AcceptanceVerdict`, `evaluate_acceptance_gate`
 - `autotuner` — fold constants (`TRAIN_RATIO`, `VALIDATION_RATIO`, `PURGE_DAYS`, `EMBARGO_DAYS`, `HARVEY_LIU_FDR_Q`); `benjamini_hochberg_adjust`, `compute_haircut_pvalue`, `compute_sortino_tstat`
 - `math_engine` — `compute_pbo` (C5b batch PBO, AC-24); `PBO_REJECT_THRESHOLD` (imported locally inside the per-candidate loop to avoid circular import risk)
+- `hashlib` — stdlib, `_stable_seed_from_candidate_id` (AC-D3)
 
 No import of `alpha_bot_execution`, `app`, or any execution module. Off-execution-path; advisory-only.

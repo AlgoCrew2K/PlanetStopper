@@ -3,7 +3,7 @@
 > M4 Logic-Change proposal engine: operator-initiated (plain-text or explicit `LogicTweak`) and advisor-suggested (objective-directed) parameter-tweak proposals for a symphony's decision tree, gated through the shared M2 BHY/FDR batch gate; advise-only, never auto-applies.
 
 **Source:** `advisors/logic_change_engine.py`
-**Last updated:** 2026-07-12
+**Last updated:** 2026-07-12 (Workstream C.1, advisor-rewire cycle — first production caller added; engine itself unchanged)
 
 ## Overview
 
@@ -11,6 +11,8 @@
 
 1. **Operator-initiated** (`propose_operator_logic_change`) — the operator supplies either a `LogicTweak` (explicit `node_path` + `param_key` + `old_value` + `new_value`) or a plain-text `change_description` (e.g. `"Reduce window from 20d to 16d"`), which the engine parses into a `LogicTweak` via `_parse_change_description_to_tweak`. The tweak is applied to a deep copy of the score tree, backtested, gated as a single-element batch, and persisted.
 2. **Advisor-suggested** (`suggest_logic_changes`) — given a `LogicChangeObjective`, `generate_objective_directed_candidates` produces a bounded, objective-directed set of `LogicTweak` candidates; all are backtested and submitted as ONE `evaluate_candidate_batch` call so the BHY/Yekutieli FDR correction applies across the FULL set (AC-3.2 — never gate candidates individually).
+
+**Advisor-rewire cycle (2026-07-12, Workstream C.1): first production caller.** `suggest_logic_changes` had a complete implementation and test suite but, before this cycle, no scheduled or automatic caller anywhere in the codebase — it was reachable only by manual/operator invocation. `advisors.weekly_suggestions_scheduler.run_weekly_logic_change_suggestions()` now enumerates every live symphony weekly and calls `suggest_logic_changes(symphony_id, score_tree, objective)` once per symphony (per-symphony D-1 isolation — one symphony's failure never blocks the others), with `objective_type="reduce_drawdown"` as the unattended-sweep default. **This module's own source is unchanged by that cycle (AC-C3 scope boundary)** — the fix was purely at the caller/loop layer that did not previously exist. See `docs/generated/advisors_weekly_suggestions_scheduler.md`.
 
 **Off-execution-path (AC-X2):** this module is not imported from `alpha_bot_execution.py`. It is an advise-only, offline, post-backtest decision layer.
 
@@ -127,6 +129,8 @@ Gates as a single-element batch (`evaluate_candidate_batch([bt_candidate], ...)`
 
 Evaluate advisor-suggested objective-directed candidates (AC-3.1 + AC-3.2). Generates candidates via `generate_objective_directed_candidates` (objective-directed, not brute force), backtests each independently (AC-X5 — one candidate's failure never aborts the batch), then submits ALL successfully-backtested candidates as ONE `evaluate_candidate_batch` call.
 
+**Live production caller (advisor-rewire cycle, Workstream C.1):** `advisors.weekly_suggestions_scheduler.run_weekly_logic_change_suggestions()` calls this once per live symphony, weekly. This is the first production caller this function has ever had.
+
 **AC-3.2 critical invariant:** never gate candidates individually — that silently disables the multiple-testing correction (raising N must raise the adjusted-p-value bar every candidate must clear). No Composer API key → `no_api_key=True` (AC-X4). Zero candidates or zero survivors are valid non-error outcomes.
 
 ### `generate_objective_directed_candidates(symphony_id, raw_value, objective, *, baseline_stats=None) → list[LogicTweak]`
@@ -226,5 +230,6 @@ Sentinel empty `GatedBatch` (zero candidates, zero survivors) for the no-API-key
 - `advisors.backtest_gate_engine` — `HARVEY_LIU_FDR_Q`, `SURVIVOR_OVERFITTING_CAVEAT`, `BacktestCandidate`, `CandidateGateResult`, `GatedBatch`, `_fold_transform_single`, `evaluate_candidate_batch`
 - `advisors.composer_backtest_client` — `run_backtest`
 - `alpha_bot_execution` — `COMPOSER_KEY_ID`, `COMPOSER_SECRET` (local import inside `_has_composer_key`, AC-X2 boundary)
+- `advisors.weekly_suggestions_scheduler` — the sole live production caller of `suggest_logic_changes` (Workstream C.1)
 
 No import of `app`; off-execution-path; advisory-only.
