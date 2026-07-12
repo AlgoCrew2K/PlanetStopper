@@ -361,13 +361,24 @@ class TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen:
     generate_objective_directed_candidates, proving the full chain reorders.
     """
 
-    def _cache_row(self, ticker_scores: dict | None) -> dict:
+    def _cache_row(self, momentum: dict | None) -> dict:
         """Build a MARKET_LENS_CACHE row shaped like database.
         get_latest_market_lens_cache()'s real return contract (raw_response
-        already JSON-deserialized, per its docstring) -- only the technicals
-        lens carries ticker_scores; the other 4 are honestly unavailable, same
-        as a real partial-lens night."""
-        has_scores = bool(ticker_scores)
+        already JSON-deserialized, per its docstring).
+
+        STALE-FIXTURE FIX (2026-07-12, live droplet-DB E2E follow-up): the prior
+        version put a fabricated "ticker_scores" key inside the technicals
+        payload -- NO real producer ever emits that key. The REAL technicals
+        payload shape (ai_advisor.py:542-552, advisors/lens_technicals.py:
+        265-272) is {"ma_posture": {ticker: {...}}, "breadth": float,
+        "momentum": {ticker: float}} -- momentum is the only real per-ticker
+        signal (an UNBOUNDED raw 20-day return, not a [0,1] score). The other
+        4 lenses are honestly unavailable, same as a real partial-lens night --
+        sentiment/derivatives/macro are market-wide even when available (see
+        tests/ai_advisor/test_cycle3_lens_informed_swaps.py), so leaving them
+        unavailable here keeps this fixture focused on the technicals path
+        without re-testing market-wide exclusion (already covered there)."""
+        has_scores = bool(momentum)
         return {
             "id": 1,
             "advisor_role": "MARKET_LENS_CACHE",
@@ -377,7 +388,11 @@ class TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen:
                     "technicals": {
                         "lens": "technicals",
                         "available": has_scores,
-                        "payload": {"ticker_scores": ticker_scores} if has_scores else None,
+                        "payload": (
+                            {"ma_posture": None, "breadth": None, "momentum": momentum}
+                            if has_scores
+                            else None
+                        ),
                         "sources": [],
                     },
                     **{
@@ -453,8 +468,12 @@ class TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen:
         bot_state = _fake_bot_state(1)
         monkeypatch.setattr(db_module, "load_state", lambda: bot_state, raising=False)
 
-        ticker_scores = {"AAA": 0.0, "BBB": 1.0}
-        cache_row = self._cache_row(ticker_scores)
+        # Real per-ticker signal is technicals.momentum -- an UNBOUNDED raw 20-day
+        # return (~+/-0.05..0.15 in practice), not a pre-normalised [0,1] score.
+        # extreme +/-0.20 values here so the extracted (squashed) scores stay
+        # clearly separated regardless of the implementer's exact squashing formula.
+        momentum = {"AAA": -0.20, "BBB": 0.20}
+        cache_row = self._cache_row(momentum)
         monkeypatch.setattr(
             db_module, "get_latest_market_lens_cache", lambda: cache_row, raising=False
         )
@@ -510,7 +529,9 @@ class TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen:
         bot_state = _fake_bot_state(1)
         monkeypatch.setattr(db_module, "load_state", lambda: bot_state, raising=False)
 
-        cache_row = self._cache_row({"AAA": 0.0, "BBB": 1.0})
+        # Extreme +/-0.20 raw momentum -- see the extraction test above for why
+        # (unbounded raw signal, squashing formula is the implementer's choice).
+        cache_row = self._cache_row({"AAA": -0.20, "BBB": 0.20})
         monkeypatch.setattr(
             db_module, "get_latest_market_lens_cache", lambda: cache_row, raising=False
         )
@@ -603,7 +624,7 @@ class TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen:
         bot_state = _fake_bot_state(1)
         monkeypatch.setattr(db_module, "load_state", lambda: bot_state, raising=False)
 
-        empty_cache_row = self._cache_row(ticker_scores=None)
+        empty_cache_row = self._cache_row(momentum=None)
         monkeypatch.setattr(
             db_module, "get_latest_market_lens_cache", lambda: empty_cache_row, raising=False
         )
@@ -620,4 +641,54 @@ class TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen:
             f"With a MARKET_LENS_CACHE row whose lenses are all available=False, "
             f"lens_scores passed to suggest_swaps must be falsy -- got "
             f"{captured.get('lens_scores')!r}"
+        )
+
+    def test_fetch_lens_scores_returns_non_empty_on_real_shaped_technicals_cache_row(
+        self, monkeypatch
+    ):
+        """PM-requested direct check: _fetch_lens_scores() (the loop's own helper
+        that wraps database.get_latest_market_lens_cache() + extract_lens_scores())
+        must return a NON-EMPTY dict when the cache row has a real-shaped,
+        available technicals.momentum block -- called directly, not just observed
+        indirectly via the suggest_swaps spy above."""
+        import database as db_module
+
+        mod, _run_fn = _resolve_loop_fn()
+        fetch_fn = getattr(mod, "_fetch_lens_scores", None)
+        assert callable(fetch_fn), (
+            f"{mod.__name__} must expose a callable _fetch_lens_scores() helper "
+            f"(the read-only MARKET_LENS_CACHE -> extract_lens_scores wrapper)."
+        )
+
+        cache_row = self._cache_row({"AAA": -0.20, "BBB": 0.20})
+        monkeypatch.setattr(
+            db_module, "get_latest_market_lens_cache", lambda: cache_row, raising=False
+        )
+
+        result = fetch_fn()
+
+        assert result, (
+            f"_fetch_lens_scores() must return a non-empty dict on a real-shaped, "
+            f"available technicals cache row; got {result!r}"
+        )
+        assert "AAA" in result and "BBB" in result, (
+            f"_fetch_lens_scores() must surface per-ticker scores for every ticker "
+            f"in technicals.momentum; got keys {sorted(result.keys())!r}"
+        )
+
+    def test_fetch_lens_scores_returns_empty_on_cold_cache(self, monkeypatch):
+        """Regression pin: _fetch_lens_scores() must degrade to {} (not raise, not
+        fabricate) when there is no cache row yet."""
+        import database as db_module
+
+        mod, _run_fn = _resolve_loop_fn()
+        fetch_fn = getattr(mod, "_fetch_lens_scores", None)
+        assert callable(fetch_fn), f"{mod.__name__} must expose _fetch_lens_scores()."
+
+        monkeypatch.setattr(db_module, "get_latest_market_lens_cache", lambda: None, raising=False)
+
+        result = fetch_fn()
+        assert result == {} or not result, (
+            f"_fetch_lens_scores() must degrade to an empty/falsy result on a cold "
+            f"cache; got {result!r}"
         )

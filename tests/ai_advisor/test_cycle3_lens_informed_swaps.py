@@ -98,16 +98,57 @@ _LENS_SCORES_FIXTURE = {
 }
 
 # Minimal advisor context as assemble_advisor_context produces for lens tests.
-# Three lenses available=True with ticker-level payload, two available=False (stubs).
+#
+# STALE-FIXTURE FIX (2026-07-12, live droplet-DB E2E follow-up): the prior version
+# put a fabricated "ticker_scores" key inside sentiment/macro payloads. NO real
+# producer ever emits that key (0 grep hits across ai_advisor.py outside this
+# fixture/its consumer) -- a parser+fixture co-design failure (Gate-1 fixture-
+# provenance FAIL). REAL shapes, verified directly against the producers:
+#   technicals.payload (ai_advisor.py:542-552, advisors/lens_technicals.py:265-272):
+#     {"ma_posture": {ticker: {above_sma50, above_sma200}}, "breadth": float,
+#      "momentum": {ticker: float}}  -- the ONLY real per-ticker signal.
+#   sentiment.payload (ai_advisor.py:673-684): {"tone_score", "corpus", "events",
+#     "article_count"} -- market-wide, no per-ticker structure.
+#   macro.payload (ai_advisor.py around _build_macro_section): {"series": {...}}
+#     keyed by FRED series_id, not ticker -- market-wide.
+# Three lenses available=True (technicals contributes; sentiment/macro are
+# available but market-wide and must contribute NOTHING), two available=False
+# (stubs, contribute nothing for the honest-availability reason instead).
 _ADVISOR_CONTEXT_WITH_LENSES = {
     "scope": "symphony",
     "symphony_id": "test-sym-001",
-    "sentiment": {
-        "lens": "sentiment",
+    "technicals": {
+        "lens": "technicals",
         "available": True,
         "payload": {
+            "ma_posture": {
+                "BND": {"above_sma50": True, "above_sma200": True},
+                "TLT": {"above_sma50": False, "above_sma200": True},
+                "SHY": {"above_sma50": True, "above_sma200": False},
+            },
+            "breadth": 0.5,
+            # Real per-ticker 20-day momentum -- UNBOUNDED raw return, not [0, 1].
+            "momentum": {"BND": 0.02, "TLT": -0.01, "SHY": 0.005},
+        },
+        "sources": [
+            {
+                "title": "Technicals momentum snapshot",
+                "url": "https://example.com/technicals",
+                "published": "2026-06-01",
+                "lens": "technicals",
+            },
+        ],
+    },
+    "sentiment": {
+        "lens": "sentiment",
+        # AVAILABLE but market-wide (no per-ticker structure) -- must contribute
+        # NOTHING to any ticker's score, despite being available=True.
+        "available": True,
+        "payload": {
+            "tone_score": 0.30,
+            "corpus": [],
+            "events": [],
             "article_count": 3,
-            "ticker_scores": {"BND": 0.7, "TLT": 0.4, "SHY": 0.2},
         },
         "sources": [
             {
@@ -120,12 +161,13 @@ _ADVISOR_CONTEXT_WITH_LENSES = {
     },
     "macro": {
         "lens": "macro",
+        # AVAILABLE but market-wide (FRED series, not per-ticker) -- must
+        # contribute NOTHING.
         "available": True,
         "payload": {
             "series": {
                 "DGS10": {"label": "10-Year Treasury", "value": "4.25", "date": "2026-06-01"},
             },
-            "ticker_scores": {"BND": 0.5, "TLT": 0.8, "SHY": 0.3},
         },
         "sources": [
             {
@@ -135,13 +177,6 @@ _ADVISOR_CONTEXT_WITH_LENSES = {
                 "lens": "macro",
             },
         ],
-    },
-    "technicals": {
-        "lens": "technicals",
-        "available": False,
-        "reason": "technicals source not connected — cycle-2b deliverable",
-        "payload": None,
-        "sources": [],
     },
     "derivatives": {
         "lens": "derivatives",
@@ -225,7 +260,12 @@ class TestExtractLensScores:
         )
 
     def test_available_lenses_contribute_scores(self):
-        """RED: available=True lenses with ticker_scores payload contribute to output."""
+        """RED: technicals' real per-ticker momentum payload contributes to output.
+
+        STALE-FIXTURE FIX: technicals is the ONLY real per-ticker signal (momentum).
+        sentiment/macro are available=True but market-wide -- see
+        test_market_wide_available_lenses_produce_no_per_ticker_scores below.
+        """
         engine = _import_engine()
         fn = getattr(engine, "extract_lens_scores", None)
         if fn is None:
@@ -234,12 +274,36 @@ class TestExtractLensScores:
 
         result = fn(_ADVISOR_CONTEXT_WITH_LENSES)
 
-        # BND appears in both sentiment and macro ticker_scores — must appear in result.
+        # BND has a real per-ticker momentum value in the technicals block.
         assert "BND" in result, "BND missing from extract_lens_scores output"
         bnd_scores = result["BND"]
         assert isinstance(bnd_scores, dict), "Per-ticker scores must be a dict"
-        assert "sentiment" in bnd_scores, "sentiment score missing for BND"
-        assert "macro" in bnd_scores, "macro score missing for BND"
+        assert "technicals" in bnd_scores, "technicals (momentum-derived) score missing for BND"
+
+    def test_market_wide_available_lenses_produce_no_per_ticker_scores(self):
+        """RED (the live-E2E-caught bug): sentiment and macro are available=True in
+        the fixture but are MARKET-WIDE (tone_score scalar / FRED series keyed by
+        series_id, not ticker) -- they must honestly contribute NOTHING to any
+        ticker's score, never a fabricated per-ticker value derived from a
+        market-wide number."""
+        engine = _import_engine()
+        fn = getattr(engine, "extract_lens_scores", None)
+        if fn is None:
+            ai = _import_ai_advisor()
+            fn = ai.extract_lens_scores
+
+        result = fn(_ADVISOR_CONTEXT_WITH_LENSES)
+
+        assert result, "Expected at least BND/TLT/SHY from the technicals momentum data."
+        for ticker, ticker_scores in result.items():
+            assert "sentiment" not in ticker_scores, (
+                f"sentiment is market-wide (no per-ticker structure) and must NOT "
+                f"contribute a score for {ticker!r}; got {ticker_scores!r}"
+            )
+            assert "macro" not in ticker_scores, (
+                f"macro is market-wide (FRED series, no per-ticker structure) and must "
+                f"NOT contribute a score for {ticker!r}; got {ticker_scores!r}"
+            )
 
     def test_unavailable_lenses_produce_no_scores(self):
         """RED: available=False lenses must not contribute any scores (AC-6 honest-availability)."""
@@ -251,11 +315,8 @@ class TestExtractLensScores:
 
         result = fn(_ADVISOR_CONTEXT_WITH_LENSES)
 
-        # technicals, derivatives, fundamentals are all unavailable — none should appear.
+        # derivatives and fundamentals are unavailable in the fixture — must never appear.
         for ticker_scores in result.values():
-            assert "technicals" not in ticker_scores, (
-                "technicals (unavailable) must not contribute scores"
-            )
             assert "derivatives" not in ticker_scores, (
                 "derivatives (unavailable) must not contribute scores"
             )
@@ -303,17 +364,148 @@ class TestExtractLensScores:
 
         sparse_context = {
             "scope": "symphony",
-            "sentiment": {
-                "lens": "sentiment",
+            "technicals": {
+                "lens": "technicals",
                 "available": True,
-                "payload": {"ticker_scores": {"BND": 0.6}},
+                "payload": {"ma_posture": None, "breadth": None, "momentum": {"BND": 0.01}},
                 "sources": [],
             },
-            # macro, technicals, derivatives, fundamentals keys absent
+            # sentiment, macro, derivatives, fundamentals keys absent
         }
         # Must not raise
         result = fn(sparse_context)
         assert isinstance(result, dict)
+        assert "BND" in result, (
+            "technicals momentum must still contribute even when other lens keys "
+            "are entirely absent from the context"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Live-E2E follow-up: extract_lens_scores must squash technicals' UNBOUNDED raw
+# momentum (~20-day return, roughly ±0.05..0.15 in practice, but not formally
+# bounded) onto the [0, 1] favorability scale _apply_lens_blend expects
+# (LENS_BLEND_WEIGHT * (mean_lens - _LENS_NEUTRAL_SCORE), neutral=0.5). These
+# tests pin the INVARIANT (monotonic, bounded, neutral-at-zero, adversarially
+# separated), NOT a specific squashing formula -- same "pin the invariant, not
+# the formula" pattern the D-workstream cumulative-gap fix used.
+# ---------------------------------------------------------------------------
+
+
+def _technicals_context(momentum: dict) -> dict:
+    """Minimal context with ONLY technicals available, carrying the given
+    per-ticker momentum dict — isolates the squashing transform from every
+    other lens/extraction concern."""
+    return {
+        "scope": "symphony",
+        "technicals": {
+            "lens": "technicals",
+            "available": True,
+            "payload": {"ma_posture": None, "breadth": None, "momentum": momentum},
+            "sources": [],
+        },
+    }
+
+
+class TestExtractLensScoresMomentumSquashing:
+    """Live-E2E follow-up: technicals.payload.momentum is an UNBOUNDED raw
+    return; extract_lens_scores must map it onto [0, 1] before it reaches
+    _apply_lens_blend (which treats scores as an already-normalised [0, 1]
+    favorability with 0.5 as neutral)."""
+
+    def _extract(self):
+        engine = _import_engine()
+        fn = getattr(engine, "extract_lens_scores", None)
+        if fn is None:
+            ai = _import_ai_advisor()
+            fn = ai.extract_lens_scores
+        return fn
+
+    def test_extracted_score_is_bounded_to_unit_interval_for_large_momentum(self):
+        """A large positive AND a large negative raw momentum value must both
+        squash into [0, 1] — the raw value (e.g. 0.50 or -0.50) is far outside
+        that range if passed through unmodified."""
+        fn = self._extract()
+        result = fn(_technicals_context({"BIG_POS": 0.50, "BIG_NEG": -0.50}))
+
+        assert "BIG_POS" in result and "BIG_NEG" in result, (
+            f"Both tickers must produce a score; got {result!r}"
+        )
+        for ticker in ("BIG_POS", "BIG_NEG"):
+            score = result[ticker]["technicals"]
+            assert 0.0 <= score <= 1.0, (
+                f"extract_lens_scores must squash unbounded raw momentum to [0, 1]; "
+                f"{ticker} momentum=0.50/-0.50 produced score={score!r} (out of range)."
+            )
+
+    def test_zero_momentum_maps_to_approximately_neutral_score(self):
+        """Zero momentum (no trend either way) must map to ~0.5 (_LENS_NEUTRAL_SCORE)
+        — the same "no evidence / no opinion" value _apply_lens_blend already
+        assigns to a ticker absent from lens_scores entirely. A momentum-neutral
+        ticker must not silently nudge the blend as if it were lens-favored or
+        lens-disfavored."""
+        fn = self._extract()
+        result = fn(_technicals_context({"FLAT": 0.0}))
+
+        assert "FLAT" in result, f"Expected a score for FLAT; got {result!r}"
+        score = result["FLAT"]["technicals"]
+        # abs=0.05: the exact squashing formula is the implementer's choice (pinned
+        # by invariant, not formula); a tight-but-not-exact tolerance around the
+        # documented neutral point (0.5) accommodates minor formula variance while
+        # still catching a transform that is clearly NOT neutral-centered at 0.
+        assert score == pytest.approx(0.5, abs=0.05), (
+            f"Zero momentum must map to ~0.5 (neutral); got {score!r}"
+        )
+
+    def test_higher_momentum_maps_to_strictly_higher_score(self):
+        """Monotonicity: a strictly increasing momentum sequence must produce a
+        strictly increasing (never flat, never inverted) score sequence."""
+        fn = self._extract()
+        momentum = {
+            "M1_LOW": -0.10,
+            "M2_MID_LOW": -0.02,
+            "M3_ZERO": 0.00,
+            "M4_MID_HIGH": 0.05,
+            "M5_HIGH": 0.15,
+        }
+        result = fn(_technicals_context(momentum))
+
+        ordered_tickers = ["M1_LOW", "M2_MID_LOW", "M3_ZERO", "M4_MID_HIGH", "M5_HIGH"]
+        scores = [result[t]["technicals"] for t in ordered_tickers]
+
+        for i in range(len(scores) - 1):
+            assert scores[i] < scores[i + 1], (
+                f"Monotonicity violated: momentum {momentum[ordered_tickers[i]]!r} -> "
+                f"score {scores[i]!r} is not strictly less than momentum "
+                f"{momentum[ordered_tickers[i + 1]]!r} -> score {scores[i + 1]!r}. "
+                f"Full sequence: {list(zip(ordered_tickers, scores, strict=True))!r}"
+            )
+
+    def test_large_positive_and_negative_momentum_produce_clearly_separated_scores(self):
+        """Adversarial: a degenerate transform that clamps or collapses everything
+        near 0.5 would satisfy 'bounded to [0,1]' and even 'monotonic' (weakly)
+        while being USELESS for ranking. A large positive vs a large negative
+        momentum must land on CLEARLY different sides of the scale (not both
+        huddled near neutral)."""
+        fn = self._extract()
+        result = fn(_technicals_context({"STRONG_UP": 0.15, "STRONG_DOWN": -0.15}))
+
+        up_score = result["STRONG_UP"]["technicals"]
+        down_score = result["STRONG_DOWN"]["technicals"]
+
+        assert up_score > down_score, (
+            f"Strong positive momentum must score higher than strong negative "
+            f"momentum; got up={up_score!r} down={down_score!r}"
+        )
+        # A degenerate near-constant transform (e.g. always ~0.5 regardless of
+        # input) would trivially satisfy monotonicity (non-strict) and bounds but
+        # be dead for ranking purposes -- require real separation.
+        assert (up_score - down_score) >= 0.2, (
+            f"Large positive (0.15) vs large negative (-0.15) momentum must "
+            f"produce a clearly separated score gap (>= 0.2 on the [0,1] scale); "
+            f"got up={up_score!r} down={down_score!r} (gap={up_score - down_score!r}). "
+            f"A near-constant/degenerate squashing transform would fail this."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -760,33 +952,39 @@ class TestSafetyContracts:
     """AC-6: honest-availability, D-1, additions-only, advise-only."""
 
     def test_no_score_fabricated_for_unavailable_lens(self):
-        """RED: a ticker with scores only from unavailable lenses must not appear in extract result."""
+        """RED: a ticker whose only real per-ticker data sits in an UNAVAILABLE
+        technicals block must not appear in extract result -- available=False must
+        win regardless of what the payload nominally contains (honest-availability
+        is checked BEFORE payload content, never bypassed by a rich-looking payload)."""
         engine = _import_engine()
         fn = getattr(engine, "extract_lens_scores", None)
         if fn is None:
             ai = _import_ai_advisor()
             fn = ai.extract_lens_scores
 
-        # Context where only technicals is "available" but has no ticker_scores payload.
-        # The ticker "XYZ" appears only in an unavailable macro lens — must not be fabricated.
+        # technicals is UNAVAILABLE but its payload nominally has real per-ticker
+        # momentum data for "XYZ" -- this must NOT leak through. Every other lens
+        # is either market-wide (sentiment, available but no per-ticker structure)
+        # or genuinely unavailable (derivatives, macro, fundamentals) -- so the
+        # honest result is the EMPTY dict, no ticker at all.
         context = {
-            "macro": {
-                "lens": "macro",
+            "technicals": {
+                "lens": "technicals",
                 "available": False,
-                "reason": "FRED_API_KEY not configured",
-                "payload": {"ticker_scores": {"XYZ": 0.9}},  # unavailable → must be ignored
+                "reason": "stub",
+                "payload": {"ma_posture": None, "breadth": None, "momentum": {"XYZ": 0.99}},
                 "sources": [],
             },
             "sentiment": {
                 "lens": "sentiment",
                 "available": True,
-                "payload": {"ticker_scores": {}},  # available but empty
+                "payload": {"tone_score": 0.5, "corpus": [], "events": [], "article_count": 0},
                 "sources": [],
             },
-            "technicals": {
-                "lens": "technicals",
+            "macro": {
+                "lens": "macro",
                 "available": False,
-                "reason": "stub",
+                "reason": "FRED_API_KEY not configured",
                 "payload": None,
                 "sources": [],
             },
@@ -810,6 +1008,12 @@ class TestSafetyContracts:
         # XYZ must NOT appear — its only score comes from an unavailable lens.
         assert "XYZ" not in result, (
             f"Unavailable-lens ticker XYZ must not appear in extract_lens_scores output; got {result}"
+        )
+        # Stronger: with technicals unavailable and every other lens either
+        # market-wide or unavailable, NOTHING should be fabricated at all.
+        assert result == {}, (
+            f"No lens in this context has a legitimately-available per-ticker signal; "
+            f"expected an empty dict, got {result!r}"
         )
 
     def test_extract_lens_scores_never_raises_on_malformed_context(self):
@@ -993,6 +1197,14 @@ class TestFixtureBackedContract:
                 assert score == score, (  # NaN check: NaN != NaN
                     f"Score for {ticker!r}.{lens_name!r} must not be NaN; got {score}"
                 )
+                if ticker_contract.get("_score_in_unit_interval"):
+                    # technicals' momentum is an UNBOUNDED raw 20-day return, not
+                    # [0, 1] -- extract_lens_scores must squash it before returning
+                    # (AC-D2's blend expects [0, 1] with neutral 0.5).
+                    assert 0.0 <= score <= 1.0, (
+                        f"Score for {ticker!r}.{lens_name!r} must be squashed to "
+                        f"[0, 1] (raw momentum is unbounded); got {score!r}"
+                    )
 
 
 class TestCitationValidationOnPersistence:
