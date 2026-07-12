@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -82,15 +83,42 @@ LENS_BLEND_WEIGHT: float = 0.25
 # Named to avoid the magic-number 0.5 appearing inline (reviewer advisory AC-2).
 _LENS_NEUTRAL_SCORE: float = 0.5
 
-# The 5 lens keys as they appear in the assembled advisor context dict (Cycle-3 AC-1).
-# Used by extract_lens_scores to iterate the lens blocks deterministically.
-_LENS_CONTEXT_KEYS: tuple[str, ...] = (
-    "technicals",
-    "sentiment",
-    "derivatives",
-    "macro",
-    "fundamentals",
-)
+# Scale constant for squashing technicals.payload["momentum"] (an UNBOUNDED raw
+# 20-day return -- see lens_technicals.py's Jegadeesh & Titman momentum window,
+# typically ~+/-0.05 to +/-0.15 in practice, but not formally bounded) onto the
+# [0, 1] favorability scale _apply_lens_blend expects (neutral =
+# _LENS_NEUTRAL_SCORE = 0.5). 0.10 is chosen so a TYPICAL momentum (~0.05) maps
+# to a clearly non-neutral but non-saturated score (tanh(0.5)/2+0.5 ~= 0.73),
+# while an EXTREME momentum (>=0.15) approaches -- but by tanh's construction
+# never reaches exactly -- the [0, 1] bounds. Live-E2E follow-up
+# (DE-LENS-SCORE-SHAPE-001): the prior "ticker_scores" parser fabricated a key
+# no real producer emits; this constant/formula only needs to satisfy the
+# pinned invariant (bounded, neutral-at-zero, monotonic, adversarially
+# separated) -- the exact k is an implementation choice, not a pinned value.
+_MOMENTUM_SQUASH_SCALE: float = 0.10
+
+
+def _squash_momentum_to_unit_interval(momentum: float) -> float:
+    """Map an unbounded raw 20-day momentum return onto (0.0, 1.0).
+
+    ``_apply_lens_blend`` treats lens scores as an already-normalised
+    favorability on [0, 1] with ``_LENS_NEUTRAL_SCORE`` (0.5) as neutral, but
+    technicals' real per-ticker signal (``payload["momentum"]``) is an
+    UNBOUNDED raw return, not pre-normalised. A bounded, strictly-monotonic
+    tanh transform satisfies all four required properties:
+      - momentum == 0.0  -> exactly 0.5 (neutral -- matches the "no evidence"
+        default so a flat ticker never silently nudges the blend).
+      - momentum > 0.0   -> score > 0.5 (bullish tilt), strictly monotonic.
+      - momentum < 0.0   -> score < 0.5 (bearish tilt), strictly monotonic.
+      - any finite input -> strictly within (0.0, 1.0), never exactly 0 or 1.
+
+    Args:
+        momentum: raw 20-day return (e.g. 0.05 == +5%).
+
+    Returns:
+        A float in the open interval (0.0, 1.0).
+    """
+    return 0.5 + 0.5 * math.tanh(momentum / _MOMENTUM_SQUASH_SCALE)
 
 
 # ---------------------------------------------------------------------------
@@ -101,57 +129,75 @@ _LENS_CONTEXT_KEYS: tuple[str, ...] = (
 def extract_lens_scores(context: dict) -> dict:
     """Extract per-ticker lens scores from an assembled advisor context dict.
 
-    Walks the 5 standard lens blocks (technicals, sentiment, derivatives, macro,
-    fundamentals) present in the context returned by
-    ``ai_advisor.assemble_advisor_context``.  Only ``available=True`` lenses
-    contribute scores; ``available=False`` blocks are skipped entirely —
-    no fabrication (AC-6 honest-availability).
+    Live-E2E follow-up (DE-LENS-SCORE-SHAPE-001): the prior implementation
+    read a fabricated ``"ticker_scores"`` key that NO real lens producer ever
+    emits (0 real occurrences outside the stale fixture / this function) --
+    caught by a live droplet-DB E2E run where a fresh MARKET_LENS_CACHE
+    bundle produced ``{}`` and silently no-opped the D-workstream lens blend.
 
-    A lens contributes ticker scores when its ``payload`` dict contains a
-    ``"ticker_scores"`` sub-dict mapping ticker → numeric score.  Lenses without
-    this key (e.g. the GDELT sentiment block whose payload currently carries only
-    article_count) are skipped without error.
+    Only ``technicals`` genuinely carries a per-ticker signal on the real
+    5-lens payload contracts:
+      - ``technicals.payload["momentum"]``: ``{ticker: float}`` -- an
+        UNBOUNDED raw 20-day return (``ai_advisor.py:542-552``,
+        ``advisors/lens_technicals.py:265-272``). Squashed onto ``[0, 1]``
+        via ``_squash_momentum_to_unit_interval`` before being returned.
+      - ``technicals.payload["ma_posture"]`` (per-ticker
+        above_sma50/above_sma200 flags) exists but is NOT used here --
+        momentum alone is sufficient signal; folding ma_posture in is a
+        natural follow-up, not required.
+
+    ``sentiment`` / ``derivatives`` / ``macro`` are MARKET-WIDE scalars
+    (``tone_score``, VIX level, FRED series keyed by ``series_id``) with no
+    per-ticker structure -- they contribute NOTHING even when
+    ``available=True``; fabricating a per-ticker score from a market-wide
+    number would violate honest-availability. ``fundamentals`` IS per-ticker-
+    KEYED (``payload["tickers"]``) but its values are raw financials
+    (``key_facts``), not a clean scalar -- excluded from v1 by design (a
+    fundamentals-derived score is a distinct, more involved design problem
+    than this parser's scope).
+
+    Only an ``available=True`` technicals block contributes; ``available=
+    False`` is honored regardless of what the payload nominally contains
+    (AC-6 honest-availability is checked BEFORE payload content, never
+    bypassed by a rich-looking payload).
 
     Args:
         context:
-            The dict returned by ``ai_advisor.assemble_advisor_context``, or any
-            dict with lens-block values keyed by lens name.  Missing lens keys,
-            None payload, and malformed blocks are handled gracefully — they
-            contribute nothing and never raise.
+            The dict returned by ``ai_advisor.assemble_advisor_context``, or
+            any dict with lens-block values keyed by lens name. Missing lens
+            keys, None payload, and malformed blocks are handled gracefully
+            — they contribute nothing and never raise.
 
     Returns:
-        ``{ticker: {lens_name: score, ...}, ...}`` — dict of dicts.
-        Returns ``{}`` when no available lens carries per-ticker scores.
-        Never raises; malformed input degrades to ``{}``.
+        ``{ticker: {"technicals": score_in_0_1}, ...}`` — dict of dicts.
+        Returns ``{}`` when technicals is absent/unavailable/has no momentum
+        data. Never raises; malformed input degrades to ``{}``.
     """
     if not isinstance(context, dict):
         return {}
 
+    block = context.get("technicals")
+    if not isinstance(block, dict):
+        return {}
+    if not block.get("available", False):
+        # Honest-availability: unavailable lens -> nothing, regardless of
+        # whatever the payload nominally contains.
+        return {}
+
+    payload = block.get("payload")
+    if not isinstance(payload, dict):
+        return {}
+
+    momentum = payload.get("momentum")
+    if not isinstance(momentum, dict):
+        return {}
+
+    lens_name = block.get("lens", "technicals")
     result: dict[str, dict[str, float]] = {}
-
-    for lens_key in _LENS_CONTEXT_KEYS:
-        block = context.get(lens_key)
-        if not isinstance(block, dict):
+    for ticker, raw_value in momentum.items():
+        if not isinstance(ticker, str) or not isinstance(raw_value, (int, float)):
             continue
-        if not block.get("available", False):
-            # Honest-availability: unavailable lens → skip entirely, no fabrication.
-            continue
-
-        payload = block.get("payload")
-        if not isinstance(payload, dict):
-            continue
-
-        ticker_scores = payload.get("ticker_scores")
-        if not isinstance(ticker_scores, dict):
-            continue
-
-        lens_name = block.get("lens", lens_key)
-        for ticker, score in ticker_scores.items():
-            if not isinstance(ticker, str) or not isinstance(score, (int, float)):
-                continue
-            if ticker not in result:
-                result[ticker] = {}
-            result[ticker][lens_name] = float(score)
+        result[ticker] = {lens_name: _squash_momentum_to_unit_interval(float(raw_value))}
 
     return result
 
