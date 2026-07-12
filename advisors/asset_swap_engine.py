@@ -375,25 +375,45 @@ def _apply_lens_blend(
 ) -> list:
     """Re-rank an already-sorted candidate list by blending in lens evidence.
 
-    Applies an ADDITIVE adjustment to each candidate's existing ranking position
-    using the mean of its available lens scores, weighted by ``LENS_BLEND_WEIGHT``.
-    The primary sort (correlation / variance / Sharpe) is the anchor; the lens
-    blend is a nudge — the gate (evaluate_candidate_batch) is the hard filter.
+    AC-D1: blends lens evidence with the CONTINUOUS primary ``"score"`` field
+    already present on every candidate dict (see
+    ``generate_objective_directed_candidates``) — NEVER the discrete
+    ``enumerate()`` position. A position-based blend is mathematically inert:
+    for any two adjacent positions the integer gap (>= 1) always exceeds the
+    maximum possible lens contribution (``LENS_BLEND_WEIGHT`` <= 1), so lens
+    evidence could never change the order (see the closed-form inertness proof
+    in ``tests/ai_advisor/test_lens_blend_efficacy.py``'s module docstring).
 
-    Blend formula (position-based, avoids unit-comparability issues between
-    objective scores and lens scores):
-        blended_key[i] = position[i] - LENS_BLEND_WEIGHT * normalised_lens_mean[i]
+    Blend formula — cumulative absolute score distance from the top candidate:
+        cum_gap[0] = 0
+        cum_gap[i] = cum_gap[i-1] + |score[i] - score[i-1]|   (i >= 1, walked
+                                                                 in the caller's
+                                                                 own pre-sorted
+                                                                 order)
+        blended_key[i] = cum_gap[i] - LENS_BLEND_WEIGHT * (mean_lens[i] - _LENS_NEUTRAL_SCORE)
 
-    where ``position`` is the 0-based rank from the primary sort and
-    ``normalised_lens_mean`` is the mean lens score in [0, 1] for the ticker.
-    Subtracting moves high-lens-score tickers toward position 0 (top of list)
-    regardless of whether the primary sort is ascending or descending.
+    ``cum_gap`` walks the candidate list IN THE ORDER GIVEN (index 0 is already
+    the best candidate per the caller's own primary sort — ascending or
+    descending, ``_apply_lens_blend`` does not need to know which) and
+    accumulates the ABSOLUTE raw-score distance between neighbours. This is
+    deliberately NOT a per-batch min-max normalization: min-max would always
+    rescale a 2-candidate gap to fill the full [0, 1] span regardless of its
+    true magnitude (a 0.0001 gap and a 0.90 gap would look identical after
+    min-max), which defeats AC-D2's "small gap can move, large gap cannot
+    invert" invariant. Using the RAW absolute gap directly preserves that
+    magnitude information — a near-tied pair (small ``cum_gap`` increment)
+    sits within ``LENS_BLEND_WEIGHT``'s max swing and can be reordered; a
+    commanding primary lead (large increment) cannot be overcome.
 
     Args:
         candidates:
             List of ``{"ticker": ..., "score": ...}`` dicts, pre-sorted by the
-            primary objective metric.  Returned unchanged when ``lens_scores``
-            is None or empty.
+            primary objective metric (index 0 = best). Returned unchanged when
+            ``lens_scores`` is None or empty. A missing/non-numeric ``"score"``
+            degrades that candidate to its 0-based position (legacy/defensive
+            fallback — matches the pre-Cycle-3 position-based ordering for
+            candidate dicts built without a "score" key, e.g. the unknown-
+            objective fallback in ``generate_objective_directed_candidates``).
         lens_scores:
             ``{ticker: {lens_name: score, ...}}`` as returned by
             ``extract_lens_scores``.  None or empty → no reranking.
@@ -419,18 +439,32 @@ def _apply_lens_blend(
         vals = [v for v in scores.values() if isinstance(v, (int, float))]
         return sum(vals) / len(vals) if vals else _LENS_NEUTRAL_SCORE
 
-    # Position-based blend: assign each candidate a blended sort key.
-    # Lower blended key → closer to the front of the returned list.
+    def _primary_score(position: int, cand: Any) -> float:
+        val = cand.get("score") if isinstance(cand, dict) else None
+        return float(val) if isinstance(val, (int, float)) else float(position)
+
+    scores = [_primary_score(i, cand) for i, cand in enumerate(candidates)]
+
+    # cum_gap[i]: cumulative ABSOLUTE score distance from the top candidate,
+    # walked in the given (already primary-sorted) order. See formula above.
+    cum_gap = [0.0] * len(candidates)
+    for i in range(1, len(candidates)):
+        cum_gap[i] = cum_gap[i - 1] + abs(scores[i] - scores[i - 1])
+
     blended = []
-    for position, cand in enumerate(candidates):
+    for i, cand in enumerate(candidates):
         ticker = cand.get("ticker", "") if isinstance(cand, dict) else str(cand)
         mean_lens = _mean_lens(ticker)
-        # Subtracting lens contribution brings high-score tickers toward position 0.
-        blended_key = position - LENS_BLEND_WEIGHT * mean_lens
-        blended.append((blended_key, cand))
+        # Deviation from neutral: a strongly lens-favored candidate (mean_lens
+        # near 1.0) subtracts from its blended key (moves toward the front);
+        # a strongly disfavored one (near 0.0) adds (moves toward the back).
+        lens_term = LENS_BLEND_WEIGHT * (mean_lens - _LENS_NEUTRAL_SCORE)
+        blended_key = cum_gap[i] - lens_term
+        # Stable tie-break on original index for exact blended-key ties.
+        blended.append((blended_key, i, cand))
 
-    blended.sort(key=lambda t: t[0])
-    return [cand for _, cand in blended]
+    blended.sort(key=lambda t: (t[0], t[1]))
+    return [cand for _, _, cand in blended]
 
 
 # ---------------------------------------------------------------------------
