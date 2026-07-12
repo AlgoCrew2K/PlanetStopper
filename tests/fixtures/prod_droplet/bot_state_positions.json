@@ -1,0 +1,752 @@
+{
+ "iaSOOUsmnCJHiZvbrWfs": {
+  "name": "(INVEST) LQD + EYEG 5 ways Full Market",
+  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "current_value": 1098.42,
+  "current_return": 0.13999999999999999,
+  "triggered": false,
+  "high_water_mark": 0.73,
+  "shadow_hwm": 0.73,
+  "symphony_vol": 1.5927051809242332,
+  "mc_prob": 27.62,
+  "vwap_ticks": 0,
+  "vwap_bleed_ticks": 0,
+  "above_tp_count": 0,
+  "below_stop_count": 0,
+  "position_epoch": "ba775024600c41a5a50ab0fa9c214142",
+  "current_holdings": [
+   {
+    "ticker": "SH",
+    "allocation": 0.390700631
+   },
+   {
+    "ticker": "EDC",
+    "allocation": 0.272940612
+   },
+   {
+    "ticker": "SCHD",
+    "allocation": 0.000868271
+   },
+   {
+    "ticker": "URTY",
+    "allocation": 0.005909363
+   },
+   {
+    "ticker": "UVIX",
+    "allocation": 0.096965443
+   },
+   {
+    "ticker": "VIXY",
+    "allocation": 0.098396678
+   },
+   {
+    "ticker": "YANG",
+    "allocation": 0.133218248
+   }
+  ]
+ },
+ "lW4ZzWuqR8tEO2DhXbil": {
+  "name": "Planet of the Paragons: EYEG of the LQD",
+  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "current_value": 949.26,
+  "current_return": 0.7799999999999999,
+  "triggered": true,
+  "triggered_reason": "Take-Profit",
+  "triggered_at_return": 0.7799999999999999,
+  "triggered_at_stop": 0.7799999999999999,
+  "triggered_at_hwm": 0.9199999999999999,
+  "triggered_at_time": "09:43",
+  "high_water_mark": -999.0,
+  "shadow_hwm": 1.01,
+  "symphony_vol": 2.2158058617694003,
+  "mc_prob": 48.16,
+  "vwap_ticks": 0,
+  "vwap_bleed_ticks": 0,
+  "above_tp_count": 2,
+  "below_stop_count": 0,
+  "position_epoch": "cc4a0fd2abea47dbaf9513dd1da2a19c",
+  "current_holdings": [
+   {
+    "ticker": "SH",
+    "allocation": 0.492962883
+   },
+   {
+    "ticker": "EDC",
+    "allocation": 0.337674287
+   },
+   {
+    "ticker": "YANG",
+    "allocation": 0.168355525
+   }
+  ]
+ },
+ "nOyb55RMGVCKPiYXv7TI": {
+  "name": "Corporate Chaos 5 ways ",
+  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "current_value": 896.64,
+  "current_return": -0.84,
+  "triggered": false,
+  "high_water_mark": -0.32,
+  "shadow_hwm": -0.32,
+  "symphony_vol": 0.988070337165776,
+  "mc_prob": 82.12,
+  "vwap_ticks": 0,
+  "vwap_bleed_ticks": 0,
+  "above_tp_count": 0,
+  "below_stop_count": 0,
+  "position_epoch": "ef20d7b499e444bab3ab5a1a09c1fbb8",
+  "current_holdings": [
+   {
+    "ticker": "EEV",
+    "allocation": 0.282026008
+   },
+   {
+    "ticker": "QLD",
+    "allocation": 0.208216713
+   },
+   {
+    "ticker": "UST",
+    "allocation": 0.100935781
+   },
+   {
+    "ticker": "XLY",
+    "allocation": 0.002306122
+   },
+   {
+    "ticker": "BTAL",
+    "allocation": 0.195948651
+   },
+   {
+    "ticker": "UVIX",
+    "allocation": 0.098105115
+   },
+   {
+    "ticker": "VIXY",
+    "allocation": 0.09954382
+   }
+  ]
+ },
+ "qF5ZU7ALjrlhxrGEwsyJ": {
+  "name": "Planet of the Golden Age (Buy Copy)",
+  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "current_value": 1514.46,
+  "current_return": 2.2859177663251935,
+  "triggered": true,
+  "triggered_reason": "VWAP Breakdown",
+  "triggered_at_return": 2.26,
+  "triggered_at_stop": 2.35,
+  "triggered_at_hwm": 2.35,
+  "triggered_at_time": "10:11",
+  "high_water_mark": -999.0,
+  "shadow_hwm": 2.44,
+  "symphony_vol": 4.140740239966466,
+  "mc_prob": 45.540000000000006,
+  "vwap_ticks": 3,
+  "vwap_bleed_ticks": 0,
+  "above_tp_count": 0,
+  "below_stop_count": 0,
+  "position_epoch": "06062dd0b57d42ba888a40c90614bdf7",
+  "current_holdings": [
+   {
+    "ticker": "DFEN",
+    "allocation": 0.007324649
+   },
+   {
+    "ticker": "STPZ",
+    "allocation": 0.012130554
+   },
+   {
+    "ticker": "SOXL",
+    "allocation": 0.008354467
+   },
+   {
+    "ticker": "SOXX",
+    "allocation": 0.011490519
+   },
+   {
+    "ticker": "QQQ",
+    "allocation": 0.044029256
+   },
+   {
+    "ticker": "GDX",
+    "allocation": 0.005421122
+   },
+   {
+    "ticker": "HYG",
+    "allocation": 0.007864975
+   },
+   {
+    "ticker": "AIQ",
+    "allocation": 0.011239423
+   },
+   {
+    "ticker": "NUGT",
+    "allocation": 0.007613244
+   },
+   {
+    "ticker": "LQD",
+    "allocation": 0.005064298
+   },
+   {
+    "ticker": "MDY",
+    "allocation": 0.011078038
+   },
+   {
+    "ticker": "XLB",
+    "allocation": 0.00314164
+   },
+   {
+    "ticker": "TECL",
+    "allocation": 0.011598844
+   },
+   {
+    "ticker": "TQQQ",
+    "allocation": 0.030305164
+   },
+   {
+    "ticker": "EDC",
+    "allocation": 0.501109224
+   },
+   {
+    "ticker": "YANG",
+    "allocation": 0.248254056
+   },
+   {
+    "ticker": "FAS",
+    "allocation": 0.002532733
+   },
+   {
+    "ticker": "GLD",
+    "allocation": 0.007345192
+   },
+   {
+    "ticker": "XLK",
+    "allocation": 0.022215234
+   },
+   {
+    "ticker": "SCHD",
+    "allocation": 0.00235949
+   },
+   {
+    "ticker": "XLY",
+    "allocation": 0.010830827
+   },
+   {
+    "ticker": "USD",
+    "allocation": 0.003280734
+   }
+  ]
+ },
+ "8FAXAnQmYi1INDubazeC": {
+  "name": "Planet LQD: Run of the Feaver'd WaltAnansi USDs 2/3 Mixup",
+  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "current_value": 1321.86,
+  "current_return": 1.4207621539615483,
+  "triggered": true,
+  "triggered_reason": "Take-Profit",
+  "triggered_at_return": 1.4200000000000002,
+  "triggered_at_stop": 1.4200000000000002,
+  "triggered_at_hwm": 1.8499999999999999,
+  "triggered_at_time": "09:45",
+  "high_water_mark": -999.0,
+  "shadow_hwm": 1.8499999999999999,
+  "symphony_vol": 1.9566448804876777,
+  "mc_prob": 48.46,
+  "vwap_ticks": 0,
+  "vwap_bleed_ticks": 0,
+  "above_tp_count": 2,
+  "below_stop_count": 0,
+  "position_epoch": "0343aed4f7a1477fbcabd444a7c6b40f",
+  "current_holdings": [
+   {
+    "ticker": "BIL",
+    "allocation": 0.067800731
+   },
+   {
+    "ticker": "EDC",
+    "allocation": 0.252941506
+   },
+   {
+    "ticker": "EDZ",
+    "allocation": 0.269600722
+   },
+   {
+    "ticker": "GLD",
+    "allocation": 0.144290988
+   },
+   {
+    "ticker": "UGL",
+    "allocation": 0.00419256
+   },
+   {
+    "ticker": "USD",
+    "allocation": 0.259859575
+   }
+  ]
+ },
+ "5XjzXjdGnjh99MIsdM97": {
+  "name": "Land of Feaver'd Allocations: Intelligent Novas",
+  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "current_value": 1040.42,
+  "current_return": 1.8710424232698448,
+  "triggered": true,
+  "triggered_reason": "Take-Profit",
+  "triggered_at_return": 1.63,
+  "triggered_at_stop": 1.63,
+  "triggered_at_hwm": 1.77,
+  "triggered_at_time": "10:07",
+  "high_water_mark": -999.0,
+  "shadow_hwm": 1.8772757374197617,
+  "symphony_vol": 1.813173559359962,
+  "mc_prob": 49.18,
+  "vwap_ticks": 0,
+  "vwap_bleed_ticks": 0,
+  "above_tp_count": 2,
+  "below_stop_count": 0,
+  "position_epoch": "43b0ddd09e8e46c39f998730a41a1e12",
+  "current_holdings": [
+   {
+    "ticker": "AGQ",
+    "allocation": 0.167814639
+   },
+   {
+    "ticker": "BIL",
+    "allocation": 0.157331864
+   },
+   {
+    "ticker": "EDC",
+    "allocation": 0.101222816
+   },
+   {
+    "ticker": "EDZ",
+    "allocation": 0.094733906
+   },
+   {
+    "ticker": "UGL",
+    "allocation": 0.161015463
+   },
+   {
+    "ticker": "GBTC",
+    "allocation": 0.159480225
+   },
+   {
+    "ticker": "NEAR",
+    "allocation": 0.157375599
+   }
+  ]
+ },
+ "hvPiGP1O7AHfutHE3Fjy": {
+  "name": "(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations",
+  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "current_value": 1178.05,
+  "current_return": 1.8710141077982745,
+  "triggered": true,
+  "triggered_reason": "Take-Profit",
+  "triggered_at_return": 1.63,
+  "triggered_at_stop": 1.63,
+  "triggered_at_hwm": 1.77,
+  "triggered_at_time": "10:07",
+  "high_water_mark": -999.0,
+  "shadow_hwm": 1.8772454923313977,
+  "symphony_vol": 1.8119372019733386,
+  "mc_prob": 49.18,
+  "vwap_ticks": 0,
+  "vwap_bleed_ticks": 0,
+  "above_tp_count": 2,
+  "below_stop_count": 0,
+  "position_epoch": "1b206ccab5034ae7946ae30cc639a7d2",
+  "current_holdings": [
+   {
+    "ticker": "AGQ",
+    "allocation": 0.167805583
+   },
+   {
+    "ticker": "BIL",
+    "allocation": 0.157273829
+   },
+   {
+    "ticker": "EDC",
+    "allocation": 0.101196825
+   },
+   {
+    "ticker": "EDZ",
+    "allocation": 0.094971163
+   },
+   {
+    "ticker": "UGL",
+    "allocation": 0.160972751
+   },
+   {
+    "ticker": "GBTC",
+    "allocation": 0.159443906
+   },
+   {
+    "ticker": "NEAR",
+    "allocation": 0.157326881
+   }
+  ]
+ },
+ "INfCn3eKsu6i4oTTqdUp": {
+  "name": "(INVEST) Planet of Projected Inflation: Corporate Chaos 2060",
+  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "current_value": 1091.86,
+  "current_return": 0.6243885662569012,
+  "triggered": true,
+  "triggered_reason": "Take-Profit",
+  "triggered_at_return": 0.6,
+  "triggered_at_stop": 0.6,
+  "triggered_at_hwm": 0.72,
+  "triggered_at_time": "09:51",
+  "high_water_mark": -999.0,
+  "shadow_hwm": 1.05,
+  "symphony_vol": 1.4872877784345362,
+  "mc_prob": 49.519999999999996,
+  "vwap_ticks": 0,
+  "vwap_bleed_ticks": 0,
+  "above_tp_count": 2,
+  "below_stop_count": 0,
+  "position_epoch": "363d2d6c423046c99dfeccaa2ede2fc1",
+  "current_holdings": [
+   {
+    "ticker": "UPRO",
+    "allocation": 0.149411519
+   },
+   {
+    "ticker": "EEV",
+    "allocation": 0.142826944
+   },
+   {
+    "ticker": "BTAL",
+    "allocation": 0.096984844
+   },
+   {
+    "ticker": "VIG",
+    "allocation": 0.001671541
+   },
+   {
+    "ticker": "UST",
+    "allocation": 0.050068092
+   },
+   {
+    "ticker": "TQQQ",
+    "allocation": 0.152942644
+   },
+   {
+    "ticker": "QLD",
+    "allocation": 0.101192096
+   },
+   {
+    "ticker": "EDV",
+    "allocation": 0.142151726
+   },
+   {
+    "ticker": "DHS",
+    "allocation": 0.001193185
+   },
+   {
+    "ticker": "KMLM",
+    "allocation": 0.146045227
+   }
+  ]
+ },
+ "Gpaw3IhZghQPRE6AdEKx": {
+  "name": "Planet of the Reasonabilists: Era of the Erased Golden Age",
+  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "current_value": 1535.56,
+  "current_return": -0.54,
+  "triggered": false,
+  "high_water_mark": 0.33999999999999997,
+  "shadow_hwm": 0.33999999999999997,
+  "symphony_vol": 1.3482453980113864,
+  "mc_prob": 81.82000000000001,
+  "vwap_ticks": 0,
+  "vwap_bleed_ticks": 0,
+  "above_tp_count": 0,
+  "below_stop_count": 0,
+  "position_epoch": "f7d3f98da523484188690c17b911c0f8",
+  "current_holdings": [
+   {
+    "ticker": "STPZ",
+    "allocation": 0.004644871
+   },
+   {
+    "ticker": "XLV",
+    "allocation": 0.003352833
+   },
+   {
+    "ticker": "SOXX",
+    "allocation": 0.00936769
+   },
+   {
+    "ticker": "QQQ",
+    "allocation": 0.036313694
+   },
+   {
+    "ticker": "GDX",
+    "allocation": 0.005075213
+   },
+   {
+    "ticker": "HYG",
+    "allocation": 0.00658372
+   },
+   {
+    "ticker": "SHY",
+    "allocation": 0.012691343
+   },
+   {
+    "ticker": "AIQ",
+    "allocation": 0.005224804
+   },
+   {
+    "ticker": "MDY",
+    "allocation": 0.009067881
+   },
+   {
+    "ticker": "XLB",
+    "allocation": 0.004764656
+   },
+   {
+    "ticker": "TECL",
+    "allocation": 0.012808545
+   },
+   {
+    "ticker": "BTAL",
+    "allocation": 0.041549323
+   },
+   {
+    "ticker": "TQQQ",
+    "allocation": 0.031332964
+   },
+   {
+    "ticker": "EDZ",
+    "allocation": 0.4202821
+   },
+   {
+    "ticker": "EDC",
+    "allocation": 0.204908401
+   },
+   {
+    "ticker": "EDV",
+    "allocation": 0.031824251
+   },
+   {
+    "ticker": "VIXY",
+    "allocation": 0.010343109
+   },
+   {
+    "ticker": "TLT",
+    "allocation": 0.019090039
+   },
+   {
+    "ticker": "XLK",
+    "allocation": 0.01831909
+   },
+   {
+    "ticker": "SCHD",
+    "allocation": 0.00531408
+   },
+   {
+    "ticker": "XLY",
+    "allocation": 0.009011407
+   },
+   {
+    "ticker": "SQQQ",
+    "allocation": 0.031534507
+   },
+   {
+    "ticker": "UYG",
+    "allocation": 0.00487634
+   },
+   {
+    "ticker": "PSQ",
+    "allocation": 0.009330664
+   }
+  ]
+ },
+ "MoAkUHnavSYw3oONiUxe": {
+  "name": "Planet of Erased History: Nova's Feaver'd Golden Age of EYEG",
+  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "current_value": 1062.25,
+  "current_return": 1.2376636464617026,
+  "triggered": true,
+  "triggered_reason": "VWAP Breakdown",
+  "triggered_at_return": 1.21,
+  "triggered_at_stop": 1.52,
+  "triggered_at_hwm": 1.52,
+  "triggered_at_time": "10:15",
+  "high_water_mark": -999.0,
+  "shadow_hwm": 1.52,
+  "symphony_vol": 2.6294691851486274,
+  "mc_prob": 43.84,
+  "vwap_ticks": 3,
+  "vwap_bleed_ticks": 0,
+  "above_tp_count": 0,
+  "below_stop_count": 0,
+  "position_epoch": "6a8ffbdb7cf04b2b96bbfb2309584402",
+  "current_holdings": [
+   {
+    "ticker": "STPZ",
+    "allocation": 0.01630089
+   },
+   {
+    "ticker": "SOXL",
+    "allocation": 0.011123388
+   },
+   {
+    "ticker": "SOXX",
+    "allocation": 0.015349834
+   },
+   {
+    "ticker": "QQQ",
+    "allocation": 0.059310012
+   },
+   {
+    "ticker": "GDX",
+    "allocation": 0.014834575
+   },
+   {
+    "ticker": "HYG",
+    "allocation": 0.010262213
+   },
+   {
+    "ticker": "AIQ",
+    "allocation": 0.005026237
+   },
+   {
+    "ticker": "NUGT",
+    "allocation": 0.007077976
+   },
+   {
+    "ticker": "MDY",
+    "allocation": 0.014847395
+   },
+   {
+    "ticker": "TECL",
+    "allocation": 0.020145181
+   },
+   {
+    "ticker": "TQQQ",
+    "allocation": 0.040437972
+   },
+   {
+    "ticker": "EDC",
+    "allocation": 0.291540273
+   },
+   {
+    "ticker": "SH",
+    "allocation": 0.365581488
+   },
+   {
+    "ticker": "YANG",
+    "allocation": 0.041356091
+   },
+   {
+    "ticker": "GLD",
+    "allocation": 0.00309818
+   },
+   {
+    "ticker": "XLK",
+    "allocation": 0.028987015
+   },
+   {
+    "ticker": "XLY",
+    "allocation": 0.014165512
+   }
+  ]
+ },
+ "n2ooAZTvBRN6ZzpMmWmU": {
+  "name": "(INVEST:CRYPTO) We do a Little Trolling Planet's Mix v1.4 | 10.19.2022",
+  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "current_value": 1625.5,
+  "current_return": 0.4926371918435325,
+  "triggered": true,
+  "triggered_reason": "Take-Profit",
+  "triggered_at_return": 0.5700000000000001,
+  "triggered_at_stop": 0.5700000000000001,
+  "triggered_at_hwm": 0.7799999999999999,
+  "triggered_at_time": "09:42",
+  "high_water_mark": -999.0,
+  "shadow_hwm": 0.7799999999999999,
+  "symphony_vol": 0.9084763226000345,
+  "mc_prob": 48.8,
+  "vwap_ticks": 0,
+  "vwap_bleed_ticks": 0,
+  "above_tp_count": 2,
+  "below_stop_count": 0,
+  "position_epoch": "feb2cadc37674226a87112c3292953d2",
+  "current_holdings": [
+   {
+    "ticker": "NVO",
+    "allocation": 0.057254608
+   },
+   {
+    "ticker": "UUP",
+    "allocation": 0.027363657
+   },
+   {
+    "ticker": "GE",
+    "allocation": 0.056861161
+   },
+   {
+    "ticker": "SPXU",
+    "allocation": 0.008651306
+   },
+   {
+    "ticker": "TQQQ",
+    "allocation": 0.149519083
+   },
+   {
+    "ticker": "LLY",
+    "allocation": 0.052983015
+   },
+   {
+    "ticker": "EDZ",
+    "allocation": 0.078136837
+   },
+   {
+    "ticker": "EDC",
+    "allocation": 0.0562181
+   },
+   {
+    "ticker": "YANG",
+    "allocation": 0.022847611
+   },
+   {
+    "ticker": "FTLS",
+    "allocation": 0.027532867
+   },
+   {
+    "ticker": "SRTY",
+    "allocation": 0.008763434
+   },
+   {
+    "ticker": "QID",
+    "allocation": 0.109785989
+   },
+   {
+    "ticker": "GLD",
+    "allocation": 0.076132388
+   },
+   {
+    "ticker": "VIXM",
+    "allocation": 0.028898939
+   },
+   {
+    "ticker": "BIL",
+    "allocation": 0.027352075
+   },
+   {
+    "ticker": "USD",
+    "allocation": 0.102909769
+   },
+   {
+    "ticker": "COST",
+    "allocation": 0.09013347
+   },
+   {
+    "ticker": "PSQ",
+    "allocation": 0.008526927
+   }
+  ]
+ }
+}

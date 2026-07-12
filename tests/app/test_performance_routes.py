@@ -74,6 +74,11 @@ def mock_analytics(monkeypatch):
         "volatility": None,  # Phase 2 addition
     }
     mock.list_available_symphonies.return_value = []
+    # Canonical shadow-series producer (DE-PROD-ACCURACY-001 Finding 4): the
+    # scope=aggregate path consumes this, not compute_aggregate_returns. None is
+    # the producer's own empty/day-1 contract.
+    mock.get_portfolio_bot_and_held_daily_returns.return_value = None
+    mock.get_single_day_shadow_returns.return_value = None
 
     # Patch the module attribute directly (covers both `import analytics` and
     # `from analytics import X` usage in app.py once DV2 lands).
@@ -83,6 +88,8 @@ def mock_analytics(monkeypatch):
         "compute_per_symphony_returns",
         "compute_quantstats_metrics",
         "list_available_symphonies",
+        "get_portfolio_bot_and_held_daily_returns",
+        "get_single_day_shadow_returns",
     ):
         monkeypatch.setattr(analytics_module, attr, getattr(mock, attr))
 
@@ -183,12 +190,19 @@ def test_get_performance_has_scope_toggle_ui(client, mock_analytics):
 def test_api_performance_aggregate_happy_path_30_days(client, mock_analytics):
     """
     GET /api/performance?scope=aggregate&days=60 with 30 days of fixture data:
-    JSON must contain the documented shape with all 7 metric keys and the
+    JSON must contain the documented shape with all metric keys and the
     correct observation_count + insufficient_history flag.
 
     Fixture-derived assertions only — we do NOT hardcode any of the producer
-    values.  The mocked analytics functions return lists of length 30; the test
+    values.  The mocked analytics producer returns lists of length 30; the test
     asserts the route preserves length and shape.
+
+    Re-pointed (DE-PROD-ACCURACY-001 Finding 4): the aggregate series now comes
+    from the canonical shadow_history producer
+    (get_portfolio_bot_and_held_daily_returns), not the post-mortem trigger
+    arrays via compute_aggregate_returns. Shape contract unchanged. Which series
+    lands in which payload field is pinned by
+    tests/app/test_canonical_portfolio_series.py, not here.
     """
     n_days = 30
     symphonies = ["sym-A", "sym-B"]
@@ -196,12 +210,13 @@ def test_api_performance_aggregate_happy_path_30_days(client, mock_analytics):
     mock_analytics.get_history_with_cache_invalidation.return_value = history
 
     dates = sorted(history.keys())
-    live_returns = [0.001 * (i + 1) for i in range(n_days)]
-    shadow_returns = [0.002 * (i + 1) for i in range(n_days)]
-    mock_analytics.compute_aggregate_returns.return_value = (
+    series_a = [0.001 * (i + 1) for i in range(n_days)]
+    series_b = [0.002 * (i + 1) for i in range(n_days)]
+    live_returns, shadow_returns = series_a, series_b
+    mock_analytics.get_portfolio_bot_and_held_daily_returns.return_value = (
         dates,
-        live_returns,
-        shadow_returns,
+        series_a,
+        series_b,
     )
     live_metrics = {
         "total_return": 0.05,
@@ -276,7 +291,8 @@ def test_api_performance_aggregate_insufficient_history_flag(client, mock_analyt
     shadow_returns = [0.002 * (i + 1) for i in range(n_days)]
 
     mock_analytics.get_history_with_cache_invalidation.return_value = history
-    mock_analytics.compute_aggregate_returns.return_value = (
+    # Re-pointed (Finding 4): aggregate consumes the canonical shadow producer.
+    mock_analytics.get_portfolio_bot_and_held_daily_returns.return_value = (
         dates,
         live_returns,
         shadow_returns,

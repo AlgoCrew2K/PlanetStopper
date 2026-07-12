@@ -1196,6 +1196,33 @@ def get_history_with_cache_invalidation(days: int = 60, base_dir: str = ".") -> 
     return data
 
 
+def _load_position_value_weights() -> dict[str, float]:
+    """Per-symphony position values from bot_state ``current_value`` — the genuine
+    value-weight source for the canonical portfolio series (audit Finding 6: the
+    prior abs(current_return) "value-weight proxy" let the day's biggest movers
+    dominate, exaggerating portfolio levels ~4x).
+
+    Only positive finite values participate. An empty dict means "no position
+    values available" (day-1 droplet) and the caller degrades to EQUAL weight —
+    never back to the abs-return proxy.
+    """
+    try:
+        state = database.load_state()
+    except Exception:
+        return {}
+    weights: dict[str, float] = {}
+    for sym_id, entry in (state or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        try:
+            value = float(entry.get("current_value"))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value) and value > 0.0:
+            weights[sym_id] = value
+    return weights
+
+
 def get_portfolio_daily_returns_from_shadow(
     db_file: str | None = None,
     days: int = 125,
@@ -1203,10 +1230,11 @@ def get_portfolio_daily_returns_from_shadow(
     """Build a continuous portfolio-level daily return series from shadow_history.
 
     Aggregates per-symphony shadow_return values for each trading day using the
-    last row per (symphony_id, trading_day). Value-weights by current_return proxy
-    (equal-weight fallback when current_return is 0 or unavailable). Returns
-    (dates_sorted_ascending, portfolio_daily_returns) or None when fewer than 2
-    distinct trading days exist — callers should fall back to post_mortem data.
+    last row per (symphony_id, trading_day). Value-weights by bot_state
+    ``current_value`` (equal-weight fallback when no position values exist).
+    Returns (dates_sorted_ascending, portfolio_daily_returns) or None when fewer
+    than 2 distinct trading days exist — callers should fall back to post_mortem
+    data.
 
     This is the correct source for the hero chart hist series: it is continuous
     (written every cycle for every tracked symphony, not only on exit days), so its
@@ -1247,15 +1275,20 @@ def get_portfolio_daily_returns_from_shadow(
     if len(sorted_days) < 2:
         return None
 
+    value_weights = _load_position_value_weights()
+
     out_dates: list[str] = []
     out_returns: list[float] = []
     for day in sorted_days:
         entries = day_map[day]
         weight_sum = 0.0
         ret_wsum = 0.0
-        for sym_ret, sym_cr in entries.values():
-            # Use absolute current_return as weight proxy; fall back to equal-weight.
-            w = abs(sym_cr) if sym_cr != 0.0 else 1.0
+        for sym_id, (sym_ret, _sym_cr) in entries.items():
+            # Genuine value-weight from bot_state current_value; EQUAL weight when
+            # no position values exist — never the abs(return) proxy (Finding 6).
+            w = value_weights.get(sym_id, 0.0) if value_weights else 1.0
+            if w <= 0.0:
+                continue
             weight_sum += w
             ret_wsum += sym_ret * w
         if weight_sum > 0.0:
@@ -1284,9 +1317,10 @@ def get_portfolio_bot_and_held_daily_returns(
     Per day, using the last row per (symphony_id, trading_day):
       - Bot  = value-weighted ``shadow_return``  (the guard's series — frozen at exit)
       - Held = value-weighted ``current_return`` (the if-held baseline — kept holding)
-    BOTH series use the SAME per-symphony weight that day (``abs(current_return)``
-    proxy, equal-weight fallback) so Bot and Held are commensurable and their
-    difference is a real guard effect, not a re-weighting artefact. For an
+    BOTH series use the SAME per-symphony weight (bot_state ``current_value``;
+    equal-weight fallback when no position values exist) so Bot and Held are
+    commensurable and their difference is a real guard effect, not a
+    re-weighting artefact. For an
     untriggered symphony shadow_return == current_return, so its Bot and Held
     contributions coincide; an all-untriggered day yields bot == held EXACTLY (no
     fabricated divergence).
@@ -1341,6 +1375,8 @@ def get_portfolio_bot_and_held_daily_returns(
     if len(sorted_days) < 2:
         return None
 
+    value_weights = _load_position_value_weights()
+
     out_dates: list[str] = []
     bot_returns: list[float] = []
     held_returns: list[float] = []
@@ -1349,10 +1385,13 @@ def get_portfolio_bot_and_held_daily_returns(
         weight_sum = 0.0
         bot_wsum = 0.0
         held_wsum = 0.0
-        for sym_ret, sym_cr in entries.values():
-            # ONE weight per symphony/day (abs current_return proxy, equal-weight
-            # fallback), applied to BOTH series so Bot and Held stay commensurable.
-            w = abs(sym_cr) if sym_cr != 0.0 else 1.0
+        for sym_id, (sym_ret, sym_cr) in entries.items():
+            # ONE weight per symphony (bot_state current_value; equal-weight when
+            # no position values exist — never the abs(return) proxy, Finding 6),
+            # applied to BOTH series so Bot and Held stay commensurable.
+            w = value_weights.get(sym_id, 0.0) if value_weights else 1.0
+            if w <= 0.0:
+                continue
             weight_sum += w
             bot_wsum += sym_ret * w
             held_wsum += sym_cr * w
@@ -1387,7 +1426,7 @@ def get_single_day_shadow_returns(
     try:
         conn = sqlite3.connect(f"file:{_db_file}?mode=ro", uri=True, timeout=10.0)
         rows = conn.execute(
-            "SELECT trading_day, shadow_return, current_return "
+            "SELECT trading_day, symphony_id, shadow_return, current_return "
             "FROM shadow_history "
             "WHERE ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
             "                WHERE s2.symphony_id = shadow_history.symphony_id "
@@ -1401,17 +1440,21 @@ def get_single_day_shadow_returns(
     if not rows:
         return None
 
-    # Use the latest trading_day only; value-weight by abs(current_return).
+    # Use the latest trading_day only; same weight policy as the multi-day series
+    # (bot_state current_value, equal-weight fallback — never the abs proxy).
     latest_day = rows[0][0]
     day_rows = [r for r in rows if r[0] == latest_day]
+    value_weights = _load_position_value_weights()
 
     weight_sum = 0.0
     bot_wsum = 0.0
     held_wsum = 0.0
-    for _day, shadow_ret, cur_ret in day_rows:
+    for _day, sym_id, shadow_ret, cur_ret in day_rows:
         shadow_f = float(shadow_ret) if shadow_ret is not None else 0.0
         cur_f = float(cur_ret) if cur_ret is not None else 0.0
-        w = abs(cur_f) if cur_f != 0.0 else 1.0
+        w = value_weights.get(sym_id, 0.0) if value_weights else 1.0
+        if w <= 0.0:
+            continue
         weight_sum += w
         bot_wsum += shadow_f * w
         held_wsum += cur_f * w
@@ -1746,7 +1789,10 @@ def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
             sym_name = _name_map.get(sym_id) or t.get("symphony_name") or sym_id
             todays_exits.append(
                 {
-                    "ts": t.get("timestamp", t.get("ts", "")),
+                    # Finding 11: the producer writes the trigger time as
+                    # time_triggered (reporting.py) — timestamp/ts never existed,
+                    # so the Time column rendered an em-dash even on this path.
+                    "ts": t.get("time_triggered") or t.get("timestamp") or t.get("ts", ""),
                     "symphony_id": sym_id,
                     "symphony_name": sym_name,
                     "reason": t.get("exit_reason", t.get("reason", "")),

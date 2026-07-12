@@ -3130,6 +3130,8 @@ Decision: no backward-compat shims for schemas that never existed in production.
 
 ## DE-GUARD-ALPHA-SAVED-001 — Post-mortem if-held sourced from shadow_history.current_return (2026-06-22)
 
+**PARTIALLY SUPERSEDED by `DE-PROD-ACCURACY-001` (2026-07-09).** This entry's "Why this is correct" section and field-semantics table describe `live_ret = sym.get("current_return", 0.0)` as correctly sourcing from `shadow_history` — it does not; that code reads `bot_state`, which the action-phase override clobbers post-trigger. The comment this commit introduced claimed shadow_history sourcing that was never implemented. See `DE-PROD-ACCURACY-001` Finding 2 for the corrected three-tier sourcing (`shadow_history` / `shadow_history_post_cutoff` / `bot_state_fallback`, each declared via an `if_held_source` field) and the current field-semantics table. The bug narrative and basket-reconstruction root-cause analysis below remain accurate as history.
+
 Branch: fix/guard-alpha-saved-math | Base: 8d7ea51 | Fix commit: 0d0d4f3
 
 ### The bug: basket reconstruction collapsed to ~$0 saved
@@ -4404,3 +4406,93 @@ RED: `tests/advisors/test_weekly_asset_swap_suggestions_loop.py`, new `TestAsset
 - `advisors/weekly_suggestions_scheduler.py` -- `_build_base_candidate_pool` added; `get_tradeable_set()` import/call removed; per-symphony pool exclusion added to `run_weekly_asset_swap_suggestions` (commit 71687fdc)
 - `tests/advisors/test_weekly_asset_swap_suggestions_loop.py` -- RED (commit e267e1ce)
 - `docs/generated/advisors_weekly_suggestions_scheduler.md`, `docs/generated/advisors_asset_swap_engine.md`, `docs/generated/INDEX.md` -- updated with the lens-covered-pool sourcing + WHY
+## DE-PROD-ACCURACY-001 — Live droplet accuracy audit: int64 persistence crash, $-saved sourcing, History/Performance canonicalization (fix/prod-accuracy-audit, 2026-07-09)
+
+Branch: `fix/prod-accuracy-audit` | Base: `0bcbd1a` (origin/main, deployed SHA) | GREEN HEAD: `3ebc504`
+
+### Source
+
+A three-auditor live-droplet audit (`da-math`, `da-output`, `da-flow`, synthesized by `da-lead`) against production `root@104.248.7.101` at deployed SHA `0bcbd1a`, cross-verified via one batched read-only SSH pass (fresh DB copy, `mode=ro`, deleted after) plus local `git show`/`git grep` re-reads of every cited code mechanism. Full verdict: `VERDICT-droplet.md` (2026-07-09). 13 findings; 3 real defect clusters fixed in this cycle plus a MEDIUM display-fix batch. Two items are explicitly OUT of this cycle's scope (see "Not done here" below).
+
+### Finding 1 (CRITICAL) — `save_state` crashed on numpy int64, causing the same exit to re-fire 4 times
+
+**Bug:** `database.py:296` serialized `bot_state` via plain `json.dumps` with no numpy-aware `default=`. On 2026-07-09, a numpy `int64` reached `bot_state` on a Take-Profit path and crashed 3 consecutive saves (`TypeError: Object of type int64 is not JSON serializable`). Each failed save lost that cycle's `triggered=True`; the next cycle reloaded pre-trigger state and re-fired the same exit — `exit_triggers` rows 80–83, same symphony, same stale `cycle_id`, 4 consecutive minutes. In `LIVE_EXECUTION` mode this is up to 4 duplicate sell submissions; the droplet's `MODE: DRY RUN` limited the damage to telemetry (duplicated exit rows, a shadow_history basis frozen at the 4th re-fire's value instead of the true first exit — the recorded exit ended up ~0.10pp worse than reality).
+
+**Fix:** `database._sanitize_state_for_json` — a recursive walk over the full `bot_state` tree (not a `json.dumps(default=...)` hook, because `default=` is never invoked for a plain `float('nan')`, which serializes "successfully" as a poison token and would never reach the hook). Coerces `np.integer → int`, `np.bool_ → bool`, and any float (numpy or plain) through the repo's pre-existing `_finite_or_none` idiom so `NaN`/`±inf` persist as `None` rather than a poison token or a second save-time crash. Unknown non-JSON types still raise — no silent serialization of anything the sanitizer doesn't explicitly recognize. `save_state()` now calls `json.dumps(_sanitize_state_for_json(state_dict))`.
+
+A first-pass `default=` hook was replaced with the recursive-walk sanitizer during Revise (reviewer finding 1) once the NaN gap above was found — `default=` alone left `float('nan')` completely unguarded.
+
+### Finding 2 (HIGH) — $-saved sourcing: the #80 fix's comment described shadow_history sourcing the code never implemented
+
+**Bug:** `reporting.py`'s Stage-1 post-mortem read if-held return from `bot_state[sym]["current_return"]`. `DE-GUARD-ALPHA-SAVED-001` (2026-06-22, commit `0d0d4f3`) shipped the comment `"Source if-held from shadow_history.current_return (the engine's live trajectory)..."` — but the code it introduced (`live_ret = sym.get("current_return", 0.0)`) never actually queried the `shadow_history` table. It read `bot_state`'s `current_return` field, which the action-phase "TRUE SHADOW RETURN OVERRIDE" (`alpha_bot_execution.py:1189–1203`, written at `:1548`) clobbers every cycle with a frozen-basket reconstruction. That reconstruction collapses to ≈ `f_ret` on basket misses (booking exactly $0.00 saved) and fabricates values otherwise. **7 of 11 audited days were sign-flipped** (e.g. 06-24 LQD booked $0.00 vs. true ≈ +$10.88; 06-23 "Golden Age" booked +$5.69 vs. true ≈ −$13.79 — a value that appears at no minute of that day's real `shadow_history`).
+
+**This entry corrects `DE-GUARD-ALPHA-SAVED-001`:** that entry's "Why this is correct" section — asserting `bot_state`'s `current_return` "tracks the live if-held trajectory accurately post-trigger" — was wrong. The 2026-06-22 fix changed the sourcing EXPRESSION but not the underlying TABLE; both before and after that commit, the value came from `bot_state`, never `shadow_history` itself. Treat this entry as the authoritative statement of Finding 2's fix; `DE-GUARD-ALPHA-SAVED-001`'s field-semantics table is superseded by the table below.
+
+**Fix — three-tier sourcing with explicit provenance:**
+
+1. **`shadow_history` (primary):** `database.load_latest_shadow_row(symphony_id, trading_day, et_cutoff=STAGE1_SNAPSHOT_CUTOFF_ET)` — the latest `shadow_history` row for the symphony+day at/before the snapshot cutoff. `if_held_source = "shadow_history"`.
+2. **`shadow_history_post_cutoff` (Revise-phase addition, pf-eng-flagged corner ruled by pf-test):** when a day's shadow rows are ALL after the cutoff (daemon started after 15:55 ET), `database.load_earliest_shadow_row(symphony_id, trading_day)` books the earliest post-cutoff row instead — real off-basis shadow data beats the clobbered `bot_state` value. `if_held_source = "shadow_history_post_cutoff"`.
+3. **`bot_state_fallback` (last resort):** only when the (symphony, day) has strictly ZERO `shadow_history` rows does the code fall back to `sym.get("current_return", 0.0)`. `if_held_source = "bot_state_fallback"`.
+
+Every Stage-1 trigger entry now declares its `if_held_source` as a queryable field (`reporting.py:75/83/90/128`) — the exact mechanism that would have made the #80 regression impossible to hide: provenance previously lived only in a comment; now it is asserted by `tests/reporting/test_postmortem_if_held_shadow_history_source.py` and visible in every post-mortem JSON.
+
+**Snapshot-cutoff invariant (reviewer finding B):** `STAGE1_SNAPSHOT_CUTOFF_ET = "15:54:59"` (`reporting.py:22`) must equal `SNAPSHOT_CUTOFF_ET` in `scripts/regenerate_post_mortems.py` (the historical repair tool) — pinned by an AST drift-guard test. Without this, an off-schedule Stage-1 run (manual regeneration, a daemon that starts late — the engine ticks to ~16:04) would silently re-base if-held onto EOD shadow rows while the panel still declares a snapshot-time basis. The regeneration script deliberately stays import-free (standalone droplet use), so the two constants are independently declared and guard-tested rather than shared via import.
+
+**Repair-tool strictness vs. producer honesty:** `scripts/regenerate_post_mortems.py` (introduced this cycle, operator-gated, dry-run default — see "Not done here") REFUSES to regenerate an all-post-cutoff day; only the live Stage-1 producer degrades through tier 2/3. The regen script also now counts wins from the unrounded `saved_pct` (matching Stage-1's own classification), fixing a rounding-boundary mismatch where `0 < saved_pct < 0.005` could flip classification between a live post-mortem and its regenerated twin.
+
+### Finding 3 (HIGH) — History tab rendered 50 all-time triggers as "Today's exits" every trading morning
+
+**Bug:** `GET /api/history/<days>` backfilled `todays_exits` whenever the field was empty — true every trading day before the 15:54 ET post-mortem write. The fallback query (`app.py:2967–2988` pre-fix) had no date filter (`SELECT ... FROM exit_triggers ORDER BY ts_utc DESC LIMIT 50`), clobbered the true windowed `trigger_count` with the 50-row feed length while `total_saved`/`win_rate` still derived from the real windowed count, and emitted a field shape (`ts_utc`/`at_return`/`triggered_reason`) that `history.js` doesn't consume (`ts`/`reason`/`detail`), blanking Time/Reason/Detail and showing the raw hash id instead of a symphony name.
+
+**Fix:** the fallback now filters to the current ET trading day, maps fields to the consumed shape (`ts`, `symphony_name` via the `bot_state` name map, `reason`, `detail`), never overwrites the windowed `trigger_count` with the feed length, and renders a zero-exit day honestly empty rather than backfilling stale rows. Verified against the real droplet DB copy: the fallback now returns exactly today's 11 exits (of 87 all-time) with 11/11 names resolved. Finding 11 (a companion low-severity item) is folded in here: the post-mortem-path `todays_exits` also gained a `time_triggered → ts` mapping, since the Time column rendered an em-dash even on the healthy EOD path.
+
+### Finding 4/6 (HIGH/MEDIUM) — Performance and Overview disagreed because three surfaces used three different series/weights
+
+**Bug:** `/api/performance` (aggregate scope) served only post-mortem `triggers` arrays — a selection-biased sample of symphonies that triggered that day, valued at exit-moment snapshot; zero-trigger days vanished entirely from the series. Separately, the Overview hero chart and other VW aggregators weighted each symphony's contribution by `abs(current_return)` rather than position value — a bug disguised as "value-weighted" — which exaggerated daily levels roughly 4x (a 13-day executed comparison showed bot −3.43%/held −4.75% abs-weighted vs. an honest −0.85%/−2.23% equal-weighted recompute over the same days). The two defects compounded: Performance and Overview could show materially different pictures of the same period, and neither series was the true portfolio.
+
+**Fix (analytics.py):** `get_portfolio_daily_returns_from_shadow`, `get_portfolio_bot_and_held_daily_returns`, and `get_single_day_shadow_returns` all now weight by `bot_state` `current_value` (genuine value-weighting, positive-finite values only) with an equal-weight degradation when no position values exist — the `abs(return)` proxy is retired everywhere these functions are used.
+
+**Fix (app.py, `/api/performance` scope=aggregate):** now serves this same canonical value-weighted `shadow_history` series — the identical source `/api/hero-chart` compounds — instead of the post-mortem trigger arrays. Zero-trigger days now appear. `scope=symphony` is unchanged (still post-mortem-history-derived per-symphony breakdowns).
+
+**Field-semantics correction (option B, Revise-phase, GREEN commit `920744a`):** the original day-1 fallback paths mapped the producer's `(dates, bot, held)` tuple inverted relative to the payload's own field names and every JS legend label. Ratified vocabulary, now applied consistently across the canonical aggregate path AND both day-1 fallbacks: **`live_returns` = if-held, the still-held Composer account** (weighted `current_return`); **`shadow_returns` = the Planet-Stopper-exited counterfactual** (weighted `shadow_return`). `quantstats` metric dicts (`live_metrics`/`shadow_metrics`) follow their corrected series. `performance.html`'s subtitle and insufficient-history banner no longer claim a post-mortem-snapshot basis — they now state the real one ("daily portfolio series, value-weighted").
+
+**Verified against the real droplet DB copy:** VW series terminal bot −0.21%/held −1.26% (the honest neighborhood) vs. the abs-weight defect's −3.51%/−4.56%.
+
+### Finding 5/8/9 (MEDIUM) — display-honesty batch
+
+- **Finding 5:** Overview "Cumulative" row (lifetime Composer anchor + windowed alpha) sat beside a 13-day compounded chart with no basis label. Fix: row now labeled "Cumulative · lifetime."
+- **Finding 8:** `$`-saved panel excluded all of today's guard activity until the 15:54 ET write, with no "as of" hint and no refresh after page load. Fix: `basis_label` now carries "through `<latest>`" freshness; the panel re-fetches on the existing SSE `cycle-complete` event (no new polling — the 60s floor is unchanged, SSE-driven).
+- **Finding 9:** the `$`-saved headline hardcoded the positive color (`index.html:1028`), so a negative cumulative (routine on a bad week — e.g. Jul-7 −$23.16) rendered in the "up" color. Fix: sign-conditional color + `-$N.NN` formatting (pattern reused from `index.js:157`).
+
+### Finding 10 — `shadow_history.trigger_id` lineage wired (0 of 25,218 rows previously linked)
+
+**Bug:** `alpha_bot_execution.py` read `_last_trigger_id` at one site (`:908`) but nothing ever wrote it — `shadow_history.trigger_id` could structurally never populate. Any historical repair had to join by the ambiguous `(symphony, day, time)` heuristic, which Finding 1's duplicate-trigger day makes genuinely ambiguous.
+
+**Fix:** `database.record_exit_trigger` now returns the inserted row id (previously returned `None` always; still returns `None` on a swallowed failure — the "telemetry never fails the cycle" contract is unchanged). The trigger-success site in `alpha_bot_execution.py` (`:1838`) stashes the returned id as `bot_state[sym_id]["_last_trigger_id"]` — the write side of the read that already fed `record_shadow_observation`. An AST writer-existence guard automates the audit's "one reader, zero writers" falsification going forward.
+
+### Not done here (operator-gated / explicitly out of scope)
+
+- **Journald buffering (Finding 7):** `ExecStart=.../python app.py` has no `-u`/`PYTHONUNBUFFERED`, so Python block-buffers stdout to journald — the journal can lag the live daemon by up to ~96 minutes, making a healthy engine look frozen. Fix is a one-line systemd drop-in (`Environment=PYTHONUNBUFFERED=1`) — a droplet deploy change, operator-gated, not applied by this cycle.
+- **Historical post-mortem regeneration (06-23 → 07-08):** `scripts/regenerate_post_mortems.py` (this cycle, `8e538cc`) is committed and dry-run by default, but running it against the live droplet's historical post-mortem files to correct the sign-flipped $-saved figures is an operator-gated data-repair step, not run as part of this cycle. Tracked as a follow-up.
+- **DRY RUN disposition:** the droplet runs `MODE: DRY RUN (SAFE)` — the audit flags this as an operator disposition question, not a defect. Finding 1's fix should land before any live-execution arming decision (a numpy-int64 crash loop in `LIVE_EXECUTION` would submit duplicate real sell orders).
+
+### Verification
+
+GREEN HEAD `3ebc504` (7 implementation commits: `6fef9fe`, `ba331a3`, `743a267`, `7d1a260`, `3ebc504` — pf-eng; `8f6cb23`, `920744a` — pf-dash). pf-test's independent merge-gate reproduction: 109 passed / 0 failed across the nine-file RED/Revise set, reproduced at `3ebc504`. Two pre-existing tests were left stale-by-intent for a separate re-point pass (not this cycle's scope): `tests/app/test_performance_routes.py` (2 aggregate tests mocking the old producer) and `tests/app/test_live_dashboard_metrics.py` (4 tests using a synthetic `exit_triggers` fixture that lacks `ts_et` vs. the real schema, and pinning the removed `trigger_count` clobber / old field shape).
+
+### Files changed
+
+- `database.py` — `_sanitize_state_for_json` (recursive numpy/non-finite sanitizer), `load_latest_shadow_row` (`et_cutoff` param), `load_earliest_shadow_row` (new), `record_exit_trigger` (returns inserted row id)
+- `reporting.py` — `STAGE1_SNAPSHOT_CUTOFF_ET` constant; Stage-1 three-tier if-held sourcing + `if_held_source` provenance field
+- `alpha_bot_execution.py` — stashes `record_exit_trigger`'s returned id as `_last_trigger_id`
+- `analytics.py` — `get_portfolio_daily_returns_from_shadow`, `get_portfolio_bot_and_held_daily_returns`, `get_single_day_shadow_returns` — value-weighting by `current_value`, equal-weight degradation, `abs(return)` proxy retired
+- `app.py` — `/api/history/<days>` today-filter + field-shape + name-map; `/api/performance` canonical VW aggregate series + option-B `live_returns`/`shadow_returns` field semantics (all three code paths); `/api/guard-alpha-summary` basis_label freshness
+- `static/index.js` — sign-conditional `$`-saved color/formatting; SSE re-fetch of guard-alpha summary
+- `templates/index.html` — hardcoded-green removed; Cumulative row lifetime label
+- `templates/performance.html`, `static/performance.js` — subtitle/banner basis correction; refresh-floor comment update (no behavior change)
+- `scripts/regenerate_post_mortems.py` — new, operator-gated, dry-run default (Finding 2 historical repair tool; not run against production by this cycle)
+- `docs/generated/reporting.md`, `docs/generated/database.md`, `docs/generated/app.md` — reconciled (see below)
+
+### Reference
+
+`VERDICT-droplet.md` (2026-07-09); supersedes `DE-GUARD-ALPHA-SAVED-001`'s "Why this is correct" sourcing claim and field-semantics table (see Finding 2 above); branch `fix/prod-accuracy-audit`; GREEN HEAD `3ebc504`.

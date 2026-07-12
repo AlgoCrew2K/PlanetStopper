@@ -13,6 +13,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
+import numpy as np
+
 
 def _finite_or_none(x):
     """Coerce non-finite float sentinels to None for RFC 8259 JSON compliance."""
@@ -290,10 +292,51 @@ def load_state():
     return json.loads(row[0]) if row else {}
 
 
+def _sanitize_state_for_json(value):
+    """Recursively coerce a bot_state tree to JSON-safe native Python.
+
+    2026-07-09 production crash (VERDICT-droplet Finding 1, CRITICAL): a numpy
+    int64 reached bot_state on a Take-Profit path and every save_state raised
+    ``TypeError: Object of type int64 is not JSON serializable``. Each failed
+    save lost that cycle's ``triggered=True``; the next cycle reloaded
+    pre-trigger state and re-fired the same exit — 4 duplicate exit_triggers
+    rows in one morning (ids 80-83), up to 4 duplicate sell submissions in
+    LIVE_EXECUTION. Engine write sites feed math_engine products (tick
+    counters, MC probabilities, price levels) straight into bot_state, so the
+    single persistence choke point sanitizes:
+
+      np.integer -> int, np.bool_ -> bool;
+      floats (numpy AND plain) -> _finite_or_none: NaN/±inf persist as None
+      (the repo's isfinite-or-None idiom) — a NaN token silently poisons
+      downstream money math and a save-time crash re-fires exits, both worse
+      than an explicitly-null field every consumer already null-guards.
+
+    A recursive walk (not a ``json.dumps default=`` hook) because default= is
+    only invoked for non-serializable types — a plain float('nan') serializes
+    "successfully" as a poison NaN token and never reaches the hook. Unknown
+    non-JSON types still raise TypeError in json.dumps: no silent
+    serialization.
+    """
+    if isinstance(value, dict):
+        return {k: _sanitize_state_for_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_state_for_json(v) for v in value]
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        return _finite_or_none(float(value))
+    return value
+
+
 def save_state(state_dict):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE bot_state SET data = ? WHERE id = 1", (json.dumps(state_dict),))
+    cursor.execute(
+        "UPDATE bot_state SET data = ? WHERE id = 1",
+        (json.dumps(_sanitize_state_for_json(state_dict)),),
+    )
     conn.commit()
     conn.close()
 
@@ -2622,12 +2665,15 @@ def record_exit_trigger(
     math_mode: "str | None" = None,
     port_trigger_id: "str | None" = None,
     also_true: "list[str] | None" = None,
-) -> None:
-    """Write one exit-trigger telemetry row.
+) -> "int | None":
+    """Write one exit-trigger telemetry row. Returns the inserted row id.
 
     Opens its own connection — does NOT join the cycle's save_state transaction.
     A failure here must never fail the cycle; any exception is logged at ERROR
-    and swallowed.  Called from alpha_bot_execution.py at the triggered=True set site.
+    and swallowed (returning None).  Called from alpha_bot_execution.py at the
+    triggered=True set site, which stashes the returned id as _last_trigger_id
+    so shadow_history rows link to their exit_triggers row (Finding 10: the
+    column could never populate while this returned nothing).
 
     AC-P2.10: math_mode and port_trigger_id support port-level exit attribution.
     gate_state_json may be passed as a pre-serialised string (e.g. from tests)
@@ -2656,7 +2702,7 @@ def record_exit_trigger(
 
     try:
         conn = sqlite3.connect(_db_file(), timeout=10.0)
-        conn.execute(
+        cursor = conn.execute(
             "INSERT INTO exit_triggers "
             "(ts_utc, ts_et, symphony_id, account_id, triggered_reason, at_return, "
             " gate_state_json, cycle_id, math_mode, port_trigger_id, also_true_json) "
@@ -2675,10 +2721,13 @@ def record_exit_trigger(
                 also_true_json,
             ),
         )
+        row_id = cursor.lastrowid
         conn.commit()
         conn.close()
+        return row_id
     except Exception as exc:
         logging.error("record_exit_trigger failed for %s: %s", symphony_id, exc)
+        return None
 
 
 def get_recent_exit_triggers(limit: int = 50) -> "list[dict]":
@@ -3057,16 +3106,31 @@ def prune_old_shadow_history(retention_days: int) -> int:
     return total_deleted
 
 
-def load_latest_shadow_row(symphony_id: str, trading_day: str) -> "dict | None":
-    """Return the most-recent shadow_history row for a symphony+day, or None."""
+def load_latest_shadow_row(
+    symphony_id: str, trading_day: str, et_cutoff: "str | None" = None
+) -> "dict | None":
+    """Return the most-recent shadow_history row for a symphony+day, or None.
+
+    et_cutoff: optional ET time-of-day string ("HH:MM:SS") — when given, only
+    rows at/before that time qualify. Used by the Stage-1 post-mortem to hold
+    its declared snapshot basis when it runs off-schedule (the engine ticks
+    past close to ~16:04; a bare latest-row read would silently re-base a late
+    run onto EOD values).
+    """
     try:
         conn = sqlite3.connect(_db_file(), timeout=10.0)
         conn.row_factory = sqlite3.Row
+        params: list = [symphony_id, trading_day]
+        cutoff_clause = ""
+        if et_cutoff is not None:
+            cutoff_clause = "AND substr(ts_et, 12, 8) <= ? "
+            params.append(et_cutoff)
         row = conn.execute(
             "SELECT * FROM shadow_history "
             "WHERE symphony_id = ? AND trading_day = ? "
-            "ORDER BY ts_utc DESC LIMIT 1",
-            (symphony_id, trading_day),
+            + cutoff_clause
+            + "ORDER BY ts_utc DESC LIMIT 1",
+            params,
         ).fetchone()
         conn.close()
         if row is None:
@@ -3074,6 +3138,34 @@ def load_latest_shadow_row(symphony_id: str, trading_day: str) -> "dict | None":
         return dict(row)
     except Exception as exc:
         logging.error("load_latest_shadow_row failed for %s %s: %s", symphony_id, trading_day, exc)
+        return None
+
+
+def load_earliest_shadow_row(symphony_id: str, trading_day: str) -> "dict | None":
+    """Return the EARLIEST shadow_history row for a symphony+day, or None.
+
+    Stage-1's degradation tier for an all-post-cutoff day (daemon started after
+    the snapshot cutoff): when no row qualifies at/before the cutoff, the
+    earliest row of the day is the one nearest the declared basis — real
+    off-basis shadow data beats the action-phase-clobbered bot_state value.
+    """
+    try:
+        conn = sqlite3.connect(_db_file(), timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM shadow_history "
+            "WHERE symphony_id = ? AND trading_day = ? "
+            "ORDER BY ts_utc ASC LIMIT 1",
+            (symphony_id, trading_day),
+        ).fetchone()
+        conn.close()
+        if row is None:
+            return None
+        return dict(row)
+    except Exception as exc:
+        logging.error(
+            "load_earliest_shadow_row failed for %s %s: %s", symphony_id, trading_day, exc
+        )
         return None
 
 

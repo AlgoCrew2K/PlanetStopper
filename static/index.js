@@ -1341,8 +1341,8 @@
     }
 
     // AC-1: fetch /api/guard-alpha-summary and populate the dollar-saved panel.
-    // Called once on page load — the aggregate changes only when a new guard event fires,
-    // so continuous polling is unnecessary (post_mortem files are written at EOD).
+    // Called on page load AND on each SSE cycle-complete event (Finding 8) — no
+    // continuous polling; the panel updates when the engine actually cycles.
     // Uses dollar-saved-headline — NOT guard-alpha-headline (that carries the windowed
     // % guard alpha from /api/strip/<window> and must not be clobbered).
     function fetchGuardAlphaSummary() {
@@ -1361,7 +1361,13 @@
                     if (countEl) countEl.textContent = '0';
                     if (labelEl) labelEl.textContent = data.basis_label || '';
                 } else {
-                    if (headlineEl) headlineEl.textContent = '$' + data.cumulative_saved_dollars.toFixed(2);
+                    // Finding 9: sign drives format ("-$N.NN") and color — same idiom
+                    // as the guard-alpha-headline renderer. Never hardcoded green.
+                    var saved = data.cumulative_saved_dollars;
+                    if (headlineEl) {
+                        headlineEl.textContent = (saved < 0 ? '-$' : '$') + Math.abs(saved).toFixed(2);
+                        headlineEl.style.color = saved >= 0 ? cs('--studio-pos') : cs('--studio-neg');
+                    }
                     if (countEl) countEl.textContent = data.guard_event_count;
                     if (labelEl) labelEl.textContent = data.basis_label || '';
                 }
@@ -1377,7 +1383,9 @@
         // AC-3: SSE event-driven update — primary path; poll (above) is the resilience fallback.
         if (typeof EventSource !== 'undefined') {
             var _es = new EventSource('/api/events');
-            _es.addEventListener('cycle-complete', function () { loadState(); });
+            // Finding 8: the $-saved panel rides the same event — a page left open
+            // across the EOD post-mortem write (or a new guard event) updates live.
+            _es.addEventListener('cycle-complete', function () { loadState(); fetchGuardAlphaSummary(); });
             _es.onerror = function () { /* silent — poll fallback handles reconnect */ };
         }
 

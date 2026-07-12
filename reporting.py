@@ -12,6 +12,15 @@ import database
 # Canonical post-mortem directory — anchored to project root regardless of CWD.
 _POST_MORTEMS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "post_mortems")
 
+# Stage-1 snapshot-basis cutoff (ET time-of-day): Stage 1 fires in the 15:54 ET
+# minute (rebalance-blackout schedule), and the $-saved panel declares a
+# "snapshot-time basis". The engine keeps ticking past close (~16:04), so an
+# off-schedule Stage-1 run (manual regeneration, late daemon) would otherwise
+# silently re-base if-held onto EOD rows. One basis everywhere: this value must
+# match SNAPSHOT_CUTOFF_ET in scripts/regenerate_post_mortems.py (the historical
+# repair tool), which was verified against the 2026-07-09 audit ground truth.
+STAGE1_SNAPSHOT_CUTOFF_ET = "15:54:59"
+
 
 def generate_eod_snapshot(
     bot_state, current_date_str, is_post_rebalance=False, discord_webhook_url=None, live_prices=None
@@ -49,12 +58,36 @@ def generate_eod_snapshot(
 
                 f_ret = sym.get("triggered_at_return", 0.0)
 
-                # Source if-held from shadow_history.current_return (the engine's live
-                # trajectory), recorded accurately post-trigger by alpha_bot_execution.py.
-                # The basket reconstruction (triggered_basket_snapshot + live_prices) collapsed
-                # to ~f_ret when basket prices were frozen at exit level, producing ~$0 saved
-                # despite large actual divergence. Diagnosis: a7601fb / guard-alpha-saved-diagnosis.md.
-                live_ret = sym.get("current_return", 0.0)
+                # Source if-held from the shadow_history TABLE (latest row for this
+                # symphony+day at/before the snapshot cutoff) — the data-phase truth
+                # from Composer. bot_state's current_return must NOT be trusted
+                # here: the action phase clobbers it every cycle with the
+                # frozen-basket reconstruction (alpha_bot_execution.py TRUE SHADOW
+                # RETURN OVERRIDE), which collapses to ~f_ret on basket misses
+                # (booking exactly $0 saved) and fabricates values otherwise — 7 of
+                # 11 audited days sign-flipped (VERDICT-droplet 2026-07-09 Finding
+                # 2; the #80 comment claimed this sourcing but never queried the
+                # table). The cutoff holds the declared snapshot basis on
+                # off-schedule runs.
+                shadow_row = database.load_latest_shadow_row(
+                    sym_id, current_date_str, et_cutoff=STAGE1_SNAPSHOT_CUTOFF_ET
+                )
+                if_held_source = "shadow_history"
+                if shadow_row is None or shadow_row.get("current_return") is None:
+                    # All-post-cutoff day (daemon started after the cutoff): the
+                    # earliest row of the day is nearest the declared basis —
+                    # real off-basis shadow data beats the clobbered bot_state
+                    # value. Distinct marker keeps the off-basis booking
+                    # auditable.
+                    shadow_row = database.load_earliest_shadow_row(sym_id, current_date_str)
+                    if_held_source = "shadow_history_post_cutoff"
+                if shadow_row is not None and shadow_row.get("current_return") is not None:
+                    live_ret = float(shadow_row["current_return"])
+                else:
+                    # Zero shadow rows for the (symphony, day) — the ONLY case
+                    # bot_state may be trusted.
+                    live_ret = sym.get("current_return", 0.0)
+                    if_held_source = "bot_state_fallback"
                 saved_pct = f_ret - live_ret
 
                 sym_val = sym.get("current_value", 0.0)
@@ -88,6 +121,11 @@ def generate_eod_snapshot(
                         "shadow_hwm": round(sym.get("shadow_hwm", 0.0), 2),
                         "saved_pct_guard_alpha": round(saved_pct, 2),
                         "saved_dollars": round(saved_dollars, 2),
+                        # Money-math provenance: "shadow_history" (table truth) or
+                        # "bot_state_fallback" (row-less degradation) — no silent
+                        # source switching (contract: test_postmortem_if_held_
+                        # shadow_history_source.py).
+                        "if_held_source": if_held_source,
                         "hwm_at_trigger": round(sym.get("triggered_at_hwm", 0.0), 2),
                         "time_triggered": sym.get("triggered_at_time", ""),
                         "symphony_vol": round(sym.get("symphony_vol", 0.0), 2),

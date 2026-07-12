@@ -3,7 +3,7 @@
 > SQLite state management for Planet Stopper: schema, migrations, all read/write accessors for the state DB, and a pytest sentinel guard that structurally prevents tests from writing to the production DB.
 
 **Source:** `database.py`
-**Last updated:** 2026-07-12 (Workstream E, advisor-rewire cycle: `save_autotune_run` gains `s_count`; prior: 2026-07-02 DE-PRISM-NUMERIC-VERIFY-001 `get_latest_market_prism_verification_for_run` accessor; prior: DE-ADVISOR-LATENCY `get_latest_market_lens_cache()`; DE-PRISM-SOURCES-001 `get_latest_market_prism_sources_for_run`)
+**Last updated:** 2026-07-12 (Workstream E, advisor-rewire cycle: `save_autotune_run` gains `s_count`; prior: 2026-07-09 DE-PROD-ACCURACY-001: `save_state` sanitizes numpy/non-finite values via `_sanitize_state_for_json` before every write, new `load_latest_shadow_row`/`load_earliest_shadow_row` Stage-1 accessors, `record_exit_trigger` now returns the inserted row id; prior: 2026-07-02 DE-PRISM-NUMERIC-VERIFY-001 `get_latest_market_prism_verification_for_run` accessor; prior: DE-ADVISOR-LATENCY `get_latest_market_lens_cache()`; DE-PRISM-SOURCES-001 `get_latest_market_prism_sources_for_run`)
 
 ## Overview
 
@@ -70,7 +70,10 @@ Clears the execution lock. Preserves `timestamp` for stale-expiry inspection.
 Returns the current `bot_state` JSON blob as a Python dict.
 
 #### `save_state(state_dict: dict) → None`
-Writes `state_dict` as JSON to `bot_state`.
+Writes `state_dict` as JSON to `bot_state`. Calls `_sanitize_state_for_json(state_dict)` before `json.dumps` (DE-PROD-ACCURACY-001, Finding 1).
+
+#### `_sanitize_state_for_json(value) → Any` (internal)
+Recursively coerces a `bot_state` tree to JSON-safe native Python: `np.integer → int`, `np.bool_ → bool`, any float (numpy or plain) through the module's `_finite_or_none` idiom so `NaN`/`±inf` persist as `None` rather than crash the save or poison downstream money math. Unknown non-JSON types still raise `TypeError` — no silent serialization of anything the sanitizer doesn't explicitly recognize. Added after a 2026-07-09 production incident: a numpy `int64` on a Take-Profit path crashed `save_state` with plain `json.dumps` on 3 consecutive cycles, each failed save losing that cycle's `triggered=True` and causing the next cycle to reload pre-trigger state and re-fire the same exit (4 duplicate `exit_triggers` rows in one morning; up to 4 duplicate sell submissions in `LIVE_EXECUTION`). Implemented as a recursive walk rather than a `json.dumps(default=...)` hook because `default=` is never invoked for a plain `float('nan')` — it serializes "successfully" as a poison token and never reaches the hook.
 
 #### `wipe_transient_state(state_dict: dict) → dict`
 Clears per-cycle transient keys (HWM, trigger flags, counters) from all symphony sub-dicts. Stamps a new `position_epoch` when the position was triggered (AC-3). Returns the mutated dict.
@@ -334,10 +337,12 @@ Deletes the singleton row. Idempotent.
 
 ### Exit Trigger Telemetry
 
-#### `record_exit_trigger(*, symphony_id, account_id=None, triggered_reason, at_return=None, gate_state=None, gate_state_json=None, cycle_id=None, ts_utc=None, ts_et=None, math_mode=None, also_true_json=None, regime_match_pct=None, regime_suppressed=None, regime_label=None, ...) → None`
-Writes one `exit_triggers` telemetry row. Opens its own connection; swallows exceptions so a telemetry failure never fails the cycle. Key migration additions:
+#### `record_exit_trigger(*, symphony_id, account_id=None, triggered_reason, at_return=None, gate_state=None, gate_state_json=None, cycle_id=None, ts_utc=None, ts_et=None, math_mode=None, also_true_json=None, regime_match_pct=None, regime_suppressed=None, regime_label=None, ...) → int | None`
+Writes one `exit_triggers` telemetry row. Opens its own connection; swallows exceptions so a telemetry failure never fails the cycle — returns `None` on a swallowed failure. Key migration additions:
 - `also_true_json` (migration 029) — co-fired exit reasons, promoted to a dedicated column for SQL queryability
 - `regime_match_pct`, `regime_suppressed`, `regime_label` (migration 026) — MC regime-match telemetry
+
+**Return value (DE-PROD-ACCURACY-001, Finding 10):** now returns the inserted row id (previously always returned `None`). The trigger-success site in `alpha_bot_execution.py` stashes the returned id as `bot_state[sym_id]["_last_trigger_id"]`, the write side of the read that already fed `record_shadow_observation`'s `trigger_id` parameter below — closing a gap where `_last_trigger_id` had exactly one reader and zero writers, so `shadow_history.trigger_id` could structurally never populate (0 of 25,218 rows linked as of the 2026-07-09 audit).
 
 #### `get_recent_exit_triggers(limit: int = 50) → list[dict]`
 Returns the `limit` most-recent `exit_triggers` rows across all symphonies.
@@ -348,6 +353,14 @@ Returns the `limit` most-recent `exit_triggers` rows across all symphonies.
 
 #### `record_shadow_observation(*, symphony_id, account_id, cycle_id, ts_utc, ts_et, trading_day, current_return, shadow_return, is_post_trigger, trigger_id, position_epoch=None) → None`
 Writes one `shadow_history` telemetry row. Swallows exceptions.
+
+#### `load_latest_shadow_row(symphony_id: str, trading_day: str, et_cutoff: str | None = None) → dict | None`
+
+**New (DE-PROD-ACCURACY-001, Finding 2).** Returns the most-recent `shadow_history` row for a symphony+day, or `None`. When `et_cutoff` (an ET time-of-day string, `"HH:MM:SS"`) is given, only rows at/before that time qualify — used by Stage-1 post-mortem (`reporting.generate_eod_snapshot`) to hold its declared snapshot basis when it runs off-schedule (the engine ticks past close to ~16:04; a bare latest-row read would otherwise silently re-base a late run onto EOD values). Swallows exceptions, logs at ERROR, returns `None` on failure.
+
+#### `load_earliest_shadow_row(symphony_id: str, trading_day: str) → dict | None`
+
+**New (DE-PROD-ACCURACY-001, Finding 2 Revise-phase).** ASC twin of `load_latest_shadow_row` — returns the EARLIEST `shadow_history` row for a symphony+day, or `None`. Stage-1's degradation tier for a day whose shadow rows are ALL after the snapshot cutoff (daemon started after 15:55 ET): the earliest row of the day is nearest the declared basis, and real off-basis shadow data beats the action-phase-clobbered `bot_state` value. Swallows exceptions, logs at ERROR, returns `None` on failure. See [reporting](reporting.md) for the full three-tier `if_held_source` sourcing contract these two accessors feed.
 
 ---
 
