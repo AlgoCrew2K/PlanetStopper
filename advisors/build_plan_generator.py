@@ -60,6 +60,7 @@ import enum
 import hashlib
 import json
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 
@@ -1205,10 +1206,13 @@ def admit_community_candidates(
 ) -> list:
     """Rank and admit community strategies by the objective OOS metric.
 
-    Ranking convention per objective (PM-approved):
-      cut_drawdown         — 'max_drawdown' descending (nearer zero = shallower, better)
-      volatility_mitigation— 'volatility' ascending (lowest first)
-      lift_risk_adjusted   — 'sharpe' descending (highest first)
+    Ranking convention per objective (PM-approved). Field names are the REAL
+    captplanet.strategies oos_metrics keys (DE-ATLAS-STAT-FIELD-001 — the
+    lowercase keys below existed on 0 live docs; generalizes the same
+    field-path bug fixed in community_strats._parse_sharpe):
+      cut_drawdown         — 'Max Drawdown' (%-string) descending (nearer zero = shallower, better)
+      volatility_mitigation— 'Volatility (ann.)' (%-string) ascending (lowest first)
+      lift_risk_adjusted   — 'Sharpe' (plain-decimal string, NOT %-formatted) descending (highest first)
       diversify            — greedy low-ticker-overlap (Jaccard), deterministic+complete
 
     Missing / unparseable stat docs are KEPT-LAST (admitted after all docs that have
@@ -1230,22 +1234,39 @@ def admit_community_candidates(
 
         obj_name = objective.value if isinstance(objective, Objective) else str(objective)
 
-        def _stat(doc: dict, key: str) -> float | None:
+        def _stat(doc: dict, key: str, *, percent: bool = False) -> float | None:
+            """Read doc['oos_metrics'][key] and parse it defensively to a float.
+
+            Mirrors community_strats._parse_sharpe's defensive contract
+            (DE-ATLAS-STAT-FIELD-001): missing key, non-numeric value, and
+            'nan'/'inf' (which pass Python's bare float() but are not valid
+            metric values) all resolve to None, never raise. When percent=True,
+            a trailing '%' is stripped before parsing — 'Max Drawdown' and
+            'Volatility (ann.)' are %-string-valued on real docs; 'Sharpe' is
+            plain-decimal and must NOT be stripped.
+            """
             oos = doc.get("oos_metrics")
             if not isinstance(oos, dict):
                 return None
             val = oos.get(key)
             if val is None:
                 return None
+            raw = str(val).strip()
+            if percent and raw.endswith("%"):
+                raw = raw[:-1]
             try:
-                return float(val)
+                parsed = float(raw)
             except (TypeError, ValueError):
                 return None
+            if math.isnan(parsed) or math.isinf(parsed):
+                return None
+            return parsed
 
         if obj_name == "cut_drawdown":
-            # max_drawdown stored as a negative number; nearer zero = shallower = better.
-            # Sort descending: -0.10 > -0.30 > -0.55. Missing docs -> float("-inf") -> last.
-            keyed = [(_stat(d, "max_drawdown"), d) for d in raw]
+            # 'Max Drawdown' stored as a %-string negative number; nearer zero =
+            # shallower = better. Sort descending: -1.50% > -8.70% > -22.30%.
+            # Missing/unparseable docs -> float("-inf") -> last.
+            keyed = [(_stat(d, "Max Drawdown", percent=True), d) for d in raw]
             keyed.sort(
                 key=lambda x: x[0] if x[0] is not None else float("-inf"),
                 reverse=True,
@@ -1253,14 +1274,16 @@ def admit_community_candidates(
             ranked_docs = [d for _, d in keyed]
 
         elif obj_name == "volatility_mitigation":
-            # Lowest volatility first -> ascending. Missing -> float("+inf") -> last.
-            keyed = [(_stat(d, "volatility"), d) for d in raw]
+            # 'Volatility (ann.)' is a %-string. Lowest first -> ascending.
+            # Missing/unparseable -> float("+inf") -> last.
+            keyed = [(_stat(d, "Volatility (ann.)", percent=True), d) for d in raw]
             keyed.sort(key=lambda x: x[0] if x[0] is not None else float("+inf"))
             ranked_docs = [d for _, d in keyed]
 
         elif obj_name == "lift_risk_adjusted":
-            # Highest sharpe first -> descending. Missing -> float("-inf") -> last.
-            keyed = [(_stat(d, "sharpe"), d) for d in raw]
+            # 'Sharpe' is a plain-decimal string (NOT %-formatted). Highest first
+            # -> descending. Missing/unparseable -> float("-inf") -> last.
+            keyed = [(_stat(d, "Sharpe"), d) for d in raw]
             keyed.sort(
                 key=lambda x: x[0] if x[0] is not None else float("-inf"),
                 reverse=True,

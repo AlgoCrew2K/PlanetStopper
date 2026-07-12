@@ -362,7 +362,17 @@ def load_community_strategies(
 
         # Composition hash: tree-structural (strips uuid4 'id' keys so identical
         # logic always hashes identically, regardless of node id generation).
-        comp_hash = _composition_hash(tree)
+        # Wrapped in its own try/except (DE-ATLAS-DEEP-TREE-001) — matching the
+        # containment already given to the 3 steps above: _strip_ids is
+        # recursive and can RecursionError on a pathologically deep (but
+        # otherwise structurally valid) tree; any exception here (RecursionError,
+        # MemoryError, or otherwise) must drop only this one doc, never abort
+        # the whole batch.
+        try:
+            comp_hash = _composition_hash(tree)
+        except Exception:  # noqa: BLE001
+            parse_failed += 1
+            continue
 
         valid_candidates.append(
             {
