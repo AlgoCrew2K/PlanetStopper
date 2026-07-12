@@ -3981,3 +3981,85 @@ A single shared helper, `_parse_sharpe(oos_metrics) -> float | None`, now backs 
 ### Reference
 
 DE-ATLAS-SHARPE-FIELD-001; branch `fix/atlas-fetch-slow-query`; HEAD `eb53a19`; found and fixed in the same cycle as `DE-ATLAS-SLOW-QUERY-001` above; see `docs/generated/advisors_community_strats.md` for the current field-parsing reference.
+
+---
+
+## DE-ATLAS-STAT-FIELD-001 + DE-ATLAS-DEEP-TREE-001 -- Community-candidate ranking field-path bug generalized + deep-tree exception containment (2026-07-11)
+
+Branch: `fix/atlas-fetch-slow-query` | HEAD: 6894afd
+
+### AC-F1 [HIGH] -- `advisors/build_plan_generator.py::admit_community_candidates` / `_stat` -- Sharpe field-path bug generalizes to objective ranking
+
+The field-path bug fixed in `community_strats._parse_sharpe` (`DE-ATLAS-SHARPE-FIELD-001`) generalized one layer up: `admit_community_candidates`'s internal `_stat()` ranking helper read lowercase keys that exist on 0 live `captplanet.strategies` docs --
+
+- `cut_drawdown` wanted `'max_drawdown'` (real key: `'Max Drawdown'`)
+- `volatility_mitigation` wanted `'volatility'` (real key: `'Volatility (ann.)'`)
+- `lift_risk_adjusted` wanted `'sharpe'` (real key: `'Sharpe'`)
+
+-- so every doc looked stat-missing for 3 of 4 objectives, and the ranking silently fell back to arbitrary insertion-order rather than the documented per-objective stat.
+
+**Fix:** `_stat()` now reads the real title-case `oos_metrics` keys. It strips a trailing `%` before `float()` for the two percentage-based metrics -- `Max Drawdown` and `Volatility (ann.)` are `%`-string-valued on real docs; `Sharpe` is plain-decimal and is NOT stripped, matching `community_strats._parse_sharpe`'s parse contract exactly. `nan`/`inf` values (which pass Python's bare `float()` but are not valid metric values) are rejected post-parse. Missing/unparseable stats still sort last (`float(-inf)`/`float(+inf)` sentinel per objective direction), and `_stat()` never raises.
+
+### AC-F2 [MEDIUM] -- `advisors/community_strats.py` per-doc loop composition-hash step -- deep-tree exception containment
+
+`_strip_ids` (the first step of `_composition_hash`) is recursive -- unlike `symphony_schema`'s deliberately iterative traversal -- and can raise `RecursionError` on a pathologically deep (but structurally valid) tree at roughly 500 nesting levels. The composition-hash call site had no `try`/`except`, unlike the other 3 steps in the same per-doc loop (`json.loads`, `validate_tree`, `extract_tickers` each already had their own). One pathological doc could therefore propagate an uncaught exception out of `load_community_strategies`, violating the D-1 never-raising contract and losing the *entire* batch, not just the one bad doc.
+
+**Fix:** wrapped the composition-hash step in its own `try`/`except`, matching the existing per-step containment pattern -- any exception there (`RecursionError`, `MemoryError`, or otherwise) now increments `parse_failed` and drops only that one doc; the loop continues. `_strip_ids` itself is intentionally left recursive (PM-approved minimal fix) -- a rare deep doc dropping is acceptable latent-risk containment, not observed live data loss.
+
+### Invariants preserved
+
+- Both modules remain off-execution-path, advisory-only -- no live Mongo/network/HTTP calls in tests, no `is_live` propagation, no retry-policy change.
+- D-1 never-raises contract unchanged and, for AC-F2, actively strengthened (a class of previously-uncaught batch-aborting exception is now contained per-doc).
+
+### Files changed
+
+- `advisors/build_plan_generator.py` -- `_stat()` rewritten to read the real title-case keys with `%`-strip + nan/inf-reject parsing.
+- `advisors/community_strats.py` -- composition-hash step wrapped in `try`/`except` (accounted as `parse_failed`).
+- `tests/advisors/test_build_plan_atlas_admission.py` -- 8 fixtures re-pointed to real title-case/%-string field shapes + 1 new malformed-value test.
+- `tests/advisors/test_community_strats_deep_tree_robustness.py` (new) -- a real depth-700 structurally-valid tree + a `MemoryError` monkeypatch seam.
+
+### Reference
+
+DE-ATLAS-STAT-FIELD-001; DE-ATLAS-DEEP-TREE-001; branch `fix/atlas-fetch-slow-query`; HEAD `6894afd`; generalizes `DE-ATLAS-SHARPE-FIELD-001`; see `docs/generated/advisors_build_plan_generator.md` and `docs/generated/advisors_community_strats.md` for the current reference.
+
+---
+
+## DE-ATLAS-STAT-FIELD-002 -- Key-union for real %-suffix/bare stat field forms (2026-07-11)
+
+Branch: `fix/atlas-fetch-slow-query` | HEAD: 81a8d46
+
+### Problem
+
+The PM's live gate against `DE-ATLAS-STAT-FIELD-001` (commit 6894afd) found `Sharpe` ranking correct (10/10) but `cut_drawdown` and `volatility_mitigation` came back all-`None`. Direct inspection of the real `captplanet.strategies` collection found it raw-data-inconsistent: docs carry EITHER a `%`-suffixed key form (`'Max Drawdown %'`, `'Volatility (ann.) %'` -- the dominant real form) OR the bare form (`'Max Drawdown'`, `'Volatility (ann.)'`), both `%`-string-valued. `community_strats` passes `oos_metrics` through verbatim with no key normalization, so both forms genuinely coexist in the source collection. `Sharpe` is unaffected -- a single key form (`'Sharpe'`) across all live docs.
+
+### Fix
+
+`_stat()` generalized to accept a candidate **key-union list** rather than a single key: it tries each key in order, and the first key that yields a genuinely **parseable** value wins -- a present-but-unparseable value at one key falls through to the next candidate key rather than short-circuiting to `None`.
+
+- `cut_drawdown` now reads `['Max Drawdown %', 'Max Drawdown']`.
+- `volatility_mitigation` now reads `['Volatility (ann.) %', 'Volatility (ann.)']`.
+- `lift_risk_adjusted` stays single-key `['Sharpe']`.
+
+No known doc carries both forms of a pair, so precedence on a genuine collision is unspecified but deterministic (list order) -- not something any real doc exercises. The `%`-strip-then-`float()` + nan/inf-reject parse logic per key is unchanged from `DE-ATLAS-STAT-FIELD-001`.
+
+### Result (PM-verified live gate)
+
+All 3 numeric-stat objectives (`cut_drawdown`, `volatility_mitigation`, `lift_risk_adjusted`) rank correctly on real cached data, 10/10 candidates each. `-n0` targeted suite: 112 passed / 2 skipped / 0 failed.
+
+### Invariants preserved
+
+- Off-execution-path, advisory-only -- no live Mongo/network/HTTP calls in tests, no `is_live` propagation, no retry-policy change.
+- `diversify`'s Jaccard-overlap ranking and the `CandidateInfo` admission/tagging logic are unchanged.
+
+### Files changed
+
+- `advisors/build_plan_generator.py` -- `_stat()` generalized to accept a key-union list; the three per-objective call sites updated to pass their key-union.
+- `tests/advisors/test_build_plan_atlas_admission.py` -- 4 fixtures re-pointed to the `%`-suffix form as primary + 2 new decisive tests mixing both key forms in one ranking call each.
+
+### Known deferred follow-up (not part of this fix, flagged for a future cycle)
+
+`admit_community_candidates`'s `diversify` branch calls `_extract_tickers_from_tree` on every still-`remaining` candidate on every outer greedy-loop iteration -- O(n^2) total tree-walk work in the candidate-pool size. Bounded today by `_MAX_FETCH_DOCS=50`, so not currently a live-timing problem; cheap fix is a precomputed `{sid: tickers}` map before the loop. Non-blocking; not required for this cycle's gate.
+
+### Reference
+
+DE-ATLAS-STAT-FIELD-002; branch `fix/atlas-fetch-slow-query`; HEAD `81a8d46`; supersedes the single-key form used in `DE-ATLAS-STAT-FIELD-001`; see `docs/generated/advisors_build_plan_generator.md` for the current reference.

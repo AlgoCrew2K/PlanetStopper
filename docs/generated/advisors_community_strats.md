@@ -3,7 +3,7 @@
 > Community symphonies sourced from **algo-db.com** (read via its `captplanet.strategies` MongoDB Atlas collection, weekly-cached): validates, deduplicates, and filters candidates for the Strategy Builder proposal suite.
 
 **Source:** `advisors/community_strats.py`
-**Last updated:** 2026-07-11 (DE-ATLAS-SLOW-QUERY-001 + DE-ATLAS-SHARPE-FIELD-001: the fetch is now a three-step, client-ranked query with NO server-side sort at all — `captplanet.strategies` has no usable index besides `_id`, so any Mongo-side sort is an unindexed COLLSCAN; ranking moved into Python. Also fixes a pre-existing field-name bug: the real OOS-sharpe field is `oos_metrics['Sharpe']` (capital S, string-valued), not `'sharpe'`, which was present on 0/11,227 live docs. `_MAX_FETCH_DOCS` tightened 500→100→50 for live-Atlas timeout headroom.)
+**Last updated:** 2026-07-11 (DE-ATLAS-SLOW-QUERY-001 + DE-ATLAS-SHARPE-FIELD-001 + DE-ATLAS-DEEP-TREE-001: the fetch is now a three-step, client-ranked query with NO server-side sort at all — `captplanet.strategies` has no usable index besides `_id`, so any Mongo-side sort is an unindexed COLLSCAN; ranking moved into Python. Also fixes a pre-existing field-name bug: the real OOS-sharpe field is `oos_metrics['Sharpe']` (capital S, string-valued), not `'sharpe'`, which was present on 0/11,227 live docs. `_MAX_FETCH_DOCS` tightened 500→100→50 for live-Atlas timeout headroom. The per-doc composition-hash step is now exception-contained — a pathologically deep tree drops only that one doc instead of aborting the whole batch.)
 
 ## Overview
 
@@ -208,6 +208,12 @@ The dedup key is a **local tree-structural hash** computed by `_composition_hash
 3. `hashlib.sha256(...).hexdigest()` -- 64-character hex string.
 
 **This is NOT `database.compute_composition_hash`**, which takes a `list[str]` of symphony IDs and is used for portfolio-set identity (mode-resolver use). `_composition_hash` operates on a single tree dict and is local to this module.
+
+### Deep-tree exception containment (DE-ATLAS-DEEP-TREE-001)
+
+`_strip_ids` (the first step of `_composition_hash`) is recursive -- unlike `symphony_schema`'s deliberately iterative traversal -- and can raise `RecursionError` on a pathologically deep (but structurally valid) tree at roughly 500 nesting levels. The other three per-doc steps in the parse loop (`json.loads`, `validate_tree`, `extract_tickers`) each already had their own `try`/`except`; the composition-hash call site did not, so one pathological doc could propagate an uncaught exception out of `load_community_strategies`, violating the D-1 never-raising contract and losing the *entire* batch rather than just the one bad doc.
+
+Fixed by wrapping the composition-hash call in its own `try`/`except`, matching the containment pattern already given to the three steps above -- any exception there (`RecursionError`, `MemoryError`, or otherwise) now increments `parse_failed` and drops only that one doc; the loop continues with the remainder of the batch. `_strip_ids` itself is intentionally left recursive (a minimal, scoped fix) -- a rare deep doc dropping is acceptable latent-risk containment, not a live data-loss concern.
 
 ### Deduplication
 

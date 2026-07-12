@@ -322,16 +322,27 @@ Takes the dict returned by `advisors.community_strats.load_community_strategies`
 
 **Returns:** `list[CandidateInfo]` — admitted community candidates. Empty list on any failure.
 
-**Ranking per objective (AC-12):**
+**Ranking per objective (AC-12, corrected DE-ATLAS-STAT-FIELD-001/002 — see below):**
 
-| Objective | Stat key | Direction | Notes |
-|-----------|----------|-----------|-------|
-| `cut_drawdown` | `oos_metrics["max_drawdown"]` | Nearer zero first (shallowest drawdown) | quantstats convention: values are <= 0 |
-| `volatility_mitigation` | `oos_metrics["volatility"]` | Lowest first | |
-| `lift_risk_adjusted` | `oos_metrics["sharpe"]` | Highest first | |
+| Objective | Stat key(s) — key-union, first-parseable wins | Direction | Notes |
+|-----------|--------------------------------------------------|-----------|-------|
+| `cut_drawdown` | `oos_metrics["Max Drawdown %"]`, `oos_metrics["Max Drawdown"]` | Nearer zero first (shallowest drawdown) | `%`-string-valued on real docs; `%`-suffix stripped before parsing; values are <= 0 |
+| `volatility_mitigation` | `oos_metrics["Volatility (ann.) %"]`, `oos_metrics["Volatility (ann.)"]` | Lowest first | `%`-string-valued on real docs; `%`-suffix stripped before parsing |
+| `lift_risk_adjusted` | `oos_metrics["Sharpe"]` (single key form) | Highest first | Plain-decimal string, NOT `%`-formatted — must NOT be `%`-stripped; matches `community_strats._parse_sharpe`'s field/parse contract exactly |
 | `diversify` | Jaccard overlap vs already-admitted ticker set | Lowest overlap first (greedy) | Tiebreaks by `sid` sort; deterministic; complete set up to cap |
 
-**Missing-stat handling (AC-12 — PM-decided: KEPT-LAST):** A doc whose `oos_metrics` is `None`, lacks the key, or has a non-numeric value for the stat is admitted AFTER all docs that have a valid numeric stat — never pre-dropped. The FDR gate, PBO veto, and SPY-OOS baseline in the downstream pipeline are the real survival gates.
+**Missing-stat handling (AC-12 — PM-decided: KEPT-LAST):** A doc whose `oos_metrics` is `None`, lacks every candidate key, or has an unparseable value for every candidate key is admitted AFTER all docs that have a valid numeric stat — never pre-dropped. The FDR gate, PBO veto, and SPY-OOS baseline in the downstream pipeline are the real survival gates.
+
+**`_stat(doc, keys, *, percent=False) -> float | None` — the shared parse helper (DE-ATLAS-STAT-FIELD-001, generalized DE-ATLAS-STAT-FIELD-002):**
+
+The original field-path bug found in `community_strats._parse_sharpe` (DE-ATLAS-SHARPE-FIELD-001 — Sharpe was read via a lowercase `'sharpe'` key present on 0 live docs) generalized to this ranking layer: `_stat()` originally read `'max_drawdown'`, `'volatility'`, and `'sharpe'` (all lowercase) — keys that exist on 0 live `captplanet.strategies` docs, so every doc looked stat-missing and 3 of 4 objectives fell back to arbitrary insertion-order ranking. Fixed in two steps:
+
+1. **DE-ATLAS-STAT-FIELD-001 (real title-case keys + `%`-strip + nan/inf-reject):** `_stat()` reads the real title-case `oos_metrics` keys (`'Max Drawdown'`, `'Volatility (ann.)'`, `'Sharpe'`). When `percent=True`, a trailing `%` is stripped before `float()` — `Max Drawdown` and `Volatility (ann.)` are `%`-string-valued on real docs; `Sharpe` is plain-decimal and must NOT be stripped. `nan`/`inf` values (which pass Python's bare `float()` but are not valid metric values) are rejected post-parse, mirroring `community_strats._parse_sharpe`'s defensive contract.
+2. **DE-ATLAS-STAT-FIELD-002 (key-union for raw-data-inconsistent forms):** the PM's live gate against step 1 found `Sharpe` ranking correct (10/10) but `cut_drawdown`/`volatility_mitigation` came back all-`None` — real `captplanet.strategies` docs are raw-data-inconsistent, carrying either a `%`-suffixed key form (`'Max Drawdown %'`, `'Volatility (ann.) %'` — the dominant real form) or the bare form (`'Max Drawdown'`, `'Volatility (ann.)'`), both `%`-string-valued; `community_strats` passes `oos_metrics` through verbatim with no key normalization, so both forms genuinely coexist in the source collection. `Sharpe` is unaffected (single key form across all live docs). `_stat()` was generalized to accept a candidate key-union list (`keys: list[str]`): it tries each key in order, and the first key that yields a **parseable** value wins — a present-but-unparseable value at one key falls through to the next candidate key rather than short-circuiting to `None`. No known doc carries both forms of a pair, so precedence on a genuine collision is unspecified but deterministic (list order) — not something any real doc exercises.
+
+Live-gate result (PM-verified): all 3 objectives (`cut_drawdown`, `volatility_mitigation`, `lift_risk_adjusted`) rank correctly on real cached data, 10/10 candidates each.
+
+**Known deferred follow-up (not fixed this cycle) — `diversify`'s greedy loop is O(n²) in ticker re-extraction.** The `diversify` branch's greedy selection loop calls `_extract_tickers_from_tree(doc.get("tree", {}))` on every still-`remaining` candidate on every outer `while remaining` iteration — an unbounded doc's tree is walked once per surviving iteration rather than once total, so total tree-walk work is O(n²) in the candidate-pool size (bounded today by `_MAX_FETCH_DOCS=50`, so not currently a live-timing problem). Cheap fix: precompute a `{sid: tickers}` map once before the `while` loop and look up instead of re-walking. Flagged by the team lead as a deferred, non-blocking follow-up — not required for this cycle's gate.
 
 ---
 
