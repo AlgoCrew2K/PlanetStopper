@@ -4496,3 +4496,44 @@ GREEN HEAD `3ebc504` (7 implementation commits: `6fef9fe`, `ba331a3`, `743a267`,
 ### Reference
 
 `VERDICT-droplet.md` (2026-07-09); supersedes `DE-GUARD-ALPHA-SAVED-001`'s "Why this is correct" sourcing claim and field-semantics table (see Finding 2 above); branch `fix/prod-accuracy-audit`; GREEN HEAD `3ebc504`.
+
+## DE-CANDIDATE-ALERT-001 — Header candidate-alert indicator: always-visible weekly-suggestion survivor badge + run-status (2026-07-12)
+
+Branch: feature/candidate-alert | Base: unified main 1a40467c | GREEN HEAD: c3cea87b
+
+### Problem
+
+The weekly suggestions job (`advisors/weekly_suggestions_scheduler`) produces advisory ASSET_SWAP/LOGIC_CHANGE/STRATEGY_BUILDER candidates, gated by the strict FDR/PBO/SPY-OOS overfitting discipline. Most candidates are correctly rejected — survivors are rare and valuable. Before this cycle, those results only surfaced if the operator happened to open the AI Advisor tab: a real winner could sit unnoticed for a week, and a week that ran-but-rejected-everything was indistinguishable from a broken job. Operator request (2026-07-12): "some sort of alerting system on the actual UI, probably in the header somewhere so it's always visible regardless of the screen I'm on... otherwise I'll never actually know if this is working."
+
+### Decision
+
+Add a single, always-visible header indicator — badges the count of NEW, UNVIEWED survivor candidates, surfaces the latest weekly-run status (even at zero survivors, so the operator can confirm the job is alive), and routes to the existing AI Advisor surfacing on click. Advisory-only UI: no new trade path, no `LIVE_EXECUTION` touch. Ships DIRECT to origin/main (no PR) per the operator's advisory-work-is-ungated-by-PR rule, after the PM's live E2E gate.
+
+### Implementation
+
+**Backend (`app.py`):**
+- `GET /api/candidate-alert` — read-only, returns `{new_valid_count, last_run}`. Both underlying accessor calls are independently `try/except`-wrapped so a DB failure degrades only that one field; the route always returns 200 (AC-6).
+- `POST /api/candidate-alert/mark-viewed` — CSRF-protected (via the global `_csrf_before_request` hook, not an explicit in-route call), advisory-only write (NOT in `_SETTINGS_WRITE_ALLOWLIST`, never touches `LIVE_EXECUTION`). Takes no request body — the new marker value is server-computed only (AC-5), so a caller cannot set it to an arbitrary observation id.
+
+**Database (`database.py`, migration `033_candidate_alert_state.sql`):**
+- New single-row `candidate_alert_state` table (`id INTEGER PRIMARY KEY CHECK (id = 1)`, `last_viewed_observation_id`, `updated_at`) — same "pinned singleton" idiom as `bot_state`/`execution_lock`.
+- Five new accessors: `get_candidate_alert_viewed_marker`, `set_candidate_alert_viewed_marker` (monotonic UPSERT via `MAX(existing, new)`), `mark_candidate_alert_viewed` (zero-arg, computes `MAX(id)` over the weekly-suggestion roles itself), `get_candidate_alert_new_valid_count`, `get_candidate_alert_last_run` (calendar-date-grouped batch aggregate — there is no run_id column on these three roles, so the UTC date of the latest row stands in for "one run").
+
+**Frontend:** the indicator markup lives in `templates/_chrome.html` — the ONE shared header partial all four screens (`index.html`, `ai_advisor.html`, `history.html`, `performance.html`) already `{% include %}` — so AC-1 (all-screens visibility) required zero per-screen duplication; `tests/app/test_candidate_alert_indicator_render.py::TestAllFourScreensShareTheChromePartial` pins that all 4 templates keep including it. `static/chrome.js` (the one JS asset shared by all 4 screens — `static/index.js` loads on the dashboard root only) gained `fetchCandidateAlert()` (30s poll + once on `DOMContentLoaded`) and `markCandidateAlertViewed()` (fired on click, `keepalive: true`). The indicator's `<a href>` is a real server-rendered link to `/ai-advisor` — AC-4 routing works even with JS disabled.
+
+### Verdict-classification refinement (deviation from feature-plan wording)
+
+The feature plan (AC-2) defined "valid" as `verdict != "REJECT_VETO_FAILED"`. The shipped implementation is stricter: `_CANDIDATE_ALERT_SURVIVOR_VERDICT = "ADOPT_CANDIDATE"` — the sole survivor condition is an exact match, not a rejection-exclusion. This additionally excludes `DECISION_KEEP_INCUMBENT` (`acceptance_gate.py`'s third decision string — the common "no benefit, nothing changed" outcome for ASSET_SWAP/LOGIC_CHANGE), which the plan's `!=` wording would have incorrectly counted as a badge-worthy survivor. `KEEP_INCUMBENT` is not a new candidate the operator needs to review; badging it would have reintroduced the noise this feature exists to eliminate. Ratified as the correct reading of AC-2's intent (the plan's own text says "rejected-for-no-benefit candidates do NOT count").
+
+### Verified
+
+Toxic-pair TDD cycle on `feature/candidate-alert`: RED at `2dec0a17` (migration 033 test + route tests + header-partial/chrome.js render tests), GREEN at `d0b3a180`, one CSRF-redundancy fix at `e045a7d7`, one ruff-format nit at `c3cea87b` (alert-review finding, non-blocking). alert-review APPROVED at `e045a7d7`, re-stamped clean at `c3cea87b`. Independent merge-gate reproduction: 71/71 GREEN, `ruff format`/`ruff check` clean project-wide.
+
+### Files changed
+
+- `app.py` — `candidate_alert()`, `candidate_alert_mark_viewed()`
+- `database.py` — `candidate_alert_state` table bootstrap + 5 accessors; `_MIGRATION_FILES` gains `033_candidate_alert_state.sql`
+- `migrations/033_candidate_alert_state.sql` — new
+- `templates/_chrome.html` — indicator markup (`#candidate-alert-indicator`, `#candidate-alert-badge`)
+- `static/chrome.js` — `fetchCandidateAlert()`, `markCandidateAlertViewed()`
+- `docs/generated/app.md`, `docs/generated/database.md`, `docs/generated/INDEX.md`, `docs/generated/static_chrome_js.md` (new) — reconciled
