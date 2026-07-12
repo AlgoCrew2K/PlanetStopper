@@ -16,20 +16,29 @@ route/SPA JSON. Those require the compiler (C3) and the rewired route (C5).
 CONTRACT for AC-12 objective-matched admission (PM-approved):
   - Source: load_community_strategies(force_refresh=False) -> {available, candidates:[...]}.
     Each candidate carries oos_metrics (a dict, possibly missing the needed stat).
-  - Ranking per objective (by the named stat the loader returns):
-      cut_drawdown         -> lowest drawdown FIRST (most-negative / smallest magnitude rule
-                              pinned by the fixture below: 'max_drawdown' nearer zero = better)
-      volatility_mitigation-> lowest volatility FIRST ('volatility')
-      lift_risk_adjusted   -> best risk-adjusted FIRST ('sharpe', higher = better)
+  - Ranking per objective (by the named stat the loader returns). Field names are the
+    REAL captplanet.strategies oos_metrics keys (DE-ATLAS-STAT-FIELD-001, amendment
+    after the field-path bug generalized beyond Sharpe): title-case, %-string-valued
+    for the two percentage-based metrics; Sharpe stays plain-decimal-string (not %):
+      cut_drawdown         -> lowest drawdown FIRST (most-negative / smallest magnitude
+                              rule pinned by the fixture below: 'Max Drawdown' (e.g.
+                              "-8.70%") nearer zero = better)
+      volatility_mitigation-> lowest volatility FIRST ('Volatility (ann.)', e.g. "22.00%")
+      lift_risk_adjusted   -> best risk-adjusted FIRST ('Sharpe', e.g. "1.00", higher = better)
       diversify            -> low cross-correlation vs the admitted set (handled deterministically)
   - Missing-stat docs: KEPT-LAST (admitted after all docs that HAVE the stat). Never crash.
+  - Malformed stat values (non-numeric core after %-strip, 'nan'/'inf') are ALSO treated
+    as missing -> kept-last, never raise (mirrors community_strats._parse_sharpe's
+    defensive contract).
   - Bounded by MAX_COMMUNITY_CANDIDATES_PER_RUN.
   - Each admitted candidate tagged provenance='atlas-suggested'.
 
 ADVERSARIAL FOCUS: assert ORDER / PRESENCE / TAG / BOUND only. The oos_metric inputs
 are crafted fixtures we fully control — there are no hardcoded PRODUCER-computed values
 (we assert the admitted docs are returned in the objective-best ORDER of the stats WE
-supplied, not any value the loader computed). The math engine is never mocked.
+supplied, not any value the loader computed — so the fixtures use real-shaped %-strings
+without needing to pin the exact %-to-float parse semantics, only relative order). The
+math engine is never mocked.
 """
 
 from __future__ import annotations
@@ -124,12 +133,16 @@ def _provenance(c) -> str | None:
 def test_ac12_cut_drawdown_admits_lowest_drawdown_first(bpg):
     """AC-12 cut_drawdown: docs ranked by drawdown, smallest-magnitude drawdown FIRST.
 
-    We supply max_drawdown values (quantstats convention: <= 0; nearer zero = shallower
-    = better defensive). The admitted ORDER must reflect OUR values, best-first."""
+    We supply the REAL 'Max Drawdown' field (title-case, %-string-valued — the loader
+    NEVER returns lowercase numeric 'max_drawdown'; that key exists on 0 live docs,
+    DE-ATLAS-STAT-FIELD-001). Nearer zero = shallower = better defensive. The admitted
+    ORDER must reflect OUR values, best-first — an implementation still reading the old
+    lowercase-numeric key would see every doc as stat-missing and admit an arbitrary
+    (insertion-order) sequence instead."""
     cands = [
-        _candidate("deep", {"max_drawdown": -0.55}),  # worst (deepest)
-        _candidate("shallow", {"max_drawdown": -0.10}),  # best (shallowest)
-        _candidate("mid", {"max_drawdown": -0.30}),
+        _candidate("deep", {"Max Drawdown": "-22.30%"}),  # worst (deepest)
+        _candidate("shallow", {"Max Drawdown": "-1.50%"}),  # best (shallowest)
+        _candidate("mid", {"Max Drawdown": "-8.70%"}),
     ]
     admitted = bpg.admit_community_candidates(
         _community_result(cands), _objective(bpg, "cut_drawdown")
@@ -138,11 +151,14 @@ def test_ac12_cut_drawdown_admits_lowest_drawdown_first(bpg):
 
 
 def test_ac12_volatility_mitigation_admits_lowest_volatility_first(bpg):
-    """AC-12 volatility_mitigation: docs ranked by volatility, lowest FIRST."""
+    """AC-12 volatility_mitigation: docs ranked by volatility, lowest FIRST.
+
+    Real field: 'Volatility (ann.)', title-case, %-string-valued (DE-ATLAS-STAT-FIELD-001)
+    — not the old lowercase numeric 'volatility'."""
     cands = [
-        _candidate("hi", {"volatility": 0.40}),
-        _candidate("lo", {"volatility": 0.08}),
-        _candidate("mid", {"volatility": 0.22}),
+        _candidate("hi", {"Volatility (ann.)": "40.00%"}),
+        _candidate("lo", {"Volatility (ann.)": "8.00%"}),
+        _candidate("mid", {"Volatility (ann.)": "22.00%"}),
     ]
     admitted = bpg.admit_community_candidates(
         _community_result(cands), _objective(bpg, "volatility_mitigation")
@@ -151,11 +167,15 @@ def test_ac12_volatility_mitigation_admits_lowest_volatility_first(bpg):
 
 
 def test_ac12_lift_risk_adjusted_admits_best_sharpe_first(bpg):
-    """AC-12 lift_risk_adjusted: docs ranked by sharpe, highest FIRST."""
+    """AC-12 lift_risk_adjusted: docs ranked by sharpe, highest FIRST.
+
+    Real field: 'Sharpe', title-case, plain-decimal-string-valued (NOT %-formatted,
+    unlike Max Drawdown/Volatility — matches community_strats._parse_sharpe's own
+    real-shape contract) — not the old lowercase numeric 'sharpe'."""
     cands = [
-        _candidate("low", {"sharpe": 0.2}),
-        _candidate("high", {"sharpe": 2.1}),
-        _candidate("mid", {"sharpe": 1.0}),
+        _candidate("low", {"Sharpe": "0.20"}),
+        _candidate("high", {"Sharpe": "2.10"}),
+        _candidate("mid", {"Sharpe": "1.00"}),
     ]
     admitted = bpg.admit_community_candidates(
         _community_result(cands), _objective(bpg, "lift_risk_adjusted")
@@ -181,11 +201,16 @@ def test_ac12_diversify_admission_is_deterministic_and_complete(bpg):
 
 def test_ac12_missing_stat_doc_kept_last(bpg):
     """AC-12 (refinement / PM answer): a doc lacking the objective stat is KEPT-LAST,
-    admitted after all docs that HAVE the stat. Never excluded, never crashes."""
+    admitted after all docs that HAVE the stat. Never excluded, never crashes.
+
+    Real field 'Max Drawdown' (title-case %-string, DE-ATLAS-STAT-FIELD-001) — an
+    implementation still reading the old lowercase 'max_drawdown' would see hasA/hasB
+    as ALSO stat-missing, collapsing the has-vs-missing distinction this test exists
+    to prove."""
     cands = [
-        _candidate("hasA", {"max_drawdown": -0.20}),
-        _candidate("nostat", {}),  # no max_drawdown
-        _candidate("hasB", {"max_drawdown": -0.05}),
+        _candidate("hasA", {"Max Drawdown": "-20.00%"}),
+        _candidate("nostat", {}),  # no Max Drawdown
+        _candidate("hasB", {"Max Drawdown": "-5.00%"}),
         _candidate("nostat2", None),  # oos_metrics is None entirely
     ]
     admitted = bpg.admit_community_candidates(
@@ -199,9 +224,13 @@ def test_ac12_missing_stat_doc_kept_last(bpg):
 
 
 def test_ac12_admission_bounded_by_max_community_constant(bpg):
-    """AC-12: the admitted count is bounded by MAX_COMMUNITY_CANDIDATES_PER_RUN."""
+    """AC-12: the admitted count is bounded by MAX_COMMUNITY_CANDIDATES_PER_RUN.
+
+    Real field 'Sharpe' (title-case plain-decimal-string) — an implementation still
+    reading the old lowercase 'sharpe' would see every doc as stat-missing, so 'the
+    cap keeps the BEST docs' would degenerate to an arbitrary slice."""
     cap = bpg.MAX_COMMUNITY_CANDIDATES_PER_RUN
-    cands = [_candidate(f"c{i}", {"sharpe": float(i)}) for i in range(cap + 7)]
+    cands = [_candidate(f"c{i}", {"Sharpe": str(float(i))}) for i in range(cap + 7)]
     admitted = bpg.admit_community_candidates(
         _community_result(cands), _objective(bpg, "lift_risk_adjusted")
     )
@@ -212,8 +241,11 @@ def test_ac12_admission_bounded_by_max_community_constant(bpg):
 
 
 def test_ac12_explicit_max_candidates_override_respected(bpg):
-    """AC-12: an explicit max_candidates kwarg further bounds the admitted count."""
-    cands = [_candidate(f"c{i}", {"sharpe": float(i)}) for i in range(10)]
+    """AC-12: an explicit max_candidates kwarg further bounds the admitted count.
+
+    Real field 'Sharpe' (title-case plain-decimal-string) — same masking concern
+    as the bounded-cap test above."""
+    cands = [_candidate(f"c{i}", {"Sharpe": str(float(i))}) for i in range(10)]
     admitted = bpg.admit_community_candidates(
         _community_result(cands), _objective(bpg, "lift_risk_adjusted"), max_candidates=3
     )
@@ -271,10 +303,19 @@ def test_ac12_malformed_community_result_never_raises(bpg):
 
 def test_ac12_unparseable_stat_value_treated_as_missing_kept_last(bpg):
     """AC-12 robustness: a non-numeric stat value is treated as missing -> kept-last,
-    never crashes the ranking."""
+    never crashes the ranking.
+
+    Real field 'Sharpe' (title-case, STRING-valued — the loader always returns a
+    string, e.g. "1.5", not a raw float) — an implementation still reading the old
+    lowercase numeric 'sharpe' would see 'good' as ALSO stat-missing, collapsing the
+    good-vs-bad distinction this test exists to prove. 'bad' is inserted FIRST so a
+    naive both-missing-tie (which stable-sorts to insertion order) would put 'bad'
+    first / 'good' last — the OPPOSITE of the expected order — making this decisively
+    RED against the old lowercase-key implementation rather than coincidentally
+    passing because insertion order already matched the expected output."""
     cands = [
-        _candidate("good", {"sharpe": 1.5}),
-        _candidate("bad", {"sharpe": "not-a-number"}),
+        _candidate("bad", {"Sharpe": "not-a-number"}),
+        _candidate("good", {"Sharpe": "1.5"}),
     ]
     admitted = bpg.admit_community_candidates(
         _community_result(cands), _objective(bpg, "lift_risk_adjusted")
@@ -283,6 +324,38 @@ def test_ac12_unparseable_stat_value_treated_as_missing_kept_last(bpg):
     assert order[0] == "good"
     assert order[-1] == "bad"
     assert len(order) == 2
+
+
+def test_ac12_malformed_stat_values_never_raise_and_sort_last(bpg):
+    """AC-12 robustness (mirrors community_strats._parse_sharpe's defensive contract,
+    extended to %-formatted stats): a %-formatted value that fails to parse after
+    stripping '%' (a non-numeric core, or 'nan'/'inf' — which pass Python's bare
+    float() but are not valid metric values), or a bare non-numeric string, must be
+    treated as missing -> kept-last, and must never raise. Exercised on cut_drawdown
+    (the %-formatted objective). The 3 malformed docs are inserted BEFORE 'good' so a
+    naive all-missing-tie (stable-sorts to insertion order) would put a malformed doc
+    first — not 'good' — making this decisively RED against a naive implementation
+    rather than coincidentally passing because insertion order already matched."""
+    cands = [
+        _candidate("bad-nan", {"Max Drawdown": "nan%"}),
+        _candidate("bad-inf", {"Max Drawdown": "-inf%"}),
+        _candidate("bad-text", {"Max Drawdown": "N/A"}),
+        _candidate("good", {"Max Drawdown": "-8.70%"}),
+    ]
+    try:
+        admitted = bpg.admit_community_candidates(
+            _community_result(cands), _objective(bpg, "cut_drawdown")
+        )
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(f"admit_community_candidates raised {type(exc).__name__}: {exc}")
+
+    order = _sids(admitted)
+    assert order[0] == "good", (
+        "the single well-formed doc must rank first when the other 3 are malformed "
+        f"(nan%/-inf%/non-numeric); got order={order!r}"
+    )
+    assert set(order[1:]) == {"bad-nan", "bad-inf", "bad-text"}
+    assert len(order) == 4
 
 
 # ===========================================================================
