@@ -3,11 +3,11 @@
 > SQLite state management for Planet Stopper: schema, migrations, all read/write accessors for the state DB, and a pytest sentinel guard that structurally prevents tests from writing to the production DB.
 
 **Source:** `database.py`
-**Last updated:** 2026-07-12 (Workstream E, advisor-rewire cycle: `save_autotune_run` gains `s_count`; prior: 2026-07-09 DE-PROD-ACCURACY-001: `save_state` sanitizes numpy/non-finite values via `_sanitize_state_for_json` before every write, new `load_latest_shadow_row`/`load_earliest_shadow_row` Stage-1 accessors, `record_exit_trigger` now returns the inserted row id; prior: 2026-07-02 DE-PRISM-NUMERIC-VERIFY-001 `get_latest_market_prism_verification_for_run` accessor; prior: DE-ADVISOR-LATENCY `get_latest_market_lens_cache()`; DE-PRISM-SOURCES-001 `get_latest_market_prism_sources_for_run`)
+**Last updated:** 2026-07-12 (candidate-alert cycle: migration 033 adds `candidate_alert_state` — five new accessors, `get_candidate_alert_viewed_marker`/`set_candidate_alert_viewed_marker`/`mark_candidate_alert_viewed`/`get_candidate_alert_new_valid_count`/`get_candidate_alert_last_run`, back the header candidate-alert indicator; prior: Workstream E, advisor-rewire cycle: `save_autotune_run` gains `s_count`; prior: 2026-07-09 DE-PROD-ACCURACY-001: `save_state` sanitizes numpy/non-finite values via `_sanitize_state_for_json` before every write, new `load_latest_shadow_row`/`load_earliest_shadow_row` Stage-1 accessors, `record_exit_trigger` now returns the inserted row id; prior: 2026-07-02 DE-PRISM-NUMERIC-VERIFY-001 `get_latest_market_prism_verification_for_run` accessor; prior: DE-ADVISOR-LATENCY `get_latest_market_lens_cache()`; DE-PRISM-SOURCES-001 `get_latest_market_prism_sources_for_run`)
 
 ## Overview
 
-`database.py` is the single write layer for `alphabot_state.db`. It owns schema initialization, 32 numbered migration SQL files (001–032), and every public accessor function. `_MIGRATION_FILES` wires 29 active entries (004–032); migrations 001–003 use a separate bootstrap path. The dashboard uses `get_ro_connection()` for all reads; the engine uses `get_connection()` for writes. The two-DB pattern (state DB here; Optuna studies in a separate DB) is an architecture hard rule — no cross-DB joins in application code.
+`database.py` is the single write layer for `alphabot_state.db`. It owns schema initialization, 33 numbered migration SQL files (001–033), and every public accessor function. `_MIGRATION_FILES` wires 30 active entries (004–033); migrations 001–003 use a separate bootstrap path. The dashboard uses `get_ro_connection()` for all reads; the engine uses `get_connection()` for writes. The two-DB pattern (state DB here; Optuna studies in a separate DB) is an architecture hard rule — no cross-DB joins in application code.
 
 WAL journal mode is enabled at `init_db()` time, allowing concurrent Flask reads while the engine holds a write lock.
 
@@ -15,11 +15,11 @@ WAL journal mode is enabled at `init_db()` time, allowing concurrent Flask reads
 
 ## Schema Migrations
 
-Migrations are listed in `_MIGRATION_FILES` and applied by `run_migrations()`. They are idempotent (tracked in `schema_migrations`). Current highest: **032** (`032_prism_audit_log.sql`).
+Migrations are listed in `_MIGRATION_FILES` and applied by `run_migrations()`. They are idempotent (tracked in `schema_migrations`). Current highest: **033** (`033_candidate_alert_state.sql`).
 
 Notable ordering: 021 is listed before 020 — intentional. See `ARCH-002` inline comment; reordering would corrupt live DBs.
 
-Migrations 026–032:
+Migrations 026–033:
 - `026_mc_regime_match_telemetry.sql` — regime match columns on `exit_triggers`
 - `027_regime_label_cache.sql` — `regime_label_cache` table
 - `028_autotune_runs_pbo.sql` — `pbo` column on `autotune_runs`
@@ -27,6 +27,7 @@ Migrations 026–032:
 - `030_per_symphony_live_mode.sql` — `live_mode` on `symphony_strategies`, `config_audit_log` table
 - `031_shadow_history_sym_ts_index.sql` — composite index on `shadow_history (symphony_id, ts_utc)`
 - `032_prism_audit_log.sql` — `prism_audit_log` table + `idx_prism_audit_log_run_id` index (Prism Phase 1)
+- `033_candidate_alert_state.sql` — `candidate_alert_state` table (single-row viewed-marker for the header candidate-alert indicator; see `feature-plans/candidate-alert.md`)
 
 An earlier migration, `023_autotune_runs_s_count.sql`, added the `s_count` column to `autotune_runs` — but until the advisor-rewire cycle (2026-07-12, Workstream E) no caller ever populated it; see `save_autotune_run` below.
 
@@ -167,7 +168,7 @@ Inserts one `advisor_observations` row. Returns the new row id. `is_advisory_onl
 | `advisor_role` | `str` | `"OVERFITTING_CONSCIENCE"`, `"SPEC_CRITIC"`, `"DIVERGENCE_EXPLAINER"`, `"WALL_BREACH"`, `"MARKET_PRISM"`, `"MARKET_PRISM_SOURCES"`, `"MARKET_LENS_CACHE"`, `"MARKET_PRISM_VERIFICATION"`, `"ASSET_SWAP"`, or `"LOGIC_CHANGE"` (the latter two producers pre-date this list but gained their first production caller and dashboard surfacing in the advisor-rewire cycle, 2026-07-12 — see `app.py`'s `_ADVISOR_ROLES`) |
 | `subject_type` | `str` | `"autotune_run"`, `"spec_bundle"`, `"fold_role_wall"`, or `"portfolio"` |
 | `subject_id` | `str` | String PK of the observed entity |
-| `verdict` | `str \| None` | `"CLEAR"`, `"WATCH"`, `"BREACH"`, `"INFORMATIONAL"`, `"NOT_APPLICABLE"`, `"neutral"`, `"bullish"`, `"bearish"`, or `"limited-inputs"` |
+| `verdict` | `str \| None` | `"CLEAR"`, `"WATCH"`, `"BREACH"`, `"INFORMATIONAL"`, `"NOT_APPLICABLE"`, `"neutral"`, `"bullish"`, `"bearish"`, `"limited-inputs"`, `"ADOPT_CANDIDATE"`, `"KEEP_INCUMBENT"`, or `"REJECT_VETO_FAILED"` (the last three are `acceptance_gate.py`'s decision strings, written by the weekly ASSET_SWAP/LOGIC_CHANGE/STRATEGY_BUILDER producers and read by the Candidate Alert accessors below) |
 | `raw_response` | `dict \| str \| None` | Serialized to JSON; `None` → `"{}"` |
 | `symphony_id` | `str \| None` | Denormalized symphony name (migration 025) |
 
@@ -430,6 +431,56 @@ Return all `prism_audit_log` entries for a run, ordered by `id` ascending (inser
 entries = database.get_prism_audit_for_run("2026-06-13T03:00:00+00:00")
 for entry in entries:
     print(entry["agent_role"], entry["phase"], entry["content"][:80])
+```
+
+---
+
+### Candidate Alert (header indicator, migration 033)
+
+Backs the always-visible header candidate-alert indicator (`templates/_chrome.html` + `static/chrome.js`) — see `feature-plans/candidate-alert.md` and `DE-CANDIDATE-ALERT-001` in `DECISIONS.md`. One single-row viewed-marker table plus four accessors that read the existing `advisor_observations` table; no new observation-writing path is added.
+
+**Table schema (`candidate_alert_state`):**
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | INTEGER | PRIMARY KEY CHECK (id = 1) | Pins the table to exactly one row |
+| `last_viewed_observation_id` | INTEGER | NOT NULL DEFAULT 0 | `advisor_observations.id` of the last row the operator has viewed. `0` = nothing viewed yet — never collides with a real row id (AUTOINCREMENT PK starts at 1) |
+| `updated_at` | TEXT | NULLable | Set by `set_candidate_alert_viewed_marker` on every write |
+
+**Verdict-classification note:** `acceptance_gate.py` defines exactly three decision strings — `DECISION_ADOPT_CANDIDATE` (`"ADOPT_CANDIDATE"`), `DECISION_KEEP_INCUMBENT`, `DECISION_REJECT_VETO_FAILED`. `KEEP_INCUMBENT` is the common "no benefit, nothing changed" outcome for ASSET_SWAP/LOGIC_CHANGE rows (persisted verbatim by `asset_swap_engine.py`/`logic_change_engine.py`) and must NOT count as a valid new candidate — so `ADOPT_CANDIDATE` (`_CANDIDATE_ALERT_SURVIVOR_VERDICT`) is the sole survivor condition below. This is stricter than the feature plan's original wording (`verdict != "REJECT_VETO_FAILED"`, which would have also counted `KEEP_INCUMBENT` as a survivor); see `DE-CANDIDATE-ALERT-001`.
+
+**Role scope:** all five accessors below are scoped to `_CANDIDATE_ALERT_WEEKLY_ROLES = ("ASSET_SWAP", "LOGIC_CHANGE", "STRATEGY_BUILDER")` — the three weekly-suggestion producer roles. A row from any other `advisor_role` (`MARKET_PRISM`, `OVERFITTING_CONSCIENCE`, etc.) never influences the marker, the survivor count, or the last-run aggregate, even if its `verdict` string happens to coincidentally match `"ADOPT_CANDIDATE"`.
+
+#### `get_candidate_alert_viewed_marker() → int`
+
+Returns the current `last_viewed_observation_id`, or `0` when unset (fresh migration, nothing viewed yet — the same value structurally). Read-only (`get_ro_connection()`, architecture constraint 5). Never raises: any exception, including a DB that predates migration 033, degrades to `0`.
+
+#### `set_candidate_alert_viewed_marker(observation_id: int) → int`
+
+UPSERTs the marker via `INSERT ... ON CONFLICT(id) DO UPDATE SET last_viewed_observation_id = MAX(existing, excluded)`. Monotonic by construction — a call with a lower id (an out-of-order request, a stale client re-POSTing) can never regress a marker that has already advanced further (AC-5 idempotency).
+
+**Returns:** `int` — the resulting stored value (not necessarily `observation_id`, if the existing marker was already higher).
+
+#### `mark_candidate_alert_viewed() → int`
+
+Advances the marker to `MAX(id)` over `advisor_observations` rows in `_CANDIDATE_ALERT_WEEKLY_ROLES`, then calls `set_candidate_alert_viewed_marker` with that value. **Zero required arguments — server-computed only:** the caller cannot supply an arbitrary observation id, so a malicious or buggy client cannot set the marker to a value the operator hasn't actually seen. Returns `0` (no-op write) when no weekly-suggestion row has ever been written. Backs `POST /api/candidate-alert/mark-viewed`.
+
+#### `get_candidate_alert_new_valid_count() → int`
+
+Counts `advisor_observations` rows in `_CANDIDATE_ALERT_WEEKLY_ROLES` where `verdict = 'ADOPT_CANDIDATE'` AND `id > <current viewed marker>` (strictly greater — a row exactly at the marker was already viewed). Read-only; never raises (degrades to `0` on any exception — a DB error, malformed data, or a row with an odd/absent verdict is fail-closed as "not counted," never mis-badged as a survivor). Backs `GET /api/candidate-alert`'s `new_valid_count` field.
+
+#### `get_candidate_alert_last_run() → dict | None`
+
+Returns the latest weekly-suggestion batch's status. No `run_id`/batch column exists for these three roles — the three weekly engines run back-to-back within one invocation of `advisors.weekly_suggestions_scheduler.run_weekly_suggestions()`, so the calendar date (UTC, via `substr(created_at, 1, 10)`) of the most recent row is used as the "one run" grouping key.
+
+**Returns:** `{"ran_at": <max created_at that date>, "evaluated": <row count that date>, "survivors": <subset with verdict='ADOPT_CANDIDATE'>}`, or `None` only when the table has ZERO weekly-suggestion rows ever. `survivors: 0` is a valid, honest result — an all-rejected run still proves the weekly job is alive (AC-3, "know it's working" case); it is not treated as equivalent to "never ran." Read-only; never raises (degrades to `None` on any exception).
+
+**Example:**
+```python
+last_run = database.get_candidate_alert_last_run()
+if last_run is None:
+    print("no weekly run yet")
+else:
+    print(f"{last_run['ran_at']}: {last_run['evaluated']} evaluated, {last_run['survivors']} survived")
 ```
 
 ## Types

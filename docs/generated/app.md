@@ -3,7 +3,7 @@
 > Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
 **Source:** `app.py`
-**Last updated:** 2026-07-09 (DE-PROD-ACCURACY-001: `/api/history/<days>` fallback now date-filters to the current ET trading day and never clobbers the windowed `trigger_count`; `/api/performance` scope=aggregate now serves the canonical value-weighted `shadow_history` series with corrected `live_returns`/`shadow_returns` field semantics; `/api/guard-alpha-summary` basis_label gains freshness stamping; prior: 2026-07-02 DE-PRISM-NUMERIC-VERIFY-001, `ai_advisor_tab()` additively fetches the MARKET_PRISM_VERIFICATION row and attaches per-check fact-check badges to the Overview render; 2026-07-02 DE-EOD-BASIS-001, EOD/frozen account-basis unification + per-field stale-cache hardening; 2026-06-30 DE-PRISM-SOURCES-PER-LENS-001, per-lens Market Prism sources carousels; 2026-06-26 fix/today-change-account-basis, DE-TODAY-BASIS-001)
+**Last updated:** 2026-07-12 (candidate-alert cycle: new `GET /api/candidate-alert` + `POST /api/candidate-alert/mark-viewed` back the header candidate-alert indicator — see `feature-plans/candidate-alert.md`; prior: 2026-07-09 DE-PROD-ACCURACY-001: `/api/history/<days>` fallback now date-filters to the current ET trading day and never clobbers the windowed `trigger_count`; `/api/performance` scope=aggregate now serves the canonical value-weighted `shadow_history` series with corrected `live_returns`/`shadow_returns` field semantics; `/api/guard-alpha-summary` basis_label gains freshness stamping; prior: 2026-07-02 DE-PRISM-NUMERIC-VERIFY-001, `ai_advisor_tab()` additively fetches the MARKET_PRISM_VERIFICATION row and attaches per-check fact-check badges to the Overview render; 2026-07-02 DE-EOD-BASIS-001, EOD/frozen account-basis unification + per-field stale-cache hardening; 2026-06-30 DE-PRISM-SOURCES-PER-LENS-001, per-lens Market Prism sources carousels; 2026-06-26 fix/today-change-account-basis, DE-TODAY-BASIS-001)
 
 ## Overview
 
@@ -323,6 +323,41 @@ See `DE-GAP-001` and `DE-LIVE-DASH-001` in `DECISIONS.md`.
 
 **Consumed by:** `fetchGuardAlphaSummary()` in `static/index.js`. Populates `#dollar-saved-headline`, `#guard-event-count`, `#dollar-saved-basis-label` in `templates/index.html` (`data-testid="dollar-saved-panel"`). Does not clobber `#guard-alpha-headline` (windowed % guard alpha from `/api/strip/<window>`).
 
+#### `GET /api/candidate-alert` -- `candidate_alert()`
+
+Returns the header candidate-alert badge count and the latest weekly-suggestion run status (`feature-plans/candidate-alert.md`).
+
+**Response shape:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `new_valid_count` | int | Count of NEW, UNVIEWED survivor candidates (`verdict == "ADOPT_CANDIDATE"`) newer than the viewed-marker — see `database.get_candidate_alert_new_valid_count`. `0` when there are none, or on a DB accessor failure. |
+| `last_run` | dict \| null | `{ran_at, evaluated, survivors}` for the latest weekly-suggestion batch (calendar-date grouped — see `database.get_candidate_alert_last_run`), or `null` when no weekly-suggestion row has ever been written. `survivors: 0` is a valid, honest result: it tells the operator the job ran and rejected everything (AC-3), not that the endpoint is broken. |
+
+**Key properties:**
+- **Read-only.** Both underlying accessors (`database.get_candidate_alert_new_valid_count`, `get_candidate_alert_last_run`) use `get_ro_connection()` (architecture constraint 5).
+- **Never raises (AC-6).** Each accessor call is independently wrapped in `try/except Exception` at the route level; a DB failure degrades only that field (`new_valid_count=0` or `last_run=None`) without affecting the other. Always returns 200.
+- **Auth-gated.** Covered by the global `_auth_before_request` hook, same as `guard_alpha_summary()` — no additional decorator.
+- **"Valid" is stricter than the feature plan's original wording.** AC-2 defined valid as `verdict != "REJECT_VETO_FAILED"`; the shipped accessor requires `verdict == "ADOPT_CANDIDATE"`, additionally excluding `KEEP_INCUMBENT` (`acceptance_gate.py`'s third decision string — the common "no benefit, nothing changed" outcome). See `DE-CANDIDATE-ALERT-001` in `DECISIONS.md`.
+
+**Consumed by:** `fetchCandidateAlert()` in `static/chrome.js` — polled every 30 s and once on `DOMContentLoaded`. Populates `#candidate-alert-badge` (hidden at count 0) and the `title` attribute of `#candidate-alert-indicator`, both in `templates/_chrome.html` (shared by all 4 screens — see AC-1).
+
+#### `POST /api/candidate-alert/mark-viewed` -- `candidate_alert_mark_viewed()`
+
+Advances the candidate-alert viewed-marker (AC-5) so currently-visible survivors stop badging.
+
+**Request:** no body required. `database.mark_candidate_alert_viewed()` takes zero arguments and computes the new marker value itself (`MAX(id)` over the three weekly-suggestion roles) — any caller-supplied observation id in the request body is ignored by design, so a malicious or buggy client cannot set the marker to a value the operator hasn't actually seen.
+
+**Response:** `{"status": "ok", "last_viewed_observation_id": <int>}`.
+
+**Key properties:**
+- **CSRF-protected** via the global `_csrf_before_request` before-request hook — no explicit in-route `_validate_csrf()` call, the same convention as the Strategy Builder `/run` route; `save_symphony_settings`'s explicit call is redundant/historical, not the pattern to follow for new routes.
+- **Advisory-only write.** NOT in `_SETTINGS_WRITE_ALLOWLIST` (that allowlist exists exclusively for the separate `/api/settings` env-key write path) and never touches `LIVE_EXECUTION`.
+- **Idempotent.** `database.set_candidate_alert_viewed_marker` stores `MAX(existing, new)` — a repeat or out-of-order call can never regress the marker.
+
+**Consumed by:** `markCandidateAlertViewed()` in `static/chrome.js`, fired on click of `#candidate-alert-indicator` alongside its native `<a href>` navigation to `/ai-advisor` (`keepalive: true` so the POST completes even as the browser navigates away; a failure here never blocks navigation — AC-4 works without JS at all).
+
+See `DE-CANDIDATE-ALERT-001` in `DECISIONS.md`.
+
 ---
 
 ### Settings Write Paths
@@ -549,7 +584,7 @@ Normalizes an `autotune_runs` DB row for the `/api/autotune-runs` JSON response.
 ## Internal Dependencies
 
 - `ai_advisor` — context assembly, Claude call, C2 safety gates, assessment builder
-- `database` — all state-DB reads and writes for advisor routes, including `get_latest_market_prism_verification_for_run` (DE-PRISM-NUMERIC-VERIFY-001 Overview overlay)
+- `database` — all state-DB reads and writes for advisor routes, including `get_latest_market_prism_verification_for_run` (DE-PRISM-NUMERIC-VERIFY-001 Overview overlay) and `get_candidate_alert_new_valid_count`/`get_candidate_alert_last_run`/`mark_candidate_alert_viewed` (candidate-alert header indicator)
 - `analytics` — symphony history, correlation data, symphony list; account-basis translation helpers (`get_portfolio_today_change_account_basis`, `get_portfolio_cumulative_return_account_basis`, DE-TODAY-BASIS-001) consumed by both the live and frozen portfolio-strip paths
 - `advisors.correlation_diagnostic` — `compute_pairwise_correlations`, `CRISIS_CAVEAT`
 - `advisors.asset_swap_engine` — `propose_operator_swap`, `SwapObjective`, `_has_composer_key`
