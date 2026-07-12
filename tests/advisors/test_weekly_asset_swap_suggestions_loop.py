@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import importlib
 import random
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -410,17 +411,25 @@ class TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen:
 
     def _build_near_tied_correlation_fixture(self) -> dict:
         """A real (non-degenerate) correlation fixture with a genuine SMALL
-        primary-score gap between AAA and BBB (both highly correlated to SPY,
-        BBB marginally more so) and an unambiguous CCC (near-zero corr, stays
-        first regardless of lens). Numerically verified: |corr(SPY,AAA)| ~=
-        0.961, |corr(SPY,BBB)| ~= 0.984 (gap ~0.023), |corr(SPY,CCC)| ~= 0.21.
-        Baseline (no lens) order: CCC, AAA, BBB."""
+        primary-score gap between QQQ and AGG (both highly correlated to SPY,
+        AGG marginally more so) and an unambiguous GLD (near-zero corr, stays
+        first regardless of lens). Numerically verified: |corr(SPY,QQQ)| ~=
+        0.961, |corr(SPY,AGG)| ~= 0.984 (gap ~0.023), |corr(SPY,GLD)| ~= 0.21.
+        Baseline (no lens) order: GLD, QQQ, AGG.
+
+        Tickers are REAL lens_technicals._PROXY_UNIVERSE members (not synthetic
+        "AAA"/"BBB"/"CCC") -- the candidate-pool-sourcing fix (PM-routed
+        follow-up, 2026-07-12 second E2E) means the loop's candidate pool now
+        comes from PROXY_UNIVERSE ∪ live logic_holdings, not an arbitrary
+        get_tradeable_set() sample, so these tests use tickers that are
+        actually reachable through that real pool regardless of how
+        get_tradeable_set() is mocked."""
         rng = random.Random(11)
         spy = [rng.gauss(0.0, 1.0) for _ in range(30)]
-        aaa = [v + rng.gauss(0.0, 0.30) for v in spy]
-        bbb = [v + rng.gauss(0.0, 0.20) for v in spy]
-        ccc = [rng.gauss(0.0, 1.0) for _ in range(30)]
-        return {"SPY": spy, "AAA": aaa, "BBB": bbb, "CCC": ccc}
+        qqq = [v + rng.gauss(0.0, 0.30) for v in spy]
+        agg = [v + rng.gauss(0.0, 0.20) for v in spy]
+        gld = [rng.gauss(0.0, 1.0) for _ in range(30)]
+        return {"SPY": spy, "QQQ": qqq, "AGG": agg, "GLD": gld}
 
     def _wire_symphony_with_held_ticker(self, monkeypatch, ticker: str) -> None:
         import symphony_logic
@@ -472,14 +481,17 @@ class TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen:
         # return (~+/-0.05..0.15 in practice), not a pre-normalised [0,1] score.
         # extreme +/-0.20 values here so the extracted (squashed) scores stay
         # clearly separated regardless of the implementer's exact squashing formula.
-        momentum = {"AAA": -0.20, "BBB": 0.20}
+        momentum = {"QQQ": -0.20, "AGG": 0.20}
         cache_row = self._cache_row(momentum)
         monkeypatch.setattr(
             db_module, "get_latest_market_lens_cache", lambda: cache_row, raising=False
         )
 
         self._wire_symphony_with_held_ticker(monkeypatch, "SPY")
-        self._wire_tradeable_universe(monkeypatch, frozenset({"AAA", "BBB", "CCC"}))
+        # Covers both possible pool-sourcing implementations: a hardcoded
+        # PROXY_UNIVERSE ∪ holdings pool (tradeable_set is irrelevant) OR one
+        # that additionally intersects against get_tradeable_set() for safety.
+        self._wire_tradeable_universe(monkeypatch, frozenset({"QQQ", "AGG", "GLD", "SPY"}))
 
         mod, run_fn = _resolve_loop_fn()
         monkeypatch.setattr(
@@ -518,8 +530,8 @@ class TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen:
         assembled, then calls the REAL generate_objective_directed_candidates
         twice with those SAME inputs -- once with lens_scores=None (baseline),
         once with the ACTUAL lens_scores the loop extracted and passed. If the
-        wiring is genuine, BBB (marginally worse primary score, strongly
-        lens-favored) must move ahead of AAA; CCC (commanding primary lead)
+        wiring is genuine, AGG (marginally worse primary score, strongly
+        lens-favored) must move ahead of QQQ; GLD (commanding primary lead)
         must stay first regardless (AC-D2 both halves, exercised end-to-end
         through the real cache-extraction path, not a synthetic dict).
         """
@@ -531,13 +543,13 @@ class TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen:
 
         # Extreme +/-0.20 raw momentum -- see the extraction test above for why
         # (unbounded raw signal, squashing formula is the implementer's choice).
-        cache_row = self._cache_row({"AAA": -0.20, "BBB": 0.20})
+        cache_row = self._cache_row({"QQQ": -0.20, "AGG": 0.20})
         monkeypatch.setattr(
             db_module, "get_latest_market_lens_cache", lambda: cache_row, raising=False
         )
 
         self._wire_symphony_with_held_ticker(monkeypatch, "SPY")
-        self._wire_tradeable_universe(monkeypatch, frozenset({"AAA", "BBB", "CCC"}))
+        self._wire_tradeable_universe(monkeypatch, frozenset({"QQQ", "AGG", "GLD", "SPY"}))
 
         mod, run_fn = _resolve_loop_fn()
         monkeypatch.setattr(
@@ -581,13 +593,13 @@ class TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen:
             f"  baseline (no lens): {baseline_tickers!r}\n"
             f"  blended (real wired lens_scores): {blended_tickers!r}"
         )
-        assert blended_tickers.index("BBB") < blended_tickers.index("AAA"), (
-            f"BBB (marginally worse primary score, strongly lens-favored via the real "
-            f"MARKET_LENS_CACHE bundle) must move ahead of AAA once genuinely wired; "
+        assert blended_tickers.index("AGG") < blended_tickers.index("QQQ"), (
+            f"AGG (marginally worse primary score, strongly lens-favored via the real "
+            f"MARKET_LENS_CACHE bundle) must move ahead of QQQ once genuinely wired; "
             f"got blended order {blended_tickers!r}"
         )
-        assert blended_tickers[0] == "CCC", (
-            f"CCC's commanding primary lead (unambiguous lowest correlation) must "
+        assert blended_tickers[0] == "GLD", (
+            f"GLD's commanding primary lead (unambiguous lowest correlation) must "
             f"survive the real wired lens evidence (AC-D2: large margin never "
             f"inverted); got blended order {blended_tickers!r}"
         )
@@ -691,4 +703,318 @@ class TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen:
         assert result == {} or not result, (
             f"_fetch_lens_scores() must degrade to an empty/falsy result on a cold "
             f"cache; got {result!r}"
+        )
+
+
+# ===========================================================================
+# PM-routed follow-up #2 (2026-07-12, second live-droplet-DB E2E re-run) —
+# extract_lens_scores now works (lens_scores is real), but the candidate POOL
+# never overlaps the lens-covered universe, so lens_evidence stayed {} end to
+# end. Root cause (E2E-confirmed): candidate_pool = sorted(get_tradeable_set())
+# [:_ASSET_SWAP_CANDIDATE_POOL_SIZE] (weekly_suggestions_scheduler.py: the
+# alphabetical-first-15 of the ~12,748-symbol universe) never intersects
+# lens_technicals._PROXY_UNIVERSE (the 10 tickers the technicals lens actually
+# scores) union live logic_holdings. _build_candidate_lens_evidence(ticker,
+# lens_scores) (asset_swap_engine.py:758-780) returns {} whenever
+# lens_scores.get(ticker) misses -- which it always does for an alphabetical
+# candidate pool.
+#
+# PM DESIGN CALL [PM-ASSUMED]: candidate pool = the LENS-COVERED universe
+# (lens_technicals._PROXY_UNIVERSE ∪ live logic_holdings across all live
+# symphonies) so swaps are both sensible (real market-proxy / actually-held
+# tickers, not an alphabetical accident) AND lens-informed. Broad
+# correlation-screened discovery across the FULL ~12,748-symbol universe is a
+# documented FUTURE enhancement, out of this cycle's scope. The current
+# alphabetical pool provides ZERO value today (garbage swap targets) --
+# replacing it loses nothing.
+#
+# DESIGN QUESTION PINNED (per PM open question to the fixtures): the
+# swap-out-target exclusion is PER-SYMPHONY -- each symphony's own candidate
+# pool excludes THAT symphony's own held ticker(s) (no swap-into-self for
+# itself), not a global cross-symphony exclusion. A ticker held by symphony A
+# is a perfectly valid swap candidate for symphony B (no cross-symphony
+# conflict) -- only a symphony swapping into an asset it ALREADY holds is a
+# no-op. This mirrors the engine's own existing per-symphony filter
+# (suggest_swaps skips `candidate_asset in present_tickers`, extracted from
+# THIS symphony's own score_tree) -- the loop-level pool exclusion is
+# defense-in-depth / explicit-by-construction, not a new behavioural class.
+# ===========================================================================
+
+
+class TestAssetSwapLoopCandidatePoolSourcing:
+    def _wire_bot_state_with_holdings(self, monkeypatch, entries: dict) -> dict:
+        """entries: {symphony_hash: {"name": ..., "logic_holdings": {ticker: weight, ...}}}.
+        logic_holdings mirrors the exact bot_state field name
+        _build_technicals_section/_build_fundamentals_section read
+        (ai_advisor.py:520-526, :1184-1190) -- NOT the Composer score_tree
+        structure (extract_tickers), a separate bot_state-level field."""
+        import database as db_module
+
+        monkeypatch.setattr(db_module, "load_state", lambda: entries, raising=False)
+        return entries
+
+    def _wire_garbage_alphabetical_universe(self, monkeypatch) -> frozenset:
+        """A tradeable universe engineered so the OLD sorted(...)[:15] sample is
+        pure garbage relative to the lens-covered universe -- every entry here
+        sorts alphabetically BEFORE every real lens_technicals._PROXY_UNIVERSE
+        ticker (which start at 'A' for AGG but these start even earlier with a
+        leading digit-like prefix), so a correct fix must NOT rely on
+        get_tradeable_set() alphabetical order to reach PROXY_UNIVERSE tickers."""
+        import advisors.universe_provider as up
+
+        garbage = frozenset({f"0GARBAGE{i:02d}" for i in range(20)})
+        monkeypatch.setattr(up, "get_tradeable_set", lambda **kw: garbage, raising=False)
+        return garbage
+
+    def test_candidate_pool_sourced_from_proxy_universe_not_alphabetical_sample(self, monkeypatch):
+        """The candidate pool passed to suggest_swaps must be built from
+        lens_technicals._PROXY_UNIVERSE (∪ live logic_holdings), NOT
+        sorted(get_tradeable_set())[:N] -- proven by making the alphabetical
+        sample pure garbage (sorts before every real ticker) and asserting the
+        garbage does NOT dominate the pool while real proxy tickers DO appear."""
+        import advisors.asset_swap_engine as engine
+        from advisors.lens_technicals import _PROXY_UNIVERSE
+
+        self._wire_bot_state_with_holdings(
+            monkeypatch,
+            {
+                "hash-000": {
+                    "name": "Pool Sourcing Symphony",
+                    "account_uuid": "acc-1",
+                    "logic_holdings": {},
+                }
+            },
+        )
+        garbage = self._wire_garbage_alphabetical_universe(monkeypatch)
+
+        mod, run_fn = _resolve_loop_fn()
+
+        captured = {}
+
+        def _spy(
+            symphony_id, score_tree, objective, correlation_data, available_assets=None, **kwargs
+        ):
+            captured["available_assets"] = available_assets
+            return engine.SwapRunResult(gate_batch=engine._empty_gate_batch(), objective=objective)
+
+        _patch_suggest_swaps(monkeypatch, mod, _spy)
+
+        run_fn()
+
+        assert "available_assets" in captured, "suggest_swaps was never called."
+        pool = set(captured["available_assets"] or [])
+
+        naive_alphabetical_sample = set(sorted(garbage)[:15])
+        assert not (pool <= naive_alphabetical_sample), (
+            f"Candidate pool must NOT be the naive sorted(get_tradeable_set())[:15] "
+            f"alphabetical garbage sample -- got pool={sorted(pool)!r}, naive sample "
+            f"would have been {sorted(naive_alphabetical_sample)!r}."
+        )
+        overlap = pool & set(_PROXY_UNIVERSE)
+        assert len(overlap) >= 5, (
+            f"Candidate pool must be substantially sourced from "
+            f"lens_technicals._PROXY_UNIVERSE (the lens-covered universe) -- expected "
+            f"at least 5 of {sorted(_PROXY_UNIVERSE)!r} to appear; got pool="
+            f"{sorted(pool)!r} (overlap={sorted(overlap)!r})."
+        )
+
+    def test_candidate_pool_includes_live_logic_holdings(self, monkeypatch):
+        """Live logic_holdings (a real position some symphony currently holds)
+        must be reachable as a swap candidate too -- not just the fixed
+        PROXY_UNIVERSE floor. Uses a ticker outside PROXY_UNIVERSE so this is
+        unambiguously attributable to the logic_holdings union, not the proxy
+        floor."""
+        import advisors.asset_swap_engine as engine
+
+        held_elsewhere_ticker = "MSFT"  # not a PROXY_UNIVERSE member
+        self._wire_bot_state_with_holdings(
+            monkeypatch,
+            {
+                "hash-000": {
+                    "name": "Pool Sourcing Symphony A",
+                    "account_uuid": "acc-1",
+                    "logic_holdings": {held_elsewhere_ticker: 1.0},
+                }
+            },
+        )
+        self._wire_garbage_alphabetical_universe(monkeypatch)
+
+        mod, run_fn = _resolve_loop_fn()
+        captured = {}
+
+        def _spy(
+            symphony_id, score_tree, objective, correlation_data, available_assets=None, **kwargs
+        ):
+            captured["available_assets"] = available_assets
+            return engine.SwapRunResult(gate_batch=engine._empty_gate_batch(), objective=objective)
+
+        _patch_suggest_swaps(monkeypatch, mod, _spy)
+
+        run_fn()
+
+        pool = set(captured.get("available_assets") or [])
+        assert held_elsewhere_ticker in pool, (
+            f"Live logic_holdings ({held_elsewhere_ticker!r}) must be unioned into the "
+            f"candidate pool alongside lens_technicals._PROXY_UNIVERSE; got pool="
+            f"{sorted(pool)!r}"
+        )
+
+    def test_candidate_pool_excludes_this_symphonys_own_held_ticker(self, monkeypatch):
+        """PER-SYMPHONY exclusion (design question pinned above): a symphony
+        whose OWN Composer score_tree holds a PROXY_UNIVERSE ticker (AGG) must
+        not see AGG offered back to itself as a swap candidate (no
+        swap-into-self) -- even though AGG is otherwise a normal pool member."""
+        import advisors.asset_swap_engine as engine
+        import symphony_logic
+
+        self._wire_bot_state_with_holdings(
+            monkeypatch,
+            {
+                "hash-000": {
+                    "name": "Self Swap Symphony",
+                    "account_uuid": "acc-1",
+                    "logic_holdings": {},
+                }
+            },
+        )
+        self._wire_garbage_alphabetical_universe(monkeypatch)
+        monkeypatch.setattr(
+            symphony_logic,
+            "fetch_symphony_score",
+            lambda symphony_id: {"name": symphony_id, "ticker": "AGG", "children": []},
+            raising=False,
+        )
+
+        mod, run_fn = _resolve_loop_fn()
+        captured = {}
+
+        def _spy(
+            symphony_id, score_tree, objective, correlation_data, available_assets=None, **kwargs
+        ):
+            captured["available_assets"] = available_assets
+            return engine.SwapRunResult(gate_batch=engine._empty_gate_batch(), objective=objective)
+
+        _patch_suggest_swaps(monkeypatch, mod, _spy)
+
+        run_fn()
+
+        pool = set(captured.get("available_assets") or [])
+        assert "AGG" not in pool, (
+            f"The candidate pool for a symphony that already holds AGG must exclude "
+            f"AGG (no swap-into-self); got pool={sorted(pool)!r}"
+        )
+
+    def test_persisted_asset_swap_rows_carry_non_empty_lens_evidence_end_to_end(self, monkeypatch):
+        """THE end-to-end proof the live E2E checks: with a real-shaped lens
+        cache AND the fixed (lens-covered) candidate pool, a REAL (unmocked)
+        suggest_swaps() run must persist at least one ASSET_SWAP row whose
+        raw_response["lens_evidence"] is NON-EMPTY.
+
+        suggest_swaps persists EVERY gated proposal regardless of verdict (RC-4,
+        asset_swap_engine.py:1287-1318) -- so this only needs the backtest layer
+        mocked (no live Composer calls), not a forced ADOPT_CANDIDATE winner.
+        """
+        import advisors.asset_swap_engine as engine
+        import database as db_module
+        import symphony_logic
+
+        # Held ticker deliberately OUTSIDE PROXY_UNIVERSE so it never collides
+        # with (and is never confused for) a swap candidate.
+        held_ticker = "MSFT"
+        monkeypatch.setattr(
+            symphony_logic,
+            "fetch_symphony_score",
+            lambda symphony_id: {
+                "name": symphony_id,
+                "ticker": held_ticker,
+                "children": [],
+            },
+            raising=False,
+        )
+        self._wire_bot_state_with_holdings(
+            monkeypatch,
+            {
+                "hash-000": {
+                    "name": "Lens Evidence E2E Symphony",
+                    "account_uuid": "acc-1",
+                    "logic_holdings": {held_ticker: 1.0},
+                }
+            },
+        )
+        self._wire_garbage_alphabetical_universe(monkeypatch)
+
+        # Real-shaped MARKET_LENS_CACHE: technicals.momentum covers a real
+        # PROXY_UNIVERSE ticker (AGG) with a strong, unambiguous value.
+        cache_row = {
+            "id": 1,
+            "advisor_role": "MARKET_LENS_CACHE",
+            "raw_response": {
+                "captured_at": "2026-07-12T00:00:00+00:00",
+                "lenses": {
+                    "technicals": {
+                        "lens": "technicals",
+                        "available": True,
+                        "payload": {"ma_posture": None, "breadth": None, "momentum": {"AGG": 0.12}},
+                        "sources": [],
+                    },
+                    **{
+                        name: {"lens": name, "available": False, "payload": None, "sources": []}
+                        for name in ("sentiment", "derivatives", "macro", "fundamentals")
+                    },
+                },
+            },
+        }
+        monkeypatch.setattr(
+            db_module, "get_latest_market_lens_cache", lambda: cache_row, raising=False
+        )
+
+        # Mock ONLY the true network boundary (Composer backtest) -- suggest_swaps
+        # itself runs FOR REAL (candidate generation, lens blend, gate, persist).
+        mock_bt_result = MagicMock()
+        mock_bt_result.error = None
+        mock_bt_result.stats = {"sharpe": 1.0}
+        mock_bt_result.daily_returns = {
+            f"day{i}": 0.001 * (1 if i % 2 == 0 else -1) for i in range(30)
+        }
+        mock_bt_result.data_warnings = []
+
+        captured_inserts = []
+
+        def _capture_insert(**kwargs):
+            captured_inserts.append(kwargs)
+
+        with (
+            patch("advisors.asset_swap_engine.run_backtest", return_value=mock_bt_result),
+            patch("advisors.asset_swap_engine._has_composer_key", return_value=True),
+            patch("database.insert_advisor_observation", side_effect=_capture_insert),
+        ):
+            mod, run_fn = _resolve_loop_fn()
+            run_fn()
+
+        assert captured_inserts, (
+            "insert_advisor_observation was never called -- suggest_swaps must persist "
+            "every gated proposal (RC-4), regardless of verdict, once the candidate "
+            "pool contains at least one backtestable candidate."
+        )
+
+        asset_swap_rows = [kw for kw in captured_inserts if kw.get("advisor_role") == "ASSET_SWAP"]
+        assert asset_swap_rows, (
+            f"Expected at least one persisted ASSET_SWAP row; got roles="
+            f"{[kw.get('advisor_role') for kw in captured_inserts]!r}"
+        )
+
+        non_empty_lens_evidence_rows = [
+            row
+            for row in asset_swap_rows
+            if isinstance(row.get("raw_response"), dict)
+            and row["raw_response"].get("lens_evidence")
+        ]
+        assert non_empty_lens_evidence_rows, (
+            f"THE END-TO-END GAP: at least one persisted ASSET_SWAP row must carry a "
+            f"NON-EMPTY lens_evidence (AC-4) once the candidate pool is lens-covered "
+            f"and a real-shaped lens cache exists. Got raw_response['lens_evidence'] "
+            f"values: {[row.get('raw_response', {}).get('lens_evidence') for row in asset_swap_rows]!r}. "
+            f"If this is still {{}}, the candidate pool never overlapped AGG (the only "
+            f"ticker with lens evidence in this fixture) -- verify the pool sourcing "
+            f"fix actually reaches lens_technicals._PROXY_UNIVERSE."
         )
