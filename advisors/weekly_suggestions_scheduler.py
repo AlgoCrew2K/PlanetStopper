@@ -64,12 +64,14 @@ logger = logging.getLogger(__name__)
 # Composer/Alpaca budget (mirrors lens_technicals.py's _get_bars pattern).
 _CORRELATION_LOOKBACK_DAYS: int = 90
 
-# Bounded candidate pool sampled (deterministically, alphabetically) from the
-# full tradeable universe for the weekly asset-swap loop. Each pool member
-# costs one Composer /backtest call (rate-limited to 1 req/s) inside
-# suggest_swaps -- an unbounded ~12k-symbol universe (universe_provider's full
-# set) would make a single symphony's weekly run take hours. Source: mirrors
-# strategy_builder_engine.MAX_CANDIDATES_PER_RUN's bounding rationale.
+# Bounded candidate pool (deterministic alphabetical cap) for the weekly
+# asset-swap loop, applied to the lens-covered universe union (see
+# _build_base_candidate_pool: lens_technicals._PROXY_UNIVERSE ∪ live
+# logic_holdings). Each pool member costs one Composer /backtest call
+# (rate-limited to 1 req/s) inside suggest_swaps -- normally a no-op since
+# _PROXY_UNIVERSE alone is 10 members, but bounds the union if live holdings
+# push it over. Source: mirrors strategy_builder_engine.MAX_CANDIDATES_PER_RUN's
+# bounding rationale.
 _ASSET_SWAP_CANDIDATE_POOL_SIZE: int = 15
 
 # Default LogicChangeObjective.objective_type for the unattended weekly sweep
@@ -266,16 +268,57 @@ def _fetch_lens_scores() -> dict:
     return extract_lens_scores(lenses)
 
 
+def _build_base_candidate_pool(bot_state: dict) -> list:
+    """Build the lens-covered candidate-pool base, ONCE per run.
+
+    PM-routed follow-up (second live-E2E, 2026-07-12): the prior
+    ``sorted(get_tradeable_set())[:_ASSET_SWAP_CANDIDATE_POOL_SIZE]`` sourcing
+    was an alphabetical-first sample of the full ~12,748-symbol Alpaca
+    tradeable universe -- structurally incapable of overlapping
+    ``lens_technicals._PROXY_UNIVERSE`` (the 10 sector-ETF tickers the
+    technicals lens actually scores), so ``lens_scores.get(candidate)`` always
+    missed and ``lens_evidence`` stayed ``{}`` even with a real, correctly-
+    parsed lens cache (E2E-confirmed).
+
+    Fix: the pool is the LENS-COVERED universe --
+    ``lens_technicals._PROXY_UNIVERSE`` unioned with every live symphony's
+    ``logic_holdings`` (the bot_state field ``ai_advisor.py``'s technicals/
+    fundamentals builders already read, e.g. ``ai_advisor.py:520-526`` --
+    NOT the Composer score-tree structure ``extract_tickers`` reads). This
+    makes swaps both sensible (real market-proxy / actually-held tickers, not
+    an alphabetical accident) and lens-informed.
+
+    ``universe_provider.get_tradeable_set()`` is deliberately NOT used to
+    filter this pool -- broad correlation-screened discovery across the full
+    tradeable universe is a documented future enhancement, out of this
+    cycle's scope; intersecting against it here would reintroduce the same
+    "lens-covered tickers get filtered out" failure mode this fix closes.
+
+    Bounded to ``_ASSET_SWAP_CANDIDATE_POOL_SIZE`` (deterministic
+    alphabetical sample) -- ``_PROXY_UNIVERSE`` alone is 10, so the cap is
+    normally a no-op; it only bites if live holdings push the union past it.
+    """
+    from advisors.lens_technicals import _PROXY_UNIVERSE  # noqa: PLC0415
+
+    pool: set = set(_PROXY_UNIVERSE)
+    for entry in bot_state.values():
+        if isinstance(entry, dict):
+            for ticker in entry.get("logic_holdings", {}):
+                if ticker:
+                    pool.add(ticker)
+
+    return sorted(pool)[:_ASSET_SWAP_CANDIDATE_POOL_SIZE]
+
+
 def run_weekly_asset_swap_suggestions() -> None:
     """Enumerate live symphonies and call suggest_swaps once per symphony.
 
     AC-C2: same enumeration as C.1; assembles the ticker-level return-series
     correlation_data via a synthetic_history.fetch_bars-style step over a
-    candidate pool sourced from universe_provider.get_tradeable_set() (bounded
-    to _ASSET_SWAP_CANDIDATE_POOL_SIZE, deterministic alphabetical sample);
-    objective defaults to reduce_correlation (v1 scope boundary). Per-symphony
-    D-1: one symphony's score-fetch/universe/bar-fetch failure or suggest_swaps
-    exception never blocks the others. Never raises.
+    candidate pool sourced from the lens-covered universe (see
+    _build_base_candidate_pool); objective defaults to reduce_correlation (v1
+    scope boundary). Per-symphony D-1: one symphony's score-fetch/bar-fetch
+    failure or suggest_swaps exception never blocks the others. Never raises.
 
     lens_scores is wired through _fetch_lens_scores() (read-only
     MARKET_LENS_CACHE read, once per run -- see that function's docstring) and
@@ -283,6 +326,17 @@ def run_weekly_asset_swap_suggestions() -> None:
     fix) is GREEN -- this closes the "fixed math, dead in production" gap
     (extract_lens_scores/_apply_lens_blend were previously unreachable via any
     real weekly path).
+
+    Per-symphony pool exclusion: each symphony's own candidate pool excludes
+    THAT symphony's own held ticker(s) -- extracted from ITS OWN Composer
+    score_tree via extract_tickers, the same source the primary_ticker anchor
+    already uses -- so a symphony is never offered its own current holding as
+    a "new" swap candidate (no swap-into-self). A ticker held by a DIFFERENT
+    symphony remains a valid candidate for this one (no cross-symphony
+    conflict) -- this mirrors, at the pool-construction level, the
+    engine's own existing per-symphony filter (suggest_swaps already skips
+    `candidate_asset in present_tickers`, asset_swap_engine.py) --
+    defense-in-depth / explicit-by-construction, not a new behavioral class.
     """
     import database  # noqa: PLC0415 - CC-2 lazy, off-execution-path
     import symphony_logic  # noqa: PLC0415
@@ -291,7 +345,6 @@ def run_weekly_asset_swap_suggestions() -> None:
         extract_tickers,
         suggest_swaps,
     )
-    from advisors.universe_provider import get_tradeable_set  # noqa: PLC0415
 
     bot_state = database.load_state()
     symphony_hashes = _live_symphony_hashes(bot_state)
@@ -299,17 +352,7 @@ def run_weekly_asset_swap_suggestions() -> None:
     if not symphony_hashes:
         return
 
-    try:
-        tradeable = get_tradeable_set()
-    except Exception as exc:  # noqa: BLE001 - D-1
-        logger.warning(
-            "run_weekly_asset_swap_suggestions: tradeable universe fetch failed (%s)",
-            type(exc).__name__,
-        )
-        tradeable = frozenset()
-
-    # Deterministic bounded sample -- see _ASSET_SWAP_CANDIDATE_POOL_SIZE.
-    candidate_pool = sorted(tradeable)[:_ASSET_SWAP_CANDIDATE_POOL_SIZE]
+    base_pool = _build_base_candidate_pool(bot_state)
 
     # Market-wide lens evidence, fetched ONCE for the whole run (not per
     # symphony) -- see _fetch_lens_scores(). Falsy (None/{}) degrades to the
@@ -326,6 +369,9 @@ def run_weekly_asset_swap_suggestions() -> None:
             # more sophisticated analysis) -- out of this loop-wiring
             # workstream's scope (AC-C3: the engines are unchanged).
             primary_ticker = sorted(held_tickers)[0] if held_tickers else None
+
+            # Per-symphony exclusion (no swap-into-self) -- see docstring.
+            candidate_pool = [t for t in base_pool if t not in held_tickers]
 
             needed_tickers = set(held_tickers) | set(candidate_pool)
             correlation_data = _build_correlation_data(needed_tickers)
