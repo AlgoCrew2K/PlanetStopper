@@ -48,6 +48,7 @@ Harvey & Liu 2015 (BHY/Yekutieli FDR, DOI 10.3905/jpm.2015.42.1.013).
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Callable, Sequence
 from typing import NamedTuple
@@ -124,6 +125,41 @@ THIN_WINDOW_CAVEAT = (
     " computed with a conservative fallback (0.0) which typically fails the"
     " BHY gate. The gate is therefore likely to WITHHOLD on thin series."
 )
+
+# Number of leading bytes of the SHA-256 digest used to derive a candidate's
+# bootstrap seed (AC-D3 order-independence fix). 4 bytes -> a 32-bit unsigned
+# int, comfortably within numpy.random.default_rng's accepted seed range.
+_STABLE_SEED_DIGEST_BYTES = 4
+
+
+def _stable_seed_from_candidate_id(candidate_id: str) -> int:
+    """Deterministic bootstrap seed derived from a candidate's OWN id.
+
+    AC-D3 fix: evaluate_candidate_batch previously seeded compute_sortino_tstat's
+    nonparametric bootstrap with the candidate's ENUMERATE POSITION in the input
+    list (``seed=idx``). Reversing (or otherwise reordering) the SAME candidate
+    set therefore reassigned different seeds to each candidate, producing a
+    different bootstrap SE / t-stat / BHY-adjusted p-value for the identical
+    candidate and return series -- the gate was order-dependent, violating the
+    "BHY-FDR output is unchanged for a fixed candidate set" invariant.
+
+    Deriving the seed from the candidate's own ``candidate_id`` instead makes it
+    independent of batch position: the same candidate always gets the same seed,
+    regardless of what order it was submitted in or who else is in the batch.
+
+    SHA-256 (not the builtin ``hash()``) is used deliberately: CPython randomizes
+    ``hash()`` for ``str`` per-process (PYTHONHASHSEED) unless explicitly disabled,
+    so it would NOT be reproducible across process restarts. SHA-256 is stable
+    across processes and Python versions -- required by compute_sortino_tstat's
+    own reproducibility contract ("the haircut decision is reproducible under a
+    fixed trial set").
+
+    Returns:
+        A non-negative int in [0, 2**32) suitable for numpy.random.default_rng.
+    """
+    digest = hashlib.sha256(candidate_id.encode("utf-8")).digest()
+    return int.from_bytes(digest[:_STABLE_SEED_DIGEST_BYTES], byteorder="big")
+
 
 # ---------------------------------------------------------------------------
 # C5b — overfitting-cull strengthening constants
@@ -689,13 +725,24 @@ def evaluate_candidate_batch(
     # Only non-zero validation folds contribute to the BHY; empty folds (too-short
     # series / purge failure) produce t=0.0 → p=0.5 which fails BHY conservatively.
     # --------------------------------------------------------------------------
-    # Each candidate's t-stat is computed with a deterministic seed derived from its
-    # index (same seed-derivation strategy as autotuner.py:_haircut_select:1256 where
-    # seed=trial_idx ensures reproducible cross-study haircut decisions).
+    # AC-D3 fix: each candidate's t-stat is seeded from a STABLE hash of its own
+    # candidate_id (_stable_seed_from_candidate_id), NOT its enumerate() position
+    # in this batch. A position-derived seed (the prior `seed=idx`) made the same
+    # candidate's bootstrap SE / t-stat / BHY-adjusted p-value depend on what order
+    # it was submitted in, which made evaluate_candidate_batch's output non-
+    # deterministic for a fixed candidate SET (violates the "unchanged for a fixed
+    # candidate set" invariant tested by test_lens_blend_efficacy.py's
+    # TestGateOutputUnchangedByCandidateOrder). This is a DIFFERENT seed-derivation
+    # context than autotuner.py:_haircut_select's seed=trial_idx (that call site
+    # seeds by TRIAL index within one fixed, never-reordered Optuna study — not
+    # touched here).
     tstats: list[float] = []
-    for idx, (cand, fold) in enumerate(zip(candidates, fold_results)):
+    for cand, fold in zip(candidates, fold_results):
         if fold.validation_returns_pct:
-            t = compute_sortino_tstat(fold.validation_returns_pct, seed=idx)
+            t = compute_sortino_tstat(
+                fold.validation_returns_pct,
+                seed=_stable_seed_from_candidate_id(cand.candidate_id),
+            )
         else:
             # Empty validation fold (series too short) → conservative 0.0.
             # compute_haircut_pvalue(0.0) = 0.5, fails BHY.
