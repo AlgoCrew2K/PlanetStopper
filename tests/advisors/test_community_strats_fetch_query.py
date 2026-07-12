@@ -99,7 +99,7 @@ class _FakeCursor:
     def __init__(self, docs: list[dict]) -> None:
         self._docs = docs
 
-    def limit(self, n: int) -> "_FakeCursor":
+    def limit(self, n: int) -> _FakeCursor:
         self._docs = self._docs[:n]
         return self
 
@@ -124,7 +124,12 @@ class _FakeCollection:
     def find(self, filter=None, projection=None, *, sort=None, allow_disk_use=None):  # noqa: A002
         filter = filter or {}
         self.find_calls.append(
-            {"filter": filter, "projection": projection, "sort": sort, "allow_disk_use": allow_disk_use}
+            {
+                "filter": filter,
+                "projection": projection,
+                "sort": sort,
+                "allow_disk_use": allow_disk_use,
+            }
         )
         matched = self._match(filter)
         if sort:
@@ -146,7 +151,9 @@ class _FakeCollection:
     def _sorted(docs: list[dict], sort_spec) -> list[dict]:
         for field, direction in reversed(list(sort_spec)):
             docs = sorted(
-                docs, key=lambda d, f=field: _dotted_get(d, f, float("-inf")), reverse=(direction < 0)
+                docs,
+                key=lambda d, f=field: _dotted_get(d, f, float("-inf")),
+                reverse=(direction < 0),
             )
         return docs
 
@@ -516,8 +523,7 @@ class TestBehaviorPreservedD1AndPipeline:
 
         assert result["available"] is False, f"expected available=False; got {result!r}"
         assert result.get("reason") == "ConnectionError", (
-            f"expected reason='ConnectionError' (type(exc).__name__); got "
-            f"{result.get('reason')!r}"
+            f"expected reason='ConnectionError' (type(exc).__name__); got {result.get('reason')!r}"
         )
 
     def test_pipeline_still_validates_dedups_filters_and_limits(self, mod, monkeypatch):

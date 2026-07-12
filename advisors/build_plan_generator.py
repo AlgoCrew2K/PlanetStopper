@@ -1214,9 +1214,12 @@ def admit_community_candidates(
     docs are raw-data-inconsistent, carrying either the %-suffixed or bare
     key form; community_strats passes oos_metrics through verbatim with no
     key normalization):
-      cut_drawdown         — 'Max Drawdown %' / 'Max Drawdown' (%-string) descending (nearer zero = shallower, better)
-      volatility_mitigation— 'Volatility (ann.) %' / 'Volatility (ann.)' (%-string) ascending (lowest first)
-      lift_risk_adjusted   — 'Sharpe' (plain-decimal string, NOT %-formatted, single key form) descending (highest first)
+      cut_drawdown          — 'Max Drawdown %' / 'Max Drawdown' (%-string),
+                              descending (nearer zero = shallower, better)
+      volatility_mitigation — 'Volatility (ann.) %' / 'Volatility (ann.)' (%-string),
+                              ascending (lowest first)
+      lift_risk_adjusted    — 'Sharpe' (plain-decimal string, NOT %-formatted,
+                              single key form), descending (highest first)
       diversify            — greedy low-ticker-overlap (Jaccard), deterministic+complete
 
     Missing / unparseable stat docs are KEPT-LAST (admitted after all docs that have
@@ -1287,9 +1290,7 @@ def admit_community_candidates(
             # Key-union: real docs use either 'Max Drawdown %' (dominant form)
             # or the bare 'Max Drawdown' (DE-ATLAS-STAT-FIELD-002).
             # Missing/unparseable docs -> float("-inf") -> last.
-            keyed = [
-                (_stat(d, ["Max Drawdown %", "Max Drawdown"], percent=True), d) for d in raw
-            ]
+            keyed = [(_stat(d, ["Max Drawdown %", "Max Drawdown"], percent=True), d) for d in raw]
             keyed.sort(
                 key=lambda x: x[0] if x[0] is not None else float("-inf"),
                 reverse=True,

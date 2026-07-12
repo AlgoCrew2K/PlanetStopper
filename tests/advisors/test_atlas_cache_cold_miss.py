@@ -30,9 +30,9 @@ from __future__ import annotations
 import json
 import pathlib
 import sqlite3
+from unittest.mock import MagicMock
 
 import pytest
-from unittest.mock import MagicMock
 
 # ---------------------------------------------------------------------------
 # Fixture: a cache DB path that has NEVER been touched by init_atlas_cache()
@@ -63,9 +63,7 @@ class TestColdMissRealMoneyBug:
     caller (community_strats.py) never does.
     """
 
-    def test_second_call_within_ttl_is_served_from_cache_not_refetched(
-        self, cold_atlas_cache_db
-    ):
+    def test_second_call_within_ttl_is_served_from_cache_not_refetched(self, cold_atlas_cache_db):
         """DECISIVE: two cached_pull() calls, same key, same TTL window, on a
         DB that was never init'd. fetch_fn (stand-in for a paid Mongo pull)
         must fire exactly ONCE -- the second call must be a cache HIT.
@@ -89,8 +87,7 @@ class TestColdMissRealMoneyBug:
             "never does)."
         )
         assert first == second, (
-            "Second call must return the CACHED first-call payload, not a "
-            "freshly re-fetched one."
+            "Second call must return the CACHED first-call payload, not a freshly re-fetched one."
         )
 
     def test_first_call_creates_table_and_persists_row_without_prior_init(
