@@ -186,6 +186,27 @@ def _make_score_tree_simple(
     }
 
 
+def _make_tree_single_window_param(
+    symphony_id: str = "sym-direction-test",
+    value: Any = 10,
+) -> dict:
+    """Build a score tree with exactly ONE numeric parameter: window=value.
+
+    Deliberately single-param (unlike _make_score_tree_with_numeric_params, which
+    has two) so a keyword-only fallback match (Phase 3 / Phase 4) is deterministic:
+    there is only one candidate parameter for _parse_change_description_to_tweak
+    to select, with no ambiguity about which window it picked.
+    """
+    return {
+        "id": symphony_id,
+        "name": "Direction Test Symphony",
+        "type": "root",
+        "children": [
+            {"type": "momentum", "window": value, "children": []},
+        ],
+    }
+
+
 def _make_mock_backtest_result(
     daily_returns_pct: list | None = None,
     status_code: int = 200,
@@ -2079,3 +2100,177 @@ class TestNamedScalingConstants:
                 f"literal pattern '{pattern}' after BLOCK-1 fix (reviewer BLOCK-1). "
                 "Replace with the corresponding named module-level constant."
             )
+
+
+# ===========================================================================
+# Section 15 — Phase-3/Phase-4 fallback must respect stated tweak direction
+# (reality-audit finding, LIVE bug via propose_operator_logic_change)
+#
+# Finding: _parse_change_description_to_tweak's Phase 3 ("match by preferred
+# key only") and Phase 4 ("fall back to the first numeric parameter") both
+# apply a flat `old_val * 1.20` regardless of the description's stated
+# direction.  Live-verified: "reduce the window size" produced old_value=10
+# -> new_value=12 (an INCREASE, despite "reduce"). The fix must read
+# reduce/lower/decrease/shrink -> DECREASE and increase/raise/grow ->
+# INCREASE from the description text, in both fallback phases (they share
+# identical math).
+# ===========================================================================
+
+
+class TestPhase3FallbackDirectionRespected:
+    """Fallback tweaks (no explicit 'from X to Y' numbers in the description)
+    must move in the direction the description states, not a flat +20%.
+    """
+
+    @pytest.mark.parametrize("keyword", ["reduce", "lower", "decrease", "shrink"])
+    def test_phase3_fallback_respects_reduce_direction_keywords(self, keyword):
+        """A reduce/lower/decrease/shrink description must DECREASE the value.
+
+        Uses a keyword ('window') that maps to a preferred_key, with no numeric
+        values in the description, forcing Phase 3 (preferred-key fallback).
+        """
+        engine = _import_engine()
+        tree = _make_tree_single_window_param(value=10)
+        description = f"{keyword.capitalize()} the window size to improve reactivity"
+
+        tweak = engine._parse_change_description_to_tweak(tree, description)
+
+        assert tweak is not None, (
+            f"_parse_change_description_to_tweak returned None for {description!r}; "
+            "expected a Phase-3 fallback tweak on the sole 'window' parameter."
+        )
+        assert tweak.old_value == 10, (
+            f"Test setup sanity: old_value must be 10 (the tree's only window "
+            f"value). Got {tweak.old_value!r}."
+        )
+        assert tweak.new_value < tweak.old_value, (
+            f"{description!r} states a REDUCE direction; new_value must be < "
+            f"old_value. Got old={tweak.old_value}, new={tweak.new_value}. "
+            "The Phase-3 fallback must not apply a flat +20% regardless of "
+            "the description's stated direction."
+        )
+
+    @pytest.mark.parametrize("keyword", ["increase", "raise", "grow"])
+    def test_phase3_fallback_respects_increase_direction_keywords(self, keyword):
+        """An increase/raise/grow description must INCREASE the value."""
+        engine = _import_engine()
+        tree = _make_tree_single_window_param(value=10)
+        description = f"{keyword.capitalize()} the window size for smoother signals"
+
+        tweak = engine._parse_change_description_to_tweak(tree, description)
+
+        assert tweak is not None, (
+            f"_parse_change_description_to_tweak returned None for {description!r}."
+        )
+        assert tweak.old_value == 10, (
+            f"Test setup sanity: old_value must be 10. Got {tweak.old_value!r}."
+        )
+        assert tweak.new_value > tweak.old_value, (
+            f"{description!r} states an INCREASE direction; new_value must be > "
+            f"old_value. Got old={tweak.old_value}, new={tweak.new_value}."
+        )
+
+    def test_phase3_fallback_reduce_from_10_is_not_the_audit_regression_value_12(self):
+        """Pin the exact audit-observed regression: 'reduce the window size' on
+        old_value=10 must NOT yield new_value=12 (the +20%-regardless-of-direction bug).
+        """
+        engine = _import_engine()
+        tree = _make_tree_single_window_param(value=10)
+
+        tweak = engine._parse_change_description_to_tweak(tree, "reduce the window size")
+
+        assert tweak is not None
+        assert tweak.old_value == 10
+        assert tweak.new_value != 12, (
+            "Reproduces the exact audit-confirmed regression: 'reduce the window "
+            f"size' on old_value=10 produced new_value=12 (a +20% INCREASE despite "
+            f"'reduce'). Got new_value={tweak.new_value}."
+        )
+        assert tweak.new_value < 10, (
+            f"'reduce the window size' must decrease the value. "
+            f"Got new_value={tweak.new_value}."
+        )
+
+    @pytest.mark.parametrize("keyword", ["reduce", "decrease"])
+    def test_phase4_fallback_respects_reduce_direction_with_no_keyword_match(self, keyword):
+        """Phase 4 (no recognized param-key keyword at all) must also respect
+        direction — same +20% fallback math as Phase 3, same bug class.
+
+        'allocation'/'weight' do not appear in keyword_to_keys, so preferred_keys
+        stays empty and the Phase-3 loop is skipped entirely — this description
+        can ONLY be satisfied by Phase 4 (the true structural fallback).
+        """
+        engine = _import_engine()
+        tree = _make_tree_single_window_param(value=10)
+        description = f"{keyword.capitalize()} the allocation weight for this position"
+
+        tweak = engine._parse_change_description_to_tweak(tree, description)
+
+        assert tweak is not None, (
+            f"_parse_change_description_to_tweak returned None for {description!r}; "
+            "expected the Phase-4 structural fallback to still produce a tweak."
+        )
+        assert tweak.new_value < tweak.old_value, (
+            f"{description!r} states a REDUCE direction via Phase 4 (no keyword "
+            f"match). new_value must be < old_value. "
+            f"Got old={tweak.old_value}, new={tweak.new_value}."
+        )
+
+    @pytest.mark.parametrize("keyword", ["increase", "grow"])
+    def test_phase4_fallback_respects_increase_direction_with_no_keyword_match(self, keyword):
+        """Phase 4 must respect an increase direction too (mirror of the reduce case)."""
+        engine = _import_engine()
+        tree = _make_tree_single_window_param(value=10)
+        description = f"{keyword.capitalize()} the allocation weight for this position"
+
+        tweak = engine._parse_change_description_to_tweak(tree, description)
+
+        assert tweak is not None, (
+            f"_parse_change_description_to_tweak returned None for {description!r}."
+        )
+        assert tweak.new_value > tweak.old_value, (
+            f"{description!r} states an INCREASE direction via Phase 4. "
+            f"new_value must be > old_value. "
+            f"Got old={tweak.old_value}, new={tweak.new_value}."
+        )
+
+    def test_operator_initiated_live_path_reduce_description_decreases_value(self):
+        """LIVE-PATH regression: propose_operator_logic_change (the operator-
+        initiated route, DE-LOGIC-CHANGE-DIRECTION-001) must apply a DECREASING
+        tweak for a 'reduce'-worded change_description with no explicit numeric
+        values (forces the Phase-3 fallback), end-to-end through the public API.
+        """
+        engine = _import_engine()
+        tree = _make_tree_single_window_param(value=10)
+        objective = _make_logic_objective(objective_type="reduce_drawdown", measured_value=-0.10)
+
+        returns = _make_synthetic_returns_pct(500, seed=31, mean_pct=0.05)
+        mock_backtest = _make_mock_backtest_result(daily_returns_pct=returns)
+
+        with (
+            patch(
+                "advisors.logic_change_engine.run_backtest",
+                return_value=mock_backtest,
+            ),
+            patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch("database.insert_advisor_observation"),
+        ):
+            result = engine.propose_operator_logic_change(
+                symphony_id="sym-direction-live",
+                score_tree=tree,
+                change_description="Reduce the window to improve drawdown reactivity",
+                objective=objective,
+            )
+
+        assert len(result.proposals) == 1, (
+            f"Expected exactly one proposal for a single-param tree. "
+            f"Got {len(result.proposals)}."
+        )
+        tweak = result.proposals[0].tweak
+        assert tweak is not None, "The change_description must parse into a tweak."
+        assert tweak.new_value < tweak.old_value, (
+            f"LIVE PATH: 'Reduce the window...' must decrease the tweak value. "
+            f"Got old={tweak.old_value}, new={tweak.new_value}. "
+            "propose_operator_logic_change must surface a direction-correct "
+            "tweak from _parse_change_description_to_tweak's Phase-3 fallback."
+        )
