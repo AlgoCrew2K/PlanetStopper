@@ -315,6 +315,29 @@ class TestDeploymentDocsHaveWeeklySuggestionsSection:
             "Persistent=true (AC-B3, mirrors the Prism timer)."
         )
 
+    def test_deployment_doc_runs_the_weekly_service_as_non_root(self):
+        """AC-B3: 'Runs as non-root planetstopper'. Locate the weekly-suggestions
+        service block and assert it declares User=planetstopper (or an equivalent
+        explicit non-root User= directive) -- mirrors the Prism service's
+        `User=planetstopper` line (docs/DEPLOYMENT.md:247). A missing User= directive
+        means systemd defaults to running the oneshot as root, which the plan
+        explicitly forbids for every advisor scheduler on the droplet."""
+        text = _DEPLOYMENT_DOC.read_text(encoding="utf-8")
+        marker = "weekly_suggestions_scheduler.py"
+        idx = text.find(marker)
+        assert idx != -1, "weekly_suggestions_scheduler.py section not found in DEPLOYMENT.md."
+
+        # Same bounded window as the council-env check below -- the service unit
+        # block (containing User=) sits near the ExecStart= line referencing the
+        # script, same as the Prism unit's layout at docs/DEPLOYMENT.md:238-254.
+        window = text[max(0, idx - 800) : idx + 800]
+        assert "User=planetstopper" in window, (
+            "The weekly-suggestions systemd service block must declare "
+            "'User=planetstopper' (AC-B3: 'Runs as non-root planetstopper') -- "
+            "mirrors the Prism service's User=planetstopper directive "
+            "(docs/DEPLOYMENT.md:247). Without it, systemd runs the oneshot as root."
+        )
+
     def test_deployment_doc_does_not_wire_council_oauth_env_for_weekly_timer(self):
         """AC-B3: 'EnvironmentFile=/opt/planetstopper/.env ONLY -- no council-env /
         OAuth-token (SDK path, metered ANTHROPIC_API_KEY)'. Locate the weekly-
