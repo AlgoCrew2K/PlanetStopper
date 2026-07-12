@@ -5040,6 +5040,8 @@ _ADVISOR_ROLES = [
     "NARRATOR",  # DEFERRED per Sprint 3 scope — producer not yet shipped
     "MARKET_PRISM",  # Cycle-1 scaffold — always-on market overview (GATE-1-AC §8)
     "ADD_CANDIDATE",  # Cycle-1 scaffold — backtest-agnostic add-candidate advisory (GATE-1-AC §3)
+    "ASSET_SWAP",  # AC-A2 — weekly auto asset-swap suggestions (advisors/asset_swap_engine.py)
+    "LOGIC_CHANGE",  # AC-A2 — weekly auto logic-change suggestions (advisors/logic_change_engine.py)
 ]
 
 # Hard limit on observations returned per request — prevents unbounded UI renders.
