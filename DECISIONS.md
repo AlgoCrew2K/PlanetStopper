@@ -4157,3 +4157,168 @@ Confined to `above_sma200` and any consumer reading it (the Market Prism per-len
 - `docs/generated/advisors_lens_technicals.md` -- constants table + new Bug Fix section + wiring line-number correction
 - `docs/generated/ai_advisor.md` -- stale line-number + stale `_fetch_technicals([])` claim corrected while sweeping this section (pre-existing drift, unrelated to this fix, corrected in the same pass)
 - `docs/generated/INDEX.md` -- module-index row + dated Architecture Notes bullet
+
+## DE-ADVISOR-REWIRE-E -- autotune_runs.s_count writer wired; Overfitting Conscience Indicator-3 (operator drift) can now fire on live data (2026-07-12)
+
+Branch: fix/advisor-rewire | Base: ec52a49a | Fix commits: 4168c0c6 (database.py + autotuner.py)
+
+### The gap: an existing column with no writer
+
+Migration `023_autotune_runs_s_count.sql` added the `s_count` column to `autotune_runs` well before this cycle, but no caller ever populated it -- `database.save_autotune_run` had no `s_count` parameter. Every row's `s_count` was `NULL` forever. `advisors/overfitting_conscience.py`'s Indicator-3 (operator drift -- monotonically growing `S` across consecutive runs on the same symphony) requires `>= 2` prior runs with non-`NULL`, increasing `s_count` to fire. With every historical row `NULL`, drift detection was **structurally impossible** on live data, regardless of how much genuine researcher drift actually occurred -- not because `overfitting_conscience.py`'s own I-1/I-2/I-3 logic was wrong (it was verified already-correct and left untouched), but because its input was always empty.
+
+### The fix
+
+1. `database.save_autotune_run` gains `s_count: int | None = None` as the 17th INSERT column on `autotune_runs`. Uses `is not None`, not a truthiness check -- `s_count=0` (the honest NN1-compliant no-BACKTEST_SELECTION-evidence case) persists as literal `0`, never coerced to `NULL`. Append-only -- no UPDATE path introduced.
+2. `autotuner.py` hoists the DoF-ledger sum query (`SELECT evidence_source, n_configs_searched ... FROM researcher_dof_ledger WHERE spec_bundle_id = ?`, run via `advisor_ro_query`) from AFTER `save_autotune_run` (where it fed ONLY the in-memory Overfitting Conscience call) to BEFORE it. `_s_count_for_persistence = sum(n_configs_searched for BACKTEST_SELECTION rows)` is now passed as `save_autotune_run(s_count=...)`. This is a control-flow reorder only -- the current-run I-1/I-2 `S` computation and verdict logic in `overfitting_conscience.py` are unchanged; they re-derive their own `S` from the same ledger rows independently of the persisted `s_count`.
+
+### Why this matters (the WHY)
+
+Indicator-3 exists specifically to catch a slow-burn overfitting failure mode that I-1/I-2 (single-run S/N ratio) cannot see: an operator who runs many small, individually-innocuous BACKTEST_SELECTION searches across successive autotune cycles on the same symphony, each one below the I-2 BREACH threshold, but which accumulate into genuine multiple-testing exposure over time. Without a real `s_count` history, this drift pattern was invisible no matter how it manifested in practice -- the safeguard existed in code and had full test coverage, but could never fire against the live database.
+
+### NULL tolerance (AC-E4)
+
+Legacy rows with `s_count IS NULL` (everything written before this fix) are tolerated -- the prior-runs scan skips `NULL` entries rather than crashing. Drift detection needs `>= 2` non-`NULL` priors, so it will not fire until enough post-fix runs accumulate; this is expected and correct. No retroactive backfill of historical rows was attempted (they carry no unambiguous `s_count` figure to backfill).
+
+### Blast radius
+
+Confined to `database.save_autotune_run`'s new optional kwarg and the query-hoist inside `autotuner.py:run_autotuner`. `overfitting_conscience.py` (the consumer) is byte-unchanged. `compute_n_effective`'s own `S` computation (a DIFFERENT accumulator -- current-run-only, excludes the winning bundle, feeds the BHY haircut) is unaffected and remains distinct from the persisted `s_count` (an all-`BACKTEST_SELECTION`-rows accumulator with no winning-bundle exclusion, consumed by LATER runs' drift check).
+
+### Result
+
+RED committed by awt-test at `d5ff3480`: `tests/database/test_save_autotune_run_s_count.py` (6 tests) + `tests/autotuner/test_autotuner_s_count_hoist_wiring.py` (4 tests). GREEN at `4168c0c6`: all 11 pass, plus a 273-test regression sweep across files adjacent to `save_autotune_run`/`autotuner.py`/`overfitting_conscience.py` -- 0 failures. `ruff format`/`check` clean.
+
+### Files changed
+
+- `database.py` -- `save_autotune_run` gains `s_count` kwarg + INSERT column (commit 4168c0c6)
+- `autotuner.py` -- DoF-ledger query hoisted before `save_autotune_run`; `s_count=` passed (commit 4168c0c6)
+- `tests/database/test_save_autotune_run_s_count.py`, `tests/autotuner/test_autotuner_s_count_hoist_wiring.py` -- RED (commit d5ff3480)
+- `docs/generated/database.md`, `docs/generated/autotuner.md`, `docs/generated/advisors_overfitting_conscience.md`, `docs/generated/INDEX.md` -- updated to reflect the fix (commit f8b46a24)
+
+## DE-ADVISOR-REWIRE-A -- Strategy Builder weekly dedup TypeError fixed; ASSET_SWAP/LOGIC_CHANGE observations surfaced in the dashboard (2026-07-12)
+
+Branch: fix/advisor-rewire | Base: ec52a49a | Fix commits: 9cc64113 (dedup), eb98fb0b (surfacing)
+
+### AC-A1: the dedup guard that always returned False
+
+`advisors/strategy_builder_scheduler._already_ran_this_week()` called `database.get_advisor_observations_for_symphony(symphony_id="", advisor_role="STRATEGY_BUILDER", limit=50)` -- a call signature that does not exist (`get_advisor_observations_for_symphony` takes only `symphony_id`). Every invocation raised `TypeError`, silently caught by the function's own outer `except Exception` (a deliberate D-1 degrade-to-`False` for genuine DB errors), so `_already_ran_this_week()` ALWAYS returned `False` -- the same-ISO-week idempotency guard never actually fired. The ISO-week comparison logic itself (lines 64-87) was always correct; it was simply unreachable behind the swallowed exception. Fixed by calling the real `database.get_advisor_observations_for_role("STRATEGY_BUILDER", limit=50)` accessor.
+
+**Why this matters:** before Workstream B's orchestrator existed, this bug meant a second manual/cron invocation of `run_weekly_build()` in the same ISO week would have re-triggered a full 4-objective builder run (Composer backtests, Opus generation cost) with zero idempotency protection -- exactly the "computationally expensive, weekly-granularity-by-design" resource the guard exists to protect.
+
+### AC-A2/AC-A3: producers with no consumer
+
+`advisors/asset_swap_engine.suggest_swaps` and `advisors/logic_change_engine.suggest_logic_changes` both persist `ASSET_SWAP`/`LOGIC_CHANGE` `advisor_observations` rows on every call and always have -- but `app.py`'s `_ADVISOR_ROLES` list (which both the `/ai-advisor` Overview feed and the `/api/advisor-observations` no-filter branch iterate) never included either role, so those rows were written to the DB but never rendered anywhere. Fixed additively: `_ADVISOR_ROLES` gains `"ASSET_SWAP"` and `"LOGIC_CHANGE"`; `templates/ai_advisor.html`'s `_ROLE_LABELS` gains human labels (`"Asset Swap"`, `"Logic Change"`) so the Overview table never renders the raw enum string. AC-A3 (the Strategy Builder tab surfacing a `symphony_id=""` weekly row) needed no code change -- `app.py:4069-4076`'s query was already unscoped by symphony; a regression test now pins it.
+
+### Blast radius
+
+AC-A1 is confined to the one call site inside `_already_ran_this_week()`. AC-A2 is additive-only to `_ADVISOR_ROLES` and `_ROLE_LABELS` -- all 5 pre-existing roles unchanged, no route/template structural change, no new write path, no CSRF surface change.
+
+### Result
+
+RED committed by awt-test at `d5ff3480`: `tests/advisors/test_dedup_already_ran_this_week_role_query.py` (5 tests), `tests/app/test_advisor_roles_surface_asset_swap_and_logic_change.py` (10 tests). GREEN: `9cc64113` (dedup, 5/5 + 4/4 `test_builder_scheduler.py` regression), `eb98fb0b` (surfacing, 10/10 + 49/49 `test_advisor_observations_ui.py` regression). `ruff format`/`check` clean.
+
+### Files changed
+
+- `advisors/strategy_builder_scheduler.py` -- dedup call fixed (commit 9cc64113)
+- `app.py` -- `_ADVISOR_ROLES` gains 2 entries (commit eb98fb0b)
+- `templates/ai_advisor.html` -- `_ROLE_LABELS` gains 2 entries (commit eb98fb0b)
+- `tests/advisors/test_dedup_already_ran_this_week_role_query.py`, `tests/app/test_advisor_roles_surface_asset_swap_and_logic_change.py` -- RED (commit d5ff3480)
+- `docs/generated/advisors_strategy_builder_scheduler.md`, `docs/generated/INDEX.md` -- updated (commit f8b46a24)
+
+## DE-ADVISOR-REWIRE-D -- lens-blend efficacy fix (mathematically inert -> genuinely reorders) + AC-D3 gate order-independence fix (2026-07-12)
+
+Branch: fix/advisor-rewire | Base: ec52a49a | Fix commits: 63ede739 (blend formula), 6a6baa5a (stale-fixture repoint), c61a3086 (AC-D3 gate seed)
+
+### The bug: a blend that could never blend
+
+`advisors/asset_swap_engine._apply_lens_blend` computed `blended_key[i] = position[i] - LENS_BLEND_WEIGHT * mean_lens[i]`, where `position` was the candidate's 0-based `enumerate()` rank from the primary objective sort and `LENS_BLEND_WEIGHT = 0.25`. For ANY two adjacent positions, the integer gap is always `>= 1`, and the maximum possible lens contribution is `LENS_BLEND_WEIGHT = 0.25 < 1` -- so the position gap structurally dominates the lens term for every possible input. Lens evidence could NEVER change the candidate order, for any objective, any lens_scores, any candidate set. This was live and shipped for the entire Cycle-3 cycle undetected, because the existing `test_lens_scores_reranks_candidates` test never actually asserted that a reorder occurred -- it merely asserted the function ran without error.
+
+### The fix: cumulative absolute score-distance
+
+Replaced with a formula on the CONTINUOUS primary `"score"` field (already present on every candidate dict): `cum_gap[i] = cum_gap[i-1] + |score[i] - score[i-1]|` (walked in the caller's own pre-sorted order), `blended_key[i] = cum_gap[i] - LENS_BLEND_WEIGHT * (mean_lens[i] - _LENS_NEUTRAL_SCORE)`. Deliberately NOT a per-batch min-max normalization -- min-max would always rescale a 2-candidate gap to fill `[0, 1]` regardless of true magnitude (a `0.0001` gap and a `0.90` gap would look identical after min-max), defeating the required invariant that a near-tied pair CAN invert but a commanding lead CANNOT. Raw absolute-gap accumulation preserves magnitude, so the fix satisfies both directions of AC-D2 simultaneously.
+
+### The WHY -- why this fix matters and why it was "dead in production" until wired further
+
+Fixing the math in isolation would not have been enough. `_apply_lens_blend` is reachable ONLY via `generate_objective_directed_candidates <- suggest_swaps <- (a caller passing real lens_scores)`. Before this cycle, NO production code anywhere called `suggest_swaps` with a real `lens_scores` argument -- the blend had a complete, tested implementation and, as of this fix, correct math, but zero live reachability. Workstream C.2 (`weekly_suggestions_scheduler._fetch_lens_scores()`, see DE-ADVISOR-REWIRE-C below) closed that gap in the SAME cycle, sourcing real market-wide lens evidence from the nightly `MARKET_LENS_CACHE` and passing it into every weekly `suggest_swaps` call. The team deliberately sequenced D before C.2's lens-wiring completion (not deferred to "a later cycle" as the original C.2 scope draft proposed) specifically so this fix would never ship as "looks wired, does nothing."
+
+### AC-D3: a second bug surfaced by making D genuinely functional
+
+Verifying Workstream D's own AC-D3 invariant test ("gate output is unchanged for a fixed candidate set, regardless of submission order") failed independent of the blend fix -- `advisors/backtest_gate_engine.evaluate_candidate_batch` seeded its Sortino bootstrap with `seed=idx` (the candidate's `enumerate()` position in the batch, not a property of the candidate itself). Reordering the SAME candidate set (as a working lens blend now legitimately does) reassigned different seeds to each candidate, producing a different bootstrap SE / t-stat / BHY-adjusted p-value for the IDENTICAL candidate purely as a function of submission order -- a pre-existing latent bug that a permanently-inert blend had never been able to trigger. Fixed via `_stable_seed_from_candidate_id` -- a SHA-256 hash (not the builtin `hash()`, which CPython randomizes per-process via `PYTHONHASHSEED`) of each candidate's OWN `candidate_id`, making the seed order-independent by construction. This was outside Workstream D's stated scope boundary ("do NOT change `evaluate_candidate_batch`") but was authorized by the PM as a scoped exception specific to this order-dependence bug -- `autotuner.py`'s own, different `seed=trial_idx` context (never-reordered single Optuna study) was explicitly left untouched.
+
+### Also surfaced, not fixed here (routed to test-writer)
+
+`tests/ai_advisor/test_cycle3_lens_informed_swaps.py::TestLensBlendPrimaryMetricDominance::test_primary_metric_dominates_opposing_lens_preference` failed against the now-functioning blend. Root-caused as a STALE fixture assumption predating this cycle: its AGG constant-series fixture assumed `corr(SPY,AGG) ~ 1.0` ("worst" case), but `_pearson_corr`'s existing (unmodified) zero-variance guard actually returns `0.0` for any constant series -- verified numerically live: `corr(SPY,BND)=0.0`, `corr(SPY,AGG)=0.0` (exact tie), `corr(SPY,TLT)=0.49`. BND and AGG are genuinely primary-score-tied, so the lens legitimately breaking that tie (AC-D2: zero gap is the smallest possible gap) is correct NEW behavior, not a regression -- the test only ever passed vacuously under the old inert blend. Repointed by the test-writer at commit `6a6baa5a` (role separation preserved -- the implementer does not edit test assertions).
+
+### Blast radius
+
+`asset_swap_engine.py`: confined to `_apply_lens_blend`'s internals -- function signature, `LENS_BLEND_WEIGHT`'s existence/value, and `evaluate_candidate_batch` (per the D scope boundary) are unchanged. `backtest_gate_engine.py`: confined to the single Step-2 seed-derivation call site inside `evaluate_candidate_batch`.
+
+### Result
+
+RED: `tests/ai_advisor/test_lens_blend_efficacy.py` (committed at `356197a0`/`d5ff3480` by awt-test, including a closed-form inertness proof of the pre-fix formula in its module docstring). GREEN: 8/9 at `63ede739` (the 9th, `TestGateOutputUnchangedByCandidateOrder`, surfaced AC-D3); 9/9 at `c61a3086`. Adjacent regression at `c61a3086`: 518 passed, 23 skipped (pre-existing/unrelated), 0 failed across `test_cycle3_lens_informed_swaps.py`, `test_lens_blend_efficacy.py`, `test_logic_change_routes.py`, `test_asset_swap_routes.py`, `test_pbo_acceptance_gate_veto.py`, `test_strategy_builder_route.py`, and 9 more adjacent files. `ruff format`/`check` clean.
+
+### Files changed
+
+- `advisors/asset_swap_engine.py` -- `_apply_lens_blend` reformulated (commit 63ede739)
+- `advisors/backtest_gate_engine.py` -- `_stable_seed_from_candidate_id` + seed-source fix (commit c61a3086)
+- `tests/ai_advisor/test_lens_blend_efficacy.py` -- RED (commit 356197a0/d5ff3480)
+- `tests/ai_advisor/test_cycle3_lens_informed_swaps.py` -- stale-fixture repoint (commit 6a6baa5a, test-writer)
+- `docs/generated/advisors_asset_swap_engine.md`, `docs/generated/advisors_backtest_gate_engine.md`, `docs/generated/INDEX.md` -- updated (commit f8b46a24)
+
+## DE-ADVISOR-REWIRE-C -- weekly per-symphony loop callers give suggest_swaps/suggest_logic_changes their first production callers (2026-07-12)
+
+Branch: fix/advisor-rewire | Base: ec52a49a | Fix commits: 9d3da841 (C.1/C.2/B initial), 29d2f042 (C.2 lens_scores wiring completion)
+
+### The gap
+
+`advisors/asset_swap_engine.suggest_swaps` and `advisors/logic_change_engine.suggest_logic_changes` both had complete implementations, full BHY-FDR gating, and comprehensive test suites -- but, before this cycle, no scheduled or automatic caller anywhere in the codebase. They were reachable only via direct manual/operator invocation (never actually invoked in practice). `advisors/weekly_suggestions_scheduler.py` (new module) adds `run_weekly_asset_swap_suggestions()` (AC-C2) and `run_weekly_logic_change_suggestions()` (AC-C1) -- both enumerate every live symphony via `database.load_state()`, fetch each symphony's Composer score tree, and call the respective engine once per symphony, each iteration independently `try`/`except`-wrapped (per-symphony D-1 isolation -- one symphony's score-fetch or engine failure never blocks the others). AC-C3: the engines themselves are UNCHANGED -- this is purely the enumeration/caller layer that did not exist.
+
+### AC-C2 completion: wiring lens_scores in the SAME cycle, not deferred
+
+The initial C.2 implementation (commit `9d3da841`) deliberately shipped WITHOUT `lens_scores` wiring, per the plan's literal wording ("wired through ONLY after D is GREEN"). Once D landed GREEN, a PM-verified reachability check found that `_apply_lens_blend` (fixed by D) was reachable ONLY via `generate_objective_directed_candidates <- suggest_swaps <- run_weekly_asset_swap_suggestions` (`propose_operator_swap` does not use the blend) -- so the fixed lens-blend math was STILL dead in the only real production path, because the loop called `suggest_swaps` with no `lens_scores` argument. The plan's "ONLY after D is GREEN" was correctly read as "sequenced after D within this same cycle," not "deferred to a separate cycle." Commit `29d2f042` adds `_fetch_lens_scores()` -- a read-only, ONCE-per-run (not per-symphony, since lens evidence is market-wide) fetch of `database.get_latest_market_lens_cache()` -> `raw_response["lenses"]` -> `advisors.asset_swap_engine.extract_lens_scores(lenses)` -- and passes the result as `lens_scores=` to every `suggest_swaps` call in the loop. **NEVER a live lens-API fetch:** the 5 lens producers are `advisors/lens_pipeline.py`'s job (nightly, 03:00); re-fetching them live inside the weekly scheduler would blow its bounded budget and duplicate that pipeline's work. Honest degradation: a cold cache or an all-unavailable-lenses row both degrade to `{}`, which `_apply_lens_blend` already treats as a no-op (same contract as the pre-existing `lens_scores=None` path) -- never fabricates evidence.
+
+### v1 scope simplifications (documented, not silent)
+
+`run_weekly_asset_swap_suggestions`'s `target_pair` uses the symphony's own alphabetically-first held ticker as a v1 simplification -- true best-pair selection is `correlation_diagnostic.py`'s separate, more sophisticated job, explicitly out of this loop-wiring workstream's scope. `run_weekly_logic_change_suggestions`'s default objective (`reduce_drawdown`) and `run_weekly_asset_swap_suggestions`'s default objective (`reduce_correlation`, AC-C2-pinned) were chosen as the most broadly protective/well-scoped defaults absent an operator-specified target -- not pinned by the RED tests beyond the asset-swap default.
+
+### Result
+
+RED: `tests/advisors/test_weekly_logic_change_suggestions_loop.py`, `tests/advisors/test_weekly_asset_swap_suggestions_loop.py` (committed at `356197a0`/`d5ff3480`); `TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen` (4 new tests, committed at `dbf6c7bd`, PM-verified genuinely RED against `9d3da841` -- 2 positive-assertion tests failed, 8 others passed). GREEN: 36/36 across all of Workstreams A/D/C/B's targeted RED files at `9d3da841`, plus 10/10 in the asset-swap loop file (6 pre-existing + 4 new) at `29d2f042`; 117/117 unchanged-engine regression (`test_logic_change_engine.py`, `test_asset_swap_engine.py`, `test_builder_scheduler.py`). The adversarial test `test_wired_lens_scores_actually_reorder_candidates_on_real_data` re-runs the REAL `generate_objective_directed_candidates` with the loop's actual captured `correlation_data`/`lens_scores` and asserts a genuine reorder on realistic data -- proving D is genuinely live in production, not merely unit-tested. `ruff format`/`check` clean.
+
+### Files changed
+
+- `advisors/weekly_suggestions_scheduler.py` -- `run_weekly_logic_change_suggestions`, `run_weekly_asset_swap_suggestions`, `_fetch_lens_scores`, `_build_correlation_data` + helpers (new file, commits 9d3da841 + 29d2f042)
+- `tests/advisors/test_weekly_logic_change_suggestions_loop.py`, `tests/advisors/test_weekly_asset_swap_suggestions_loop.py` -- RED (commits 356197a0/d5ff3480/dbf6c7bd)
+- `docs/generated/advisors_weekly_suggestions_scheduler.md` (new), `docs/generated/advisors_asset_swap_engine.md`, `docs/generated/advisors_logic_change_engine.md`, `docs/generated/database.md`, `docs/generated/INDEX.md` -- updated (commit f8b46a24)
+
+## DE-ADVISOR-REWIRE-B -- weekly orchestrator + droplet systemd unit for all three advisor engines (2026-07-12)
+
+Branch: fix/advisor-rewire | Base: ec52a49a | Fix commit: 9d3da841
+
+### Summary
+
+New `advisors/weekly_suggestions_scheduler.py::run_weekly_suggestions()` calls, in sequence, each wrapped in its own D-1 `try`/`except` (one engine's failure never blocks the next, never propagates even when all three fail): (1) `strategy_builder_scheduler.run_weekly_build()`, (2) `run_weekly_asset_swap_suggestions()` (Workstream C.2), (3) `run_weekly_logic_change_suggestions()` (Workstream C.1). Invokable via `python -m advisors.weekly_suggestions_scheduler`. Deliberately does NOT extend `strategy_builder_scheduler.py` to hold the new orchestrator or loop callers -- that module stays Strategy-Builder-only per its own AC-18 scope (a static test asserts `strategy_builder_scheduler` never gains a `run_weekly_suggestions` attribute).
+
+### Why one orchestrator module for three engines
+
+All three engines share the same D-1 / bounded-retry / `.env`-credential shape, and the orchestrator needs direct access to the two new loop functions' names -- co-locating them in one new module gives the same blast-radius isolation as three separate timers (per-engine try/except) without the operational overhead of three separate systemd units, three separate idempotency mechanisms, or three separate cron entries to keep synchronized.
+
+### Deployment (AC-B3)
+
+`docs/DEPLOYMENT.md` gains "Step 9 -- Weekly Suggestions scheduler," mirroring the Market Prism council's Step 8 pattern but with one deliberate divergence: `planetstopper-weekly-suggestions.service` sets `EnvironmentFile=/opt/planetstopper/.env` ONLY -- no second `EnvironmentFile=/etc/planetstopper/council-env` line. The council (`prism_scheduler.py`) is a `claude -p` subprocess that strips `ANTHROPIC_API_KEY` from its environment specifically so it falls back to a Claude subscription OAuth token (`council-env`); this weekly scheduler makes NO direct Anthropic API calls of any kind (it only calls Composer `/backtest` via the underlying engines and Alpaca bar-fetch endpoints), so it needs neither credential path beyond the plain `.env` its DB/Composer/Alpaca clients already read. `planetstopper-weekly-suggestions.timer` sets `OnCalendar=*-*-* Mon 04:00 America/New_York` and `Persistent=true` (a missed run -- e.g. a droplet reboot exactly at that moment -- fires as soon as the system is back up, rather than silently skipping the week). Runs as non-root `planetstopper`, matching every other systemd unit in the deployment. The old "Step 9 -- No-two-live-daemons cutover rule" section was renumbered to Step 10 (content byte-unchanged).
+
+**Droplet timer REGISTRATION (`systemctl enable --now`) is explicitly a separate, PM-gated deploy step** -- this cycle ships only the unit files + documentation, per the same convention already established for the Market Prism council's Step 8 timer.
+
+### A reviewer-caught pre-GREEN gap (AC-B3 non-root User= directive)
+
+A RED test (`20aaa1f9`, "AC-B3 non-root User= directive gap -- reviewer finding") was added by the test-writer/reviewer pairing before the final GREEN commit to pin that the documented systemd service unit MUST contain `User=planetstopper` (not run as root) -- the GREEN commit (`9d3da841`) already includes this line, so the RED/GREEN ordering here reflects a reviewer catching a documentation-completeness gap during the cycle rather than a shipped defect.
+
+### Result
+
+RED: `tests/advisors/test_weekly_suggestions_orchestrator.py` (committed at `356197a0`, AC-B1-B4), plus the `20aaa1f9` AC-B3 doc-completeness addition. GREEN at `9d3da841`: 11/11 orchestrator tests, all of Workstreams A/D/C's tests green in the same commit (36/36 total across A.1/D/C.1/C.2/B), 117/117 unchanged-engine regression. `ruff format`/`check` clean.
+
+### Files changed
+
+- `advisors/weekly_suggestions_scheduler.py` -- `run_weekly_suggestions` + `__main__` guard (commit 9d3da841)
+- `docs/DEPLOYMENT.md` -- new "Step 9 -- Weekly Suggestions scheduler" section; old Step 9 renumbered to Step 10 (commit 9d3da841, awt-eng)
+- `tests/advisors/test_weekly_suggestions_orchestrator.py` -- RED (commits 356197a0, 20aaa1f9)
+- `docs/generated/advisors_weekly_suggestions_scheduler.md`, `docs/generated/INDEX.md` -- updated (commit f8b46a24)
