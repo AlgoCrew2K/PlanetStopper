@@ -123,7 +123,9 @@ def _hermetic_network_seams(monkeypatch):
     try:
         import advisors.universe_provider as up
 
-        monkeypatch.setattr(up, "get_tradeable_set", lambda **kw: frozenset({"AAA", "BBB"}), raising=False)
+        monkeypatch.setattr(
+            up, "get_tradeable_set", lambda **kw: frozenset({"AAA", "BBB"}), raising=False
+        )
     except Exception:  # noqa: BLE001
         pass
     try:
@@ -239,8 +241,7 @@ class TestAssetSwapLoopPerSymphonyIsolation:
             )
 
         assert failing_hash not in seen_symphony_ids, (
-            "The failing symphony must not reach suggest_swaps with a broken/missing "
-            "score tree."
+            "The failing symphony must not reach suggest_swaps with a broken/missing score tree."
         )
         assert len(seen_symphony_ids) == 2, (
             f"The other 2 symphonies must still be processed despite one failure; got "
@@ -429,7 +430,9 @@ class TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen:
 
         captured: dict = {}
 
-        def _spy(symphony_id, score_tree, objective, correlation_data, available_assets=None, **kwargs):
+        def _spy(
+            symphony_id, score_tree, objective, correlation_data, available_assets=None, **kwargs
+        ):
             captured["symphony_id"] = symphony_id
             captured["score_tree"] = score_tree
             captured["objective"] = objective
@@ -575,9 +578,7 @@ class TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen:
 
         bot_state = _fake_bot_state(1)
         monkeypatch.setattr(db_module, "load_state", lambda: bot_state, raising=False)
-        monkeypatch.setattr(
-            db_module, "get_latest_market_lens_cache", lambda: None, raising=False
-        )
+        monkeypatch.setattr(db_module, "get_latest_market_lens_cache", lambda: None, raising=False)
 
         mod, run_fn = _resolve_loop_fn()
         captured = self._capture_suggest_swaps_call(monkeypatch, mod)
@@ -593,9 +594,7 @@ class TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen:
             f"{captured.get('lens_scores')!r}"
         )
 
-    def test_cache_row_with_no_available_lenses_degrades_to_falsy_lens_scores(
-        self, monkeypatch
-    ):
+    def test_cache_row_with_no_available_lenses_degrades_to_falsy_lens_scores(self, monkeypatch):
         """A cache row exists but every lens is available=False (a genuinely bad
         night) -- extract_lens_scores() honestly returns {}; the loop must pass
         that through as falsy, never substitute a fabricated score."""

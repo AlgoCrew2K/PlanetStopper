@@ -137,9 +137,7 @@ class TestOrchestratorD1PerEngineIsolation:
 
             return _fn
 
-        monkeypatch.setattr(
-            sb_sched, "run_weekly_build", _make("strategy_builder"), raising=False
-        )
+        monkeypatch.setattr(sb_sched, "run_weekly_build", _make("strategy_builder"), raising=False)
         if hasattr(mod, "run_weekly_build"):
             monkeypatch.setattr(mod, "run_weekly_build", _make("strategy_builder"), raising=False)
 
@@ -158,9 +156,7 @@ class TestOrchestratorD1PerEngineIsolation:
                 if hasattr(src_mod, name):
                     monkeypatch.setattr(src_mod, name, fake, raising=False)
 
-    def test_strategy_builder_failure_does_not_block_asset_swap_or_logic_change(
-        self, monkeypatch
-    ):
+    def test_strategy_builder_failure_does_not_block_asset_swap_or_logic_change(self, monkeypatch):
         mod = _import_orchestrator()
         run_fn = _resolve_entry_fn(mod)
         call_log: list = []
@@ -244,7 +240,7 @@ class TestOrchestratorInvocableAsModule:
             for node in ast.walk(tree)
         )
         assert has_main_guard, (
-            f"{source_path} must have an `if __name__ == \"__main__\":` guard so "
+            f'{source_path} must have an `if __name__ == "__main__":` guard so '
             f"`python -m advisors.weekly_suggestions_scheduler` is a valid invocation "
             f"(AC-B1)."
         )

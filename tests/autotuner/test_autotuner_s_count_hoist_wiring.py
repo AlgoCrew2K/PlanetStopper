@@ -293,8 +293,7 @@ class TestOperatorDriftFiresEndToEndAfterWiring:
         conn.close()
 
         assert len(obs_rows) >= 3, (
-            f"Expected an OVERFITTING_CONSCIENCE observation per run (>=3); got "
-            f"{len(obs_rows)}."
+            f"Expected an OVERFITTING_CONSCIENCE observation per run (>=3); got {len(obs_rows)}."
         )
         last_raw = json.loads(obs_rows[-1][0])
         last_verdict = obs_rows[-1][1]

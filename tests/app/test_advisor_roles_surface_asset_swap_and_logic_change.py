@@ -171,9 +171,7 @@ class TestOverviewPanelRendersNewRoleObservations:
             "did not appear, meaning the role was never queried/rendered."
         )
 
-    def test_api_advisor_observations_includes_asset_swap_rows_with_no_filter(
-        self, flask_client
-    ):
+    def test_api_advisor_observations_includes_asset_swap_rows_with_no_filter(self, flask_client):
         """/api/advisor-observations with no ?symphony_id filter iterates
         _ADVISOR_ROLES (app.py:5071) -- must include ASSET_SWAP rows too."""
         asset_swap_obs = _make_observation(
@@ -194,9 +192,7 @@ class TestOverviewPanelRendersNewRoleObservations:
             f"_ADVISOR_ROLES includes it; got subject_ids={subject_ids!r}"
         )
 
-    def test_api_advisor_observations_includes_logic_change_rows_with_no_filter(
-        self, flask_client
-    ):
+    def test_api_advisor_observations_includes_logic_change_rows_with_no_filter(self, flask_client):
         logic_change_obs = _make_observation(
             obs_id=104, advisor_role="LOGIC_CHANGE", subject_id="cand-api-sentinel-2"
         )

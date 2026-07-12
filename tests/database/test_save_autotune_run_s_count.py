@@ -158,8 +158,7 @@ class TestSaveAutotuneRunPersistsSCount:
 
         conn = db_module.get_connection()
         rows = conn.execute(
-            "SELECT s_count FROM autotune_runs WHERE symphony_id = 'sc-append-test' "
-            "ORDER BY id ASC"
+            "SELECT s_count FROM autotune_runs WHERE symphony_id = 'sc-append-test' ORDER BY id ASC"
         ).fetchall()
         conn.close()
 
