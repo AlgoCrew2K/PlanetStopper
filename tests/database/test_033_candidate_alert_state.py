@@ -527,9 +527,7 @@ class TestLastRunAggregate:
         latest run's evaluated/survivors counts."""
         conn = db_module.get_connection()
         try:
-            old_date = (datetime.now(UTC) - timedelta(days=14)).strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
+            old_date = (datetime.now(UTC) - timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
             conn.execute(
                 "INSERT INTO advisor_observations "
                 "(advisor_role, subject_type, subject_id, verdict, raw_response, "
