@@ -3,7 +3,7 @@
 > Offline asset-swap proposal engine: objective-directed candidate generation, lens-informed ranking, BHY-FDR gating, and audit-trail persistence — advise-only, never executes.
 
 **Source:** `advisors/asset_swap_engine.py`
-**Last updated:** 2026-07-12 (Workstream D — lens-blend efficacy fix, DE-ADVISOR-REWIRE-D)
+**Last updated:** 2026-07-12 (DE-LENS-SCORE-SHAPE-001 — `extract_lens_scores` rewritten to parse REAL producer shapes, live-E2E-caught fix)
 
 ## Overview
 
@@ -13,9 +13,11 @@
 
 2. **Advisor-suggested** (`suggest_swaps`): given a swap objective and an available asset pool, the engine calls `generate_objective_directed_candidates` to shortlist candidates ranked by the stated objective, then backtests and gates the full batch together.
 
-**Cycle-3 addition (lens-informed ranking):** `generate_objective_directed_candidates` now accepts an optional `lens_scores` dict. When provided, multi-lens evidence (technicals, sentiment, derivatives, macro, fundamentals) is blended into candidate ranking via `_apply_lens_blend`. Lens scoring influences ranking only — the BHY-FDR gate is unchanged. Both entry points (`propose_operator_swap`, `suggest_swaps`) accept `lens_scores` and `lens_sources` kwargs; the pre-Cycle-3 call paths remain byte-identical when `lens_scores=None`.
+**Cycle-3 addition (lens-informed ranking):** `generate_objective_directed_candidates` now accepts an optional `lens_scores` dict. When provided, multi-lens evidence is blended into candidate ranking via `_apply_lens_blend`. Lens scoring influences ranking only — the BHY-FDR gate is unchanged. Both entry points (`propose_operator_swap`, `suggest_swaps`) accept `lens_scores` and `lens_sources` kwargs; the pre-Cycle-3 call paths remain byte-identical when `lens_scores=None`.
 
-**Advisor-rewire cycle (2026-07-12, Workstream D):** the Cycle-3 blend formula was **mathematically inert in production** — see "Lens Blend — How Ranking Works" below for the closed-form proof and the fix. As of this cycle the blend genuinely reorders candidates, AND (Workstream C.2, `advisors/weekly_suggestions_scheduler.py`) the fixed math is reachable from the real weekly production path via a new `_fetch_lens_scores()` helper — previously `generate_objective_directed_candidates`/`_apply_lens_blend` had no caller passing real `lens_scores` anywhere in the codebase, so even a correct blend formula would have stayed dead. Both the math and the wiring landed together in this cycle.
+**Advisor-rewire cycle (2026-07-12, Workstream D):** the Cycle-3 blend formula was **mathematically inert in production** — see "Lens Blend — How Ranking Works" below for the closed-form proof and the fix. As of this cycle the blend genuinely reorders candidates, AND (Workstream C.2, `advisors/weekly_suggestions_scheduler.py`) the fixed math is reachable from the real weekly production path via a new `_fetch_lens_scores()` helper.
+
+**Live-E2E follow-up (DE-LENS-SCORE-SHAPE-001, 2026-07-12):** even after the above, `extract_lens_scores` itself read a fabricated `payload["ticker_scores"]` key that NO real lens producer emits — 441 mocked tests stayed green because every fixture fabricated that shape, but a live droplet-DB E2E run against a real, fresh `MARKET_LENS_CACHE` row (all 5 lenses genuinely available) returned `{}`. The D-workstream lens-blend fix and its C.2 wiring were both mathematically/structurally correct but DEAD on real data until this fix. Rewritten to parse the REAL producer shapes — see "API Reference" below. This is a parser/fixture-provenance class of bug (fixtures encoded an assumption never verified against the actual producer), the exact failure mode the project's fixture-provenance hard rule exists to prevent — caught only because the E2E ran against real production data, not because any unit test caught it.
 
 **Hard constraints:**
 - This module MUST NOT be imported from `alpha_bot_execution.py` — it is an offline advise-only post-backtest layer.
@@ -27,11 +29,13 @@
 
 | Name | Value | Purpose |
 |------|-------|---------|
-| `LENS_BLEND_WEIGHT` | `0.25` | Weight for lens evidence in `_apply_lens_blend`'s cumulative-gap formula. Keeps lens signal as supporting evidence — the primary objective metric anchors ranking. Unchanged by the D fix (existence + value both preserved per the handoff's explicit constraint). |
+| `LENS_BLEND_WEIGHT` | `0.25` | Weight for lens evidence in `_apply_lens_blend`'s cumulative-gap formula. Keeps lens signal as supporting evidence — the primary objective metric anchors ranking. |
 | `SWAP_SURVIVOR_CAVEAT` | (from backtest_gate_engine) | Caveat attached to every ADOPT_CANDIDATE survivor. |
 | `NO_SURVIVORS_MESSAGE` | `"no swap cleared the gate this run"` | Message in `SwapRunResult` when zero candidates pass the gate. |
-| `_LENS_CONTEXT_KEYS` | `("technicals", "sentiment", "derivatives", "macro", "fundamentals")` | Ordered tuple of lens block keys expected in the assembled advisor context. |
-| `_LENS_NEUTRAL_SCORE` | `0.5` | Neutral lens value used both for tickers absent from `lens_scores` and as the deviation baseline in the D-fixed blend formula. |
+| `_LENS_NEUTRAL_SCORE` | `0.5` | Neutral lens value: the deviation baseline in the blend formula AND the momentum-squash midpoint (`_squash_momentum_to_unit_interval(0.0) == 0.5`). |
+| `_MOMENTUM_SQUASH_SCALE` | `0.10` | **New (DE-LENS-SCORE-SHAPE-001).** Scale constant in `_squash_momentum_to_unit_interval`'s `0.5 + 0.5*tanh(momentum/_MOMENTUM_SQUASH_SCALE)` transform. Not a pinned formula — chosen so a typical ~5% momentum lands at a clearly non-neutral, non-saturated ~0.73, and an extreme ~15% momentum approaches but never reaches the (0,1) bounds. |
+
+**Removed (DE-LENS-SCORE-SHAPE-001):** `_LENS_CONTEXT_KEYS` (the 5-lens-key iteration tuple) — deleted as dead code once `extract_lens_scores` was rewritten to read only `technicals` (see below); no longer iterated anywhere.
 
 ## API Reference
 
@@ -39,7 +43,23 @@
 
 Extracts per-ticker lens scores from an assembled advisor context dict.
 
-Walks the 5 standard lens blocks. Only `available=True` lenses contribute scores — `available=False` blocks are skipped entirely (honest-availability contract, AC-6). A lens contributes ticker scores when its `payload` dict contains a `"ticker_scores"` sub-dict mapping `ticker → float`. Lenses whose payload lacks `ticker_scores` (e.g. sentiment blocks carrying only article counts) are skipped without error.
+**Rewritten 2026-07-12 (DE-LENS-SCORE-SHAPE-001 — live-E2E-caught fix).** The prior implementation walked all 5 lens blocks looking for a `payload["ticker_scores"]` sub-dict — a key **no real lens producer ever emits** (0 real occurrences outside the stale fixture and this function itself). On a live droplet-DB E2E run against a real, fresh `MARKET_LENS_CACHE` row it returned `{}`, silently no-opping the entire lens-blend feature end-to-end even though the blend math (Workstream D) and its wiring (Workstream C.2) were both correct.
+
+Real per-lens payload shapes, verified directly against the producers (not re-derived from a fixture):
+
+| Lens | Real payload shape | Per-ticker signal? |
+|------|---------------------|---------------------|
+| `technicals` | `{"ma_posture": {ticker: {above_sma50, above_sma200}}, "breadth": float, "momentum": {ticker: float}}` (`ai_advisor.py:542-552`, `advisors/lens_technicals.py:265-272`) | YES — `momentum` is an unbounded raw 20-day return per ticker |
+| `sentiment` | `{tone_score, corpus, events, article_count}` (`ai_advisor.py:673-684`) | No — market-wide scalar |
+| `derivatives` | `{vix_level, vix_term_structure, risk_read, as_of_date}` | No — market-wide scalar |
+| `macro` | `{"series": {series_id: {...}}}` | No — FRED-series-keyed, market-wide |
+| `fundamentals` | `{"tickers": {ticker: key_facts_dict}, "coverage": {...}}` (`ai_advisor.py:1242-1253`) | Per-ticker-KEYED, but values are raw financials, not a clean scalar — excluded from v1 by design (a fundamentals-derived score is a distinct design problem, out of this parser's scope) |
+
+**Only `technicals.payload["momentum"]` is used.** `ma_posture` (also per-ticker) exists but is NOT read — momentum alone is sufficient signal; folding `ma_posture` in is a documented future enhancement, not required for correctness. `sentiment`/`derivatives`/`macro`/`fundamentals` contribute NOTHING even when `available=True` — fabricating a per-ticker score from a market-wide scalar (or an unrelated raw-financials blob) would violate the honest-availability contract.
+
+Each raw momentum value is squashed onto `(0.0, 1.0)` via `_squash_momentum_to_unit_interval` (see below) before being returned, because `_apply_lens_blend` expects an already-normalized `[0,1]` favorability with `0.5` as neutral, while real momentum is an unbounded return.
+
+Only an `available=True` `technicals` block contributes; `available=False` is honored regardless of what the payload nominally contains (AC-6 honest-availability is checked BEFORE payload content).
 
 **Parameters:**
 
@@ -47,7 +67,15 @@ Walks the 5 standard lens blocks. Only `available=True` lenses contribute scores
 |------|------|-------------|
 | `context` | `dict` | Dict returned by `ai_advisor.assemble_advisor_context`, or any dict with lens-block values keyed by lens name. Missing keys, None payload, and malformed blocks are handled gracefully. |
 
-**Returns:** `{ticker: {lens_name: score, ...}, ...}`. Returns `{}` when no available lens carries per-ticker scores. Never raises.
+**Returns:** `{ticker: {"technicals": score_in_0_1}, ...}`. Returns `{}` when `technicals` is absent/unavailable/has no `momentum` data. Never raises.
+
+---
+
+### `_squash_momentum_to_unit_interval(momentum: float) → float` (internal helper, new 2026-07-12)
+
+Maps an unbounded raw 20-day momentum return onto the open interval `(0.0, 1.0)` via `0.5 + 0.5 * math.tanh(momentum / _MOMENTUM_SQUASH_SCALE)`.
+
+Required because `_apply_lens_blend` treats lens scores as an already-normalized favorability on `[0, 1]` with `_LENS_NEUTRAL_SCORE` (0.5) as neutral, but technicals' real per-ticker signal (`payload["momentum"]`) is an unbounded raw return, not pre-normalized. Satisfies four pinned invariant properties (the exact formula/constant is an implementation choice, not itself pinned): `momentum == 0.0` → exactly `0.5` (neutral, matches the "no evidence" default so a flat ticker never silently nudges the blend); `momentum > 0.0` → score `> 0.5`, strictly monotonic; `momentum < 0.0` → score `< 0.5`, strictly monotonic; any finite input → strictly within `(0.0, 1.0)`, never exactly 0 or 1.
 
 ---
 
@@ -71,7 +99,7 @@ After the primary sort, `_apply_lens_blend` is called with `lens_scores`. When `
 | `symphony_id` | `str` | Composer symphony UUID. |
 | `objective` | `SwapObjective` | The objective driving candidate generation. |
 | `correlation_data` | `dict` | `{entity_id: [float]}` return series for ranking. |
-| `available_assets` | `list` | Candidate pool. Open universe — no allowlist. |
+| `available_assets` | `list` | Candidate pool. Since the advisor-rewire cycle's live production caller, this is the lens-covered universe built by `weekly_suggestions_scheduler._build_base_candidate_pool` — see `docs/generated/advisors_weekly_suggestions_scheduler.md`. The function itself accepts an open universe (no allowlist). |
 | `lens_scores` | `dict \| None` | Optional per-ticker lens evidence from `extract_lens_scores`. When provided, mean lens score is blended into post-primary-sort ranking. Lens scoring influences ranking only — never bypasses the gate. Default `None`. |
 
 **Returns:** Ordered list of `{"ticker": ..., "score": ...}` dicts, top-ranked first. Never plain strings.
@@ -104,7 +132,7 @@ Evaluate one operator-specified asset swap (AC-2.1). Backtests the variant, gate
 
 Evaluate advisor-suggested objective-directed swap candidates (AC-2.2). Generates candidates via `generate_objective_directed_candidates` (with lens blend when `lens_scores` is provided), backtests the full batch together for honest n_effective BHY-FDR gating, and returns survivors. An absent Composer API key returns `no_api_key=True` and writes nothing (AC-X4). Never raises.
 
-**Live production caller (advisor-rewire cycle, Workstream C.2):** `advisors.weekly_suggestions_scheduler.run_weekly_asset_swap_suggestions()` calls this once per live symphony, weekly, passing a real `lens_scores` dict sourced from the nightly `MARKET_LENS_CACHE` row via `_fetch_lens_scores()`. This is the first production caller this function has ever had — previously it existed with a full test suite but no scheduled/automatic invocation.
+**Live production caller (advisor-rewire cycle, Workstream C.2):** `advisors.weekly_suggestions_scheduler.run_weekly_asset_swap_suggestions()` calls this once per live symphony, weekly, passing a real `lens_scores` dict sourced from the nightly `MARKET_LENS_CACHE` row via `_fetch_lens_scores()` (now genuinely non-empty on real data — DE-LENS-SCORE-SHAPE-001) and a candidate pool sourced from the lens-covered universe (DE-LENS-CANDIDATE-POOL-001 — see `docs/generated/advisors_weekly_suggestions_scheduler.md`). This is the first production caller this function has ever had.
 
 **Parameters:**
 
@@ -192,6 +220,8 @@ blended_key[i] = cum_gap[i] - LENS_BLEND_WEIGHT * (mean_lens[i] - _LENS_NEUTRAL_
 
 **Gate order-independence (AC-D3, `advisors/backtest_gate_engine.py`):** fixing the blend surfaced a second, pre-existing bug — `evaluate_candidate_batch` seeded its Sortino bootstrap with `seed=idx` (the candidate's list position), so re-sorting the SAME candidate set into a different submission order produced a different bootstrap seed per candidate, hence a different t-stat/p-value for the identical candidate. This violated the "gate output is unchanged for a fixed candidate set" invariant the new blend now actually exercises (a reordering blend needs the gate to be truly order-independent downstream). Fixed by seeding from a stable SHA-256 hash of the candidate's own `candidate_id` instead of its batch position — see `docs/generated/advisors_backtest_gate_engine.md`.
 
+**Full end-to-end reachability chain (as of DE-LENS-CANDIDATE-POOL-001, closing the last E2E-caught gap):** `_build_base_candidate_pool` (lens-covered universe) → `_fetch_lens_scores` (real technicals momentum, correctly parsed) → `extract_lens_scores`/`_squash_momentum_to_unit_interval` → `generate_objective_directed_candidates`/`_apply_lens_blend` (reordering formula) → `evaluate_candidate_batch` (order-independent gate) → `insert_advisor_observation` (persisted `lens_evidence`). Every link in this chain was independently correct at some point in the cycle but the chain as a whole was proven end-to-end non-empty ONLY by a live droplet-DB E2E test — see `docs/generated/advisors_weekly_suggestions_scheduler.md`.
+
 ## Persistence (AC-4)
 
 Every evaluated proposal is persisted via `database.insert_advisor_observation` with:
@@ -210,4 +240,5 @@ Persistence is verdict-agnostic (RC-4) — the operator sees the engine ran even
 - `advisors.composer_backtest_client` — `run_backtest`
 - `database` — `insert_advisor_observation`
 - `ai_advisor` — `assemble_advisor_context` (callers pass the assembled context; `extract_lens_scores` consumes it)
-- `advisors.weekly_suggestions_scheduler` — the sole live production caller of `suggest_swaps` (Workstream C.2), including the `_fetch_lens_scores()` wiring that makes this module's lens blend reachable on real data
+- `advisors.weekly_suggestions_scheduler` — the sole live production caller of `suggest_swaps` (Workstream C.2), including the `_fetch_lens_scores()` and `_build_base_candidate_pool()` wiring that makes this module's lens blend reachable AND non-empty on real data
+- `math` — stdlib, `_squash_momentum_to_unit_interval` (`math.tanh`, new DE-LENS-SCORE-SHAPE-001)

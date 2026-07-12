@@ -4322,3 +4322,85 @@ RED: `tests/advisors/test_weekly_suggestions_orchestrator.py` (committed at `356
 - `docs/DEPLOYMENT.md` -- new "Step 9 -- Weekly Suggestions scheduler" section; old Step 9 renumbered to Step 10 (commit 9d3da841, awt-eng)
 - `tests/advisors/test_weekly_suggestions_orchestrator.py` -- RED (commits 356197a0, 20aaa1f9)
 - `docs/generated/advisors_weekly_suggestions_scheduler.md`, `docs/generated/INDEX.md` -- updated (commit f8b46a24)
+
+## DE-LENS-SCORE-SHAPE-001 -- extract_lens_scores rewritten to parse REAL producer shapes, not a fabricated ticker_scores key (2026-07-12)
+
+Branch: fix/advisor-rewire | Base: ec52a49a | Fix commits: 0b7eaebb (RED), 2839a2f3 (GREEN)
+
+### The bug: a parser and its own fixtures fabricated the same wrong shape
+
+`advisors/asset_swap_engine.extract_lens_scores` walked all 5 lens blocks looking for a `payload["ticker_scores"]` sub-dict. This key does not exist anywhere in the real system -- `0` real occurrences outside the stale test fixture and the function itself. Every one of the cycle's 441 mocked tests stayed green because every fixture that exercised this function fabricated the same `ticker_scores` shape the parser expected -- a textbook parser+fixture co-design failure, the exact class of bug the project's fixture-provenance hard rule exists to prevent (fixtures must be captured-from-producer or schema-derived-with-a-runtime-validator, never invented to match the code under test).
+
+**How it was caught:** the PM's live droplet-DB E2E gate -- running the full weekly asset-swap pipeline against a REAL, fresh `MARKET_LENS_CACHE` row (all 5 lenses genuinely `available=True`) -- returned `lens_scores == {}`. The D-workstream lens-blend formula fix (63ede739/c61a3086) and its C.2 production wiring (29d2f042) were both independently correct, but the entire feature was DEAD on real data because its very first parsing step returned nothing.
+
+### The fix: read the actual shape each producer emits
+
+Verified directly against the producers (not re-derived from the stale fixture):
+
+| Lens | Real payload shape | Per-ticker signal? |
+|------|---------------------|---------------------|
+| `technicals` | `{"ma_posture": {ticker: {above_sma50, above_sma200}}, "breadth": float, "momentum": {ticker: float}}` | YES -- `momentum`, an unbounded raw 20-day return |
+| `sentiment` | `{tone_score, corpus, events, article_count}` | No -- market-wide scalar |
+| `derivatives` | `{vix_level, vix_term_structure, risk_read, as_of_date}` | No -- market-wide scalar |
+| `macro` | `{"series": {series_id: {...}}}` | No -- FRED-series-keyed, market-wide |
+| `fundamentals` | `{"tickers": {ticker: key_facts_dict}, "coverage": {...}}` | Per-ticker-keyed but raw financials, not a clean scalar -- excluded from v1 by design |
+
+`extract_lens_scores` now reads ONLY `technicals.payload["momentum"]`. `ma_posture` (also per-ticker) is intentionally NOT read -- momentum alone is sufficient signal; folding `ma_posture` in is a documented future enhancement, not required for correctness. The other four lenses contribute nothing even when `available=True` -- fabricating a per-ticker score from a market-wide scalar (or an unrelated raw-financials blob) would itself violate the honest-availability contract this fix is trying to restore.
+
+Since real momentum is an unbounded raw return but `_apply_lens_blend` expects an already-normalized `[0,1]` favorability, a new helper `_squash_momentum_to_unit_interval(momentum)` maps it via `0.5 + 0.5*tanh(momentum / _MOMENTUM_SQUASH_SCALE)` (`_MOMENTUM_SQUASH_SCALE = 0.10`, a named constant, not a magic number). The exact scale is an implementation choice -- the pinned invariant is: momentum `== 0` maps to exactly `0.5` (neutral), the map is strictly monotonic in both directions, and any finite input stays strictly within `(0.0, 1.0)`.
+
+### The WHY -- this is the value case for a live E2E gate, not a unit-test gap
+
+This bug could not have been caught by any amount of additional mocked-test coverage written against the SAME fixture-generation process that produced the bug -- the fixture and the parser were co-designed by the same (incorrect) assumption about what the real system emits. Only a test that reads the REAL producer's output (or, as here, a live run against the real database) can catch a parser/fixture co-design failure. This is why the project's fixture-provenance hard rule requires captured-from-producer or schema-validated fixtures, and why "tests-green" was explicitly never treated as sufficient to ship this cycle.
+
+### Blast radius
+
+Confined to `extract_lens_scores`'s internals and the new `_squash_momentum_to_unit_interval` helper + `_MOMENTUM_SQUASH_SCALE` constant. The now-dead `_LENS_CONTEXT_KEYS` 5-lens iteration tuple was deleted (no longer iterated anywhere -- "no unused code" standard). `_apply_lens_blend`, `generate_objective_directed_candidates`, `suggest_swaps`, `propose_operator_swap`, and `evaluate_candidate_batch` are all unchanged -- this fix is entirely upstream of the blend, at the parsing boundary.
+
+### Result
+
+RED: `tests/ai_advisor/test_cycle3_lens_informed_swaps.py` (rewritten `_ADVISOR_CONTEXT_WITH_LENSES` fixture + new `TestExtractLensScoresMomentumSquashing`, 4 tests) + `tests/advisors/test_weekly_asset_swap_suggestions_loop.py` (rewritten `_cache_row` + 2 new `_fetch_lens_scores` direct-call tests) + `tests/fixtures/ai_advisor/cycle3/lens_score_extraction_basic.json` rewritten to the real shapes, all committed at `0b7eaebb` by awt-test (PM-verified genuinely RED: 11 new/rewritten positive-assertion tests failed against the `ticker_scores`-seeking parser, 34 others passed). GREEN at `2839a2f3`: 45/45 across both RED files. Adjacent regression: 69/69 across `test_asset_swap_engine.py`, `test_cycle3_lens_swaps_supplement.py`, `test_lens_blend_efficacy.py`, `test_weekly_logic_change_suggestions_loop.py`, `test_weekly_suggestions_orchestrator.py`. `ruff format`/`check` clean (the JSON fixture is intentionally excluded from ruff -- trailing commas in the fixture would be corrupted by a JSON-unaware formatter; this fix commit was path-scoped to `asset_swap_engine.py` only and did not touch the fixture).
+
+**Live-E2E acceptance bar (per PM):** a re-run of the E2E checkpoint against the real `MARKET_LENS_CACHE` row now produces non-empty `lens_scores` -- confirmed before this fix was accepted as GREEN.
+
+### Files changed
+
+- `advisors/asset_swap_engine.py` -- `extract_lens_scores` rewritten, `_squash_momentum_to_unit_interval` + `_MOMENTUM_SQUASH_SCALE` added, `_LENS_CONTEXT_KEYS` removed (commit 2839a2f3)
+- `tests/ai_advisor/test_cycle3_lens_informed_swaps.py`, `tests/advisors/test_weekly_asset_swap_suggestions_loop.py`, `tests/fixtures/ai_advisor/cycle3/lens_score_extraction_basic.json` -- RED (commit 0b7eaebb)
+- `docs/generated/advisors_asset_swap_engine.md`, `docs/generated/INDEX.md` -- updated with the real-shape parsing + squash + WHY
+
+## DE-LENS-CANDIDATE-POOL-001 -- asset-swap candidate pool sourced from the lens-covered universe, closing the last E2E-caught gap in the lens-blend chain (2026-07-12)
+
+Branch: fix/advisor-rewire | Base: ec52a49a | Fix commits: e267e1ce (RED), 71687fdc (GREEN)
+
+### The bug: a candidate pool that structurally never overlapped the lens universe
+
+Even after DE-LENS-SCORE-SHAPE-001 made `extract_lens_scores` genuinely return real momentum-derived `lens_scores`, a SECOND live droplet-DB E2E run found `lens_evidence` still persisting as `{}` end-to-end. Root cause: `run_weekly_asset_swap_suggestions`'s candidate pool was `sorted(get_tradeable_set())[:_ASSET_SWAP_CANDIDATE_POOL_SIZE]` -- the deterministic alphabetical-first-15 sample of the full ~12,748-symbol Alpaca tradeable universe. This is structurally incapable of overlapping `lens_technicals._PROXY_UNIVERSE` (the 10 sector-ETF tickers the technicals lens actually scores: SPY, QQQ, IWM, EFA, AGG, GLD, XLF, XLE, XLV, XLI) -- only tickers alphabetically `<= ~"AG"` could ever land in an alphabetical top-15, and none of the 10 proxy tickers do. `_build_candidate_lens_evidence`'s `lens_scores.get(candidate)` lookup therefore always missed, so lens-informed swaps were structurally `False` in production even with a live, correctly-parsed lens cache.
+
+### The fix: the pool IS the lens-covered universe
+
+New `_build_base_candidate_pool(bot_state)` helper: the candidate pool is `lens_technicals._PROXY_UNIVERSE` unioned with every live symphony's `logic_holdings` (the `bot_state` field `ai_advisor.py`'s technicals/fundamentals builders already read at `ai_advisor.py:520-526`/`1184-1190` -- NOT the Composer score-tree structure `extract_tickers` reads). Computed ONCE per run (not per-symphony), then bounded to `_ASSET_SWAP_CANDIDATE_POOL_SIZE` (normally a no-op -- `_PROXY_UNIVERSE` alone is 10 members).
+
+`universe_provider.get_tradeable_set()` is deliberately DROPPED entirely from pool construction -- not used even as a filter or intersection. Broad correlation-screened discovery across the full tradeable universe remains a documented future enhancement, explicitly out of this cycle's scope; intersecting against it here would reintroduce the exact "lens-covered tickers get filtered out" failure mode this fix closes -- proven by the RED test's garbage-alphabetical-universe fixture (tickers deliberately sorted before every real ticker), which asserts the pool must not depend on `get_tradeable_set()`'s membership or ordering at all.
+
+**Per-symphony exclusion (a design question the RED pinned):** each symphony's own candidate pool excludes THAT symphony's own held ticker(s), extracted from its own Composer `score_tree` via the existing `extract_tickers` (the same source `primary_ticker` already uses) -- so a symphony is never offered its own current holding as a "new" swap candidate. A ticker held by a DIFFERENT symphony remains a valid candidate for this one (no cross-symphony conflict). This mirrors, at the pool-construction level, `suggest_swaps`'s own existing `candidate_asset in present_tickers` filter (`asset_swap_engine.py`) -- defense-in-depth / explicit-by-construction, not a new behavioral class.
+
+### The WHY -- two independent E2E-only findings on one feature
+
+Neither this bug nor DE-LENS-SCORE-SHAPE-001 was reachable by unit-test coverage against mocked fixtures, because each mock encoded an assumption (a plausible-looking payload key; a plausible-looking "bounded sample of the universe") that was never checked against the other half of the real system it needed to interoperate with. The lens-blend feature had SIX links in its real chain (candidate pool -> lens fetch -> parse -> blend -> gate -> persist); this cycle's 441 green mocked tests each verified individual links in isolation, but only a live, largely-unmocked E2E run against real production data (real `MARKET_LENS_CACHE` row, real `bot_state`) could prove the chain was non-empty end-to-end. This is the second half of the concrete "why a mandatory live E2E gate" case documented under DE-LENS-SCORE-SHAPE-001 above.
+
+### Reviewer finding (non-blocking, accepted)
+
+`_build_base_candidate_pool` iterates `entry.get("logic_holdings", {})` for every `bot_state` entry with no per-symphony `try`/`except` around that read. The reviewer flagged this as a potential single-bad-entry blast-radius risk. Accepted without a code change: `logic_holdings` is never `None` on a well-formed `bot_state` entry (a malformed entry would already have failed `_live_symphony_hashes`'s `isinstance(entry, dict) and "name" in entry` filter earlier in the same pipeline, so it never reaches this helper at all), and the orchestrator's own D-1 wrapping around `run_weekly_asset_swap_suggestions` as a whole still contains any genuinely unexpected exception even in a worst case this reasoning missed.
+
+### Result
+
+RED: `tests/advisors/test_weekly_asset_swap_suggestions_loop.py`, new `TestAssetSwapLoopCandidatePoolSourcing` (4 tests) + renamed AAA/BBB/CCC -> QQQ/AGG/GLD fixtures in `TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen` (so those reorder-proof tests stay reachable through the fixed pool), committed at `e267e1ce` by awt-test (PM-verified genuinely RED: 3 new tests failed against `sorted(get_tradeable_set())[:15]`, 13 others passed). GREEN at `71687fdc`: 16/16 in that file. Combined regression across every workstream touched this cycle: 204/204 passed. `ruff format`/`check` clean.
+
+**This closes the last E2E-caught gap.** The end-to-end proof test (`test_persisted_asset_swap_rows_carry_non_empty_lens_evidence_end_to_end`) runs a REAL (unmocked) `suggest_swaps` pipeline -- only the true network/DB boundary (`run_backtest`, `_has_composer_key`, `insert_advisor_observation`) is mocked -- and asserts at least one persisted `ASSET_SWAP` row carries non-empty `lens_evidence`, proving the full chain (pool -> lens overlap -> blend -> gate -> persist) end-to-end, not just unit-level.
+
+### Files changed
+
+- `advisors/weekly_suggestions_scheduler.py` -- `_build_base_candidate_pool` added; `get_tradeable_set()` import/call removed; per-symphony pool exclusion added to `run_weekly_asset_swap_suggestions` (commit 71687fdc)
+- `tests/advisors/test_weekly_asset_swap_suggestions_loop.py` -- RED (commit e267e1ce)
+- `docs/generated/advisors_weekly_suggestions_scheduler.md`, `docs/generated/advisors_asset_swap_engine.md`, `docs/generated/INDEX.md` -- updated with the lens-covered-pool sourcing + WHY
