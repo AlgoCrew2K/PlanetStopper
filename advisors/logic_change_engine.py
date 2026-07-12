@@ -972,6 +972,37 @@ def _evaluate_single_variant(
 # change_description parser — converts operator plain text into a LogicTweak
 # ---------------------------------------------------------------------------
 
+# Fallback multipliers for Phase 3 / Phase 4 of _parse_change_description_to_tweak
+# (no explicit "from X to Y" numbers in the description — direction must come
+# from keyword scan instead). Symmetric with _REDUCE_DRAWDOWN_TIGHTEN_FACTOR
+# above. DE-LOGIC-CHANGE-DIRECTION-001: audit-confirmed regression — the
+# fallback previously applied +20 % unconditionally regardless of the
+# description's stated direction ("reduce the window" produced an INCREASE).
+_FALLBACK_INCREASE_FACTOR: float = 1.20
+_FALLBACK_DECREASE_FACTOR: float = 0.80
+
+# Keywords scanned against the FULL description text (independent of
+# keyword_to_keys, which only maps to a preferred param_key and does not
+# cover every direction word — e.g. "reduce the allocation weight" has no
+# keyword_to_keys match at all, so direction detection cannot piggyback on it).
+_REDUCE_DIRECTION_KEYWORDS: tuple[str, ...] = ("reduce", "lower", "decrease", "shrink")
+_INCREASE_DIRECTION_KEYWORDS: tuple[str, ...] = ("increase", "raise", "grow")
+
+
+def _fallback_direction_factor(desc_lower: str) -> float:
+    """Return the fallback scaling factor implied by direction words in the description.
+
+    Scans the full description for reduce/increase keywords (see
+    ``_REDUCE_DIRECTION_KEYWORDS`` / ``_INCREASE_DIRECTION_KEYWORDS``). Defaults
+    to ``_FALLBACK_INCREASE_FACTOR`` when no direction word is present, matching
+    the prior unconditional behavior for descriptions that state no direction.
+    """
+    if any(kw in desc_lower for kw in _REDUCE_DIRECTION_KEYWORDS):
+        return _FALLBACK_DECREASE_FACTOR
+    if any(kw in desc_lower for kw in _INCREASE_DIRECTION_KEYWORDS):
+        return _FALLBACK_INCREASE_FACTOR
+    return _FALLBACK_INCREASE_FACTOR
+
 
 def _parse_change_description_to_tweak(
     raw_value: dict, change_description: str
@@ -1078,15 +1109,17 @@ def _parse_change_description_to_tweak(
                     ),
                 )
 
-    # Phase 3: try to match by preferred key only (apply a default ±20% tweak).
+    # Phase 3: try to match by preferred key only (apply a direction-aware
+    # default tweak — see _fallback_direction_factor).
     if preferred_keys:
+        factor = _fallback_direction_factor(desc_lower)
         for param in numeric_params:
             if param["param_key"] in preferred_keys:
                 old_val = param["value"]
                 if isinstance(old_val, int):
-                    new_val = max(1, round(old_val * 1.20))
+                    new_val = max(1, round(old_val * factor))
                 else:
-                    new_val = round(old_val * 1.20, 6)
+                    new_val = round(old_val * factor, 6)
                 return LogicTweak(
                     node_path=param["node_path"],
                     param_key=param["param_key"],
@@ -1098,13 +1131,15 @@ def _parse_change_description_to_tweak(
                     ),
                 )
 
-    # Phase 4: fall back to the first numeric parameter with a default ±20% tweak.
+    # Phase 4: fall back to the first numeric parameter with a direction-aware
+    # default tweak (see _fallback_direction_factor).
+    factor = _fallback_direction_factor(desc_lower)
     param = numeric_params[0]
     old_val = param["value"]
     if isinstance(old_val, int):
-        new_val = max(1, round(old_val * 1.20))
+        new_val = max(1, round(old_val * factor))
     else:
-        new_val = round(old_val * 1.20, 6)
+        new_val = round(old_val * factor, 6)
     return LogicTweak(
         node_path=param["node_path"],
         param_key=param["param_key"],
