@@ -1127,8 +1127,29 @@ class TestLensBlendPrimaryMetricDominance:
     def test_primary_metric_dominates_opposing_lens_preference(self):
         """When primary metric clearly favors BND, BND ranks first even with strong opposing lens.
 
-        LENS_BLEND_WEIGHT=0.25 max perturbation is 0.25 positions.
-        A 1-position primary gap cannot be inverted by lens alone.
+        AC-D2 invariant (post-D-fix, advisors/asset_swap_engine.py:_apply_lens_blend):
+        the blend key is a CUMULATIVE ABSOLUTE raw-score-gap walk minus a bounded
+        lens term (``LENS_BLEND_WEIGHT * (mean_lens - neutral)``, |term| <= 0.25*0.5
+        = 0.125 per candidate). A real, non-degenerate primary gap of ~0.318
+        (BND's corr vs TLT's corr, see below) is far larger than any pairwise lens
+        swing the extreme lens_scores_oppose fixture can produce, so BND must stay
+        first -- "supporting evidence only, never override".
+
+        STALE-FIXTURE FIX (2026-07-12, routed via awt-eng/PM D-workstream review):
+        the original BND=[0.0]*10 and AGG=[0.9]*10 series are CONSTANT (zero
+        variance). asset_swap_engine._pearson_corr's zero-variance guard
+        (denom <= 1e-12 -> return 0.0) therefore forced BOTH BND's and AGG's
+        correlation to a hardcoded 0.0 -- an accidental EXACT TIE, not the
+        "BND best (~0), AGG worst (~1.0)" the old comments claimed. Against the
+        pre-D-fix (inert) blend this tie was invisible because nothing could ever
+        reorder anything; once the blend correctly resolves a zero-gap tie by lens
+        (AC-D2: "a zero gap is the smallest gap -- lens CAN move it"), AGG's higher
+        lens score (0.5) legitimately promoted it ahead of BND (lens 0.01),
+        breaking this test -- CORRECTLY, since the fixture never exercised a real
+        primary-dominance case. Fixed below: every series now has genuine
+        (non-degenerate) variance and a REAL computed correlation gap, verified
+        against the actual _pearson_corr formula (not assumed) -- BND corr=0.174,
+        TLT corr=0.492, AGG corr=1.0 (exact rank: BND < TLT < AGG, no ties).
         """
         engine = _import_engine()
         obj = engine.SwapObjective(
@@ -1137,15 +1158,24 @@ class TestLensBlendPrimaryMetricDominance:
             measured_value=0.85,
         )
 
+        _spy_ramp = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
         primary_corr = {
-            "SPY": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-            "BND": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # corr~0 → best
-            "TLT": [0.5, 0.6, 0.7, 0.8, 0.9, 0.5, 0.6, 0.7, 0.8, 0.9],  # corr~0.95 → worse
-            "AGG": [0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9],  # corr~1.0 → worst
+            "SPY": _spy_ramp,
+            # Alternating series, no linear trend with SPY's ramp -> genuinely low
+            # (not zero-variance-guard-forced) correlation. |corr| ~= 0.174 -> best.
+            "BND": [0.5, -0.5, 0.5, -0.5, 0.5, -0.5, 0.5, -0.5, 0.5, -0.5],
+            # Partial trend-following (real, non-degenerate variance). |corr| ~= 0.492
+            # -> worse than BND by a real ~0.318 gap.
+            "TLT": [0.5, 0.6, 0.7, 0.8, 0.9, 0.5, 0.6, 0.7, 0.8, 0.9],
+            # A pure positive scaling of SPY's ramp (0.9x amplitude, same shape) --
+            # non-constant (real variance) but PERFECTLY correlated: |corr| == 1.0
+            # exactly -> worst, by construction, not by a zero-variance accident.
+            "AGG": [v * 0.9 for v in _spy_ramp],
         }
 
-        # Lens strongly opposes primary: TLT=0.99, BND=0.01.
-        # Max lens bump for TLT vs BND = 0.25*(0.99-0.01)=0.245 < 1.0-position gap.
+        # Lens strongly opposes primary: TLT=0.99, BND=0.01, AGG=0.5 (neutral).
+        # Even the maximum possible pairwise lens swing cannot bridge BND's real
+        # ~0.318 cumulative-gap lead over TLT (let alone AGG's ~0.826).
         lens_scores_oppose = {
             "BND": {"sentiment": 0.01},
             "TLT": {"sentiment": 0.99},
@@ -1164,8 +1194,9 @@ class TestLensBlendPrimaryMetricDominance:
         assert tickers, "Must return at least one candidate"
         assert tickers[0] == "BND", (
             f"Primary metric (low correlation) must dominate lens preference. "
-            f"BND has near-zero correlation and must rank first even though lens "
-            f"strongly prefers TLT. With LENS_BLEND_WEIGHT=0.25 the max lens "
-            f"perturbation (0.245) cannot bridge a 1.0-position primary gap. "
+            f"BND has the lowest REAL (non-degenerate) correlation (~0.174) and "
+            f"must rank first even though lens strongly prefers TLT -- the real "
+            f"~0.318 primary gap to TLT cannot be bridged by any lens differential "
+            f"(AC-D2: large primary margin is never invertible). "
             f"Got ranking: {tickers}."
         )
