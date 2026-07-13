@@ -125,6 +125,35 @@ def test_ac14_api_advisor_observations_suppresses_or_labels_feature_off_de_row(c
     )
 
 
+def test_ac14_e2e_flag_off_symphony_observations_feed_has_no_divergence_explainer_rows(client):
+    """NEW regression test (PM-adjudicated 2026-07-13, explicitly requested in
+    addition to the mocked test above): end-to-end through the REAL database
+    module (no mocking of get_advisor_observations_for_symphony or
+    insert_advisor_observation — the test-isolated temp DB_PATH from
+    conftest.py's autouse fixture is used) — the user-visible surface the fix
+    exists for. Calls the REAL run_divergence_explainer with §B off (the
+    approved fix: write nothing), then hits the REAL route and confirms zero
+    DIVERGENCE_EXPLAINER rows for that symphony — proving the full stack, not
+    just an isolated unit."""
+    import advisors.divergence_explainer as divex
+
+    symphony_id = "test-symphony-de-e2e"
+    autotune_run = {"id": 9001, "symphony_id": symphony_id, "spec_bundle_id": "bundle-e2e-9001"}
+
+    result = divex.run_divergence_explainer(autotune_run, None, second_window_enabled=False)
+    assert result is None, f"expected no row written (§B off), got a row id: {result!r}"
+
+    resp = client.get(f"/api/advisor-observations?symphony_id={symphony_id}")
+    assert resp.status_code == 200
+    rows = resp.get_json()
+    de_rows = [r for r in rows if r.get("advisor_role") == "DIVERGENCE_EXPLAINER"]
+    assert de_rows == [], (
+        f"AC-14 REGRESSION: /api/advisor-observations for a symphony that ran "
+        f"autotune with §B off must contain NO DIVERGENCE_EXPLAINER rows "
+        f"end-to-end; got: {de_rows}"
+    )
+
+
 def test_self_guard_overview_panel_already_excludes_divergence_explainer_role(client, monkeypatch):
     """PINS existing-correct behavior (not a RED test): the Overview panel's
     own aggregation must continue to exclude DIVERGENCE_EXPLAINER from
