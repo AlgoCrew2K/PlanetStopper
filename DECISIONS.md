@@ -4678,7 +4678,10 @@ The `advisor-intent-audit` (2026-07-13, verdict @ `08b0bcc0`) found the AI Advis
 
 ### AC-11..AC-12 — Strategy Builder observability + dead-code revival (F5, Gap E)
 
-**STATUS: PENDING.**
+**STATUS: PENDING — split across two owners, recorded here so this doc-writer knows what to expect from whom (r1-engine, 2026-07-13):**
+- **AC-11 (run-level mode banner: `built_new_count`/`atlas_count`/"LLM generation produced 0 plans (degraded)" notice) is r1-fe's territory** (route/UI per the plan's Architecture split) — NOT r1-engine's, correcting this doc-writer's earlier assumption.
+- **AC-12 (r1-engine's actual slice) is narrower than the plan's headline text:** the `backtest_fn` engine seam into `compile_plan`/`_generate_candidate_trees`/`propose_strategies` — self-wires by default (PM decision "mod-1"; `_SKIP_REPAIR_LOOP` sentinel is the only off-switch) — plus a `ProposalRun.live_returns_applied: bool` signal for the route to key its skip-indicator off. r1-fe renders the actual skip-indicator using that signal.
+- This doc section therefore needs file:line from BOTH r1-engine (engine-side seam + `live_returns_applied`) and r1-fe (banner/skip-indicator rendering) before it can be closed.
 
 ### AC-13 — Performance: single baseline-backtest call per route evaluation (D-7, Gap H)
 
