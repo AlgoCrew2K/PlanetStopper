@@ -4842,9 +4842,28 @@ The full-tree pre-merge suite remains the PM's separate ship-gate (recorded in t
 - `74b84180`: `CHANGELOG.md` (AC-16 attribution edit), `docs/audit-inputs/doc-reconciliation.md` (2 SUPERSEDED banners, §1.3/§1.4)
 - `38732183`: `docs/generated/app.md` (R1 route sweep + AC-17 candidate-alert note), `docs/audit-inputs/claude-md-corrections-r1.md` (finalized §1-6, §8 retraction, §7 pending)
 - `93e0e48d`: `DECISIONS.md` (Checkpoint-3 draft + AC-17 doc-tree retraction + Verification/Files-changed placeholders)
-- (this commit): `DECISIONS.md` (Checkpoint-3 closed + final Verification numbers), `docs/generated/static_ai_advisor_js.md` (`sbRunAnalysis()` field-consumption update), `docs/audit-inputs/claude-md-corrections-r1.md` (§7 unblocked)
+- `0069ac2b`: `DECISIONS.md` (Checkpoint-3 closed + final Verification numbers), `docs/generated/static_ai_advisor_js.md` (`sbRunAnalysis()` field-consumption update), `docs/audit-inputs/claude-md-corrections-r1.md` (§7 unblocked)
+- (this commit): `DECISIONS.md` (post-cycle-complete stale-test remediation record, below)
 
 CLAUDE.md itself is not in this list -- the PM applies it directly from `docs/audit-inputs/claude-md-corrections-r1.md`, all 8 sections now unblocked.
+
+### Post-cycle-complete: full-tree stale-test remediation
+
+**STATUS: GREEN.** Not part of Checkpoint-3 or the 18-file R1 battery (both closed above, unaffected) -- a separate, later finding from the PM's independent full-tree verifier, which by design runs the WHOLE tree, not R1's own targeted file list. At HEAD `0069ac2b` the verifier found 5 FAILED tests outside R1's 18-file list. r1-test root-caused all 5 read-only (test + SUT + R1 diff), reported to team-lead, was cleared to fix, and landed the fix at commit `d7ac00ed` (test-only, zero production-code diff).
+
+**Root cause, both cases: cycle-caused-stale-test, not a functional regression** -- the production code was already correct in both cases; these sibling tests (never part of R1's own 18-file list) encoded a contract R1's own changes correctly superseded, and nobody's targeted-file battery was scoped to catch it.
+
+1. **`tests/ai_advisor/test_strategy_builder_run_render_contract.py::test_success_path_writes_into_results_div`** -- a test-harness bug, not a code defect: the test's own `_sb_run_analysis_body()` extracted a fixed 4000-character window from the `sbRunAnalysis(` signature, sized (per its own comment) to "comfortably cover the ~70-line pre-fix version." Checkpoint-3's `fa691f6a` field-consumption wiring legitimately grew the function to ~7990 characters, so the window silently truncated mid-function and the test's own brace-matcher raised a false-negative "Unbalanced braces" error. Fixed with real brace-matching from the function's own opening `{` (reusing the file's existing `_matching_brace_end` helper) -- correct-by-construction regardless of future growth, not a window-size bump (team-lead's directive: permanent fix only).
+
+2. **`tests/ai_advisor/test_synthesis_model_config.py`** -- 4 tests (`TestRequestSuggestionsModelEnvVar` x2, `TestSuiteOrderingRegression` x2) asserted the PRE-AC-16 contract for `ai_advisor.request_suggestions` (env var `ADVISOR_SYNTHESIS_MODEL`, default `claude-opus-4-8`). AC-16 (this cycle, operator directive) deliberately split suggestion-model routing into its own `model_config.py` knob (`ADVISOR_SUGGESTION_MODEL`, default `claude-fable-5`) -- already correctly covered by R1's own `tests/advisors/test_r1_fable_suggestion_routing.py` (6/6 GREEN, cited under AC-16 above), but this SIBLING file was missed since it was never in R1's 18-file list. A real AC-16 coverage-completeness gap, not a functional regression. Fixed the 4 `request_suggestions`-scoped tests plus a stale file-header AC-5 docstring to assert the new contract; `test_env_var_unset_uses_opus_default_in_suggestions` renamed to `test_env_var_unset_uses_fable_default_in_suggestions` (the old name asserted a claim now false). The other 37 tests in the same file (covering the untouched `ADVISOR_SYNTHESIS_MODEL` synthesis/chat paths) confirmed unaffected -- r1-test ran the whole file before and after; only these 4 flipped FAIL->PASS.
+
+**No test was skipped, xfailed, or deleted to force green** -- both fixes assert the genuinely-correct NEW behavior, verified by r1-test's own read of the shipped R1 diff before writing either fix.
+
+**Verified independently by this doc-writer** (not taken at face value): ran both files together, `49 passed in 14.27s`, matching r1-test's reported 49/49 (8 + 41) exactly.
+
+**Item 6 (deliberately NOT part of this remediation):** a collection ERROR in `test_response_text_scrub.py`, left with the PM's verifier to confirm reproducible-in-full-tree vs. pre-existing/blip before anyone touches it -- per team-lead's directive, not silently folded into this fix.
+
+**Tests:** commit `d7ac00ed`, test-only (`tests/ai_advisor/test_strategy_builder_run_render_contract.py` + `tests/ai_advisor/test_synthesis_model_config.py`), zero production-code diff. r1-review sign-off ("asserts new contract, coverage not weakened") tracked separately.
 
 ### Reference
 
