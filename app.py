@@ -3850,6 +3850,42 @@ def _n1_honest_caveats(caveats: "list[str] | None") -> list[str]:
     return filtered
 
 
+# AC-9 (F3, Gap C — near-zero statistical power at reachable fold lengths):
+# audit F3 chained the codebase's own compute_sortino_tstat -> compute_
+# haircut_pvalue -> benjamini_hochberg_adjust on synthetic data and found
+# near-zero detection power at the gate's own verified T=13 fold-length
+# floor (FOLD_TRANSFORM_MIN_TOTAL_DAYS=65*0.20), and confirmed the finding
+# still holds at a fixture-verified T=121 real-symphony anchor (hash
+# INfCn3eKsu6i4oTTqdUp, series_len=606) — even there, N=12 batch-corrected
+# detection is 0% for every economically-plausible effect size. Deliberately
+# in app.py, not backtest_gate_engine.py (collision-avoidance with
+# r1-engine's concurrent AC-4/5/17 work there, per the locked contract) —
+# this is a UI-caveat threshold, not a gate-math constant; the gate's
+# accept/reject logic is unaffected. Value = the fixture-verified anchor
+# itself (T=121): the audit describes even that longer fold as only "weak"
+# power, so anything at or below it earns the caveat.
+MIN_POWER_FOLD_DAYS = 121
+
+# Caveat text for AC-9 — additive to SURVIVOR_OVERFITTING_CAVEAT (the
+# engine's own selection-bias disclosure), never a replacement. Rendered
+# only for SURVIVOR cards — a rejected candidate's fold length is moot, it
+# didn't clear the gate either way.
+_LOW_POWER_CAVEAT = (
+    "This candidate cleared the statistical gate, but the underlying "
+    "backtest window is short enough that statistical power to detect a "
+    "genuine edge is low. Treat as a candidate for further scrutiny, not a "
+    "proven result."
+)
+
+
+def _low_power(validation_days: "int | None") -> bool:
+    """True when the validation fold is short enough that detection power
+    is near-zero per audit F3 — see MIN_POWER_FOLD_DAYS. None (fold length
+    unknown) is never flagged — absence of data is not evidence of low
+    power."""
+    return validation_days is not None and validation_days < MIN_POWER_FOLD_DAYS
+
+
 # AC-1/AC-2/AC-3/AC-16 (attribution honesty + coherence): every model-name
 # badge/copy string in the AI Advisor UI reads a resolved accessor value at
 # render time — never a hardcoded "Opus"/"Fable" literal. This map is
@@ -4413,6 +4449,9 @@ def ai_advisor_asset_swaps_evaluate():
                 "validation_days": gate_result.validation_days,
                 "oos_alpha": gate_result.oos_alpha,
                 "winner_p_adj": gate_result.winner_p_adj,
+                # AC-9: statistical-power flag, threshold in app.py only —
+                # never duplicated client-side.
+                "low_power": _low_power(getattr(gate_result, "validation_days", None)),
             }
             if gate_result
             else None,
@@ -4606,6 +4645,9 @@ def ai_advisor_logic_changes_evaluate():
                     "validation_days": gate_result.validation_days,
                     "oos_alpha": gate_result.oos_alpha,
                     "winner_p_adj": gate_result.winner_p_adj,
+                    # AC-9: statistical-power flag, threshold in app.py only —
+                    # never duplicated client-side.
+                    "low_power": _low_power(getattr(gate_result, "validation_days", None)),
                 }
                 if gate_result
                 else None,
@@ -4758,9 +4800,20 @@ def ai_advisor_strategy_builder_run():
             "n_candidates": gate_batch.n_candidates if gate_batch else None,
             "fdr_q": gate_batch.fdr_q if gate_batch else None,
             "fdr_adjusted_threshold": fdr_adjusted_threshold,
+            # AC-9: statistical-power flag, threshold in app.py only — never
+            # duplicated client-side. getattr (not gr.validation_days) since
+            # some pre-existing tests construct `gr` as a bare
+            # types.SimpleNamespace without this field — real
+            # CandidateGateResult instances always carry it.
+            "low_power": _low_power(getattr(gr, "validation_days", None)),
         }
 
     survivors_list = [_gate_result_to_dict(gr) for gr in run.screened_survivors]
+    # AC-9: the power caveat is additive on SURVIVOR cards only (a rejected
+    # candidate's fold length is moot — it didn't clear the gate either way).
+    for _survivor in survivors_list:
+        if _survivor["low_power"]:
+            _survivor["caveats"] = [*_survivor["caveats"], _LOW_POWER_CAVEAT]
 
     # Derive rejected from gated_batch.results minus screened_survivors (AC-3.2).
     # ProposalRun has no rejected_candidates attribute — compute from gate batch.
