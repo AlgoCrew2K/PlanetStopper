@@ -4678,11 +4678,11 @@ The `advisor-intent-audit` (2026-07-13, verdict @ `08b0bcc0`) found the AI Advis
 
 ### AC-11..AC-12 — Strategy Builder observability + dead-code revival (F5, Gap E)
 
-**STATUS: PENDING — split across two owners, recorded here so this doc-writer knows what to expect from whom (r1-engine, 2026-07-13):**
+**STATUS: PENDING (implementation) — split across two owners; field-name settled 2026-07-13, code not yet GREEN.**
 - **AC-11 (run-level mode banner: `built_new_count`/`atlas_count`/"LLM generation produced 0 plans (degraded)" notice) is r1-fe's territory** (route/UI per the plan's Architecture split) — NOT r1-engine's, correcting this doc-writer's earlier assumption.
-- **AC-12 (r1-engine's actual slice) is narrower than the plan's headline text:** the `backtest_fn` engine seam into `compile_plan`/`_generate_candidate_trees`/`propose_strategies` — self-wires by default (PM decision "mod-1"; `_SKIP_REPAIR_LOOP` sentinel is the only off-switch). r1-fe renders the skip-indicator using an engine-provided signal.
-- **Field-name NOT yet settled (2026-07-13) — this doc-writer relayed a name that turned out to be wrong, correcting here rather than leaving it stand:** r1-engine's message to this doc-writer named the signal `ProposalRun.live_returns_applied: bool`; r1-fe reports the name the PM actually approved with them for the skip-indicator is `screens_skipped`/`screens_skipped_reason` — **opposite polarity** (true when skipped, not true when applied). r1-fe is reconciling the real field name/semantics directly with r1-engine before wiring the route; this doc-writer will use whichever name+polarity actually lands, not either of the two names floated so far.
-- This doc section therefore needs file:line from BOTH r1-engine (engine-side seam + the settled signal) and r1-fe (banner/skip-indicator rendering) before it can be closed.
+- **AC-12 (r1-engine's actual slice) is narrower than the plan's headline text:** the `backtest_fn` engine seam into `compile_plan`/`_generate_candidate_trees`/`propose_strategies` — self-wires by default (PM decision "mod-1"; `_SKIP_REPAIR_LOOP` sentinel is the only off-switch). r1-fe renders the skip-indicator using the settled engine-provided signal below.
+- **Field names SETTLED (r1-engine + r1-fe reconciled directly, 2026-07-13) — final shape, this doc-writer's earlier relayed name (`live_returns_applied`) is fully dropped, no dual-field:** `ProposalRun.screens_skipped: bool` is the sole engine-side field (`= not bool(live_returns)`); `screens_skipped_reason` is a route-constructed static string (r1-fe's side, `app.py`'s SB route) — NOT derived from anything r1-engine exposes.
+- This doc section needs file:line from BOTH r1-engine (engine-side `screens_skipped` seam) and r1-fe (route-level `screens_skipped_reason` + banner/skip-indicator rendering) once GREEN before it can be closed.
 
 ### AC-13 — Performance: single baseline-backtest call per route evaluation (D-7, Gap H)
 
