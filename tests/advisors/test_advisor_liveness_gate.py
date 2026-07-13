@@ -267,12 +267,13 @@ class TestH6EngineFeedsFoldMatchedBaseline:
 
         real_batch = swap_engine.evaluate_candidate_batch
 
-        def _batch_spy(candidates, *, incumbent_oos_alpha=0.0, default_oos_alpha=0.0):
+        def _batch_spy(candidates, *, incumbent_oos_alpha=0.0, default_oos_alpha=0.0, spy_returns_fn=None):
             captured["incumbent_oos_alpha"] = incumbent_oos_alpha
             return real_batch(
                 candidates,
                 incumbent_oos_alpha=incumbent_oos_alpha,
                 default_oos_alpha=default_oos_alpha,
+                spy_returns_fn=spy_returns_fn,
             )
 
         score_tree = {
@@ -354,12 +355,13 @@ class TestH5ExplicitZeroNotReplaced:
         captured = {"incumbent_oos_alpha": "__unset__"}
         real_batch = swap_engine.evaluate_candidate_batch
 
-        def _batch_spy(candidates, *, incumbent_oos_alpha=0.0, default_oos_alpha=0.0):
+        def _batch_spy(candidates, *, incumbent_oos_alpha=0.0, default_oos_alpha=0.0, spy_returns_fn=None):
             captured["incumbent_oos_alpha"] = incumbent_oos_alpha
             return real_batch(
                 candidates,
                 incumbent_oos_alpha=incumbent_oos_alpha,
                 default_oos_alpha=default_oos_alpha,
+                spy_returns_fn=spy_returns_fn,
             )
 
         score_tree = {
