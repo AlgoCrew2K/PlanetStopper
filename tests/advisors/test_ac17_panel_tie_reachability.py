@@ -27,10 +27,17 @@ OOS-superiority precondition (acceptance_gate.py:257) plus the three hard
 vetoes (BHY winner / PBO / SPY baseline), never on an accidental panel-score
 artifact of missing parameter data.
 
-WHAT THIS FILE COVERS (plan sub-requirements a/d/e — engine-agnostic core +
-all three engines' real entry points). Sub-requirement (c) — panel_breakdown
-carrying an explicit N/A marker — is PENDING r1-engine's answer on the exact
-key/location (coordination message sent; not guessed here to avoid rework).
+WHAT THIS FILE COVERS: plan sub-requirements a/c/d/e — engine-agnostic core +
+all three engines' real entry points + the panel_breakdown N/A marker.
+Sub-requirement (c)'s exact contract was answered by r1-engine (msg
+082fd634): `acceptance_gate.py` is untouched (no-touch file) — the marker is
+stamped by `backtest_gate_engine.py` via `AcceptanceVerdict._replace()`
+(NamedTuple immutable-update) AFTER calling `evaluate_acceptance_gate`, when
+the both-empty tie condition fired. Key `"note"`, value the literal string
+`"not applicable — no parameter-vector representation"`, present ONLY on the
+tie path — absent (key not in dict) for every other path (OOS-inferior,
+one-side-empty caller-bug, real-params-unchanged).
+
 Sub-requirement (b) — partial param population forbidden at the three
 construction sites — is a design constraint on the FIX itself, not
 independently testable beyond what (a)/(d) already pin (a fix that "solves"
@@ -454,4 +461,81 @@ def test_ac17_candidate_alert_badge_increments_on_a_real_empty_params_survivor(b
         f"still returned {count} — the badge accessor itself is unaffected "
         f"by this AC (D-1 read path, database.py:1631), but this proves the "
         f"end-to-end chain from a reachable survivor to the badge now works."
+    )
+
+
+# ===========================================================================
+# (c) panel_breakdown N/A marker — contract confirmed by r1-engine (msg
+# 082fd634): key "note", literal value "not applicable — no parameter-vector
+# representation", present ONLY on the both-empty tie path.
+# ===========================================================================
+
+_PANEL_NA_NOTE = "not applicable — no parameter-vector representation"
+
+
+def test_ac17_panel_breakdown_carries_na_note_on_empty_params_tie(bge):
+    """MUST FAIL pre-fix: the key does not exist at all today (nothing stamps
+    it — the tie mechanism itself doesn't exist yet)."""
+    cand = _empty_params_candidate(bge, "ac17-note-cand", list(_STRONG_POSITIVE_RETURNS_PCT))
+    batch = bge.evaluate_candidate_batch([cand], incumbent_oos_alpha=0.0, default_oos_alpha=0.0)
+    breakdown = batch.results[0].verdict.panel_breakdown
+    assert breakdown.get("note") == _PANEL_NA_NOTE, (
+        f"AC-17 GAP: panel_breakdown does not carry the N/A marker on the "
+        f"both-empty tie path. Got breakdown={breakdown}"
+    )
+
+
+def test_ac17_panel_breakdown_note_absent_for_oos_inferior_empty_params(bge):
+    """The marker must be present whenever the tie condition fires (both
+    params empty), REGARDLESS of the eventual decision — an OOS-inferior
+    empty-params candidate still hits the tie path structurally (it clears
+    every veto, just loses on the separate OOS-superiority comparison). This
+    is the precise contract per r1-engine's design (present whenever the tie
+    fired, not "only on ADOPT").
+
+    Fixture note: uses the SAME strong-positive returns as the core ADOPT
+    test (proven to clear BHY/PBO/SPY) but an artificially high
+    incumbent_oos_alpha (1000.0) to force the OOS-inferior KEEP_INCUMBENT
+    branch deterministically — an earlier draft tried weak/negative returns
+    directly, which instead failed the BHY veto (panel_breakdown={} on veto
+    failure, a DIFFERENT branch than intended) rather than reaching the
+    OOS-inferior comparison. Forcing via the baseline is more robust than
+    hand-tuning the fold-split boundary."""
+    cand = _empty_params_candidate(bge, "ac17-note-oos-inferior", list(_STRONG_POSITIVE_RETURNS_PCT))
+    batch = bge.evaluate_candidate_batch([cand], incumbent_oos_alpha=1000.0, default_oos_alpha=0.0)
+    result = batch.results[0]
+    assert result.verdict.decision == "KEEP_INCUMBENT", (
+        f"self-guard: expected KEEP_INCUMBENT via the OOS-inferior branch "
+        f"(vetoes must still pass); got {result.verdict.decision}"
+    )
+    assert result.verdict.vetoes_passed, (
+        "self-guard: this test requires the veto-passed branch (panel_breakdown "
+        "non-empty) to isolate the OOS-inferior case from a veto failure"
+    )
+    breakdown = result.verdict.panel_breakdown
+    assert breakdown.get("note") == _PANEL_NA_NOTE, (
+        f"AC-17 GAP: an OOS-inferior empty-params candidate still hits the "
+        f"both-empty tie condition structurally — the N/A marker must be "
+        f"present regardless of the eventual KEEP_INCUMBENT decision. "
+        f"Got breakdown={breakdown}"
+    )
+
+
+def test_ac17_panel_breakdown_note_absent_for_real_params_candidate(bge):
+    """The marker must be ABSENT for a real-params candidate — the tie
+    condition never fires when either param dict is non-empty, so no N/A
+    annotation should ever appear on a genuinely-evaluated panel."""
+    cand = bge.BacktestCandidate(
+        candidate_id="ac17-note-real",
+        daily_returns_pct=list(_STRONG_POSITIVE_RETURNS_PCT),
+        candidate_params={"window": 16.0},
+        incumbent_params={"window": 20.0},
+        theory_prior_params={"window": 18.0},
+    )
+    batch = bge.evaluate_candidate_batch([cand], incumbent_oos_alpha=0.0, default_oos_alpha=0.0)
+    breakdown = batch.results[0].verdict.panel_breakdown
+    assert "note" not in breakdown, (
+        f"AC-17 REGRESSION: a real-params candidate's panel_breakdown carries "
+        f"the empty-params N/A marker — it must never fire outside the "
+        f"both-empty tie path. Got breakdown={breakdown}"
     )
