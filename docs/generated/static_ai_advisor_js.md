@@ -3,7 +3,7 @@
 > Client-side logic for the AI Advisor single-page SPA: in-place tab switching, suggestion card rendering with per-symphony assessment and lens-cache staleness stamp (AC-3), accept/reject lifecycle, autotune run feed, symphony selection, and Strategy Builder run/chat affordances.
 
 **Source:** `static/ai_advisor.js`
-**Last updated:** 2026-06-29 (DE-ADVISOR-LATENCY AC-3: `#advisor-lens-as-of` staleness stamp populated on suggest completion; prior: spa-port cycle 2026-06-13)
+**Last updated:** 2026-07-13 (advisor-suite-fixes AC-1/AC-2: `sbRunAnalysis()` success branch now renders in-place instead of navigating away -- see below; prior: DE-ADVISOR-LATENCY AC-3 `#advisor-lens-as-of` staleness stamp; prior: spa-port cycle 2026-06-13)
 
 ## Overview
 
@@ -121,11 +121,18 @@ Fetches `GET /api/performance/symphonies`, populates `#symphony-id-input` option
 
 Operator-initiated proposal run for the Strategy Builder tab. Reads `#sb-objective-select`, `#sb-universe-input`, and `#sb-symphony-select` from the panel controls. Obtains the CSRF token from the cached `_csrfToken` or fetches fresh from `GET /api/csrf-token` on a miss. POSTs to `POST /ai-advisor/strategy-builder/run` with `X-CSRF-Token` header and JSON body `{ objective, universe, symphony_id }`.
 
-On success: navigates to `/ai-advisor` (the unified SPA) so newly-persisted `STRATEGY_BUILDER` observations are rendered server-side. Navigates to `/ai-advisor`, not the old standalone `/ai-advisor/strategy-builder` URL (which 302-redirects anyway per the spa-port fold-in).
+**On success (AC-1/AC-2 fix, advisor-suite-fixes.md, 2026-07-13):** renders the response IN-PLACE into `#sb-run-results` -- never navigates away, so the displayed cards are inherently scoped to the run that just completed (no re-fetch, no stale-history confusion):
+- A summary line (`data-testid="sb-live-summary"`): `"Evaluated N candidate(s)"`, plus `" — threshold α=<fdr_adjusted_threshold>"` when the route returns one.
+- `data.survivors` (if any): one `.proposal-card--survivor` per item (`data-testid="sb-live-survivor-cards"`), each showing `candidate_id` (HTML-escaped via `escHtml`).
+- Zero survivors: an explicit honest empty state (`data-testid="sb-live-empty-state"`) — `"Evaluated N candidates — 0 passed the gate"` — never a blank div.
+- `data.rejected` (if any): a `<details data-testid="sb-live-rejected-section">` collapsible, one `.proposal-card--rejected` per item.
+- No sparkline — the run endpoint's response carries no equity points; only the server-rendered persisted-history cards keep the sparkline. Accepted scope gap (team-lead ruling, documented in the plan).
 
-On error: shows the error class name in `#sb-run-error` inline without a page navigation.
+**Before this fix:** unconditionally navigated to `/ai-advisor` on success, discarding the response JSON entirely — the operator saw a full-page reload with no way to tell which observations (if any) belonged to the run they just triggered (AC-1: nothing rendered; AC-2: not run-identifiable). See `DECISIONS.md` `DE-ADVISOR-SUITE-FIX-001`.
 
-Disables `#sb-run-btn` during the request; re-enables it in the `finally` block regardless of outcome.
+On error: shows the error class name in `#sb-run-error` inline without a page navigation (unchanged).
+
+Disables `#sb-run-btn` during the request; re-enables it in the `finally` block regardless of outcome (unchanged).
 
 *Moved from inline `<script>` in the deleted `templates/ai_advisor_strategy_builder.html`; defined inside the IIFE to share the `_csrfToken` closure; exposed as `window.sbRunAnalysis` for Jinja `onclick` handlers (spa-port cycle, 2026-06-13).*
 

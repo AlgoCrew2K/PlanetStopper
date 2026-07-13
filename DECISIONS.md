@@ -4566,7 +4566,90 @@ ADVISOR-AUDIT-VERDICT.md (2026-07-13 audit, worktree adv-audit) -- the operator 
 
 **Doc-sweep finding (non-blocking, fix-review-approved with a follow-up nit):** `advisors/lens_gdelt.py:27-28`'s MODULE-level docstring ("Design invariants" section) still read "on 429 only" post-fix -- the function-level docstring at `lens_gdelt.py:161-163` was correctly updated by fix-lens, but this one line at the top of the file was missed. Filed to fix-lens for a one-line correction; not a functional defect.
 
-### AC-1/AC-2/AC-3/AC-5/AC-7 -- pending
+### AC-1/AC-2 -- Strategy Builder on-demand run renders in-place and is run-scoped
 
-Strategy Builder in-place render + run-identifiability (AC-1/AC-2), Asset Swaps chat-button quote-escaping (AC-3), and the chrome header badge emoji-to-SVG swap (AC-5) are RED (`3b34583a`) and in GREEN with fix-fe as of this entry. AC-7 (live-UI verification of guard-alpha / weekly-suggestion surfacing / Overview ADOPT_CANDIDATE filter) is fix-ux's deliverable, independent of the pytest ACs. This entry will be extended with each AC's decision record as it lands GREEN + is PM live-UI-gated; a final "Verification" + "Files changed" close-out will be appended once the whole cycle ships.
+**Problem:** `static/ai_advisor.js`'s `sbRunAnalysis()` unconditionally navigated to `/ai-advisor` on a successful run (`window.location.href = '/ai-advisor'`), discarding the route's own response JSON. The operator saw a full-page reload with no way to tell whether their run produced anything, or which observations (if any) belonged to THIS run versus prior history.
+
+**Fix:** `static/ai_advisor.js` (success branch) now renders `data.survivors`/`data.rejected`/`data.n_candidates`/`data.fdr_adjusted_threshold` directly into `#sb-run-results`: a summary line, survivor cards, an honest 0-survivor empty state ("Evaluated N candidates — 0 passed the gate"), and a rejected-candidates `<details>` collapsible. No re-fetch after the response resolves, so the cards are inherently scoped to the run that just completed (AC-2) -- no separate run-id was needed. No sparkline: the run endpoint's response carries no equity points (accepted scope gap, team-lead ruling -- only the server-rendered persisted-history cards keep the sparkline).
+
+**PM live-UI gate:** PM personally read the screenshot -- Strategy Builder tab renders "Evaluated 12 — 0 passed the gate" in-place after Run, no navigation. AC-1/AC-2 CONFIRMED from the rendered UI.
+
+**Tests:** `tests/ai_advisor/test_strategy_builder_run_render_contract.py` (new, 8 tests: 5 RED-to-GREEN + 3 regression guards). RED at `3b34583a`, GREEN at `37bf1fc5`.
+
+### AC-3 -- Asset Swaps "Chat about this" button (real bug, fixed) + AC-3b (suspected panel-visibility bug, investigated and found to be a test-environment artifact, not shipped)
+
+**AC-3 problem (real defect, fixed):** `static/ai_advisor_asset_swaps.js`'s "Chat about this" onclick handler embedded a JS string literal using a double-quote inside the double-quoted `onclick="..."` HTML attribute -- the unescaped quote truncated the attribute at that point, so the button's click handler was unreachable (nothing happened on click).
+
+**AC-3 fix:** switched the two embedded JS string literals from double- to single-quoted, matching the already-correct sibling pattern at `ai_advisor.js:298-301`. Verified live: the button now fires `openChatPanel` with real artifact data.
+
+**AC-3b (raised during live verification, NOT shipped):** after the onclick fix made the button reachable, fix-ux's live click test found the chat panel itself staying visually off-canvas (`.chat-panel`'s toggled `right` property stuck at its closed value, `-440px`, despite `.chat-panel--open` correctly present in `classList`). Exhaustive live diagnosis (fix-ux: computed-style dump, full ancestor-chain walk, CSSOM rule enumeration via `document.styleSheets`, `document.getAnimations()` check, brace/comment-balance parse check) ruled out every standard cascade explanation. A transform-based rewrite (`right: 0` constant, `transform: translateX(100%)`/`translateX(0)` toggled instead -- matching the already-proven `#detail-panel` pattern) was written and committed (`dd3efbb1`) with a 6-test regression guard (`ed66ee7e`).
+
+**Reversal:** before shipping the transform fix, the team ran a fresh-browser A/B: TEST-1 (`ux-ac3b-TEST1-original-code-fresh-browser-WORKS.png`) showed the ORIGINAL `right`-based CSS opening the panel INSTANTLY in a fresh browser session. This proved AC-3b was a stale/long-lived-headless-browser paint-scheduling artifact (the diagnosis session had been running the same headless tab for ~2 hours across dozens of `evaluate()` calls) -- not a real user-facing defect. Per Rule 2 applied to the PM's own prior conclusion, the transform fix and its test were reverted (`aca67f53`, `09ac1187`) rather than ship a CSS change to working production code for a phantom bug. Net effect on `templates/ai_advisor.html` between `37bf1fc5` and `09ac1187` is ZERO (confirmed via `git diff --stat`, empty). The one-hop detour is preserved in git history for provenance; nothing shipped from it.
+
+**Backlog (not filed to `feature-plans/BACKLOG.md` as of this doc pass -- flagging here so it isn't lost):** the `right`-based slide panel has a demonstrated paint-scheduling fragility under long-lived headless sessions, even though it is provably correct in normal (fresh) use. Consider standardizing slide-panels on the transform pattern (`#detail-panel`'s proven mechanism) as a deliberate follow-up for E2E test robustness -- not a user-facing bug, purely a test-environment hardening item.
+
+**Tests:** `tests/ai_advisor/test_asset_swaps_chat_button_escaping.py` (new, 4 tests: 2 RED-to-GREEN + 2 control-sibling sanity checks) for AC-3. RED at `3b34583a`, GREEN at `37bf1fc5`. AC-3b's `test_chat_panel_open_mechanism.py` (6 tests) was written, committed (`ed66ee7e`), and then reverted alongside the CSS (`09ac1187`) -- it no longer exists on the branch.
+
+### AC-5 -- Header candidate-alert badge icon is a monochrome inline SVG, not an emoji
+
+**Problem:** `templates/_chrome.html`'s candidate-alert indicator used the raw `&#x1F514;` (🔔) emoji entity -- inconsistent with the rest of the header chrome (clock/engine-status icons are all monochrome `stroke="currentColor"` SVGs) and rendered as a yellow bell regardless of light/dark theme.
+
+**Fix:** replaced with an inline monochrome SVG bell (`stroke="currentColor"`), inheriting `--studio-ink-dim` for legibility in both themes. The red `--studio-neg` count-pill is unchanged.
+
+**PM live-UI gate:** PM personally read the screenshot -- badge renders as a monochrome bell, not a yellow emoji, in the header. AC-5 CONFIRMED from the rendered UI.
+
+**Tests:** `tests/app/test_candidate_alert_indicator_render.py` (extended, 4 new tests: 2 RED-to-GREEN + 2 cascading-skip that un-skip on the SVG landing). RED at `3b34583a`, GREEN at `37bf1fc5`.
+
+### Test re-point (`3df88432`) -- 8 pre-existing tests were stale, not the implementation
+
+Two pre-existing test files broke against the correct AC-3/AC-5 implementation, both root-caused as stale test assumptions (root-cause-determines-role: implementation correct, tests wrong -- routed to fix-test, not re-opened as an implementation bug):
+- `tests/app/test_strategy_builder_phase36.py` (6 tests): whole-page `<svg` presence/count checks tripped by AC-5's new header bell SVG (present on every page via `_chrome.html`). Re-pointed via a `_without_header_chrome_svg()` helper that strips the ONE known header SVG by its stable `data-testid="candidate-alert-indicator"` anchor before checking -- the underlying sparkline invariants are unchanged and a genuine second sparkline SVG would still be caught.
+- `tests/ai_advisor/test_advisor_chat_handoff.py` (2 tests): regexes required an unescaped quote immediately after `setItem(`/`href=`, but this codebase's own established convention (confirmed at `ai_advisor.js:298-301` during this cycle's RED phase) requires backslash-escaped quotes for a JS string literal embedded inside a single-quote-delimited source string. Widened both patterns to accept an optional `\` before the quote; the underlying invariants (string-literal key; setItem precedes every chat-nav within 200 chars) are unchanged.
+
+`tests/app/test_app_routes.py::test_api_history_returns_zero_aggregates_when_no_files` was left failing, unrelated to this cycle and pre-existing -- see the CLAUDE.md draft below (post_mortems third-filesystem-source gotcha) for the root cause.
+
+### AC-7 -- guard-alpha, weekly-suggestion surfacing, and the Overview feed filter: all verified WORKING, no fix needed
+
+Live-driven by fix-ux against the running app: the `$`-saved guard-alpha panel WORKS, the weekly-suggestion surfacing (the candidate-alert header badge + AI Advisor tab) WORKS, and the Overview observations feed's lack of an ADOPT_CANDIDATE-only filter was confirmed INTENTIONAL (the feed is a general advisor-observations log, not a survivors-only view -- the candidate-alert badge is the survivors-only surface) and therefore out of scope, not a defect. No code change was required for AC-7.
+
+### CLAUDE.md updates (drafted here for PM application post-ship -- NOT applied to the checked-in CLAUDE.md by this cycle)
+
+**Key-files row addenda (append to the existing rows' text, do not replace):**
+- `static/ai_advisor.js` row: add "**advisor-suite-fixes AC-1/AC-2 (2026-07-13):** `sbRunAnalysis()` renders the Strategy Builder run response in-place (survivors/rejected/0-survivor honest state) instead of navigating away and discarding it."
+- `advisors/lens_gdelt.py` row: the existing text says "bounded 429 retry" -- update to "bounded retry on HTTP 429 AND transient network errors (Timeout, ConnectionError -- advisor-suite-fixes AC-6, `.claude/gdelt-contract.md` §5 Amendment 2)".
+- `ai_advisor.py` row: add "**advisor-suite-fixes AC-4 (2026-07-13):** the fundamentals selection loop's 10-K-only pre-filter was removed -- all forms (10-K, 10-Q, ...) now feed the existing latest-`end` sort, reversing the deliberate 10-Q scope-out from the original vintage-fix cycle (operator-approved)."
+- **New row to consider adding:** `static/ai_advisor_asset_swaps.js` has no Key Files row today. Suggested: "Asset Swaps tab client logic: candidate card rendering, accept/reject, 'Chat about this' → `openChatPanel` handoff (onclick-escaping fixed advisor-suite-fixes AC-3, 2026-07-13 -- previously truncated by an unescaped double-quote inside the attribute)."
+- **New row to consider adding:** `templates/_chrome.html` + `static/chrome.js` (the shared header chrome, all 4 screens) has no dedicated row -- currently only referenced inline under the candidate-alert cycle's app.py/database.py notes. Suggested: fold in "AC-5 (2026-07-13): candidate-alert badge icon is a monochrome inline SVG (`stroke="currentColor"`), not the prior `&#x1F514;` emoji entity."
+
+**Process gotcha -- `post_mortems/*.json` is a THIRD filesystem data source, not covered by the "Two-DB pattern" architecture constraint:** `app.py` (e.g. the Asset Swaps/Logic Changes symphony-selector list at `app.py:3980-3985`, and the History/Performance/Correlations routes) reads `post_mortem_*.json` files directly off disk via `analytics._POST_MORTEMS_DIR` -- an ABSOLUTE path (`os.path.join(os.path.dirname(os.path.abspath(__file__)), "post_mortems")`, `analytics.py:69`), computed once at import time from the SOURCE FILE's location, not the process cwd. Two consequences: (1) a local test/audit instance without a populated `post_mortems/` directory next to `analytics.py` will see empty symphony selectors and an empty Correlations render, even with a fully-seeded state DB -- the directory must be copied alongside the code, not just the DB; (2) `monkeypatch.chdir(tmp_path)` does NOT isolate this path (it's absolute, not cwd-relative), which is why `tests/app/test_app_routes.py::test_api_history_returns_zero_aggregates_when_no_files` is flaky/failing whenever the worktree's own `post_mortems/` directory has real files in the query window -- a pre-existing test-isolation gap, not a regression from this cycle. Suggested CLAUDE.md placement: a fourth bullet under Architecture Constraints' "Two-DB pattern" item, renaming it to reflect three data sources (state DB, optimization DB, `post_mortems/*.json`).
+
+**Process gotcha -- droplet DB snapshots must use `VACUUM INTO`, not raw `scp`:** copying `alphabot_state.db` off the live droplet via a direct `scp` while the daemon is mid-write can produce an inconsistent copy ("database disk image is malformed" on open, even with a 0-byte `-wal` sidecar). Fix: on the droplet, run
+
+```
+python3 -c "import sqlite3; c=sqlite3.connect('/opt/planetstopper/alphabot_state.db'); c.execute('VACUUM INTO \"/tmp/snapshot.db\"'); c.close()"
+```
+
+to produce a guaranteed-consistent single-file snapshot on the droplet, `scp` that file down, then delete the `/tmp` copy. Verify with `PRAGMA integrity_check` before pointing a local Flask instance at it. Suggested CLAUDE.md placement: the project's "Known Gotchas" table.
+
+### Verification
+
+Full advisor-suite-fixes cycle sweep (8 test files touched across the cycle, bounded `-n0`, per project hard rule): 187 passed / 0 failed at HEAD `09ac1187` (`test_api_history_returns_zero_aggregates_when_no_files` deselected as the pre-existing isolation-gap flake documented above -- not a cycle regression). `ruff format` + `ruff check` clean project-wide. fix-review approved AC-4/AC-6 at `fb7ae9d0` and re-approved the net-zero AC-3/AC-3b outcome at `09ac1187` (== the already-approved `37bf1fc5`). PM personally read fix-ux's live screenshots for AC-1, AC-2, AC-3 (button fires, chat opens), AC-4 (fresh SEC call resolved AAPL to its 2026-03-28 10-Q period, not the FY2025 10-K), AC-5 (light + dark theme), and AC-7 (guard-alpha panel, weekly-suggestion badge) before this cycle was declared complete -- no surface shipped on DB/unit-test evidence alone, per the plan's non-negotiable PM LIVE-UI GATE.
+
+### Files changed
+
+- `static/ai_advisor.js` -- `sbRunAnalysis()` success-branch in-place render (AC-1/AC-2)
+- `static/ai_advisor_asset_swaps.js` -- onclick quote-escaping fix (AC-3)
+- `templates/_chrome.html` -- candidate-alert icon emoji→SVG (AC-5); `templates/ai_advisor.html` touched then reverted net-zero (AC-3b detour)
+- `ai_advisor.py` -- fundamentals selection loop 10-K-only pre-filter removed (AC-4)
+- `advisors/lens_gdelt.py` -- tone-GET retry extended to Timeout/ConnectionError (AC-6); module-docstring correction (`6b41b40f`)
+- `.claude/gdelt-contract.md` -- §5 Amendment 2
+- `feature-plans/lens-fundamentals-vintage-fix.completed.md` -- append-only "Superseded" section
+- `tests/ai_advisor/test_strategy_builder_run_render_contract.py`, `tests/ai_advisor/test_asset_swaps_chat_button_escaping.py`, `tests/app/test_candidate_alert_indicator_render.py`, `tests/ai_advisor/test_fundamentals_vintage.py`, `tests/ai_advisor/test_lens_gdelt.py` -- new/extended contract tests
+- `tests/app/test_strategy_builder_phase36.py`, `tests/ai_advisor/test_advisor_chat_handoff.py` -- re-pointed (stale-by-intent, not weakened)
+- `tests/fixtures/math/fundamentals_vintage_mixed_10k_10q.json` -- new fixture
+- `docs/generated/ai_advisor.md`, `docs/generated/advisors_lens_gdelt.md`, `docs/generated/static_ai_advisor_js.md`, `docs/generated/INDEX.md` -- reconciled
+
+### Reference
+
+`ADVISOR-AUDIT-VERDICT.md` (2026-07-13, worktree adv-audit); `feature-plans/advisor-suite-fixes.md`; branch `fix/advisor-suite`; GREEN HEAD `09ac1187`. Ships advisory-only DIRECT to origin/main (fast-forward, no PR) after this gate, per the project's advisory-work rule -- no trade-path/`LIVE_EXECUTION` touch anywhere in this cycle.
 
