@@ -4686,7 +4686,9 @@ The `advisor-intent-audit` (2026-07-13, verdict @ `08b0bcc0`) found the AI Advis
 
 ### AC-14 — Guardrail honesty: Divergence Explainer / Overfitting Conscience UI scope (F8 revision, B.4)
 
-**STATUS: PENDING.**
+**STATUS: PENDING (implementation) — root cause + design decision ADJUDICATED by the PM 2026-07-13, recorded here ahead of the landed diff so the reasoning isn't lost.**
+
+**Adjudicated fix direction:** `run_divergence_explainer` will no longer write `NOT_APPLICABLE` rows to the observations feed while `SECOND_WINDOW_CVAR_ENABLED` is off (the feature-disabled default). **Root cause:** `database.py:1226`'s per-symphony observations feed accessor has no `advisor_role` filter, so every `NOT_APPLICABLE` row Divergence Explainer wrote while dormant was user-visible in the Overview feed regardless of relevance. **Scope decision (deliberate, PM-adjudicated):** the underlying no-role-filter design of the `database.py:1226` feed accessor is NOT changed in R1 — only Divergence Explainer's own emission behavior while disabled is fixed. The no-role-filter fact is recorded as backlog (a future cycle could add role-scoping to the feed accessor generally), not an R1 deliverable. Overfitting Conscience UI description (naming its actual BACKTEST_SELECTION-only scope) and Spec Critic (untouched, genuine control) remain **PENDING** implementation.
 
 ### AC-15 — Docs
 
@@ -4704,7 +4706,11 @@ The `advisor-intent-audit` (2026-07-13, verdict @ `08b0bcc0`) found the AI Advis
 
 ### AC-16 — Model routing: suggestion-producing LLM calls route to Fable (operator directive 2026-07-13)
 
-**STATUS: PENDING — added to the feature plan after this cycle started; no owner assigned as of this writing.** Once landed, this doc-writer will do a dedicated pass on every "Opus"-specific (not just "Claude"-specific) doc claim for `advisors/build_plan_generator.py` and `ai_advisor.request_suggestions` — the `docs/generated/advisors_build_plan_generator.md` title ("Opus Build-Plan Generator") and Overview ("Opus-backed brain") both name Opus specifically and will go stale once the default model becomes Fable (still a Claude-family model, so "Claude-backed" framing survives, but "Opus" does not). Flagged to team-lead 2026-07-13.
+**STATUS: PENDING (implementation) — owned (r1-engine: accessor + both call-site swaps; r1-test: RED coverage in flight; r1-fe: dynamic per-surface attribution). Confirmed by the PM 2026-07-13 after this doc-writer flagged an apparent ownership gap on the task list (the task list lagged the actual assignment, which had already gone out by message).**
+
+**Provenance:** operator directive 2026-07-13 ("anything it suggests should be using fable"); landed in the feature plan via plan-amendment commit `47826731`.
+
+**This doc-writer's piece (sequenced AFTER the implementation diff lands, per PM confirmation — correct order, not a delay):** once the accessor + call-site swap ship, sweep every "Opus"-specific (not just "Claude"-specific) doc claim for `advisors/build_plan_generator.py` and `ai_advisor.request_suggestions` to accessor-driven/model-neutral language ("configurable via `ADVISOR_SUGGESTION_MODEL`, default Fable/`claude-fable-5`") — specifically `docs/generated/advisors_build_plan_generator.md`'s title ("Opus Build-Plan Generator") and Overview ("Opus-backed brain of the real Strategy Builder"), any Opus-specific line in `docs/generated/ai_advisor.md`, and `docs/audit-inputs/claude-md-corrections-r1.md` §4 (currently PENDING for the same reason).
 
 ### Verification
 
