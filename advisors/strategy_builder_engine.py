@@ -127,6 +127,11 @@ class ProposalRun:
     screened_survivors: list[CandidateGateResult]
     observations_written: int
     error: str | None = None
+    # AC-11: sanitized cause category (type(exc).__name__) for the route to
+    # surface to the operator. `error` may carry raw exception text (hostnames,
+    # paths, credentials) and must never be echoed to the client verbatim
+    # (AC-23 precedent) — error_category is the safe, displayable alternative.
+    error_category: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -964,4 +969,5 @@ def propose_strategies(
             screened_survivors=[],
             observations_written=0,
             error=str(exc),
+            error_category=type(exc).__name__,
         )
