@@ -120,14 +120,38 @@ def test_ac1_asset_swaps_tab_carries_deterministic_no_ai_label(client, monkeypat
     )
 
 
-def test_ac1_strategy_builder_tab_labeled_opus_generated_plus_community_statistically_gated(client, monkeypatch):
+def test_ac1_strategy_builder_tab_labeled_generation_model_plus_community_statistically_gated(client, monkeypatch):
     """MUST FAIL pre-fix: the SB tab nav badge today only says 'Highest
-    overfitting risk — building from scratch', with no Opus/community/
-    statistically-gated attribution."""
+    overfitting risk — building from scratch', with no model/community/
+    statistically-gated attribution.
+
+    ATTRIBUTION-COHERENCE NOTE (AC-16 conflict with AC-1's literal plan text):
+    AC-1's plan text quotes "Opus-generated" as the target SB label, but AC-16
+    (operator directive, added mid-cycle) routes SB's build-plan generation
+    (build_plan_generator.py) through model_config.get_advisor_suggestion_model()
+    — default claude-fable-5, not Opus. AC-16's own text is explicit: "a Fable
+    suggestion surface must never display 'Opus'". Since SB generation IS a
+    suggestion-producing call site per AC-16's scope, a hardcoded "Opus" label
+    would be WRONG the moment AC-16 lands (and is arguably wrong today, given
+    AC-16 already exists in the committed plan when this test was written).
+    Resolving in favor of the more specific, later directive: this test proves
+    the label is ACCESSOR-DRIVEN (reflects whatever model_config resolves,
+    monkeypatched to a marker value) rather than hardcoding either "Opus" or
+    "Fable" as a literal string — flagged to team-lead as a real plan-text
+    inconsistency, not silently resolved without a paper trail."""
+    import model_config
+
+    monkeypatch.setattr(model_config, "get_advisor_suggestion_model", lambda: "test-marker-sb-model")
     html = _get_html(client, monkeypatch)
     tab = _extract_by_testid(html, "strategy-builder-tab", closing_tag="</button>")
+    assert "test-marker-sb-model" in tab, (
+        f"AC-1 GAP: strategy-builder-tab does not reflect the accessor-resolved "
+        f"generation model (patched model_config.get_advisor_suggestion_model "
+        f"to a marker value and it did not appear) — the label must be "
+        f"accessor-driven, never a hardcoded 'Opus'/'Fable' literal (AC-16 "
+        f"attribution-coherence requirement). Element: {tab}"
+    )
     tab_lower = tab.lower()
-    assert "opus" in tab_lower, f"AC-1 GAP: strategy-builder-tab does not mention Opus. Element: {tab}"
     assert "community" in tab_lower, f"AC-1 GAP: strategy-builder-tab does not mention community candidates. Element: {tab}"
     assert "statistically gated" in tab_lower or "statistical" in tab_lower, (
         f"AC-1 GAP: strategy-builder-tab does not mention statistical gating. Element: {tab}"
@@ -199,23 +223,38 @@ def test_ac3_sb_run_controls_note_stale_from_templates_copy_removed(client, monk
     ), "AC-3 GAP: the stale 'generates candidate symphonies from templates' copy is still present verbatim."
 
 
-def test_ac3_sb_run_controls_note_mentions_opus_and_community_and_significance_bar(client, monkeypatch):
-    """Corrected copy per doc-reconciliation §1.3: Opus generation + Atlas
-    community sourcing + FDR/Yekutieli-calibrated significance bar, with
-    single-strongest-candidate winner-take-all framing (not plural
-    'candidates ... are surfaced')."""
+def test_ac3_sb_run_controls_note_mentions_generation_model_and_community_and_significance_bar(client, monkeypatch):
+    """Corrected copy per doc-reconciliation §1.3: generation-model attribution
+    + Atlas community sourcing + FDR/Yekutieli-calibrated significance bar,
+    with single-strongest-candidate winner-take-all framing (not plural
+    'candidates ... are surfaced').
+
+    Same AC-16 attribution-coherence resolution as the SB tab test above:
+    doc-reconciliation's drafted copy says "via Claude Opus", but AC-16 routes
+    SB generation through model_config.get_advisor_suggestion_model()
+    (default claude-fable-5) — asserting a hardcoded "Opus" substring here
+    would itself become a false claim the moment AC-16 lands. Accessor-driven
+    check instead."""
+    import model_config
+
+    monkeypatch.setattr(model_config, "get_advisor_suggestion_model", lambda: "test-marker-sb-model")
     html = _get_html(client, monkeypatch)
     run_controls_marker = 'class="run-controls-note"'
     start = html.find(run_controls_marker)
     assert start != -1, "run-controls-note element not found in rendered HTML"
     end = html.find("</p>", start)
     assert end != -1
-    note = html[start:end].lower()
-    assert "opus" in note, f"AC-3 GAP: run-controls-note does not mention Opus. Element text: {note}"
-    assert "community" in note or "atlas" in note, (
-        f"AC-3 GAP: run-controls-note does not mention the Atlas community library. Element text: {note}"
+    note = html[start:end]
+    assert "test-marker-sb-model" in note, (
+        f"AC-3 GAP: run-controls-note does not reflect the accessor-resolved "
+        f"generation model — must be accessor-driven, never a hardcoded model "
+        f"name literal (AC-16 attribution-coherence requirement). Element text: {note}"
     )
-    assert "single" in note or "strongest" in note, (
+    note_lower = note.lower()
+    assert "community" in note_lower or "atlas" in note_lower, (
+        f"AC-3 GAP: run-controls-note does not mention the Atlas community library. Element text: {note_lower}"
+    )
+    assert "single" in note_lower or "strongest" in note_lower, (
         f"AC-3 GAP: run-controls-note does not correct the plural 'candidates are "
-        f"surfaced' framing to the actual single-winner-per-run semantics. Element text: {note}"
+        f"surfaced' framing to the actual single-winner-per-run semantics. Element text: {note_lower}"
     )
