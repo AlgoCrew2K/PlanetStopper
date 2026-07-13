@@ -3,7 +3,7 @@
 > Claude-backed config advisor: context assembly, per-symphony assessment, structured-output Claude call via ADVISOR_SYNTHESIS_MODEL, safety gates (7-item allowlist, risk-direction check, OOS re-validation), and market-wide lens cache-serve (nightly MARKET_LENS_CACHE bundle; no per-click live lens fetches for the 5 market-wide lens blocks).
 
 **Source:** `ai_advisor.py`
-**Last updated:** 2026-07-12 (DE-TECH-SMA200-HISTORY-001: stale ai_advisor.py:439-482 line-range + _fetch_technicals([]) claim corrected in the technicals lens section, swept while documenting the lens_technicals._HISTORY_DAYS fix; prior: DE-ADVISOR-LATENCY MARKET_LENS_CACHE cache-serve path; persist_market_lens_cache producer; build_assessment_from_context empty-state reword; prior: DE-FUND-002 vintage-correct fundamentals)
+**Last updated:** 2026-07-13 (advisor-suite-fixes AC-4: fundamentals selection loop no longer pre-filters to 10-K-only — see below; prior: DE-TECH-SMA200-HISTORY-001 technicals lens line-range correction; prior: DE-ADVISOR-LATENCY MARKET_LENS_CACHE cache-serve path; persist_market_lens_cache producer; build_assessment_from_context empty-state reword; prior: DE-FUND-002 vintage-correct fundamentals)
 
 ## Overview
 
@@ -248,14 +248,14 @@ Wired (2026-06-16 — DE-FUND-001; vintage-corrected 2026-06-17 — DE-FUND-002)
 
 Helper that performs CIK resolution, companyfacts fetch, and concept extraction for a single ticker. Returns a per-ticker block without the top-level `"lens"` key — callers set `"lens"` on the outer block.
 
-**Vintage-correct selection (DE-FUND-002, `ai_advisor.py:1011-1073`):** For each logical concept in `_SEC_KEY_CONCEPTS`, the helper:
+**Vintage-correct selection (DE-FUND-002, `ai_advisor.py:1011-1073`; all-forms fix advisor-suite-fixes AC-4, 2026-07-13):** For each logical concept in `_SEC_KEY_CONCEPTS`, the helper:
 1. Unions entries across ALL candidate tags present in the `us-gaap` namespace (e.g. for Revenues: `RevenueFromContractWithCustomerExcludingAssessedTax`, `SalesRevenueNet`, `Revenues` — whichever tags exist are included).
-2. Filters to 10-K annual entries where available; falls back to all entries otherwise (existing behavior).
+2. Considers ALL forms (10-K, 10-Q, ...) — the prior 10-K-only pre-filter was removed (AC-4); the `(end desc, filed desc)` sort below now picks the freshest reporting period regardless of form, so a fresher 10-Q is never shadowed by a stale 10-K.
 3. Sorts the union by `(end desc, filed desc)` — the most recently reported accounting period wins; `filed` is a secondary tiebreak for restatements sharing the same `end` date.
 4. Selects `entries_sorted[0]` — the entry with the latest `end`.
 5. Wraps the whole per-concept block in `try/except` (AC-7 — never raises on malformed XBRL).
 
-This resolves Mode B (sort-by-filed selected the oldest comparative entry from a 10-K bundle) and Mode A (a single hardcoded tag never reached data under migrated GAAP concepts).
+This resolves Mode B (sort-by-filed selected the oldest comparative entry from a 10-K bundle) and Mode A (a single hardcoded tag never reached data under migrated GAAP concepts). **AC-4 (2026-07-13, operator-approved reversal of the prior 10-K-only scope-out):** the 10-K-only pre-filter (old step 2) discarded a fresher 10-Q whenever any 10-K existed for the same concept — live evidence was AAPL resolving to its 2025-09 10-K instead of the ~2026-03 10-Q. See `feature-plans/lens-fundamentals-vintage-fix.completed.md`'s append-only "Superseded" section and `DECISIONS.md` `DE-ADVISOR-SUITE-FIX-001`.
 
 **Returned shape on success:** `{available: True, payload: {entity_name, cik, key_facts: {"Revenues": {label, value, unit, end, filed, form}, ...}}, sources: [{title, url, published, lens}]}`. The `key_facts` outer keys are the stable logical concept keys from `_SEC_KEY_CONCEPTS` (e.g. `"Revenues"`, `"NetIncomeLoss"`) — not the XBRL candidate-tag names.
 

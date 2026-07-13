@@ -4537,3 +4537,36 @@ Toxic-pair TDD cycle on `feature/candidate-alert`: RED at `2dec0a17` (migration 
 - `templates/_chrome.html` — indicator markup (`#candidate-alert-indicator`, `#candidate-alert-badge`)
 - `static/chrome.js` — `fetchCandidateAlert()`, `markCandidateAlertViewed()`
 - `docs/generated/app.md`, `docs/generated/database.md`, `docs/generated/INDEX.md`, `docs/generated/static_chrome_js.md` (new) — reconciled
+
+## DE-ADVISOR-SUITE-FIX-001 -- Post-audit advisor suite fixes: AC-1..AC-7 (2026-07-13, cycle in progress)
+
+Branch: fix/advisor-suite | Base: unified main 5f9fa942 | Plan: feature-plans/advisor-suite-fixes.md
+
+### Origin
+
+ADVISOR-AUDIT-VERDICT.md (2026-07-13 audit, worktree adv-audit) -- the operator caught the PM over-claiming a comprehensive AI Advisor audit when only the DB/API layer had been checked, never the rendered UI or data freshness. A read-only audit team drove every AI Advisor tab as a user (Playwright + screenshots) and checked live data freshness, surfacing 6 confirmed defects (AC-1..AC-6) plus 3 previously-unverified surfaces to confirm or fix (AC-7). Every fix in this cycle must be proven from the RENDERED UI (a screenshot the PM reads), never DB/unit-test-only -- see the plan's PM LIVE-UI GATE.
+
+### AC-4 -- Fundamentals lens now selects the latest reporting period including 10-Q (operator-approved reversal)
+
+**Problem:** `ai_advisor.py`'s fundamentals selection loop pre-filtered to 10-K-only entries before the existing `(end desc, filed desc)` sort (the vintage-fix cycle's own Mode A/Mode B logic, DE-FUND-002). Any 10-Q entry for a concept was discarded outright whenever even one 10-K existed for that concept -- live evidence: AAPL resolved to its 2025-09 10-K instead of the ~2026-03 10-Q, feeding the nightly Market Prism council stale-by-~6-months fundamentals data. `lens-fundamentals-vintage-fix.completed.md` had deliberately scoped this out ("we do NOT start trusting 10-Q over 10-K -- out of scope") -- the operator explicitly approved reversing that scope-out on 2026-07-13.
+
+**Fix:** `ai_advisor.py:1034-1050` (`_fetch_fundamentals_for_ticker`) drops the 10-K-only pre-filter -- ALL forms now feed the union that the existing `(end desc, filed desc)` sort ranks, so the freshest reporting period wins regardless of form. Zero change to the sort/selection logic itself (Mode A concept-fallback, Mode B end-sort are untouched) -- this is a pure pre-filter removal. Both the single-ticker and portfolio fan-out paths share the fix (same helper).
+
+**Superseded doc:** `feature-plans/lens-fundamentals-vintage-fix.completed.md` gained an append-only "Superseded" section pointing at this decision; its historical body (Mode A/B rationale, the original 10-K-preference edge case) is unedited and remains accurate for everything except the 10-Q exclusion.
+
+**Tests:** `tests/ai_advisor/test_fundamentals_vintage.py` -- 3 new tests (`TestMixedFormsLatestPeriodWins`: 10-Q wins over an older 10-K for the same concept; the selected value/form come from the 10-Q entry; the portfolio fan-out path also applies the fix), all 24 tests in the file pass (21 pre-existing untouched). New fixture `tests/fixtures/math/fundamentals_vintage_mixed_10k_10q.json` (schema-derived, AAPL/CIK 0000320193, one 10-K + one fresher 10-Q entry for the same concept; provenance: fix-test, RED phase). RED at `3b34583a`, GREEN at `fb7ae9d0`.
+
+### AC-6 -- GDELT tone-fetch retries transient network errors, not just HTTP 429
+
+**Problem:** `advisors/lens_gdelt.py`'s bounded retry (`_fetch_gdelt_sentiment`'s tone GET) only retried on HTTP 429 -- the `try/except` wrapped the WHOLE per-attempt loop, so a `requests.exceptions.Timeout` or `ConnectionError` on the first attempt propagated straight out and abandoned the retry loop after a single transient blip, even though `_GDELT_MAX_ATTEMPTS=4` more attempts would likely have succeeded. `ai_advisor._fetch_with_backoff` (the equivalent retry helper used by the other 4 lenses) already retried these transient errors -- GDELT was the one lens inconsistent with the project's own retry contract.
+
+**Fix:** `advisors/lens_gdelt.py:181-228` moves the `try/except` INSIDE the per-attempt loop so `Timeout`/`ConnectionError` share the exact same bounded exponential backoff (`min(_GDELT_BACKOFF_BASE_S * 2**attempt, _GDELT_BACKOFF_CAP_S)`, capped at `_GDELT_MAX_ATTEMPTS` total calls, worst-case ~120s total wait) as the existing 429 path. No new total-wait budget constant was added -- the existing attempt ceiling is already contract-pinned; team-lead ruled a second bounding mechanism would be redundant. D-1 contract unchanged: an exhausted retry still returns `type(exc).__name__` only (no new named reason label). Non-network exceptions on a 2xx response (e.g. malformed-JSON `JSONDecodeError`) are deliberately NOT retried -- unchanged from the original contract. Contract doc updated: `.claude/gdelt-contract.md` §5 Amendment 2.
+
+**Tests:** `tests/ai_advisor/test_lens_gdelt.py` -- 2 new RED-to-GREEN tests (`TestTransientNetworkErrorsAreRetried`: Timeout on the first attempt is retried then recovers; ConnectionError on the first attempt is retried then recovers) + 1 regression guard (retry still respects the `_GDELT_MAX_ATTEMPTS` bound under persistent Timeout) + the pre-existing single-instance-Timeout test (retries-exhausted case) confirmed still semantically correct post-fix. 93 passed, 2 live-marked deselected; ~100 pre-existing tests in the file untouched. RED at `3b34583a`, GREEN at `fb7ae9d0`.
+
+**Doc-sweep finding (non-blocking, fix-review-approved with a follow-up nit):** `advisors/lens_gdelt.py:27-28`'s MODULE-level docstring ("Design invariants" section) still read "on 429 only" post-fix -- the function-level docstring at `lens_gdelt.py:161-163` was correctly updated by fix-lens, but this one line at the top of the file was missed. Filed to fix-lens for a one-line correction; not a functional defect.
+
+### AC-1/AC-2/AC-3/AC-5/AC-7 -- pending
+
+Strategy Builder in-place render + run-identifiability (AC-1/AC-2), Asset Swaps chat-button quote-escaping (AC-3), and the chrome header badge emoji-to-SVG swap (AC-5) are RED (`3b34583a`) and in GREEN with fix-fe as of this entry. AC-7 (live-UI verification of guard-alpha / weekly-suggestion surfacing / Overview ADOPT_CANDIDATE filter) is fix-ux's deliverable, independent of the pytest ACs. This entry will be extended with each AC's decision record as it lands GREEN + is PM live-UI-gated; a final "Verification" + "Files changed" close-out will be appended once the whole cycle ships.
+
