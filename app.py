@@ -4866,6 +4866,14 @@ def ai_advisor_strategy_builder_run():
             # types.SimpleNamespace without this field — real
             # CandidateGateResult instances always carry it.
             "low_power": _low_power(getattr(gr, "validation_days", None)),
+            # AC-7 (r1-review Checkpoint-3 BLOCK finding, continuation): pbo_veto /
+            # below_spy_alpha / oos_inferior_to_incumbent / fdr_not_winner / None —
+            # already computed on every CandidateGateResult (backtest_gate_engine.py)
+            # for SB's gated results, but never copied into this route's JSON, unlike
+            # the asset-swap (app.py's ai_advisor_asset_swaps_evaluate) and
+            # logic-change (ai_advisor_logic_changes_evaluate) routes, which already
+            # do this. None on a genuine survivor — never fabricated.
+            "rejection_reason": getattr(gr, "rejection_reason", None),
         }
 
     survivors_list = [_gate_result_to_dict(gr) for gr in run.screened_survivors]
