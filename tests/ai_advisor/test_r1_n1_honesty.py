@@ -160,7 +160,18 @@ def test_ac6_asset_swap_n1_evaluate_response_omits_fdr_yekutieli_branding(client
 
     with (
         patch.object(ase, "_has_composer_key", return_value=True),
-        patch.object(ase, "_evaluate_single_variant", return_value=(cand, shell, {"sharpe": 0.0})),
+        # AC-13 (commit 82479560) extended _evaluate_single_variant's return
+        # from a 3-tuple to a 4-tuple (baseline_returns_pct added — the
+        # caller now reuses this list instead of a second run_backtest call
+        # for the baseline fold). baseline_returns_pct is a flat, percent-
+        # scale list[float] (matches _fold_transform_single's expected
+        # shape, confirmed by reading the real call site at ase.py:1109) —
+        # a dict would be the wrong type here.
+        patch.object(
+            ase,
+            "_evaluate_single_variant",
+            return_value=(cand, shell, {"sharpe": 0.0}, [0.0] * len(_DATES_80)),
+        ),
         # The baseline-fold call inside propose_operator_swap itself (via
         # _backtest_returns_from_tree) still hits run_backtest — return a flat
         # near-zero baseline series so it does not perturb the ADOPT outcome.
@@ -228,7 +239,13 @@ def test_ac6_logic_change_n1_evaluate_response_omits_fdr_yekutieli_branding(clie
 
     with (
         patch.object(lce, "_has_composer_key", return_value=True),
-        patch.object(lce, "_evaluate_single_variant", return_value=(cand, shell, {"sharpe": 0.0})),
+        # AC-13 4-tuple contract change — see the asset_swap sibling test's
+        # comment for the full rationale.
+        patch.object(
+            lce,
+            "_evaluate_single_variant",
+            return_value=(cand, shell, {"sharpe": 0.0}, [0.0] * len(_DATES_80)),
+        ),
         patch.object(lce, "run_backtest") as mock_run_backtest,
         patch.object(lce, "database") as mock_db,
     ):
