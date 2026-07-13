@@ -4664,9 +4664,13 @@ The `advisor-intent-audit` (2026-07-13, verdict @ `08b0bcc0`) found the AI Advis
 
 **STATUS: PENDING.**
 
+**Precedence ruling recorded ahead of the landed diff (PM, 2026-07-13):** two sources of DRAFTED copy for this AC predate the AC-16 Fable directive and both hardcode "Opus" — (a) doc-reconciliation §1.3's drafted SB run-controls-note replacement text; (b) the feature plan's AC-1 paragraph example badge text ("Opus-generated + Atlas community"). **AC-16's attribution-coherence clause now governs wherever a model name appears: AC-16 > earlier drafted copy.** When AC-1/AC-3 actually land, this doc-writer will describe the SHIPPED accessor-driven behavior (whatever model `ADVISOR_SUGGESTION_MODEL` actually resolves to) and will note both superseded-by-design sources here — neither drafted "Opus" string is applied verbatim.
+
 ### AC-4..AC-6 — Statistical wiring: PBO veto, SPY-OOS baseline, N=1 honesty (F2, Gap B)
 
-**STATUS: PENDING.**
+**AC-4/AC-5 (PBO veto + real SPY-OOS baseline for Asset Swaps/Logic Changes) — STATUS: PENDING** (r1-engine's territory; not yet landed as of this writing).
+
+**AC-6 (N=1 honesty on the operator Evaluate buttons) — STATUS: GREEN, landed by r1-fe, commit `9693cdc4` on `fix/advisor-remediation-r1`.** New `_n1_honest_caveats()` helper in `app.py` (placed immediately after `_translate_backtest_error`, ~line 3830) strips any FDR/Yekutieli-branded caveat text and appends the honest N=1 string: "single-candidate check — no multiple-testing correction applies (N=1)." Wired into three call sites: `POST /ai-advisor/asset-swaps/evaluate`'s top-level caveats field, `POST /ai-advisor/logic-changes/evaluate`'s top-level caveats field, and that route's `_proposal_to_dict` helper's per-candidate caveats field. The N>1 weekly paths are untouched and keep FDR labeling (AC-6's own requirement). r1-fe reports a 294-test targeted regression pass clean before commit.
 
 ### AC-7..AC-9 — Gate transparency: rejection-reason branching, gate-cardinality copy, power caveat (F6, Gap F + F3, Gap C)
 
@@ -4692,9 +4696,17 @@ The `advisor-intent-audit` (2026-07-13, verdict @ `08b0bcc0`) found the AI Advis
 
 ### AC-14 — Guardrail honesty: Divergence Explainer / Overfitting Conscience UI scope (F8 revision, B.4)
 
-**STATUS: PENDING (implementation) — root cause + design decision ADJUDICATED by the PM 2026-07-13, recorded here ahead of the landed diff so the reasoning isn't lost.**
+**STATUS: GREEN, landed by r1-fe, commit `9693cdc4` on `fix/advisor-remediation-r1`. 294-test targeted regression pass clean before commit.**
 
-**Adjudicated fix direction:** `run_divergence_explainer` will no longer write `NOT_APPLICABLE` rows to the observations feed while `SECOND_WINDOW_CVAR_ENABLED` is off (the feature-disabled default). **Root cause:** `database.py:1226`'s per-symphony observations feed accessor has no `advisor_role` filter, so every `NOT_APPLICABLE` row Divergence Explainer wrote while dormant was user-visible in the Overview feed regardless of relevance. **Scope decision (deliberate, PM-adjudicated):** the underlying no-role-filter design of the `database.py:1226` feed accessor is NOT changed in R1 — only Divergence Explainer's own emission behavior while disabled is fixed. The no-role-filter fact is recorded as backlog (a future cycle could add role-scoping to the feed accessor generally), not an R1 deliverable. Overfitting Conscience UI description (naming its actual BACKTEST_SELECTION-only scope) and Spec Critic (untouched, genuine control) remain **PENDING** implementation.
+**Root cause (PM-adjudicated, recorded pre-landing):** `database.py:1226`'s per-symphony observations feed accessor has no `advisor_role` filter, so every `NOT_APPLICABLE` row Divergence Explainer wrote while dormant (feature disabled by default, `SECOND_WINDOW_CVAR_ENABLED` off) was user-visible in the Overview feed regardless of relevance.
+
+**Mechanism actually shipped diverges from the PM's original adjudicated fix direction — recorded precisely rather than silently updated to match, per root-cause-determines-role discipline:** the adjudication drafted a SOURCE-side fix ("`run_divergence_explainer` will no longer WRITE `NOT_APPLICABLE` rows"). What actually landed is a ROUTE-side suppression predicate — `advisors/divergence_explainer.py` was NEVER touched; the fix lives entirely in `GET /api/advisor-observations?symphony_id=...` (`app.py:5136`), which was leaking `NOT_APPLICABLE` rows verbatim on the symphony_id-filtered path (the no-symphony_id path was already safe via the existing `_ADVISOR_ROLES` exclusion). Fixed by applying the SAME suppression predicate the Overview panel already used. Both mechanisms achieve the identical operator-visible outcome (no `NOT_APPLICABLE` row ever surfaces to the operator) — this is a legitimate, narrower implementation of the adjudicated intent, not a deviation from it, but the mechanism itself differs from what was originally drafted and future readers should not assume `divergence_explainer.py` was modified.
+
+**Scope decision (deliberate, PM-adjudicated, held):** the underlying no-role-filter design of the `database.py:1226` feed accessor is NOT changed in R1 — recorded as backlog for a future cycle, not an R1 deliverable.
+
+**Overfitting Conscience / Spec Critic copy (`templates/ai_advisor.html:2204-2217`, the `guardrail-uniform-note` paragraph, corrected verbatim per doc-reconciliation §1.8) — final rendered text:**
+
+> Spec Critic is an active guardrail checking the shared, frozen THEORY spec structure — a CLEAR verdict means the spec was evaluated and passed. Overfitting Conscience checks one narrow overfitting-risk source (backtest-selection degrees of freedom) — a CLEAR here does not mean "no overfitting risk exists," only that this one source is clean. Divergence Explainer is disabled by default and its rows are informational-only, not currently monitoring anything active. Per-symphony recommendations come from the Run Advisor (gear icon on each symphony card).
 
 ### AC-15 — Docs
 
@@ -4717,6 +4729,8 @@ The `advisor-intent-audit` (2026-07-13, verdict @ `08b0bcc0`) found the AI Advis
 **Provenance:** operator directive 2026-07-13 ("anything it suggests should be using fable"); landed in the feature plan via plan-amendment commit `47826731`.
 
 **This doc-writer's piece (sequenced AFTER the implementation diff lands, per PM confirmation — correct order, not a delay):** once the accessor + call-site swap ship, sweep every "Opus"-specific (not just "Claude"-specific) doc claim for `advisors/build_plan_generator.py` and `ai_advisor.request_suggestions` to accessor-driven/model-neutral language ("configurable via `ADVISOR_SUGGESTION_MODEL`, default Fable/`claude-fable-5`") — specifically `docs/generated/advisors_build_plan_generator.md`'s title ("Opus Build-Plan Generator") and Overview ("Opus-backed brain of the real Strategy Builder"), any Opus-specific line in `docs/generated/ai_advisor.md`, and `docs/audit-inputs/claude-md-corrections-r1.md` §4 (currently PENDING for the same reason).
+
+**Two more sources of pre-directive "Opus"-hardcoded DRAFTED (not shipped) copy flagged by the PM (2026-07-13), added to this sweep so they are never mistaken for final text:** (1) doc-reconciliation §1.3's drafted SB run-controls-note replacement hardcodes "Opus" — predates this AC and is superseded by it; (2) the feature plan's own AC-1 paragraph example badge text ("Opus-generated + Atlas community") has the identical staleness. Precedence ruling: **AC-16 > earlier drafted copy wherever a model name appears.** See the corresponding note added to the AC-1..AC-3 subsection above.
 
 ### AC-17 — Panel unreachability: ADOPT_CANDIDATE made mathematically REACHABLE (added mid-cycle, PM adjudication ad9b1629, [PM-ASSUMED] — operator may overrule)
 
