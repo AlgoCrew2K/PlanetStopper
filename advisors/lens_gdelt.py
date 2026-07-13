@@ -24,8 +24,10 @@ Design invariants
 Honest availability: tone is None => available is False (the prior bug was
     the reverse — available=True, tone=None — which is forbidden).
 D-1: reason is type(exc).__name__ only — never str(exc) or the message.
-Bounded retry: on 429 only, exponential backoff, at most _GDELT_MAX_ATTEMPTS
-    total calls, each separated by >= _GDELT_BACKOFF_BASE_S seconds.
+Bounded retry: on HTTP 429 and transient network errors (Timeout,
+    ConnectionError — contract §5 Amendment 2), exponential backoff, at most
+    _GDELT_MAX_ATTEMPTS total calls, each separated by >= _GDELT_BACKOFF_BASE_S
+    seconds.
 Off-execution-path: never imported at module level in alpha_bot_execution.py.
 
 Contract reference: .claude/gdelt-contract.md (pinned 2026-06-15).
