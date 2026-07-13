@@ -202,6 +202,16 @@ _SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA: float = float("+inf")
 # Source: feature-plans/strategy-builder-real.md §AC-25 (SPY-OOS-over-the-fold baseline).
 SPY_BENCHMARK_TICKER: str = "SPY"
 
+# AC-17: panel_breakdown annotation stamped when the empty-params tie neutralization
+# fires (see the panel-score block in evaluate_candidate_batch below). Every current
+# engine construction site builds candidates with candidate_params={}/incumbent_params={}
+# — there is no real parameter vector to compare, so the panel score is an artifact of
+# missing data, not a genuine stability signal. This marker records that fact on the
+# persisted verdict so a future reader of panel_breakdown is not misled into thinking a
+# real parameter-distance comparison occurred.
+# Source: feature-plans/advisor-remediation-r1.md AC-17(c); r1-engine design (msg 082fd634).
+_PANEL_NA_NOTE: str = "not applicable — no parameter-vector representation"
+
 
 # ---------------------------------------------------------------------------
 # Input / output types
@@ -822,6 +832,19 @@ def evaluate_candidate_batch(
             cand.incumbent_params, cand.theory_prior_params
         )
 
+        # AC-17: when BOTH candidate_params AND incumbent_params are structurally
+        # empty, there is no parameter vector to compare — _compute_parameter_
+        # stability_score's neutral-prior fallback (0.5) against the incumbent's
+        # hardcoded 1.0 would otherwise cap every such candidate at KEEP_INCUMBENT
+        # regardless of OOS performance (panel_score 0.5 < 0.75, unconditionally).
+        # Tie cand_stability to inc_stability so the decision rests entirely on the
+        # OOS-superiority precondition (acceptance_gate.py:257) and the hard vetoes,
+        # never on this panel-score artifact of missing parameter data. Requires
+        # BOTH sides empty — a one-side-empty shape is a caller bug, not this case.
+        _params_na = not cand.candidate_params and not cand.incumbent_params
+        if _params_na:
+            cand_stability = inc_stability
+
         # BHY veto input for THIS candidate:
         # - winner_trial_is_none=True iff this candidate is NOT the BHY winner.
         #   (Any non-winner, including veto-eligible ones, gets winner_trial_is_none=True.)
@@ -855,6 +878,17 @@ def evaluate_candidate_batch(
             pbo=_batch_pbo,
         )
 
+        # AC-17(c): stamp the N/A marker on panel_breakdown whenever the tie
+        # neutralization fired above — regardless of the eventual decision (an
+        # OOS-inferior empty-params candidate still hits the tie condition
+        # structurally; it just loses separately on the OOS comparison).
+        # acceptance_gate.py itself is untouched — AcceptanceVerdict is a
+        # NamedTuple, so this is an immutable-update via ._replace().
+        if _params_na:
+            verdict = verdict._replace(
+                panel_breakdown={**verdict.panel_breakdown, "note": _PANEL_NA_NOTE}
+            )
+
         # Survivor overfitting caveat is MANDATORY for ADOPT_CANDIDATE (AC-3.3).
         if verdict.decision == "ADOPT_CANDIDATE":
             caveats.append(SURVIVOR_OVERFITTING_CAVEAT)
@@ -868,8 +902,17 @@ def evaluate_candidate_batch(
         #      high-PBO AND below-SPY reports the PBO reason (AC-24 stage order).
         #   3. SPY-fold baseline not met (oos_alpha <= spy-fold default) → "below_spy_alpha".
         #      Stage-2 gate — only reached when PBO did not veto.
-        #   4. All other causes (BHY non-winner, nn1, purge) → "fdr_not_winner".
-        # Source: feature-plans/strategy-builder-real.md §AC-24/AC-25; handoff §rejection_reason.
+        #   4. Not the batch's BHY/Yekutieli FDR winner (this_winner_trial_is_none, or
+        #      nn1/purge failure) → "fdr_not_winner". EXPLICIT check (AC-7b) — no longer
+        #      a blind catch-all, since a genuine FDR winner can still lose to the
+        #      incumbent (case 5 below) and must not be mislabeled as a non-winner.
+        #   5. Cleared every veto, WAS the FDR winner, beat SPY/default — the only
+        #      remaining KEEP_INCUMBENT cause per acceptance_gate.py's own cascade is
+        #      losing to the incumbent specifically (OOS-alpha or panel-score margin)
+        #      → "oos_inferior_to_incumbent" (AC-7b). Previously fell through to
+        #      "fdr_not_winner", indistinguishable from a genuine non-winner.
+        # Source: feature-plans/strategy-builder-real.md §AC-24/AC-25; feature-plans/
+        # advisor-remediation-r1.md AC-7b (plan @ 39d56fd5); handoff §rejection_reason.
         _rejection_reason: str | None
 
         if verdict.decision == "ADOPT_CANDIDATE":
@@ -886,9 +929,13 @@ def evaluate_candidate_batch(
             # candidate is withheld with below_spy_alpha (the baseline could not be
             # established — AC-25 edge-14 conservative WITHHOLD).
             _rejection_reason = "below_spy_alpha"
-        else:
-            # Catch-all: BHY/Yekutieli FDR non-winner, or nn1/purge/thin-window failure.
+        elif this_winner_trial_is_none:
+            # Genuinely not the batch's BHY/Yekutieli FDR winner (or failed nn1/purge).
             _rejection_reason = "fdr_not_winner"
+        else:
+            # AC-7b residual: cleared every veto, IS the FDR winner, beat SPY/default —
+            # the only remaining KEEP_INCUMBENT cause is the incumbent comparison itself.
+            _rejection_reason = "oos_inferior_to_incumbent"
 
         results.append(
             CandidateGateResult(
