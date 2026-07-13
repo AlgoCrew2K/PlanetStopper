@@ -474,18 +474,13 @@
         .chat-example-prompts { color: var(--studio-ink-dim); font-size: 0.8125rem; font-style: italic; list-style: none; padding: 0; }
         .chat-example-prompts li { padding: 0.25rem 0; }
         .chat-panel {
-            position: fixed; top: 0; right: 0; width: 420px; height: 100vh;
+            position: fixed; top: 0; right: -440px; width: 420px; height: 100vh;
             background: var(--studio-paper, var(--studio-surface));
             border-left: 1px solid var(--studio-rule-hi, var(--studio-border));
             z-index: 200; display: flex; flex-direction: column;
-            transition: transform 0.25s ease; overflow: hidden;
-            transform: translateX(100%);
+            transition: right 0.25s ease; overflow: hidden;
         }
-        /* transform (not right) drives the slide-in — matches the proven
-           #detail-panel pattern (index.html:477-494). translateX(100%) is
-           relative to the panel's OWN width, so it works at both the desktop
-           420px width and the 100% mobile width below with no extra override. */
-        .chat-panel.chat-panel--open { transform: translateX(0) !important; }
+        .chat-panel.chat-panel--open { right: 0; }
         .chat-panel-header {
             display: flex; justify-content: space-between; align-items: flex-start;
             padding: 1rem 1.25rem; border-bottom: 1px solid var(--studio-border); flex-shrink: 0;
@@ -535,7 +530,7 @@
         }
         .chat-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         @media (max-width: 768px) {
-            .chat-panel { width: 100%; }
+            .chat-panel { width: 100%; right: -100%; }
         }
 
         /* ------------------------------------------------------------------ */
