@@ -92,6 +92,19 @@
         return decision || 'unknown';
     }
 
+    // AC-7 (F6, Gap F): rejection_reason -> distinguishable copy. Mirrors the
+    // SB Jinja _REJECTION_COPY map exactly (same 4 mapped values, same
+    // wording) so the operator sees the same explanation regardless of which
+    // surface rejected the candidate. Extensible: an unmapped reason (null,
+    // a legacy row, or a future untracked class) renders NOTHING — never a
+    // fabricated blanket string.
+    var REJECTION_COPY = {
+        pbo_veto: 'This candidate failed the overfitting-robustness (PBO) check.',
+        below_spy_alpha: 'This candidate did not beat the SPY benchmark over the same period.',
+        oos_inferior_to_incumbent: 'This candidate did not outperform the live incumbent out-of-sample.',
+        fdr_not_winner: 'This candidate cleared the FDR-calibrated significance bar but was not the single strongest candidate this run.',
+    };
+
     // ---------------------------------------------------------------------------
     // Render a single swap proposal card
     // ---------------------------------------------------------------------------
@@ -177,14 +190,19 @@
         // Gate verdict row
         var pillClass = gatePillClass(result.gate_decision);
         var pillLabel = gatePillLabel(result.gate_decision);
+        // AC-7: rejection_reason lives under the nested gate_result object;
+        // reasonCopy is '' (renders nothing) for a survivor or an unmapped
+        // reason — see REJECTION_COPY above.
+        var rejectionReason = (result.gate_result && result.gate_result.rejection_reason) || null;
+        var reasonCopy = REJECTION_COPY[rejectionReason] || '';
         var gateRow =
             '<div class="gate-verdict-row" data-testid="gate-verdict-row">' +
             '<span class="gate-pill ' + pillClass + '" data-testid="gate-pill">' +
             escHtml(pillLabel) +
             '</span>' +
-            '<span class="gate-reason" data-testid="gate-reason">' +
-            escHtml(result.gate_reason || '') +
-            '</span>' +
+            (reasonCopy
+                ? '<span class="gate-reason" data-testid="gate-reason">' + escHtml(reasonCopy) + '</span>'
+                : '') +
             (result.validation_days
                 ? '<span class="validation-days" data-testid="validation-days">n=' + result.validation_days + ' days</span>'
                 : '') +

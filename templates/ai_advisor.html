@@ -1863,6 +1863,7 @@
             {%- set _REJECTION_COPY = {
                 "pbo_veto": "This candidate failed the overfitting-robustness (PBO) check.",
                 "below_spy_alpha": "This candidate did not beat the SPY benchmark over the same period.",
+                "oos_inferior_to_incumbent": "This candidate did not outperform the live incumbent out-of-sample.",
                 "fdr_not_winner": "This candidate cleared the FDR-calibrated significance bar but was not the single strongest candidate this run.",
             } -%}
 

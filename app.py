@@ -4452,6 +4452,12 @@ def ai_advisor_asset_swaps_evaluate():
                 # AC-9: statistical-power flag, threshold in app.py only —
                 # never duplicated client-side.
                 "low_power": _low_power(getattr(gate_result, "validation_days", None)),
+                # AC-7: pbo_veto / below_spy_alpha / oos_inferior_to_incumbent /
+                # fdr_not_winner / None — computed on every CandidateGateResult
+                # (backtest_gate_engine.py) but never threaded through this
+                # route until now. None on a genuine survivor — never
+                # fabricated (regression-guarded).
+                "rejection_reason": getattr(gate_result, "rejection_reason", None),
             }
             if gate_result
             else None,
@@ -4616,6 +4622,11 @@ def ai_advisor_logic_changes_evaluate():
             "validation_days": gr.validation_days if gr else None,
             "oos_alpha": gr.oos_alpha if gr else None,
             "winner_p_adj": gr.winner_p_adj if gr else None,
+            # AC-7: pbo_veto / below_spy_alpha / oos_inferior_to_incumbent /
+            # fdr_not_winner / None — the granular cause, distinct from the
+            # coarse gate_reason title above (which collapses all veto
+            # failures into "veto failed"). None on a genuine survivor.
+            "rejection_reason": getattr(gr, "rejection_reason", None) if gr else None,
             # FDR metadata for audit trail (AC-3.2)
             "n_candidates": gate_batch.n_candidates if gate_batch else None,
             "fdr_q": gate_batch.fdr_q if gate_batch else None,
@@ -4648,6 +4659,10 @@ def ai_advisor_logic_changes_evaluate():
                     # AC-9: statistical-power flag, threshold in app.py only —
                     # never duplicated client-side.
                     "low_power": _low_power(getattr(gate_result, "validation_days", None)),
+                    # AC-7: granular rejection cause — see the identical field
+                    # on _proposal_to_dict above for the per-candidate version
+                    # (this is the run-level/primary-proposal shortcut).
+                    "rejection_reason": getattr(gate_result, "rejection_reason", None),
                 }
                 if gate_result
                 else None,

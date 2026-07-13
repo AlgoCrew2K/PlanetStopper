@@ -39,6 +39,19 @@
         return;
     }
 
+    // AC-7 (F6, Gap F): rejection_reason -> distinguishable copy. Mirrors the
+    // SB Jinja _REJECTION_COPY map exactly (same 4 mapped values, same
+    // wording) and its Asset Swaps JS sibling — same explanation regardless
+    // of which surface rejected the candidate. Extensible: an unmapped
+    // reason (null, a legacy row, or a future untracked class) renders
+    // NOTHING — never a fabricated blanket string.
+    const REJECTION_COPY = {
+        pbo_veto: "This candidate failed the overfitting-robustness (PBO) check.",
+        below_spy_alpha: "This candidate did not beat the SPY benchmark over the same period.",
+        oos_inferior_to_incumbent: "This candidate did not outperform the live incumbent out-of-sample.",
+        fdr_not_winner: "This candidate cleared the FDR-calibrated significance bar but was not the single strongest candidate this run.",
+    };
+
     // ---------------------------------------------------------------------------
     // Enable the evaluate button only when symphony + description are populated.
     // ---------------------------------------------------------------------------
@@ -200,7 +213,13 @@
                 }
             }
 
-            const gateReason = _escapeHtml(proposal.gate_reason || "");
+            // AC-7: rejection_reason (pbo_veto/below_spy_alpha/
+            // oos_inferior_to_incumbent/fdr_not_winner/null) replaces the old
+            // coarse gate_reason title, which collapsed every veto failure
+            // into "veto failed" — the wrong statistical claim for at least
+            // 2 of the 4 known causes.
+            const reasonCopy = REJECTION_COPY[proposal.rejection_reason] || "";
+            const gateReason = _escapeHtml(reasonCopy);
             gateHtml = `
             <div class="gate-verdict-row" data-testid="gate-verdict-row">
               <span class="${pillClass}" data-testid="gate-pill">${pillText}</span>
