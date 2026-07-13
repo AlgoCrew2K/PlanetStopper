@@ -21,6 +21,15 @@ fixture (tests/fixtures/math/min_power_fold_days_caveat.json) drives the
 boundary cases via OFFSETS from app.MIN_POWER_FOLD_DAYS (never an absolute
 day count), so this file needs no update if the threshold's chosen value
 changes — only the comparison DIRECTION is pinned.
+
+r1-review CHECKPOINT-3 BLOCK FINDING (r1-fe's GREEN made the low_power
+BOOLEAN honest on all three surfaces but only appended the caveat TEXT on
+SB — asset-swaps/logic-changes computed the flag and stopped there, leaving
+this module's own "not SB-only" docstring claim only half-true):
+test_ac9_asset_swap_evaluate_caveat_text_present_when_low_power and
+test_ac9_logic_change_evaluate_caveat_text_present_when_low_power close the
+gap, mirroring test_ac9_survivor_caveat_text_present_when_low_power's SB
+assertion on the two remaining surfaces.
 """
 
 from __future__ import annotations
@@ -273,6 +282,176 @@ def test_ac9_asset_swap_evaluate_response_carries_low_power_field():
         f"low_power field. Response: {body}"
     )
     assert body["gate_result"]["low_power"] is True
+
+
+def test_ac9_asset_swap_evaluate_caveat_text_present_when_low_power():
+    """MUST FAIL pre-fix (r1-review Checkpoint-3 BLOCK finding): this module's
+    own docstring claims AC-9 applies to all three surfaces "not SB-only" —
+    but only the SB route (app.py:4844-4845) appends `_LOW_POWER_CAVEAT` text
+    to the caveats array when low_power fires; the asset-swap route computes
+    the boolean (test above) but never appends the caveat text. A True
+    low_power flag silently present in JSON, never surfaced as operator-
+    readable text, does not satisfy 'survivor cards carry a statistical-power
+    caveat' — mirrors test_ac9_survivor_caveat_text_present_when_low_power's
+    SB assertion exactly, applied to this route."""
+    import advisors.asset_swap_engine as ase
+    import app as app_module
+
+    threshold = getattr(app_module, "MIN_POWER_FOLD_DAYS", 65)
+    from advisors.backtest_gate_engine import AcceptanceVerdict, CandidateGateResult, GatedBatch
+
+    verdict = AcceptanceVerdict(
+        vetoes_passed=True, panel_score=1.0, panel_breakdown={}, decision="ADOPT_CANDIDATE"
+    )
+    gr = CandidateGateResult(
+        candidate_id="HASH1:AAA->CAND0",
+        verdict=verdict,
+        validation_days=threshold - 1,
+        oos_alpha=5.0,
+        caveats=[],
+        winner_p_adj=0.01,
+        rejection_reason=None,
+    )
+    shell = ase.SwapProposalResult(
+        candidate_id="HASH1:AAA->CAND0",
+        symphony_id="HASH1",
+        incumbent_asset="AAA",
+        candidate_asset="CAND0",
+        objective=ase.SwapObjective(
+            objective_type="reduce_correlation", target_pair=None, measured_value=0.0
+        ),
+        objective_rationale="test",
+        baseline_stats={},
+        variant_stats={},
+        apply_guidance="test",
+        data_warnings=[],
+    )
+    shell.gate_result = gr
+    shell.caveats = list(gr.caveats)
+    run_result = ase.SwapRunResult(
+        gate_batch=GatedBatch(results=[gr], survivors=[gr], n_candidates=1, fdr_q=0.05),
+        proposals=[shell],
+        survivors=[shell],
+        rejected_candidates=[],
+        message="1 swap survived the gate",
+        objective=shell.objective,
+    )
+
+    import database
+
+    with (
+        patch.object(database, "load_state", lambda: {"HASH1": {"name": "Test Symphony"}}),
+        patch("symphony_logic.fetch_symphony_score", lambda h: {"ticker": None, "children": []}),
+        patch.object(ase, "_has_composer_key", return_value=True),
+        patch.object(ase, "propose_operator_swap", return_value=run_result),
+    ):
+        app_module.app.config["TESTING"] = True
+        with app_module.app.test_client() as c:
+            resp = c.post(
+                "/ai-advisor/asset-swaps/evaluate",
+                json={"symphony_id": "Test Symphony", "from_ticker": "AAA", "to_ticker": "CAND0"},
+            )
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert (body.get("gate_result") or {}).get("low_power") is True, (
+        "self-guard: fixture must reach low_power=True before checking caveat text"
+    )
+    caveats = body.get("caveats") or []
+    assert any("power" in str(c).lower() for c in caveats), (
+        f"AC-9 GAP: asset-swap evaluate response has low_power=True but no "
+        f"caveat text mentions statistical power. caveats={caveats}"
+    )
+
+
+def test_ac9_logic_change_evaluate_caveat_text_present_when_low_power():
+    """MUST FAIL pre-fix — identical gap, logic_change_engine sibling. Checks
+    both the top-level caveats and the per-candidate survivors_detail caveats
+    (either/or, mirrors the AC-7 either/or pattern already established for
+    this route's richer per-candidate shape)."""
+    import advisors.logic_change_engine as lce
+    import app as app_module
+
+    threshold = getattr(app_module, "MIN_POWER_FOLD_DAYS", 65)
+    from advisors.backtest_gate_engine import AcceptanceVerdict, CandidateGateResult, GatedBatch
+
+    verdict = AcceptanceVerdict(
+        vetoes_passed=True, panel_score=1.0, panel_breakdown={}, decision="ADOPT_CANDIDATE"
+    )
+    tweak = lce.LogicTweak(
+        node_path=["children", 0],
+        param_key="window",
+        old_value=20,
+        new_value=16,
+        node_description="test",
+    )
+    gr = CandidateGateResult(
+        candidate_id="HASH1:window:20->16",
+        verdict=verdict,
+        validation_days=threshold - 1,
+        oos_alpha=5.0,
+        caveats=[],
+        winner_p_adj=0.01,
+        rejection_reason=None,
+    )
+    shell = lce.LogicChangeProposalResult(
+        candidate_id="HASH1:window:20->16",
+        symphony_id="HASH1",
+        tweak=tweak,
+        objective=lce.LogicChangeObjective(
+            objective_type="reduce_drawdown", measured_value=0.0, rationale="test"
+        ),
+        objective_rationale="test",
+        baseline_stats={},
+        variant_stats={},
+        apply_guidance="test",
+        data_warnings=[],
+    )
+    shell.gate_result = gr
+    shell.caveats = list(gr.caveats)
+    run_result = lce.LogicChangeRunResult(
+        gate_batch=GatedBatch(results=[gr], survivors=[gr], n_candidates=1, fdr_q=0.05),
+        proposals=[shell],
+        survivors=[shell],
+        rejected_candidates=[],
+        message="1 logic change survived the gate",
+        objective=shell.objective,
+    )
+
+    import database
+
+    with (
+        patch.object(database, "load_state", lambda: {"HASH1": {"name": "Test Symphony"}}),
+        patch("symphony_logic.fetch_symphony_score", lambda h: {"type": "root", "children": []}),
+        patch.object(lce, "_has_composer_key", return_value=True),
+        patch.object(lce, "propose_operator_logic_change", return_value=run_result),
+    ):
+        app_module.app.config["TESTING"] = True
+        with app_module.app.test_client() as c:
+            resp = c.post(
+                "/ai-advisor/logic-changes/evaluate",
+                json={
+                    "symphony_id": "Test Symphony",
+                    "change_description": "Reduce window from 20d to 16d",
+                },
+            )
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    gate_result = body.get("gate_result") or {}
+    low_power = gate_result.get("low_power")
+    survivors_detail = body.get("survivors_detail") or []
+    assert low_power is True or (
+        survivors_detail and survivors_detail[0].get("low_power") is True
+    ), "self-guard: fixture must reach low_power=True before checking caveat text"
+    top_caveats = body.get("caveats") or []
+    nested_caveats = survivors_detail[0].get("caveats") if survivors_detail else []
+    all_caveats = [*top_caveats, *(nested_caveats or [])]
+    assert any("power" in str(c).lower() for c in all_caveats), (
+        f"AC-9 GAP: logic-change evaluate response has low_power=True but no "
+        f"caveat text mentions statistical power. top_caveats={top_caveats}, "
+        f"nested_caveats={nested_caveats}"
+    )
 
 
 def test_ac9_logic_change_evaluate_response_carries_low_power_field():
