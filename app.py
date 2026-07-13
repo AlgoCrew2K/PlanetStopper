@@ -3826,6 +3826,29 @@ def _translate_backtest_error(err: "str | None") -> "str | None":
     return err
 
 
+# AC-6 (F2/N=1 honesty — feature-plans/advisor-remediation-r1.md): the two
+# operator-initiated Evaluate routes (asset-swaps, logic-changes) each route
+# exactly ONE candidate through evaluate_candidate_batch — c(N=1)=1.0 makes the
+# BHY/Yekutieli multiple-testing correction a mathematical no-op (see
+# autotuner.benjamini_hochberg_adjust). The gate's shared
+# SURVIVOR_OVERFITTING_CAVEAT text unconditionally carries "BHY/Yekutieli FDR"
+# branding on an ADOPT verdict; at N=1 that branding falsely implies a
+# multi-candidate correction ran. Strip it and disclose the real N=1 shape
+# instead. The N>1 weekly scheduler paths (suggest_swaps / suggest_logic_
+# changes) never call these two routes and keep their real FDR/Yekutieli
+# labeling untouched.
+_N1_HONESTY_NOTE = "single-candidate check — no multiple-testing correction applies (N=1)"
+
+
+def _n1_honest_caveats(caveats: "list[str] | None") -> list[str]:
+    """Strip FDR/Yekutieli-branded caveat text and append the N=1 honesty
+    disclosure. Shared by both operator-initiated Evaluate routes (AC-6) —
+    never called from the weekly N>1 scheduler paths."""
+    filtered = [c for c in (caveats or []) if "FDR" not in c and "Yekutieli" not in c]
+    filtered.append(_N1_HONESTY_NOTE)
+    return filtered
+
+
 def _build_verification_count_line(summary: "dict") -> str:
     """Format the MARKET_PRISM_VERIFICATION summary counts into a compact,
     human-readable status line for the Overview tab's Numeric Verification
@@ -4356,8 +4379,10 @@ def ai_advisor_asset_swaps_evaluate():
             }
             if gate_result
             else None,
-            # Caveats (mandatory for survivors — SURVIVOR_OVERFITTING_CAVEAT)
-            "caveats": proposal.caveats if proposal else [],
+            # Caveats (mandatory for survivors — SURVIVOR_OVERFITTING_CAVEAT),
+            # N=1-honest per AC-6: FDR/Yekutieli branding stripped, replaced
+            # with the real single-candidate disclosure.
+            "caveats": _n1_honest_caveats(proposal.caveats if proposal else None),
             # Apply guidance — plain text, no button (AC-X1)
             "apply_guidance": proposal.apply_guidance if proposal else "",
             # AC-9c: translate raw nginx 413 HTML to a clean operator message.
@@ -4519,8 +4544,8 @@ def ai_advisor_logic_changes_evaluate():
             "n_candidates": gate_batch.n_candidates if gate_batch else None,
             "fdr_q": gate_batch.fdr_q if gate_batch else None,
             "fdr_adjusted_threshold": fdr_adjusted_threshold,
-            # Caveats (mandatory for survivors, AC-3.3)
-            "caveats": p.caveats,
+            # Caveats (mandatory for survivors, AC-3.3); N=1-honest per AC-6.
+            "caveats": _n1_honest_caveats(p.caveats),
             # Apply guidance — plain text, no button (AC-X1 / AC-3.4)
             "apply_guidance": p.apply_guidance,
             "backtest_error": _translate_backtest_error(p.backtest_error),
@@ -4552,7 +4577,8 @@ def ai_advisor_logic_changes_evaluate():
                 "fdr_q": gate_batch.fdr_q if gate_batch else None,
                 "fdr_adjusted_threshold": fdr_adjusted_threshold,
                 # Caveats + guidance from the primary proposal (operator-initiated = single candidate)  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
-                "caveats": proposal.caveats if proposal else [],
+                # N=1-honest per AC-6.
+                "caveats": _n1_honest_caveats(proposal.caveats if proposal else None),
                 "apply_guidance": proposal.apply_guidance if proposal else "",
                 "backtest_error": _translate_backtest_error(proposal.backtest_error)
                 if proposal
@@ -5161,6 +5187,25 @@ def api_advisor_observations():
                     role, limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT
                 )
             )
+
+    # AC-14 (F8, Gap): the symphony_id branch above reads
+    # get_advisor_observations_for_symphony directly with no role filter, so
+    # a DIVERGENCE_EXPLAINER feature-off NOT_APPLICABLE row (the producer is
+    # permanently rejected but still writes one per autotune run — see
+    # _ADVISOR_ROLES's comment above) leaked through unlabeled. The
+    # no-symphony_id branch above already can't leak this (_ADVISOR_ROLES
+    # excludes DIVERGENCE_EXPLAINER) — this filter is a no-op there and only
+    # closes the gap on the symphony_id path. Same predicate as the Overview
+    # panel's own suppression (ai_advisor_tab(), feature-off stub filter).
+    rows = [
+        row
+        for row in rows
+        if not (
+            row.get("verdict") == "NOT_APPLICABLE"
+            and isinstance(row.get("raw_response"), dict)
+            and row["raw_response"].get("feature_flag") == "off"
+        )
+    ]
 
     rows = rows[:_ADVISOR_OBSERVATIONS_PAGE_LIMIT]
     return jsonify(rows)
