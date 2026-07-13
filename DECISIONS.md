@@ -4672,6 +4672,8 @@ The `advisor-intent-audit` (2026-07-13, verdict @ `08b0bcc0`) found the AI Advis
 
 **STATUS: PENDING.**
 
+**Derived scope addition (PM adjudication alongside AC-17, 2026-07-13):** AC-17's panel-tie proof surfaced a REAL 4th rejection class AC-7's original 3-way branching (`pbo_veto`/`below_spy_alpha`/`fdr_not_winner`) didn't account for: **"OOS-inferior to incumbent."** Today this case persists with `rejection_reason=None` — identical to how a genuine survivor's record looks, so it is NOT distinguishable from a survivor in persisted records without also checking `verdict`. AC-7's rendering work needs to either add this as a named 4th `rejection_reason` value or otherwise ensure the UI/persisted-record distinction is honest. r1-test is folding this into RED coverage.
+
 ### AC-10 — Honest data: `measured_value` real or absent (F7, Gap G)
 
 **STATUS: PENDING.**
@@ -4715,6 +4717,35 @@ The `advisor-intent-audit` (2026-07-13, verdict @ `08b0bcc0`) found the AI Advis
 **Provenance:** operator directive 2026-07-13 ("anything it suggests should be using fable"); landed in the feature plan via plan-amendment commit `47826731`.
 
 **This doc-writer's piece (sequenced AFTER the implementation diff lands, per PM confirmation — correct order, not a delay):** once the accessor + call-site swap ship, sweep every "Opus"-specific (not just "Claude"-specific) doc claim for `advisors/build_plan_generator.py` and `ai_advisor.request_suggestions` to accessor-driven/model-neutral language ("configurable via `ADVISOR_SUGGESTION_MODEL`, default Fable/`claude-fable-5`") — specifically `docs/generated/advisors_build_plan_generator.md`'s title ("Opus Build-Plan Generator") and Overview ("Opus-backed brain of the real Strategy Builder"), any Opus-specific line in `docs/generated/ai_advisor.md`, and `docs/audit-inputs/claude-md-corrections-r1.md` §4 (currently PENDING for the same reason).
+
+### AC-17 — Panel unreachability: ADOPT_CANDIDATE made mathematically REACHABLE (added mid-cycle, PM adjudication ad9b1629, [PM-ASSUMED] — operator may overrule)
+
+**STATUS: PENDING (implementation) — proof + adjudicated fix direction recorded 2026-07-13, ahead of the landed diff, so the reasoning isn't lost. Implementation tracked as its own task (#25).**
+
+**Proven defect (r1-engine, PM-verified 2026-07-13):** all three advisor engines (Strategy Builder, Asset Swaps, Logic Changes) construct `BacktestCandidate` with structurally empty `candidate_params`/`incumbent_params`/`theory_prior_params`. This makes `candidate_panel_score` the CONSTANT `0.5` against the incumbent's CONSTANT `0.75` (hardcoded `inc_stability=1.0`, `backtest_gate_engine.py:820`) — so the adoption comparison `0.5 >= 0.75 + PANEL_ADOPT_MARGIN_THRESHOLD(0.0)` is **false unconditionally, regardless of actual candidate performance.** `ADOPT_CANDIDATE` was therefore mathematically unreachable on every one of the three engines' real production call paths. Confirmed at `backtest_gate_engine.py:369-439`, `acceptance_gate.py:108`/`:259`, `database.py:1631` (the badge accessor's `WHERE verdict='ADOPT_CANDIDATE'` query — this is the SECOND reason, independent of AC-4/5's PBO/SPY gap, that the candidate-alert badge always read 0). r1-test's own proof: a real `p_adj=0.0026` candidate (a strong, FDR-significant result) still resolved `KEEP_INCUMBENT` on the operator Evaluate path.
+
+**Adjudicated fix (PM, ~20:20Z 2026-07-13) — contained to `advisors/backtest_gate_engine.py` ONLY, `acceptance_gate.py` and `autotuner.py` get ZERO diff:** when `candidate_params` AND `incumbent_params` are BOTH structurally empty (no parameter-vector representation exists at all), the parameter panel is NOT APPLICABLE — set `cand_stability = inc_stability` (an exact tie), so the adoption decision rests entirely on the OOS-superiority precondition (`acceptance_gate.py:257`) plus the three hard vetoes (BHY winner, PBO, SPY baseline — which AC-4/5 are simultaneously making real for Asset Swaps/Logic Changes). **Why not populate real params instead (option (a), ruled out algebraically):** real params without a real theory-prior require `stability >= 1.0`, which only zero-change candidates can satisfy — that path was killed as a dead end, not merely deprioritized.
+
+**Requirements the fix must satisfy (from the plan, `feature-plans/advisor-remediation-r1.md` AC-17):**
+(a) the tie fires ONLY on both-empty — one-side-empty is a caller bug and must be guarded/asserted, never silently tied;
+(b) partial param population is FORBIDDEN at all three construction sites (re-triggers the broken `stability >= 1.0` algebra);
+(c) `panel_breakdown` records the N/A state honestly ("parameter panel not applicable — no parameter-vector representation") so UI/persistence never imply a panel evaluated when it didn't;
+(d) real-params candidates keep byte-identical semantics (regression-safe);
+(e) end-to-end RED: a strong-OOS empty-params candidate reaches `ADOPT_CANDIDATE` and increments the badge accessor; an OOS-inferior candidate still resolves `KEEP_INCUMBENT`.
+
+**[PM-ASSUMED] marker:** this changes the advisor suite's adoption semantics (candidates can now actually be adopted where none ever could before) — the operator may overrule this adjudication. Not a unilateral final decision; flagged per the plan's own marker convention.
+
+**The narrative correction this forces — itself a deliverable, not a side effect:** the long-standing explanation "0 survivors is the EXPECTED common case — the gate is intentionally strict" (this project's CLAUDE.md Known-Gotchas entry, the original audit's F6 framing, and multiple prior cycle reports) was **WRONG as a COMPLETE explanation.** Gate strictness and F6's max-1-survivor-per-run cap are real and remain true, but they were SECONDARY — the DOMINANT cause of the observed all-zero survivor history was this structural unreachability bug, not intentional strictness. The operator was told "the badge lights when a survivor appears" by a system in which no survivor could ever appear, for any candidate, ever, until this fix.
+
+**Doc-tree sweep for the narrative-correction (this doc-writer, 2026-07-13 — inventory only, NOT applied yet; every location below is PENDING on AC-17's implementation actually landing):**
+- **HIGH priority — asserts "expected/intentionally strict" as if it were the complete explanation:**
+  - `.claude/CLAUDE.md:92` (Known Gotchas table): "AI Advisor empty suggestions (most symphonies) | Expected. The CRRA-EU + Harvey-Liu FDR gate is intentionally strict." — CONFIG-tier, drafted for PM application (not this doc-writer's to edit directly), same convention as the rest of the CLAUDE.md draft file.
+  - `docs/generated/ai_advisor.md:85`: "This is the expected state for most symphonies — the FDR + PBO gates are intentionally strict." — docs/generated, directly in this doc-writer's lane; will correct once AC-17 lands.
+- **MEDIUM priority — historical/completed feature plan citing the CLAUDE.md gotcha as its source:**
+  - `feature-plans/strategy-builder-real.completed.md:224`: "The CRRA-EU/Harvey-Liu gate is intentionally strict; 0 survivors is a VALID outcome, not an error (project CLAUDE.md 'AI Advisor empty suggestions' gotcha)." — a dated/completed plan; per the doc-writer cleanup mandate this gets a **superseded pointer note, not a rewrite of the historical body**, once the CLAUDE.md gotcha it cites is itself corrected.
+- **Reviewed, NOT flagged (remain accurate post-AC-17 — they assert only "zero survivors is a valid non-error outcome," never a root-cause or "expected/common" claim, and a 0-survivor run is still genuinely possible after this fix, just no longer the ONLY possible outcome):** `docs/generated/advisors_asset_swap_engine.md:30,155`; `README.md:206`; `CHANGELOG.md:28` (which also needs a separate, unrelated "Claude Opus" → AC-16 Fable-accessor pass); `feature-plans/candidate-alert.md:14`.
+
+**Tests:** tracked under r1-test's RED coverage (task #25, "Implement AC-17: neutral panel-tie in backtest_gate_engine.py"); this doc-writer will cite the actual test file once GREEN.
 
 ### Verification
 

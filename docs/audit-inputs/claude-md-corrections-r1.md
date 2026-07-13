@@ -50,8 +50,23 @@
 
 ---
 
+## 6. Known Gotchas table — "AI Advisor empty suggestions" narrative correction — PENDING, blocked on AC-17
+
+**PENDING.** AC-17 (added mid-cycle 2026-07-13, plan @ ad9b1629, [PM-ASSUMED] — operator may overrule) proved `ADOPT_CANDIDATE` was mathematically unreachable on every advisor engine's real production call path (constant 0.5-vs-0.75 panel comparison from structurally empty params + hardcoded incumbent stability — see `DECISIONS.md` `DE-ADVISOR-R1-001` §AC-17 for the full proof + fix). This falsifies the CURRENT Known Gotchas table entry as a COMPLETE explanation:
+
+**Current text (`.claude/CLAUDE.md`, Known Gotchas table):**
+> AI Advisor empty suggestions (most symphonies) | Expected. The CRRA-EU + Harvey-Liu FDR gate is intentionally strict. `build_assessment_from_context` explains why — `oos_alpha=None` means all trials were haircut-rejected, not an error.
+
+**Defect:** gate strictness is real and remains true, but it was NOT the dominant cause of the all-zero survivor history — a structural bug made `ADOPT_CANDIDATE` unreachable regardless of how strong any candidate's performance was. This entry told workers (and, transitively, the operator) that empty suggestions were solely a strictness artifact, when the primary cause was a defect now fixed by AC-17.
+
+**Corrected direction (drafted once AC-17's implementation is confirmed GREEN — NOT drafted yet, this doc-writer will not guess the post-fix behavior ahead of the landed diff):** the corrected entry needs to (a) note that `ADOPT_CANDIDATE` is now reachable (post-AC-17) where it previously was not, (b) retain the true and still-relevant strictness/FDR framing as a SECONDARY factor, not the sole explanation, and (c) avoid overcorrecting into implying survivors are now common — the gate is still genuinely strict, just no longer structurally impossible to pass.
+
+**Also flagged (see `DECISIONS.md` `DE-ADVISOR-R1-001` §AC-17's doc-tree sweep for the full inventory, not duplicated here):** `docs/generated/ai_advisor.md:85` carries the identical "intentionally strict" framing (this doc-writer's own lane, corrected directly, not via this CLAUDE.md draft file) and `feature-plans/strategy-builder-real.completed.md:224` cites this CLAUDE.md gotcha as its source (gets a superseded pointer note once this entry is corrected, not a rewrite).
+
+---
+
 ## Application order (for the PM)
 
 1. §1 and §5 can be applied now — no code dependency, already verified against live source.
-2. §2, §3, §4 are PENDING — this doc-writer will replace their `PENDING` markers with concrete corrected text as AC-11/12, AC-4/5, and AC-16 respectively land on `fix/advisor-remediation-r1`, and will notify the PM when the full file has no `PENDING` markers left.
-3. Do not apply §2/§3/§4 from the doc-reconciliation.md original text (superseded — see the divergence note in `DECISIONS.md` `DE-ADVISOR-R1-001` §AC-15) — those would document the pre-R1 broken state R1 is fixing.
+2. §2, §3, §4, §6 are PENDING — this doc-writer will replace their `PENDING` markers with concrete corrected text as AC-11/12, AC-4/5, AC-16, and AC-17 respectively land on `fix/advisor-remediation-r1`, and will notify the PM when the full file has no `PENDING` markers left.
+3. Do not apply §2/§3/§4/§6 from the doc-reconciliation.md original text or this file's PENDING placeholders (superseded — see the divergence note in `DECISIONS.md` `DE-ADVISOR-R1-001` §AC-15/§AC-17) — those would document the pre-R1 broken state R1 is fixing.
