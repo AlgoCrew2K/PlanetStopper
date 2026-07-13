@@ -39,22 +39,29 @@ import re
 
 _JS_PATH = pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor.js"
 
-# sbRunAnalysis is ~70 lines (static/ai_advisor.js:701-757 on the pre-fix source).
-# A 4000-char window from the signature comfortably covers the fixed version too,
-# matching the fixed-window-extraction convention already used in
-# tests/dashboard/test_card_consistency_liveness.py.
-_SB_RUN_WINDOW = 4000
-
 
 def _js() -> str:
     return _JS_PATH.read_text(encoding="utf-8")
 
 
 def _sb_run_analysis_body(src: str) -> str:
-    """Extract the sbRunAnalysis function body (signature through the window)."""
+    """Extract the sbRunAnalysis function body (signature through its REAL
+    closing brace, found via brace-matching from the function's own opening
+    '{' — not a fixed-size character window. A prior fixed 4000-char window
+    ("comfortably covers the ~70-line pre-fix version") silently truncated
+    mid-function once fa691f6a's Checkpoint-3 field-consumption wiring grew
+    the function to ~8000 chars, producing a spurious "Unbalanced braces"
+    failure in _success_branch below — a test-harness assumption invalidated
+    by legitimate growth, not a real code defect (confirmed: node --check
+    clean, JS well-formed). Brace-matching is correct-by-construction
+    regardless of how large the function grows in the future.
+    """
     start = src.find("function sbRunAnalysis(")
     assert start != -1, "function sbRunAnalysis not found in static/ai_advisor.js"
-    return src[start : start + _SB_RUN_WINDOW]
+    open_brace_idx = src.find("{", start)
+    assert open_brace_idx != -1, "no opening brace found after sbRunAnalysis signature"
+    close_idx = _matching_brace_end(src, open_brace_idx)
+    return src[start : close_idx + 1]
 
 
 def _post_response_segment(src: str) -> str:
