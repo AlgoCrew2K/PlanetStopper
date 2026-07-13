@@ -3,7 +3,7 @@
 > Client-side logic for the AI Advisor single-page SPA: in-place tab switching, suggestion card rendering with per-symphony assessment and lens-cache staleness stamp (AC-3), accept/reject lifecycle, autotune run feed, symphony selection, and Strategy Builder run/chat affordances.
 
 **Source:** `static/ai_advisor.js`
-**Last updated:** 2026-07-13 (advisor-suite-fixes AC-1/AC-2: `sbRunAnalysis()` success branch now renders in-place instead of navigating away -- see below; prior: DE-ADVISOR-LATENCY AC-3 `#advisor-lens-as-of` staleness stamp; prior: spa-port cycle 2026-06-13)
+**Last updated:** 2026-07-13 (advisor-remediation-r1 Checkpoint-3, `DE-ADVISOR-R1-001`: `sbRunAnalysis()` gains consumption of the AC-7/AC-9/AC-11/AC-12 route-JSON fields -- see below; prior: advisor-suite-fixes AC-1/AC-2: `sbRunAnalysis()` success branch renders in-place instead of navigating away; prior: DE-ADVISOR-LATENCY AC-3 `#advisor-lens-as-of` staleness stamp; prior: spa-port cycle 2026-06-13)
 
 ## Overview
 
@@ -130,7 +130,18 @@ Operator-initiated proposal run for the Strategy Builder tab. Reads `#sb-objecti
 
 **Before this fix:** unconditionally navigated to `/ai-advisor` on success, discarding the response JSON entirely — the operator saw a full-page reload with no way to tell which observations (if any) belonged to the run they just triggered (AC-1: nothing rendered; AC-2: not run-identifiable). See `DECISIONS.md` `DE-ADVISOR-SUITE-FIX-001`.
 
-On error: shows the error class name in `#sb-run-error` inline without a page navigation (unchanged).
+**Advisor-remediation-r1 Checkpoint-3 field consumption (`DE-ADVISOR-R1-001`, 2026-07-13, commits `fa691f6a` + `f6688ed4`):** an r1-review finding — the AC-7/AC-9/AC-11/AC-12 fields the route added to its JSON response this cycle (see [app.md](app.md)'s `POST /ai-advisor/strategy-builder/run` section) were never consumed on THIS render path, even though every route-JSON RED test proved the fields reach the response — the tests were structurally blind to this render path. Closed:
+
+- **AC-11 provenance rollup:** a new `data-testid="sb-live-provenance"` line ("Built-new: N · Atlas: N") renders whenever `built_new_count`/`atlas_count` are non-null. No prior render surface existed for these two fields anywhere in the codebase (checked Jinja + every JS file before adding).
+- **AC-11 degraded-run notice:** `data.mode_notice` (server-authored prose, e.g. an "0 plans (degraded)" explanation) renders verbatim, HTML-escaped, in a new `data-testid="sb-live-mode-notice"` div — non-null-only.
+- **AC-12 screens-skipped indicator:** `data.screens_skipped` renders a new `data-testid="sb-live-screens-skipped"` line, optionally appending `data.screens_skipped_reason` when present.
+- **AC-11 error_category:** the error branch appends `data.error_category` in parentheses to the existing sanitized `data.error` text when non-null — never renders the literal string `"null"`/`"undefined"`.
+- **AC-9 low_power:** the per-candidate `card(c, cls)` helper adds a `proposal-card--low-power` CSS modifier when `c.low_power` is true (survivor cards only — mirrors the route's own survivor-only scoping). The caveat TEXT itself is never re-derived or hardcoded in JS — it comes from `c.caveats` (the server appends `_LOW_POWER_CAVEAT` there when `low_power` fires), rendered via the existing `caveats-block`/`caveat-text` markup. The numeric `MIN_POWER_FOLD_DAYS` threshold never crosses into JS (locked AC-9 contract).
+- **AC-7 rejection_reason:** a new module-level `SB_LIVE_REJECTION_COPY` map (4 entries: `pbo_veto`, `below_spy_alpha`, `oos_inferior_to_incumbent`, `fdr_not_winner`) — byte-identical wording to the persisted-history Jinja `_REJECTION_COPY` map and the Asset-Swaps/Logic-Changes JS `REJECTION_COPY` siblings, so the operator sees the same explanation regardless of which surface rejected the candidate. Rejected cards render a `data-testid="apply-guidance"` `<strong>Gate withheld:</strong>` line when `c.rejection_reason` maps to a known entry; an unmapped or `null` reason renders NOTHING — never a fabricated blanket string, matching the map's existing extensibility convention.
+
+**Test coverage (source-consumption, not DOM/browser):** `tests/ai_advisor/test_r1_sb_live_run_field_consumption.py` reads this file as TEXT and asserts each field name is referenced as a literal token inside `sbRunAnalysis()`'s source — this stack has no JS-behavior test runner (no jsdom/Jest/Playwright-component harness; only `node --check` syntax validation exists project-wide), so a claimed DOM-behavior test would be fabricated confidence. These tests prove the field's NAME is wired into the function that reads `data.<field>`; they prove nothing about whether the resulting DOM element is visible, styled, or reachable to an operator. The PM's first-hand browser E2E is the sufficient verification for the actual rendered UI.
+
+On error: shows the error class name in `#sb-run-error` inline without a page navigation (unchanged, now with the `error_category` extension above).
 
 Disables `#sb-run-btn` during the request; re-enables it in the `finally` block regardless of outcome (unchanged).
 
@@ -152,7 +163,7 @@ This is pure JS navigation — no form submission, no POST. Buttons invoking thi
 - `POST /ai-advisor/suggest` — suggestion fetch; response body includes `lens_data_as_of` (str|null) + `lens_data_stale` (bool) for AC-3 stamp
 - `POST /ai-advisor/accept` — suggestion acceptance
 - `POST /ai-advisor/reject` — suggestion rejection
-- `POST /ai-advisor/strategy-builder/run` — strategy-builder proposal run (Strategy Builder tab)
+- `POST /ai-advisor/strategy-builder/run` — strategy-builder proposal run (Strategy Builder tab); response body includes `built_new_count`/`atlas_count`/`mode_notice`/`error_category` (AC-11), `screens_skipped`/`screens_skipped_reason` (AC-12), and per-candidate `low_power` (AC-9)/`rejection_reason` (AC-7) — all consumed by `sbRunAnalysis()` (`DE-ADVISOR-R1-001` Checkpoint-3)
 - `GET /api/autotune-runs` — autotune run history feed
 - `GET /api/performance/symphonies` — symphony list
 - `Chart.js` (global) — autotune sparkline; guarded by `typeof Chart === 'undefined'` check

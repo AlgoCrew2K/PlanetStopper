@@ -4706,15 +4706,17 @@ The `advisor-intent-audit` (2026-07-13, verdict @ `08b0bcc0`) found the AI Advis
 
 ### Checkpoint-3 -- Post-review remediation: AC-9 caveat text (Asset Swaps/Logic Changes) + AC-7/9/11/12 SB live-run field consumption
 
-**STATUS: IN PROGRESS -- code landed, verification pending r1-review sign-off. Do not read as closed.**
+**STATUS: GREEN -- CLOSED. r1-review lifted the Checkpoint-3 BLOCK (both findings verified closed, standing R1 completeness sweep clean, ruff clean, code frozen at `f6688ed4` with zero code diff through this entry's own closing HEAD).**
 
 r1-review's Checkpoint-3 pass (RED commit `f2adce0f`) found two gaps the AC-7/AC-9/AC-11 sections above did not close:
 
 1. **AC-9 caveat-text gap (Asset Swaps / Logic Changes evaluate routes):** the `low_power` BOOLEAN was wired into both routes' `gate_result` JSON, but the actual CAVEAT TEXT was never appended to the operator-visible `caveats` array -- a `True` flag silently present in JSON, never surfaced as readable text, does not satisfy "survivor cards carry a statistical-power caveat" (the SB route already did this; these two routes did not). **STATUS: GREEN, r1-fe, commit `a5eaa3b0`.** `ai_advisor_asset_swaps_evaluate` appends `_LOW_POWER_CAVEAT` to the top-level `caveats` array on a genuine `ADOPT_CANDIDATE` survivor; `ai_advisor_logic_changes_evaluate` appends it to each survivor's nested caveats in `survivors_detail`. Tests: `tests/ai_advisor/test_r1_power_caveat.py`, 12/12 GREEN.
 
-2. **SB live-run field-consumption gap:** `static/ai_advisor.js`'s `sbRunAnalysis()` -- the LIVE-RUN handler wired to the SB tab's "Run analysis" button (`POST /ai-advisor/strategy-builder/run`, rendered in-place) -- never consumed any of the R1 route-JSON fields (`built_new_count`/`atlas_count`/`mode_notice`/`screens_skipped`/`error_category`/`low_power`/`rejection_reason`). Every route-JSON RED test this cycle proved the field reaches the JSON response; none touched this render path, so they were structurally blind to the gap. **STATUS: code landed, r1-fe, commits `fa691f6a`** (SB live-run render path wired to consume the AC-7/AC-9/AC-11/AC-12 fields) **and `f6688ed4`** (SB run route's `_gate_result_to_dict` surfaces `rejection_reason` in the route-JSON, closing the last field this render path needed). r1-test ran a full targeted battery (0 fail/0 error, task-tracked) before handing back to r1-review; r1-review is executing its Checkpoint-3 re-verification pass against `f6688ed4` as of this writing.
+2. **SB live-run field-consumption gap:** `static/ai_advisor.js`'s `sbRunAnalysis()` -- the LIVE-RUN handler wired to the SB tab's "Run analysis" button (`POST /ai-advisor/strategy-builder/run`, rendered in-place) -- never consumed any of the R1 route-JSON fields (`built_new_count`/`atlas_count`/`mode_notice`/`screens_skipped`/`error_category`/`low_power`/`rejection_reason`). Every route-JSON RED test this cycle proved the field reaches the JSON response; none touched this render path, so they were structurally blind to the gap. **STATUS: GREEN, r1-fe, commits `fa691f6a`** (SB live-run render path wired to consume the AC-7/AC-9/AC-11/AC-12 fields: `built_new_count`/`atlas_count` provenance line, `mode_notice`, `screens_skipped`, `error_category`, per-candidate `low_power` CSS modifier + server-appended caveat text, `rejection_reason` -> `SB_LIVE_REJECTION_COPY`-mapped text on rejected cards) **and `f6688ed4`** (SB run route's `_gate_result_to_dict` surfaces `rejection_reason` in the route-JSON, closing the last field this render path needed).
 
-**This doc-writer's position:** both findings' CODE is landed and self-reports GREEN. This entry will NOT be marked closed, and `docs/generated/static_ai_advisor_js.md` / the `static/ai_advisor.js` CLAUDE.md key-files row will NOT be updated to describe the shipped field-consumption behavior, until r1-review explicitly lifts the Checkpoint-3 BLOCK. See `docs/audit-inputs/claude-md-corrections-r1.md` §7 for the parallel PENDING marker on the CLAUDE.md draft.
+**Closing HEAD for the code fix:** `f6688ed4768fea57d6104eb4a4752031fee38d67` -- the three GREEN commits in order are `a5eaa3b0` (AC-9 caveat text), `fa691f6a` (SB JS field wiring), `f6688ed4` (rejection_reason serialization). r1-review independently confirmed `93e0e48d` (this doc-writer's prior commit) is docs-only with zero diff vs `f6688ed4` on every reviewed file.
+
+**Sign-off:** r1-review, 2026-07-13 -- both findings verified closed; standing R1 completeness sweep (autotuner leakage, `+inf` SPY sentinel, PBO guard, fabricated-rejection-string sweep) all PASS, no doc correction needed (these were already-correct invariants, not something that changed this cycle).
 
 **Tests (finding 2):** `tests/ai_advisor/test_r1_sb_live_run_field_consumption.py` (source-consumption text-window checks -- NOT a DOM/browser test; this stack has no JS-behavior test runner, only `node --check` syntax validation; the PM's first-hand browser E2E is the sufficient verification for the actual rendered UI, not this suite).
 
@@ -4829,19 +4831,20 @@ r1-review's Checkpoint-3 pass (RED commit `f2adce0f`) found two gaps the AC-7/AC
 
 ### Verification
 
-**STATUS: PENDING.** The full-tree pre-merge suite is the PM's ship-gate (recorded in the PM's own evidence report, not here -- per project convention). The number that belongs here is the cycle's own targeted-set evidence: r1-test's FINAL targeted-file `-n0` run (0-fail/0-error) against the closing HEAD SHA, sourced from r1-test directly at cycle-complete -- not proxied through r1-review or the PM's separate full-tree number. Not yet filled in: Checkpoint-3 (see above) has not been signed off by r1-review as of this writing.
+**STATUS: GREEN.** 128 passed / 0 failed / 0 errors across the 18 R1-cycle test files, plus the JS syntax gate (11/11) -- **139/139 combined**, `-n0`, ruff clean. Both the 128-only and 139-combined figures are accurate at different scopes (18 R1-cycle files vs. 18 files + the JS syntax gate); neither is "wrong." Independently confirmed three ways: r1-test's original run, r1-review's reproduction, and this doc-writer's own reconciliation run (which additionally surfaced that `tests/ai_advisor/test_divergence_explainer.py` -- 41 tests total, only 6 of which are R1/AC-14-authored per the AC-14 section above -- is correctly excluded from the 18-file R1-cycle count; including it as a whole file is a scope error, not part of this cycle's own test surface). Verified at HEAD `f6688ed4768fea57d6104eb4a4752031fee38d67` (the closing code-fix commit); this entry's own doc commits (`93e0e48d` and later) are confirmed docs-only, zero diff on any reviewed/tested file.
+
+The full-tree pre-merge suite remains the PM's separate ship-gate (recorded in the PM's own evidence report, not here) -- the number above is the cycle's own targeted-set evidence, not a substitute for it.
 
 ### Files changed
 
-**STATUS: PENDING** -- running list, updated as each AC lands; final list confirmed at cycle-complete against `git diff --stat` off the closing HEAD SHA, not hand-maintained as authoritative. So far (this doc-writer's own commits, `74b84180`/`38732183`, this session):
-- `CHANGELOG.md` (AC-16 attribution edit)
-- `docs/audit-inputs/doc-reconciliation.md` (2 SUPERSEDED banners, SS1.3/SS1.4)
-- `docs/audit-inputs/claude-md-corrections-r1.md` (finalized §1-6, §8 retraction, §7 pending)
-- `docs/generated/app.md` (R1 route sweep + AC-17 candidate-alert note)
-- `DECISIONS.md` (this entry)
-- Prior session (commit `583f5f93`): `docs/generated/advisors_backtest_gate_engine.md`, `docs/generated/advisors_logic_change_engine.md`, `docs/generated/advisors_asset_swap_engine.md`, `docs/generated/advisors_build_plan_generator.md`
+**STATUS: GREEN.** Full running list of this doc-writer's own commits on `fix/advisor-remediation-r1`, this cycle:
+- `583f5f93`: `docs/generated/advisors_backtest_gate_engine.md`, `docs/generated/advisors_logic_change_engine.md`, `docs/generated/advisors_asset_swap_engine.md`, `docs/generated/advisors_build_plan_generator.md`
+- `74b84180`: `CHANGELOG.md` (AC-16 attribution edit), `docs/audit-inputs/doc-reconciliation.md` (2 SUPERSEDED banners, §1.3/§1.4)
+- `38732183`: `docs/generated/app.md` (R1 route sweep + AC-17 candidate-alert note), `docs/audit-inputs/claude-md-corrections-r1.md` (finalized §1-6, §8 retraction, §7 pending)
+- `93e0e48d`: `DECISIONS.md` (Checkpoint-3 draft + AC-17 doc-tree retraction + Verification/Files-changed placeholders)
+- (this commit): `DECISIONS.md` (Checkpoint-3 closed + final Verification numbers), `docs/generated/static_ai_advisor_js.md` (`sbRunAnalysis()` field-consumption update), `docs/audit-inputs/claude-md-corrections-r1.md` (§7 unblocked)
 
-Still open: `docs/generated/static_ai_advisor_js.md` (blocked on Checkpoint-3), CLAUDE.md itself (PM applies from `docs/audit-inputs/claude-md-corrections-r1.md`).
+CLAUDE.md itself is not in this list -- the PM applies it directly from `docs/audit-inputs/claude-md-corrections-r1.md`, all 8 sections now unblocked.
 
 ### Reference
 

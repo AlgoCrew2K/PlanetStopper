@@ -1,6 +1,6 @@
 # Advisor-Remediation-R1 — CLAUDE.md Key-Files Corrections (DRAFT — NOT APPLIED)
 
-**Author:** r1-doc | **Status:** DRAFT, FINALIZED for the code that has actually landed as of 2026-07-13 — for PM application only. This doc-writer never edits `.claude/CLAUDE.md` directly (project convention). One section (§7) is still PENDING, blocked on the r1-review Checkpoint-3 BLOCK finding not yet being lifted — do not apply §7 until that lands; §1–§6 have no remaining code dependency and are ready to apply now.
+**Author:** r1-doc | **Status:** DRAFT, COMPLETE — all 8 sections finalized, no remaining PENDING markers. For PM application only. This doc-writer never edits `.claude/CLAUDE.md` directly (project convention).
 **Source:** `docs/audit-inputs/doc-reconciliation.md` §4 (the audit's original outline) + this doc-writer's own reconciliation as R1's ACs landed, verified against the current worktree source line-by-line (`DECISIONS.md` `DE-ADVISOR-R1-001`).
 **Branch:** `fix/advisor-remediation-r1` · **Worktree:** `.claude/worktrees/advisor-r1`
 
@@ -78,9 +78,15 @@
 
 ---
 
-## 7. `static/ai_advisor.js` key-files row (line 46) — PENDING, blocked on the r1-review Checkpoint-3 BLOCK finding
+## 7. `static/ai_advisor.js` key-files row (line 46) — REPLACE (RESOLVED — Checkpoint-3 BLOCK lifted by r1-review, 2026-07-13)
 
-**PENDING — do not apply yet.** The row currently documents `sbRunAnalysis()`'s DE-ADVISOR-SUITE-FIX-001 AC-1/AC-2 fix (in-place render, no navigate-away) but predates this cycle's field-consumption work. As of this writing, r1-fe has landed two commits addressing the r1-review Checkpoint-3 BLOCK finding (SB live-run render path consuming AC-7/AC-9/AC-11/AC-12 route-JSON fields; the SB route-JSON `rejection_reason` addition) and r1-test is running the final targeted-suite verification before handing back to r1-review. Once r1-review lifts the BLOCK, this doc-writer will append a note to this row (and finalize [static_ai_advisor_js.md](../generated/static_ai_advisor_js.md)'s `sbRunAnalysis()` section) describing the shipped field-consumption behavior, citing the landed commit SHA(s). Not drafted speculatively — will describe the SHIPPED code, not the in-flight diff.
+**Target:** `.claude/CLAUDE.md` line 46.
+
+**Append to the existing row** (the row correctly documents the AC-1/AC-2 in-place-render fix; this adds the Checkpoint-3 field-consumption work on top, do not replace the existing sentence):
+
+> **Advisor-remediation-r1 Checkpoint-3 (`DE-ADVISOR-R1-001`, 2026-07-13, commits `fa691f6a` + `f6688ed4`):** `sbRunAnalysis()` now consumes the AC-7/AC-9/AC-11/AC-12 route-JSON fields the three Evaluate routes gained this cycle — an r1-review finding that the route-JSON tests proved the fields reached the response but never proved this specific render path consumed them. New: a `data-testid="sb-live-provenance"` built-new/Atlas count line and a `data-testid="sb-live-mode-notice"` degraded-run notice (AC-11); a `data-testid="sb-live-screens-skipped"` indicator (AC-12); an `error_category` parenthetical on the error branch (AC-11); a `proposal-card--low-power` CSS modifier on survivor cards (AC-9, caveat TEXT still server-sourced via `c.caveats`, never re-derived in JS); a new `SB_LIVE_REJECTION_COPY` map (4 entries, byte-identical wording to the Jinja/Asset-Swaps/Logic-Changes siblings) rendering a "Gate withheld" line on rejected cards keyed off `rejection_reason` (AC-7), with unmapped/null reasons rendering nothing.
+
+**Verified against:** the shipped `sbRunAnalysis()` source (read directly, not the diff) — full detail in [static_ai_advisor_js.md](../generated/static_ai_advisor_js.md)'s `sbRunAnalysis()` section, updated in the same commit as this file.
 
 ---
 
@@ -90,7 +96,7 @@
 
 **What AC-17 actually fixed:** `advisors/backtest_gate_engine.py`'s panel-tie neutralization, making `ADOPT_CANDIDATE` reachable for the 3 advisor-ENGINE evaluate routes (Strategy Builder / Asset Swaps / Logic Changes) — see §3 above and the new `GET /api/candidate-alert` note in [app.md](../generated/app.md) (the `new_valid_count` field, which WAS structurally stuck at 0 before this fix — that is the genuine, narrower narrative correction, already applied there).
 
-**What CLAUDE.md:92 / ai_advisor.md:85 are actually about:** `ai_advisor.build_assessment_from_context`'s `oos_alpha=None` framing — driven entirely by `autotuner.py`'s own walk-forward BHY/Yekutieli haircut-select (`_haircut_select`), a completely separate code path. Verified: `autotuner.py:2710-2722` calls `acceptance_gate.evaluate_acceptance_gate` with hardcoded `candidate_stability_score=1.0, incumbent_stability_score=1.0` — an unconditional tie, never touched by AC-17 (whose fix lives entirely inside `backtest_gate_engine.py`, which `autotuner.py` never calls). Independently moot even if it were touched: `acceptance_gate.py:221-227` short-circuits to `REJECT_VETO_FAILED` before the panel-comparison clause is ever reached when `winner_trial_is_none=True` — exactly the `oos_alpha=None` case this gotcha describes, both before and after AC-17.
+**What CLAUDE.md:92 / ai_advisor.md:85 are actually about:** `ai_advisor.build_assessment_from_context`'s `oos_alpha=None` framing — driven entirely by `autotuner.py`'s own walk-forward BHY/Yekutieli haircut-select (`_haircut_select`), a completely separate code path. Verified: `autotuner.py:2710-2722` calls `acceptance_gate.evaluate_acceptance_gate` with hardcoded `candidate_stability_score=1.0, incumbent_stability_score=1.0` — an unconditional tie, never touched by AC-17 (whose fix lives entirely inside `backtest_gate_engine.py`, which `autotuner.py` never calls). Independently moot even if it were touched: `acceptance_gate.py:221-227` short-circuits to `REJECT_VETO_FAILED` before the panel-comparison clause is ever reached when `winner_trial_is_none=True` — exactly the `oos_alpha=None` case this gotcha describes, both before and after AC-17. Independently cross-checked by r1-review at the PM's request — confirmed.
 
 **Disposition:** `.claude/CLAUDE.md:92` and `docs/generated/ai_advisor.md:85` are accurate as currently written — NO CHANGE. `feature-plans/strategy-builder-real.completed.md:224` (which cites the CLAUDE.md:92 gotcha as its source) likewise needs no superseded banner, since the gotcha it cites is not changing.
 
@@ -98,6 +104,8 @@
 
 ## Application order (for the PM)
 
-1. §1, §2, §3, §4, §5 (no-op), §6 can be applied now — no remaining code dependency, all verified against the current worktree source.
-2. §7 is PENDING — will be replaced with concrete shipped-code text once r1-review lifts the Checkpoint-3 BLOCK.
-3. §8 is a **retraction**, not a pending correction — do not apply any version of the "AI Advisor empty suggestions" gotcha correction from this file's earlier draft or from `docs/audit-inputs/doc-reconciliation.md`'s original outline; both were superseded by this doc-writer's own call-path verification.
+All 8 sections are ready to apply now — no PENDING markers remain.
+
+1. §1, §2, §3, §4, §6, §7 are concrete edits to `.claude/CLAUDE.md` (§1/§3 REPLACE existing text, §2/§4/§6/§7 APPEND to existing rows or add a new line).
+2. §5 and §8 are explicit NO-CHANGE confirmations — recorded so a future pass doesn't re-open a question this doc-writer already verified closed.
+3. Do not apply any earlier draft of §7's PENDING placeholder or §8's original (superseded) over-broad correction — both are retracted in favor of the text above.
