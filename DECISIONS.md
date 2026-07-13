@@ -4704,6 +4704,20 @@ The `advisor-intent-audit` (2026-07-13, verdict @ `08b0bcc0`) found the AI Advis
 
 **Tests:** `tests/ai_advisor/test_r1_attribution_honesty.py` (13/13), `tests/ai_advisor/test_r1_gate_transparency.py` (6/6, SB), `tests/ai_advisor/test_ac7_route_json_rejection_reason.py` (8/8, Asset Swaps/Logic Changes route-JSON), `tests/advisors/test_ac7b_oos_inferior_rejection_class.py` (4/4), `tests/ai_advisor/test_r1_power_caveat.py` (10/10, including a Hypothesis property test verifying `low_power` is monotonic in `validation_days` across 20 generated examples). Regression across the combined route/template/JS surface: multiple targeted passes, 0 new failures beyond pre-existing/unrelated flakes (documented per-commit).
 
+### Checkpoint-3 -- Post-review remediation: AC-9 caveat text (Asset Swaps/Logic Changes) + AC-7/9/11/12 SB live-run field consumption
+
+**STATUS: IN PROGRESS -- code landed, verification pending r1-review sign-off. Do not read as closed.**
+
+r1-review's Checkpoint-3 pass (RED commit `f2adce0f`) found two gaps the AC-7/AC-9/AC-11 sections above did not close:
+
+1. **AC-9 caveat-text gap (Asset Swaps / Logic Changes evaluate routes):** the `low_power` BOOLEAN was wired into both routes' `gate_result` JSON, but the actual CAVEAT TEXT was never appended to the operator-visible `caveats` array -- a `True` flag silently present in JSON, never surfaced as readable text, does not satisfy "survivor cards carry a statistical-power caveat" (the SB route already did this; these two routes did not). **STATUS: GREEN, r1-fe, commit `a5eaa3b0`.** `ai_advisor_asset_swaps_evaluate` appends `_LOW_POWER_CAVEAT` to the top-level `caveats` array on a genuine `ADOPT_CANDIDATE` survivor; `ai_advisor_logic_changes_evaluate` appends it to each survivor's nested caveats in `survivors_detail`. Tests: `tests/ai_advisor/test_r1_power_caveat.py`, 12/12 GREEN.
+
+2. **SB live-run field-consumption gap:** `static/ai_advisor.js`'s `sbRunAnalysis()` -- the LIVE-RUN handler wired to the SB tab's "Run analysis" button (`POST /ai-advisor/strategy-builder/run`, rendered in-place) -- never consumed any of the R1 route-JSON fields (`built_new_count`/`atlas_count`/`mode_notice`/`screens_skipped`/`error_category`/`low_power`/`rejection_reason`). Every route-JSON RED test this cycle proved the field reaches the JSON response; none touched this render path, so they were structurally blind to the gap. **STATUS: code landed, r1-fe, commits `fa691f6a`** (SB live-run render path wired to consume the AC-7/AC-9/AC-11/AC-12 fields) **and `f6688ed4`** (SB run route's `_gate_result_to_dict` surfaces `rejection_reason` in the route-JSON, closing the last field this render path needed). r1-test ran a full targeted battery (0 fail/0 error, task-tracked) before handing back to r1-review; r1-review is executing its Checkpoint-3 re-verification pass against `f6688ed4` as of this writing.
+
+**This doc-writer's position:** both findings' CODE is landed and self-reports GREEN. This entry will NOT be marked closed, and `docs/generated/static_ai_advisor_js.md` / the `static/ai_advisor.js` CLAUDE.md key-files row will NOT be updated to describe the shipped field-consumption behavior, until r1-review explicitly lifts the Checkpoint-3 BLOCK. See `docs/audit-inputs/claude-md-corrections-r1.md` §7 for the parallel PENDING marker on the CLAUDE.md draft.
+
+**Tests (finding 2):** `tests/ai_advisor/test_r1_sb_live_run_field_consumption.py` (source-consumption text-window checks -- NOT a DOM/browser test; this stack has no JS-behavior test runner, only `node --check` syntax validation; the PM's first-hand browser E2E is the sufficient verification for the actual rendered UI, not this suite).
+
 ### AC-10 — Honest data: `measured_value` real or absent (F7, Gap G)
 
 **STATUS: GREEN (with one residual gap this doc-writer found and is flagging, not covered by either landed commit), r1-engine, commits `df4e1eee` (initial) + `7420b33f` (sufficiency extension, closing a scope gap the first commit's own message documented).**
@@ -4805,23 +4819,29 @@ The `advisor-intent-audit` (2026-07-13, verdict @ `08b0bcc0`) found the AI Advis
 
 **The narrative correction this forces — itself a deliverable, not a side effect:** the long-standing explanation "0 survivors is the EXPECTED common case — the gate is intentionally strict" (this project's CLAUDE.md Known-Gotchas entry, the original audit's F6 framing, and multiple prior cycle reports) was **WRONG as a COMPLETE explanation.** Gate strictness and F6's max-1-survivor-per-run cap are real and remain true, but they were SECONDARY — the DOMINANT cause of the observed all-zero survivor history was this structural unreachability bug, not intentional strictness. The operator was told "the badge lights when a survivor appears" by a system in which no survivor could ever appear, for any candidate, ever, until this fix.
 
-**Doc-tree sweep for the narrative-correction (this doc-writer, 2026-07-13 — inventory only, NOT applied yet; every location below is PENDING on AC-17's implementation actually landing):**
-- **HIGH priority — asserts "expected/intentionally strict" as if it were the complete explanation:**
-  - `.claude/CLAUDE.md:92` (Known Gotchas table): "AI Advisor empty suggestions (most symphonies) | Expected. The CRRA-EU + Harvey-Liu FDR gate is intentionally strict." — CONFIG-tier, drafted for PM application (not this doc-writer's to edit directly), same convention as the rest of the CLAUDE.md draft file.
-  - `docs/generated/ai_advisor.md:85`: "This is the expected state for most symphonies — the FDR + PBO gates are intentionally strict." — docs/generated, directly in this doc-writer's lane; will correct once AC-17 lands.
-- **MEDIUM priority — historical/completed feature plan citing the CLAUDE.md gotcha as its source:**
-  - `feature-plans/strategy-builder-real.completed.md:224`: "The CRRA-EU/Harvey-Liu gate is intentionally strict; 0 survivors is a VALID outcome, not an error (project CLAUDE.md 'AI Advisor empty suggestions' gotcha)." — a dated/completed plan; per the doc-writer cleanup mandate this gets a **superseded pointer note, not a rewrite of the historical body**, once the CLAUDE.md gotcha it cites is itself corrected.
-- **Reviewed, NOT flagged (remain accurate post-AC-17 — they assert only "zero survivors is a valid non-error outcome," never a root-cause or "expected/common" claim, and a 0-survivor run is still genuinely possible after this fix, just no longer the ONLY possible outcome):** `docs/generated/advisors_asset_swap_engine.md:30,155`; `README.md:206`; `CHANGELOG.md:28` (which also needs a separate, unrelated "Claude Opus" → AC-16 Fable-accessor pass); `feature-plans/candidate-alert.md:14`.
+**Doc-tree sweep for the narrative-correction -- completed and CORRECTED by this doc-writer (2026-07-13). The original inventory below (as first drafted) proposed correcting `.claude/CLAUDE.md:92` and `docs/generated/ai_advisor.md:85` on the theory that AC-17 falsified their "expected/intentionally strict" framing. That theory does NOT survive a call-path check and is retracted here -- see `docs/audit-inputs/claude-md-corrections-r1.md` §8 for the full verification (autotuner.py hardcodes a 1.0-vs-1.0 stability tie unconditionally in its own `evaluate_acceptance_gate` call, never touched by AC-17's fix which lives entirely in `backtest_gate_engine.py`; independently, `acceptance_gate.py`'s Stage-1 veto short-circuits before the panel-comparison clause whenever `winner_trial_is_none=True`, i.e. exactly the `oos_alpha=None` case that gotcha describes -- before AND after AC-17). Disposition, final:**
+- **`.claude/CLAUDE.md:92` (Known Gotchas table) and `docs/generated/ai_advisor.md:85`:** NO CHANGE -- reviewed, confirmed accurate, different subsystem (`ai_advisor.build_assessment_from_context` / `autotuner.py`'s own BHY/Yekutieli haircut-select), never had the bug AC-17 fixed.
+- **`feature-plans/strategy-builder-real.completed.md:224`:** NO CHANGE -- cites the CLAUDE.md:92 gotcha as its source; since that gotcha isn't changing, no superseded banner is needed either.
+- **The genuine, narrower AC-17 narrative correction -- applied (this doc-writer, commit `38732183`):** `docs/generated/app.md`'s `GET /api/candidate-alert` section, `new_valid_count` field -- this WAS structurally stuck at `0` regardless of candidate quality before AC-17 (the badge accessor's `WHERE verdict='ADOPT_CANDIDATE'` query, the same reachability bug), and is the actual user-facing surface where "0 survivors was structurally guaranteed, not just statistically likely" was true and is now corrected.
+- **Reviewed, NOT flagged (remain accurate -- assert only "zero survivors is a valid non-error outcome," never a root-cause or "expected/common" claim):** `docs/generated/advisors_asset_swap_engine.md:30,155`; `README.md:206`; `CHANGELOG.md:28` (Opus->Fable pass closed separately, commit `74b84180`); `feature-plans/candidate-alert.md:14`.
 
 **Tests:** tracked under r1-test's RED coverage (task #25, "Implement AC-17: neutral panel-tie in backtest_gate_engine.py"); this doc-writer will cite the actual test file once GREEN.
 
 ### Verification
 
-**STATUS: PENDING** — filled in at cycle-complete with test counts + HEAD SHA per the project's test-status-quotes-HEAD-SHA convention.
+**STATUS: PENDING.** The full-tree pre-merge suite is the PM's ship-gate (recorded in the PM's own evidence report, not here -- per project convention). The number that belongs here is the cycle's own targeted-set evidence: r1-test's FINAL targeted-file `-n0` run (0-fail/0-error) against the closing HEAD SHA, sourced from r1-test directly at cycle-complete -- not proxied through r1-review or the PM's separate full-tree number. Not yet filled in: Checkpoint-3 (see above) has not been signed off by r1-review as of this writing.
 
 ### Files changed
 
-**STATUS: PENDING** — running list, updated as each AC lands. So far (this doc-writer's own commits): `docs/generated/advisors_asset_swap_engine.md`, `docs/generated/advisors_build_plan_generator.md`, `docs/audit/CLOSEOUT-VERDICT.md`, `DECISIONS.md` (this entry).
+**STATUS: PENDING** -- running list, updated as each AC lands; final list confirmed at cycle-complete against `git diff --stat` off the closing HEAD SHA, not hand-maintained as authoritative. So far (this doc-writer's own commits, `74b84180`/`38732183`, this session):
+- `CHANGELOG.md` (AC-16 attribution edit)
+- `docs/audit-inputs/doc-reconciliation.md` (2 SUPERSEDED banners, SS1.3/SS1.4)
+- `docs/audit-inputs/claude-md-corrections-r1.md` (finalized §1-6, §8 retraction, §7 pending)
+- `docs/generated/app.md` (R1 route sweep + AC-17 candidate-alert note)
+- `DECISIONS.md` (this entry)
+- Prior session (commit `583f5f93`): `docs/generated/advisors_backtest_gate_engine.md`, `docs/generated/advisors_logic_change_engine.md`, `docs/generated/advisors_asset_swap_engine.md`, `docs/generated/advisors_build_plan_generator.md`
+
+Still open: `docs/generated/static_ai_advisor_js.md` (blocked on Checkpoint-3), CLAUDE.md itself (PM applies from `docs/audit-inputs/claude-md-corrections-r1.md`).
 
 ### Reference
 
