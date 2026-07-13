@@ -205,9 +205,12 @@ class LogicChangeObjective:
         ``"reduce_turnover"``, ``"improve_momentum_timing"``,
         ``"reduce_whipsaw"``, or any other named objective.
     measured_value:
-        The measured input driving this objective (e.g., the current max-drawdown
-        magnitude, or the current Sharpe ratio).  Always a measurement from the
-        live backtest stats — never a hardcoded heuristic.
+        Display-only context value shown in the human-readable rationale
+        surfaced alongside every survivor (AC-3.3).  Does not drive tweak
+        generation, ranking, or gate decisions.  Current production callers
+        (app.py's operator-evaluate route) pass 0.0 — no live statistic is
+        wired in yet; the weekly_suggestions_scheduler.py call sites remain
+        a known follow-up (AC-10, not yet covered).
     rationale:
         Human-readable explanation of why this objective was chosen and what
         measurement drove it.  Surfaced alongside every survivor (AC-3.3).
@@ -776,8 +779,7 @@ def _build_objective_rationale(tweak: LogicTweak, objective: LogicChangeObjectiv
     if obj_type == "reduce_drawdown":
         return (
             f"Adjusting {tweak.param_key} from {tweak.old_value} to {tweak.new_value} "
-            f"targets reduction of the measured {measured:.1%} drawdown by increasing "
-            f"signal reactivity."
+            f"targets drawdown reduction by increasing signal reactivity."
         )
     elif obj_type == "lift_risk_adjusted":
         return (

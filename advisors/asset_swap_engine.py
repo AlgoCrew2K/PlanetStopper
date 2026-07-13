@@ -224,9 +224,12 @@ class SwapObjective:
         Two-tuple of symphony IDs or ticker names identifying the pair whose
         correlation is being addressed.  ``None`` for non-correlation objectives.
     measured_value:
-        The measured input driving this objective (e.g., the measured correlation
-        coefficient, the measured max-drawdown magnitude).  Never hardcoded wisdom
-        — always a measurement from the live correlation diagnostic or backtest stats.
+        Display-only context value shown in the human-readable rationale
+        surfaced alongside the swap result.  Does not drive candidate
+        generation, ranking, or gate decisions.  Current production callers
+        (app.py's operator-evaluate route) pass 0.0 — no live statistic is
+        wired in yet; the weekly_suggestions_scheduler.py call sites remain
+        a known follow-up (AC-10, not yet covered).
     """
 
     objective_type: str
@@ -714,9 +717,9 @@ def _build_objective_rationale(
         )
     elif obj_type == "reduce_drawdown":
         base = (
-            f"Replacing {incumbent_asset} with {candidate_asset} targets reduction of "
-            f"the measured {measured:.1%} drawdown. {candidate_asset} was selected as "
-            f"a lower-volatility candidate from objective-directed ranking."
+            f"Replacing {incumbent_asset} with {candidate_asset} targets drawdown "
+            f"reduction. {candidate_asset} was selected as a lower-volatility "
+            f"candidate from objective-directed ranking."
         )
     elif obj_type == "lift_risk_adjusted":
         base = (
