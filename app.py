@@ -4772,6 +4772,12 @@ def ai_advisor_strategy_builder_run():
     # the route's own outer except (type(exc).__name__ at app.py:3829).
     if run.error:
         _daemon_log.warning("strategy_builder_engine returned error: %s", run.error)
+        # AC-11: prefer the engine's sanitized error_category (a type(exc).__name__
+        # token, D-1/AC-23-safe) when the field exists; getattr defaults to None so
+        # this route never breaks while the field lands on ProposalRun.  NEVER
+        # surface run.error itself (raw str(exc) — may carry credentials, internal
+        # hostnames, or paths) — same contract as the static token below.
+        _error_category = getattr(run, "error_category", None)
         return jsonify(
             {
                 "survivors": [],
@@ -4779,6 +4785,7 @@ def ai_advisor_strategy_builder_run():
                 "n_candidates": 0,
                 "fdr_adjusted_threshold": None,
                 "error": "strategy-builder-error",
+                "error_category": _error_category,
             }
         ), 200
 
@@ -4831,6 +4838,21 @@ def ai_advisor_strategy_builder_run():
         if gr.candidate_id not in screened_ids
     ]
 
+    # AC-11 (F5, Gap E): run-level built-new/Atlas provenance rollup, derived
+    # from the real candidate mix — never hardcoded. Without this, a run
+    # where all built-new (Opus) branches failed and only Atlas community
+    # candidates populate the result renders as an ordinary success; the
+    # operator cannot tell "Opus produced nothing" from "Opus produced
+    # everything you see" (silent-degradation risk, audit F5).
+    built_new_count = sum(1 for c in run.candidates if c.template_id == "built-new")
+    atlas_count = sum(1 for c in run.candidates if c.template_id == "atlas-suggested")
+    mode_notice = (
+        f"Opus generation produced 0 plans (degraded) — this run surfaces "
+        f"{atlas_count} Atlas community candidate(s) only."
+        if built_new_count == 0
+        else None
+    )
+
     return jsonify(
         {
             "survivors": survivors_list,
@@ -4838,6 +4860,9 @@ def ai_advisor_strategy_builder_run():
             "n_candidates": gate_batch.n_candidates if gate_batch else 0,
             "fdr_adjusted_threshold": fdr_adjusted_threshold,
             "error": None,
+            "built_new_count": built_new_count,
+            "atlas_count": atlas_count,
+            "mode_notice": mode_notice,
             # AC-12: honest indicator when live_returns is empty — the drawdown/
             # Pearson screens (sbe.py:746-749) do not run without it.
             "screens_skipped": not bool(_live_returns),
