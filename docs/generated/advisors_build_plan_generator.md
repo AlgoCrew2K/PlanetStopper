@@ -3,11 +3,13 @@
 > Opus Build-Plan Generator for the real Strategy Builder (Component 2 + 2b): uses the Anthropic SDK in structured tool-use mode to emit diverse objective-shaped build-plans expressed in a constrained strategy DSL, validates every proposed ticker against the tradeable membership set, and admits objective-matched Atlas community strategies alongside the generated plans.
 
 **Source:** `advisors/build_plan_generator.py`
-**Last updated:** 2026-06-20 (DE-SB-GEN-TRUNCATION: MAX_OUTPUT_TOKENS=16384 + MAX_GENERATION_ATTEMPTS=3 truncation-retry)
+**Last updated:** 2026-07-13 (advisor-remediation-r1 — context-blindness caveat added, DE-ADVISOR-R1-001)
 
 ## Overview
 
 `advisors/build_plan_generator.py` is the Opus-backed brain of the real Strategy Builder. It produces the plans that the Component 3 compiler translates into Composer trees, replacing the 7-template stamper in `_generate_candidate_trees` (the engine rewire happens in Component 3).
+
+**Context-blindness caveat (advisor-intent audit, 2026-07-13; DE-ADVISOR-R1-001 §AC-15, F1/F5):** the generation prompt does NOT include the operator's live symphony tree, portfolio composition, backtest statistics, or any of the 5 market lens blocks — only the requested objective name, the DSL grammar, three static worked examples, and a 20-ticker sample of the tradeable universe (`_build_generation_prompt(objective, n_plans, membership)`, verified against the current signature — no symphony/portfolio/backtest/lens parameter exists). Strategy Builder proposes NEW strategies from scratch; it does not reason about the operator's EXISTING symphony. Closing this gap (context injection so generation reasons over the operator's live symphony) is explicitly out of scope for the R1 remediation cycle — see `feature-plans/advisor-remediation-r1.md` Scope Boundaries ("R2: SB context injection").
 
 The module has two responsibilities:
 
@@ -171,7 +173,7 @@ The prompt embeds five pieces of steering content:
 4. **Three compiler-verified worked examples.** `_EXAMPLE_PLAN` (diversify-shaped; two weight sleeves), `_EXAMPLE_IF_PLAN` (flat if-node; `rhs: {"fixed": 80}`), and `_EXAMPLE_IF_COMPOUND_PLAN` (mixed compound-gate; `{type:"compound", operator:"all", conditions:[flat-binary leaf, binary_compound leaf]}`) are all embedded verbatim in every prompt. All three have been verified compiler-clean through `plan_tree_compiler.compile_plan` + `validate_tree==[]` using the unified canonical-flat compiler. `_EXAMPLE_IF_COMPOUND_PLAN` is a deliberate **mixed compound** — it contains one `type:"binary"` leaf (flat `lhs_fn`/`lhs_ticker`/`window`, `rhs:{fixed}`) and one `type:"binary_compound"` leaf (`fn`/`tickers`, `rhs:{const}`) so Opus sees both binary sub-shapes inside a single compound example. This was updated after the binary-encoding-fix (Revise-3) from an all-`binary_compound` example that gave Opus no flat-binary model for compound leaves. The full Composer condition grammar — flat `if` and compound `if_compound`, all three condition types, both binary sub-shapes — is now generation-reachable with compiler-verified examples for each construct.
 5. **`_OBJECTIVE_SIGNATURES[obj_name]`.** The per-objective structural signature description is embedded for the requested objective, telling Opus which DSL construct is required (e.g. for `lift_risk_adjusted`: "A bare equal-weight basket does NOT satisfy this signature — the filter construct is required").
 
-A sample of up to 20 tickers from `membership` is appended as a universe hint when provided.
+A sample of up to 20 tickers from `membership` is appended as a universe hint when provided. **No symphony/portfolio/backtest/lens data is ever appended — see the Context-blindness caveat in Overview above.**
 
 **Parameters:**
 

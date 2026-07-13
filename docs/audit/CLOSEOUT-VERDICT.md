@@ -1,5 +1,23 @@
 # AI Advisor System Closeout — Consolidated Verdict
 
+> **SUPERSEDED — 2026-07-13.** This closeout verified STRUCTURAL
+> wiring (do routes exist, do they call the right function, does a
+> gate run) as of 2026-06-17. It did NOT evaluate whether the advisor
+> suite delivers the operator's actual intent — genuine LLM reasoning
+> over the live symphony, and statistically meaningful gating. For
+> that assessment, see `docs/audit/ADVISOR-INTENT-AUDIT.md`
+> (2026-07-13), which found: Logic Changes and Asset Swaps are 100%
+> deterministic with no LLM on any reachable path (F1); their FDR
+> gates lack the PBO veto and SPY-relative baseline Strategy Builder
+> has (F2); and Strategy Builder's "template-only in prod" finding
+> below (HF-1) was resolved 2026-06-20 by DE-SB-GEN-001, three days
+> after this closeout — Strategy Builder now defaults to real Opus
+> generation. The structural-wiring findings below remain historically
+> accurate for their stated scope and date; do not read them as a
+> verdict on reasoning fidelity or statistical substance. See
+> `DE-ADVISOR-R1-001` in `DECISIONS.md` for the remediation cycle this
+> audit produced.
+
 **Synthesis lead:** `closeout-synth` (honest broker)
 **Date:** 2026-06-17
 **Branch:** `audit/ai-council-closeout-e2e` (doc-only vs origin/main `73dc603`)
@@ -167,6 +185,9 @@ Nothing in the goal is silently dropped. Every not-yet-closed item has a named g
 - **Resolution this cycle:** doc reconciled by `closeout-doc` to "no production route caller;
   engine layer available for a future wiring cycle." **Build-vs-defer is the OPERATOR's call**
   (PM notes the operator leans BUILD — a separate Toxic-Pair cycle, not part of this closeout).
+  **Superseded note (2026-07-13):** this gap was closed by C4/C5 (2026-06-20) — see
+  `docs/generated/advisors_build_plan_generator.md` and `docs/generated/
+  advisors_strategy_builder_engine.md` for the current, wired state.
 
 ### Finding AC-18 — C2 "safety gates" wording (DOC-ONLY, this cycle)
 - **Class:** minor doc-accuracy. **NOT a security finding.**

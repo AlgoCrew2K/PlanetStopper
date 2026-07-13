@@ -4653,3 +4653,67 @@ Full advisor-suite-fixes cycle sweep (8 test files touched across the cycle, bou
 
 `ADVISOR-AUDIT-VERDICT.md` (2026-07-13, worktree adv-audit); `feature-plans/advisor-suite-fixes.md`; branch `fix/advisor-suite`; GREEN HEAD `09ac1187`. Ships advisory-only DIRECT to origin/main (fast-forward, no PR) after this gate, per the project's advisory-work rule -- no trade-path/`LIVE_EXECUTION` touch anywhere in this cycle.
 
+
+## DE-ADVISOR-R1-001 — Advisor suite honesty + statistical wiring remediation (2026-07-13)
+
+**Status: IN PROGRESS — this entry is a live skeleton, filled in per-AC as each lands on `fix/advisor-remediation-r1`. Sections marked `STATUS: PENDING` have not shipped yet; do not read them as fact until the marker is replaced.**
+
+The `advisor-intent-audit` (2026-07-13, verdict @ `08b0bcc0`) found the AI Advisor suite misrepresents itself to the operator across six findings: deterministic engines (Logic Changes, Asset Swaps) wear a page-global "Claude-powered" banner despite zero LLM on any reachable path (F4); Strategy Builder's statistical gate has PBO-veto + SPY-relative baseline teeth that Logic Changes/Asset Swaps structurally lack (F2); the operator's single-candidate Evaluate buttons run N=1 where an FDR/Yekutieli correction is a mathematical no-op (F2); every rejected candidate renders the same generic "did not clear the FDR threshold" copy regardless of which of three distinct rejection classes actually applied (F6); `measured_value` carries a docstring claiming it's "never a hardcoded heuristic" when every production call site passes a hardcoded `0.0` (F7); Strategy Builder can silently degrade to Atlas-only candidates with a dead tradeability-repair loop and skipped live-return screens (F5); and survivor cards imply a validated finding despite near-zero statistical power at the gate's reachable fold lengths (F3). This entry (DE-ADVISOR-R1-001) is R1's honest record of what changed to close each finding — see `feature-plans/advisor-remediation-r1.md` for the full AC text and `docs/audit-inputs/ADVISOR-INTENT-AUDIT.md` + `docs/audit-inputs/doc-reconciliation.md` for the audit's source findings.
+
+### AC-1..AC-3 — Attribution honesty (F4, Gap D)
+
+**STATUS: PENDING.**
+
+### AC-4..AC-6 — Statistical wiring: PBO veto, SPY-OOS baseline, N=1 honesty (F2, Gap B)
+
+**STATUS: PENDING.**
+
+### AC-7..AC-9 — Gate transparency: rejection-reason branching, gate-cardinality copy, power caveat (F6, Gap F + F3, Gap C)
+
+**STATUS: PENDING.**
+
+### AC-10 — Honest data: `measured_value` real or absent (F7, Gap G)
+
+**STATUS: PENDING.**
+
+### AC-11..AC-12 — Strategy Builder observability + dead-code revival (F5, Gap E)
+
+**STATUS: PENDING.**
+
+### AC-13 — Performance: single baseline-backtest call per route evaluation (D-7, Gap H)
+
+**STATUS: PENDING.**
+
+### AC-14 — Guardrail honesty: Divergence Explainer / Overfitting Conscience UI scope (F8 revision, B.4)
+
+**STATUS: PENDING.**
+
+### AC-15 — Docs
+
+**Problem (audit F1/F2/F4/F5/F7):** the audit's `doc-reconciliation.md` (Phase 2, drafted by the audit team) named four `docs/generated/*.md` corrections and one superseded-banner insertion needed to bring the doc tree in line with reachable-path reality, plus a CLAUDE.md key-files draft for PM application.
+
+**Fix (in progress — this doc-writer's own AC):**
+- `docs/generated/advisors_asset_swap_engine.md` — added the two-part reachability caveat (doc-reconciliation §2.2, verified against live code before applying): (a) the operator-clicked evaluate route (`app.py:4312`) never passes `lens_scores`/`lens_sources` to `propose_operator_swap` — confirmed by direct read of the call site, zero lens influence on any operator-clicked swap; (b) even the weekly-scheduler path that IS wired reads a single lens (`technicals.momentum`), weighted 0.25, ranking-influence only. Applied as-drafted — unaffected by any R1 AC (out of scope, R2 territory).
+- `docs/generated/advisors_build_plan_generator.md` — added the context-blindness caveat (doc-reconciliation §2.4, verified against the live `_build_generation_prompt(objective, n_plans, membership)` signature — no symphony/portfolio/backtest/lens parameter exists). Applied as-drafted — unaffected by any R1 AC (context injection is explicitly R2 scope per this plan's Scope Boundaries).
+- `docs/audit/CLOSEOUT-VERDICT.md` — added the doc-reconciliation §5.1 superseded banner pointing to `ADVISOR-INTENT-AUDIT.md`, plus one addition beyond the drafted banner text: a pointer note under the existing in-body HF-1 finding to the current `advisors_build_plan_generator.md`/`advisors_strategy_builder_engine.md` docs, since the top banner alone would leave a reader who jumps straight to the HF-1 section believing it's still open (it was resolved by `DE-SB-GEN-001`, 2026-06-20).
+- `docs/generated/advisors_backtest_gate_engine.md:156` (§2.1) and `docs/generated/advisors_logic_change_engine.md:46` + the parallel Asset Swaps `measured_value` comment/docstring (§2.3/§3.3) were **deliberately NOT applied verbatim** — both drafted corrections describe the PRE-R1 broken state that AC-4/AC-5/AC-10 are the code fixes for (e.g. §2.1 says PBO/SPY wiring is "wired only for Strategy Builder," which becomes false the moment AC-4/5 land). These will be rewritten from the landed diff once AC-4/5/10 ship, citing the real post-fix file:line — **STATUS: PENDING**, tracked here rather than applied stale.
+- §3.1/§3.2/§3.3 code docstring/comment fixes (`logic_change_engine.py:206-209`, `advisor_chat.py:144`, `asset_swap_engine.py:164,225-228`) — filed as findings to the owning engine teammate per the doc-writer's never-edit-others'-files rule. **STATUS: PENDING** confirmation they landed.
+- CLAUDE.md key-files draft (per doc-reconciliation §4) — **STATUS: PENDING**, drafted as a standalone file for PM application, not yet delivered.
+
+**Tests:** N/A — doc-only changes, no test surface.
+
+### AC-16 — Model routing: suggestion-producing LLM calls route to Fable (operator directive 2026-07-13)
+
+**STATUS: PENDING — added to the feature plan after this cycle started; no owner assigned as of this writing.** Once landed, this doc-writer will do a dedicated pass on every "Opus"-specific (not just "Claude"-specific) doc claim for `advisors/build_plan_generator.py` and `ai_advisor.request_suggestions` — the `docs/generated/advisors_build_plan_generator.md` title ("Opus Build-Plan Generator") and Overview ("Opus-backed brain") both name Opus specifically and will go stale once the default model becomes Fable (still a Claude-family model, so "Claude-backed" framing survives, but "Opus" does not). Flagged to team-lead 2026-07-13.
+
+### Verification
+
+**STATUS: PENDING** — filled in at cycle-complete with test counts + HEAD SHA per the project's test-status-quotes-HEAD-SHA convention.
+
+### Files changed
+
+**STATUS: PENDING** — running list, updated as each AC lands. So far (this doc-writer's own commits): `docs/generated/advisors_asset_swap_engine.md`, `docs/generated/advisors_build_plan_generator.md`, `docs/audit/CLOSEOUT-VERDICT.md`, `DECISIONS.md` (this entry).
+
+### Reference
+
+`feature-plans/advisor-remediation-r1.md`; `docs/audit-inputs/ADVISOR-INTENT-AUDIT.md` (verdict @ `08b0bcc0`); `docs/audit-inputs/doc-reconciliation.md`; `docs/audit-inputs/claims-inventory.md`; branch `fix/advisor-remediation-r1`; worktree `.claude/worktrees/advisor-r1`.

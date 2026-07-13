@@ -3,7 +3,7 @@
 > Offline asset-swap proposal engine: objective-directed candidate generation, lens-informed ranking, BHY-FDR gating, and audit-trail persistence — advise-only, never executes.
 
 **Source:** `advisors/asset_swap_engine.py`
-**Last updated:** 2026-07-12 (DE-LENS-SCORE-SHAPE-001 — `extract_lens_scores` rewritten to parse REAL producer shapes, live-E2E-caught fix)
+**Last updated:** 2026-07-13 (advisor-remediation-r1 — reachability caveat added, DE-ADVISOR-R1-001)
 
 ## Overview
 
@@ -14,6 +14,10 @@
 2. **Advisor-suggested** (`suggest_swaps`): given a swap objective and an available asset pool, the engine calls `generate_objective_directed_candidates` to shortlist candidates ranked by the stated objective, then backtests and gates the full batch together.
 
 **Cycle-3 addition (lens-informed ranking):** `generate_objective_directed_candidates` now accepts an optional `lens_scores` dict. When provided, multi-lens evidence is blended into candidate ranking via `_apply_lens_blend`. Lens scoring influences ranking only — the BHY-FDR gate is unchanged. Both entry points (`propose_operator_swap`, `suggest_swaps`) accept `lens_scores` and `lens_sources` kwargs; the pre-Cycle-3 call paths remain byte-identical when `lens_scores=None`.
+
+**Reachability caveat (advisor-intent audit, 2026-07-13 — two parts, both required for an honest picture; DE-ADVISOR-R1-001 §AC-15, F2/F4):**
+(a) The operator-clicked evaluate route (`POST /ai-advisor/asset-swaps/evaluate`, `app.py:4240`→`4312`) never passes `lens_scores`/`lens_sources` to `propose_operator_swap` (both default `None`, `asset_swap_engine.py:987`) — on that surface, `_apply_lens_blend` is a permanent no-op and `lens_evidence` persists as `{}`. Zero lens influence on any operator-clicked swap. This is unaffected by the R1 remediation cycle — it is R2 (context-injection) scope, not an R1 acceptance criterion.
+(b) Even where `lens_scores` IS wired (the weekly scheduler path only, via `weekly_suggestions_scheduler.py`), the blend reads a SINGLE lens (`technicals.momentum` only — sentiment/derivatives/macro are excluded as market-wide scalars, fundamentals excluded by design; see `extract_lens_scores` below), weighted `LENS_BLEND_WEIGHT=0.25`, and never affects the gate itself (ranking-influence only).
 
 **Advisor-rewire cycle (2026-07-12, Workstream D):** the Cycle-3 blend formula was **mathematically inert in production** — see "Lens Blend — How Ranking Works" below for the closed-form proof and the fix. As of this cycle the blend genuinely reorders candidates, AND (Workstream C.2, `advisors/weekly_suggestions_scheduler.py`) the fixed math is reachable from the real weekly production path via a new `_fetch_lens_scores()` helper.
 
@@ -121,7 +125,7 @@ Evaluate one operator-specified asset swap (AC-2.1). Backtests the variant, gate
 | `objective` | `SwapObjective` | Drives the swap and surfaces alongside the result (AC-2.3). |
 | `incumbent_oos_alpha` | `float \| None` | Live incumbent OOS alpha. `None` → computed from fold-matched baseline backtest. Explicit `0.0` is respected (H5). |
 | `default_oos_alpha` | `float` | Global-default params OOS alpha. |
-| `lens_scores` | `dict \| None` | Per-ticker lens evidence from `extract_lens_scores`. Enriches rationale (AC-5) and is written to the persisted observation (AC-4). Ranking unaffected in operator mode (operator chose the candidate). Default `None`. |
+| `lens_scores` | `dict \| None` | Per-ticker lens evidence from `extract_lens_scores`. **Not passed by the operator-clicked route today** (see "Reachability caveat" above) — always `None` in the only reachable production caller of this function. Enriches rationale (AC-5) and is written to the persisted observation (AC-4) when provided. Ranking unaffected in operator mode (operator chose the candidate). Default `None`. |
 | `lens_sources` | `list \| None` | Citation dicts `{title, url, published, lens}` for news-backed evidence. Written to `raw_response.sources` in the persisted observation. Default `None`. |
 
 **Returns:** `SwapRunResult` — always returned, never raises.
@@ -161,7 +165,13 @@ Evaluate advisor-suggested objective-directed swap candidates (AC-2.2). Generate
 class SwapObjective:
     objective_type: str   # "reduce_correlation" | "reduce_drawdown" | "lift_risk_adjusted"
     target_pair: tuple[str, str] | None  # Symphony IDs/tickers for correlation objectives
-    measured_value: float  # Measured input driving this objective — never hardcoded wisdom
+    measured_value: float  # Display-only value embedded in the generated rationale text
+                            # (e.g. "the measured 0.00 correlation"). Does NOT influence
+                            # candidate generation or ranking. Every current production
+                            # caller (app.py:4308) passes 0.0 (never a live measurement) —
+                            # see ADVISOR-INTENT-AUDIT.md F7. See docs/generated/
+                            # advisors_logic_change_engine.md for the identical pattern
+                            # in Logic Changes.
 ```
 
 ### `SwapProposalResult`
@@ -220,7 +230,7 @@ blended_key[i] = cum_gap[i] - LENS_BLEND_WEIGHT * (mean_lens[i] - _LENS_NEUTRAL_
 
 **Gate order-independence (AC-D3, `advisors/backtest_gate_engine.py`):** fixing the blend surfaced a second, pre-existing bug — `evaluate_candidate_batch` seeded its Sortino bootstrap with `seed=idx` (the candidate's list position), so re-sorting the SAME candidate set into a different submission order produced a different bootstrap seed per candidate, hence a different t-stat/p-value for the identical candidate. This violated the "gate output is unchanged for a fixed candidate set" invariant the new blend now actually exercises (a reordering blend needs the gate to be truly order-independent downstream). Fixed by seeding from a stable SHA-256 hash of the candidate's own `candidate_id` instead of its batch position — see `docs/generated/advisors_backtest_gate_engine.md`.
 
-**Full end-to-end reachability chain (as of DE-LENS-CANDIDATE-POOL-001, closing the last E2E-caught gap):** `_build_base_candidate_pool` (lens-covered universe) → `_fetch_lens_scores` (real technicals momentum, correctly parsed) → `extract_lens_scores`/`_squash_momentum_to_unit_interval` → `generate_objective_directed_candidates`/`_apply_lens_blend` (reordering formula) → `evaluate_candidate_batch` (order-independent gate) → `insert_advisor_observation` (persisted `lens_evidence`). Every link in this chain was independently correct at some point in the cycle but the chain as a whole was proven end-to-end non-empty ONLY by a live droplet-DB E2E test — see `docs/generated/advisors_weekly_suggestions_scheduler.md`.
+**Full end-to-end reachability chain (as of DE-LENS-CANDIDATE-POOL-001, closing the last E2E-caught gap):** `_build_base_candidate_pool` (lens-covered universe) → `_fetch_lens_scores` (real technicals momentum, correctly parsed) → `extract_lens_scores`/`_squash_momentum_to_unit_interval` → `generate_objective_directed_candidates`/`_apply_lens_blend` (reordering formula) → `evaluate_candidate_batch` (order-independent gate) → `insert_advisor_observation` (persisted `lens_evidence`). Every link in this chain was independently correct at some point in the cycle but the chain as a whole was proven end-to-end non-empty ONLY by a live droplet-DB E2E test — see `docs/generated/advisors_weekly_suggestions_scheduler.md`. **This chain is exclusively the weekly-scheduler path — see the Reachability caveat above for the operator-route gap.**
 
 ## Persistence (AC-4)
 
