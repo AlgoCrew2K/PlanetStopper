@@ -1,0 +1,31 @@
+{
+  "description": "AC-9 golden fixture — statistical-power caveat boundary cases. Rows are RELATIVE offsets from app.MIN_POWER_FOLD_DAYS (whatever value the implementer names it, per doc-reconciliation §1.7 / audit F3) rather than absolute day counts, so the fixture never needs updating if the threshold constant's value changes — only the COMPARISON direction (strictly-below-threshold means low power) is pinned.",
+  "source": "audit F3 (ADVISOR-INTENT-AUDIT.md) — near-zero statistical power at the gate's own verified T=13 fold-length floor (FOLD_TRANSFORM_MIN_TOTAL_DAYS=65×0.20); weak-but-nonzero power at the T=121 fixture-verified anchor (real symphony hash INfCn3eKsu6i4oTTqdUp, tests/fixtures/composer/backtest_inline_v1.json, series_len=606).",
+  "cases": [
+    {
+      "name": "one_day_below_threshold",
+      "validation_days_offset_from_threshold": -1,
+      "expected_low_power": true
+    },
+    {
+      "name": "exactly_at_threshold",
+      "validation_days_offset_from_threshold": 0,
+      "expected_low_power": false
+    },
+    {
+      "name": "one_day_above_threshold",
+      "validation_days_offset_from_threshold": 1,
+      "expected_low_power": false
+    },
+    {
+      "name": "far_below_threshold",
+      "validation_days_offset_from_threshold": -10,
+      "expected_low_power": true
+    },
+    {
+      "name": "far_above_threshold",
+      "validation_days_offset_from_threshold": 50,
+      "expected_low_power": false
+    }
+  ]
+}
