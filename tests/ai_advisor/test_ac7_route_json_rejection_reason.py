@@ -86,16 +86,35 @@ def _asset_swap_response(rejection_reason: str | None, *, vetoes_passed: bool = 
     import app as app_module
     import database
 
-    gr = _gate_result(bge, rejection_reason=rejection_reason, vetoes_passed=vetoes_passed, candidate_id="HASH1:AAA->CAND0")
+    gr = _gate_result(
+        bge,
+        rejection_reason=rejection_reason,
+        vetoes_passed=vetoes_passed,
+        candidate_id="HASH1:AAA->CAND0",
+    )
     shell = ase.SwapProposalResult(
-        candidate_id="HASH1:AAA->CAND0", symphony_id="HASH1", incumbent_asset="AAA", candidate_asset="CAND0",
-        objective=ase.SwapObjective(objective_type="reduce_correlation", target_pair=None, measured_value=0.0),
-        objective_rationale="test", baseline_stats={}, variant_stats={}, apply_guidance="test", data_warnings=[],
+        candidate_id="HASH1:AAA->CAND0",
+        symphony_id="HASH1",
+        incumbent_asset="AAA",
+        candidate_asset="CAND0",
+        objective=ase.SwapObjective(
+            objective_type="reduce_correlation", target_pair=None, measured_value=0.0
+        ),
+        objective_rationale="test",
+        baseline_stats={},
+        variant_stats={},
+        apply_guidance="test",
+        data_warnings=[],
     )
     shell.gate_result = gr
     shell.caveats = list(gr.caveats)
     run_result = ase.SwapRunResult(
-        gate_batch=bge.GatedBatch(results=[gr], survivors=[gr] if rejection_reason is None else [], n_candidates=1, fdr_q=0.05),
+        gate_batch=bge.GatedBatch(
+            results=[gr],
+            survivors=[gr] if rejection_reason is None else [],
+            n_candidates=1,
+            fdr_q=0.05,
+        ),
         proposals=[shell],
         survivors=[shell] if rejection_reason is None else [],
         rejected_candidates=[] if rejection_reason is None else [shell],
@@ -180,17 +199,41 @@ def _logic_change_response(rejection_reason: str | None, *, vetoes_passed: bool 
     import app as app_module
     import database
 
-    gr = _gate_result(bge, rejection_reason=rejection_reason, vetoes_passed=vetoes_passed, candidate_id="HASH1:window:20->16")
-    tweak = lce.LogicTweak(node_path=["children", 0], param_key="window", old_value=20, new_value=16, node_description="test")
+    gr = _gate_result(
+        bge,
+        rejection_reason=rejection_reason,
+        vetoes_passed=vetoes_passed,
+        candidate_id="HASH1:window:20->16",
+    )
+    tweak = lce.LogicTweak(
+        node_path=["children", 0],
+        param_key="window",
+        old_value=20,
+        new_value=16,
+        node_description="test",
+    )
     shell = lce.LogicChangeProposalResult(
-        candidate_id="HASH1:window:20->16", symphony_id="HASH1", tweak=tweak,
-        objective=lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0, rationale="test"),
-        objective_rationale="test", baseline_stats={}, variant_stats={}, apply_guidance="test", data_warnings=[],
+        candidate_id="HASH1:window:20->16",
+        symphony_id="HASH1",
+        tweak=tweak,
+        objective=lce.LogicChangeObjective(
+            objective_type="reduce_drawdown", measured_value=0.0, rationale="test"
+        ),
+        objective_rationale="test",
+        baseline_stats={},
+        variant_stats={},
+        apply_guidance="test",
+        data_warnings=[],
     )
     shell.gate_result = gr
     shell.caveats = list(gr.caveats)
     run_result = lce.LogicChangeRunResult(
-        gate_batch=bge.GatedBatch(results=[gr], survivors=[gr] if rejection_reason is None else [], n_candidates=1, fdr_q=0.05),
+        gate_batch=bge.GatedBatch(
+            results=[gr],
+            survivors=[gr] if rejection_reason is None else [],
+            n_candidates=1,
+            fdr_q=0.05,
+        ),
         proposals=[shell],
         survivors=[shell] if rejection_reason is None else [],
         rejected_candidates=[] if rejection_reason is None else [shell],
@@ -208,7 +251,10 @@ def _logic_change_response(rejection_reason: str | None, *, vetoes_passed: bool 
         with app_module.app.test_client() as c:
             resp = c.post(
                 "/ai-advisor/logic-changes/evaluate",
-                json={"symphony_id": "Test Symphony", "change_description": "Reduce window from 20d to 16d"},
+                json={
+                    "symphony_id": "Test Symphony",
+                    "change_description": "Reduce window from 20d to 16d",
+                },
             )
     assert resp.status_code == 200
     return resp.get_json()

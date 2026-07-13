@@ -23,7 +23,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # ===========================================================================
 # (a) backtest_fn threaded into compile_plan — call-site proof, not a trust-
 # the-flag check (per the established AC-13/AC-4/5 pattern in this suite).
@@ -39,7 +38,12 @@ def test_ac12_compile_plan_called_with_backtest_fn_from_real_generation_path():
     import advisors.plan_tree_compiler as compiler
     import advisors.strategy_builder_engine as sbe
 
-    plan = {"plan_id": "ac12-plan-1", "provenance": "built-new", "objective": "diversify", "root": {}}
+    plan = {
+        "plan_id": "ac12-plan-1",
+        "provenance": "built-new",
+        "objective": "diversify",
+        "root": {},
+    }
     gen_result = bpg.GeneratorResult(plans=[plan], reason=None)
     compile_result = compiler.CompileResult(tree={"step": "root", "children": []}, reason=None)
 
@@ -98,7 +102,9 @@ def test_ac12_sb_route_populates_live_returns_or_indicates_screens_skipped(clien
         patch.object(sbe, "propose_strategies", side_effect=_spy_propose_strategies),
         patch("advisors.build_plan_generator.load_atlas_candidates", return_value=[]),
     ):
-        resp = client.post("/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []})
+        resp = client.post(
+            "/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []}
+        )
 
     assert resp.status_code == 200
     assert captured_calls, "propose_strategies was never called — self-guard failed"
@@ -136,13 +142,16 @@ def test_ac12_screens_skipped_reason_is_a_real_string_not_a_bare_true(client):
         patch.object(sbe, "propose_strategies", side_effect=_spy_propose_strategies),
         patch("advisors.build_plan_generator.load_atlas_candidates", return_value=[]),
     ):
-        resp = client.post("/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []})
+        resp = client.post(
+            "/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []}
+        )
 
     body = resp.get_json()
     if not body.get("screens_skipped"):
-        pytest.skip("route populated live_returns instead of skipping — the other disjunct, covered by the sibling test")
+        pytest.skip(
+            "route populated live_returns instead of skipping — the other disjunct, covered by the sibling test"
+        )
     reason = body.get("screens_skipped_reason")
     assert isinstance(reason, str) and len(reason) > 10, (
-        f"AC-12 GAP: screens_skipped_reason is not a genuine explanatory "
-        f"string. Got: {reason!r}"
+        f"AC-12 GAP: screens_skipped_reason is not a genuine explanatory string. Got: {reason!r}"
     )

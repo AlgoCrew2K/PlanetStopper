@@ -77,9 +77,7 @@ _DATES_80 = [f"2026-{m:02d}-{d:02d}" for m in range(1, 9) for d in range(1, 11)]
 # gives the bootstrap real downside variance to measure (p_adj ~0.0026,
 # comfortably clearing HARVEY_LIU_FDR_Q=0.05) while keeping the cumulative
 # sum strongly positive (oos_alpha ~20, comfortably beating the 0.0 baseline).
-_STRONG_POSITIVE_RETURNS_PCT = {
-    d: (1.5 if i % 10 != 9 else -0.2) for i, d in enumerate(_DATES_80)
-}
+_STRONG_POSITIVE_RETURNS_PCT = {d: (1.5 if i % 10 != 9 else -0.2) for i, d in enumerate(_DATES_80)}
 
 # Matching, non-empty, IDENTICAL params across candidate/incumbent/theory-prior
 # so acceptance_gate's panel-score margin check (candidate_panel_score >=
@@ -89,7 +87,7 @@ _STRONG_POSITIVE_RETURNS_PCT = {
 _MATCHING_PARAMS = {"window": 20.0}
 
 
-def _matching_candidate(candidate_id: str, daily_returns_pct: list) -> "object":
+def _matching_candidate(candidate_id: str, daily_returns_pct: list) -> object:
     from advisors.backtest_gate_engine import BacktestCandidate
 
     return BacktestCandidate(
@@ -129,7 +127,9 @@ def test_self_guard_strong_positive_fixture_adopts_via_real_gate():
 # ===========================================================================
 
 
-def _mock_symphony_resolution(monkeypatch, raw_tree: dict, composer_hash: str = "HASH1", symphony_name: str = "Test Symphony"):
+def _mock_symphony_resolution(
+    monkeypatch, raw_tree: dict, composer_hash: str = "HASH1", symphony_name: str = "Test Symphony"
+):
     import database
 
     monkeypatch.setattr(database, "load_state", lambda: {composer_hash: {"name": symphony_name}})
@@ -150,7 +150,9 @@ def test_ac6_asset_swap_n1_evaluate_response_omits_fdr_yekutieli_branding(client
         symphony_id="HASH1",
         incumbent_asset="AAA",
         candidate_asset="CAND0",
-        objective=ase.SwapObjective(objective_type="reduce_correlation", target_pair=None, measured_value=0.0),
+        objective=ase.SwapObjective(
+            objective_type="reduce_correlation", target_pair=None, measured_value=0.0
+        ),
         objective_rationale="test rationale",
         baseline_stats={"sharpe": 0.0},
         variant_stats={"sharpe": 2.0},
@@ -180,7 +182,9 @@ def test_ac6_asset_swap_n1_evaluate_response_omits_fdr_yekutieli_branding(client
     ):
         from advisors.composer_backtest_client import BacktestResult
 
-        mock_run_backtest.return_value = BacktestResult(stats={}, data_warnings=[], daily_returns={d: 0.0 for d in _DATES_80})
+        mock_run_backtest.return_value = BacktestResult(
+            stats={}, data_warnings=[], daily_returns={d: 0.0 for d in _DATES_80}
+        )
         mock_db.insert_advisor_observation.return_value = 1
         resp = client.post(
             "/ai-advisor/asset-swaps/evaluate",
@@ -224,12 +228,16 @@ def test_ac6_logic_change_n1_evaluate_response_omits_fdr_yekutieli_branding(clie
         new_value=16,
         node_description="window=20 -> 16 at path [children, 0]",
     )
-    cand = _matching_candidate("HASH1:window@children>0:20->16", list(_STRONG_POSITIVE_RETURNS_PCT.values()))
+    cand = _matching_candidate(
+        "HASH1:window@children>0:20->16", list(_STRONG_POSITIVE_RETURNS_PCT.values())
+    )
     shell = lce.LogicChangeProposalResult(
         candidate_id="HASH1:window@children>0:20->16",
         symphony_id="HASH1",
         tweak=tweak,
-        objective=lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0, rationale="test"),
+        objective=lce.LogicChangeObjective(
+            objective_type="reduce_drawdown", measured_value=0.0, rationale="test"
+        ),
         objective_rationale="test rationale",
         baseline_stats={"sharpe": 0.0},
         variant_stats={"sharpe": 2.0},
@@ -251,7 +259,9 @@ def test_ac6_logic_change_n1_evaluate_response_omits_fdr_yekutieli_branding(clie
     ):
         from advisors.composer_backtest_client import BacktestResult
 
-        mock_run_backtest.return_value = BacktestResult(stats={}, data_warnings=[], daily_returns={d: 0.0 for d in _DATES_80})
+        mock_run_backtest.return_value = BacktestResult(
+            stats={}, data_warnings=[], daily_returns={d: 0.0 for d in _DATES_80}
+        )
         mock_db.insert_advisor_observation.return_value = 1
         resp = client.post(
             "/ai-advisor/logic-changes/evaluate",

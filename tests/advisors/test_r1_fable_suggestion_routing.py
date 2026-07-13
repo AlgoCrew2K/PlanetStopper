@@ -37,7 +37,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # (a) ai_advisor.request_suggestions
 # ---------------------------------------------------------------------------
@@ -163,9 +162,13 @@ def test_ac16_build_plan_generator_defaults_to_fable_not_opus(monkeypatch):
     fake_client = _client_returning_empty_plans()
 
     with patch.object(bpg, "_build_client", return_value=fake_client):
-        bpg.generate_build_plans(bpg.Objective.diversify, n_plans=1, membership_set=frozenset({"AAA"}))
+        bpg.generate_build_plans(
+            bpg.Objective.diversify, n_plans=1, membership_set=frozenset({"AAA"})
+        )
 
-    assert fake_client.messages.create.called, "generate_build_plans must call client.messages.create"
+    assert fake_client.messages.create.called, (
+        "generate_build_plans must call client.messages.create"
+    )
     resolved_model = fake_client.messages.create.call_args.kwargs.get("model")
     assert resolved_model == "claude-fable-5", (
         f"AC-16 GAP: build_plan_generator's default suggestion model is "
@@ -180,7 +183,9 @@ def test_ac16_build_plan_generator_honors_suggestion_model_env_override(monkeypa
     fake_client = _client_returning_empty_plans()
 
     with patch.object(bpg, "_build_client", return_value=fake_client):
-        bpg.generate_build_plans(bpg.Objective.diversify, n_plans=1, membership_set=frozenset({"AAA"}))
+        bpg.generate_build_plans(
+            bpg.Objective.diversify, n_plans=1, membership_set=frozenset({"AAA"})
+        )
 
     resolved_model = fake_client.messages.create.call_args.kwargs.get("model")
     assert resolved_model == "test-marker-suggestion-model", (
@@ -209,7 +214,9 @@ def test_ac16_both_suggestion_call_sites_share_the_same_accessor_default(monkeyp
 
     fake_create_client = _client_returning_empty_plans()
     with patch.object(bpg, "_build_client", return_value=fake_create_client):
-        bpg.generate_build_plans(bpg.Objective.diversify, n_plans=1, membership_set=frozenset({"AAA"}))
+        bpg.generate_build_plans(
+            bpg.Objective.diversify, n_plans=1, membership_set=frozenset({"AAA"})
+        )
     build_plan_generator_model = fake_create_client.messages.create.call_args.kwargs.get("model")
 
     assert request_suggestions_model == "test-marker-shared", (

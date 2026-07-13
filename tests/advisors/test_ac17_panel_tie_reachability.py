@@ -91,13 +91,10 @@ def _log_returns_cyclical(level: float = 0.015, dip: float = -0.002) -> dict[str
     evaluate_candidate_batch core tests above)."""
     import math
 
-    return {
-        d: math.log(1.0 + (level if i % 10 != 9 else dip))
-        for i, d in enumerate(_DATES)
-    }
+    return {d: math.log(1.0 + (level if i % 10 != 9 else dip)) for i, d in enumerate(_DATES)}
 
 
-def _empty_params_candidate(bge, candidate_id: str, returns_pct: list) -> "object":
+def _empty_params_candidate(bge, candidate_id: str, returns_pct: list) -> object:
     return bge.BacktestCandidate(
         candidate_id=candidate_id,
         daily_returns_pct=returns_pct,
@@ -252,7 +249,9 @@ def test_ac17_real_params_candidate_panel_score_unchanged_by_the_fix(bge):
         f"Expected {expected_candidate_stability}, got "
         f"{breakdown['stability']['candidate_sub_score']}"
     )
-    assert breakdown["candidate_panel_score"] == pytest.approx(expected_candidate_panel, abs=1e-9), (
+    assert breakdown["candidate_panel_score"] == pytest.approx(
+        expected_candidate_panel, abs=1e-9
+    ), (
         f"AC-17 REGRESSION: real-params candidate panel_score changed. "
         f"Expected {expected_candidate_panel}, got {breakdown['candidate_panel_score']}"
     )
@@ -291,8 +290,12 @@ def test_ac17_e2e_asset_swap_operator_evaluate_empty_params_candidate_adopts():
                 for c in node.get("children", []) or []:
                     stack.append(c)
         if tickers == {"CAND0"}:
-            return BacktestResult(stats={"sharpe": 2.0}, data_warnings=[], daily_returns=dict(variant_returns_log))
-        return BacktestResult(stats={"sharpe": 0.0}, data_warnings=[], daily_returns=dict(baseline_returns_log))
+            return BacktestResult(
+                stats={"sharpe": 2.0}, data_warnings=[], daily_returns=dict(variant_returns_log)
+            )
+        return BacktestResult(
+            stats={"sharpe": 0.0}, data_warnings=[], daily_returns=dict(baseline_returns_log)
+        )
 
     with (
         patch.object(ase, "_has_composer_key", return_value=True),
@@ -305,7 +308,9 @@ def test_ac17_e2e_asset_swap_operator_evaluate_empty_params_candidate_adopts():
             score_tree=raw_tree,
             incumbent_asset="AAA",
             candidate_asset="CAND0",
-            objective=ase.SwapObjective(objective_type="reduce_correlation", target_pair=None, measured_value=0.0),
+            objective=ase.SwapObjective(
+                objective_type="reduce_correlation", target_pair=None, measured_value=0.0
+            ),
         )
 
     decision = result.gate_batch.results[0].verdict.decision if result.gate_batch.results else None
@@ -329,11 +334,18 @@ def test_ac17_e2e_logic_change_operator_evaluate_empty_params_candidate_adopts()
         children = tree.get("children") or []
         window = children[0].get("window") if children and isinstance(children[0], dict) else None
         if window == 16:
-            return BacktestResult(stats={"sharpe": 2.0}, data_warnings=[], daily_returns=dict(variant_returns_log))
-        return BacktestResult(stats={"sharpe": 0.0}, data_warnings=[], daily_returns=dict(baseline_returns_log))
+            return BacktestResult(
+                stats={"sharpe": 2.0}, data_warnings=[], daily_returns=dict(variant_returns_log)
+            )
+        return BacktestResult(
+            stats={"sharpe": 0.0}, data_warnings=[], daily_returns=dict(baseline_returns_log)
+        )
 
     tweak = lce.LogicTweak(
-        node_path=["children", 0], param_key="window", old_value=20, new_value=16,
+        node_path=["children", 0],
+        param_key="window",
+        old_value=20,
+        new_value=16,
         node_description="window=20 -> 16 at path [children, 0]",
     )
 
@@ -347,7 +359,9 @@ def test_ac17_e2e_logic_change_operator_evaluate_empty_params_candidate_adopts()
             symphony_id="ac17-logic",
             score_tree=raw_tree,
             tweak=tweak,
-            objective=lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0, rationale="test"),
+            objective=lce.LogicChangeObjective(
+                objective_type="reduce_drawdown", measured_value=0.0, rationale="test"
+            ),
         )
 
     decision = result.gate_batch.results[0].verdict.decision if result.gate_batch.results else None
@@ -389,8 +403,12 @@ def test_ac17_e2e_strategy_builder_batch_path_empty_params_candidate_adopts():
 
     def _side_effect(tree_arg, *, symphony_id="", **kwargs):
         if _only_ticker(tree_arg) == "SPY":
-            return BacktestResult(stats={"sharpe": 0.0}, data_warnings=[], daily_returns=dict(baseline_returns_log))
-        return BacktestResult(stats={"sharpe": 2.0}, data_warnings=[], daily_returns=dict(variant_returns_log))
+            return BacktestResult(
+                stats={"sharpe": 0.0}, data_warnings=[], daily_returns=dict(baseline_returns_log)
+            )
+        return BacktestResult(
+            stats={"sharpe": 2.0}, data_warnings=[], daily_returns=dict(variant_returns_log)
+        )
 
     with (
         patch.object(sbe, "_has_composer_key", return_value=True),
@@ -501,7 +519,9 @@ def test_ac17_panel_breakdown_note_absent_for_oos_inferior_empty_params(bge):
     failure, a DIFFERENT branch than intended) rather than reaching the
     OOS-inferior comparison. Forcing via the baseline is more robust than
     hand-tuning the fold-split boundary."""
-    cand = _empty_params_candidate(bge, "ac17-note-oos-inferior", list(_STRONG_POSITIVE_RETURNS_PCT))
+    cand = _empty_params_candidate(
+        bge, "ac17-note-oos-inferior", list(_STRONG_POSITIVE_RETURNS_PCT)
+    )
     batch = bge.evaluate_candidate_batch([cand], incumbent_oos_alpha=1000.0, default_oos_alpha=0.0)
     result = batch.results[0]
     assert result.verdict.decision == "KEEP_INCUMBENT", (

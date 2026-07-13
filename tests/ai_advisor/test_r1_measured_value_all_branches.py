@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ===========================================================================
 # asset_swap_engine.py — all branches.
 # ===========================================================================
@@ -57,13 +56,20 @@ def ase():
     [
         ("reduce_correlation", "0.00 correlation"),
         ("lift_risk_adjusted", "measured Sharpe of 0.00"),
-        ("volatility_mitigation", "measured_value=0.0"),  # falls to the else catch-all — not a real objective_type, proves the catch-all itself is honest for any unrecognized value
+        (
+            "volatility_mitigation",
+            "measured_value=0.0",
+        ),  # falls to the else catch-all — not a real objective_type, proves the catch-all itself is honest for any unrecognized value
     ],
 )
-def test_ac10_asset_swap_rationale_honest_across_all_branches(ase, objective_type, fabricated_substring):
+def test_ac10_asset_swap_rationale_honest_across_all_branches(
+    ase, objective_type, fabricated_substring
+):
     """MUST FAIL pre-fix for reduce_correlation/lift_risk_adjusted/the
     catch-all — only reduce_drawdown was fixed by the original RED's scope."""
-    objective = ase.SwapObjective(objective_type=objective_type, target_pair=None, measured_value=0.0)
+    objective = ase.SwapObjective(
+        objective_type=objective_type, target_pair=None, measured_value=0.0
+    )
     rationale = ase._build_objective_rationale("CAND0", "AAA", objective)
     assert fabricated_substring not in rationale, (
         f"AC-10 GAP ({objective_type}): rationale still carries the "
@@ -76,7 +82,9 @@ def test_ac10_asset_swap_reduce_drawdown_regression_guard(ase):
     test passed both before and after this file's own RED — pinning it
     prevents a future edit from re-introducing the fabricated phrase here
     while fixing the other branches)."""
-    objective = ase.SwapObjective(objective_type="reduce_drawdown", target_pair=None, measured_value=0.0)
+    objective = ase.SwapObjective(
+        objective_type="reduce_drawdown", target_pair=None, measured_value=0.0
+    )
     rationale = ase._build_objective_rationale("CAND0", "AAA", objective)
     assert "measured" not in rationale.lower(), (
         f"AC-10 REGRESSION: reduce_drawdown rationale carries the word "
@@ -98,7 +106,10 @@ def lce():
 
 def _tweak(lce):
     return lce.LogicTweak(
-        node_path=["children", 0], param_key="window", old_value=20, new_value=16,
+        node_path=["children", 0],
+        param_key="window",
+        old_value=20,
+        new_value=16,
         node_description="test",
     )
 
@@ -113,9 +124,13 @@ def _tweak(lce):
         ("volatility_mitigation", "measured_value=0.0"),  # else catch-all
     ],
 )
-def test_ac10_logic_change_rationale_honest_across_all_branches(lce, objective_type, fabricated_substring):
+def test_ac10_logic_change_rationale_honest_across_all_branches(
+    lce, objective_type, fabricated_substring
+):
     """MUST FAIL pre-fix for every branch except reduce_drawdown."""
-    objective = lce.LogicChangeObjective(objective_type=objective_type, measured_value=0.0, rationale="test")
+    objective = lce.LogicChangeObjective(
+        objective_type=objective_type, measured_value=0.0, rationale="test"
+    )
     rationale = lce._build_objective_rationale(_tweak(lce), objective)
     assert fabricated_substring not in rationale, (
         f"AC-10 GAP ({objective_type}): rationale still carries the "
@@ -125,7 +140,9 @@ def test_ac10_logic_change_rationale_honest_across_all_branches(lce, objective_t
 
 def test_ac10_logic_change_reduce_drawdown_regression_guard(lce):
     """Non-regression: the already-fixed branch stays fixed."""
-    objective = lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0, rationale="test")
+    objective = lce.LogicChangeObjective(
+        objective_type="reduce_drawdown", measured_value=0.0, rationale="test"
+    )
     rationale = lce._build_objective_rationale(_tweak(lce), objective)
     assert "measured" not in rationale.lower(), (
         f"AC-10 REGRESSION: reduce_drawdown rationale carries the word "

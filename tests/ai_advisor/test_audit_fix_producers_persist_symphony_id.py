@@ -119,8 +119,7 @@ def test_run_divergence_explainer_writes_nothing_when_flag_off():
         "contract change — insert_advisor_observation was called."
     )
     assert result is None, (
-        f"DE producer (flag off) must return None (no row id — there is no "
-        f"row); got {result!r}"
+        f"DE producer (flag off) must return None (no row id — there is no row); got {result!r}"
     )
 
 

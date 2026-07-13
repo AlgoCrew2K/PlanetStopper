@@ -205,8 +205,7 @@ def test_ac14_guardrail_note_no_longer_implies_uniform_two_producer_behavior(cli
     html = resp.get_data(as_text=True)
 
     assert (
-        "Overfitting Conscience and Spec Critic are guardrails that check the shared,"
-        in html
+        "Overfitting Conscience and Spec Critic are guardrails that check the shared," in html
     ) is False, (
         "AC-14 GAP: the stale two-producer 'uniform CLEAR' framing is still present "
         "in the guardrail-uniform-note copy verbatim."
@@ -236,7 +235,9 @@ def test_ac14_guardrail_note_scopes_overfitting_conscience_to_one_dof_source(cli
     html = client.get("/ai-advisor").get_data(as_text=True)
     note = _extract_guardrail_note(html).lower()
     assert "overfitting conscience" in note
-    assert "backtest-selection" in note or "degrees of freedom" in note or "degrees-of-freedom" in note, (
+    assert (
+        "backtest-selection" in note or "degrees of freedom" in note or "degrees-of-freedom" in note
+    ), (
         "AC-14 GAP: guardrail-uniform-note does not scope Overfitting Conscience "
         "to its actual narrow check (BACKTEST_SELECTION degrees-of-freedom only)."
     )
@@ -246,7 +247,9 @@ def test_ac14_guardrail_note_scopes_overfitting_conscience_to_one_dof_source(cli
     )
 
 
-def test_ac14_guardrail_note_names_divergence_explainer_as_disabled_and_informational(client, monkeypatch):
+def test_ac14_guardrail_note_names_divergence_explainer_as_disabled_and_informational(
+    client, monkeypatch
+):
     """MUST FAIL pre-fix: the current copy does not mention Divergence Explainer
     at all — an operator seeing a stray DE row (via the /api/advisor-observations
     leak this file's other test targets) has zero context for it."""

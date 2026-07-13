@@ -856,7 +856,13 @@ def test_run_divergence_explainer_writes_only_divergence_explainer_role(
     mod = _import_divex()
     for flag_val, scenario, cvar, label, expected_roles in [
         ("0", flag_off_scenario, None, "flag_off", []),
-        ("1", flag_on_both_windows, flag_on_both_windows["cvar_rows"][0], "flag_on", ["DIVERGENCE_EXPLAINER"]),
+        (
+            "1",
+            flag_on_both_windows,
+            flag_on_both_windows["cvar_rows"][0],
+            "flag_on",
+            ["DIVERGENCE_EXPLAINER"],
+        ),
     ]:
         monkeypatch.setenv("SECOND_WINDOW_CVAR_ENABLED", flag_val)
         written_roles = []

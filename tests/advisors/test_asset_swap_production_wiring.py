@@ -112,12 +112,16 @@ def _pbo_gamma() -> float:
 
 def test_production_fixture_high_pbo_exceeds_threshold_via_real_compute_pbo():
     pbo = compute_pbo(_per_block_overfit_logreturns(), _DATES, _pbo_gamma())
-    assert pbo > PBO_REJECT_THRESHOLD, f"high-PBO production fixture must exceed the reject threshold; got {pbo}"
+    assert pbo > PBO_REJECT_THRESHOLD, (
+        f"high-PBO production fixture must exceed the reject threshold; got {pbo}"
+    )
 
 
 def test_production_below_spy_fixture_is_low_pbo_via_real_compute_pbo():
     pbo = compute_pbo(_below_spy_logreturns(3, level=0.001), _DATES, _pbo_gamma())
-    assert pbo <= PBO_REJECT_THRESHOLD, f"below-SPY production fixture must be LOW-pbo so the SPY cause is isolated; got {pbo}"
+    assert pbo <= PBO_REJECT_THRESHOLD, (
+        f"below-SPY production fixture must be LOW-pbo so the SPY cause is isolated; got {pbo}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -147,15 +151,20 @@ def _only_ticker(tree: object) -> str | None:
     return next(iter(tickers)) if len(tickers) == 1 else None
 
 
-def _spy_aware_backtest(series_by_ticker: dict[str, dict[str, float]], spy_series: dict[str, float], *, baseline_series: dict[str, float] | None = None):
+def _spy_aware_backtest(
+    series_by_ticker: dict[str, dict[str, float]],
+    spy_series: dict[str, float],
+    *,
+    baseline_series: dict[str, float] | None = None,
+):
     """run_backtest side_effect, content-dispatched (never call-order-dispatched):
-      - a tree whose ONLY ticker is "SPY" -> the SPY series (the AC-5 "existing
-        backtest path" seam — mirrors sbe.py's SPY-benchmark sourcing).
-      - a tree containing a ticker in series_by_ticker -> that candidate's series.
-      - anything else (the raw incumbent tree, used for both the
-        _evaluate_single_variant baseline call and propose_operator_swap's own
-        duplicate _backtest_returns_from_tree call, AC-13's target) -> a neutral
-        baseline series that never drives a veto by itself.
+    - a tree whose ONLY ticker is "SPY" -> the SPY series (the AC-5 "existing
+      backtest path" seam — mirrors sbe.py's SPY-benchmark sourcing).
+    - a tree containing a ticker in series_by_ticker -> that candidate's series.
+    - anything else (the raw incumbent tree, used for both the
+      _evaluate_single_variant baseline call and propose_operator_swap's own
+      duplicate _backtest_returns_from_tree call, AC-13's target) -> a neutral
+      baseline series that never drives a veto by itself.
     """
     from advisors.composer_backtest_client import BacktestResult
 
@@ -164,17 +173,26 @@ def _spy_aware_backtest(series_by_ticker: dict[str, dict[str, float]], spy_serie
     def _side_effect(tree, *, symphony_id="", **kwargs):
         only = _only_ticker(tree)
         if only == "SPY":
-            return BacktestResult(stats={"sharpe": 1.0}, data_warnings=[], daily_returns=dict(spy_series))
+            return BacktestResult(
+                stats={"sharpe": 1.0}, data_warnings=[], daily_returns=dict(spy_series)
+            )
         if only in series_by_ticker:
-            return BacktestResult(stats={"sharpe": 0.5}, data_warnings=[], daily_returns=dict(series_by_ticker[only]))
+            return BacktestResult(
+                stats={"sharpe": 0.5}, data_warnings=[], daily_returns=dict(series_by_ticker[only])
+            )
         # Baseline / incumbent tree (ticker "AAA").
-        return BacktestResult(stats={"sharpe": 0.4}, data_warnings=[], daily_returns=dict(_baseline))
+        return BacktestResult(
+            stats={"sharpe": 0.4}, data_warnings=[], daily_returns=dict(_baseline)
+        )
 
     return _side_effect
 
 
 def _all_rejection_reasons(result) -> list:
-    return [getattr(r, "rejection_reason", "<<no rejection_reason field>>") for r in result.gate_batch.results]
+    return [
+        getattr(r, "rejection_reason", "<<no rejection_reason field>>")
+        for r in result.gate_batch.results
+    ]
 
 
 # ===========================================================================
@@ -201,7 +219,9 @@ def test_ac4_production_high_pbo_batch_is_pbo_vetoed_end_to_end(ase):
         result = ase.suggest_swaps(
             symphony_id="prod-pbo-swap",
             score_tree=_raw_tree(),
-            objective=ase.SwapObjective(objective_type="reduce_correlation", target_pair=None, measured_value=0.0),
+            objective=ase.SwapObjective(
+                objective_type="reduce_correlation", target_pair=None, measured_value=0.0
+            ),
             correlation_data={},
             available_assets=list(series_by_ticker),
         )
@@ -238,7 +258,9 @@ def test_ac5_production_below_spy_batch_rejected_below_spy_alpha_end_to_end(ase)
         result = ase.suggest_swaps(
             symphony_id="prod-spy-swap",
             score_tree=_raw_tree(),
-            objective=ase.SwapObjective(objective_type="reduce_correlation", target_pair=None, measured_value=0.0),
+            objective=ase.SwapObjective(
+                objective_type="reduce_correlation", target_pair=None, measured_value=0.0
+            ),
             correlation_data={},
             available_assets=list(series_by_ticker),
         )
@@ -268,7 +290,9 @@ def test_ac4_n1_operator_evaluate_never_carries_pbo_veto_even_after_wiring(ase):
 
     with (
         patch.object(ase, "_has_composer_key", return_value=True),
-        patch.object(ase, "run_backtest", side_effect=_spy_aware_backtest({"CAND0": candidate_series}, spy)),
+        patch.object(
+            ase, "run_backtest", side_effect=_spy_aware_backtest({"CAND0": candidate_series}, spy)
+        ),
         patch.object(ase, "database") as mock_db,
     ):
         mock_db.insert_advisor_observation.return_value = 1
@@ -277,7 +301,9 @@ def test_ac4_n1_operator_evaluate_never_carries_pbo_veto_even_after_wiring(ase):
             score_tree=_raw_tree(),
             incumbent_asset="AAA",
             candidate_asset="CAND0",
-            objective=ase.SwapObjective(objective_type="reduce_correlation", target_pair=None, measured_value=0.0),
+            objective=ase.SwapObjective(
+                objective_type="reduce_correlation", target_pair=None, measured_value=0.0
+            ),
         )
 
     reasons = _all_rejection_reasons(result)
@@ -306,7 +332,9 @@ def test_ac5_n1_operator_evaluate_beats_zero_loses_to_spy_withholds(ase):
 
     with (
         patch.object(ase, "_has_composer_key", return_value=True),
-        patch.object(ase, "run_backtest", side_effect=_spy_aware_backtest({"CAND0": candidate_series}, spy)),
+        patch.object(
+            ase, "run_backtest", side_effect=_spy_aware_backtest({"CAND0": candidate_series}, spy)
+        ),
         patch.object(ase, "database") as mock_db,
     ):
         mock_db.insert_advisor_observation.return_value = 1
@@ -315,7 +343,9 @@ def test_ac5_n1_operator_evaluate_beats_zero_loses_to_spy_withholds(ase):
             score_tree=_raw_tree(),
             incumbent_asset="AAA",
             candidate_asset="CAND0",
-            objective=ase.SwapObjective(objective_type="reduce_correlation", target_pair=None, measured_value=0.0),
+            objective=ase.SwapObjective(
+                objective_type="reduce_correlation", target_pair=None, measured_value=0.0
+            ),
         )
 
     reasons = _all_rejection_reasons(result)

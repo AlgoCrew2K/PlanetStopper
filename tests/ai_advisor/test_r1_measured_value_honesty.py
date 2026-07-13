@@ -39,7 +39,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # ===========================================================================
 # Docstring fixes — source-text byte-absence checks (no runtime behavior to
 # assert on for a docstring).
@@ -79,10 +78,17 @@ def _measured_value_paragraph(class_source: str) -> str:
     measured_value's own text was ever corrected (caught empirically: this
     scoping bug produced a false pass on the first draft of this test)."""
     lines = class_source.splitlines()
-    start = next((i for i, line in enumerate(lines) if line.strip().startswith("measured_value:")), None)
+    start = next(
+        (i for i, line in enumerate(lines) if line.strip().startswith("measured_value:")), None
+    )
     assert start is not None, "could not locate the measured_value: docstring paragraph"
     end = start + 1
-    while end < len(lines) and lines[end].strip() and not lines[end].strip().endswith(":") and lines[end].startswith(" " * 8):
+    while (
+        end < len(lines)
+        and lines[end].strip()
+        and not lines[end].strip().endswith(":")
+        and lines[end].startswith(" " * 8)
+    ):
         end += 1
     return "\n".join(lines[start:end])
 
@@ -131,7 +137,9 @@ def client():
         yield c
 
 
-def _mock_symphony_resolution(monkeypatch, raw_tree: dict, composer_hash: str = "HASH1", symphony_name: str = "Test Symphony"):
+def _mock_symphony_resolution(
+    monkeypatch, raw_tree: dict, composer_hash: str = "HASH1", symphony_name: str = "Test Symphony"
+):
     import database
 
     monkeypatch.setattr(database, "load_state", lambda: {composer_hash: {"name": symphony_name}})
@@ -162,7 +170,9 @@ def test_ac10_asset_swap_evaluate_response_drops_fabricated_measured_drawdown(cl
     _mock_symphony_resolution(monkeypatch, raw_tree)
 
     def _side_effect(tree, *, symphony_id="", **kwargs):
-        return BacktestResult(stats={"sharpe": 0.1}, data_warnings=[], daily_returns={"2026-01-01": 0.001})
+        return BacktestResult(
+            stats={"sharpe": 0.1}, data_warnings=[], daily_returns={"2026-01-01": 0.001}
+        )
 
     with (
         patch.object(ase, "_has_composer_key", return_value=True),
@@ -190,7 +200,9 @@ def test_ac10_asset_swap_evaluate_response_drops_fabricated_measured_drawdown(cl
     )
 
 
-def test_ac10_logic_change_evaluate_response_drops_fabricated_measured_drawdown(client, monkeypatch):
+def test_ac10_logic_change_evaluate_response_drops_fabricated_measured_drawdown(
+    client, monkeypatch
+):
     """MUST FAIL pre-fix: today the rationale literally reads 'targets
     reduction of the measured 0.0% drawdown...' regardless of any real
     drawdown data."""
@@ -201,7 +213,9 @@ def test_ac10_logic_change_evaluate_response_drops_fabricated_measured_drawdown(
     _mock_symphony_resolution(monkeypatch, raw_tree)
 
     def _side_effect(tree, *, symphony_id="", **kwargs):
-        return BacktestResult(stats={"sharpe": 0.1}, data_warnings=[], daily_returns={"2026-01-01": 0.001})
+        return BacktestResult(
+            stats={"sharpe": 0.1}, data_warnings=[], daily_returns={"2026-01-01": 0.001}
+        )
 
     with (
         patch.object(lce, "_has_composer_key", return_value=True),

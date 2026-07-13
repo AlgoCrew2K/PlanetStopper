@@ -108,7 +108,9 @@ def test_ac7b_oos_inferior_distinct_from_fdr_not_winner(bge):
     batch: a weak candidate that is NOT the FDR winner (this_winner_trial_is_none
     should end up True for it) alongside the strong OOS-inferior-forced
     candidate from the test above."""
-    strong = _matching_candidate(bge, "ac7b-strong-oos-inferior", list(_STRONG_POSITIVE_RETURNS_PCT))
+    strong = _matching_candidate(
+        bge, "ac7b-strong-oos-inferior", list(_STRONG_POSITIVE_RETURNS_PCT)
+    )
     # A second, much weaker candidate — real but modest positive returns,
     # unlikely to be the batch's argmin winner alongside the strong one.
     weak_returns = [0.05 if i % 10 != 9 else -0.05 for i in range(len(_DATES))]
@@ -137,7 +139,9 @@ def test_ac7b_below_spy_alpha_dominates_oos_inferior_precedence(bge):
     would separately be OOS-inferior-to-incumbent must report below_spy_alpha
     (higher in the stage-ordered precedence chain), not oos_inferior_to_
     incumbent."""
-    from advisors.composer_backtest_client import BacktestResult  # noqa: F401 - not used directly, keeps import parity with sibling files
+    from advisors.composer_backtest_client import (
+        BacktestResult,  # noqa: F401 - not used directly, keeps import parity with sibling files
+    )
 
     cand = _matching_candidate(bge, "ac7b-below-spy", list(_STRONG_POSITIVE_RETURNS_PCT))
     spy_series = {d: 100.0 for d in _DATES}  # SPY baseline far above the candidate.

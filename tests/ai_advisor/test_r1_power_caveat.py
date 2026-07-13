@@ -39,9 +39,7 @@ try:
 except ImportError:  # pragma: no cover - project already depends on hypothesis elsewhere
     _HAS_HYPOTHESIS = False
 
-_FIXTURE_PATH = (
-    Path(__file__).parents[1] / "fixtures" / "math" / "min_power_fold_days_caveat.json"
-)
+_FIXTURE_PATH = Path(__file__).parents[1] / "fixtures" / "math" / "min_power_fold_days_caveat.json"
 
 
 @pytest.fixture(scope="module")
@@ -88,7 +86,9 @@ def test_ac9_min_power_fold_days_constant_exists_in_app_with_source_comment():
         (i for i, line in enumerate(lines) if line.strip().startswith("MIN_POWER_FOLD_DAYS")),
         None,
     )
-    assert const_line_idx is not None, "could not locate the MIN_POWER_FOLD_DAYS assignment line in app.py source"
+    assert const_line_idx is not None, (
+        "could not locate the MIN_POWER_FOLD_DAYS assignment line in app.py source"
+    )
     context = "\n".join(lines[max(0, const_line_idx - 5) : const_line_idx + 1])
     assert "F3" in context or "audit" in context.lower(), (
         f"AC-9 GAP: no source comment citing audit F3 near the "
@@ -108,7 +108,9 @@ def _sb_survivor_with_validation_days(validation_days: int):
     from advisors.backtest_gate_engine import AcceptanceVerdict, CandidateGateResult, GatedBatch
     from advisors.strategy_builder_engine import CandidateInfo, ProposalRun
 
-    verdict = AcceptanceVerdict(vetoes_passed=True, panel_score=1.0, panel_breakdown={}, decision="ADOPT_CANDIDATE")
+    verdict = AcceptanceVerdict(
+        vetoes_passed=True, panel_score=1.0, panel_breakdown={}, decision="ADOPT_CANDIDATE"
+    )
     gr = CandidateGateResult(
         candidate_id="power-cand",
         verdict=verdict,
@@ -127,24 +129,37 @@ def _sb_survivor_with_validation_days(validation_days: int):
     )
 
 
-@pytest.mark.parametrize("case_name", [
-    "one_day_below_threshold", "exactly_at_threshold", "one_day_above_threshold",
-    "far_below_threshold", "far_above_threshold",
-])
+@pytest.mark.parametrize(
+    "case_name",
+    [
+        "one_day_below_threshold",
+        "exactly_at_threshold",
+        "one_day_above_threshold",
+        "far_below_threshold",
+        "far_above_threshold",
+    ],
+)
 def test_ac9_sb_route_low_power_flag_matches_golden_fixture(client, golden_fixture, case_name):
     """MUST FAIL pre-fix: the SB route response carries no low_power field at
     all today. Golden-fixture-driven boundary cases."""
     import app as app_module
 
     case = next(c for c in golden_fixture["cases"] if c["name"] == case_name)
-    threshold = getattr(app_module, "MIN_POWER_FOLD_DAYS", 65)  # fallback keeps the route callable pre-fix
+    threshold = getattr(
+        app_module, "MIN_POWER_FOLD_DAYS", 65
+    )  # fallback keeps the route callable pre-fix
     validation_days = threshold + case["validation_days_offset_from_threshold"]
 
     with (
-        patch("advisors.strategy_builder_engine.propose_strategies", return_value=_sb_survivor_with_validation_days(validation_days)),
+        patch(
+            "advisors.strategy_builder_engine.propose_strategies",
+            return_value=_sb_survivor_with_validation_days(validation_days),
+        ),
         patch("advisors.build_plan_generator.load_atlas_candidates", return_value=[]),
     ):
-        resp = client.post("/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []})
+        resp = client.post(
+            "/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []}
+        )
 
     assert resp.status_code == 200
     body = resp.get_json()
@@ -166,17 +181,21 @@ def test_ac9_survivor_caveat_text_present_when_low_power(client, golden_fixture)
 
     threshold = getattr(app_module, "MIN_POWER_FOLD_DAYS", 65)
     with (
-        patch("advisors.strategy_builder_engine.propose_strategies", return_value=_sb_survivor_with_validation_days(threshold - 1)),
+        patch(
+            "advisors.strategy_builder_engine.propose_strategies",
+            return_value=_sb_survivor_with_validation_days(threshold - 1),
+        ),
         patch("advisors.build_plan_generator.load_atlas_candidates", return_value=[]),
     ):
-        resp = client.post("/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []})
+        resp = client.post(
+            "/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []}
+        )
     body = resp.get_json()
     survivors = body.get("survivors") or []
     assert survivors and survivors[0].get("low_power") is True
     caveats = survivors[0].get("caveats") or []
     assert any("power" in str(c).lower() for c in caveats), (
-        f"AC-9 GAP: low_power=True but no caveat text mentions statistical "
-        f"power. caveats={caveats}"
+        f"AC-9 GAP: low_power=True but no caveat text mentions statistical power. caveats={caveats}"
     )
 
 
@@ -195,21 +214,41 @@ def test_ac9_asset_swap_evaluate_response_carries_low_power_field():
     threshold = getattr(app_module, "MIN_POWER_FOLD_DAYS", 65)
     from advisors.backtest_gate_engine import AcceptanceVerdict, CandidateGateResult, GatedBatch
 
-    verdict = AcceptanceVerdict(vetoes_passed=True, panel_score=1.0, panel_breakdown={}, decision="ADOPT_CANDIDATE")
+    verdict = AcceptanceVerdict(
+        vetoes_passed=True, panel_score=1.0, panel_breakdown={}, decision="ADOPT_CANDIDATE"
+    )
     gr = CandidateGateResult(
-        candidate_id="HASH1:AAA->CAND0", verdict=verdict, validation_days=threshold - 1,
-        oos_alpha=5.0, caveats=[], winner_p_adj=0.01, rejection_reason=None,
+        candidate_id="HASH1:AAA->CAND0",
+        verdict=verdict,
+        validation_days=threshold - 1,
+        oos_alpha=5.0,
+        caveats=[],
+        winner_p_adj=0.01,
+        rejection_reason=None,
     )
     shell = ase.SwapProposalResult(
-        candidate_id="HASH1:AAA->CAND0", symphony_id="HASH1", incumbent_asset="AAA", candidate_asset="CAND0",
-        objective=ase.SwapObjective(objective_type="reduce_correlation", target_pair=None, measured_value=0.0),
-        objective_rationale="test", baseline_stats={}, variant_stats={}, apply_guidance="test", data_warnings=[],
+        candidate_id="HASH1:AAA->CAND0",
+        symphony_id="HASH1",
+        incumbent_asset="AAA",
+        candidate_asset="CAND0",
+        objective=ase.SwapObjective(
+            objective_type="reduce_correlation", target_pair=None, measured_value=0.0
+        ),
+        objective_rationale="test",
+        baseline_stats={},
+        variant_stats={},
+        apply_guidance="test",
+        data_warnings=[],
     )
     shell.gate_result = gr
     shell.caveats = list(gr.caveats)
     run_result = ase.SwapRunResult(
         gate_batch=GatedBatch(results=[gr], survivors=[gr], n_candidates=1, fdr_q=0.05),
-        proposals=[shell], survivors=[shell], rejected_candidates=[], message="1 swap survived the gate", objective=shell.objective,
+        proposals=[shell],
+        survivors=[shell],
+        rejected_candidates=[],
+        message="1 swap survived the gate",
+        objective=shell.objective,
     )
 
     import database
@@ -244,22 +283,47 @@ def test_ac9_logic_change_evaluate_response_carries_low_power_field():
     threshold = getattr(app_module, "MIN_POWER_FOLD_DAYS", 65)
     from advisors.backtest_gate_engine import AcceptanceVerdict, CandidateGateResult, GatedBatch
 
-    verdict = AcceptanceVerdict(vetoes_passed=True, panel_score=1.0, panel_breakdown={}, decision="ADOPT_CANDIDATE")
-    tweak = lce.LogicTweak(node_path=["children", 0], param_key="window", old_value=20, new_value=16, node_description="test")
+    verdict = AcceptanceVerdict(
+        vetoes_passed=True, panel_score=1.0, panel_breakdown={}, decision="ADOPT_CANDIDATE"
+    )
+    tweak = lce.LogicTweak(
+        node_path=["children", 0],
+        param_key="window",
+        old_value=20,
+        new_value=16,
+        node_description="test",
+    )
     gr = CandidateGateResult(
-        candidate_id="HASH1:window:20->16", verdict=verdict, validation_days=threshold - 1,
-        oos_alpha=5.0, caveats=[], winner_p_adj=0.01, rejection_reason=None,
+        candidate_id="HASH1:window:20->16",
+        verdict=verdict,
+        validation_days=threshold - 1,
+        oos_alpha=5.0,
+        caveats=[],
+        winner_p_adj=0.01,
+        rejection_reason=None,
     )
     shell = lce.LogicChangeProposalResult(
-        candidate_id="HASH1:window:20->16", symphony_id="HASH1", tweak=tweak,
-        objective=lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0, rationale="test"),
-        objective_rationale="test", baseline_stats={}, variant_stats={}, apply_guidance="test", data_warnings=[],
+        candidate_id="HASH1:window:20->16",
+        symphony_id="HASH1",
+        tweak=tweak,
+        objective=lce.LogicChangeObjective(
+            objective_type="reduce_drawdown", measured_value=0.0, rationale="test"
+        ),
+        objective_rationale="test",
+        baseline_stats={},
+        variant_stats={},
+        apply_guidance="test",
+        data_warnings=[],
     )
     shell.gate_result = gr
     shell.caveats = list(gr.caveats)
     run_result = lce.LogicChangeRunResult(
         gate_batch=GatedBatch(results=[gr], survivors=[gr], n_candidates=1, fdr_q=0.05),
-        proposals=[shell], survivors=[shell], rejected_candidates=[], message="1 logic change survived the gate", objective=shell.objective,
+        proposals=[shell],
+        survivors=[shell],
+        rejected_candidates=[],
+        message="1 logic change survived the gate",
+        objective=shell.objective,
     )
 
     import database
@@ -274,7 +338,10 @@ def test_ac9_logic_change_evaluate_response_carries_low_power_field():
         with app_module.app.test_client() as c:
             resp = c.post(
                 "/ai-advisor/logic-changes/evaluate",
-                json={"symphony_id": "Test Symphony", "change_description": "Reduce window from 20d to 16d"},
+                json={
+                    "symphony_id": "Test Symphony",
+                    "change_description": "Reduce window from 20d to 16d",
+                },
             )
 
     assert resp.status_code == 200
@@ -314,13 +381,20 @@ def test_ac9_low_power_flag_is_monotonic_in_validation_days(client, validation_d
 
     threshold = getattr(app_module, "MIN_POWER_FOLD_DAYS", None)
     if threshold is None:
-        pytest.fail("AC-9 GAP: app.MIN_POWER_FOLD_DAYS does not exist — cannot evaluate the property.")
+        pytest.fail(
+            "AC-9 GAP: app.MIN_POWER_FOLD_DAYS does not exist — cannot evaluate the property."
+        )
 
     with (
-        patch("advisors.strategy_builder_engine.propose_strategies", return_value=_sb_survivor_with_validation_days(validation_days)),
+        patch(
+            "advisors.strategy_builder_engine.propose_strategies",
+            return_value=_sb_survivor_with_validation_days(validation_days),
+        ),
         patch("advisors.build_plan_generator.load_atlas_candidates", return_value=[]),
     ):
-        resp = client.post("/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []})
+        resp = client.post(
+            "/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []}
+        )
 
     body = resp.get_json()
     survivors = body.get("survivors") or []

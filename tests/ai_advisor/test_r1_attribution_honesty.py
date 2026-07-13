@@ -73,9 +73,9 @@ def _extract_by_testid(html: str, testid: str, *, closing_tag: str) -> str:
     against unrelated markup elsewhere on the large page."""
     marker = f'data-testid="{testid}"'
     start = html.find(marker)
-    assert start != -1, f'element with {marker} not found in rendered HTML'
+    assert start != -1, f"element with {marker} not found in rendered HTML"
     end = html.find(closing_tag, start)
-    assert end != -1, f'element with {marker} has no {closing_tag} in rendered HTML'
+    assert end != -1, f"element with {marker} has no {closing_tag} in rendered HTML"
     return html[start:end]
 
 
@@ -120,7 +120,9 @@ def test_ac1_asset_swaps_tab_carries_deterministic_no_ai_label(client, monkeypat
     )
 
 
-def test_ac1_strategy_builder_tab_labeled_generation_model_plus_community_statistically_gated(client, monkeypatch):
+def test_ac1_strategy_builder_tab_labeled_generation_model_plus_community_statistically_gated(
+    client, monkeypatch
+):
     """MUST FAIL pre-fix: the SB tab nav badge today only says 'Highest
     overfitting risk — building from scratch', with no model/community/
     statistically-gated attribution.
@@ -141,7 +143,9 @@ def test_ac1_strategy_builder_tab_labeled_generation_model_plus_community_statis
     inconsistency, not silently resolved without a paper trail."""
     import model_config
 
-    monkeypatch.setattr(model_config, "get_advisor_suggestion_model", lambda: "test-marker-sb-model")
+    monkeypatch.setattr(
+        model_config, "get_advisor_suggestion_model", lambda: "test-marker-sb-model"
+    )
     html = _get_html(client, monkeypatch)
     tab = _extract_by_testid(html, "strategy-builder-tab", closing_tag="</button>")
     assert "test-marker-sb-model" in tab, (
@@ -152,7 +156,9 @@ def test_ac1_strategy_builder_tab_labeled_generation_model_plus_community_statis
         f"attribution-coherence requirement). Element: {tab}"
     )
     tab_lower = tab.lower()
-    assert "community" in tab_lower, f"AC-1 GAP: strategy-builder-tab does not mention community candidates. Element: {tab}"
+    assert "community" in tab_lower, (
+        f"AC-1 GAP: strategy-builder-tab does not mention community candidates. Element: {tab}"
+    )
     assert "statistically gated" in tab_lower or "statistical" in tab_lower, (
         f"AC-1 GAP: strategy-builder-tab does not mention statistical gating. Element: {tab}"
     )
@@ -184,15 +190,18 @@ def test_ac2_market_prism_block_carries_model_attribution(client, monkeypatch):
     in the suite is the LEAST attributed surface (audit F4's inverted-
     attribution finding)."""
     html = _get_html(client, monkeypatch)
-    block = _extract_by_testid(html, "market-prism-block", closing_tag='data-testid="advisor-controls"')
+    block = _extract_by_testid(
+        html, "market-prism-block", closing_tag='data-testid="advisor-controls"'
+    )
     block_lower = block.lower()
     assert "opus" in block_lower or "claude" in block_lower, (
-        f"AC-2 GAP: market-prism-block carries no model attribution anywhere "
-        f"in its rendered output."
+        "AC-2 GAP: market-prism-block carries no model attribution anywhere in its rendered output."
     )
 
 
-def test_ac2_market_prism_attribution_reflects_resolved_model_accessor_not_hardcoded(client, monkeypatch):
+def test_ac2_market_prism_attribution_reflects_resolved_model_accessor_not_hardcoded(
+    client, monkeypatch
+):
     """Accessor-monkeypatch proof (mirrors the AC-16 technique): patching
     ai_advisor.resolve_advisor_model() must change the rendered attribution —
     proves the badge reads a live accessor value, not a hardcoded literal
@@ -201,10 +210,12 @@ def test_ac2_market_prism_attribution_reflects_resolved_model_accessor_not_hardc
 
     monkeypatch.setattr(ai_advisor, "resolve_advisor_model", lambda: "test-marker-prism-model")
     html = _get_html(client, monkeypatch)
-    block = _extract_by_testid(html, "market-prism-block", closing_tag='data-testid="advisor-controls"')
+    block = _extract_by_testid(
+        html, "market-prism-block", closing_tag='data-testid="advisor-controls"'
+    )
     assert "test-marker-prism-model" in block, (
-        f"AC-2 GAP: patching resolve_advisor_model() did not change the "
-        f"rendered Market Prism attribution — the badge is not accessor-driven."
+        "AC-2 GAP: patching resolve_advisor_model() did not change the "
+        "rendered Market Prism attribution — the badge is not accessor-driven."
     )
 
 
@@ -217,13 +228,14 @@ def test_ac3_sb_run_controls_note_stale_from_templates_copy_removed(client, monk
     """MUST FAIL pre-fix: byte-absence check on the exact stale string
     (git-blamed 7908d77b0, describes the retired T1-T7 template stamper)."""
     html = _get_html(client, monkeypatch)
-    assert (
-        "The advisor generates candidate symphonies from templates, backtests"
-        not in html
-    ), "AC-3 GAP: the stale 'generates candidate symphonies from templates' copy is still present verbatim."
+    assert "The advisor generates candidate symphonies from templates, backtests" not in html, (
+        "AC-3 GAP: the stale 'generates candidate symphonies from templates' copy is still present verbatim."
+    )
 
 
-def test_ac3_sb_run_controls_note_mentions_generation_model_and_community_and_significance_bar(client, monkeypatch):
+def test_ac3_sb_run_controls_note_mentions_generation_model_and_community_and_significance_bar(
+    client, monkeypatch
+):
     """Corrected copy per doc-reconciliation §1.3: generation-model attribution
     + Atlas community sourcing + FDR/Yekutieli-calibrated significance bar,
     with single-strongest-candidate winner-take-all framing (not plural
@@ -237,7 +249,9 @@ def test_ac3_sb_run_controls_note_mentions_generation_model_and_community_and_si
     check instead."""
     import model_config
 
-    monkeypatch.setattr(model_config, "get_advisor_suggestion_model", lambda: "test-marker-sb-model")
+    monkeypatch.setattr(
+        model_config, "get_advisor_suggestion_model", lambda: "test-marker-sb-model"
+    )
     html = _get_html(client, monkeypatch)
     run_controls_marker = 'class="run-controls-note"'
     start = html.find(run_controls_marker)

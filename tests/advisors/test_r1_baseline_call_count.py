@@ -64,9 +64,15 @@ def _counting_backtest(baseline_tree_marker, variant_result_daily_returns: dict)
     def _side_effect(tree, *, symphony_id="", **kwargs):
         if tree == baseline_tree_marker:
             counts["baseline"] += 1
-            return BacktestResult(stats={"sharpe": 0.1}, data_warnings=[], daily_returns=dict(baseline_daily_returns))
+            return BacktestResult(
+                stats={"sharpe": 0.1}, data_warnings=[], daily_returns=dict(baseline_daily_returns)
+            )
         counts["other"] += 1
-        return BacktestResult(stats={"sharpe": 0.2}, data_warnings=[], daily_returns=dict(variant_result_daily_returns))
+        return BacktestResult(
+            stats={"sharpe": 0.2},
+            data_warnings=[],
+            daily_returns=dict(variant_result_daily_returns),
+        )
 
     return counts, _side_effect
 
@@ -95,7 +101,9 @@ def test_ac13_asset_swap_operator_evaluate_backtests_baseline_exactly_once(ase):
             score_tree=raw_tree,
             incumbent_asset="AAA",
             candidate_asset="CAND0",
-            objective=ase.SwapObjective(objective_type="reduce_correlation", target_pair=None, measured_value=0.0),
+            objective=ase.SwapObjective(
+                objective_type="reduce_correlation", target_pair=None, measured_value=0.0
+            ),
         )
 
     assert counts["baseline"] == 1, (
@@ -136,7 +144,9 @@ def test_ac13_logic_change_operator_evaluate_backtests_baseline_exactly_once(lce
             symphony_id="prod-baseline-count-logic",
             score_tree=raw_tree,
             tweak=tweak,
-            objective=lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0, rationale="test"),
+            objective=lce.LogicChangeObjective(
+                objective_type="reduce_drawdown", measured_value=0.0, rationale="test"
+            ),
         )
 
     assert counts["baseline"] == 1, (
@@ -172,8 +182,14 @@ def test_ac13_asset_swap_baseline_value_reused_is_not_a_stale_or_zeroed_stub(ase
 
     def _side_effect(tree, *, symphony_id="", **kwargs):
         if tree == raw_tree:
-            return BacktestResult(stats=dict(_REAL_BASELINE_STATS), data_warnings=[], daily_returns={"2026-01-01": 0.0001})
-        return BacktestResult(stats={"sharpe": 0.2}, data_warnings=[], daily_returns=dict(variant_returns))
+            return BacktestResult(
+                stats=dict(_REAL_BASELINE_STATS),
+                data_warnings=[],
+                daily_returns={"2026-01-01": 0.0001},
+            )
+        return BacktestResult(
+            stats={"sharpe": 0.2}, data_warnings=[], daily_returns=dict(variant_returns)
+        )
 
     with (
         patch.object(ase, "_has_composer_key", return_value=True),
@@ -186,7 +202,9 @@ def test_ac13_asset_swap_baseline_value_reused_is_not_a_stale_or_zeroed_stub(ase
             score_tree=raw_tree,
             incumbent_asset="AAA",
             candidate_asset="CAND0",
-            objective=ase.SwapObjective(objective_type="reduce_correlation", target_pair=None, measured_value=0.0),
+            objective=ase.SwapObjective(
+                objective_type="reduce_correlation", target_pair=None, measured_value=0.0
+            ),
         )
 
     proposal = result.proposals[0]

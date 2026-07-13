@@ -78,12 +78,16 @@ def _spy_logreturns(level: float) -> dict[str, float]:
 
 def test_production_fixture_high_pbo_exceeds_threshold_via_real_compute_pbo():
     pbo = compute_pbo(_per_block_overfit_logreturns(), _DATES, 1.0)
-    assert pbo > PBO_REJECT_THRESHOLD, f"high-PBO production fixture must exceed the reject threshold; got {pbo}"
+    assert pbo > PBO_REJECT_THRESHOLD, (
+        f"high-PBO production fixture must exceed the reject threshold; got {pbo}"
+    )
 
 
 def test_production_below_spy_fixture_is_low_pbo_via_real_compute_pbo():
     pbo = compute_pbo(_below_spy_logreturns(3, level=0.001), _DATES, 1.0)
-    assert pbo <= PBO_REJECT_THRESHOLD, f"below-SPY production fixture must be LOW-pbo so the SPY cause is isolated; got {pbo}"
+    assert pbo <= PBO_REJECT_THRESHOLD, (
+        f"below-SPY production fixture must be LOW-pbo so the SPY cause is isolated; got {pbo}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -136,25 +140,41 @@ def _is_spy_benchmark_tree(tree: object) -> bool:
     return tickers == {"SPY"}
 
 
-def _spy_aware_backtest(series_by_window: dict[float, dict[str, float]], spy_series: dict[str, float], *, baseline_series: dict[str, float] | None = None):
+def _spy_aware_backtest(
+    series_by_window: dict[float, dict[str, float]],
+    spy_series: dict[str, float],
+    *,
+    baseline_series: dict[str, float] | None = None,
+):
     from advisors.composer_backtest_client import BacktestResult
 
     _baseline = baseline_series or {d: -0.001 for d in _DATES}
 
     def _side_effect(tree, *, symphony_id="", **kwargs):
         if _is_spy_benchmark_tree(tree):
-            return BacktestResult(stats={"sharpe": 1.0}, data_warnings=[], daily_returns=dict(spy_series))
+            return BacktestResult(
+                stats={"sharpe": 1.0}, data_warnings=[], daily_returns=dict(spy_series)
+            )
         window = _tree_window(tree)
         if window in series_by_window:
-            return BacktestResult(stats={"sharpe": 0.5}, data_warnings=[], daily_returns=dict(series_by_window[window]))
+            return BacktestResult(
+                stats={"sharpe": 0.5},
+                data_warnings=[],
+                daily_returns=dict(series_by_window[window]),
+            )
         # Baseline / incumbent tree (window == 20, unchanged).
-        return BacktestResult(stats={"sharpe": 0.4}, data_warnings=[], daily_returns=dict(_baseline))
+        return BacktestResult(
+            stats={"sharpe": 0.4}, data_warnings=[], daily_returns=dict(_baseline)
+        )
 
     return _side_effect
 
 
 def _all_rejection_reasons(result) -> list:
-    return [getattr(r, "rejection_reason", "<<no rejection_reason field>>") for r in result.gate_batch.results]
+    return [
+        getattr(r, "rejection_reason", "<<no rejection_reason field>>")
+        for r in result.gate_batch.results
+    ]
 
 
 # ===========================================================================
@@ -181,7 +201,9 @@ def test_ac4_production_high_pbo_batch_is_pbo_vetoed_end_to_end(lce):
         result = lce.suggest_logic_changes(
             symphony_id="prod-pbo-logic",
             score_tree=_raw_tree(),
-            objective=lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0, rationale="test"),
+            objective=lce.LogicChangeObjective(
+                objective_type="reduce_drawdown", measured_value=0.0, rationale="test"
+            ),
         )
 
     reasons = _all_rejection_reasons(result)
@@ -215,7 +237,9 @@ def test_ac5_production_below_spy_batch_rejected_below_spy_alpha_end_to_end(lce)
         result = lce.suggest_logic_changes(
             symphony_id="prod-spy-logic",
             score_tree=_raw_tree(),
-            objective=lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0, rationale="test"),
+            objective=lce.LogicChangeObjective(
+                objective_type="reduce_drawdown", measured_value=0.0, rationale="test"
+            ),
         )
 
     reasons = _all_rejection_reasons(result)
@@ -239,7 +263,9 @@ def test_ac4_n1_operator_evaluate_never_carries_pbo_veto_even_after_wiring(lce):
 
     with (
         patch.object(lce, "_has_composer_key", return_value=True),
-        patch.object(lce, "run_backtest", side_effect=_spy_aware_backtest({16.0: candidate_series}, spy)),
+        patch.object(
+            lce, "run_backtest", side_effect=_spy_aware_backtest({16.0: candidate_series}, spy)
+        ),
         patch.object(lce, "database") as mock_db,
     ):
         mock_db.insert_advisor_observation.return_value = 1
@@ -247,7 +273,9 @@ def test_ac4_n1_operator_evaluate_never_carries_pbo_veto_even_after_wiring(lce):
             symphony_id="prod-n1-pbo-logic",
             score_tree=_raw_tree(),
             tweak=_make_tweak(lce, 16.0),
-            objective=lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0, rationale="test"),
+            objective=lce.LogicChangeObjective(
+                objective_type="reduce_drawdown", measured_value=0.0, rationale="test"
+            ),
         )
 
     reasons = _all_rejection_reasons(result)
@@ -270,7 +298,9 @@ def test_ac5_n1_operator_evaluate_beats_zero_loses_to_spy_withholds(lce):
 
     with (
         patch.object(lce, "_has_composer_key", return_value=True),
-        patch.object(lce, "run_backtest", side_effect=_spy_aware_backtest({16.0: candidate_series}, spy)),
+        patch.object(
+            lce, "run_backtest", side_effect=_spy_aware_backtest({16.0: candidate_series}, spy)
+        ),
         patch.object(lce, "database") as mock_db,
     ):
         mock_db.insert_advisor_observation.return_value = 1
@@ -278,7 +308,9 @@ def test_ac5_n1_operator_evaluate_beats_zero_loses_to_spy_withholds(lce):
             symphony_id="prod-n1-spy-logic",
             score_tree=_raw_tree(),
             tweak=_make_tweak(lce, 16.0),
-            objective=lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0, rationale="test"),
+            objective=lce.LogicChangeObjective(
+                objective_type="reduce_drawdown", measured_value=0.0, rationale="test"
+            ),
         )
 
     reasons = _all_rejection_reasons(result)

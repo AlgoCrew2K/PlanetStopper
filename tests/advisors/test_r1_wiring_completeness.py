@@ -167,8 +167,12 @@ def test_self_guard_finds_one_backtest_candidate_construction_per_engine():
     # forces conscious update rather than silently exempting the new site.
     ase_sites = _call_sites(_ASE_PATH, {"BacktestCandidate"})
     lce_sites = _call_sites(_LCE_PATH, {"BacktestCandidate"})
-    assert len(ase_sites) == 1, f"Expected 1 BacktestCandidate(...) site in asset_swap_engine.py, found {len(ase_sites)}"
-    assert len(lce_sites) == 1, f"Expected 1 BacktestCandidate(...) site in logic_change_engine.py, found {len(lce_sites)}"
+    assert len(ase_sites) == 1, (
+        f"Expected 1 BacktestCandidate(...) site in asset_swap_engine.py, found {len(ase_sites)}"
+    )
+    assert len(lce_sites) == 1, (
+        f"Expected 1 BacktestCandidate(...) site in logic_change_engine.py, found {len(lce_sites)}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +193,9 @@ def test_ac4_every_backtest_candidate_construction_passes_dated_returns_kwarg(
     which is exactly why _batch_pbo stays None and the PBO veto can never fire —
     MUST FAIL pre-wiring."""
     sites = _call_sites(engine_path, {"BacktestCandidate"})
-    assert sites, f"No BacktestCandidate(...) construction found in {engine_path.name} — self-guard should have caught this"
+    assert sites, (
+        f"No BacktestCandidate(...) construction found in {engine_path.name} — self-guard should have caught this"
+    )
     missing = [s.lineno for s in sites if "dated_returns" not in _kwarg_names(s)]
     assert not missing, (
         f"AC-4 WIRING GAP in {engine_name}: BacktestCandidate(...) at line(s) "

@@ -70,7 +70,9 @@ def test_ac11_sb_route_reports_built_new_and_atlas_counts(client):
         patch("advisors.strategy_builder_engine.propose_strategies", return_value=run),
         patch("advisors.build_plan_generator.load_atlas_candidates", return_value=[]),
     ):
-        resp = client.post("/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []})
+        resp = client.post(
+            "/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []}
+        )
 
     assert resp.status_code == 200
     body = resp.get_json()
@@ -80,8 +82,7 @@ def test_ac11_sb_route_reports_built_new_and_atlas_counts(client):
         f"Full response: {body}"
     )
     assert body.get("atlas_count") == 1, (
-        f"AC-11 GAP: expected atlas_count=1, got {body.get('atlas_count')!r}. "
-        f"Full response: {body}"
+        f"AC-11 GAP: expected atlas_count=1, got {body.get('atlas_count')!r}. Full response: {body}"
     )
 
 
@@ -97,7 +98,9 @@ def test_ac11_sb_route_degraded_notice_when_zero_built_new_plans(client):
         patch("advisors.strategy_builder_engine.propose_strategies", return_value=run),
         patch("advisors.build_plan_generator.load_atlas_candidates", return_value=[]),
     ):
-        resp = client.post("/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []})
+        resp = client.post(
+            "/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []}
+        )
 
     body = resp.get_json()
     assert body.get("built_new_count") == 0
@@ -119,7 +122,9 @@ def test_ac11_sb_route_healthy_run_carries_no_false_degraded_notice(client):
         patch("advisors.strategy_builder_engine.propose_strategies", return_value=run),
         patch("advisors.build_plan_generator.load_atlas_candidates", return_value=[]),
     ):
-        resp = client.post("/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []})
+        resp = client.post(
+            "/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []}
+        )
 
     body = resp.get_json()
     assert body.get("built_new_count") == 2
@@ -182,7 +187,9 @@ def test_ac11_sb_route_error_response_never_echoes_raw_exception_text(client):
         patch("advisors.strategy_builder_engine.propose_strategies", return_value=run),
         patch("advisors.build_plan_generator.load_atlas_candidates", return_value=[]),
     ):
-        resp = client.post("/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []})
+        resp = client.post(
+            "/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []}
+        )
 
     body = resp.get_json()
     rendered_text = " ".join(str(v) for v in body.values())

@@ -186,9 +186,9 @@ def test_ac8_survivor_caveat_stale_fdr_tested_string_removed(client, monkeypatch
     _mock_ai_advisor_route_deps(monkeypatch, sb_rows=[_survivor_row(3, n_cand=7)])
     resp = client.get("/ai-advisor")
     html = resp.get_data(as_text=True)
-    assert (
-        "FDR correction applied (7 tested, threshold Yekutieli-adjusted)" not in html
-    ), "AC-8 GAP: the stale 'FDR correction applied (N tested, ...)' string is still present verbatim."
+    assert "FDR correction applied (7 tested, threshold Yekutieli-adjusted)" not in html, (
+        "AC-8 GAP: the stale 'FDR correction applied (N tested, ...)' string is still present verbatim."
+    )
 
 
 def test_ac8_survivor_caveat_carries_calibrated_significance_bar_wording(client, monkeypatch):
