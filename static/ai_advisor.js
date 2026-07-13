@@ -691,10 +691,12 @@
      * CSRF token from the prefetched _csrfToken (or fetches fresh on miss),
      * then POSTs to /ai-advisor/strategy-builder/run with X-CSRF-Token header.
      *
-     * On success: navigates to /ai-advisor (the unified SPA) so newly-persisted
-     * observations are rendered server-side from the read-only SQLite accessor.
-     * Note: navigates to /ai-advisor (not the old /ai-advisor/strategy-builder
-     * standalone URL) per the SPA-port fold-in contract.
+     * On success: renders the response IN-PLACE into #sb-run-results (survivor
+     * cards, 0-survivor honest state, rejected-candidates collapsible) — never
+     * navigates away, so the operator can tell THIS run's results from prior
+     * history (AC-1/AC-2, feature-plans/advisor-suite-fixes.md). No sparkline —
+     * the run endpoint returns no equity points; the persisted-history cards
+     * (server-rendered) keep the sparkline, these do not (accepted scope gap).
      *
      * On error: the sb-run-error div is shown inline.
      */
@@ -744,9 +746,28 @@
                 if (errDiv) { errDiv.textContent = data.error; errDiv.style.display = 'block'; }
                 if (resultsDiv) { resultsDiv.innerHTML = ''; }
             } else {
-                // Navigate to /ai-advisor (unified SPA) — the strategy-builder tab
-                // panel will re-render with newly-persisted observations.
-                window.location.href = '/ai-advisor';
+                var n = data.n_candidates || 0, thr = data.fdr_adjusted_threshold;
+                var sv = data.survivors || [], rj = data.rejected || [];
+                var html = '<div class="run-controls-note" data-testid="sb-live-summary">Evaluated ' + n +
+                    ' candidate' + (n === 1 ? '' : 's') + (thr != null ? ' — threshold α=' + thr.toFixed(4) : '') + '</div>';
+                function card(c, cls) {
+                    return '<div class="proposal-card proposal-card--' + cls + '"><span class="card-candidate-id">' +
+                        escHtml(c.candidate_id || '') + '</span></div>';
+                }
+                if (sv.length) {
+                    html += '<div class="proposal-cards" data-testid="sb-live-survivor-cards">' +
+                        sv.map(function (s) { return card(s, 'survivor'); }).join('') + '</div>';
+                } else {
+                    html += '<div class="empty-state" data-testid="sb-live-empty-state">Evaluated ' + n +
+                        ' candidates — 0 passed the gate</div>';
+                }
+                if (rj.length) {
+                    html += '<details class="rejected-collapsible" data-testid="sb-live-rejected-section">' +
+                        '<summary>Candidates that did not clear the gate (' + rj.length + ')</summary>' +
+                        '<div class="rejected-cards">' + rj.map(function (r) { return card(r, 'rejected'); }).join('') +
+                        '</div></details>';
+                }
+                if (resultsDiv) { resultsDiv.innerHTML = html; }
             }
         } catch (err) {
             if (errDiv) { errDiv.textContent = 'Request failed: ' + err.message; errDiv.style.display = 'block'; }
