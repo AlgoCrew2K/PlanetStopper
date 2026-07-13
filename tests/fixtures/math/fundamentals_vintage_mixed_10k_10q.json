@@ -1,0 +1,49 @@
+{
+  "_provenance": "Schema-derived fixture — advisor-suite-fixes.md AC-4 RED phase (2026-07-13). Reproduces the defect at ai_advisor.py:1041-1043: `annual_entries = [e for e in unit_entries if e.get('form') == '10-K']` filters to 10-K entries BEFORE the (end desc, filed desc) sort runs, so a FRESHER 10-Q entry is discarded whenever any 10-K entry exists for that concept. Ticker AAPL is used deliberately — it is already in ai_advisor._SEC_TICKER_CIK_CACHE (CIK 0000320193), matching the plan's own real-world validation example ('AAPL must resolve to the ~2026-03 10-Q period, not the 2025-09 10-K'). Values are test sentinels — NOT real Apple financials, NOT hardcoded producer outputs.",
+  "_mode_defect": "Mixed 10-K + 10-Q entries for one concept. The 10-K entry has the OLDER end date; the 10-Q entry has the NEWER end date. Current code's 10-K-only pre-filter means the 10-Q entry is never even considered by the sort — the stale 10-K always wins. The fix must consider ALL forms and let (end desc, filed desc) pick the freshest period regardless of form.",
+  "_fixture_note": "Revenues has exactly 2 entries: one 10-K (end=2025-09-27, filed=2025-11-01) and one 10-Q (end=2026-03-28, filed=2026-05-05) — the 10-Q is later on BOTH end and filed, so there is no tiebreak ambiguity. val sentinels are unmistakably distinct: 10-K val=5100001 (buggy/legacy result), 10-Q val=6200003 (correct post-fix result).",
+  "companyfacts": {
+    "cik": 320193,
+    "entityName": "Apple Inc.",
+    "facts": {
+      "us-gaap": {
+        "Revenues": {
+          "label": "Revenues",
+          "description": "Amount of revenue recognized from goods sold, services rendered, etc.",
+          "units": {
+            "USD": [
+              {
+                "accn": "0000320193-25-000100",
+                "end": "2025-09-27",
+                "val": 5100001,
+                "form": "10-K",
+                "filed": "2025-11-01",
+                "fp": "FY",
+                "fy": 2025
+              },
+              {
+                "accn": "0000320193-26-000050",
+                "end": "2026-03-28",
+                "val": 6200003,
+                "form": "10-Q",
+                "filed": "2026-05-05",
+                "fp": "Q2",
+                "fy": 2026
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "_expected": {
+    "Revenues_logical_concept": {
+      "expected_end": "2026-03-28",
+      "expected_val": 6200003,
+      "expected_form": "10-Q",
+      "buggy_end": "2025-09-27",
+      "buggy_val": 5100001,
+      "buggy_form": "10-K"
+    }
+  }
+}

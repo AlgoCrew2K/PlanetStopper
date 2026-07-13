@@ -1,6 +1,6 @@
 """
 RED tests — candidate-alert header indicator markup + wiring (AC-1/AC-4/AC-6,
-feature-plans/candidate-alert.md).
+feature-plans/candidate-alert.md; icon AC-5 of feature-plans/advisor-suite-fixes.md).
 
 Source-level assertions only — mirrors the established pattern in
 tests/app/test_guard_alpha_panel_ui.py (template string search + JS source
@@ -26,11 +26,21 @@ Contract under test:
   /api/candidate-alert and posts to /api/candidate-alert/mark-viewed with the
   existing _chromeCsrfToken, and degrades honestly on a non-OK response
   (mirrors the AC-7 JS-safety pattern from test_guard_alpha_panel_ui.py).
+
+- advisor-suite-fixes.md AC-5 (design-consistent icon): the indicator
+  currently renders the raw &#x1F514; (bell) emoji entity (_chrome.html:69).
+  The fix replaces it with a monochrome inline <svg> bell using
+  stroke="currentColor" (inheriting --studio-ink-dim, matching the
+  clock/engine-status treatment elsewhere in this same partial) — legible in
+  both light and dark theme without a raw hex/emoji dependency. The red
+  --studio-neg count-pill (data-testid="candidate-alert-badge") is unchanged
+  by this AC.
 """
 
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 
@@ -180,4 +190,92 @@ class TestCandidateAlertJsWiring:
             "a response.ok guard or .catch handler — a 401 response will throw on "
             ".json() (HTML body, not JSON), crashing the poller with an uncaught "
             "promise rejection on every one of the 4 screens."
+        )
+
+
+# ---------------------------------------------------------------------------
+# advisor-suite-fixes.md AC-5: icon is a design-consistent inline SVG,
+# not the raw bell emoji
+# ---------------------------------------------------------------------------
+
+
+class TestCandidateAlertIconIsSvgNotEmoji:
+    """AC-5: the header candidate-alert icon must be a monochrome inline SVG
+    (stroke="currentColor") — not the &#x1F514; emoji entity currently at
+    _chrome.html:69. Confined to a window around the indicator element so a
+    coincidental &#x1F514; or <svg> elsewhere in the partial (e.g. the tweaks
+    panel) can't produce a false pass/fail.
+    """
+
+    def _indicator_window(self, html: str) -> str:
+        idx = html.find('data-testid="candidate-alert-indicator"')
+        assert idx != -1, (
+            'data-testid="candidate-alert-indicator" not found in _chrome.html — '
+            "prior TestCandidateAlertIndicatorMarkup tests must pass before this "
+            "window-scoped check is meaningful."
+        )
+        return html[idx : idx + 600]
+
+    def test_no_emoji_entity_present(self):
+        """FAILS on current: the indicator renders the literal &#x1F514; bell
+        emoji entity instead of a monochrome SVG.
+        """
+        window = self._indicator_window(_chrome_html())
+        assert "&#x1F514;" not in window, (
+            "AC-5 defect: the candidate-alert indicator still uses the raw "
+            "&#x1F514; bell emoji entity. The plan requires a monochrome "
+            'inline SVG bell (stroke="currentColor") instead — emoji glyphs '
+            "render inconsistently across platforms/themes and can't inherit "
+            "--studio-ink-dim."
+        )
+
+    def test_inline_svg_bell_icon_present(self):
+        """FAILS on current: no <svg> element exists in the indicator at all."""
+        window = self._indicator_window(_chrome_html())
+        assert "<svg" in window, (
+            "AC-5 defect: no inline <svg> element found in the candidate-alert "
+            "indicator. The bell icon must be a monochrome inline SVG, not an "
+            "emoji glyph or an external icon-font reference."
+        )
+
+    def test_svg_uses_currentcolor_stroke(self):
+        """AC-5: the SVG must use stroke="currentColor" so it inherits
+        --studio-ink-dim (the same treatment as the clock/engine-status
+        indicators elsewhere in this partial) rather than a hardcoded color —
+        this is what keeps it legible in both light and dark theme.
+        """
+        window = self._indicator_window(_chrome_html())
+        if "<svg" not in window:
+            pytest.skip("No <svg> present yet — prior test covers that gap.")
+        svg_idx = window.find("<svg")
+        svg_close_idx = window.find("</svg>", svg_idx)
+        svg_block = (
+            window[svg_idx : svg_close_idx + len("</svg>")]
+            if svg_close_idx != -1
+            else window[svg_idx:]
+        )
+        assert 'stroke="currentColor"' in svg_block, (
+            "AC-5 defect: the inline SVG bell does not use "
+            'stroke="currentColor" — it must inherit the surrounding text '
+            "color (--studio-ink-dim) to stay legible in both themes, not a "
+            "hardcoded hex/named color."
+        )
+
+    def test_no_raw_hex_color_on_the_icon(self):
+        """AC-5: 'No raw hex/emoji for the icon' — the SVG itself must not
+        hardcode a hex color (a raw hex would defeat the currentColor
+        inheritance and could look wrong in one of the two themes).
+        """
+        window = self._indicator_window(_chrome_html())
+        if "<svg" not in window:
+            pytest.skip("No <svg> present yet — prior test covers that gap.")
+        svg_idx = window.find("<svg")
+        svg_close_idx = window.find("</svg>", svg_idx)
+        svg_block = (
+            window[svg_idx : svg_close_idx + len("</svg>")]
+            if svg_close_idx != -1
+            else window[svg_idx:]
+        )
+        assert not re.search(r"#[0-9a-fA-F]{3,8}\b", svg_block), (
+            f"AC-5 defect: the inline SVG bell hardcodes a raw hex color. SVG block: {svg_block!r}"
         )

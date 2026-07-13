@@ -736,6 +736,147 @@ class TestErrorReasonLabels:
 
 
 # ---------------------------------------------------------------------------
+# advisor-suite-fixes.md AC-6 — Timeout/ConnectionError on the tone endpoint
+# are retried, not surfaced as unavailable after exactly one attempt
+# ---------------------------------------------------------------------------
+
+
+class TestTransientNetworkErrorsAreRetried:
+    """advisor-suite-fixes.md AC-6: a Timeout or ConnectionError on the
+    timelinetone fetch (lens_gdelt.py:184-228) must be retried within the
+    existing bounded loop — mirroring ai_advisor._fetch_with_backoff
+    (ai_advisor.py:406-486), which already retries ConnectionError/Timeout
+    alongside 429.
+
+    THE BUG: the `try/except Exception` at lens_gdelt.py:224-228 wraps the
+    ENTIRE `for attempt in range(_GDELT_MAX_ATTEMPTS)` loop from OUTSIDE it.
+    A Timeout/ConnectionError raised by requests.get() on attempt 1 propagates
+    straight past the loop to this outer handler -> immediate
+    _unavailable(exc_type) -> zero retries. Only the 429 branch (a normal,
+    non-raising HTTP response) currently reaches the loop's retry logic.
+
+    Scope note: the ARTLIST fetch (lens_gdelt.py:284-321) is explicitly
+    best-effort by design ("a failed artlist call does NOT invalidate the
+    tone signal") and is NOT retried even after this fix — these tests target
+    the TONE endpoint only, matching the plan's own line-range citation.
+
+    NOT weakened: TestErrorReasonLabels.test_network_timeout_returns_unavailable_with_exc_class_reason
+    uses side_effect=<single exception instance> (every call raises) — after
+    this fix that scenario becomes 'retries exhausted, still available=False,
+    reason=Timeout', so it stays correct and is left untouched.
+    """
+
+    def _make_call_sequence(self, first_exc, timelinetone_fixture, artlist_fixture):
+        """Build a requests.get side_effect: call 1 raises `first_exc`, call 2
+        (the tone retry) succeeds, call 3 (artlist) succeeds. A dict-based
+        counter (not a plain int) so the closure can mutate it.
+        """
+        state = {"n": 0}
+
+        def _side_effect(*_args, **_kwargs):
+            state["n"] += 1
+            if state["n"] == 1:
+                raise first_exc
+            if state["n"] == 2:
+                return _make_mock_http_response(timelinetone_fixture)
+            return _make_mock_http_response(artlist_fixture)
+
+        return _side_effect, state
+
+    def test_timeout_on_first_tone_attempt_is_retried_then_recovers(
+        self, timelinetone_fixture, artlist_fixture
+    ):
+        """FAILS on current: call 1 raises Timeout -> outer except fires
+        immediately -> available=False after exactly 1 HTTP call. The producer
+        never reaches call 2, so the retry that would have recovered the tone
+        signal never happens.
+        """
+        from requests.exceptions import Timeout
+
+        from advisors import lens_gdelt
+
+        side_effect, state = self._make_call_sequence(
+            Timeout("transient network blip"), timelinetone_fixture, artlist_fixture
+        )
+
+        with (
+            patch("requests.get", side_effect=side_effect) as mock_get,
+            patch("time.sleep"),
+        ):
+            result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
+
+        assert mock_get.call_count >= 2, (
+            "AC-6 defect: a Timeout on the first tone HTTP call must be "
+            "retried — the producer gave up after exactly "
+            f"{mock_get.call_count} call(s) instead of retrying within the "
+            "bounded loop."
+        )
+        assert result["available"] is True, (
+            "AC-6: once the retry succeeds, the producer must report "
+            f"available=True (the transient error is recoverable). Got: {result!r}"
+        )
+
+    def test_connection_error_on_first_tone_attempt_is_retried_then_recovers(
+        self, timelinetone_fixture, artlist_fixture
+    ):
+        """Same contract as the Timeout case, for ConnectionError — the other
+        transient network exception _fetch_with_backoff retries alongside 429.
+        """
+        from requests.exceptions import ConnectionError as ReqConnError
+
+        from advisors import lens_gdelt
+
+        side_effect, state = self._make_call_sequence(
+            ReqConnError("transient connection reset"), timelinetone_fixture, artlist_fixture
+        )
+
+        with (
+            patch("requests.get", side_effect=side_effect) as mock_get,
+            patch("time.sleep"),
+        ):
+            result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
+
+        assert mock_get.call_count >= 2, (
+            "AC-6 defect: a ConnectionError on the first tone HTTP call must "
+            "be retried — the producer gave up after exactly "
+            f"{mock_get.call_count} call(s) instead of retrying within the "
+            "bounded loop."
+        )
+        assert result["available"] is True, (
+            "AC-6: once the retry succeeds, the producer must report "
+            f"available=True. Got: {result!r}"
+        )
+
+    def test_retry_still_respects_max_attempts_bound(self):
+        """Regression guard: retrying Timeout/ConnectionError must stay inside
+        the SAME bounded loop as 429 — total calls never exceed
+        _GDELT_MAX_ATTEMPTS even when every attempt raises. This is the
+        existing TestBoundedRetry.test_retry_count_does_not_exceed_max_attempts
+        property restated for Timeout specifically (ConnectionError is already
+        covered there) — the fix must not introduce a second, unbounded retry
+        path.
+        """
+        from requests.exceptions import Timeout
+
+        from advisors import lens_gdelt
+
+        max_attempts = lens_gdelt._GDELT_MAX_ATTEMPTS
+
+        with (
+            patch("requests.get", side_effect=Timeout("persistent blip")) as mock_get,
+            patch("time.sleep"),
+        ):
+            result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
+
+        assert result["available"] is False
+        assert mock_get.call_count <= max_attempts, (
+            f"Total HTTP calls {mock_get.call_count} exceeded MAX_ATTEMPTS "
+            f"({max_attempts}) on a persistent Timeout. AC-6's retry must "
+            "reuse the existing bounded loop, not add an unbounded one."
+        )
+
+
+# ---------------------------------------------------------------------------
 # AC-3 — Tone normalization: shape/format/range, never a hardcoded value
 # ---------------------------------------------------------------------------
 
