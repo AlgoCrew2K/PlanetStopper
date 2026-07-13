@@ -23,6 +23,7 @@ This agent is an overlay. It does not re-litigate global code-reviewer concerns 
 6. **No magic numbers in engine:** any numeric literal added to `math_engine.py` without a name and source comment → block.
 7. **Logging redaction:** new log lines must not echo response bodies from Composer/Alpaca verbatim → block until scrubbed.
 8. **Dashboard side-effect ban:** routes in `app.py` must not call engine functions that mutate state → surface and block.
+9. **SHA-pinned verification on shared worktrees:** when validating a specific commit on a worktree other agents share, `git rev-parse HEAD` matching the target is NOT sufficient — a teammate mid-edit means the working tree no longer matches that commit's content. Require `git status --porcelain` EMPTY for the paths under test, and bracket every verification run with HEAD + status checks immediately before AND after; any drift voids the run. If the tree is dirty, content-verify via `git show <sha>:<path>` or a detached temp worktree instead. Every verdict quotes the SHA it was verified against.
 
 ## Anti-Patterns
 
