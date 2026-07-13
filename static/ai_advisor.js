@@ -700,6 +700,21 @@
      *
      * On error: the sb-run-error div is shown inline.
      */
+    // AC-7 (F6, Gap F; r1-review Checkpoint-3 BLOCK finding): rejection_reason
+    // -> distinguishable copy. Mirrors the SB Jinja _REJECTION_COPY map and
+    // its Asset-Swaps/Logic-Changes JS siblings exactly (same 4 mapped
+    // values, same wording) so the operator sees identical explanations
+    // regardless of which surface (live run vs. persisted history vs. the
+    // other two evaluate routes) rejected the candidate. Extensible: an
+    // unmapped reason (null, or a future untracked class) renders NOTHING —
+    // never a fabricated blanket string.
+    var SB_LIVE_REJECTION_COPY = {
+        pbo_veto: 'This candidate failed the overfitting-robustness (PBO) check.',
+        below_spy_alpha: 'This candidate did not beat the SPY benchmark over the same period.',
+        oos_inferior_to_incumbent: 'This candidate did not outperform the live incumbent out-of-sample.',
+        fdr_not_winner: 'This candidate cleared the FDR-calibrated significance bar but was not the single strongest candidate this run.',
+    };
+
     async function sbRunAnalysis() {
         var btn = document.getElementById('sb-run-btn');
         var errDiv = document.getElementById('sb-run-error');
@@ -743,16 +758,71 @@
 
             var data = await resp.json();
             if (data.error) {
-                if (errDiv) { errDiv.textContent = data.error; errDiv.style.display = 'block'; }
+                // AC-11: error_category is a richer, still-sanitized cause token
+                // (a type(exc).__name__-shaped string) alongside the static
+                // "strategy-builder-error" token — non-null-only, never render
+                // the literal string "null"/"undefined" in the DOM.
+                var errText = data.error + (data.error_category ? ' (' + data.error_category + ')' : '');
+                if (errDiv) { errDiv.textContent = errText; errDiv.style.display = 'block'; }
                 if (resultsDiv) { resultsDiv.innerHTML = ''; }
             } else {
                 var n = data.n_candidates || 0, thr = data.fdr_adjusted_threshold;
                 var sv = data.survivors || [], rj = data.rejected || [];
                 var html = '<div class="run-controls-note" data-testid="sb-live-summary">Evaluated ' + n +
                     ' candidate' + (n === 1 ? '' : 's') + (thr != null ? ' — threshold α=' + thr.toFixed(4) : '') + '</div>';
+                // AC-11 (F5, Gap E): built-new/Atlas provenance rollup — no prior
+                // render surface existed for these two fields anywhere in the
+                // codebase (checked Jinja + every JS file); minimal factual line,
+                // same ' · ' separator convention already used elsewhere in this
+                // file.
+                if (data.built_new_count != null || data.atlas_count != null) {
+                    html += '<div class="run-controls-note" data-testid="sb-live-provenance">Built-new: ' +
+                        (data.built_new_count || 0) + ' · Atlas: ' + (data.atlas_count || 0) + '</div>';
+                }
+                // AC-11: degraded-run notice ("Opus produced 0 plans...") — server-
+                // authored prose, rendered verbatim, non-null-only.
+                if (data.mode_notice) {
+                    html += '<div class="empty-state" data-testid="sb-live-mode-notice">' +
+                        escHtml(data.mode_notice) + '</div>';
+                }
+                // AC-12: honest indicator when the drawdown/Pearson screens did not
+                // run this batch (no live-portfolio return series at route time).
+                if (data.screens_skipped) {
+                    html += '<div class="run-controls-note" data-testid="sb-live-screens-skipped">Screens skipped' +
+                        (data.screens_skipped_reason ? ': ' + escHtml(data.screens_skipped_reason) : '') + '</div>';
+                }
                 function card(c, cls) {
-                    return '<div class="proposal-card proposal-card--' + cls + '"><span class="card-candidate-id">' +
-                        escHtml(c.candidate_id || '') + '</span></div>';
+                    var extra = '';
+                    var modifierClass = '';
+                    if (cls === 'survivor') {
+                        // AC-9: low_power drives a CSS modifier only — the caveat
+                        // TEXT itself comes from c.caveats (server-appended
+                        // _LOW_POWER_CAVEAT when true), never re-derived or
+                        // hardcoded here; the numeric MIN_POWER_FOLD_DAYS threshold
+                        // never crosses into JS (locked AC-9 contract). Moot for
+                        // rejected candidates — didn't clear the gate either way,
+                        // mirrors app.py's own survivor-only scoping.
+                        if (c.low_power) { modifierClass = ' proposal-card--low-power'; }
+                        if (c.caveats && c.caveats.length) {
+                            extra += '<div class="caveats-block" data-testid="caveats-block">' +
+                                c.caveats.map(function (cv) { return '<p class="caveat-text">' + escHtml(cv) + '</p>'; }).join('') +
+                                '</div>';
+                        }
+                    } else {
+                        // AC-7: rejection_reason -> distinguishable copy via
+                        // SB_LIVE_REJECTION_COPY (byte-identical wording to the
+                        // persisted-history Jinja _REJECTION_COPY and the
+                        // Asset-Swaps/Logic-Changes JS REJECTION_COPY maps).
+                        // Unmapped/null reason renders nothing — never a
+                        // fabricated blanket string.
+                        var reasonCopy = c.rejection_reason ? SB_LIVE_REJECTION_COPY[c.rejection_reason] : null;
+                        if (reasonCopy) {
+                            extra += '<div class="apply-guidance" data-testid="apply-guidance">' +
+                                '<strong>Gate withheld:</strong> ' + escHtml(reasonCopy) + '</div>';
+                        }
+                    }
+                    return '<div class="proposal-card proposal-card--' + cls + modifierClass + '"><span class="card-candidate-id">' +
+                        escHtml(c.candidate_id || '') + '</span>' + extra + '</div>';
                 }
                 if (sv.length) {
                     html += '<div class="proposal-cards" data-testid="sb-live-survivor-cards">' +
