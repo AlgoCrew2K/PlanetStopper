@@ -107,6 +107,8 @@ Backoff schedule: `min(_GDELT_BACKOFF_BASE_S * 2**attempt, _GDELT_BACKOFF_CAP_S)
 
 **429 detection:** HTTP status code only. The body is plaintext on 429 — do NOT attempt to parse it as JSON.
 
+**Amendment 2 (2026-07-13, `advisor-suite-fixes.md` AC-4/AC-6 fix cycle):** the tone GET's bounded retry loop now ALSO retries `requests.exceptions.Timeout` and `requests.exceptions.ConnectionError`, using the same per-attempt exponential backoff formula and the same `_GDELT_MAX_ATTEMPTS` ceiling as the 429 path above — mirroring `ai_advisor._fetch_with_backoff` (`ai_advisor.py:406-486`), which already retries these transient network errors alongside 429. Prior to this amendment, a Timeout/ConnectionError on the FIRST attempt propagated immediately past the retry loop (only the non-raising 429 HTTP response ever reached the retry logic), so a single transient network blip produced an unrecoverable `available=False` even though attempts 2-4 would likely have succeeded. Non-network exceptions (e.g. a `JSONDecodeError` from a malformed 2xx body) are still NOT retried — unchanged from the original contract, and consistent with `_fetch_with_backoff`. No new D-1 reason label was added: an exhausted Timeout/ConnectionError retry still returns `type(exc).__name__` (`"Timeout"` / `"ConnectionError"`) per the existing §4 table.
+
 ---
 
 ## §6 — Scope Limitations (v1)

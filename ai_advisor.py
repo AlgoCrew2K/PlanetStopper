@@ -1034,14 +1034,17 @@ def _fetch_fundamentals_for_ticker(ticker: str) -> dict:
                 tag_data = us_gaap.get(tag)
                 if not tag_data:
                     continue
-                # Walk the units (usually USD) for the most recent annual filing.
+                # Walk the units (usually USD) for the most recent reporting period.
                 for unit_type, unit_entries in tag_data.get("units", {}).items():
                     if not isinstance(unit_entries, list) or not unit_entries:
                         continue
-                    # Prefer 10-K entries; fall back to all entries when none present.
-                    annual_entries = [e for e in unit_entries if e.get("form") == "10-K"]
-                    entries_to_check = annual_entries or unit_entries
-                    for e in entries_to_check:
+                    # Consider ALL forms (10-K, 10-Q, ...) — the (end desc, filed
+                    # desc) sort below picks the most-recently-reported period
+                    # regardless of form type, so a fresher 10-Q is never
+                    # shadowed by a stale 10-K (advisor-suite-fixes.md AC-4;
+                    # operator-approved reversal of the prior 10-K-only
+                    # scope-out in lens-fundamentals-vintage-fix.completed.md).
+                    for e in unit_entries:
                         all_tag_entries.append((unit_type, e))
 
             if not all_tag_entries:

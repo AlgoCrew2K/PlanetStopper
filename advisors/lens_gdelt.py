@@ -162,8 +162,9 @@ def _fetch_gdelt_sentiment(universe: list[str]) -> dict[str, Any]:
     """Fetch GDELT tone/sentiment for the configured universe.
 
     Makes two HTTP GETs: timelinetone (tone signal) then artlist (citations).
-    Retries the tone GET on HTTP 429 only, with exponential backoff bounded
-    to _GDELT_MAX_ATTEMPTS total calls.
+    Retries the tone GET on HTTP 429 and on transient network errors
+    (Timeout, ConnectionError), with exponential backoff bounded to
+    _GDELT_MAX_ATTEMPTS total calls (contract §5 Amendment 2).
 
     Parameters
     ----------
@@ -179,53 +180,85 @@ def _fetch_gdelt_sentiment(universe: list[str]) -> dict[str, Any]:
         Never raises — all exceptions yield available=False with D-1 reason.
     """
     # --- Step 1: Fetch tone from timelinetone endpoint (with bounded retry) ---
+    # The try/except lives INSIDE the per-attempt loop (not wrapped around the
+    # whole loop) so a Timeout/ConnectionError on any attempt before the last
+    # is retried via the same bounded exponential backoff as the 429 branch,
+    # instead of propagating straight out and abandoning the retry loop after
+    # a single transient blip (contract §5 Amendment 2).
     tone_data: dict[str, Any] | None = None
-    try:
-        for attempt in range(_GDELT_MAX_ATTEMPTS):
+    for attempt in range(_GDELT_MAX_ATTEMPTS):
+        try:
             resp = requests.get(_GDELT_TONE_URL, timeout=_GDELT_TIMEOUT_S)
-
-            if resp.status_code == 429:
-                # Detect 429 by status code only — the body is plaintext, NOT
-                # JSON (contract §5: "do NOT parse the 429 body").
-                if attempt < _GDELT_MAX_ATTEMPTS - 1:
-                    sleep_s = min(
-                        _GDELT_BACKOFF_BASE_S * (2**attempt),
-                        _GDELT_BACKOFF_CAP_S,
-                    )
-                    logger.debug(
-                        "GDELT timelinetone returned 429; retrying in %.1fs (attempt %d/%d)",
-                        sleep_s,
-                        attempt + 1,
-                        _GDELT_MAX_ATTEMPTS,
-                    )
-                    time.sleep(sleep_s)
-                    continue
-                # Final attempt also 429 — all attempts exhausted
-                logger.info(
-                    "GDELT timelinetone rate_limited after %d attempts",
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+            exc_type = type(exc).__name__
+            if attempt < _GDELT_MAX_ATTEMPTS - 1:
+                sleep_s = min(
+                    _GDELT_BACKOFF_BASE_S * (2**attempt),
+                    _GDELT_BACKOFF_CAP_S,
+                )
+                logger.debug(
+                    "GDELT timelinetone %s; retrying in %.1fs (attempt %d/%d)",
+                    exc_type,
+                    sleep_s,
+                    attempt + 1,
                     _GDELT_MAX_ATTEMPTS,
                 )
-                return _unavailable("rate_limited")
+                time.sleep(sleep_s)
+                continue
+            # Final attempt also raised — all attempts exhausted.
+            # D-1: type(exc).__name__ only — never str(exc).
+            logger.warning("GDELT timelinetone %s after %d attempts", exc_type, _GDELT_MAX_ATTEMPTS)
+            return _unavailable(exc_type)
+        except Exception as exc:
+            # Non-retryable exception (e.g. a malformed URL) — D-1: type(exc).__name__ only.
+            exc_type = type(exc).__name__
+            logger.warning("GDELT timelinetone exception: %s", exc_type)
+            return _unavailable(exc_type)
 
-            # Non-429 non-2xx: named label per contract §4 — do NOT raise
-            # (raise_for_status would yield reason="HTTPError" via the outer
-            # except, which violates the named-label table in §4).
-            if not (200 <= resp.status_code < 300):
-                logger.info(
-                    "GDELT timelinetone: HTTP %d -> gdelt_fetch_failed",
-                    resp.status_code,
+        if resp.status_code == 429:
+            # Detect 429 by status code only — the body is plaintext, NOT
+            # JSON (contract §5: "do NOT parse the 429 body").
+            if attempt < _GDELT_MAX_ATTEMPTS - 1:
+                sleep_s = min(
+                    _GDELT_BACKOFF_BASE_S * (2**attempt),
+                    _GDELT_BACKOFF_CAP_S,
                 )
-                return _unavailable("gdelt_fetch_failed")
+                logger.debug(
+                    "GDELT timelinetone returned 429; retrying in %.1fs (attempt %d/%d)",
+                    sleep_s,
+                    attempt + 1,
+                    _GDELT_MAX_ATTEMPTS,
+                )
+                time.sleep(sleep_s)
+                continue
+            # Final attempt also 429 — all attempts exhausted
+            logger.info(
+                "GDELT timelinetone rate_limited after %d attempts",
+                _GDELT_MAX_ATTEMPTS,
+            )
+            return _unavailable("rate_limited")
 
+        # Non-429 non-2xx: named label per contract §4 — do NOT raise
+        # (raise_for_status would yield reason="HTTPError" via the outer
+        # except, which violates the named-label table in §4).
+        if not (200 <= resp.status_code < 300):
+            logger.info(
+                "GDELT timelinetone: HTTP %d -> gdelt_fetch_failed",
+                resp.status_code,
+            )
+            return _unavailable("gdelt_fetch_failed")
+
+        try:
             tone_data = resp.json()
-            logger.info("GDELT timelinetone: HTTP %d", resp.status_code)
-            break
-
-    except Exception as exc:
-        # D-1: type(exc).__name__ only — never str(exc)
-        exc_type = type(exc).__name__
-        logger.warning("GDELT timelinetone exception: %s", exc_type)
-        return _unavailable(exc_type)
+        except Exception as exc:
+            # D-1: type(exc).__name__ only — never str(exc). Not retried —
+            # a malformed body on a 2xx response is not a transient network
+            # error, matches pre-fix behavior for this path.
+            exc_type = type(exc).__name__
+            logger.warning("GDELT timelinetone exception: %s", exc_type)
+            return _unavailable(exc_type)
+        logger.info("GDELT timelinetone: HTTP %d", resp.status_code)
+        break
 
     # --- Step 2: Extract tone from the nested data field (contract §2) ---
     # Correct field path: timeline[0]["data"][k]["value"]
