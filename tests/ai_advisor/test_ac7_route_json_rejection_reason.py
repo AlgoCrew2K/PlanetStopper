@@ -1,4 +1,5 @@
-"""RED tests — AC-7 route-JSON extension (Asset Swaps / Logic Changes).
+"""RED tests — AC-7 route-JSON extension (Asset Swaps / Logic Changes / SB
+live-run).
 
 test_r1_gate_transparency.py's AC-7 coverage is SB-only (Jinja-rendered
 sb_withheld cards). Asset Swaps and Logic Changes render their Evaluate
@@ -7,6 +8,20 @@ static/ai_advisor_logic_changes.js) — not Jinja — so the equivalent
 "rejection reasons are distinguishable" requirement has to be proven at the
 route-JSON level (per team-lead's approval, msg a434a3a3: "the two JS
 surfaces need route-JSON-field tests").
+
+**Checkpoint-3 BLOCK continuation (team-lead ruling):** the SB Jinja
+coverage above proves the PERSISTED-history render path only. The SB
+LIVE-RUN JSON response (`POST /ai-advisor/strategy-builder/run`, consumed
+by `sbRunAnalysis()` in static/ai_advisor.js — see
+test_r1_sb_live_run_field_consumption.py) is a DIFFERENT surface and was
+never covered: `_gate_result_to_dict` (app.py, shared by this route's
+`survivors_list` and `rejected_list`) never serializes `rejection_reason`
+at all today, confirmed independently by both r1-fe and r1-test by direct
+read. Wiring the JS to reference `r.rejection_reason` without this route
+fix would be a false-GREEN — the field would be `undefined` on every real
+run. The "Strategy Builder — live-run route JSON" section below closes
+that gap, mirroring the Asset-Swaps/Logic-Changes sections' structure
+exactly.
 
 CONFIRMED BY READING app.py DIRECTLY BEFORE WRITING:
   - `grep -n "rejection_reason" app.py` returns ZERO matches — the field is
@@ -320,4 +335,100 @@ def test_ac7_logic_change_evaluate_survivor_carries_no_rejection_reason():
     assert top is None and nested is None, (
         f"AC-7 REGRESSION: a survivor carries a non-null rejection_reason "
         f"(top={top!r}, nested={nested!r}). Response: {body}"
+    )
+
+
+# ===========================================================================
+# Strategy Builder — POST /ai-advisor/strategy-builder/run (LIVE-RUN route
+# JSON, distinct from the persisted-history Jinja surface test_r1_gate_
+# transparency.py already covers). Checkpoint-3 BLOCK continuation.
+# ===========================================================================
+
+
+def _sb_run_response(rejection_reason: str | None, *, vetoes_passed: bool = False):
+    import advisors.backtest_gate_engine as bge
+    from advisors.strategy_builder_engine import CandidateInfo, ProposalRun
+
+    gr = _gate_result(
+        bge,
+        rejection_reason=rejection_reason,
+        vetoes_passed=vetoes_passed,
+        candidate_id="sb-cand",
+    )
+    info = CandidateInfo(candidate_id="sb-cand", tree={}, template_id="built-new", params={})
+    run = ProposalRun(
+        candidates=[info],
+        gated_batch=bge.GatedBatch(
+            results=[gr],
+            survivors=[gr] if rejection_reason is None else [],
+            n_candidates=1,
+            fdr_q=0.05,
+        ),
+        screened_survivors=[gr] if rejection_reason is None else [],
+        observations_written=0,
+    )
+
+    with (
+        patch("advisors.strategy_builder_engine.propose_strategies", return_value=run),
+        patch("advisors.build_plan_generator.load_atlas_candidates", return_value=[]),
+    ):
+        import app as app_module
+
+        app_module.app.config["TESTING"] = True
+        with app_module.app.test_client() as c:
+            resp = c.post(
+                "/ai-advisor/strategy-builder/run", json={"objective": "diversify", "universe": []}
+            )
+    assert resp.status_code == 200
+    return resp.get_json()
+
+
+def test_ac7_sb_run_response_carries_pbo_veto_rejection_reason():
+    """MUST FAIL pre-fix: SB's own _gate_result_to_dict (shared by
+    survivors_list and rejected_list) has no rejection_reason key at all —
+    confirmed by direct read by both r1-fe and r1-test independently."""
+    body = _sb_run_response("pbo_veto")
+    rejected = body.get("rejected") or []
+    assert rejected and rejected[0].get("rejection_reason") == "pbo_veto", (
+        f"AC-7 GAP: SB run response's rejected-candidate entry carries no "
+        f"pbo_veto rejection_reason. Response: {body}"
+    )
+
+
+def test_ac7_sb_run_response_carries_oos_inferior_to_incumbent_rejection_reason():
+    """The real 4th honest class, SB live-run sibling."""
+    body = _sb_run_response("oos_inferior_to_incumbent", vetoes_passed=True)
+    rejected = body.get("rejected") or []
+    assert rejected and rejected[0].get("rejection_reason") == "oos_inferior_to_incumbent", (
+        f"AC-7 GAP: SB run response does not distinguish the OOS-inferior-"
+        f"to-incumbent class. Response: {body}"
+    )
+
+
+def test_ac7_sb_run_distinguishes_pbo_veto_from_below_spy_alpha():
+    """Adversarial core, SB live-run sibling: two DIFFERENT rejection causes
+    must produce two DIFFERENT rejection_reason values — a fix that maps
+    every rejection to one constant string still fails this."""
+    pbo_body = _sb_run_response("pbo_veto")
+    spy_body = _sb_run_response("below_spy_alpha")
+    pbo_rejected = pbo_body.get("rejected") or []
+    spy_rejected = spy_body.get("rejected") or []
+    pbo_reason = pbo_rejected[0].get("rejection_reason") if pbo_rejected else None
+    spy_reason = spy_rejected[0].get("rejection_reason") if spy_rejected else None
+    assert pbo_reason is not None and spy_reason is not None, (
+        f"AC-7 GAP: rejection_reason missing entirely. pbo_body={pbo_body}, spy_body={spy_body}"
+    )
+    assert pbo_reason != spy_reason, (
+        "AC-7 GAP: pbo_veto and below_spy_alpha SB rejections render "
+        f"IDENTICAL rejection_reason ({pbo_reason!r}) — not distinguishable to the operator."
+    )
+
+
+def test_ac7_sb_run_survivor_carries_no_rejection_reason():
+    """Regression guard: a genuine ADOPT_CANDIDATE survivor must NOT carry a
+    fabricated rejection_reason, SB live-run sibling."""
+    body = _sb_run_response(None)
+    survivors = body.get("survivors") or []
+    assert survivors and survivors[0].get("rejection_reason") is None, (
+        f"AC-7 REGRESSION: a SB survivor carries a non-null rejection_reason. Response: {body}"
     )
