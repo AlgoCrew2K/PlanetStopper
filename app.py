@@ -4428,6 +4428,22 @@ def ai_advisor_asset_swaps_evaluate():
     proposal = run_result.proposals[0] if run_result.proposals else None
     gate_result = proposal.gate_result if proposal else None
 
+    # AC-9 (r1-review Checkpoint-3 BLOCK finding): the low_power BOOLEAN was
+    # already wired into gate_result above, but the actual CAVEAT TEXT was
+    # never appended here — a True flag silently present in JSON, never
+    # surfaced as operator-readable text, does not satisfy "survivor cards
+    # carry a statistical-power caveat" (mirrors the SB route's existing
+    # post-processing loop). Additive on a genuine survivor only — a
+    # rejected candidate's fold length is moot, it didn't clear the gate
+    # either way.
+    _caveats = _n1_honest_caveats(proposal.caveats if proposal else None)
+    if (
+        gate_result
+        and gate_result.verdict.decision == "ADOPT_CANDIDATE"
+        and _low_power(getattr(gate_result, "validation_days", None))
+    ):
+        _caveats.append(_LOW_POWER_CAVEAT)
+
     return jsonify(
         {
             # Run-level fields (AC-2.5: always expose the message so zero-survivors is explicit)
@@ -4463,8 +4479,9 @@ def ai_advisor_asset_swaps_evaluate():
             else None,
             # Caveats (mandatory for survivors — SURVIVOR_OVERFITTING_CAVEAT),
             # N=1-honest per AC-6: FDR/Yekutieli branding stripped, replaced
-            # with the real single-candidate disclosure.
-            "caveats": _n1_honest_caveats(proposal.caveats if proposal else None),
+            # with the real single-candidate disclosure; low-power text
+            # appended above when applicable (AC-9).
+            "caveats": _caveats,
             # Apply guidance — plain text, no button (AC-X1)
             "apply_guidance": proposal.apply_guidance if proposal else "",
             # AC-9c: translate raw nginx 413 HTML to a clean operator message.
@@ -4622,6 +4639,9 @@ def ai_advisor_logic_changes_evaluate():
             "validation_days": gr.validation_days if gr else None,
             "oos_alpha": gr.oos_alpha if gr else None,
             "winner_p_adj": gr.winner_p_adj if gr else None,
+            # AC-9: statistical-power flag, threshold in app.py only — never
+            # duplicated client-side.
+            "low_power": _low_power(getattr(gr, "validation_days", None)) if gr else False,
             # AC-7: pbo_veto / below_spy_alpha / oos_inferior_to_incumbent /
             # fdr_not_winner / None — the granular cause, distinct from the
             # coarse gate_reason title above (which collapses all veto
@@ -4639,6 +4659,17 @@ def ai_advisor_logic_changes_evaluate():
             "data_warnings": p.data_warnings,
         }
 
+    # AC-9 (r1-review Checkpoint-3 BLOCK finding): low_power's BOOLEAN was
+    # already computed above, but the caveat TEXT was never appended to any
+    # survivor's caveats list on this route. Additive on survivors_detail
+    # only — mirrors the SB route's identical post-processing loop
+    # (app.py's SB _gate_result_to_dict caller) — a rejected candidate's
+    # fold length is moot, it didn't clear the gate either way.
+    _survivors_detail = [_proposal_to_dict(p) for p in run_result.survivors]
+    for _survivor in _survivors_detail:
+        if _survivor["low_power"]:
+            _survivor["caveats"] = [*_survivor["caveats"], _LOW_POWER_CAVEAT]
+
     try:
         return jsonify(
             {
@@ -4647,7 +4678,7 @@ def ai_advisor_logic_changes_evaluate():
                 "survivors": len(run_result.survivors),
                 "no_api_key": run_result.no_api_key,
                 # Proposal detail for rendering
-                "survivors_detail": [_proposal_to_dict(p) for p in run_result.survivors],
+                "survivors_detail": _survivors_detail,
                 "rejected_detail": [_proposal_to_dict(p) for p in run_result.rejected_candidates],
                 # Gate verdict shortcut (for tests that check flat gate_decision key)
                 "gate_decision": gate_result.verdict.decision if gate_result else None,
