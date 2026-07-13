@@ -165,13 +165,22 @@ Evaluate advisor-suggested objective-directed swap candidates (AC-2.2). Generate
 class SwapObjective:
     objective_type: str   # "reduce_correlation" | "reduce_drawdown" | "lift_risk_adjusted"
     target_pair: tuple[str, str] | None  # Symphony IDs/tickers for correlation objectives
-    measured_value: float  # Display-only value embedded in the generated rationale text
-                            # (e.g. "the measured 0.00 correlation"). Does NOT influence
-                            # candidate generation or ranking. Every current production
-                            # caller (app.py:4308) passes 0.0 (never a live measurement) —
-                            # see ADVISOR-INTENT-AUDIT.md F7. See docs/generated/
-                            # advisors_logic_change_engine.md for the identical pattern
-                            # in Logic Changes.
+    measured_value: float  # Corrected 2026-07-13 (AC-10, df4e1eee + 7420b33f,
+                            # advisor-intent audit F7). Display-only; does NOT
+                            # influence candidate generation, ranking, or gate
+                            # decisions. AC-10's shipped remediation REMOVED
+                            # the "measured X" phrase from _build_objective_
+                            # rationale's output entirely (not merely marked
+                            # display-only) -- the field is no longer rendered
+                            # anywhere in this engine's rationale text. Every
+                            # current production caller (app.py:4308) passes
+                            # 0.0 -- never a live measurement. See docs/
+                            # generated/advisors_logic_change_engine.md for
+                            # the identical pattern + a residual gap this
+                            # doc-writer found (logic_change_engine.py's
+                            # generate_objective_directed_logic_candidates
+                            # still fabricates the phrase; asset_swap_engine.py
+                            # has no equivalent second fabrication site).
 ```
 
 ### `SwapProposalResult`

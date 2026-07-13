@@ -3,7 +3,7 @@
 > M4 Logic-Change proposal engine: operator-initiated (plain-text or explicit `LogicTweak`) and advisor-suggested (objective-directed) parameter-tweak proposals for a symphony's decision tree, gated through the shared M2 BHY/FDR batch gate; advise-only, never auto-applies.
 
 **Source:** `advisors/logic_change_engine.py`
-**Last updated:** 2026-07-12 (Workstream C.1, advisor-rewire cycle — first production caller added; engine itself unchanged)
+**Last updated:** 2026-07-13 (advisor-remediation-r1, DE-ADVISOR-R1-001, AC-10 — measured_value honesty + AC-4/5 PBO/SPY gate-strength parity)
 
 ## Overview
 
@@ -43,7 +43,7 @@ Typed objective driving a logic-change search (Gate-1 Resolution #2 — every ch
 | Field | Type | Description |
 |-------|------|-------------|
 | `objective_type` | `str` | One of `"reduce_drawdown"`, `"lift_risk_adjusted"`, `"reduce_turnover"`, `"improve_momentum_timing"`, `"reduce_whipsaw"`, or any other named objective |
-| `measured_value` | `float` | The live backtest measurement driving this objective (e.g. current max-drawdown, current Sharpe) — never a hardcoded heuristic |
+| `measured_value` | `float` | **Corrected 2026-07-13 (AC-10, `df4e1eee` + `7420b33f`, advisor-intent audit F7).** Display-only value; does NOT influence tweak generation, ranking, or gate decisions — the tweak generator selects by `objective.objective_type` alone. **The "measured X" phrase has been REMOVED entirely from `_build_objective_rationale`'s output across every branch** (not merely display-only as originally proposed — AC-10's actual shipped remediation choice was to drop the fabricated statistic rather than keep displaying it). Every current production caller (`app.py`'s operator-evaluate route) passes `0.0` — never a live measurement. **Known residual gap (this doc-writer, verified via call-path check, not covered by either AC-10 commit):** a SEPARATE function, `generate_objective_directed_logic_candidates`'s `change_description` builder (`logic_change_engine.py:494-529`), still fabricates the identical "measured X" phrase across all 6 of its objective-type branches — no production caller was found for this function via a whole-worktree grep, so it is not currently reaching the operator on a verified reachable path, but it is a genuine leftover instance of the exact pattern F7 named. See `DECISIONS.md` `DE-ADVISOR-R1-001` §AC-10. |
 | `rationale` | `str` | Human-readable explanation surfaced alongside every survivor (AC-3.3); default `""` |
 
 ### `LogicChangeProposalResult` (dataclass) — alias `LogicProposalResult`

@@ -3,7 +3,7 @@
 > M2 backtest-and-gate engine: fold-transforms Composer backtest return series into walk-forward folds and runs batch BHY/Yekutieli FDR + acceptance gate over the full candidate set; C5b (2026-06-20) adds batch PBO veto and real SPY-OOS-fold baseline; AC-D3 (2026-07-12) fixes candidate-order dependence in the bootstrap seed.
 
 **Source:** `advisors/backtest_gate_engine.py`
-**Last updated:** 2026-07-12 (AC-D3 — stable per-candidate bootstrap seed)
+**Last updated:** 2026-07-13 (advisor-remediation-r1, DE-ADVISOR-R1-001 — AC-17 panel-tie neutralization + AC-7b 4th rejection class + AC-4/5 gate-strength parity for Asset Swaps/Logic Changes)
 
 ## Overview
 
@@ -95,18 +95,21 @@ Gate result for one candidate.
 | `oos_alpha` | `float` | Sum of validation-fold daily returns (percent) |
 | `caveats` | `list[str]` | Plain-text caveats; always non-empty for `ADOPT_CANDIDATE` |
 | `winner_p_adj` | `float \| None` | BHY-adjusted p-value for this candidate (audit trail) |
-| `rejection_reason` | `str \| None` | **C5b.** Why the candidate was culled, or `None` for survivors. Deterministic stage-order precedence — see below. On SPY-unavailable, withheld candidates carry `"below_spy_alpha"` (the `+inf` sentinel makes the alpha-gate clause always-true). |
+| `rejection_reason` | `str \| None` | **C5b + AC-7b.** Why the candidate was culled, or `None` for survivors. FOUR possible non-`None` values as of AC-7b (2026-07-13, `3fa2e7f8`): `pbo_veto`, `below_spy_alpha`, `fdr_not_winner`, `oos_inferior_to_incumbent`. Deterministic stage-order precedence — see below. On SPY-unavailable, withheld candidates carry `"below_spy_alpha"` (the `+inf` sentinel makes the alpha-gate clause always-true). |
 
-#### `rejection_reason` stage-order precedence (C5b, final at f037c83)
+#### `rejection_reason` stage-order precedence (C5b + AC-7b, final at `3fa2e7f8`, 2026-07-13)
 
 The precedence ensures the most-specific cause is recorded. A candidate that triggers multiple gates reports the highest-priority cause:
 
 | Priority | Value | Condition |
 |----------|-------|-----------|
-| 1 (survivor) | `None` | `verdict.decision == "ADOPT_CANDIDATE"` |
-| 2 (Stage-1) | `"pbo_veto"` | `_batch_pbo is not None and _batch_pbo > PBO_REJECT_THRESHOLD` |
-| 3 (Stage-2) | `"below_spy_alpha"` | `spy_returns_fn is not None and fold.oos_alpha <= _effective_default_oos_alpha` — also fires on SPY-unavailable (sentinel is `+inf`, always-true for finite alpha) |
-| 4 (catch-all) | `"fdr_not_winner"` | BHY non-winner, nn1 failure, purge failure, or thin-window |
+| 1 (highest) | `"pbo_veto"` | `_batch_pbo is not None and _batch_pbo > PBO_REJECT_THRESHOLD` |
+| 2 | `"below_spy_alpha"` | `spy_returns_fn is not None and fold.oos_alpha <= _effective_default_oos_alpha` — also fires on SPY-unavailable (sentinel is `+inf`, always-true for finite alpha) |
+| 3 | `"fdr_not_winner"` | **EXPLICIT `this_winner_trial_is_none` check** (AC-7b, `3fa2e7f8` — no longer a blind catch-all): BHY non-winner, nn1 failure, purge failure, or thin-window |
+| 4 (new, AC-7b) | `"oos_inferior_to_incumbent"` | The candidate IS the BHY winner (`this_winner_trial_is_none` is False) but still loses the OOS-superiority comparison against the incumbent (`acceptance_gate.py:257`). |
+| 5 (lowest — survivor) | `None` | `verdict.decision == "ADOPT_CANDIDATE"` |
+
+**AC-7b fix (`3fa2e7f8`, per the audit's F6 finding):** pre-fix, priority-4 candidates were MISLABELED `"fdr_not_winner"` — a genuine FDR winner that lost only on OOS-superiority was indistinguishable, in every persisted record and rendered UI surface, from a true BHY non-winner. The former blind `"fdr_not_winner"` catch-all is now an EXPLICIT `this_winner_trial_is_none` check; a candidate that IS the winner but still loses to the incumbent gets the new `"oos_inferior_to_incumbent"` token instead.
 
 PBO veto (`pbo_veto`) dominates `below_spy_alpha` because PBO is the `acceptance_gate` Stage-1 hard veto — a high-PBO batch is too sample-dependent to consider further, regardless of alpha. A candidate that is both high-PBO and below-SPY reports `"pbo_veto"` so the operator can see which gate fired first.
 
@@ -149,11 +152,22 @@ Step 1: _fold_transform_single per candidate (60/20/20 + purge)
 Step 2: compute_sortino_tstat per candidate (seed=_stable_seed_from_candidate_id(cand.candidate_id) — AC-D3, see below)
 Step 3: BHY/Yekutieli FDR over full batch (n_effective = N)
 Step 4: BHY winner = argmin p_adj over veto-eligible candidates
+Step 4.5 (AC-17, 2026-07-13): panel-tie neutralization when both
+         candidate_params and incumbent_params are structurally empty
+         (see "Panel-Tie Neutralization" below)
 Step 5: evaluate_acceptance_gate per candidate (pbo=_batch_pbo, default_oos_alpha=_effective_default_oos_alpha)
-        → rejection_reason cascade (pbo_veto > below_spy_alpha > fdr_not_winner)
+        → rejection_reason cascade (pbo_veto > below_spy_alpha > fdr_not_winner > oos_inferior_to_incumbent)
 ```
 
-**FDR integrity invariant:** `evaluate_candidate_batch` must receive ALL successfully-backtested candidates — built-new (Opus) and Atlas-suggested together — in one call. Screens NEVER shrink the gate input. `n_effective = len(candidates)` is the honest multiple-testing count; raising N raises the correction bar.
+**FDR integrity invariant:** `evaluate_candidate_batch` must receive ALL successfully-backtested candidates — built-new/Fable-generated and Atlas-suggested together — in one call. Screens NEVER shrink the gate input. `n_effective = len(candidates)` is the honest multiple-testing count; raising N raises the correction bar. **Gate-strength parity across all three advisor engines, closed 2026-07-13 (AC-4/5, `82479560`):** this invariant, the PBO veto, and the SPY-relative OOS baseline documented above were previously wired ONLY for Strategy Builder's `evaluate_candidate_batch` call sites — Asset Swaps and Logic Changes passed neither `dated_returns=` nor `spy_returns_fn=`, so their PBO veto could never fire and their OOS baseline was "beats a flat 0.0% return," not SPY-relative (the advisor-intent audit's F2 finding). **This gap is now closed:** `dated_returns=` is threaded into `BacktestCandidate` construction at the single `_evaluate_single_variant` site shared by both engines (reaching every real gate call, operator N=1 and weekly batch alike, automatically); a new `_spy_returns_fn_for(symphony_id)` helper in both engines (mirroring `strategy_builder_engine.py:807-826`) is wired at all 4 real gate calls (`asset_swap_engine.py`'s `propose_operator_swap` + `suggest_swaps`, `logic_change_engine.py`'s `propose_operator_logic_change` + `suggest_logic_changes`). All three engines now gate on genuinely equivalent statistical machinery. The `_PBO_MIN_CONFIGS=2` guard (audit-proved load-bearing — K=1 -> PBO=1.0 always -> would veto everything) is untouched, so PBO stays structurally `None` at N=1 (the operator's single-candidate Evaluate buttons) as designed. See `DECISIONS.md` `DE-ADVISOR-R1-001` §AC-4..6 for the full record.
+
+## Panel-Tie Neutralization (AC-17, 2026-07-13, `3fa2e7f8`)
+
+**The defect this closes:** all three advisor engines construct `BacktestCandidate` with structurally empty `candidate_params`/`incumbent_params`/`theory_prior_params` on every real production path. This made `candidate_panel_score` the CONSTANT `0.5` against the incumbent's CONSTANT `0.75` (hardcoded `inc_stability=1.0`) — so the panel-comparison clause in `acceptance_gate.py` was **false unconditionally, regardless of actual candidate OOS performance.** `ADOPT_CANDIDATE` was mathematically unreachable on every reachable production path until this fix (advisor-intent audit's finding, PM adjudication @ `ad9b1629`).
+
+**The fix:** when `candidate_params` AND `incumbent_params` are BOTH structurally empty (every current engine construction site builds candidates this way), `cand_stability` is tied to `inc_stability` (an exact tie) instead of falling through to `_compute_parameter_stability_score`'s asymmetric-neutral fallback. The adoption decision then rests entirely on the OOS-superiority precondition (`acceptance_gate.py:257`) plus the three hard vetoes (BHY winner, PBO, SPY baseline). Requires BOTH sides empty — a one-side-empty shape (a caller bug) does NOT trigger the tie. `panel_breakdown` carries `{"note": "not applicable — no parameter-vector representation"}` (the `_PANEL_NA_NOTE` constant) whenever the tie condition fired, REGARDLESS of the eventual decision, so a downstream reader is never misled into thinking a real panel score was evaluated. **Deliberately NOT fixed by populating real params instead** — real params without a real theory-prior require `stability >= 1.0`, satisfiable only by zero-change candidates; that path was ruled out algebraically, not merely deprioritized. `acceptance_gate.py` and `autotuner.py` received ZERO diff for this fix — it is contained entirely to this module.
+
+**[PM-ASSUMED] marker (operator may overrule):** this changes the advisor suite's adoption semantics — candidates can now actually be adopted where none ever could before. See `DECISIONS.md` `DE-ADVISOR-R1-001` §AC-17 for the full proof, the narrative-correction this forces (the long-standing "0 survivors is expected — the gate is intentionally strict" explanation was incomplete; structural unreachability was the dominant cause, gate strictness secondary), and the doc-tree sweep this proof triggered.
 
 **C5b batch PBO details (AC-24):**
 
@@ -173,7 +187,7 @@ Step 5: evaluate_acceptance_gate per candidate (pbo=_batch_pbo, default_oos_alph
 
 **Atlas parity (AC-26):**
 
-Atlas community candidates and built-new (Opus) candidates flow through the SAME call, receive the SAME batch PBO, the SAME SPY-fold baseline, and the SAME BHY/Yekutieli FDR correction. Advertised community `oos_metrics` are structurally inert in the gate (parameter stability scoring only float-coerces shared param keys; dict metrics never influence survival). Identical fresh return series produce identical gate verdicts regardless of provenance.
+Atlas community candidates and built-new (accessor-driven, currently Fable per AC-16, `model_config.get_advisor_suggestion_model()`) candidates flow through the SAME call, receive the SAME batch PBO, the SAME SPY-fold baseline, and the SAME BHY/Yekutieli FDR correction. Advertised community `oos_metrics` are structurally inert in the gate (parameter stability scoring only float-coerces shared param keys; dict metrics never influence survival). Identical fresh return series produce identical gate verdicts regardless of provenance.
 
 ## Bug Fix — Order-Dependent Bootstrap Seed (AC-D3, 2026-07-12)
 
