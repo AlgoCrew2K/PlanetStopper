@@ -4743,12 +4743,19 @@ def ai_advisor_strategy_builder_run():
         _daemon_log.warning("community-strats load skipped: %s", type(exc).__name__)
         community_candidates = []
 
+    # AC-12: no live-portfolio return series is available at route time (this
+    # route is not necessarily symphony-scoped — symphony_id is optional).
+    # Rather than silently skipping the drawdown/Pearson screens (sbe.py:746-749),
+    # the response carries an explicit screens_skipped indicator below so the
+    # operator knows those screens did not run this batch.
+    _live_returns: list[float] = []
+
     try:
         run = propose_strategies(
             objective=objective,
             universe=universe,
             screen_config=ScreenConfig(),
-            live_returns=[],
+            live_returns=_live_returns,
             symphony_id=symphony_id,
             community_candidates=community_candidates,
         )
@@ -4831,6 +4838,12 @@ def ai_advisor_strategy_builder_run():
             "n_candidates": gate_batch.n_candidates if gate_batch else 0,
             "fdr_adjusted_threshold": fdr_adjusted_threshold,
             "error": None,
+            # AC-12: honest indicator when live_returns is empty — the drawdown/
+            # Pearson screens (sbe.py:746-749) do not run without it.
+            "screens_skipped": not bool(_live_returns),
+            "screens_skipped_reason": (
+                "no live returns at route time" if not _live_returns else None
+            ),
         }
     ), 200
 

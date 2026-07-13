@@ -376,7 +376,10 @@ def _generate_candidate_trees(
         # C3 — compile each plan; drop uncompilable ones, keep the run going.
         candidates: list[CandidateInfo] = []
         for plan in result.plans:
-            compile_result = _compiler.compile_plan(plan)
+            # AC-12: thread the real backtest seam so compile_plan's tradeability-
+            # repair loop (dead when backtest_fn defaults to None) is live on this
+            # reachable path — revives the AC-16 repair loop at plan_tree_compiler.py:379.
+            compile_result = _compiler.compile_plan(plan, backtest_fn=run_backtest)
             if compile_result.tree is None:
                 # Drop: market_cap-deprecated, validate_tree hard error, or other clean drop.
                 logger.debug(
