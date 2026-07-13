@@ -704,14 +704,16 @@ def _build_objective_rationale(
     Each candidate stands on its own merits — no ranked single-winner verdict.
     """
     obj_type = objective.objective_type
-    measured = objective.measured_value
+    # AC-10: measured_value is display-only and every current production caller
+    # passes 0.0 (see SwapObjective's docstring) — no branch below references it
+    # anymore, so it is not read here.
     pair = objective.target_pair
 
     if obj_type == "reduce_correlation":
         pair_str = f"{pair[0]} and {pair[1]}" if pair else "the correlated pair"
         base = (
             f"Replacing {incumbent_asset} with {candidate_asset} addresses the "
-            f"{measured:.2f} correlation between {pair_str}. "
+            f"correlation between {pair_str}. "
             f"{candidate_asset} is expected to exhibit lower correlation with the pair "
             f"based on objective-directed candidate scoring."
         )
@@ -724,13 +726,13 @@ def _build_objective_rationale(
     elif obj_type == "lift_risk_adjusted":
         base = (
             f"Replacing {incumbent_asset} with {candidate_asset} aims to lift "
-            f"risk-adjusted return from the measured Sharpe of {measured:.2f}. "
-            f"{candidate_asset} was scored as a higher risk-adjusted candidate."
+            f"risk-adjusted return. {candidate_asset} was scored as a higher "
+            f"risk-adjusted candidate."
         )
     else:
         base = (
-            f"Replacing {incumbent_asset} with {candidate_asset} per the stated objective "
-            f"({obj_type}, measured_value={measured})."
+            f"Replacing {incumbent_asset} with {candidate_asset} per the stated "
+            f"objective ({obj_type})."
         )
 
     # Cycle-3 AC-5: append lens evidence summary when available.

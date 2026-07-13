@@ -774,7 +774,9 @@ def generate_objective_directed_candidates(
 def _build_objective_rationale(tweak: LogicTweak, objective: LogicChangeObjective) -> str:
     """Build a human-readable rationale explaining how this tweak addresses the objective."""
     obj_type = objective.objective_type
-    measured = objective.measured_value
+    # AC-10: measured_value is display-only and every current production caller
+    # passes 0.0 (see LogicChangeObjective's docstring) — no branch below
+    # references it anymore, so it is not read here.
 
     if obj_type == "reduce_drawdown":
         return (
@@ -784,30 +786,27 @@ def _build_objective_rationale(tweak: LogicTweak, objective: LogicChangeObjectiv
     elif obj_type == "lift_risk_adjusted":
         return (
             f"Adjusting {tweak.param_key} from {tweak.old_value} to {tweak.new_value} "
-            f"aims to lift risk-adjusted return from the measured Sharpe of {measured:.2f} "
-            f"by widening entry thresholds."
+            f"aims to lift risk-adjusted return by widening entry thresholds."
         )
     elif obj_type == "reduce_turnover":
         return (
             f"Adjusting {tweak.param_key} from {tweak.old_value} to {tweak.new_value} "
-            f"targets reduction of turnover (signal-change rate: {measured:.2f}) by "
-            f"lengthening the lookback window."
+            f"targets reduction of turnover by lengthening the lookback window."
         )
     elif obj_type == "improve_momentum_timing":
         return (
             f"Adjusting {tweak.param_key} from {tweak.old_value} to {tweak.new_value} "
-            f"aims to improve momentum timing (measured: {measured:.2f}) by shortening "
-            f"the lookback window."
+            f"aims to improve momentum timing by shortening the lookback window."
         )
     elif obj_type == "reduce_whipsaw":
         return (
             f"Adjusting {tweak.param_key} from {tweak.old_value} to {tweak.new_value} "
-            f"reduces whipsaw (signal rate: {measured:.2f}) by extending the lookback window."
+            f"reduces whipsaw by extending the lookback window."
         )
     else:
         return (
             f"Adjusting {tweak.param_key} from {tweak.old_value} to {tweak.new_value} "
-            f"per the stated objective ({obj_type}, measured_value={measured})."
+            f"per the stated objective ({obj_type})."
         )
 
 
