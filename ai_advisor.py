@@ -26,6 +26,7 @@ import requests.exceptions
 from pydantic import BaseModel
 
 import database
+import model_config
 import symphony_logic
 
 logger = logging.getLogger(__name__)
@@ -1757,7 +1758,7 @@ def request_suggestions(
     # .parsed_output (see the extraction loop below).
     try:
         sdk_response = client.messages.parse(
-            model=os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8"),
+            model=model_config.get_advisor_suggestion_model(),
             max_tokens=_MAX_TOKENS,
             output_format=ConfigSuggestionsResponse,
             messages=_build_messages(context),

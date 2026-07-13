@@ -55,6 +55,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import database
+from advisors import symphony_schema
 from advisors.backtest_gate_engine import (
     HARVEY_LIU_FDR_Q,
     SURVIVOR_OVERFITTING_CAVEAT,
@@ -868,6 +869,29 @@ def _persist_observation(
 # ---------------------------------------------------------------------------
 
 
+def _spy_returns_fn_for(symphony_id: str):
+    """Source a real SPY OOS-fold baseline once (AC-5/AC-25), mirroring
+    strategy_builder_engine.py:807-826. Returns a zero-arg callable suitable
+    for evaluate_candidate_batch's spy_returns_fn= seam. A 100%-SPY tree is
+    the minimal valid Composer tree for a pure SPY backtest — same
+    run_backtest client used for candidates, no new endpoint. On SPY-fetch
+    error or an empty daily_returns series the callable returns {} so the
+    gate's conservative +inf-sentinel WITHHOLD fires (edge-14) instead of a
+    silent fall-back to the old beats-a-flat-0.0%-return baseline."""
+    spy_tree = symphony_schema.make_root(
+        "SPY Benchmark",
+        "daily",
+        [symphony_schema.make_weight_equal([symphony_schema.make_asset("SPY")])],
+    )
+    spy_result = run_backtest(spy_tree, symphony_id=symphony_id)
+    if spy_result.error or not spy_result.daily_returns:
+        spy_returns_dict: dict[str, float] = {}
+    else:
+        # Pct-scale matches dated_returns on candidates (log × 100 → pct).
+        spy_returns_dict = {d: r * 100.0 for d, r in spy_result.daily_returns.items()}
+    return lambda: spy_returns_dict
+
+
 def _evaluate_single_variant(
     raw_value: dict,
     symphony_id: str,
@@ -877,12 +901,16 @@ def _evaluate_single_variant(
 ) -> tuple:
     """Backtest a single logic-change variant.
 
-    Returns (BacktestCandidate | None, LogicChangeProposalResult, baseline_stats | None).
+    Returns (BacktestCandidate | None, LogicChangeProposalResult, baseline_stats | None, baseline_returns_pct).
 
     - candidate is None when the variant backtest failed or the tweak is structurally
       invalid (AC-X5).
     - proposal has backtest_error set on failure.
     - baseline_stats is the stats dict from the baseline (or None on failure).
+    - baseline_returns_pct is the baseline's daily log-returns converted to
+      percent scale (or [] when the baseline was never backtested — the
+      tweak-not-found branch, before any backtest call). AC-13: callers reuse
+      this instead of re-backtesting the identical baseline tree a second time.
     """
     candidate_id = _make_candidate_id(symphony_id, tweak)
     rationale = _build_objective_rationale(tweak, objective)
@@ -914,11 +942,16 @@ def _evaluate_single_variant(
                 ),
             ),
             None,
+            [],
         )
 
     # Backtest baseline.
     baseline_result = run_backtest(raw_value, symphony_id=symphony_id)
     baseline_stats = baseline_result.stats
+    # AC-13: computed once here, returned to the caller so
+    # propose_operator_logic_change can reuse it instead of a second,
+    # redundant baseline backtest.
+    baseline_returns_pct = [r * 100.0 for r in baseline_result.daily_returns.values()]
 
     # Backtest variant (AC-X5: failure here is isolated to this candidate).
     variant_result = run_backtest(variant_tree, symphony_id=symphony_id)
@@ -938,10 +971,14 @@ def _evaluate_single_variant(
                 data_warnings=variant_result.data_warnings,
             ),
             baseline_stats,
+            baseline_returns_pct,
         )
 
     # Convert log-returns → percent for the fold-transform (same contract as M3).
     variant_returns_pct = [r * 100.0 for r in variant_result.daily_returns.values()]
+    # AC-4: date-keyed pct-scale returns enable the batch PBO veto (mirrors
+    # strategy_builder_engine.py:843).
+    dated_returns_pct = {d: r * 100.0 for d, r in variant_result.daily_returns.items()}
 
     bt_candidate = BacktestCandidate(
         candidate_id=candidate_id,
@@ -951,6 +988,7 @@ def _evaluate_single_variant(
         theory_prior_params={},
         nn1_compliant=True,
         purge_integrity_ok=True,
+        dated_returns=dated_returns_pct,
     )
 
     proposal_shell = LogicChangeProposalResult(
@@ -965,7 +1003,7 @@ def _evaluate_single_variant(
         data_warnings=variant_result.data_warnings,
     )
 
-    return (bt_candidate, proposal_shell, baseline_stats)
+    return (bt_candidate, proposal_shell, baseline_stats, baseline_returns_pct)
 
 
 # ---------------------------------------------------------------------------
@@ -1276,7 +1314,7 @@ def propose_operator_logic_change(
             objective=objective,
         )
 
-    bt_candidate, proposal_shell, _baseline_stats = _evaluate_single_variant(
+    bt_candidate, proposal_shell, _baseline_stats, baseline_returns_pct = _evaluate_single_variant(
         raw_value=score_tree,
         symphony_id=symphony_id,
         tweak=tweak,
@@ -1285,6 +1323,9 @@ def propose_operator_logic_change(
     )
 
     # Backtest failed or tree structurally invalid — zero candidates to gate.
+    # Empty-branch site (AC-5 exempt, audit-verified at
+    # backtest_gate_engine.py:627-633 — evaluate_candidate_batch returns before
+    # spy_returns_fn is ever read when candidates=[]).
     if bt_candidate is None:
         gate_batch = evaluate_candidate_batch(
             [],
@@ -1305,18 +1346,21 @@ def propose_operator_logic_change(
     # the candidate's validation-fold alpha against the incumbent's SAME fold, not
     # against a full-history sum (which biases the gate to systematic KEEP_INCUMBENT).
     # H5: an explicit incumbent_oos_alpha (incl. 0.0) is honoured; only None falls back.
-    baseline_returns = _backtest_returns_from_tree(score_tree, symphony_id)
-    baseline_returns_pct = [r * 100.0 for r in baseline_returns]
+    # AC-13: reuses the baseline_returns_pct already computed by
+    # _evaluate_single_variant instead of a second, redundant baseline backtest.
     fold_baseline_oos_alpha = _fold_transform_single(baseline_returns_pct).oos_alpha
     effective_incumbent_oos_alpha = (
         incumbent_oos_alpha if incumbent_oos_alpha is not None else fold_baseline_oos_alpha
     )
 
     # Gate as a single-element batch (AC-3.2: ALL N candidates in one batch call).
+    # AC-5: real SPY-OOS baseline sourced once here (real gate call — not the
+    # empty-branch site above).
     gate_batch = evaluate_candidate_batch(
         [bt_candidate],
         incumbent_oos_alpha=effective_incumbent_oos_alpha,
         default_oos_alpha=default_oos_alpha,
+        spy_returns_fn=_spy_returns_fn_for(symphony_id),
     )
     gate_result = gate_batch.results[0]
 
@@ -1440,7 +1484,7 @@ def suggest_logic_changes(
     proposal_shells = []
 
     for tweak in candidate_tweaks:
-        bt_cand, proposal_shell, _ = _evaluate_single_variant(
+        bt_cand, proposal_shell, _, _ = _evaluate_single_variant(
             raw_value=score_tree,
             symphony_id=symphony_id,
             tweak=tweak,
@@ -1453,6 +1497,9 @@ def suggest_logic_changes(
 
     # Derive incumbent OOS alpha from baseline (once for the batch).
     # H6/RC-1: fold-matched baseline (see propose_operator_logic_change). H5: explicit-0.0 safe.
+    # (This per-symphony weekly baseline call is separate from the per-candidate
+    # baseline calls inside _evaluate_single_variant above — AC-13 is scoped to
+    # the operator single-eval route only, per audit D-7; not touched here.)
     baseline_returns = _backtest_returns_from_tree(score_tree, symphony_id)
     baseline_returns_pct = [r * 100.0 for r in baseline_returns]
     fold_baseline_oos_alpha = _fold_transform_single(baseline_returns_pct).oos_alpha
@@ -1463,10 +1510,12 @@ def suggest_logic_changes(
     # AC-3.2 CRITICAL: gate ALL successfully-backtested candidates as ONE batch.
     # This is the multiple-testing correction.  Never gate individually.
     if bt_candidates:
+        # AC-5: real SPY-OOS baseline sourced once for the whole weekly batch.
         gate_batch = evaluate_candidate_batch(
             bt_candidates,
             incumbent_oos_alpha=effective_incumbent_oos_alpha,
             default_oos_alpha=default_oos_alpha,
+            spy_returns_fn=_spy_returns_fn_for(symphony_id),
         )
         gate_result_by_id = {gr.candidate_id: gr for gr in gate_batch.results}
     else:

@@ -64,6 +64,8 @@ import math
 import os
 from dataclasses import dataclass, field
 
+import model_config
+
 # Re-export so the AC-12 bound tests can resolve it from this module.
 from advisors.strategy_builder_engine import (  # noqa: F401
     MAX_COMMUNITY_CANDIDATES_PER_RUN,
@@ -1076,7 +1078,7 @@ def generate_build_plans(
         response = None
         for _attempt in range(MAX_GENERATION_ATTEMPTS):
             response = client.messages.create(
-                model="claude-opus-4-8",
+                model=model_config.get_advisor_suggestion_model(),
                 max_tokens=MAX_OUTPUT_TOKENS,
                 tools=[_EMIT_BUILD_PLANS_TOOL],
                 tool_choice={"type": "tool", "name": "emit_build_plans"},
