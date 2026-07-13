@@ -28,6 +28,7 @@ import ai_advisor
 import analytics
 import database
 import market_calendar
+import model_config
 from market_calendar import get_market_state
 
 _ET = ZoneInfo("America/New_York")
@@ -3849,6 +3850,29 @@ def _n1_honest_caveats(caveats: "list[str] | None") -> list[str]:
     return filtered
 
 
+# AC-1/AC-2/AC-3/AC-16 (attribution honesty + coherence): every model-name
+# badge/copy string in the AI Advisor UI reads a resolved accessor value at
+# render time — never a hardcoded "Opus"/"Fable" literal. This map is
+# display-only humanization (mirrors the map-known/fallback-to-raw idiom in
+# advisors/prism_render.py) — an UNKNOWN model ID (a future model, or a test
+# monkeypatch marker) passes through unchanged rather than being dropped, so
+# a new model or a test fixture can never silently vanish from the badge.
+_MODEL_DISPLAY_NAMES = {
+    "claude-opus-4-8": "Claude Opus 4.8",
+    "claude-opus-4-7": "Claude Opus 4.7",
+    "claude-sonnet-5": "Claude Sonnet 5",
+    "claude-haiku-4-5": "Claude Haiku 4.5",
+    "claude-fable-5": "Claude Fable 5",
+    "claude-mythos-5": "Claude Mythos 5",
+}
+
+
+def _humanize_model_name(model_id: str) -> str:
+    """Map a raw model ID to a display-ready name; unmapped IDs (a future
+    model, or a test's monkeypatched marker string) pass through unchanged."""
+    return _MODEL_DISPLAY_NAMES.get(model_id, model_id)
+
+
 def _build_verification_count_line(summary: "dict") -> str:
     """Format the MARKET_PRISM_VERIFICATION summary counts into a compact,
     human-readable status line for the Overview tab's Numeric Verification
@@ -4222,6 +4246,17 @@ def ai_advisor_tab():
             # Inject sparkline points directly onto obs for template rendering.
             _obs["sparkline_points"] = _rr.get("equity_curve_downsampled")
 
+    # AC-1/AC-2/AC-3 (attribution honesty): resolved at request time so a
+    # monkeypatch or an env-var change takes effect without a daemon restart —
+    # same pattern as every other accessor-driven value on this page.
+    # ADVISOR_SUGGESTION_MODEL (model_config) drives Strategy Builder's
+    # built-new label + the SB run-controls-note (AC-1/AC-3). ADVISOR_
+    # SYNTHESIS_MODEL (ai_advisor.resolve_advisor_model) drives Chat's badge
+    # + the Market Prism attribution (AC-1/AC-2) — a separate, independent
+    # knob per AC-16.
+    advisor_suggestion_model = _humanize_model_name(model_config.get_advisor_suggestion_model())
+    advisor_synthesis_model = _humanize_model_name(ai_advisor.resolve_advisor_model())
+
     return render_template(
         "ai_advisor.html",
         active_route="advisor",
@@ -4238,6 +4273,8 @@ def ai_advisor_tab():
         sb_card_artifacts=sb_card_artifacts,
         market_prism_summary=market_prism_summary,
         market_prism_verification=market_prism_verification,
+        advisor_suggestion_model=advisor_suggestion_model,
+        advisor_synthesis_model=advisor_synthesis_model,
     )
 
 
