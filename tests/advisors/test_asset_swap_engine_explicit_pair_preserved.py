@@ -110,8 +110,16 @@ def test_explicit_pair_candidate_id_format_byte_preserved(ase, fixture_tree, mon
     )
     assert proposal.incumbent_asset == _REAL_INCUMBENT
     assert proposal.candidate_asset == "AGG"
+    # Byte-preserved pre-R2-3 derivation (advisors/asset_swap_engine.py,
+    # unchanged): symphony_name prefers the REAL tree's own "name" field over
+    # the caller-supplied symphony_id when the tree has one — the fixture
+    # does, so the expected string is derived from fixture_tree["name"]
+    # itself (never a hardcoded guess at what that field happens to contain;
+    # feedback_no_hardcoded_test_values).
+    expected_symphony_name = fixture_tree.get("name") or "sym-1"
     assert proposal.apply_guidance == (
-        f"To apply: open sym-1 in Composer and swap {_REAL_INCUMBENT} → AGG manually."
+        f"To apply: open {expected_symphony_name} in Composer and swap "
+        f"{_REAL_INCUMBENT} → AGG manually."
     ), f"AC-12 GAP: apply_guidance template changed. Got {proposal.apply_guidance!r}."
 
 
