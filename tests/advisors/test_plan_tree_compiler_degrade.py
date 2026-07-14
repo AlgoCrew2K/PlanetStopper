@@ -56,6 +56,17 @@ matching composer_backtest_client.BacktestResult's .error/.stats shape) -- no
 live network, no network-module patching. The math/schema engine
 (symphony_schema.validate_tree, extract_tickers) is imported LIVE and never
 mocked, matching this suite's established discipline.
+
+PROVENANCE (Gate-1): the infra envelope strings below (_http_5xx, _timeout,
+_transport_error, _http_429_exhausted, _invalid_json_200) are format-derived,
+not invented -- test_self_guard_fixture_matches_composer_backtest_client_format
+below is the CANONICAL provenance mechanism: it asserts, via
+inspect.getsource, that the literal f-string templates these helpers
+reproduce are byte-present in advisors/composer_backtest_client.py's real
+source. This is a runtime validator against the live producer (fails on
+producer drift), stronger than a static sidecar fixture file (which only
+fails if someone remembers to update it) -- so no separate JSON fixture is
+checked in; this self-guard IS the fixture-provenance gate.
 """
 
 from __future__ import annotations
@@ -136,8 +147,11 @@ def _tickers_in(raw_value) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
-# Real producer-format envelope strings, reproduced from the fixture (which
-# itself cites composer_backtest_client.py file:line -- no invented shapes).
+# Real producer-format envelope strings, reproduced directly from
+# composer_backtest_client.py's own f-string templates (file:line cited
+# inline below) -- no invented shapes. See
+# test_self_guard_fixture_matches_composer_backtest_client_format for the
+# runtime provenance check against the live producer source.
 # ---------------------------------------------------------------------------
 
 
@@ -184,10 +198,17 @@ def _two_asset_plan() -> dict:
 
 
 def test_self_guard_fixture_matches_composer_backtest_client_format():
-    """Self-guard: our locally-built envelope strings must match the exact
-    shapes composer_backtest_client.run_backtest actually returns (verified
-    by direct read of the source at fixture-cited line numbers). If this
-    fails, every other test in this file is exercising a fabricated shape."""
+    """CANONICAL PROVENANCE MECHANISM for this file's infra envelope helpers
+    (Gate-1: no invented fixture values). Rather than a static sidecar JSON
+    fixture (which only fails if a human remembers to update it),
+    this asserts -- via inspect.getsource -- that the literal f-string
+    templates _http_5xx/_timeout/_transport_error/_http_429_exhausted
+    reproduce are byte-present in the REAL, LIVE advisors/
+    composer_backtest_client.py source. It fails the moment the producer's
+    format drifts, which a checked-in fixture file cannot do. If this test
+    fails, every other test in this file is exercising a fabricated shape --
+    fix the helpers (or this assertion, if the producer format genuinely
+    changed) before trusting anything else here."""
     import inspect
 
     import advisors.composer_backtest_client as client
