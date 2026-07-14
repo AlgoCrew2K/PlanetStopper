@@ -3,7 +3,7 @@
 > Claude-backed config advisor: context assembly, per-symphony assessment, structured-output Claude call via ADVISOR_SYNTHESIS_MODEL, safety gates (7-item allowlist, risk-direction check, OOS re-validation), market-wide lens cache-serve (nightly MARKET_LENS_CACHE bundle; no per-click live lens fetches for the 5 market-wide lens blocks), and the R2-1 `build_reasoning_context` operator-context assembler that feeds Strategy Builder generation (real tree + live stats + lens evidence, with an honest per-source manifest).
 
 **Source:** `ai_advisor.py`
-**Last updated:** 2026-07-13 (R2-1 -- new `build_reasoning_context` reasoning-context assembler + `_EMPTY_MANIFEST`/`_MAX_TREE_RENDER_CHARS` constants, `DE-ADVISOR-R2-1-001`; prior: advisor-suite-fixes AC-4: fundamentals selection loop no longer pre-filters to 10-K-only -- see below; prior: DE-TECH-SMA200-HISTORY-001 technicals lens line-range correction; prior: DE-ADVISOR-LATENCY MARKET_LENS_CACHE cache-serve path; persist_market_lens_cache producer; build_assessment_from_context empty-state reword; prior: DE-FUND-002 vintage-correct fundamentals)
+**Last updated:** 2026-07-13 (R2-1 -- new `build_reasoning_context` reasoning-context assembler + `_EMPTY_MANIFEST`/`_MAX_TREE_RENDER_CHARS` constants, `DE-ADVISOR-R2-1-001`; AC-9 wording reconciled per r2-review's gate finding -- see below; prior: advisor-suite-fixes AC-4: fundamentals selection loop no longer pre-filters to 10-K-only -- see below; prior: DE-TECH-SMA200-HISTORY-001 technicals lens line-range correction; prior: DE-ADVISOR-LATENCY MARKET_LENS_CACHE cache-serve path; persist_market_lens_cache producer; build_assessment_from_context empty-state reword; prior: DE-FUND-002 vintage-correct fundamentals)
 
 ## Overview
 
@@ -153,13 +153,15 @@ Assembles operator-context text + a per-source honesty manifest for Strategy Bui
 - Live stats + the 5 lens blocks (AC-2): reuses `assemble_advisor_context`'s EXISTING nightly cache-serve path (never a fresh live fan-out on this per-click path) — `optuna_evidence` for stats; each available lens block's `payload` is re-encoded to JSON and passed through `advisors.prism_render.humanize_lens_summary` for prose (the same humanizer the Overview tab uses — no second hand-rolled renderer).
 - Bound (AC-9): `_MAX_TREE_RENDER_CHARS = 6000` bounds INPUT-context growth/cost for the injected tree text specifically. Distinct from `build_plan_generator.MAX_OUTPUT_TOKENS` (a different, OUTPUT-side ceiling on the SDK's structured-tool-use response). Conservative, uncalibrated value (~1,500 tokens at a rough 4-chars/token estimate) — no measured worst-case exists yet, unlike `MAX_OUTPUT_TOKENS`'s calibrated figure.
 
+**AC-9 wording reconciliation (r2-review gate finding, 2026-07-13):** the feature plan's AC-9 text reads "bounded so a large real tree can't blow `build_plan_generator.MAX_OUTPUT_TOKENS`" — that phrasing is loose and does not literally match the implementation. `_MAX_TREE_RENDER_CHARS` bounds THIS function's own INPUT-context contribution to the prompt; it has no runtime relationship to `MAX_OUTPUT_TOKENS`, which is a wholly separate module's OUTPUT-side ceiling on the SDK's structured-tool-use response (`advisors/build_plan_generator.py`). AC-9's actual intent — "the injected tree can't blow the generation call's cost/context budget" — is satisfied by capping the input side; the two constants have never been coupled in code, and the plan text should not be read as implying otherwise. Follow-up (non-blocking, logged 2026-07-13): tighten this wording in the R2-1 feature plan itself so a future reader isn't misled by the same loose phrasing.
+
 **Source:** `ai_advisor.py:1700-1803`
 
 **Constants:**
 | Constant | Type | Value | Purpose |
 |----------|------|-------|---------|
 | `_EMPTY_MANIFEST` | `dict` | 7-key, all `"absent"` | Returned (a fresh `dict()` copy) whenever nothing is injectable — every key defaults to `"absent"`, never omitted, never fabricated as present. `ai_advisor.py:67-78`. |
-| `_MAX_TREE_RENDER_CHARS` | `int` | `6000` | Bounds the rendered real-tree text injected into the SB generation prompt (AC-9). `ai_advisor.py:80-88`. |
+| `_MAX_TREE_RENDER_CHARS` | `int` | `6000` | INPUT-context bound: caps the rendered real-tree text injected into the SB generation prompt (AC-9). NOT related to `build_plan_generator.MAX_OUTPUT_TOKENS` (see the wording-reconciliation note above). `ai_advisor.py:80-88`. |
 
 **Called by:** `app.py`'s `ai_advisor_strategy_builder_run()` route — symphony-scoped runs only, never the from-scratch path (see [app](app.md)). Threaded into `strategy_builder_engine.propose_strategies(reasoning_context=, reasoning_manifest=)` → `build_plan_generator.generate_build_plans(reasoning_context=)` → `_build_generation_prompt(reasoning_context=)` (see [advisors/strategy_builder_engine](advisors_strategy_builder_engine.md) and [advisors/build_plan_generator](advisors_build_plan_generator.md)).
 
@@ -390,12 +392,12 @@ The 7-item allowlist (6 Optuna search-space keys + `MAX_SQUEEZE_FLOOR`). Note: `
 | `_REQUEST_TIMEOUT_SECONDS` | `float` | `30.0` | Explicit client-side timeout for all Anthropic SDK calls. Never rely on SDK/urllib3 default. |
 | `_MAX_TOKENS` | `int` | `2048` | Max output tokens for the structured-output Claude call in `request_suggestions`. |
 | `_EMPTY_MANIFEST` | `dict` | 7-key, all `"absent"` | R2-1: default honest manifest returned by `build_reasoning_context` when nothing is injectable. `ai_advisor.py:67-78`. |
-| `_MAX_TREE_RENDER_CHARS` | `int` | `6000` | R2-1: bounds the rendered real-tree text `build_reasoning_context` injects into the SB generation prompt (AC-9). `ai_advisor.py:80-88`. |
+| `_MAX_TREE_RENDER_CHARS` | `int` | `6000` | R2-1: INPUT-context bound — the rendered real-tree text `build_reasoning_context` injects into the SB generation prompt (AC-9). Independent of `build_plan_generator.MAX_OUTPUT_TOKENS`. `ai_advisor.py:80-88`. |
 
 ## Internal Dependencies
 
 - `database` — `get_latest_autotune_run`, `get_symphony_strategy`, `load_state`, `normalize_name`, `DEFAULT_STRATEGY`, `DEFAULT_LOCKED_VARS`, **`get_latest_market_lens_cache`** (DE-ADVISOR-LATENCY cache-serve path), **`insert_advisor_observation`** (called by `persist_market_lens_cache`)
-- `symphony_logic` — `get_condensed_logic` (called with Composer hash ID via `composer_symphony_id`, not normalized name); `fetch_symphony_score` (R2-1, `build_reasoning_context` real-tree source)
+- `symphony_logic` — `get_condensed_logic` (called with Composer hash ID via `composer_symphony_id`, not normalized name); `fetch_symphony_score` (R2-1, `build_reasoning_context` real-tree source). **Transitive:** `symphony_logic.py` itself imports `alpha_bot_execution` (`COMPOSER_BASE_URL`, `get_composer_headers`) at module level — see [advisors/strategy_builder_engine](advisors_strategy_builder_engine.md)'s "Internal Dependencies" section for the accepted-precedent note this creates for R2-1's new `strategy_builder_engine` → `ai_advisor` import edge.
 - `advisors.symphony_schema` — `render_rules_text` (R2-1, `build_reasoning_context` — renders the real tree into bounded prose, never a raw JSON dump)
 - `advisors.prism_render` — `humanize_lens_summary` (R2-1, `build_reasoning_context` — reuses the Overview tab's humanizer for injected lens prose; no second hand-rolled renderer)
 - `autotuner` — `run_simulation`, `calculate_historical_deviation` (lazy import in `revalidate_suggestion_oos`)
