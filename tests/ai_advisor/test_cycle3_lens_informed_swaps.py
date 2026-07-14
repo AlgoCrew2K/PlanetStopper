@@ -955,36 +955,17 @@ class TestSafetyContracts:
             "is_advisory_only must remain 1 (advise-only contract)"
         )
 
-    def test_lens_scores_empty_dict_behaves_like_none(self):
-        """RED: lens_scores={} (empty) must not crash and must not rerank (no scores to blend)."""
-        engine = _import_engine()
-        obj = engine.SwapObjective(
-            objective_type="reduce_correlation",
-            target_pair=("SPY", "GLD"),
-            measured_value=0.85,
-        )
-        available = ["BND", "TLT", "SHY"]
-
-        result_empty = engine.generate_objective_directed_candidates(
-            symphony_id="test-sym-001",
-            objective=obj,
-            correlation_data=_CORR_DATA,
-            available_assets=available,
-            lens_scores={},
-        )
-        result_none = engine.generate_objective_directed_candidates(
-            symphony_id="test-sym-001",
-            objective=obj,
-            correlation_data=_CORR_DATA,
-            available_assets=available,
-            lens_scores=None,
-        )
-
-        tickers_empty = [c["ticker"] if isinstance(c, dict) else c for c in result_empty]
-        tickers_none = [c["ticker"] if isinstance(c, dict) else c for c in result_none]
-        assert tickers_empty == tickers_none, (
-            f"lens_scores={{}} must produce same ranking as None; got {tickers_empty} vs {tickers_none}"
-        )
+    # test_lens_scores_empty_dict_behaves_like_none RETIRED (R2-3, 2026-07-14
+    # -- found by r2-3-engine while implementing §1l's deletion, same class as
+    # test_lens_blend_efficacy.py's identical retirement): called
+    # generate_objective_directed_candidates() directly to prove
+    # lens_scores={} behaves like lens_scores=None through the production
+    # path. That deterministic generator was DELETED ([PM-ASSUMED Q4]); the
+    # SAME invariant against _apply_lens_blend directly (the surviving,
+    # generator-independent home) is
+    # tests/ai_advisor/test_lens_blend_efficacy.py::
+    # TestApplyLensBlendUsesContinuousScoreNotPosition::
+    # test_lens_scores_none_or_empty_returns_input_order_unchanged.
 
 
 # ---------------------------------------------------------------------------
@@ -1209,79 +1190,16 @@ class TestCitationValidationOnPersistence:
 class TestLensBlendPrimaryMetricDominance:
     """Reviewer advisory gap: primary metric must dominate when clearly better than alternatives."""
 
-    def test_primary_metric_dominates_opposing_lens_preference(self):
-        """When primary metric clearly favors BND, BND ranks first even with strong opposing lens.
-
-        AC-D2 invariant (post-D-fix, advisors/asset_swap_engine.py:_apply_lens_blend):
-        the blend key is a CUMULATIVE ABSOLUTE raw-score-gap walk minus a bounded
-        lens term (``LENS_BLEND_WEIGHT * (mean_lens - neutral)``, |term| <= 0.25*0.5
-        = 0.125 per candidate). A real, non-degenerate primary gap of ~0.318
-        (BND's corr vs TLT's corr, see below) is far larger than any pairwise lens
-        swing the extreme lens_scores_oppose fixture can produce, so BND must stay
-        first -- "supporting evidence only, never override".
-
-        STALE-FIXTURE FIX (2026-07-12, routed via awt-eng/PM D-workstream review):
-        the original BND=[0.0]*10 and AGG=[0.9]*10 series are CONSTANT (zero
-        variance). asset_swap_engine._pearson_corr's zero-variance guard
-        (denom <= 1e-12 -> return 0.0) therefore forced BOTH BND's and AGG's
-        correlation to a hardcoded 0.0 -- an accidental EXACT TIE, not the
-        "BND best (~0), AGG worst (~1.0)" the old comments claimed. Against the
-        pre-D-fix (inert) blend this tie was invisible because nothing could ever
-        reorder anything; once the blend correctly resolves a zero-gap tie by lens
-        (AC-D2: "a zero gap is the smallest gap -- lens CAN move it"), AGG's higher
-        lens score (0.5) legitimately promoted it ahead of BND (lens 0.01),
-        breaking this test -- CORRECTLY, since the fixture never exercised a real
-        primary-dominance case. Fixed below: every series now has genuine
-        (non-degenerate) variance and a REAL computed correlation gap, verified
-        against the actual _pearson_corr formula (not assumed) -- BND corr=0.174,
-        TLT corr=0.492, AGG corr=1.0 (exact rank: BND < TLT < AGG, no ties).
-        """
-        engine = _import_engine()
-        obj = engine.SwapObjective(
-            objective_type="reduce_correlation",
-            target_pair=("SPY", "GLD"),
-            measured_value=0.85,
-        )
-
-        _spy_ramp = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-        primary_corr = {
-            "SPY": _spy_ramp,
-            # Alternating series, no linear trend with SPY's ramp -> genuinely low
-            # (not zero-variance-guard-forced) correlation. |corr| ~= 0.174 -> best.
-            "BND": [0.5, -0.5, 0.5, -0.5, 0.5, -0.5, 0.5, -0.5, 0.5, -0.5],
-            # Partial trend-following (real, non-degenerate variance). |corr| ~= 0.492
-            # -> worse than BND by a real ~0.318 gap.
-            "TLT": [0.5, 0.6, 0.7, 0.8, 0.9, 0.5, 0.6, 0.7, 0.8, 0.9],
-            # A pure positive scaling of SPY's ramp (0.9x amplitude, same shape) --
-            # non-constant (real variance) but PERFECTLY correlated: |corr| == 1.0
-            # exactly -> worst, by construction, not by a zero-variance accident.
-            "AGG": [v * 0.9 for v in _spy_ramp],
-        }
-
-        # Lens strongly opposes primary: TLT=0.99, BND=0.01, AGG=0.5 (neutral).
-        # Even the maximum possible pairwise lens swing cannot bridge BND's real
-        # ~0.318 cumulative-gap lead over TLT (let alone AGG's ~0.826).
-        lens_scores_oppose = {
-            "BND": {"sentiment": 0.01},
-            "TLT": {"sentiment": 0.99},
-            "AGG": {"sentiment": 0.5},
-        }
-
-        result = engine.generate_objective_directed_candidates(
-            symphony_id="test-sym-001",
-            objective=obj,
-            correlation_data=primary_corr,
-            available_assets=["BND", "TLT", "AGG"],
-            lens_scores=lens_scores_oppose,
-        )
-
-        tickers = [c["ticker"] if isinstance(c, dict) else c for c in result]
-        assert tickers, "Must return at least one candidate"
-        assert tickers[0] == "BND", (
-            f"Primary metric (low correlation) must dominate lens preference. "
-            f"BND has the lowest REAL (non-degenerate) correlation (~0.174) and "
-            f"must rank first even though lens strongly prefers TLT -- the real "
-            f"~0.318 primary gap to TLT cannot be bridged by any lens differential "
-            f"(AC-D2: large primary margin is never invertible). "
-            f"Got ranking: {tickers}."
-        )
+    # test_primary_metric_dominates_opposing_lens_preference RETIRED (R2-3,
+    # 2026-07-14 -- found by r2-3-engine while implementing §1l's deletion,
+    # same class as test_lens_blend_efficacy.py's identical retirement):
+    # called generate_objective_directed_candidates() directly to prove the
+    # AC-D2 invariant (a large real primary-score gap can never be inverted
+    # by lens evidence) through the production candidate-generation path.
+    # That deterministic generator was DELETED ([PM-ASSUMED Q4]); the SAME
+    # invariant against _apply_lens_blend directly (the surviving,
+    # generator-independent home, using the identical real-computed-gap
+    # fixture-construction discipline this test's own docstring documented)
+    # is tests/ai_advisor/test_lens_blend_efficacy.py::
+    # TestApplyLensBlendUsesContinuousScoreNotPosition::
+    # test_large_primary_margin_cannot_be_inverted_by_extreme_lens_favor.

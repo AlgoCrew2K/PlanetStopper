@@ -205,71 +205,26 @@ class TestApplyLensBlendUsesContinuousScoreNotPosition:
 # End-to-end through generate_objective_directed_candidates (production path)
 # ===========================================================================
 
-
-class TestGenerateObjectiveDirectedCandidatesLensReranking:
-    def test_reduce_correlation_small_gap_candidate_reranks_with_lens(self):
-        """Two candidates with near-identical (but not tied) correlation to the
-        target series; lens strongly favors the marginally-worse one. Production
-        callers (suggest_swaps) go through this function, not _apply_lens_blend
-        directly -- this proves the fix is reachable end-to-end."""
-        engine = _import_engine()
-        obj = engine.SwapObjective(
-            objective_type="reduce_correlation", target_pair=("SPY", "OTHER"), measured_value=0.9
-        )
-
-        # SPY series and two near-twin candidate series (BND, TLT) whose correlation
-        # to SPY differs only slightly, plus a clearly-uncorrelated third (SHY) to
-        # keep the fixture non-degenerate.
-        rng = random.Random(7)
-        spy_series = [rng.gauss(0.0, 1.0) for _ in range(40)]
-        # BND: highly correlated with SPY, but slightly LESS so than TLT (more noise
-        # dilutes the linear relationship) -> BND ranks first (lower abs corr = better
-        # for reduce_correlation) at baseline, by a small (~0.005) margin.
-        # Verified numerically (see PR discussion): |corr(SPY,BND)|=0.9930 vs
-        # |corr(SPY,TLT)|=0.9982 for this seed/noise combination.
-        bnd_series = [v + rng.gauss(0.0, 0.09) for v in spy_series]
-        # TLT: marginally MORE correlated than BND -> ranks second at baseline, by a
-        # small primary-score gap (the AC-D2 "small gap -> lens CAN move it" case).
-        tlt_series = [v + rng.gauss(0.0, 0.05) for v in spy_series]
-        # SHY: near-zero correlation (unambiguous, must not be disturbed).
-        shy_series = [rng.gauss(0.0, 1.0) for _ in range(40)]
-
-        correlation_data = {
-            "SPY": spy_series,
-            "BND": bnd_series,
-            "TLT": tlt_series,
-            "SHY": shy_series,
-        }
-        lens_scores = {
-            "BND": {"sentiment": 0.0},
-            "TLT": {"sentiment": 1.0},  # strongly favored despite the (tiny) worse corr
-        }
-
-        baseline = engine.generate_objective_directed_candidates(
-            symphony_id="sym-lens-rerank",
-            objective=obj,
-            correlation_data=correlation_data,
-            available_assets=["BND", "TLT", "SHY"],
-            lens_scores=None,
-        )
-        baseline_tickers = [c["ticker"] for c in baseline]
-
-        blended = engine.generate_objective_directed_candidates(
-            symphony_id="sym-lens-rerank",
-            objective=obj,
-            correlation_data=correlation_data,
-            available_assets=["BND", "TLT", "SHY"],
-            lens_scores=lens_scores,
-        )
-        blended_tickers = [c["ticker"] for c in blended]
-
-        assert blended_tickers != baseline_tickers, (
-            f"Providing lens_scores with a near-tied primary gap must change the "
-            f"ranking relative to the no-lens baseline.\n"
-            f"  baseline (no lens): {baseline_tickers!r}\n"
-            f"  blended (with lens): {blended_tickers!r}\n"
-            f"  Both orders are identical -- the blend had no effect end-to-end."
-        )
+# TestGenerateObjectiveDirectedCandidatesLensReranking RETIRED (R2-3,
+# 2026-07-14 -- found by r2-3-engine while implementing §1l's deletion; my
+# earlier grep pass on THIS file returned a false "clean" result, mixed up
+# with test_cycle3_lens_swaps_supplement.py's matches from a parallel tool
+# call -- my error, corrected here): the retired
+# test_reduce_correlation_small_gap_candidate_reranks_with_lens called
+# generate_objective_directed_candidates() directly to prove the AC-D1
+# blend-inertness fix was reachable end-to-end through the production
+# candidate-generation path. That deterministic generator was DELETED
+# ([PM-ASSUMED Q4]) and replaced by the LLM-reasoned
+# generate_reasoned_swap_candidates, which does not do lens-blended
+# statistical ranking at all -- selection is the LLM's, same intentional
+# Q4-mandated behavior change already documented in
+# tests/advisors/test_weekly_asset_swap_suggestions_loop.py's identically-
+# retired test_wired_lens_scores_actually_reorder_candidates_on_real_data.
+# _apply_lens_blend itself remains behaviorally unchanged (AC-12) and is
+# still directly proven by TestApplyLensBlendUsesContinuousScoreNotPosition
+# above in this same file (never called the deleted generator) -- that
+# class is the surviving, generator-independent home for this fix's
+# coverage.
 
 
 # ===========================================================================
