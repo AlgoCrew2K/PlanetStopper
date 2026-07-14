@@ -39,6 +39,15 @@ alphabot.pid
 *.db.*backup
 *.db.postDryRun
 *.db.preDryRun*
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Ad-hoc scratch DB_PATH targets used for local/manual test runs (e.g.
+# `DB_PATH="$PWD/.scratch_seam.sqlite" pytest ...`) — .sqlite is already
+# covered above, this also catches any extension variant of the convention.
+.scratch_*
 
 # Operational dry-run artifacts
 .dry-run-smoke.*
