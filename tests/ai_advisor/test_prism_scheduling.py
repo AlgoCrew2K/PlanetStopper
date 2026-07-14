@@ -245,24 +245,36 @@ class TestSubprocessInvocation:
         kwargs = mock_run.call_args[1]
         assert not kwargs.get("shell", False), "shell=True is not allowed — security risk"
 
-    def test_api_key_not_in_subprocess_args(self):
-        """ANTHROPIC_API_KEY must not appear in the subprocess args list."""
-        import os
+    def test_api_key_not_in_subprocess_args(self, monkeypatch):
+        """ANTHROPIC_API_KEY must not appear in the subprocess args list.
 
-        os.environ["ANTHROPIC_API_KEY"] = "sk-ant-TEST-SENTINEL-VALUE"
+        Uses monkeypatch.setenv (not a raw os.environ mutation) so the
+        REAL ANTHROPIC_API_KEY value — populated once at process start by
+        app.py's module-level load_dotenv(ENV_FILE_PATH) — is restored
+        after this test regardless of test ordering. A prior version did
+        `os.environ[...] = sentinel` then an unconditional
+        `del os.environ["ANTHROPIC_API_KEY"]` in `finally`, which discarded
+        the real key rather than restoring it — leaving ANTHROPIC_API_KEY
+        permanently absent for the rest of the pytest worker process and
+        causing downstream tests (e.g.
+        tests/app/test_frontrunner_builder_route.py::
+        test_run_accepts_optional_symphony_ids_for_a_scoped_run, which
+        relies on the ambient real key rather than mocking it) to
+        spuriously hit the route's fail-fast missing-key branch under
+        full-suite / xdist orderings that don't happen to run another
+        prism_scheduler test (whose own _load_env() self-heals the env var
+        via load_dotenv(override=False)) in between."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-TEST-SENTINEL-VALUE")
         mod = _import_scheduler()
         mock_result = MagicMock()
         mock_result.returncode = 0
 
-        try:
-            with (
-                patch.object(mod, "_get_summary", return_value=None),
-                patch("subprocess.run", return_value=mock_result) as mock_run,
-                pytest.raises(SystemExit),
-            ):
-                mod.main()
-        finally:
-            del os.environ["ANTHROPIC_API_KEY"]
+        with (
+            patch.object(mod, "_get_summary", return_value=None),
+            patch("subprocess.run", return_value=mock_result) as mock_run,
+            pytest.raises(SystemExit),
+        ):
+            mod.main()
 
         args_used = mock_run.call_args[0][0]
         for arg in args_used:
