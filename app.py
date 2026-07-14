@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -4523,6 +4524,26 @@ def ai_advisor_logic_changes_evaluate():
 
     Returns JSON with the logic-change result for rendering in the UI.
     """
+    # R2-2 (AC-5): route-minted default provenance — present on EVERY return
+    # path of this route, including the branches below that fire BEFORE the
+    # reasoned engine is ever called (import failure, no Composer key,
+    # missing input, hash-resolution failure, tree-fetch failure) and the
+    # engine-call exception handler. evidence_injected defaults to the
+    # all-absent manifest (ai_advisor._EMPTY_MANIFEST) — honest, since no
+    # reasoning context was gathered on any of those paths, never a
+    # placeholder. This is STRICTER than R2-1's SB route (which only carries
+    # provenance on its success path) — team-lead ruling. The success path
+    # below instead reads the ENGINE's own provenance (which reflects what
+    # build_reasoning_context actually found for this symphony), falling
+    # back to this same default via a defensive getattr+isinstance guard —
+    # never None.
+    _default_provenance = {
+        "generation_model": model_config.get_advisor_suggestion_model(),
+        "mode": "logic-change",
+        "evidence_injected": dict(ai_advisor._EMPTY_MANIFEST),
+        "run_id": str(uuid.uuid4()),
+    }
+
     # Lazy imports (AC-X2 — keep logic_change_engine off the live execution path).
     try:
         from advisors.logic_change_engine import (  # noqa: PLC0415
@@ -4534,10 +4555,20 @@ def ai_advisor_logic_changes_evaluate():
     except ImportError as _ie:
         _daemon_log.error("ai_advisor_logic_changes_evaluate import failed: %s", _ie, exc_info=True)
         # D-1: surface only the error class, not str(_ie).
-        return jsonify({"error": f"advisor unavailable: {type(_ie).__name__}"}), 200
+        return jsonify(
+            {
+                "error": f"advisor unavailable: {type(_ie).__name__}",
+                "provenance": _default_provenance,
+            }
+        ), 200
 
     if not _has_composer_key():
-        return jsonify({"error": "advisor unavailable: API key not configured"}), 200
+        return jsonify(
+            {
+                "error": "advisor unavailable: API key not configured",
+                "provenance": _default_provenance,
+            }
+        ), 200
 
     body = request.get_json(silent=True) or {}
     symphony_id = str(body.get("symphony_id", "")).strip()
@@ -4545,7 +4576,12 @@ def ai_advisor_logic_changes_evaluate():
     change_description = str(body.get("change_description", "")).strip()
 
     if not symphony_id or not change_description:
-        return jsonify({"error": "symphony_id and change_description are required"}), 200
+        return jsonify(
+            {
+                "error": "symphony_id and change_description are required",
+                "provenance": _default_provenance,
+            }
+        ), 200
 
     # AC-8: same NAME->Composer-hash resolution as asset-swaps/evaluate.
     # RC-6: fail loudly if the name can't resolve — no silent pass-through.
@@ -4561,19 +4597,41 @@ def ai_advisor_logic_changes_evaluate():
     if composer_hash is None:
         return jsonify(
             {
-                "error": f"could not resolve name to a Composer hash: {symphony_id!r} not found in active symphonies"  # noqa: E501  # un-wrappable long line
+                "error": f"could not resolve name to a Composer hash: {symphony_id!r} not found in active symphonies",  # noqa: E501  # un-wrappable long line
+                "provenance": _default_provenance,
             }
         ), 200
 
     raw_value = fetch_symphony_score(composer_hash)
     if not raw_value:
-        return jsonify({"error": f"could not fetch symphony tree for {symphony_id}"}), 200
+        return jsonify(
+            {
+                "error": f"could not fetch symphony tree for {symphony_id}",
+                "provenance": _default_provenance,
+            }
+        ), 200
 
     # Build a typed LogicChangeObjective (Gate-1 Resolution #2 — no plain-string objectives).
     objective = LogicChangeObjective(
         objective_type=objective_type,
         measured_value=0.0,
         rationale=change_description,
+    )
+
+    # R2-2 (AC-1): inject the operator's REAL tree + live stats + 5 market-lens
+    # blocks into the reasoned generator's prompt — same call SB's route makes
+    # (app.py's ai_advisor_strategy_builder_run, build_reasoning_context call).
+    # symphony_id here is the operator-supplied normalized name (this route's
+    # own id key); composer_hash is the Composer UUID used for the tree fetch
+    # (project's AI Advisor Composer hash rule). NOTE: build_reasoning_context
+    # re-fetches the tree internally (symphony_logic.get_condensed_logic ->
+    # fetch_symphony_score) — a second /score read beyond raw_value above.
+    # Accepted cost per the plan's "reuse build_reasoning_context verbatim"
+    # directive (R2-1 shipped code, not touched here); logged as an R2
+    # follow-up (let build_reasoning_context accept a pre-fetched tree),
+    # not fixed in this cycle.
+    reasoning_context, reasoning_manifest = ai_advisor.build_reasoning_context(
+        symphony_id, objective, composer_symphony_id=composer_hash
     )
 
     # Delegate parse + apply to the engine; pass change_description= so the engine's
@@ -4591,13 +4649,15 @@ def ai_advisor_logic_changes_evaluate():
             tweak=None,
             objective=objective,
             change_description=change_description,
+            reasoning_context=reasoning_context,
+            reasoning_manifest=reasoning_manifest,
         )
     except Exception as exc:
         _daemon_log.error("ai_advisor_logic_changes_evaluate failed: %s", exc, exc_info=True)
         # D-1 security contract: do NOT echo str(exc) — exception messages may contain
         # API keys or internal paths. Surface only the error class for operator triage;
         # full detail is logged server-side via exc_info=True above.
-        return jsonify({"error": type(exc).__name__}), 200
+        return jsonify({"error": type(exc).__name__, "provenance": _default_provenance}), 200
 
     # Build FDR metadata for the operator audit trail (AC-3.2).
     gate_batch = run_result.gate_batch
@@ -4670,6 +4730,20 @@ def ai_advisor_logic_changes_evaluate():
         if _survivor["low_power"]:
             _survivor["caveats"] = [*_survivor["caveats"], _LOW_POWER_CAVEAT]
 
+    # R2-2 (AC-5): run-level provenance — read straight off run_result.provenance
+    # (the engine's real 4-key contract, reflecting what build_reasoning_context
+    # actually found for this symphony), defensive getattr+isinstance guard —
+    # identical MagicMock-safety idiom to the shipped SB route
+    # (app.py's ai_advisor_strategy_builder_run, provenance = getattr(...)).
+    # getattr's default alone is not enough against a bare Mock stand-in (it
+    # auto-vivifies ANY attribute access into a child Mock) — the isinstance
+    # check is the only reliable guard. Falls back to the route-minted default
+    # instead of None (AC-5: never None — stricter than SB, which falls back
+    # to None on this same guard).
+    provenance = getattr(run_result, "provenance", None)
+    if not isinstance(provenance, dict):
+        provenance = _default_provenance
+
     try:
         return jsonify(
             {
@@ -4709,6 +4783,7 @@ def ai_advisor_logic_changes_evaluate():
                 if proposal
                 else None,
                 "objective_rationale": proposal.objective_rationale if proposal else "",
+                "provenance": provenance,
             }
         ), 200
     except Exception as _je:
@@ -4720,7 +4795,7 @@ def ai_advisor_logic_changes_evaluate():
         # D-1 security contract: do NOT echo str(exc) — exception messages may contain
         # API keys or internal paths. Surface only the error class for operator triage;
         # full detail is logged server-side via exc_info=True above.
-        return jsonify({"error": type(_je).__name__}), 200
+        return jsonify({"error": type(_je).__name__, "provenance": _default_provenance}), 200
 
 
 @app.route("/ai-advisor/strategy-builder", methods=["GET"])

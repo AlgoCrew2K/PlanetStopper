@@ -316,8 +316,37 @@
      *   - backtest-failed / error
      */
     function _renderResults(data) {
+        // R2-2 (AC-8): run-level generation provenance -- model, injected-
+        // evidence manifest, and run-id, read straight off data.provenance
+        // (the route's 4-key object; see app.py's
+        // ai_advisor_logic_changes_evaluate()). UNLIKE SB (whose route omits
+        // provenance on its error branch, so its JS only needs it on the
+        // success path), this route now populates provenance on EVERY
+        // response including error ones -- computed here, BEFORE the
+        // error/success branch split, so it renders on both. Non-null-
+        // guarded (mirrors the mode_notice/backtest_unavailable idiom in
+        // the SB live-run block, static/ai_advisor.js:806-831); same
+        // "Model: X · Context — ... · Run: <uuid>" format, distinct testid
+        // (lc-live-generation-provenance, vs. SB's sb-live-generation-
+        // provenance -- same overloaded concept, a different producing route).
+        let provenanceHtml = "";
+        if (data.provenance) {
+            const prov = data.provenance;
+            const evidence = prov.evidence_injected || {};
+            const evidenceParts = [];
+            ["tree", "stats", "technicals", "sentiment", "derivatives", "macro", "fundamentals"].forEach(function (key) {
+                const val = evidence[key];
+                if (val) { evidenceParts.push(key + ": " + val); }
+            });
+            provenanceHtml = `<div class="run-controls-note" data-testid="lc-live-generation-provenance">` +
+                `Model: ${_escapeHtml(prov.generation_model || "")}` +
+                (evidenceParts.length ? ` · Context — ${_escapeHtml(evidenceParts.join(", "))}` : "") +
+                (prov.run_id ? ` · Run: ${_escapeHtml(prov.run_id)}` : "") +
+                `</div>`;
+        }
+
         if (data.error) {
-            return `<div class="no-survivors-state" data-testid="error-state">
+            return provenanceHtml + `<div class="no-survivors-state" data-testid="error-state">
                 <div class="no-survivors-title">Evaluation error</div>
                 <div class="no-survivors-body">${_escapeHtml(data.error)}</div>
             </div>`;
@@ -327,7 +356,7 @@
         const rejected = data.rejected_detail || [];
         const noSurvivors = survivors.length === 0;
 
-        let html = "";
+        let html = provenanceHtml;
 
         if (noSurvivors) {
             // AC-3.1: zero survivors is a valid non-error outcome.
