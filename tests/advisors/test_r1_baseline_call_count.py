@@ -85,8 +85,23 @@ def _counting_backtest(baseline_tree_marker, variant_result_daily_returns: dict)
 def test_ac13_asset_swap_operator_evaluate_backtests_baseline_exactly_once(ase):
     """MUST FAIL pre-fix: today the baseline tree is backtested twice
     (ase.py:927 inside _evaluate_single_variant, ase.py:1068 inside
-    propose_operator_swap's own _backtest_returns_from_tree call)."""
-    raw_tree = {"ticker": None, "children": [{"ticker": "AAA", "children": []}]}
+    propose_operator_swap's own _backtest_returns_from_tree call).
+
+    R2-3 NOTE: built via REAL symphony_schema constructors ("step"-based
+    Composer grammar) — mirrors the identical fix already applied to this
+    file's logic_change sibling test above. The legacy ad-hoc
+    {"ticker": None, "children": [...]} shape is correctly rejected by
+    AC-3's validate_tree guard (not real Composer grammar), which would zero
+    out the candidate before it ever reaches run_backtest and mask this
+    AC-13 count entirely (0 calls, not a genuine 1-vs-2 count).
+    """
+    from advisors import symphony_schema  # noqa: PLC0415
+
+    raw_tree = symphony_schema.make_root(
+        "Baseline Count Test",
+        "daily",
+        [symphony_schema.make_weight_equal([symphony_schema.make_asset("AAA")])],
+    )
     variant_returns = {"2026-01-01": 0.001, "2026-01-02": 0.002}
     counts, side_effect = _counting_backtest(raw_tree, variant_returns)
 
@@ -190,8 +205,18 @@ def test_ac13_asset_swap_baseline_value_reused_is_not_a_stale_or_zeroed_stub(ase
     hardcoded/zeroed baseline for the second usage site instead of genuinely
     reusing the first call's real result. We assert baseline_stats on the
     returned proposal reflects the REAL (non-empty, non-default-zero) mocked
-    stats dict, not an empty/default fallback."""
-    raw_tree = {"ticker": None, "children": [{"ticker": "AAA", "children": []}]}
+    stats dict, not an empty/default fallback.
+
+    R2-3 NOTE: same symphony_schema-built tree as the sibling test above —
+    the legacy {"ticker": None, ...} shape fails validate_tree.
+    """
+    from advisors import symphony_schema  # noqa: PLC0415
+
+    raw_tree = symphony_schema.make_root(
+        "Baseline Value Reuse Test",
+        "daily",
+        [symphony_schema.make_weight_equal([symphony_schema.make_asset("AAA")])],
+    )
     variant_returns = {"2026-01-01": 0.001, "2026-01-02": 0.002}
     from advisors.composer_backtest_client import BacktestResult
 

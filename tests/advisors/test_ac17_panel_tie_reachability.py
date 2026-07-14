@@ -273,9 +273,19 @@ def test_ac17_e2e_asset_swap_operator_evaluate_empty_params_candidate_adopts():
     """MUST FAIL pre-fix: propose_operator_swap's real _evaluate_single_variant
     always builds empty-params candidates — same defect, same fix target."""
     import advisors.asset_swap_engine as ase
+    from advisors import symphony_schema
     from advisors.composer_backtest_client import BacktestResult
 
-    raw_tree = {"ticker": None, "children": [{"ticker": "AAA", "children": []}]}
+    # R2-3: a REAL, structurally-valid Composer tree — asset_swap_engine's
+    # validate_tree guard (wired unconditionally for every swap variant)
+    # rejects the old hand-built {"ticker": None, "children": [...]} minimal
+    # dict this test used pre-R2-3. Built via the real symphony_schema
+    # constructors so it is genuinely valid.
+    raw_tree = symphony_schema.make_root(
+        "AC17 Test Symphony",
+        "daily",
+        [symphony_schema.make_weight_equal([symphony_schema.make_asset("AAA")])],
+    )
     variant_returns_log = _log_returns_cyclical()
     baseline_returns_log = {d: 0.0 for d in _DATES}
 

@@ -460,12 +460,26 @@ def _tab_button_block(html: str, testid: str) -> str:
 
 
 def test_attribution_label_flips_for_asset_swaps_tab_only():
+    """This is the BINDING contract for Asset Swaps' tab-attribution label —
+    the R1-era sibling assertion in
+    tests/ai_advisor/test_r1_attribution_honesty.py
+    (test_ac1_asset_swaps_tab_carries_deterministic_no_ai_label) was RETIRED
+    once R2-3 shipped, mirroring how R2-2 retired the identical
+    Logic-Changes-era assertion in that same file — see that file's own
+    in-source retirement note."""
     html = (_REPO_ROOT / "templates" / "ai_advisor.html").read_text(encoding="utf-8")
 
     swaps_block = _tab_button_block(html, "tab-asset-swaps")
     assert _STALE_LABEL not in swaps_block, (
         f"AC-9 GAP: the Asset Swaps tab button still contains the stale label {_STALE_LABEL!r} — "
         "the reasoned path must retire it."
+    )
+    # Positive check (not just old-label-absent): the tab must carry the new
+    # honest, reasoned-path attribution — byte-identical phrasing to Logic
+    # Changes' R2-2 flip, same mechanism (reasoning over the live tree).
+    assert "reasons over your live tree" in swaps_block, (
+        "AC-9 GAP: the Asset Swaps tab does not carry the new reasoned-path "
+        f"attribution copy. Element: {swaps_block!r}"
     )
 
     # Regression guard: Logic Changes' and Strategy Builder's labels were

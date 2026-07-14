@@ -104,19 +104,20 @@ def test_ac1_page_global_claude_powered_subtitle_is_removed(client, monkeypatch)
 # ::test_attribution_label_flips_for_logic_changes_tab_only, which asserts the
 # OPPOSITE — the label's ABSENCE — and is the current binding contract for
 # that tab). This R1-era test asserted the PRE-R2-2 state, which is now
-# obsolete by design, not a regression. Asset Swaps (R2-3, not yet built) is
-# untouched and keeps its own identical assertion below.
-
-
-def test_ac1_asset_swaps_tab_carries_deterministic_no_ai_label(client, monkeypatch):
-    """MUST FAIL pre-fix — identical gap to the Logic Changes sibling test."""
-    html = _get_html(client, monkeypatch)
-    tab = _extract_by_testid(html, "tab-asset-swaps", closing_tag="</button>")
-    tab_lower = tab.lower()
-    assert "deterministic" in tab_lower or "no ai reasoning" in tab_lower, (
-        f"AC-1 GAP: tab-asset-swaps does not carry a deterministic/no-AI-"
-        f"reasoning label. Element: {tab}"
-    )
+# obsolete by design, not a regression.
+#
+# R2-3 (2026-07-14): the SAME retirement now applies to Asset Swaps —
+# test_ac1_asset_swaps_tab_carries_deterministic_no_ai_label (formerly here)
+# asserted the PRE-R2-3 state. R2-3 made Asset Swaps genuinely LLM-reasoned
+# too and intentionally removed its "Deterministic — no AI reasoning" label
+# (found by the PM's independent full-tree gate on the R2-3 cycle, which
+# caught this exact stale-test-pins-retired-behavior class the touch-set-only
+# CYCLE-COMPLETE run had missed). The binding contract for Asset Swaps' label
+# is now tests/ui/test_asset_swap_route_reasoning_provenance.py::
+# test_attribution_label_flips_for_asset_swaps_tab_only, which asserts the
+# label's ABSENCE plus the new reasoned-path copy's presence. Strategy
+# Builder/Chat are untouched by either R2-2 or R2-3 and keep their own
+# genuine-attribution assertions above/below.
 
 
 def test_ac1_strategy_builder_tab_labeled_generation_model_plus_community_statistically_gated(

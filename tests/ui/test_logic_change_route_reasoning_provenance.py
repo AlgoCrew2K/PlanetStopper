@@ -318,6 +318,15 @@ def _tab_button_block(html: str, testid: str) -> str:
 
 
 def test_attribution_label_flips_for_logic_changes_tab_only():
+    """R2-3 UPDATE (2026-07-14): this test's original name/scope ("...only")
+    predates R2-3 — at R2-2 ship time, Asset Swaps was still deterministic,
+    so this test's regression guard correctly pinned Asset Swaps' label as
+    UNCHANGED. R2-3 has since shipped and intentionally flipped Asset Swaps'
+    label too (its own binding contract is
+    tests/ui/test_asset_swap_route_reasoning_provenance.py::
+    test_attribution_label_flips_for_asset_swaps_tab_only). Updated here so
+    this file's own regression guard reflects the CURRENT truth — both tabs
+    now flip, Strategy Builder/Chat remain untouched by either cycle."""
     html = (_REPO_ROOT / "templates" / "ai_advisor.html").read_text(encoding="utf-8")
 
     lc_block = _tab_button_block(html, "tab-logic-changes")
@@ -326,13 +335,16 @@ def test_attribution_label_flips_for_logic_changes_tab_only():
         "the reasoned path must retire it."
     )
 
-    # Regression guard: Asset Swaps (R2-3 scope, untouched by R2-2) must still
-    # carry the identical stale label — proves R2-2 did not accidentally edit
-    # the wrong tab's attribution span.
+    # R2-3 (2026-07-14): Asset Swaps' label has ALSO since flipped — no longer
+    # a regression guard for "stays deterministic", now a regression guard
+    # for "stays flipped" (mirrors the Logic Changes assertion above).
     swaps_block = _tab_button_block(html, "tab-asset-swaps")
-    assert _STALE_LABEL in swaps_block, (
-        "REGRESSION: Asset Swaps' attribution label changed — that tab is R2-3 scope, "
-        "must remain untouched by R2-2."
+    assert _STALE_LABEL not in swaps_block, (
+        "REGRESSION: Asset Swaps' attribution label reverted to the stale "
+        "'Deterministic — no AI reasoning' copy — R2-3 intentionally flipped it."
+    )
+    assert "reasons over your live tree" in swaps_block, (
+        "REGRESSION: Asset Swaps' R2-3 attribution copy changed unexpectedly."
     )
 
 
