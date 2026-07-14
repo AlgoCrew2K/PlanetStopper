@@ -4338,16 +4338,47 @@ def ai_advisor_asset_swaps():
 def ai_advisor_asset_swaps_evaluate():
     """Operator-initiated swap evaluation endpoint (AC-2.1).
 
-    Accepts JSON: { symphony_id, from_ticker, to_ticker, objective_type? }.
-    Constructs a typed SwapObjective, fetches the baseline tree via symphony_logic,
-    calls propose_operator_swap from advisors.asset_swap_engine, and returns the
-    SwapRunResult fields as JSON.
+    Accepts JSON: { symphony_id, from_ticker?, to_ticker?, objective_type? }.
+    R2-3: from_ticker/to_ticker are now OPTIONAL. Supplying BOTH evaluates
+    that exact pair (explicit-pair mode — byte-preserves the pre-R2-3
+    response shape, additively gaining provenance/survivors_detail/
+    rejected_detail). Supplying NEITHER lets the LLM-reasoned generator
+    propose objective-directed swap pairs over the operator's real holdings
+    + a validated tradeable universe (objective-only mode — array-shaped
+    response mirroring the logic-changes route). Supplying exactly ONE
+    ticker is an honest 200 error — never silently reinterpreted as either
+    mode (team-lead's R2-3 contract ruling).
+
+    Constructs a typed SwapObjective, injects the operator's real tree + live
+    stats + 5 market-lens blocks via ai_advisor.build_reasoning_context (R2-3,
+    mirrors R2-2's AC-1) for BOTH modes, fetches the baseline tree via
+    symphony_logic, calls propose_operator_swap from advisors.asset_swap_engine,
+    and returns the SwapRunResult fields as JSON.
 
     Never runs a live trade; never calls Composer write endpoints (AC-X1).
     Persistence (advisor_observation) is handled inside propose_operator_swap (AC-X3).
 
     Returns JSON with the swap result for rendering in the UI.
     """
+    # R2-3 (AC-8): route-minted default provenance — present on EVERY return
+    # path of this route, including the branches below that fire BEFORE the
+    # reasoned engine is ever called (no Composer key, exactly-one-ticker,
+    # missing symphony_id, hash-resolution failure, tree-fetch failure) and
+    # the engine-call exception handler. evidence_injected defaults to the
+    # all-absent manifest (ai_advisor._EMPTY_MANIFEST) — honest, since no
+    # reasoning context was gathered on any of those paths, never a
+    # placeholder. Mirrors the logic-changes route (R2-2) byte-for-byte. The
+    # success path below instead reads the ENGINE's own provenance (which
+    # reflects what build_reasoning_context actually found for this
+    # symphony), falling back to this same default via a defensive
+    # getattr+isinstance guard — never None.
+    _default_provenance = {
+        "generation_model": model_config.get_advisor_suggestion_model(),
+        "mode": "asset-swap",
+        "evidence_injected": dict(ai_advisor._EMPTY_MANIFEST),
+        "run_id": str(uuid.uuid4()),
+    }
+
     # Lazy imports (AC-X2 — keep asset_swap_engine off the live execution path).
     from advisors.asset_swap_engine import (  # noqa: PLC0415
         SwapObjective,
@@ -4357,7 +4388,12 @@ def ai_advisor_asset_swaps_evaluate():
     from symphony_logic import fetch_symphony_score  # noqa: PLC0415
 
     if not _has_composer_key():
-        return jsonify({"error": "advisor unavailable: API key not configured"}), 200
+        return jsonify(
+            {
+                "error": "advisor unavailable: API key not configured",
+                "provenance": _default_provenance,
+            }
+        ), 200
 
     body = request.get_json(silent=True) or {}
     symphony_id = str(body.get("symphony_id", "")).strip()
@@ -4368,8 +4404,21 @@ def ai_advisor_asset_swaps_evaluate():
     # override via the optional form field).
     objective_type = str(body.get("objective_type", "reduce_correlation")).strip()
 
-    if not symphony_id or not from_ticker or not to_ticker:
-        return jsonify({"error": "symphony_id, from_ticker, and to_ticker are required"}), 200
+    if not symphony_id:
+        return jsonify({"error": "symphony_id is required", "provenance": _default_provenance}), 200
+
+    # R2-3 (AC-12): the two operator modes must be genuinely disjoint.
+    # Checked BEFORE any composer_hash/DB lookup — an exactly-one-ticker
+    # request must never fall through to a hash-resolution error instead of
+    # this honest, pinned message.
+    explicit_pair = bool(from_ticker) and bool(to_ticker)
+    if bool(from_ticker) != bool(to_ticker):
+        return jsonify(
+            {
+                "error": "supply both tickers for an explicit pair, or neither to let the advisor propose",  # noqa: E501  # pinned literal, un-wrappable
+                "provenance": _default_provenance,
+            }
+        ), 200
 
     # AC-8: the payload carries the display NAME (from the analytics dropdown); the
     # Composer API needs the HASH.  Resolve NAME -> Composer hash via bot_state
@@ -4390,19 +4439,42 @@ def ai_advisor_asset_swaps_evaluate():
     if composer_hash is None:
         return jsonify(
             {
-                "error": f"could not resolve name to a Composer hash: {symphony_id!r} not found in active symphonies"  # noqa: E501  # un-wrappable long line
+                "error": f"could not resolve name to a Composer hash: {symphony_id!r} not found in active symphonies",  # noqa: E501  # un-wrappable long line
+                "provenance": _default_provenance,
             }
         ), 200
 
     raw_value = fetch_symphony_score(composer_hash)
     if not raw_value:
-        return jsonify({"error": f"could not fetch symphony tree for {symphony_id}"}), 200
+        return jsonify(
+            {
+                "error": f"could not fetch symphony tree for {symphony_id}",
+                "provenance": _default_provenance,
+            }
+        ), 200
 
     # Construct a typed SwapObjective (Gate-1 Resolution #2 — no plain string objectives).
     objective = SwapObjective(
         objective_type=objective_type,
         target_pair=None,
         measured_value=0.0,
+    )
+
+    # R2-3 (AC-1 mirror): inject the operator's REAL tree + live stats + 5
+    # market-lens blocks into the reasoned generator's prompt — same call
+    # shape as the logic-changes route (R2-2) and Strategy Builder (R2-1).
+    # Called unconditionally for BOTH modes: explicit-pair mode also passes
+    # reasoning_context through as an optional steering hint (mirrors R2-2
+    # retaining change_description as a hint alongside real context).
+    reasoning_context, reasoning_manifest = ai_advisor.build_reasoning_context(
+        symphony_id, objective, composer_symphony_id=composer_hash
+    )
+
+    # Mode 2 (explicit-pair) passes both tickers through; mode 3
+    # (objective-only) omits them entirely so the engine's reasoned branch
+    # fires (AC-12: the two modes must be genuinely disjoint at the call site).
+    _pair_kwargs = (
+        {"incumbent_asset": from_ticker, "candidate_asset": to_ticker} if explicit_pair else {}
     )
 
     try:
@@ -4413,19 +4485,120 @@ def ai_advisor_asset_swaps_evaluate():
             # the advisor_observations DB key (RC-4 keying handled engine-side).
             symphony_id=composer_hash,
             score_tree=raw_value,
-            incumbent_asset=from_ticker,
-            candidate_asset=to_ticker,
             objective=objective,
+            reasoning_context=reasoning_context,
+            reasoning_manifest=reasoning_manifest,
+            **_pair_kwargs,
         )
     except Exception as exc:
         _daemon_log.error("ai_advisor_asset_swaps_evaluate failed: %s", exc, exc_info=True)
         # D-1 security contract: do NOT echo str(exc) — exception messages may contain
         # API keys or internal paths. Surface only the error class for operator triage;
         # full detail is logged server-side via exc_info=True above.
-        return jsonify({"error": type(exc).__name__}), 200
+        return jsonify({"error": type(exc).__name__, "provenance": _default_provenance}), 200
 
-    # Build response from the first proposal (single-candidate operator-initiated mode)
-    # plus the run-level message and gate batch metadata (AC-2.3 / AC-2.5).
+    # Build FDR metadata for the operator audit trail (AC-3.2, mirrors the
+    # logic-changes route's identical derivation).
+    gate_batch = run_result.gate_batch
+    fdr_adjusted_threshold: float | None = None
+    if gate_batch is not None:
+        n = gate_batch.n_candidates or 1
+        # Yekutieli c(n) = sum(1/k for k in 1..n) — same formula as autotuner._c_yekutieli.
+        c_n = sum(1.0 / k for k in range(1, n + 1))
+        fdr_adjusted_threshold = gate_batch.fdr_q / c_n if c_n > 0 else gate_batch.fdr_q
+
+    def _swap_proposal_to_dict(p) -> dict:
+        """Serialise a SwapProposalResult to a JSON-friendly dict (swap-flavored
+        mirror of the logic-changes route's _proposal_to_dict — incumbent_asset/
+        candidate_asset replace the tweak_* fields since SwapProposalResult
+        already carries them as top-level attributes)."""
+        gr = p.gate_result
+        return {
+            "candidate_id": p.candidate_id,
+            "symphony_id": p.symphony_id,
+            "objective_type": p.objective.objective_type if p.objective else None,
+            "objective_rationale": p.objective_rationale,
+            "incumbent_asset": p.incumbent_asset,
+            "candidate_asset": p.candidate_asset,
+            "baseline_stats": p.baseline_stats,
+            "variant_stats": p.variant_stats,
+            # Gate verdict (AC-3.3)
+            "gate_decision": gr.verdict.decision if gr else None,
+            "gate_reason": (
+                gr.verdict.decision.replace("_", " ").title()
+                if gr and gr.verdict.vetoes_passed
+                else ("veto failed" if gr else None)
+            ),
+            "validation_days": gr.validation_days if gr else None,
+            "oos_alpha": gr.oos_alpha if gr else None,
+            "winner_p_adj": gr.winner_p_adj if gr else None,
+            # AC-9: statistical-power flag, threshold in app.py only — never
+            # duplicated client-side.
+            "low_power": _low_power(getattr(gr, "validation_days", None)) if gr else False,
+            # AC-7: pbo_veto / below_spy_alpha / oos_inferior_to_incumbent /
+            # fdr_not_winner / None — the granular cause, distinct from the
+            # coarse gate_reason title above (which collapses all veto
+            # failures into "veto failed"). None on a genuine survivor.
+            "rejection_reason": getattr(gr, "rejection_reason", None) if gr else None,
+            # FDR metadata for audit trail (AC-3.2)
+            "n_candidates": gate_batch.n_candidates if gate_batch else None,
+            "fdr_q": gate_batch.fdr_q if gate_batch else None,
+            "fdr_adjusted_threshold": fdr_adjusted_threshold,
+            # Caveats (mandatory for survivors, AC-3.3); N=1-honest per AC-6.
+            "caveats": _n1_honest_caveats(p.caveats),
+            # Apply guidance — plain text, no button (AC-X1)
+            "apply_guidance": p.apply_guidance,
+            "backtest_error": _translate_backtest_error(p.backtest_error),
+            "data_warnings": p.data_warnings,
+        }
+
+    # AC-9: low_power's BOOLEAN was already computed above, but the caveat
+    # TEXT must also be appended so the operator sees it as readable text —
+    # additive on survivors_detail only (mirrors the logic-changes route's
+    # identical post-processing loop).
+    _survivors_detail = [_swap_proposal_to_dict(p) for p in run_result.survivors]
+    for _survivor in _survivors_detail:
+        if _survivor["low_power"]:
+            _survivor["caveats"] = [*_survivor["caveats"], _LOW_POWER_CAVEAT]
+    _rejected_detail = [_swap_proposal_to_dict(p) for p in run_result.rejected_candidates]
+
+    # R2-3 (AC-5/AC-8): run-level provenance — read straight off
+    # run_result.provenance (the engine's real 4-key contract), defensive
+    # getattr+isinstance(dict) guard identical to the shipped SB/LC routes —
+    # getattr's default alone is not enough against a bare Mock stand-in (it
+    # auto-vivifies ANY attribute access into a child Mock); falls back to
+    # the route-minted default instead of None.
+    provenance = getattr(run_result, "provenance", None)
+    if not isinstance(provenance, dict):
+        provenance = _default_provenance
+
+    if not explicit_pair:
+        # Mode 3 (objective-only reasoned): array-shaped response — there may
+        # be N candidates, so no single candidate_id/from_ticker/to_ticker
+        # top-level field makes sense (mirrors the logic-changes route's shape).
+        try:
+            return jsonify(
+                {
+                    "message": run_result.message,
+                    "survivors": len(run_result.survivors),
+                    "no_api_key": run_result.no_api_key,
+                    "survivors_detail": _survivors_detail,
+                    "rejected_detail": _rejected_detail,
+                    "provenance": provenance,
+                }
+            ), 200
+        except Exception as _je:
+            _daemon_log.error(
+                "ai_advisor_asset_swaps_evaluate response serialization failed: %s",
+                _je,
+                exc_info=True,
+            )
+            return jsonify({"error": type(_je).__name__, "provenance": _default_provenance}), 200
+
+    # Mode 2 (explicit-pair): byte-preserve every pre-R2-3 top-level key from
+    # the first proposal (single-candidate operator-initiated mode) plus the
+    # run-level message and gate batch metadata (AC-2.3 / AC-2.5), additively
+    # gaining provenance + survivors_detail/rejected_detail (AC-12).
     proposal = run_result.proposals[0] if run_result.proposals else None
     gate_result = proposal.gate_result if proposal else None
 
@@ -4445,53 +4618,66 @@ def ai_advisor_asset_swaps_evaluate():
     ):
         _caveats.append(_LOW_POWER_CAVEAT)
 
-    return jsonify(
-        {
-            # Run-level fields (AC-2.5: always expose the message so zero-survivors is explicit)
-            "message": run_result.message,
-            "survivors": len(run_result.survivors),
-            "no_api_key": run_result.no_api_key,
-            # Proposal-level fields (AC-2.3: stats + verdict + rationale + guidance)
-            "candidate_id": proposal.candidate_id if proposal else None,
-            "symphony_id": symphony_id,
-            "from_ticker": from_ticker,
-            "to_ticker": to_ticker,
-            "objective_rationale": proposal.objective_rationale if proposal else "",
-            "baseline_stats": proposal.baseline_stats if proposal else None,
-            "variant_stats": proposal.variant_stats if proposal else None,
-            # Gate verdict — AC-2.3: operator sees decision + reason
-            "gate_decision": gate_result.verdict.decision if gate_result else None,
-            "gate_result": {
-                "decision": gate_result.verdict.decision,
-                "validation_days": gate_result.validation_days,
-                "oos_alpha": gate_result.oos_alpha,
-                "winner_p_adj": gate_result.winner_p_adj,
-                # AC-9: statistical-power flag, threshold in app.py only —
-                # never duplicated client-side.
-                "low_power": _low_power(getattr(gate_result, "validation_days", None)),
-                # AC-7: pbo_veto / below_spy_alpha / oos_inferior_to_incumbent /
-                # fdr_not_winner / None — computed on every CandidateGateResult
-                # (backtest_gate_engine.py) but never threaded through this
-                # route until now. None on a genuine survivor — never
-                # fabricated (regression-guarded).
-                "rejection_reason": getattr(gate_result, "rejection_reason", None),
+    try:
+        return jsonify(
+            {
+                # Run-level fields (AC-2.5: always expose the message so zero-survivors is explicit)
+                "message": run_result.message,
+                "survivors": len(run_result.survivors),
+                "no_api_key": run_result.no_api_key,
+                # Proposal-level fields (AC-2.3: stats + verdict + rationale + guidance)
+                "candidate_id": proposal.candidate_id if proposal else None,
+                "symphony_id": symphony_id,
+                "from_ticker": from_ticker,
+                "to_ticker": to_ticker,
+                "objective_rationale": proposal.objective_rationale if proposal else "",
+                "baseline_stats": proposal.baseline_stats if proposal else None,
+                "variant_stats": proposal.variant_stats if proposal else None,
+                # Gate verdict — AC-2.3: operator sees decision + reason
+                "gate_decision": gate_result.verdict.decision if gate_result else None,
+                "gate_result": {
+                    "decision": gate_result.verdict.decision,
+                    "validation_days": gate_result.validation_days,
+                    "oos_alpha": gate_result.oos_alpha,
+                    "winner_p_adj": gate_result.winner_p_adj,
+                    # AC-9: statistical-power flag, threshold in app.py only —
+                    # never duplicated client-side.
+                    "low_power": _low_power(getattr(gate_result, "validation_days", None)),
+                    # AC-7: pbo_veto / below_spy_alpha / oos_inferior_to_incumbent /
+                    # fdr_not_winner / None — computed on every CandidateGateResult
+                    # (backtest_gate_engine.py) but never threaded through this
+                    # route until now. None on a genuine survivor — never
+                    # fabricated (regression-guarded).
+                    "rejection_reason": getattr(gate_result, "rejection_reason", None),
+                }
+                if gate_result
+                else None,
+                # Caveats (mandatory for survivors — SURVIVOR_OVERFITTING_CAVEAT),
+                # N=1-honest per AC-6: FDR/Yekutieli branding stripped, replaced
+                # with the real single-candidate disclosure; low-power text
+                # appended above when applicable (AC-9).
+                "caveats": _caveats,
+                # Apply guidance — plain text, no button (AC-X1)
+                "apply_guidance": proposal.apply_guidance if proposal else "",
+                # AC-9c: translate raw nginx 413 HTML to a clean operator message.
+                "backtest_error": _translate_backtest_error(proposal.backtest_error)
+                if proposal
+                else None,
+                "data_warnings": proposal.data_warnings if proposal else [],
+                # R2-3 additive keys (AC-9 / AC-12) — never remove/rename an
+                # existing key above, only add.
+                "provenance": provenance,
+                "survivors_detail": _survivors_detail,
+                "rejected_detail": _rejected_detail,
             }
-            if gate_result
-            else None,
-            # Caveats (mandatory for survivors — SURVIVOR_OVERFITTING_CAVEAT),
-            # N=1-honest per AC-6: FDR/Yekutieli branding stripped, replaced
-            # with the real single-candidate disclosure; low-power text
-            # appended above when applicable (AC-9).
-            "caveats": _caveats,
-            # Apply guidance — plain text, no button (AC-X1)
-            "apply_guidance": proposal.apply_guidance if proposal else "",
-            # AC-9c: translate raw nginx 413 HTML to a clean operator message.
-            "backtest_error": _translate_backtest_error(proposal.backtest_error)
-            if proposal
-            else None,
-            "data_warnings": proposal.data_warnings if proposal else [],
-        }
-    ), 200
+        ), 200
+    except Exception as _je:
+        _daemon_log.error(
+            "ai_advisor_asset_swaps_evaluate response serialization failed: %s",
+            _je,
+            exc_info=True,
+        )
+        return jsonify({"error": type(_je).__name__, "provenance": _default_provenance}), 200
 
 
 @app.route("/ai-advisor/logic-changes", methods=["GET"])
