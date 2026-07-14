@@ -28,6 +28,7 @@ from pydantic import BaseModel
 import database
 import model_config
 import symphony_logic
+from advisors import prism_render, symphony_schema
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,29 @@ _REQUEST_TIMEOUT_SECONDS = 30.0
 # Freshness window for the nightly MARKET_LENS_CACHE bundle.
 # 36 h covers a missed council night while still allowing the next run to refresh.
 _LENS_CACHE_MAX_AGE_HOURS = 36
+
+# R2-1: honest per-source manifest returned by build_reasoning_context() when
+# nothing is injectable (falsy symphony_id, or every source degraded) — every
+# key defaults to "absent", never omitted, never fabricated as present.
+_EMPTY_MANIFEST: dict = {
+    "tree": "absent",
+    "stats": "absent",
+    "technicals": "absent",
+    "sentiment": "absent",
+    "derivatives": "absent",
+    "macro": "absent",
+    "fundamentals": "absent",
+}
+
+# R2-1: bounds INPUT-context growth/cost — the rendered real-tree text injected
+# into the SB generation prompt is capped at this many characters. This is
+# NOT derived from build_plan_generator.MAX_OUTPUT_TOKENS (a different,
+# OUTPUT-side ceiling on the SDK's structured-tool-use response) — it exists
+# purely to keep a large real symphony tree from meaningfully bloating every
+# generation call's input token cost / context-window footprint. Conservative,
+# uncalibrated value (no measured worst-case exists yet, unlike MAX_OUTPUT_TOKENS'
+# calibrated figure) — ~1,500 tokens at a rough 4-chars/token estimate.
+_MAX_TREE_RENDER_CHARS: int = 6000
 
 # _OOS_REPLAY_N_JOBS — bounds intraday-replay parallelism on the OOS-revalidation
 # path (C-1, DE-AUTOTUNE-OOM). Same 2-core / MemoryMax=3.0 GiB droplet root cause
@@ -1671,6 +1695,112 @@ def assemble_advisor_context(
         "fundamentals": _lenses_from_cache.get("fundamentals") or {},
     }
     return context
+
+
+def build_reasoning_context(
+    symphony_id: str, objective, *, composer_symphony_id: str | None = None
+) -> tuple[str, dict]:
+    """Assemble operator-context text + a per-source manifest for SB generation.
+
+    Real-money-critical honesty contract (R2-1): the Strategy Builder should
+    reason over the operator's ACTUAL symphony, not just an objective name.
+    This function gathers {the real tree (rendered), live Optuna stats, the 5
+    market-lens blocks} and renders them into a bounded prose block ready to
+    splice verbatim into a generation prompt, alongside an honest per-source
+    manifest a caller can use for provenance/attribution.
+
+    Args:
+        symphony_id: the symphony to reason about. Falsy (empty/None) means
+            a from-scratch (non-symphony-scoped) run — returns immediately
+            with zero I/O, matching the AC-8 byte-preservation floor one
+            layer up (build_plan_generator._build_generation_prompt).
+        objective: unused today beyond documenting intent — reserved for a
+            future objective-conditioned rendering; every source is gathered
+            unconditionally regardless of objective.
+        composer_symphony_id: the Composer hash ID, when known (preferred
+            for the tree fetch/lens-cache-serve calls per the project's
+            Composer hash rule — falls back to symphony_id when absent).
+
+    Returns:
+        (prompt_context, manifest):
+          prompt_context: "" when nothing is injectable, else a bounded,
+              human-readable text block (never a raw JSON tree dump).
+          manifest: {"tree": "present"|"absent", "stats": "present"|"absent",
+              "technicals"/"sentiment"/"derivatives"/"macro"/"fundamentals":
+              "available"|"stale"|"absent"} — an honest per-source record,
+              never fabricated. Degraded/failed sources are reflected
+              honestly, never silently dropped or faked as available.
+
+    D-1: never raises, under any failure mode.
+    """
+    if not symphony_id:
+        return "", dict(_EMPTY_MANIFEST)
+
+    manifest = dict(_EMPTY_MANIFEST)
+    sections: list[str] = []
+
+    # Real tree (AC-1) — rendered via symphony_schema.render_rules_text, never
+    # a raw JSON dump (leaks internal node ids, blows the token budget).
+    # Wrapped in its OWN try/except (D-1): this function's honesty contract
+    # must not depend on fetch_symphony_score's own D-1 contract holding.
+    try:
+        raw_tree = symphony_logic.fetch_symphony_score(composer_symphony_id or symphony_id)
+    except Exception:  # noqa: BLE001 - D-1: a collaborator failure degrades, never propagates
+        raw_tree = {}
+
+    if raw_tree:
+        rendered = symphony_schema.render_rules_text(raw_tree)
+        if rendered:
+            manifest["tree"] = "present"
+            bounded = rendered[:_MAX_TREE_RENDER_CHARS]
+            if len(rendered) > _MAX_TREE_RENDER_CHARS:
+                bounded += "\n... [truncated]"
+            sections.append(f"OPERATOR'S CURRENT STRATEGY:\n{bounded}")
+
+    # Live stats + the 5 market-lens blocks — reuse assemble_advisor_context's
+    # EXISTING nightly cache-serve path (never a fresh live fan-out on this
+    # per-click path). Wrapped in its own try/except (D-1).
+    try:
+        context = assemble_advisor_context(
+            "symphony", symphony_id=symphony_id, composer_symphony_id=composer_symphony_id
+        )
+    except Exception:  # noqa: BLE001 - D-1
+        context = None
+
+    if context is not None:
+        optuna_evidence = context.get("optuna_evidence") or {}
+        if optuna_evidence.get("available"):
+            manifest["stats"] = "present"
+            sections.append(
+                "LIVE PERFORMANCE EVIDENCE:\n"
+                f"train_alpha={optuna_evidence.get('train_alpha')} "
+                f"oos_alpha={optuna_evidence.get('oos_alpha')} "
+                f"baseline_decision={optuna_evidence.get('baseline_decision')}"
+            )
+
+        # Per-lens state = each lens's own "available" flag combined with the
+        # bundle-wide staleness classifier already computed by
+        # assemble_advisor_context — reusing the EXISTING classifier, never
+        # inventing a new one.
+        bundle_stale = bool(context.get("lens_data_stale"))
+        for lens_name in ("technicals", "sentiment", "derivatives", "macro", "fundamentals"):
+            lens_block = context.get(lens_name) or {}
+            if not lens_block.get("available"):
+                continue
+            manifest[lens_name] = "stale" if bundle_stale else "available"
+            # Reuse the Overview tab's existing structured-JSON-to-prose
+            # converter (prism_render.humanize_lens_summary) instead of a
+            # second hand-rolled renderer — it expects a JSON-encoded
+            # "summary" string, so the lens's real payload is re-encoded to
+            # match that calling convention.
+            import json  # noqa: PLC0415 - local import, matches this module's existing convention
+
+            prose = prism_render.humanize_lens_summary(
+                lens_name, {"summary": json.dumps(lens_block.get("payload"))}
+            )
+            sections.append(f"{lens_name.upper()}: {prose}")
+
+    return "\n\n".join(sections), manifest
 
 
 # ---------------------------------------------------------------------------

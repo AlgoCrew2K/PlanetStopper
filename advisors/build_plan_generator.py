@@ -916,6 +916,7 @@ def _build_generation_prompt(
     objective,
     n_plans: int = N_PLANS_PER_OBJECTIVE,
     membership=None,
+    reasoning_context: str | None = None,
 ) -> str:
     """Build the SDK prompt for the given objective.
 
@@ -932,6 +933,13 @@ def _build_generation_prompt(
         Number of distinct plans requested.
     membership : frozenset | set | None
         The valid ticker universe (included in prompt for reference).
+    reasoning_context : str | None
+        R2-1: an optional, ready-to-inject operator-context text block (the
+        real symphony tree + live stats + market-lens summaries — see
+        ai_advisor.build_reasoning_context). Additive/keyword, default None.
+        When falsy (None or ""), the returned prompt is BYTE-IDENTICAL to the
+        pre-R2-1 output (AC-8) — when truthy, appended as a distinct trailing
+        section, never mixed into the existing grammar text above it.
 
     Returns
     -------
@@ -954,7 +962,7 @@ def _build_generation_prompt(
             f"sample): {', '.join(sample)}" + (" ..." if len(membership) > 20 else "")
         )
 
-    return (
+    prompt = (
         f"You are a quantitative strategy designer for the Planet Stopper risk engine.\n\n"
         f"TASK: Generate exactly {n_plans} DISTINCT build-plans for objective='{obj_name}'.\n\n"
         f"CRITICAL — USE THE EXACT DSL GRAMMAR BELOW. Do NOT invent new field names.\n\n"
@@ -1030,6 +1038,9 @@ def _build_generation_prompt(
         f"Every plan must satisfy the '{obj_name}' structural requirement above. "
         f"Use diverse asset combinations across plans."
     )
+    if reasoning_context:
+        prompt += f"\n\n## OPERATOR CONTEXT\n\n{reasoning_context}"
+    return prompt
 
 
 # ---------------------------------------------------------------------------
@@ -1042,6 +1053,7 @@ def generate_build_plans(
     membership_set,
     *,
     n_plans: int = N_PLANS_PER_OBJECTIVE,
+    reasoning_context: str | None = None,
 ) -> GeneratorResult:
     """Generate N objective-shaped build-plans via the Anthropic SDK (tool-use).
 
@@ -1053,6 +1065,10 @@ def generate_build_plans(
         The valid ticker universe (AC-9 membership validation).
     n_plans : int
         Maximum number of structurally-distinct admitted plans to return.
+    reasoning_context : str | None
+        R2-1: threaded straight through to _build_generation_prompt (see its
+        docstring). Additive/keyword, default None — omitted or falsy
+        reproduces the pre-R2-1 prompt byte-for-byte (AC-8).
 
     Returns
     -------
@@ -1069,7 +1085,9 @@ def generate_build_plans(
         # Build the SDK client (patched in tests via the _build_client seam).
         client = _build_client()
 
-        prompt = _build_generation_prompt(objective, n_plans, membership)
+        prompt = _build_generation_prompt(
+            objective, n_plans, membership, reasoning_context=reasoning_context
+        )
 
         # Bounded retry on truncation (stop_reason="max_tokens").  The old bare literal
         # max_tokens=4096 was too small for 12 full-grammar plans; MAX_OUTPUT_TOKENS fixes
