@@ -71,18 +71,6 @@ def test_self_guard_sb_run_analysis_block_extraction_finds_known_existing_token(
     )
 
 
-def test_new_testid_not_yet_present_before_implementation():
-    """Precondition guard (passes today, flips once GREEN lands): the NEW
-    testid literal must be ABSENT from the file before implementation — proves
-    this cycle is genuinely adding it, not re-discovering an existing string."""
-    source = _js()
-    assert f'data-testid="{_NEW_TESTID}"' not in source, (
-        f'data-testid="{_NEW_TESTID}" is already present before R2-1 implementation — '
-        "either this name collides with pre-existing markup, or GREEN already landed "
-        "out of band. Either way this precondition check needs review."
-    )
-
-
 # ===========================================================================
 # AC-5: sbRunAnalysis() consumes provenance / generation_model / run_id.
 # ===========================================================================
