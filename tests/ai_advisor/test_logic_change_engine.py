@@ -1417,6 +1417,10 @@ class TestOperatorInitiatedMode:
                 return_value=mock_backtest,
             ),
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates",
+                return_value=[_make_logic_tweak()],
+            ),
             patch("database.insert_advisor_observation"),
         ):
             result = engine.propose_operator_logic_change(
@@ -1573,6 +1577,10 @@ class TestAdvisorSuggestedMode:
                 return_value=mock_backtest,
             ),
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates",
+                return_value=_make_two_logic_tweaks(),
+            ),
             patch("database.insert_advisor_observation"),
         ):
             result = engine.suggest_logic_changes(

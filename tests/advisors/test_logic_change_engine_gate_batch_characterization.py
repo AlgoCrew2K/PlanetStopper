@@ -180,3 +180,74 @@ def test_operator_path_still_single_batch_call_n1(lce, fixture_tree, monkeypatch
     assert len(candidates) == 1, (
         f"AC-4 GAP: operator path batch carried {len(candidates)} candidates, expected 1."
     )
+
+
+# ===========================================================================
+# AC-X5: one candidate's backtest failure never aborts the rest of the batch.
+#
+# Replaces the coverage lost when test_one_failure_in_suggest_mode_does_not_
+# abort_other_candidates (tests/ai_advisor/test_logic_change_engine.py) was
+# retired for calling the deleted generate_objective_directed_logic_candidates
+# directly (r2-2-review non-blocking follow-up).
+# ===========================================================================
+
+
+def test_one_candidate_backtest_failure_does_not_abort_the_rest_of_the_batch(
+    lce, fixture_tree, monkeypatch
+):
+    """N=3 reasoned candidates, the SECOND's run_backtest call errors — the
+    other two must still be backtested, gated, and surfaced; the batch must
+    not abort (AC-X5)."""
+    _patch_common(lce, monkeypatch)
+    params = lce.extract_numeric_params(fixture_tree)[:3]
+    edits = [
+        {"node_path": p["node_path"], "param_key": p["param_key"], "new_value": p["value"] + 1}
+        for p in params
+    ]
+    client = _FixedMockClient(edits=edits)
+    monkeypatch.setattr(lce, "_build_client", lambda: client)
+
+    from advisors.composer_backtest_client import BacktestResult
+
+    error_result = BacktestResult(
+        error="HTTP 500: Internal Server Error", stats=None, data_warnings=[], daily_returns={}
+    )
+    call_count = {"n": 0}
+
+    def _flaky_backtest(*a, **k):
+        call_count["n"] += 1
+        # Empirically confirmed call order for suggest_logic_changes with N=3
+        # candidates: [baseline-1, variant-1, baseline-2, variant-2, baseline-3,
+        # variant-3, batch-level-baseline-returns, SPY-benchmark] — call #4 is
+        # candidate 2's VARIANT backtest, the call whose failure actually marks
+        # that candidate's own backtest_error (a baseline-call failure alone
+        # does not fail the candidate). Deterministic call-index targeting,
+        # not content-based, since all 3 candidates share the same tree shape.
+        if call_count["n"] == 4:
+            return error_result
+        return _fake_backtest_result(seed=call_count["n"])
+
+    monkeypatch.setattr(lce, "run_backtest", _flaky_backtest)
+
+    gate_spy = MagicMock(wraps=lce.evaluate_candidate_batch)
+    monkeypatch.setattr(lce, "evaluate_candidate_batch", gate_spy)
+
+    objective = lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0)
+    result = lce.suggest_logic_changes("sym-1", fixture_tree, objective)
+
+    assert result is not None, "AC-X5 GAP: suggest_logic_changes must not raise on a backtest error."
+    n_total = len(result.proposals)
+    n_failed = sum(1 for p in result.proposals if p.backtest_error)
+    assert n_total == 3, f"AC-X5 GAP: expected all 3 candidates surfaced, got {n_total}."
+    assert 0 < n_failed < n_total, (
+        f"AC-X5 GAP: expected exactly one failed candidate among {n_total}, got {n_failed} failed "
+        "— one backtest failure must not abort the rest of the batch, and must not be silently "
+        "dropped either."
+    )
+    assert gate_spy.called, "AC-X5 GAP: the surviving candidates must still reach the gate."
+    _args, kwargs = gate_spy.call_args
+    gated = _args[0] if _args else kwargs.get("candidates")
+    assert len(gated) == n_total - n_failed, (
+        f"AC-X5 GAP: {len(gated)} candidates reached the gate, expected {n_total - n_failed} "
+        "(the successfully-backtested ones only)."
+    )
