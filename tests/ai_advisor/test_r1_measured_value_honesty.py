@@ -205,7 +205,17 @@ def test_ac10_logic_change_evaluate_response_drops_fabricated_measured_drawdown(
 ):
     """MUST FAIL pre-fix: today the rationale literally reads 'targets
     reduction of the measured 0.0% drawdown...' regardless of any real
-    drawdown data."""
+    drawdown data.
+
+    R2-2 (DE-R2-2-SEAM-AUDIT-002, 3rd pass): change_description now routes
+    through the LLM-backed generate_reasoned_logic_candidates before ever
+    reaching the mocked run_backtest/database seams below -- without mocking
+    it, this test (with a real ANTHROPIC_API_KEY present) billed a live
+    Anthropic call. Caught only by an execution-level detector patching the
+    real anthropic.Anthropic constructor -- this test's own negative
+    assertion ("measured 0.0%" not in rationale) passes vacuously whether the
+    call is mocked or not, so neither a green run nor a credential-less pass
+    surfaced it."""
     import advisors.logic_change_engine as lce
     from advisors.composer_backtest_client import BacktestResult
 
@@ -217,8 +227,17 @@ def test_ac10_logic_change_evaluate_response_drops_fabricated_measured_drawdown(
             stats={"sharpe": 0.1}, data_warnings=[], daily_returns={"2026-01-01": 0.001}
         )
 
+    tweak = lce.LogicTweak(
+        node_path=["children", 0],
+        param_key="window",
+        old_value=20,
+        new_value=16,
+        node_description="window=20 -> 16 at path [children, 0]",
+    )
+
     with (
         patch.object(lce, "_has_composer_key", return_value=True),
+        patch.object(lce, "generate_reasoned_logic_candidates", return_value=[tweak]),
         patch.object(lce, "run_backtest", side_effect=_side_effect),
         patch.object(lce, "database") as mock_db,
     ):

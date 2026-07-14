@@ -520,14 +520,25 @@ class TestTreeManipulation:
             f"in the score tree. Found window values: {window_values}."
         )
 
-    def test_extract_numeric_params_returns_empty_for_no_numeric_nodes(self):
-        """extract_numeric_params returns empty list for a tree with no numeric params."""
+    def test_extract_numeric_params_returns_empty_for_no_window_or_threshold_nodes(self):
+        """extract_numeric_params returns no window/threshold-keyed entries for a
+        tree with none present.
+
+        CORRECTED (was stale/factually wrong — see DE-R2-2-SEAM-AUDIT-002): this
+        does NOT mean the tree has zero numeric params overall. extract_numeric_
+        params's own L1 contract surfaces ALL finite numerics, including 0/1
+        values (only genuine booleans are excluded as flags) — _make_score_tree_
+        simple()'s weight=1.0 IS captured as a real param (param_key="weight",
+        value=1.0). This test only asserts the narrower claim that no
+        window/threshold-keyed params exist, which remains true regardless.
+        """
         engine = _import_engine()
         tree_no_params = _make_score_tree_simple()
         params = engine.extract_numeric_params(tree_no_params)
         assert isinstance(params, list), "extract_numeric_params must return a list."
-        # weight=1.0 is present but value is exactly 1 and is excluded per the spec
-        # (values of 0 or 1 are boolean flags). So result should be empty.
+        # weight=1.0 IS present and IS captured (L1: 0/1 are NOT excluded as
+        # flags — only genuine booleans are). It just isn't a window/threshold
+        # key, which is the only thing this narrower assertion checks.
         window_or_threshold_params = [
             p for p in params if p["param_key"] in ("window", "threshold")
         ]
@@ -1204,13 +1215,24 @@ class TestArchitectureConstraints:
                     )
 
     def test_no_api_key_operator_mode_returns_no_api_key_true(self, score_tree, logic_objective):
-        """AC-X4: absent Composer API key → no_api_key=True + 'advisor unavailable' message."""
+        """AC-X4: absent Composer API key → no_api_key=True + 'advisor unavailable' message.
+
+        CORRECTED (DE-R2-2-SEAM-AUDIT-002, 2nd pass): propose_operator_logic_
+        change resolves change_description via generate_reasoned_logic_
+        candidates BEFORE its own _has_composer_key() check (verified by
+        execution — _build_client is invoked even with _has_composer_key
+        mocked False, since Composer credentials and the Anthropic credential
+        the LLM seam reads are two independent gates). Without this mock, a
+        real ANTHROPIC_API_KEY present in the environment made this test bill
+        a live Anthropic call despite asserting the NO-COMPOSER-KEY path.
+        """
         engine = _import_engine()
 
         insert_calls: list = []
 
         with (
             patch("advisors.logic_change_engine._has_composer_key", return_value=False),
+            patch("advisors.logic_change_engine.generate_reasoned_logic_candidates", return_value=[]),
             patch(
                 "database.insert_advisor_observation",
                 side_effect=lambda **kw: insert_calls.append(kw),
@@ -1604,10 +1626,18 @@ class TestAdvisorSuggestedMode:
         assert result.no_api_key is False
 
     def test_suggest_mode_with_simple_tree_yields_zero_proposals(self):
-        """suggest_logic_changes on a tree with no numeric params yields an empty result.
+        """suggest_logic_changes yields a clean zero-survivors result when the
+        reasoned generator proposes nothing usable.
 
-        A tree with no tweakable numeric parameters produces zero candidates, which
-        is a valid non-error outcome.
+        CORRECTED (DE-R2-2-SEAM-AUDIT-002): this test's name/docstring used to
+        claim _make_score_tree_simple() has "no numeric params" — factually
+        wrong (extract_numeric_params(_make_score_tree_simple()) == weight=1.0,
+        verified by execution; L1 does not exclude 0/1 values). That false
+        premise meant generate_reasoned_logic_candidates was NOT mocked here,
+        so (with real credentials present) this test made a live Anthropic
+        call. Fixed with the same established mock pattern as every sibling
+        test — return [] directly, the simplest fix per r2-2-review, rather
+        than depending on getting the fixture's param-emptiness right.
         """
         engine = _import_engine()
         objective = _make_logic_objective()
@@ -1615,6 +1645,7 @@ class TestAdvisorSuggestedMode:
 
         with (
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch("advisors.logic_change_engine.generate_reasoned_logic_candidates", return_value=[]),
             patch("database.insert_advisor_observation"),
         ):
             result = engine.suggest_logic_changes(
@@ -1625,7 +1656,7 @@ class TestAdvisorSuggestedMode:
 
         assert result is not None
         assert len(result.survivors) == 0, (
-            "A tree with no tweakable params must yield zero survivors."
+            "A generator that proposes nothing usable must yield zero survivors."
         )
 
     def test_suggest_mode_n_candidates_matches_gated_count(self, score_tree):
