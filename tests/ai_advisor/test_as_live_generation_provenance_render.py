@@ -229,3 +229,41 @@ def test_existing_swap_card_testids_preserved():
             f"AC-9 GAP (regression): existing testid {testid!r} no longer appears in "
             "static/ai_advisor_asset_swaps.js — the R2-3 render rewrite must preserve it."
         )
+
+
+# ===========================================================================
+# Regression guard — objective-only mode must be reachable from the UI, not
+# only via a direct POST. r2-3-fe flagged this deviation (relaxing
+# syncBtn()'s ticker-required check to symphony-only) mid-cycle: without it,
+# AC-2's objective-only reasoned mode is server-real but dead from the
+# operator's seat, since the "Evaluate swap" button would never enable with
+# both ticker fields blank. Locking it in here as a characterization test
+# (the fix already shipped GREEN) so a future refactor can't silently
+# reintroduce the both-tickers-required gate.
+# ===========================================================================
+
+
+def _sync_btn_block(source: str) -> str:
+    start = source.find("function syncBtn(")
+    assert start != -1, "static/ai_advisor_asset_swaps.js no longer contains syncBtn()."
+    end = source.find("\n    }\n", start)
+    assert end != -1, (
+        "static/ai_advisor_asset_swaps.js structure changed — syncBtn() end not found."
+    )
+    return source[start : end + len("\n    }\n")]
+
+
+def test_sync_btn_does_not_require_ticker_fields():
+    """ADVERSARIAL: syncBtn()'s enablement check must NOT require fromInput/
+    toInput to be non-empty — that would make objective-only reasoned mode
+    unreachable from the real UI (only invocable via a direct POST)."""
+    block = _sync_btn_block(_js())
+    assert "fromInput.value" not in block and "toInput.value" not in block, (
+        "AC-2 GAP: syncBtn() still gates the Evaluate button on fromInput/toInput "
+        "being filled — objective-only mode (both tickers blank) would never be "
+        "reachable through the actual dashboard UI."
+    )
+    assert "symphonySelect" in block and "symphonySelect.value" in block, (
+        "AC-2 GAP: syncBtn() no longer requires a symphony selection at all — "
+        "symphony selection must remain a hard requirement to enable the button."
+    )
