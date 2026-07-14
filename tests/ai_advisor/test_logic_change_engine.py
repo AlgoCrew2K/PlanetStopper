@@ -255,8 +255,12 @@ def _make_two_logic_tweaks() -> list:
     gone; these tests inject a controlled candidate list directly, same
     pattern as the reasoning port's own RED suite)."""
     return [
-        _make_logic_tweak(node_path=["children", 0], param_key="window", old_value=20, new_value=16),
-        _make_logic_tweak(node_path=["children", 1], param_key="window", old_value=50, new_value=40),
+        _make_logic_tweak(
+            node_path=["children", 0], param_key="window", old_value=20, new_value=16
+        ),
+        _make_logic_tweak(
+            node_path=["children", 1], param_key="window", old_value=50, new_value=40
+        ),
     ]
 
 
@@ -790,6 +794,7 @@ class TestBatchDispatchContract:
                 f"total candidates submitted ({total_candidates_gated})."
             )
 
+
 # ===========================================================================
 # Section 5 — Pre-correction passers are NOT surfaced (AC-3.3)
 # ===========================================================================
@@ -1232,7 +1237,9 @@ class TestArchitectureConstraints:
 
         with (
             patch("advisors.logic_change_engine._has_composer_key", return_value=False),
-            patch("advisors.logic_change_engine.generate_reasoned_logic_candidates", return_value=[]),
+            patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates", return_value=[]
+            ),
             patch(
                 "database.insert_advisor_observation",
                 side_effect=lambda **kw: insert_calls.append(kw),
@@ -1344,6 +1351,7 @@ class TestBacktestFailureIsolation:
                 assert (
                     isinstance(proposal.backtest_error, str) and len(proposal.backtest_error) > 0
                 ), "backtest_error must be a non-empty string describing the failure."
+
 
 # ===========================================================================
 # Section 10 — Zero survivors is a valid outcome
@@ -1645,7 +1653,9 @@ class TestAdvisorSuggestedMode:
 
         with (
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
-            patch("advisors.logic_change_engine.generate_reasoned_logic_candidates", return_value=[]),
+            patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates", return_value=[]
+            ),
             patch("database.insert_advisor_observation"),
         ):
             result = engine.suggest_logic_changes(
@@ -1783,4 +1793,3 @@ class TestFixtureContract:
             "sample_tweak_invalid must be rejected by apply_logic_tweak (old_value mismatch). "
             f"Got a non-None result: {result_tree!r}."
         )
-

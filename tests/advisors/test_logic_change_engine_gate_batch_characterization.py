@@ -31,7 +31,9 @@ import pytest
 from advisors.backtest_gate_engine import evaluate_candidate_batch
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_FIXTURE_TREE_PATH = _REPO_ROOT / "tests" / "fixtures" / "symphony_logic" / "sample_score_small.json"
+_FIXTURE_TREE_PATH = (
+    _REPO_ROOT / "tests" / "fixtures" / "symphony_logic" / "sample_score_small.json"
+)
 
 # The exact current parameter set of the FDR/PBO/SPY gate — pinned BEFORE any
 # R2-2 change (same frozenset R2-1 pinned; the gate has not changed since).
@@ -235,7 +237,9 @@ def test_one_candidate_backtest_failure_does_not_abort_the_rest_of_the_batch(
     objective = lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0)
     result = lce.suggest_logic_changes("sym-1", fixture_tree, objective)
 
-    assert result is not None, "AC-X5 GAP: suggest_logic_changes must not raise on a backtest error."
+    assert result is not None, (
+        "AC-X5 GAP: suggest_logic_changes must not raise on a backtest error."
+    )
     n_total = len(result.proposals)
     n_failed = sum(1 for p in result.proposals if p.backtest_error)
     assert n_total == 3, f"AC-X5 GAP: expected all 3 candidates surfaced, got {n_total}."

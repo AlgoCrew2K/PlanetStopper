@@ -35,7 +35,9 @@ from unittest.mock import MagicMock
 import pytest
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_FIXTURE_TREE_PATH = _REPO_ROOT / "tests" / "fixtures" / "symphony_logic" / "sample_score_small.json"
+_FIXTURE_TREE_PATH = (
+    _REPO_ROOT / "tests" / "fixtures" / "symphony_logic" / "sample_score_small.json"
+)
 
 
 @pytest.fixture(scope="module")
@@ -141,7 +143,9 @@ def test_structurally_invalid_llm_edit_dropped_before_backtest(lce, fixture_tree
     assert result.message == lce.NO_SURVIVORS_MESSAGE, (
         f"AC-3: zero survivors expected (only candidate was invalid). Got message={result.message!r}"
     )
-    assert result.rejected_candidates, "AC-3 GAP: the invalid candidate must still be surfaced (rejected), not silently vanish."
+    assert result.rejected_candidates, (
+        "AC-3 GAP: the invalid candidate must still be surfaced (rejected), not silently vanish."
+    )
     reason = result.rejected_candidates[0].backtest_error
     assert reason, "AC-3 GAP: the dropped candidate must carry an honest, non-empty reason."
     assert "not found" not in reason.lower(), (

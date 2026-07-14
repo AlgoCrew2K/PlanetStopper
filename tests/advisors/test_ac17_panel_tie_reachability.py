@@ -335,7 +335,9 @@ def test_ac17_e2e_logic_change_operator_evaluate_empty_params_candidate_adopts()
     from advisors.composer_backtest_client import BacktestResult
 
     raw_tree = symphony_schema.make_root(
-        "AC17 Test", "daily", [symphony_schema.make_inverse_vol([symphony_schema.make_asset("QQQ")])]
+        "AC17 Test",
+        "daily",
+        [symphony_schema.make_inverse_vol([symphony_schema.make_asset("QQQ")])],
     )
     raw_tree["children"][0]["window-days"] = 20
     variant_returns_log = _log_returns_cyclical()

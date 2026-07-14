@@ -118,7 +118,9 @@ def _wipe_cred_env(monkeypatch):
 
 def test_full_reasoned_path_runs_credential_less_zero_live_calls(lce, small_tree, monkeypatch):
     _wipe_cred_env(monkeypatch)
-    monkeypatch.setattr(lce, "_has_composer_key", lambda: True)  # engine-level guard mocked separately from live creds
+    monkeypatch.setattr(
+        lce, "_has_composer_key", lambda: True
+    )  # engine-level guard mocked separately from live creds
 
     client = _RecordingMockClient(edits=[])
     monkeypatch.setattr(lce, "_build_client", lambda: client)
@@ -132,7 +134,9 @@ def test_full_reasoned_path_runs_credential_less_zero_live_calls(lce, small_tree
     objective = lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0)
     result = lce.suggest_logic_changes("sym-1", small_tree, objective)
 
-    assert result is not None, "AC-10 GAP: the reasoned path did not complete under credential-less env."
+    assert result is not None, (
+        "AC-10 GAP: the reasoned path did not complete under credential-less env."
+    )
     assert client.calls, (
         "AC-10 GAP: the LLM seam (_build_client) was never reached — the reasoned path was "
         "silently skipped rather than exercised end-to-end."
@@ -163,7 +167,9 @@ def test_full_reasoned_path_operator_entry_point_credential_less(lce, small_tree
     )
 
     assert result is not None
-    assert client.calls, "AC-10 GAP: operator path never reached the LLM seam under credential-less env."
+    assert client.calls, (
+        "AC-10 GAP: operator path never reached the LLM seam under credential-less env."
+    )
 
 
 # ===========================================================================
@@ -171,7 +177,9 @@ def test_full_reasoned_path_operator_entry_point_credential_less(lce, small_tree
 # ===========================================================================
 
 
-def test_oversized_real_tree_reasoning_context_stays_bounded(lce, small_tree, large_tree, monkeypatch):
+def test_oversized_real_tree_reasoning_context_stays_bounded(
+    lce, small_tree, large_tree, monkeypatch
+):
     small_client = _RecordingMockClient(edits=[])
     monkeypatch.setattr(lce, "_build_client", lambda: small_client)
     objective = lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0)

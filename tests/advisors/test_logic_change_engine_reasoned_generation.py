@@ -34,7 +34,9 @@ import pathlib
 import pytest
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_FIXTURE_TREE_PATH = _REPO_ROOT / "tests" / "fixtures" / "symphony_logic" / "sample_score_small.json"
+_FIXTURE_TREE_PATH = (
+    _REPO_ROOT / "tests" / "fixtures" / "symphony_logic" / "sample_score_small.json"
+)
 
 
 @pytest.fixture(scope="module")
@@ -139,7 +141,9 @@ class _RaisingMockClient:
 # ===========================================================================
 
 
-def test_two_objectives_produce_different_edits_on_same_tree(lce, fixture_tree, real_param, monkeypatch):
+def test_two_objectives_produce_different_edits_on_same_tree(
+    lce, fixture_tree, real_param, monkeypatch
+):
     """ADVERSARIAL: an objective-ignoring generator fails this test. Two distinct
     objectives against the identical tree must yield DIFFERENT LogicTweak sets —
     proven via a mock client keyed on objective text reaching the prompt."""
@@ -321,7 +325,9 @@ def test_llm_client_construction_or_call_failure_returns_empty_list_no_raise(
     monkeypatch.setattr(lce, "_build_client", _raise)
     objective = lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0)
     result = lce.generate_reasoned_logic_candidates("sym-1", fixture_tree, objective)
-    assert result == [], f"D-1 GAP: client construction failure should degrade to [], got {result!r}"
+    assert result == [], (
+        f"D-1 GAP: client construction failure should degrade to [], got {result!r}"
+    )
 
     monkeypatch.setattr(lce, "_build_client", lambda: _RaisingMockClient())
     result2 = lce.generate_reasoned_logic_candidates("sym-1", fixture_tree, objective)

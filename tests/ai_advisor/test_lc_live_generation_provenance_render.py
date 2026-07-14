@@ -48,8 +48,13 @@ def _render_results_block(source: str) -> str:
     anchor (this file's own existing convention, see the 'Evaluate button'
     section comment immediately following _renderResults)."""
     start = source.find(_FN_START_ANCHOR)
-    assert start != -1, f"static/ai_advisor_logic_changes.js no longer contains {_FN_START_ANCHOR!r}"
-    end = source.find("// ---------------------------------------------------------------------------\n    // Evaluate button", start)  # noqa: E501
+    assert start != -1, (
+        f"static/ai_advisor_logic_changes.js no longer contains {_FN_START_ANCHOR!r}"
+    )
+    end = source.find(
+        "// ---------------------------------------------------------------------------\n    // Evaluate button",
+        start,
+    )  # noqa: E501
     assert end != -1, "static/ai_advisor_logic_changes.js structure changed — end anchor not found."
     return source[start:end]
 
@@ -120,7 +125,9 @@ def test_provenance_render_reachable_before_error_branch_early_return():
     block = _render_results_block(_js())
     error_branch_idx = block.find("if (data.error)")
     provenance_idx = block.find("data.provenance")
-    assert error_branch_idx != -1, "self-guard: 'if (data.error)' branch not found in _renderResults()."
+    assert error_branch_idx != -1, (
+        "self-guard: 'if (data.error)' branch not found in _renderResults()."
+    )
     assert provenance_idx != -1, (
         "AC-8 GAP: 'data.provenance' not found at all in _renderResults() — see the "
         "dedicated consumption test above for the primary failure signal."

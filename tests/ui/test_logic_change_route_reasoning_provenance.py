@@ -63,7 +63,11 @@ def _real_run_result(*, provenance: dict, run_id: str):
     """Build a minimal, real (non-Mock) LogicChangeRunResult-shaped object for
     a mocked propose_operator_logic_change return."""
     from advisors.backtest_gate_engine import HARVEY_LIU_FDR_Q, GatedBatch
-    from advisors.logic_change_engine import LogicChangeObjective, LogicChangeRunResult, NO_SURVIVORS_MESSAGE
+    from advisors.logic_change_engine import (
+        LogicChangeObjective,
+        LogicChangeRunResult,
+        NO_SURVIVORS_MESSAGE,
+    )
 
     return LogicChangeRunResult(
         gate_batch=GatedBatch(results=[], survivors=[], n_candidates=0, fdr_q=HARVEY_LIU_FDR_Q),
@@ -90,13 +94,17 @@ def _provenance_dict(*, run_id: str = "engine-run-id", model: str = "engine-mode
 
 
 def test_evaluate_route_success_response_includes_provenance_matching_engine_result(flask_client):
-    mock_result = _real_run_result(provenance=_provenance_dict(run_id="engine-run-id"), run_id="engine-run-id")
+    mock_result = _real_run_result(
+        provenance=_provenance_dict(run_id="engine-run-id"), run_id="engine-run-id"
+    )
 
     with (
         patch("advisors.logic_change_engine._has_composer_key", return_value=True),
         patch("database.load_state", return_value=_seeded_bot_state()),
         patch("symphony_logic.fetch_symphony_score", return_value=_minimal_score_tree()),
-        patch("advisors.logic_change_engine.propose_operator_logic_change", return_value=mock_result),
+        patch(
+            "advisors.logic_change_engine.propose_operator_logic_change", return_value=mock_result
+        ),
     ):
         resp = flask_client.post(
             "/ai-advisor/logic-changes/evaluate",
@@ -106,11 +114,18 @@ def test_evaluate_route_success_response_includes_provenance_matching_engine_res
     assert resp.status_code == 200
     data = resp.get_json()
     assert data is not None
-    assert "provenance" in data, f"AC-5 GAP: route response missing 'provenance' key. Got keys: {list(data.keys())}"
-    assert data["provenance"] is not None, "AC-5 GAP: provenance must never be None on the success path."
-    assert set(data["provenance"].keys()) == {"generation_model", "mode", "evidence_injected", "run_id"}, (
-        f"AC-5 GAP: provenance key set is {sorted(data['provenance'].keys())!r}."
+    assert "provenance" in data, (
+        f"AC-5 GAP: route response missing 'provenance' key. Got keys: {list(data.keys())}"
     )
+    assert data["provenance"] is not None, (
+        "AC-5 GAP: provenance must never be None on the success path."
+    )
+    assert set(data["provenance"].keys()) == {
+        "generation_model",
+        "mode",
+        "evidence_injected",
+        "run_id",
+    }, f"AC-5 GAP: provenance key set is {sorted(data['provenance'].keys())!r}."
     assert data["provenance"]["run_id"] == "engine-run-id", (
         f"AC-5 GAP: route did not echo the engine's real provenance verbatim. Got {data['provenance']!r}"
     )
@@ -139,7 +154,9 @@ def test_evaluate_route_provenance_present_on_no_api_key_early_return(flask_clie
         f"AC-5 GAP: the no-key pre-engine early return must ALSO carry provenance (stricter than "
         f"R2-1's engine-only scoping — team-lead ruling). Got keys: {list(data.keys())}"
     )
-    assert data["provenance"] is not None, "AC-5 GAP: provenance must never be None, even pre-engine."
+    assert data["provenance"] is not None, (
+        "AC-5 GAP: provenance must never be None, even pre-engine."
+    )
     prov = data["provenance"]
     assert set(prov.keys()) == {"generation_model", "mode", "evidence_injected", "run_id"}, (
         f"AC-5 GAP: provenance key set is {sorted(prov.keys())!r}."
@@ -166,7 +183,12 @@ def test_evaluate_route_provenance_present_on_missing_input_early_return(flask_c
     assert "provenance" in data and data["provenance"] is not None, (
         f"AC-5 GAP: missing-input early return must carry real provenance. Got: {data!r}"
     )
-    assert set(data["provenance"].keys()) == {"generation_model", "mode", "evidence_injected", "run_id"}
+    assert set(data["provenance"].keys()) == {
+        "generation_model",
+        "mode",
+        "evidence_injected",
+        "run_id",
+    }
 
 
 # ===========================================================================
@@ -199,7 +221,12 @@ def test_evaluate_route_provenance_present_on_engine_exception_path(flask_client
     assert "provenance" in data and data["provenance"] is not None, (
         f"AC-5 GAP: the engine-exception path must ALSO carry real provenance. Got: {data!r}"
     )
-    assert set(data["provenance"].keys()) == {"generation_model", "mode", "evidence_injected", "run_id"}
+    assert set(data["provenance"].keys()) == {
+        "generation_model",
+        "mode",
+        "evidence_injected",
+        "run_id",
+    }
 
 
 # ===========================================================================
@@ -211,7 +238,9 @@ def test_evaluate_route_provenance_generation_model_reflects_accessor_env_overri
     import model_config
 
     with (
-        patch.object(model_config, "get_advisor_suggestion_model", return_value="test-marker-route-model"),
+        patch.object(
+            model_config, "get_advisor_suggestion_model", return_value="test-marker-route-model"
+        ),
         patch("advisors.logic_change_engine._has_composer_key", return_value=False),
     ):
         resp = flask_client.post(
@@ -246,7 +275,10 @@ def test_evaluate_route_provenance_defensive_guard_on_non_dict_engine_result(fla
         patch("advisors.logic_change_engine._has_composer_key", return_value=True),
         patch("database.load_state", return_value=_seeded_bot_state()),
         patch("symphony_logic.fetch_symphony_score", return_value=_minimal_score_tree()),
-        patch("advisors.logic_change_engine.propose_operator_logic_change", return_value=malformed_result),
+        patch(
+            "advisors.logic_change_engine.propose_operator_logic_change",
+            return_value=malformed_result,
+        ),
     ):
         resp = flask_client.post(
             "/ai-advisor/logic-changes/evaluate",
@@ -260,7 +292,12 @@ def test_evaluate_route_provenance_defensive_guard_on_non_dict_engine_result(fla
         f"AC-5 GAP: defensive fallback must still produce a real dict, never a Mock repr or None. "
         f"Got {data.get('provenance')!r}"
     )
-    assert set(data["provenance"].keys()) == {"generation_model", "mode", "evidence_injected", "run_id"}
+    assert set(data["provenance"].keys()) == {
+        "generation_model",
+        "mode",
+        "evidence_injected",
+        "run_id",
+    }
 
 
 # ===========================================================================
@@ -316,7 +353,9 @@ def test_evaluate_route_still_never_touches_settings_write_surface():
             evaluate_fn_body = ast.unparse(node)
             break
 
-    assert evaluate_fn_body is not None, "Could not find ai_advisor_logic_changes_evaluate in app.py."
+    assert evaluate_fn_body is not None, (
+        "Could not find ai_advisor_logic_changes_evaluate in app.py."
+    )
     for forbidden in ("_SETTINGS_WRITE_ALLOWLIST", "save_settings", "set_symphony_live_mode"):
         assert forbidden not in evaluate_fn_body, (
             f"AC-9 GAP: ai_advisor_logic_changes_evaluate references {forbidden!r} — the "

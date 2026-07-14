@@ -22,7 +22,9 @@ from unittest.mock import MagicMock
 import pytest
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_FIXTURE_TREE_PATH = _REPO_ROOT / "tests" / "fixtures" / "symphony_logic" / "sample_score_small.json"
+_FIXTURE_TREE_PATH = (
+    _REPO_ROOT / "tests" / "fixtures" / "symphony_logic" / "sample_score_small.json"
+)
 
 
 @pytest.fixture(scope="module")
@@ -112,7 +114,9 @@ def test_llm_unavailable_degrades_to_no_reasoned_proposal_clean_message__operato
     assert result.provenance is not None
 
 
-def test_llm_malformed_tool_output_degrades_cleanly_through_full_entry_point(lce, fixture_tree, monkeypatch):
+def test_llm_malformed_tool_output_degrades_cleanly_through_full_entry_point(
+    lce, fixture_tree, monkeypatch
+):
     _patch_common(lce, monkeypatch)
     monkeypatch.setattr(lce, "_build_client", lambda: _MalformedResponseClient())
 
@@ -128,9 +132,13 @@ def test_llm_malformed_tool_output_degrades_cleanly_through_full_entry_point(lce
 # ===========================================================================
 
 
-def test_reasoning_manifest_absent_lenses_reflected_honestly_not_fabricated(lce, fixture_tree, monkeypatch):
+def test_reasoning_manifest_absent_lenses_reflected_honestly_not_fabricated(
+    lce, fixture_tree, monkeypatch
+):
     _patch_common(lce, monkeypatch)
-    monkeypatch.setattr(lce, "run_backtest", MagicMock(side_effect=RuntimeError("no backtest needed")))
+    monkeypatch.setattr(
+        lce, "run_backtest", MagicMock(side_effect=RuntimeError("no backtest needed"))
+    )
     monkeypatch.setattr(lce, "generate_reasoned_logic_candidates", MagicMock(return_value=[]))
 
     manifest = {
@@ -143,7 +151,9 @@ def test_reasoning_manifest_absent_lenses_reflected_honestly_not_fabricated(lce,
         "fundamentals": "absent",
     }
     objective = lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0)
-    result = lce.suggest_logic_changes("sym-1", fixture_tree, objective, reasoning_manifest=manifest)
+    result = lce.suggest_logic_changes(
+        "sym-1", fixture_tree, objective, reasoning_manifest=manifest
+    )
 
     assert result.provenance.get("evidence_injected") == manifest, (
         f"AC-6 GAP: the engine must reflect the manifest EXACTLY as passed — no upgrading 'stale'/"
@@ -163,7 +173,9 @@ def test_reasoning_manifest_absent_lenses_reflected_honestly_not_fabricated(lce,
         "llm_malformed",
     ],
 )
-def test_engine_never_raises_across_failure_modes__suggest(lce, fixture_tree, monkeypatch, failure_setup):
+def test_engine_never_raises_across_failure_modes__suggest(
+    lce, fixture_tree, monkeypatch, failure_setup
+):
     # NOTE: this sweep intentionally does NOT include "a collaborator breaks its
     # own D-1 contract and raises anyway" scenarios (e.g. forcing run_backtest
     # itself to raise) — composer_backtest_client.run_backtest is independently
@@ -185,5 +197,7 @@ def test_engine_never_raises_across_failure_modes__suggest(lce, fixture_tree, mo
     try:
         result = lce.suggest_logic_changes("sym-1", fixture_tree, objective)
     except Exception as exc:  # noqa: BLE001 - the test itself asserts this must not happen
-        pytest.fail(f"D-1 GAP ({failure_setup}): suggest_logic_changes raised {type(exc).__name__}: {exc}")
+        pytest.fail(
+            f"D-1 GAP ({failure_setup}): suggest_logic_changes raised {type(exc).__name__}: {exc}"
+        )
     assert result is not None

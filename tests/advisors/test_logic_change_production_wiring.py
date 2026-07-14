@@ -116,7 +116,9 @@ def _raw_tree() -> dict:
     # _is_spy_benchmark_tree's ticker-based detection of the SEPARATE SPY
     # benchmark tree _spy_returns_fn_for constructs internally.
     tree = symphony_schema.make_root(
-        "Prod Wiring Test", "daily", [symphony_schema.make_inverse_vol([symphony_schema.make_asset("QQQ")])]
+        "Prod Wiring Test",
+        "daily",
+        [symphony_schema.make_inverse_vol([symphony_schema.make_asset("QQQ")])],
     )
     tree["children"][0]["window-days"] = 20
     return tree

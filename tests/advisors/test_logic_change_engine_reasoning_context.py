@@ -41,7 +41,9 @@ from unittest.mock import MagicMock
 import pytest
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_FIXTURE_TREE_PATH = _REPO_ROOT / "tests" / "fixtures" / "symphony_logic" / "sample_score_small.json"
+_FIXTURE_TREE_PATH = (
+    _REPO_ROOT / "tests" / "fixtures" / "symphony_logic" / "sample_score_small.json"
+)
 
 
 @pytest.fixture(scope="module")
@@ -210,7 +212,9 @@ def test_propose_operator_logic_change_threads_reasoning_context_to_generator(
     )
 
 
-def test_suggest_logic_changes_threads_reasoning_context_to_generator(lce, fixture_tree, monkeypatch):
+def test_suggest_logic_changes_threads_reasoning_context_to_generator(
+    lce, fixture_tree, monkeypatch
+):
     """suggest_logic_changes must forward reasoning_context/reasoning_manifest to
     generate_reasoned_logic_candidates(...) unchanged (weekly-scheduler entry point,
     signature-symmetric with propose_operator_logic_change)."""

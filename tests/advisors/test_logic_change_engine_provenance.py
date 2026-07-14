@@ -44,7 +44,9 @@ import pytest
 import model_config
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_FIXTURE_TREE_PATH = _REPO_ROOT / "tests" / "fixtures" / "symphony_logic" / "sample_score_small.json"
+_FIXTURE_TREE_PATH = (
+    _REPO_ROOT / "tests" / "fixtures" / "symphony_logic" / "sample_score_small.json"
+)
 
 
 @pytest.fixture(scope="module")
@@ -84,7 +86,10 @@ def _run_suggest(
     gen_mock = MagicMock(
         return_value=[
             lce.LogicTweak(
-                node_path=p["node_path"], param_key=p["param_key"], old_value=p["value"], new_value=p["value"] + 1
+                node_path=p["node_path"],
+                param_key=p["param_key"],
+                old_value=p["value"],
+                new_value=p["value"] + 1,
             )
             for p in params
         ]
@@ -142,11 +147,15 @@ def _run_operator(
 
 
 def test_provenance_shape_and_accessor_driven_model(lce, fixture_tree, monkeypatch):
-    monkeypatch.setattr(model_config, "get_advisor_suggestion_model", lambda: "test-marker-lc-model")
+    monkeypatch.setattr(
+        model_config, "get_advisor_suggestion_model", lambda: "test-marker-lc-model"
+    )
     manifest = {
         "tree": "present",
         "stats": "absent",
-        **{n: "absent" for n in ("technicals", "sentiment", "derivatives", "macro", "fundamentals")},
+        **{
+            n: "absent" for n in ("technicals", "sentiment", "derivatives", "macro", "fundamentals")
+        },
     }
     result, _insert = _run_suggest(lce, fixture_tree, monkeypatch, reasoning_manifest=manifest)
 
@@ -155,7 +164,9 @@ def test_provenance_shape_and_accessor_driven_model(lce, fixture_tree, monkeypat
         f"AC-5 GAP: provenance['generation_model'] must reflect the LIVE accessor value. "
         f"Got {result.provenance!r}"
     )
-    assert result.provenance.get("mode") == "logic-change", f"AC-5 GAP: provenance={result.provenance!r}"
+    assert result.provenance.get("mode") == "logic-change", (
+        f"AC-5 GAP: provenance={result.provenance!r}"
+    )
     assert result.provenance.get("evidence_injected") == manifest, (
         f"AC-5 GAP: evidence_injected must equal the passed reasoning_manifest exactly. "
         f"Got {result.provenance.get('evidence_injected')!r}"
@@ -166,10 +177,15 @@ def test_provenance_shape_and_accessor_driven_model(lce, fixture_tree, monkeypat
 
 
 def test_provenance_key_set_is_exactly_four_keys(lce, fixture_tree, monkeypatch):
-    result, _insert = _run_suggest(lce, fixture_tree, monkeypatch, reasoning_manifest={"tree": "present"})
-    assert set(result.provenance.keys()) == {"generation_model", "mode", "evidence_injected", "run_id"}, (
-        f"AC-5 GAP: provenance key set is {sorted(result.provenance.keys())!r}."
+    result, _insert = _run_suggest(
+        lce, fixture_tree, monkeypatch, reasoning_manifest={"tree": "present"}
     )
+    assert set(result.provenance.keys()) == {
+        "generation_model",
+        "mode",
+        "evidence_injected",
+        "run_id",
+    }, f"AC-5 GAP: provenance key set is {sorted(result.provenance.keys())!r}."
 
 
 def test_provenance_evidence_injected_defaults_to_empty_manifest_when_reasoning_manifest_absent(
@@ -204,7 +220,9 @@ def test_run_id_minted_as_valid_uuid4_when_omitted(lce, fixture_tree, monkeypatc
 def test_caller_supplied_run_id_is_honored_and_used_verbatim(lce, fixture_tree, monkeypatch):
     fixed_id = "11111111-1111-4111-8111-111111111111"
     result, insert_mock = _run_suggest(lce, fixture_tree, monkeypatch, run_id=fixed_id)
-    assert result.run_id == fixed_id, f"AC-7 GAP: caller-supplied run_id not honored. Got {result.run_id!r}"
+    assert result.run_id == fixed_id, (
+        f"AC-7 GAP: caller-supplied run_id not honored. Got {result.run_id!r}"
+    )
     _args, call_kwargs = insert_mock.call_args_list[0]
     raw_response = call_kwargs.get("raw_response", {})
     assert raw_response.get("run_id") == fixed_id, (
@@ -212,7 +230,9 @@ def test_caller_supplied_run_id_is_honored_and_used_verbatim(lce, fixture_tree, 
     )
 
 
-def test_run_id_persisted_traceable_to_advisor_observation__suggest_path(lce, fixture_tree, monkeypatch):
+def test_run_id_persisted_traceable_to_advisor_observation__suggest_path(
+    lce, fixture_tree, monkeypatch
+):
     manifest = {"tree": "absent", "stats": "absent"}
     result, insert_mock = _run_suggest(
         lce, fixture_tree, monkeypatch, reasoning_manifest=manifest, n_edits=2
@@ -230,10 +250,14 @@ def test_run_id_persisted_traceable_to_advisor_observation__suggest_path(lce, fi
         )
 
 
-def test_run_id_persisted_traceable_to_advisor_observation__operator_path(lce, fixture_tree, monkeypatch):
+def test_run_id_persisted_traceable_to_advisor_observation__operator_path(
+    lce, fixture_tree, monkeypatch
+):
     manifest = {"tree": "present", "stats": "present"}
     result, insert_mock = _run_operator(lce, fixture_tree, monkeypatch, reasoning_manifest=manifest)
-    assert insert_mock.call_count >= 1, "AC-7 precondition: operator-path candidate was not persisted."
+    assert insert_mock.call_count >= 1, (
+        "AC-7 precondition: operator-path candidate was not persisted."
+    )
     _args, call_kwargs = insert_mock.call_args_list[0]
     raw_response = call_kwargs.get("raw_response", {})
     assert raw_response.get("run_id") == result.run_id, (
@@ -246,10 +270,16 @@ def test_run_id_persisted_traceable_to_advisor_observation__operator_path(lce, f
 # ===========================================================================
 
 
-def test_no_composer_key_still_populates_real_provenance_never_none__suggest(lce, fixture_tree, monkeypatch):
-    monkeypatch.setattr(model_config, "get_advisor_suggestion_model", lambda: "test-marker-lc-model")
+def test_no_composer_key_still_populates_real_provenance_never_none__suggest(
+    lce, fixture_tree, monkeypatch
+):
+    monkeypatch.setattr(
+        model_config, "get_advisor_suggestion_model", lambda: "test-marker-lc-model"
+    )
     manifest = {"tree": "absent", "stats": "absent"}
-    result, _insert = _run_suggest(lce, fixture_tree, monkeypatch, reasoning_manifest=manifest, has_key=False)
+    result, _insert = _run_suggest(
+        lce, fixture_tree, monkeypatch, reasoning_manifest=manifest, has_key=False
+    )
 
     assert result.no_api_key is True, "Test precondition: no-key path must set no_api_key=True."
     assert result.provenance is not None, (
@@ -266,7 +296,9 @@ def test_no_composer_key_still_populates_real_provenance_never_none__suggest(lce
     assert result.provenance.get("run_id") == result.run_id
 
 
-def test_no_composer_key_still_populates_real_provenance_never_none__operator(lce, fixture_tree, monkeypatch):
+def test_no_composer_key_still_populates_real_provenance_never_none__operator(
+    lce, fixture_tree, monkeypatch
+):
     result, _insert = _run_operator(lce, fixture_tree, monkeypatch, has_key=False)
     assert result.no_api_key is True
     assert result.provenance is not None, (
