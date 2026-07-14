@@ -4508,19 +4508,26 @@ def ai_advisor_logic_changes_evaluate():
     """Operator-initiated logic-change evaluation endpoint (AC-3.1).
 
     Accepts JSON: { symphony_id, objective_type?, change_description }.
-    Parses the change_description to build a LogicTweak + LogicChangeObjective,
-    fetches the baseline tree via symphony_logic, calls propose_operator_logic_change
-    from advisors.logic_change_engine, and returns the LogicChangeRunResult fields
-    as JSON.
+    Builds a LogicChangeObjective, injects the operator's real tree + live
+    stats + 5 market-lens blocks via ai_advisor.build_reasoning_context
+    (R2-2, AC-1), fetches the baseline tree via symphony_logic, calls
+    propose_operator_logic_change from advisors.logic_change_engine, and
+    returns the LogicChangeRunResult fields as JSON.
 
     Never runs a live trade; never calls Composer write endpoints (AC-X1).
     Persistence (advisor_observation) is handled inside propose_operator_logic_change
     (AC-X3).
 
     The change_description is a plain-text operator input (e.g., "change momentum
-    lookback from 20 to 10 days").  The route parses it for node_path + param_key +
-    old_value + new_value via a simple heuristic; on parse failure it returns a clear
-    error rather than fabricating a tweak.
+    lookback from 20 to 10 days"), retained as a steering hint into the engine's
+    LLM-reasoned generator (R2-2 — replaces the old deterministic heuristic
+    parser). The LLM proposes objective-directed edits over the operator's
+    ACTUAL tree; each edit's node_path/param_key is resolved against the real
+    tree and structurally re-validated (symphony_schema.validate_tree) before
+    backtest — an edit that doesn't resolve or fails validation is dropped
+    with an honest reason, never fabricated. LLM unavailability or a
+    malformed/empty proposal degrades to zero survivors, never a crash
+    (AC-X5 isolation applies at the engine level, not here).
 
     Returns JSON with the logic-change result for rendering in the UI.
     """
@@ -4634,10 +4641,14 @@ def ai_advisor_logic_changes_evaluate():
         symphony_id, objective, composer_symphony_id=composer_hash
     )
 
-    # Delegate parse + apply to the engine; pass change_description= so the engine's
-    # own _parse_change_description_to_tweak runs internally.  On parse failure the
-    # engine sets backtest_error on the proposal and returns zero survivors — no
-    # early-return needed here (AC-X5 isolation applies at the engine level).
+    # Delegate to the engine; pass change_description= so the engine's own
+    # LLM-reasoned generator (generate_reasoned_logic_candidates) runs
+    # internally, steered by change_description + reasoning_context (R2-2 —
+    # replaces the old deterministic heuristic parser). When the reasoned
+    # generator proposes nothing (LLM unavailable, malformed output, or no
+    # edit resolves against the real tree) the engine sets backtest_error on
+    # the proposal and returns zero survivors — no early-return needed here
+    # (AC-X5 isolation applies at the engine level).
     try:
         run_result = propose_operator_logic_change(
             # Pass the Composer hash — engine uses it as the UUID for dvm_capital
