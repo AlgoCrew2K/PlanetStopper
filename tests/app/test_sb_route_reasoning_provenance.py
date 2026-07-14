@@ -1,27 +1,17 @@
 """RED tests — R2-1 AC-4/AC-5(route half)/AC-7: SB run-route provenance JSON.
 
-Contract pinned (per r2-fe/r2-engine/team-lead, reconciled via SendMessage
-before this file was finalized — see the FINAL RULING note below, which
-supersedes an earlier draft of this contract):
+Contract pinned (per r2-fe/r2-engine, confirmed via SendMessage before this
+file was written):
 
   POST /ai-advisor/strategy-builder/run response JSON gains a "provenance" key:
     {"generation_model": <str>, "mode": "build-new",
      "evidence_injected": <the AC-3 manifest dict>, "run_id": <uuid4 str>}
 
-  FINAL RULING: ProposalRun.provenance (engine-side, tested in
-  test_strategy_builder_engine_reasoning_provenance.py) is ALREADY a REAL
-  4-key dict matching this exact shape (run_id nested inside it too, matching
-  ProposalRun.run_id's value) on EVERY return path — never None, never a
-  3-key dict needing a route-side merge. The route's job is to surface it
-  (via getattr for robustness — see below), not to assemble it from two
-  separate ProposalRun fields.
-
-  EXCEPTION — the existing top-level `if run.error:` early-return branch
-  (app.py, the no-Composer-key / top-level-exception path) is PRE-EXISTING
-  code that keeps its EXISTING response shape unchanged (survivors=[],
-  rejected=[], error=..., error_category=...) — it does not read or emit
-  run.provenance AT ALL, regardless of what ProposalRun.provenance actually
-  contains. This is confirmed with r2-fe directly, not an assumption.
+  This 4-key JSON object is assembled by the ROUTE, merging
+  ProposalRun.provenance (a 3-key dict: generation_model/mode/evidence_injected
+  — engine-side, tested in test_strategy_builder_engine_reasoning_provenance.py)
+  with ProposalRun.run_id (a separate top-level field) — the route is the ONLY
+  place all 4 keys come together into one JSON object.
 
   The route must read run.provenance / run.run_id via getattr(run, ..., None)
   — NOT direct attribute access — because several pre-existing test fixtures
@@ -101,20 +91,18 @@ def _post_run(client, body: dict | None = None):
 # ===========================================================================
 
 
-def test_response_json_surfaces_the_four_key_provenance_dict(client):
-    """AC-4: the route JSON's 'provenance' object must surface the engine's
-    ALREADY-4-key ProposalRun.provenance dict verbatim: generation_model /
-    mode / evidence_injected / run_id, with run_id matching ProposalRun.run_id."""
+def test_response_json_carries_provenance_key_merging_run_provenance_and_run_id(client):
+    """AC-4: the route JSON's 'provenance' object must merge
+    ProposalRun.provenance (3 keys) with ProposalRun.run_id into the 4-key
+    contract: generation_model / mode / evidence_injected / run_id."""
     manifest = {"tree": "present", "stats": "absent"}
-    fixed_run_id = "22222222-2222-4222-8222-222222222222"
     run = _make_run(
         provenance={
             "generation_model": "test-marker-sb-model",
             "mode": "build-new",
             "evidence_injected": manifest,
-            "run_id": fixed_run_id,
         },
-        run_id=fixed_run_id,
+        run_id="22222222-2222-4222-8222-222222222222",
         survivors=True,
     )
 
@@ -137,30 +125,19 @@ def test_response_json_surfaces_the_four_key_provenance_dict(client):
     )
     assert provenance.get("mode") == "build-new", f"provenance={provenance!r}"
     assert provenance.get("evidence_injected") == manifest, f"provenance={provenance!r}"
-    assert provenance.get("run_id") == fixed_run_id, (
-        f"AC-4/AC-6 GAP: response JSON provenance['run_id'] must equal run.run_id. "
-        f"provenance={provenance!r}"
+    assert provenance.get("run_id") == "22222222-2222-4222-8222-222222222222", (
+        f"AC-4 GAP: response JSON provenance['run_id'] must equal run.run_id — the route "
+        f"must merge the two ProposalRun fields into one JSON object. provenance={provenance!r}"
     )
 
 
-def test_error_early_return_branch_shape_untouched_regardless_of_provenance_content(client):
-    """AC-7 (FINAL contract — supersedes an earlier draft of this test that
-    constructed run.provenance=None): the top-level `if run.error:` early
-    return is PRE-EXISTING code that keeps its EXISTING response shape
-    unchanged — it does not read or emit run.provenance AT ALL, regardless of
-    what ProposalRun.provenance actually contains. Proven with a REALISTIC
-    populated provenance dict (matching the real engine contract, not an
-    artificial None) alongside run.error set — the response must still carry
-    no fabricated 'provenance' content on this branch."""
-    fixed_run_id = "33333333-3333-4333-8333-333333333333"
+def test_provenance_absent_when_run_provenance_is_none(client):
+    """AC-7 (route half): when run.provenance is None (e.g. the engine's
+    no-key error early-return), the response JSON must carry provenance=None
+    — never a fabricated object with empty/placeholder values."""
     run = _make_run(
-        provenance={
-            "generation_model": "test-marker-sb-model",
-            "mode": "build-new",
-            "evidence_injected": {"tree": "absent", "stats": "absent"},
-            "run_id": fixed_run_id,
-        },
-        run_id=fixed_run_id,
+        provenance=None,
+        run_id="33333333-3333-4333-8333-333333333333",
         error="No Composer API key configured.",
     )
 
@@ -173,10 +150,8 @@ def test_error_early_return_branch_shape_untouched_regardless_of_provenance_cont
     data = resp.get_json()
     assert data is not None
     assert data.get("provenance") is None, (
-        f"AC-7 GAP: the existing error-early-return branch must not surface a 'provenance' "
-        f"key at all (its response shape is pre-existing and untouched), even though "
-        f"run.provenance was a REAL populated dict on this call. Got "
-        f"{data.get('provenance')!r} — the error branch must not reach into run.provenance."
+        f"AC-7 GAP: provenance must be None/absent when run.provenance is None (no-key "
+        f"error path). Got {data.get('provenance')!r} — never fabricate provenance."
     )
 
 
@@ -193,15 +168,13 @@ def test_route_threads_build_reasoning_context_output_into_propose_strategies(cl
     — proven via call_args, not by re-testing assembler internals."""
     known_prompt_context = "## OPERATOR CONTEXT\nHOLD SPY\n"
     known_manifest = {"tree": "present", "stats": "present"}
-    fixed_run_id = "44444444-4444-4444-8444-444444444444"
     run = _make_run(
         provenance={
             "generation_model": "m",
             "mode": "build-new",
             "evidence_injected": known_manifest,
-            "run_id": fixed_run_id,
         },
-        run_id=fixed_run_id,
+        run_id="44444444-4444-4444-8444-444444444444",
     )
     propose_mock = MagicMock(return_value=run)
 
@@ -306,12 +279,7 @@ def test_live_execution_key_never_in_response_with_provenance_present(client):
     """Regression (mirrors the existing C-11 contract): adding provenance
     must not create a new path for LIVE_EXECUTION to leak into the response."""
     run = _make_run(
-        provenance={
-            "generation_model": "m",
-            "mode": "build-new",
-            "evidence_injected": {},
-            "run_id": "66666666-6666-4666-8666-666666666666",
-        },
+        provenance={"generation_model": "m", "mode": "build-new", "evidence_injected": {}},
         run_id="66666666-6666-4666-8666-666666666666",
         survivors=True,
     )

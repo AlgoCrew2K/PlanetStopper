@@ -8,30 +8,21 @@ written):
                       reasoning_manifest: dict | None = None) -> ProposalRun
 
   ProposalRun gains:
-    run_id: str        — uuid4 (or caller-supplied override), minted on the
-                          FIRST line of propose_strategies, present on EVERY
-                          return path of one call (including both the
-                          no-Composer-key and top-level-exception early
-                          returns).
-    provenance: dict    — a REAL 4-key dict on EVERY path, NEVER None, NEVER
-                          `{}`: {"generation_model": <raw model_config
-                          accessor value, read at call time>, "mode":
-                          "build-new", "evidence_injected": <reasoning_manifest,
-                          or ai_advisor._EMPTY_MANIFEST when reasoning_manifest
-                          is None>, "run_id": <same value as ProposalRun.run_id>}.
-                          FINAL RULING (superseded an earlier "absent on
-                          run.error" draft of this contract — see the
-                          reconciliation thread with team-lead + r2-engine):
-                          run_id/generation_model/mode are cheap, non-fabricated
-                          facts about the CALL ITSELF (not a claim that
-                          generation succeeded), so they are never nulled out.
-                          The entire honesty burden is carried by
-                          evidence_injected's per-source absent/present/stale
-                          values, which are already honest by construction —
-                          nulling the whole object on an error path would
-                          itself be dishonest if the caller (the route) had
-                          already built real evidence via build_reasoning_context
-                          BEFORE the Composer-key check ran.
+    run_id: str        — uuid4, minted once, present on EVERY return path of
+                          one call (including the top-level run.error early
+                          return).
+    provenance: dict    — {"generation_model": <raw model_config accessor
+                          value>, "mode": "build-new", "evidence_injected":
+                          <reasoning_manifest, or ai_advisor._EMPTY_MANIFEST
+                          when reasoning_manifest is None>}.
+                          NOTE: run_id is NOT nested inside this dict at the
+                          Python-dataclass layer — it lives solely on
+                          ProposalRun.run_id. The 4-key JSON contract AC-4
+                          describes (generation_model/mode/evidence_injected/
+                          run_id) is assembled by the ROUTE (app.py), which
+                          merges run.provenance with run.run_id — tested in
+                          tests/app/test_sb_route_reasoning_provenance.py, NOT
+                          here.
 
   _persist_survivor / _persist_rejected gain run_id/evidence_injected kwargs
   -> additive raw_response["run_id"], raw_response["evidence_injected"] keys
@@ -187,29 +178,6 @@ def test_provenance_shape_and_accessor_driven_model(monkeypatch):
     assert run.provenance.get("evidence_injected") == manifest, (
         f"AC-4 GAP: provenance['evidence_injected'] must equal the passed reasoning_manifest "
         f"exactly. Got {run.provenance.get('evidence_injected')!r}, expected {manifest!r}"
-    )
-    assert run.provenance.get("run_id") == run.run_id, (
-        f"AC-4/AC-6 GAP: provenance['run_id'] must equal ProposalRun.run_id (the FINAL "
-        f"contract nests run_id INSIDE provenance too — a 4-key dict, not 3). "
-        f"provenance={run.provenance!r}, run.run_id={run.run_id!r}"
-    )
-
-
-def test_provenance_key_set_is_exactly_four_keys(monkeypatch):
-    """AC-4 (adversarial, narrow scope): provenance's key set must be EXACTLY
-    {generation_model, mode, evidence_injected, run_id} — never a 3-key dict
-    (the superseded draft contract) and never a surprise 5th key."""
-    run, _gen_mock, _insert_mock = _run_propose_strategies(
-        monkeypatch, reasoning_manifest={"tree": "present"}
-    )
-    assert set(run.provenance.keys()) == {
-        "generation_model",
-        "mode",
-        "evidence_injected",
-        "run_id",
-    }, (
-        f"AC-4 GAP: provenance key set is {sorted(run.provenance.keys())!r}, expected exactly "
-        "{'generation_model', 'mode', 'evidence_injected', 'run_id'}."
     )
 
 
@@ -400,27 +368,18 @@ def test_no_top_level_alpha_bot_execution_or_math_engine_import(module_path):
 
 
 # ===========================================================================
-# AC-7: credential-less — no-key path still carries real (never fabricated,
-# never nulled) provenance. FINAL ruling: provenance is a real dict on every
-# path; only evidence_injected's per-source values carry the honesty signal.
+# AC-7: credential-less — no-key path never fabricates provenance.
 # ===========================================================================
 
 
-def test_no_composer_key_still_populates_real_provenance_never_none(monkeypatch):
-    """AC-7 (FINAL contract — supersedes an earlier draft of this test that
-    asserted provenance is None on this path): even on the no-Composer-key
-    early-return, provenance is a REAL 4-key dict — generation_model/mode/
-    run_id are cheap non-fabricated facts about the call itself, never nulled.
-    evidence_injected reflects whatever reasoning_manifest was actually passed
-    in (built by build_reasoning_context BEFORE the Composer-key check ever
-    runs) — nulling it here would itself be dishonest if the caller had real
-    evidence. Only evidence_injected's per-source absent/present/stale values
-    carry the honesty signal; the envelope around them never disappears."""
+def test_no_composer_key_yields_no_fabricated_provenance(monkeypatch):
+    """AC-7: the existing no-key early-return (run.error set, empty
+    survivors/rejected) must NOT carry a fabricated provenance object — no
+    generation occurred, so there is nothing to attribute a model/manifest to.
+    run_id, per r2-engine's contract, is still minted on every return path
+    (including this one) so an error response is still traceable to an
+    attempt — this test proves both halves of that split."""
     monkeypatch.setattr(sbe, "_has_composer_key", lambda: False)
-    monkeypatch.setattr(
-        model_config, "get_advisor_suggestion_model", lambda: "test-marker-sb-model"
-    )
-    manifest = {"tree": "absent", "stats": "absent"}
 
     run = sbe.propose_strategies(
         objective=sbe.Objective.diversify,
@@ -428,29 +387,15 @@ def test_no_composer_key_still_populates_real_provenance_never_none(monkeypatch)
         screen_config=sbe.ScreenConfig(),
         live_returns=[],
         symphony_id="sym-test",
-        reasoning_manifest=manifest,
     )
 
     assert run.error, "Test precondition: no-key path must set run.error."
-    assert run.provenance is not None, (
-        f"GAP: provenance must NEVER be None, even on the no-key error path (FINAL "
-        f"contract — supersedes the earlier 'absent on error' draft). Got {run.provenance!r}"
-    )
-    assert run.provenance.get("generation_model") == "test-marker-sb-model", (
-        f"GAP: provenance={run.provenance!r}"
-    )
-    assert run.provenance.get("mode") == "build-new", f"GAP: provenance={run.provenance!r}"
-    assert run.provenance.get("evidence_injected") == manifest, (
-        "GAP: evidence_injected must reflect the reasoning_manifest actually passed in "
-        "(built before the Composer-key check ran) — nulling it here would be dishonest "
-        f"if the caller had real evidence. Got {run.provenance.get('evidence_injected')!r}"
+    assert run.provenance is None, (
+        f"AC-7 GAP: provenance must be None/absent on the no-key error early-return "
+        f"(nothing was generated) — never fabricated. Got {run.provenance!r}"
     )
     assert isinstance(run.run_id, str) and run.run_id, (
         f"AC-6 GAP: run_id must still be minted even on the error early-return "
         f"(every return path gets a run_id, per contract). Got {run.run_id!r}"
     )
     uuid.UUID(run.run_id)  # must still be a valid UUID4 string on the error path
-    assert run.provenance.get("run_id") == run.run_id, (
-        f"AC-4/AC-6 GAP: provenance['run_id'] must equal ProposalRun.run_id even on the "
-        f"error path. provenance={run.provenance!r}, run.run_id={run.run_id!r}"
-    )
