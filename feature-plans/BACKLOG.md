@@ -113,6 +113,20 @@ infrastructure concern, not a test correctness problem.
 
 ---
 
+### `docs/generated/app.md` Strategy Builder route section -- stale `app.py:38xx` line citations -- COSMETIC (found 2026-07-13, advisor-outage-degrade doc pass)
+The `POST /ai-advisor/strategy-builder/run` section of `docs/generated/app.md` cites several
+`app.py:38xx` line numbers (e.g. `app.py:3759`, `:3800`, `:3807`, `:3813`, `:3826`, `:3840`,
+`:3852-3879`) that were accurate when R1 wrote them but have drifted -- several routes
+(candidate-alert, 2026-07-12) were added to `app.py` since, and the route decorator now lives
+at `app.py:4739`. Flagged inline in the doc (a footnote noting the drift + the current line)
+rather than corrected line-by-line, since a full citation sweep of this section is its own
+small task, not scoped to the advisor-outage-degrade cycle that surfaced it. Fix candidate:
+re-derive every `app.py:N` citation in this section (and audit the rest of `app.md` for the
+same drift pattern -- this section is unlikely to be the only one). Tier 1; cosmetic, no
+functional impact -- the doc content itself is accurate, only the line pointers are stale.
+
+---
+
 ## Deployment follow-on
 
 ### Droplet wipe-and-collect
