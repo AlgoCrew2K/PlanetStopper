@@ -247,6 +247,15 @@ def test_ac6_logic_change_n1_evaluate_response_omits_fdr_yekutieli_branding(clie
 
     with (
         patch.object(lce, "_has_composer_key", return_value=True),
+        # R2-2: change_description now routes through the LLM-backed
+        # generate_reasoned_logic_candidates seam before ever reaching
+        # _evaluate_single_variant below — mock it to return exactly the one
+        # tweak this test's fixture is built around, so (a) this test never
+        # makes a live Anthropic call when a real ANTHROPIC_API_KEY happens to
+        # be present in the environment, and (b) it stays credential-less-safe
+        # (degrades to zero candidates otherwise, which would make the
+        # ADOPT_CANDIDATE precondition below fail for an unrelated reason).
+        patch.object(lce, "generate_reasoned_logic_candidates", return_value=[tweak]),
         # AC-13 4-tuple contract change — see the asset_swap sibling test's
         # comment for the full rationale.
         patch.object(
