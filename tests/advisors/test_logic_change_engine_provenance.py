@@ -63,8 +63,9 @@ def fixture_tree():
 
 
 def _fake_backtest_result():
-    from advisors.composer_backtest_client import BacktestResult
     from datetime import date, timedelta
+
+    from advisors.composer_backtest_client import BacktestResult
 
     returns: dict[str, float] = {}
     d = date(2022, 1, 1)
@@ -261,7 +262,7 @@ def test_run_id_persisted_traceable_to_advisor_observation__operator_path(
     _args, call_kwargs = insert_mock.call_args_list[0]
     raw_response = call_kwargs.get("raw_response", {})
     assert raw_response.get("run_id") == result.run_id, (
-        f"AC-7 GAP (operator path): persisted run_id != result.run_id."
+        "AC-7 GAP (operator path): persisted run_id != result.run_id."
     )
 
 

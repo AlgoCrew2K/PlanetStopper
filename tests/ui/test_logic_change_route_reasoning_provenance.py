@@ -64,9 +64,9 @@ def _real_run_result(*, provenance: dict, run_id: str):
     a mocked propose_operator_logic_change return."""
     from advisors.backtest_gate_engine import HARVEY_LIU_FDR_Q, GatedBatch
     from advisors.logic_change_engine import (
+        NO_SURVIVORS_MESSAGE,
         LogicChangeObjective,
         LogicChangeRunResult,
-        NO_SURVIVORS_MESSAGE,
     )
 
     return LogicChangeRunResult(

@@ -84,8 +84,9 @@ class _FixedMockClient:
 
 
 def _fake_backtest_result(seed: int = 0):
-    from advisors.composer_backtest_client import BacktestResult
     from datetime import date, timedelta
+
+    from advisors.composer_backtest_client import BacktestResult
 
     returns: dict[str, float] = {}
     d = date(2022, 1, 1)
