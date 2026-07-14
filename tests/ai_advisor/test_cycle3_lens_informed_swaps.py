@@ -1196,19 +1196,20 @@ class TestCitationValidationOnPersistence:
             )
 
 
-class TestLensBlendPrimaryMetricDominance:
-    """Reviewer advisory gap: primary metric must dominate when clearly better than alternatives."""
-
-    # test_primary_metric_dominates_opposing_lens_preference RETIRED (R2-3,
-    # 2026-07-14 -- found by r2-3-engine while implementing §1l's deletion,
-    # same class as test_lens_blend_efficacy.py's identical retirement):
-    # called generate_objective_directed_candidates() directly to prove the
-    # AC-D2 invariant (a large real primary-score gap can never be inverted
-    # by lens evidence) through the production candidate-generation path.
-    # That deterministic generator was DELETED ([PM-ASSUMED Q4]); the SAME
-    # invariant against _apply_lens_blend directly (the surviving,
-    # generator-independent home, using the identical real-computed-gap
-    # fixture-construction discipline this test's own docstring documented)
-    # is tests/ai_advisor/test_lens_blend_efficacy.py::
-    # TestApplyLensBlendUsesContinuousScoreNotPosition::
-    # test_large_primary_margin_cannot_be_inverted_by_extreme_lens_favor.
+# TestLensBlendPrimaryMetricDominance RETIRED IN FULL (R2-3, 2026-07-14 —
+# found by r2-3-engine while implementing §1l's deletion, same class as
+# test_lens_blend_efficacy.py's identical retirement; the empty class shell
+# left behind by an earlier pass of this retirement was itself caught by CI's
+# tests/meta/test_all_test_files_parse.py::test_no_empty_test_classes_across_all_test_files
+# meta-guard and removed here). This class held exactly one test,
+# test_primary_metric_dominates_opposing_lens_preference, which called
+# generate_objective_directed_candidates() directly to prove the AC-D2
+# invariant (a large real primary-score gap can never be inverted by lens
+# evidence) through the production candidate-generation path. That
+# deterministic generator was DELETED ([PM-ASSUMED Q4]); the SAME invariant
+# against _apply_lens_blend directly (the surviving, generator-independent
+# home, using the identical real-computed-gap fixture-construction
+# discipline this test's own docstring documented) is
+# tests/ai_advisor/test_lens_blend_efficacy.py::
+# TestApplyLensBlendUsesContinuousScoreNotPosition::
+# test_large_primary_margin_cannot_be_inverted_by_extreme_lens_favor.
