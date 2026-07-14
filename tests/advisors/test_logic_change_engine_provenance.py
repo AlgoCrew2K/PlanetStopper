@@ -278,6 +278,49 @@ def test_no_composer_key_still_populates_real_provenance_never_none__operator(lc
 
 
 # ===========================================================================
+# AC-X4 ordering — the LLM seam must never be reached when the Composer key
+# is absent (production bug, r2-2-review re-gate finding at 8817382b).
+#
+# propose_operator_logic_change resolves change_description via
+# generate_reasoned_logic_candidates (a REAL, billed Anthropic call) BEFORE
+# its own _has_composer_key() check — so a valid ANTHROPIC_API_KEY with no
+# Composer credentials still bills a live call for a run that is guaranteed
+# to be discarded (returns no_api_key=True immediately after). suggest_logic_
+# changes already gets this ordering right (key check first, generator
+# second) — propose_operator_logic_change does not. The existing no-key
+# provenance test above mocks the seam, so it passes under EITHER ordering
+# and cannot catch this; this test spies on the REAL (unmocked) seam
+# reference and asserts zero calls, which only holds under the correct
+# check-key-first ordering.
+# ===========================================================================
+
+
+def test_no_composer_key_never_reaches_llm_seam__operator(lce, fixture_tree, monkeypatch):
+    """MUST FAIL pre-fix (RED at 8817382b): generate_reasoned_logic_candidates
+    is called even when _has_composer_key() is False, on the
+    change_description path. AC-X4 requires the no-key gate to short-circuit
+    BEFORE any billed LLM call, mirroring suggest_logic_changes's existing
+    (correct) ordering."""
+    monkeypatch.setattr(lce, "_has_composer_key", lambda: False)
+    gen_spy = MagicMock(return_value=[])
+    monkeypatch.setattr(lce, "generate_reasoned_logic_candidates", gen_spy)
+    monkeypatch.setattr(lce.database, "insert_advisor_observation", MagicMock(return_value=1))
+
+    objective = lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0)
+    result = lce.propose_operator_logic_change(
+        "sym-1", fixture_tree, objective=objective, change_description="tighten the window"
+    )
+
+    assert result.no_api_key is True, "Test precondition: no-key path must set no_api_key=True."
+    assert gen_spy.call_count == 0, (
+        f"AC-X4 GAP: generate_reasoned_logic_candidates was called {gen_spy.call_count} time(s) "
+        "despite _has_composer_key() returning False — a real Anthropic call would be billed "
+        "for a run guaranteed to be discarded. The no-Composer-key check must short-circuit "
+        "BEFORE the LLM seam is ever reached (mirrors suggest_logic_changes's existing ordering)."
+    )
+
+
+# ===========================================================================
 # Narrow-scope characterization: LogicChangeRunResult field set.
 # ===========================================================================
 
