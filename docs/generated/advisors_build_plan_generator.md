@@ -1,15 +1,15 @@
 # advisors/build_plan_generator
 
-> Build-Plan Generator for the real Strategy Builder (Component 2 + 2b): uses the Anthropic SDK in structured tool-use mode, via an accessor-driven, env-overridable model (`model_config.get_advisor_suggestion_model()`, default `claude-fable-5` per AC-16, operator directive 2026-07-13), to emit diverse objective-shaped build-plans expressed in a constrained strategy DSL, validates every proposed ticker against the tradeable membership set, and admits objective-matched Atlas community strategies alongside the generated plans.
+> Build-Plan Generator for the real Strategy Builder (Component 2 + 2b): uses the Anthropic SDK in structured tool-use mode, via an accessor-driven, env-overridable model (`model_config.get_advisor_suggestion_model()`, default `claude-fable-5` per AC-16, operator directive 2026-07-13), to emit diverse objective-shaped build-plans expressed in a constrained strategy DSL, validates every proposed ticker against the tradeable membership set, admits objective-matched Atlas community strategies alongside the generated plans, and (R2-1) optionally injects the operator's real symphony/live-stats/lens context into the generation prompt for symphony-scoped runs.
 
 **Source:** `advisors/build_plan_generator.py`
-**Last updated:** 2026-07-13 (advisor-remediation-r1 — context-blindness caveat + AC-16 model-neutral language sweep, DE-ADVISOR-R1-001)
+**Last updated:** 2026-07-13 (R2-1 — additive `reasoning_context` keyword param on `_build_generation_prompt`/`generate_build_plans`; CLOSES the context-blindness caveat below for symphony-scoped runs, `DE-ADVISOR-R2-1-001`; prior: advisor-remediation-r1 — context-blindness caveat + AC-16 model-neutral language sweep, DE-ADVISOR-R1-001)
 
 ## Overview
 
 `advisors/build_plan_generator.py` is the LLM-backed brain of the real Strategy Builder — model-configurable via `model_config.get_advisor_suggestion_model()` (AC-16), default `claude-fable-5`; historically Opus-only before AC-16 (2026-07-13). It produces the plans that the Component 3 compiler translates into Composer trees, replacing the 7-template stamper in `_generate_candidate_trees` (the engine rewire happens in Component 3).
 
-**Context-blindness caveat (advisor-intent audit, 2026-07-13; DE-ADVISOR-R1-001 §AC-15, F1/F5):** the generation prompt does NOT include the operator's live symphony tree, portfolio composition, backtest statistics, or any of the 5 market lens blocks — only the requested objective name, the DSL grammar, three static worked examples, and a 20-ticker sample of the tradeable universe (`_build_generation_prompt(objective, n_plans, membership)`, verified against the current signature — no symphony/portfolio/backtest/lens parameter exists). Strategy Builder proposes NEW strategies from scratch; it does not reason about the operator's EXISTING symphony. Closing this gap (context injection so generation reasons over the operator's live symphony) is explicitly out of scope for the R1 remediation cycle — see `feature-plans/advisor-remediation-r1.md` Scope Boundaries ("R2: SB context injection").
+**Context-blindness caveat (advisor-intent audit, 2026-07-13; DE-ADVISOR-R1-001 §AC-15, F1/F5) — CLOSED for the symphony-scoped path by R2-1 (`DE-ADVISOR-R2-1-001`, 2026-07-13):** at R1 time, the generation prompt did NOT include the operator's live symphony tree, portfolio composition, backtest statistics, or any of the 5 market lens blocks — only the requested objective name, the DSL grammar, three static worked examples, and a 20-ticker sample of the tradeable universe. R2-1 closes this gap for symphony-scoped runs: `_build_generation_prompt` gained an additive `reasoning_context: str | None = None` keyword parameter (see the API Reference entry below) carrying the operator's real tree + live stats + lens evidence, assembled by `ai_advisor.build_reasoning_context` (see [ai_advisor](ai_advisor.md)). **The from-scratch (non-symphony-scoped) path is unaffected and remains context-blind by design** — when `reasoning_context` is omitted or explicitly `None` (every pre-R2-1 caller's exact call shape), the returned prompt is BYTE-IDENTICAL to the pre-R2-1 producer output (AC-8, pinned against a golden fixture captured at commit `c0cacd47` before any R2-1 change landed — see `tests/fixtures/strategy_builder/generation_prompt_from_scratch_baseline.json`). Strategy Builder's from-scratch generation still proposes NEW strategies without reasoning about any existing symphony; only a symphony-scoped run (the operator selected an existing symphony before clicking Run) gets the injected context. Porting this same context+provenance contract to Logic Changes and Asset Swaps is R2-2/R2-3 — see `DE-ADVISOR-R2-1-001` in `DECISIONS.md`.
 
 The module has two responsibilities:
 
@@ -161,7 +161,7 @@ SDK factory seam. Mirrors `ai_advisor._build_client` (`ai_advisor.py:1590`). Rea
 
 ---
 
-### `_build_generation_prompt(objective, n_plans=N_PLANS_PER_OBJECTIVE, membership=None) -> str`
+### `_build_generation_prompt(objective, n_plans=N_PLANS_PER_OBJECTIVE, membership=None, reasoning_context=None) -> str`
 
 **Prompt-builder seam.** Builds the full SDK prompt for the given objective. Extracted from the old inline f-string to make the sent instructions independently testable without mocking a full SDK round-trip.
 
@@ -173,7 +173,7 @@ The prompt embeds five pieces of steering content:
 4. **Three compiler-verified worked examples.** `_EXAMPLE_PLAN` (diversify-shaped; two weight sleeves), `_EXAMPLE_IF_PLAN` (flat if-node; `rhs: {"fixed": 80}`), and `_EXAMPLE_IF_COMPOUND_PLAN` (mixed compound-gate; `{type:"compound", operator:"all", conditions:[flat-binary leaf, binary_compound leaf]}`) are all embedded verbatim in every prompt. All three have been verified compiler-clean through `plan_tree_compiler.compile_plan` + `validate_tree==[]` using the unified canonical-flat compiler. `_EXAMPLE_IF_COMPOUND_PLAN` is a deliberate **mixed compound** — it contains one `type:"binary"` leaf (flat `lhs_fn`/`lhs_ticker`/`window`, `rhs:{fixed}`) and one `type:"binary_compound"` leaf (`fn`/`tickers`, `rhs:{const}`) so the configured model sees both binary sub-shapes inside a single compound example. This was updated after the binary-encoding-fix (Revise-3) from an all-`binary_compound` example that gave the model no flat-binary model for compound leaves. The full Composer condition grammar — flat `if` and compound `if_compound`, all three condition types, both binary sub-shapes — is now generation-reachable with compiler-verified examples for each construct.
 5. **`_OBJECTIVE_SIGNATURES[obj_name]`.** The per-objective structural signature description is embedded for the requested objective, telling the configured model which DSL construct is required (e.g. for `lift_risk_adjusted`: "A bare equal-weight basket does NOT satisfy this signature — the filter construct is required").
 
-A sample of up to 20 tickers from `membership` is appended as a universe hint when provided. **No symphony/portfolio/backtest/lens data is ever appended — see the Context-blindness caveat in Overview above.**
+A sample of up to 20 tickers from `membership` is appended as a universe hint when provided. **R2-1 — operator context (AC-1/AC-2/AC-8/AC-9, `DE-ADVISOR-R2-1-001`):** when `reasoning_context` is truthy, it is appended VERBATIM under a `## OPERATOR CONTEXT` section header (`_build_generation_prompt`'s trailing `if reasoning_context: prompt += "\n\n## OPERATOR CONTEXT\n\n" + reasoning_context`) — the real symphony tree + live stats + lens evidence assembled by `ai_advisor.build_reasoning_context` (see [ai_advisor](ai_advisor.md)). When `reasoning_context` is falsy (`None` or `""` — the default, and every pre-R2-1 caller's exact call shape), **no such section is added at all — not even an empty header** (AC-8's byte-preservation floor for the from-scratch path).
 
 **Parameters:**
 
@@ -182,6 +182,7 @@ A sample of up to 20 tickers from `membership` is appended as a universe hint wh
 | `objective` | `Objective` | Steers the structural signature description embedded in the prompt |
 | `n_plans` | `int` | Number of plans requested; embedded in the prompt instruction |
 | `membership` | `frozenset \| set \| None` | When provided, a sample of up to 20 tickers is appended as a universe hint |
+| `reasoning_context` | `str \| None` | R2-1: an optional, ready-to-inject operator-context text block (the real symphony tree + live stats + market-lens summaries — see `ai_advisor.build_reasoning_context`). Additive/keyword, default `None`. When falsy, the returned prompt is BYTE-IDENTICAL to the pre-R2-1 producer output (AC-8, pinned against a golden fixture captured at commit `c0cacd47` — `tests/fixtures/strategy_builder/generation_prompt_from_scratch_baseline.json`). |
 
 **Returns:** `str` — the full prompt string sent to the SDK `messages.create` call.
 
@@ -235,11 +236,11 @@ Never raises (D-1). Returns `False` for any malformed input or unknown objective
 
 ---
 
-### `generate_build_plans(objective, membership_set, *, n_plans=N_PLANS_PER_OBJECTIVE) -> GeneratorResult`
+### `generate_build_plans(objective, membership_set, *, n_plans=N_PLANS_PER_OBJECTIVE, reasoning_context=None) -> GeneratorResult`
 
 Generate up to `n_plans` objective-shaped build-plans. Never raises (AC-11).
 
-Calls `_build_client()` → `_build_generation_prompt(objective, n_plans, membership_set)` (embeds DSL grammar + `_EXAMPLE_PLAN` + per-objective signature) → structured tool-use SDK call → parses the `"emit_build_plans"` tool-use block's `.input["plans"]` list → membership-validates every ticker → deduplicates structurally-identical plans → enforces objective structural signature → returns admitted plans tagged `provenance="built-new"`.
+Calls `_build_client()` → `_build_generation_prompt(objective, n_plans, membership_set, reasoning_context=reasoning_context)` (embeds DSL grammar + `_EXAMPLE_PLAN` + per-objective signature + R2-1 operator context when supplied) → structured tool-use SDK call → parses the `"emit_build_plans"` tool-use block's `.input["plans"]` list → membership-validates every ticker → deduplicates structurally-identical plans → enforces objective structural signature → returns admitted plans tagged `provenance="built-new"`.
 
 **Parameters:**
 
@@ -248,6 +249,7 @@ Calls `_build_client()` → `_build_generation_prompt(objective, n_plans, member
 | `objective` | `Objective` | Steers the structural shape constraint applied to each plan |
 | `membership_set` | `frozenset[str] \| set[str]` | The tradeable universe; typically `universe_provider.get_tradeable_set()`. Every ticker in every plan is checked against this set. |
 | `n_plans` | `int` | Number of plans to request. Defaults to `N_PLANS_PER_OBJECTIVE` (12). |
+| `reasoning_context` | `str \| None` | R2-1: threaded straight through to `_build_generation_prompt` (see its Parameters above). Additive/keyword, default `None` — every pre-R2-1 caller's exact call shape is unaffected. |
 
 **Returns:** `GeneratorResult`
 
@@ -389,6 +391,16 @@ All AC-13 provenance behaviors are IMPLEMENTED as of C4 (engine rewire) + C5 (ro
 - Provenance tag (`template_id`) survives to persisted `advisor_observations.raw_response` (AC-13).
 - Provenance tag surfaces in the SPA route JSON as `template_id: built-new` or `template_id: atlas-suggested` on every survivor and rejected candidate (C5 route rewire, commit 1d5dd48).
 
+## R2-1 — Reasoning-Context Threading (`DE-ADVISOR-R2-1-001`)
+
+**Not a new admission concept** — R2-1 does not add a third provenance tag or change the DSL. It threads one additive, optional string (`reasoning_context`) through the existing generation seam so a symphony-scoped run's prompt carries the operator's real evidence.
+
+**Seam chain:** `app.py`'s `ai_advisor_strategy_builder_run()` route (symphony-scoped only) → `ai_advisor.build_reasoning_context(symphony_id, objective, composer_symphony_id=...)` → `strategy_builder_engine.propose_strategies(reasoning_context=, reasoning_manifest=)` → `generate_build_plans(reasoning_context=)` (this module) → `_build_generation_prompt(reasoning_context=)` (this module). Every hop is keyword-only and additive; every hop's default (`None`) reproduces its exact pre-R2-1 behavior.
+
+**What actually changes in the prompt:** a single `## OPERATOR CONTEXT` section appended verbatim at the end of the prompt when `reasoning_context` is truthy — no change to the DSL grammar sections, the worked examples, the objective signature text, or the membership hint (all five steering-content pieces documented above are untouched). See `_build_generation_prompt`'s API Reference entry above for the exact mechanics and the AC-8 byte-preservation proof.
+
+**Provenance surfaced elsewhere, not here:** the run-level `provenance` object (`generation_model`/`mode`/`evidence_injected`/`run_id`) and the honest-degradation manifest this module's injected text is built from both live on `ProposalRun` — see [advisors/strategy_builder_engine](advisors_strategy_builder_engine.md)'s "R2-1" section and [ai_advisor](ai_advisor.md)'s `build_reasoning_context` entry for the manifest shape. This module only consumes the already-rendered prompt text; it has no knowledge of the manifest.
+
 ## Internal Dependencies
 
 - `advisors.community_strats` — `load_community_strategies` (called inside `load_atlas_candidates`, CC-2 lazy import)
@@ -396,7 +408,7 @@ All AC-13 provenance behaviors are IMPLEMENTED as of C4 (engine rewire) + C5 (ro
 - `anthropic` — SDK client via `_build_client()` (lazy import inside the function, CC-2 boundary)
 - `advisors.symphony_schema` — `KNOWN_COMPARATORS`, `KNOWN_REBALANCE`, `_KNOWN_OPERATORS` (vocabulary constants for DSL validation)
 
-No imports from `database`, `autotuner`, `app`, or any execution module. Off-execution-path; advisory-only.
+No imports from `database`, `autotuner`, `app`, or any execution module. Off-execution-path; advisory-only. `reasoning_context` (R2-1) arrives as a plain string from the caller — this module never calls `ai_advisor.build_reasoning_context` itself, preserving the off-execution-path/no-`database`-import boundary.
 
 ## Design Notes
 
@@ -417,3 +429,4 @@ No imports from `database`, `autotuner`, `app`, or any execution module. Off-exe
 - **Heterogeneous pool.** `pool_candidates` returns a mixed-type list: `dict` items (built-new plans) and `CandidateInfo` items (atlas-suggested). In production, the C4 engine rewire in `_generate_candidate_trees` produces built-new `CandidateInfo` objects directly (not dicts); the `pool_candidates` utility is therefore primarily a test/diagnostic tool. The live path: `_generate_candidate_trees` → `CandidateInfo` list; `load_atlas_candidates` → `CandidateInfo` list; both fed to `propose_strategies(community_candidates=...)` for the single-batch FDR gate.
 - **Aligned `Objective` enums.** This module defines its own 4-value `Objective` enum. `strategy_builder_engine.Objective` is also 4-value (unified in C4 when `volatility_mitigation` was added). Values are cross-cast via `.value` strings in `_generate_candidate_trees`; no numeric index.
 - **`market_cap` scheme is a forward-compat DSL token; the constructor was never added.** Composer retired market-cap weighting (HTTP 422 `node-type-not-supported` / "Market cap weighting is no longer supported"; captured 2026-06-20; evidence at `tests/fixtures/strategy_builder/wt_marketcap_deprecated_envelope.json`). Per PM Option A (adopt-the-provider-contract), no `make_weight_marketcap` constructor and no `wt-marketcap` entry in `KNOWN_STEPS` are added. The DSL retains `scheme:"market_cap"` as a recognized value so generator plans are structurally valid; `advisors/plan_tree_compiler._has_market_cap` detects and drops them before compilation. See `DE-SB-MARKETCAP-DEPRECATED`.
+- **`reasoning_context` is a plain string, not a manifest-aware object (R2-1).** This module receives only the already-rendered prompt text from `ai_advisor.build_reasoning_context` — it never sees the honest-degradation manifest that text was built from, and never needs to: the manifest is a provenance concern (surfaced on `ProposalRun.provenance["evidence_injected"]`, see [advisors/strategy_builder_engine](advisors_strategy_builder_engine.md)), while this module's only job is prompt assembly. Keeping the two concerns separate is what let R2-1 land as a single additive string parameter instead of a wider signature change.

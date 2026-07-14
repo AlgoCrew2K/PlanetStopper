@@ -3,7 +3,7 @@
 > Client-side logic for the AI Advisor single-page SPA: in-place tab switching, suggestion card rendering with per-symphony assessment and lens-cache staleness stamp (AC-3), accept/reject lifecycle, autotune run feed, symphony selection, and Strategy Builder run/chat affordances.
 
 **Source:** `static/ai_advisor.js`
-**Last updated:** 2026-07-13 (advisor-outage-degrade AC-4/AC-5, `DE-SB-DEGRADE-001`, commit `14adb451`: `sbRunAnalysis()` gains the honest `backtest_unavailable` outage notice -- see below; prior: advisor-remediation-r1 Checkpoint-3, `DE-ADVISOR-R1-001`: `sbRunAnalysis()` gains consumption of the AC-7/AC-9/AC-11/AC-12 route-JSON fields; prior: advisor-suite-fixes AC-1/AC-2: `sbRunAnalysis()` success branch renders in-place instead of navigating away; prior: DE-ADVISOR-LATENCY AC-3 `#advisor-lens-as-of` staleness stamp; prior: spa-port cycle 2026-06-13)
+**Last updated:** 2026-07-13 (R2-1, `DE-ADVISOR-R2-1-001`, commit `4063ec33`: `sbRunAnalysis()` gains a `data-testid="sb-live-generation-provenance"` render for the run-level generation-model/injected-evidence/run-id object -- see below; prior: advisor-outage-degrade AC-4/AC-5, `DE-SB-DEGRADE-001`, commit `14adb451`: `sbRunAnalysis()` gains the honest `backtest_unavailable` outage notice; prior: advisor-remediation-r1 Checkpoint-3, `DE-ADVISOR-R1-001`: `sbRunAnalysis()` gains consumption of the AC-7/AC-9/AC-11/AC-12 route-JSON fields; prior: advisor-suite-fixes AC-1/AC-2: `sbRunAnalysis()` success branch renders in-place instead of navigating away; prior: DE-ADVISOR-LATENCY AC-3 `#advisor-lens-as-of` staleness stamp; prior: spa-port cycle 2026-06-13)
 
 ## Overview
 
@@ -141,6 +141,29 @@ Operator-initiated proposal run for the Strategy Builder tab. Reads `#sb-objecti
 
 **Advisor-outage-degrade AC-4/AC-5 (`DE-SB-DEGRADE-001`, commit `14adb451`, 2026-07-13):** a new honest-degrade notice, rendered right after the AC-12 screens-skipped indicator, before the survivor/rejected cards. Guarded on the boolean `data.backtest_unavailable` flag (mirrors the `screens_skipped`/`screens_skipped_reason` pairing above, not the `mode_notice`-only pattern) — a healthy run renders nothing. When true, renders `data.backtest_unavailable_notice` (server-authored prose, e.g. `"3 candidate(s) could not be tradeability-checked — Composer backtest unavailable"`, HTML-escaped via `escHtml`) in a new `data-testid="sb-live-backtest-unavailable"` `.empty-state` div. Distinguishes an outage-degraded run from both a normal "0 passed the gate" empty-state and from ordinary survivor/rejected cards — the operator can tell the difference between "the gate rejected everything" and "Composer was unreachable, so some candidates were never tradeability-checked." Test coverage: `tests/ai_advisor/test_sb_backtest_unavailable_js_consumption.py` (same source-consumption pattern as the R1 sibling test below).
 
+**R2-1 — generation provenance render (`DE-ADVISOR-R2-1-001`, commit `4063ec33`, 2026-07-13):** a new run-level render, placed right after the AC-4/AC-5 outage-degrade notice above and before the survivor/rejected cards. Guarded on the truthy `data.provenance` object — a run before R2-1's route change, or either error branch (both leave `provenance` absent from the JSON entirely, never `null`), renders nothing:
+
+```javascript
+if (data.provenance) {
+    var prov = data.provenance;
+    var evidence = prov.evidence_injected || {};
+    var evidenceParts = [];
+    ['tree', 'stats', 'technicals', 'sentiment', 'derivatives', 'macro', 'fundamentals'].forEach(function (key) {
+        var val = evidence[key];
+        if (val) { evidenceParts.push(key + ': ' + val); }
+    });
+    html += '<div class="run-controls-note" data-testid="sb-live-generation-provenance">' +
+        'Model: ' + escHtml(prov.generation_model || '') +
+        (evidenceParts.length ? ' · Context — ' + escHtml(evidenceParts.join(', ')) : '') +
+        (prov.run_id ? ' · Run: ' + escHtml(prov.run_id) : '') +
+        '</div>';
+}
+```
+
+Renders three pieces of the R2-1 provenance contract in one `data-testid="sb-live-generation-provenance"` line: the generation model (`prov.generation_model`), a compact rendering of the `evidence_injected` honest manifest (`"tree: present, stats: present, technicals: available, ..."` — every truthy manifest value, in the fixed order `tree`/`stats`/the 5 lenses, HTML-escaped), and the run id (`prov.run_id`). All three pieces are non-null-only within the block (`evidenceParts.length` guards the `· Context —` segment; `prov.run_id` guards the `· Run:` segment) so a partially-populated manifest never renders a dangling separator.
+
+**Deliberately DISAMBIGUATED from the pre-existing `data-testid="sb-live-provenance"` line (AC-11/F5, above):** both use the word "provenance" but name two independent concepts — the AC-11 line is a per-candidate TEMPLATE-origin rollup (built-new vs. atlas-suggested COUNTS); this R2-1 line is this RUN's generation-CONTEXT provenance (which model, what evidence, which run). The comment directly above this block in the source calls out the collision explicitly so a future reader does not conflate or merge the two testids. See [app.md](app.md)'s `POST /ai-advisor/strategy-builder/run` section for the route-side `provenance` object and its `isinstance(dict)` MagicMock-serialization guard, and [advisors/strategy_builder_engine](advisors_strategy_builder_engine.md)'s "R2-1" section for the manifest's honest-degradation contract.
+
 **Test coverage (source-consumption, not DOM/browser):** `tests/ai_advisor/test_r1_sb_live_run_field_consumption.py` reads this file as TEXT and asserts each field name is referenced as a literal token inside `sbRunAnalysis()`'s source — this stack has no JS-behavior test runner (no jsdom/Jest/Playwright-component harness; only `node --check` syntax validation exists project-wide), so a claimed DOM-behavior test would be fabricated confidence. These tests prove the field's NAME is wired into the function that reads `data.<field>`; they prove nothing about whether the resulting DOM element is visible, styled, or reachable to an operator. The PM's first-hand browser E2E is the sufficient verification for the actual rendered UI.
 
 On error: shows the error class name in `#sb-run-error` inline without a page navigation (unchanged, now with the `error_category` extension above).
@@ -165,7 +188,7 @@ This is pure JS navigation — no form submission, no POST. Buttons invoking thi
 - `POST /ai-advisor/suggest` — suggestion fetch; response body includes `lens_data_as_of` (str|null) + `lens_data_stale` (bool) for AC-3 stamp
 - `POST /ai-advisor/accept` — suggestion acceptance
 - `POST /ai-advisor/reject` — suggestion rejection
-- `POST /ai-advisor/strategy-builder/run` — strategy-builder proposal run (Strategy Builder tab); response body includes `built_new_count`/`atlas_count`/`mode_notice`/`error_category` (AC-11), `screens_skipped`/`screens_skipped_reason` (AC-12), and per-candidate `low_power` (AC-9)/`rejection_reason` (AC-7) — all consumed by `sbRunAnalysis()` (`DE-ADVISOR-R1-001` Checkpoint-3) — plus `backtest_unavailable`/`backtest_unavailable_count`/`backtest_unavailable_notice` (AC-4/AC-5, `DE-SB-DEGRADE-001`, also consumed by `sbRunAnalysis()`)
+- `POST /ai-advisor/strategy-builder/run` — strategy-builder proposal run (Strategy Builder tab); response body includes `built_new_count`/`atlas_count`/`mode_notice`/`error_category` (AC-11), `screens_skipped`/`screens_skipped_reason` (AC-12), and per-candidate `low_power` (AC-9)/`rejection_reason` (AC-7) — all consumed by `sbRunAnalysis()` (`DE-ADVISOR-R1-001` Checkpoint-3) — `backtest_unavailable`/`backtest_unavailable_count`/`backtest_unavailable_notice` (AC-4/AC-5, `DE-SB-DEGRADE-001`, also consumed by `sbRunAnalysis()`) — and (R2-1, symphony-scoped runs only) `provenance` (`{generation_model, mode, evidence_injected, run_id}`, `DE-ADVISOR-R2-1-001`, consumed by `sbRunAnalysis()`'s `sb-live-generation-provenance` block)
 - `GET /api/autotune-runs` — autotune run history feed
 - `GET /api/performance/symphonies` — symphony list
 - `Chart.js` (global) — autotune sparkline; guarded by `typeof Chart === 'undefined'` check

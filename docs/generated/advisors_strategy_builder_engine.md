@@ -1,9 +1,9 @@
 # advisors/strategy_builder_engine
 
-> Phase-2 Strategy Builder proposal engine: drives the real C1→C2→C3 builder pipeline to generate candidates, backtests them, gates via Harvey-Liu FDR + C5b PBO veto + SPY-OOS baseline, and persists survivors as advisory observations.
+> Phase-2 Strategy Builder proposal engine: drives the real C1→C2→C3 builder pipeline to generate candidates, backtests them, gates via Harvey-Liu FDR + C5b PBO veto + SPY-OOS baseline, persists survivors as advisory observations, and (R2-1) carries a run-level provenance object — generation model, mode, injected-evidence manifest, run-id — on every `ProposalRun`.
 
 **Source:** `advisors/strategy_builder_engine.py`
-**Last updated:** 2026-07-13 (advisor-outage-degrade: honest backtest_unavailable rollup, DE-SB-DEGRADE-001; also reconciled a pre-existing gap -- ProposalRun.error_category, added in R1 AC-11, was never documented here until now)
+**Last updated:** 2026-07-13 (R2-1 -- `ProposalRun.run_id`/`.provenance` + `propose_strategies(reasoning_context=, reasoning_manifest=, run_id=)`, `DE-ADVISOR-R2-1-001`; prior: advisor-outage-degrade: honest backtest_unavailable rollup, DE-SB-DEGRADE-001; also reconciled a pre-existing gap -- ProposalRun.error_category, added in R1 AC-11, was never documented here until now)
 
 ## Overview
 
@@ -91,15 +91,19 @@ class ProposalRun:
     error_category: str | None = None       # R1 AC-11: sanitized type(exc).__name__ -- safe to surface, `error` is not
     backtest_unavailable: bool = False       # advisor-outage-degrade AC-4: True iff >=1 candidate was tradeability-unverified
     backtest_unavailable_count: int = 0      # advisor-outage-degrade AC-4: count, computed pre-Step-2-filter (see below)
+    run_id: str = ""                         # R2-1 AC-6: UUID minted once per run, stable across every return path
+    provenance: dict | None = None           # R2-1 AC-4/AC-6: {generation_model, mode, evidence_injected, run_id}
 ```
 
 `error_category` (R1, AC-11 -- a pre-existing field this file never documented until this pass) lets the route surface a safe, sanitized failure cause (`type(exc).__name__`) without ever echoing `error`'s raw exception text, which may carry hostnames, paths, or credentials (the same AC-23 precedent as the route's own error boundary).
 
 `backtest_unavailable` / `backtest_unavailable_count` (advisor-outage-degrade, `DE-SB-DEGRADE-001`) roll up the honest outage signal from `CandidateInfo.tradeability_unverified`. **Computed from the FULL pre-Step-2-backtest `candidate_infos` list, NOT from `candidates` above** — `candidates` is filtered to only those whose OWN Step-2 metrics `run_backtest` call also succeeded, which a sustained outage would fail too, silently zeroing a `candidates`-derived count in exactly the case this flag exists to surface. Verified by hand for the sustained-outage case: `run.candidates` goes empty while `backtest_unavailable_count` still reports the true count.
 
+`run_id` / `provenance` (R2-1, `DE-ADVISOR-R2-1-001`) — see the dedicated "R2-1 — Reasoning-Context Threading + Provenance Contract" section below for the full shape, minting rules, and honesty guarantees.
+
 ## API Reference
 
-### `propose_strategies(objective, universe, screen_config, live_returns, symphony_id, *, incumbent_oos_alpha, default_oos_alpha, community_candidates) -> ProposalRun`
+### `propose_strategies(objective, universe, screen_config, live_returns, symphony_id, *, incumbent_oos_alpha, default_oas_alpha, community_candidates, reasoning_context, reasoning_manifest, run_id) -> ProposalRun`
 
 Propose new candidate symphonies from scratch. Never raises.
 
@@ -115,6 +119,9 @@ Propose new candidate symphonies from scratch. Never raises.
 | `incumbent_oos_alpha` | `float` | OOS alpha of the incumbent strategy, passed to `evaluate_candidate_batch` |
 | `default_oas_alpha` | `float` | Fallback OOS alpha when no incumbent alpha is available. In production, the C5b SPY-fold baseline — sourced internally by `propose_strategies` via a `run_backtest` call before the candidate loop — overrides this value inside `evaluate_candidate_batch`. Callers do not need to wire the SPY baseline; it is automatic as of C5b (commit 5d6e04a). |
 | `community_candidates` | `list[CandidateInfo] \| None` | Optional pre-built `CandidateInfo` objects. As of C5, callers supply these via `build_plan_generator.load_atlas_candidates(objective)` (the canonical path for both the route and the scheduler). Appended to the built-new list and flow through the **same single-batch FDR gate** (AC-2). Capped at `MAX_COMMUNITY_CANDIDATES_PER_RUN` internally (AC-3). `None` and `[]` are identical — no community candidates are injected (AC-6). |
+| `reasoning_context` | `str \| None` | R2-1: an optional, ready-to-inject operator-context text block (see `ai_advisor.build_reasoning_context`), threaded into `_generate_candidate_trees` → `build_plan_generator.generate_build_plans`. Additive/keyword, default `None` — every pre-R2-1 caller's exact call shape is unaffected. |
+| `reasoning_manifest` | `dict \| None` | R2-1: the honest per-source manifest paired with `reasoning_context` (see `ai_advisor.build_reasoning_context`). Stamped into `ProposalRun.provenance["evidence_injected"]` verbatim; falls back to `ai_advisor._EMPTY_MANIFEST` (never fabricated as present) when omitted. |
+| `run_id` | `str \| None` | R2-1: an optional caller-supplied run id, used verbatim when provided; a fresh `str(uuid.uuid4())` is minted when omitted. Threaded onto `ProposalRun.run_id` and `ProposalRun.provenance["run_id"]`. |
 
 **Returns:** `ProposalRun` where:
 - `candidates` contains only successfully-backtested `CandidateInfo` objects
@@ -122,14 +129,17 @@ Propose new candidate symphonies from scratch. Never raises.
 - `screened_survivors` is a subset of `gated_batch.survivors`
 - `error` is non-None on catastrophic failure
 - `backtest_unavailable` / `backtest_unavailable_count` (advisor-outage-degrade AC-4) are `True`/`>0` when one or more candidates were emitted tradeability-unverified by `plan_tree_compiler.compile_plan` because Composer's backtest endpoint was unreachable — an honest signal distinct from a normal gate rejection or from `error`. Computed over the full candidate list BEFORE the Step-2 backtest-success filter, so it stays accurate even when the same outage also empties `candidates`.
+- `run_id` / `provenance` (R2-1) are populated on EVERY return path, including the earliest error returns (see the R2-1 section below) — never `None`/`""` by omission.
 
 **FDR integrity invariant:** `evaluate_candidate_batch` receives ALL successfully-backtested candidates — built-new (real C1→C2→C3) and atlas-suggested together in one batch. Wide exploration pays one batch-wide multiple-testing correction. Screens apply only to gate survivors. The gate input is never pre-filtered or split.
 
 **Pipeline:**
 
 ```
-Step 1:  _generate_candidate_trees(objective, universe)
-         C4: C1 (self-source or universe override) → C2 (build_plan_generator) → C3 (compile)
+Step 0:  mint run_id + provenance UNCONDITIONALLY, before the try block (R2-1)
+Step 1:  _generate_candidate_trees(objective, universe, reasoning_context=reasoning_context)
+         C4: C1 (self-source or universe override) → C2 (build_plan_generator, R2-1 threads
+             reasoning_context into the generation prompt) → C3 (compile)
          → CandidateInfo list (provenance="built-new")
 Step 1b: extend with community_candidates[:MAX_COMMUNITY_CANDIDATES_PER_RUN]
          (no-op when community_candidates is None or [])
@@ -155,7 +165,7 @@ Step 5:  persist survivors + rejected candidates
 
 ### C2 — Build-plan generation
 
-`build_plan_generator.generate_build_plans(gen_objective, membership_set)` is called. The `sbe.Objective` value is mapped to `build_plan_generator.Objective` via `.value` (string-keyed, 4-way). If the generator returns no plans (`result.plans` empty), `_generate_candidate_trees` returns `[]` cleanly (D-1 honest degradation, logs `result.reason`).
+`build_plan_generator.generate_build_plans(gen_objective, membership_set, reasoning_context=reasoning_context)` is called (the `reasoning_context=` kwarg is R2-1; `None` when the run is not symphony-scoped). The `sbe.Objective` value is mapped to `build_plan_generator.Objective` via `.value` (string-keyed, 4-way). If the generator returns no plans (`result.plans` empty), `_generate_candidate_trees` returns `[]` cleanly (D-1 honest degradation, logs `result.reason`).
 
 ### C3 — Plan compilation
 
@@ -231,12 +241,63 @@ Before this fix, `plan_tree_compiler.compile_plan`'s repair loop treated ANY non
 
 No change to `evaluate_candidate_batch`, the FDR gate, or any screen — a tradeability-unverified candidate still competes for survivorship on its actual backtest metrics exactly like any other candidate (Step 2's own `run_backtest` call is unaffected by `plan_tree_compiler`'s classification; the two are independent Composer calls). This field is purely an honesty signal for the operator, not a new filter.
 
-Route/UI surfacing (AC-5) is tracked separately — see `DE-SB-DEGRADE-001` in `DECISIONS.md` for status.
+Route/UI surfacing (AC-5) shipped the same cycle — see `DE-SB-DEGRADE-001` in `DECISIONS.md`.
+
+---
+
+## R2-1 — Reasoning-Context Threading + Provenance Contract (`DE-ADVISOR-R2-1-001`, 2026-07-13)
+
+**Cross-cutting contract, not an SB-only feature.** This is the shared provenance surface `DE-ADVISOR-R2-1-001` establishes for the whole R2 program — R2-2 (Logic Changes) and R2-3 (Asset Swaps) reuse the SAME `ai_advisor.build_reasoning_context` assembler and extend the SAME `provenance` shape to their own engines/routes, rather than each port inventing its own.
+
+### `provenance` — minted unconditionally, before the try block
+
+```python
+run_id = run_id or str(uuid.uuid4())
+provenance: dict = {
+    "generation_model": model_config.get_advisor_suggestion_model(),
+    "mode": "build-new",
+    "evidence_injected": reasoning_manifest or ai_advisor._EMPTY_MANIFEST,
+    "run_id": run_id,
+}
+```
+
+This dict is built at the TOP of `propose_strategies`, before `_has_composer_key()` is even checked — so every return path below, including the earliest error returns (missing Composer key, an exception in Step 1), carries the SAME `run_id`/`provenance`, never fabricated and never left `None` by omission. `run_id`/`generation_model`/`mode` are cheap, non-fabricated facts about the CALL ITSELF (not a claim that generation succeeded) — the honesty burden is carried entirely by `evidence_injected`'s own per-source values, which already reflect whatever `reasoning_manifest` the caller actually passed in (built by `ai_advisor.build_reasoning_context` before any Composer-key check ran).
+
+**The `evidence_injected` manifest is the honesty artifact — not a footnote.** It is `reasoning_manifest` verbatim (never re-derived or summarized): the SAME per-source `present`/`absent`/`available`/`stale` dict `ai_advisor.build_reasoning_context` returned. A caller that never ran `build_reasoning_context` at all (or ran it on a from-scratch request) gets `ai_advisor._EMPTY_MANIFEST` — every key `"absent"`, never a fabricated `"available"`. This is what makes R2's "reasoning is real AND observable" thesis concrete at the engine layer: the exact same manifest an operator can inspect on the response JSON is the exact same object gating what was injected into the generation prompt — there is no second, lossy summary in between.
+
+### Threading
+
+`reasoning_context` flows: `propose_strategies(reasoning_context=)` → `_generate_candidate_trees(objective, universe, reasoning_context=reasoning_context)` → `build_plan_generator.generate_build_plans(..., reasoning_context=reasoning_context)` → `_build_generation_prompt(..., reasoning_context=reasoning_context)` (see [advisors/build_plan_generator](advisors_build_plan_generator.md)). `reasoning_manifest` does NOT thread through this chain — it is consumed once, at the top of `propose_strategies`, to build `provenance["evidence_injected"]`, and never passed to the generator (the generator only needs the already-rendered prompt text).
+
+### Persistence
+
+`run_id` and `evidence_injected` are stamped into every persisted advisory observation's `raw_response` alongside the existing survivor/rejected fields — so any proposal traces back to the exact run and the exact evidence manifest that produced it (AC-6, traceability).
+
+### Route-boundary serialization guard (a named pattern for R2-2/R2-3 to reuse)
+
+`app.py`'s `ai_advisor_strategy_builder_run()` route reads `run.provenance` defensively:
+
+```python
+provenance = getattr(run, "provenance", None)
+if not isinstance(provenance, dict):
+    provenance = None
+```
+
+**Why `getattr(..., default)` alone is NOT enough here:** several pre-existing test fixtures construct a bare `MagicMock()` as a `ProposalRun` stand-in. `MagicMock` auto-vivifies ANY attribute access into a new child `Mock` object rather than raising `AttributeError` — so `getattr(mock_run, "provenance", None)`'s `default` branch never actually fires against a mock missing that attribute; it silently returns a non-`None`, non-dict `Mock`. Passed straight to `jsonify()`, that raises `TypeError: Object of type Mock is not JSON serializable`. The `isinstance(provenance, dict)` check is the only reliable guard against this — and it fails CLOSED (`None`, never a fabricated dict) rather than raising. This is the same defensive shape as the pre-existing `getattr(run, "backtest_unavailable_count", 0)` read one paragraph above it in the route, but that field only needs `bool()`/`int()` coercion (safe against a truthy-but-wrong `Mock`); `provenance` is handed straight to `jsonify()` as a nested object, where a `Mock` is fatal, not just wrong. See [app](app.md) for the full route section and [static/ai_advisor.js](static_ai_advisor_js.md) for the render side.
+
+### What R2-1 deliberately did NOT change
+
+- No new admission concept, DSL change, or provenance TAG (`built-new`/`atlas-suggested` are unchanged) — `provenance` (the R2-1 dict) and `template_id` (the pre-existing built-new/atlas-suggested tag) are two independently-named concepts that happen to share the English word "provenance"; do not conflate them (see the route-side disambiguation note in [static/ai_advisor.js](static_ai_advisor_js.md)).
+- No gate/PBO/FDR/SPY math change — R1 parity is untouched (characterization-tested).
+- No change to `evaluate_candidate_batch`, `backtest_gate_engine`, or any screen.
+- The from-scratch (non-symphony-scoped) path never calls `ai_advisor.build_reasoning_context` at all (the route-level decision, not this engine's) — `reasoning_context`/`reasoning_manifest` arrive as `None` on that path, so `provenance["evidence_injected"]` is `ai_advisor._EMPTY_MANIFEST` and `_generate_candidate_trees` byte-preserves the pre-R2-1 generation prompt (AC-8).
 
 ---
 
 ## Internal Dependencies
 
+- `ai_advisor` — `_EMPTY_MANIFEST` (R2-1, module-level `import ai_advisor` at `strategy_builder_engine.py:21` — NOT a lazy/CC-2 import like the other `advisors.*` dependencies below; used only as the `provenance["evidence_injected"]` fallback default when `reasoning_manifest` is omitted). This module does NOT call `ai_advisor.build_reasoning_context` itself — that call happens at the route layer (see [app](app.md)); the engine only consumes the already-assembled `reasoning_context` string and `reasoning_manifest` dict as plain parameters.
+- `model_config` — `get_advisor_suggestion_model()` (R2-1, `provenance["generation_model"]` source — read at call time, never a hardcoded literal)
 - `advisors.universe_provider` — `get_tradeable_set()` (C1, CC-2 lazy import inside `_generate_candidate_trees`)
 - `advisors.build_plan_generator` — `generate_build_plans`, `Objective` (C2, CC-2 lazy import); `load_atlas_candidates` is the canonical community-admission path for both route and scheduler callers
 - `advisors.plan_tree_compiler` — `compile_plan` (C3, CC-2 lazy import)
@@ -246,4 +307,4 @@ Route/UI surfacing (AC-5) is tracked separately — see `DE-SB-DEGRADE-001` in `
 - `analytics` — `compute_quantstats_metrics`
 - `database` — `insert_advisor_observation`
 
-No import of `alpha_bot_execution`, `autotuner`, or any execution module. Off-execution-path; advisory-only. The sole production callers are `app.py:3813` (`ai_advisor_strategy_builder_run` route) and `advisors/strategy_builder_scheduler.py` (`run_weekly_build`). `autotuner.py` does NOT call `propose_strategies` — a prior doc claim to the contrary was stale (corrected in C4 doc pass).
+No import of `alpha_bot_execution`, `autotuner`, or any execution module — `ai_advisor` (R2-1) is an advisor-suite module, not an execution module, so this invariant is unaffected. Off-execution-path; advisory-only. The sole production callers are `app.py:3813` (`ai_advisor_strategy_builder_run` route) and `advisors/strategy_builder_scheduler.py` (`run_weekly_build`). `autotuner.py` does NOT call `propose_strategies` — a prior doc claim to the contrary was stale (corrected in C4 doc pass).

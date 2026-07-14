@@ -1,9 +1,9 @@
 # ai_advisor
 
-> Claude-backed config advisor: context assembly, per-symphony assessment, structured-output Claude call via ADVISOR_SYNTHESIS_MODEL, safety gates (7-item allowlist, risk-direction check, OOS re-validation), and market-wide lens cache-serve (nightly MARKET_LENS_CACHE bundle; no per-click live lens fetches for the 5 market-wide lens blocks).
+> Claude-backed config advisor: context assembly, per-symphony assessment, structured-output Claude call via ADVISOR_SYNTHESIS_MODEL, safety gates (7-item allowlist, risk-direction check, OOS re-validation), market-wide lens cache-serve (nightly MARKET_LENS_CACHE bundle; no per-click live lens fetches for the 5 market-wide lens blocks), and the R2-1 `build_reasoning_context` operator-context assembler that feeds Strategy Builder generation (real tree + live stats + lens evidence, with an honest per-source manifest).
 
 **Source:** `ai_advisor.py`
-**Last updated:** 2026-07-13 (advisor-suite-fixes AC-4: fundamentals selection loop no longer pre-filters to 10-K-only — see below; prior: DE-TECH-SMA200-HISTORY-001 technicals lens line-range correction; prior: DE-ADVISOR-LATENCY MARKET_LENS_CACHE cache-serve path; persist_market_lens_cache producer; build_assessment_from_context empty-state reword; prior: DE-FUND-002 vintage-correct fundamentals)
+**Last updated:** 2026-07-13 (R2-1 -- new `build_reasoning_context` reasoning-context assembler + `_EMPTY_MANIFEST`/`_MAX_TREE_RENDER_CHARS` constants, `DE-ADVISOR-R2-1-001`; prior: advisor-suite-fixes AC-4: fundamentals selection loop no longer pre-filters to 10-K-only -- see below; prior: DE-TECH-SMA200-HISTORY-001 technicals lens line-range correction; prior: DE-ADVISOR-LATENCY MARKET_LENS_CACHE cache-serve path; persist_market_lens_cache producer; build_assessment_from_context empty-state reword; prior: DE-FUND-002 vintage-correct fundamentals)
 
 ## Overview
 
@@ -32,6 +32,8 @@ Real-money-critical input governance: `assemble_advisor_context` never includes 
 **Fundamentals lens vintage fix (2026-06-17 — DE-FUND-002):** Two concurrent vintage defects resolved. Mode A (XBRL concept deprecation): `_SEC_KEY_CONCEPTS` now maps each logical concept to `(label, ordered_candidate_tags)` — the Revenues concept unions three candidate tags (`RevenueFromContractWithCustomerExcludingAssessedTax`, `SalesRevenueNet`, `Revenues`) so migrated issuers are not frozen at a deprecated tag. Mode B (wrong sort key): the entry selection loop now sorts by `(end desc, filed desc)` across the unioned candidate-tag entries, selecting the entry with the most recent reporting-period end date. `key_facts` output keys are stable (logical keys unchanged — `Revenues`, `NetIncomeLoss`, etc.). See [DE-FUND-002 in DECISIONS.md](../../DECISIONS.md).
 
 **Market-lens cache-serve (2026-06-29 — DE-ADVISOR-LATENCY):** The per-click 17-29 sequential external API call fan-out (6-minute hang) has been eliminated. `assemble_advisor_context` now serves the 5 market-wide lens blocks from a nightly `MARKET_LENS_CACHE` advisor_observations row instead of invoking the live `_build_*_section()` builders per request. The nightly producer (`persist_market_lens_cache`) is wired into `prism_scheduler._patch_provenance`, which already runs the 5 builders — the cache costs one additional DB write and zero extra network calls. Cold-start (no cache row yet): each lens block degrades honestly to `available=False, reason="lens_cache_unavailable"` — the live builders are never the silent default fallback. A stale bundle (older than `_LENS_CACHE_MAX_AGE_HOURS=36`) is served with an honest "stale" label rather than triggering a live re-fetch. Staleness metadata (`lens_data_as_of`, `lens_data_stale`) is surfaced in the suggest response JSON and the advisor SPA. See [DE-ADVISOR-LATENCY in DECISIONS.md](../../DECISIONS.md).
+
+**Reasoning-context assembler (2026-07-13 — R2-1, `DE-ADVISOR-R2-1-001`):** `build_reasoning_context(symphony_id, objective, *, composer_symphony_id=None) -> tuple[str, dict]` assembles a bounded, human-readable operator-context block for Strategy Builder generation — the operator's real symphony tree (rendered via `symphony_schema.render_rules_text`, capped at `_MAX_TREE_RENDER_CHARS=6000`), live Optuna stats, and the 5 market-lens blocks (reusing `assemble_advisor_context`'s existing nightly cache-serve path — never a fresh live fan-out) — paired with an honest per-source manifest (`tree`/`stats`: present|absent; the 5 lenses: available|stale|absent) a caller can surface as provenance. Falsy `symphony_id` (the from-scratch, non-symphony-scoped path) returns immediately with zero I/O — no Composer fetch, no DB read — matching the byte-preservation floor one layer up in `build_plan_generator._build_generation_prompt`. D-1: never raises, even when a collaborator (e.g. `symphony_logic.fetch_symphony_score`) itself raises. See [advisors/build_plan_generator](advisors_build_plan_generator.md) for how the returned text is threaded into the SB generation prompt, and `DE-ADVISOR-R2-1-001` in `DECISIONS.md` for the full provenance contract — this assembler is the shared, cross-cutting enabler R2-2 (Logic Changes) and R2-3 (Asset Swaps) reuse, not a Strategy-Builder-only feature.
 
 ## API Reference
 
@@ -119,6 +121,49 @@ Persists all 5 structured lens payloads as a `MARKET_LENS_CACHE` advisor_observa
 **D-1 never-raises:** any exception is caught and logged as `logger.warning("persist_market_lens_cache failed: %s", type(exc).__name__)`. Never propagates.
 
 **Source:** `ai_advisor.py:1470–1495`
+
+---
+
+### Reasoning-Context Assembly (R2-1)
+
+#### `build_reasoning_context(symphony_id: str, objective, *, composer_symphony_id: str | None = None) → tuple[str, dict]`
+
+Assembles operator-context text + a per-source honesty manifest for Strategy Builder generation (`DE-ADVISOR-R2-1-001`). Real-money-critical honesty contract: Strategy Builder should reason over the operator's ACTUAL symphony, not just an objective name — this function gathers {the real tree (rendered), live Optuna stats, the 5 market-lens blocks} into a bounded prose block ready to splice verbatim into a generation prompt, alongside an honest manifest a caller can surface as provenance.
+
+**Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| `symphony_id` | `str` | The symphony to reason about. Falsy (`""`/`None`) means a from-scratch run — returns immediately with **zero I/O** (no Composer fetch, no DB read), matching the AC-8 byte-preservation floor in `build_plan_generator._build_generation_prompt`. |
+| `objective` | (unused today) | Reserved for a future objective-conditioned rendering; every source is gathered unconditionally regardless of objective. |
+| `composer_symphony_id` | `str \| None` | The Composer hash ID, when known — preferred for the tree-fetch/lens-cache-serve calls per the project's Composer hash rule; falls back to `symphony_id` when absent. |
+
+**Returns:** `(prompt_context, manifest)`:
+- `prompt_context: str` — `""` when nothing is injectable; otherwise a bounded, human-readable text block (never a raw JSON tree dump — a raw dump would both blow the token budget and leak internal Composer node ids/uuids).
+- `manifest: dict` — an honest per-source record, never fabricated:
+  - `"tree"`: `"present"` \| `"absent"`
+  - `"stats"`: `"present"` \| `"absent"` (mirrors `context["optuna_evidence"]["available"]` from `assemble_advisor_context`)
+  - `"technicals"` / `"sentiment"` / `"derivatives"` / `"macro"` / `"fundamentals"`: `"available"` \| `"stale"` \| `"absent"` — derived by combining each lens's own `assemble_advisor_context` `available` flag with the bundle-wide `lens_data_stale` classifier (the SAME classifier `assemble_advisor_context` already computes — never a second, hand-rolled one).
+
+**The honest-degradation manifest is the honesty artifact this function exists to produce — not a footnote to the prose.** Every degraded source is reflected in the manifest exactly as it happened: a tree-fetch failure or a falsy `symphony_id` → `"tree": "absent"`; no Optuna run → `"stats": "absent"`; a cold lens cache → every lens `"absent"`; a bundle older than `_LENS_CACHE_MAX_AGE_HOURS` → every available lens `"stale"` instead of `"available"`. In every one of those cases the run PROCEEDS without that evidence — never a placeholder, never a fabricated "available". This is the concrete mechanism behind R2's thesis that reasoning must be OBSERVABLE, not merely present: an operator (or a future R2-2/R2-3 port) can always tell, from the manifest alone and independent of the prose, exactly what evidence a given generation run actually saw versus what it reasoned without.
+
+**D-1: never raises**, under any failure mode — including when a collaborator itself raises (e.g. `symphony_logic.fetch_symphony_score` throwing `RuntimeError`). Each source (tree; stats+lenses) is gathered inside its own `try/except`, so one collaborator's failure can never take down the other or propagate to the caller.
+
+**Behavior:**
+- Real tree (AC-1): `symphony_logic.fetch_symphony_score(composer_symphony_id or symphony_id)` → `symphony_schema.render_rules_text(raw_tree)`, truncated to `_MAX_TREE_RENDER_CHARS` characters (with a `"... [truncated]"` marker appended) when the rendered text exceeds the bound — never a raw JSON dump.
+- Live stats + the 5 lens blocks (AC-2): reuses `assemble_advisor_context`'s EXISTING nightly cache-serve path (never a fresh live fan-out on this per-click path) — `optuna_evidence` for stats; each available lens block's `payload` is re-encoded to JSON and passed through `advisors.prism_render.humanize_lens_summary` for prose (the same humanizer the Overview tab uses — no second hand-rolled renderer).
+- Bound (AC-9): `_MAX_TREE_RENDER_CHARS = 6000` bounds INPUT-context growth/cost for the injected tree text specifically. Distinct from `build_plan_generator.MAX_OUTPUT_TOKENS` (a different, OUTPUT-side ceiling on the SDK's structured-tool-use response). Conservative, uncalibrated value (~1,500 tokens at a rough 4-chars/token estimate) — no measured worst-case exists yet, unlike `MAX_OUTPUT_TOKENS`'s calibrated figure.
+
+**Source:** `ai_advisor.py:1700-1803`
+
+**Constants:**
+| Constant | Type | Value | Purpose |
+|----------|------|-------|---------|
+| `_EMPTY_MANIFEST` | `dict` | 7-key, all `"absent"` | Returned (a fresh `dict()` copy) whenever nothing is injectable — every key defaults to `"absent"`, never omitted, never fabricated as present. `ai_advisor.py:67-78`. |
+| `_MAX_TREE_RENDER_CHARS` | `int` | `6000` | Bounds the rendered real-tree text injected into the SB generation prompt (AC-9). `ai_advisor.py:80-88`. |
+
+**Called by:** `app.py`'s `ai_advisor_strategy_builder_run()` route — symphony-scoped runs only, never the from-scratch path (see [app](app.md)). Threaded into `strategy_builder_engine.propose_strategies(reasoning_context=, reasoning_manifest=)` → `build_plan_generator.generate_build_plans(reasoning_context=)` → `_build_generation_prompt(reasoning_context=)` (see [advisors/strategy_builder_engine](advisors_strategy_builder_engine.md) and [advisors/build_plan_generator](advisors_build_plan_generator.md)).
+
+**Cross-cutting contract:** this assembler and its manifest shape are the shared enabler `DE-ADVISOR-R2-1-001` establishes for the whole R2 program — R2-2 (Logic Changes) and R2-3 (Asset Swaps) call the SAME `build_reasoning_context` and extend the SAME provenance surface to their own routes, rather than each port inventing its own context-assembly or manifest shape.
 
 ---
 
@@ -344,11 +389,15 @@ The 7-item allowlist (6 Optuna search-space keys + `MAX_SQUEEZE_FLOOR`). Note: `
 | `_SEC_KEY_CONCEPTS` | `dict[str, tuple[str, tuple[str, ...]]]` | logical concept → (display label, ordered candidate tags) | Maps each of the 5 recognized financial concepts to a display label and an ordered tuple of XBRL us-gaap candidate tags. All present candidate tags are unioned per concept; entry with most recent `end` wins. Outer logical keys are stable (`Revenues`, `NetIncomeLoss`, `Assets`, `Liabilities`, `StockholdersEquity`) — these are the `key_facts` output keys. `ai_advisor.py:361-374`. |
 | `_REQUEST_TIMEOUT_SECONDS` | `float` | `30.0` | Explicit client-side timeout for all Anthropic SDK calls. Never rely on SDK/urllib3 default. |
 | `_MAX_TOKENS` | `int` | `2048` | Max output tokens for the structured-output Claude call in `request_suggestions`. |
+| `_EMPTY_MANIFEST` | `dict` | 7-key, all `"absent"` | R2-1: default honest manifest returned by `build_reasoning_context` when nothing is injectable. `ai_advisor.py:67-78`. |
+| `_MAX_TREE_RENDER_CHARS` | `int` | `6000` | R2-1: bounds the rendered real-tree text `build_reasoning_context` injects into the SB generation prompt (AC-9). `ai_advisor.py:80-88`. |
 
 ## Internal Dependencies
 
 - `database` — `get_latest_autotune_run`, `get_symphony_strategy`, `load_state`, `normalize_name`, `DEFAULT_STRATEGY`, `DEFAULT_LOCKED_VARS`, **`get_latest_market_lens_cache`** (DE-ADVISOR-LATENCY cache-serve path), **`insert_advisor_observation`** (called by `persist_market_lens_cache`)
-- `symphony_logic` — `get_condensed_logic` (called with Composer hash ID via `composer_symphony_id`, not normalized name)
+- `symphony_logic` — `get_condensed_logic` (called with Composer hash ID via `composer_symphony_id`, not normalized name); `fetch_symphony_score` (R2-1, `build_reasoning_context` real-tree source)
+- `advisors.symphony_schema` — `render_rules_text` (R2-1, `build_reasoning_context` — renders the real tree into bounded prose, never a raw JSON dump)
+- `advisors.prism_render` — `humanize_lens_summary` (R2-1, `build_reasoning_context` — reuses the Overview tab's humanizer for injected lens prose; no second hand-rolled renderer)
 - `autotuner` — `run_simulation`, `calculate_historical_deviation` (lazy import in `revalidate_suggestion_oos`)
 - `synthetic_history` — `generate_synthetic_history` (lazy import in `revalidate_suggestion_oos`)
 - `advisors.lens_technicals` — `_fetch_technicals` (lazy import in `_build_technicals_section`; called nightly by prism_scheduler, not per advisor click)
