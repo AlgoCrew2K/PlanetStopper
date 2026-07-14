@@ -77,6 +77,11 @@ def _make_fake_proposal_run(*, error: str | None = None) -> MagicMock:
     # ProposalRun defaults (strategy_builder_engine.py:149-150).
     run.backtest_unavailable = False
     run.backtest_unavailable_count = 0
+    # R2-1: same auto-vivification trap for the new provenance/run_id fields
+    # (ProposalRun gains both this cycle) — front-run per r2-fe's flag before
+    # the route starts reading them, same precedent as backtest_unavailable above.
+    run.provenance = None
+    run.run_id = None
     return run
 
 

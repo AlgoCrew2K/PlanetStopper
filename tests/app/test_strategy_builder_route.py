@@ -1437,6 +1437,11 @@ def test_post_run_does_not_call_real_atlas_in_offline_suite(client, _stub_commun
     # Atlas-stub assertion). Set explicitly to the real ProposalRun defaults.
     mock_run.backtest_unavailable = False
     mock_run.backtest_unavailable_count = 0
+    # R2-1: same auto-vivification trap for the new provenance/run_id fields —
+    # front-run per r2-fe's flag before the route starts reading them, same
+    # precedent as backtest_unavailable_count above.
+    mock_run.provenance = None
+    mock_run.run_id = None
 
     with patch(
         "advisors.strategy_builder_engine.propose_strategies",
