@@ -1045,6 +1045,36 @@ def propose_operator_logic_change(
         "run_id": run_id,
     }
 
+    if tweak is None and change_description is None:
+        # Neither supplied — produce a no-op empty run. No key check needed:
+        # nothing downstream (backtest or LLM call) would ever fire either way.
+        return LogicChangeRunResult(
+            gate_batch=_empty_gate_batch(),
+            message=NO_SURVIVORS_MESSAGE,
+            objective=objective,
+            run_id=run_id,
+            provenance=provenance,
+        )
+
+    # AC-X4: check API key before any backtest call OR billed LLM call.
+    # R2-2 follow-up fix: this check must run BEFORE tweak resolution below —
+    # the change_description branch now costs a real Anthropic call (the old
+    # deterministic parser was free), so short-circuiting here first avoids
+    # billing a call for a run that's guaranteed to be discarded. Mirrors
+    # suggest_logic_changes's existing (correct) ordering.
+    if not _has_composer_key():
+        logger.info(
+            "propose_operator_logic_change: no Composer API key — returning no_api_key=True"
+        )
+        return LogicChangeRunResult(
+            gate_batch=_empty_gate_batch(),
+            no_api_key=True,
+            message="advisor unavailable: API key not configured",
+            objective=objective,
+            run_id=run_id,
+            provenance=provenance,
+        )
+
     # Resolve the tweak: caller may supply a LogicTweak directly, or a
     # change_description steered through the reasoned generator (R2-2 — replaces
     # the old deterministic _parse_change_description_to_tweak).
@@ -1058,33 +1088,10 @@ def propose_operator_logic_change(
             max_candidates=1,
         )
         tweak = reasoned[0] if reasoned else None
-    elif tweak is None and change_description is None:
-        # Neither supplied — produce a no-op empty run.
-        return LogicChangeRunResult(
-            gate_batch=_empty_gate_batch(),
-            message=NO_SURVIVORS_MESSAGE,
-            objective=objective,
-            run_id=run_id,
-            provenance=provenance,
-        )
 
     symphony_name = (
         (score_tree.get("name") or symphony_id) if isinstance(score_tree, dict) else symphony_id
     )
-
-    # AC-X4: check API key before any backtest call.
-    if not _has_composer_key():
-        logger.info(
-            "propose_operator_logic_change: no Composer API key — returning no_api_key=True"
-        )
-        return LogicChangeRunResult(
-            gate_batch=_empty_gate_batch(),
-            no_api_key=True,
-            message="advisor unavailable: API key not configured",
-            objective=objective,
-            run_id=run_id,
-            provenance=provenance,
-        )
 
     # R2-2 (AC-6): the reasoned generator proposed nothing this run (LLM outage,
     # malformed output, or no well-supported edit) — a clean empty result, never
