@@ -116,6 +116,12 @@ class CandidateInfo:
     metrics: dict = field(default_factory=dict)
     backtest_error: str | None = None
     data_warnings: list = field(default_factory=list)
+    # True when plan_tree_compiler.compile_plan degraded this tree on an
+    # infra/transport failure (Composer unreachable) instead of pruning/
+    # dropping — the tree's tradeability against Composer was never
+    # confirmed. Community candidates (Atlas-sourced, not compiled via
+    # plan_tree_compiler) always default False.
+    tradeability_unverified: bool = False
 
 
 @dataclass
@@ -132,6 +138,16 @@ class ProposalRun:
     # paths, credentials) and must never be echoed to the client verbatim
     # (AC-23 precedent) — error_category is the safe, displayable alternative.
     error_category: str | None = None
+    # Honest run-level outage signal (advisor-outage-degrade AC-4): True when
+    # one or more generated candidates were emitted tradeability-unverified
+    # because Composer was unreachable during compile_plan's repair loop.
+    # Computed from the FULL pre-Step-2-backtest candidate list, NOT from
+    # `candidates` above — `candidates` is filtered to only those whose own
+    # Step-2 metrics backtest succeeded, which a real outage would also fail,
+    # silently zeroing a `candidates`-derived count in exactly the case this
+    # flag exists to surface.
+    backtest_unavailable: bool = False
+    backtest_unavailable_count: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +423,9 @@ def _generate_candidate_trees(
                         "objective": plan.get("objective", ""),
                         "provenance": provenance,
                     },
+                    # advisor-outage-degrade AC-2/AC-4: carries forward compile_plan's
+                    # infra-degrade marker so propose_strategies can roll it up honestly.
+                    tradeability_unverified=compile_result.tradeability_unverified,
                 )
             )
             if len(candidates) >= MAX_CANDIDATES_PER_RUN:
@@ -777,6 +796,14 @@ def propose_strategies(
           input count — never the total attempted or the post-screen count).
         - ``screened_survivors`` is a subset of ``gated_batch.survivors``.
         - ``error`` is non-None when a top-level exception occurred.
+        - ``backtest_unavailable`` / ``backtest_unavailable_count`` (advisor-outage-
+          degrade AC-4) are True / >0 when one or more candidates were emitted
+          tradeability-unverified by ``plan_tree_compiler.compile_plan`` because
+          Composer's backtest endpoint was unreachable — an honest signal distinct
+          from a normal gate rejection. Computed over the full candidate list
+          BEFORE the Step-2 backtest-success filter, so it stays accurate even
+          when that same outage also fails Step 2 and the affected candidates
+          never make it into ``candidates`` above.
 
     FDR integrity: evaluate_candidate_batch receives ALL successfully backtested
     candidates (AC-3.2). Screens apply only to gate survivors (post-gate presentation).
@@ -800,6 +827,16 @@ def propose_strategies(
         # None and [] are both no-ops (AC-6: byte-for-byte identical to the template-only path).
         if community_candidates:
             candidate_infos.extend(community_candidates[:MAX_COMMUNITY_CANDIDATES_PER_RUN])
+
+        # advisor-outage-degrade AC-4: roll up the honest outage signal from the
+        # FULL candidate list computed here — NOT from `successful_candidates`
+        # below, which Step 2's own per-candidate run_backtest call filters on
+        # backtest_error. A real Composer outage fails that Step-2 call too, so
+        # a rollup taken after that filter would read 0 in exactly the case
+        # this flag exists to surface.
+        backtest_unavailable_count = sum(
+            1 for info in candidate_infos if info.tradeability_unverified
+        )
 
         if not candidate_infos:
             return ProposalRun(
@@ -959,6 +996,8 @@ def propose_strategies(
             gated_batch=gate_batch,
             screened_survivors=screened_survivors,
             observations_written=obs_written,
+            backtest_unavailable=backtest_unavailable_count > 0,
+            backtest_unavailable_count=backtest_unavailable_count,
         )
 
     except Exception as exc:
