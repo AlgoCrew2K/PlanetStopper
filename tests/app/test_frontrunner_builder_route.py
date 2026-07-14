@@ -72,6 +72,33 @@ def client():
         yield c
 
 
+@pytest.fixture(autouse=True)
+def _ensure_anthropic_api_key_present(monkeypatch):
+    """Autouse: guarantee ANTHROPIC_API_KEY is present for every test in this
+    module, independent of the AMBIENT environment.
+
+    Recurring non-deterministic CI failure (DE-FRONTRUNNER-ROUTE-XDIST-ENV):
+    ai_advisor_frontrunner_builder_run (app.py:~5354) fast-fails 200 when
+    os.environ.get("ANTHROPIC_API_KEY") is falsy — correct D-1 behavior. Tests
+    in this module that exercise the valid-key/202 path were relying on the
+    REAL key loaded once by app.py's module-level load_dotenv() at process
+    start; under pytest-xdist (-n2) that ambient value is shared with every
+    other test scheduled onto the same worker process, so ANY sibling test
+    (anywhere in the collected scope, not just this file) that mutates
+    ANTHROPIC_API_KEY makes the 202-path tests here fail non-deterministically
+    depending on -n2 test distribution — a fragile, ambient-state dependency,
+    not a bug in the route itself.
+
+    monkeypatch.setenv is used (not a raw os.environ mutation) so pytest
+    restores the prior value after every test regardless of outcome. Tests
+    that specifically exercise the missing-key/200 path
+    (test_run_missing_api_key_returns_200_error_and_does_not_submit) override
+    this via their own explicit patch of os.environ.get / monkeypatch.delenv,
+    which take precedence within their own scope.
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-frontrunner-route-key")
+
+
 @pytest.fixture(autouse=False)
 def _reenable_csrf(monkeypatch):
     """Re-enable real CSRF enforcement for CSRF-specific tests in this
