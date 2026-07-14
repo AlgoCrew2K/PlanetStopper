@@ -282,6 +282,6 @@ def evaluate_calmar_acceptance(
             candidate_calmar=candidate_calmar,
         )
 
-    except Exception as exc:  # pragma: no cover - defensive; never raises contract
+    except Exception:  # pragma: no cover - defensive; never raises contract
         logger.debug("evaluate_calmar_acceptance: unexpected error", exc_info=True)
         return _rejected()

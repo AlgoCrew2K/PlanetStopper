@@ -111,8 +111,7 @@ def _assert_route_exists(resp, route: str) -> None:
 def _get_csrf_token(client) -> str:
     token_resp = client.get("/api/csrf-token")
     assert token_resp.status_code == 200, (
-        f"GET /api/csrf-token returned {token_resp.status_code}; cannot obtain a "
-        f"valid CSRF token."
+        f"GET /api/csrf-token returned {token_resp.status_code}; cannot obtain a valid CSRF token."
     )
     token = token_resp.get_json().get("csrf_token")
     assert token, "GET /api/csrf-token must return a non-empty csrf_token"
@@ -159,7 +158,10 @@ def test_run_with_valid_csrf_token_returns_202(client, _reenable_csrf):
     body to return."""
     token = _get_csrf_token(client)
     with (
-        patch("os.environ.get", side_effect=lambda k, d=None: "fake-key" if k == "ANTHROPIC_API_KEY" else d),
+        patch(
+            "os.environ.get",
+            side_effect=lambda k, d=None: "fake-key" if k == "ANTHROPIC_API_KEY" else d,
+        ),
         patch("app._FRONTRUNNER_BUILD_EXECUTOR") as mock_executor,
     ):
         resp = client.post(
@@ -253,10 +255,17 @@ def test_run_background_closure_actually_invokes_run_frontrunner_build(client):
         invoked.set()
 
     with (
-        patch("os.environ.get", side_effect=lambda k, d=None: "fake-key" if k == "ANTHROPIC_API_KEY" else d),
-        patch("advisors.frontrunner_builder.run_frontrunner_build", side_effect=_mark_invoked) as mock_run,
+        patch(
+            "os.environ.get",
+            side_effect=lambda k, d=None: "fake-key" if k == "ANTHROPIC_API_KEY" else d,
+        ),
+        patch(
+            "advisors.frontrunner_builder.run_frontrunner_build", side_effect=_mark_invoked
+        ) as mock_run,
     ):
-        resp = client.post("/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json")
+        resp = client.post(
+            "/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json"
+        )
         # Wait INSIDE the patch context — the real (unmocked) executor's
         # worker thread runs after the handler returns; the mock must
         # remain active until the worker calls through it.
@@ -315,12 +324,19 @@ def test_run_background_closure_logs_and_swallows_an_unexpected_exception(client
         raise RuntimeError("unexpected worker-thread failure despite D-1 contract")
 
     with (
-        patch("os.environ.get", side_effect=lambda k, d=None: "fake-key" if k == "ANTHROPIC_API_KEY" else d),
-        patch("advisors.frontrunner_builder.run_frontrunner_build", side_effect=_raise_unexpectedly),
+        patch(
+            "os.environ.get",
+            side_effect=lambda k, d=None: "fake-key" if k == "ANTHROPIC_API_KEY" else d,
+        ),
+        patch(
+            "advisors.frontrunner_builder.run_frontrunner_build", side_effect=_raise_unexpectedly
+        ),
         patch.object(app_module._daemon_log, "error", side_effect=_error_and_signal),
         caplog.at_level(logging.ERROR),
     ):
-        resp = client.post("/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json")
+        resp = client.post(
+            "/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json"
+        )
         # Wait INSIDE the patch context — same rationale as the sibling test
         # above: the real executor's worker thread runs after the handler
         # returns, and the mock (which signals via the Event) must still be
@@ -350,7 +366,9 @@ def test_run_background_closure_logs_and_swallows_an_unexpected_exception(client
 
 def test_run_response_never_contains_live_execution_key(client):
     with patch("app._FRONTRUNNER_BUILD_EXECUTOR"):
-        resp = client.post("/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json")
+        resp = client.post(
+            "/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json"
+        )
 
     _assert_route_exists(resp, "POST /ai-advisor/frontrunner-builder/run")
     data = resp.get_json()
@@ -375,10 +393,15 @@ def test_run_submission_exception_returns_static_error_token_never_str_exc(clien
     mock_executor = MagicMock()
     mock_executor.submit.side_effect = RuntimeError(secret_bearing_message)
     with (
-        patch("os.environ.get", side_effect=lambda k, d=None: "fake-key" if k == "ANTHROPIC_API_KEY" else d),
+        patch(
+            "os.environ.get",
+            side_effect=lambda k, d=None: "fake-key" if k == "ANTHROPIC_API_KEY" else d,
+        ),
         patch("app._FRONTRUNNER_BUILD_EXECUTOR", mock_executor),
     ):
-        resp = client.post("/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json")
+        resp = client.post(
+            "/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json"
+        )
 
     _assert_route_exists(resp, "POST /ai-advisor/frontrunner-builder/run")
     data = resp.get_json()
@@ -428,7 +451,9 @@ def test_run_missing_api_key_returns_200_error_and_does_not_submit(client):
         patch("os.environ.get", side_effect=lambda k, d=None: d if k == "ANTHROPIC_API_KEY" else d),
         patch("app._FRONTRUNNER_BUILD_EXECUTOR") as mock_executor,
     ):
-        resp = client.post("/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json")
+        resp = client.post(
+            "/ai-advisor/frontrunner-builder/run", json={}, content_type="application/json"
+        )
 
     _assert_route_exists(resp, "POST /ai-advisor/frontrunner-builder/run")
     assert resp.status_code == 200, (

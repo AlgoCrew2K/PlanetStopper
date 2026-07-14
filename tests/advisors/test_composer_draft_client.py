@@ -177,9 +177,7 @@ def test_save_symphony_surfaces_a_4xx_error_rather_than_returning_silent_success
     """A malformed-raw_value 400 must be visible on the result — the caller
     (approval route) needs to render the error, never mark the item uploaded."""
     with patch("advisors.composer_draft_client.requests.post") as mock_post:
-        mock_post.return_value = _mock_response(
-            400, text="raw_value failed schema validation"
-        )
+        mock_post.return_value = _mock_response(400, text="raw_value failed schema validation")
         result = cdc.save_symphony(
             name="n", description="d", color="#000000", hashtag="#h", raw_value=minimal_raw_value
         )

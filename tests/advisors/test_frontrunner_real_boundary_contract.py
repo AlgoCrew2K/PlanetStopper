@@ -260,8 +260,7 @@ def test_splice_preserves_incumbent_core_tickers_beyond_the_cascade_boundary(
         real_incumbent_symphony, real_incumbent_cascade.overlay_tree.get("id")
     )
     assert real_cascade_root is not None, (
-        "fixture setup: could not locate the real cascade root node by id "
-        "in the incumbent tree"
+        "fixture setup: could not locate the real cascade root node by id in the incumbent tree"
     )
     real_fire_branch = next(
         (
@@ -272,8 +271,7 @@ def test_splice_preserves_incumbent_core_tickers_beyond_the_cascade_boundary(
         None,
     )
     assert real_fire_branch is not None, (
-        "fixture setup: could not locate the real cascade's fire "
-        "(is-else-condition?=False) branch"
+        "fixture setup: could not locate the real cascade's fire (is-else-condition?=False) branch"
     )
 
     incumbent_tickers = symphony_schema.extract_tickers(real_incumbent_symphony)

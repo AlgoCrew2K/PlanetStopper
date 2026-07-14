@@ -135,7 +135,9 @@ def test_improved_calmar_via_higher_profit_is_accepted(facc):
     candidate_calmar = candidate["annualized_return"] / abs(candidate["max_drawdown"])
     assert candidate_calmar > incumbent_calmar  # sanity: fixture actually improves
 
-    result = facc.evaluate_calmar_acceptance(incumbent, candidate, incumbent_node_count=50, candidate_node_count=50)
+    result = facc.evaluate_calmar_acceptance(
+        incumbent, candidate, incumbent_node_count=50, candidate_node_count=50
+    )
     assert result.accepted is True
     assert "performance" in result.tags
 
@@ -146,7 +148,9 @@ def test_improved_calmar_via_lower_drawdown_is_accepted(facc):
     incumbent = _metrics(annualized_return=0.10, max_drawdown=-0.20)
     candidate = _metrics(annualized_return=0.10, max_drawdown=-0.08)
 
-    result = facc.evaluate_calmar_acceptance(incumbent, candidate, incumbent_node_count=50, candidate_node_count=50)
+    result = facc.evaluate_calmar_acceptance(
+        incumbent, candidate, incumbent_node_count=50, candidate_node_count=50
+    )
     assert result.accepted is True
     assert "performance" in result.tags
 
@@ -157,7 +161,9 @@ def test_worse_calmar_with_no_simplification_is_rejected(facc):
     incumbent = _metrics(annualized_return=0.12, max_drawdown=-0.10)
     candidate = _metrics(annualized_return=0.05, max_drawdown=-0.18)
 
-    result = facc.evaluate_calmar_acceptance(incumbent, candidate, incumbent_node_count=50, candidate_node_count=50)
+    result = facc.evaluate_calmar_acceptance(
+        incumbent, candidate, incumbent_node_count=50, candidate_node_count=50
+    )
     assert result.accepted is False
 
 

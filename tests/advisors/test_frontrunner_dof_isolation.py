@@ -58,7 +58,9 @@ def _insert_autotuner_row(*, n_configs_searched: int, spec_bundle_id: str, facet
     )
 
 
-def _insert_frontrunner_row(*, n_configs_searched: int, facet_name: str = "frontrunner_candidate_search") -> int:
+def _insert_frontrunner_row(
+    *, n_configs_searched: int, facet_name: str = "frontrunner_candidate_search"
+) -> int:
     """A ledger row shaped exactly like the RATIFIED frontrunner_builder
     write — evidence_source="OVERLAY_BACKTEST_SELECTION" (not yet a valid
     enum member as of 21608d1 — this call raising ValueError IS this test

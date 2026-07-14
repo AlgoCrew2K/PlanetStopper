@@ -115,9 +115,7 @@ def test_approve_frontrunner_proposal_is_idempotent_for_an_already_uploaded_prop
     create two symphonies.' A proposal already marked uploaded (with a
     recorded created_symphony_id) must short-circuit to a success result
     echoing that id, WITHOUT issuing a second Composer create call."""
-    proposal = _make_proposal(
-        approval_status="uploaded", created_symphony_id="already-created-456"
-    )
+    proposal = _make_proposal(approval_status="uploaded", created_symphony_id="already-created-456")
     with (
         patch("database.get_frontrunner_proposal", return_value=proposal),
         patch("advisors.composer_draft_client.save_symphony") as mock_save,
@@ -158,8 +156,7 @@ def test_approve_frontrunner_proposal_surfaces_a_save_symphony_failure_without_m
 
     assert result.success is False
     assert result.error and "400" in result.error, (
-        f"the HTTP 400 failure reason must be surfaced on the result, got "
-        f"error={result.error!r}"
+        f"the HTTP 400 failure reason must be surfaced on the result, got error={result.error!r}"
     )
     mock_verify.assert_not_called()  # never verify a symphony that was never created
     assert mock_update.called, "the failure must still be persisted (not silently dropped)"
@@ -238,7 +235,9 @@ def test_approve_frontrunner_proposal_success_path_marks_uploaded_and_persists_o
         for _, kwargs in mock_update.call_args_list
         if kwargs.get("approval_status") == "uploaded"
     ]
-    assert uploaded_calls, "expected an update_frontrunner_proposal_status(approval_status='uploaded', ...) call"
+    assert uploaded_calls, (
+        "expected an update_frontrunner_proposal_status(approval_status='uploaded', ...) call"
+    )
     assert uploaded_calls[0].get("created_symphony_id") == "clean-symphony-321"
 
     assert mock_obs.called

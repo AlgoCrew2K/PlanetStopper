@@ -45,8 +45,7 @@ def test_the_guard_message_names_the_real_money_risk_and_the_fix():
         f"guard message doesn't convey the stakes (billed Atlas call): {message!r}"
     )
     assert "load_community_strategies" in message, (
-        f"guard message doesn't point to the fix (mock load_community_strategies): "
-        f"{message!r}"
+        f"guard message doesn't point to the fix (mock load_community_strategies): {message!r}"
     )
 
 

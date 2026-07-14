@@ -656,9 +656,10 @@ def detect_frontrunner_cascades(tree: dict) -> DetectionResult:
         cascades: list[Cascade] = []
         for root_node, group_name in candidate_roots:
             overlay_tree, thresholds, vix_tickers = _build_cascade_overlay(root_node)
-            if _has_core_placeholder(overlay_tree) and len(
-                _collect_tickers(overlay_tree) & VIX_FAMILY_TICKERS
-            ) == 0:
+            if (
+                _has_core_placeholder(overlay_tree)
+                and len(_collect_tickers(overlay_tree) & VIX_FAMILY_TICKERS) == 0
+            ):
                 # Defensive: an overlay that swallowed core placeholder content
                 # AND has no VIX ticker of its own is not a real cascade — skip
                 # this one rather than report a corrupted overlay.

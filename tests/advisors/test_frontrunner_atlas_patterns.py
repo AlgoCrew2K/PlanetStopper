@@ -281,7 +281,9 @@ def test_gather_atlas_frontrunner_patterns_never_raises_on_malformed_candidate_d
         "advisors.community_strats.load_community_strategies",
         return_value=malformed_result,
     ):
-        patterns = fbld._gather_atlas_frontrunner_patterns(watched_tickers=["QQQ"])  # must not raise
+        patterns = fbld._gather_atlas_frontrunner_patterns(
+            watched_tickers=["QQQ"]
+        )  # must not raise
 
     assert patterns == []
 
@@ -295,7 +297,9 @@ def test_gather_atlas_frontrunner_patterns_never_raises_when_loader_itself_raise
         "advisors.community_strats.load_community_strategies",
         side_effect=RuntimeError("unexpected"),
     ):
-        patterns = fbld._gather_atlas_frontrunner_patterns(watched_tickers=["QQQ"])  # must not raise
+        patterns = fbld._gather_atlas_frontrunner_patterns(
+            watched_tickers=["QQQ"]
+        )  # must not raise
 
     assert patterns == []
 

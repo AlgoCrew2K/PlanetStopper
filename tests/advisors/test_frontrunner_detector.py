@@ -218,9 +218,7 @@ def test_detected_cascade_fire_branch_contains_at_least_one_vix_family_ticker(fd
             continue  # covered by the dedicated shape assertion elsewhere
         cond_branch, cont_branch = branches
         fire_branch = (
-            cond_branch
-            if _count_nodes(cond_branch) <= _count_nodes(cont_branch)
-            else cont_branch
+            cond_branch if _count_nodes(cond_branch) <= _count_nodes(cont_branch) else cont_branch
         )
         fire_tickers = _all_tickers(fire_branch)
         assert fire_tickers & vix_family, (
@@ -247,9 +245,7 @@ def test_detected_cascade_fire_branch_never_includes_a_core_asset_placeholder(fd
             continue  # covered by the dedicated shape assertion elsewhere
         cond_branch, cont_branch = branches
         fire_branch = (
-            cond_branch
-            if _count_nodes(cond_branch) <= _count_nodes(cont_branch)
-            else cont_branch
+            cond_branch if _count_nodes(cond_branch) <= _count_nodes(cont_branch) else cont_branch
         )
         assert not _has_core_asset_placeholder(fire_branch), (
             "the fire (hedge-firing) branch of a detected cascade includes a "
@@ -423,9 +419,9 @@ def test_excludes_internal_inverse_vix_timing_substrategy(fd):
             n.get("id") for n in _iter_ids(cascade.overlay_tree) if isinstance(n, dict)
         }
 
-    assert "cascade-if" in detected_ids or any(
-        "cascade" in str(i) for i in detected_ids
-    ), "the genuine frontrunner cascade was not detected"
+    assert "cascade-if" in detected_ids or any("cascade" in str(i) for i in detected_ids), (
+        "the genuine frontrunner cascade was not detected"
+    )
     assert "timing-if" not in detected_ids, (
         "the inverse-VIX timing sub-strategy was misclassified as a frontrunner cascade"
     )

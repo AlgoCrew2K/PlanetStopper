@@ -415,9 +415,12 @@ def _has_vix_ticker_in_fire_branch(node: dict) -> bool:
     # Recurse: a tiered candidate's then-branch may itself be another if/
     # if_compound node whose OWN then-branch is where the VIX ticker lives.
     for child in node.get("then") or []:
-        if isinstance(child, dict) and child.get("kind") in ("if", "if_compound"):
-            if _has_vix_ticker_in_fire_branch(child):
-                return True
+        if (
+            isinstance(child, dict)
+            and child.get("kind") in ("if", "if_compound")
+            and _has_vix_ticker_in_fire_branch(child)
+        ):
+            return True
     return False
 
 
@@ -882,8 +885,7 @@ def generate_candidate_overlay(
             if not _has_vix_ticker_in_fire_branch(overlay):
                 last_reason = "candidate fire branch contains no VIX-family ticker"
                 logger.warning(
-                    "generate_candidate_overlay: rejected (no VIX ticker) on "
-                    "attempt %d/%d",
+                    "generate_candidate_overlay: rejected (no VIX ticker) on attempt %d/%d",
                     attempt + 1,
                     n_attempts,
                 )
@@ -912,8 +914,7 @@ def generate_candidate_overlay(
                 # truncation continues above) and retry.
                 last_reason = f"candidate failed to compile: {compile_result.reason}"
                 logger.warning(
-                    "generate_candidate_overlay: compile failed on attempt "
-                    "%d/%d (%s)",
+                    "generate_candidate_overlay: compile failed on attempt %d/%d (%s)",
                     attempt + 1,
                     n_attempts,
                     compile_result.reason,
@@ -1088,9 +1089,11 @@ def splice_candidate_into_symphony(
         errors). Never raises (D-1).
     """
     try:
-        target_id = incumbent_cascade.overlay_tree.get("id") if isinstance(
-            incumbent_cascade.overlay_tree, dict
-        ) else None
+        target_id = (
+            incumbent_cascade.overlay_tree.get("id")
+            if isinstance(incumbent_cascade.overlay_tree, dict)
+            else None
+        )
         if not target_id:
             logger.warning("splice_candidate_into_symphony: incumbent cascade has no id")
             return None
@@ -1123,9 +1126,7 @@ def splice_candidate_into_symphony(
             compiled_root = compile_result.tree
             compiled_children = compiled_root.get("children") or []
             if len(compiled_children) != 1:
-                logger.warning(
-                    "splice_candidate_into_symphony: unexpected compiled root shape"
-                )
+                logger.warning("splice_candidate_into_symphony: unexpected compiled root shape")
                 return None
             compiled_node = compiled_children[0]
         elif isinstance(candidate, dict) and "step" in candidate:
@@ -1158,7 +1159,7 @@ def splice_candidate_into_symphony(
 
         return spliced
 
-    except Exception as exc:
+    except Exception:
         logger.debug("splice_candidate_into_symphony: unexpected error", exc_info=True)
         return None
 
@@ -1614,7 +1615,10 @@ def _gate_and_accept_candidate(
         candidate_gate_result = next(
             (r for r in gated_batch.results if r.candidate_id == "candidate"), None
         )
-        if candidate_gate_result is None or candidate_gate_result.verdict.decision != "ADOPT_CANDIDATE":
+        if (
+            candidate_gate_result is None
+            or candidate_gate_result.verdict.decision != "ADOPT_CANDIDATE"
+        ):
             reason = (
                 candidate_gate_result.rejection_reason
                 if candidate_gate_result is not None

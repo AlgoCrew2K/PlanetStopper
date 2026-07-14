@@ -150,8 +150,7 @@ def test_detector_count_nodes_handles_a_very_deep_tree_without_crashing():
         count = _count_nodes(tree)
     except RecursionError:
         pytest.fail(
-            f"_count_nodes raised RecursionError, uncaught, on a "
-            f"{_DEEP_TREE_DEPTH}-deep tree."
+            f"_count_nodes raised RecursionError, uncaught, on a {_DEEP_TREE_DEPTH}-deep tree."
         )
 
     expected = 1 + _DEEP_TREE_DEPTH + 1
@@ -170,8 +169,7 @@ def test_detector_collect_tickers_handles_a_very_deep_tree_without_crashing():
         tickers = _collect_tickers(tree)
     except RecursionError:
         pytest.fail(
-            f"_collect_tickers raised RecursionError, uncaught, on a "
-            f"{_DEEP_TREE_DEPTH}-deep tree."
+            f"_collect_tickers raised RecursionError, uncaught, on a {_DEEP_TREE_DEPTH}-deep tree."
         )
 
     assert tickers == {"SPY"}, (

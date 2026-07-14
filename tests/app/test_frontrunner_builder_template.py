@@ -134,9 +134,7 @@ def _make_pending_row(
         "candidate_tree": candidate_tree if candidate_tree is not None else {"step": "root"},
         "metrics_json": metrics_json
         if metrics_json is not None
-        else dict(
-            _FR_METRICS if proposal_source == "frontrunner_builder" else _RETROFIT_METRICS
-        ),
+        else dict(_FR_METRICS if proposal_source == "frontrunner_builder" else _RETROFIT_METRICS),
         "created_symphony_id": None,
         "error_message": error_message,
     }
@@ -211,7 +209,7 @@ class TestTabStructure:
     def test_spa_contains_frontrunner_builder_tab_button(self, client, monkeypatch):
         html = _render_advisor_page(client, monkeypatch)
         assert 'data-testid="frontrunner-builder-tab"' in html, (
-            'GET /ai-advisor must contain a tab button with '
+            "GET /ai-advisor must contain a tab button with "
             'data-testid="frontrunner-builder-tab" — the Frontrunner Builder tab is '
             "absent from the unified SPA template (AC-8)."
         )
@@ -219,8 +217,7 @@ class TestTabStructure:
     def test_spa_contains_frontrunner_builder_panel_id(self, client, monkeypatch):
         html = _render_advisor_page(client, monkeypatch)
         assert 'id="tab-panel-frontrunner-builder"' in html, (
-            'GET /ai-advisor must contain a panel with id="tab-panel-frontrunner-builder" '
-            "(AC-8)."
+            'GET /ai-advisor must contain a panel with id="tab-panel-frontrunner-builder" (AC-8).'
         )
 
     def test_frontrunner_builder_panel_has_role_tabpanel(self, client, monkeypatch):
@@ -245,7 +242,7 @@ class TestTabStructure:
         assert tag_snippet.lstrip("<").startswith("button"), (
             f"The frontrunner-builder tab control must be a <button> element, not <a href>. "
             f"Found opening tag context: {tag_snippet[:80]!r}. In-place tab switching "
-            "requires <button role=\"tab\"> (AC-8)."
+            'requires <button role="tab"> (AC-8).'
         )
 
     def test_spa_has_at_least_seven_tab_buttons_total(self, client, monkeypatch):
@@ -379,7 +376,7 @@ class TestEmptyState:
         assert 'data-testid="frontrunner-builder-empty-state"' in html, (
             "With zero pending frontrunner_proposals rows, the panel must render "
             'data-testid="frontrunner-builder-empty-state" (mirrors the existing '
-            'strategy-builder-empty-state pattern, templates/ai_advisor.html:1783) — '
+            "strategy-builder-empty-state pattern, templates/ai_advisor.html:1783) — "
             "an empty queue is a valid, non-error outcome (AC-10-UX)."
         )
 
@@ -424,7 +421,7 @@ class TestCardAnatomyFrontrunnerBuilderSource:
         nearby = html[idx : idx + 300]
         assert "Frontrunner Builder" in nearby, (
             'The source badge for a proposal_source="frontrunner_builder" row must '
-            "read \"Frontrunner Builder\" nearby its testid. Found: "
+            'read "Frontrunner Builder" nearby its testid. Found: '
             f"{nearby[:150]!r} (AC-10-UX)."
         )
 
@@ -435,7 +432,7 @@ class TestCardAnatomyFrontrunnerBuilderSource:
             "delta table."
         )
         assert 'data-testid="fr-candidate-calmar"' in html, (
-            'A frontrunner_builder-source card must render a candidate Calmar cell '
+            "A frontrunner_builder-source card must render a candidate Calmar cell "
             '(data-testid="fr-candidate-calmar").'
         )
 
@@ -450,7 +447,7 @@ class TestCardAnatomyFrontrunnerBuilderSource:
     def test_node_count_delta_cell_present_with_value(self, html):
         idx = html.find('data-testid="fr-node-count-delta"')
         assert idx != -1, (
-            'A frontrunner_builder-source card must render '
+            "A frontrunner_builder-source card must render "
             'data-testid="fr-node-count-delta" (metrics_json["node_count_delta"] = -6 '
             "in this test's fixture)."
         )
@@ -568,7 +565,7 @@ class TestApproveRejectAdversarialContract:
             last_open = before.rfind("<")
             tag_snippet = before[last_open:]
             assert tag_snippet.lstrip("<").startswith("button"), (
-                f'The {testid} element must be a <button>, not an <a> or <input>. '
+                f"The {testid} element must be a <button>, not an <a> or <input>. "
                 f"Found opening tag context: {tag_snippet[:80]!r}."
             )
             # Must not be type="submit" (no bare HTML <form> action affordance —
@@ -595,8 +592,7 @@ class TestApproveRejectAdversarialContract:
             f"{approve_ctx!r}"
         )
         assert "frReject(" in reject_ctx, (
-            "fr-reject-btn must call frReject(...) via onclick — not found nearby: "
-            f"{reject_ctx!r}"
+            f"fr-reject-btn must call frReject(...) via onclick — not found nearby: {reject_ctx!r}"
         )
 
 
@@ -675,7 +671,7 @@ class TestCollapsedRawPreview:
 
     def test_raw_preview_details_element_present(self, html):
         assert 'data-testid="fr-raw-preview"' in html, (
-            'A pending card must render a collapsed raw-preview <details '
+            "A pending card must render a collapsed raw-preview <details "
             'data-testid="fr-raw-preview"> (candidate_tree / metrics_json preview) — '
             "mirrors the existing rules-collapsible <details> pattern "
             "(templates/ai_advisor.html:1998) so the card never dumps a raw JSON wall "

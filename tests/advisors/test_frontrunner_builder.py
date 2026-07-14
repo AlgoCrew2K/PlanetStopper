@@ -244,9 +244,7 @@ def incumbent_symphony() -> dict:
             "gt",
             80,
         ),
-        then_children=[
-            symphony_schema.make_weight_equal([symphony_schema.make_asset("VIXY")])
-        ],
+        then_children=[symphony_schema.make_weight_equal([symphony_schema.make_asset("VIXY")])],
         else_children=[
             symphony_schema.make_weight_equal([symphony_schema.make_asset("CORE_ASSET_0001")])
         ],
@@ -285,8 +283,7 @@ def test_candidate_with_vix_ticker_is_accepted(fbld):
             signal_context={"watched_tickers": ["SPY"]},
         )
     assert getattr(result, "candidate", None) is not None, (
-        "a well-formed VIX-bearing candidate was rejected — over-strict "
-        "post-generation validation"
+        "a well-formed VIX-bearing candidate was rejected — over-strict post-generation validation"
     )
     assert getattr(result, "error", None) is None
 

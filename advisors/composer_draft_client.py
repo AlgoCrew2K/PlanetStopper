@@ -199,9 +199,7 @@ def save_symphony(
                 except ValueError as exc:
                     return _error_result(f"invalid JSON in {response.status_code} response: {exc}")
                 if not isinstance(data, dict):
-                    return _error_result(
-                        f"unexpected response body shape: {type(data).__name__}"
-                    )
+                    return _error_result(f"unexpected response body shape: {type(data).__name__}")
                 return DraftResult(
                     success=True,
                     symphony_id=data.get("symphony_id"),

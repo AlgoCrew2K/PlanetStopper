@@ -3466,9 +3466,7 @@ def count_uploaded_frontrunner_proposals() -> int:
     """
     conn = get_ro_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT COUNT(*) FROM frontrunner_proposals WHERE approval_status = 'uploaded'"
-    )
+    cursor.execute("SELECT COUNT(*) FROM frontrunner_proposals WHERE approval_status = 'uploaded'")
     row = cursor.fetchone()
     conn.close()
     return int(row[0]) if row and row[0] is not None else 0

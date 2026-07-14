@@ -171,9 +171,7 @@ def incumbent_symphony() -> dict:
             "gt",
             80,
         ),
-        then_children=[
-            symphony_schema.make_weight_equal([symphony_schema.make_asset("VIXY")])
-        ],
+        then_children=[symphony_schema.make_weight_equal([symphony_schema.make_asset("VIXY")])],
         else_children=[
             symphony_schema.make_weight_equal([symphony_schema.make_asset("CORE_ASSET_0001")])
         ],
@@ -194,7 +192,11 @@ def _mocked_fable_overlay_client(vix_ticker: str = "UVXY") -> MagicMock:
             "rhs": {"fixed": 81},
         },
         "then": [
-            {"kind": "weight", "scheme": "equal", "children": [{"kind": "asset", "ticker": vix_ticker}]}
+            {
+                "kind": "weight",
+                "scheme": "equal",
+                "children": [{"kind": "asset", "ticker": vix_ticker}],
+            }
         ],
         "else": [
             {
@@ -218,9 +220,7 @@ def _mocked_fable_overlay_client(vix_ticker: str = "UVXY") -> MagicMock:
 def _patched_fable(fbld_module):
     """Patch frontrunner_builder's own documented _build_client seam (this
     one IS a real, confirmed module attribute — see test_frontrunner_builder.py)."""
-    return patch.object(
-        fbld_module, "_build_client", return_value=_mocked_fable_overlay_client()
-    )
+    return patch.object(fbld_module, "_build_client", return_value=_mocked_fable_overlay_client())
 
 
 # ---------------------------------------------------------------------------
@@ -526,9 +526,7 @@ def test_search_breadth_is_recorded_to_the_dof_ledger():
     import pathlib
 
     source = (
-        pathlib.Path(__file__).resolve().parents[2]
-        / "advisors"
-        / "frontrunner_builder.py"
+        pathlib.Path(__file__).resolve().parents[2] / "advisors" / "frontrunner_builder.py"
     ).read_text(encoding="utf-8")
     assert "dof" in source.lower() or "degrees_of_freedom" in source.lower(), (
         "frontrunner_builder.py has no reference to a DoF ledger anywhere — "
@@ -720,9 +718,7 @@ def test_a_gate_rejected_candidate_is_recorded_as_a_rejected_advisor_observation
     raw_response = call_kwargs.get("raw_response")
     assert isinstance(raw_response, dict), "raw_response must be a dict carrying reason+deltas"
     assert (
-        "reject_reason" in raw_response
-        or "gate" in verdict.lower()
-        or "reject" in verdict.lower()
+        "reject_reason" in raw_response or "gate" in verdict.lower() or "reject" in verdict.lower()
     ), (
         f"raw_response/verdict does not surface WHY the candidate was "
         f"rejected: verdict={verdict!r}, raw_response keys="

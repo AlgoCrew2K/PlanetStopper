@@ -346,8 +346,7 @@ def test_atlas_pattern_for_tiered_cascade_carries_real_nesting_signal(fbld):
     )
     rendered = symphony_schema.render_rules_text(detection.cascades[0].overlay_tree)
     assert rendered.count("IF") >= 2, (
-        f"fixture setup: expected a genuinely 2-tier (>=2 nested IF) cascade, "
-        f"rendered={rendered!r}"
+        f"fixture setup: expected a genuinely 2-tier (>=2 nested IF) cascade, rendered={rendered!r}"
     )
 
     with patch(
@@ -443,7 +442,9 @@ def test_prompt_reflects_atlas_structural_content_when_present_vs_absent(fbld):
 # ===========================================================================
 
 
-def _run_build_capturing_signal_context(fbld_module, incumbent_symphony: dict, symphony_id: str) -> dict | None:
+def _run_build_capturing_signal_context(
+    fbld_module, incumbent_symphony: dict, symphony_id: str
+) -> dict | None:
     """Run _run_build_for_symphony against a mocked incumbent, capturing the
     signal_context passed to generate_candidate_overlay on its first call.
     Mirrors test_frontrunner_atlas_patterns.py's own established mocking
@@ -459,7 +460,12 @@ def _run_build_capturing_signal_context(fbld_module, incumbent_symphony: dict, s
         patch("symphony_logic.fetch_symphony_score", return_value=incumbent_symphony),
         patch(
             "advisors.community_strats.load_community_strategies",
-            return_value={"available": False, "candidates": [], "stats": {}, "source": "captplanet"},
+            return_value={
+                "available": False,
+                "candidates": [],
+                "stats": {},
+                "source": "captplanet",
+            },
         ),
         patch.object(fbld_module, "generate_candidate_overlay", side_effect=_capture_and_stop),
         patch("database.insert_frontrunner_proposal"),
