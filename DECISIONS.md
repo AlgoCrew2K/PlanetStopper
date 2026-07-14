@@ -4880,3 +4880,49 @@ CLAUDE.md itself is not in this list -- the PM applies it directly from `docs/au
 ### Reference
 
 `feature-plans/advisor-remediation-r1.md`; `docs/audit-inputs/ADVISOR-INTENT-AUDIT.md` (verdict @ `08b0bcc0`); `docs/audit-inputs/doc-reconciliation.md`; `docs/audit-inputs/claims-inventory.md`; branch `fix/advisor-remediation-r1`; worktree `.claude/worktrees/advisor-r1`.
+
+---
+
+## DE-SB-DEGRADE-001 — Strategy Builder degrades on Composer outage instead of dropping the plan (2026-07-13)
+
+Branch: `fix/advisor-outage-degrade` | HEAD: 4230641b (compiler + engine layer; route/JS layer in progress, see STATUS below)
+
+### Problem
+
+`advisors/plan_tree_compiler.py`'s tradeability-repair loop (wired to the real `composer_backtest_client.run_backtest` since R1 AC-12) treated ANY non-400 `backtest_fn` failure -- including infra/transport failures (connection error, timeout, DNS failure, HTTP 5xx, a Retry-After-exhausted 429) -- identically to a genuine HTTP-422 grammar rejection: drop the plan (`CompileResult(tree=None)`). A real Composer outage therefore silently zeroed Strategy Builder's entire output, with no signal distinguishable from "every candidate was genuinely gate-rejected." Origin: surfaced by r1-test during the R1 CI-credential-less investigation, disclosed and deferred by the PM for this scoped cycle (see this file's `DE-ADVISOR-R1-001` entry, "Deferred design question" note).
+
+### Fix
+
+**`advisors/plan_tree_compiler.py`:** new `_INFRA_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})` + `_is_infra_failure(status)` classifier, checked in the repair loop BEFORE the existing `status == 400` branch. `status` is the `_parse_envelope_status` result on the `backtest_fn` failure envelope -- `None` (no parseable "HTTP {N}:" prefix at all: timeout, transport/connection/DNS error, invalid JSON on a 200, or an unparseable 429) or a parsed 5xx/429 status are both classified infra. An infra classification returns `CompileResult(tree=current_tree, reason="backtest_unavailable", tradeability_unverified=True)` -- the last VALIDATED tree (initial, or partially pruned if an earlier attempt already pruned a genuine tradeability rejection) is emitted, flagged unverified, instead of dropped. No additional retry is added at this layer: `run_backtest` already exhausts its own bounded exponential backoff (`BACKTEST_MAX_RETRY_WAIT_SECONDS`) before returning the error, so retrying again here would silently stack a second, unbounded-feeling retry layer. Genuine HTTP-400 (prune/retry) and HTTP-422 (grammar-drop) paths are byte-for-byte unchanged.
+
+**`advisors/strategy_builder_engine.py`:** `CandidateInfo.tradeability_unverified: bool = False` threads `compile_result.tradeability_unverified` forward from `_generate_candidate_trees`. `ProposalRun.backtest_unavailable: bool = False` / `.backtest_unavailable_count: int = 0` roll up the honest run-level signal inside `propose_strategies`, computed as `sum(1 for info in candidate_infos if info.tradeability_unverified)` over the FULL pre-Step-2-backtest candidate list -- deliberately NOT over `candidates` (the field returned to callers), which Step 2's own separate per-candidate `run_backtest` call would ALSO fail under the same sustained outage, silently zeroing a `candidates`-derived count in exactly the case this flag exists to catch. Verified by hand: a sustained outage empties `run.candidates` while `backtest_unavailable_count` still reports the true count.
+
+**Provenance validation:** rather than a static fixture (silently drifts if `composer_backtest_client.py`'s error-envelope format changes), dg-test's `test_self_guard_fixture_matches_composer_backtest_client_format` is a RUNTIME validator -- it inspects the live `composer_backtest_client.py` source via `inspect.getsource` and fails on producer drift. An earlier static JSON fixture (`tests/fixtures/strategy_builder/backtest_infra_error_envelopes.json`) was added then DELETED once confirmed unconsumed by any test (commit `d2679bc5`, team-lead review) -- the self-guard is strictly stronger (a live outage cannot ethically or safely be captured against the real API, so any static fixture is synthetic-by-necessity; a runtime check against the producer's actual source beats a static sidecar a human has to remember to update).
+
+### Invariants preserved
+
+- D-1 / never-raises contract unchanged on both modules.
+- Off-execution-path / advisory-only unchanged -- no `LIVE_EXECUTION` reference, no write/deploy endpoint, not in `_SETTINGS_WRITE_ALLOWLIST`.
+- No change to `evaluate_candidate_batch`, the FDR gate, PBO veto, or any post-gate screen -- a tradeability-unverified candidate still competes purely on its own Step-2 backtest metrics; `tradeability_unverified`/`backtest_unavailable` are honesty signals, not a new filter or veto.
+- No change to `composer_backtest_client.py` -- its existing `BacktestResult.error` envelope format already disambiguated every infra case from a genuine 400/422; only the CALLER's classification of that envelope changed.
+- Genuine HTTP-400 (prune/retry) and HTTP-422 (grammar-drop) repair-loop paths are byte-for-byte unchanged; existing tests covering those paths stay green unmodified.
+- Retry policy unchanged -- `BACKTEST_MAX_RETRY_WAIT_SECONDS` (`composer_backtest_client.py`); no new retry framework, per the plan's explicit Scope Boundary.
+
+### Verified
+
+Compiler + engine layer (commit `4230641b`): full existing test suite green (with-creds AND credential-less, `-n0`). dg-test's targeted battery for this cycle (compiler-degrade + engine-degrade + route + JS-consumption + every untouched R1/repair sibling file) reached 101 passed / 0 failed / 0 errors as of commit `d2679bc5`, ruff clean -- the queue-sizing gap noted in an earlier draft of this entry (1 failure out of an initial 30) was closed by dg-test's own follow-up (commit `8eb8ee69`), not a production-code change.
+
+**STATUS: compiler + engine layer (AC-1/AC-2/AC-3/AC-6) GREEN and fully tested at `4230641b`/`8eb8ee69`/`d2679bc5` (101/101). Route + JS surfacing (AC-4/AC-5) is functionally covered by dg-test's route/JS-consumption tests, which pass against dg-fe's in-progress `app.py`/`static/ai_advisor.js` changes in this shared worktree -- but those two files remain UNCOMMITTED as of this entry. Hold final cycle-complete framing until dg-fe commits; this doc-writer will append an addendum (and update `docs/generated/app.md` + `docs/generated/static_ai_advisor_js.md`, plus a second CLAUDE.md apply for the app.py/static/ai_advisor.js key-files rows) once that lands.**
+
+### Files changed
+
+- `advisors/plan_tree_compiler.py` -- `_INFRA_HTTP_STATUSES`, `_is_infra_failure`, `CompileResult.tradeability_unverified`, repair-loop infra branch.
+- `advisors/strategy_builder_engine.py` -- `CandidateInfo.tradeability_unverified`, `ProposalRun.backtest_unavailable`/`.backtest_unavailable_count`, rollup in `propose_strategies`.
+- `tests/advisors/test_plan_tree_compiler_degrade.py` (21 tests), `tests/advisors/test_strategy_builder_engine_degrade.py` (9 tests) -- compiler/engine layer, dg-test, commit `8eb8ee69`.
+- `tests/app/test_sb_backtest_unavailable_route.py` (6 tests), `tests/ai_advisor/test_sb_backtest_unavailable_js_consumption.py` (4 tests) -- route/JS layer, dg-test, commit `8eb8ee69`, passing against dg-fe's uncommitted WIP as of this entry.
+- `tests/fixtures/strategy_builder/backtest_infra_error_envelopes.json` was added then DELETED (commit `d2679bc5`) once confirmed unconsumed -- the self-guard runtime validator is the actual provenance mechanism (see the Fix section above).
+- `docs/generated/advisors_plan_tree_compiler.md`, `docs/generated/advisors_strategy_builder_engine.md` (this doc-writer, reconciled in the same pass -- also closed a pre-existing gap where `ProposalRun.error_category`, added in R1 AC-11, was never documented in the engine doc until now).
+
+### Reference
+
+`feature-plans/advisor-outage-degrade.md`; branch `fix/advisor-outage-degrade`; worktree `.claude/worktrees/advisor-degrade`; origin note in this file's `DE-ADVISOR-R1-001` entry, "Deferred design question" section.

@@ -3,7 +3,7 @@
 > Phase-2 Strategy Builder proposal engine: drives the real C1→C2→C3 builder pipeline to generate candidates, backtests them, gates via Harvey-Liu FDR + C5b PBO veto + SPY-OOS baseline, and persists survivors as advisory observations.
 
 **Source:** `advisors/strategy_builder_engine.py`
-**Last updated:** 2026-06-20
+**Last updated:** 2026-07-13 (advisor-outage-degrade: honest backtest_unavailable rollup, DE-SB-DEGRADE-001; also reconciled a pre-existing gap -- ProposalRun.error_category, added in R1 AC-11, was never documented here until now)
 
 ## Overview
 
@@ -69,7 +69,10 @@ class CandidateInfo:
     metrics: dict = field(default_factory=dict)
     backtest_error: str | None = None
     data_warnings: list = field(default_factory=list)
+    tradeability_unverified: bool = False  # advisor-outage-degrade, see below
 ```
+
+`tradeability_unverified` is `True` only when `plan_tree_compiler.compile_plan` degraded this candidate's tree on an infra/transport failure (Composer unreachable) instead of pruning or dropping it — the tree's tradeability against Composer was never confirmed (advisor-outage-degrade, `DE-SB-DEGRADE-001`). Community candidates (Atlas-sourced, not compiled via `plan_tree_compiler`) always default `False`.
 
 `template_id` carries provenance; it is never `"T1"`–`"T7"` for built-new candidates (the old template-stamper was removed in C4). It is never `"community"` for atlas-sourced candidates after C5 (the `community_candidate_infos` adapter was deleted; the tag is now `"atlas-suggested"`).
 
@@ -85,7 +88,14 @@ class ProposalRun:
     screened_survivors: list[CandidateGateResult]
     observations_written: int
     error: str | None = None
+    error_category: str | None = None       # R1 AC-11: sanitized type(exc).__name__ -- safe to surface, `error` is not
+    backtest_unavailable: bool = False       # advisor-outage-degrade AC-4: True iff >=1 candidate was tradeability-unverified
+    backtest_unavailable_count: int = 0      # advisor-outage-degrade AC-4: count, computed pre-Step-2-filter (see below)
 ```
+
+`error_category` (R1, AC-11 -- a pre-existing field this file never documented until this pass) lets the route surface a safe, sanitized failure cause (`type(exc).__name__`) without ever echoing `error`'s raw exception text, which may carry hostnames, paths, or credentials (the same AC-23 precedent as the route's own error boundary).
+
+`backtest_unavailable` / `backtest_unavailable_count` (advisor-outage-degrade, `DE-SB-DEGRADE-001`) roll up the honest outage signal from `CandidateInfo.tradeability_unverified`. **Computed from the FULL pre-Step-2-backtest `candidate_infos` list, NOT from `candidates` above** — `candidates` is filtered to only those whose OWN Step-2 metrics `run_backtest` call also succeeded, which a sustained outage would fail too, silently zeroing a `candidates`-derived count in exactly the case this flag exists to surface. Verified by hand for the sustained-outage case: `run.candidates` goes empty while `backtest_unavailable_count` still reports the true count.
 
 ## API Reference
 
@@ -111,6 +121,7 @@ Propose new candidate symphonies from scratch. Never raises.
 - `gated_batch.n_candidates` equals the number of successfully-backtested candidates
 - `screened_survivors` is a subset of `gated_batch.survivors`
 - `error` is non-None on catastrophic failure
+- `backtest_unavailable` / `backtest_unavailable_count` (advisor-outage-degrade AC-4) are `True`/`>0` when one or more candidates were emitted tradeability-unverified by `plan_tree_compiler.compile_plan` because Composer's backtest endpoint was unreachable — an honest signal distinct from a normal gate rejection or from `error`. Computed over the full candidate list BEFORE the Step-2 backtest-success filter, so it stays accurate even when the same outage also empties `candidates`.
 
 **FDR integrity invariant:** `evaluate_candidate_batch` receives ALL successfully-backtested candidates — built-new (real C1→C2→C3) and atlas-suggested together in one batch. Wide exploration pays one batch-wide multiple-testing correction. Screens apply only to gate survivors. The gate input is never pre-filtered or split.
 
@@ -209,6 +220,18 @@ Pre-C5, `run.error` was echoed verbatim in the route JSON response. `run.error` 
 - **SPY sourcing (AC-25):** `run_backtest` called on `make_root("SPY Benchmark", "daily", [make_weight_equal([make_asset("SPY")])])`. On success: `_spy_returns_dict = {d: r * 100.0 ...}`. On error or empty: `_spy_returns_dict = {}` → gate's `_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA=float("+inf")` sentinel fires → conservative WITHHOLD.
 - **`dated_returns` population (AC-24):** `{d: r * 100.0 for d, r in result.daily_returns.items()}` — same scale as `daily_returns_pct`.
 - **Edge-14 fix (4ccea92):** original `-inf` sentinel made the withhold-clause always-false; corrected to `+inf`.
+
+---
+
+## AC-4 Outage Rollup — `backtest_unavailable` (advisor-outage-degrade, DE-SB-DEGRADE-001, commit 4230641b, 2026-07-13)
+
+Before this fix, `plan_tree_compiler.compile_plan`'s repair loop treated ANY non-400 `backtest_fn` failure — including Composer infra outages (timeouts, connection/DNS errors, 5xx, 429-exhausted) — the same as a genuine HTTP-422 grammar rejection, dropping the plan. A real Composer outage therefore silently zeroed this engine's output with no distinguishable reason from "the gate rejected everything."
+
+`_generate_candidate_trees` now threads `compile_result.tradeability_unverified` forward onto each `CandidateInfo`. `propose_strategies` computes `backtest_unavailable_count = sum(1 for info in candidate_infos if info.tradeability_unverified)` over the FULL pre-Step-2 list (see the `ProposalRun` field notes above for why NOT `candidates`), and surfaces `backtest_unavailable = backtest_unavailable_count > 0` on the returned `ProposalRun`.
+
+No change to `evaluate_candidate_batch`, the FDR gate, or any screen — a tradeability-unverified candidate still competes for survivorship on its actual backtest metrics exactly like any other candidate (Step 2's own `run_backtest` call is unaffected by `plan_tree_compiler`'s classification; the two are independent Composer calls). This field is purely an honesty signal for the operator, not a new filter.
+
+Route/UI surfacing (AC-5) is tracked separately — see `DE-SB-DEGRADE-001` in `DECISIONS.md` for status.
 
 ---
 
