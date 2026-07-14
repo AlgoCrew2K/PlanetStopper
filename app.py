@@ -4796,6 +4796,30 @@ def ai_advisor_strategy_builder_run():
     # operator knows those screens did not run this batch.
     _live_returns: list[float] = []
 
+    # R2-1 (AC-1/AC-2/AC-8): a symphony-scoped run gets the operator's real
+    # tree + live stats + lens blocks injected into the generation prompt via
+    # ai_advisor.build_reasoning_context. The from-scratch path (no
+    # symphony_id) never calls it at all — zero extra I/O, byte-preserving
+    # today's generation prompt (AC-8). composer_symphony_id resolution
+    # mirrors the existing NAME->hash bot_state lookup used by the asset-swap
+    # route (app.py:4373-4387) — this route's symphony_id is the canonical
+    # normalized-name id (analytics.list_available_symphonies), not the raw
+    # Composer hash (project's AI Advisor Composer hash rule).
+    reasoning_context: str | None = None
+    reasoning_manifest: dict | None = None
+    if symphony_id:
+        _composer_hash = None
+        _bot_state = database.load_state()
+        for _sym_key, _sym_data in _bot_state.items():
+            if not isinstance(_sym_data, dict) or "name" not in _sym_data:
+                continue
+            if database.normalize_name(_sym_data["name"]) == database.normalize_name(symphony_id):
+                _composer_hash = _sym_key
+                break
+        reasoning_context, reasoning_manifest = ai_advisor.build_reasoning_context(
+            symphony_id, objective, composer_symphony_id=_composer_hash
+        )
+
     try:
         run = propose_strategies(
             objective=objective,
@@ -4804,6 +4828,8 @@ def ai_advisor_strategy_builder_run():
             live_returns=_live_returns,
             symphony_id=symphony_id,
             community_candidates=community_candidates,
+            reasoning_context=reasoning_context,
+            reasoning_manifest=reasoning_manifest,
         )
     except Exception as exc:
         _daemon_log.error("ai_advisor_strategy_builder_run failed: %s", exc, exc_info=True)
@@ -4927,6 +4953,22 @@ def ai_advisor_strategy_builder_run():
         else None
     )
 
+    # AC-4/AC-6 (R2-1): run-level provenance — generation model, mode,
+    # injected-evidence manifest, and run-id, surfaced verbatim from
+    # run.provenance (already the exact 4-key contract on the engine side —
+    # no route-side merge). Read via getattr, not direct attribute access,
+    # same defensive pattern as backtest_unavailable_count above — a bare
+    # MagicMock() ProposalRun stand-in (several pre-existing test fixtures)
+    # would otherwise auto-vivify a non-None child Mock and break jsonify().
+    # getattr's default alone is NOT enough here: a MagicMock auto-vivifies
+    # ANY attribute access into a new child Mock, so the "default" branch of
+    # getattr never fires for a bare mock missing .provenance — an isinstance
+    # check is the only reliable guard (never fabricate a dict-shaped value
+    # out of a Mock; honest None instead).
+    provenance = getattr(run, "provenance", None)
+    if not isinstance(provenance, dict):
+        provenance = None
+
     return jsonify(
         {
             "survivors": survivors_list,
@@ -4946,6 +4988,7 @@ def ai_advisor_strategy_builder_run():
             "backtest_unavailable": backtest_unavailable,
             "backtest_unavailable_count": backtest_unavailable_count,
             "backtest_unavailable_notice": backtest_unavailable_notice,
+            "provenance": provenance,
         }
     ), 200
 

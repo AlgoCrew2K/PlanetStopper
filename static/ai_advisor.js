@@ -803,6 +803,32 @@
                     html += '<div class="empty-state" data-testid="sb-live-backtest-unavailable">' +
                         escHtml(data.backtest_unavailable_notice) + '</div>';
                 }
+                // R2-1 (AC-4/AC-5): run-level generation provenance -- model,
+                // injected-evidence manifest, and run-id, read straight off
+                // data.provenance (the route's 4-key object; see app.py's
+                // ai_advisor_strategy_builder_run()). Distinct from the
+                // existing built-new/Atlas TEMPLATE-provenance rollup above
+                // (data-testid="sb-live-provenance", AC-11/F5) -- same
+                // overloaded English word, different concept (per-candidate
+                // origin vs. this run's generation-context provenance),
+                // hence the disambiguated testid. Non-null-only: a null
+                // provenance (the pre-existing no-key error path, which
+                // never populates this field) renders nothing, mirroring
+                // the mode_notice/backtest_unavailable idiom above.
+                if (data.provenance) {
+                    var prov = data.provenance;
+                    var evidence = prov.evidence_injected || {};
+                    var evidenceParts = [];
+                    ['tree', 'stats', 'technicals', 'sentiment', 'derivatives', 'macro', 'fundamentals'].forEach(function (key) {
+                        var val = evidence[key];
+                        if (val) { evidenceParts.push(key + ': ' + val); }
+                    });
+                    html += '<div class="run-controls-note" data-testid="sb-live-generation-provenance">' +
+                        'Model: ' + escHtml(prov.generation_model || '') +
+                        (evidenceParts.length ? ' · Context — ' + escHtml(evidenceParts.join(', ')) : '') +
+                        (prov.run_id ? ' · Run: ' + escHtml(prov.run_id) : '') +
+                        '</div>';
+                }
                 function card(c, cls) {
                     var extra = '';
                     var modifierClass = '';
