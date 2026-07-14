@@ -107,8 +107,21 @@ def _patch_builder_seams(monkeypatch, sbe, gen, *, plans: list[dict], membership
       (We patch the function on the sbe module's import site AND the gen module so the
       body-swap can reference it either way; raising=False tolerates whichever name the
       impl wires.)
+    - run_backtest → a deterministic success BacktestResult (no network call). This
+      file's own module docstring ("WHAT IS MOCKED... run_backtest (network)") already
+      declared this seam mocked, but the implementation never caught up: a39a1476
+      (AC-12, advisor-remediation-r1) wired _generate_candidate_trees's real
+      compile_plan(plan, backtest_fn=run_backtest) call site, and this helper's
+      run_backtest mock was never added. Without it, every one of the 4 tests using
+      this helper made a REAL unmocked call to Composer's live production /backtest
+      endpoint on every run — silently green wherever network egress to Composer was
+      reachable (confirmed: Composer's /backtest does not enforce auth, so it even
+      succeeds with empty credentials), silently red (empty infos) wherever it was
+      not, e.g. CI. compile_plan only reads .error on this success path, so a minimal
+      stats={} fake is sufficient — it never inspects .stats/.daily_returns here.
     """
     import advisors.universe_provider as up  # noqa: PLC0415
+    from advisors.composer_backtest_client import BacktestResult  # noqa: PLC0415
 
     monkeypatch.setattr(up, "get_tradeable_set", lambda *a, **k: frozenset(membership))
     monkeypatch.setattr(
@@ -126,6 +139,14 @@ def _patch_builder_seams(monkeypatch, sbe, gen, *, plans: list[dict], membership
         monkeypatch.setattr(
             sbe, "get_tradeable_set", lambda *a, **k: frozenset(membership), raising=False
         )
+
+    def _fake_run_backtest(*a, **k):
+        return BacktestResult(stats={}, data_warnings=[], error=None)
+
+    # sbe imports run_backtest at module level (`from ... import run_backtest`), so the
+    # name bound in sbe's own namespace — the one compile_plan(backtest_fn=run_backtest)
+    # actually receives — must be patched there, not on composer_backtest_client.
+    monkeypatch.setattr(sbe, "run_backtest", _fake_run_backtest, raising=False)
 
 
 def _all_objectives(sbe):

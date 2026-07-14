@@ -246,9 +246,25 @@ def test_ac3_sb_run_controls_note_mentions_generation_model_and_community_and_si
     SB generation through model_config.get_advisor_suggestion_model()
     (default claude-fable-5) — asserting a hardcoded "Opus" substring here
     would itself become a false claim the moment AC-16 lands. Accessor-driven
-    check instead."""
+    check instead.
+
+    CI credential-less fix: the run-controls-note this test targets lives
+    inside the /ai-advisor route's `{% if no_api_key %}...{% else %}...{%
+    endif %}` branch (templates/ai_advisor.html) — no_api_key = not
+    _has_composer_key() (app.py, lazily imported from
+    advisors.asset_swap_engine). Without a credentials mock, this test
+    silently depended on real local .env Composer credentials to reach the
+    else-branch; credential-less (CI), no_api_key=True and the whole
+    run-controls-panel — including this element — is honestly omitted in
+    favor of a "Composer API key not configured" notice, which is correct
+    production behavior, not a bug. Mocking _has_composer_key makes the
+    assertion deterministic and independent of environment credentials,
+    matching the pattern already used for the same seam elsewhere this
+    cycle (e.g. test_r1_power_caveat.py)."""
+    import advisors.asset_swap_engine as ase
     import model_config
 
+    monkeypatch.setattr(ase, "_has_composer_key", lambda: True)
     monkeypatch.setattr(
         model_config, "get_advisor_suggestion_model", lambda: "test-marker-sb-model"
     )
