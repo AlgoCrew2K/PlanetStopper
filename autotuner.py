@@ -2831,6 +2831,34 @@ def run_autotuner(
             f"D_spec={d_spec} n_effective={n_eff}"
         )
 
+        # AC-E2 (feature-plans/advisor-weekly-suggestions.md, Workstream E): hoisted
+        # ABOVE save_autotune_run so the accumulated S is persisted into THIS run's
+        # autotune_runs.s_count row.  Previously this query ran only AFTER the save
+        # (feeding solely the in-memory _oc_run dict below), so autotune_runs.s_count
+        # stayed NULL on every row forever — a later run's prior_runs query always
+        # saw None, so overfitting_conscience Indicator-3 (operator drift) could
+        # structurally never fire on live data.  Control-flow reorder only: the
+        # current-run I-1/I-2 S computation and verdict logic in
+        # overfitting_conscience.py are unchanged (it re-derives its own S from
+        # these same ledger rows).
+        # Reads ledger rows via advisor_ro_query (wall integrity contract).
+        _oc_ledger_rows = database.advisor_ro_query(
+            "SELECT evidence_source, n_configs_searched, touched_frozen_eval, "
+            "spec_bundle_id, facet_name FROM researcher_dof_ledger "
+            "WHERE spec_bundle_id = ?",
+            (stored_hash,),
+        )
+        # S = SUM(n_configs_searched) over BACKTEST_SELECTION rows for this run's
+        # bundle — same filter overfitting_conscience.compute_overfitting_conscience_
+        # observation applies to its own matching_rows (I-1/I-2 S accounting).
+        # n_configs_searched is NOT NULL DEFAULT 1 (migration 018) so no None guard
+        # is needed; int() cast mirrors compute_n_effective's defensive style.
+        _s_count_for_persistence = sum(
+            int(_row["n_configs_searched"])
+            for _row in _oc_ledger_rows
+            if _row["evidence_source"] == "BACKTEST_SELECTION"
+        )
+
         # S3-AUDIT-001: capture the inserted row id directly from save_autotune_run
         # (which now returns cursor.lastrowid) — eliminates the read-after-write
         # get_latest_autotune_run dance that raced and always fell back to id=0.
@@ -2852,17 +2880,12 @@ def run_autotuner(
             d_spec=d_spec,
             gamma=_gamma,
             overfitting_verdict=_overfitting_verdict,
+            # AC-E2: hoisted DoF-ledger S sum (see above) — feeds Indicator-3 drift
+            # detection on later runs via the prior_runs query below.
+            s_count=_s_count_for_persistence,
         )
 
         # Sprint 3: Overfitting Conscience — post-save observation.
-        # Reads ledger rows via advisor_ro_query (wall integrity contract);
-        # persists the observation via insert_advisor_observation.
-        _oc_ledger_rows = database.advisor_ro_query(
-            "SELECT evidence_source, n_configs_searched, touched_frozen_eval, "
-            "spec_bundle_id, facet_name FROM researcher_dof_ledger "
-            "WHERE spec_bundle_id = ?",
-            (stored_hash,),
-        )
         _oc_run = {
             "id": _inserted_id,
             "symphony_id": normalized_name,

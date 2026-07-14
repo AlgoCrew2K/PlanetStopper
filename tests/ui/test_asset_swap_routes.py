@@ -612,9 +612,15 @@ class TestRouteImportability:
 
     This prevents the evaluate_single_swap class of silent name-mismatch bugs.
     The canonical public API of asset_swap_engine is:
-      propose_operator_swap, suggest_swaps, generate_objective_directed_candidates,
-      SwapObjective, SwapProposalResult, SwapRunResult, apply_ticker_swap,
-      extract_tickers, NO_SURVIVORS_MESSAGE, SWAP_SURVIVOR_CAVEAT.
+      propose_operator_swap, suggest_swaps, generate_reasoned_swap_candidates,
+      SwapObjective, SwapCandidate, SwapProposalResult, SwapRunResult,
+      apply_ticker_swap, extract_tickers, NO_SURVIVORS_MESSAGE,
+      SWAP_SURVIVOR_CAVEAT.
+    R2-3 (2026-07-14): generate_objective_directed_candidates (the deterministic
+    generator) was DELETED and replaced by generate_reasoned_swap_candidates
+    (LLM-reasoned) — this test is dynamic (checks whatever app.py's route
+    ACTUALLY imports against the real module), so the deletion does not itself
+    break it; this docstring is kept current for accuracy.
     The route must use propose_operator_swap — NOT evaluate_single_swap (which
     does not exist in the new engine and would cause ImportError at request time).
     """

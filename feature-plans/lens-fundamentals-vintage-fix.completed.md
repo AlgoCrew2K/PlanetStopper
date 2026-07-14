@@ -49,6 +49,9 @@ N/A — backend producer fix; no UI components. (The Overview render of these va
 - 10-Q vs 10-K mixing: existing logic prefers 10-K; preserved. (We do NOT start trusting 10-Q over 10-K — out of scope.)
 - Portfolio fan-out with a mix of resolvable/unresolvable tickers → per-ticker honest degradation unchanged.
 
+## Superseded (append-only — do not edit the body above)
+**2026-07-13, operator-approved reversal:** the "10-Q vs 10-K mixing" Edge Case line above (and the corresponding "Prefer 10-K entries; fall back to all entries" behavior it documents) is SUPERSEDED by `feature-plans/advisor-suite-fixes.md` AC-4. The 10-K-only pre-filter in `ai_advisor.py`'s selection loop caused a fresher 10-Q period to be silently discarded whenever any 10-K existed for the concept (confirmed live: AAPL was resolving to the 2025-09 10-K instead of the ~2026-03 10-Q). AC-4 removes the 10-K-only filter entirely — all forms now feed the `(end desc, filed desc)` sort documented here unchanged, so the freshest reporting period wins regardless of form. The rest of this document (Mode A concept-fallback, Mode B sort-key fix, payload shape, honest degradation) is unaffected and remains current.
+
 ## Security Considerations
 - **Input validation / injection:** companyfacts JSON is external (SEC). Parsing is read-only dict traversal; no eval, no query interpolation. Malformed payloads must degrade (AC-7), not raise or leak.
 - **SSRF / URL:** CIK/companyfacts URLs are built from validated CIK lookups (unchanged); no user-supplied URL component introduced.

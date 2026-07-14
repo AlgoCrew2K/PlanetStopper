@@ -1,4 +1,4 @@
--- Migration 033 — frontrunner_proposals: mutable approval-status lifecycle for
+-- Migration 034 — frontrunner_proposals: mutable approval-status lifecycle for
 -- the Frontrunner Builder + the propose_strategies retrofit
 -- (feature-plans/frontrunner-builder.md AC-8/9/10).
 --

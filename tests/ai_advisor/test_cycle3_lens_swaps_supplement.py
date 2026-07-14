@@ -43,14 +43,23 @@ def _import_engine():
     return importlib.import_module("advisors.asset_swap_engine")
 
 
-_SCORE_TREE = {
-    "name": "TestSymphony",
-    "ticker": None,
-    "children": [
-        {"ticker": "SPY", "children": []},
-        {"ticker": "GLD", "children": []},
+_ensure_repo_on_path()
+from advisors import symphony_schema  # noqa: E402 - path must be ensured first
+
+# R2-3: rebuilt via the real symphony_schema constructors so it satisfies
+# symphony_schema.validate_tree -- the old hand-built {"ticker": None,
+# "children": [...]} shape (no "step" vocabulary at all) fails the engine's
+# validate_tree guard, now wired unconditionally for every swap variant
+# (asset_swap_engine.py's _evaluate_single_variant).
+_SCORE_TREE = symphony_schema.make_root(
+    "TestSymphony",
+    "daily",
+    [
+        symphony_schema.make_weight_equal(
+            [symphony_schema.make_asset("SPY"), symphony_schema.make_asset("GLD")]
+        )
     ],
-}
+)
 
 _CORR_DATA = {
     "SPY": [0.01, -0.02, 0.03, -0.01, 0.02],
@@ -250,6 +259,14 @@ class TestLensSourcesKwargOnSuggestSwaps:
             measured_value=0.85,
         )
 
+        # R2-3 RECONCILIATION: generate_reasoned_swap_candidates (the LLM-reasoned
+        # replacement for the deleted generate_objective_directed_candidates)
+        # mocked directly — this test proves the lens_sources kwarg doesn't raise,
+        # not candidate generation.
+        reasoned_pairs = [
+            engine.SwapCandidate(incumbent_asset="SPY", candidate_asset=t, rationale="x")
+            for t in ("BND", "TLT")
+        ]
         try:
             with (
                 patch("advisors.asset_swap_engine.run_backtest", return_value=_make_mock_bt()),
@@ -259,6 +276,10 @@ class TestLensSourcesKwargOnSuggestSwaps:
                     return_value=mock_gate_batch,
                 ),
                 patch("database.insert_advisor_observation"),
+                patch(
+                    "advisors.asset_swap_engine.generate_reasoned_swap_candidates",
+                    return_value=reasoned_pairs,
+                ),
             ):
                 result = engine.suggest_swaps(
                     symphony_id="test-sym-001",
@@ -318,6 +339,14 @@ class TestLensSourcesKwargOnSuggestSwaps:
         def _capture(**kwargs):
             captured.append(kwargs)
 
+        # R2-3 RECONCILIATION: the reasoned generator is mocked to propose EXACTLY
+        # the SPY->BND pair the mock_gate_result above is keyed to (candidate_id
+        # "test-sym-001:SPY->BND") — the real _evaluate_single_variant constructs
+        # candidate_id from (symphony_id, incumbent_asset, candidate_asset), so
+        # this must match for the gate-result lookup to find it.
+        reasoned_pairs = [
+            engine.SwapCandidate(incumbent_asset="SPY", candidate_asset="BND", rationale="x")
+        ]
         with (
             patch("advisors.asset_swap_engine.run_backtest", return_value=_make_mock_bt()),
             patch("advisors.asset_swap_engine._has_composer_key", return_value=True),
@@ -325,6 +354,10 @@ class TestLensSourcesKwargOnSuggestSwaps:
                 "advisors.asset_swap_engine.evaluate_candidate_batch", return_value=mock_gate_batch
             ),
             patch("database.insert_advisor_observation", side_effect=_capture),
+            patch(
+                "advisors.asset_swap_engine.generate_reasoned_swap_candidates",
+                return_value=reasoned_pairs,
+            ),
         ):
             engine.suggest_swaps(
                 symphony_id="test-sym-001",

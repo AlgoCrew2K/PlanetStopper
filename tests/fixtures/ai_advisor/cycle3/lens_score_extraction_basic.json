@@ -1,32 +1,40 @@
 {
   "_fixture_meta": {
-    "description": "Golden fixture for extract_lens_scores shape/contract (AC-1). Schema-derived — not producer-computed values.",
-    "provenance": "schema-derived (not producer-computed); numeric values are synthetic test data representing the structural contract between available/unavailable lens blocks and per-ticker score output",
-    "cycle": "cycle3-lens-swaps"
+    "description": "Golden fixture for extract_lens_scores shape/contract (AC-1). Schema-derived from REAL producer shapes (ai_advisor.py:542-552 technicals, :673-684 sentiment, :1242-1253 fundamentals, advisors/lens_technicals.py:265-272 momentum) — not producer-computed numeric values.",
+    "provenance": "schema-derived (not producer-computed); numeric values are synthetic test data representing the structural contract between available/unavailable lens blocks and per-ticker score output. STALE-FIXTURE FIX (2026-07-12): the prior version fabricated a 'ticker_scores' key inside sentiment/macro payloads that NO real producer ever emits (0 grep hits in ai_advisor.py outside this fixture/consumer) — a parser+fixture co-design failure caught by a live droplet-DB E2E (Gate-1 fixture-provenance FAIL). Replaced with the REAL shapes: technicals.payload.momentum is the only per-ticker signal that genuinely exists; sentiment/derivatives/macro are market-wide scalars with no per-ticker structure; fundamentals is per-ticker-KEYED but its values (key_facts) are raw financials, not a clean scalar, so it stays excluded from v1 per the PM design call.",
+    "cycle": "cycle3-lens-swaps",
+    "stale_fixture_fix_ref": "advisor-weekly-suggestions.md Workstream D live-E2E follow-up"
   },
   "input_lens_blocks": {
     "technicals": {
       "lens": "technicals",
-      "available": false,
-      "reason": "technicals stub — cycle-1 not yet wired",
-      "payload": null,
+      "available": true,
+      "payload": {
+        "ma_posture": {
+          "AGG": { "above_sma50": true, "above_sma200": true },
+          "GLD": { "above_sma50": false, "above_sma200": true }
+        },
+        "breadth": 0.55,
+        "momentum": {
+          "AGG": 0.03,
+          "GLD": -0.02
+        }
+      },
       "sources": []
     },
     "sentiment": {
       "lens": "sentiment",
       "available": true,
       "payload": {
-        "ticker_scores": {
-          "AGG": 0.70,
-          "GLD": 0.30
-        },
-        "article_count": 5,
-        "tone_summary": "slightly positive"
+        "tone_score": 0.30,
+        "corpus": [],
+        "events": [],
+        "article_count": 5
       },
       "sources": [
         {
-          "title": "Test article for AGG",
-          "url": "https://example.com/agg-article",
+          "title": "Test market-wide sentiment article",
+          "url": "https://example.com/sentiment-article",
           "published": "2026-01-01",
           "lens": "sentiment"
         }
@@ -43,11 +51,9 @@
       "lens": "macro",
       "available": true,
       "payload": {
-        "ticker_scores": {
-          "AGG": 0.65,
-          "GLD": 0.50
-        },
-        "series_count": 3
+        "series": {
+          "FEDFUNDS": { "label": "Federal Funds Rate", "value": "5.25", "date": "2026-01-01" }
+        }
       },
       "sources": [
         {
@@ -60,25 +66,35 @@
     },
     "fundamentals": {
       "lens": "fundamentals",
-      "available": false,
-      "reason": "no SEC EDGAR ticker mapped",
-      "payload": null,
+      "available": true,
+      "payload": {
+        "tickers": {
+          "AGG": {
+            "entity_name": "Test Bond Fund Co",
+            "cik": "0000000001",
+            "key_facts": { "Revenues": { "value": 1000000, "unit": "USD", "end": "2025-12-31" } }
+          }
+        },
+        "coverage": { "available": 1, "universe": 1 }
+      },
       "sources": []
     }
   },
   "expected_output_contract": {
-    "_note": "Shape/contract only — actual numeric values are implementation-defined. The contract is: available lenses contribute, unavailable lenses are absent.",
+    "_note": "Shape/contract only — actual numeric values are implementation-defined (extract_lens_scores squashes momentum's unbounded raw return onto some [0,1] favorability scale; the exact transform is not pinned here). The contract: ONLY technicals (the sole real per-ticker signal) contributes. sentiment and macro are AVAILABLE but market-wide (no per-ticker structure) — honestly contribute NOTHING, not fabricated from a market-wide scalar. derivatives is genuinely unavailable — contributes nothing (AC-6). fundamentals is AVAILABLE and per-ticker-KEYED but its values are raw financials (key_facts), not a clean scalar — excluded from v1 per the PM design call, contributes nothing.",
     "AGG": {
-      "_present_lens_keys": ["sentiment", "macro"],
-      "_absent_lens_keys": ["technicals", "derivatives", "fundamentals"],
+      "_present_lens_keys": ["technicals"],
+      "_absent_lens_keys": ["sentiment", "derivatives", "macro", "fundamentals"],
       "_score_type": "float",
-      "_score_is_finite": true
+      "_score_is_finite": true,
+      "_score_in_unit_interval": true
     },
     "GLD": {
-      "_present_lens_keys": ["sentiment", "macro"],
-      "_absent_lens_keys": ["technicals", "derivatives", "fundamentals"],
+      "_present_lens_keys": ["technicals"],
+      "_absent_lens_keys": ["sentiment", "derivatives", "macro", "fundamentals"],
       "_score_type": "float",
-      "_score_is_finite": true
+      "_score_is_finite": true,
+      "_score_in_unit_interval": true
     }
   }
 }

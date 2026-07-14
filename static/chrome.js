@@ -292,6 +292,67 @@ function _tickNextCountdown() {
 }
 setInterval(_tickNextCountdown, 1000);
 
+// ── Candidate alert: header badge for new weekly-suggestion survivors ─────
+// (feature-plans/candidate-alert.md AC-1..AC-6). chrome.js — not index.js —
+// because chrome.js is the only JS asset shared by all 4 screens (loaded via
+// _chrome.html's <script src="/static/chrome.js"> on every page).
+// 30s poll — matches index.js's POLL_INTERVAL_MS, well above the 15s floor.
+var CANDIDATE_ALERT_POLL_INTERVAL_MS = 30000;
+
+function fetchCandidateAlert() {
+  fetch('/api/candidate-alert')
+    .then(function (response) {
+      if (!response.ok) return null;
+      return response.json();
+    })
+    .then(function (data) {
+      var badge = document.getElementById('candidate-alert-badge');
+      var wrap = document.getElementById('candidate-alert-indicator');
+      if (!data) return;
+
+      var count = data.new_valid_count || 0;
+      if (badge) {
+        if (count > 0) {
+          badge.textContent = String(count);
+          badge.style.display = 'inline-block';
+        } else {
+          badge.textContent = '';
+          badge.style.display = 'none';
+        }
+      }
+
+      if (wrap) {
+        var lastRun = data.last_run;
+        wrap.title = lastRun
+          ? 'Weekly run ' + (lastRun.ran_at || '') + ': ' + lastRun.evaluated +
+            ' evaluated, ' + lastRun.survivors + ' passed the gate'
+          : 'No weekly run yet';
+      }
+    })
+    .catch(function () { /* silent — badge stays at its last-known state (AC-6) */ });
+}
+window.fetchCandidateAlert = fetchCandidateAlert;
+
+// Fires on indicator click, alongside the native <a href> navigation to
+// /ai-advisor — keepalive lets the request complete even though the browser
+// is about to navigate away. Best-effort: a failure here must never block
+// or interfere with the navigation itself (AC-4 works without JS at all).
+function markCandidateAlertViewed() {
+  fetch('/api/candidate-alert/mark-viewed', {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': _chromeCsrfToken || '' },
+    keepalive: true,
+  }).catch(function () { /* best-effort — navigation proceeds regardless */ });
+}
+window.markCandidateAlertViewed = markCandidateAlertViewed;
+
+document.addEventListener('DOMContentLoaded', function () {
+  fetchCandidateAlert();
+  setInterval(fetchCandidateAlert, CANDIDATE_ALERT_POLL_INTERVAL_MS);
+  var indicator = document.getElementById('candidate-alert-indicator');
+  if (indicator) indicator.addEventListener('click', markCandidateAlertViewed);
+});
+
 // ── ET clock (FP-T3-06) ───────────────────────────────────────────────────
 function updateClock() {
   var el = document.querySelector('[data-testid="et-clock"]');

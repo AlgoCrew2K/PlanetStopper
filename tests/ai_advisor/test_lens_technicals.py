@@ -1770,3 +1770,109 @@ class TestProxyUniverseGuard:
             f"Expected '_NetworkError', got {reason!r}. "
             f"Never include str(exc) in the reason field."
         )
+
+
+# ---------------------------------------------------------------------------
+# _HISTORY_DAYS vs _SMA_200_WINDOW headroom — reality-audit LIVE finding
+#
+# Finding: _HISTORY_DAYS=270 calendar days yields ~270*(252/365)~=186.6 NYSE
+# trading bars (252/365 is the standard trading-day ratio — averages in
+# weekends + the ~9-10 NYSE holidays/year) — below _SMA_200_WINDOW=200.
+# _compute_sma returns None whenever len(closes) < window, so above_sma200
+# is UNCONDITIONALLY None for every ticker, on every real fetch, forever —
+# while the lens still reports available=True (silent degradation, live-
+# verified across 10 tickers).
+#
+# Fix required: raise _HISTORY_DAYS so the calendar window can realistically
+# contain >= _SMA_200_WINDOW trading bars (200 trading days corresponds to
+# ~290 calendar days by the same ratio; a safe margin above that is expected).
+# ---------------------------------------------------------------------------
+
+
+class TestHistoryDaysSufficientForSma200:
+    """_HISTORY_DAYS must fetch enough calendar days to realistically contain
+    >= _SMA_200_WINDOW trading bars — otherwise above_sma200 can never compute.
+    """
+
+    # NYSE trading days per calendar year (~252, i.e. 365 calendar days minus
+    # ~104 weekend days minus ~9-10 holidays) — a market-calendar fact, not a
+    # producer-computed value. Source: NYSE holiday calendar + standard
+    # 5-day trading week.
+    _NYSE_TRADING_DAYS_PER_YEAR = 252
+    _CALENDAR_DAYS_PER_YEAR = 365
+
+    def test_history_days_yields_at_least_sma200_window_trading_bars(self):
+        """_HISTORY_DAYS * (252/365) must be >= _SMA_200_WINDOW.
+
+        FAILS against the current _HISTORY_DAYS=270 (270 * 252/365 ~= 186.6
+        trading bars < 200). Passes once _HISTORY_DAYS is raised enough.
+        """
+        from advisors import lens_technicals
+
+        implied_trading_bars = lens_technicals._HISTORY_DAYS * (
+            self._NYSE_TRADING_DAYS_PER_YEAR / self._CALENDAR_DAYS_PER_YEAR
+        )
+        assert implied_trading_bars >= lens_technicals._SMA_200_WINDOW, (
+            f"_HISTORY_DAYS={lens_technicals._HISTORY_DAYS} implies only "
+            f"~{implied_trading_bars:.1f} NYSE trading bars (using the standard "
+            f"{self._NYSE_TRADING_DAYS_PER_YEAR}/{self._CALENDAR_DAYS_PER_YEAR} "
+            f"trading-day ratio), below _SMA_200_WINDOW="
+            f"{lens_technicals._SMA_200_WINDOW}. The 200-day SMA can NEVER be "
+            f"computed from this window — above_sma200 is silently None forever "
+            f"despite available=True. _HISTORY_DAYS must be raised so implied "
+            f"trading bars clear _SMA_200_WINDOW with headroom."
+        )
+
+    def test_above_sma200_is_computable_from_realistic_history_days_bar_count(self):
+        """With a REALISTIC (weekday-only, holiday-free — a generous upper
+        bound) bar count derived from the module's own _HISTORY_DAYS,
+        above_sma200 must be non-None.
+
+        Does not hardcode a bar count: it replays the exact date-range math
+        _get_bars uses (today - _HISTORY_DAYS calendar days) and counts
+        weekdays in that span, mirroring what a real Alpaca fetch would
+        realistically return (real production bars would be fewer once NYSE
+        holidays are subtracted, so this weekday-only count is generous).
+
+        FAILS against the current _HISTORY_DAYS=270 (weekday count ~193 < 200
+        -> above_sma200 stays None). Passes once _HISTORY_DAYS gives >= 200
+        weekday bars.
+        """
+        import datetime
+
+        from advisors import lens_technicals
+
+        end_dt = datetime.date.today()
+        start_dt = end_dt - datetime.timedelta(days=lens_technicals._HISTORY_DAYS)
+
+        weekday_count = 0
+        day = start_dt
+        while day <= end_dt:
+            if day.weekday() < 5:  # Mon-Fri
+                weekday_count += 1
+            day += datetime.timedelta(days=1)
+
+        closes = [100.0] * (weekday_count - 1) + [110.0]
+        bar_list = _make_bar_sequence(closes)
+        mock_bars = {"SPY": bar_list}
+
+        with patch.object(lens_technicals, "_get_bars", return_value=mock_bars):
+            result = lens_technicals._fetch_technicals(["SPY"])
+
+        assert result.get("available") is True, (
+            f"Expected available=True with {weekday_count} realistic weekday "
+            f"bars derived from _HISTORY_DAYS={lens_technicals._HISTORY_DAYS}. "
+            f"Full result: {result!r}"
+        )
+        above_sma200 = result["ma_posture"]["SPY"].get("above_sma200")
+        assert above_sma200 is not None, (
+            f"above_sma200 is None despite {weekday_count} weekday bars derived "
+            f"from _HISTORY_DAYS={lens_technicals._HISTORY_DAYS} "
+            f"(_SMA_200_WINDOW={lens_technicals._SMA_200_WINDOW}; "
+            f"{weekday_count} >= {lens_technicals._SMA_200_WINDOW} is "
+            f"{weekday_count >= lens_technicals._SMA_200_WINDOW}). "
+            "If weekday_count here is < _SMA_200_WINDOW, _HISTORY_DAYS is not "
+            "raised enough — real production Alpaca fetches (fewer bars than "
+            "this holiday-free estimate) would NEVER be able to compute the "
+            "200-day SMA."
+        )

@@ -92,24 +92,34 @@ def test_run_overfitting_conscience_passes_symphony_id_to_insert():
 # ---------------------------------------------------------------------------
 
 
-def test_run_divergence_explainer_passes_symphony_id_when_flag_off():
-    """When SECOND_WINDOW_CVAR_ENABLED is off, the NOT_APPLICABLE row must still
-    carry symphony_id — operator-visibility audit-trail integrity.
+def test_run_divergence_explainer_writes_nothing_when_flag_off():
+    """CONTRACT CHANGE (PM-adjudicated 2026-07-13, AC-14 Mechanism 2 —
+    advisor-remediation-r1, flagged by r1-engine's regression sweep at
+    commit 82479560): this test previously asserted symphony_id propagation
+    on the NOT_APPLICABLE row written when SECOND_WINDOW_CVAR_ENABLED is
+    off. That premise is now VOID — database.get_advisor_observations_for_
+    symphony has no role filter, so the old NOT_APPLICABLE stub row leaked
+    onto /api/advisor-observations?symphony_id= on every autotune run; the
+    approved fix is for run_divergence_explainer to write NOTHING (and
+    return None) when the flag is off, rather than persisting a stub row at
+    all. There is therefore no insert call left to check symphony_id
+    propagation on for this path — asserting the opposite (no write
+    happens) is the corrected, honest contract. The flag_on sibling test
+    below is unaffected and still asserts symphony_id propagation on the
+    real INFORMATIONAL row.
     """
     mod = _import("advisors.divergence_explainer")
     run = _valid_de_run()
 
     with patch.object(mod.database, "insert_advisor_observation", return_value=21) as mocked:
-        mod.run_divergence_explainer(run, cvar_row=None, second_window_enabled=False)
+        result = mod.run_divergence_explainer(run, cvar_row=None, second_window_enabled=False)
 
-    assert mocked.called
-    _, kwargs = mocked.call_args
-    assert "symphony_id" in kwargs, (
-        f"DE producer (flag off) did not pass symphony_id to insert. "
-        f"kwargs keys: {sorted(kwargs.keys())!r}."
+    assert not mocked.called, (
+        "DE producer (flag off) must write NOTHING per the AC-14 Mechanism 2 "
+        "contract change — insert_advisor_observation was called."
     )
-    assert kwargs["symphony_id"] == run["symphony_id"], (
-        f"DE persisted symphony_id={kwargs['symphony_id']!r}; expected {run['symphony_id']!r}."
+    assert result is None, (
+        f"DE producer (flag off) must return None (no row id — there is no row); got {result!r}"
     )
 
 

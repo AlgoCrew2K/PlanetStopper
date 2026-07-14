@@ -39,6 +39,19 @@
         return;
     }
 
+    // AC-7 (F6, Gap F): rejection_reason -> distinguishable copy. Mirrors the
+    // SB Jinja _REJECTION_COPY map exactly (same 4 mapped values, same
+    // wording) and its Asset Swaps JS sibling — same explanation regardless
+    // of which surface rejected the candidate. Extensible: an unmapped
+    // reason (null, a legacy row, or a future untracked class) renders
+    // NOTHING — never a fabricated blanket string.
+    const REJECTION_COPY = {
+        pbo_veto: "This candidate failed the overfitting-robustness (PBO) check.",
+        below_spy_alpha: "This candidate did not beat the SPY benchmark over the same period.",
+        oos_inferior_to_incumbent: "This candidate did not outperform the live incumbent out-of-sample.",
+        fdr_not_winner: "This candidate cleared the FDR-calibrated significance bar but was not the single strongest candidate this run.",
+    };
+
     // ---------------------------------------------------------------------------
     // Enable the evaluate button only when symphony + description are populated.
     // ---------------------------------------------------------------------------
@@ -200,7 +213,13 @@
                 }
             }
 
-            const gateReason = _escapeHtml(proposal.gate_reason || "");
+            // AC-7: rejection_reason (pbo_veto/below_spy_alpha/
+            // oos_inferior_to_incumbent/fdr_not_winner/null) replaces the old
+            // coarse gate_reason title, which collapsed every veto failure
+            // into "veto failed" — the wrong statistical claim for at least
+            // 2 of the 4 known causes.
+            const reasonCopy = REJECTION_COPY[proposal.rejection_reason] || "";
+            const gateReason = _escapeHtml(reasonCopy);
             gateHtml = `
             <div class="gate-verdict-row" data-testid="gate-verdict-row">
               <span class="${pillClass}" data-testid="gate-pill">${pillText}</span>
@@ -297,8 +316,37 @@
      *   - backtest-failed / error
      */
     function _renderResults(data) {
+        // R2-2 (AC-8): run-level generation provenance -- model, injected-
+        // evidence manifest, and run-id, read straight off data.provenance
+        // (the route's 4-key object; see app.py's
+        // ai_advisor_logic_changes_evaluate()). UNLIKE SB (whose route omits
+        // provenance on its error branch, so its JS only needs it on the
+        // success path), this route now populates provenance on EVERY
+        // response including error ones -- computed here, BEFORE the
+        // error/success branch split, so it renders on both. Non-null-
+        // guarded (mirrors the mode_notice/backtest_unavailable idiom in
+        // the SB live-run block, static/ai_advisor.js:806-831); same
+        // "Model: X · Context — ... · Run: <uuid>" format, distinct testid
+        // (lc-live-generation-provenance, vs. SB's sb-live-generation-
+        // provenance -- same overloaded concept, a different producing route).
+        let provenanceHtml = "";
+        if (data.provenance) {
+            const prov = data.provenance;
+            const evidence = prov.evidence_injected || {};
+            const evidenceParts = [];
+            ["tree", "stats", "technicals", "sentiment", "derivatives", "macro", "fundamentals"].forEach(function (key) {
+                const val = evidence[key];
+                if (val) { evidenceParts.push(key + ": " + val); }
+            });
+            provenanceHtml = `<div class="run-controls-note" data-testid="lc-live-generation-provenance">` +
+                `Model: ${_escapeHtml(prov.generation_model || "")}` +
+                (evidenceParts.length ? ` · Context — ${_escapeHtml(evidenceParts.join(", "))}` : "") +
+                (prov.run_id ? ` · Run: ${_escapeHtml(prov.run_id)}` : "") +
+                `</div>`;
+        }
+
         if (data.error) {
-            return `<div class="no-survivors-state" data-testid="error-state">
+            return provenanceHtml + `<div class="no-survivors-state" data-testid="error-state">
                 <div class="no-survivors-title">Evaluation error</div>
                 <div class="no-survivors-body">${_escapeHtml(data.error)}</div>
             </div>`;
@@ -308,7 +356,7 @@
         const rejected = data.rejected_detail || [];
         const noSurvivors = survivors.length === 0;
 
-        let html = "";
+        let html = provenanceHtml;
 
         if (noSurvivors) {
             // AC-3.1: zero survivors is a valid non-error outcome.

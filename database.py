@@ -13,6 +13,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
+import numpy as np
+
 
 def _finite_or_none(x):
     """Coerce non-finite float sentinels to None for RFC 8259 JSON compliance."""
@@ -145,6 +147,18 @@ def init_db():
             after_value  TEXT    NOT NULL,
             operator     TEXT    NOT NULL,
             ts_utc       TEXT    NOT NULL
+        )
+    """)
+
+    # H1 DUAL-WRITE: candidate_alert_state is also created by migration 033.
+    # Single-row (id=1) viewed-marker for the header candidate-alert indicator
+    # (feature-plans/candidate-alert.md) — see database.py's Candidate Alert
+    # accessors section below.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS candidate_alert_state (
+            id                          INTEGER PRIMARY KEY CHECK (id = 1),
+            last_viewed_observation_id  INTEGER NOT NULL DEFAULT 0,
+            updated_at                  TEXT
         )
     """)
 
@@ -290,10 +304,51 @@ def load_state():
     return json.loads(row[0]) if row else {}
 
 
+def _sanitize_state_for_json(value):
+    """Recursively coerce a bot_state tree to JSON-safe native Python.
+
+    2026-07-09 production crash (VERDICT-droplet Finding 1, CRITICAL): a numpy
+    int64 reached bot_state on a Take-Profit path and every save_state raised
+    ``TypeError: Object of type int64 is not JSON serializable``. Each failed
+    save lost that cycle's ``triggered=True``; the next cycle reloaded
+    pre-trigger state and re-fired the same exit — 4 duplicate exit_triggers
+    rows in one morning (ids 80-83), up to 4 duplicate sell submissions in
+    LIVE_EXECUTION. Engine write sites feed math_engine products (tick
+    counters, MC probabilities, price levels) straight into bot_state, so the
+    single persistence choke point sanitizes:
+
+      np.integer -> int, np.bool_ -> bool;
+      floats (numpy AND plain) -> _finite_or_none: NaN/±inf persist as None
+      (the repo's isfinite-or-None idiom) — a NaN token silently poisons
+      downstream money math and a save-time crash re-fires exits, both worse
+      than an explicitly-null field every consumer already null-guards.
+
+    A recursive walk (not a ``json.dumps default=`` hook) because default= is
+    only invoked for non-serializable types — a plain float('nan') serializes
+    "successfully" as a poison NaN token and never reaches the hook. Unknown
+    non-JSON types still raise TypeError in json.dumps: no silent
+    serialization.
+    """
+    if isinstance(value, dict):
+        return {k: _sanitize_state_for_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_state_for_json(v) for v in value]
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        return _finite_or_none(float(value))
+    return value
+
+
 def save_state(state_dict):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE bot_state SET data = ? WHERE id = 1", (json.dumps(state_dict),))
+    cursor.execute(
+        "UPDATE bot_state SET data = ? WHERE id = 1",
+        (json.dumps(_sanitize_state_for_json(state_dict)),),
+    )
     conn.commit()
     conn.close()
 
@@ -649,6 +704,9 @@ def save_autotune_run(
     overfitting_verdict=None,
     # migration 028: Phase-3 PBO acceptance gate result.
     pbo=None,
+    # migration 023: S accumulator (SUM n_configs_searched over BACKTEST_SELECTION
+    # researcher_dof_ledger rows for this run's spec_bundle_id) — see AC-E1/E2.
+    s_count: int | None = None,
 ) -> int:
     """Persist one row of per-run Optuna validation metrics to autotune_runs.
 
@@ -685,6 +743,17 @@ def save_autotune_run(
       pbo: Probability of Backtest Overfitting from CSCV (Bailey et al. 2017).
            In (0, 1); higher means more overfitting evidence.  None when PBO
            could not be computed (insufficient CSCV paths).
+
+    S accumulator column (migration 023):
+      s_count: SUM of n_configs_searched over BACKTEST_SELECTION rows in
+               researcher_dof_ledger for this run's spec_bundle_id (distinct
+               from d_spec, which is COUNT DISTINCT bundles). None for legacy
+               pre-023 rows / callers that haven't been wired yet; 0 is the
+               honest NN1-compliant value (no BACKTEST_SELECTION evidence) and
+               must be persisted as literal 0, never coerced to NULL — callers
+               use `s_count=0`, not an omitted kwarg, to record that case.
+               Feeds overfitting_conscience Indicator-3 (operator drift) via
+               each run's prior_runs query.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -695,8 +764,8 @@ def save_autotune_run(
              baseline_decision, fallback_oos_alpha, default_oos_alpha,
              selection_tstat, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
              spec_bundle_id, n_effective, d_spec, gamma, overfitting_verdict,
-             pbo)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             pbo, s_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_timestamp,
@@ -716,6 +785,7 @@ def save_autotune_run(
             gamma,
             overfitting_verdict,
             pbo,
+            s_count,
         ),
     )
     conn.commit()
@@ -1461,6 +1531,174 @@ def get_cached_regime_label(
     return label
 
 
+# --- Candidate Alert (header indicator) — viewed-marker + survivor accessors ---
+# feature-plans/candidate-alert.md. Migration 033 (candidate_alert_state).
+#
+# Verdict-classification note: acceptance_gate.py:80-82 defines exactly three
+# decision strings (ADOPT_CANDIDATE / KEEP_INCUMBENT / REJECT_VETO_FAILED).
+# KEEP_INCUMBENT is the common "nothing changed" outcome for ASSET_SWAP/
+# LOGIC_CHANGE (asset_swap_engine.py / logic_change_engine.py persist it
+# verbatim, RC-4) — it must NOT count as a valid new candidate, so
+# ADOPT_CANDIDATE is the ONLY survivor condition below.
+
+# Role scope for the weekly-suggestion advisor_observations rows this feature
+# cares about. Deliberately excludes MARKET_PRISM/OVERFITTING_CONSCIENCE/
+# SPEC_CRITIC/NARRATOR/etc — those never count toward the marker, the survivor
+# count, or the last-run aggregate, even if a verdict string coincidentally
+# matches ADOPT_CANDIDATE.
+_CANDIDATE_ALERT_WEEKLY_ROLES = ("ASSET_SWAP", "LOGIC_CHANGE", "STRATEGY_BUILDER")
+
+# The sole verdict string that counts as a survivor (acceptance_gate.py:80
+# DECISION_ADOPT_CANDIDATE) — see the verdict-classification note above.
+_CANDIDATE_ALERT_SURVIVOR_VERDICT = "ADOPT_CANDIDATE"
+
+
+def get_candidate_alert_viewed_marker() -> int:
+    """Return the last-viewed advisor_observations.id for the candidate-alert
+    indicator, or 0 when unset (nothing viewed yet).
+
+    Read-only (architecture constraint 5). Never raises: a missing table/row
+    (e.g. a DB that predates migration 033) degrades to 0, the same value as
+    a freshly-migrated, never-viewed marker.
+    """
+    try:
+        conn = get_ro_connection()
+        try:
+            row = conn.execute(
+                "SELECT last_viewed_observation_id FROM candidate_alert_state WHERE id = 1"
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+    return row[0] if row else 0
+
+
+def set_candidate_alert_viewed_marker(observation_id: int) -> int:
+    """UPSERT the candidate-alert viewed-marker; returns the resulting value.
+
+    Monotonic: the stored marker becomes max(existing, observation_id) — a
+    call with a lower id (an out-of-order request, a stale client re-POSTing)
+    can never regress a marker that has already advanced further (AC-5
+    idempotency). Single-row table (id=1); ON CONFLICT DO UPDATE avoids a PK
+    collision on repeat calls.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO candidate_alert_state "
+            "(id, last_viewed_observation_id, updated_at) "
+            "VALUES (1, ?, datetime('now')) "
+            "ON CONFLICT(id) DO UPDATE SET "
+            "last_viewed_observation_id = MAX(last_viewed_observation_id, "
+            "                              excluded.last_viewed_observation_id), "
+            "updated_at = datetime('now')",
+            (observation_id,),
+        )
+        conn.commit()
+        row = cursor.execute(
+            "SELECT last_viewed_observation_id FROM candidate_alert_state WHERE id = 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else observation_id
+
+
+def mark_candidate_alert_viewed() -> int:
+    """Advance the candidate-alert viewed-marker to the current max weekly-
+    suggestion observation id.
+
+    Zero required arguments — server-computed only: a caller can never inject
+    an arbitrary observation id (the marker must not be settable to a value
+    the operator hasn't actually seen). Role-scoped to
+    _CANDIDATE_ALERT_WEEKLY_ROLES — a higher-id row from an unrelated role
+    (e.g. MARKET_PRISM) must never influence the marker. Returns 0 (no-op)
+    when no weekly-suggestion row has ever been written.
+    """
+    placeholders = ", ".join("?" for _ in _CANDIDATE_ALERT_WEEKLY_ROLES)
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            f"SELECT MAX(id) FROM advisor_observations WHERE advisor_role IN ({placeholders})",
+            _CANDIDATE_ALERT_WEEKLY_ROLES,
+        ).fetchone()
+    finally:
+        conn.close()
+    max_id = row[0] if row and row[0] is not None else 0
+    return set_candidate_alert_viewed_marker(max_id)
+
+
+def get_candidate_alert_new_valid_count() -> int:
+    """Count NEW survivor (verdict=='ADOPT_CANDIDATE') weekly-suggestion rows.
+
+    "New" = advisor_observations.id strictly greater than the current viewed
+    marker (id > marker, not >= — a row at the marker was already viewed).
+    Role-scoped to _CANDIDATE_ALERT_WEEKLY_ROLES; fail-closed on NULL/odd/
+    unrecognised verdicts (never counted). Read-only (architecture
+    constraint 5); never raises (degrades to 0).
+    """
+    try:
+        marker = get_candidate_alert_viewed_marker()
+        placeholders = ", ".join("?" for _ in _CANDIDATE_ALERT_WEEKLY_ROLES)
+        conn = get_ro_connection()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM advisor_observations "
+                f"WHERE advisor_role IN ({placeholders}) "
+                "AND verdict = ? AND id > ?",
+                (*_CANDIDATE_ALERT_WEEKLY_ROLES, _CANDIDATE_ALERT_SURVIVOR_VERDICT, marker),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+    return row[0] if row else 0
+
+
+def get_candidate_alert_last_run() -> dict | None:
+    """Return the latest weekly-suggestion batch's status, or None if never run.
+
+    No run_id/batch column exists for ASSET_SWAP/LOGIC_CHANGE/STRATEGY_BUILDER
+    rows — the three weekly engines run back-to-back within one invocation of
+    run_weekly_suggestions() (advisors/weekly_suggestions_scheduler.py), so the
+    calendar date (UTC) of the most recent row is a sound proxy for "one run".
+
+    Returns {"ran_at": <max created_at that date>, "evaluated": <row count
+    that date>, "survivors": <subset verdict=='ADOPT_CANDIDATE'>}. survivors=0
+    is a valid, honest result (AC-3 "know it's working" — an all-rejected
+    batch still proves the job ran); only a table with ZERO weekly-suggestion
+    rows ever returns None. Read-only; never raises.
+    """
+    try:
+        placeholders = ", ".join("?" for _ in _CANDIDATE_ALERT_WEEKLY_ROLES)
+        conn = get_ro_connection()
+        try:
+            row = conn.execute(
+                "SELECT MAX(created_at), COUNT(*), "
+                "SUM(CASE WHEN verdict = ? THEN 1 ELSE 0 END) "
+                "FROM advisor_observations "
+                f"WHERE advisor_role IN ({placeholders}) "
+                "AND substr(created_at, 1, 10) = ("
+                "  SELECT substr(MAX(created_at), 1, 10) FROM advisor_observations "
+                f"  WHERE advisor_role IN ({placeholders})"
+                ")",
+                (
+                    _CANDIDATE_ALERT_SURVIVOR_VERDICT,
+                    *_CANDIDATE_ALERT_WEEKLY_ROLES,
+                    *_CANDIDATE_ALERT_WEEKLY_ROLES,
+                ),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+    ran_at, evaluated, survivors = row
+    if ran_at is None:
+        return None
+    return {"ran_at": ran_at, "evaluated": evaluated or 0, "survivors": survivors or 0}
+
+
 # --- H1: Schema Migration Runner ---
 
 _MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations")
@@ -1503,7 +1741,8 @@ _MIGRATION_FILES = [
     "030_per_symphony_live_mode.sql",
     "031_shadow_history_sym_ts_index.sql",
     "032_prism_audit_log.sql",
-    "033_frontrunner_proposals.sql",
+    "033_candidate_alert_state.sql",
+    "034_frontrunner_proposals.sql",
 ]
 
 
@@ -2626,12 +2865,15 @@ def record_exit_trigger(
     math_mode: "str | None" = None,
     port_trigger_id: "str | None" = None,
     also_true: "list[str] | None" = None,
-) -> None:
-    """Write one exit-trigger telemetry row.
+) -> "int | None":
+    """Write one exit-trigger telemetry row. Returns the inserted row id.
 
     Opens its own connection — does NOT join the cycle's save_state transaction.
     A failure here must never fail the cycle; any exception is logged at ERROR
-    and swallowed.  Called from alpha_bot_execution.py at the triggered=True set site.
+    and swallowed (returning None).  Called from alpha_bot_execution.py at the
+    triggered=True set site, which stashes the returned id as _last_trigger_id
+    so shadow_history rows link to their exit_triggers row (Finding 10: the
+    column could never populate while this returned nothing).
 
     AC-P2.10: math_mode and port_trigger_id support port-level exit attribution.
     gate_state_json may be passed as a pre-serialised string (e.g. from tests)
@@ -2660,7 +2902,7 @@ def record_exit_trigger(
 
     try:
         conn = sqlite3.connect(_db_file(), timeout=10.0)
-        conn.execute(
+        cursor = conn.execute(
             "INSERT INTO exit_triggers "
             "(ts_utc, ts_et, symphony_id, account_id, triggered_reason, at_return, "
             " gate_state_json, cycle_id, math_mode, port_trigger_id, also_true_json) "
@@ -2679,10 +2921,13 @@ def record_exit_trigger(
                 also_true_json,
             ),
         )
+        row_id = cursor.lastrowid
         conn.commit()
         conn.close()
+        return row_id
     except Exception as exc:
         logging.error("record_exit_trigger failed for %s: %s", symphony_id, exc)
+        return None
 
 
 def get_recent_exit_triggers(limit: int = 50) -> "list[dict]":
@@ -3061,16 +3306,31 @@ def prune_old_shadow_history(retention_days: int) -> int:
     return total_deleted
 
 
-def load_latest_shadow_row(symphony_id: str, trading_day: str) -> "dict | None":
-    """Return the most-recent shadow_history row for a symphony+day, or None."""
+def load_latest_shadow_row(
+    symphony_id: str, trading_day: str, et_cutoff: "str | None" = None
+) -> "dict | None":
+    """Return the most-recent shadow_history row for a symphony+day, or None.
+
+    et_cutoff: optional ET time-of-day string ("HH:MM:SS") — when given, only
+    rows at/before that time qualify. Used by the Stage-1 post-mortem to hold
+    its declared snapshot basis when it runs off-schedule (the engine ticks
+    past close to ~16:04; a bare latest-row read would silently re-base a late
+    run onto EOD values).
+    """
     try:
         conn = sqlite3.connect(_db_file(), timeout=10.0)
         conn.row_factory = sqlite3.Row
+        params: list = [symphony_id, trading_day]
+        cutoff_clause = ""
+        if et_cutoff is not None:
+            cutoff_clause = "AND substr(ts_et, 12, 8) <= ? "
+            params.append(et_cutoff)
         row = conn.execute(
             "SELECT * FROM shadow_history "
             "WHERE symphony_id = ? AND trading_day = ? "
-            "ORDER BY ts_utc DESC LIMIT 1",
-            (symphony_id, trading_day),
+            + cutoff_clause
+            + "ORDER BY ts_utc DESC LIMIT 1",
+            params,
         ).fetchone()
         conn.close()
         if row is None:
@@ -3078,6 +3338,34 @@ def load_latest_shadow_row(symphony_id: str, trading_day: str) -> "dict | None":
         return dict(row)
     except Exception as exc:
         logging.error("load_latest_shadow_row failed for %s %s: %s", symphony_id, trading_day, exc)
+        return None
+
+
+def load_earliest_shadow_row(symphony_id: str, trading_day: str) -> "dict | None":
+    """Return the EARLIEST shadow_history row for a symphony+day, or None.
+
+    Stage-1's degradation tier for an all-post-cutoff day (daemon started after
+    the snapshot cutoff): when no row qualifies at/before the cutoff, the
+    earliest row of the day is the one nearest the declared basis — real
+    off-basis shadow data beats the action-phase-clobbered bot_state value.
+    """
+    try:
+        conn = sqlite3.connect(_db_file(), timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM shadow_history "
+            "WHERE symphony_id = ? AND trading_day = ? "
+            "ORDER BY ts_utc ASC LIMIT 1",
+            (symphony_id, trading_day),
+        ).fetchone()
+        conn.close()
+        if row is None:
+            return None
+        return dict(row)
+    except Exception as exc:
+        logging.error(
+            "load_earliest_shadow_row failed for %s %s: %s", symphony_id, trading_day, exc
+        )
         return None
 
 

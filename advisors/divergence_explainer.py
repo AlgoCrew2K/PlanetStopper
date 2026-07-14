@@ -152,14 +152,23 @@ def run_divergence_explainer(
     cvar_row: dict | None,
     *,
     second_window_enabled: bool | None = None,
-) -> int:
+) -> int | None:
     """Compute the divergence-explainer observation and persist it.
 
     Reads SECOND_WINDOW_CVAR_ENABLED from the environment when
     second_window_enabled is None. Explicit kwarg overrides the env var —
     this is the seam for deterministic unit testing.
 
-    Returns the new advisor_observations row id.
+    §B off: writes NOTHING and returns None (AC-14 Mechanism 2). A disabled,
+    non-functional feature must not accumulate a NOT_APPLICABLE audit-trail
+    row on every autotune run — the row previously leaked onto
+    /api/advisor-observations?symphony_id=... (database.
+    get_advisor_observations_for_symphony has no role filter). The pure
+    compute_divergence_explainer_observation() contract is unchanged — it
+    still returns a NOT_APPLICABLE dict when called directly; only this
+    integration entry point's write behavior changes.
+
+    §B on: returns the new advisor_observations row id.
 
     DB reads (if any) must go through database.advisor_ro_query — this function
     does not open connections directly (wall integrity contract).
@@ -167,6 +176,9 @@ def run_divergence_explainer(
     if second_window_enabled is None:
         flag_raw = os.environ.get(_FLAG_ENV_VAR, "0")
         second_window_enabled = flag_raw.strip() == "1"
+
+    if not second_window_enabled:
+        return None
 
     # When §B is on and the caller did not supply a pre-fetched CVaR row,
     # fetch the most-recent cvar_diagnostics row via the approved read path.

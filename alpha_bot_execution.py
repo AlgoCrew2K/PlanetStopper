@@ -1813,8 +1813,13 @@ def main():
                         bot_state[sym_id]["triggered_at_time"] = current_time_str
 
                         # H1: non-blocking telemetry write — opens its own connection,
-                        # never joins save_state transaction; failure is swallowed.
-                        database.record_exit_trigger(
+                        # never joins save_state transaction; failure is swallowed
+                        # (returns None). The returned row id is stashed as
+                        # _last_trigger_id so the data phase's shadow writes link
+                        # post-trigger rows to this exit_triggers row (Finding 10:
+                        # the read at the record_shadow_observation site existed
+                        # with no writer, so trigger_id never populated).
+                        _trigger_row_id = database.record_exit_trigger(
                             symphony_id=sym_id,
                             account_id=bot_state[sym_id].get("account"),
                             triggered_reason=reason,
@@ -1830,6 +1835,7 @@ def main():
                             also_true=item["also_true"],
                             cycle_id=bot_state.get("last_successful_cycle_at"),
                         )
+                        bot_state[sym_id]["_last_trigger_id"] = _trigger_row_id
 
                         bot_state[sym_id]["high_water_mark"] = -999.0
 

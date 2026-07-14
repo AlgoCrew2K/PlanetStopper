@@ -15,9 +15,12 @@ from __future__ import annotations
 import enum
 import logging
 import math
+import uuid
 from dataclasses import dataclass, field
 
+import ai_advisor
 import database
+import model_config
 from advisors import symphony_schema
 from advisors.backtest_gate_engine import (
     HARVEY_LIU_FDR_Q,
@@ -116,6 +119,12 @@ class CandidateInfo:
     metrics: dict = field(default_factory=dict)
     backtest_error: str | None = None
     data_warnings: list = field(default_factory=list)
+    # True when plan_tree_compiler.compile_plan degraded this tree on an
+    # infra/transport failure (Composer unreachable) instead of pruning/
+    # dropping — the tree's tradeability against Composer was never
+    # confirmed. Community candidates (Atlas-sourced, not compiled via
+    # plan_tree_compiler) always default False.
+    tradeability_unverified: bool = False
 
 
 @dataclass
@@ -127,6 +136,32 @@ class ProposalRun:
     screened_survivors: list[CandidateGateResult]
     observations_written: int
     error: str | None = None
+    # AC-11: sanitized cause category (type(exc).__name__) for the route to
+    # surface to the operator. `error` may carry raw exception text (hostnames,
+    # paths, credentials) and must never be echoed to the client verbatim
+    # (AC-23 precedent) — error_category is the safe, displayable alternative.
+    error_category: str | None = None
+    # Honest run-level outage signal (advisor-outage-degrade AC-4): True when
+    # one or more generated candidates were emitted tradeability-unverified
+    # because Composer was unreachable during compile_plan's repair loop.
+    # Computed from the FULL pre-Step-2-backtest candidate list, NOT from
+    # `candidates` above — `candidates` is filtered to only those whose own
+    # Step-2 metrics backtest succeeded, which a real outage would also fail,
+    # silently zeroing a `candidates`-derived count in exactly the case this
+    # flag exists to surface.
+    backtest_unavailable: bool = False
+    backtest_unavailable_count: int = 0
+    # R2-1 (AC-4/AC-6): a UUID4 minted once per propose_strategies call, present
+    # on EVERY return path (including error early-returns) — a correlation id
+    # for the call itself, traced into every persisted advisor_observations row.
+    run_id: str = ""
+    # R2-1 (AC-4): {"generation_model", "mode", "evidence_injected", "run_id"} —
+    # a REAL 4-key dict on every return path, never None, never fabricated.
+    # run_id/generation_model/mode are cheap, non-fabricated facts about the
+    # call itself (not a claim that generation succeeded), so they are never
+    # nulled out on an error path — only evidence_injected's own per-source
+    # values (absent/present/stale) carry the honesty signal.
+    provenance: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +367,8 @@ def low_vol_floor(universe: list[str], n: int, window: int, name: str = "Low Vol
 def _generate_candidate_trees(
     objective: Objective,
     universe: list[str],
+    *,
+    reasoning_context: str | None = None,
 ) -> list[CandidateInfo]:
     """Generate up to MAX_CANDIDATES_PER_RUN objective-directed candidates via the real builder.
 
@@ -348,6 +385,11 @@ def _generate_candidate_trees(
 
     Honest degradation: generator returns empty plans (D-1 reason) → returns [] cleanly.
     D-1 never-raises: any internal exception degrades to [] with a logged class name only.
+
+    Args:
+        reasoning_context: R2-1 — threaded straight through to
+            build_plan_generator.generate_build_plans (see its docstring).
+            Additive/keyword, default None.
     """
     # CC-2 lazy imports — off-execution-path; never imported from alpha_bot_execution.py.
     from advisors import build_plan_generator as _gen  # noqa: PLC0415
@@ -363,7 +405,9 @@ def _generate_candidate_trees(
 
         # C2 — map sbe.Objective → build_plan_generator.Objective by .value (string-keyed).
         gen_objective = _gen.Objective(objective.value)
-        result = _gen.generate_build_plans(gen_objective, membership_set)
+        result = _gen.generate_build_plans(
+            gen_objective, membership_set, reasoning_context=reasoning_context
+        )
 
         if not result.plans:
             # D-1 honest degradation: no plans from generator (SDK error, signature-floor, etc.)
@@ -376,7 +420,10 @@ def _generate_candidate_trees(
         # C3 — compile each plan; drop uncompilable ones, keep the run going.
         candidates: list[CandidateInfo] = []
         for plan in result.plans:
-            compile_result = _compiler.compile_plan(plan)
+            # AC-12: thread the real backtest seam so compile_plan's tradeability-
+            # repair loop (dead when backtest_fn defaults to None) is live on this
+            # reachable path — revives the AC-16 repair loop at plan_tree_compiler.py:379.
+            compile_result = _compiler.compile_plan(plan, backtest_fn=run_backtest)
             if compile_result.tree is None:
                 # Drop: market_cap-deprecated, validate_tree hard error, or other clean drop.
                 logger.debug(
@@ -399,6 +446,9 @@ def _generate_candidate_trees(
                         "objective": plan.get("objective", ""),
                         "provenance": provenance,
                     },
+                    # advisor-outage-degrade AC-2/AC-4: carries forward compile_plan's
+                    # infra-degrade marker so propose_strategies can roll it up honestly.
+                    tradeability_unverified=compile_result.tradeability_unverified,
                 )
             )
             if len(candidates) >= MAX_CANDIDATES_PER_RUN:
@@ -581,6 +631,8 @@ def _persist_survivor(
     returns_pct: list[float] | None = None,
     n_survivors: int = 0,
     is_rejected: bool = False,
+    run_id: str = "",
+    evidence_injected: dict | None = None,
 ) -> None:
     """Persist an ADOPT_CANDIDATE survivor (or rejected candidate) as an advisory observation.
 
@@ -601,6 +653,12 @@ def _persist_survivor(
         returns_pct: Candidate daily returns in percent scale. When not provided,
             falls back to info._returns_pct if set (allows test helpers to inject
             candidate returns without modifying the call site).
+        run_id: R2-1 (AC-6) — the ProposalRun.run_id of the call that produced
+            this candidate; persisted so the row traces back to its run.
+        evidence_injected: R2-1 (AC-6) — the run's provenance manifest (the
+            same value on ProposalRun.provenance["evidence_injected"]);
+            persisted so the row traces back to what reasoning evidence, if
+            any, informed its generation.
     """
     _live_returns = live_returns or []
     # returns_pct kwarg takes priority; info._returns_pct is a test/fallback seam
@@ -655,6 +713,10 @@ def _persist_survivor(
         "fdr_q": fdr_q,
         "fdr_adjusted_threshold": fdr_adjusted_threshold,
         "caveats": caveats,
+        # R2-1 (AC-6): additive traceability keys — always present, never a
+        # schema migration (raw_response is a free-form JSON blob column).
+        "run_id": run_id,
+        "evidence_injected": evidence_injected if evidence_injected is not None else {},
     }
 
     # PA-3: live_baseline key is ABSENT (not None, not present) when live_returns empty.
@@ -729,6 +791,8 @@ def _persist_rejected(
     live_returns: list[float] | None = None,
     returns_pct: list[float] | None = None,
     n_survivors: int = 0,
+    run_id: str = "",
+    evidence_injected: dict | None = None,
 ) -> None:
     """Persist a gate-rejected or screen-rejected candidate as an advisory observation.
 
@@ -747,6 +811,8 @@ def _persist_rejected(
         returns_pct=returns_pct,
         n_survivors=n_survivors,
         is_rejected=True,
+        run_id=run_id,
+        evidence_injected=evidence_injected,
     )
 
 
@@ -765,6 +831,9 @@ def propose_strategies(
     incumbent_oos_alpha: float = 0.0,
     default_oos_alpha: float = 0.0,
     community_candidates: list[CandidateInfo] | None = None,
+    reasoning_context: str | None = None,
+    reasoning_manifest: dict | None = None,
+    run_id: str | None = None,
 ) -> ProposalRun:
     """Propose new candidate symphonies from scratch.
 
@@ -792,6 +861,19 @@ def propose_strategies(
             single-batch FDR gate (AC-2).  Capped at ``MAX_COMMUNITY_CANDIDATES_PER_RUN``
             inside this function regardless of list length (AC-3).  ``None`` and ``[]``
             are identical — no community candidates are injected (AC-6).
+        reasoning_context: R2-1 — an optional, ready-to-inject operator-context
+            text block (see ai_advisor.build_reasoning_context), threaded into
+            ``_generate_candidate_trees`` -> ``generate_build_plans`` ->
+            ``_build_generation_prompt``. Additive/keyword, default None —
+            byte-preserves the from-scratch generation prompt (AC-8).
+        reasoning_manifest: R2-1 — the honest per-source manifest paired with
+            ``reasoning_context`` (see ai_advisor.build_reasoning_context).
+            Stamped into ``ProposalRun.provenance["evidence_injected"]`` and
+            persisted on every observation this run writes (AC-6). Defaults
+            to ``ai_advisor._EMPTY_MANIFEST`` when omitted — never fabricated.
+        run_id: R2-1 — an optional caller-supplied run id, used verbatim
+            instead of minting a fresh UUID4. Lets tests/callers pin a known
+            id end-to-end. Omitted -> a UUID4 is minted.
 
     Returns:
         ProposalRun where:
@@ -801,10 +883,34 @@ def propose_strategies(
           input count — never the total attempted or the post-screen count).
         - ``screened_survivors`` is a subset of ``gated_batch.survivors``.
         - ``error`` is non-None when a top-level exception occurred.
+        - ``backtest_unavailable`` / ``backtest_unavailable_count`` (advisor-outage-
+          degrade AC-4) are True / >0 when one or more candidates were emitted
+          tradeability-unverified by ``plan_tree_compiler.compile_plan`` because
+          Composer's backtest endpoint was unreachable — an honest signal distinct
+          from a normal gate rejection. Computed over the full candidate list
+          BEFORE the Step-2 backtest-success filter, so it stays accurate even
+          when that same outage also fails Step 2 and the affected candidates
+          never make it into ``candidates`` above.
 
     FDR integrity: evaluate_candidate_batch receives ALL successfully backtested
     candidates (AC-3.2). Screens apply only to gate survivors (post-gate presentation).
     """
+    # R2-1 (AC-4/AC-6): minted UNCONDITIONALLY, before the try block, so every
+    # return path below (both early-returns and the top-level exception
+    # handler) carries the SAME run_id/provenance — never fabricated, never
+    # nulled. run_id/generation_model/mode are cheap, non-fabricated facts
+    # about the CALL ITSELF (not a claim that generation succeeded); the
+    # honesty burden is carried entirely by evidence_injected's own per-
+    # source values, which already reflect whatever reasoning_manifest the
+    # caller actually passed in (built before any Composer-key check ran).
+    run_id = run_id or str(uuid.uuid4())
+    provenance: dict = {
+        "generation_model": model_config.get_advisor_suggestion_model(),
+        "mode": "build-new",
+        "evidence_injected": reasoning_manifest or ai_advisor._EMPTY_MANIFEST,
+        "run_id": run_id,
+    }
+
     try:
         if not _has_composer_key():
             return ProposalRun(
@@ -813,10 +919,14 @@ def propose_strategies(
                 screened_survivors=[],
                 observations_written=0,
                 error="Composer API key not configured",
+                run_id=run_id,
+                provenance=provenance,
             )
 
         # Step 1: Generate candidate trees (objective-directed, bounded)
-        candidate_infos = _generate_candidate_trees(objective, universe)
+        candidate_infos = _generate_candidate_trees(
+            objective, universe, reasoning_context=reasoning_context
+        )
 
         # Step 1b: Inject caller-provided community candidates (keyword-only, AC-2/AC-3/AC-6).
         # Cap at MAX_COMMUNITY_CANDIDATES_PER_RUN even if the caller passes more — the adapter
@@ -825,12 +935,24 @@ def propose_strategies(
         if community_candidates:
             candidate_infos.extend(community_candidates[:MAX_COMMUNITY_CANDIDATES_PER_RUN])
 
+        # advisor-outage-degrade AC-4: roll up the honest outage signal from the
+        # FULL candidate list computed here — NOT from `successful_candidates`
+        # below, which Step 2's own per-candidate run_backtest call filters on
+        # backtest_error. A real Composer outage fails that Step-2 call too, so
+        # a rollup taken after that filter would read 0 in exactly the case
+        # this flag exists to surface.
+        backtest_unavailable_count = sum(
+            1 for info in candidate_infos if info.tradeability_unverified
+        )
+
         if not candidate_infos:
             return ProposalRun(
                 candidates=[],
                 gated_batch=_empty_gate_batch(),
                 screened_survivors=[],
                 observations_written=0,
+                run_id=run_id,
+                provenance=provenance,
             )
 
         # Step 2: Backtest each candidate (sequential, 1 req/s via client pacing)
@@ -933,6 +1055,8 @@ def propose_strategies(
                     live_returns=live_returns,
                     returns_pct=returns_pct,
                     n_survivors=n_survivors,
+                    run_id=run_id,
+                    evidence_injected=provenance["evidence_injected"],
                 )
                 obs_written += 1
             except Exception:
@@ -963,6 +1087,8 @@ def propose_strategies(
                     live_returns=live_returns,
                     returns_pct=returns_pct,
                     n_survivors=n_survivors,
+                    run_id=run_id,
+                    evidence_injected=provenance["evidence_injected"],
                 )
             except Exception:
                 logger.warning(
@@ -983,6 +1109,10 @@ def propose_strategies(
             gated_batch=gate_batch,
             screened_survivors=screened_survivors,
             observations_written=obs_written,
+            backtest_unavailable=backtest_unavailable_count > 0,
+            backtest_unavailable_count=backtest_unavailable_count,
+            run_id=run_id,
+            provenance=provenance,
         )
 
     except Exception as exc:
@@ -993,4 +1123,7 @@ def propose_strategies(
             screened_survivors=[],
             observations_written=0,
             error=str(exc),
+            error_category=type(exc).__name__,
+            run_id=run_id,
+            provenance=provenance,
         )

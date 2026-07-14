@@ -3,7 +3,7 @@
 > Client-side logic for the AI Advisor single-page SPA: in-place tab switching, suggestion card rendering with per-symphony assessment and lens-cache staleness stamp (AC-3), accept/reject lifecycle, autotune run feed, symphony selection, and Strategy Builder run/chat affordances.
 
 **Source:** `static/ai_advisor.js`
-**Last updated:** 2026-07-11 (frontrunner-builder wave-2 -- DE-FRONTRUNNER-002: `frRunBuild`/`frApprove`/`frReject`/`frDispatchProposalAction` added for the Frontrunner Builder tab; prior: 2026-06-29 DE-ADVISOR-LATENCY AC-3, `#advisor-lens-as-of` staleness stamp populated on suggest completion; spa-port cycle 2026-06-13)
+**Last updated:** 2026-07-14 (branch-integration merge — frontrunner-builder wave-2 `frRunBuild`/`frApprove`/`frReject`/`frDispatchProposalAction` DE-FRONTRUNNER-002 integrated with R2-1 provenance render; 2026-07-13 (R2-1, `DE-ADVISOR-R2-1-001`, commit `4063ec33`: `sbRunAnalysis()` gains a `data-testid="sb-live-generation-provenance"` render for the run-level generation-model/injected-evidence/run-id object -- see below; prior: advisor-outage-degrade AC-4/AC-5, `DE-SB-DEGRADE-001`, commit `14adb451`: `sbRunAnalysis()` gains the honest `backtest_unavailable` outage notice; prior: advisor-remediation-r1 Checkpoint-3, `DE-ADVISOR-R1-001`: `sbRunAnalysis()` gains consumption of the AC-7/AC-9/AC-11/AC-12 route-JSON fields; prior: advisor-suite-fixes AC-1/AC-2: `sbRunAnalysis()` success branch renders in-place instead of navigating away; prior: DE-ADVISOR-LATENCY AC-3 `#advisor-lens-as-of` staleness stamp; prior: spa-port cycle 2026-06-13) ALSO: 2026-07-11 (frontrunner-builder wave-2 -- DE-FRONTRUNNER-002: `frRunBuild`/`frApprove`/`frReject`/`frDispatchProposalAction` added for the Frontrunner Builder tab; prior: 2026-06-29 DE-ADVISOR-LATENCY AC-3, `#advisor-lens-as-of` staleness stamp populated on suggest completion; spa-port cycle 2026-06-13)
 
 ## Overview
 
@@ -122,11 +122,54 @@ Fetches `GET /api/performance/symphonies`, populates `#symphony-id-input` option
 
 Operator-initiated proposal run for the Strategy Builder tab. Reads `#sb-objective-select`, `#sb-universe-input`, and `#sb-symphony-select` from the panel controls. Obtains the CSRF token from the cached `_csrfToken` or fetches fresh from `GET /api/csrf-token` on a miss. POSTs to `POST /ai-advisor/strategy-builder/run` with `X-CSRF-Token` header and JSON body `{ objective, universe, symphony_id }`.
 
-On success: navigates to `/ai-advisor` (the unified SPA) so newly-persisted `STRATEGY_BUILDER` observations are rendered server-side. Navigates to `/ai-advisor`, not the old standalone `/ai-advisor/strategy-builder` URL (which 302-redirects anyway per the spa-port fold-in).
+**On success (AC-1/AC-2 fix, advisor-suite-fixes.md, 2026-07-13):** renders the response IN-PLACE into `#sb-run-results` -- never navigates away, so the displayed cards are inherently scoped to the run that just completed (no re-fetch, no stale-history confusion):
+- A summary line (`data-testid="sb-live-summary"`): `"Evaluated N candidate(s)"`, plus `" — threshold α=<fdr_adjusted_threshold>"` when the route returns one.
+- `data.survivors` (if any): one `.proposal-card--survivor` per item (`data-testid="sb-live-survivor-cards"`), each showing `candidate_id` (HTML-escaped via `escHtml`).
+- Zero survivors: an explicit honest empty state (`data-testid="sb-live-empty-state"`) — `"Evaluated N candidates — 0 passed the gate"` — never a blank div.
+- `data.rejected` (if any): a `<details data-testid="sb-live-rejected-section">` collapsible, one `.proposal-card--rejected` per item.
+- No sparkline — the run endpoint's response carries no equity points; only the server-rendered persisted-history cards keep the sparkline. Accepted scope gap (team-lead ruling, documented in the plan).
 
-On error: shows the error class name in `#sb-run-error` inline without a page navigation.
+**Before this fix:** unconditionally navigated to `/ai-advisor` on success, discarding the response JSON entirely — the operator saw a full-page reload with no way to tell which observations (if any) belonged to the run they just triggered (AC-1: nothing rendered; AC-2: not run-identifiable). See `DECISIONS.md` `DE-ADVISOR-SUITE-FIX-001`.
 
-Disables `#sb-run-btn` during the request; re-enables it in the `finally` block regardless of outcome.
+**Advisor-remediation-r1 Checkpoint-3 field consumption (`DE-ADVISOR-R1-001`, 2026-07-13, commits `fa691f6a` + `f6688ed4`):** an r1-review finding — the AC-7/AC-9/AC-11/AC-12 fields the route added to its JSON response this cycle (see [app.md](app.md)'s `POST /ai-advisor/strategy-builder/run` section) were never consumed on THIS render path, even though every route-JSON RED test proved the fields reach the response — the tests were structurally blind to this render path. Closed:
+
+- **AC-11 provenance rollup:** a new `data-testid="sb-live-provenance"` line ("Built-new: N · Atlas: N") renders whenever `built_new_count`/`atlas_count` are non-null. No prior render surface existed for these two fields anywhere in the codebase (checked Jinja + every JS file before adding).
+- **AC-11 degraded-run notice:** `data.mode_notice` (server-authored prose, e.g. an "0 plans (degraded)" explanation) renders verbatim, HTML-escaped, in a new `data-testid="sb-live-mode-notice"` div — non-null-only.
+- **AC-12 screens-skipped indicator:** `data.screens_skipped` renders a new `data-testid="sb-live-screens-skipped"` line, optionally appending `data.screens_skipped_reason` when present.
+- **AC-11 error_category:** the error branch appends `data.error_category` in parentheses to the existing sanitized `data.error` text when non-null — never renders the literal string `"null"`/`"undefined"`.
+- **AC-9 low_power:** the per-candidate `card(c, cls)` helper adds a `proposal-card--low-power` CSS modifier when `c.low_power` is true (survivor cards only — mirrors the route's own survivor-only scoping). The caveat TEXT itself is never re-derived or hardcoded in JS — it comes from `c.caveats` (the server appends `_LOW_POWER_CAVEAT` there when `low_power` fires), rendered via the existing `caveats-block`/`caveat-text` markup. The numeric `MIN_POWER_FOLD_DAYS` threshold never crosses into JS (locked AC-9 contract).
+- **AC-7 rejection_reason:** a new module-level `SB_LIVE_REJECTION_COPY` map (4 entries: `pbo_veto`, `below_spy_alpha`, `oos_inferior_to_incumbent`, `fdr_not_winner`) — byte-identical wording to the persisted-history Jinja `_REJECTION_COPY` map and the Asset-Swaps/Logic-Changes JS `REJECTION_COPY` siblings, so the operator sees the same explanation regardless of which surface rejected the candidate. Rejected cards render a `data-testid="apply-guidance"` `<strong>Gate withheld:</strong>` line when `c.rejection_reason` maps to a known entry; an unmapped or `null` reason renders NOTHING — never a fabricated blanket string, matching the map's existing extensibility convention.
+
+**Advisor-outage-degrade AC-4/AC-5 (`DE-SB-DEGRADE-001`, commit `14adb451`, 2026-07-13):** a new honest-degrade notice, rendered right after the AC-12 screens-skipped indicator, before the survivor/rejected cards. Guarded on the boolean `data.backtest_unavailable` flag (mirrors the `screens_skipped`/`screens_skipped_reason` pairing above, not the `mode_notice`-only pattern) — a healthy run renders nothing. When true, renders `data.backtest_unavailable_notice` (server-authored prose, e.g. `"3 candidate(s) could not be tradeability-checked — Composer backtest unavailable"`, HTML-escaped via `escHtml`) in a new `data-testid="sb-live-backtest-unavailable"` `.empty-state` div. Distinguishes an outage-degraded run from both a normal "0 passed the gate" empty-state and from ordinary survivor/rejected cards — the operator can tell the difference between "the gate rejected everything" and "Composer was unreachable, so some candidates were never tradeability-checked." Test coverage: `tests/ai_advisor/test_sb_backtest_unavailable_js_consumption.py` (same source-consumption pattern as the R1 sibling test below).
+
+**R2-1 — generation provenance render (`DE-ADVISOR-R2-1-001`, commit `4063ec33`, 2026-07-13):** a new run-level render, placed right after the AC-4/AC-5 outage-degrade notice above and before the survivor/rejected cards. Guarded on the truthy `data.provenance` object — a run before R2-1's route change, or either error branch (both leave `provenance` absent from the JSON entirely, never `null`), renders nothing:
+
+```javascript
+if (data.provenance) {
+    var prov = data.provenance;
+    var evidence = prov.evidence_injected || {};
+    var evidenceParts = [];
+    ['tree', 'stats', 'technicals', 'sentiment', 'derivatives', 'macro', 'fundamentals'].forEach(function (key) {
+        var val = evidence[key];
+        if (val) { evidenceParts.push(key + ': ' + val); }
+    });
+    html += '<div class="run-controls-note" data-testid="sb-live-generation-provenance">' +
+        'Model: ' + escHtml(prov.generation_model || '') +
+        (evidenceParts.length ? ' · Context — ' + escHtml(evidenceParts.join(', ')) : '') +
+        (prov.run_id ? ' · Run: ' + escHtml(prov.run_id) : '') +
+        '</div>';
+}
+```
+
+Renders three pieces of the R2-1 provenance contract in one `data-testid="sb-live-generation-provenance"` line: the generation model (`prov.generation_model`), a compact rendering of the `evidence_injected` honest manifest (`"tree: present, stats: present, technicals: available, ..."` — every truthy manifest value, in the fixed order `tree`/`stats`/the 5 lenses, HTML-escaped), and the run id (`prov.run_id`). All three pieces are non-null-only within the block (`evidenceParts.length` guards the `· Context —` segment; `prov.run_id` guards the `· Run:` segment) so a partially-populated manifest never renders a dangling separator.
+
+**Deliberately DISAMBIGUATED from the pre-existing `data-testid="sb-live-provenance"` line (AC-11/F5, above):** both use the word "provenance" but name two independent concepts — the AC-11 line is a per-candidate TEMPLATE-origin rollup (built-new vs. atlas-suggested COUNTS); this R2-1 line is this RUN's generation-CONTEXT provenance (which model, what evidence, which run). The comment directly above this block in the source calls out the collision explicitly so a future reader does not conflate or merge the two testids. See [app.md](app.md)'s `POST /ai-advisor/strategy-builder/run` section for the route-side `provenance` object and its `isinstance(dict)` MagicMock-serialization guard, and [advisors/strategy_builder_engine](advisors_strategy_builder_engine.md)'s "R2-1" section for the manifest's honest-degradation contract.
+
+**Test coverage (source-consumption, not DOM/browser):** `tests/ai_advisor/test_r1_sb_live_run_field_consumption.py` reads this file as TEXT and asserts each field name is referenced as a literal token inside `sbRunAnalysis()`'s source — this stack has no JS-behavior test runner (no jsdom/Jest/Playwright-component harness; only `node --check` syntax validation exists project-wide), so a claimed DOM-behavior test would be fabricated confidence. These tests prove the field's NAME is wired into the function that reads `data.<field>`; they prove nothing about whether the resulting DOM element is visible, styled, or reachable to an operator. The PM's first-hand browser E2E is the sufficient verification for the actual rendered UI.
+
+On error: shows the error class name in `#sb-run-error` inline without a page navigation (unchanged, now with the `error_category` extension above).
+
+Disables `#sb-run-btn` during the request; re-enables it in the `finally` block regardless of outcome (unchanged).
 
 *Moved from inline `<script>` in the deleted `templates/ai_advisor_strategy_builder.html`; defined inside the IIFE to share the `_csrfToken` closure; exposed as `window.sbRunAnalysis` for Jinja `onclick` handlers (spa-port cycle, 2026-06-13).*
 
@@ -170,7 +213,7 @@ Thin wrappers calling `frDispatchProposalAction('approve', proposalId)` / `frDis
 - `POST /ai-advisor/suggest` — suggestion fetch; response body includes `lens_data_as_of` (str|null) + `lens_data_stale` (bool) for AC-3 stamp
 - `POST /ai-advisor/accept` — suggestion acceptance
 - `POST /ai-advisor/reject` — suggestion rejection
-- `POST /ai-advisor/strategy-builder/run` — strategy-builder proposal run (Strategy Builder tab)
+- `POST /ai-advisor/strategy-builder/run` — strategy-builder proposal run (Strategy Builder tab); response body includes `built_new_count`/`atlas_count`/`mode_notice`/`error_category` (AC-11), `screens_skipped`/`screens_skipped_reason` (AC-12), and per-candidate `low_power` (AC-9)/`rejection_reason` (AC-7) — all consumed by `sbRunAnalysis()` (`DE-ADVISOR-R1-001` Checkpoint-3) — `backtest_unavailable`/`backtest_unavailable_count`/`backtest_unavailable_notice` (AC-4/AC-5, `DE-SB-DEGRADE-001`, also consumed by `sbRunAnalysis()`) — and (R2-1, symphony-scoped runs only) `provenance` (`{generation_model, mode, evidence_injected, run_id}`, `DE-ADVISOR-R2-1-001`, consumed by `sbRunAnalysis()`'s `sb-live-generation-provenance` block)
 - `POST /ai-advisor/frontrunner-builder/run` — on-demand build trigger (Frontrunner Builder tab, async 202)
 - `POST /ai-advisor/proposal/approve` / `POST /ai-advisor/proposal/reject` — per-proposal approve/reject (Frontrunner Builder tab, shared by both proposal sources)
 - `GET /api/autotune-runs` — autotune run history feed

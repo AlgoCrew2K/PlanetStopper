@@ -334,6 +334,20 @@
 
         .cap-tab-badge--yellow { background: var(--studio-warn); }
 
+        /* AC-1: per-tab reasoning-mode attribution — visible text, not a
+           hover-only title tooltip.  The audit's root cause (F4) was a
+           page-global banner claiming universal Claude reasoning; hiding the
+           per-tab correction in a tooltip would reproduce the same failure
+           mode at a smaller scale. */
+        .cap-tab-attribution {
+            display: block;
+            font-size: 0.625rem;
+            font-weight: 400;
+            color: var(--studio-ink-dim);
+            margin-top: 0.125rem;
+            white-space: nowrap;
+        }
+
         /* Tab panels — in-place switching: only the active panel is visible */
         .tab-panel { display: none; }
         .tab-panel--active { display: block; }
@@ -690,6 +704,17 @@
             font-variant-numeric: tabular-nums;
         }
 
+        /* AC-2: the one genuinely real, best-documented LLM pipeline in the
+           suite (real `claude -p` council, prism_scheduler.py) was the LEAST
+           attributed surface in the UI — opposite failure mode from AC-1's
+           over-attribution.  Accessor-driven (advisor_synthesis_model), never
+           a hardcoded model-name literal. */
+        .prism-model-badge {
+            font-size: 0.625rem;
+            color: var(--studio-ink-dim);
+            font-style: italic;
+        }
+
         /* Sentiment chip — semantic color by value */
         .prism-sentiment-chip {
             display: inline-block;
@@ -984,8 +1009,15 @@
         <header data-testid="advisor-header" class="adv-header">
             <div>
                 <h1 class="adv-title">AI Advisor</h1>
+                {# AC-1 (F4, Gap D): the page-global "Claude-powered" claim was TRUE
+                   for 3 of 6 tabs and FALSE/MISLEADING for the other 3 — the audit's
+                   likely root cause of operator distrust (first thing rendered on
+                   page load). Replaced with a neutral description; reasoning-mode
+                   attribution now lives per-tab below (cap-tab-attribution), driven
+                   by the same accessors the engine actually calls, never a hardcoded
+                   model-name literal (AC-16 attribution-coherence requirement). #}
                 <p class="adv-subtitle">
-                    Claude-powered suggestion engine — operator must approve each change through safety gates
+                    Advisory suite — operator must approve each change through safety gates
                 </p>
             </div>
             <a href="/" class="back-link">&larr; Dashboard</a>
@@ -1019,6 +1051,7 @@
                     data-tab="asset-swaps">
                 Asset Swaps
                 <span class="cap-tab-badge" title="Low risk when gated"></span>
+                <span class="cap-tab-attribution">{{ advisor_suggestion_model | e }} — reasons over your live tree</span>
             </button>
             <button role="tab"
                     aria-selected="false"
@@ -1028,6 +1061,7 @@
                     data-tab="logic-changes">
                 Logic Changes
                 <span class="cap-tab-badge cap-tab-badge--yellow" title="Higher overfitting risk"></span>
+                <span class="cap-tab-attribution">{{ advisor_suggestion_model | e }} — reasons over your live tree</span>
             </button>
             <button role="tab"
                     aria-selected="false"
@@ -1037,6 +1071,7 @@
                     data-tab="chat">
                 Chat
                 <span class="cap-tab-badge cap-tab-badge--yellow" title="Explain-only"></span>
+                <span class="cap-tab-attribution">{{ advisor_synthesis_model | e }}</span>
             </button>
             <button role="tab"
                     aria-selected="false"
@@ -1046,6 +1081,7 @@
                     data-tab="strategy-builder">
                 Strategy Builder
                 <span class="cap-tab-badge cap-tab-badge--yellow" title="Highest overfitting risk — building from scratch"></span>
+                <span class="cap-tab-attribution">{{ advisor_suggestion_model | e }} + community, statistically gated</span>
             </button>
             <button role="tab"
                     aria-selected="false"
@@ -1085,6 +1121,7 @@
 
             <div class="prism-block-header">
                 <span class="prism-block-title">Market Prism</span>
+                <span class="prism-model-badge" data-testid="prism-model-badge">Synthesized by {{ advisor_synthesis_model | e }}</span>
                 {% if market_prism_summary %}
                     <span class="prism-as-of" data-testid="prism-as-of">As of {{ _created }}</span>
                 {% endif %}
@@ -1723,10 +1760,18 @@
                         Run analysis
                     </button>
                 </div>
+                {# AC-3 (F5, Gap A/E; doc-reconciliation.md §1.3): the old copy
+                   described the retired 7-template stamper (T1-T7, dead code since
+                   DE-SB-GEN-001), omitted the Atlas community source entirely, and
+                   implied a plural "candidates are surfaced" when the gate caps
+                   ADOPT_CANDIDATE at exactly one survivor per run. Corrected + made
+                   accessor-driven per AC-16 (never a hardcoded model-name literal). #}
                 <p class="run-controls-note">
-                    The advisor generates candidate symphonies from templates, backtests
-                    each one, and applies FDR/Yekutieli multiple-testing correction. Only
-                    candidates that clear the gate are surfaced as proposals.
+                    The advisor generates candidate strategies via {{ advisor_suggestion_model | e }}
+                    (plus ranked community strategies from the Atlas library), compiles
+                    and backtests each one, and applies an FDR/Yekutieli-calibrated
+                    significance bar. Only the single strongest candidate that clears
+                    the bar is ever promoted per run.
                 </p>
                 <div id="sb-run-error"
                      class="run-error"
@@ -1811,6 +1856,25 @@
                     {% if sb_withheld.append(obs) %}{% endif %}
                 {% endif %}
             {% endfor %}
+
+            {# AC-7 (F6, Gap F; doc-reconciliation.md §1.6): rejection_reason ->
+               distinguishable copy, keyed by value so a future reason class is
+               one dict entry, never a rewrite (PM directive — the panel-score
+               investigation (AC-17) may surface a 4th class, "OOS-inferior to
+               incumbent", currently indistinguishable from a survivor because
+               it isn't tracked as a rejection_reason value at all yet).
+               UNMAPPED values (None, a legacy pre-cycle row with no
+               rejection_reason key, or a future untracked class) intentionally
+               have NO entry here — the render site below checks membership and
+               renders NOTHING rather than the old blanket "did not clear the
+               FDR correction threshold" string, which was the wrong statistical
+               claim for at least 2 of the 3 known reason classes. #}
+            {%- set _REJECTION_COPY = {
+                "pbo_veto": "This candidate failed the overfitting-robustness (PBO) check.",
+                "below_spy_alpha": "This candidate did not beat the SPY benchmark over the same period.",
+                "oos_inferior_to_incumbent": "This candidate did not outperform the live incumbent out-of-sample.",
+                "fdr_not_winner": "This candidate cleared the FDR-calibrated significance bar but was not the single strongest candidate this run.",
+            } -%}
 
             <!-- Survivor cards (ADOPT_CANDIDATE) — ZERO action affordances -->
             {% if sb_survivors %}
@@ -1910,7 +1974,13 @@
                         </span>
                     </div>
                     <div class="caveats-block">
-                        <p class="caveat-text" data-testid="caveat-text">Selected on backtest across {{ n_cand }} candidates. FDR correction applied ({{ n_cand }} tested, threshold Yekutieli-adjusted). Overfitting risk cannot be eliminated — only resisted.</p>
+                        {# AC-8 (F6, Gap F; doc-reconciliation.md §1.5, audit-stats'
+                           recommended string, ADVISOR-INTENT-AUDIT.md:205): the old
+                           "FDR correction applied (N tested)" wording invited a
+                           "controlled-FDP SET was returned" reading when the declared
+                           set is capped at exactly 1 by construction (argmin-only
+                           selection, backtest_gate_engine.py). #}
+                        <p class="caveat-text" data-testid="caveat-text">Tested against an FDR-calibrated significance bar accounting for {{ n_cand }} alternatives; only the single strongest candidate is ever promoted per run.</p>
                         {% for caveat in rr.get('caveats') or [] %}
                         {% if caveat and 'Selected on backtest' not in caveat %}
                         <p class="caveat-text">{{ caveat | e }}</p>
@@ -2001,14 +2071,25 @@
                                 <span class="gate-pill gate-pill--withheld" data-testid="gate-verdict-pill">WITHHELD</span>
                                 <span class="fdr-metadata" data-testid="fdr-metadata"><strong>N={{ n_cand }}</strong> candidates tested</span>
                             </div>
+                            {% set _reason_copy = _REJECTION_COPY.get(rr.get('rejection_reason')) %}
+                            {% if _reason_copy %}
                             <div class="apply-guidance" data-testid="apply-guidance">
-                                <strong>Gate withheld:</strong> this candidate did not clear the FDR correction threshold.
+                                <strong>Gate withheld:</strong> {{ _reason_copy | e }}
                             </div>
+                            {% endif %}
                             <details class="rules-collapsible" data-testid="rules-collapsible">
                                 <summary>Show rules</summary>
                                 <pre>{{ rr.get('rules_text') or '(no rules text available)' | e }}</pre>
                             </details>
-                            <p class="caveat-text" data-testid="caveat-text">Selected on backtest: gate withheld this candidate — selection-bias risk exceeds the FDR correction threshold.</p>
+                            {# AC-7: mechanism-agnostic — no longer names "FDR correction
+                               threshold" unconditionally, since that's the wrong claim
+                               for a pbo_veto/below_spy_alpha reject. The specific reason
+                               (when known) is in the apply-guidance block above. #}
+                            {% if _reason_copy %}
+                            <p class="caveat-text" data-testid="caveat-text">Selected on backtest: this candidate did not survive the statistical gate — see the reason above.</p>
+                            {% else %}
+                            <p class="caveat-text" data-testid="caveat-text">Selected on backtest: this candidate did not survive the statistical gate.</p>
+                            {% endif %}
                             {% set _art = sb_card_artifacts.get(obs.id) %}
                             {% if _art %}
                             <button type="button"
@@ -2360,6 +2441,8 @@
         "SPEC_CRITIC": "Spec Critic",
         "DIVERGENCE_EXPLAINER": "Divergence Explainer",
         "NARRATOR": "Narrator",
+        "ASSET_SWAP": "Asset Swap",
+        "LOGIC_CHANGE": "Logic Change",
     } -%}
 
     {# Verdict CSS class mapping #}
@@ -2371,15 +2454,24 @@
 
     <section data-testid="advisor-observations-section" class="obs-section">
         <div class="obs-section-header">Advisor Observations</div>
-        {# AC-7: honest framing — OC and Spec Critic are portfolio-wide GUARDRAILS that
-           read the shared, frozen Phase-1 THEORY spec.  A uniform CLEAR verdict is the
-           healthy expected result (S=0, nothing symphony-specific to flag).  The genuine
-           per-symphony advice comes from the Run Advisor (gear icon on each symphony card). #}
+        {# AC-14 (F8, doc-reconciliation.md §1.8): the three guardrail producers are
+           NOT uniform — Spec Critic is a genuine active control (an empty/missing-facet
+           bundle triggers BREACH, not a default CLEAR, so a CLEAR is an evaluated pass);
+           Overfitting Conscience checks exactly one narrow DoF source (BACKTEST_SELECTION)
+           and a CLEAR there does not imply general overfitting protection; Divergence
+           Explainer is disabled by default (SECOND_WINDOW_CVAR_ENABLED) and its rows are
+           informational-only.  Named individually below so an operator can't over-read a
+           uniform "all clear" across three producers with different actual scope. #}
         <p data-testid="guardrail-uniform-note" class="obs-framing-note">
-            Overfitting Conscience and Spec Critic are guardrails that check the shared,
-            frozen THEORY spec — a uniform CLEAR verdict is the healthy expected result,
-            not a stub. Per-symphony recommendations come from the
-            <strong>Run Advisor</strong> (gear icon on each symphony card).
+            Spec Critic is an active guardrail checking the shared, frozen THEORY spec
+            structure — a CLEAR verdict means the spec was evaluated and passed.
+            Overfitting Conscience checks one narrow overfitting-risk source
+            (backtest-selection degrees of freedom) — a CLEAR here does not mean
+            'no overfitting risk exists,' only that this one source is clean.
+            Divergence Explainer is disabled by default and its rows are
+            informational-only, not currently monitoring anything active.
+            Per-symphony recommendations come from
+            the <strong>Run Advisor</strong> (gear icon on each symphony card).
         </p>
         {% if observations %}
         <table class="obs-table">

@@ -287,7 +287,66 @@ Confirm exactly one `MARKET_PRISM` row appears in the DB and the Overview tab re
 
 ---
 
-## Step 9 — No-two-live-daemons cutover rule
+## Step 9 — Weekly Suggestions scheduler (systemd oneshot + timer)
+
+`weekly_suggestions_scheduler.py` runs once a week and wires three advisory-only suggestion engines (Strategy Builder, Asset Swap, Logic Change) to unattended execution. Unlike the Market Prism council (Step 8), this is an SDK/metered-API-key path — it authenticates with the operator's `ANTHROPIC_API_KEY` in `.env`, NOT a Claude subscription OAuth token, so it needs only `.env`, no second `EnvironmentFile=`.
+
+### 9a — Create the oneshot service and timer units
+
+`/etc/systemd/system/planetstopper-weekly-suggestions.service`:
+
+```ini
+[Unit]
+Description=Planet Stopper weekly advisor suggestions (Strategy Builder + Asset Swap + Logic Change)
+After=network.target planetstopper.service
+
+[Service]
+Type=oneshot
+User=planetstopper
+WorkingDirectory=/opt/planetstopper
+EnvironmentFile=/opt/planetstopper/.env
+ExecStart=/opt/planetstopper/.venv/bin/python -m advisors.weekly_suggestions_scheduler
+StandardOutput=journal
+StandardError=journal
+```
+
+`/etc/systemd/system/planetstopper-weekly-suggestions.timer`:
+
+```ini
+[Unit]
+Description=Planet Stopper weekly advisor suggestions — Mondays at 04:00 ET
+
+[Timer]
+OnCalendar=*-*-* Mon 04:00 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+systemctl daemon-reload
+systemctl enable --now planetstopper-weekly-suggestions.timer
+```
+
+`Persistent=true` ensures a missed run (e.g., VPS rebooted at 04:00 Monday) fires as soon as the system is back up.
+
+### 9b — Verify the weekly scheduler
+
+Manually trigger a test run:
+
+```bash
+systemctl start planetstopper-weekly-suggestions
+journalctl -u planetstopper-weekly-suggestions -f
+```
+
+Confirm `STRATEGY_BUILDER`, `ASSET_SWAP`, and `LOGIC_CHANGE` advisor_observations rows appear in the DB (one engine's failure does not block the others — D-1 isolation per engine) and that they surface in the AI Advisor Overview tab.
+
+**Registering the timer on the droplet is a PM-gated deploy step** — this section ships the unit files + docs; enabling the timer against the live droplet is a separate, explicitly-approved rollout action (same convention as Step 8's Market Prism timer).
+
+---
+
+## Step 10 — No-two-live-daemons cutover rule
 
 **Never run two live daemons at once.** If migrating from a local machine to the droplet:
 

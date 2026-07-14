@@ -914,7 +914,10 @@
 
             <div data-testid="vs-row" class="vs-row">
               <div class="vs-row-top">
-                <span class="vs-row-label">Cumulative</span>
+                <!-- Finding 5: the row's anchor is the Composer LIFETIME per-symphony
+                     return (only the guard alpha re-windows) — qualify the basis so it
+                     cannot read as the windowed chart's cumulative beside it. -->
+                <span class="vs-row-label">Cumulative &middot; lifetime</span>
                 <span data-testid="comp-cumulative-bot-text" class="vs-val {% if cr_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Bot {% if cr_bot >= 0 %}+{% endif %}{{ "%.2f"|format(cr_bot) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-cumulative-held-text" class="vs-val {% if cr_held >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Held {% if cr_held >= 0 %}+{% endif %}{{ "%.2f"|format(cr_held) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-cumulative-delta" class="vs-delta {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}α {% if cr_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(cr_alpha) }}%{% else %}&mdash;{% endif %}</span>
@@ -1026,7 +1029,8 @@
          Populated on page load by fetchGuardAlphaSummary() in static/index.js.
          Reuses .hero-section light card-UI CSS — no dark/foreign theme. -->
     <div data-testid="dollar-saved-panel" class="hero-section" style="text-align:center;">
-      <span data-testid="dollar-saved-headline" id="dollar-saved-headline" style="font-size:2em;font-weight:700;color:var(--studio-pos);">&mdash;</span>
+      <!-- Finding 9: no hardcoded color — fetchGuardAlphaSummary() sets pos/neg by sign. -->
+      <span data-testid="dollar-saved-headline" id="dollar-saved-headline" style="font-size:2em;font-weight:700;">&mdash;</span>
       <span style="font-size:1.1em;color:var(--studio-ink);"> saved across </span>
       <span data-testid="guard-event-count" id="guard-event-count" style="font-size:1.1em;font-weight:600;color:var(--studio-ink);">&mdash;</span>
       <span style="font-size:1.1em;color:var(--studio-ink);"> exits</span>

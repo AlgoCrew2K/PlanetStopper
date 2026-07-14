@@ -133,11 +133,18 @@ class TestRC4PersistRegardlessOfVerdict:
             persisted.append(kwargs)
             return len(persisted)
 
-        score_tree = {
-            "id": "sym-rc4",
-            "type": "root",
-            "children": [{"type": "asset", "ticker": "SPY", "weight": 1.0}],
-        }
+        # R2-3: a REAL, structurally-valid Composer tree — asset_swap_engine's
+        # validate_tree guard (wired unconditionally for every swap variant)
+        # rejects the old hand-built {"type": "root", ...} shape (missing the
+        # real "step" vocabulary). Built via the real symphony_schema
+        # constructors so it is genuinely valid.
+        from advisors import symphony_schema  # noqa: PLC0415
+
+        score_tree = symphony_schema.make_root(
+            "sym-rc4",
+            "daily",
+            [symphony_schema.make_weight_equal([symphony_schema.make_asset("SPY")])],
+        )
         objective = swap_engine.SwapObjective(
             objective_type="reduce_correlation",
             target_pair=("sym-rc4", "sym-other"),
@@ -192,11 +199,14 @@ class TestRC4PersistRegardlessOfVerdict:
             persisted.append(kwargs)
             return len(persisted)
 
-        score_tree = {
-            "id": "sym-rc4b",
-            "type": "root",
-            "children": [{"type": "asset", "ticker": "SPY", "weight": 1.0}],
-        }
+        # R2-3: same symphony_schema-built tree fix as the sibling test above.
+        from advisors import symphony_schema  # noqa: PLC0415
+
+        score_tree = symphony_schema.make_root(
+            "sym-rc4b",
+            "daily",
+            [symphony_schema.make_weight_equal([symphony_schema.make_asset("SPY")])],
+        )
         objective = swap_engine.SwapObjective(
             objective_type="reduce_correlation",
             target_pair=None,
@@ -349,11 +359,14 @@ class TestRC5NoSilentMasking:
         """
         fake_bt = _varied_returns_backtest(seed=11, n=700, mean_pct=0.5)
 
-        score_tree = {
-            "id": "sym-rc5p",
-            "type": "root",
-            "children": [{"type": "asset", "ticker": "SPY", "weight": 1.0}],
-        }
+        # R2-3: same symphony_schema-built tree fix as the RC4 tests above.
+        from advisors import symphony_schema  # noqa: PLC0415
+
+        score_tree = symphony_schema.make_root(
+            "sym-rc5p",
+            "daily",
+            [symphony_schema.make_weight_equal([symphony_schema.make_asset("SPY")])],
+        )
         objective = swap_engine.SwapObjective(
             objective_type="reduce_correlation",
             target_pair=None,

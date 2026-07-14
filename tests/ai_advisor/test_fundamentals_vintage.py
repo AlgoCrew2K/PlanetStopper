@@ -48,6 +48,7 @@ _FX_MODE_B = _FX_DIR / "fundamentals_vintage_mode_b_bundled_comparative.json"
 _FX_MODE_A = _FX_DIR / "fundamentals_vintage_mode_a_migrated_concept.json"
 _FX_CROSS = _FX_DIR / "fundamentals_vintage_cross_tag_later_listed_wins.json"
 _FX_MALFORMED = _FX_DIR / "fundamentals_vintage_malformed_payloads.json"
+_FX_MIXED_10K_10Q = _FX_DIR / "fundamentals_vintage_mixed_10k_10q.json"
 
 # The five outer logical keys that key_facts MUST have (AC-4 shape guard).
 _EXPECTED_KEY_FACTS_KEYS = frozenset(
@@ -82,6 +83,12 @@ def _load_cross() -> dict:
 
 def _load_malformed() -> dict:
     return json.loads(_FX_MALFORMED.read_text(encoding="utf-8"))
+
+
+def _load_mixed_10k_10q() -> dict:
+    data = json.loads(_FX_MIXED_10K_10Q.read_text(encoding="utf-8"))
+    _validate_companyfacts_shape(data["companyfacts"])
+    return data
 
 
 def _validate_companyfacts_shape(cf: dict) -> None:
@@ -427,6 +434,151 @@ class TestCrossTag:
             f"AC-3 union failure: selected end={selected_end!r}, "
             f"true max end across ALL candidate tags={true_max_end!r}. "
             "The producer did not union all candidate tags before picking max end."
+        )
+
+
+# ---------------------------------------------------------------------------
+# advisor-suite-fixes.md AC-4: latest reporting period INCLUDING 10-Q
+# (operator-approved 2026-07-13 — reverses the deliberate scope-out in
+# lens-fundamentals-vintage-fix.completed.md's Edge Cases: "10-Q vs 10-K
+# mixing: existing logic prefers 10-K; preserved... out of scope")
+#
+# NOTE ON NUMBERING: this file's OTHER classes (TestModeB/TestModeA/
+# TestCrossTag/TestPayloadShape/TestHonestDegradation/TestBothPaths/
+# TestNeverRaising) use AC-1..AC-7 from the ORIGINAL F5 handoff (the
+# end-desc/filed-desc sort fix). This class covers a DIFFERENT, later AC — also
+# numbered "AC-4" but from feature-plans/advisor-suite-fixes.md — do not
+# conflate the two AC-4s.
+# ---------------------------------------------------------------------------
+
+
+class TestMixedFormsLatestPeriodWins:
+    """advisor-suite-fixes.md AC-4: given a companyfacts fixture with BOTH a
+    10-K (older end) and a 10-Q (newer end) for the same concept, the
+    selection must return the 10-Q period — not stop at 10-K entries before
+    the sort ever sees the fresher 10-Q.
+
+    THE BUG: ai_advisor.py:1041-1043 pre-filters to 10-K-only whenever ANY
+    10-K entry exists for the concept:
+        annual_entries = [e for e in unit_entries if e.get("form") == "10-K"]
+        entries_to_check = annual_entries or unit_entries
+    The (end desc, filed desc) sort then only ever sees the 10-K entries — the
+    fresher 10-Q is discarded before the sort runs, regardless of how much
+    fresher it is.
+
+    Uses ticker AAPL deliberately — already in ai_advisor._SEC_TICKER_CIK_CACHE
+    (no tickers-JSON round trip needed), matching the plan's own real-world
+    validation example.
+    """
+
+    def test_10q_wins_over_older_10k_for_same_concept(self):
+        """FAILS on current: the 10-K-only pre-filter means the sort never even
+        considers the fresher 10-Q entry — the stale 10-K always wins whenever
+        a 10-K entry is present, no matter how much older its end date is.
+        """
+        fx = _load_mixed_10k_10q()
+        cf = fx["companyfacts"]
+        expected_end = fx["_expected"]["Revenues_logical_concept"]["expected_end"]
+        buggy_end = fx["_expected"]["Revenues_logical_concept"]["buggy_end"]
+
+        import ai_advisor
+
+        with patch("requests.get", return_value=_mock_resp(cf)):
+            result = ai_advisor._fetch_fundamentals_for_ticker("AAPL")
+
+        assert result.get("available") is True, (
+            f"available=False unexpectedly. reason={result.get('reason')!r}"
+        )
+        key_facts = result["payload"]["key_facts"]
+        assert "Revenues" in key_facts, "key_facts missing 'Revenues' concept"
+
+        selected_end = key_facts["Revenues"]["end"]
+        assert selected_end != buggy_end, (
+            f"AC-4 defect: producer returned the STALE 10-K end={buggy_end!r}. "
+            "The 10-K-only pre-filter discarded the fresher 10-Q entry before "
+            "the (end desc, filed desc) sort ever ran. FIX: consider ALL forms "
+            "(10-K AND 10-Q), not just 10-K, then let the existing sort pick "
+            "the freshest end."
+        )
+        assert selected_end == expected_end, (
+            f"AC-4 defect: producer returned end={selected_end!r} but the "
+            f"correct (freshest, form-agnostic) end is {expected_end!r}."
+        )
+
+    def test_selected_value_and_form_come_from_the_10q_entry(self):
+        """FAILS on current: wrong entry selected, so value/form are also wrong.
+
+        AC-4: once the 10-Q period is selected, its own val and form="10-Q"
+        must be surfaced — not the 10-K entry's val/form.
+        """
+        fx = _load_mixed_10k_10q()
+        cf = fx["companyfacts"]
+        expected_val = fx["_expected"]["Revenues_logical_concept"]["expected_val"]
+        expected_form = fx["_expected"]["Revenues_logical_concept"]["expected_form"]
+        buggy_val = fx["_expected"]["Revenues_logical_concept"]["buggy_val"]
+
+        import ai_advisor
+
+        with patch("requests.get", return_value=_mock_resp(cf)):
+            result = ai_advisor._fetch_fundamentals_for_ticker("AAPL")
+
+        assert result.get("available") is True, (
+            f"available=False unexpectedly. reason={result.get('reason')!r}"
+        )
+        key_facts = result["payload"]["key_facts"]
+        selected_val = key_facts["Revenues"]["value"]
+        selected_form = key_facts["Revenues"]["form"]
+
+        assert selected_val != buggy_val, (
+            f"AC-4 defect: producer returned the stale 10-K value={buggy_val!r} "
+            "instead of the fresher 10-Q value."
+        )
+        assert selected_val == expected_val, (
+            f"AC-4 defect: producer returned value={selected_val!r} but the "
+            f"correct (10-Q) value is {expected_val!r}."
+        )
+        assert selected_form == expected_form, (
+            f"AC-4 defect: key_facts['Revenues']['form']={selected_form!r} but "
+            f"the selected entry's own form is {expected_form!r} — the form "
+            "field must reflect whichever entry was actually selected, not be "
+            "hardcoded to '10-K'."
+        )
+
+    def test_portfolio_fanout_path_also_includes_10q(self):
+        """FAILS on current: AC-4's fix must apply on BOTH call paths (mirrors
+        the existing file's AC-6 'both paths' pattern) — the portfolio
+        fan-out path (_build_fundamentals_section with no ticker) must also
+        surface the fresher 10-Q, not just the single-ticker path.
+        """
+        fx = _load_mixed_10k_10q()
+        cf = fx["companyfacts"]
+        expected_end = fx["_expected"]["Revenues_logical_concept"]["expected_end"]
+
+        import ai_advisor
+
+        with (
+            patch("database.load_state", return_value=_empty_holdings_state()),
+            patch("requests.get", return_value=_mock_resp(cf)),
+        ):
+            block = ai_advisor._build_fundamentals_section()
+
+        assert block.get("available") is True, (
+            f"Portfolio fan-out returned available=False. reason={block.get('reason')!r}"
+        )
+        tickers_payload = block["payload"].get("tickers", {})
+        assert len(tickers_payload) >= 1, "Portfolio payload has no per-ticker facts."
+
+        corrected_found = False
+        for _ticker_name, ticker_payload in tickers_payload.items():
+            kf = ticker_payload.get("key_facts", {})
+            if "Revenues" in kf and kf["Revenues"]["end"] == expected_end:
+                corrected_found = True
+                break
+        assert corrected_found, (
+            f"AC-4 portfolio path: no ticker in the payload has "
+            f"Revenues.end == {expected_end!r} (the 10-Q period). "
+            "The portfolio fan-out path did not apply the form-agnostic "
+            "selection fix."
         )
 
 

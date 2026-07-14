@@ -3130,6 +3130,8 @@ Decision: no backward-compat shims for schemas that never existed in production.
 
 ## DE-GUARD-ALPHA-SAVED-001 — Post-mortem if-held sourced from shadow_history.current_return (2026-06-22)
 
+**PARTIALLY SUPERSEDED by `DE-PROD-ACCURACY-001` (2026-07-09).** This entry's "Why this is correct" section and field-semantics table describe `live_ret = sym.get("current_return", 0.0)` as correctly sourcing from `shadow_history` — it does not; that code reads `bot_state`, which the action-phase override clobbers post-trigger. The comment this commit introduced claimed shadow_history sourcing that was never implemented. See `DE-PROD-ACCURACY-001` Finding 2 for the corrected three-tier sourcing (`shadow_history` / `shadow_history_post_cutoff` / `bot_state_fallback`, each declared via an `if_held_source` field) and the current field-semantics table. The bug narrative and basket-reconstruction root-cause analysis below remain accurate as history.
+
 Branch: fix/guard-alpha-saved-math | Base: 8d7ea51 | Fix commit: 0d0d4f3
 
 ### The bug: basket reconstruction collapsed to ~$0 saved
@@ -4066,6 +4068,1120 @@ DE-ATLAS-STAT-FIELD-002; branch `fix/atlas-fetch-slow-query`; HEAD `81a8d46`; su
 
 ---
 
+## DE-LOGIC-CHANGE-DIRECTION-001 -- Logic-change description parser: direction-blind fallback fixed (2026-07-12)
+
+Branch: fix/advisor-livepath-bugs | Base: b2865d7 | Fix commit: a62e673
+
+### The bug: fallback tweak ignored the stated direction
+
+`advisors/logic_change_engine._parse_change_description_to_tweak` parses an operator plain-text `change_description` (e.g. `"Reduce window from 20d to 16d"`) into a `LogicTweak` via four phases. Phases 1-2 extract explicit `"from X to Y"` numeric values and were never affected -- the stated values are used verbatim. Phases 3 and 4 (no explicit numbers in the description -- direction must be inferred from keywords alone) both applied a flat `old_val * 1.20` (unconditional +20% increase) regardless of what the description said.
+
+Reality-audit finding, live-verified: `"reduce the window size"` on `old_value=10` produced `new_value=12` -- an INCREASE despite the word "reduce". This reached the operator-initiated live path (`propose_operator_logic_change(change_description=...)`) whenever a description was worded without explicit before/after numbers -- a realistic, likely-common input shape.
+
+**Why the existing test suite did not catch it:** coverage exercised Phases 1-2 (explicit-number descriptions) and the objective-directed generator (`generate_objective_directed_candidates`, which already carried correct per-objective signs via named constants), but had no test forcing Phase 3/4 with a direction-only, no-numbers description -- exactly the shape most likely to come from a real operator.
+
+### The fix
+
+New `_fallback_direction_factor(desc_lower) -> float` helper scans the FULL description text (not just the substring matched to a `param_key`) for direction keywords:
+
+```python
+_FALLBACK_INCREASE_FACTOR: float = 1.20
+_FALLBACK_DECREASE_FACTOR: float = 0.80
+_REDUCE_DIRECTION_KEYWORDS: tuple[str, ...] = ("reduce", "lower", "decrease", "shrink")
+_INCREASE_DIRECTION_KEYWORDS: tuple[str, ...] = ("increase", "raise", "grow")
+
+def _fallback_direction_factor(desc_lower: str) -> float:
+    if any(kw in desc_lower for kw in _REDUCE_DIRECTION_KEYWORDS):
+        return _FALLBACK_DECREASE_FACTOR
+    if any(kw in desc_lower for kw in _INCREASE_DIRECTION_KEYWORDS):
+        return _FALLBACK_INCREASE_FACTOR
+    return _FALLBACK_INCREASE_FACTOR
+```
+
+Applied identically in Phase 3 (preferred-key match) and Phase 4 (first-numeric-parameter fallback) -- they share identical math, so the fix is one helper called from both sites. Defaults to `_FALLBACK_INCREASE_FACTOR` when no direction keyword is present, preserving the prior behavior for direction-less descriptions (e.g. `"tweak the window a bit"`).
+
+`old_value=10` with `"reduce the window size"` now yields `new_value=8` (`round(10 * 0.80)`), not `12`.
+
+### Blast radius
+
+Confined to the plain-text-description fallback path (Phases 3-4 of `_parse_change_description_to_tweak`), reached only through `propose_operator_logic_change(change_description=...)` with no explicit numbers in the description.
+
+**Not affected:**
+- Phases 1-2 of the same parser (explicit `"from X to Y"` numbers) -- direction is inherent to the stated values.
+- `generate_objective_directed_candidates` (the advisor-suggested candidate generator) -- its five named per-objective scaling factors (`_REDUCE_DRAWDOWN_TIGHTEN_FACTOR=0.80`, `_LIFT_RISK_ADJUSTED_LOOSEN_FACTOR=1.25`, etc.) already carried objective-correct signs.
+- `propose_operator_logic_change(tweak=...)` (explicit `LogicTweak` object) -- direction is caller-supplied, not parsed.
+
+### Result
+
+`tests/ai_advisor/test_logic_change_engine.py::TestPhase3FallbackDirectionRespected` (11 tests: Phase-3 reduce/increase keyword parametrization, Phase-4 reduce/increase with no `param_key` keyword match, the exact audit-regression pin (`old_value=10` must not yield `new_value=12`), and one live end-to-end test through `propose_operator_logic_change`) plus the pair authoritative 125-test run and `ruff format`/`check` all GREEN at a62e673.
+
+### Files changed
+
+- `advisors/logic_change_engine.py` -- `_fallback_direction_factor` helper + 4 new named constants + Phase 3/4 call sites (+31/-4 lines, commit a62e673)
+- `tests/ai_advisor/test_logic_change_engine.py` -- `TestPhase3FallbackDirectionRespected` (new class, 11 tests, commit 404fc02)
+- `docs/generated/advisors_logic_change_engine.md` -- new module reference doc (was previously undocumented)
+- `docs/generated/INDEX.md` -- new module-index row + dated Architecture Notes bullet
+
+## DE-TECH-SMA200-HISTORY-001 -- Technicals lens: _HISTORY_DAYS raised so the 200-day SMA is actually computable (2026-07-12)
+
+Branch: fix/advisor-livepath-bugs | Base: b2865d7 | Fix commit: a62e673
+
+### The bug: above_sma200 was structurally unreachable on every real fetch
+
+`advisors/lens_technicals._HISTORY_DAYS` was `270` calendar days. Using the standard NYSE trading-day ratio (252 trading days per 365 calendar days, approximately 0.6904), 270 calendar days implies only approximately 186.6 trading bars -- below `_SMA_200_WINDOW=200`. `_compute_sma` returns `None` whenever `len(closes) < window`, so `above_sma200` was unconditionally `None` for every ticker, on every real Alpaca fetch, forever -- while the lens still reported `available=True` (silent degradation). Reality-audit live-verified across 10 tickers (including SPY and QQQ) that `above_sma200` never resolved to a boolean. `above_sma50` and `momentum` (20-day) were unaffected -- only the 200-day indicator was structurally unreachable.
+
+**Why the existing test suite did not catch it:** every unit test mocks `_get_bars` directly with a synthetic bar sequence of 250+ bars (well above 200), bypassing the real `_HISTORY_DAYS` calendar-window math entirely. The gap only manifests on a real Alpaca fetch, where `_get_bars` requests `today - _HISTORY_DAYS` calendar days and Alpaca returns however many trading bars actually fall in that window -- fewer than the mocked fixtures assumed.
+
+### The fix
+
+Raised `_HISTORY_DAYS` from `270` to `320` calendar days:
+
+```python
+# 320 calendar days covers ~221 trading days (320 * 252/365), clearing
+# _SMA_200_WINDOW=200 with margin for NYSE holidays.  270 was too short
+# (~186 trading days) and left above_sma200 permanently None
+# (DE-TECH-SMA200-HISTORY-001).
+_HISTORY_DAYS: int = 320
+```
+
+320 calendar days implies approximately 221 trading bars (320 * 252/365) -- roughly a 21-trading-day margin above the 200-day requirement, enough to absorb NYSE holidays without falling short. Live-confirmed post-fix: SPY and QQQ both return non-`None` `above_sma200` from a real Alpaca fetch.
+
+### Blast radius
+
+Confined to `above_sma200` and any consumer reading it (the Market Prism per-lens digest, `ai_advisor._build_technicals_section` payload `ma_posture` field). `above_sma50`, `breadth`, and `momentum` were always computable from a 270-day window and are unaffected. No change to retry logic, honest-availability contract, or the universe-sourcing wiring (DE-TECH-002, unrelated, already correct).
+
+### Result
+
+`tests/ai_advisor/test_lens_technicals.py::TestHistoryDaysSufficientForSma200` (2 tests: `_HISTORY_DAYS * 252/365 >= _SMA_200_WINDOW` arithmetic check, and a realistic-weekday-bar-count golden test replaying the module own date-range math) plus the pair authoritative 125-test run and `ruff format`/`check` all GREEN at a62e673.
+
+### Files changed
+
+- `advisors/lens_technicals.py` -- `_HISTORY_DAYS` 270 -> 320 + updated source comment (+5/-3 lines, commit a62e673)
+- `tests/ai_advisor/test_lens_technicals.py` -- `TestHistoryDaysSufficientForSma200` (new class, 2 tests, commit 404fc02)
+- `docs/generated/advisors_lens_technicals.md` -- constants table + new Bug Fix section + wiring line-number correction
+- `docs/generated/ai_advisor.md` -- stale line-number + stale `_fetch_technicals([])` claim corrected while sweeping this section (pre-existing drift, unrelated to this fix, corrected in the same pass)
+- `docs/generated/INDEX.md` -- module-index row + dated Architecture Notes bullet
+
+## DE-ADVISOR-REWIRE-E -- autotune_runs.s_count writer wired; Overfitting Conscience Indicator-3 (operator drift) can now fire on live data (2026-07-12)
+
+Branch: fix/advisor-rewire | Base: ec52a49a | Fix commits: 4168c0c6 (database.py + autotuner.py)
+
+### The gap: an existing column with no writer
+
+Migration `023_autotune_runs_s_count.sql` added the `s_count` column to `autotune_runs` well before this cycle, but no caller ever populated it -- `database.save_autotune_run` had no `s_count` parameter. Every row's `s_count` was `NULL` forever. `advisors/overfitting_conscience.py`'s Indicator-3 (operator drift -- monotonically growing `S` across consecutive runs on the same symphony) requires `>= 2` prior runs with non-`NULL`, increasing `s_count` to fire. With every historical row `NULL`, drift detection was **structurally impossible** on live data, regardless of how much genuine researcher drift actually occurred -- not because `overfitting_conscience.py`'s own I-1/I-2/I-3 logic was wrong (it was verified already-correct and left untouched), but because its input was always empty.
+
+### The fix
+
+1. `database.save_autotune_run` gains `s_count: int | None = None` as the 17th INSERT column on `autotune_runs`. Uses `is not None`, not a truthiness check -- `s_count=0` (the honest NN1-compliant no-BACKTEST_SELECTION-evidence case) persists as literal `0`, never coerced to `NULL`. Append-only -- no UPDATE path introduced.
+2. `autotuner.py` hoists the DoF-ledger sum query (`SELECT evidence_source, n_configs_searched ... FROM researcher_dof_ledger WHERE spec_bundle_id = ?`, run via `advisor_ro_query`) from AFTER `save_autotune_run` (where it fed ONLY the in-memory Overfitting Conscience call) to BEFORE it. `_s_count_for_persistence = sum(n_configs_searched for BACKTEST_SELECTION rows)` is now passed as `save_autotune_run(s_count=...)`. This is a control-flow reorder only -- the current-run I-1/I-2 `S` computation and verdict logic in `overfitting_conscience.py` are unchanged; they re-derive their own `S` from the same ledger rows independently of the persisted `s_count`.
+
+### Why this matters (the WHY)
+
+Indicator-3 exists specifically to catch a slow-burn overfitting failure mode that I-1/I-2 (single-run S/N ratio) cannot see: an operator who runs many small, individually-innocuous BACKTEST_SELECTION searches across successive autotune cycles on the same symphony, each one below the I-2 BREACH threshold, but which accumulate into genuine multiple-testing exposure over time. Without a real `s_count` history, this drift pattern was invisible no matter how it manifested in practice -- the safeguard existed in code and had full test coverage, but could never fire against the live database.
+
+### NULL tolerance (AC-E4)
+
+Legacy rows with `s_count IS NULL` (everything written before this fix) are tolerated -- the prior-runs scan skips `NULL` entries rather than crashing. Drift detection needs `>= 2` non-`NULL` priors, so it will not fire until enough post-fix runs accumulate; this is expected and correct. No retroactive backfill of historical rows was attempted (they carry no unambiguous `s_count` figure to backfill).
+
+### Blast radius
+
+Confined to `database.save_autotune_run`'s new optional kwarg and the query-hoist inside `autotuner.py:run_autotuner`. `overfitting_conscience.py` (the consumer) is byte-unchanged. `compute_n_effective`'s own `S` computation (a DIFFERENT accumulator -- current-run-only, excludes the winning bundle, feeds the BHY haircut) is unaffected and remains distinct from the persisted `s_count` (an all-`BACKTEST_SELECTION`-rows accumulator with no winning-bundle exclusion, consumed by LATER runs' drift check).
+
+### Result
+
+RED committed by awt-test at `d5ff3480`: `tests/database/test_save_autotune_run_s_count.py` (6 tests) + `tests/autotuner/test_autotuner_s_count_hoist_wiring.py` (4 tests). GREEN at `4168c0c6`: all 11 pass, plus a 273-test regression sweep across files adjacent to `save_autotune_run`/`autotuner.py`/`overfitting_conscience.py` -- 0 failures. `ruff format`/`check` clean.
+
+### Files changed
+
+- `database.py` -- `save_autotune_run` gains `s_count` kwarg + INSERT column (commit 4168c0c6)
+- `autotuner.py` -- DoF-ledger query hoisted before `save_autotune_run`; `s_count=` passed (commit 4168c0c6)
+- `tests/database/test_save_autotune_run_s_count.py`, `tests/autotuner/test_autotuner_s_count_hoist_wiring.py` -- RED (commit d5ff3480)
+- `docs/generated/database.md`, `docs/generated/autotuner.md`, `docs/generated/advisors_overfitting_conscience.md`, `docs/generated/INDEX.md` -- updated to reflect the fix (commit f8b46a24)
+
+## DE-ADVISOR-REWIRE-A -- Strategy Builder weekly dedup TypeError fixed; ASSET_SWAP/LOGIC_CHANGE observations surfaced in the dashboard (2026-07-12)
+
+Branch: fix/advisor-rewire | Base: ec52a49a | Fix commits: 9cc64113 (dedup), eb98fb0b (surfacing)
+
+### AC-A1: the dedup guard that always returned False
+
+`advisors/strategy_builder_scheduler._already_ran_this_week()` called `database.get_advisor_observations_for_symphony(symphony_id="", advisor_role="STRATEGY_BUILDER", limit=50)` -- a call signature that does not exist (`get_advisor_observations_for_symphony` takes only `symphony_id`). Every invocation raised `TypeError`, silently caught by the function's own outer `except Exception` (a deliberate D-1 degrade-to-`False` for genuine DB errors), so `_already_ran_this_week()` ALWAYS returned `False` -- the same-ISO-week idempotency guard never actually fired. The ISO-week comparison logic itself (lines 64-87) was always correct; it was simply unreachable behind the swallowed exception. Fixed by calling the real `database.get_advisor_observations_for_role("STRATEGY_BUILDER", limit=50)` accessor.
+
+**Why this matters:** before Workstream B's orchestrator existed, this bug meant a second manual/cron invocation of `run_weekly_build()` in the same ISO week would have re-triggered a full 4-objective builder run (Composer backtests, Opus generation cost) with zero idempotency protection -- exactly the "computationally expensive, weekly-granularity-by-design" resource the guard exists to protect.
+
+### AC-A2/AC-A3: producers with no consumer
+
+`advisors/asset_swap_engine.suggest_swaps` and `advisors/logic_change_engine.suggest_logic_changes` both persist `ASSET_SWAP`/`LOGIC_CHANGE` `advisor_observations` rows on every call and always have -- but `app.py`'s `_ADVISOR_ROLES` list (which both the `/ai-advisor` Overview feed and the `/api/advisor-observations` no-filter branch iterate) never included either role, so those rows were written to the DB but never rendered anywhere. Fixed additively: `_ADVISOR_ROLES` gains `"ASSET_SWAP"` and `"LOGIC_CHANGE"`; `templates/ai_advisor.html`'s `_ROLE_LABELS` gains human labels (`"Asset Swap"`, `"Logic Change"`) so the Overview table never renders the raw enum string. AC-A3 (the Strategy Builder tab surfacing a `symphony_id=""` weekly row) needed no code change -- `app.py:4069-4076`'s query was already unscoped by symphony; a regression test now pins it.
+
+### Blast radius
+
+AC-A1 is confined to the one call site inside `_already_ran_this_week()`. AC-A2 is additive-only to `_ADVISOR_ROLES` and `_ROLE_LABELS` -- all 5 pre-existing roles unchanged, no route/template structural change, no new write path, no CSRF surface change.
+
+### Result
+
+RED committed by awt-test at `d5ff3480`: `tests/advisors/test_dedup_already_ran_this_week_role_query.py` (5 tests), `tests/app/test_advisor_roles_surface_asset_swap_and_logic_change.py` (10 tests). GREEN: `9cc64113` (dedup, 5/5 + 4/4 `test_builder_scheduler.py` regression), `eb98fb0b` (surfacing, 10/10 + 49/49 `test_advisor_observations_ui.py` regression). `ruff format`/`check` clean.
+
+### Files changed
+
+- `advisors/strategy_builder_scheduler.py` -- dedup call fixed (commit 9cc64113)
+- `app.py` -- `_ADVISOR_ROLES` gains 2 entries (commit eb98fb0b)
+- `templates/ai_advisor.html` -- `_ROLE_LABELS` gains 2 entries (commit eb98fb0b)
+- `tests/advisors/test_dedup_already_ran_this_week_role_query.py`, `tests/app/test_advisor_roles_surface_asset_swap_and_logic_change.py` -- RED (commit d5ff3480)
+- `docs/generated/advisors_strategy_builder_scheduler.md`, `docs/generated/INDEX.md` -- updated (commit f8b46a24)
+
+## DE-ADVISOR-REWIRE-D -- lens-blend efficacy fix (mathematically inert -> genuinely reorders) + AC-D3 gate order-independence fix (2026-07-12)
+
+Branch: fix/advisor-rewire | Base: ec52a49a | Fix commits: 63ede739 (blend formula), 6a6baa5a (stale-fixture repoint), c61a3086 (AC-D3 gate seed)
+
+### The bug: a blend that could never blend
+
+`advisors/asset_swap_engine._apply_lens_blend` computed `blended_key[i] = position[i] - LENS_BLEND_WEIGHT * mean_lens[i]`, where `position` was the candidate's 0-based `enumerate()` rank from the primary objective sort and `LENS_BLEND_WEIGHT = 0.25`. For ANY two adjacent positions, the integer gap is always `>= 1`, and the maximum possible lens contribution is `LENS_BLEND_WEIGHT = 0.25 < 1` -- so the position gap structurally dominates the lens term for every possible input. Lens evidence could NEVER change the candidate order, for any objective, any lens_scores, any candidate set. This was live and shipped for the entire Cycle-3 cycle undetected, because the existing `test_lens_scores_reranks_candidates` test never actually asserted that a reorder occurred -- it merely asserted the function ran without error.
+
+### The fix: cumulative absolute score-distance
+
+Replaced with a formula on the CONTINUOUS primary `"score"` field (already present on every candidate dict): `cum_gap[i] = cum_gap[i-1] + |score[i] - score[i-1]|` (walked in the caller's own pre-sorted order), `blended_key[i] = cum_gap[i] - LENS_BLEND_WEIGHT * (mean_lens[i] - _LENS_NEUTRAL_SCORE)`. Deliberately NOT a per-batch min-max normalization -- min-max would always rescale a 2-candidate gap to fill `[0, 1]` regardless of true magnitude (a `0.0001` gap and a `0.90` gap would look identical after min-max), defeating the required invariant that a near-tied pair CAN invert but a commanding lead CANNOT. Raw absolute-gap accumulation preserves magnitude, so the fix satisfies both directions of AC-D2 simultaneously.
+
+### The WHY -- why this fix matters and why it was "dead in production" until wired further
+
+Fixing the math in isolation would not have been enough. `_apply_lens_blend` is reachable ONLY via `generate_objective_directed_candidates <- suggest_swaps <- (a caller passing real lens_scores)`. Before this cycle, NO production code anywhere called `suggest_swaps` with a real `lens_scores` argument -- the blend had a complete, tested implementation and, as of this fix, correct math, but zero live reachability. Workstream C.2 (`weekly_suggestions_scheduler._fetch_lens_scores()`, see DE-ADVISOR-REWIRE-C below) closed that gap in the SAME cycle, sourcing real market-wide lens evidence from the nightly `MARKET_LENS_CACHE` and passing it into every weekly `suggest_swaps` call. The team deliberately sequenced D before C.2's lens-wiring completion (not deferred to "a later cycle" as the original C.2 scope draft proposed) specifically so this fix would never ship as "looks wired, does nothing."
+
+### AC-D3: a second bug surfaced by making D genuinely functional
+
+Verifying Workstream D's own AC-D3 invariant test ("gate output is unchanged for a fixed candidate set, regardless of submission order") failed independent of the blend fix -- `advisors/backtest_gate_engine.evaluate_candidate_batch` seeded its Sortino bootstrap with `seed=idx` (the candidate's `enumerate()` position in the batch, not a property of the candidate itself). Reordering the SAME candidate set (as a working lens blend now legitimately does) reassigned different seeds to each candidate, producing a different bootstrap SE / t-stat / BHY-adjusted p-value for the IDENTICAL candidate purely as a function of submission order -- a pre-existing latent bug that a permanently-inert blend had never been able to trigger. Fixed via `_stable_seed_from_candidate_id` -- a SHA-256 hash (not the builtin `hash()`, which CPython randomizes per-process via `PYTHONHASHSEED`) of each candidate's OWN `candidate_id`, making the seed order-independent by construction. This was outside Workstream D's stated scope boundary ("do NOT change `evaluate_candidate_batch`") but was authorized by the PM as a scoped exception specific to this order-dependence bug -- `autotuner.py`'s own, different `seed=trial_idx` context (never-reordered single Optuna study) was explicitly left untouched.
+
+### Also surfaced, not fixed here (routed to test-writer)
+
+`tests/ai_advisor/test_cycle3_lens_informed_swaps.py::TestLensBlendPrimaryMetricDominance::test_primary_metric_dominates_opposing_lens_preference` failed against the now-functioning blend. Root-caused as a STALE fixture assumption predating this cycle: its AGG constant-series fixture assumed `corr(SPY,AGG) ~ 1.0` ("worst" case), but `_pearson_corr`'s existing (unmodified) zero-variance guard actually returns `0.0` for any constant series -- verified numerically live: `corr(SPY,BND)=0.0`, `corr(SPY,AGG)=0.0` (exact tie), `corr(SPY,TLT)=0.49`. BND and AGG are genuinely primary-score-tied, so the lens legitimately breaking that tie (AC-D2: zero gap is the smallest possible gap) is correct NEW behavior, not a regression -- the test only ever passed vacuously under the old inert blend. Repointed by the test-writer at commit `6a6baa5a` (role separation preserved -- the implementer does not edit test assertions).
+
+### Blast radius
+
+`asset_swap_engine.py`: confined to `_apply_lens_blend`'s internals -- function signature, `LENS_BLEND_WEIGHT`'s existence/value, and `evaluate_candidate_batch` (per the D scope boundary) are unchanged. `backtest_gate_engine.py`: confined to the single Step-2 seed-derivation call site inside `evaluate_candidate_batch`.
+
+### Result
+
+RED: `tests/ai_advisor/test_lens_blend_efficacy.py` (committed at `356197a0`/`d5ff3480` by awt-test, including a closed-form inertness proof of the pre-fix formula in its module docstring). GREEN: 8/9 at `63ede739` (the 9th, `TestGateOutputUnchangedByCandidateOrder`, surfaced AC-D3); 9/9 at `c61a3086`. Adjacent regression at `c61a3086`: 518 passed, 23 skipped (pre-existing/unrelated), 0 failed across `test_cycle3_lens_informed_swaps.py`, `test_lens_blend_efficacy.py`, `test_logic_change_routes.py`, `test_asset_swap_routes.py`, `test_pbo_acceptance_gate_veto.py`, `test_strategy_builder_route.py`, and 9 more adjacent files. `ruff format`/`check` clean.
+
+### Files changed
+
+- `advisors/asset_swap_engine.py` -- `_apply_lens_blend` reformulated (commit 63ede739)
+- `advisors/backtest_gate_engine.py` -- `_stable_seed_from_candidate_id` + seed-source fix (commit c61a3086)
+- `tests/ai_advisor/test_lens_blend_efficacy.py` -- RED (commit 356197a0/d5ff3480)
+- `tests/ai_advisor/test_cycle3_lens_informed_swaps.py` -- stale-fixture repoint (commit 6a6baa5a, test-writer)
+- `docs/generated/advisors_asset_swap_engine.md`, `docs/generated/advisors_backtest_gate_engine.md`, `docs/generated/INDEX.md` -- updated (commit f8b46a24)
+
+## DE-ADVISOR-REWIRE-C -- weekly per-symphony loop callers give suggest_swaps/suggest_logic_changes their first production callers (2026-07-12)
+
+Branch: fix/advisor-rewire | Base: ec52a49a | Fix commits: 9d3da841 (C.1/C.2/B initial), 29d2f042 (C.2 lens_scores wiring completion)
+
+### The gap
+
+`advisors/asset_swap_engine.suggest_swaps` and `advisors/logic_change_engine.suggest_logic_changes` both had complete implementations, full BHY-FDR gating, and comprehensive test suites -- but, before this cycle, no scheduled or automatic caller anywhere in the codebase. They were reachable only via direct manual/operator invocation (never actually invoked in practice). `advisors/weekly_suggestions_scheduler.py` (new module) adds `run_weekly_asset_swap_suggestions()` (AC-C2) and `run_weekly_logic_change_suggestions()` (AC-C1) -- both enumerate every live symphony via `database.load_state()`, fetch each symphony's Composer score tree, and call the respective engine once per symphony, each iteration independently `try`/`except`-wrapped (per-symphony D-1 isolation -- one symphony's score-fetch or engine failure never blocks the others). AC-C3: the engines themselves are UNCHANGED -- this is purely the enumeration/caller layer that did not exist.
+
+### AC-C2 completion: wiring lens_scores in the SAME cycle, not deferred
+
+The initial C.2 implementation (commit `9d3da841`) deliberately shipped WITHOUT `lens_scores` wiring, per the plan's literal wording ("wired through ONLY after D is GREEN"). Once D landed GREEN, a PM-verified reachability check found that `_apply_lens_blend` (fixed by D) was reachable ONLY via `generate_objective_directed_candidates <- suggest_swaps <- run_weekly_asset_swap_suggestions` (`propose_operator_swap` does not use the blend) -- so the fixed lens-blend math was STILL dead in the only real production path, because the loop called `suggest_swaps` with no `lens_scores` argument. The plan's "ONLY after D is GREEN" was correctly read as "sequenced after D within this same cycle," not "deferred to a separate cycle." Commit `29d2f042` adds `_fetch_lens_scores()` -- a read-only, ONCE-per-run (not per-symphony, since lens evidence is market-wide) fetch of `database.get_latest_market_lens_cache()` -> `raw_response["lenses"]` -> `advisors.asset_swap_engine.extract_lens_scores(lenses)` -- and passes the result as `lens_scores=` to every `suggest_swaps` call in the loop. **NEVER a live lens-API fetch:** the 5 lens producers are `advisors/lens_pipeline.py`'s job (nightly, 03:00); re-fetching them live inside the weekly scheduler would blow its bounded budget and duplicate that pipeline's work. Honest degradation: a cold cache or an all-unavailable-lenses row both degrade to `{}`, which `_apply_lens_blend` already treats as a no-op (same contract as the pre-existing `lens_scores=None` path) -- never fabricates evidence.
+
+### v1 scope simplifications (documented, not silent)
+
+`run_weekly_asset_swap_suggestions`'s `target_pair` uses the symphony's own alphabetically-first held ticker as a v1 simplification -- true best-pair selection is `correlation_diagnostic.py`'s separate, more sophisticated job, explicitly out of this loop-wiring workstream's scope. `run_weekly_logic_change_suggestions`'s default objective (`reduce_drawdown`) and `run_weekly_asset_swap_suggestions`'s default objective (`reduce_correlation`, AC-C2-pinned) were chosen as the most broadly protective/well-scoped defaults absent an operator-specified target -- not pinned by the RED tests beyond the asset-swap default.
+
+### Result
+
+RED: `tests/advisors/test_weekly_logic_change_suggestions_loop.py`, `tests/advisors/test_weekly_asset_swap_suggestions_loop.py` (committed at `356197a0`/`d5ff3480`); `TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen` (4 new tests, committed at `dbf6c7bd`, PM-verified genuinely RED against `9d3da841` -- 2 positive-assertion tests failed, 8 others passed). GREEN: 36/36 across all of Workstreams A/D/C/B's targeted RED files at `9d3da841`, plus 10/10 in the asset-swap loop file (6 pre-existing + 4 new) at `29d2f042`; 117/117 unchanged-engine regression (`test_logic_change_engine.py`, `test_asset_swap_engine.py`, `test_builder_scheduler.py`). The adversarial test `test_wired_lens_scores_actually_reorder_candidates_on_real_data` re-runs the REAL `generate_objective_directed_candidates` with the loop's actual captured `correlation_data`/`lens_scores` and asserts a genuine reorder on realistic data -- proving D is genuinely live in production, not merely unit-tested. `ruff format`/`check` clean.
+
+### Files changed
+
+- `advisors/weekly_suggestions_scheduler.py` -- `run_weekly_logic_change_suggestions`, `run_weekly_asset_swap_suggestions`, `_fetch_lens_scores`, `_build_correlation_data` + helpers (new file, commits 9d3da841 + 29d2f042)
+- `tests/advisors/test_weekly_logic_change_suggestions_loop.py`, `tests/advisors/test_weekly_asset_swap_suggestions_loop.py` -- RED (commits 356197a0/d5ff3480/dbf6c7bd)
+- `docs/generated/advisors_weekly_suggestions_scheduler.md` (new), `docs/generated/advisors_asset_swap_engine.md`, `docs/generated/advisors_logic_change_engine.md`, `docs/generated/database.md`, `docs/generated/INDEX.md` -- updated (commit f8b46a24)
+
+## DE-ADVISOR-REWIRE-B -- weekly orchestrator + droplet systemd unit for all three advisor engines (2026-07-12)
+
+Branch: fix/advisor-rewire | Base: ec52a49a | Fix commit: 9d3da841
+
+### Summary
+
+New `advisors/weekly_suggestions_scheduler.py::run_weekly_suggestions()` calls, in sequence, each wrapped in its own D-1 `try`/`except` (one engine's failure never blocks the next, never propagates even when all three fail): (1) `strategy_builder_scheduler.run_weekly_build()`, (2) `run_weekly_asset_swap_suggestions()` (Workstream C.2), (3) `run_weekly_logic_change_suggestions()` (Workstream C.1). Invokable via `python -m advisors.weekly_suggestions_scheduler`. Deliberately does NOT extend `strategy_builder_scheduler.py` to hold the new orchestrator or loop callers -- that module stays Strategy-Builder-only per its own AC-18 scope (a static test asserts `strategy_builder_scheduler` never gains a `run_weekly_suggestions` attribute).
+
+### Why one orchestrator module for three engines
+
+All three engines share the same D-1 / bounded-retry / `.env`-credential shape, and the orchestrator needs direct access to the two new loop functions' names -- co-locating them in one new module gives the same blast-radius isolation as three separate timers (per-engine try/except) without the operational overhead of three separate systemd units, three separate idempotency mechanisms, or three separate cron entries to keep synchronized.
+
+### Deployment (AC-B3)
+
+`docs/DEPLOYMENT.md` gains "Step 9 -- Weekly Suggestions scheduler," mirroring the Market Prism council's Step 8 pattern but with one deliberate divergence: `planetstopper-weekly-suggestions.service` sets `EnvironmentFile=/opt/planetstopper/.env` ONLY -- no second `EnvironmentFile=/etc/planetstopper/council-env` line. The council (`prism_scheduler.py`) is a `claude -p` subprocess that strips `ANTHROPIC_API_KEY` from its environment specifically so it falls back to a Claude subscription OAuth token (`council-env`); this weekly scheduler makes NO direct Anthropic API calls of any kind (it only calls Composer `/backtest` via the underlying engines and Alpaca bar-fetch endpoints), so it needs neither credential path beyond the plain `.env` its DB/Composer/Alpaca clients already read. `planetstopper-weekly-suggestions.timer` sets `OnCalendar=*-*-* Mon 04:00 America/New_York` and `Persistent=true` (a missed run -- e.g. a droplet reboot exactly at that moment -- fires as soon as the system is back up, rather than silently skipping the week). Runs as non-root `planetstopper`, matching every other systemd unit in the deployment. The old "Step 9 -- No-two-live-daemons cutover rule" section was renumbered to Step 10 (content byte-unchanged).
+
+**Droplet timer REGISTRATION (`systemctl enable --now`) is explicitly a separate, PM-gated deploy step** -- this cycle ships only the unit files + documentation, per the same convention already established for the Market Prism council's Step 8 timer.
+
+### A reviewer-caught pre-GREEN gap (AC-B3 non-root User= directive)
+
+A RED test (`20aaa1f9`, "AC-B3 non-root User= directive gap -- reviewer finding") was added by the test-writer/reviewer pairing before the final GREEN commit to pin that the documented systemd service unit MUST contain `User=planetstopper` (not run as root) -- the GREEN commit (`9d3da841`) already includes this line, so the RED/GREEN ordering here reflects a reviewer catching a documentation-completeness gap during the cycle rather than a shipped defect.
+
+### Result
+
+RED: `tests/advisors/test_weekly_suggestions_orchestrator.py` (committed at `356197a0`, AC-B1-B4), plus the `20aaa1f9` AC-B3 doc-completeness addition. GREEN at `9d3da841`: 11/11 orchestrator tests, all of Workstreams A/D/C's tests green in the same commit (36/36 total across A.1/D/C.1/C.2/B), 117/117 unchanged-engine regression. `ruff format`/`check` clean.
+
+### Files changed
+
+- `advisors/weekly_suggestions_scheduler.py` -- `run_weekly_suggestions` + `__main__` guard (commit 9d3da841)
+- `docs/DEPLOYMENT.md` -- new "Step 9 -- Weekly Suggestions scheduler" section; old Step 9 renumbered to Step 10 (commit 9d3da841, awt-eng)
+- `tests/advisors/test_weekly_suggestions_orchestrator.py` -- RED (commits 356197a0, 20aaa1f9)
+- `docs/generated/advisors_weekly_suggestions_scheduler.md`, `docs/generated/INDEX.md` -- updated (commit f8b46a24)
+
+## DE-LENS-SCORE-SHAPE-001 -- extract_lens_scores rewritten to parse REAL producer shapes, not a fabricated ticker_scores key (2026-07-12)
+
+Branch: fix/advisor-rewire | Base: ec52a49a | Fix commits: 0b7eaebb (RED), 2839a2f3 (GREEN)
+
+### The bug: a parser and its own fixtures fabricated the same wrong shape
+
+`advisors/asset_swap_engine.extract_lens_scores` walked all 5 lens blocks looking for a `payload["ticker_scores"]` sub-dict. This key does not exist anywhere in the real system -- `0` real occurrences outside the stale test fixture and the function itself. Every one of the cycle's 441 mocked tests stayed green because every fixture that exercised this function fabricated the same `ticker_scores` shape the parser expected -- a textbook parser+fixture co-design failure, the exact class of bug the project's fixture-provenance hard rule exists to prevent (fixtures must be captured-from-producer or schema-derived-with-a-runtime-validator, never invented to match the code under test).
+
+**How it was caught:** the PM's live droplet-DB E2E gate -- running the full weekly asset-swap pipeline against a REAL, fresh `MARKET_LENS_CACHE` row (all 5 lenses genuinely `available=True`) -- returned `lens_scores == {}`. The D-workstream lens-blend formula fix (63ede739/c61a3086) and its C.2 production wiring (29d2f042) were both independently correct, but the entire feature was DEAD on real data because its very first parsing step returned nothing.
+
+### The fix: read the actual shape each producer emits
+
+Verified directly against the producers (not re-derived from the stale fixture):
+
+| Lens | Real payload shape | Per-ticker signal? |
+|------|---------------------|---------------------|
+| `technicals` | `{"ma_posture": {ticker: {above_sma50, above_sma200}}, "breadth": float, "momentum": {ticker: float}}` | YES -- `momentum`, an unbounded raw 20-day return |
+| `sentiment` | `{tone_score, corpus, events, article_count}` | No -- market-wide scalar |
+| `derivatives` | `{vix_level, vix_term_structure, risk_read, as_of_date}` | No -- market-wide scalar |
+| `macro` | `{"series": {series_id: {...}}}` | No -- FRED-series-keyed, market-wide |
+| `fundamentals` | `{"tickers": {ticker: key_facts_dict}, "coverage": {...}}` | Per-ticker-keyed but raw financials, not a clean scalar -- excluded from v1 by design |
+
+`extract_lens_scores` now reads ONLY `technicals.payload["momentum"]`. `ma_posture` (also per-ticker) is intentionally NOT read -- momentum alone is sufficient signal; folding `ma_posture` in is a documented future enhancement, not required for correctness. The other four lenses contribute nothing even when `available=True` -- fabricating a per-ticker score from a market-wide scalar (or an unrelated raw-financials blob) would itself violate the honest-availability contract this fix is trying to restore.
+
+Since real momentum is an unbounded raw return but `_apply_lens_blend` expects an already-normalized `[0,1]` favorability, a new helper `_squash_momentum_to_unit_interval(momentum)` maps it via `0.5 + 0.5*tanh(momentum / _MOMENTUM_SQUASH_SCALE)` (`_MOMENTUM_SQUASH_SCALE = 0.10`, a named constant, not a magic number). The exact scale is an implementation choice -- the pinned invariant is: momentum `== 0` maps to exactly `0.5` (neutral), the map is strictly monotonic in both directions, and any finite input stays strictly within `(0.0, 1.0)`.
+
+### The WHY -- this is the value case for a live E2E gate, not a unit-test gap
+
+This bug could not have been caught by any amount of additional mocked-test coverage written against the SAME fixture-generation process that produced the bug -- the fixture and the parser were co-designed by the same (incorrect) assumption about what the real system emits. Only a test that reads the REAL producer's output (or, as here, a live run against the real database) can catch a parser/fixture co-design failure. This is why the project's fixture-provenance hard rule requires captured-from-producer or schema-validated fixtures, and why "tests-green" was explicitly never treated as sufficient to ship this cycle.
+
+### Blast radius
+
+Confined to `extract_lens_scores`'s internals and the new `_squash_momentum_to_unit_interval` helper + `_MOMENTUM_SQUASH_SCALE` constant. The now-dead `_LENS_CONTEXT_KEYS` 5-lens iteration tuple was deleted (no longer iterated anywhere -- "no unused code" standard). `_apply_lens_blend`, `generate_objective_directed_candidates`, `suggest_swaps`, `propose_operator_swap`, and `evaluate_candidate_batch` are all unchanged -- this fix is entirely upstream of the blend, at the parsing boundary.
+
+### Result
+
+RED: `tests/ai_advisor/test_cycle3_lens_informed_swaps.py` (rewritten `_ADVISOR_CONTEXT_WITH_LENSES` fixture + new `TestExtractLensScoresMomentumSquashing`, 4 tests) + `tests/advisors/test_weekly_asset_swap_suggestions_loop.py` (rewritten `_cache_row` + 2 new `_fetch_lens_scores` direct-call tests) + `tests/fixtures/ai_advisor/cycle3/lens_score_extraction_basic.json` rewritten to the real shapes, all committed at `0b7eaebb` by awt-test (PM-verified genuinely RED: 11 new/rewritten positive-assertion tests failed against the `ticker_scores`-seeking parser, 34 others passed). GREEN at `2839a2f3`: 45/45 across both RED files. Adjacent regression: 69/69 across `test_asset_swap_engine.py`, `test_cycle3_lens_swaps_supplement.py`, `test_lens_blend_efficacy.py`, `test_weekly_logic_change_suggestions_loop.py`, `test_weekly_suggestions_orchestrator.py`. `ruff format`/`check` clean (the JSON fixture is intentionally excluded from ruff -- trailing commas in the fixture would be corrupted by a JSON-unaware formatter; this fix commit was path-scoped to `asset_swap_engine.py` only and did not touch the fixture).
+
+**Live-E2E acceptance bar (per PM):** a re-run of the E2E checkpoint against the real `MARKET_LENS_CACHE` row now produces non-empty `lens_scores` -- confirmed before this fix was accepted as GREEN.
+
+### Files changed
+
+- `advisors/asset_swap_engine.py` -- `extract_lens_scores` rewritten, `_squash_momentum_to_unit_interval` + `_MOMENTUM_SQUASH_SCALE` added, `_LENS_CONTEXT_KEYS` removed (commit 2839a2f3)
+- `tests/ai_advisor/test_cycle3_lens_informed_swaps.py`, `tests/advisors/test_weekly_asset_swap_suggestions_loop.py`, `tests/fixtures/ai_advisor/cycle3/lens_score_extraction_basic.json` -- RED (commit 0b7eaebb)
+- `docs/generated/advisors_asset_swap_engine.md`, `docs/generated/INDEX.md` -- updated with the real-shape parsing + squash + WHY
+
+## DE-LENS-CANDIDATE-POOL-001 -- asset-swap candidate pool sourced from the lens-covered universe, closing the last E2E-caught gap in the lens-blend chain (2026-07-12)
+
+Branch: fix/advisor-rewire | Base: ec52a49a | Fix commits: e267e1ce (RED), 71687fdc (GREEN)
+
+### The bug: a candidate pool that structurally never overlapped the lens universe
+
+Even after DE-LENS-SCORE-SHAPE-001 made `extract_lens_scores` genuinely return real momentum-derived `lens_scores`, a SECOND live droplet-DB E2E run found `lens_evidence` still persisting as `{}` end-to-end. Root cause: `run_weekly_asset_swap_suggestions`'s candidate pool was `sorted(get_tradeable_set())[:_ASSET_SWAP_CANDIDATE_POOL_SIZE]` -- the deterministic alphabetical-first-15 sample of the full ~12,748-symbol Alpaca tradeable universe. This is structurally incapable of overlapping `lens_technicals._PROXY_UNIVERSE` (the 10 sector-ETF tickers the technicals lens actually scores: SPY, QQQ, IWM, EFA, AGG, GLD, XLF, XLE, XLV, XLI) -- only tickers alphabetically `<= ~"AG"` could ever land in an alphabetical top-15, and none of the 10 proxy tickers do. `_build_candidate_lens_evidence`'s `lens_scores.get(candidate)` lookup therefore always missed, so lens-informed swaps were structurally `False` in production even with a live, correctly-parsed lens cache.
+
+### The fix: the pool IS the lens-covered universe
+
+New `_build_base_candidate_pool(bot_state)` helper: the candidate pool is `lens_technicals._PROXY_UNIVERSE` unioned with every live symphony's `logic_holdings` (the `bot_state` field `ai_advisor.py`'s technicals/fundamentals builders already read at `ai_advisor.py:520-526`/`1184-1190` -- NOT the Composer score-tree structure `extract_tickers` reads). Computed ONCE per run (not per-symphony), then bounded to `_ASSET_SWAP_CANDIDATE_POOL_SIZE` (normally a no-op -- `_PROXY_UNIVERSE` alone is 10 members).
+
+`universe_provider.get_tradeable_set()` is deliberately DROPPED entirely from pool construction -- not used even as a filter or intersection. Broad correlation-screened discovery across the full tradeable universe remains a documented future enhancement, explicitly out of this cycle's scope; intersecting against it here would reintroduce the exact "lens-covered tickers get filtered out" failure mode this fix closes -- proven by the RED test's garbage-alphabetical-universe fixture (tickers deliberately sorted before every real ticker), which asserts the pool must not depend on `get_tradeable_set()`'s membership or ordering at all.
+
+**Per-symphony exclusion (a design question the RED pinned):** each symphony's own candidate pool excludes THAT symphony's own held ticker(s), extracted from its own Composer `score_tree` via the existing `extract_tickers` (the same source `primary_ticker` already uses) -- so a symphony is never offered its own current holding as a "new" swap candidate. A ticker held by a DIFFERENT symphony remains a valid candidate for this one (no cross-symphony conflict). This mirrors, at the pool-construction level, `suggest_swaps`'s own existing `candidate_asset in present_tickers` filter (`asset_swap_engine.py`) -- defense-in-depth / explicit-by-construction, not a new behavioral class.
+
+### The WHY -- two independent E2E-only findings on one feature
+
+Neither this bug nor DE-LENS-SCORE-SHAPE-001 was reachable by unit-test coverage against mocked fixtures, because each mock encoded an assumption (a plausible-looking payload key; a plausible-looking "bounded sample of the universe") that was never checked against the other half of the real system it needed to interoperate with. The lens-blend feature had SIX links in its real chain (candidate pool -> lens fetch -> parse -> blend -> gate -> persist); this cycle's 441 green mocked tests each verified individual links in isolation, but only a live, largely-unmocked E2E run against real production data (real `MARKET_LENS_CACHE` row, real `bot_state`) could prove the chain was non-empty end-to-end. This is the second half of the concrete "why a mandatory live E2E gate" case documented under DE-LENS-SCORE-SHAPE-001 above.
+
+### Reviewer finding (non-blocking, accepted)
+
+`_build_base_candidate_pool` iterates `entry.get("logic_holdings", {})` for every `bot_state` entry with no per-symphony `try`/`except` around that read. The reviewer flagged this as a potential single-bad-entry blast-radius risk. Accepted without a code change: `logic_holdings` is never `None` on a well-formed `bot_state` entry (a malformed entry would already have failed `_live_symphony_hashes`'s `isinstance(entry, dict) and "name" in entry` filter earlier in the same pipeline, so it never reaches this helper at all), and the orchestrator's own D-1 wrapping around `run_weekly_asset_swap_suggestions` as a whole still contains any genuinely unexpected exception even in a worst case this reasoning missed.
+
+### Result
+
+RED: `tests/advisors/test_weekly_asset_swap_suggestions_loop.py`, new `TestAssetSwapLoopCandidatePoolSourcing` (4 tests) + renamed AAA/BBB/CCC -> QQQ/AGG/GLD fixtures in `TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen` (so those reorder-proof tests stay reachable through the fixed pool), committed at `e267e1ce` by awt-test (PM-verified genuinely RED: 3 new tests failed against `sorted(get_tradeable_set())[:15]`, 13 others passed). GREEN at `71687fdc`: 16/16 in that file. Combined regression across every workstream touched this cycle: 204/204 passed. `ruff format`/`check` clean.
+
+**This closes the last E2E-caught gap.** The end-to-end proof test (`test_persisted_asset_swap_rows_carry_non_empty_lens_evidence_end_to_end`) runs a REAL (unmocked) `suggest_swaps` pipeline -- only the true network/DB boundary (`run_backtest`, `_has_composer_key`, `insert_advisor_observation`) is mocked -- and asserts at least one persisted `ASSET_SWAP` row carries non-empty `lens_evidence`, proving the full chain (pool -> lens overlap -> blend -> gate -> persist) end-to-end, not just unit-level.
+
+### Files changed
+
+- `advisors/weekly_suggestions_scheduler.py` -- `_build_base_candidate_pool` added; `get_tradeable_set()` import/call removed; per-symphony pool exclusion added to `run_weekly_asset_swap_suggestions` (commit 71687fdc)
+- `tests/advisors/test_weekly_asset_swap_suggestions_loop.py` -- RED (commit e267e1ce)
+- `docs/generated/advisors_weekly_suggestions_scheduler.md`, `docs/generated/advisors_asset_swap_engine.md`, `docs/generated/INDEX.md` -- updated with the lens-covered-pool sourcing + WHY
+## DE-PROD-ACCURACY-001 — Live droplet accuracy audit: int64 persistence crash, $-saved sourcing, History/Performance canonicalization (fix/prod-accuracy-audit, 2026-07-09)
+
+Branch: `fix/prod-accuracy-audit` | Base: `0bcbd1a` (origin/main, deployed SHA) | GREEN HEAD: `3ebc504`
+
+### Source
+
+A three-auditor live-droplet audit (`da-math`, `da-output`, `da-flow`, synthesized by `da-lead`) against production `root@104.248.7.101` at deployed SHA `0bcbd1a`, cross-verified via one batched read-only SSH pass (fresh DB copy, `mode=ro`, deleted after) plus local `git show`/`git grep` re-reads of every cited code mechanism. Full verdict: `VERDICT-droplet.md` (2026-07-09). 13 findings; 3 real defect clusters fixed in this cycle plus a MEDIUM display-fix batch. Two items are explicitly OUT of this cycle's scope (see "Not done here" below).
+
+### Finding 1 (CRITICAL) — `save_state` crashed on numpy int64, causing the same exit to re-fire 4 times
+
+**Bug:** `database.py:296` serialized `bot_state` via plain `json.dumps` with no numpy-aware `default=`. On 2026-07-09, a numpy `int64` reached `bot_state` on a Take-Profit path and crashed 3 consecutive saves (`TypeError: Object of type int64 is not JSON serializable`). Each failed save lost that cycle's `triggered=True`; the next cycle reloaded pre-trigger state and re-fired the same exit — `exit_triggers` rows 80–83, same symphony, same stale `cycle_id`, 4 consecutive minutes. In `LIVE_EXECUTION` mode this is up to 4 duplicate sell submissions; the droplet's `MODE: DRY RUN` limited the damage to telemetry (duplicated exit rows, a shadow_history basis frozen at the 4th re-fire's value instead of the true first exit — the recorded exit ended up ~0.10pp worse than reality).
+
+**Fix:** `database._sanitize_state_for_json` — a recursive walk over the full `bot_state` tree (not a `json.dumps(default=...)` hook, because `default=` is never invoked for a plain `float('nan')`, which serializes "successfully" as a poison token and would never reach the hook). Coerces `np.integer → int`, `np.bool_ → bool`, and any float (numpy or plain) through the repo's pre-existing `_finite_or_none` idiom so `NaN`/`±inf` persist as `None` rather than a poison token or a second save-time crash. Unknown non-JSON types still raise — no silent serialization of anything the sanitizer doesn't explicitly recognize. `save_state()` now calls `json.dumps(_sanitize_state_for_json(state_dict))`.
+
+A first-pass `default=` hook was replaced with the recursive-walk sanitizer during Revise (reviewer finding 1) once the NaN gap above was found — `default=` alone left `float('nan')` completely unguarded.
+
+### Finding 2 (HIGH) — $-saved sourcing: the #80 fix's comment described shadow_history sourcing the code never implemented
+
+**Bug:** `reporting.py`'s Stage-1 post-mortem read if-held return from `bot_state[sym]["current_return"]`. `DE-GUARD-ALPHA-SAVED-001` (2026-06-22, commit `0d0d4f3`) shipped the comment `"Source if-held from shadow_history.current_return (the engine's live trajectory)..."` — but the code it introduced (`live_ret = sym.get("current_return", 0.0)`) never actually queried the `shadow_history` table. It read `bot_state`'s `current_return` field, which the action-phase "TRUE SHADOW RETURN OVERRIDE" (`alpha_bot_execution.py:1189–1203`, written at `:1548`) clobbers every cycle with a frozen-basket reconstruction. That reconstruction collapses to ≈ `f_ret` on basket misses (booking exactly $0.00 saved) and fabricates values otherwise. **7 of 11 audited days were sign-flipped** (e.g. 06-24 LQD booked $0.00 vs. true ≈ +$10.88; 06-23 "Golden Age" booked +$5.69 vs. true ≈ −$13.79 — a value that appears at no minute of that day's real `shadow_history`).
+
+**This entry corrects `DE-GUARD-ALPHA-SAVED-001`:** that entry's "Why this is correct" section — asserting `bot_state`'s `current_return` "tracks the live if-held trajectory accurately post-trigger" — was wrong. The 2026-06-22 fix changed the sourcing EXPRESSION but not the underlying TABLE; both before and after that commit, the value came from `bot_state`, never `shadow_history` itself. Treat this entry as the authoritative statement of Finding 2's fix; `DE-GUARD-ALPHA-SAVED-001`'s field-semantics table is superseded by the table below.
+
+**Fix — three-tier sourcing with explicit provenance:**
+
+1. **`shadow_history` (primary):** `database.load_latest_shadow_row(symphony_id, trading_day, et_cutoff=STAGE1_SNAPSHOT_CUTOFF_ET)` — the latest `shadow_history` row for the symphony+day at/before the snapshot cutoff. `if_held_source = "shadow_history"`.
+2. **`shadow_history_post_cutoff` (Revise-phase addition, pf-eng-flagged corner ruled by pf-test):** when a day's shadow rows are ALL after the cutoff (daemon started after 15:55 ET), `database.load_earliest_shadow_row(symphony_id, trading_day)` books the earliest post-cutoff row instead — real off-basis shadow data beats the clobbered `bot_state` value. `if_held_source = "shadow_history_post_cutoff"`.
+3. **`bot_state_fallback` (last resort):** only when the (symphony, day) has strictly ZERO `shadow_history` rows does the code fall back to `sym.get("current_return", 0.0)`. `if_held_source = "bot_state_fallback"`.
+
+Every Stage-1 trigger entry now declares its `if_held_source` as a queryable field (`reporting.py:75/83/90/128`) — the exact mechanism that would have made the #80 regression impossible to hide: provenance previously lived only in a comment; now it is asserted by `tests/reporting/test_postmortem_if_held_shadow_history_source.py` and visible in every post-mortem JSON.
+
+**Snapshot-cutoff invariant (reviewer finding B):** `STAGE1_SNAPSHOT_CUTOFF_ET = "15:54:59"` (`reporting.py:22`) must equal `SNAPSHOT_CUTOFF_ET` in `scripts/regenerate_post_mortems.py` (the historical repair tool) — pinned by an AST drift-guard test. Without this, an off-schedule Stage-1 run (manual regeneration, a daemon that starts late — the engine ticks to ~16:04) would silently re-base if-held onto EOD shadow rows while the panel still declares a snapshot-time basis. The regeneration script deliberately stays import-free (standalone droplet use), so the two constants are independently declared and guard-tested rather than shared via import.
+
+**Repair-tool strictness vs. producer honesty:** `scripts/regenerate_post_mortems.py` (introduced this cycle, operator-gated, dry-run default — see "Not done here") REFUSES to regenerate an all-post-cutoff day; only the live Stage-1 producer degrades through tier 2/3. The regen script also now counts wins from the unrounded `saved_pct` (matching Stage-1's own classification), fixing a rounding-boundary mismatch where `0 < saved_pct < 0.005` could flip classification between a live post-mortem and its regenerated twin.
+
+### Finding 3 (HIGH) — History tab rendered 50 all-time triggers as "Today's exits" every trading morning
+
+**Bug:** `GET /api/history/<days>` backfilled `todays_exits` whenever the field was empty — true every trading day before the 15:54 ET post-mortem write. The fallback query (`app.py:2967–2988` pre-fix) had no date filter (`SELECT ... FROM exit_triggers ORDER BY ts_utc DESC LIMIT 50`), clobbered the true windowed `trigger_count` with the 50-row feed length while `total_saved`/`win_rate` still derived from the real windowed count, and emitted a field shape (`ts_utc`/`at_return`/`triggered_reason`) that `history.js` doesn't consume (`ts`/`reason`/`detail`), blanking Time/Reason/Detail and showing the raw hash id instead of a symphony name.
+
+**Fix:** the fallback now filters to the current ET trading day, maps fields to the consumed shape (`ts`, `symphony_name` via the `bot_state` name map, `reason`, `detail`), never overwrites the windowed `trigger_count` with the feed length, and renders a zero-exit day honestly empty rather than backfilling stale rows. Verified against the real droplet DB copy: the fallback now returns exactly today's 11 exits (of 87 all-time) with 11/11 names resolved. Finding 11 (a companion low-severity item) is folded in here: the post-mortem-path `todays_exits` also gained a `time_triggered → ts` mapping, since the Time column rendered an em-dash even on the healthy EOD path.
+
+### Finding 4/6 (HIGH/MEDIUM) — Performance and Overview disagreed because three surfaces used three different series/weights
+
+**Bug:** `/api/performance` (aggregate scope) served only post-mortem `triggers` arrays — a selection-biased sample of symphonies that triggered that day, valued at exit-moment snapshot; zero-trigger days vanished entirely from the series. Separately, the Overview hero chart and other VW aggregators weighted each symphony's contribution by `abs(current_return)` rather than position value — a bug disguised as "value-weighted" — which exaggerated daily levels roughly 4x (a 13-day executed comparison showed bot −3.43%/held −4.75% abs-weighted vs. an honest −0.85%/−2.23% equal-weighted recompute over the same days). The two defects compounded: Performance and Overview could show materially different pictures of the same period, and neither series was the true portfolio.
+
+**Fix (analytics.py):** `get_portfolio_daily_returns_from_shadow`, `get_portfolio_bot_and_held_daily_returns`, and `get_single_day_shadow_returns` all now weight by `bot_state` `current_value` (genuine value-weighting, positive-finite values only) with an equal-weight degradation when no position values exist — the `abs(return)` proxy is retired everywhere these functions are used.
+
+**Fix (app.py, `/api/performance` scope=aggregate):** now serves this same canonical value-weighted `shadow_history` series — the identical source `/api/hero-chart` compounds — instead of the post-mortem trigger arrays. Zero-trigger days now appear. `scope=symphony` is unchanged (still post-mortem-history-derived per-symphony breakdowns).
+
+**Field-semantics correction (option B, Revise-phase, GREEN commit `920744a`):** the original day-1 fallback paths mapped the producer's `(dates, bot, held)` tuple inverted relative to the payload's own field names and every JS legend label. Ratified vocabulary, now applied consistently across the canonical aggregate path AND both day-1 fallbacks: **`live_returns` = if-held, the still-held Composer account** (weighted `current_return`); **`shadow_returns` = the Planet-Stopper-exited counterfactual** (weighted `shadow_return`). `quantstats` metric dicts (`live_metrics`/`shadow_metrics`) follow their corrected series. `performance.html`'s subtitle and insufficient-history banner no longer claim a post-mortem-snapshot basis — they now state the real one ("daily portfolio series, value-weighted").
+
+**Verified against the real droplet DB copy:** VW series terminal bot −0.21%/held −1.26% (the honest neighborhood) vs. the abs-weight defect's −3.51%/−4.56%.
+
+### Finding 5/8/9 (MEDIUM) — display-honesty batch
+
+- **Finding 5:** Overview "Cumulative" row (lifetime Composer anchor + windowed alpha) sat beside a 13-day compounded chart with no basis label. Fix: row now labeled "Cumulative · lifetime."
+- **Finding 8:** `$`-saved panel excluded all of today's guard activity until the 15:54 ET write, with no "as of" hint and no refresh after page load. Fix: `basis_label` now carries "through `<latest>`" freshness; the panel re-fetches on the existing SSE `cycle-complete` event (no new polling — the 60s floor is unchanged, SSE-driven).
+- **Finding 9:** the `$`-saved headline hardcoded the positive color (`index.html:1028`), so a negative cumulative (routine on a bad week — e.g. Jul-7 −$23.16) rendered in the "up" color. Fix: sign-conditional color + `-$N.NN` formatting (pattern reused from `index.js:157`).
+
+### Finding 10 — `shadow_history.trigger_id` lineage wired (0 of 25,218 rows previously linked)
+
+**Bug:** `alpha_bot_execution.py` read `_last_trigger_id` at one site (`:908`) but nothing ever wrote it — `shadow_history.trigger_id` could structurally never populate. Any historical repair had to join by the ambiguous `(symphony, day, time)` heuristic, which Finding 1's duplicate-trigger day makes genuinely ambiguous.
+
+**Fix:** `database.record_exit_trigger` now returns the inserted row id (previously returned `None` always; still returns `None` on a swallowed failure — the "telemetry never fails the cycle" contract is unchanged). The trigger-success site in `alpha_bot_execution.py` (`:1838`) stashes the returned id as `bot_state[sym_id]["_last_trigger_id"]` — the write side of the read that already fed `record_shadow_observation`. An AST writer-existence guard automates the audit's "one reader, zero writers" falsification going forward.
+
+### Not done here (operator-gated / explicitly out of scope)
+
+- **Journald buffering (Finding 7):** `ExecStart=.../python app.py` has no `-u`/`PYTHONUNBUFFERED`, so Python block-buffers stdout to journald — the journal can lag the live daemon by up to ~96 minutes, making a healthy engine look frozen. Fix is a one-line systemd drop-in (`Environment=PYTHONUNBUFFERED=1`) — a droplet deploy change, operator-gated, not applied by this cycle.
+- **Historical post-mortem regeneration (06-23 → 07-08):** `scripts/regenerate_post_mortems.py` (this cycle, `8e538cc`) is committed and dry-run by default, but running it against the live droplet's historical post-mortem files to correct the sign-flipped $-saved figures is an operator-gated data-repair step, not run as part of this cycle. Tracked as a follow-up.
+- **DRY RUN disposition:** the droplet runs `MODE: DRY RUN (SAFE)` — the audit flags this as an operator disposition question, not a defect. Finding 1's fix should land before any live-execution arming decision (a numpy-int64 crash loop in `LIVE_EXECUTION` would submit duplicate real sell orders).
+
+### Verification
+
+GREEN HEAD `3ebc504` (7 implementation commits: `6fef9fe`, `ba331a3`, `743a267`, `7d1a260`, `3ebc504` — pf-eng; `8f6cb23`, `920744a` — pf-dash). pf-test's independent merge-gate reproduction: 109 passed / 0 failed across the nine-file RED/Revise set, reproduced at `3ebc504`. Two pre-existing tests were left stale-by-intent for a separate re-point pass (not this cycle's scope): `tests/app/test_performance_routes.py` (2 aggregate tests mocking the old producer) and `tests/app/test_live_dashboard_metrics.py` (4 tests using a synthetic `exit_triggers` fixture that lacks `ts_et` vs. the real schema, and pinning the removed `trigger_count` clobber / old field shape).
+
+### Files changed
+
+- `database.py` — `_sanitize_state_for_json` (recursive numpy/non-finite sanitizer), `load_latest_shadow_row` (`et_cutoff` param), `load_earliest_shadow_row` (new), `record_exit_trigger` (returns inserted row id)
+- `reporting.py` — `STAGE1_SNAPSHOT_CUTOFF_ET` constant; Stage-1 three-tier if-held sourcing + `if_held_source` provenance field
+- `alpha_bot_execution.py` — stashes `record_exit_trigger`'s returned id as `_last_trigger_id`
+- `analytics.py` — `get_portfolio_daily_returns_from_shadow`, `get_portfolio_bot_and_held_daily_returns`, `get_single_day_shadow_returns` — value-weighting by `current_value`, equal-weight degradation, `abs(return)` proxy retired
+- `app.py` — `/api/history/<days>` today-filter + field-shape + name-map; `/api/performance` canonical VW aggregate series + option-B `live_returns`/`shadow_returns` field semantics (all three code paths); `/api/guard-alpha-summary` basis_label freshness
+- `static/index.js` — sign-conditional `$`-saved color/formatting; SSE re-fetch of guard-alpha summary
+- `templates/index.html` — hardcoded-green removed; Cumulative row lifetime label
+- `templates/performance.html`, `static/performance.js` — subtitle/banner basis correction; refresh-floor comment update (no behavior change)
+- `scripts/regenerate_post_mortems.py` — new, operator-gated, dry-run default (Finding 2 historical repair tool; not run against production by this cycle)
+- `docs/generated/reporting.md`, `docs/generated/database.md`, `docs/generated/app.md` — reconciled (see below)
+
+### Reference
+
+`VERDICT-droplet.md` (2026-07-09); supersedes `DE-GUARD-ALPHA-SAVED-001`'s "Why this is correct" sourcing claim and field-semantics table (see Finding 2 above); branch `fix/prod-accuracy-audit`; GREEN HEAD `3ebc504`.
+
+## DE-CANDIDATE-ALERT-001 — Header candidate-alert indicator: always-visible weekly-suggestion survivor badge + run-status (2026-07-12)
+
+Branch: feature/candidate-alert | Base: unified main 1a40467c | GREEN HEAD: c3cea87b
+
+### Problem
+
+The weekly suggestions job (`advisors/weekly_suggestions_scheduler`) produces advisory ASSET_SWAP/LOGIC_CHANGE/STRATEGY_BUILDER candidates, gated by the strict FDR/PBO/SPY-OOS overfitting discipline. Most candidates are correctly rejected — survivors are rare and valuable. Before this cycle, those results only surfaced if the operator happened to open the AI Advisor tab: a real winner could sit unnoticed for a week, and a week that ran-but-rejected-everything was indistinguishable from a broken job. Operator request (2026-07-12): "some sort of alerting system on the actual UI, probably in the header somewhere so it's always visible regardless of the screen I'm on... otherwise I'll never actually know if this is working."
+
+### Decision
+
+Add a single, always-visible header indicator — badges the count of NEW, UNVIEWED survivor candidates, surfaces the latest weekly-run status (even at zero survivors, so the operator can confirm the job is alive), and routes to the existing AI Advisor surfacing on click. Advisory-only UI: no new trade path, no `LIVE_EXECUTION` touch. Ships DIRECT to origin/main (no PR) per the operator's advisory-work-is-ungated-by-PR rule, after the PM's live E2E gate.
+
+### Implementation
+
+**Backend (`app.py`):**
+- `GET /api/candidate-alert` — read-only, returns `{new_valid_count, last_run}`. Both underlying accessor calls are independently `try/except`-wrapped so a DB failure degrades only that one field; the route always returns 200 (AC-6).
+- `POST /api/candidate-alert/mark-viewed` — CSRF-protected (via the global `_csrf_before_request` hook, not an explicit in-route call), advisory-only write (NOT in `_SETTINGS_WRITE_ALLOWLIST`, never touches `LIVE_EXECUTION`). Takes no request body — the new marker value is server-computed only (AC-5), so a caller cannot set it to an arbitrary observation id.
+
+**Database (`database.py`, migration `033_candidate_alert_state.sql`):**
+- New single-row `candidate_alert_state` table (`id INTEGER PRIMARY KEY CHECK (id = 1)`, `last_viewed_observation_id`, `updated_at`) — same "pinned singleton" idiom as `bot_state`/`execution_lock`.
+- Five new accessors: `get_candidate_alert_viewed_marker`, `set_candidate_alert_viewed_marker` (monotonic UPSERT via `MAX(existing, new)`), `mark_candidate_alert_viewed` (zero-arg, computes `MAX(id)` over the weekly-suggestion roles itself), `get_candidate_alert_new_valid_count`, `get_candidate_alert_last_run` (calendar-date-grouped batch aggregate — there is no run_id column on these three roles, so the UTC date of the latest row stands in for "one run").
+
+**Frontend:** the indicator markup lives in `templates/_chrome.html` — the ONE shared header partial all four screens (`index.html`, `ai_advisor.html`, `history.html`, `performance.html`) already `{% include %}` — so AC-1 (all-screens visibility) required zero per-screen duplication; `tests/app/test_candidate_alert_indicator_render.py::TestAllFourScreensShareTheChromePartial` pins that all 4 templates keep including it. `static/chrome.js` (the one JS asset shared by all 4 screens — `static/index.js` loads on the dashboard root only) gained `fetchCandidateAlert()` (30s poll + once on `DOMContentLoaded`) and `markCandidateAlertViewed()` (fired on click, `keepalive: true`). The indicator's `<a href>` is a real server-rendered link to `/ai-advisor` — AC-4 routing works even with JS disabled.
+
+### Verdict-classification refinement (deviation from feature-plan wording)
+
+The feature plan (AC-2) defined "valid" as `verdict != "REJECT_VETO_FAILED"`. The shipped implementation is stricter: `_CANDIDATE_ALERT_SURVIVOR_VERDICT = "ADOPT_CANDIDATE"` — the sole survivor condition is an exact match, not a rejection-exclusion. This additionally excludes `DECISION_KEEP_INCUMBENT` (`acceptance_gate.py`'s third decision string — the common "no benefit, nothing changed" outcome for ASSET_SWAP/LOGIC_CHANGE), which the plan's `!=` wording would have incorrectly counted as a badge-worthy survivor. `KEEP_INCUMBENT` is not a new candidate the operator needs to review; badging it would have reintroduced the noise this feature exists to eliminate. Ratified as the correct reading of AC-2's intent (the plan's own text says "rejected-for-no-benefit candidates do NOT count").
+
+### Verified
+
+Toxic-pair TDD cycle on `feature/candidate-alert`: RED at `2dec0a17` (migration 033 test + route tests + header-partial/chrome.js render tests), GREEN at `d0b3a180`, one CSRF-redundancy fix at `e045a7d7`, one ruff-format nit at `c3cea87b` (alert-review finding, non-blocking). alert-review APPROVED at `e045a7d7`, re-stamped clean at `c3cea87b`. Independent merge-gate reproduction: 71/71 GREEN, `ruff format`/`ruff check` clean project-wide.
+
+### Files changed
+
+- `app.py` — `candidate_alert()`, `candidate_alert_mark_viewed()`
+- `database.py` — `candidate_alert_state` table bootstrap + 5 accessors; `_MIGRATION_FILES` gains `033_candidate_alert_state.sql`
+- `migrations/033_candidate_alert_state.sql` — new
+- `templates/_chrome.html` — indicator markup (`#candidate-alert-indicator`, `#candidate-alert-badge`)
+- `static/chrome.js` — `fetchCandidateAlert()`, `markCandidateAlertViewed()`
+- `docs/generated/app.md`, `docs/generated/database.md`, `docs/generated/INDEX.md`, `docs/generated/static_chrome_js.md` (new) — reconciled
+
+## DE-ADVISOR-SUITE-FIX-001 -- Post-audit advisor suite fixes: AC-1..AC-7 (2026-07-13, cycle in progress)
+
+Branch: fix/advisor-suite | Base: unified main 5f9fa942 | Plan: feature-plans/advisor-suite-fixes.md
+
+### Origin
+
+ADVISOR-AUDIT-VERDICT.md (2026-07-13 audit, worktree adv-audit) -- the operator caught the PM over-claiming a comprehensive AI Advisor audit when only the DB/API layer had been checked, never the rendered UI or data freshness. A read-only audit team drove every AI Advisor tab as a user (Playwright + screenshots) and checked live data freshness, surfacing 6 confirmed defects (AC-1..AC-6) plus 3 previously-unverified surfaces to confirm or fix (AC-7). Every fix in this cycle must be proven from the RENDERED UI (a screenshot the PM reads), never DB/unit-test-only -- see the plan's PM LIVE-UI GATE.
+
+### AC-4 -- Fundamentals lens now selects the latest reporting period including 10-Q (operator-approved reversal)
+
+**Problem:** `ai_advisor.py`'s fundamentals selection loop pre-filtered to 10-K-only entries before the existing `(end desc, filed desc)` sort (the vintage-fix cycle's own Mode A/Mode B logic, DE-FUND-002). Any 10-Q entry for a concept was discarded outright whenever even one 10-K existed for that concept -- live evidence: AAPL resolved to its 2025-09 10-K instead of the ~2026-03 10-Q, feeding the nightly Market Prism council stale-by-~6-months fundamentals data. `lens-fundamentals-vintage-fix.completed.md` had deliberately scoped this out ("we do NOT start trusting 10-Q over 10-K -- out of scope") -- the operator explicitly approved reversing that scope-out on 2026-07-13.
+
+**Fix:** `ai_advisor.py:1034-1050` (`_fetch_fundamentals_for_ticker`) drops the 10-K-only pre-filter -- ALL forms now feed the union that the existing `(end desc, filed desc)` sort ranks, so the freshest reporting period wins regardless of form. Zero change to the sort/selection logic itself (Mode A concept-fallback, Mode B end-sort are untouched) -- this is a pure pre-filter removal. Both the single-ticker and portfolio fan-out paths share the fix (same helper).
+
+**Superseded doc:** `feature-plans/lens-fundamentals-vintage-fix.completed.md` gained an append-only "Superseded" section pointing at this decision; its historical body (Mode A/B rationale, the original 10-K-preference edge case) is unedited and remains accurate for everything except the 10-Q exclusion.
+
+**Tests:** `tests/ai_advisor/test_fundamentals_vintage.py` -- 3 new tests (`TestMixedFormsLatestPeriodWins`: 10-Q wins over an older 10-K for the same concept; the selected value/form come from the 10-Q entry; the portfolio fan-out path also applies the fix), all 24 tests in the file pass (21 pre-existing untouched). New fixture `tests/fixtures/math/fundamentals_vintage_mixed_10k_10q.json` (schema-derived, AAPL/CIK 0000320193, one 10-K + one fresher 10-Q entry for the same concept; provenance: fix-test, RED phase). RED at `3b34583a`, GREEN at `fb7ae9d0`.
+
+### AC-6 -- GDELT tone-fetch retries transient network errors, not just HTTP 429
+
+**Problem:** `advisors/lens_gdelt.py`'s bounded retry (`_fetch_gdelt_sentiment`'s tone GET) only retried on HTTP 429 -- the `try/except` wrapped the WHOLE per-attempt loop, so a `requests.exceptions.Timeout` or `ConnectionError` on the first attempt propagated straight out and abandoned the retry loop after a single transient blip, even though `_GDELT_MAX_ATTEMPTS=4` more attempts would likely have succeeded. `ai_advisor._fetch_with_backoff` (the equivalent retry helper used by the other 4 lenses) already retried these transient errors -- GDELT was the one lens inconsistent with the project's own retry contract.
+
+**Fix:** `advisors/lens_gdelt.py:181-228` moves the `try/except` INSIDE the per-attempt loop so `Timeout`/`ConnectionError` share the exact same bounded exponential backoff (`min(_GDELT_BACKOFF_BASE_S * 2**attempt, _GDELT_BACKOFF_CAP_S)`, capped at `_GDELT_MAX_ATTEMPTS` total calls, worst-case ~120s total wait) as the existing 429 path. No new total-wait budget constant was added -- the existing attempt ceiling is already contract-pinned; team-lead ruled a second bounding mechanism would be redundant. D-1 contract unchanged: an exhausted retry still returns `type(exc).__name__` only (no new named reason label). Non-network exceptions on a 2xx response (e.g. malformed-JSON `JSONDecodeError`) are deliberately NOT retried -- unchanged from the original contract. Contract doc updated: `.claude/gdelt-contract.md` §5 Amendment 2.
+
+**Tests:** `tests/ai_advisor/test_lens_gdelt.py` -- 2 new RED-to-GREEN tests (`TestTransientNetworkErrorsAreRetried`: Timeout on the first attempt is retried then recovers; ConnectionError on the first attempt is retried then recovers) + 1 regression guard (retry still respects the `_GDELT_MAX_ATTEMPTS` bound under persistent Timeout) + the pre-existing single-instance-Timeout test (retries-exhausted case) confirmed still semantically correct post-fix. 93 passed, 2 live-marked deselected; ~100 pre-existing tests in the file untouched. RED at `3b34583a`, GREEN at `fb7ae9d0`.
+
+**Doc-sweep finding (non-blocking, fix-review-approved with a follow-up nit):** `advisors/lens_gdelt.py:27-28`'s MODULE-level docstring ("Design invariants" section) still read "on 429 only" post-fix -- the function-level docstring at `lens_gdelt.py:161-163` was correctly updated by fix-lens, but this one line at the top of the file was missed. Filed to fix-lens for a one-line correction; not a functional defect.
+
+### AC-1/AC-2 -- Strategy Builder on-demand run renders in-place and is run-scoped
+
+**Problem:** `static/ai_advisor.js`'s `sbRunAnalysis()` unconditionally navigated to `/ai-advisor` on a successful run (`window.location.href = '/ai-advisor'`), discarding the route's own response JSON. The operator saw a full-page reload with no way to tell whether their run produced anything, or which observations (if any) belonged to THIS run versus prior history.
+
+**Fix:** `static/ai_advisor.js` (success branch) now renders `data.survivors`/`data.rejected`/`data.n_candidates`/`data.fdr_adjusted_threshold` directly into `#sb-run-results`: a summary line, survivor cards, an honest 0-survivor empty state ("Evaluated N candidates — 0 passed the gate"), and a rejected-candidates `<details>` collapsible. No re-fetch after the response resolves, so the cards are inherently scoped to the run that just completed (AC-2) -- no separate run-id was needed. No sparkline: the run endpoint's response carries no equity points (accepted scope gap, team-lead ruling -- only the server-rendered persisted-history cards keep the sparkline).
+
+**PM live-UI gate:** PM personally read the screenshot -- Strategy Builder tab renders "Evaluated 12 — 0 passed the gate" in-place after Run, no navigation. AC-1/AC-2 CONFIRMED from the rendered UI.
+
+**Tests:** `tests/ai_advisor/test_strategy_builder_run_render_contract.py` (new, 8 tests: 5 RED-to-GREEN + 3 regression guards). RED at `3b34583a`, GREEN at `37bf1fc5`.
+
+### AC-3 -- Asset Swaps "Chat about this" button (real bug, fixed) + AC-3b (suspected panel-visibility bug, investigated and found to be a test-environment artifact, not shipped)
+
+**AC-3 problem (real defect, fixed):** `static/ai_advisor_asset_swaps.js`'s "Chat about this" onclick handler embedded a JS string literal using a double-quote inside the double-quoted `onclick="..."` HTML attribute -- the unescaped quote truncated the attribute at that point, so the button's click handler was unreachable (nothing happened on click).
+
+**AC-3 fix:** switched the two embedded JS string literals from double- to single-quoted, matching the already-correct sibling pattern at `ai_advisor.js:298-301`. Verified live: the button now fires `openChatPanel` with real artifact data.
+
+**AC-3b (raised during live verification, NOT shipped):** after the onclick fix made the button reachable, fix-ux's live click test found the chat panel itself staying visually off-canvas (`.chat-panel`'s toggled `right` property stuck at its closed value, `-440px`, despite `.chat-panel--open` correctly present in `classList`). Exhaustive live diagnosis (fix-ux: computed-style dump, full ancestor-chain walk, CSSOM rule enumeration via `document.styleSheets`, `document.getAnimations()` check, brace/comment-balance parse check) ruled out every standard cascade explanation. A transform-based rewrite (`right: 0` constant, `transform: translateX(100%)`/`translateX(0)` toggled instead -- matching the already-proven `#detail-panel` pattern) was written and committed (`dd3efbb1`) with a 6-test regression guard (`ed66ee7e`).
+
+**Reversal:** before shipping the transform fix, the team ran a fresh-browser A/B: TEST-1 (`ux-ac3b-TEST1-original-code-fresh-browser-WORKS.png`) showed the ORIGINAL `right`-based CSS opening the panel INSTANTLY in a fresh browser session. This proved AC-3b was a stale/long-lived-headless-browser paint-scheduling artifact (the diagnosis session had been running the same headless tab for ~2 hours across dozens of `evaluate()` calls) -- not a real user-facing defect. Per Rule 2 applied to the PM's own prior conclusion, the transform fix and its test were reverted (`aca67f53`, `09ac1187`) rather than ship a CSS change to working production code for a phantom bug. Net effect on `templates/ai_advisor.html` between `37bf1fc5` and `09ac1187` is ZERO (confirmed via `git diff --stat`, empty). The one-hop detour is preserved in git history for provenance; nothing shipped from it.
+
+**Backlog (not filed to `feature-plans/BACKLOG.md` as of this doc pass -- flagging here so it isn't lost):** the `right`-based slide panel has a demonstrated paint-scheduling fragility under long-lived headless sessions, even though it is provably correct in normal (fresh) use. Consider standardizing slide-panels on the transform pattern (`#detail-panel`'s proven mechanism) as a deliberate follow-up for E2E test robustness -- not a user-facing bug, purely a test-environment hardening item.
+
+**Tests:** `tests/ai_advisor/test_asset_swaps_chat_button_escaping.py` (new, 4 tests: 2 RED-to-GREEN + 2 control-sibling sanity checks) for AC-3. RED at `3b34583a`, GREEN at `37bf1fc5`. AC-3b's `test_chat_panel_open_mechanism.py` (6 tests) was written, committed (`ed66ee7e`), and then reverted alongside the CSS (`09ac1187`) -- it no longer exists on the branch.
+
+### AC-5 -- Header candidate-alert badge icon is a monochrome inline SVG, not an emoji
+
+**Problem:** `templates/_chrome.html`'s candidate-alert indicator used the raw `&#x1F514;` (🔔) emoji entity -- inconsistent with the rest of the header chrome (clock/engine-status icons are all monochrome `stroke="currentColor"` SVGs) and rendered as a yellow bell regardless of light/dark theme.
+
+**Fix:** replaced with an inline monochrome SVG bell (`stroke="currentColor"`), inheriting `--studio-ink-dim` for legibility in both themes. The red `--studio-neg` count-pill is unchanged.
+
+**PM live-UI gate:** PM personally read the screenshot -- badge renders as a monochrome bell, not a yellow emoji, in the header. AC-5 CONFIRMED from the rendered UI.
+
+**Tests:** `tests/app/test_candidate_alert_indicator_render.py` (extended, 4 new tests: 2 RED-to-GREEN + 2 cascading-skip that un-skip on the SVG landing). RED at `3b34583a`, GREEN at `37bf1fc5`.
+
+### Test re-point (`3df88432`) -- 8 pre-existing tests were stale, not the implementation
+
+Two pre-existing test files broke against the correct AC-3/AC-5 implementation, both root-caused as stale test assumptions (root-cause-determines-role: implementation correct, tests wrong -- routed to fix-test, not re-opened as an implementation bug):
+- `tests/app/test_strategy_builder_phase36.py` (6 tests): whole-page `<svg` presence/count checks tripped by AC-5's new header bell SVG (present on every page via `_chrome.html`). Re-pointed via a `_without_header_chrome_svg()` helper that strips the ONE known header SVG by its stable `data-testid="candidate-alert-indicator"` anchor before checking -- the underlying sparkline invariants are unchanged and a genuine second sparkline SVG would still be caught.
+- `tests/ai_advisor/test_advisor_chat_handoff.py` (2 tests): regexes required an unescaped quote immediately after `setItem(`/`href=`, but this codebase's own established convention (confirmed at `ai_advisor.js:298-301` during this cycle's RED phase) requires backslash-escaped quotes for a JS string literal embedded inside a single-quote-delimited source string. Widened both patterns to accept an optional `\` before the quote; the underlying invariants (string-literal key; setItem precedes every chat-nav within 200 chars) are unchanged.
+
+`tests/app/test_app_routes.py::test_api_history_returns_zero_aggregates_when_no_files` was left failing, unrelated to this cycle and pre-existing -- see the CLAUDE.md draft below (post_mortems third-filesystem-source gotcha) for the root cause.
+
+### AC-7 -- guard-alpha, weekly-suggestion surfacing, and the Overview feed filter: all verified WORKING, no fix needed
+
+Live-driven by fix-ux against the running app: the `$`-saved guard-alpha panel WORKS, the weekly-suggestion surfacing (the candidate-alert header badge + AI Advisor tab) WORKS, and the Overview observations feed's lack of an ADOPT_CANDIDATE-only filter was confirmed INTENTIONAL (the feed is a general advisor-observations log, not a survivors-only view -- the candidate-alert badge is the survivors-only surface) and therefore out of scope, not a defect. No code change was required for AC-7.
+
+### CLAUDE.md updates (drafted here for PM application post-ship -- NOT applied to the checked-in CLAUDE.md by this cycle)
+
+**Key-files row addenda (append to the existing rows' text, do not replace):**
+- `static/ai_advisor.js` row: add "**advisor-suite-fixes AC-1/AC-2 (2026-07-13):** `sbRunAnalysis()` renders the Strategy Builder run response in-place (survivors/rejected/0-survivor honest state) instead of navigating away and discarding it."
+- `advisors/lens_gdelt.py` row: the existing text says "bounded 429 retry" -- update to "bounded retry on HTTP 429 AND transient network errors (Timeout, ConnectionError -- advisor-suite-fixes AC-6, `.claude/gdelt-contract.md` §5 Amendment 2)".
+- `ai_advisor.py` row: add "**advisor-suite-fixes AC-4 (2026-07-13):** the fundamentals selection loop's 10-K-only pre-filter was removed -- all forms (10-K, 10-Q, ...) now feed the existing latest-`end` sort, reversing the deliberate 10-Q scope-out from the original vintage-fix cycle (operator-approved)."
+- **New row to consider adding:** `static/ai_advisor_asset_swaps.js` has no Key Files row today. Suggested: "Asset Swaps tab client logic: candidate card rendering, accept/reject, 'Chat about this' → `openChatPanel` handoff (onclick-escaping fixed advisor-suite-fixes AC-3, 2026-07-13 -- previously truncated by an unescaped double-quote inside the attribute)."
+- **New row to consider adding:** `templates/_chrome.html` + `static/chrome.js` (the shared header chrome, all 4 screens) has no dedicated row -- currently only referenced inline under the candidate-alert cycle's app.py/database.py notes. Suggested: fold in "AC-5 (2026-07-13): candidate-alert badge icon is a monochrome inline SVG (`stroke="currentColor"`), not the prior `&#x1F514;` emoji entity."
+
+**Process gotcha -- `post_mortems/*.json` is a THIRD filesystem data source, not covered by the "Two-DB pattern" architecture constraint:** `app.py` (e.g. the Asset Swaps/Logic Changes symphony-selector list at `app.py:3980-3985`, and the History/Performance/Correlations routes) reads `post_mortem_*.json` files directly off disk via `analytics._POST_MORTEMS_DIR` -- an ABSOLUTE path (`os.path.join(os.path.dirname(os.path.abspath(__file__)), "post_mortems")`, `analytics.py:69`), computed once at import time from the SOURCE FILE's location, not the process cwd. Two consequences: (1) a local test/audit instance without a populated `post_mortems/` directory next to `analytics.py` will see empty symphony selectors and an empty Correlations render, even with a fully-seeded state DB -- the directory must be copied alongside the code, not just the DB; (2) `monkeypatch.chdir(tmp_path)` does NOT isolate this path (it's absolute, not cwd-relative), which is why `tests/app/test_app_routes.py::test_api_history_returns_zero_aggregates_when_no_files` is flaky/failing whenever the worktree's own `post_mortems/` directory has real files in the query window -- a pre-existing test-isolation gap, not a regression from this cycle. Suggested CLAUDE.md placement: a fourth bullet under Architecture Constraints' "Two-DB pattern" item, renaming it to reflect three data sources (state DB, optimization DB, `post_mortems/*.json`).
+
+**Process gotcha -- droplet DB snapshots must use `VACUUM INTO`, not raw `scp`:** copying `alphabot_state.db` off the live droplet via a direct `scp` while the daemon is mid-write can produce an inconsistent copy ("database disk image is malformed" on open, even with a 0-byte `-wal` sidecar). Fix: on the droplet, run
+
+```
+python3 -c "import sqlite3; c=sqlite3.connect('/opt/planetstopper/alphabot_state.db'); c.execute('VACUUM INTO \"/tmp/snapshot.db\"'); c.close()"
+```
+
+to produce a guaranteed-consistent single-file snapshot on the droplet, `scp` that file down, then delete the `/tmp` copy. Verify with `PRAGMA integrity_check` before pointing a local Flask instance at it. Suggested CLAUDE.md placement: the project's "Known Gotchas" table.
+
+### Verification
+
+Full advisor-suite-fixes cycle sweep (8 test files touched across the cycle, bounded `-n0`, per project hard rule): 187 passed / 0 failed at HEAD `09ac1187` (`test_api_history_returns_zero_aggregates_when_no_files` deselected as the pre-existing isolation-gap flake documented above -- not a cycle regression). `ruff format` + `ruff check` clean project-wide. fix-review approved AC-4/AC-6 at `fb7ae9d0` and re-approved the net-zero AC-3/AC-3b outcome at `09ac1187` (== the already-approved `37bf1fc5`). PM personally read fix-ux's live screenshots for AC-1, AC-2, AC-3 (button fires, chat opens), AC-4 (fresh SEC call resolved AAPL to its 2026-03-28 10-Q period, not the FY2025 10-K), AC-5 (light + dark theme), and AC-7 (guard-alpha panel, weekly-suggestion badge) before this cycle was declared complete -- no surface shipped on DB/unit-test evidence alone, per the plan's non-negotiable PM LIVE-UI GATE.
+
+### Files changed
+
+- `static/ai_advisor.js` -- `sbRunAnalysis()` success-branch in-place render (AC-1/AC-2)
+- `static/ai_advisor_asset_swaps.js` -- onclick quote-escaping fix (AC-3)
+- `templates/_chrome.html` -- candidate-alert icon emoji→SVG (AC-5); `templates/ai_advisor.html` touched then reverted net-zero (AC-3b detour)
+- `ai_advisor.py` -- fundamentals selection loop 10-K-only pre-filter removed (AC-4)
+- `advisors/lens_gdelt.py` -- tone-GET retry extended to Timeout/ConnectionError (AC-6); module-docstring correction (`6b41b40f`)
+- `.claude/gdelt-contract.md` -- §5 Amendment 2
+- `feature-plans/lens-fundamentals-vintage-fix.completed.md` -- append-only "Superseded" section
+- `tests/ai_advisor/test_strategy_builder_run_render_contract.py`, `tests/ai_advisor/test_asset_swaps_chat_button_escaping.py`, `tests/app/test_candidate_alert_indicator_render.py`, `tests/ai_advisor/test_fundamentals_vintage.py`, `tests/ai_advisor/test_lens_gdelt.py` -- new/extended contract tests
+- `tests/app/test_strategy_builder_phase36.py`, `tests/ai_advisor/test_advisor_chat_handoff.py` -- re-pointed (stale-by-intent, not weakened)
+- `tests/fixtures/math/fundamentals_vintage_mixed_10k_10q.json` -- new fixture
+- `docs/generated/ai_advisor.md`, `docs/generated/advisors_lens_gdelt.md`, `docs/generated/static_ai_advisor_js.md`, `docs/generated/INDEX.md` -- reconciled
+
+### Reference
+
+`ADVISOR-AUDIT-VERDICT.md` (2026-07-13, worktree adv-audit); `feature-plans/advisor-suite-fixes.md`; branch `fix/advisor-suite`; GREEN HEAD `09ac1187`. Ships advisory-only DIRECT to origin/main (fast-forward, no PR) after this gate, per the project's advisory-work rule -- no trade-path/`LIVE_EXECUTION` touch anywhere in this cycle.
+
+
+## DE-ADVISOR-R1-001 — Advisor suite honesty + statistical wiring remediation (2026-07-13)
+
+**Status: IN PROGRESS — this entry is a live skeleton, filled in per-AC as each lands on `fix/advisor-remediation-r1`. Sections marked `STATUS: PENDING` have not shipped yet; do not read them as fact until the marker is replaced.**
+
+The `advisor-intent-audit` (2026-07-13, verdict @ `08b0bcc0`) found the AI Advisor suite misrepresents itself to the operator across six findings: deterministic engines (Logic Changes, Asset Swaps) wear a page-global "Claude-powered" banner despite zero LLM on any reachable path (F4); Strategy Builder's statistical gate has PBO-veto + SPY-relative baseline teeth that Logic Changes/Asset Swaps structurally lack (F2); the operator's single-candidate Evaluate buttons run N=1 where an FDR/Yekutieli correction is a mathematical no-op (F2); every rejected candidate renders the same generic "did not clear the FDR threshold" copy regardless of which of three distinct rejection classes actually applied (F6); `measured_value` carries a docstring claiming it's "never a hardcoded heuristic" when every production call site passes a hardcoded `0.0` (F7); Strategy Builder can silently degrade to Atlas-only candidates with a dead tradeability-repair loop and skipped live-return screens (F5); and survivor cards imply a validated finding despite near-zero statistical power at the gate's reachable fold lengths (F3). This entry (DE-ADVISOR-R1-001) is R1's honest record of what changed to close each finding — see `feature-plans/advisor-remediation-r1.md` for the full AC text and `docs/audit-inputs/ADVISOR-INTENT-AUDIT.md` + `docs/audit-inputs/doc-reconciliation.md` for the audit's source findings.
+
+### AC-1..AC-3 — Attribution honesty (F4, Gap D)
+
+**STATUS: GREEN, landed by r1-fe, commit `949ce47e` on `fix/advisor-remediation-r1`.**
+
+**AC-1** (`templates/ai_advisor.html`): the page-global "Claude-powered suggestion engine" subtitle (TRUE for 3 tabs, FALSE for 3, MISLEADING for 1 per the audit's F4 grading) is replaced with a neutral page description; per-tab reasoning-mode attribution added as a new VISIBLE `.cap-tab-attribution` span (`:1054`, `:1064`, `:1074`, `:1084` — deliberately not a hover-only title tooltip, since hiding the fix in a tooltip would reproduce F4's failure mode at a smaller scale). Asset Swaps / Logic Changes: "Deterministic — no AI reasoning." Chat: accessor-driven via `ai_advisor.resolve_advisor_model()`. Strategy Builder: accessor-driven via `model_config.get_advisor_suggestion_model()` + community + statistical-gating mention. **No hardcoded model-name literal anywhere** (AC-16 attribution-coherence, verified — both attribution spans read live `advisor_suggestion_model`/`advisor_synthesis_model` template context keys computed at request time via a shared `_humanize_model_name()` display map, mirroring `advisors/prism_render.py`'s map-known/fallback-to-raw idiom).
+
+**AC-2** (`templates/ai_advisor.html:1115`): the Market Prism block — the one genuinely real, best-documented LLM pipeline in the suite — was previously the LEAST attributed surface (the audit's inverted-attribution finding). New `.prism-model-badge` (`data-testid="prism-model-badge"`), reads "Synthesized by {{ advisor_synthesis_model }}", accessor-driven via the SAME `ai_advisor.resolve_advisor_model()` the council/synthesis path actually uses (no second, drifting accessor).
+
+**AC-3** (`templates/ai_advisor.html`, doc-reconciliation §1.3): the SB run-controls-note described the retired 7-template stamper (dead since `DE-SB-GEN-001`), omitted Atlas community sourcing, and implied a plural "candidates are surfaced" when the gate caps `ADOPT_CANDIDATE` at exactly one survivor per run. Corrected, accessor-driven via `model_config.get_advisor_suggestion_model()`. **Supersedes doc-reconciliation §1.3's own drafted replacement text** (which predated the AC-16 Fable directive and hardcoded "Opus") — the shipped copy names no model literally, per the precedence ruling recorded below.
+
+**Precedence ruling on two now-superseded pre-directive drafts (PM, 2026-07-13, confirmed correctly applied):** (a) doc-reconciliation §1.3's drafted SB run-controls-note replacement hardcoded "Opus" — NOT what shipped, the actual copy is accessor-driven with zero model-name literals; (b) the feature plan's own AC-1 paragraph example badge text ("Opus-generated + Atlas community") has the identical staleness — also not what shipped. **AC-16 > earlier drafted copy wherever a model name appears** — both confirmed superseded, described here per the SHIPPED behavior, not either draft.
+
+**Tests:** `tests/ai_advisor/test_r1_attribution_honesty.py` (13/13 GREEN), `tests/ai_advisor/test_r1_gate_transparency.py` (6/6 GREEN, AC-8's SB gate-cardinality copy — see AC-7..9 below).
+
+### AC-4..AC-6 — Statistical wiring: PBO veto, SPY-OOS baseline, N=1 honesty (F2, Gap B)
+
+**AC-4/AC-5 (PBO veto + real SPY-OOS baseline for Asset Swaps/Logic Changes) — STATUS: GREEN, landed by r1-engine, commit `82479560` on `fix/advisor-remediation-r1`.**
+
+**AC-4:** `dated_returns=` now threaded into `BacktestCandidate` construction at the single `_evaluate_single_variant` site in BOTH `asset_swap_engine.py` and `logic_change_engine.py` — reaches every real gate call (operator N=1 and weekly batch alike) automatically since both paths route through that one helper. The `_PBO_MIN_CONFIGS=2` guard in `backtest_gate_engine.py` is untouched, so PBO stays structurally `None` at N=1 as required (the audit-proved load-bearing guard).
+
+**AC-5:** new `_spy_returns_fn_for(symphony_id)` helper in both engines (mirrors `strategy_builder_engine.py:807-826` — same `run_backtest` client, 100%-SPY minimal tree, `+inf`-sentinel WITHHOLD on fetch failure/empty series, never a silent fall-back to beats-zero, preserving edge-14 semantics). Wired at all 4 real gate calls: `asset_swap_engine.py`'s `propose_operator_swap` + `suggest_swaps`, `logic_change_engine.py`'s `propose_operator_logic_change` + `suggest_logic_changes`. The 2 empty-candidate-list defensive branches are exempt by design — `evaluate_candidate_batch` returns before `spy_returns_fn` is ever read (`backtest_gate_engine.py:627-633`), so no wasted live SPY call on a dead branch.
+
+**AC-6 (N=1 honesty on the operator Evaluate buttons) — STATUS: GREEN, landed by r1-fe, commit `9693cdc4` on `fix/advisor-remediation-r1`.** New `_N1_HONESTY_NOTE` constant (`app.py:3840`) and `_n1_honest_caveats()` helper (`app.py:3843`) strip any FDR/Yekutieli-branded caveat text and append the honest N=1 string: "single-candidate check — no multiple-testing correction applies (N=1)." Wired into three call sites: `POST /ai-advisor/asset-swaps/evaluate`'s top-level caveats field, `POST /ai-advisor/logic-changes/evaluate`'s top-level caveats field, and that route's `_proposal_to_dict` helper's per-candidate caveats field. The N>1 weekly paths are untouched and keep FDR labeling (AC-6's own requirement). r1-fe reports a 294-test targeted regression pass clean before commit.
+
+**Tests:** `tests/advisors/test_r1_wiring_completeness.py`, `tests/advisors/test_asset_swap_production_wiring.py`, `tests/advisors/test_logic_change_production_wiring.py`, `tests/advisors/test_r1_baseline_call_count.py`, `tests/advisors/test_r1_fable_suggestion_routing.py` — 29/29 GREEN. Regression across the SB/wiring/weekly-scheduler/ai_advisor suites: 375 passed, 6 pre-existing skips, 0 regressions.
+
+### AC-7..AC-9 — Gate transparency: rejection-reason branching, gate-cardinality copy, power caveat (F6, Gap F + F3, Gap C)
+
+**STATUS: GREEN, all three ACs landed across three commits by r1-fe (`949ce47e` SB-only, `2e6a2a5f` Asset Swaps/Logic Changes route-JSON extension) and r1-engine (`3fa2e7f8` AC-7b gate-engine addition).**
+
+**AC-7b (a real 4th rejection class, PM adjudication @ `39d56fd5`/`b730fa35`, closes the gap flagged above):** the prior blind `fdr_not_winner` catch-all is now an EXPLICIT `this_winner_trial_is_none` check in `backtest_gate_engine.py`. A genuine FDR winner that still loses to the incumbent (`acceptance_gate.py:257`) now gets the new `oos_inferior_to_incumbent` token instead of being mislabeled `fdr_not_winner` — the exact pre-existing mislabel the plan called out. **Precedence:** `pbo_veto` > `below_spy_alpha` > `fdr_not_winner` (explicit) > `oos_inferior_to_incumbent` > `None` (survivor).
+
+**AC-7 (rejection-reason rendering on all three surfaces):** `rejection_reason` (all 4 real values + `None`) now flows into: SB's Jinja `sb_withheld` cards (`templates/ai_advisor.html`, new data-driven `_REJECTION_COPY` map, `:1863` — extensible per PM directive, never a rewrite when a new class is added); Asset Swaps' `gate_result` dict (single-proposal route, top-level only); Logic Changes' `gate_result` dict (run-level shortcut) AND `_proposal_to_dict`'s per-candidate dict (the actually-rendered surface for survivors_detail/rejected_detail) — both, matching the AC-9 either/or pattern already established for this route. All three `getattr`-defensive (mirrors the AC-9 `validation_days` pattern) — `None` on a genuine survivor, never fabricated (regression-guarded). JS rendering: both `static/ai_advisor_asset_swaps.js` and `static/ai_advisor_logic_changes.js` gained a `REJECTION_COPY` map, same extensible pattern, same 4 mapped values, same wording across all three surfaces. Unmapped reasons (`null`, legacy rows, future untracked classes) render NOTHING — the gate-reason span is omitted entirely, never a fabricated blanket string, per PM's explicit instruction.
+
+**Two bonus defects r1-fe caught and fixed beyond the AC's literal text (both real, both fixed in `2e6a2a5f`):** (1) Asset Swaps' gate-reason span previously always rendered EMPTY — `result.gate_reason` was never populated by that route at all (a dead field, not a wrong-string bug); this fix replaces the dead field with the correctly-sourced `rejection_reason`-driven copy. (2) SB's `_REJECTION_COPY` map (landed in `949ce47e`, before AC-7b existed) only had 3 of the 4 known classes — `oos_inferior_to_incumbent` (live since `3fa2e7f8`) was added to close the gap, so SB's own rejection copy is now complete too.
+
+**AC-8 (`templates/ai_advisor.html`, doc-reconciliation §1.5, audit-stats' recommended string):** SB's survivor caveat "FDR correction applied (N tested)" invited a controlled-FDP-SET reading when the declared set is capped at 1 by construction. Replaced with the calibrated-significance-bar wording verbatim per the audit's drafted text.
+
+**AC-9 (F3, Gap C — near-zero statistical power at reachable fold lengths):** new `MIN_POWER_FOLD_DAYS=121` constant in `app.py:3867` (deliberately NOT `backtest_gate_engine.py` — collision-avoidance with r1-engine's concurrent AC-4/5/17 work there, per a locked contract with team-lead) — a UI-caveat threshold, not a gate-math constant; the gate's accept/reject logic is unaffected. Value derives from the audit's own fixture-verified T=121 real-symphony power analysis (N=12 batch-corrected detection is 0% for every economically-plausible effect size even at that anchor). Route-computed `low_power` boolean (`_low_power()` helper) shipped in JSON for all three result surfaces: SB's `_gate_result_to_dict`, and the `gate_result` dict on both Asset Swaps and Logic Changes evaluate routes. JS/Jinja never receive or duplicate the numeric threshold — flag only. SB survivors additionally get an additive `_LOW_POWER_CAVEAT` caveat-text entry (not a replacement of `SURVIVOR_OVERFITTING_CAVEAT`) when `low_power` is true; rejected candidates don't get it (their fold length is moot — they didn't clear the gate either way).
+
+**Bug caught and fixed pre-commit (r1-fe):** `_gate_result_to_dict`'s `gr` parameter is a bare `types.SimpleNamespace` in two pre-existing tests (`test_strategy_builder_route.py`), not a real `CandidateGateResult` — direct attribute access on `gr.validation_days` crashed those tests with `AttributeError`. Switched all three `validation_days` reads to `getattr(..., "validation_days", None)` for defensive consistency.
+
+**Tests:** `tests/ai_advisor/test_r1_attribution_honesty.py` (13/13), `tests/ai_advisor/test_r1_gate_transparency.py` (6/6, SB), `tests/ai_advisor/test_ac7_route_json_rejection_reason.py` (8/8, Asset Swaps/Logic Changes route-JSON), `tests/advisors/test_ac7b_oos_inferior_rejection_class.py` (4/4), `tests/ai_advisor/test_r1_power_caveat.py` (10/10, including a Hypothesis property test verifying `low_power` is monotonic in `validation_days` across 20 generated examples). Regression across the combined route/template/JS surface: multiple targeted passes, 0 new failures beyond pre-existing/unrelated flakes (documented per-commit).
+
+### Checkpoint-3 -- Post-review remediation: AC-9 caveat text (Asset Swaps/Logic Changes) + AC-7/9/11/12 SB live-run field consumption
+
+**STATUS: GREEN -- CLOSED. r1-review lifted the Checkpoint-3 BLOCK (both findings verified closed, standing R1 completeness sweep clean, ruff clean, code frozen at `f6688ed4` with zero code diff through this entry's own closing HEAD).**
+
+r1-review's Checkpoint-3 pass (RED commit `f2adce0f`) found two gaps the AC-7/AC-9/AC-11 sections above did not close:
+
+1. **AC-9 caveat-text gap (Asset Swaps / Logic Changes evaluate routes):** the `low_power` BOOLEAN was wired into both routes' `gate_result` JSON, but the actual CAVEAT TEXT was never appended to the operator-visible `caveats` array -- a `True` flag silently present in JSON, never surfaced as readable text, does not satisfy "survivor cards carry a statistical-power caveat" (the SB route already did this; these two routes did not). **STATUS: GREEN, r1-fe, commit `a5eaa3b0`.** `ai_advisor_asset_swaps_evaluate` appends `_LOW_POWER_CAVEAT` to the top-level `caveats` array on a genuine `ADOPT_CANDIDATE` survivor; `ai_advisor_logic_changes_evaluate` appends it to each survivor's nested caveats in `survivors_detail`. Tests: `tests/ai_advisor/test_r1_power_caveat.py`, 12/12 GREEN.
+
+2. **SB live-run field-consumption gap:** `static/ai_advisor.js`'s `sbRunAnalysis()` -- the LIVE-RUN handler wired to the SB tab's "Run analysis" button (`POST /ai-advisor/strategy-builder/run`, rendered in-place) -- never consumed any of the R1 route-JSON fields (`built_new_count`/`atlas_count`/`mode_notice`/`screens_skipped`/`error_category`/`low_power`/`rejection_reason`). Every route-JSON RED test this cycle proved the field reaches the JSON response; none touched this render path, so they were structurally blind to the gap. **STATUS: GREEN, r1-fe, commits `fa691f6a`** (SB live-run render path wired to consume the AC-7/AC-9/AC-11/AC-12 fields: `built_new_count`/`atlas_count` provenance line, `mode_notice`, `screens_skipped`, `error_category`, per-candidate `low_power` CSS modifier + server-appended caveat text, `rejection_reason` -> `SB_LIVE_REJECTION_COPY`-mapped text on rejected cards) **and `f6688ed4`** (SB run route's `_gate_result_to_dict` surfaces `rejection_reason` in the route-JSON, closing the last field this render path needed).
+
+**Closing HEAD for the code fix:** `f6688ed4768fea57d6104eb4a4752031fee38d67` -- the three GREEN commits in order are `a5eaa3b0` (AC-9 caveat text), `fa691f6a` (SB JS field wiring), `f6688ed4` (rejection_reason serialization). r1-review independently confirmed `93e0e48d` (this doc-writer's prior commit) is docs-only with zero diff vs `f6688ed4` on every reviewed file.
+
+**Sign-off:** r1-review, 2026-07-13 -- both findings verified closed; standing R1 completeness sweep (autotuner leakage, `+inf` SPY sentinel, PBO guard, fabricated-rejection-string sweep) all PASS, no doc correction needed (these were already-correct invariants, not something that changed this cycle).
+
+**Tests (finding 2):** `tests/ai_advisor/test_r1_sb_live_run_field_consumption.py` (source-consumption text-window checks -- NOT a DOM/browser test; this stack has no JS-behavior test runner, only `node --check` syntax validation; the PM's first-hand browser E2E is the sufficient verification for the actual rendered UI, not this suite).
+
+### AC-10 — Honest data: `measured_value` real or absent (F7, Gap G)
+
+**STATUS: GREEN (with one residual gap this doc-writer found and is flagging, not covered by either landed commit), r1-engine, commits `df4e1eee` (initial) + `7420b33f` (sufficiency extension, closing a scope gap the first commit's own message documented).**
+
+**What shipped:** `LogicChangeObjective.measured_value` / `SwapObjective.measured_value` docstrings no longer claim the field is always a real backtest/correlation measurement (false — both production callers, `app.py`'s operator-evaluate routes, hardcode `measured_value=0.0`). Corrected to state the field is display-only and does not drive tweak/candidate generation, ranking, or gate decisions (verified directly against the current docstrings: `asset_swap_engine.py:225-233`, `logic_change_engine.py:207-213`). `_build_objective_rationale`'s branches in BOTH engines no longer render the fabricated-looking "measured 0.0%"/"measured Sharpe of 0.00"/etc. phrases — the unbacked statistic is dropped from the rationale string entirely rather than inventing one, per AC-10's stated remediation choice. `7420b33f` extended this from just the `reduce_drawdown` branch (the only one with RED in the first commit) to EVERY remaining branch in both engines (`reduce_correlation`, `lift_risk_adjusted`, the catch-all, plus `reduce_turnover`/`improve_momentum_timing`/`reduce_whipsaw` for Logic Changes) — the now-fully-unused `measured` local was removed from both rationale builders.
+
+**Residual gap this doc-writer found via call-path verification, NOT covered by either AC-10 commit — flagging per Rule 2 rather than accepting "all rationale branches" at face value:** `logic_change_engine.py`'s `generate_objective_directed_logic_candidates` (a SEPARATE function from `_build_objective_rationale`, builds a `change_description` string for the advisor-suggested candidate list) STILL contains the identical "measured X" fabrication pattern across all 6 of its objective-type branches (`logic_change_engine.py:494-529` — e.g. `f"to reduce drawdown (measured: {measured:.1%})"` where `measured` is the same hardcoded-`0.0` `objective.measured_value`). Neither AC-10 commit's message mentions this function. **Mitigating factor found on the same pass:** grepping the whole worktree for `generate_objective_directed_logic_candidates` found only test files and this doc-tree's own audit references as callers — no production caller (`app.py`, `weekly_suggestions_scheduler.py`) was found invoking it, so this fabrication is currently NOT reaching the operator on any verified reachable path, unlike the two production-hardcoded call sites AC-10 fixed. Still a genuine leftover instance of the exact pattern F7 named — tracked here as an explicit known gap for a future cycle, not silently dropped. `asset_swap_engine.py` has no equivalent second fabrication site (verified via the same grep — only its docstring + `_build_objective_rationale` reference `measured`).
+
+**Also known/documented gap (from `df4e1eee`'s own commit message, still open as of `7420b33f`):** `weekly_suggestions_scheduler.py:136/:382` call sites (constructing `SwapObjective`/`LogicChangeObjective` for the weekly-batch path) remain untouched — no RED test exists for them; `7420b33f` notes the asset-swap weekly site is honest as an indirect consequence of the `reduce_correlation` branch fix (its default objective type), and the logic-change weekly site was already honest via the already-fixed `reduce_drawdown` branch — both pinned as regression guards, not RED fixes.
+
+**Tests:** `tests/ai_advisor/test_r1_measured_value_honesty.py` (6/6), `tests/ai_advisor/test_r1_measured_value_all_branches.py` (12/12). Regression: 132/132 (first commit) + 164/164 (sufficiency extension), 0 failed.
+
+### AC-11..AC-12 — Strategy Builder observability + dead-code revival (F5, Gap E)
+
+**STATUS: GREEN. AC-11 landed across `5bd89b8b` (r1-fe, UI/route) + `59e86f9a` (r1-engine, the one blocking engine-side field). AC-12 landed at `a39a1476` (r1-engine).**
+
+**AC-11 (F5, Gap E — SB silent degradation + unobservability):** a run where all built-new (Opus/Fable) branches fail and only Atlas community candidates populate the result previously rendered as an ordinary success — the operator could not tell "generation produced nothing" from "generation produced everything you see." New `built_new_count`/`atlas_count` rollup on the success-path response, derived from the real `run.candidates` `template_id` mix (never hardcoded). New `mode_notice` field, explicit "0 plans (degraded)" text when `built_new_count==0`; `None` on a healthy run (non-regression-guarded — a fix that always renders the notice would pass the degraded-notice test vacuously). Route-error branch now defensively reads `getattr(run, "error_category", None)` and includes it as a new "error_category" JSON key alongside the existing sanitized "strategy-builder-error" static token — never echoes `run.error` (raw `str(exc)`, may carry credentials/hostnames/paths), same AC-23/D-1 contract as the route's own outer except. `59e86f9a` (r1-engine) closes the one blocking engine-side gap: `ProposalRun` previously carried only `error: str | None`; new `ProposalRun.error_category: str | None = None` dataclass field (default `None` — the two early-return `ProposalRun(...)` sites at `:781`/`:800` leave it unset, matching their existing controlled non-exception error strings which were already safe to display); the top-level except block now also sets `error_category=type(exc).__name__` alongside the untouched `error=str(exc)`.
+
+**AC-12 (`backtest_fn` threading + `live_returns` honesty):** `strategy_builder_engine.py`'s `_generate_candidate_trees` now calls `plan_tree_compiler.compile_plan(plan, backtest_fn=run_backtest)` instead of `compile_plan(plan)` — revives the AC-16 tradeability-repair loop (`plan_tree_compiler.py:379`), dead on the reachable path since `backtest_fn` defaulted to `None`. `app.py`'s SB route: `live_returns` stays `[]` (no live-portfolio return series is available at route time — the route is not necessarily symphony-scoped, `symphony_id` is optional). Rather than silently skipping the drawdown/Pearson screens (`sbe.py:746-749`), the response now carries `screens_skipped=True` + `screens_skipped_reason='no live returns at route time'` whenever `live_returns` is empty — no silent skip. **Field names as actually shipped (this doc-writer's own earlier relayed `live_returns_applied` name was never real, per the correction record above):** `ProposalRun.screens_skipped: bool` (engine-side, the sole field r1-engine exposes) + `screens_skipped_reason` (a route-constructed static string on r1-fe's side, `app.py`'s SB route — not derived from anything r1-engine exposes). Matches the settled shape recorded earlier exactly.
+
+**Tests:** `tests/ai_advisor/test_r1_sb_observability.py` (5/5 GREEN, `built_new_count`/`atlas_count` rollup + degraded-notice presence + degraded-notice non-regression-guard + raw-text-never-leaks security invariant + `error_category` field-existence), `tests/advisors/test_r1_sb_repair_and_screens.py` (3/3 GREEN). Regression across the SB-surface test files: 286-309 passed depending on commit, 0 failed beyond pre-existing/unrelated skips.
+
+### AC-13 — Performance: single baseline-backtest call per route evaluation (D-7, Gap H)
+
+**STATUS: GREEN, landed by r1-engine, commit `82479560` on `fix/advisor-remediation-r1`.**
+
+`_evaluate_single_variant` (the shared helper both engines' operator-Evaluate routes call) now returns `baseline_returns_pct` (computed once, right after the existing baseline `run_backtest` call) as a 4th tuple element. `propose_operator_swap` / `propose_operator_logic_change` reuse it instead of a second, duplicate `_backtest_returns_from_tree` call on the identical baseline tree — cuts one Composer round-trip per operator Evaluate click (the AC-13 target: `lce.py:920+1308` / `ase.py:927+1068` collapsed to one call each). Weekly-batch call sites updated to the new 4-tuple arity (discarding the unused baseline) but otherwise unchanged. **Scope note (from the commit message, an honest boundary, not a gap in this AC):** the weekly N+1 baseline-per-candidate redundancy is explicitly OUT of AC-13's scope — the audit's D-7 finding names the operator routes only, not the weekly batch path.
+
+**Tests:** covered by the same `82479560` GREEN suite as AC-4/5/16 (29/29); `tests/advisors/test_r1_baseline_call_count.py` asserts the call-count reduction directly. A follow-up test fix (`96ff56b6`) updated a stale 3-tuple mock of `_evaluate_single_variant` to the new 4-tuple return signature (stale test, not a code regression).
+
+### AC-14 — Guardrail honesty: Divergence Explainer / Overfitting Conscience UI scope (F8 revision, B.4)
+
+**STATUS: GREEN — AC-14's two-mechanism scope is now fully landed: Mechanism 1 (`9693cdc4`, r1-fe) + Mechanism 2 (`b87f6ace`, r1-engine).**
+
+**Mechanism 1 — route-side suppression (display honesty, including historical rows already in the DB): GREEN, r1-fe, commit `9693cdc4`. 294-test targeted regression pass clean before commit.**
+
+**Mechanism 2 — producer-side no-write-when-flag-off: GREEN, r1-engine, commit `b87f6ace`.** `run_divergence_explainer` now returns `None` WITHOUT calling `database.insert_advisor_observation` when `SECOND_WINDOW_CVAR_ENABLED` is off, instead of persisting a `NOT_APPLICABLE` stub row on every autotune run — the audit's "dead producer still emits rows" half, DB-growth hygiene, distinct from Mechanism 1's display-honesty half (Mechanism 1 stops rows from being SERVED; Mechanism 2 stops them from being WRITTEN at all, going forward). `compute_divergence_explainer_observation` (the pure function) is BYTE-UNCHANGED — it still returns a `NOT_APPLICABLE` dict when called directly; only `run_divergence_explainer`'s write behavior changes. Return-type annotation updated `int -> int | None`. `autotuner.py`'s sole call site (`autotuner.py:2924`) discards the return value entirely, so it needs no change (verified by r1-engine reading, not touched).
+
+**Root cause (PM-adjudicated, recorded pre-landing):** `database.py:1226`'s per-symphony observations feed accessor has no `advisor_role` filter, so every `NOT_APPLICABLE` row Divergence Explainer wrote while dormant (feature disabled by default, `SECOND_WINDOW_CVAR_ENABLED` off) was user-visible in the Overview feed regardless of relevance.
+
+**Mechanism 1's implementation (r1-fe):** `advisors/divergence_explainer.py` was NOT touched by this half — the fix lives inside `api_advisor_observations()`, the `GET /api/advisor-observations` route handler (`app.py:5191`, the filter block), which was leaking `NOT_APPLICABLE` rows verbatim on the `symphony_id`-filtered path (the no-`symphony_id` path was already safe via the existing `_ADVISOR_ROLES` exclusion). Fixed by applying the SAME suppression predicate the Overview panel already used. **r1-fe confirms this matches the PM-adjudicated root cause exactly:** `database.py:1226`'s `get_advisor_observations_for_symphony()` IS the no-role-filter accessor that leaks the row; r1-fe did NOT edit `database.py` — the fix filters its return value at the route layer. **Mechanism 1 is display-only — it stops the row from being SERVED, not from being WRITTEN, and covers rows already written historically as well as future ones while Mechanism 2 remains pending.** Mechanism 2 (stop the write at the source) is a SEPARATE requirement, tracked independently in r1-engine's queue — NOT a mechanism this doc-writer should describe as "replaced" or "diverged from"; both were always in scope.
+
+**Scope decision (deliberate, PM-adjudicated, held):** the underlying no-role-filter design of the `database.py:1226` feed accessor is NOT changed in R1 — recorded as backlog for a future cycle, not an R1 deliverable.
+
+**Tests (Mechanism 2):** `tests/ai_advisor/test_divergence_explainer.py` (6 RED->GREEN), `tests/ai_advisor/test_r1_guardrail_honesty.py` (1 new e2e RED->GREEN) — 48/48 GREEN. Regression: `tests/acceptance_gate/`, `tests/advisors/test_advisor_liveness_routes.py`, `tests/execution/test_cvar_wireup_*.py`, `tests/test_prod_db_write_guard.py` — 74/74 GREEN. r1-engine flagged 2 pre-existing (pre-R1) tests to r1-test that assert the now-superseded "flag-off still writes a row" contract (stale-test fix, r1-test's lane, not touched by r1-engine).
+
+**Overfitting Conscience / Spec Critic copy (`templates/ai_advisor.html:2208`, the `guardrail-uniform-note` `<p>` element, corrected verbatim per doc-reconciliation §1.8, part of Mechanism 1) — final rendered text, r1-fe-confirmed as matching the framing exactly (Spec Critic genuinely untouched by this cycle — the copy names it as the active/evaluated control it already was, no behavior change; Overfitting Conscience's copy now explicitly names its actual scope — backtest-selection degrees of freedom only, with the "does not mean no overfitting risk exists" carve-out):**
+
+> Spec Critic is an active guardrail checking the shared, frozen THEORY spec structure — a CLEAR verdict means the spec was evaluated and passed. Overfitting Conscience checks one narrow overfitting-risk source (backtest-selection degrees of freedom) — a CLEAR here does not mean "no overfitting risk exists," only that this one source is clean. Divergence Explainer is disabled by default and its rows are informational-only, not currently monitoring anything active. Per-symphony recommendations come from the Run Advisor (gear icon on each symphony card).
+
+### AC-15 — Docs
+
+**Problem (audit F1/F2/F4/F5/F7):** the audit's `doc-reconciliation.md` (Phase 2, drafted by the audit team) named four `docs/generated/*.md` corrections and one superseded-banner insertion needed to bring the doc tree in line with reachable-path reality, plus a CLAUDE.md key-files draft for PM application.
+
+**Fix (in progress — this doc-writer's own AC):**
+- `docs/generated/advisors_asset_swap_engine.md` — added the two-part reachability caveat (doc-reconciliation §2.2, verified against live code before applying): (a) the operator-clicked evaluate route (`app.py:4312`) never passes `lens_scores`/`lens_sources` to `propose_operator_swap` — confirmed by direct read of the call site, zero lens influence on any operator-clicked swap; (b) even the weekly-scheduler path that IS wired reads a single lens (`technicals.momentum`), weighted 0.25, ranking-influence only. Applied as-drafted — unaffected by any R1 AC (out of scope, R2 territory).
+- `docs/generated/advisors_build_plan_generator.md` — added the context-blindness caveat (doc-reconciliation §2.4, verified against the live `_build_generation_prompt(objective, n_plans, membership)` signature — no symphony/portfolio/backtest/lens parameter exists). Applied as-drafted — unaffected by any R1 AC (context injection is explicitly R2 scope per this plan's Scope Boundaries).
+- `docs/audit/CLOSEOUT-VERDICT.md` — added the doc-reconciliation §5.1 superseded banner pointing to `ADVISOR-INTENT-AUDIT.md`, plus one addition beyond the drafted banner text: a pointer note under the existing in-body HF-1 finding to the current `advisors_build_plan_generator.md`/`advisors_strategy_builder_engine.md` docs, since the top banner alone would leave a reader who jumps straight to the HF-1 section believing it's still open (it was resolved by `DE-SB-GEN-001`, 2026-06-20).
+- `docs/generated/advisors_backtest_gate_engine.md:156` (§2.1) and `docs/generated/advisors_logic_change_engine.md:46` + the parallel Asset Swaps `measured_value` comment/docstring (§2.3/§3.3) were **deliberately NOT applied verbatim** — both drafted corrections describe the PRE-R1 broken state that AC-4/AC-5/AC-10 are the code fixes for (e.g. §2.1 says PBO/SPY wiring is "wired only for Strategy Builder," which becomes false the moment AC-4/5 land). These will be rewritten from the landed diff once AC-4/5/10 ship, citing the real post-fix file:line — **STATUS: PENDING**, tracked here rather than applied stale.
+- §3.1/§3.2/§3.3 code docstring/comment fixes (`logic_change_engine.py:206-209`, `advisor_chat.py:144`, `asset_swap_engine.py:164,225-228`) — filed as findings to the owning engine teammate per the doc-writer's never-edit-others'-files rule. **STATUS: PENDING** confirmation they landed.
+- CLAUDE.md key-files draft (per doc-reconciliation §4) — **STATUS: PENDING**, drafted as a standalone file for PM application, not yet delivered.
+
+**Tests:** N/A — doc-only changes, no test surface.
+
+### AC-16 — Model routing: suggestion-producing LLM calls route to Fable (operator directive 2026-07-13)
+
+**STATUS: GREEN, r1-engine, commit `82479560` on `fix/advisor-remediation-r1`. The Opus-language doc sweep this section describes below is executed as part of this same final-pass cycle (see the tree-wide sweep summary at the tail of this entry).**
+
+**Provenance:** operator directive 2026-07-13 ("anything it suggests should be using fable"); landed in the feature plan via plan-amendment commit `47826731`.
+
+**What shipped:** new `model_config.py` (top-level, zero-dependency module) exposing `get_advisor_suggestion_model() -> str`, reads `ADVISOR_SUGGESTION_MODEL`, defaults to `claude-fable-5`. Deliberately SEPARATE from `ai_advisor.resolve_advisor_model()`/`ADVISOR_SYNTHESIS_MODEL` — `ai_advisor.py`'s `request_suggestions` was previously reading `ADVISOR_SYNTHESIS_MODEL` (the Prism-council knob) for its OWN model selection, an accidental coupling that meant retuning the nightly Prism synthesis model would silently also move config-suggestion routing. Now decoupled: `ai_advisor.request_suggestions` and `advisors.build_plan_generator.generate_build_plans` both route through the new accessor independently. Two knobs, two purposes: `ADVISOR_SUGGESTION_MODEL` for config-suggestion/build-plan generation; `ADVISOR_SYNTHESIS_MODEL` for the nightly Market Prism council synthesis (untouched by this module, out of AC-16's stated scope). **Tests:** `tests/advisors/test_r1_fable_suggestion_routing.py` (part of the 29/29 `82479560` GREEN suite).
+
+**This doc-writer's piece (sequenced AFTER the implementation diff lands, per PM confirmation — correct order, not a delay):** once the accessor + call-site swap ship, sweep every "Opus"-specific (not just "Claude"-specific) doc claim for `advisors/build_plan_generator.py` and `ai_advisor.request_suggestions` to accessor-driven/model-neutral language ("configurable via `ADVISOR_SUGGESTION_MODEL`, default Fable/`claude-fable-5`") — specifically `docs/generated/advisors_build_plan_generator.md`'s title ("Opus Build-Plan Generator") and Overview ("Opus-backed brain of the real Strategy Builder"), any Opus-specific line in `docs/generated/ai_advisor.md`, and `docs/audit-inputs/claude-md-corrections-r1.md` §4 (currently PENDING for the same reason).
+
+**Two more sources of pre-directive "Opus"-hardcoded DRAFTED (not shipped) copy flagged by the PM (2026-07-13), added to this sweep so they are never mistaken for final text:** (1) doc-reconciliation §1.3's drafted SB run-controls-note replacement hardcodes "Opus" — predates this AC and is superseded by it; (2) the feature plan's own AC-1 paragraph example badge text ("Opus-generated + Atlas community") has the identical staleness. Precedence ruling: **AC-16 > earlier drafted copy wherever a model name appears.** See the corresponding note added to the AC-1..AC-3 subsection above.
+
+### AC-17 — Panel unreachability: ADOPT_CANDIDATE made mathematically REACHABLE (added mid-cycle, PM adjudication ad9b1629, [PM-ASSUMED] — operator may overrule)
+
+**STATUS: GREEN, r1-engine, commit `3fa2e7f8` on `fix/advisor-remediation-r1` (task #25, completed).**
+
+**Proven defect (r1-engine, PM-verified 2026-07-13):** all three advisor engines (Strategy Builder, Asset Swaps, Logic Changes) construct `BacktestCandidate` with structurally empty `candidate_params`/`incumbent_params`/`theory_prior_params`. This makes `candidate_panel_score` the CONSTANT `0.5` against the incumbent's CONSTANT `0.75` (hardcoded `inc_stability=1.0`, `backtest_gate_engine.py:820`) — so the adoption comparison `0.5 >= 0.75 + PANEL_ADOPT_MARGIN_THRESHOLD(0.0)` is **false unconditionally, regardless of actual candidate performance.** `ADOPT_CANDIDATE` was therefore mathematically unreachable on every one of the three engines' real production call paths. Confirmed at `backtest_gate_engine.py:369-439`, `acceptance_gate.py:108`/`:259`, `database.py:1631` (the badge accessor's `WHERE verdict='ADOPT_CANDIDATE'` query — this is the SECOND reason, independent of AC-4/5's PBO/SPY gap, that the candidate-alert badge always read 0). r1-test's own proof: a real `p_adj=0.0026` candidate (a strong, FDR-significant result) still resolved `KEEP_INCUMBENT` on the operator Evaluate path.
+
+**Adjudicated fix (PM, ~20:20Z 2026-07-13) — contained to `advisors/backtest_gate_engine.py` ONLY, `acceptance_gate.py` and `autotuner.py` get ZERO diff:** when `candidate_params` AND `incumbent_params` are BOTH structurally empty (no parameter-vector representation exists at all), the parameter panel is NOT APPLICABLE — set `cand_stability = inc_stability` (an exact tie), so the adoption decision rests entirely on the OOS-superiority precondition (`acceptance_gate.py:257`) plus the three hard vetoes (BHY winner, PBO, SPY baseline — which AC-4/5 are simultaneously making real for Asset Swaps/Logic Changes). **Why not populate real params instead (option (a), ruled out algebraically):** real params without a real theory-prior require `stability >= 1.0`, which only zero-change candidates can satisfy — that path was killed as a dead end, not merely deprioritized.
+
+**Requirements the fix must satisfy (from the plan, `feature-plans/advisor-remediation-r1.md` AC-17):**
+(a) the tie fires ONLY on both-empty — one-side-empty is a caller bug and must be guarded/asserted, never silently tied;
+(b) partial param population is FORBIDDEN at all three construction sites (re-triggers the broken `stability >= 1.0` algebra);
+(c) `panel_breakdown` records the N/A state honestly ("parameter panel not applicable — no parameter-vector representation") so UI/persistence never imply a panel evaluated when it didn't;
+(d) real-params candidates keep byte-identical semantics (regression-safe);
+(e) end-to-end RED: a strong-OOS empty-params candidate reaches `ADOPT_CANDIDATE` and increments the badge accessor; an OOS-inferior candidate still resolves `KEEP_INCUMBENT`.
+
+**Verified shipped, requirement-by-requirement (directly against the landed source, `advisors/backtest_gate_engine.py`):** (a) the tie requires BOTH `candidate_params` AND `incumbent_params` structurally empty — confirmed at `:819-846`; (b) no partial-population path was added at any construction site (`asset_swap_engine.py`, `logic_change_engine.py`, `strategy_builder_engine.py` all remain empty-params, verified by r1-engine directly per the commit message); (c) `panel_breakdown` carries `{'note': 'not applicable — no parameter-vector representation'}` (the `_PANEL_NA_NOTE` constant, `:213`) whenever the tie condition fired, stamped via `AcceptanceVerdict._replace()` after the untouched `evaluate_acceptance_gate` call, REGARDLESS of the eventual decision (an OOS-inferior empty-params candidate still hits the tie structurally, so its `panel_breakdown` is honest too); (d)/(e) covered by the 11/11 test suite below.
+
+**AC-7b (the derived 4th rejection class this proof surfaced) landed in the SAME commit — see the AC-7..9 subsection above for the full precedence chain and rendering details.**
+
+**Tests:** `tests/advisors/test_ac17_panel_tie_reachability.py` (11/11 GREEN), `tests/advisors/test_ac7b_oos_inferior_rejection_class.py` (4/4 GREEN). Regression across 22 files referencing `evaluate_candidate_batch`/`backtest_gate_engine`: 547 passed, 23 skipped, 2 failed — both pre-existing stale mocks in `tests/advisors/test_advisor_liveness_gate.py` (missing `spy_returns_fn=` from the earlier AC-4/5 commit, unrelated to this commit's own changes) — routed to r1-test per the never-edit-test-files rule, not fixed by r1-engine.
+
+**[PM-ASSUMED] marker:** this changes the advisor suite's adoption semantics (candidates can now actually be adopted where none ever could before) — the operator may overrule this adjudication. Not a unilateral final decision; flagged per the plan's own marker convention.
+
+**The narrative correction this forces — itself a deliverable, not a side effect:** the long-standing explanation "0 survivors is the EXPECTED common case — the gate is intentionally strict" (this project's CLAUDE.md Known-Gotchas entry, the original audit's F6 framing, and multiple prior cycle reports) was **WRONG as a COMPLETE explanation.** Gate strictness and F6's max-1-survivor-per-run cap are real and remain true, but they were SECONDARY — the DOMINANT cause of the observed all-zero survivor history was this structural unreachability bug, not intentional strictness. The operator was told "the badge lights when a survivor appears" by a system in which no survivor could ever appear, for any candidate, ever, until this fix.
+
+**Doc-tree sweep for the narrative-correction -- completed and CORRECTED by this doc-writer (2026-07-13). The original inventory below (as first drafted) proposed correcting `.claude/CLAUDE.md:92` and `docs/generated/ai_advisor.md:85` on the theory that AC-17 falsified their "expected/intentionally strict" framing. That theory does NOT survive a call-path check and is retracted here -- see `docs/audit-inputs/claude-md-corrections-r1.md` §8 for the full verification (autotuner.py hardcodes a 1.0-vs-1.0 stability tie unconditionally in its own `evaluate_acceptance_gate` call, never touched by AC-17's fix which lives entirely in `backtest_gate_engine.py`; independently, `acceptance_gate.py`'s Stage-1 veto short-circuits before the panel-comparison clause whenever `winner_trial_is_none=True`, i.e. exactly the `oos_alpha=None` case that gotcha describes -- before AND after AC-17). Disposition, final:**
+- **`.claude/CLAUDE.md:92` (Known Gotchas table) and `docs/generated/ai_advisor.md:85`:** NO CHANGE -- reviewed, confirmed accurate, different subsystem (`ai_advisor.build_assessment_from_context` / `autotuner.py`'s own BHY/Yekutieli haircut-select), never had the bug AC-17 fixed.
+- **`feature-plans/strategy-builder-real.completed.md:224`:** NO CHANGE -- cites the CLAUDE.md:92 gotcha as its source; since that gotcha isn't changing, no superseded banner is needed either.
+- **The genuine, narrower AC-17 narrative correction -- applied (this doc-writer, commit `38732183`):** `docs/generated/app.md`'s `GET /api/candidate-alert` section, `new_valid_count` field -- this WAS structurally stuck at `0` regardless of candidate quality before AC-17 (the badge accessor's `WHERE verdict='ADOPT_CANDIDATE'` query, the same reachability bug), and is the actual user-facing surface where "0 survivors was structurally guaranteed, not just statistically likely" was true and is now corrected.
+- **Reviewed, NOT flagged (remain accurate -- assert only "zero survivors is a valid non-error outcome," never a root-cause or "expected/common" claim):** `docs/generated/advisors_asset_swap_engine.md:30,155`; `README.md:206`; `CHANGELOG.md:28` (Opus->Fable pass closed separately, commit `74b84180`); `feature-plans/candidate-alert.md:14`.
+
+**Tests:** tracked under r1-test's RED coverage (task #25, "Implement AC-17: neutral panel-tie in backtest_gate_engine.py"); this doc-writer will cite the actual test file once GREEN.
+
+### Verification
+
+**STATUS: GREEN.** 128 passed / 0 failed / 0 errors across the 18 R1-cycle test files, plus the JS syntax gate (11/11) -- **139/139 combined**, `-n0`, ruff clean. Both the 128-only and 139-combined figures are accurate at different scopes (18 R1-cycle files vs. 18 files + the JS syntax gate); neither is "wrong." Independently confirmed three ways: r1-test's original run, r1-review's reproduction, and this doc-writer's own reconciliation run (which additionally surfaced that `tests/ai_advisor/test_divergence_explainer.py` -- 41 tests total, only 6 of which are R1/AC-14-authored per the AC-14 section above -- is correctly excluded from the 18-file R1-cycle count; including it as a whole file is a scope error, not part of this cycle's own test surface). Verified at HEAD `f6688ed4768fea57d6104eb4a4752031fee38d67` (the closing code-fix commit); this entry's own doc commits (`93e0e48d` and later) are confirmed docs-only, zero diff on any reviewed/tested file.
+
+The full-tree pre-merge suite remains the PM's separate ship-gate (recorded in the PM's own evidence report, not here) -- the number above is the cycle's own targeted-set evidence, not a substitute for it.
+
+### Files changed
+
+**STATUS: GREEN.** Full running list of this doc-writer's own commits on `fix/advisor-remediation-r1`, this cycle:
+- `583f5f93`: `docs/generated/advisors_backtest_gate_engine.md`, `docs/generated/advisors_logic_change_engine.md`, `docs/generated/advisors_asset_swap_engine.md`, `docs/generated/advisors_build_plan_generator.md`
+- `74b84180`: `CHANGELOG.md` (AC-16 attribution edit), `docs/audit-inputs/doc-reconciliation.md` (2 SUPERSEDED banners, §1.3/§1.4)
+- `38732183`: `docs/generated/app.md` (R1 route sweep + AC-17 candidate-alert note), `docs/audit-inputs/claude-md-corrections-r1.md` (finalized §1-6, §8 retraction, §7 pending)
+- `93e0e48d`: `DECISIONS.md` (Checkpoint-3 draft + AC-17 doc-tree retraction + Verification/Files-changed placeholders)
+- `0069ac2b`: `DECISIONS.md` (Checkpoint-3 closed + final Verification numbers), `docs/generated/static_ai_advisor_js.md` (`sbRunAnalysis()` field-consumption update), `docs/audit-inputs/claude-md-corrections-r1.md` (§7 unblocked)
+- (this commit): `DECISIONS.md` (post-cycle-complete stale-test remediation record, below)
+
+CLAUDE.md itself is not in this list -- the PM applies it directly from `docs/audit-inputs/claude-md-corrections-r1.md`, all 8 sections now unblocked.
+
+### Post-cycle-complete: full-tree stale-test remediation
+
+**STATUS: GREEN.** Not part of Checkpoint-3 or the 18-file R1 battery (both closed above, unaffected) -- a separate, later finding from the PM's independent full-tree verifier, which by design runs the WHOLE tree, not R1's own targeted file list. At HEAD `0069ac2b` the verifier found 5 FAILED tests outside R1's 18-file list. r1-test root-caused all 5 read-only (test + SUT + R1 diff), reported to team-lead, was cleared to fix, and landed the fix at commit `d7ac00ed` (test-only, zero production-code diff).
+
+**Root cause, both cases: cycle-caused-stale-test, not a functional regression** -- the production code was already correct in both cases; these sibling tests (never part of R1's own 18-file list) encoded a contract R1's own changes correctly superseded, and nobody's targeted-file battery was scoped to catch it.
+
+1. **`tests/ai_advisor/test_strategy_builder_run_render_contract.py::test_success_path_writes_into_results_div`** -- a test-harness bug, not a code defect: the test's own `_sb_run_analysis_body()` extracted a fixed 4000-character window from the `sbRunAnalysis(` signature, sized (per its own comment) to "comfortably cover the ~70-line pre-fix version." Checkpoint-3's `fa691f6a` field-consumption wiring legitimately grew the function to ~7990 characters, so the window silently truncated mid-function and the test's own brace-matcher raised a false-negative "Unbalanced braces" error. Fixed with real brace-matching from the function's own opening `{` (reusing the file's existing `_matching_brace_end` helper) -- correct-by-construction regardless of future growth, not a window-size bump (team-lead's directive: permanent fix only).
+
+2. **`tests/ai_advisor/test_synthesis_model_config.py`** -- 4 tests (`TestRequestSuggestionsModelEnvVar` x2, `TestSuiteOrderingRegression` x2) asserted the PRE-AC-16 contract for `ai_advisor.request_suggestions` (env var `ADVISOR_SYNTHESIS_MODEL`, default `claude-opus-4-8`). AC-16 (this cycle, operator directive) deliberately split suggestion-model routing into its own `model_config.py` knob (`ADVISOR_SUGGESTION_MODEL`, default `claude-fable-5`) -- already correctly covered by R1's own `tests/advisors/test_r1_fable_suggestion_routing.py` (6/6 GREEN, cited under AC-16 above), but this SIBLING file was missed since it was never in R1's 18-file list. A real AC-16 coverage-completeness gap, not a functional regression. Fixed the 4 `request_suggestions`-scoped tests plus a stale file-header AC-5 docstring to assert the new contract; `test_env_var_unset_uses_opus_default_in_suggestions` renamed to `test_env_var_unset_uses_fable_default_in_suggestions` (the old name asserted a claim now false). The other 37 tests in the same file (covering the untouched `ADVISOR_SYNTHESIS_MODEL` synthesis/chat paths) confirmed unaffected -- r1-test ran the whole file before and after; only these 4 flipped FAIL->PASS.
+
+**No test was skipped, xfailed, or deleted to force green** -- both fixes assert the genuinely-correct NEW behavior, verified by r1-test's own read of the shipped R1 diff before writing either fix.
+
+**Verified independently by this doc-writer** (not taken at face value): ran both files together, `49 passed in 14.27s`, matching r1-test's reported 49/49 (8 + 41) exactly.
+
+**Item 6 (deliberately NOT part of this remediation):** a collection ERROR in `test_response_text_scrub.py`, left with the PM's verifier to confirm reproducible-in-full-tree vs. pre-existing/blip before anyone touches it -- per team-lead's directive, not silently folded into this fix.
+
+**Tests:** commit `d7ac00ed`, test-only (`tests/ai_advisor/test_strategy_builder_run_render_contract.py` + `tests/ai_advisor/test_synthesis_model_config.py`), zero production-code diff. r1-review sign-off ("asserts new contract, coverage not weakened") tracked separately.
+
+**Second post-cycle-complete finding, same day (commit `45d57bbb`):** CI (`-n2`, credential-less) went RED after `37b35743` on 5 failures the local `-n0` gate (run with real .env credentials) missed. Root cause is CI-environment-specific, not a functional regression:
+
+3. **`tests/advisors/test_builder_integration.py` (4 tests using `_patch_builder_seams`):** these tests never mocked `run_backtest`. Since `a39a1476` (AC-12, this cycle) wired `_generate_candidate_trees`'s `compile_plan(plan, backtest_fn=run_backtest)` call site, the tests made REAL unmocked network calls to Composer's live production `/backtest` endpoint on every run -- silently green wherever network egress to Composer was reachable, silently red (empty `infos`, the observed CI symptom) wherever it was not. The file's own module docstring already declared `run_backtest (network)` as a mocked seam; the implementation never caught up when AC-12 landed. Fixed: `_patch_builder_seams` now also patches `sbe.run_backtest` to a deterministic success `BacktestResult`. `compile_plan`/`validate_tree` stay genuinely real (only the network seam is mocked, matching the file's own "WHAT IS MOCKED" contract).
+
+4. **`tests/ai_advisor/test_r1_attribution_honesty.py::test_ac3_sb_run_controls_note_mentions_generation_model_and_community_and_significance_bar`:** the run-controls-note lives inside `/ai-advisor`'s `{% if no_api_key %}...{% else %}...{% endif %}` Jinja branch. Credential-less, `no_api_key=True` and the run-controls panel is honestly omitted for a "Composer API key not configured" notice -- correct production behavior, not a bug. The test never mocked `_has_composer_key`, silently depending on real local `.env` credentials to reach the else-branch. Fixed by adding the same `_has_composer_key` mock already used elsewhere this cycle (e.g. `test_r1_power_caveat.py`).
+
+**Deferred design question (surfaced to team-lead by r1-test, NOT decided here, tracked as open backlog):** `compile_plan`'s repair loop is confirmed fail-closed when the backtest call fails for a genuine infrastructure reason (Composer transport error), as opposed to a real gate rejection -- a real Composer outage would currently zero out Strategy Builder output silently, with no distinction from "every candidate was genuinely rejected." Orthogonal to the CI fix above (mocking the test resolves CI regardless of this design choice) -- whether the repair loop should degrade instead of fail-closed on infra-only failures is an explicit design call for a future cycle, not unilaterally decided here.
+
+**Verified (r1-test):** all 5 pass BOTH credential-less (5/5 in 1.95s -- no network latency, confirming no live calls remain) AND with real `.env` credentials (`test_builder_integration.py` + `test_r1_attribution_honesty.py` together, 19/19). Combined with the full 20-file R1 targeted battery (with creds): 198 passed / 0 failed / 0 errors. ruff clean. **Independently spot-checked by this doc-writer:** ran both files with real .env credentials, 19/19 passed in 6.57s, matching.
+
+**Tests:** commit `45d57bbb`, test-only (`tests/advisors/test_builder_integration.py` + `tests/ai_advisor/test_r1_attribution_honesty.py`), zero production-code diff.
+
+### Reference
+
+`feature-plans/advisor-remediation-r1.md`; `docs/audit-inputs/ADVISOR-INTENT-AUDIT.md` (verdict @ `08b0bcc0`); `docs/audit-inputs/doc-reconciliation.md`; `docs/audit-inputs/claims-inventory.md`; branch `fix/advisor-remediation-r1`; worktree `.claude/worktrees/advisor-r1`.
+
+---
+
+## DE-SB-DEGRADE-001 — Strategy Builder degrades on Composer outage instead of dropping the plan (2026-07-13)
+
+Branch: `fix/advisor-outage-degrade` | HEAD: 14adb451 (compiler + engine layer at `4230641b`, route/JS layer at `14adb451`)
+
+### Problem
+
+`advisors/plan_tree_compiler.py`'s tradeability-repair loop (wired to the real `composer_backtest_client.run_backtest` since R1 AC-12) treated ANY non-400 `backtest_fn` failure -- including infra/transport failures (connection error, timeout, DNS failure, HTTP 5xx, a Retry-After-exhausted 429) -- identically to a genuine HTTP-422 grammar rejection: drop the plan (`CompileResult(tree=None)`). A real Composer outage therefore silently zeroed Strategy Builder's entire output, with no signal distinguishable from "every candidate was genuinely gate-rejected." Origin: surfaced by r1-test during the R1 CI-credential-less investigation, disclosed and deferred by the PM for this scoped cycle (see this file's `DE-ADVISOR-R1-001` entry, "Deferred design question" note).
+
+### Fix
+
+**`advisors/plan_tree_compiler.py`:** new `_INFRA_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})` + `_is_infra_failure(status)` classifier, checked in the repair loop BEFORE the existing `status == 400` branch. `status` is the `_parse_envelope_status` result on the `backtest_fn` failure envelope -- `None` (no parseable "HTTP {N}:" prefix at all: timeout, transport/connection/DNS error, invalid JSON on a 200, or an unparseable 429) or a parsed 5xx/429 status are both classified infra. An infra classification returns `CompileResult(tree=current_tree, reason="backtest_unavailable", tradeability_unverified=True)` -- the last VALIDATED tree (initial, or partially pruned if an earlier attempt already pruned a genuine tradeability rejection) is emitted, flagged unverified, instead of dropped. No additional retry is added at this layer: `run_backtest` already exhausts its own bounded exponential backoff (`BACKTEST_MAX_RETRY_WAIT_SECONDS`) before returning the error, so retrying again here would silently stack a second, unbounded-feeling retry layer. Genuine HTTP-400 (prune/retry) and HTTP-422 (grammar-drop) paths are byte-for-byte unchanged.
+
+**`advisors/strategy_builder_engine.py`:** `CandidateInfo.tradeability_unverified: bool = False` threads `compile_result.tradeability_unverified` forward from `_generate_candidate_trees`. `ProposalRun.backtest_unavailable: bool = False` / `.backtest_unavailable_count: int = 0` roll up the honest run-level signal inside `propose_strategies`, computed as `sum(1 for info in candidate_infos if info.tradeability_unverified)` over the FULL pre-Step-2-backtest candidate list -- deliberately NOT over `candidates` (the field returned to callers), which Step 2's own separate per-candidate `run_backtest` call would ALSO fail under the same sustained outage, silently zeroing a `candidates`-derived count in exactly the case this flag exists to catch. Verified by hand: a sustained outage empties `run.candidates` while `backtest_unavailable_count` still reports the true count.
+
+**Provenance validation:** rather than a static fixture (silently drifts if `composer_backtest_client.py`'s error-envelope format changes), dg-test's `test_self_guard_fixture_matches_composer_backtest_client_format` is a RUNTIME validator -- it inspects the live `composer_backtest_client.py` source via `inspect.getsource` and fails on producer drift. An earlier static JSON fixture (`tests/fixtures/strategy_builder/backtest_infra_error_envelopes.json`) was added then DELETED once confirmed unconsumed by any test (commit `d2679bc5`, team-lead review) -- the self-guard is strictly stronger (a live outage cannot ethically or safely be captured against the real API, so any static fixture is synthetic-by-necessity; a runtime check against the producer's actual source beats a static sidecar a human has to remember to update).
+
+### Invariants preserved
+
+- D-1 / never-raises contract unchanged on both modules.
+- Off-execution-path / advisory-only unchanged -- no `LIVE_EXECUTION` reference, no write/deploy endpoint, not in `_SETTINGS_WRITE_ALLOWLIST`.
+- No change to `evaluate_candidate_batch`, the FDR gate, PBO veto, or any post-gate screen -- a tradeability-unverified candidate still competes purely on its own Step-2 backtest metrics; `tradeability_unverified`/`backtest_unavailable` are honesty signals, not a new filter or veto.
+- No change to `composer_backtest_client.py` -- its existing `BacktestResult.error` envelope format already disambiguated every infra case from a genuine 400/422; only the CALLER's classification of that envelope changed.
+- Genuine HTTP-400 (prune/retry) and HTTP-422 (grammar-drop) repair-loop paths are byte-for-byte unchanged; existing tests covering those paths stay green unmodified.
+- Retry policy unchanged -- `BACKTEST_MAX_RETRY_WAIT_SECONDS` (`composer_backtest_client.py`); no new retry framework, per the plan's explicit Scope Boundary.
+
+### Verified
+
+Compiler + engine layer (commit `4230641b`): full existing test suite green (with-creds AND credential-less, `-n0`). dg-test's targeted battery for this cycle (compiler-degrade + engine-degrade + route + JS-consumption + every untouched R1/repair sibling file) reached 101 passed / 0 failed / 0 errors as of commit `d2679bc5`, ruff clean -- the queue-sizing gap noted in an earlier draft of this entry (1 failure out of an initial 30) was closed by dg-test's own follow-up (commit `8eb8ee69`), not a production-code change.
+
+**STATUS: ALL ACs (AC-1..AC-7) GREEN. Compiler + engine layer at `4230641b`; route + JS layer at `14adb451` (dg-fe, see the Route/JS Layer subsection below); test cleanup at `8eb8ee69`/`d2679bc5`. 101/101 targeted battery. `docs/generated/app.md` and `docs/generated/static_ai_advisor_js.md` reconciled in the same pass as this addendum. A second CLAUDE.md apply (app.py/static/ai_advisor.js key-files rows) is pending PM approval -- see this doc-writer's SendMessage to team-lead.**
+
+### Route/JS Layer -- AC-4/AC-5 (commit `14adb451`, dg-fe)
+
+`POST /ai-advisor/strategy-builder/run` (`app.py`, `ai_advisor_strategy_builder_run()`, currently `app.py:4739`) now reads `ProposalRun.backtest_unavailable`/`.backtest_unavailable_count` directly off the engine result -- same pattern as the existing `run.error`/`run.error_category` reads, deliberately NOT recomputed from `run.candidates` (that collection excludes exactly the outage population; Step 2's own per-candidate backtest call hits the same failing seam and strips the candidate via `backtest_error` before the route ever sees it -- confirmed with dg-engine at `strategy_builder_engine.py:950-958` before implementing). Response JSON gains three fields: `backtest_unavailable` (`bool`), `backtest_unavailable_count` (`int`), `backtest_unavailable_notice` (`str | None`, server-authored prose `"{count} candidate(s) could not be tradeability-checked — Composer backtest unavailable"`). All three absent/false/None on both error branches (`run.error`, outer exception) -- never fabricated. No new routes, no write-path change, no `LIVE_EXECUTION` interaction, templates untouched (JSON API response only).
+
+`static/ai_advisor.js`'s `sbRunAnalysis()` renders the notice in `<div class="empty-state" data-testid="sb-live-backtest-unavailable">`, guarded on the boolean `data.backtest_unavailable` flag (mirrors the existing `screens_skipped`/`screens_skipped_reason` pairing, not the `mode_notice`-only pattern) so a healthy run renders nothing (AC-5 honest empty-state). Placed right after the `screens_skipped` render block, before the survivor/rejected cards. Both early-return error branches (`run.error`, outer exception) are unchanged.
+
+**Tests:** `tests/app/test_sb_backtest_unavailable_route.py` (6 tests), `tests/ai_advisor/test_sb_backtest_unavailable_js_consumption.py` (4 tests) -- both `-n0`, with-creds AND credential-less, 9/9 both modes (dg-fe); dg-test independently confirmed the full 101-test targeted battery (compiler/engine/route/JS layers + every untouched R1 sibling) green against this exact diff before commit.
+
+### Files changed
+
+- `advisors/plan_tree_compiler.py` -- `_INFRA_HTTP_STATUSES`, `_is_infra_failure`, `CompileResult.tradeability_unverified`, repair-loop infra branch.
+- `advisors/strategy_builder_engine.py` -- `CandidateInfo.tradeability_unverified`, `ProposalRun.backtest_unavailable`/`.backtest_unavailable_count`, rollup in `propose_strategies`.
+- `tests/advisors/test_plan_tree_compiler_degrade.py` (21 tests), `tests/advisors/test_strategy_builder_engine_degrade.py` (9 tests) -- compiler/engine layer, dg-test, commit `8eb8ee69`.
+- `tests/app/test_sb_backtest_unavailable_route.py` (6 tests), `tests/ai_advisor/test_sb_backtest_unavailable_js_consumption.py` (4 tests) -- route/JS layer, dg-test, commit `8eb8ee69`, confirmed green against dg-fe's landed route/JS diff (commit `14adb451`).
+- `tests/fixtures/strategy_builder/backtest_infra_error_envelopes.json` was added then DELETED (commit `d2679bc5`) once confirmed unconsumed -- the self-guard runtime validator is the actual provenance mechanism (see the Fix section above).
+- `app.py`, `static/ai_advisor.js` -- route/JS layer, dg-fe, commit `14adb451`.
+- `docs/generated/advisors_plan_tree_compiler.md`, `docs/generated/advisors_strategy_builder_engine.md` (this doc-writer, reconciled in the same pass -- also closed a pre-existing gap where `ProposalRun.error_category`, added in R1 AC-11, was never documented in the engine doc until now).
+- `docs/generated/app.md`, `docs/generated/static_ai_advisor_js.md` (this doc-writer -- also corrected a stale `app.md` "Known gap, in progress" note left over from R1 Checkpoint-3, which had already landed but was never marked resolved in this file).
+
+### Reference
+
+`feature-plans/advisor-outage-degrade.md`; branch `fix/advisor-outage-degrade`; worktree `.claude/worktrees/advisor-degrade`; origin note in this file's `DE-ADVISOR-R1-001` entry, "Deferred design question" section.
+
+## DE-ADVISOR-R2-1-001 — SB reasoning-context injection + provenance contract (R2 sub-cycle 1 of 3) (2026-07-13)
+
+Branch: `feature/advisor-r2-reasoning` | HEAD: `e27f1cea` (engine at `fdc6a0aa`, route/JS at `4063ec33`, test re-freezes at `81cf2da6`/`e27f1cea`)
+
+### Program context
+
+R2 = 3 sub-cycles: **R2-1 (THIS)** — the reasoning-context assembler + provenance contract, proven on Strategy Builder → **R2-2** — Logic Changes reasoning port → **R2-3** — Asset Swaps port. Provenance is a CROSS-CUTTING contract established here, not a one-off Strategy-Builder feature: R2-2 and R2-3 will call the SAME `ai_advisor.build_reasoning_context` assembler and extend the SAME 4-key `provenance` shape (`generation_model`/`mode`/`evidence_injected`/`run_id`) to their own engines/routes — no port ships reasoning without its provenance surface, and no port re-derives its own context-assembly or manifest shape from scratch.
+
+R2-1 also CLOSES `DE-ADVISOR-R1-001`'s "context-blindness caveat" (`advisors/build_plan_generator.py`) for the symphony-scoped path only — the from-scratch (no-symphony-selected) path remains context-blind by design and stays byte-preserved.
+
+### Problem
+
+At R1 time, Strategy Builder's generation prompt carried none of the operator's real symphony — no live tree, no portfolio composition, no backtest statistics, no market-lens data. It proposed strategies from an objective name and a DSL grammar alone. Separately, a generated proposal carried no run-level provenance: an operator (or a downstream engineer) had no way to see which model generated a run, what evidence — if any — informed it, or trace a persisted proposal back to the run and evidence that produced it. R2's mandate: make Advisor reasoning genuinely informed by real evidence AND make that reasoning OBSERVABLE — "speed can't impersonate intelligence."
+
+### Fix
+
+**`ai_advisor.py` — new `build_reasoning_context(symphony_id, objective, *, composer_symphony_id=None) -> tuple[str, dict]`.** Assembles a bounded, human-readable operator-context text block — the real symphony tree (rendered via `advisors.symphony_schema.render_rules_text`, never a raw JSON dump; capped at the new `_MAX_TREE_RENDER_CHARS=6000` constant), live Optuna stats, and the 5 market-lens blocks (reusing `assemble_advisor_context`'s EXISTING nightly cache-serve path — never a fresh live fan-out on this per-click path, and reusing `advisors.prism_render.humanize_lens_summary` for lens prose, never a second hand-rolled renderer) — paired with the new `_EMPTY_MANIFEST`-shaped per-source manifest. Falsy `symphony_id` (the from-scratch path) returns `("", _EMPTY_MANIFEST)` with ZERO I/O — no Composer fetch, no DB read. D-1: never raises, even when a collaborator (`symphony_logic.fetch_symphony_score`) itself raises — each source is gathered in its own `try/except`.
+
+**The honest-degradation manifest — the actual deliverable of this cycle, not a side effect.** `manifest` carries `"tree"`/`"stats"`: `present`/`absent`, and the 5 lenses: `available`/`stale`/`absent`. Every degraded source — a tree-fetch failure, no Optuna run, a cold or stale lens cache — is reflected EXACTLY as it happened, and the run proceeds without that evidence rather than fabricating a placeholder or silently reporting it as available. This manifest is not summarized or re-derived anywhere downstream: the exact same dict that gated what was injected into the generation prompt is the exact same dict surfaced to the operator on the response JSON (`provenance["evidence_injected"]`, see below) and persisted with the observation. There is no second, lossy copy in between — this is the concrete mechanism behind R2's "observable reasoning" thesis.
+
+**`advisors/build_plan_generator.py` — additive `reasoning_context: str | None = None` on `_build_generation_prompt`/`generate_build_plans`.** When truthy, appended verbatim under a `## OPERATOR CONTEXT` section header. When falsy (omitted or explicit `None` — every pre-R2-1 caller's exact shape), the returned prompt is BYTE-IDENTICAL to the pre-R2-1 producer output (AC-8) — proven against a golden fixture captured from the REAL producer at commit `c0cacd47`, before any R2-1 change landed (`tests/fixtures/strategy_builder/generation_prompt_from_scratch_baseline.json`, SHA-256-pinned). This closes the `DE-ADVISOR-R1-001` context-blindness caveat for symphony-scoped runs only.
+
+**`advisors/strategy_builder_engine.py` — `ProposalRun.run_id`/`.provenance` + `propose_strategies(reasoning_context=, reasoning_manifest=, run_id=)`.** The 4-key `provenance` dict (`generation_model` from `model_config.get_advisor_suggestion_model()` read at call time — never a hardcoded literal; `mode="build-new"`; `evidence_injected` = `reasoning_manifest` verbatim or `ai_advisor._EMPTY_MANIFEST`; `run_id` = caller-supplied or a fresh `uuid4()`) is minted UNCONDITIONALLY at the top of `propose_strategies`, before even the Composer-key check — so every return path, including the earliest error returns, carries the SAME `run_id`/`provenance`. `run_id`/`evidence_injected` persist into every advisory observation's `raw_response`, so a proposal traces back to its run and evidence manifest (AC-6).
+
+**`app.py`'s `ai_advisor_strategy_builder_run()` route.** Symphony-scoped runs (truthy `symphony_id`) resolve the Composer hash via the same NAME→hash `bot_state` scan the asset-swap route already uses, then call `build_reasoning_context` and thread both return values into `propose_strategies`. From-scratch runs never call it — zero extra I/O, AC-8. Response JSON gains a `provenance` object on the success path only; both error branches (`run.error`, the outer exception) omit the key entirely — never a fabricated `null`.
+
+**Route-boundary `isinstance(dict)` serialization guard — a named pattern for R2-2/R2-3 to reuse (r2-fe finding).**
+```python
+provenance = getattr(run, "provenance", None)
+if not isinstance(provenance, dict):
+    provenance = None
+```
+A plain `getattr(run, "provenance", None)` is not sufficient: several pre-existing test fixtures construct a bare `MagicMock()` as a `ProposalRun` stand-in, and `MagicMock` auto-vivifies ANY attribute access into a new child `Mock` rather than raising `AttributeError` — so `getattr`'s `default` branch never actually fires against a mock missing `.provenance`, and the resulting non-`None`, non-dict `Mock` blows up `jsonify()` with `TypeError: Object of type Mock is not JSON serializable`. `isinstance(provenance, dict)` is the only reliable guard, and it fails CLOSED (`None`) rather than raising or fabricating a dict out of a `Mock`. Same defensive SHAPE as the pre-existing `backtest_unavailable_count` read one paragraph above it, but that field only needed `bool()`/`int()` coercion (safe against a truthy-but-wrong `Mock`) — `provenance` is handed straight to `jsonify()` as a nested object, where a bare `Mock` is fatal, not merely wrong. Regression-pinned by `test_route_survives_bare_mock_run_missing_provenance_attrs` (`tests/app/test_sb_route_reasoning_provenance.py`).
+
+**`static/ai_advisor.js`'s `sbRunAnalysis()`.** Renders `data.provenance` in a new `data-testid="sb-live-generation-provenance"` block (model + compact rendering of `evidence_injected` + run-id), guarded on truthy `data.provenance`. Deliberately disambiguated from the pre-existing per-candidate `data-testid="sb-live-provenance"` built-new/Atlas COUNT rollup (AC-11/F5, `DE-ADVISOR-R1-001`) — the two share the English word "provenance" but name independent concepts (per-candidate template origin vs. this run's generation-context provenance); the source comment calls out the collision explicitly.
+
+**Provenance contract-shape reconciliation.** The `provenance` shape went through several design-thrash rounds during the cycle (a brief 3-key-vs-4-key back-and-forth) before team-lead's final ruling (`Design B`, commit `048e4482`) settled the 4-key shape documented above. Per team-lead's explicit instruction, that thrash carries no independent design signal — only the code actually committed at `e27f1cea` is authoritative, and that is what this entry documents.
+
+### AC-9 wording reconciliation (r2-review gate finding)
+
+The feature plan's AC-9 read "bounded so a large real tree can't blow `build_plan_generator.MAX_OUTPUT_TOKENS`" — loosely worded, and not literally what the implementation does. `_MAX_TREE_RENDER_CHARS=6000` (`ai_advisor.py`) is a dedicated INPUT-context bound on the tree text `build_reasoning_context` injects; it has no runtime relationship to `MAX_OUTPUT_TOKENS` (`advisors/build_plan_generator.py`), a different module's OUTPUT-side ceiling on the SDK's structured-tool-use response. AC-9's actual intent — bound the injected tree so it can't blow the generation call's cost/context budget — is satisfied entirely on the input side; the two constants have never been coupled in code. Documented at the constant's source of truth in `docs/generated/ai_advisor.md`.
+
+### Finding-2 — accepted transitive import (r2-review)
+
+`strategy_builder_engine.py`'s new module-level `import ai_advisor` (line 21) transitively imports `alpha_bot_execution` at module-load time: `ai_advisor.py`'s own `import symphony_logic` (`ai_advisor.py:30`) → `symphony_logic.py`'s `from alpha_bot_execution import COMPOSER_BASE_URL, get_composer_headers` (`symphony_logic.py:19`). Verified independently (grepped both edges before documenting) — not merely asserted from the finding. ACCEPTED for three reasons: (1) import-only, no cycle — `alpha_bot_execution.py` does not import back up this chain; (2) not a new dependency, only a new PATH to an existing one — `ai_advisor.py` already carried this exact transitive import before R2-1; R2-1 makes it reachable through a second route, it does not introduce it; (3) Architecture Constraint #1 ("no blocking I/O on the execution path") stays intact — nothing in the chain executes I/O at import time, and `strategy_builder_engine.py` itself is lazy-imported inside the route handler (CC-2), so none of this loads at daemon startup. The blanket "no execution-module import" claim previously in `docs/generated/advisors_strategy_builder_engine.md` was corrected — it is no longer exactly true for the file's full transitive closure, only for its own top-level `import` statements.
+
+### Follow-ups (non-blocking, logged 2026-07-13)
+
+1. Strengthen the SB import-guard test to a full-source-text transitive scan, matching the precedent in `tests/ai_advisor/test_correlation_diagnostic_guards.py`, so the Finding-2 accepted transitive path is explicitly asserted rather than left to an implicit direct-import-only check.
+2. Tighten the AC-9 wording in the R2-1 feature plan itself (`feature-plans/advisor-r2-1-context-provenance.md`) so a future reader isn't misled by the loose `MAX_OUTPUT_TOKENS` phrasing this entry reconciles.
+
+### Invariants preserved
+
+- D-1 / never-raises contract unchanged on `build_reasoning_context` and every hop of the seam chain.
+- Off-execution-path / advisory-only unchanged — no import from `alpha_bot_execution`/`autotuner` at any touched file's OWN top level (see Finding-2 above for the accepted transitive exception); CSRF unchanged; not added to `_SETTINGS_WRITE_ALLOWLIST`; no `LIVE_EXECUTION` reference.
+- The FDR/PBO/SPY/BHY gate is BYTE-unchanged — no change to `evaluate_candidate_batch`, `backtest_gate_engine`, or any screen (R1 parity untouched, characterization-tested).
+- No new admission concept or DSL change; provenance tags (`built-new`/`atlas-suggested`) unchanged — the R2-1 `provenance` dict and the pre-existing `template_id` tag are independently-named concepts that happen to share the word "provenance"; do not conflate.
+- The from-scratch (non-symphony-scoped) generation path is BYTE-PRESERVED end to end when `reasoning_context`/`reasoning_manifest` are omitted — pinned against a golden fixture captured before any R2-1 change landed (AC-8).
+
+### Verified
+
+Reviewed HEAD `e27f1cea` (origin/main fork point `5f353145`) — **APPROVED by r2-review.** With real `.env` credentials: 637 passed / 0 failed / 12 skipped. Credential-less (all 7 cred vars set to `""`): 636 passed / 0 failed / 13 skipped (the extra skip is the expected credential-gated test correctly deactivating). Full 40-file SB/route/reasoning-context superset swept in both modes — zero failures either mode. Engine landed at `fdc6a0aa`, route/JS at `4063ec33`, signature re-freezes at `81cf2da6` (`generate_build_plans`) and `e27f1cea` (`propose_strategies` AC-20) confirmed test-only (verified independently: `propose_strategies`'s actual parameter list matches the documented signature exactly).
+
+**Independent post-commit re-verification (r2-test, HEAD `a9b14e74`):** r2-test's final confirming pass could not reproduce r2-review's literal 40-file selection (no enumerated file list was available to reconstruct it against) and instead built an independently-enumerated, broader SB/route/reasoning-context-touching superset — 51 files, 1101 tests collected. Results: real `.env` credentials 1087 passed / 0 failed / 14 skipped; credential-less (7 vars `""`) 1086 passed / 0 failed / 15 skipped. The totals differ from r2-review's 637/636 above because the two sweeps cover different (overlapping, non-identical) file sets, not because either count is wrong — both independently confirm ZERO failures at their respective scope, and neither supersedes the other.
+
+### Files changed
+
+- `ai_advisor.py` — new `build_reasoning_context`, `_EMPTY_MANIFEST`, `_MAX_TREE_RENDER_CHARS`.
+- `advisors/build_plan_generator.py` — `_build_generation_prompt`/`generate_build_plans` gain `reasoning_context=`.
+- `advisors/strategy_builder_engine.py` — `ProposalRun.run_id`/`.provenance`; `propose_strategies` gains `reasoning_context=`/`reasoning_manifest=`/`run_id=`.
+- `app.py` — `ai_advisor_strategy_builder_run()` route: `build_reasoning_context` call for symphony-scoped runs, `provenance` response field, `isinstance(dict)` guard.
+- `static/ai_advisor.js` — `sbRunAnalysis()`: `sb-live-generation-provenance` render block.
+- `tests/advisors/test_reasoning_context_assembler.py`, `tests/advisors/test_build_plan_generator_reasoning_context.py`, `tests/app/test_sb_route_reasoning_provenance.py`, and sibling provenance/render coverage — r2-test, reconciled across several contract-ruling revert/reconcile commits to the final `Design B` shape (`fea46803` -> `aee451b8` -> ... -> `e27f1cea`).
+- `tests/fixtures/strategy_builder/generation_prompt_from_scratch_baseline.json` (golden AC-8 fixture, captured pre-R2-1 at `c0cacd47`).
+- `docs/generated/ai_advisor.md`, `docs/generated/advisors_build_plan_generator.md`, `docs/generated/advisors_strategy_builder_engine.md`, `docs/generated/app.md`, `docs/generated/static_ai_advisor_js.md`, `docs/generated/INDEX.md` (this doc-writer, commits `0dbc5158` + `f4b73f93`).
+- `.claude/CLAUDE.md` key-files rows for the 5 touched modules — pending PM approval before commit (see this doc-writer's SendMessage to team-lead).
+
+### Reference
+
+`feature-plans/advisor-r2-1-context-provenance.md`; branch `feature/advisor-r2-reasoning`; worktree `.claude/worktrees/advisor-r2`; team-lead's provenance-shape ruling at commit `048e4482` ("Design B"); `DE-ADVISOR-R1-001` in this file (the context-blindness caveat this entry closes for the symphony-scoped path).
+
+## DE-ADVISOR-R2-2-001 — Logic Changes LLM-reasoned generation + provenance (R2 sub-cycle 2 of 3) (2026-07-14)
+
+Branch: `feature/advisor-r2-2-logic-changes` | HEAD: `6e1eabcd` (fork-point `origin/main` `8d1b9770`, clean fast-forward) — RED `f69af478`, engine GREEN `d1d480dd`, route/JS GREEN `13f9863d`, test-maintenance `ae9a0ba1`/`8974ddba`/`8817382b`, docstring fix `f8361f46`, AC-X4 billing-order RED `2a003ae4` + GREEN `6e1eabcd`
+
+### Program context
+
+R2 = 3 sub-cycles: R2-1 (shipped `8d1b9770`) — the reasoning-context assembler + provenance contract, proven on Strategy Builder → **R2-2 (THIS)** — Logic Changes reasoning port → R2-3 — Asset Swaps port. `DE-ADVISOR-R2-1-001` established the cross-cutting contract; this entry is the first CONFIRMATION that the contract genuinely is cross-cutting, not a one-off Strategy-Builder feature — R2-2 reuses `ai_advisor.build_reasoning_context` and the same 4-key `provenance` shape (`generation_model`/`mode`/`evidence_injected`/`run_id`) verbatim, with zero code change to `ai_advisor.py` itself.
+
+### Problem
+
+Prior to R2-2, `advisors/logic_change_engine.py` produced logic-change candidates via fixed-percentage scripts: `generate_objective_directed_candidates` scaled a per-objective tweak by one of five hardcoded factors (e.g. `0.80` for `reduce_drawdown`), and an operator's plain-text `change_description` — when it carried no explicit numbers — fell back to a flat +/-20% via `_fallback_direction_factor`/`_parse_change_description_to_tweak`. Neither path reasoned about the operator's actual tree, live stats, or market context; the Logic Changes tab was honestly labelled "Deterministic — no AI reasoning" for exactly this reason. R2's mandate — make Advisor reasoning genuinely informed by real evidence AND make that reasoning OBSERVABLE — had been proven on one surface (Strategy Builder, R2-1); Logic Changes was the next of three ports.
+
+### Fix
+
+**`advisors/logic_change_engine.py` — the entire fixed-multiplier generator family is DELETED.** `generate_objective_directed_candidates` (five named scaling-factor constants: `_REDUCE_DRAWDOWN_TIGHTEN_FACTOR`, `_LIFT_RISK_ADJUSTED_LOOSEN_FACTOR`, `_REDUCE_TURNOVER_LENGTHEN_FACTOR`, `_IMPROVE_MOMENTUM_TIMING_SHORTEN_FACTOR`, `_REDUCE_WHIPSAW_LENGTHEN_FACTOR`, plus two window-floor constants), `generate_objective_directed_logic_candidates` (its `change_description`-annotating wrapper), `_parse_change_description_to_tweak` (the 4-phase plain-text parser), and `_fallback_direction_factor` (with its four direction-keyword/factor constants) are all gone — verified by grep against the final `logic_change_engine.py`: none of these names exist as a definition anywhere in the file, only as past-tense references inside comments explaining what was replaced.
+
+**`generate_reasoned_logic_candidates(symphony_id, raw_value, objective, *, reasoning_context=None, change_description=None, max_candidates=MAX_SUGGESTED_CANDIDATES) -> list[LogicTweak]` — the sole replacement.** Makes a real Anthropic `messages.create` tool-use call (model via `model_config.get_advisor_suggestion_model()`, forced `emit_logic_edits` tool choice, `_MAX_OUTPUT_TOKENS=2048`, `_REQUEST_TIMEOUT_SECONDS=30.0`) with a prompt assembled by `_build_reasoned_generation_prompt`: the objective, an optional `reasoning_context` block (verbatim, when the caller supplies one), an optional `change_description` steering hint, and a bounded (`_MAX_PARAMS_LISTED_IN_PROMPT=40`) listing of the tree's actual `node_path`/`param_key`/`current_value` entries — never a raw `json.dumps()` of the tree. **SECURITY-CRITICAL:** every proposed edit's `node_path`/`param_key` is resolved via `_navigate_to_node` against the REAL `raw_value` tree — an edit that doesn't resolve to a real dict/key is dropped, never fabricated into a `LogicTweak`; the resulting `LogicTweak.old_value` is always read from the real tree, never trusted from any `old_value` the LLM's edit dict happens to include (the `emit_logic_edits` tool schema does not even define `old_value` as an input field). D-1: `_build_client()` raising (no key, no SDK), the SDK call raising, a response with no `tool_use` block, or a malformed `edits` payload all degrade to `[]` — never propagates.
+
+**The `evidence_injected` manifest — R2's thesis, reused not re-derived.** When the route supplies `reasoning_context`/`reasoning_manifest` from `ai_advisor.build_reasoning_context`, the EXACT SAME per-source honesty manifest that gated the LLM prompt is the exact same dict surfaced as `provenance["evidence_injected"]` on the response and persisted on every observation the run writes. Omitted (the weekly scheduler's call site, which never builds reasoning context) → `ai_advisor._EMPTY_MANIFEST` (all 7 keys `"absent"`), never a fabricated placeholder.
+
+**`validate_tree` guard — net-new safety over `apply_logic_tweak`, not incidental hardening.** `apply_logic_tweak` is a NAVIGATION check only (target node/`param_key`/`old_value` exist and match) — it has no opinion on whether the resulting tree is a structurally valid Composer tree, and was sufficient when the generator was a fixed-percentage script that could only ever emit well-formed numeric substitutions. `_evaluate_single_variant` now calls `advisors.symphony_schema.validate_tree(variant_tree)` immediately after `apply_logic_tweak` succeeds, before any backtest — an LLM-reasoned edit can navigate to a real node yet still corrupt a structural field, so the guard exists specifically because the generator's trust model changed from a trusted constant to a less-trusted LLM. A variant that fails validation is dropped with a `backtest_error` message deliberately distinct from the "old_value not found" wording, before any backtest call — never fabricated, never backtested.
+
+**`run_id`/`provenance` — the SAME 4-key contract `DE-ADVISOR-R2-1-001` established, minted unconditionally.** Both `propose_operator_logic_change` and `suggest_logic_changes` mint `run_id` (caller-supplied or a fresh `uuid4()`) and build `provenance = {generation_model, mode: "logic-change", evidence_injected, run_id}` at the very top, before any other logic — every return path, including the earliest early-exit branches, carries the same non-fabricated `run_id`/`provenance`. `_persist_observation` gains keyword-only `run_id=`/`evidence_injected=`, written into every observation's `raw_response` (additive, no migration — `raw_response` is a free-form JSON column).
+
+**`app.py`'s `ai_advisor_logic_changes_evaluate()` route.** Reuses `ai_advisor.build_reasoning_context(symphony_id, objective, composer_symphony_id=composer_hash)` verbatim — same call shape as the SB route — and threads both return values into `propose_operator_logic_change(reasoning_context=, reasoning_manifest=)`. `change_description` is passed straight through to the engine rather than parsed at the route (unchanged pattern; the engine-side behavior it delegates to is what changed).
+
+**A deliberate, team-lead-ruled divergence from R2-1's SB route: provenance present on EVERY return path, not just success.** The route mints `_default_provenance = {generation_model, mode: "logic-change", evidence_injected: dict(ai_advisor._EMPTY_MANIFEST), run_id: str(uuid.uuid4())}` immediately after the docstring and returns it on every early-exit branch — import failure, no Composer key, missing `symphony_id`/`change_description`, hash-resolution failure, tree-fetch failure, and the engine-call exception handler — none of which carried a `provenance` key at all before this cycle. The success path instead reads the ENGINE's own `provenance` via `getattr(run_result, "provenance", None)` guarded by the same `isinstance(provenance, dict)` MagicMock-safety idiom R2-1 established for the SB route (`getattr(..., default)` alone does not fire against a `MagicMock`'s auto-vivified attributes) — but falls back to `_default_provenance` rather than `None`, consistent with this route's never-absent contract. This is a genuine, intentional difference from the SB route (which omits `provenance` entirely on error) — not an inconsistency to reconcile.
+
+**`static/ai_advisor_logic_changes.js`** (a separate script file from `static/ai_advisor.js` — the two tabs' JS was never unified) renders `data.provenance` in a new `data-testid="lc-live-generation-provenance"` block — model + a compact rendering of `evidence_injected` + run-id — disambiguated from SB's `sb-live-generation-provenance`, computed BEFORE the success/error branch split so it renders on both (matching the route's provenance-on-every-path contract).
+
+**`templates/ai_advisor.html`'s Logic Changes tab-attribution label** no longer reads "Deterministic — no AI reasoning"; it now reads `{{ advisor_suggestion_model | e }} — reasons over your live tree`. The Asset Swaps tab's identical label is UNCHANGED (accurate — R2-3 has not shipped).
+
+**Re-gate fix — `propose_operator_logic_change`'s AC-X4 check now runs BEFORE the billed LLM seam (`6e1eabcd`).** In the first GREEN pass, the `change_description` → `generate_reasoned_logic_candidates` resolution ran before `_has_composer_key()` was checked — a valid `ANTHROPIC_API_KEY` with missing/invalid Composer credentials billed a live Anthropic call for a run that was guaranteed to discard it and return `no_api_key=True`. `suggest_logic_changes` already had the correct ordering; `propose_operator_logic_change` did not. Fixed by reordering: the "neither `tweak` nor `change_description` supplied" no-op branch stays first (touches neither credential nor the LLM seam), the Composer-key check now runs immediately after (before tweak resolution), and the `change_description` → reasoned-generator resolution moved after the key gate. `run_id`/`provenance` still minted unconditionally on every return path — this reorder does not touch that contract. See the Testing-discipline findings section below for how this was caught.
+
+### Testing-discipline findings — 6 total (5 test leaks + 1 production bug), the discipline paying off
+
+R2-2's introduction of a real, billed Anthropic call into a path (`change_description`) that was previously a zero-network deterministic parser turned every PRE-EXISTING test exercising that path into a candidate live-API-leak — a test that mocked the downstream backtest seam but never the new upstream LLM seam would, with a real `ANTHROPIC_API_KEY` present, silently make a genuine paid call while still reporting green. Six distinct instances of this class were found and fixed across the re-gate, via three independent detection layers, each catching what the layer before it missed:
+
+1. **Grep for `change_description=`/`ANTHROPIC_API_KEY` usage** caught the obvious cases but missed leaks hidden behind D-1 degradation — a leaking test still asserted correctly on the (real) response shape, so a manual read of assertions alone did not distinguish "mocked" from "accidentally live."
+2. **The credential-less second verification pass** (`ANTHROPIC_API_KEY=""`, mandated by this project's testing discipline for exactly this reason) caught the first instance (`74e96aac`, `test_ac6_logic_change_n1_evaluate_response_omits_fdr_yekutieli_branding`) — it correctly FAILED credential-less where it had silently passed (and silently called out) credentialed. Two further passes (`8974ddba`, `8817382b`) found four more of the same class this way.
+3. **The execution-level Anthropic-seam detector — the definitive tool, now the standing final seam check.** Patches `anthropic.Anthropic.__init__` to record-then-raise on every construction, runs the FULL suite with REAL credentials present, and asserts zero client constructions across the entire run. This is stricter than either grep or the credential-less pass: it catches a leak regardless of whether the test's assertions happen to still pass, and regardless of whether a particular CI run happens to have credentials set. Run independently by BOTH r2-2-test and r2-2-review; both converged on zero live client constructions at the final HEAD (r2-2-review's own scoped rerun: 355/0/12 both credential modes, detector 0). **Noted for R2-3 (Asset Swaps) reuse** — any reasoning port that introduces a real LLM call into a previously-deterministic path should run this detector as a matter of course, not as an afterthought.
+
+The 6th finding was NOT a test leak — it was the PRODUCTION ordering bug documented in the Fix section above (`propose_operator_logic_change` billing an LLM call before checking for a Composer key). It surfaced during r2-2-review's re-gate, not via the seam detector (which only flags UNMOCKED live calls in tests, not a real-but-wasted call in a genuinely un-mocked, real-credentialed production path) — a reminder that the detector's scope is test hygiene, not production-cost correctness; the two are related but distinct classes of defect, both real, both fixed this cycle.
+
+**Route docstring/comment finding, RESOLVED this cycle (`f8361f46`).** This doc-writer flagged (in an earlier draft of this entry) that `app.py`'s `ai_advisor_logic_changes_evaluate()` docstring and one inline comment still described the deleted deterministic parser ("parses via a simple heuristic," "the engine's own `_parse_change_description_to_tweak` runs internally"). r2-2-fe fixed both this cycle — the docstring now describes the LLM-reasoned steering-hint behavior and the real-tree resolution + `validate_tree` guard; the inline comment now names `generate_reasoned_logic_candidates`. No behavior change; docs-only. This doc-writer's own `docs/generated/advisors_logic_change_engine.md` and `docs/generated/app.md` already documented the actual runtime behavior throughout — this fix brings the source comments into agreement with what was already the documented (and actual) behavior, not the other way around.
+
+**8th doc target confirmed NOT needed (per the approved doc plan, verified against the actual diff, not assumed).** `advisors/weekly_suggestions_scheduler.py` carries ZERO diff across the full cycle (`git diff 8d1b9770..6e1eabcd -- advisors/weekly_suggestions_scheduler.py` is empty) — its `run_weekly_logic_change_suggestions()` call site is unaffected; `suggest_logic_changes` gained new keyword-only `reasoning_context=`/`reasoning_manifest=`/`run_id=` parameters, all defaulted `None`/omitted at this call site, so `docs/generated/advisors_weekly_suggestions_scheduler.md` needed no edit (a confirming note was added to `docs/generated/advisors_logic_change_engine.md` and `docs/generated/INDEX.md` instead, at the existing entries).
+
+### Invariants preserved
+
+- D-1 / never-raises contract unchanged on `generate_reasoned_logic_candidates` and every hop of the seam chain (`_build_client`, the SDK call, tool-use parsing).
+- Off-execution-path / advisory-only unchanged — no import from `alpha_bot_execution`/`autotuner`/`math_engine` at any touched file's own top level; `logic_change_engine.py` itself remains lazy-imported inside the route handler (CC-2). New module-level `import ai_advisor` in `logic_change_engine.py` transitively reaches `alpha_bot_execution` via the SAME chain `DE-ADVISOR-R2-1-001` Finding-2 already accepted for `strategy_builder_engine.py` (`ai_advisor.py`'s own `import symphony_logic` → `symphony_logic.py`'s `from alpha_bot_execution import ...`) — verified independently for this module too (no reverse import), accepted for the identical three reasons.
+- The FDR/PBO/SPY/BHY gate is BYTE-unchanged — no change to `evaluate_candidate_batch`, `backtest_gate_engine`, or any screen; `_evaluate_single_variant`'s pre-existing `dated_returns`/PBO wiring and `_spy_returns_fn_for` are untouched.
+- `apply_logic_tweak`, `_navigate_to_node`, `extract_numeric_params` — the raw-tree edit primitives — are byte-unchanged; the new generator and the new `validate_tree` guard are additive call sites, not replacements of these primitives.
+- No Composer write endpoint call — only `GET /score` + stateless `POST /api/v0.1/backtest` (unchanged), plus the new Anthropic `messages.create` call (not a Composer endpoint).
+- CSRF unchanged; not added to `_SETTINGS_WRITE_ALLOWLIST`; no `LIVE_EXECUTION` reference anywhere in the touched files.
+- `ai_advisor.py`, `advisors/symphony_schema.py`, `advisors/backtest_gate_engine.py` — ZERO diff this cycle (confirmed via `git diff 8d1b9770..6e1eabcd`) — every reuse point in this entry is genuine reuse, not a disguised rewrite.
+- `run_id`/`provenance` minted-unconditionally-on-every-return-path contract (AC-5/AC-7) held through the AC-X4 reorder fix — the reorder changes WHEN the LLM seam fires, never whether `run_id`/`provenance` are present.
+
+### Verified
+
+Reviewed HEAD `6e1eabcd` (fork-point `origin/main` `8d1b9770`) — **APPROVED by r2-2-review.** Clean fast-forward. Full route-touching superset, both credential modes: real-creds **571 passed / 0 failed / 16 skipped**; credential-less **567 passed / 0 failed / 20 skipped** (r2-2-test's full 37-file run). **Execution-level Anthropic-seam detector: 0 live client constructions**, confirmed independently by both r2-2-test and r2-2-review; r2-2-review's own scoped rerun: 355 passed / 0 failed / 12 skipped both credential modes, detector 0.
+
+### Files changed
+
+- `advisors/logic_change_engine.py` — `generate_reasoned_logic_candidates`, `_build_client`, `_build_reasoned_generation_prompt`, `_EMIT_LOGIC_EDITS_TOOL`, `_MAX_PARAMS_LISTED_IN_PROMPT`/`_MAX_OUTPUT_TOKENS`/`_REQUEST_TIMEOUT_SECONDS`; `LogicChangeRunResult.run_id`/`.provenance`; `propose_operator_logic_change`/`suggest_logic_changes` gain `reasoning_context=`/`reasoning_manifest=`/`run_id=`; `_evaluate_single_variant` gains the `validate_tree` guard; `_persist_observation` gains `run_id=`/`evidence_injected=`; the entire fixed-multiplier generator family deleted; `propose_operator_logic_change` reordered so the Composer-key check runs before the billed LLM seam (`6e1eabcd`).
+- `app.py` — `ai_advisor_logic_changes_evaluate()` route: `build_reasoning_context` call, route-minted `_default_provenance` on every return path, engine-provenance read with `isinstance(dict)` guard, docstring/comment fix (`f8361f46`).
+- `static/ai_advisor_logic_changes.js` — `_renderResults()`: `lc-live-generation-provenance` render block, computed before the error/success branch split.
+- `templates/ai_advisor.html` — Logic Changes tab-attribution label flip (Asset Swaps' identical label untouched).
+- `feature-plans/advisor-r2-2-logic-changes.md` — plan scaffold (Status: ready).
+- `tests/advisors/test_logic_change_engine_reasoning_context.py`, `test_logic_change_engine_reasoned_generation.py`, `test_logic_change_engine_validate_tree_guard.py`, `test_logic_change_engine_provenance.py`, `test_logic_change_engine_honest_degradation.py`, `test_logic_change_engine_credentialless_bounded_prompt.py`, `test_logic_change_engine_gate_batch_characterization.py`, `tests/app/test_logic_change_route_reasoning_provenance.py`, `tests/advisors/test_lc_live_generation_provenance_render.py` — r2-2-test, new RED coverage for AC-1..AC-10.
+- `tests/ai_advisor/test_logic_change_engine.py` (major reduction — dead-generator test classes retired), `tests/ai_advisor/test_r1_attribution_honesty.py`, `tests/ai_advisor/test_r1_measured_value_honesty.py`, `tests/ai_advisor/test_r1_n1_honesty.py`, `tests/advisors/test_ac17_panel_tie_reachability.py`, `tests/advisors/test_r1_baseline_call_count.py`, `tests/advisors/test_logic_change_production_wiring.py` — r2-2-test, reconciled to the reasoned-generator contract across `ae9a0ba1`/`8974ddba`/`8817382b` (5 unmocked-LLM-seam live-API leaks fixed, see Testing-discipline findings above).
+- `docs/generated/advisors_logic_change_engine.md`, `docs/generated/ai_advisor.md`, `docs/generated/app.md`, `docs/generated/INDEX.md` (this doc-writer).
+- `.claude/CLAUDE.md` key-files rows for `app.py` / the shared `advisors/` row / `ai_advisor.py` / `static/ai_advisor.js` (this doc-writer, PM-approved before commit).
+
+### Reference
+
+`feature-plans/advisor-r2-2-logic-changes.md`; branch `feature/advisor-r2-2-logic-changes`; worktree `.claude/worktrees/advisor-r2-2`; `DE-ADVISOR-R2-1-001` in this file (the cross-cutting contract this entry confirms on a second port); `DE-LOGIC-CHANGE-DIRECTION-001` in this file (the historical bug fix superseded-by-deletion this cycle — see `docs/generated/advisors_logic_change_engine.md`'s Bug Fix section for the annotated historical record).
+
+## DE-ADVISOR-R2-3-001 — Asset Swaps LLM-reasoned generation + provenance (R2 sub-cycle 3 of 3, CLOSES THE PROGRAM) (2026-07-14)
+
+Branch: `feature/advisor-r2-3-asset-swaps` (fork-point `origin/main`/local main `fe3d9754`) | engine GREEN `248469a5`, route/JS GREEN `5afb41bd`, test-maintenance `46af45a8`/`b3d8e244`/`6e024b11`/`7c857502`/`b373e7e4`, RED `3c5e5acf`, plan scaffold `6821aa39`, seam-detector target-list widen (r2-3-review follow-up) `007ca05f`, drift-guard test `a6e6b142`, `.gitignore` scratch-artifact cleanup `1c93d63a` (HEAD, no production/test diff) | **APPROVED by r2-3-review** — production code confirmed BYTE-IDENTICAL from `248469a5` through `a6e6b142` and current HEAD `1c93d63a`
+
+### Program context
+
+R2 = 3 sub-cycles: R2-1 (Strategy Builder, shipped `8d1b9770`) — the reasoning-context assembler + provenance contract → R2-2 (Logic Changes, shipped `6e1eabcd`, `DE-ADVISOR-R2-2-001`) — the first confirmation the contract is genuinely cross-cutting → **R2-3 (THIS, Asset Swaps) — the second confirmation, and the program's close.** `DE-ADVISOR-R2-1-001` established `ai_advisor.build_reasoning_context` + the 4-key `provenance` shape; R2-2 proved it ported verbatim to a second engine; R2-3 proves it again on a THIRD engine whose shape differs the most from the other two — two distinct operator sub-modes instead of one, and a pre-existing lens-evidence side-channel neither SB nor Logic Changes carries — and the contract still reuses `ai_advisor.build_reasoning_context`/the 4-key `provenance` shape verbatim, zero code change to `ai_advisor.py` itself.
+
+### Problem
+
+Prior to R2-3, `advisors/asset_swap_engine.py` produced advisor-suggested swap candidates via `generate_objective_directed_candidates`: a fixed statistical sort (`reduce_correlation` → ascending absolute Pearson correlation vs `correlation_data`; `reduce_drawdown` → ascending return-series variance; `lift_risk_adjusted` → descending pseudo-Sharpe; unknown objective → unchanged order), with the held ticker to swap out chosen by a separate deterministic `_select_incumbent_asset` helper. The operator-initiated route (`propose_operator_swap`) never called the generator at all — the operator had to supply both `incumbent_asset` and `candidate_asset` explicitly; there was no way to ask the advisor to propose a swap. Neither path reasoned about the operator's actual tree, live stats, or market context — the Asset Swaps tab was honestly labelled "Deterministic — no AI reasoning" for exactly this reason, the last of the three AI Advisor capability tabs still carrying that label after R2-1 and R2-2 shipped.
+
+### Fix
+
+**`advisors/asset_swap_engine.py` — the deterministic generator and its incumbent-picker are DELETED.** `generate_objective_directed_candidates` and `_select_incumbent_asset` are both gone — verified by grep against the final `asset_swap_engine.py`: neither name exists as a definition anywhere in the file. Unlike `logic_change_engine.py`'s R2-2 deletion, there were no per-objective named scaling-factor constants to remove alongside them — the deterministic sort used inline computation (ascending-Pearson / ascending-variance / descending-pseudo-Sharpe), so `LENS_BLEND_WEIGHT`/`_LENS_NEUTRAL_SCORE`/`_MOMENTUM_SQUASH_SCALE` all survive unchanged (see the Lens Blend note below for why they're now orphaned, not removed).
+
+**`generate_reasoned_swap_candidates(symphony_id, raw_value, objective, *, reasoning_context=None, correlation_data=None, available_assets=None, tradeable_universe=None, max_candidates=MAX_SUGGESTED_CANDIDATES) -> list[SwapCandidate]` — the sole replacement.** Makes a real Anthropic `messages.create` tool-use call (model via `model_config.get_advisor_suggestion_model()`, forced `emit_swap_candidates` tool choice, `_MAX_OUTPUT_TOKENS=2048`, `_REQUEST_TIMEOUT_SECONDS=30.0`) with a prompt assembled by `_build_reasoned_swap_generation_prompt`: the objective, an optional `reasoning_context` block (verbatim, when the caller supplies one), optional `correlation_data` surfaced as sorted entity keys only (never raw series), and a bounded (`_MAX_ASSETS_LISTED_IN_PROMPT=40`) sample of the real tradeable universe — never the full ~12.7k-symbol set. A genuine change in KIND from R2-2's single-value parameter edits: the LLM proposes (incumbent, candidate) PAIRS, since choosing which held ticker to swap OUT is itself a reasoning act (not just picking a replacement). **SECURITY-CRITICAL:** each proposed pair's `incumbent_asset` is resolved against the REAL `raw_value` tree via `extract_tickers` — a pair whose incumbent doesn't resolve to a real holding is dropped, never fabricated into a `SwapCandidate`. Each `candidate_asset` is independently validated against the real tradeable universe (`advisors.universe_provider.get_tradeable_set()`, or a caller-supplied `tradeable_universe` override, intersected with `available_assets` when supplied) — an LLM's own free-text claim of tradeability is NEVER trusted. D-1: `_build_client()` raising (no key, no SDK), the SDK call raising, a response with no `tool_use` block, or a malformed `candidates` payload all degrade to `[]`, never propagates.
+
+**Both operator modes AND the advisor-suggested mode route through the SAME generator — a deliberate divergence from R2-2's shape.** `propose_operator_swap` gains a genuine second REASONED branch (fires when either/both of `incumbent_asset`/`candidate_asset` are omitted — both moved from required positional to optional keyword-only parameters, a signature-breaking change the route was updated for in the same commit) that calls `generate_reasoned_swap_candidates(..., max_candidates=1)` and hands the resolved pair to a new shared `_evaluate_explicit_pair(...)` helper — the SAME gating/persistence core the EXPLICIT-PAIR branch (both tickers supplied, byte-preserved pre-R2-3 behavior, AC-12) also calls. `suggest_swaps` calls the generator directly with `max_candidates=MAX_SUGGESTED_CANDIDATES=30` and backtests/gates the full returned set as one batch (AC-4 — never per-candidate).
+
+**`validate_tree` guard — net-new safety over `apply_ticker_swap`, placed identically to R2-2's guard.** `apply_ticker_swap` only substitutes a ticker STRING at matching tree nodes — a structurally valid input stays valid on this specific mutation, but the guard exists for the same defense-in-depth reasoning R2-2 established: the generator's trust model changed from a fixed, incapable-of-malformed-output sort to a less-trusted LLM. `_evaluate_single_variant` now calls `advisors.symphony_schema.validate_tree` on the swapped tree immediately after `apply_ticker_swap`, before any backtest call (including the baseline) — a tree that fails is dropped with a `backtest_error` message deliberately distinct from the "incumbent not in tree" wording, never fabricated, never backtested. Composer `/backtest` remains the real tradeability arbiter.
+
+**`run_id`/`provenance` — the SAME 4-key contract `DE-ADVISOR-R2-1-001` established and `DE-ADVISOR-R2-2-001` confirmed, minted unconditionally.** Both `propose_operator_swap` and `suggest_swaps` mint `run_id` (caller-supplied or a fresh `uuid4()`) and build `provenance = {generation_model, mode: "asset-swap", evidence_injected, run_id}` at the very top, before any other logic — every return path, including the earliest early-exit branches, carries the same non-fabricated `run_id`/`provenance`. `_persist_observation` gains `run_id=`/`evidence_injected=` (AC-7), written into every observation's `raw_response` (additive, no migration).
+
+**`app.py`'s `ai_advisor_asset_swaps_evaluate()` route — a genuine three-outcome contract, not just an evaluate-the-pair-or-error binary.** Both tickers supplied → EXPLICIT-PAIR mode (byte-preserved flat response shape, additively gaining `provenance`/`survivors_detail`/`rejected_detail`). Neither ticker supplied → objective-only REASONED mode (array-shaped response mirroring the logic-changes route). Exactly one ticker supplied → an honest 200 error (`"supply both tickers for an explicit pair, or neither to let the advisor propose"`), checked BEFORE any hash resolution so it can never fall through to a confusing hash-resolution failure instead — a team-lead ruling that the two real modes must be genuinely disjoint at the call site (AC-12), never silently reinterpreted. `reasoning_context, reasoning_manifest = ai_advisor.build_reasoning_context(...)` is called unconditionally for BOTH modes (EXPLICIT-PAIR also threads it through as an optional steering hint alongside the fixed pair, mirroring R2-2 retaining `change_description` as a hint).
+
+**Route-minted default provenance on EVERY return path (AC-8) — adopts R2-2's stricter shape, not R2-1's success-only shape.** The route builds `_default_provenance = {generation_model, mode: "asset-swap", evidence_injected: dict(ai_advisor._EMPTY_MANIFEST), run_id: str(uuid.uuid4())}` immediately after the docstring and returns it on every early-exit branch (no Composer key, exactly-one-ticker, missing `symphony_id`, hash-resolution failure, tree-fetch failure, the engine-call exception handler, and the JSON-serialization exception handler) — none of which carried a `provenance` key at all before this cycle. The success path reads the ENGINE's own `provenance` via `getattr(run_result, "provenance", None)` guarded by the same `isinstance(provenance, dict)` MagicMock-safety idiom R2-1/R2-2 established, falling back to `_default_provenance` rather than `None`.
+
+**`static/ai_advisor_asset_swaps.js`** gains a unified `renderResults(data)` that now drives BOTH response shapes off `data.survivors_detail`/`data.rejected_detail` arrays via the existing `renderSwapCard` (previously it only ever rendered a single bare `result` object — the old shape couldn't represent the new N-candidate REASONED mode), plus a run-level provenance block (`data-testid="as-live-generation-provenance"` — model + injected-evidence manifest + run-id), computed BEFORE the success/error branch split so it renders on both, disambiguated from SB's `sb-live-generation-provenance` and LC's `lc-live-generation-provenance`. In-band `data.error` (200 status, valid JSON — the route always populates a real `provenance` alongside it per AC-8) is now handled inside `renderResults()` itself rather than a separate `renderError()` branch, mirroring `static/ai_advisor_logic_changes.js`'s precedent; the `evalBtn`'s enable-gate (`syncBtn()`) relaxed from requiring both tickers to requiring only a symphony selection (tickers are now optional, R2-3).
+
+**`templates/ai_advisor.html`'s Asset Swaps tab-attribution label** no longer reads "Deterministic — no AI reasoning"; it now reads `{{ advisor_suggestion_model | e }} — reasons over your live tree` — byte-identical text to R2-2's Logic Changes flip. All other tab labels (Chat, Correlations, Strategy Builder) untouched.
+
+**Lens-blend orphaned by the generator deletion, not touched directly — AC-12 non-generation-helper preservation.** `_apply_lens_blend`, `LENS_BLEND_WEIGHT`, `_LENS_NEUTRAL_SCORE` are preserved BYTE-UNCHANGED — but the function's ONLY caller across the entire codebase, `generate_objective_directed_candidates`, is deleted, so `_apply_lens_blend` now has ZERO production call sites. **Correction (r2-3-review finding, per team-lead instruction): `tests/ai_advisor/test_lens_blend_efficacy.py` was NOT left untouched this cycle** — one full test class, `TestGenerateObjectiveDirectedCandidatesLensReranking` (~85 lines), was RETIRED because it exercised the deleted `generate_objective_directed_candidates` end-to-end. The surviving `TestApplyLensBlendUsesContinuousScoreNotPosition` class still directly exercises `_apply_lens_blend` itself and is what makes AC-12's byte-preservation claim (the FUNCTION, not the test FILE, is unchanged) a tested fact rather than an assertion. `lens_scores` is still fetched (`extract_lens_scores`, unchanged) and threaded through both `propose_operator_swap`/`suggest_swaps` exactly as before — it still enriches `objective_rationale` text (`_build_lens_evidence_summary`) and the persisted `lens_evidence` audit field (`_build_candidate_lens_evidence`) — but it can no longer reorder, rerank, or otherwise influence which candidates get proposed or survive, since candidate SELECTION is now entirely the LLM's (this cycle's PM-ASSUMED Q4 resolution). This is the intended, documented consequence of Q4, not a regression — but it is a genuine behavior change from the pre-R2-3 "lens evidence can nudge candidate order" contract the advisor-rewire cycle (2026-07-12) had wired to real weekly production data.
+
+**Disclosed follow-up, tracked, NOT part of this commit:** preserving an orphaned function byte-unchanged satisfies AC-12's letter but leaves dead code — `_apply_lens_blend` (and, pending verification, `LENS_BLEND_WEIGHT`/`_LENS_NEUTRAL_SCORE`/`_MOMENTUM_SQUASH_SCALE`/`_squash_momentum_to_unit_interval` if they too become orphaned once the blend itself is gone) violates the project's "no unused code, delete it" standard once R2-3 ships. This is the R2 program's one disclosed loose thread — a small, scoped Toxic-Pair-or-solo cleanup cycle is tracked to delete the orphaned helper and retire its ranking-specific tests while explicitly KEEPING `extract_lens_scores` and the lens-evidence-into-rationale/persistence path (still live). Deliberately NOT done in this commit — R2-3's own scope is the reasoning port, not a follow-on cleanup of the helper it orphaned. `advisors/weekly_suggestions_scheduler.py` carries ZERO diff this cycle (`git diff fe3d9754..248469a5 -- advisors/weekly_suggestions_scheduler.py` is empty) — its `_fetch_lens_scores()`/`suggest_swaps(lens_scores=...)` call site is unaffected in code, but the EFFECT of what it passes changed underneath it. `ai_advisor.py`, `advisors/symphony_schema.py`, and `advisors/backtest_gate_engine.py` also carry ZERO diff this cycle (confirmed via `git diff fe3d9754..248469a5`) — every reuse point in this entry is genuine reuse.
+
+### New reusable tooling — `tests/tools/execution_seam_detector.py`
+
+R2-2's DECISIONS entry explicitly flagged its ad-hoc, single-seam (Anthropic-only) execution-level detector "for R2-3 (Asset Swaps) reuse." R2-3 generalizes it into a standing, committed module rather than re-deriving the check by hand: a DUAL-seam detector, patching BOTH `anthropic.Anthropic.__init__` (record-then-raise) AND `requests.post` filtered to Composer's real `/backtest` URL (record-then-raise) — the second seam matters because Composer's `/backtest` endpoint does not enforce auth, so a credential-less-green test run can still reach the real network if a test mocks `run_backtest` at the wrong local name-binding (e.g. mocking `composer_backtest_client.run_backtest` at the source module while the caller imported it into its own namespace). Patching at the TRUE network boundary is immune to which local name got missed. Runs the target test superset in-process (`pytest.main`, `-n0`, neutral cwd — mirrors this project's standing no-xdist gate technique) and reports every live-call stack trace found on either seam, regardless of whether the individual tests themselves report green. Deliberately named to avoid pytest's `test_*.py` auto-collection pattern (`tests/tools/execution_seam_detector.py`, not `test_execution_seam_detector.py`) so it never runs as part of the default suite — it is a manual PM/reviewer re-gate tool, invoked as `python tests/tools/execution_seam_detector.py [test_path ...]`. Ships with a curated 13-file default target list (`_R2_3_DEFAULT_TARGETS`) scoped to the reasoning port's own new test files.
+
+**Gap found and fixed within this same cycle (not carried as a follow-up):** r2-3-review found the initial default target list omitted 6 pre-existing test files that also genuinely exercise the reasoned/Composer paths (`test_advisor_liveness_gate.py`, `test_weekly_asset_swap_suggestions_loop.py`, `test_asset_swap_engine.py`, both `cycle3_lens_*` files, `test_lens_blend_efficacy.py`) — a defaults-only run gave false confidence by missing leaks in those files. Fixed same-cycle (`007ca05f`): `_R2_3_DEFAULT_TARGETS` widened from 13 to 19 files to the full handoff superset. A new `tests/tools/test_execution_seam_detector_coverage.py` (`a6e6b142`) adds a drift guard — a test asserting the default list stays synchronized with every file that actually imports/exercises the advisor engines' `_build_client`/`run_backtest` seams — so this specific class of under-coverage cannot silently regress on a future cycle without failing a test.
+
+### Invariants preserved
+
+- D-1 / never-raises contract unchanged on `generate_reasoned_swap_candidates` and every hop of its seam chain (`_build_client`, the SDK call, tool-use parsing).
+- Off-execution-path / advisory-only unchanged — no import from `alpha_bot_execution`/`autotuner`/`math_engine` at this module's own top level (the one `alpha_bot_execution` reference, `COMPOSER_KEY_ID`/`COMPOSER_SECRET`, stays a local import inside `_has_composer_key`, unchanged); `asset_swap_engine.py` itself is lazy-imported inside the route handler (CC-2). New module-level `import ai_advisor` transitively reaches `alpha_bot_execution` via the SAME accepted chain `DE-ADVISOR-R2-1-001` Finding-2 / `DE-ADVISOR-R2-2-001` already established and independently re-verified here (no reverse import) — accepted for the identical three reasons.
+- The FDR/PBO/SPY/BHY gate is BYTE-unchanged — no change to `evaluate_candidate_batch`, `backtest_gate_engine`, or any screen.
+- `apply_ticker_swap`, `extract_tickers`, `_apply_lens_blend`, `extract_lens_scores`, `_persist_observation`'s persistence-keying shape — the non-generation helpers AC-12 required stay behaviorally unchanged — are byte-unchanged; the new generator and the new `validate_tree` guard are additive call sites, not replacements of these primitives.
+- No Composer write endpoint call — only `GET /score` + stateless `POST /api/v0.1/backtest` (unchanged), plus the new Anthropic `messages.create` call (not a Composer endpoint).
+- CSRF unchanged; not added to `_SETTINGS_WRITE_ALLOWLIST`; no `LIVE_EXECUTION` reference anywhere in the touched files.
+- `ai_advisor.py`, `advisors/symphony_schema.py`, `advisors/backtest_gate_engine.py`, `advisors/weekly_suggestions_scheduler.py` — ZERO diff this cycle (confirmed via `git diff fe3d9754..a6e6b142`, the true final HEAD including the post-GREEN seam-detector-only follow-up commits) — every reuse point in this entry is genuine reuse, not a disguised rewrite.
+- `run_id`/`provenance` minted-unconditionally-on-every-return-path contract (AC-5/AC-7) holds on both engine entry points and the route (AC-8) from first GREEN — no re-gate ordering fix was needed this cycle (unlike R2-2's `propose_operator_logic_change`), because the Composer-key check was correctly ordered before the billed LLM seam from the start.
+
+### Verified
+
+**APPROVED by r2-3-review**, re-confirmed at HEAD `1c93d63a` (fork-point `fe3d9754`, origin/main, fresh-fetched, no drift). Production code (`advisors/asset_swap_engine.py`, `app.py`'s asset-swaps route, `static/ai_advisor_asset_swaps.js`, `templates/ai_advisor.html`) confirmed BYTE-IDENTICAL from the reviewed `248469a5` through `a6e6b142` and current HEAD `1c93d63a` — both post-approval commits are test-tooling (`007ca05f`/`a6e6b142`) and `.gitignore` (`1c93d63a`) only.
+
+**Dual-seam execution detector** (`python tests/tools/execution_seam_detector.py`, widened default list, no CLI args, real credentials present): `pytest rc=0`, **206 passed, 2 skipped, 0 failed**, **anthropic calls=0, composer calls=0**. The 2 skips are pre-existing/unrelated (`tests/ui/test_asset_swap_routes.py:457,488` — a stale per-tab-template check for a template file this project's SPA architecture deleted long before R2-3). Drift-guard regression test (`test_execution_seam_detector_coverage.py`) itself: 2 passed.
+
+**Combined R2-3 + seam-tooling touch-set total: 208 passed / 2 skipped / 0 failed / 0 errors.**
+
+Whole-repo grep for the 3 deleted symbols (`generate_objective_directed_candidates`, `_select_incumbent_asset`, `_pearson_corr_series`): zero orphaned production callers. `ruff format --check` + `ruff check` on the production surface: clean.
+
+### Files changed
+
+- `advisors/asset_swap_engine.py` — `generate_reasoned_swap_candidates`, `SwapCandidate`, `_build_client`, `_build_reasoned_swap_generation_prompt`, `_evaluate_explicit_pair`, `_EMIT_SWAP_CANDIDATES_TOOL`, `MAX_SUGGESTED_CANDIDATES`/`_MAX_ASSETS_LISTED_IN_PROMPT`/`_MAX_OUTPUT_TOKENS`/`_REQUEST_TIMEOUT_SECONDS`; `SwapRunResult.run_id`/`.provenance`; `propose_operator_swap` signature change (`incumbent_asset`/`candidate_asset` → optional keyword-only, `objective` moved to 3rd positional) gains REASONED mode + `reasoning_context=`/`reasoning_manifest=`/`run_id=`; `suggest_swaps` gains the same three new keyword params; `_evaluate_single_variant` signature change (explicit `incumbent_asset`/`candidate_asset` params) gains the `validate_tree` guard; `_persist_observation` gains `run_id=`/`evidence_injected=`; `generate_objective_directed_candidates`/`_select_incumbent_asset` deleted.
+- `app.py` — `ai_advisor_asset_swaps_evaluate()` route: three-outcome ticket contract, `build_reasoning_context` call for both modes, route-minted `_default_provenance` on every return path, engine-provenance read with `isinstance(dict)` guard, unified array/flat response serialization via `_swap_proposal_to_dict`.
+- `static/ai_advisor_asset_swaps.js` — unified `renderResults()`/`renderSwapCard` array-driven rendering, `as-live-generation-provenance` block, relaxed `syncBtn()` gate, in-band-error-inside-renderResults refactor.
+- `templates/ai_advisor.html` — Asset Swaps tab-attribution label flip (1-line diff).
+- `tests/tools/execution_seam_detector.py` — new, dual-seam (Anthropic + Composer) standing reusable detector, generalizing R2-2's ad-hoc single-seam check; `_R2_3_DEFAULT_TARGETS` widened 13→19 files same-cycle (`007ca05f`, r2-3-review finding).
+- `tests/tools/test_execution_seam_detector_coverage.py` — new (`a6e6b142`), drift guard asserting the default target list stays synchronized with every file exercising the advisor engines' seams.
+- `feature-plans/advisor-r2-3-asset-swaps.md` — plan scaffold (Status: ready).
+- `tests/advisors/test_asset_swap_engine_reasoned_generation.py`, `test_asset_swap_engine_reasoning_context.py`, `test_asset_swap_engine_candidate_universe_validation.py`, `test_asset_swap_engine_validate_tree_guard.py`, `test_asset_swap_engine_gate_batch_characterization.py`, `test_asset_swap_engine_provenance.py`, `test_asset_swap_engine_honest_degradation.py`, `test_asset_swap_engine_credentialless_bounded_prompt.py`, `test_asset_swap_engine_explicit_pair_preserved.py`, `tests/ui/test_asset_swap_route_reasoning_provenance.py`, `tests/ai_advisor/test_as_live_generation_provenance_render.py` — r2-3-test, new RED coverage for AC-1..AC-12.
+- `tests/ai_advisor/test_asset_swap_engine.py` (major reduction — dead-generator test classes retired), `tests/ai_advisor/test_cycle3_lens_informed_swaps.py`, `tests/ai_advisor/test_cycle3_lens_swaps_supplement.py`, `tests/ai_advisor/test_lens_blend_efficacy.py`, `tests/advisors/test_asset_swap_production_wiring.py`, `tests/advisors/test_weekly_asset_swap_suggestions_loop.py`, `tests/advisors/test_advisor_liveness_gate.py`, `tests/ui/test_asset_swap_routes.py` — r2-3-test, reconciled to the reasoned-generator + two-mode contract.
+- `docs/generated/advisors_asset_swap_engine.md`, `docs/generated/advisors_weekly_suggestions_scheduler.md`, `docs/generated/app.md`, `docs/generated/INDEX.md` (this doc-writer).
+- `.claude/CLAUDE.md` key-files rows for `app.py` / the shared `advisors/` row / `ai_advisor.py` / `templates/ai_advisor.html` (this doc-writer, DRAFTED — pending PM approval before commit).
+
+### Reference
+
+`feature-plans/advisor-r2-3-asset-swaps.md`; branch `feature/advisor-r2-3-asset-swaps`; worktree `.claude/worktrees/advisor-r2-3`; `DE-ADVISOR-R2-1-001` in this file (the cross-cutting contract this entry confirms a second time, on the program's third and final engine); `DE-ADVISOR-R2-2-001` in this file (the shape this entry deliberately adopts for AC-8's provenance strictness, and the entry that flagged the execution-seam detector for this cycle's reuse).
+
+---
+
 ## DE-FRONTRUNNER-001 -- Frontrunner Builder wave-1 backend: shared-infrastructure fixes + real-money guard (2026-07-11)
 
 Branch: `feature/frontrunner-builder` | Base: `origin/main` 0bcbd1a | HEAD (this entry): `26c1364`
@@ -4194,3 +5310,4 @@ Wave-2 of the Frontrunner Builder (feature-plans/frontrunner-builder.md) ships t
 ### Reference
 
 DE-FRONTRUNNER-002; branch `feature/frontrunner-builder`; wave-2 UI HEAD `eb1b612`; plan `feature-plans/frontrunner-builder.md`; supersedes the "Not Yet Built (wave-2)" framing in `DE-FRONTRUNNER-001` and `docs/generated/advisors_frontrunner_builder.md` (now "Wave-2 UI (built, 2026-07-11)"). The operator-gated task-zero live Composer create test is still NOT covered by this entry -- `approve_frontrunner_proposal` has only been exercised against mocked Composer responses to date.
+

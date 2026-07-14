@@ -55,9 +55,11 @@ _RETRY_BACKOFF_S: float = 2.0
 _TECHNICALS_SOURCE: str = "Alpaca Markets v2 daily bars — reused synthetic_history cache"
 
 # The date range passed to synthetic_history.fetch_bars.
-# 270 calendar days covers ~250 trading days (accounting for weekends +
-# holidays).  Source: synthetic_history.py uses the same window.
-_HISTORY_DAYS: int = 270
+# 320 calendar days covers ~221 trading days (320 * 252/365), clearing
+# _SMA_200_WINDOW=200 with margin for NYSE holidays.  270 was too short
+# (~186 trading days) and left above_sma200 permanently None
+# (DE-TECH-SMA200-HISTORY-001).
+_HISTORY_DAYS: int = 320
 
 # Market-proxy breadth basket — stable universe for off-hours / flat-holding
 # runs (e.g. nightly Prism at 03:00 when logic_holdings is empty on all

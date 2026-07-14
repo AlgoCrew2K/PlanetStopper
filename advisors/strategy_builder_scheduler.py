@@ -56,11 +56,12 @@ def _already_ran_this_week() -> bool:
 
         # Fetch recent STRATEGY_BUILDER observations — we only need to check
         # whether any row exists from this ISO week.
-        rows = database.get_advisor_observations_for_symphony(
-            symphony_id="",
-            advisor_role="STRATEGY_BUILDER",
-            limit=50,
-        )
+        # AC-A1: the real signature is get_advisor_observations_for_role(advisor_role,
+        # limit) (database.py:1133) — the prior get_advisor_observations_for_symphony(
+        # symphony_id=..., advisor_role=..., limit=...) call raised TypeError (that
+        # function takes only symphony_id), silently swallowed by the outer except
+        # below, so the dedup guard always degraded to False.
+        rows = database.get_advisor_observations_for_role("STRATEGY_BUILDER", limit=50)
 
         for row in rows:
             created_at = row.get("created_at") or row.get("timestamp") or ""

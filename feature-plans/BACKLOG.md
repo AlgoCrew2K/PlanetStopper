@@ -18,6 +18,13 @@ from history. No code change until operator provides the new credential + go-ahe
 
 ## Ready to build now
 
+### `autotune_runs.pbo` never persisted — small defect (found 2026-07-07, culling-engine recon)
+The production autotune call site (`autotuner.py:2826-2844`) does not pass `pbo=` to
+`database.save_autotune_run`, so the computed `_pbo_value` (used for the in-run veto) is
+never written — `autotune_runs.pbo` (migration 028) is `None` on every real row. Also no
+dashboard/context path surfaces the numeric PBO anywhere. Fix: thread `_pbo_value` into the
+save call; optionally surface it in `_build_optuna_section`. Tier 1; independent of sleeves.
+
 ### `tech-debt-cleanups.completed.md` — C3b + C3c
 C3a is a confirmed no-op (stash empty). C3c shipped (chore/tech-debt-c3bc). Remaining:
 - **C3b:** formal route self-skip closure — write the route-level RED test for the
@@ -32,6 +39,45 @@ Small; Tier 1.
 ---
 
 ## Low priority / tracked follow-on
+
+### Sleeves: mis-citing float-imprecision example in the price-rounding docstring — COSMETIC (found 2026-07-08, P3 smoke cycle)
+The bracket price-rounding (`_round_to_equity_tick`, sleeves/alpaca_orders.py, task #35) cites
+`495.00 / 0.01 == 49499.999999999993` as motivation, but that expression is exactly `49500.0` in
+Python — the example doesn't reproduce. The Decimal-based decision is CORRECT (naive
+`floor(price*100)/100` genuinely misrounds e.g. $0.29→$0.28); only the illustrative citation is
+wrong. Now mirrored in 3 places (the source docstring, DECISIONS.md DE-SLEEVES-P3-001, docs/generated/sleeves.md).
+Trivial one-line fix — swap in a real reproducing example. Not fixed inline to avoid re-gating a comment typo.
+
+### tests/database/conftest.py init_db-before-guard footgun (found 2026-07-07, sleeves P1 cycle) — LOW
+Bare top-level `import database` in tests/database/conftest.py triggers database.py's
+module-level init_db() BEFORE tests/conftest.py's pytest_configure() DB_PATH guard fires,
+when tests/database is passed as an explicit pytest CLI target (bare `tests` root, as CI
+uses, is unaffected). Pre-existing on stock HEAD (confirmed via git stash by sleeve-db).
+Workaround: pre-set DB_PATH in the shell env. Fix candidate: defer init_db out of import
+time or make the database conftest set DB_PATH itself. Tier 1.
+
+### Fundamentals lens `sources[].url` hardcodes `type=10-K` query param — COSMETIC (found 2026-07-13, advisor-suite live re-verify)
+The AAPL fundamentals payload correctly selects the latest 10-Q (`end=2026-03-28`, `filed=2026-05-01`,
+`form=10-Q` — DE-ADVISOR-SUITE-FIX-001 AC-4, proven live), and `sources[].title` reads
+"Apple Inc. 10-Q (2026-05-01)", but the EDGAR browse URL still hardcodes `&type=10-K` in the query
+string. Data + title are correct; only the source deep-link's form filter is wrong. Trivial fix —
+thread the selected form into the URL builder (`ai_advisor.py` fundamentals section). Advisory-only.
+
+### Standardize AI-Advisor slide-in panels on the transform pattern — DEFERRED FOLLOW-UP (found 2026-07-13, AC-3b saga)
+The right-based chat/detail panel (`right:-440px` → `chat-panel--open`) has a latent paint
+fragility that produced a stale-headless-browser artifact during AC-3b (the panel *does* open
+instantly in a fresh browser — verified — so this was NOT a shipped bug and the transform fix was
+reverted net-zero). Consider deliberately standardizing all AI-Advisor slide-panels on the proven
+`#detail-panel` transform-translateX pattern as a hygiene follow-up, to eliminate the class of
+paint fragility. Deferred, not a defect. See DECISIONS.md DE-ADVISOR-SUITE-FIX-001 AC-3b.
+
+### `test_api_history` cross-test isolation gap — LOW (found 2026-07-13, advisor-suite gate)
+`tests/.../test_api_history` reads the absolute `_POST_MORTEMS_DIR` (module-level absolute path)
+which defeats `monkeypatch.chdir` — under a nested-path pytest invocation it reads the worktree's
+real `post_mortems/` instead of an isolated temp dir, so it passes/fails depending on ambient
+fixtures. Deterministic pre-existing isolation gap, NOT a production defect (the app path is
+correct). Fix: make the post-mortems dir resolution test-overridable (env var or fixture) so the
+test can point it at a temp dir. Deselected in bounded PM gate runs.
 
 ### Per-module test footprint (`tests/advisors/` single-process) — LOW PRIORITY
 **Discovered:** 2026-06-21 (reload-leak remediation diagnostic). **Priority:** LOW — gates
@@ -64,6 +110,20 @@ production — no accumulation occurs in the daemon or live path.
 file, then targeted test-infra fix (e.g. session-scoped fixtures, gc.collect teardowns, or
 test-file splitting). Do NOT address by weakening assertions or removing coverage — this is an
 infrastructure concern, not a test correctness problem.
+
+---
+
+### `docs/generated/app.md` Strategy Builder route section -- stale `app.py:38xx` line citations -- COSMETIC (found 2026-07-13, advisor-outage-degrade doc pass)
+The `POST /ai-advisor/strategy-builder/run` section of `docs/generated/app.md` cites several
+`app.py:38xx` line numbers (e.g. `app.py:3759`, `:3800`, `:3807`, `:3813`, `:3826`, `:3840`,
+`:3852-3879`) that were accurate when R1 wrote them but have drifted -- several routes
+(candidate-alert, 2026-07-12) were added to `app.py` since, and the route decorator now lives
+at `app.py:4739`. Flagged inline in the doc (a footnote noting the drift + the current line)
+rather than corrected line-by-line, since a full citation sweep of this section is its own
+small task, not scoped to the advisor-outage-degrade cycle that surfaced it. Fix candidate:
+re-derive every `app.py:N` citation in this section (and audit the rest of `app.md` for the
+same drift pattern -- this section is unlikely to be the only one). Tier 1; cosmetic, no
+functional impact -- the doc content itself is accurate, only the line pointers are stale.
 
 ---
 

@@ -464,12 +464,24 @@ def test_retry_after_truncation_to_unparseable_response_degrades_cleanly(bpg):
 
 
 def test_generate_build_plans_public_signature_is_frozen(bpg):
-    """C1: the public signature stays (objective, membership_set, *, n_plans) — the fix
-    must not change the call contract callers depend on (AC-20 style)."""
+    """C1: the public signature stays (objective, membership_set, *, n_plans,
+    reasoning_context) — the fix must not change the call contract callers
+    depend on (AC-20 style).
+
+    Re-frozen for R2-1 (advisor-r2-1-context-provenance.md): the additive
+    `reasoning_context` keyword param is a genuine, intentional signature
+    change (reasoning-context injection), not a regression — this
+    characterization test is updated to pin the NEW frozen shape rather than
+    deleted, so it keeps catching any FUTURE unintended change. The
+    keyword-only + default-None assertions below confirm the addition is
+    backward-compatible (every pre-R2-1 caller's positional/keyword usage
+    still works unchanged)."""
     sig = inspect.signature(bpg.generate_build_plans)
     params = list(sig.parameters.values())
     names = [p.name for p in params]
-    assert names == ["objective", "membership_set", "n_plans"], f"public signature changed: {names}"
+    assert names == ["objective", "membership_set", "n_plans", "reasoning_context"], (
+        f"public signature changed: {names}"
+    )
     # n_plans is keyword-only.
     assert sig.parameters["n_plans"].kind is inspect.Parameter.KEYWORD_ONLY
     # objective + membership_set are positional.
@@ -480,6 +492,17 @@ def test_generate_build_plans_public_signature_is_frozen(bpg):
     assert sig.parameters["membership_set"].kind in (
         inspect.Parameter.POSITIONAL_OR_KEYWORD,
         inspect.Parameter.POSITIONAL_ONLY,
+    )
+    # reasoning_context (R2-1 addition) must be keyword-only with default None —
+    # the backward-compatibility proof: every pre-R2-1 caller (positional
+    # objective/membership_set, keyword n_plans) is unaffected by this addition.
+    assert sig.parameters["reasoning_context"].kind is inspect.Parameter.KEYWORD_ONLY, (
+        "reasoning_context must be keyword-only — a positional-or-keyword addition "
+        "would risk silently shifting positional callers onto the wrong parameter."
+    )
+    assert sig.parameters["reasoning_context"].default is None, (
+        "reasoning_context must default to None — omitting it must be a no-op "
+        "(AC-8 from-scratch byte-preservation), not a required new argument."
     )
 
 
