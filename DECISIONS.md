@@ -5000,6 +5000,8 @@ The feature plan's AC-9 read "bounded so a large real tree can't blow `build_pla
 
 Reviewed HEAD `e27f1cea` (origin/main fork point `5f353145`) — **APPROVED by r2-review.** With real `.env` credentials: 637 passed / 0 failed / 12 skipped. Credential-less (all 7 cred vars set to `""`): 636 passed / 0 failed / 13 skipped (the extra skip is the expected credential-gated test correctly deactivating). Full 40-file SB/route/reasoning-context superset swept in both modes — zero failures either mode. Engine landed at `fdc6a0aa`, route/JS at `4063ec33`, signature re-freezes at `81cf2da6` (`generate_build_plans`) and `e27f1cea` (`propose_strategies` AC-20) confirmed test-only (verified independently: `propose_strategies`'s actual parameter list matches the documented signature exactly).
 
+**Independent post-commit re-verification (r2-test, HEAD `a9b14e74`):** r2-test's final confirming pass could not reproduce r2-review's literal 40-file selection (no enumerated file list was available to reconstruct it against) and instead built an independently-enumerated, broader SB/route/reasoning-context-touching superset — 51 files, 1101 tests collected. Results: real `.env` credentials 1087 passed / 0 failed / 14 skipped; credential-less (7 vars `""`) 1086 passed / 0 failed / 15 skipped. The totals differ from r2-review's 637/636 above because the two sweeps cover different (overlapping, non-identical) file sets, not because either count is wrong — both independently confirm ZERO failures at their respective scope, and neither supersedes the other.
+
 ### Files changed
 
 - `ai_advisor.py` — new `build_reasoning_context`, `_EMPTY_MANIFEST`, `_MAX_TREE_RENDER_CHARS`.
