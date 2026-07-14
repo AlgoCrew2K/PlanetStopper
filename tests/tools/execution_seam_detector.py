@@ -164,9 +164,15 @@ def run_seam_detector(test_paths: list[str]) -> tuple[int, list[str], list[str]]
 
 
 # The R2-3 asset-swap reasoning-port test superset — default target when run
-# standalone with no CLI arguments. Deliberately excludes any file (e.g.
-# test_sdk_contract.py) that legitimately constructs a real SDK client for
-# non-LLM-call sanity checking — see the KNOWN LIMITATION note above.
+# standalone with no CLI arguments. Widened (r2-3-review finding, post-GREEN
+# gate) from the original 13-file list to the FULL §5 handoff superset — the
+# original list under-covered: test_advisor_liveness_gate.py,
+# test_weekly_asset_swap_suggestions_loop.py, test_asset_swap_engine.py, and
+# both cycle3 files all exercise suggest_swaps/the reasoned path too, so a
+# casual no-args run was silently missing genuine R2-3 seam-leak surface.
+# Deliberately excludes any file (e.g. test_sdk_contract.py) that
+# legitimately constructs a real SDK client for non-LLM-call sanity checking
+# — see the KNOWN LIMITATION note above.
 _R2_3_DEFAULT_TARGETS: list[str] = [
     "tests/advisors/test_asset_swap_engine_reasoned_generation.py",
     "tests/advisors/test_asset_swap_engine_reasoning_context.py",
@@ -181,6 +187,12 @@ _R2_3_DEFAULT_TARGETS: list[str] = [
     "tests/ui/test_asset_swap_route_reasoning_provenance.py",
     "tests/ui/test_asset_swap_routes.py",
     "tests/ai_advisor/test_as_live_generation_provenance_render.py",
+    "tests/advisors/test_advisor_liveness_gate.py",
+    "tests/advisors/test_weekly_asset_swap_suggestions_loop.py",
+    "tests/ai_advisor/test_asset_swap_engine.py",
+    "tests/ai_advisor/test_cycle3_lens_informed_swaps.py",
+    "tests/ai_advisor/test_cycle3_lens_swaps_supplement.py",
+    "tests/ai_advisor/test_lens_blend_efficacy.py",
 ]
 
 
