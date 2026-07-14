@@ -377,10 +377,28 @@ def test_stats_absent_when_no_autotune_run():
 # ===========================================================================
 
 
+# Constant-name candidates, in priority order. r2-engine committed to
+# `_MAX_TREE_RENDER_CHARS` (input-context-growth bound — the real AC-9 lever;
+# NOT a MAX_OUTPUT_TOKENS-derived value, which caps a DIFFERENT thing —
+# the SDK's output token ceiling, per PM guidance during contract reconciliation).
+# A tolerant multi-name lookup (same idiom as the prompt-builder resolver in
+# test_build_plan_generator_prompt.py) keeps this test from hard-blocking a
+# reasonable naming choice while still requiring SOME discoverable constant.
+_BOUND_CONSTANT_NAMES = ("_MAX_TREE_RENDER_CHARS", "MAX_REASONING_TREE_RENDER_CHARS")
+
+
+def _resolve_bound_constant():
+    for name in _BOUND_CONSTANT_NAMES:
+        val = getattr(ai_advisor, name, None)
+        if val is not None:
+            return name, val
+    return None, None
+
+
 def test_oversized_real_tree_render_is_length_bounded():
-    """AC-9: the real fixture tree renders to 70k+ chars unbounded — injecting
-    that raw would alone exceed a reasonable share of MAX_OUTPUT_TOKENS=16384
-    (~4 chars/token -> ~65k chars). build_reasoning_context must cap the
+    """AC-9: the real fixture tree renders to 70k+ chars unbounded — that much
+    injected input context alone would meaningfully bloat every generation
+    call's cost/context-window footprint. build_reasoning_context must cap the
     injected tree text at a documented, discoverable bound (a named module
     constant — never a magic inline number, per project hard rule 'no magic
     numbers')."""
@@ -396,11 +414,11 @@ def test_oversized_real_tree_render_is_length_bounded():
 
     assert manifest.get("tree") == "present", f"AC-9 precondition: manifest={manifest!r}"
 
-    bound = getattr(ai_advisor, "MAX_REASONING_TREE_RENDER_CHARS", None)
+    _name, bound = _resolve_bound_constant()
     assert bound is not None and isinstance(bound, int) and bound > 0, (
-        "AC-9 GAP: no discoverable named bound constant found on ai_advisor "
-        "(expected e.g. ai_advisor.MAX_REASONING_TREE_RENDER_CHARS). The render must be "
-        "capped by a named constant, never an inline magic number."
+        f"AC-9 GAP: no discoverable named bound constant found on ai_advisor "
+        f"(checked {_BOUND_CONSTANT_NAMES!r}). The render must be capped by a named "
+        "constant, never an inline magic number."
     )
     assert len(prompt_context) <= bound + 2000, (
         f"AC-9 GAP: prompt_context is {len(prompt_context)} chars, which exceeds the "
