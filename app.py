@@ -4907,6 +4907,26 @@ def ai_advisor_strategy_builder_run():
         else None
     )
 
+    # AC-4/AC-5 (DEGRADE-FIX, advisor-outage-degrade.md): honest run-level
+    # signal when candidates were compiled but NOT tradeability-checked
+    # because Composer's /backtest was unreachable (infra/transport failure —
+    # see plan_tree_compiler's infra-vs-400 classifier — NOT a genuine gate
+    # rejection). Read straight off `run` (same pattern as run.error/
+    # run.error_category above) rather than recomputed here — run.candidates
+    # excludes exactly this population (Step 2's own per-candidate backtest
+    # call hits the same outage and strips the candidate before this route
+    # ever sees it), so a route-side recount would silently read 0 in the
+    # outage case this cycle exists to catch (see strategy_builder_engine.py's
+    # ProposalRun.backtest_unavailable rollup for the verified fix).
+    backtest_unavailable = bool(getattr(run, "backtest_unavailable", False))
+    backtest_unavailable_count = getattr(run, "backtest_unavailable_count", 0)
+    backtest_unavailable_notice = (
+        f"{backtest_unavailable_count} candidate(s) could not be "
+        f"tradeability-checked — Composer backtest unavailable"
+        if backtest_unavailable
+        else None
+    )
+
     return jsonify(
         {
             "survivors": survivors_list,
@@ -4923,6 +4943,9 @@ def ai_advisor_strategy_builder_run():
             "screens_skipped_reason": (
                 "no live returns at route time" if not _live_returns else None
             ),
+            "backtest_unavailable": backtest_unavailable,
+            "backtest_unavailable_count": backtest_unavailable_count,
+            "backtest_unavailable_notice": backtest_unavailable_notice,
         }
     ), 200
 

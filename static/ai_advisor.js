@@ -791,6 +791,18 @@
                     html += '<div class="run-controls-note" data-testid="sb-live-screens-skipped">Screens skipped' +
                         (data.screens_skipped_reason ? ': ' + escHtml(data.screens_skipped_reason) : '') + '</div>';
                 }
+                // AC-4/AC-5 (DEGRADE-FIX): honest notice when some candidates were
+                // compiled but could not be tradeability-checked because Composer's
+                // /backtest was unreachable (infra outage, not a genuine gate
+                // rejection) -- guarded on the boolean flag (mirrors the
+                // screens_skipped/screens_skipped_reason pairing above), server-
+                // authored prose rendered verbatim, distinct from the "0 passed
+                // the gate" empty-state and from survivor/rejected cards.
+                // Non-null-only -- never fabricated (AC-5).
+                if (data.backtest_unavailable) {
+                    html += '<div class="empty-state" data-testid="sb-live-backtest-unavailable">' +
+                        escHtml(data.backtest_unavailable_notice) + '</div>';
+                }
                 function card(c, cls) {
                     var extra = '';
                     var modifierClass = '';
