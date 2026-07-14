@@ -4936,3 +4936,82 @@ Compiler + engine layer (commit `4230641b`): full existing test suite green (wit
 ### Reference
 
 `feature-plans/advisor-outage-degrade.md`; branch `fix/advisor-outage-degrade`; worktree `.claude/worktrees/advisor-degrade`; origin note in this file's `DE-ADVISOR-R1-001` entry, "Deferred design question" section.
+
+## DE-ADVISOR-R2-1-001 — SB reasoning-context injection + provenance contract (R2 sub-cycle 1 of 3) (2026-07-13)
+
+Branch: `feature/advisor-r2-reasoning` | HEAD: `e27f1cea` (engine at `fdc6a0aa`, route/JS at `4063ec33`, test re-freezes at `81cf2da6`/`e27f1cea`)
+
+### Program context
+
+R2 = 3 sub-cycles: **R2-1 (THIS)** — the reasoning-context assembler + provenance contract, proven on Strategy Builder → **R2-2** — Logic Changes reasoning port → **R2-3** — Asset Swaps port. Provenance is a CROSS-CUTTING contract established here, not a one-off Strategy-Builder feature: R2-2 and R2-3 will call the SAME `ai_advisor.build_reasoning_context` assembler and extend the SAME 4-key `provenance` shape (`generation_model`/`mode`/`evidence_injected`/`run_id`) to their own engines/routes — no port ships reasoning without its provenance surface, and no port re-derives its own context-assembly or manifest shape from scratch.
+
+R2-1 also CLOSES `DE-ADVISOR-R1-001`'s "context-blindness caveat" (`advisors/build_plan_generator.py`) for the symphony-scoped path only — the from-scratch (no-symphony-selected) path remains context-blind by design and stays byte-preserved.
+
+### Problem
+
+At R1 time, Strategy Builder's generation prompt carried none of the operator's real symphony — no live tree, no portfolio composition, no backtest statistics, no market-lens data. It proposed strategies from an objective name and a DSL grammar alone. Separately, a generated proposal carried no run-level provenance: an operator (or a downstream engineer) had no way to see which model generated a run, what evidence — if any — informed it, or trace a persisted proposal back to the run and evidence that produced it. R2's mandate: make Advisor reasoning genuinely informed by real evidence AND make that reasoning OBSERVABLE — "speed can't impersonate intelligence."
+
+### Fix
+
+**`ai_advisor.py` — new `build_reasoning_context(symphony_id, objective, *, composer_symphony_id=None) -> tuple[str, dict]`.** Assembles a bounded, human-readable operator-context text block — the real symphony tree (rendered via `advisors.symphony_schema.render_rules_text`, never a raw JSON dump; capped at the new `_MAX_TREE_RENDER_CHARS=6000` constant), live Optuna stats, and the 5 market-lens blocks (reusing `assemble_advisor_context`'s EXISTING nightly cache-serve path — never a fresh live fan-out on this per-click path, and reusing `advisors.prism_render.humanize_lens_summary` for lens prose, never a second hand-rolled renderer) — paired with the new `_EMPTY_MANIFEST`-shaped per-source manifest. Falsy `symphony_id` (the from-scratch path) returns `("", _EMPTY_MANIFEST)` with ZERO I/O — no Composer fetch, no DB read. D-1: never raises, even when a collaborator (`symphony_logic.fetch_symphony_score`) itself raises — each source is gathered in its own `try/except`.
+
+**The honest-degradation manifest — the actual deliverable of this cycle, not a side effect.** `manifest` carries `"tree"`/`"stats"`: `present`/`absent`, and the 5 lenses: `available`/`stale`/`absent`. Every degraded source — a tree-fetch failure, no Optuna run, a cold or stale lens cache — is reflected EXACTLY as it happened, and the run proceeds without that evidence rather than fabricating a placeholder or silently reporting it as available. This manifest is not summarized or re-derived anywhere downstream: the exact same dict that gated what was injected into the generation prompt is the exact same dict surfaced to the operator on the response JSON (`provenance["evidence_injected"]`, see below) and persisted with the observation. There is no second, lossy copy in between — this is the concrete mechanism behind R2's "observable reasoning" thesis.
+
+**`advisors/build_plan_generator.py` — additive `reasoning_context: str | None = None` on `_build_generation_prompt`/`generate_build_plans`.** When truthy, appended verbatim under a `## OPERATOR CONTEXT` section header. When falsy (omitted or explicit `None` — every pre-R2-1 caller's exact shape), the returned prompt is BYTE-IDENTICAL to the pre-R2-1 producer output (AC-8) — proven against a golden fixture captured from the REAL producer at commit `c0cacd47`, before any R2-1 change landed (`tests/fixtures/strategy_builder/generation_prompt_from_scratch_baseline.json`, SHA-256-pinned). This closes the `DE-ADVISOR-R1-001` context-blindness caveat for symphony-scoped runs only.
+
+**`advisors/strategy_builder_engine.py` — `ProposalRun.run_id`/`.provenance` + `propose_strategies(reasoning_context=, reasoning_manifest=, run_id=)`.** The 4-key `provenance` dict (`generation_model` from `model_config.get_advisor_suggestion_model()` read at call time — never a hardcoded literal; `mode="build-new"`; `evidence_injected` = `reasoning_manifest` verbatim or `ai_advisor._EMPTY_MANIFEST`; `run_id` = caller-supplied or a fresh `uuid4()`) is minted UNCONDITIONALLY at the top of `propose_strategies`, before even the Composer-key check — so every return path, including the earliest error returns, carries the SAME `run_id`/`provenance`. `run_id`/`evidence_injected` persist into every advisory observation's `raw_response`, so a proposal traces back to its run and evidence manifest (AC-6).
+
+**`app.py`'s `ai_advisor_strategy_builder_run()` route.** Symphony-scoped runs (truthy `symphony_id`) resolve the Composer hash via the same NAME→hash `bot_state` scan the asset-swap route already uses, then call `build_reasoning_context` and thread both return values into `propose_strategies`. From-scratch runs never call it — zero extra I/O, AC-8. Response JSON gains a `provenance` object on the success path only; both error branches (`run.error`, the outer exception) omit the key entirely — never a fabricated `null`.
+
+**Route-boundary `isinstance(dict)` serialization guard — a named pattern for R2-2/R2-3 to reuse (r2-fe finding).**
+```python
+provenance = getattr(run, "provenance", None)
+if not isinstance(provenance, dict):
+    provenance = None
+```
+A plain `getattr(run, "provenance", None)` is not sufficient: several pre-existing test fixtures construct a bare `MagicMock()` as a `ProposalRun` stand-in, and `MagicMock` auto-vivifies ANY attribute access into a new child `Mock` rather than raising `AttributeError` — so `getattr`'s `default` branch never actually fires against a mock missing `.provenance`, and the resulting non-`None`, non-dict `Mock` blows up `jsonify()` with `TypeError: Object of type Mock is not JSON serializable`. `isinstance(provenance, dict)` is the only reliable guard, and it fails CLOSED (`None`) rather than raising or fabricating a dict out of a `Mock`. Same defensive SHAPE as the pre-existing `backtest_unavailable_count` read one paragraph above it, but that field only needed `bool()`/`int()` coercion (safe against a truthy-but-wrong `Mock`) — `provenance` is handed straight to `jsonify()` as a nested object, where a bare `Mock` is fatal, not merely wrong. Regression-pinned by `test_route_survives_bare_mock_run_missing_provenance_attrs` (`tests/app/test_sb_route_reasoning_provenance.py`).
+
+**`static/ai_advisor.js`'s `sbRunAnalysis()`.** Renders `data.provenance` in a new `data-testid="sb-live-generation-provenance"` block (model + compact rendering of `evidence_injected` + run-id), guarded on truthy `data.provenance`. Deliberately disambiguated from the pre-existing per-candidate `data-testid="sb-live-provenance"` built-new/Atlas COUNT rollup (AC-11/F5, `DE-ADVISOR-R1-001`) — the two share the English word "provenance" but name independent concepts (per-candidate template origin vs. this run's generation-context provenance); the source comment calls out the collision explicitly.
+
+**Provenance contract-shape reconciliation.** The `provenance` shape went through several design-thrash rounds during the cycle (a brief 3-key-vs-4-key back-and-forth) before team-lead's final ruling (`Design B`, commit `048e4482`) settled the 4-key shape documented above. Per team-lead's explicit instruction, that thrash carries no independent design signal — only the code actually committed at `e27f1cea` is authoritative, and that is what this entry documents.
+
+### AC-9 wording reconciliation (r2-review gate finding)
+
+The feature plan's AC-9 read "bounded so a large real tree can't blow `build_plan_generator.MAX_OUTPUT_TOKENS`" — loosely worded, and not literally what the implementation does. `_MAX_TREE_RENDER_CHARS=6000` (`ai_advisor.py`) is a dedicated INPUT-context bound on the tree text `build_reasoning_context` injects; it has no runtime relationship to `MAX_OUTPUT_TOKENS` (`advisors/build_plan_generator.py`), a different module's OUTPUT-side ceiling on the SDK's structured-tool-use response. AC-9's actual intent — bound the injected tree so it can't blow the generation call's cost/context budget — is satisfied entirely on the input side; the two constants have never been coupled in code. Documented at the constant's source of truth in `docs/generated/ai_advisor.md`.
+
+### Finding-2 — accepted transitive import (r2-review)
+
+`strategy_builder_engine.py`'s new module-level `import ai_advisor` (line 21) transitively imports `alpha_bot_execution` at module-load time: `ai_advisor.py`'s own `import symphony_logic` (`ai_advisor.py:30`) → `symphony_logic.py`'s `from alpha_bot_execution import COMPOSER_BASE_URL, get_composer_headers` (`symphony_logic.py:19`). Verified independently (grepped both edges before documenting) — not merely asserted from the finding. ACCEPTED for three reasons: (1) import-only, no cycle — `alpha_bot_execution.py` does not import back up this chain; (2) not a new dependency, only a new PATH to an existing one — `ai_advisor.py` already carried this exact transitive import before R2-1; R2-1 makes it reachable through a second route, it does not introduce it; (3) Architecture Constraint #1 ("no blocking I/O on the execution path") stays intact — nothing in the chain executes I/O at import time, and `strategy_builder_engine.py` itself is lazy-imported inside the route handler (CC-2), so none of this loads at daemon startup. The blanket "no execution-module import" claim previously in `docs/generated/advisors_strategy_builder_engine.md` was corrected — it is no longer exactly true for the file's full transitive closure, only for its own top-level `import` statements.
+
+### Follow-ups (non-blocking, logged 2026-07-13)
+
+1. Strengthen the SB import-guard test to a full-source-text transitive scan, matching the precedent in `tests/ai_advisor/test_correlation_diagnostic_guards.py`, so the Finding-2 accepted transitive path is explicitly asserted rather than left to an implicit direct-import-only check.
+2. Tighten the AC-9 wording in the R2-1 feature plan itself (`feature-plans/advisor-r2-1-context-provenance.md`) so a future reader isn't misled by the loose `MAX_OUTPUT_TOKENS` phrasing this entry reconciles.
+
+### Invariants preserved
+
+- D-1 / never-raises contract unchanged on `build_reasoning_context` and every hop of the seam chain.
+- Off-execution-path / advisory-only unchanged — no import from `alpha_bot_execution`/`autotuner` at any touched file's OWN top level (see Finding-2 above for the accepted transitive exception); CSRF unchanged; not added to `_SETTINGS_WRITE_ALLOWLIST`; no `LIVE_EXECUTION` reference.
+- The FDR/PBO/SPY/BHY gate is BYTE-unchanged — no change to `evaluate_candidate_batch`, `backtest_gate_engine`, or any screen (R1 parity untouched, characterization-tested).
+- No new admission concept or DSL change; provenance tags (`built-new`/`atlas-suggested`) unchanged — the R2-1 `provenance` dict and the pre-existing `template_id` tag are independently-named concepts that happen to share the word "provenance"; do not conflate.
+- The from-scratch (non-symphony-scoped) generation path is BYTE-PRESERVED end to end when `reasoning_context`/`reasoning_manifest` are omitted — pinned against a golden fixture captured before any R2-1 change landed (AC-8).
+
+### Verified
+
+Reviewed HEAD `e27f1cea` (origin/main fork point `5f353145`) — **APPROVED by r2-review.** With real `.env` credentials: 637 passed / 0 failed / 12 skipped. Credential-less (all 7 cred vars set to `""`): 636 passed / 0 failed / 13 skipped (the extra skip is the expected credential-gated test correctly deactivating). Full 40-file SB/route/reasoning-context superset swept in both modes — zero failures either mode. Engine landed at `fdc6a0aa`, route/JS at `4063ec33`, signature re-freezes at `81cf2da6` (`generate_build_plans`) and `e27f1cea` (`propose_strategies` AC-20) confirmed test-only (verified independently: `propose_strategies`'s actual parameter list matches the documented signature exactly).
+
+### Files changed
+
+- `ai_advisor.py` — new `build_reasoning_context`, `_EMPTY_MANIFEST`, `_MAX_TREE_RENDER_CHARS`.
+- `advisors/build_plan_generator.py` — `_build_generation_prompt`/`generate_build_plans` gain `reasoning_context=`.
+- `advisors/strategy_builder_engine.py` — `ProposalRun.run_id`/`.provenance`; `propose_strategies` gains `reasoning_context=`/`reasoning_manifest=`/`run_id=`.
+- `app.py` — `ai_advisor_strategy_builder_run()` route: `build_reasoning_context` call for symphony-scoped runs, `provenance` response field, `isinstance(dict)` guard.
+- `static/ai_advisor.js` — `sbRunAnalysis()`: `sb-live-generation-provenance` render block.
+- `tests/advisors/test_reasoning_context_assembler.py`, `tests/advisors/test_build_plan_generator_reasoning_context.py`, `tests/app/test_sb_route_reasoning_provenance.py`, and sibling provenance/render coverage — r2-test, reconciled across several contract-ruling revert/reconcile commits to the final `Design B` shape (`fea46803` -> `aee451b8` -> ... -> `e27f1cea`).
+- `tests/fixtures/strategy_builder/generation_prompt_from_scratch_baseline.json` (golden AC-8 fixture, captured pre-R2-1 at `c0cacd47`).
+- `docs/generated/ai_advisor.md`, `docs/generated/advisors_build_plan_generator.md`, `docs/generated/advisors_strategy_builder_engine.md`, `docs/generated/app.md`, `docs/generated/static_ai_advisor_js.md`, `docs/generated/INDEX.md` (this doc-writer, commits `0dbc5158` + `f4b73f93`).
+- `.claude/CLAUDE.md` key-files rows for the 5 touched modules — pending PM approval before commit (see this doc-writer's SendMessage to team-lead).
+
+### Reference
+
+`feature-plans/advisor-r2-1-context-provenance.md`; branch `feature/advisor-r2-reasoning`; worktree `.claude/worktrees/advisor-r2`; team-lead's provenance-shape ruling at commit `048e4482` ("Design B"); `DE-ADVISOR-R1-001` in this file (the context-blindness caveat this entry closes for the symphony-scoped path).
