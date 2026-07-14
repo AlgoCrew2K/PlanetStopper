@@ -202,8 +202,8 @@ def test_self_guard_fixture_matches_composer_backtest_client_format():
     (Gate-1: no invented fixture values). Rather than a static sidecar JSON
     fixture (which only fails if a human remembers to update it),
     this asserts -- via inspect.getsource -- that the literal f-string
-    templates _http_5xx/_timeout/_transport_error/_http_429_exhausted
-    reproduce are byte-present in the REAL, LIVE advisors/
+    templates _http_5xx/_timeout/_transport_error/_http_429_exhausted/
+    _invalid_json_200 reproduce are byte-present in the REAL, LIVE advisors/
     composer_backtest_client.py source. It fails the moment the producer's
     format drifts, which a checked-in fixture file cannot do. If this test
     fails, every other test in this file is exercising a fabricated shape --
@@ -225,6 +225,9 @@ def test_self_guard_fixture_matches_composer_backtest_client_format():
     )
     assert 'f"transport error: {type(exc).__name__}: {exc}"' in source, (
         "transport-error envelope format has drifted from the fixture assumption"
+    )
+    assert 'f"invalid JSON in 200 response: {exc}"' in source, (
+        "invalid-JSON-200 envelope format has drifted from the fixture assumption"
     )
 
 
