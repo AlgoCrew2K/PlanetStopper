@@ -43,14 +43,23 @@ def _import_engine():
     return importlib.import_module("advisors.asset_swap_engine")
 
 
-_SCORE_TREE = {
-    "name": "TestSymphony",
-    "ticker": None,
-    "children": [
-        {"ticker": "SPY", "children": []},
-        {"ticker": "GLD", "children": []},
+_ensure_repo_on_path()
+from advisors import symphony_schema  # noqa: E402 - path must be ensured first
+
+# R2-3: rebuilt via the real symphony_schema constructors so it satisfies
+# symphony_schema.validate_tree -- the old hand-built {"ticker": None,
+# "children": [...]} shape (no "step" vocabulary at all) fails the engine's
+# validate_tree guard, now wired unconditionally for every swap variant
+# (asset_swap_engine.py's _evaluate_single_variant).
+_SCORE_TREE = symphony_schema.make_root(
+    "TestSymphony",
+    "daily",
+    [
+        symphony_schema.make_weight_equal(
+            [symphony_schema.make_asset("SPY"), symphony_schema.make_asset("GLD")]
+        )
     ],
-}
+)
 
 _CORR_DATA = {
     "SPY": [0.01, -0.02, 0.03, -0.01, 0.02],

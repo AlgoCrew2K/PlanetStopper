@@ -853,18 +853,24 @@ class TestAssetSwapLoopCandidatePoolSourcing:
         import advisors.asset_swap_engine as engine
         import database as db_module
         import symphony_logic
+        from advisors import symphony_schema
 
         # Held ticker deliberately OUTSIDE PROXY_UNIVERSE so it never collides
         # with (and is never confused for) a swap candidate.
         held_ticker = "MSFT"
+        # R2-3: a REAL, structurally-valid Composer tree (asset_swap_engine's
+        # new validate_tree guard rejects the old {"ticker": ..., "children":
+        # []} root-carries-a-ticker minimal dict this test used pre-R2-3 --
+        # validate_tree requires the real "step" vocabulary). Built via the
+        # real symphony_schema constructors so it is genuinely valid.
         monkeypatch.setattr(
             symphony_logic,
             "fetch_symphony_score",
-            lambda symphony_id: {
-                "name": symphony_id,
-                "ticker": held_ticker,
-                "children": [],
-            },
+            lambda symphony_id: symphony_schema.make_root(
+                symphony_id,
+                "daily",
+                [symphony_schema.make_weight_equal([symphony_schema.make_asset(held_ticker)])],
+            ),
             raising=False,
         )
         self._wire_bot_state_with_holdings(

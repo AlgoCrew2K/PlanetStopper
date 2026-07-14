@@ -108,6 +108,24 @@ def _validation_fold_slice(series: list, train_ratio: float, val_end_ratio: floa
     return series[val_start_idx:frozen_start_idx]
 
 
+def _valid_single_asset_tree(ticker: str) -> dict:
+    """A REAL, structurally-valid Composer tree holding one asset (R2-3: the
+    engine's new validate_tree guard in _evaluate_single_variant, wired
+    unconditionally for every swap variant — explicit-pair and reasoned alike
+    — rejects the old hand-built {"type": "root", ...} minimal dicts these
+    tests used pre-R2-3; validate_tree requires the real "step" vocabulary,
+    not "type". Built via the real symphony_schema constructors — the same
+    ones _spy_returns_fn_for already uses elsewhere in this codebase — so it
+    is genuinely valid, not another hand-guessed shape."""
+    from advisors import symphony_schema  # noqa: PLC0415
+
+    return symphony_schema.make_root(
+        "H-fixture Test Symphony",
+        "daily",
+        [symphony_schema.make_weight_equal([symphony_schema.make_asset(ticker)])],
+    )
+
+
 # ===========================================================================
 # H6 / RC-1 — the window-mismatch root cause, at the GATE layer.
 # ===========================================================================
@@ -278,11 +296,7 @@ class TestH6EngineFeedsFoldMatchedBaseline:
                 spy_returns_fn=spy_returns_fn,
             )
 
-        score_tree = {
-            "id": "sym-h6",
-            "type": "root",
-            "children": [{"type": "asset", "ticker": "SPY", "weight": 1.0}],
-        }
+        score_tree = _valid_single_asset_tree("SPY")
         objective = swap_engine.SwapObjective(
             objective_type="reduce_correlation",
             target_pair=("sym-h6", "sym-other"),
@@ -368,11 +382,7 @@ class TestH5ExplicitZeroNotReplaced:
                 spy_returns_fn=spy_returns_fn,
             )
 
-        score_tree = {
-            "id": "sym-h5",
-            "type": "root",
-            "children": [{"type": "asset", "ticker": "SPY", "weight": 1.0}],
-        }
+        score_tree = _valid_single_asset_tree("SPY")
         objective = swap_engine.SwapObjective(
             objective_type="reduce_correlation",
             target_pair=("sym-h5", "sym-other"),

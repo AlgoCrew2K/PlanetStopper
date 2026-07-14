@@ -155,17 +155,27 @@ def _make_score_tree(
 ) -> dict:
     """Build a minimal structurally-valid Composer score tree for use as raw_value.
 
-    Shape matches the Composer GET /score response structure (condensed form).
-    Does not embed any real asset weights — shape-only for test purposes.
+    R2-3: rebuilt via the real symphony_schema constructors (make_root/
+    make_weight_equal/make_asset) so it satisfies symphony_schema.validate_tree
+    -- the old hand-built {"type": "root", ...} shape used the wrong node
+    vocabulary ("type" instead of the real "step") and fails the engine's
+    validate_tree guard, now wired unconditionally for every swap variant
+    (advisors/asset_swap_engine.py's _evaluate_single_variant). Equal-weighted
+    across `assets`, matching the pre-R2-3 intent. `symphony_id` doubles as
+    the tree's own "name" field (as it always effectively did — every call
+    site passes the SAME value as both this argument and the
+    propose_operator_swap/suggest_swaps symphony_id kwarg, so
+    score_tree.get("name") and the symphony_id fallback resolve identically;
+    no divergence from propose_operator_swap's symphony_name derivation).
     """
-    return {
-        "id": symphony_id,
-        "type": "root",
-        "children": [
-            {"type": "asset", "ticker": t, "weight": round(1.0 / len(assets or ["SPY"]), 6)}
-            for t in (assets or ["SPY"])
-        ],
-    }
+    from advisors import symphony_schema  # noqa: PLC0415
+
+    tickers = assets or ["SPY"]
+    return symphony_schema.make_root(
+        symphony_id,
+        "daily",
+        [symphony_schema.make_weight_equal([symphony_schema.make_asset(t) for t in tickers])],
+    )
 
 
 def _make_synthetic_daily_returns(n: int = 500, seed: int = 42, mean_pct: float = 0.05) -> list:

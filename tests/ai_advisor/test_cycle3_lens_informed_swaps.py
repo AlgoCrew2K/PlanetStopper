@@ -70,15 +70,24 @@ def _import_ai_advisor():
 # Shared test fixtures
 # ---------------------------------------------------------------------------
 
-# A minimal Composer score tree with two holdings.
-_SCORE_TREE = {
-    "name": "TestSymphony",
-    "ticker": None,
-    "children": [
-        {"ticker": "SPY", "children": []},
-        {"ticker": "GLD", "children": []},
+_ensure_repo_on_path()
+from advisors import symphony_schema  # noqa: E402 - path must be ensured first
+
+# A minimal Composer score tree with two holdings. R2-3: rebuilt via the real
+# symphony_schema constructors so it satisfies symphony_schema.validate_tree
+# -- the old hand-built {"ticker": None, "children": [...]} shape (no "step"
+# vocabulary at all) fails the engine's validate_tree guard, now wired
+# unconditionally for every swap variant (asset_swap_engine.py's
+# _evaluate_single_variant).
+_SCORE_TREE = symphony_schema.make_root(
+    "TestSymphony",
+    "daily",
+    [
+        symphony_schema.make_weight_equal(
+            [symphony_schema.make_asset("SPY"), symphony_schema.make_asset("GLD")]
+        )
     ],
-}
+)
 
 # Correlation data: return series per ticker.
 _CORR_DATA = {

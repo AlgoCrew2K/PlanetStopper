@@ -144,7 +144,22 @@ def test_production_below_spy_fixture_is_low_pbo_via_real_compute_pbo():
 
 
 def _raw_tree(incumbent_ticker: str = "AAA") -> dict:
-    return {"ticker": None, "children": [{"ticker": incumbent_ticker, "children": []}]}
+    """A REAL, structurally-valid Composer tree holding one asset. R2-3:
+    _evaluate_single_variant's new validate_tree guard (wired unconditionally
+    for every swap variant) rejects the old hand-built {"ticker": None,
+    "children": [...]} minimal dict this helper used pre-R2-3 — validate_tree
+    requires the real Composer "step" vocabulary. Built via the real
+    symphony_schema constructors (the same ones _spy_returns_fn_for already
+    uses elsewhere), so it is genuinely valid, not another hand-guessed shape.
+    extract_tickers/_only_ticker still find exactly one ticker (AAA) in this
+    shape -- unaffected by the switch."""
+    from advisors import symphony_schema  # noqa: PLC0415
+
+    return symphony_schema.make_root(
+        "Production Wiring Test Symphony",
+        "daily",
+        [symphony_schema.make_weight_equal([symphony_schema.make_asset(incumbent_ticker)])],
+    )
 
 
 def _only_ticker(tree: object) -> str | None:
