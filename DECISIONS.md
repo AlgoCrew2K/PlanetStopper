@@ -4885,7 +4885,7 @@ CLAUDE.md itself is not in this list -- the PM applies it directly from `docs/au
 
 ## DE-SB-DEGRADE-001 — Strategy Builder degrades on Composer outage instead of dropping the plan (2026-07-13)
 
-Branch: `fix/advisor-outage-degrade` | HEAD: 4230641b (compiler + engine layer; route/JS layer in progress, see STATUS below)
+Branch: `fix/advisor-outage-degrade` | HEAD: 14adb451 (compiler + engine layer at `4230641b`, route/JS layer at `14adb451`)
 
 ### Problem
 
@@ -4912,16 +4912,26 @@ Branch: `fix/advisor-outage-degrade` | HEAD: 4230641b (compiler + engine layer; 
 
 Compiler + engine layer (commit `4230641b`): full existing test suite green (with-creds AND credential-less, `-n0`). dg-test's targeted battery for this cycle (compiler-degrade + engine-degrade + route + JS-consumption + every untouched R1/repair sibling file) reached 101 passed / 0 failed / 0 errors as of commit `d2679bc5`, ruff clean -- the queue-sizing gap noted in an earlier draft of this entry (1 failure out of an initial 30) was closed by dg-test's own follow-up (commit `8eb8ee69`), not a production-code change.
 
-**STATUS: compiler + engine layer (AC-1/AC-2/AC-3/AC-6) GREEN and fully tested at `4230641b`/`8eb8ee69`/`d2679bc5` (101/101). Route + JS surfacing (AC-4/AC-5) is functionally covered by dg-test's route/JS-consumption tests, which pass against dg-fe's in-progress `app.py`/`static/ai_advisor.js` changes in this shared worktree -- but those two files remain UNCOMMITTED as of this entry. Hold final cycle-complete framing until dg-fe commits; this doc-writer will append an addendum (and update `docs/generated/app.md` + `docs/generated/static_ai_advisor_js.md`, plus a second CLAUDE.md apply for the app.py/static/ai_advisor.js key-files rows) once that lands.**
+**STATUS: ALL ACs (AC-1..AC-7) GREEN. Compiler + engine layer at `4230641b`; route + JS layer at `14adb451` (dg-fe, see the Route/JS Layer subsection below); test cleanup at `8eb8ee69`/`d2679bc5`. 101/101 targeted battery. `docs/generated/app.md` and `docs/generated/static_ai_advisor_js.md` reconciled in the same pass as this addendum. A second CLAUDE.md apply (app.py/static/ai_advisor.js key-files rows) is pending PM approval -- see this doc-writer's SendMessage to team-lead.**
+
+### Route/JS Layer -- AC-4/AC-5 (commit `14adb451`, dg-fe)
+
+`POST /ai-advisor/strategy-builder/run` (`app.py`, `ai_advisor_strategy_builder_run()`, currently `app.py:4739`) now reads `ProposalRun.backtest_unavailable`/`.backtest_unavailable_count` directly off the engine result -- same pattern as the existing `run.error`/`run.error_category` reads, deliberately NOT recomputed from `run.candidates` (that collection excludes exactly the outage population; Step 2's own per-candidate backtest call hits the same failing seam and strips the candidate via `backtest_error` before the route ever sees it -- confirmed with dg-engine at `strategy_builder_engine.py:950-958` before implementing). Response JSON gains three fields: `backtest_unavailable` (`bool`), `backtest_unavailable_count` (`int`), `backtest_unavailable_notice` (`str | None`, server-authored prose `"{count} candidate(s) could not be tradeability-checked — Composer backtest unavailable"`). All three absent/false/None on both error branches (`run.error`, outer exception) -- never fabricated. No new routes, no write-path change, no `LIVE_EXECUTION` interaction, templates untouched (JSON API response only).
+
+`static/ai_advisor.js`'s `sbRunAnalysis()` renders the notice in `<div class="empty-state" data-testid="sb-live-backtest-unavailable">`, guarded on the boolean `data.backtest_unavailable` flag (mirrors the existing `screens_skipped`/`screens_skipped_reason` pairing, not the `mode_notice`-only pattern) so a healthy run renders nothing (AC-5 honest empty-state). Placed right after the `screens_skipped` render block, before the survivor/rejected cards. Both early-return error branches (`run.error`, outer exception) are unchanged.
+
+**Tests:** `tests/app/test_sb_backtest_unavailable_route.py` (6 tests), `tests/ai_advisor/test_sb_backtest_unavailable_js_consumption.py` (4 tests) -- both `-n0`, with-creds AND credential-less, 9/9 both modes (dg-fe); dg-test independently confirmed the full 101-test targeted battery (compiler/engine/route/JS layers + every untouched R1 sibling) green against this exact diff before commit.
 
 ### Files changed
 
 - `advisors/plan_tree_compiler.py` -- `_INFRA_HTTP_STATUSES`, `_is_infra_failure`, `CompileResult.tradeability_unverified`, repair-loop infra branch.
 - `advisors/strategy_builder_engine.py` -- `CandidateInfo.tradeability_unverified`, `ProposalRun.backtest_unavailable`/`.backtest_unavailable_count`, rollup in `propose_strategies`.
 - `tests/advisors/test_plan_tree_compiler_degrade.py` (21 tests), `tests/advisors/test_strategy_builder_engine_degrade.py` (9 tests) -- compiler/engine layer, dg-test, commit `8eb8ee69`.
-- `tests/app/test_sb_backtest_unavailable_route.py` (6 tests), `tests/ai_advisor/test_sb_backtest_unavailable_js_consumption.py` (4 tests) -- route/JS layer, dg-test, commit `8eb8ee69`, passing against dg-fe's uncommitted WIP as of this entry.
+- `tests/app/test_sb_backtest_unavailable_route.py` (6 tests), `tests/ai_advisor/test_sb_backtest_unavailable_js_consumption.py` (4 tests) -- route/JS layer, dg-test, commit `8eb8ee69`, confirmed green against dg-fe's landed route/JS diff (commit `14adb451`).
 - `tests/fixtures/strategy_builder/backtest_infra_error_envelopes.json` was added then DELETED (commit `d2679bc5`) once confirmed unconsumed -- the self-guard runtime validator is the actual provenance mechanism (see the Fix section above).
+- `app.py`, `static/ai_advisor.js` -- route/JS layer, dg-fe, commit `14adb451`.
 - `docs/generated/advisors_plan_tree_compiler.md`, `docs/generated/advisors_strategy_builder_engine.md` (this doc-writer, reconciled in the same pass -- also closed a pre-existing gap where `ProposalRun.error_category`, added in R1 AC-11, was never documented in the engine doc until now).
+- `docs/generated/app.md`, `docs/generated/static_ai_advisor_js.md` (this doc-writer -- also corrected a stale `app.md` "Known gap, in progress" note left over from R1 Checkpoint-3, which had already landed but was never marked resolved in this file).
 
 ### Reference
 
