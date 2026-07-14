@@ -195,7 +195,21 @@ def test_sbe_objective_values_map_to_generator_objective_by_value(sbe, gen):
 def test_ac20_propose_strategies_signature_unchanged(sbe):
     """AC-20: the body swap must NOT change propose_strategies' public signature. The
     parameters / defaults / kinds are frozen (a new Objective enum member is not a
-    signature change). The ONLY production caller is the route (app.py:3816)."""
+    signature change). The ONLY production caller is the route (app.py:3816).
+
+    Re-frozen for R2-1 (advisor-r2-1-context-provenance.md, r2-review finding):
+    R2-1 correctly adds 3 new keyword-only, default=None params —
+    reasoning_context / reasoning_manifest / run_id — for reasoning-context
+    injection + provenance threading (AC-4/AC-6/AC-8). That's a genuine,
+    intentional signature change, not a regression, so this characterization
+    test is updated to pin the NEW frozen shape (mirrors the same re-freeze
+    pattern applied to test_generate_build_plans_public_signature_is_frozen
+    in test_build_plan_generator_truncation.py) rather than deleted — it still
+    catches any FUTURE unintended drift. The keyword-only + default-None
+    assertions below are the backward-compatibility proof: every pre-R2-1
+    caller (positional objective/universe/screen_config/live_returns/
+    symphony_id, keyword incumbent_oos_alpha/default_oos_alpha/
+    community_candidates) is unaffected by the addition."""
     sig = inspect.signature(sbe.propose_strategies)
     params = list(sig.parameters.keys())
     assert params == [
@@ -207,9 +221,24 @@ def test_ac20_propose_strategies_signature_unchanged(sbe):
         "incumbent_oos_alpha",
         "default_oos_alpha",
         "community_candidates",
-    ], f"propose_strategies signature must be frozen (AC-20); got {params}"
+        "reasoning_context",
+        "reasoning_manifest",
+        "run_id",
+    ], f"propose_strategies signature must be frozen (AC-20 + R2-1); got {params}"
     # universe stays positional-or-keyword with no required-arg change.
     assert sig.parameters["universe"].default is inspect.Parameter.empty or True
+    # R2-1 addition: all 3 new params must be keyword-only with default=None —
+    # a positional-or-keyword addition would risk silently shifting positional
+    # callers, and a non-None default would make omitting them not a no-op
+    # (AC-8's from-scratch byte-preservation contract).
+    for new_param in ("reasoning_context", "reasoning_manifest", "run_id"):
+        assert sig.parameters[new_param].kind is inspect.Parameter.KEYWORD_ONLY, (
+            f"R2-1 GAP: {new_param!r} must be keyword-only, got {sig.parameters[new_param].kind}"
+        )
+        assert sig.parameters[new_param].default is None, (
+            f"R2-1 GAP: {new_param!r} must default to None (omitting it must be a "
+            f"no-op), got {sig.parameters[new_param].default!r}"
+        )
 
 
 # ===========================================================================
