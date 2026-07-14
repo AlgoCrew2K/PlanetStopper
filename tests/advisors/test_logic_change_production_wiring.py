@@ -18,9 +18,11 @@ WHAT IS MOCKED: run_backtest (date-keyed daily_returns dicts, dispatched by
 tree content — a logic-change variant tree is identified by its tweaked
 `window` value at children[0], since these trees differ by parameter value
 rather than by ticker composition), _has_composer_key (-> True),
-generate_objective_directed_candidates (-> a controlled list of LogicTweak
-objects, each structurally valid against the shared raw tree so
-apply_logic_tweak succeeds for real), database (no real persistence).
+generate_reasoned_logic_candidates (R2-2: the LLM-backed replacement for the
+deleted fixed-multiplier generate_objective_directed_candidates -> a
+controlled list of LogicTweak objects, each structurally valid against the
+shared raw tree so apply_logic_tweak succeeds for real), database (no real
+persistence).
 
 WHAT IS NOT MOCKED: evaluate_candidate_batch, math_engine.compute_pbo,
 apply_logic_tweak, the fold transform, BHY/Yekutieli FDR — identical
@@ -95,31 +97,50 @@ def test_production_below_spy_fixture_is_low_pbo_via_real_compute_pbo():
 # established test convention (tests/ai_advisor/test_logic_change_engine.py
 # _make_logic_tweak) so apply_logic_tweak succeeds for real, never producing a
 # silent None-variant that would vacuously skip the candidate.
+#
+# R2-2 NOTE: built via REAL symphony_schema constructors ("step"-based Composer
+# grammar, param_key="window-days" on a wt-inverse-vol node) rather than the
+# legacy ad-hoc {"type": "root", ...} shape used elsewhere in this file's
+# history — AC-3's new validate_tree guard correctly rejects the legacy shape
+# (it is not real Composer grammar), which would silently zero out every
+# candidate BEFORE it ever reaches the PBO/SPY gate math this file exists to
+# test, masking the file's actual "MUST FAIL pre-wiring" gap behind an
+# unrelated validate_tree rejection.
 # ---------------------------------------------------------------------------
 
 
 def _raw_tree() -> dict:
-    return {"type": "root", "children": [{"type": "momentum", "window": 20, "children": []}]}
+    from advisors import symphony_schema  # noqa: PLC0415
+
+    # QQQ (not SPY) — the candidate/baseline tree must NOT collide with
+    # _is_spy_benchmark_tree's ticker-based detection of the SEPARATE SPY
+    # benchmark tree _spy_returns_fn_for constructs internally.
+    tree = symphony_schema.make_root(
+        "Prod Wiring Test", "daily", [symphony_schema.make_inverse_vol([symphony_schema.make_asset("QQQ")])]
+    )
+    tree["children"][0]["window-days"] = 20
+    return tree
 
 
 def _make_tweak(lce, new_value: float):
     return lce.LogicTweak(
         node_path=["children", 0],
-        param_key="window",
+        param_key="window-days",
         old_value=20,
         new_value=new_value,
-        node_description=f"window=20 -> {new_value} at path [children, 0]",
+        node_description=f"window-days=20 -> {new_value} at path [children, 0]",
     )
 
 
 def _tree_window(tree: object) -> object:
-    """Extract the children[0].window value used to identify which candidate
-    variant a given backtest call is for — content-based dispatch, never
-    call-order (mirrors the ticker-based dispatch in the asset_swap sibling)."""
+    """Extract the children[0]."window-days" value used to identify which
+    candidate variant a given backtest call is for — content-based dispatch,
+    never call-order (mirrors the ticker-based dispatch in the asset_swap
+    sibling)."""
     if isinstance(tree, dict):
         children = tree.get("children") or []
         if children and isinstance(children[0], dict):
-            return children[0].get("window")
+            return children[0].get("window-days")
     return None
 
 
@@ -193,7 +214,7 @@ def test_ac4_production_high_pbo_batch_is_pbo_vetoed_end_to_end(lce):
 
     with (
         patch.object(lce, "_has_composer_key", return_value=True),
-        patch.object(lce, "generate_objective_directed_candidates", return_value=tweaks),
+        patch.object(lce, "generate_reasoned_logic_candidates", return_value=tweaks),
         patch.object(lce, "run_backtest", side_effect=_spy_aware_backtest(series_by_window, spy)),
         patch.object(lce, "database") as mock_db,
     ):
@@ -229,7 +250,7 @@ def test_ac5_production_below_spy_batch_rejected_below_spy_alpha_end_to_end(lce)
 
     with (
         patch.object(lce, "_has_composer_key", return_value=True),
-        patch.object(lce, "generate_objective_directed_candidates", return_value=tweaks),
+        patch.object(lce, "generate_reasoned_logic_candidates", return_value=tweaks),
         patch.object(lce, "run_backtest", side_effect=_spy_aware_backtest(series_by_window, spy)),
         patch.object(lce, "database") as mock_db,
     ):

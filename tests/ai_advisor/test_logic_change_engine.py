@@ -51,7 +51,21 @@ API contract (from existing advisors/logic_change_engine.py):
   - LogicChangeRunResult — top-level return type
   - propose_operator_logic_change(symphony_id, score_tree, change_description, objective, ...)
   - suggest_logic_changes(symphony_id, score_tree, objective, ...)
-  - generate_objective_directed_logic_candidates(symphony_id, score_tree, objective, *, baseline_stats=None)
+
+R2-2 (reasoning port): the fixed-multiplier generate_objective_directed_candidates
+/ generate_objective_directed_logic_candidates / _parse_change_description_to_tweak
+/ _fallback_direction_factor generators and their scaling constants were DELETED
+(zero production callers post-rewire — team-lead ruling) in favor of the LLM-backed
+advisors.logic_change_engine.generate_reasoned_logic_candidates. Tests that pinned
+the deleted functions' fixed-multiplier/deterministic-parse behavior were retired;
+tests exercising RETAINED primitives (extract_numeric_params, apply_logic_tweak,
+evaluate_candidate_batch, validate_tree) were kept, with a controlled
+generate_reasoned_logic_candidates() return value injected wherever a test needs a
+real (non-empty) candidate to reach downstream gate/persistence behavior. The
+reasoned path itself is covered by the dedicated RED suite: tests/advisors/
+test_logic_change_engine_{reasoning_context,reasoned_generation,
+validate_tree_guard,gate_batch_characterization,provenance,honest_degradation,
+credentialless_bounded_prompt}.py.
 
 Fixture: tests/fixtures/ai_advisor/m4/logic_change_proposals_basic.json
          tests/fixtures/ai_advisor/m4/logic_change_objective_directed_basic.json
@@ -186,27 +200,6 @@ def _make_score_tree_simple(
     }
 
 
-def _make_tree_single_window_param(
-    symphony_id: str = "sym-direction-test",
-    value: Any = 10,
-) -> dict:
-    """Build a score tree with exactly ONE numeric parameter: window=value.
-
-    Deliberately single-param (unlike _make_score_tree_with_numeric_params, which
-    has two) so a keyword-only fallback match (Phase 3 / Phase 4) is deterministic:
-    there is only one candidate parameter for _parse_change_description_to_tweak
-    to select, with no ambiguity about which window it picked.
-    """
-    return {
-        "id": symphony_id,
-        "name": "Direction Test Symphony",
-        "type": "root",
-        "children": [
-            {"type": "momentum", "window": value, "children": []},
-        ],
-    }
-
-
 def _make_mock_backtest_result(
     daily_returns_pct: list | None = None,
     status_code: int = 200,
@@ -252,6 +245,19 @@ def _make_logic_tweak(
         new_value=new_value,
         node_description=node_description,
     )
+
+
+def _make_two_logic_tweaks() -> list:
+    """Two real tweaks matching _make_score_tree_with_numeric_params()'s two
+    numeric params (children[0].window=20, children[1].window=50) — used as a
+    canned generate_reasoned_logic_candidates() return value in tests that need
+    >1 candidate (post-R2-2 the deterministic fixed-multiplier generator is
+    gone; these tests inject a controlled candidate list directly, same
+    pattern as the reasoning port's own RED suite)."""
+    return [
+        _make_logic_tweak(node_path=["children", 0], param_key="window", old_value=20, new_value=16),
+        _make_logic_tweak(node_path=["children", 1], param_key="window", old_value=50, new_value=40),
+    ]
 
 
 def _make_logic_objective(
@@ -416,14 +422,6 @@ class TestModuleContract:
         assert hasattr(engine, "SURVIVOR_OVERFITTING_CAVEAT"), (
             "advisors.logic_change_engine must expose SURVIVOR_OVERFITTING_CAVEAT — "
             "the mandatory caveat text appended to every surfaced survivor (AC-3.3)."
-        )
-
-    def test_module_exposes_generate_objective_directed_logic_candidates(self):
-        """Module must expose generate_objective_directed_logic_candidates for testing objective direction."""
-        engine = _import_engine()
-        assert callable(getattr(engine, "generate_objective_directed_logic_candidates", None)), (
-            "advisors.logic_change_engine must expose "
-            "generate_objective_directed_logic_candidates as a testable unit."
         )
 
     def test_module_exposes_apply_logic_tweak(self):
@@ -695,6 +693,10 @@ class TestBatchDispatchContract:
                 return_value=mock_backtest,
             ),
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates",
+                return_value=[_make_logic_tweak()],
+            ),
             patch("database.insert_advisor_observation"),
         ):
             engine.propose_operator_logic_change(
@@ -749,6 +751,10 @@ class TestBatchDispatchContract:
                 side_effect=mock_backtest_fn,
             ),
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates",
+                return_value=_make_two_logic_tweaks(),
+            ),
             patch("database.insert_advisor_observation"),
         ):
             result = engine.suggest_logic_changes(
@@ -772,136 +778,6 @@ class TestBatchDispatchContract:
                 f"GatedBatch.n_candidates={result.gate_batch.n_candidates} must equal "
                 f"total candidates submitted ({total_candidates_gated})."
             )
-
-    def test_advisor_suggested_multiple_objectives_generate_different_candidate_directions(
-        self, score_tree
-    ):
-        """Different objectives must produce different candidate sets (objective-direction test).
-
-        This verifies that the candidate generator is not simply enumerating all
-        numeric parameters regardless of objective.  AC-3.1 + Gate-1 Resolution #2.
-        """
-        engine = _import_engine()
-
-        # generate_objective_directed_logic_candidates takes score_tree directly.
-        drawdown_obj = _make_logic_objective(objective_type="reduce_drawdown", measured_value=-0.25)
-        risk_adj_obj = _make_logic_objective(
-            objective_type="lift_risk_adjusted", measured_value=0.72
-        )
-        turnover_obj = _make_logic_objective(objective_type="reduce_turnover", measured_value=5.0)
-
-        cands_drawdown = engine.generate_objective_directed_logic_candidates(
-            symphony_id="sym-gen-test",
-            score_tree=score_tree,
-            objective=drawdown_obj,
-        )
-        cands_risk_adj = engine.generate_objective_directed_logic_candidates(
-            symphony_id="sym-gen-test",
-            score_tree=score_tree,
-            objective=risk_adj_obj,
-        )
-        cands_turnover = engine.generate_objective_directed_logic_candidates(
-            symphony_id="sym-gen-test",
-            score_tree=score_tree,
-            objective=turnover_obj,
-        )
-
-        # Candidates may be dicts with "change_description"/{"tweak"} keys or bare LogicTweak objects.
-        for cands, label in [
-            (cands_drawdown, "reduce_drawdown"),
-            (cands_risk_adj, "lift_risk_adjusted"),
-            (cands_turnover, "reduce_turnover"),
-        ]:
-            assert isinstance(cands, list), (
-                f"generate_objective_directed_logic_candidates({label}) must return a list."
-            )
-            for c in cands:
-                if isinstance(c, dict):
-                    # Dict-shaped candidate must have "tweak" or "change_description".
-                    assert "tweak" in c or "change_description" in c, (
-                        f"Candidate dict from {label} must have 'tweak' or 'change_description'. "
-                        f"Got keys: {list(c.keys())}."
-                    )
-                else:
-                    # Raw LogicTweak object.
-                    assert hasattr(c, "node_path") and hasattr(c, "param_key"), (
-                        f"Candidate from {label} must have LogicTweak attributes. "
-                        f"Got type {type(c).__name__}."
-                    )
-
-        def _get_tweak(c):
-            if isinstance(c, dict):
-                return c.get("tweak", None)
-            return c
-
-        # The three objectives must produce different new_value directions for the same params.
-        # reduce_drawdown: new_value < old_value (tighten by 20%).
-        # lift_risk_adjusted: new_value > old_value (loosen by 25%).
-        if cands_drawdown and cands_risk_adj:
-            # Drawdown candidates should reduce window values.
-            for c in cands_drawdown:
-                t = _get_tweak(c)
-                if t is not None and hasattr(t, "param_key") and t.param_key == "window":
-                    assert t.new_value < t.old_value, (
-                        f"reduce_drawdown candidate must tighten (decrease) window: "
-                        f"old={t.old_value}, new={t.new_value}. "
-                        "Direction is objective-derived — an objective-ignoring "
-                        "generator would fail this test."
-                    )
-
-            # lift_risk_adjusted candidates should increase window values.
-            for c in cands_risk_adj:
-                t = _get_tweak(c)
-                if t is not None and hasattr(t, "param_key") and t.param_key == "window":
-                    assert t.new_value > t.old_value, (
-                        f"lift_risk_adjusted candidate must loosen (increase) window: "
-                        f"old={t.old_value}, new={t.new_value}. "
-                        "Direction is objective-derived."
-                    )
-
-    def test_unknown_objective_generates_no_candidates(self, score_tree):
-        """An unknown objective_type must return an empty candidate list.
-
-        Refusing to produce unguided candidates prevents an objective-ignoring fallback
-        from becoming a brute-force overfitting loop.
-        """
-        engine = _import_engine()
-        unknown_obj = _make_logic_objective(objective_type="vibe_check", measured_value=0.0)
-        cands = engine.generate_objective_directed_logic_candidates(
-            symphony_id="sym-unknown-obj",
-            score_tree=score_tree,
-            objective=unknown_obj,
-        )
-        assert cands == [], (
-            "generate_objective_directed_logic_candidates with an unknown objective_type "
-            f"must return an empty list. Got {len(cands)} candidates. "
-            "Producing candidates for an unknown objective is the objective-ignoring "
-            "anti-pattern (AC-3.1 + Gate-1 Resolution #2)."
-        )
-
-    def test_candidate_count_bounded_by_max_suggested_candidates(self, score_tree):
-        """The number of generated candidates must not exceed MAX_SUGGESTED_CANDIDATES."""
-        engine = _import_engine()
-        max_n = getattr(engine, "MAX_SUGGESTED_CANDIDATES", None)
-        assert max_n is not None, (
-            "advisors.logic_change_engine must expose MAX_SUGGESTED_CANDIDATES constant "
-            "(the candidate-count upper bound that keeps the FDR correction effective)."
-        )
-        assert isinstance(max_n, int) and max_n > 0, (
-            f"MAX_SUGGESTED_CANDIDATES must be a positive integer. Got {max_n!r}."
-        )
-
-        obj = _make_logic_objective(objective_type="reduce_drawdown")
-        cands = engine.generate_objective_directed_logic_candidates(
-            symphony_id="sym-bound-test",
-            score_tree=score_tree,
-            objective=obj,
-        )
-        assert len(cands) <= max_n, (
-            f"Candidate count {len(cands)} exceeds MAX_SUGGESTED_CANDIDATES={max_n}. "
-            "Unbounded candidate generation defeats the FDR correction in practice."
-        )
-
 
 # ===========================================================================
 # Section 5 — Pre-correction passers are NOT surfaced (AC-3.3)
@@ -1023,6 +899,10 @@ class TestSurvivorCaveatsPresent:
                 return_value=mock_backtest,
             ),
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates",
+                return_value=[_make_logic_tweak()],
+            ),
             patch("database.insert_advisor_observation"),
         ):
             result = engine.propose_operator_logic_change(
@@ -1057,6 +937,10 @@ class TestSurvivorCaveatsPresent:
                 return_value=mock_backtest,
             ),
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates",
+                return_value=[_make_logic_tweak()],
+            ),
             patch("database.insert_advisor_observation"),
         ):
             result = engine.propose_operator_logic_change(
@@ -1112,6 +996,10 @@ class TestAdvisoryOnlyContract:
             ),
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
             patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates",
+                return_value=[_make_logic_tweak()],
+            ),
+            patch(
                 "database.insert_advisor_observation",
                 side_effect=capture_insert,
             ),
@@ -1152,6 +1040,10 @@ class TestAdvisoryOnlyContract:
                 return_value=mock_backtest,
             ),
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates",
+                return_value=[_make_logic_tweak()],
+            ),
             patch("database.insert_advisor_observation"),
         ):
             result = engine.propose_operator_logic_change(
@@ -1176,9 +1068,7 @@ class TestAdvisoryOnlyContract:
                     f"Found '{forbidden}' in: {guidance!r}."
                 )
 
-    def test_rejected_candidates_are_persisted_with_their_real_verdict(
-        self, score_tree, logic_objective
-    ):
+    def test_rejected_candidates_are_persisted_with_their_real_verdict(self, logic_objective):
         """RC-4 (DIAGNOSIS F4): a rejected/kept candidate IS persisted — with its REAL
         gate verdict — so the operator sees the engine ran and kept the incumbent.
 
@@ -1186,8 +1076,32 @@ class TestAdvisoryOnlyContract:
         left advisor_observations empty on the common KEEP/REJECT path, making the
         advisor look dead.  The persisted row must carry the actual decision (NOT a
         hardcoded ADOPT_CANDIDATE) and is_advisory_only=1.
+
+        R2-2 NOTE: uses a LOCAL symphony_schema-constructed tree (real "step"-based
+        Composer grammar), not the file's shared `score_tree` fixture — that fixture
+        predates AC-3's validate_tree guard and uses a legacy "type"-keyed shape that
+        validate_tree correctly rejects (it is not real Composer grammar), which
+        would make this test's candidate never reach the gate at all and turn the
+        RC-4 assertion below into a false precondition failure unrelated to what
+        this test actually verifies (persistence of a REAL gate verdict).
         """
+        import advisors.symphony_schema as symphony_schema  # noqa: PLC0415
+
         engine = _import_engine()
+        tree = symphony_schema.make_root(
+            "Test Symphony",
+            "daily",
+            [symphony_schema.make_inverse_vol([symphony_schema.make_asset("SPY")])],
+        )
+        tree["children"][0]["window-days"] = 20
+        tweak = engine.LogicTweak(
+            node_path=["children", 0],
+            param_key="window-days",
+            old_value=20,
+            new_value=16,
+            node_description="window-days=20 at path [children, 0]",
+        )
+
         # Short noisy series — will fail the gate (non-ADOPT verdict).
         bad_returns = _make_noisy_returns_pct(80, seed=555)
         mock_backtest = _make_mock_backtest_result(daily_returns_pct=bad_returns)
@@ -1201,13 +1115,17 @@ class TestAdvisoryOnlyContract:
             ),
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
             patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates",
+                return_value=[tweak],
+            ),
+            patch(
                 "database.insert_advisor_observation",
                 side_effect=lambda **kw: insert_calls.append(kw),
             ),
         ):
             result = engine.propose_operator_logic_change(
                 symphony_id="sym-reject-test",
-                score_tree=score_tree,
+                score_tree=tree,
                 change_description=_OPERATOR_CHANGE_DESCRIPTION,
                 objective=logic_objective,
             )
@@ -1382,6 +1300,10 @@ class TestBacktestFailureIsolation:
                 return_value=error_backtest,
             ),
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates",
+                return_value=[_make_logic_tweak()],
+            ),
             patch("database.insert_advisor_observation"),
         ):
             result = engine.propose_operator_logic_change(
@@ -1400,130 +1322,6 @@ class TestBacktestFailureIsolation:
                 assert (
                     isinstance(proposal.backtest_error, str) and len(proposal.backtest_error) > 0
                 ), "backtest_error must be a non-empty string describing the failure."
-
-    def test_unparseable_change_description_yields_backtest_error_not_raise(
-        self, score_tree, logic_objective
-    ):
-        """An unparseable / inapplicable change_description yields a backtest_error, not a raise.
-
-        AC-X5: the engine must handle failed/invalid proposals gracefully and return
-        a result with backtest_error set.  This tests the invalid_tweak_contract from
-        the fixture: when a change_description cannot be applied to the symphony tree,
-        the proposal is marked as failed without aborting the run.
-
-        We use a backtest error injection (HTTP 500) to simulate an inapplicable variant
-        reliably, since change_description parsing may succeed even for unusual strings.
-        """
-        engine = _import_engine()
-
-        error_backtest = MagicMock()
-        error_backtest.error = "HTTP 500: Internal Server Error"
-        error_backtest.daily_returns = {}
-        error_backtest.stats = None
-        error_backtest.data_warnings = []
-
-        with (
-            patch(
-                "advisors.logic_change_engine.run_backtest",
-                return_value=error_backtest,
-            ),
-            patch("advisors.logic_change_engine._has_composer_key", return_value=True),
-            patch("database.insert_advisor_observation"),
-        ):
-            result = engine.propose_operator_logic_change(
-                symphony_id="sym-error-test",
-                score_tree=score_tree,
-                change_description="Modify the momentum window",
-                objective=logic_objective,
-            )
-
-        assert result is not None, (
-            "propose_operator_logic_change must not raise when backtest fails (AC-X5)."
-        )
-        # The result must be returned even on failure — proposals carries the error marker.
-        assert isinstance(result.proposals, list), (
-            "proposals must be a list even when backtest fails."
-        )
-        # Any failed proposals must have backtest_error set (not None).
-        for proposal in result.proposals:
-            if proposal.backtest_error is not None:
-                assert (
-                    isinstance(proposal.backtest_error, str) and len(proposal.backtest_error) > 0
-                ), "backtest_error must be a non-empty string describing the failure."
-
-    def test_one_failure_in_suggest_mode_does_not_abort_other_candidates(self, score_tree):
-        """In suggest mode, one structurally-invalid tweak does not abort other candidates (AC-X5).
-
-        We use apply_logic_tweak returning None (invalid tree) for the FIRST generated
-        candidate and a good backtest for the remainder.  This tests the isolation at the
-        engine level without depending on the exact internal call ordering of run_backtest.
-        """
-        engine = _import_engine()
-        gate = _import_gate_engine()
-
-        good_returns = _make_synthetic_returns_pct(500, seed=22, mean_pct=0.10)
-        good_backtest = _make_mock_backtest_result(daily_returns_pct=good_returns)
-
-        objective = _make_logic_objective(objective_type="reduce_drawdown")
-
-        # Verify the score_tree actually has numeric params to generate candidates from.
-        generated_tweaks = engine.generate_objective_directed_logic_candidates(
-            symphony_id="sym-batch-fail-test",
-            score_tree=score_tree,
-            objective=objective,
-        )
-
-        if len(generated_tweaks) < 2:
-            pytest.skip(
-                f"Score tree only yields {len(generated_tweaks)} candidates — "
-                "need >= 2 to test isolation. Use a richer score tree."
-            )
-
-        # Patch apply_logic_tweak to fail on the first call only.
-        call_count = {"n": 0}
-        real_apply = engine.apply_logic_tweak
-
-        def patched_apply(raw_value, tweak):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                # First candidate's tree application fails → no BacktestCandidate produced.
-                return None
-            return real_apply(raw_value, tweak)
-
-        with (
-            patch(
-                "advisors.logic_change_engine.apply_logic_tweak",
-                side_effect=patched_apply,
-            ),
-            patch(
-                "advisors.logic_change_engine.run_backtest",
-                return_value=good_backtest,
-            ),
-            patch("advisors.logic_change_engine._has_composer_key", return_value=True),
-            patch("database.insert_advisor_observation"),
-        ):
-            result = engine.suggest_logic_changes(
-                symphony_id="sym-batch-fail-test",
-                score_tree=score_tree,
-                objective=objective,
-            )
-
-        assert result is not None, (
-            "suggest_logic_changes must not raise when one candidate's tweak fails (AC-X5)."
-        )
-        n_total = len(result.proposals)
-        n_failed = sum(1 for p in result.proposals if p.backtest_error)
-        # With the first tweak failing and others succeeding, not all should fail.
-        assert n_total >= 2, (
-            f"Expected >= 2 proposals (score_tree has {len(generated_tweaks)} tweaks). "
-            f"Got {n_total}."
-        )
-        assert n_failed < n_total, (
-            f"One tweak-application failure should not abort all {n_total} candidates. "
-            f"All {n_failed} have backtest_error set. "
-            "The engine must continue evaluating remaining candidates (AC-X5)."
-        )
-
 
 # ===========================================================================
 # Section 10 — Zero survivors is a valid outcome
@@ -1545,6 +1343,10 @@ class TestZeroSurvivorsIsValid:
                 return_value=mock_backtest,
             ),
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates",
+                return_value=[_make_logic_tweak()],
+            ),
             patch("database.insert_advisor_observation"),
         ):
             result = engine.propose_operator_logic_change(
@@ -1573,6 +1375,10 @@ class TestZeroSurvivorsIsValid:
                 return_value=mock_backtest,
             ),
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates",
+                return_value=[_make_logic_tweak()],
+            ),
             patch("database.insert_advisor_observation"),
         ):
             result = engine.propose_operator_logic_change(
@@ -1647,6 +1453,10 @@ class TestOperatorInitiatedMode:
                 return_value=mock_backtest,
             ),
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates",
+                return_value=[_make_logic_tweak()],
+            ),
             patch("database.insert_advisor_observation"),
         ):
             result = engine.propose_operator_logic_change(
@@ -1685,6 +1495,10 @@ class TestOperatorInitiatedMode:
                 return_value=mock_backtest,
             ),
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates",
+                return_value=[_make_logic_tweak()],
+            ),
             patch("database.insert_advisor_observation"),
         ):
             result = engine.propose_operator_logic_change(
@@ -1719,6 +1533,10 @@ class TestOperatorInitiatedMode:
                 return_value=mock_backtest,
             ),
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates",
+                return_value=[_make_logic_tweak()],
+            ),
             patch("database.insert_advisor_observation"),
         ):
             result = engine.propose_operator_logic_change(
@@ -1828,6 +1646,10 @@ class TestAdvisorSuggestedMode:
                 return_value=mock_backtest,
             ),
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch(
+                "advisors.logic_change_engine.generate_reasoned_logic_candidates",
+                return_value=_make_two_logic_tweaks(),
+            ),
             patch("database.insert_advisor_observation"),
         ):
             result = engine.suggest_logic_changes(
@@ -1923,352 +1745,3 @@ class TestFixtureContract:
             f"Got a non-None result: {result_tree!r}."
         )
 
-
-# ===========================================================================
-# Section 14 — Named constants for scaling factors (BLOCK-1 reviewer finding)
-# ===========================================================================
-
-
-class TestNamedScalingConstants:
-    """All bare numeric scaling factors and floor thresholds must be named module-level constants.
-
-    Reviewer BLOCK-1 (HEAD 7d0e083): five scaling factors (0.80, 1.25, 1.50, 0.90, 1.30)
-    and two floor thresholds (5, 3) appear as bare numeric literals in
-    generate_objective_directed_candidates.  They are the entire overfitting-surface
-    control mechanism and must have names + source comments so a maintainer can
-    understand their origin without reverse-engineering the arithmetic.
-
-    These tests encode the contract so a bare-literal reimplementation fails.
-    """
-
-    def test_module_exposes_reduce_drawdown_tighten_factor(self):
-        """Module must expose _REDUCE_DRAWDOWN_TIGHTEN_FACTOR as a named constant (bare 0.80).
-
-        Must be a float in (0, 1): tightening multiplier reduces the parameter value.
-        """
-        engine = _import_engine()
-        const = getattr(engine, "_REDUCE_DRAWDOWN_TIGHTEN_FACTOR", None)
-        assert const is not None, (
-            "advisors.logic_change_engine must expose _REDUCE_DRAWDOWN_TIGHTEN_FACTOR "
-            "(reviewer BLOCK-1: bare 0.80 literal in generate_objective_directed_candidates). "
-            "Name the constant at module level with a source rationale comment."
-        )
-        assert isinstance(const, float), (
-            f"_REDUCE_DRAWDOWN_TIGHTEN_FACTOR must be a float. Got {type(const).__name__!r}."
-        )
-        # Tightening factor: multiplies to produce a smaller value, so must be in (0, 1).
-        assert 0.0 < const < 1.0, (
-            f"_REDUCE_DRAWDOWN_TIGHTEN_FACTOR must be in (0, 1). Got {const!r}."
-        )
-
-    def test_module_exposes_lift_risk_adjusted_loosen_factor(self):
-        """Module must expose _LIFT_RISK_ADJUSTED_LOOSEN_FACTOR as a named constant (bare 1.25).
-
-        Must be > 1.0: loosening multiplier increases the parameter value.
-        """
-        engine = _import_engine()
-        const = getattr(engine, "_LIFT_RISK_ADJUSTED_LOOSEN_FACTOR", None)
-        assert const is not None, (
-            "advisors.logic_change_engine must expose _LIFT_RISK_ADJUSTED_LOOSEN_FACTOR "
-            "(reviewer BLOCK-1: bare 1.25 literal). "
-            "Name the constant at module level with a source rationale comment."
-        )
-        assert isinstance(const, float) and const > 1.0, (
-            f"_LIFT_RISK_ADJUSTED_LOOSEN_FACTOR must be a float > 1.0. Got {const!r}."
-        )
-
-    def test_module_exposes_reduce_turnover_lengthen_factor(self):
-        """Module must expose _REDUCE_TURNOVER_LENGTHEN_FACTOR as a named constant (bare 1.50).
-
-        Must be > 1.0: lengthening multiplier.
-        """
-        engine = _import_engine()
-        const = getattr(engine, "_REDUCE_TURNOVER_LENGTHEN_FACTOR", None)
-        assert const is not None, (
-            "advisors.logic_change_engine must expose _REDUCE_TURNOVER_LENGTHEN_FACTOR "
-            "(reviewer BLOCK-1: bare 1.50 literal). "
-            "Name the constant at module level with a source rationale comment."
-        )
-        assert isinstance(const, float) and const > 1.0, (
-            f"_REDUCE_TURNOVER_LENGTHEN_FACTOR must be a float > 1.0. Got {const!r}."
-        )
-
-    def test_module_exposes_improve_momentum_timing_shorten_factor(self):
-        """Module must expose _IMPROVE_MOMENTUM_TIMING_SHORTEN_FACTOR (bare 0.90).
-
-        Must be in (0, 1): shortening multiplier.
-        """
-        engine = _import_engine()
-        const = getattr(engine, "_IMPROVE_MOMENTUM_TIMING_SHORTEN_FACTOR", None)
-        assert const is not None, (
-            "advisors.logic_change_engine must expose _IMPROVE_MOMENTUM_TIMING_SHORTEN_FACTOR "
-            "(reviewer BLOCK-1: bare 0.90 literal). "
-            "Name the constant at module level with a source rationale comment."
-        )
-        assert isinstance(const, float) and 0.0 < const < 1.0, (
-            f"_IMPROVE_MOMENTUM_TIMING_SHORTEN_FACTOR must be a float in (0, 1). Got {const!r}."
-        )
-
-    def test_module_exposes_reduce_whipsaw_lengthen_factor(self):
-        """Module must expose _REDUCE_WHIPSAW_LENGTHEN_FACTOR as a named constant (bare 1.30).
-
-        Must be > 1.0: lengthening multiplier.
-        """
-        engine = _import_engine()
-        const = getattr(engine, "_REDUCE_WHIPSAW_LENGTHEN_FACTOR", None)
-        assert const is not None, (
-            "advisors.logic_change_engine must expose _REDUCE_WHIPSAW_LENGTHEN_FACTOR "
-            "(reviewer BLOCK-1: bare 1.30 literal). "
-            "Name the constant at module level with a source rationale comment."
-        )
-        assert isinstance(const, float) and const > 1.0, (
-            f"_REDUCE_WHIPSAW_LENGTHEN_FACTOR must be a float > 1.0. Got {const!r}."
-        )
-
-    def test_module_exposes_candidate_window_floor_days(self):
-        """Module must expose _CANDIDATE_WINDOW_FLOOR_DAYS as a named constant (bare 5).
-
-        This floor gates which numeric parameters qualify for candidate generation
-        (day-scale windows vs fractional or boolean-flag values).
-        """
-        engine = _import_engine()
-        const = getattr(engine, "_CANDIDATE_WINDOW_FLOOR_DAYS", None)
-        assert const is not None, (
-            "advisors.logic_change_engine must expose _CANDIDATE_WINDOW_FLOOR_DAYS "
-            "(reviewer BLOCK-1: bare 5 floor literal). "
-            "Name the constant at module level with a source rationale comment."
-        )
-        assert isinstance(const, int) and const > 0, (
-            f"_CANDIDATE_WINDOW_FLOOR_DAYS must be a positive int. Got {const!r}."
-        )
-
-    def test_module_exposes_reduce_turnover_floor_days(self):
-        """Module must expose _REDUCE_TURNOVER_FLOOR_DAYS as a named constant (bare 3).
-
-        reduce_turnover uses a lower floor (>= 3) than the other objectives (>= 5).
-        This distinction must be named so maintainers understand why 3 was chosen.
-        """
-        engine = _import_engine()
-        const = getattr(engine, "_REDUCE_TURNOVER_FLOOR_DAYS", None)
-        assert const is not None, (
-            "advisors.logic_change_engine must expose _REDUCE_TURNOVER_FLOOR_DAYS "
-            "(reviewer BLOCK-1: bare 3 floor literal in reduce_turnover branch). "
-            "Name the constant at module level with a source rationale comment."
-        )
-        assert isinstance(const, int) and const > 0, (
-            f"_REDUCE_TURNOVER_FLOOR_DAYS must be a positive int. Got {const!r}."
-        )
-
-    def test_generate_objective_directed_candidates_uses_named_constants_not_bare_literals(self):
-        """Static analysis: generate_objective_directed_candidates must not contain bare
-        scaling-factor literals.
-
-        After BLOCK-1 is fixed, references to 0.80 / 1.25 / 1.50 / 0.90 / 1.30 inside
-        the function body must be replaced by the named constants.  A bare-literal
-        reimplementation fails this test.
-
-        Pattern matched: '* 0.80', '* 1.25', etc. (multiplication context confirms
-        these are the scaling uses, not incidental occurrences in comments or strings
-        when we use ast.unparse which strips comments).
-        """
-        engine_path = _REPO_ROOT / "advisors" / "logic_change_engine.py"
-        if not engine_path.exists():
-            pytest.skip("advisors/logic_change_engine.py not found.")
-
-        source = engine_path.read_text(encoding="utf-8")
-        tree = ast.parse(source)
-
-        fn_source = None
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.FunctionDef)
-                and node.name == "generate_objective_directed_candidates"
-            ):
-                fn_source = ast.unparse(node)
-                break
-
-        if fn_source is None:
-            pytest.skip("generate_objective_directed_candidates not found in source.")
-
-        # After the fix, these bare multiplication patterns must be absent from the
-        # unparsed AST (ast.unparse produces canonical Python, so bare literals are
-        # always 0.8, 1.25, 1.5, 0.9, 1.3 — no trailing zeros).
-        bare_patterns = ["* 0.8)", "* 1.25)", "* 1.5)", "* 0.9)", "* 1.3)"]
-        for pattern in bare_patterns:
-            assert pattern not in fn_source, (
-                f"generate_objective_directed_candidates still contains bare scaling "
-                f"literal pattern '{pattern}' after BLOCK-1 fix (reviewer BLOCK-1). "
-                "Replace with the corresponding named module-level constant."
-            )
-
-
-# ===========================================================================
-# Section 15 — Phase-3/Phase-4 fallback must respect stated tweak direction
-# (reality-audit finding, LIVE bug via propose_operator_logic_change)
-#
-# Finding: _parse_change_description_to_tweak's Phase 3 ("match by preferred
-# key only") and Phase 4 ("fall back to the first numeric parameter") both
-# apply a flat `old_val * 1.20` regardless of the description's stated
-# direction.  Live-verified: "reduce the window size" produced old_value=10
-# -> new_value=12 (an INCREASE, despite "reduce"). The fix must read
-# reduce/lower/decrease/shrink -> DECREASE and increase/raise/grow ->
-# INCREASE from the description text, in both fallback phases (they share
-# identical math).
-# ===========================================================================
-
-
-class TestPhase3FallbackDirectionRespected:
-    """Fallback tweaks (no explicit 'from X to Y' numbers in the description)
-    must move in the direction the description states, not a flat +20%.
-    """
-
-    @pytest.mark.parametrize("keyword", ["reduce", "lower", "decrease", "shrink"])
-    def test_phase3_fallback_respects_reduce_direction_keywords(self, keyword):
-        """A reduce/lower/decrease/shrink description must DECREASE the value.
-
-        Uses a keyword ('window') that maps to a preferred_key, with no numeric
-        values in the description, forcing Phase 3 (preferred-key fallback).
-        """
-        engine = _import_engine()
-        tree = _make_tree_single_window_param(value=10)
-        description = f"{keyword.capitalize()} the window size to improve reactivity"
-
-        tweak = engine._parse_change_description_to_tweak(tree, description)
-
-        assert tweak is not None, (
-            f"_parse_change_description_to_tweak returned None for {description!r}; "
-            "expected a Phase-3 fallback tweak on the sole 'window' parameter."
-        )
-        assert tweak.old_value == 10, (
-            f"Test setup sanity: old_value must be 10 (the tree's only window "
-            f"value). Got {tweak.old_value!r}."
-        )
-        assert tweak.new_value < tweak.old_value, (
-            f"{description!r} states a REDUCE direction; new_value must be < "
-            f"old_value. Got old={tweak.old_value}, new={tweak.new_value}. "
-            "The Phase-3 fallback must not apply a flat +20% regardless of "
-            "the description's stated direction."
-        )
-
-    @pytest.mark.parametrize("keyword", ["increase", "raise", "grow"])
-    def test_phase3_fallback_respects_increase_direction_keywords(self, keyword):
-        """An increase/raise/grow description must INCREASE the value."""
-        engine = _import_engine()
-        tree = _make_tree_single_window_param(value=10)
-        description = f"{keyword.capitalize()} the window size for smoother signals"
-
-        tweak = engine._parse_change_description_to_tweak(tree, description)
-
-        assert tweak is not None, (
-            f"_parse_change_description_to_tweak returned None for {description!r}."
-        )
-        assert tweak.old_value == 10, (
-            f"Test setup sanity: old_value must be 10. Got {tweak.old_value!r}."
-        )
-        assert tweak.new_value > tweak.old_value, (
-            f"{description!r} states an INCREASE direction; new_value must be > "
-            f"old_value. Got old={tweak.old_value}, new={tweak.new_value}."
-        )
-
-    def test_phase3_fallback_reduce_from_10_is_not_the_audit_regression_value_12(self):
-        """Pin the exact audit-observed regression: 'reduce the window size' on
-        old_value=10 must NOT yield new_value=12 (the +20%-regardless-of-direction bug).
-        """
-        engine = _import_engine()
-        tree = _make_tree_single_window_param(value=10)
-
-        tweak = engine._parse_change_description_to_tweak(tree, "reduce the window size")
-
-        assert tweak is not None
-        assert tweak.old_value == 10
-        assert tweak.new_value != 12, (
-            "Reproduces the exact audit-confirmed regression: 'reduce the window "
-            f"size' on old_value=10 produced new_value=12 (a +20% INCREASE despite "
-            f"'reduce'). Got new_value={tweak.new_value}."
-        )
-        assert tweak.new_value < 10, (
-            f"'reduce the window size' must decrease the value. Got new_value={tweak.new_value}."
-        )
-
-    @pytest.mark.parametrize("keyword", ["reduce", "decrease"])
-    def test_phase4_fallback_respects_reduce_direction_with_no_keyword_match(self, keyword):
-        """Phase 4 (no recognized param-key keyword at all) must also respect
-        direction — same +20% fallback math as Phase 3, same bug class.
-
-        'allocation'/'weight' do not appear in keyword_to_keys, so preferred_keys
-        stays empty and the Phase-3 loop is skipped entirely — this description
-        can ONLY be satisfied by Phase 4 (the true structural fallback).
-        """
-        engine = _import_engine()
-        tree = _make_tree_single_window_param(value=10)
-        description = f"{keyword.capitalize()} the allocation weight for this position"
-
-        tweak = engine._parse_change_description_to_tweak(tree, description)
-
-        assert tweak is not None, (
-            f"_parse_change_description_to_tweak returned None for {description!r}; "
-            "expected the Phase-4 structural fallback to still produce a tweak."
-        )
-        assert tweak.new_value < tweak.old_value, (
-            f"{description!r} states a REDUCE direction via Phase 4 (no keyword "
-            f"match). new_value must be < old_value. "
-            f"Got old={tweak.old_value}, new={tweak.new_value}."
-        )
-
-    @pytest.mark.parametrize("keyword", ["increase", "grow"])
-    def test_phase4_fallback_respects_increase_direction_with_no_keyword_match(self, keyword):
-        """Phase 4 must respect an increase direction too (mirror of the reduce case)."""
-        engine = _import_engine()
-        tree = _make_tree_single_window_param(value=10)
-        description = f"{keyword.capitalize()} the allocation weight for this position"
-
-        tweak = engine._parse_change_description_to_tweak(tree, description)
-
-        assert tweak is not None, (
-            f"_parse_change_description_to_tweak returned None for {description!r}."
-        )
-        assert tweak.new_value > tweak.old_value, (
-            f"{description!r} states an INCREASE direction via Phase 4. "
-            f"new_value must be > old_value. "
-            f"Got old={tweak.old_value}, new={tweak.new_value}."
-        )
-
-    def test_operator_initiated_live_path_reduce_description_decreases_value(self):
-        """LIVE-PATH regression: propose_operator_logic_change (the operator-
-        initiated route, DE-LOGIC-CHANGE-DIRECTION-001) must apply a DECREASING
-        tweak for a 'reduce'-worded change_description with no explicit numeric
-        values (forces the Phase-3 fallback), end-to-end through the public API.
-        """
-        engine = _import_engine()
-        tree = _make_tree_single_window_param(value=10)
-        objective = _make_logic_objective(objective_type="reduce_drawdown", measured_value=-0.10)
-
-        returns = _make_synthetic_returns_pct(500, seed=31, mean_pct=0.05)
-        mock_backtest = _make_mock_backtest_result(daily_returns_pct=returns)
-
-        with (
-            patch(
-                "advisors.logic_change_engine.run_backtest",
-                return_value=mock_backtest,
-            ),
-            patch("advisors.logic_change_engine._has_composer_key", return_value=True),
-            patch("database.insert_advisor_observation"),
-        ):
-            result = engine.propose_operator_logic_change(
-                symphony_id="sym-direction-live",
-                score_tree=tree,
-                change_description="Reduce the window to improve drawdown reactivity",
-                objective=objective,
-            )
-
-        assert len(result.proposals) == 1, (
-            f"Expected exactly one proposal for a single-param tree. Got {len(result.proposals)}."
-        )
-        tweak = result.proposals[0].tweak
-        assert tweak is not None, "The change_description must parse into a tweak."
-        assert tweak.new_value < tweak.old_value, (
-            f"LIVE PATH: 'Reduce the window...' must decrease the tweak value. "
-            f"Got old={tweak.old_value}, new={tweak.new_value}. "
-            "propose_operator_logic_change must surface a direction-correct "
-            "tweak from _parse_change_description_to_tweak's Phase-3 fallback."
-        )

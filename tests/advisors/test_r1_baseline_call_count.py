@@ -121,17 +121,34 @@ def test_ac13_asset_swap_operator_evaluate_backtests_baseline_exactly_once(ase):
 def test_ac13_logic_change_operator_evaluate_backtests_baseline_exactly_once(lce):
     """MUST FAIL pre-fix: today the baseline tree is backtested twice
     (lce.py:920-ish inside _evaluate_single_variant, lce.py:1308 inside
-    propose_operator_logic_change's own _backtest_returns_from_tree call)."""
-    raw_tree = {"type": "root", "children": [{"type": "momentum", "window": 20, "children": []}]}
+    propose_operator_logic_change's own _backtest_returns_from_tree call).
+
+    R2-2 NOTE: built via REAL symphony_schema constructors ("step"-based
+    Composer grammar) — the legacy ad-hoc {"type": "root", ...} shape is
+    correctly rejected by AC-3's new validate_tree guard (it is not real
+    Composer grammar), which would zero out the candidate before it ever
+    reaches run_backtest and mask this AC-13 count entirely (0 calls, not a
+    genuine 1-vs-2 count). Uses the tweak= direct path (mutually exclusive
+    with change_description), which R2-2 leaves behaviorally unchanged — no
+    LLM/generate_reasoned_logic_candidates mock is needed here.
+    """
+    from advisors import symphony_schema  # noqa: PLC0415
+
+    raw_tree = symphony_schema.make_root(
+        "Baseline Count Test",
+        "daily",
+        [symphony_schema.make_inverse_vol([symphony_schema.make_asset("QQQ")])],
+    )
+    raw_tree["children"][0]["window-days"] = 20
     variant_returns = {"2026-01-01": 0.001, "2026-01-02": 0.002}
     counts, side_effect = _counting_backtest(raw_tree, variant_returns)
 
     tweak = lce.LogicTweak(
         node_path=["children", 0],
-        param_key="window",
+        param_key="window-days",
         old_value=20,
         new_value=16,
-        node_description="window=20 -> 16 at path [children, 0]",
+        node_description="window-days=20 -> 16 at path [children, 0]",
     )
 
     with (

@@ -96,17 +96,16 @@ def test_ac1_page_global_claude_powered_subtitle_is_removed(client, monkeypatch)
     )
 
 
-def test_ac1_logic_changes_tab_carries_deterministic_no_ai_label(client, monkeypatch):
-    """MUST FAIL pre-fix: the Logic Changes tab nav button carries no
-    deterministic/no-AI-reasoning indication today (only an overfitting-risk
-    badge, `title='Higher overfitting risk'`)."""
-    html = _get_html(client, monkeypatch)
-    tab = _extract_by_testid(html, "tab-logic-changes", closing_tag="</button>")
-    tab_lower = tab.lower()
-    assert "deterministic" in tab_lower or "no ai reasoning" in tab_lower, (
-        f"AC-1 GAP: tab-logic-changes does not carry a deterministic/no-AI-"
-        f"reasoning label. Element: {tab}"
-    )
+# R2-2 (2026-07-14): the sibling Logic Changes assertion this file used to
+# carry here (test_ac1_logic_changes_tab_carries_deterministic_no_ai_label)
+# was RETIRED, not merely rephrased — R2-2 made the Logic Changes tab
+# genuinely LLM-reasoned and intentionally removed its "Deterministic — no AI
+# reasoning" label (see tests/ui/test_logic_change_route_reasoning_provenance.py
+# ::test_attribution_label_flips_for_logic_changes_tab_only, which asserts the
+# OPPOSITE — the label's ABSENCE — and is the current binding contract for
+# that tab). This R1-era test asserted the PRE-R2-2 state, which is now
+# obsolete by design, not a regression. Asset Swaps (R2-3, not yet built) is
+# untouched and keeps its own identical assertion below.
 
 
 def test_ac1_asset_swaps_tab_carries_deterministic_no_ai_label(client, monkeypatch):

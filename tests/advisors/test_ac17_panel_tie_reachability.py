@@ -322,17 +322,30 @@ def test_ac17_e2e_asset_swap_operator_evaluate_empty_params_candidate_adopts():
 
 
 def test_ac17_e2e_logic_change_operator_evaluate_empty_params_candidate_adopts():
-    """MUST FAIL pre-fix — identical gap, logic_change_engine sibling."""
+    """MUST FAIL pre-fix — identical gap, logic_change_engine sibling.
+
+    R2-2 NOTE: built via REAL symphony_schema constructors ("step"-based
+    Composer grammar, param_key="window-days") — the legacy ad-hoc
+    {"type": "root", ...} shape is correctly rejected by AC-3's new
+    validate_tree guard (not real Composer grammar), which would zero out
+    the candidate before it ever reaches the gate and mask this AC-17 check.
+    """
     import advisors.logic_change_engine as lce
+    from advisors import symphony_schema
     from advisors.composer_backtest_client import BacktestResult
 
-    raw_tree = {"type": "root", "children": [{"type": "momentum", "window": 20, "children": []}]}
+    raw_tree = symphony_schema.make_root(
+        "AC17 Test", "daily", [symphony_schema.make_inverse_vol([symphony_schema.make_asset("QQQ")])]
+    )
+    raw_tree["children"][0]["window-days"] = 20
     variant_returns_log = _log_returns_cyclical()
     baseline_returns_log = {d: 0.0 for d in _DATES}
 
     def _side_effect(tree, *, symphony_id="", **kwargs):
         children = tree.get("children") or []
-        window = children[0].get("window") if children and isinstance(children[0], dict) else None
+        window = (
+            children[0].get("window-days") if children and isinstance(children[0], dict) else None
+        )
         if window == 16:
             return BacktestResult(
                 stats={"sharpe": 2.0}, data_warnings=[], daily_returns=dict(variant_returns_log)
@@ -343,10 +356,10 @@ def test_ac17_e2e_logic_change_operator_evaluate_empty_params_candidate_adopts()
 
     tweak = lce.LogicTweak(
         node_path=["children", 0],
-        param_key="window",
+        param_key="window-days",
         old_value=20,
         new_value=16,
-        node_description="window=20 -> 16 at path [children, 0]",
+        node_description="window-days=20 -> 16 at path [children, 0]",
     )
 
     with (
