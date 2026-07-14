@@ -513,164 +513,18 @@ class TestExtractLensScoresMomentumSquashing:
 # ---------------------------------------------------------------------------
 
 
-class TestGenerateObjectiveDirectedCandidatesLensParam:
-    """AC-2: lens_scores=None → byte-identical behavior; lens_scores provided → reranks."""
-
-    def _make_objective(self, obj_type="reduce_correlation"):
-        engine = _import_engine()
-        return engine.SwapObjective(
-            objective_type=obj_type,
-            target_pair=("SPY", "GLD"),
-            measured_value=0.85,
-        )
-
-    def test_accepts_lens_scores_none_param(self):
-        """RED: generate_objective_directed_candidates must accept lens_scores=None without TypeError."""
-        engine = _import_engine()
-        obj = self._make_objective()
-        available = ["BND", "TLT", "SHY"]
-        # Must not raise TypeError — lens_scores=None is the backward-compatible default.
-        result = engine.generate_objective_directed_candidates(
-            symphony_id="test-sym-001",
-            objective=obj,
-            correlation_data=_CORR_DATA,
-            available_assets=available,
-            lens_scores=None,
-        )
-        assert isinstance(result, list), "Result must be a list"
-
-    def test_backward_compat_no_lens_scores_arg(self):
-        """RED: calling WITHOUT lens_scores must still work (existing call sites unbroken)."""
-        engine = _import_engine()
-        obj = self._make_objective()
-        available = ["BND", "TLT", "SHY"]
-        # Legacy call without lens_scores — must not raise.
-        result = engine.generate_objective_directed_candidates(
-            symphony_id="test-sym-001",
-            objective=obj,
-            correlation_data=_CORR_DATA,
-            available_assets=available,
-        )
-        assert isinstance(result, list)
-
-    def test_lens_scores_reranks_candidates(self):
-        """RED: providing lens_scores must change the ranking relative to no-lens baseline.
-
-        Adversarial: a generate_objective_directed_candidates that ignores lens_scores
-        entirely will produce identical rankings — this test must fail against it.
-
-        We use a lens_scores where TLT has very high scores and SHY has very low scores,
-        then verify TLT appears before SHY in the reranked output.
-        """
-        engine = _import_engine()
-        obj = self._make_objective("lift_risk_adjusted")
-        available = ["BND", "TLT", "SHY"]
-
-        # Correlation data is deliberately equal for all three candidates (no-op baseline).
-        flat_corr = {
-            "SPY": [0.01] * 10,
-            "BND": [0.0] * 10,
-            "TLT": [0.0] * 10,
-            "SHY": [0.0] * 10,
-        }
-
-        # Lens scores: TLT is strongly preferred, SHY is strongly disfavored.
-        lens_scores = {
-            "BND": {"sentiment": 0.5, "macro": 0.5},
-            "TLT": {"sentiment": 0.95, "macro": 0.90},  # high score → should rank first
-            "SHY": {"sentiment": 0.05, "macro": 0.05},  # low score → should rank last
-        }
-
-        result = engine.generate_objective_directed_candidates(
-            symphony_id="test-sym-001",
-            objective=obj,
-            correlation_data=flat_corr,
-            available_assets=available,
-            lens_scores=lens_scores,
-        )
-
-        tickers = [c["ticker"] if isinstance(c, dict) else c for c in result]
-        assert len(tickers) >= 2, f"Expected at least 2 candidates, got {tickers}"
-        tlt_idx = tickers.index("TLT") if "TLT" in tickers else None
-        shy_idx = tickers.index("SHY") if "SHY" in tickers else None
-
-        assert tlt_idx is not None and shy_idx is not None, (
-            f"Both TLT and SHY must appear in result; got {tickers}"
-        )
-        assert tlt_idx < shy_idx, (
-            f"Lens-informed ranking must put TLT (high lens score) before SHY (low lens score); "
-            f"got TLT at {tlt_idx}, SHY at {shy_idx} in {tickers}"
-        )
-
-    def test_lens_scores_none_produces_same_result_as_omitted(self):
-        """RED: lens_scores=None and omitting lens_scores must produce identical output."""
-        engine = _import_engine()
-        obj = self._make_objective()
-        available = ["BND", "TLT", "SHY"]
-
-        result_none = engine.generate_objective_directed_candidates(
-            symphony_id="test-sym-001",
-            objective=obj,
-            correlation_data=_CORR_DATA,
-            available_assets=available,
-            lens_scores=None,
-        )
-        result_omitted = engine.generate_objective_directed_candidates(
-            symphony_id="test-sym-001",
-            objective=obj,
-            correlation_data=_CORR_DATA,
-            available_assets=available,
-        )
-
-        tickers_none = [c["ticker"] if isinstance(c, dict) else c for c in result_none]
-        tickers_omitted = [c["ticker"] if isinstance(c, dict) else c for c in result_omitted]
-        assert tickers_none == tickers_omitted, (
-            f"lens_scores=None must produce identical ranking to omitting the param; "
-            f"got {tickers_none} vs {tickers_omitted}"
-        )
-
-    def test_named_constants_exist_for_lens_blend_weight(self):
-        """RED: the lens blend weight must be a named module-level constant (no magic numbers)."""
-        engine = _import_engine()
-        # The constant must be accessible as an attribute — name must be descriptive.
-        # We accept LENS_BLEND_WEIGHT or any name containing LENS and WEIGHT.
-        constant_names = [
-            attr for attr in dir(engine) if "LENS" in attr.upper() and "WEIGHT" in attr.upper()
-        ]
-        assert constant_names, (
-            "No named LENS_BLEND_WEIGHT constant found in asset_swap_engine — "
-            "no magic numbers per project coding standard (BRIEF AC-2)"
-        )
-        # The constant must be a float in (0.0, 1.0] — it's a blend weight, not a multiplier.
-        weight = getattr(engine, constant_names[0])
-        assert isinstance(weight, float), f"{constant_names[0]} must be a float"
-        assert 0.0 < weight <= 1.0, f"{constant_names[0]}={weight} must be in (0.0, 1.0]"
-
-    def test_lens_score_does_not_replace_gate(self):
-        """RED: lens scoring must influence ranking only, never replace evaluate_candidate_batch.
-
-        Structural: the function must still return candidates for the gate to process,
-        not filter them out based on lens scores alone.
-        """
-        engine = _import_engine()
-        obj = self._make_objective("reduce_correlation")
-        available = ["BND", "TLT", "SHY"]
-
-        # Very low lens scores for all candidates — must still return all candidates.
-        lens_scores_all_low = {t: {"sentiment": 0.01} for t in available}
-
-        result = engine.generate_objective_directed_candidates(
-            symphony_id="test-sym-001",
-            objective=obj,
-            correlation_data=_CORR_DATA,
-            available_assets=available,
-            lens_scores=lens_scores_all_low,
-        )
-        tickers = [c["ticker"] if isinstance(c, dict) else c for c in result]
-        # All candidates must survive ranking — gate happens later.
-        assert set(tickers) == {"BND", "TLT", "SHY"}, (
-            f"Lens scoring must not eliminate candidates pre-gate; got {tickers}"
-        )
+# TestGenerateObjectiveDirectedCandidatesLensParam RETIRED (R2-3, 2026-07-14):
+# every test in this class called generate_objective_directed_candidates()
+# directly — that deterministic generator was DELETED ([PM-ASSUMED Q4]) and
+# replaced by the LLM-reasoned generate_reasoned_swap_candidates, which does
+# not do lens-informed statistical ranking at all (selection is the LLM's).
+# The lens-blend HELPER these tests were really protecting (_apply_lens_blend,
+# LENS_BLEND_WEIGHT) is explicitly preserved byte-unchanged by R2-3 AC-12 and
+# has its own dedicated, generator-independent coverage in
+# tests/ai_advisor/test_lens_blend_efficacy.py (never called the deleted
+# generator — confirmed clean) and
+# tests/advisors/test_asset_swap_engine_explicit_pair_preserved.py::
+# test_apply_lens_blend_unchanged.
 
 
 # ---------------------------------------------------------------------------
@@ -695,6 +549,14 @@ class TestGatePathUnchanged:
         mock_gate_batch = MagicMock()
         mock_gate_batch.results = []
 
+        # R2-3 RECONCILIATION: generate_reasoned_swap_candidates (the LLM-reasoned
+        # replacement for the deleted generate_objective_directed_candidates)
+        # mocked directly so at least one candidate reaches the (also mocked) gate —
+        # this test proves gate-reachability, not candidate generation.
+        reasoned_pairs = [
+            engine.SwapCandidate(incumbent_asset="SPY", candidate_asset=t, rationale="x")
+            for t in ("BND", "TLT")
+        ]
         with (
             patch("advisors.asset_swap_engine.run_backtest", return_value=mock_bt_result),
             patch("advisors.asset_swap_engine._has_composer_key", return_value=True),
@@ -702,6 +564,10 @@ class TestGatePathUnchanged:
                 "advisors.asset_swap_engine.evaluate_candidate_batch", return_value=mock_gate_batch
             ) as mock_gate,
             patch("database.insert_advisor_observation"),
+            patch(
+                "advisors.asset_swap_engine.generate_reasoned_swap_candidates",
+                return_value=reasoned_pairs,
+            ),
         ):
             obj = engine.SwapObjective(
                 objective_type="reduce_correlation",
@@ -732,6 +598,9 @@ class TestGatePathUnchanged:
         mock_gate_batch = MagicMock()
         mock_gate_batch.results = []
 
+        reasoned_pairs = [
+            engine.SwapCandidate(incumbent_asset="SPY", candidate_asset="BND", rationale="x")
+        ]
         with (
             patch("advisors.asset_swap_engine.run_backtest", return_value=mock_bt_result),
             patch("advisors.asset_swap_engine._has_composer_key", return_value=True),
@@ -739,6 +608,10 @@ class TestGatePathUnchanged:
                 "advisors.asset_swap_engine.evaluate_candidate_batch", return_value=mock_gate_batch
             ),
             patch("database.insert_advisor_observation"),
+            patch(
+                "advisors.asset_swap_engine.generate_reasoned_swap_candidates",
+                return_value=reasoned_pairs,
+            ),
         ):
             obj = engine.SwapObjective(
                 objective_type="reduce_correlation",

@@ -250,6 +250,14 @@ class TestLensSourcesKwargOnSuggestSwaps:
             measured_value=0.85,
         )
 
+        # R2-3 RECONCILIATION: generate_reasoned_swap_candidates (the LLM-reasoned
+        # replacement for the deleted generate_objective_directed_candidates)
+        # mocked directly — this test proves the lens_sources kwarg doesn't raise,
+        # not candidate generation.
+        reasoned_pairs = [
+            engine.SwapCandidate(incumbent_asset="SPY", candidate_asset=t, rationale="x")
+            for t in ("BND", "TLT")
+        ]
         try:
             with (
                 patch("advisors.asset_swap_engine.run_backtest", return_value=_make_mock_bt()),
@@ -259,6 +267,10 @@ class TestLensSourcesKwargOnSuggestSwaps:
                     return_value=mock_gate_batch,
                 ),
                 patch("database.insert_advisor_observation"),
+                patch(
+                    "advisors.asset_swap_engine.generate_reasoned_swap_candidates",
+                    return_value=reasoned_pairs,
+                ),
             ):
                 result = engine.suggest_swaps(
                     symphony_id="test-sym-001",
@@ -318,6 +330,14 @@ class TestLensSourcesKwargOnSuggestSwaps:
         def _capture(**kwargs):
             captured.append(kwargs)
 
+        # R2-3 RECONCILIATION: the reasoned generator is mocked to propose EXACTLY
+        # the SPY->BND pair the mock_gate_result above is keyed to (candidate_id
+        # "test-sym-001:SPY->BND") — the real _evaluate_single_variant constructs
+        # candidate_id from (symphony_id, incumbent_asset, candidate_asset), so
+        # this must match for the gate-result lookup to find it.
+        reasoned_pairs = [
+            engine.SwapCandidate(incumbent_asset="SPY", candidate_asset="BND", rationale="x")
+        ]
         with (
             patch("advisors.asset_swap_engine.run_backtest", return_value=_make_mock_bt()),
             patch("advisors.asset_swap_engine._has_composer_key", return_value=True),
@@ -325,6 +345,10 @@ class TestLensSourcesKwargOnSuggestSwaps:
                 "advisors.asset_swap_engine.evaluate_candidate_batch", return_value=mock_gate_batch
             ),
             patch("database.insert_advisor_observation", side_effect=_capture),
+            patch(
+                "advisors.asset_swap_engine.generate_reasoned_swap_candidates",
+                return_value=reasoned_pairs,
+            ),
         ):
             engine.suggest_swaps(
                 symphony_id="test-sym-001",

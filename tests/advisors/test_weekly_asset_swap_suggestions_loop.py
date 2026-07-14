@@ -345,21 +345,22 @@ class TestAssetSwapLoopNeverTouchesLiveExecution:
 
 
 class TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen:
-    """Reachability chain this class pins:
+    """Reachability chain this class pins (R2-3 UPDATE, 2026-07-14 — see the
+    retired test_wired_lens_scores_actually_reorder_candidates_on_real_data
+    below for the full rationale): the "actually reorders candidates" leg of
+    this chain no longer applies — generate_objective_directed_candidates was
+    DELETED and its LLM-reasoned replacement does not do lens-blended
+    statistical ranking. What remains pinned:
 
         database.get_latest_market_lens_cache()
             -> advisors.asset_swap_engine.extract_lens_scores(context)
             -> suggest_swaps(..., lens_scores=<real, non-empty dict>)
-            -> generate_objective_directed_candidates (via suggest_swaps)
-            -> _apply_lens_blend actually reorders candidates
 
     A test that only asserts "lens_scores is not None" would pass for a stub
-    that hardcodes an empty-but-truthy dict, or wires the wrong cache section,
-    or extracts scores that happen not to move anything on real correlation
-    data -- none of which would actually make D live. Test 2 below closes that
-    hole by capturing the EXACT correlation_data/available_assets the loop
-    assembled and feeding the EXACT lens_scores it extracted through the REAL
-    generate_objective_directed_candidates, proving the full chain reorders.
+    that hardcodes an empty-but-truthy dict, or wires the wrong cache section
+    -- test_lens_scores_extracted_from_market_lens_cache_and_passed_to_
+    suggest_swaps below closes that hole by asserting the EXACT value passed
+    equals extract_lens_scores() applied to the real cache bundle.
     """
 
     def _cache_row(self, momentum: dict | None) -> dict:
@@ -523,86 +524,21 @@ class TestAssetSwapLoopWiresRealLensScoresAfterDIsGreen:
             f"  actual:   {actual_lens_scores!r}"
         )
 
-    def test_wired_lens_scores_actually_reorder_candidates_on_real_data(self, monkeypatch):
-        """The adversarial core of this gap: prove the full chain is NOT dead.
-
-        Captures the EXACT correlation_data/available_assets/objective the loop
-        assembled, then calls the REAL generate_objective_directed_candidates
-        twice with those SAME inputs -- once with lens_scores=None (baseline),
-        once with the ACTUAL lens_scores the loop extracted and passed. If the
-        wiring is genuine, AGG (marginally worse primary score, strongly
-        lens-favored) must move ahead of QQQ; GLD (commanding primary lead)
-        must stay first regardless (AC-D2 both halves, exercised end-to-end
-        through the real cache-extraction path, not a synthetic dict).
-        """
-        import advisors.asset_swap_engine as engine
-        import database as db_module
-
-        bot_state = _fake_bot_state(1)
-        monkeypatch.setattr(db_module, "load_state", lambda: bot_state, raising=False)
-
-        # Extreme +/-0.20 raw momentum -- see the extraction test above for why
-        # (unbounded raw signal, squashing formula is the implementer's choice).
-        cache_row = self._cache_row({"QQQ": -0.20, "AGG": 0.20})
-        monkeypatch.setattr(
-            db_module, "get_latest_market_lens_cache", lambda: cache_row, raising=False
-        )
-
-        self._wire_symphony_with_held_ticker(monkeypatch, "SPY")
-        self._wire_tradeable_universe(monkeypatch, frozenset({"QQQ", "AGG", "GLD", "SPY"}))
-
-        mod, run_fn = _resolve_loop_fn()
-        monkeypatch.setattr(
-            mod,
-            "_build_correlation_data",
-            lambda tickers: self._build_near_tied_correlation_fixture(),
-            raising=False,
-        )
-        captured = self._capture_suggest_swaps_call(monkeypatch, mod)
-
-        run_fn()
-
-        assert captured.get("lens_scores"), (
-            "Precondition failed: suggest_swaps must have received a non-empty "
-            "lens_scores kwarg for this reorder proof to be meaningful."
-        )
-
-        baseline = engine.generate_objective_directed_candidates(
-            symphony_id=captured["symphony_id"],
-            objective=captured["objective"],
-            correlation_data=captured["correlation_data"],
-            available_assets=captured["available_assets"],
-            lens_scores=None,
-        )
-        blended = engine.generate_objective_directed_candidates(
-            symphony_id=captured["symphony_id"],
-            objective=captured["objective"],
-            correlation_data=captured["correlation_data"],
-            available_assets=captured["available_assets"],
-            lens_scores=captured["lens_scores"],
-        )
-
-        baseline_tickers = [c["ticker"] if isinstance(c, dict) else c for c in baseline]
-        blended_tickers = [c["ticker"] if isinstance(c, dict) else c for c in blended]
-
-        assert blended_tickers != baseline_tickers, (
-            f"The lens_scores the loop actually extracted and passed to suggest_swaps "
-            f"produced NO reordering versus lens_scores=None on the SAME "
-            f"correlation_data/available_assets the loop assembled -- the wiring is "
-            f"dead on real data even though a non-empty dict is passed.\n"
-            f"  baseline (no lens): {baseline_tickers!r}\n"
-            f"  blended (real wired lens_scores): {blended_tickers!r}"
-        )
-        assert blended_tickers.index("AGG") < blended_tickers.index("QQQ"), (
-            f"AGG (marginally worse primary score, strongly lens-favored via the real "
-            f"MARKET_LENS_CACHE bundle) must move ahead of QQQ once genuinely wired; "
-            f"got blended order {blended_tickers!r}"
-        )
-        assert blended_tickers[0] == "GLD", (
-            f"GLD's commanding primary lead (unambiguous lowest correlation) must "
-            f"survive the real wired lens evidence (AC-D2: large margin never "
-            f"inverted); got blended order {blended_tickers!r}"
-        )
+    # test_wired_lens_scores_actually_reorder_candidates_on_real_data RETIRED
+    # (R2-3, 2026-07-14): called the REAL generate_objective_directed_candidates
+    # to prove lens_scores genuinely reordered its statistical ranking. That
+    # deterministic generator was DELETED ([PM-ASSUMED Q4]) and replaced by the
+    # LLM-reasoned generate_reasoned_swap_candidates, which does not do
+    # lens-blended statistical ranking at all — selection is the LLM's. This is
+    # an intentional, Q4-mandated production behavior change: the weekly
+    # scheduler's lens_scores kwarg still reaches suggest_swaps (proven by the
+    # sibling test_lens_scores_extracted_from_market_lens_cache_and_passed_to_
+    # suggest_swaps above, unchanged) and still feeds per-candidate rationale/
+    # persistence evidence via _build_candidate_lens_evidence (unchanged), but
+    # no longer drives candidate SELECTION order — that guarantee, specific to
+    # the deleted generator, is retired along with it. _apply_lens_blend itself
+    # remains behaviorally unchanged and callable (AC-12); its own coverage
+    # lives in tests/ai_advisor/test_lens_blend_efficacy.py (generator-independent).
 
     def test_no_cache_row_degrades_to_falsy_lens_scores(self, monkeypatch):
         """Cold-start (no MARKET_LENS_CACHE row yet): must degrade honestly to
@@ -968,8 +904,13 @@ class TestAssetSwapLoopCandidatePoolSourcing:
             db_module, "get_latest_market_lens_cache", lambda: cache_row, raising=False
         )
 
-        # Mock ONLY the true network boundary (Composer backtest) -- suggest_swaps
-        # itself runs FOR REAL (candidate generation, lens blend, gate, persist).
+        # Mock the true network boundaries -- Composer backtest AND the LLM seam
+        # (R2-3: generate_reasoned_swap_candidates replaced the deleted
+        # deterministic generate_objective_directed_candidates; candidate
+        # SELECTION is the LLM's now, not something this end-to-end persistence
+        # test should depend on being reachable/deterministic without
+        # credentials). suggest_swaps' own gate/lens-evidence/persist logic
+        # downstream of generation still runs FOR REAL.
         mock_bt_result = MagicMock()
         mock_bt_result.error = None
         mock_bt_result.stats = {"sharpe": 1.0}
@@ -983,10 +924,21 @@ class TestAssetSwapLoopCandidatePoolSourcing:
         def _capture_insert(**kwargs):
             captured_inserts.append(kwargs)
 
+        import advisors.asset_swap_engine as _ase_mod
+
+        reasoned_pairs = [
+            _ase_mod.SwapCandidate(
+                incumbent_asset=held_ticker, candidate_asset="AGG", rationale="x"
+            )
+        ]
         with (
             patch("advisors.asset_swap_engine.run_backtest", return_value=mock_bt_result),
             patch("advisors.asset_swap_engine._has_composer_key", return_value=True),
             patch("database.insert_advisor_observation", side_effect=_capture_insert),
+            patch(
+                "advisors.asset_swap_engine.generate_reasoned_swap_candidates",
+                return_value=reasoned_pairs,
+            ),
         ):
             mod, run_fn = _resolve_loop_fn()
             run_fn()

@@ -1,5 +1,17 @@
 """RED tests — AC-4/AC-5 PRODUCTION-PATH wiring for asset_swap_engine.py.
 
+R2-3 RECONCILIATION (2026-07-14): the deterministic
+generate_objective_directed_candidates seam this file used to mock directly
+was DELETED (R2-3, [PM-ASSUMED Q4]) and replaced by the LLM-reasoned
+generate_reasoned_swap_candidates, which returns full (incumbent, candidate)
+SwapCandidate PAIRS rather than a ranked ticker-only candidate list. Every
+mock in this file that patched the old generator now patches the new one,
+constructing SwapCandidate pairs with the fixed incumbent "AAA" (the sole
+holding in _raw_tree()) — the PBO/SPY production-wiring math this file
+proves is unaffected by that swap (candidate generation is upstream of the
+gate this file actually tests); only the mocked SEAM name and return shape
+changed.
+
 WHY THIS FILE EXISTS (mirrors the C2-hollow-trap lesson from
 tests/advisors/test_cull_production_wiring.py, the Strategy Builder C5b
 production-wiring proof — same trap, different engine):
@@ -206,12 +218,15 @@ def test_ac4_production_high_pbo_batch_is_pbo_vetoed_end_to_end(ase):
     a 'pbo' rejection_reason, no matter how overfit the batch is."""
     configs = _per_block_overfit_logreturns()
     series_by_ticker = {f"CAND{i}": c for i, c in enumerate(configs)}
-    candidates_ranked = [{"ticker": t} for t in series_by_ticker]
+    reasoned_pairs = [
+        ase.SwapCandidate(incumbent_asset="AAA", candidate_asset=t, rationale="x")
+        for t in series_by_ticker
+    ]
     spy = _spy_logreturns(0.0)  # neutral SPY — PBO is the cause under test.
 
     with (
         patch.object(ase, "_has_composer_key", return_value=True),
-        patch.object(ase, "generate_objective_directed_candidates", return_value=candidates_ranked),
+        patch.object(ase, "generate_reasoned_swap_candidates", return_value=reasoned_pairs),
         patch.object(ase, "run_backtest", side_effect=_spy_aware_backtest(series_by_ticker, spy)),
         patch.object(ase, "database") as mock_db,
     ):
@@ -245,12 +260,15 @@ def test_ac5_production_below_spy_batch_rejected_below_spy_alpha_end_to_end(ase)
     candidates never carry below_spy_alpha."""
     configs = _below_spy_logreturns(3, level=0.0005)
     series_by_ticker = {f"CAND{i}": c for i, c in enumerate(configs)}
-    candidates_ranked = [{"ticker": t} for t in series_by_ticker]
+    reasoned_pairs = [
+        ase.SwapCandidate(incumbent_asset="AAA", candidate_asset=t, rationale="x")
+        for t in series_by_ticker
+    ]
     spy = _spy_logreturns(0.02)  # SPY clearly above every candidate's level.
 
     with (
         patch.object(ase, "_has_composer_key", return_value=True),
-        patch.object(ase, "generate_objective_directed_candidates", return_value=candidates_ranked),
+        patch.object(ase, "generate_reasoned_swap_candidates", return_value=reasoned_pairs),
         patch.object(ase, "run_backtest", side_effect=_spy_aware_backtest(series_by_ticker, spy)),
         patch.object(ase, "database") as mock_db,
     ):

@@ -332,112 +332,15 @@ class TestObjectiveDirectedCandidateGeneration:
             "objective explanation. A result type with no rationale field cannot satisfy this."
         )
 
-    def test_suggest_swaps_with_reduce_correlation_objective_produces_objective_driven_candidates(
-        self,
-    ):
-        """advisor-suggested mode with reduce_correlation objective must generate
-        candidates that address the stated correlation objective.
-
-        Adversarial contract: the generator must NOT produce a candidate list that
-        is identical to what would be generated for a reduce_drawdown objective
-        with the same symphony. If it does, the generator is ignoring the objective
-        (the canonical naive implementation flaw).
-
-        This test works by running suggest_swaps twice with two DIFFERENT objectives
-        on the same symphony and verifying that the candidate pools differ, OR by
-        verifying that the generator sources candidates from the correlation matrix
-        (for reduce_correlation) rather than from an unrelated signal.
-        """
-        engine = _import_engine()
-        obj_type = engine.SwapObjective
-
-        # Correlation objective: generate candidates to reduce correlation between sym-A and sym-B.
-        corr_objective = obj_type(
-            objective_type="reduce_correlation",
-            target_pair=("sym-A", "sym-B"),
-            measured_value=0.9,
-        )
-        # Drawdown objective: different semantic intent.
-        dd_objective = obj_type(
-            objective_type="reduce_drawdown",
-            target_pair=None,
-            measured_value=0.25,
-        )
-
-        # The candidate-generation function (internal to the engine) must be inspectable
-        # as its own step, or the suggest_swaps entry point must accept a dry_run flag
-        # that returns the candidate list before backtesting.
-        gen_fn = getattr(engine, "generate_objective_directed_candidates", None)
-        assert gen_fn is not None, (
-            "advisors.asset_swap_engine must expose generate_objective_directed_candidates(). "
-            "This function is the adversarially-testable gate on objective-direction. "
-            "Without a separately testable generation step, the engine cannot be verified "
-            "as objective-directed rather than brute-force."
-        )
-
-        # We call the generator with each objective.  The results must not be identical —
-        # a generator that ignores the objective always returns the same candidates.
-        # We mock the correlation data source to give it something to work from.
-        mock_corr_data = {
-            "sym-A": [0.01, 0.02, -0.005, 0.015],  # shape — not financial data
-            "sym-B": [0.009, 0.021, -0.004, 0.016],  # high-correlation pair
-            "sym-C": [-0.01, 0.003, 0.02, -0.015],  # low-correlation with sym-A
-        }
-        mock_backtest_stats = {
-            "SPY": {"max_drawdown": -0.15, "sharpe_ratio": 0.8},
-            "AGG": {"max_drawdown": -0.05, "sharpe_ratio": 0.4},
-            "IALT": {"max_drawdown": -0.10, "sharpe_ratio": 0.6},
-            "GLD": {"max_drawdown": -0.12, "sharpe_ratio": 0.5},
-        }
-
-        try:
-            corr_candidates = gen_fn(
-                symphony_id="sym-A",
-                objective=corr_objective,
-                correlation_data=mock_corr_data,
-                available_assets=["SPY", "AGG", "IALT", "GLD"],
-            )
-            dd_candidates = gen_fn(
-                symphony_id="sym-A",
-                objective=dd_objective,
-                correlation_data=mock_corr_data,
-                available_assets=["SPY", "AGG", "IALT", "GLD"],
-            )
-        except TypeError:
-            # If the signature is different, try alternative calling conventions.
-            # The key property is that the objective parameter is consumed, not ignored.
-            pytest.fail(
-                "generate_objective_directed_candidates() has a different signature. "
-                "It must accept at minimum: symphony_id, objective, correlation_data, available_assets."
-            )
-
-        # An objective-ignoring generator produces identical candidate lists for any objective.
-        # An objective-DRIVEN generator produces different candidate lists for different objectives.
-        # We assert they're NOT identical.
-        corr_tickers = sorted(
-            c.get("ticker") or c if isinstance(c, str) else str(c) for c in (corr_candidates or [])
-        )
-        dd_tickers = sorted(
-            c.get("ticker") or c if isinstance(c, str) else str(c) for c in (dd_candidates or [])
-        )
-
-        # The corr_objective should favor low-correlation assets (sym-C); the dd_objective
-        # should favor low-drawdown assets (AGG). If both produce the same list, the
-        # generator is ignoring the objective.
-        # We allow that they MIGHT overlap (the universe is small), but at least the
-        # generator must not be provably objective-unaware — so we check it consumed the objective.
-        assert (
-            corr_tickers != dd_tickers
-            or len(corr_candidates or []) == 0
-            or len(dd_candidates or []) == 0
-        ), (
-            "generate_objective_directed_candidates() returns identical candidate lists "
-            "for reduce_correlation and reduce_drawdown objectives on the same symphony. "
-            "This indicates the generator is ignoring the objective — it is producing "
-            "objective-unaware candidates. "
-            "Gate-1 Resolution #2 VIOLATION: 'every swap must be OBJECTIVE-DIRECTED.' "
-            "The generator must source candidates differently for different objectives."
-        )
+    # test_suggest_swaps_with_reduce_correlation_objective_produces_objective_driven_candidates
+    # RETIRED (R2-3, 2026-07-14): asserted generate_objective_directed_candidates()
+    # exists and is objective-driven. That deterministic generator was DELETED
+    # ([PM-ASSUMED Q4]) and replaced by the LLM-reasoned
+    # generate_reasoned_swap_candidates. The equivalent objective-direction
+    # adversarial proof now lives in
+    # tests/advisors/test_asset_swap_engine_reasoned_generation.py::
+    # test_two_objectives_produce_different_pairs_on_same_tree (mirrors this
+    # test's intent one-for-one against the new generator).
 
 
 # ===========================================================================
@@ -647,19 +550,34 @@ class TestAdvisorSuggestedMode:
             "sym-other": [0.009, -0.004, 0.007],
         }
 
-        with patch("requests.post", return_value=mock_resp):
-            with patch("database.insert_advisor_observation", return_value=1):
-                result = engine.suggest_swaps(
-                    symphony_id="sym-test",
-                    score_tree=score_tree,
-                    objective=obj_type(
-                        objective_type="reduce_correlation",
-                        target_pair=("sym-test", "sym-other"),
-                        measured_value=0.88,
-                    ),
-                    correlation_data=mock_corr_data,
-                    available_assets=["AGG", "GLD", "IALT"],
-                )
+        # R2-3 RECONCILIATION: generate_reasoned_swap_candidates (the LLM-reasoned
+        # replacement for the deleted generate_objective_directed_candidates)
+        # mocked directly — this test proves suggest_swaps' end-to-end
+        # backtest/gate wiring, not candidate generation (which has its own
+        # dedicated coverage in test_asset_swap_engine_reasoned_generation.py).
+        reasoned_pairs = [
+            engine.SwapCandidate(incumbent_asset="SPY", candidate_asset=t, rationale="x")
+            for t in ("AGG", "GLD", "IALT")
+        ]
+        with (
+            patch("requests.post", return_value=mock_resp),
+            patch("database.insert_advisor_observation", return_value=1),
+            patch(
+                "advisors.asset_swap_engine.generate_reasoned_swap_candidates",
+                return_value=reasoned_pairs,
+            ),
+        ):
+            result = engine.suggest_swaps(
+                symphony_id="sym-test",
+                score_tree=score_tree,
+                objective=obj_type(
+                    objective_type="reduce_correlation",
+                    target_pair=("sym-test", "sym-other"),
+                    measured_value=0.88,
+                ),
+                correlation_data=mock_corr_data,
+                available_assets=["AGG", "GLD", "IALT"],
+            )
 
         assert isinstance(result, engine.SwapRunResult), (
             f"suggest_swaps must return a SwapRunResult. Got {type(result).__name__!r}."
@@ -683,20 +601,30 @@ class TestAdvisorSuggestedMode:
         score_tree = _make_score_tree("sym-test", assets=["SPY"])
         mock_corr_data = {"sym-test": [0.01, -0.005], "sym-other": [0.009, -0.004]}
 
+        reasoned_pairs = [
+            engine.SwapCandidate(incumbent_asset="SPY", candidate_asset=t, rationale="x")
+            for t in ("AGG", "GLD")
+        ]
         try:
-            with patch("requests.post", return_value=mock_resp):
-                with patch("database.insert_advisor_observation", return_value=1):
-                    result = engine.suggest_swaps(
-                        symphony_id="sym-test",
-                        score_tree=score_tree,
-                        objective=obj_type(
-                            objective_type="reduce_correlation",
-                            target_pair=("sym-test", "sym-other"),
-                            measured_value=0.88,
-                        ),
-                        correlation_data=mock_corr_data,
-                        available_assets=["AGG", "GLD"],
-                    )
+            with (
+                patch("requests.post", return_value=mock_resp),
+                patch("database.insert_advisor_observation", return_value=1),
+                patch(
+                    "advisors.asset_swap_engine.generate_reasoned_swap_candidates",
+                    return_value=reasoned_pairs,
+                ),
+            ):
+                result = engine.suggest_swaps(
+                    symphony_id="sym-test",
+                    score_tree=score_tree,
+                    objective=obj_type(
+                        objective_type="reduce_correlation",
+                        target_pair=("sym-test", "sym-other"),
+                        measured_value=0.88,
+                    ),
+                    correlation_data=mock_corr_data,
+                    available_assets=["AGG", "GLD"],
+                )
         except Exception as exc:
             pytest.fail(
                 f"suggest_swaps raised {type(exc).__name__}: {exc} when all candidates "
@@ -1228,7 +1156,8 @@ class TestBacktestFailureIsolation:
         }
 
         # The first backtest call → error, subsequent calls → success.
-        # (Number depends on how many candidates generate_objective_directed_candidates returns.)
+        # (Number depends on how many candidates generate_reasoned_swap_candidates
+        # returns — R2-3: mocked directly to two, below.)
         call_count = [0]
 
         def _side_effect(*args, **kwargs):
@@ -1237,26 +1166,36 @@ class TestBacktestFailureIsolation:
                 return error_resp
             return success_resp
 
-        with patch("requests.post", side_effect=_side_effect):
-            with patch("database.insert_advisor_observation", return_value=1):
-                try:
-                    result = engine.suggest_swaps(
-                        symphony_id="sym-test",
-                        score_tree=score_tree,
-                        objective=obj_type(
-                            objective_type="reduce_correlation",
-                            target_pair=("sym-test", "sym-other"),
-                            measured_value=0.88,
-                        ),
-                        correlation_data=mock_corr_data,
-                        available_assets=["AGG", "GLD"],
-                    )
-                except Exception as exc:
-                    pytest.fail(
-                        f"suggest_swaps raised {type(exc).__name__}: {exc} when one "
-                        "of multiple backtest calls failed with HTTP 500. "
-                        "AC-X5: one failure must NEVER abort the batch."
-                    )
+        reasoned_pairs = [
+            engine.SwapCandidate(incumbent_asset="SPY", candidate_asset=t, rationale="x")
+            for t in ("AGG", "GLD")
+        ]
+        with (
+            patch("requests.post", side_effect=_side_effect),
+            patch("database.insert_advisor_observation", return_value=1),
+            patch(
+                "advisors.asset_swap_engine.generate_reasoned_swap_candidates",
+                return_value=reasoned_pairs,
+            ),
+        ):
+            try:
+                result = engine.suggest_swaps(
+                    symphony_id="sym-test",
+                    score_tree=score_tree,
+                    objective=obj_type(
+                        objective_type="reduce_correlation",
+                        target_pair=("sym-test", "sym-other"),
+                        measured_value=0.88,
+                    ),
+                    correlation_data=mock_corr_data,
+                    available_assets=["AGG", "GLD"],
+                )
+            except Exception as exc:
+                pytest.fail(
+                    f"suggest_swaps raised {type(exc).__name__}: {exc} when one "
+                    "of multiple backtest calls failed with HTTP 500. "
+                    "AC-X5: one failure must NEVER abort the batch."
+                )
 
         assert result is not None, (
             "suggest_swaps must return a result even when one backtest call fails. "
@@ -1277,26 +1216,35 @@ class TestBacktestFailureIsolation:
         score_tree = _make_score_tree("sym-test", assets=["SPY"])
         mock_corr_data = {"sym-test": [0.01, -0.005], "sym-other": [0.009, -0.004]}
 
-        with patch("requests.post", return_value=error_resp):
-            with patch("database.insert_advisor_observation", return_value=1):
-                try:
-                    result = engine.suggest_swaps(
-                        symphony_id="sym-test",
-                        score_tree=score_tree,
-                        objective=obj_type(
-                            objective_type="reduce_correlation",
-                            target_pair=("sym-test", "sym-other"),
-                            measured_value=0.88,
-                        ),
-                        correlation_data=mock_corr_data,
-                        available_assets=["AGG"],
-                    )
-                except Exception as exc:
-                    pytest.fail(
-                        f"suggest_swaps raised {type(exc).__name__}: {exc} when ALL "
-                        "backtest calls failed. AC-X5 + AC-2.5: total batch failure is "
-                        "a valid non-error outcome."
-                    )
+        reasoned_pairs = [
+            engine.SwapCandidate(incumbent_asset="SPY", candidate_asset="AGG", rationale="x")
+        ]
+        with (
+            patch("requests.post", return_value=error_resp),
+            patch("database.insert_advisor_observation", return_value=1),
+            patch(
+                "advisors.asset_swap_engine.generate_reasoned_swap_candidates",
+                return_value=reasoned_pairs,
+            ),
+        ):
+            try:
+                result = engine.suggest_swaps(
+                    symphony_id="sym-test",
+                    score_tree=score_tree,
+                    objective=obj_type(
+                        objective_type="reduce_correlation",
+                        target_pair=("sym-test", "sym-other"),
+                        measured_value=0.88,
+                    ),
+                    correlation_data=mock_corr_data,
+                    available_assets=["AGG"],
+                )
+            except Exception as exc:
+                pytest.fail(
+                    f"suggest_swaps raised {type(exc).__name__}: {exc} when ALL "
+                    "backtest calls failed. AC-X5 + AC-2.5: total batch failure is "
+                    "a valid non-error outcome."
+                )
 
         assert result is not None
 
