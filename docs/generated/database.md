@@ -3,11 +3,11 @@
 > SQLite state management for Planet Stopper: schema, migrations, all read/write accessors for the state DB, and a pytest sentinel guard that structurally prevents tests from writing to the production DB.
 
 **Source:** `database.py`
-**Last updated:** 2026-07-12 (candidate-alert cycle: migration 033 adds `candidate_alert_state` — five new accessors, `get_candidate_alert_viewed_marker`/`set_candidate_alert_viewed_marker`/`mark_candidate_alert_viewed`/`get_candidate_alert_new_valid_count`/`get_candidate_alert_last_run`, back the header candidate-alert indicator; prior: Workstream E, advisor-rewire cycle: `save_autotune_run` gains `s_count`; prior: 2026-07-09 DE-PROD-ACCURACY-001: `save_state` sanitizes numpy/non-finite values via `_sanitize_state_for_json` before every write, new `load_latest_shadow_row`/`load_earliest_shadow_row` Stage-1 accessors, `record_exit_trigger` now returns the inserted row id; prior: 2026-07-02 DE-PRISM-NUMERIC-VERIFY-001 `get_latest_market_prism_verification_for_run` accessor; prior: DE-ADVISOR-LATENCY `get_latest_market_lens_cache()`; DE-PRISM-SOURCES-001 `get_latest_market_prism_sources_for_run`)
+**Last updated:** 2026-07-14 (branch-integration merge — Frontrunner Builder migration renumbered 033→**034** `frontrunner_proposals` on top of main's migration 033 `candidate_alert_state`; combines: Frontrunner Builder `frontrunner_proposals` table + accessors + `_VALID_DOF_EVIDENCE_SOURCES` addition; candidate-alert cycle migration 033 `candidate_alert_state` — five new accessors, `get_candidate_alert_viewed_marker`/`set_candidate_alert_viewed_marker`/`mark_candidate_alert_viewed`/`get_candidate_alert_new_valid_count`/`get_candidate_alert_last_run`, back the header candidate-alert indicator; prior: Workstream E, advisor-rewire cycle: `save_autotune_run` gains `s_count`; prior: 2026-07-09 DE-PROD-ACCURACY-001: `save_state` sanitizes numpy/non-finite values via `_sanitize_state_for_json` before every write, new `load_latest_shadow_row`/`load_earliest_shadow_row` Stage-1 accessors, `record_exit_trigger` now returns the inserted row id; prior: 2026-07-02 DE-PRISM-NUMERIC-VERIFY-001 `get_latest_market_prism_verification_for_run` accessor; prior: DE-ADVISOR-LATENCY `get_latest_market_lens_cache()`; DE-PRISM-SOURCES-001 `get_latest_market_prism_sources_for_run`)
 
 ## Overview
 
-`database.py` is the single write layer for `alphabot_state.db`. It owns schema initialization, 33 numbered migration SQL files (001–033), and every public accessor function. `_MIGRATION_FILES` wires 30 active entries (004–033); migrations 001–003 use a separate bootstrap path. The dashboard uses `get_ro_connection()` for all reads; the engine uses `get_connection()` for writes. The two-DB pattern (state DB here; Optuna studies in a separate DB) is an architecture hard rule — no cross-DB joins in application code.
+`database.py` is the single write layer for `alphabot_state.db`. It owns schema initialization, 34 numbered migration SQL files (001–034), and every public accessor function. `_MIGRATION_FILES` wires 31 active entries (004–034); migrations 001–003 use a separate bootstrap path. The dashboard uses `get_ro_connection()` for all reads; the engine uses `get_connection()` for writes. The two-DB pattern (state DB here; Optuna studies in a separate DB) is an architecture hard rule — no cross-DB joins in application code.
 
 WAL journal mode is enabled at `init_db()` time, allowing concurrent Flask reads while the engine holds a write lock.
 
@@ -15,11 +15,11 @@ WAL journal mode is enabled at `init_db()` time, allowing concurrent Flask reads
 
 ## Schema Migrations
 
-Migrations are listed in `_MIGRATION_FILES` and applied by `run_migrations()`. They are idempotent (tracked in `schema_migrations`). Current highest: **033** (`033_candidate_alert_state.sql`).
+Migrations are listed in `_MIGRATION_FILES` and applied by `run_migrations()`. They are idempotent (tracked in `schema_migrations`). Current highest: **034** (`034_frontrunner_proposals.sql`), applied after main's **033** (`033_candidate_alert_state.sql`).
 
 Notable ordering: 021 is listed before 020 — intentional. See `ARCH-002` inline comment; reordering would corrupt live DBs.
 
-Migrations 026–033:
+Migrations 026–034:
 - `026_mc_regime_match_telemetry.sql` — regime match columns on `exit_triggers`
 - `027_regime_label_cache.sql` — `regime_label_cache` table
 - `028_autotune_runs_pbo.sql` — `pbo` column on `autotune_runs`
@@ -28,10 +28,13 @@ Migrations 026–033:
 - `031_shadow_history_sym_ts_index.sql` — composite index on `shadow_history (symphony_id, ts_utc)`
 - `032_prism_audit_log.sql` — `prism_audit_log` table + `idx_prism_audit_log_run_id` index (Prism Phase 1)
 - `033_candidate_alert_state.sql` — `candidate_alert_state` table (single-row viewed-marker for the header candidate-alert indicator; see `feature-plans/candidate-alert.md`)
+- `034_frontrunner_proposals.sql` — `frontrunner_proposals` table (Frontrunner Builder AC-8/9/10; renumbered 033→034 during branch integration to sit after main's migration 033 `candidate_alert_state`): a MUTABLE approval-status lifecycle table (`pending`/`approved`/`rejected`/`uploaded`), deliberately separate from the append-only `advisor_observations` (which has no update accessor, by design). Shared by both the Frontrunner Builder's own candidates and the `strategy_builder_engine.propose_strategies` retrofit (`proposal_source` column distinguishes `'frontrunner_builder'` from `'strategy_builder_retrofit'`). Accessors: `insert_frontrunner_proposal`, `update_frontrunner_proposal_status`, `get_frontrunner_proposal`, `get_frontrunner_proposals_for_symphony`, `get_pending_frontrunner_proposals`, `count_uploaded_frontrunner_proposals`. Additive, idempotent (`IF NOT EXISTS`), two indexes (`symphony_id`, `approval_status`).
 
 An earlier migration, `023_autotune_runs_s_count.sql`, added the `s_count` column to `autotune_runs` — but until the advisor-rewire cycle (2026-07-12, Workstream E) no caller ever populated it; see `save_autotune_run` below.
 
 **DE-PRISM-NUMERIC-VERIFY-001 adds no migration.** `MARKET_PRISM_VERIFICATION` is a new `advisor_role` value on the existing `advisor_observations` table — same no-schema-change pattern as `MARKET_PRISM_SOURCES` and `MARKET_LENS_CACHE`.
+
+**Frontrunner Builder DoF-ledger isolation (2026-07-11, no migration).** `_VALID_DOF_EVIDENCE_SOURCES` (the app-layer frozenset gating `insert_dof_ledger_row`'s `evidence_source` argument — no SQL CHECK constraint) gains an additive member, `"OVERLAY_BACKTEST_SELECTION"`, distinct from the autotuner's own `"BACKTEST_SELECTION"`. This is the real isolation mechanism keeping the Frontrunner Builder's search-breadth DoF-ledger rows out of the autotuner's N_effective overfitting haircut — every consumer that aggregates `researcher_dof_ledger` for N_effective (`count_dof_backtest_selections`, `get_researcher_dof_ledger_for_run`) filters on the literal string `evidence_source='BACKTEST_SELECTION'`, so a distinct value is excluded by construction. See `DE-FRONTRUNNER-001` in `DECISIONS.md` and `docs/generated/advisors_frontrunner_builder.md`.
 
 ## Public API Reference
 

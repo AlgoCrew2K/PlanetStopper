@@ -748,6 +748,38 @@ def _persist_survivor(
         raw_response=raw_response,
     )
 
+    # AC-10 retrofit: route accepted (non-rejected) candidates onto the SAME
+    # approval->Composer-create path as the Frontrunner Builder, so
+    # propose_strategies' survivors can also be approved and pushed to
+    # Composer as undeployed symphonies — closing the gap where the strategy
+    # builder could previously only persist an advisory observation, never a
+    # Composer upload. This ONLY queues a pending frontrunner_proposals row
+    # (proposal_source='strategy_builder_retrofit') — it never calls
+    # composer_draft_client.save_symphony directly; that happens exclusively
+    # via the operator-driven approve_frontrunner_proposal path. D-1: queueing
+    # failure is logged and swallowed — it must never break the existing
+    # advisor_observations persist above, which already succeeded.
+    if not is_rejected:
+        try:
+            database.insert_frontrunner_proposal(
+                symphony_id=symphony_id,
+                proposal_source="strategy_builder_retrofit",
+                candidate_tree=info.tree,
+                metrics_json={
+                    "cagr": cagr,
+                    "sharpe": sharpe,
+                    "calmar": calmar,
+                    "max_drawdown": max_drawdown,
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "_persist_survivor: strategy_builder_retrofit proposal-queue "
+                "failed for candidate_id=%s (%s)",
+                info.candidate_id,
+                type(exc).__name__,
+            )
+
 
 def _persist_rejected(
     symphony_id: str,

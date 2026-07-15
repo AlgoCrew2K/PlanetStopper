@@ -885,8 +885,140 @@
         }
     }
 
+    // ---------------------------------------------------------------------------
+    // Frontrunner Builder tab functions.
+    //
+    // Defined inside the IIFE so they share the _csrfToken closure, then
+    // exposed on window so Jinja onclick="..." works.
+    // ---------------------------------------------------------------------------
+
+    /**
+     * Frontrunner Builder run trigger.
+     *
+     * POSTs to /ai-advisor/frontrunner-builder/run. The route dispatches the
+     * (genuinely multi-minute, all-live-symphonies) build to a background
+     * executor and returns immediately — there is no synchronous result to
+     * render. On success this shows a status message telling the operator to
+     * reload the page later; it deliberately does NOT auto-navigate (unlike
+     * sbRunAnalysis) since results are not ready yet when the response lands.
+     */
+    async function frRunBuild() {
+        var btn = document.getElementById('fr-run-btn');
+        var statusDiv = document.getElementById('fr-run-status');
+        var errDiv = document.getElementById('fr-run-error');
+        if (!btn) { return; }
+
+        btn.disabled = true;
+        btn.textContent = 'Starting…';
+        if (statusDiv) { statusDiv.textContent = ''; }
+        if (errDiv) { errDiv.style.display = 'none'; errDiv.textContent = ''; }
+
+        try {
+            var csrfToken = _csrfToken;
+            if (!csrfToken) {
+                var tokenResp = await fetch('/api/csrf-token');
+                if (!tokenResp.ok) { throw new Error('Could not obtain CSRF token'); }
+                var tokenData = await tokenResp.json();
+                csrfToken = tokenData.csrf_token;
+            }
+
+            var resp = await fetch('/ai-advisor/frontrunner-builder/run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                body: JSON.stringify({}),
+            });
+            var data = await resp.json();
+
+            if (data && data.error) {
+                if (errDiv) { errDiv.textContent = data.error; errDiv.style.display = 'block'; }
+            } else if (statusDiv) {
+                statusDiv.textContent =
+                    'Build started in the background — this can take several minutes for ' +
+                    'multiple symphonies. Reload this page afterward to see new proposals.';
+            }
+        } catch (err) {
+            if (errDiv) { errDiv.textContent = 'Request failed: ' + err.message; errDiv.style.display = 'block'; }
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Run build';
+        }
+    }
+
+    /**
+     * Shared approve/reject dispatch for a frontrunner_proposals row.
+     *
+     * action: 'approve' | 'reject'. Disables both buttons in the card
+     * immediately (prevents double-submit) and replaces the card's action
+     * row with a status message on success.
+     */
+    function frDispatchProposalAction(action, proposalId) {
+        var card = document.getElementById('fr-card-' + proposalId);
+        var approveBtn = card ? card.querySelector('[data-testid="fr-approve-btn"]') : null;
+        var rejectBtn = card ? card.querySelector('[data-testid="fr-reject-btn"]') : null;
+        if (approveBtn) { approveBtn.disabled = true; }
+        if (rejectBtn) { rejectBtn.disabled = true; }
+        if (card) { card.style.opacity = '0.6'; }
+
+        var routePath = action === 'approve' ? '/ai-advisor/proposal/approve' : '/ai-advisor/proposal/reject';
+
+        (async function () {
+            try {
+                var csrfToken = _csrfToken;
+                if (!csrfToken) {
+                    var tokenResp = await fetch('/api/csrf-token');
+                    if (!tokenResp.ok) { throw new Error('Could not obtain CSRF token'); }
+                    var tokenData = await tokenResp.json();
+                    csrfToken = tokenData.csrf_token;
+                }
+
+                var resp = await fetch(routePath, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                    body: JSON.stringify({ proposal_id: proposalId }),
+                });
+                var data = await resp.json();
+
+                if (data && (data.success === true)) {
+                    if (card) {
+                        card.style.opacity = '1';
+                        var msg = action === 'approve'
+                            ? 'Approved — created in Composer' + (data.symphony_id ? ' (' + escHtml(data.symphony_id) + ')' : '') + '.'
+                            : 'Rejected.';
+                        var actionsRow = card.querySelector('.proposal-actions');
+                        if (actionsRow) {
+                            actionsRow.innerHTML =
+                                '<p style="color:' + cssVar('--studio-pos') + ';font-size:0.875rem;font-weight:700;">' +
+                                msg + '</p>';
+                        }
+                    }
+                } else {
+                    if (card) { card.style.opacity = '1'; }
+                    if (approveBtn) { approveBtn.disabled = false; }
+                    if (rejectBtn) { rejectBtn.disabled = false; }
+                    alert((action === 'approve' ? 'Approve' : 'Reject') + ' failed: ' + (data && data.error ? data.error : 'unknown error'));
+                }
+            } catch (err) {
+                if (card) { card.style.opacity = '1'; }
+                if (approveBtn) { approveBtn.disabled = false; }
+                if (rejectBtn) { rejectBtn.disabled = false; }
+                alert('Request failed: ' + err.message);
+            }
+        }());
+    }
+
+    function frApprove(proposalId) {
+        frDispatchProposalAction('approve', proposalId);
+    }
+
+    function frReject(proposalId) {
+        frDispatchProposalAction('reject', proposalId);
+    }
+
     // Expose on window so Jinja onclick="..." handlers can call them.
     window.openChatWithArtifact = openChatWithArtifact;
     window.sbRunAnalysis = sbRunAnalysis;
+    window.frRunBuild = frRunBuild;
+    window.frApprove = frApprove;
+    window.frReject = frReject;
 
 })();

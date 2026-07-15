@@ -1,9 +1,9 @@
 # advisors/strategy_builder_engine
 
-> Phase-2 Strategy Builder proposal engine: drives the real C1→C2→C3 builder pipeline to generate candidates, backtests them, gates via Harvey-Liu FDR + C5b PBO veto + SPY-OOS baseline, persists survivors as advisory observations, and (R2-1) carries a run-level provenance object — generation model, mode, injected-evidence manifest, run-id — on every `ProposalRun`.
+> Phase-2 Strategy Builder proposal engine: drives the real C1→C2→C3 builder pipeline to generate candidates, backtests them, gates via Harvey-Liu FDR + C5b PBO veto + SPY-OOS baseline, persists survivors as advisory observations, and (R2-1) carries a run-level provenance object — generation model, mode, injected-evidence manifest, run-id — on every `ProposalRun`; (AC-10) also queues survivors for the Frontrunner Builder's shared approval-to-Composer-create path.
 
 **Source:** `advisors/strategy_builder_engine.py`
-**Last updated:** 2026-07-13 (R2-1 -- `ProposalRun.run_id`/`.provenance` + `propose_strategies(reasoning_context=, reasoning_manifest=, run_id=)`, `DE-ADVISOR-R2-1-001`; Internal Dependencies corrected per r2-review's Finding-2 (transitive `alpha_bot_execution` import via the new `import ai_advisor` edge) -- see below; prior: advisor-outage-degrade: honest backtest_unavailable rollup, DE-SB-DEGRADE-001; also reconciled a pre-existing gap -- ProposalRun.error_category, added in R1 AC-11, was never documented here until now)
+**Last updated:** 2026-07-14 (branch-integration merge — Frontrunner Builder AC-10 retrofit `f1592a2` integrated with R2-1 provenance; 2026-07-13 (R2-1 -- `ProposalRun.run_id`/`.provenance` + `propose_strategies(reasoning_context=, reasoning_manifest=, run_id=)`, `DE-ADVISOR-R2-1-001`; Internal Dependencies corrected per r2-review's Finding-2 (transitive `alpha_bot_execution` import via the new `import ai_advisor` edge) -- see below; prior: advisor-outage-degrade: honest backtest_unavailable rollup, DE-SB-DEGRADE-001; also reconciled a pre-existing gap -- ProposalRun.error_category, added in R1 AC-11, was never documented here until now) ALSO: 2026-07-11 (AC-10 Frontrunner Builder retrofit, `f1592a2`; prior: 2026-06-20)
 
 ## Overview
 
@@ -233,6 +233,12 @@ Pre-C5, `run.error` was echoed verbatim in the route JSON response. `run.error` 
 
 ---
 
+## Frontrunner Builder Retrofit (AC-10, 2026-07-11, commit f1592a2)
+
+`_persist_survivor` additionally queues every non-rejected candidate onto the `frontrunner_proposals` table via `database.insert_frontrunner_proposal(symphony_id, proposal_source="strategy_builder_retrofit", candidate_tree=info.tree, metrics_json={cagr, sharpe, calmar, max_drawdown})`, immediately after the existing `advisor_observations` persist. This closes the pre-existing gap where a Strategy Builder survivor could only ever be an advisory observation, never a Composer upload. `proposal_source` distinguishes these rows from the Frontrunner Builder's own (`"frontrunner_builder"`); both flow through the SAME `advisors.frontrunner_builder.approve_frontrunner_proposal` on operator approval -- one shared approval-to-Composer-create path for the whole feature, not two. This module does NOT import `advisors.frontrunner_builder` -- the queue write goes through `database.insert_frontrunner_proposal` directly, so there is no cross-module coupling beyond the shared table + shared approval function (called from elsewhere, not from here). D-1: a queue-write failure is logged and swallowed -- it never breaks the `advisor_observations` persist that already succeeded above it. See `DE-FRONTRUNNER-001` in `DECISIONS.md` and `docs/generated/advisors_frontrunner_builder.md`.
+
+---
+
 ## AC-4 Outage Rollup — `backtest_unavailable` (advisor-outage-degrade, DE-SB-DEGRADE-001, commit 4230641b, 2026-07-13)
 
 Before this fix, `plan_tree_compiler.compile_plan`'s repair loop treated ANY non-400 `backtest_fn` failure — including Composer infra outages (timeouts, connection/DNS errors, 5xx, 429-exhausted) — the same as a genuine HTTP-422 grammar rejection, dropping the plan. A real Composer outage therefore silently zeroed this engine's output with no distinguishable reason from "the gate rejected everything."
@@ -309,7 +315,7 @@ The feature plan's AC-9 reads "bounded so a large real tree can't blow `build_pl
 - `advisors.backtest_gate_engine` — `evaluate_candidate_batch`, `BacktestCandidate`, `CandidateGateResult`, `GatedBatch`, `HARVEY_LIU_FDR_Q`, `SURVIVOR_OVERFITTING_CAVEAT`
 - `advisors.composer_backtest_client` — `run_backtest` (1 req/s pacing; also used for SPY benchmark sourcing, Step 2a, AC-25)
 - `analytics` — `compute_quantstats_metrics`
-- `database` — `insert_advisor_observation`
+- `database` — `insert_advisor_observation`, `insert_frontrunner_proposal` (AC-10 retrofit)
 
 **Direct imports at this file's own top level:** no `alpha_bot_execution`, `autotuner`, or execution-module import — verified by grepping this file directly.
 

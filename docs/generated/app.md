@@ -3,7 +3,7 @@
 > Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
 **Source:** `app.py`
-**Last updated:** 2026-07-14 (R2-3: `POST /ai-advisor/asset-swaps/evaluate` gains a route-minted default `provenance` object present on EVERY return path (same stricter shape R2-2 established) plus the engine's own `provenance` on success, reusing `ai_advisor.build_reasoning_context` verbatim; the route also gains an objective-only REASONED mode (both tickers omitted) alongside the byte-preserved EXPLICIT-PAIR mode — see the route section below; `DE-ADVISOR-R2-3-001`, closes the R2 program 3-of-3); prior: R2-2: `POST /ai-advisor/logic-changes/evaluate` gains a route-minted default `provenance` object present on EVERY return path (stricter than R2-1's SB route, which only carries it on success) plus the engine's own `provenance` on success, reusing `ai_advisor.build_reasoning_context` verbatim — see the route section below; `DE-ADVISOR-R2-2-001`); prior: 2026-07-13 R2-1: `POST /ai-advisor/strategy-builder/run` gains a run-level `provenance` object (4-key: `generation_model`/`mode`/`evidence_injected`/`run_id`) for symphony-scoped runs, plus a route-boundary `isinstance(dict)` serialization guard against bare-`MagicMock` `ProposalRun` stand-ins — see the route section below; `DE-ADVISOR-R2-1-001`); prior: advisor-remediation-r1, `DE-ADVISOR-R1-001`: the three operator Evaluate routes — asset-swaps/evaluate, logic-changes/evaluate, strategy-builder/run — and `GET /api/candidate-alert` gained honesty/transparency response-JSON fields; see the route sections below); prior: 2026-07-12 (candidate-alert cycle: new `GET /api/candidate-alert` + `POST /api/candidate-alert/mark-viewed` back the header candidate-alert indicator — see `feature-plans/candidate-alert.md`; prior: 2026-07-09 DE-PROD-ACCURACY-001: `/api/history/<days>` fallback now date-filters to the current ET trading day and never clobbers the windowed `trigger_count`; `/api/performance` scope=aggregate now serves the canonical value-weighted `shadow_history` series with corrected `live_returns`/`shadow_returns` field semantics; `/api/guard-alpha-summary` basis_label gains freshness stamping; prior: 2026-07-02 DE-PRISM-NUMERIC-VERIFY-001, `ai_advisor_tab()` additively fetches the MARKET_PRISM_VERIFICATION row and attaches per-check fact-check badges to the Overview render; 2026-07-02 DE-EOD-BASIS-001, EOD/frozen account-basis unification + per-field stale-cache hardening; 2026-06-30 DE-PRISM-SOURCES-PER-LENS-001, per-lens Market Prism sources carousels; 2026-06-26 fix/today-change-account-basis, DE-TODAY-BASIS-001)
+**Last updated:** 2026-07-14 (branch-integration merge of `feature/frontrunner-builder` onto the R2 program. Frontrunner Builder wave-2 — DE-FRONTRUNNER-002: 4 new Frontrunner Builder AI Advisor routes — `POST /ai-advisor/frontrunner-builder/run` [async 202 dispatch via a dedicated executor], `POST /ai-advisor/proposal/approve`, `POST /ai-advisor/proposal/reject`, `GET /ai-advisor/frontrunner-builder` redirect stub — plus `ai_advisor_tab()` prefetches pending `frontrunner_proposals` with `candidate_tree` bounded to a 4000-char preview. R2-3: `POST /ai-advisor/asset-swaps/evaluate` gains a route-minted default `provenance` object present on EVERY return path (same stricter shape R2-2 established) plus the engine's own `provenance` on success, reusing `ai_advisor.build_reasoning_context` verbatim; the route also gains an objective-only REASONED mode (both tickers omitted) alongside the byte-preserved EXPLICIT-PAIR mode — see the route section below; `DE-ADVISOR-R2-3-001`, closes the R2 program 3-of-3); prior: R2-2: `POST /ai-advisor/logic-changes/evaluate` gains a route-minted default `provenance` object present on EVERY return path (stricter than R2-1's SB route, which only carries it on success) plus the engine's own `provenance` on success, reusing `ai_advisor.build_reasoning_context` verbatim — see the route section below; `DE-ADVISOR-R2-2-001`); prior: 2026-07-13 R2-1: `POST /ai-advisor/strategy-builder/run` gains a run-level `provenance` object (4-key: `generation_model`/`mode`/`evidence_injected`/`run_id`) for symphony-scoped runs, plus a route-boundary `isinstance(dict)` serialization guard against bare-`MagicMock` `ProposalRun` stand-ins — see the route section below; `DE-ADVISOR-R2-1-001`); prior: advisor-remediation-r1, `DE-ADVISOR-R1-001`: the three operator Evaluate routes — asset-swaps/evaluate, logic-changes/evaluate, strategy-builder/run — and `GET /api/candidate-alert` gained honesty/transparency response-JSON fields; see the route sections below); prior: 2026-07-12 (candidate-alert cycle: new `GET /api/candidate-alert` + `POST /api/candidate-alert/mark-viewed` back the header candidate-alert indicator — see `feature-plans/candidate-alert.md`; prior: 2026-07-09 DE-PROD-ACCURACY-001: `/api/history/<days>` fallback now date-filters to the current ET trading day and never clobbers the windowed `trigger_count`; `/api/performance` scope=aggregate now serves the canonical value-weighted `shadow_history` series with corrected `live_returns`/`shadow_returns` field semantics; `/api/guard-alpha-summary` basis_label gains freshness stamping; prior: 2026-07-02 DE-PRISM-NUMERIC-VERIFY-001, `ai_advisor_tab()` additively fetches the MARKET_PRISM_VERIFICATION row and attaches per-check fact-check badges to the Overview render; 2026-07-02 DE-EOD-BASIS-001, EOD/frozen account-basis unification + per-field stale-cache hardening; 2026-06-30 DE-PRISM-SOURCES-PER-LENS-001, per-lens Market Prism sources carousels; 2026-06-26 fix/today-change-account-basis, DE-TODAY-BASIS-001)
 
 ## Overview
 
@@ -13,7 +13,7 @@
 - **Startup symphony seed** — calls `alpha_bot_execution.ensure_bot_state_seeded()` once after the pidfile is acquired and before the minute scheduler starts. Idempotent no-op when symphonies already exist; fail-safe if Composer is unreachable at startup. See `DE-SEED-STARTUP-001` in `DECISIONS.md`.
 - **Minute scheduler** — spawns `alpha_bot_execution.py` at `:00` via `subprocess.run`; refreshes Composer account totals once per minute; prunes telemetry at 02:00.
 - **Dashboard routes** — operator UI routes. Two CSRF-protected write paths exist: `POST /api/settings` (allowlisted .env keys) and `POST /api/symphony-settings/<name>` (per-symphony live-mode toggle). Templates open SQLite read-only; the dashboard is NOT a live-trade-action surface.
-- **AI Advisor routes** — unified single-page SPA at `GET /ai-advisor` renders all 6 tabs in one server-side render; GET sub-routes for all 5 old per-tab pages now 302-redirect to `/ai-advisor`; POST action routes (suggest, evaluate, accept, reject, chat/send, strategy-builder/run) kept their request shapes and paths, but the three operator-Evaluate routes (asset-swaps/evaluate, logic-changes/evaluate, strategy-builder/run) gained substantial response-JSON extensions in the advisor-remediation-r1 cycle — N=1 statistical-honesty caveats, a granular `rejection_reason` per candidate, a `low_power` statistical-power flag (plus caveat text), and (Strategy Builder only) run-level built-new/Atlas provenance + degraded-mode reporting; Strategy Builder additionally gained R2-1's `provenance` object (generation model + injected-evidence manifest + run-id, symphony-scoped runs only), and Logic Changes gained R2-2's own reuse of the same contract (present on EVERY return path, not just success); Asset Swaps gained R2-3's reuse of the SAME contract on the SAME stricter present-on-every-path shape, plus a new objective-only REASONED mode (both `from_ticker`/`to_ticker` omitted) that runs alongside the byte-preserved EXPLICIT-PAIR mode. See `DE-ADVISOR-R1-001`/`DE-ADVISOR-R2-1-001`/`DE-ADVISOR-R2-2-001`/`DE-ADVISOR-R2-3-001` in `DECISIONS.md` and the route sections below.
+- **AI Advisor routes** — unified single-page SPA at `GET /ai-advisor` renders all 7 tabs in one server-side render (Frontrunner Builder added as the 7th tab, frontrunner-builder wave-2, 2026-07-11); GET sub-routes for the old per-tab pages now 302-redirect to `/ai-advisor`; POST action routes (suggest, evaluate, accept, reject, chat/send, strategy-builder/run, frontrunner-builder/run, proposal/approve, proposal/reject) kept their request shapes and paths. The three operator-Evaluate routes (asset-swaps/evaluate, logic-changes/evaluate, strategy-builder/run) gained substantial response-JSON extensions in the advisor-remediation-r1 cycle — N=1 statistical-honesty caveats, a granular `rejection_reason` per candidate, a `low_power` statistical-power flag (plus caveat text), and (Strategy Builder only) run-level built-new/Atlas provenance + degraded-mode reporting; Strategy Builder additionally gained R2-1's `provenance` object (generation model + injected-evidence manifest + run-id, symphony-scoped runs only), and Logic Changes gained R2-2's own reuse of the same contract (present on EVERY return path, not just success); Asset Swaps gained R2-3's reuse of the SAME contract on the SAME stricter present-on-every-path shape, plus a new objective-only REASONED mode (both `from_ticker`/`to_ticker` omitted) that runs alongside the byte-preserved EXPLICIT-PAIR mode. See `DE-ADVISOR-R1-001`/`DE-ADVISOR-R2-1-001`/`DE-ADVISOR-R2-2-001`/`DE-ADVISOR-R2-3-001` and `DE-FRONTRUNNER-002` in `DECISIONS.md` and the route sections below.
 - **CSRF infrastructure** — `_validate_csrf()` hook; `_csrf_before_request` before-request handler; `GET /api/csrf-token` token endpoint; `_SETTINGS_WRITE_ALLOWLIST` restricts which .env keys the settings write path can touch.
 - **Dashboard auth gate** — single-password Flask signed-session gate protecting the entire Flask surface (AC-1..AC-13). `_auth_before_request` before-request hook registered before CSRF; `_AUTH_EXEMPT_ENDPOINTS` frozenset allowlist (`login`, `logout`, `static`, `get_csrf_token`, `health`); `_resolve_dashboard_credential()` for hash-preferred credential resolution (`DASHBOARD_PASSWORD_HASH` over `DASHBOARD_PASSWORD`); `_is_api_or_xhr()` dispatches 401 JSON vs 302 redirect; in-memory throttle `_AUTH_FAILED_ATTEMPTS`; **fail-closed**: missing credential or `SECRET_KEY` denies ALL requests.
 - **Event-driven dashboard push** — `GET /api/events` SSE endpoint streams `cycle-complete` notifications to all connected dashboard clients; `_notify_cycle_complete()` fans out after every engine subprocess exit (success or failure). Primary update path; 30 s poll is the resilience fallback. See `DE-SSE-PUSH-001` in `DECISIONS.md`.
@@ -389,6 +389,8 @@ The AI Advisor SPA was extended from 5 to **6 in-place tabs** in the spa-port cy
 
 All 6 panels (Overview, Correlations, Asset Swaps, Logic Changes, Chat, Strategy Builder) are rendered in one server-side template at `GET /ai-advisor`. Tab switching is in-place via JS (`initTabSwitcher` in `static/ai_advisor.js`). All 5 old GET sub-routes 302-redirect to `/ai-advisor`; the POST action routes keep their paths (see the advisor-remediation-r1 response-JSON extensions on the three Evaluate routes below).
 
+**Extended to 7 tabs in the frontrunner-builder wave-2 cycle (2026-07-11):** the Frontrunner Builder tab was added following the same pattern as Strategy Builder -- a new `GET /ai-advisor/frontrunner-builder` route 302-redirects to `/ai-advisor` (no standalone page ever existed for it), and the tab content is the 7th panel in the unified template. Three new POST action routes support it: `POST /ai-advisor/frontrunner-builder/run`, `POST /ai-advisor/proposal/approve`, `POST /ai-advisor/proposal/reject` -- see "Frontrunner Builder Routes" below.
+
 #### `GET /ai-advisor` — `ai_advisor_tab()`
 
 Unified single-page render for all 6 in-place tab panels. Server-side assembles all data needed for every panel in one request:
@@ -603,6 +605,62 @@ Advisory-only: never calls Composer write endpoints, never touches `LIVE_EXECUTI
 
 ---
 
+### Frontrunner Builder Routes
+
+Four routes support the Frontrunner Builder Advisor tab (feature-plans/frontrunner-builder.md AC-8/AC-9-route/AC-10-UX; wave-2, 2026-07-11). See [advisors/frontrunner_builder](advisors_frontrunner_builder.md) for the backend pipeline these routes trigger.
+
+#### `GET /ai-advisor/frontrunner-builder` → 302 redirect to `/ai-advisor` — `ai_advisor_frontrunner_builder()`
+
+Mirrors the existing redirect-stub pattern used by every other Advisor sub-route. No standalone page was ever built for this tab -- it only ever existed as the 7th panel of the unified SPA.
+
+#### `POST /ai-advisor/frontrunner-builder/run` — `ai_advisor_frontrunner_builder_run()`
+
+Operator-initiated on-demand build (AC-1's route, AC-8). Dispatches `advisors.frontrunner_builder.run_frontrunner_build` to a dedicated single-worker `ThreadPoolExecutor` (`_FRONTRUNNER_BUILD_EXECUTOR`, `atexit`-registered) and returns immediately -- **async 202, never a synchronous call**. `run_frontrunner_build` iterates every live symphony (up to `MAX_CASCADES_PER_SYMPHONY_RUN` cascades each) with rate-limited Fable + Composer calls and is genuinely multi-minute; the route must never block a Flask request thread. Results persist straight to `frontrunner_proposals` (SQLite) -- the operator "polls" by reloading `/ai-advisor` to see newly-queued server-rendered proposal cards; there is no synchronous result body and no new JSON polling endpoint.
+
+**Dedicated executor, not shared:** deliberately not `_DISMISS_EXECUTOR` -- sharing a pool with the latency-sensitive dismiss/flush writes would queue those behind a long-running build. Single-worker serializes overlapping run requests rather than hammering Fable/Composer concurrently.
+
+**Request body:** `{ symphony_ids?: [str] }`. Omitted/empty → full live roster (`run_frontrunner_build`'s own default).
+
+**Fail-fast pre-check is ANTHROPIC_API_KEY-only:** returns `200 {"error": "advisor unavailable: ANTHROPIC_API_KEY not configured"}` -- without submitting to the executor -- when `ANTHROPIC_API_KEY` is absent, since the build needs it for Fable candidate generation and a doomed job should never be queued. **Deliberately does NOT pre-check Composer credentials** -- Composer infra is assumed present (the same posture as every other advisor route); a missing/invalid Composer key degrades per-symphony inside `run_frontrunner_build`'s own D-1 never-raises contract (that symphony is skipped and logged, not a route-level crash). `frreview` confirmed this asymmetry is deliberate, not an oversight.
+
+**Log-and-swallow closure (ruling, team-lead, 2026-07-11):** the submitted work wraps `run_frontrunner_build` in `_run_frontrunner_build_background`, a closure that catches any exception and logs it via `_daemon_log.error(..., exc_info=True)` -- mirrors `_dismiss_async`. `run_frontrunner_build` is documented D-1/never-raises, but an unawaited `Future` silently drops any exception that somehow escapes that contract; the wrapper makes a D-1 violation observable in the logs (defense-in-depth) instead of silently lost.
+
+CSRF-protected via `_csrf_before_request`. Not in `_SETTINGS_WRITE_ALLOWLIST` (not a settings write). No `LIVE_EXECUTION` interaction.
+
+#### `POST /ai-advisor/proposal/approve` — `ai_advisor_proposal_approve()`
+
+Generic approval route for `frontrunner_proposals` rows (AC-9/AC-10). Serves **both** proposal sources -- `'frontrunner_builder'` and `'strategy_builder_retrofit'` -- since both land in the same `frontrunner_proposals` table (migration 033) and both flow through the identical `advisors.frontrunner_builder.approve_frontrunner_proposal`, which is itself source-agnostic (keyed purely by row id). **Ruled** (team-lead, 2026-07-11): a single opaque `proposal_id`, no source-disambiguation parameter.
+
+**This is the only route in the app that can reach `composer_draft_client.save_symphony`** -- exclusively via `approve_frontrunner_proposal`, never called directly here. Approval creates a NEW UNDEPLOYED Composer symphony (`verify_undeployed` enforced inside the called function) -- never a trade, never a deploy/invest call.
+
+**Request body:** `{ proposal_id: <int> }` -- non-int/missing → `200 {"success": false, "error": "invalid proposal_id"}`.
+
+Bounded (1-2 Composer calls) -- safe to run synchronously in-request, unlike `/run`. Route outer `except`: `{"error": type(exc).__name__}` -- D-1, never echoes `str(exc)` (may carry Composer credentials or internal paths). On success: `{"success": result.success, "symphony_id": result.symphony_id, "error": result.error}`.
+
+CSRF-protected via `_csrf_before_request`. Not in `_SETTINGS_WRITE_ALLOWLIST`. No `LIVE_EXECUTION` interaction.
+
+#### `POST /ai-advisor/proposal/reject` — `ai_advisor_proposal_reject()`
+
+Status-only DB write for `frontrunner_proposals` rows (AC-9/AC-10) -- never touches `composer_draft_client` (same shared-table rationale as the approve route above). Calls `database.update_frontrunner_proposal_status(proposal_id, approval_status="rejected")`.
+
+**Request body:** `{ proposal_id: <int> }` -- same validation/error shape as approve.
+
+CSRF-protected via `_csrf_before_request`. Not in `_SETTINGS_WRITE_ALLOWLIST`. No `LIVE_EXECUTION` interaction.
+
+---
+
+### `ai_advisor_tab()` — Frontrunner Builder panel prefetch
+
+Additive to the existing `GET /ai-advisor` context assembly (see the template-context table above). One query shared by both proposal sources -- the template branches per-card on `proposal_source`:
+
+```python
+frontrunner_proposals = database.get_pending_frontrunner_proposals()
+```
+
+**`candidate_tree` bounding (never rendered as a live dict):** the full spliced candidate symphony (potentially 8,000+ nodes) is popped off each row and replaced with a JSON-dumped, truncated preview string (`_FR_TREE_PREVIEW_MAX_CHARS = 4000`) stamped as `candidate_tree_preview` before the row ever reaches the template. Wrapped in `try/except` -- any failure (query error, malformed row) leaves `frontrunner_proposals = []` and the template renders its existing empty-state; never a 500.
+
+---
+
 ### State Helpers
 
 #### `get_api_state_dict() → dict`
@@ -649,7 +707,7 @@ Normalizes an `autotune_runs` DB row for the `/api/autotune-runs` JSON response.
 - `ai_advisor` — context assembly, Claude call, C2 safety gates, assessment builder; `build_reasoning_context` (R2-1, symphony-scoped Strategy Builder runs; R2-2, symphony-scoped Logic Changes runs — same call shape, two independent call sites); `_EMPTY_MANIFEST` (R2-2, the default `evidence_injected` value inside the Logic Changes route's `_default_provenance`)
 - `model_config` — `get_advisor_suggestion_model()` (R2-2: the Logic Changes route's `_default_provenance["generation_model"]`; also read by the SB route's pipeline, `app.py:3813`)
 - `uuid` — **NEW (R2-2), stdlib.** `str(uuid.uuid4())` mints the Logic Changes route's default `provenance["run_id"]` on every early-exit branch
-- `database` — all state-DB reads and writes for advisor routes, including `get_latest_market_prism_verification_for_run` (DE-PRISM-NUMERIC-VERIFY-001 Overview overlay), `get_candidate_alert_new_valid_count`/`get_candidate_alert_last_run`/`mark_candidate_alert_viewed` (candidate-alert header indicator), and `load_state`/`normalize_name` (NAME→hash resolution for `build_reasoning_context`, both the SB and Logic Changes call sites)
+- `database` — all state-DB reads and writes for advisor routes, including `get_latest_market_prism_verification_for_run` (DE-PRISM-NUMERIC-VERIFY-001 Overview overlay), `get_candidate_alert_new_valid_count`/`get_candidate_alert_last_run`/`mark_candidate_alert_viewed` (candidate-alert header indicator), `load_state`/`normalize_name` (NAME→hash resolution for `build_reasoning_context`, both the SB and Logic Changes call sites), and `get_pending_frontrunner_proposals`/`update_frontrunner_proposal_status` (frontrunner-builder wave-2)
 - `analytics` — symphony history, correlation data, symphony list; account-basis translation helpers (`get_portfolio_today_change_account_basis`, `get_portfolio_cumulative_return_account_basis`, DE-TODAY-BASIS-001) consumed by both the live and frozen portfolio-strip paths
 - `advisors.correlation_diagnostic` — `compute_pairwise_correlations`, `CRISIS_CAVEAT`
 - `advisors.asset_swap_engine` — `propose_operator_swap`, `SwapObjective`, `_has_composer_key`
@@ -657,6 +715,7 @@ Normalizes an `autotune_runs` DB row for the `/api/autotune-runs` JSON response.
 - `advisors.advisor_chat` — `explain_artifact`, `CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS`
 - `advisors.strategy_builder_engine` — `propose_strategies`, `Objective`, `ScreenConfig` (lazy import)
 - `advisors.build_plan_generator` — `load_atlas_candidates` (lazy import, C5 route rewire)
+- `advisors.frontrunner_builder` — `run_frontrunner_build`, `approve_frontrunner_proposal` (lazy imports, frontrunner-builder wave-2 routes)
 - `alpha_bot_execution` — `ensure_bot_state_seeded` (lazy import, startup seed)
 - `symphony_logic` — `fetch_symphony_score`
 - `werkzeug.security` — `check_password_hash` for `DASHBOARD_PASSWORD_HASH` verification

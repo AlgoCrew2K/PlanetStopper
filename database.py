@@ -1742,6 +1742,7 @@ _MIGRATION_FILES = [
     "031_shadow_history_sym_ts_index.sql",
     "032_prism_audit_log.sql",
     "033_candidate_alert_state.sql",
+    "034_frontrunner_proposals.sql",
 ]
 
 
@@ -2265,6 +2266,24 @@ _VALID_DOF_EVIDENCE_SOURCES: frozenset[str] = frozenset(
         "CALIBRATION",
         "BACKTEST_SELECTION",
         "OOS",
+        # Distinct evidence KIND (not a producer/subsystem tag — mirrors the
+        # enum's existing kind-not-producer convention) for the frontrunner
+        # builder's overlay-candidate search breadth (AC-6). A structurally
+        # different search from the autotuner's own parameter optimization
+        # (separate search space; its own multiple-testing is handled
+        # per-batch by evaluate_candidate_batch) — recorded to the DoF ledger
+        # per AC-6, but ISOLATED from the autotuner's N_effective haircut:
+        # every real consumer (count_dof_backtest_selections,
+        # get_researcher_dof_ledger_for_run — the production N_effective feed
+        # at autotuner.py:2487) filters on the literal string
+        # 'BACKTEST_SELECTION', so a distinct value is excluded by
+        # construction, zero schema/query change. Team-lead-ratified
+        # 2026-07-11 (cff1264c) after a full researcher_dof_ledger consumer
+        # audit found the distinct-spec_bundle_id-only approach (the original
+        # f51cffe design) did NOT achieve isolation — every consumer
+        # excludes only the CURRENT run's own winning spec_bundle_id, never
+        # an arbitrary sentinel string.
+        "OVERLAY_BACKTEST_SELECTION",
     }
 )
 
@@ -3551,6 +3570,194 @@ def prune_old_triggers(retention_days: int) -> int:
     except Exception as exc:
         logging.error("prune_old_triggers failed: %s", exc)
     return deleted_total
+
+
+# --- 033: Frontrunner Proposals (mutable approval-status lifecycle) ---
+#
+# advisor_observations is append-only/immutable (see insert_advisor_observation
+# docstring) and has no update accessor by design. The frontrunner approval
+# workflow (pending -> approved/rejected -> uploaded) needs a MUTABLE row per
+# candidate, so this is a separate small state table (migration 033) — NOT a
+# repurposing of the append-only audit log. Shared by the Frontrunner Builder
+# and the propose_strategies retrofit (proposal_source distinguishes the two).
+
+_FRONTRUNNER_PROPOSAL_COLUMNS = [
+    "id",
+    "created_at",
+    "updated_at",
+    "symphony_id",
+    "proposal_source",
+    "approval_status",
+    "candidate_tree",
+    "metrics_json",
+    "created_symphony_id",
+    "error_message",
+]
+
+_VALID_PROPOSAL_APPROVAL_STATUSES = frozenset({"pending", "approved", "rejected", "uploaded"})
+
+
+def _parse_frontrunner_proposal_row(row: tuple, columns: list[str]) -> dict:
+    """Convert a raw frontrunner_proposals tuple into a typed dict.
+
+    candidate_tree and metrics_json are JSON blob columns and are
+    deserialised to Python objects so callers receive the original structure
+    rather than a raw JSON string (same precedent as advisor_observations'
+    raw_response handling).
+    """
+    result = {}
+    for col, val in zip(columns, row):
+        if col in ("candidate_tree", "metrics_json") and val is not None:
+            result[col] = json.loads(val)
+        else:
+            result[col] = val
+    return result
+
+
+def insert_frontrunner_proposal(
+    *,
+    symphony_id: str,
+    proposal_source: str,
+    candidate_tree: "dict | str",
+    metrics_json: "dict | str | None" = None,
+) -> int:
+    """Insert a new frontrunner proposal row (approval_status='pending'); return the new row id.
+
+    candidate_tree is required (the full spliced candidate symphony); a dict
+    is JSON-serialised, a pre-serialised JSON string is accepted as-is.
+    metrics_json defaults to '{}' when not supplied.
+    """
+    candidate_tree_str = (
+        json.dumps(candidate_tree) if isinstance(candidate_tree, dict) else candidate_tree
+    )
+    if metrics_json is None:
+        metrics_json_str = "{}"
+    elif isinstance(metrics_json, dict):
+        metrics_json_str = json.dumps(metrics_json)
+    else:
+        metrics_json_str = metrics_json
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO frontrunner_proposals "
+        "(symphony_id, proposal_source, candidate_tree, metrics_json) "
+        "VALUES (?, ?, ?, ?)",
+        (symphony_id, proposal_source, candidate_tree_str, metrics_json_str),
+    )
+    conn.commit()
+    row_id = cursor.lastrowid
+    conn.close()
+    return row_id
+
+
+def update_frontrunner_proposal_status(
+    proposal_id: int,
+    *,
+    approval_status: str,
+    created_symphony_id: str | None = None,
+    error_message: str | None = None,
+) -> bool:
+    """Update a proposal's approval_status (and optionally created_symphony_id /
+    error_message); return True if a row was updated, False if proposal_id
+    does not exist.
+
+    approval_status must be one of pending/approved/rejected/uploaded — raises
+    ValueError on an invalid value (a caller bug, not a runtime condition to
+    degrade silently on).
+    """
+    if approval_status not in _VALID_PROPOSAL_APPROVAL_STATUSES:
+        raise ValueError(
+            f"approval_status must be one of {sorted(_VALID_PROPOSAL_APPROVAL_STATUSES)}; "
+            f"got {approval_status!r}"
+        )
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE frontrunner_proposals SET approval_status = ?, "
+        "created_symphony_id = COALESCE(?, created_symphony_id), "
+        "error_message = ?, updated_at = datetime('now') WHERE id = ?",
+        (approval_status, created_symphony_id, error_message, proposal_id),
+    )
+    conn.commit()
+    updated = cursor.rowcount > 0
+    conn.close()
+    return updated
+
+
+def get_frontrunner_proposal(proposal_id: int) -> dict | None:
+    """Return one frontrunner proposal row by id, or None if not found.
+
+    Uses get_ro_connection() — read-only at the driver level (architecture
+    constraint 5).
+    """
+    conn = get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT " + ", ".join(_FRONTRUNNER_PROPOSAL_COLUMNS) + " FROM frontrunner_proposals "
+        "WHERE id = ?",
+        (proposal_id,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return _parse_frontrunner_proposal_row(row, _FRONTRUNNER_PROPOSAL_COLUMNS)
+
+
+def get_frontrunner_proposals_for_symphony(symphony_id: str) -> list[dict]:
+    """Return all frontrunner proposal rows for a given symphony, newest-first.
+
+    Returns an empty list when no rows match — never raises for an unknown
+    symphony_id. Uses get_ro_connection() (architecture constraint 5).
+    """
+    conn = get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT " + ", ".join(_FRONTRUNNER_PROPOSAL_COLUMNS) + " FROM frontrunner_proposals "
+        "WHERE symphony_id = ? ORDER BY id DESC",
+        (symphony_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_parse_frontrunner_proposal_row(row, _FRONTRUNNER_PROPOSAL_COLUMNS) for row in rows]
+
+
+def get_pending_frontrunner_proposals(limit: int = 50) -> list[dict]:
+    """Return pending frontrunner proposal rows, newest-first (the Advisor
+    tab's queue). Uses get_ro_connection() (architecture constraint 5).
+    """
+    conn = get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT " + ", ".join(_FRONTRUNNER_PROPOSAL_COLUMNS) + " FROM frontrunner_proposals "
+        "WHERE approval_status = 'pending' ORDER BY id DESC LIMIT ?",
+        (limit,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_parse_frontrunner_proposal_row(row, _FRONTRUNNER_PROPOSAL_COLUMNS) for row in rows]
+
+
+def count_uploaded_frontrunner_proposals() -> int:
+    """Return the count of frontrunner_proposals rows with approval_status='uploaded'.
+
+    AC-12's self-imposed local-count guard: Composer documents no per-account
+    symphony-count cap or create-time quota, and fetch_symphony_stats is
+    DEPLOYED-scoped (cannot see the undeployed symphonies this feature
+    creates) — so this LOCAL count of already-uploaded proposals substitutes
+    as the runaway-creation safety valve, checked by
+    advisors.frontrunner_builder.approve_frontrunner_proposal before every
+    composer_draft_client.save_symphony call.
+
+    Uses a read-only connection (architecture constraint 5).
+    """
+    conn = get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM frontrunner_proposals WHERE approval_status = 'uploaded'")
+    row = cursor.fetchone()
+    conn.close()
+    return int(row[0]) if row and row[0] is not None else 0
 
 
 # Initialize tables on import

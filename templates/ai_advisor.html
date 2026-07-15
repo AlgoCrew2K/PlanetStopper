@@ -1083,6 +1083,15 @@
                 <span class="cap-tab-badge cap-tab-badge--yellow" title="Highest overfitting risk — building from scratch"></span>
                 <span class="cap-tab-attribution">{{ advisor_suggestion_model | e }} + community, statistically gated</span>
             </button>
+            <button role="tab"
+                    aria-selected="false"
+                    aria-controls="tab-panel-frontrunner-builder"
+                    class="cap-tab"
+                    data-testid="frontrunner-builder-tab"
+                    data-tab="frontrunner-builder">
+                Frontrunner Builder
+                <span class="cap-tab-badge cap-tab-badge--yellow" title="Real Composer write — approval required"></span>
+            </button>
         </nav>
 
         <!-- ============================================================ -->
@@ -2101,6 +2110,173 @@
             {% endif %}{# sb_observations #}
 
         </div>{# /tab-panel-strategy-builder #}
+
+        <!-- ============================================================ -->
+        <!-- TAB PANEL: Frontrunner Builder                                -->
+        <!-- ============================================================ -->
+        <div id="tab-panel-frontrunner-builder"
+             role="tabpanel"
+             data-testid="tab-panel-frontrunner-builder"
+             data-tab="frontrunner-builder"
+             class="tab-panel">
+
+            <!--
+                Persistent non-dismissible notice. Unlike every other tab on this
+                page (AC-4.1 HARD: no apply/accept/deploy/trade buttons), THIS tab
+                deliberately inverts that rule — approving a proposal here creates
+                a real Composer symphony. Never a trade, never a deploy/invest call.
+            -->
+            <div class="sb-risk-banner"
+                 data-testid="frontrunner-builder-risk-banner"
+                 role="note"
+                 aria-live="polite">
+                <span class="sb-risk-banner-icon" aria-hidden="true">&#x26A0;</span>
+                <p class="sb-risk-banner-text">
+                    <strong>Approving a proposal creates a NEW UNDEPLOYED symphony
+                    in your Composer account.</strong>
+                    Nothing is deployed or traded here — Composer's deploy/invest step
+                    is a separate, manual action. Review each candidate's deltas below
+                    before approving.
+                </p>
+            </div>
+
+            {% if not chat_available %}
+
+            <!-- ANTHROPIC_API_KEY not configured — the build needs it for Fable
+                 candidate generation. Pending proposals from a prior run (when the
+                 key WAS configured) still render below regardless. -->
+            <div class="no-api-key-state" data-testid="no-api-key-state-fr">
+                <div class="no-api-key-title">Frontrunner Builder Unavailable</div>
+                <div class="no-api-key-body">
+                    <code>ANTHROPIC_API_KEY</code> not configured — the build needs it
+                    for Fable candidate generation. Already-queued pending proposals
+                    (if any) still render below.
+                </div>
+            </div>
+
+            {% else %}
+
+            <!-- Run controls — no HTML form element; trigger uses JS fetch + X-CSRF-Token header -->
+            <div class="run-controls-panel" data-testid="frontrunner-builder-controls">
+                <div class="run-controls-header">Run Frontrunner Build</div>
+                <div class="run-controls-row">
+                    <button id="fr-run-btn"
+                            type="button"
+                            class="run-trigger-btn"
+                            data-testid="fr-run-btn"
+                            onclick="frRunBuild()">
+                        Run build
+                    </button>
+                </div>
+                <p class="run-controls-note">
+                    Runs over every live symphony in the background (this can take
+                    several minutes) — reload this tab afterward to see newly-queued
+                    proposals below. Also runs automatically on the weekly schedule.
+                </p>
+                <div id="fr-run-status" class="run-controls-note" data-testid="fr-run-status"></div>
+                <div id="fr-run-error"
+                     class="run-error"
+                     data-testid="fr-run-error"
+                     style="display:none;"
+                     role="alert"></div>
+            </div>
+
+            {% endif %}{# chat_available #}
+
+            {% if not frontrunner_proposals %}
+
+            <!-- Empty state: no pending proposals — a valid, non-error outcome -->
+            <div class="empty-state" data-testid="frontrunner-builder-empty-state">
+                <div class="empty-state-title">No pending frontrunner proposals.</div>
+                <div class="empty-state-body">
+                    Run a build above, or check back after the weekly scheduled run.
+                </div>
+            </div>
+
+            {% else %}
+
+            <div class="section-header">Pending Approval ({{ frontrunner_proposals | length }})</div>
+            <div class="proposal-cards" data-testid="frontrunner-proposal-cards">
+                {% for p in frontrunner_proposals %}
+                {% set m = p.metrics_json or {} %}
+                {% set is_fr = p.proposal_source == 'frontrunner_builder' %}
+                <div class="proposal-card"
+                     data-testid="frontrunner-proposal-card"
+                     id="fr-card-{{ p.id }}">
+                    <div class="card-header-row">
+                        <span class="card-candidate-id">{{ p.symphony_id }}</span>
+                        <span class="advisory-only-badge" data-testid="proposal-source-badge">
+                            {% if is_fr %}Frontrunner Builder{% else %}Strategy Builder (retrofit){% endif %}
+                        </span>
+                    </div>
+                    <table class="stats-table" data-testid="stats-table">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                {% if is_fr %}<th>Incumbent</th>{% endif %}
+                                <th>Candidate</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Calmar</td>
+                                {% if is_fr %}
+                                <td data-testid="fr-incumbent-calmar">{% if m.incumbent_calmar is not none %}{{ "%.3f" | format(m.incumbent_calmar) }}{% else %}—{% endif %}</td>
+                                {% endif %}
+                                {% set _cand_calmar = m.candidate_calmar if is_fr else m.calmar %}
+                                <td data-testid="fr-candidate-calmar">{% if _cand_calmar is not none %}{{ "%.3f" | format(_cand_calmar) }}{% else %}—{% endif %}</td>
+                            </tr>
+                            <tr>
+                                <td>CAGR</td>
+                                {% if is_fr %}
+                                <td data-testid="fr-incumbent-cagr">{% if m.incumbent_cagr is not none %}{{ "%.2f%%" | format(m.incumbent_cagr * 100) }}{% else %}—{% endif %}</td>
+                                {% endif %}
+                                {% set _cand_cagr = m.candidate_cagr if is_fr else m.cagr %}
+                                <td data-testid="fr-candidate-cagr">{% if _cand_cagr is not none %}{{ "%.2f%%" | format(_cand_cagr * 100) }}{% else %}—{% endif %}</td>
+                            </tr>
+                            <tr>
+                                <td>Max Drawdown</td>
+                                {% if is_fr %}
+                                <td data-testid="fr-incumbent-mdd">{% if m.incumbent_max_drawdown is not none %}{{ "%.2f%%" | format(m.incumbent_max_drawdown * 100) }}{% else %}—{% endif %}</td>
+                                {% endif %}
+                                {% set _cand_mdd = m.candidate_max_drawdown if is_fr else m.max_drawdown %}
+                                <td data-testid="fr-candidate-mdd">{% if _cand_mdd is not none %}{{ "%.2f%%" | format(_cand_mdd * 100) }}{% else %}—{% endif %}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    {% if is_fr %}
+                    <div class="objective-strip" data-testid="fr-node-count-delta">
+                        Node count &Delta;: {{ m.node_count_delta if m.node_count_delta is not none else '—' }}
+                    </div>
+                    {% endif %}
+                    {% if p.error_message %}
+                    <p class="backtest-error">Previous attempt failed: {{ p.error_message }}</p>
+                    {% endif %}
+                    <details class="rules-collapsible" data-testid="fr-raw-preview">
+                        <summary>View raw candidate data</summary>
+                        <pre>{{ p.candidate_tree_preview or '(unavailable)' }}</pre>
+                    </details>
+                    <div class="proposal-actions" style="display:flex;gap:0.5rem;margin-top:0.75rem;">
+                        <button type="button"
+                                class="run-trigger-btn"
+                                data-testid="fr-approve-btn"
+                                onclick="frApprove({{ p.id }})">
+                            Approve &mdash; create in Composer
+                        </button>
+                        <button type="button"
+                                class="discuss-btn"
+                                data-testid="fr-reject-btn"
+                                onclick="frReject({{ p.id }})">
+                            Reject
+                        </button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            {% endif %}{# frontrunner_proposals #}
+
+        </div>{# /tab-panel-frontrunner-builder #}
 
     </div>{# /page-wrap #}
 
