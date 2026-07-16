@@ -24,7 +24,22 @@ fixture JSON, not assumed):
     if-child carries no comparator.
   - The size-cliff signature: the fire-basket branch (small, VIX/hedge assets)
     is one to two orders of magnitude smaller in node-count than the sibling
-    branch that continues toward the core.
+    branch that continues toward the core. RE-VERIFIED 2026-07-16
+    (frontrunner-signals cycle) as a description of THIS module's own
+    `detect_frontrunner_cascades`/`_build_cascade_overlay` overlay-construction
+    contract specifically (advisors/frontrunner_detector.py:604-661,
+    `_compact_if_node`) — that function selects fire-vs-continuation by
+    relative node-count (`fire_child = cond_child if cond_n <= else_n else
+    else_child`, line 625) BY DESIGN, not by `is-else-condition?`, and pads
+    the continuation stub to `>= fire_node_count + 1` (line 646) specifically
+    so downstream consumers (including these tests) can keep relying on
+    "smaller branch = fire" against the constructed `overlay_tree`. This is a
+    DIFFERENT model from `extract_fr_checks`'s AC-3 direction-explicit walk
+    (test_frontrunner_extraction_walk.py), which never infers direction from
+    size — the two functions serve different purposes and are not
+    interchangeable. An earlier revision of this file's docstring briefly
+    claimed the size-cliff premise was "falsified" by conflating the two
+    models; that revision was itself wrong and has been reverted here.
   - Parallel sub-strategies are sibling "group" nodes directly under the
     portfolio's top-level "wt-cash-equal" (real_tree_10 has 5: "Sharpe",
     "Mixed | VibeCheck", "MDD", "80% | Calmar", ...).
@@ -109,10 +124,10 @@ def _has_core_asset_placeholder(node) -> bool:
 # ---------------------------------------------------------------------------
 
 
-# real_tree_08 (orig lW4ZzWuqR8tEO2DhXbil) ground-truthed exception: its leading
-# structure has NO AC-2-shaped flat-RSI-gt-overbought -> VIX/hedge-basket cascade.
-# Independently verified (fb-test, not taking fb-eng's report at face value) by
-# direct inspection of the RAW (untrimmed) fixture:
+# SUPERSEDED 2026-07-16 (frontrunner-signals cycle, AC-3/AC-6 rebuild) — kept
+# for the historical record per this cycle's honest-history convention, not
+# silently deleted. real_tree_08 (orig lW4ZzWuqR8tEO2DhXbil) was originally
+# ground-truthed as having NO AC-2-shaped cascade, based on this investigation:
 #   - The tree's only flat RSI-gt candidate with a nearby VIX-family ticker is
 #     "RSI(SPY) gt 31" (id 643351b6...) — its fire branch (28 nodes vs a 35-node
 #     sibling; not even a real size-cliff) is ENTIRELY an internal inverse-VIX
@@ -127,34 +142,24 @@ def _has_core_asset_placeholder(node) -> bool:
 #     TQQQ vs a nested fallback to SH — NO VIX-family ticker anywhere in what it
 #     fires. This is a crisis-exit/regime-timing gate (a DIFFERENT construct
 #     from AC-2's flat RSI-gt -> VIX-basket cascade), not a frontrunner overlay.
-# AC-11 explicitly allows "no incumbent FR -> skip w/ reason" as a legitimate
-# outcome; this is that case for this one fixture. The other 10 real trees are
-# NOT exempted — this carve-out is narrow and fixture-specific, not a general
-# loosening.
-_NO_CASCADE_EXPECTED_FIXTURE_STEMS = frozenset({"real_tree_08_lW4ZzWuqR8tEO2DhXbil"})
+# This investigation examined node 643351b6 specifically and correctly found
+# it self-referential — but real_tree_08 ALSO contains a SEPARATE genuine node
+# (892d862a, "Paragons" in the AC-6 rebuild's naming) carrying RSI(SPY,10) gt 31
+# with a TRUE branch that fires UVIX — a real, non-self-referential cascade
+# this investigation did not examine. fr-falsifier2's verdict
+# (.claude/fr-signals-inputs/mirror-pattern-verdict.md, X4 trace) confirms it
+# genuine. Directly reproduced here: detect_frontrunner_cascades on this
+# fixture now reports exactly 1 cascade (rsi_thresholds=[31.0],
+# vix_tickers={"UVIX"}) — the carve-out below is removed accordingly.
 
 
-def test_detects_at_least_one_cascade_on_every_real_tree(fd, real_tree, request):
-    """Every real tree except the ground-truthed real_tree_08 exception (see
-    _NO_CASCADE_EXPECTED_FIXTURE_STEMS above) is a live frontrunner'd symphony
-    (per the plan's own grounding note) — the detector must find at least one
-    cascade, never silently report zero on a tree that structurally contains
-    one."""
-    stem = request.node.callspec.id
+def test_detects_at_least_one_cascade_on_every_real_tree(fd, real_tree):
+    """Every real tree is a live frontrunner'd symphony (per the plan's own
+    grounding note) — the detector must find at least one cascade, never
+    silently report zero on a tree that structurally contains one. (No
+    per-tree carve-out remains — see the SUPERSEDED comment above for the one
+    that used to exist and why it no longer applies.)"""
     result = fd.detect_frontrunner_cascades(real_tree)
-    if stem in _NO_CASCADE_EXPECTED_FIXTURE_STEMS:
-        assert not result.cascades, (
-            f"{stem} was ground-truthed to have NO AC-2-shaped cascade (see the "
-            f"comment above this test) but the detector now reports "
-            f"{len(result.cascades)} — either the ground-truth changed (update "
-            f"this carve-out with a new investigation) or the detector is "
-            f"over-admitting a construct it should still exclude"
-        )
-        assert result.skip_reason, (
-            f"{stem} correctly found zero cascades but skip_reason is falsy — "
-            f"AC-11 requires an explicit reason whenever the detector declines"
-        )
-        return
     assert result.cascades, (
         "detector found zero cascades on a real tree known to contain a "
         "frontrunner overlay (feature-plans/frontrunner-builder.md grounding note)"
@@ -209,7 +214,19 @@ def test_detected_cascade_fire_branch_contains_at_least_one_vix_family_ticker(fd
     """Grounding: 'fire baskets always contain >=1 VIX-family instrument'.
     Scoped to the fire branch specifically — the invariant is about what the
     hedge basket FIRES, not about the continuation branch (which legitimately
-    carries on toward unrelated core content)."""
+    carries on toward unrelated core content).
+
+    RE-VERIFIED 2026-07-16 (frontrunner-signals cycle): fire-branch
+    identification here is intentionally size-based (smaller of the two
+    top-level branches), matching `_build_cascade_overlay`'s own contract
+    for constructing `overlay_tree` (advisors/frontrunner_detector.py:604-661
+    — the continuation stub is deliberately padded larger than the fire
+    branch specifically so this size comparison stays correct). An `is-else-
+    condition?`-based swap was tried and directly falsified: it broke this
+    test on real_tree_04/real_tree_09 (picked the STUBBED branch as "fire"
+    on cascades where the original if-node's condition-side happened to be
+    the larger, continuation-bound side) — see module docstring for the
+    full finding. Reverted to the original size heuristic, unmodified."""
     vix_family = {"VIXY", "VIXM", "UVXY", "UVIX", "VXX", "SVXY", "SVIX"}
     result = fd.detect_frontrunner_cascades(real_tree)
     for cascade in result.cascades:
@@ -237,7 +254,24 @@ def test_detected_cascade_fire_branch_never_includes_a_core_asset_placeholder(fd
     legitimately spans the continuation branch too, per the detector's
     documented contract — the continuation branch IS core content by design;
     the invariant that matters is that the actual hedge-firing branch stays
-    pure hedge/VIX content)."""
+    pure hedge/VIX content).
+
+    UNRESOLVED 2026-07-16 (frontrunner-signals cycle, flagged to team-lead,
+    NOT a stale-premise fix): real_tree_04 and real_tree_06 still fail this
+    assertion under the CORRECT (size-based, matching the detector's own
+    contract — see the sibling test's docstring) fire-branch identification.
+    The genuinely-identified fire branch of a nested/multi-tier cascade
+    (rsi_thresholds has >1 entry) contains BOTH a VIX-family ticker AND a
+    CORE_ASSET_ placeholder in the same branch. Root cause not yet
+    determined: either the fixture-trimming script over-aggressively
+    replaced a legitimate hedge-basket ticker with a CORE_ASSET_ placeholder
+    (a fixture-provenance defect), or the detector genuinely swallows core
+    content into a reported fire basket for certain nested tiers (an AC-2
+    violation in production code — fr-engine's lane, not a test fix at
+    all). Left AS-IS (still RED, still asserting the real AC-2 invariant)
+    pending that verdict — loosening or deleting this assertion without
+    knowing which side is wrong would be exactly the unprincipled
+    make-it-pass this cycle's discriminator work was built to avoid."""
     result = fd.detect_frontrunner_cascades(real_tree)
     for cascade in result.cascades:
         branches = _if_child_branches(cascade.overlay_tree)
@@ -254,27 +288,36 @@ def test_detected_cascade_fire_branch_never_includes_a_core_asset_placeholder(fd
         )
 
 
-def test_detected_cascade_rsi_thresholds_fall_in_the_grounded_range(fd, real_tree, request):
-    """Grounding note: 'RSI(ticker) gt ~77-82.5'. Every real tree's leading
-    cascade is gated by an RSI-OVERBOUGHT if-node — comparator='gt' against a
-    high threshold, never 'lt' against a low one (that would be an oversold /
-    unrelated regime-timing gate, not a frontrunner hedge trigger; AC-2's
-    whole premise is triggering on overbought conditions). This test asserts
-    at least one rsi_threshold per real fixture that HAS a detected cascade
-    (see _NO_CASCADE_EXPECTED_FIXTURE_STEMS for the one ground-truthed
-    exception), and each one both (a) uses comparator='gt' and (b) falls in a
-    plausible overbought range — not exactly 77-82.5 (some real trees may
-    legitimately vary), but sanity-bounded well inside [50, 100] to catch a
-    detector that's mis-attributing an unrelated gate as the frontrunner
-    cascade."""
-    stem = request.node.callspec.id
+def test_detected_cascade_rsi_thresholds_fall_in_the_grounded_range(fd, real_tree):
+    """Grounding note (ORIGINAL, pre-AC-3-rebuild): 'RSI(ticker) gt ~77-82.5'.
+    Every real tree's leading cascade is gated by an RSI-OVERBOUGHT if-node —
+    comparator='gt' against a threshold, never 'lt' against a low one (that
+    would be an oversold / unrelated regime-timing gate, not a frontrunner
+    hedge trigger; AC-2's whole premise is triggering on overbought
+    conditions). This test asserts at least one rsi_threshold per real
+    fixture, and that each one uses comparator='gt'.
+
+    REMOVED 2026-07-16 (AC-3/AC-6 rebuild, cycle-caused stale-test fix): this
+    test used to ALSO assert `50 <= threshold <= 100` as a numeric sanity
+    bound ("catch a detector mis-attributing an unrelated gate"). fr-falsifier2's
+    verdict (.claude/fr-signals-inputs/mirror-pattern-verdict.md) proved
+    genuine frontrunner thresholds as low as 31.0/40.0 are real (the
+    RSI(SPY,10) gt 31 gate confirmed across 8 symphonies) — there is no
+    principled fixed numeric floor left that distinguishes "real cascade"
+    from "mis-attributed gate" across the full genuine population; the
+    premise itself is dead, not just its specific bounds, so no replacement
+    range is substituted (an arbitrarily loosened bound would be exactly the
+    unprincipled make-it-pass this cycle's discriminator work was built to
+    avoid). The comparator=='gt' check remains valid and is unaffected — AC-3's
+    walk criterion never changed directionality, only which thresholds are
+    considered genuine."""
     result = fd.detect_frontrunner_cascades(real_tree)
     found_any_threshold = False
     for cascade in result.cascades:
         branches = _if_child_branches(cascade.overlay_tree)
         cond_branch = branches[0] if branches else None
         comparator = cond_branch.get("comparator") if cond_branch else None
-        for threshold in getattr(cascade, "rsi_thresholds", []) or []:
+        for _threshold in getattr(cascade, "rsi_thresholds", []) or []:
             found_any_threshold = True
             if comparator is not None:
                 assert comparator == "gt", (
@@ -282,12 +325,6 @@ def test_detected_cascade_rsi_thresholds_fall_in_the_grounded_range(fd, real_tre
                     f"AC-2's frontrunner trigger is RSI-OVERBOUGHT ('gt'), not an "
                     f"oversold/unrelated regime gate"
                 )
-            assert 50 <= threshold <= 100, (
-                f"cascade RSI threshold {threshold} is outside a plausible "
-                f"overbought range — likely mis-attributed gate"
-            )
-    if stem in _NO_CASCADE_EXPECTED_FIXTURE_STEMS:
-        return  # no cascade at all on this fixture (see the carve-out comment) — nothing to check
     assert found_any_threshold, (
         "detector reported no rsi_thresholds for any cascade on a real tree — "
         "every real fixture's cascade is RSI-gated per the plan's grounding note"
