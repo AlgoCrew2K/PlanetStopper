@@ -256,22 +256,29 @@ def test_detected_cascade_fire_branch_never_includes_a_core_asset_placeholder(fd
     the invariant that matters is that the actual hedge-firing branch stays
     pure hedge/VIX content).
 
-    UNRESOLVED 2026-07-16 (frontrunner-signals cycle, flagged to team-lead,
-    NOT a stale-premise fix): real_tree_04 and real_tree_06 still fail this
-    assertion under the CORRECT (size-based, matching the detector's own
-    contract — see the sibling test's docstring) fire-branch identification.
-    The genuinely-identified fire branch of a nested/multi-tier cascade
-    (rsi_thresholds has >1 entry) contains BOTH a VIX-family ticker AND a
-    CORE_ASSET_ placeholder in the same branch. Root cause not yet
-    determined: either the fixture-trimming script over-aggressively
-    replaced a legitimate hedge-basket ticker with a CORE_ASSET_ placeholder
-    (a fixture-provenance defect), or the detector genuinely swallows core
-    content into a reported fire basket for certain nested tiers (an AC-2
-    violation in production code — fr-engine's lane, not a test fix at
-    all). Left AS-IS (still RED, still asserting the real AC-2 invariant)
-    pending that verdict — loosening or deleting this assertion without
-    knowing which side is wrong would be exactly the unprincipled
-    make-it-pass this cycle's discriminator work was built to avoid."""
+    RESOLVED 2026-07-16 (commit 42ffe560, fr-engine's defect #5/#6 fix —
+    reported here as UNRESOLVED in an earlier revision of this docstring;
+    corrected now that the root cause is confirmed, not guessed): the
+    original real_tree_04/real_tree_06 leak was neither a fixture defect nor
+    an unfixable structural ambiguity — it traced to `_compact_subtree`'s
+    "copy a non-qualifying nested if-node verbatim" fallback, which did not
+    protect against that verbatim-copied subtree containing a sibling
+    CORE_ASSET_-vs-hedge allocation decision alongside a genuine VIX pick
+    (e.g. a real BND-vs-SH sub-gate whose CORE_ASSET_-laden branch went
+    unstubbed). Fixed as a LOCAL, PER-CHILD purification inside
+    `_compact_subtree`'s recursion (advisors/frontrunner_detector.py, see
+    that function's own docstring for the mechanism) — never touched the
+    ratified size-based fire/continuation selection model this file's own
+    tests assert against. real_tree_04/06 now pass; a SEPARATE real_tree_09
+    finding (fr-falsifier3's inverted-polarity-verdict.md) was independently
+    confirmed as a fixture-trimming defect (not a detector bug) and fixed by
+    restoring the wrongly-scrubbed hedge tickers directly in the fixture
+    (commit aad7c49b) — the detector's own logic was never at fault for that
+    one, either. Both root causes were confirmed by direct evidence before
+    any fix landed, per this cycle's "never blind make-it-pass" standard —
+    neither assertion here was loosened or deleted to route around either
+    finding; both stayed genuinely RED until their actual root cause was
+    fixed."""
     result = fd.detect_frontrunner_cascades(real_tree)
     for cascade in result.cascades:
         branches = _if_child_branches(cascade.overlay_tree)
@@ -623,4 +630,51 @@ def test_recurses_into_all_parallel_substrategy_groups():
     assert len(result.cascades) >= 2, (
         f"expected the detector to recurse into multiple parallel sub-strategy "
         f"groups and report one cascade per group; got {len(result.cascades)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Downstream consumer purity: advisors.frontrunner_builder's watched_tickers
+# derivation reads the SAME overlay_tree the fire-branch purity tests above
+# assert against — a fr-review finding (2026-07-16, relayed after 7ca7c0c6)
+# flagged that the CORE_ASSET_ leak defects #4/#5 could also surface here,
+# since _run_build_for_symphony feeds watched_tickers straight into the Fable
+# generation prompt/signal_context. Empirically swept (not assumed) after
+# fr-engine's defect #5/#6 fix (42ffe560): 0 of 1,306 cascades across all 11
+# real fixtures leak a CORE_ASSET_ placeholder into
+# _collect_step_keyed_signal_tickers' output — the same per-child
+# purification that fixed the fire-branch tests protects this consumer too,
+# since both read the identical (now-purified) overlay_tree. This test pins
+# that as a permanent regression guard rather than leaving it as an
+# unverified assumption.
+# ---------------------------------------------------------------------------
+
+
+def test_watched_tickers_derivation_never_leaks_a_core_asset_placeholder(fd):
+    """advisors.frontrunner_builder._collect_step_keyed_signal_tickers feeds
+    _run_build_for_symphony's watched_tickers, which lands directly in the
+    generation prompt (test_frontrunner_builder_signal_wiring.py pins that
+    prompt-rendering behavior). If a CORE_ASSET_ placeholder ever leaked into
+    watched_tickers, it would be surfaced to Fable as a real signal ticker —
+    a genuine AC-2-adjacent leak one level downstream of the fire-branch
+    purity this file already guards. Swept across every real fixture's every
+    detected cascade, not just one representative tree, since the leak this
+    guards against was itself fixture-specific (real_tree_04/06) the first
+    time it was found."""
+    from advisors import frontrunner_builder as fb
+
+    leaks: list[tuple[str, list[str]]] = []
+    for path in _REAL_TREE_FIXTURES:
+        tree = json.loads(path.read_text(encoding="utf-8"))
+        result = fd.detect_frontrunner_cascades(tree)
+        for cascade in result.cascades:
+            watched = fb._collect_step_keyed_signal_tickers(cascade.overlay_tree)
+            core_leak = sorted(t for t in watched if t.startswith("CORE_ASSET_"))
+            if core_leak:
+                leaks.append((path.stem, core_leak))
+
+    assert not leaks, (
+        f"watched_tickers derivation leaked a CORE_ASSET_ placeholder for "
+        f"{len(leaks)} cascade(s) — this would surface fake ticker identity "
+        f"to Fable's generation prompt: {leaks[:5]}"
     )
