@@ -6,13 +6,6 @@ seam, normalizes each doc into a typed row, and persists non-cache-hit pulls
 into the warehouse third-DB (`alphabot_warehouse.db` — separate from the state
 DB and the optimization DB; no cross-DB joins).
 
-This module also owns the write/read accessors for the PM-ruling classification
-extension (per-symphony FR-check classification rows + the AC-5
-`signals_unavailable` run marker) — a second table pair in the SAME warehouse
-DB file, written by advisors/frontrunner_builder.py's compute path via
-`persist_classification_run`, read by the AI Advisor Frontrunner tab via
-`get_latest_classifications` / `get_latest_run_marker`.
-
 `classify_fr_checks` (the AC-4 pure edge-classifier) is a SEPARATE function
 implemented by fr-engine in this same file — not implemented here.
 
@@ -21,10 +14,6 @@ Public surface
 load_frontrunner_signals(*, force_refresh=False, db_path=None) -> dict
 init_frontrunner_signal_snapshots_db(path=None) -> None
 get_latest_signal_rows(*, db_path=None) -> list[dict]
-persist_classification_run(symphony_id, classification_rows, *,
-    signals_unavailable=False, reason=None, computed_at=None, db_path=None) -> None
-get_latest_classifications(symphony_id=None, *, db_path=None) -> list[dict]
-get_latest_run_marker(symphony_id=None, *, db_path=None) -> dict | None
 
 Design invariants
 -----------------
@@ -184,70 +173,6 @@ def init_frontrunner_signal_snapshots_db(path=None) -> None:
         _ensure_signal_snapshots_schema(conn)
     finally:
         conn.close()
-
-
-# ---------------------------------------------------------------------------
-# Schema — frontrunner_classification_snapshots + frontrunner_run_metadata
-# (PM-ruling extension: AC-3/4/5 output, persisted by fr-engine's builder
-# compute path via persist_classification_run)
-# ---------------------------------------------------------------------------
-
-_CREATE_CLASSIFICATION_SNAPSHOTS_SQL = """
-CREATE TABLE IF NOT EXISTS frontrunner_classification_snapshots (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    symphony_id     TEXT    NOT NULL,
-    fr_key          TEXT    NOT NULL,
-    fn              TEXT,
-    comparator      TEXT,
-    branch_path     TEXT,
-    rsi_live        REAL,
-    rsi_live_at     TEXT,
-    cagr            REAL,
-    sharpe          REAL,
-    sortino         REAL,
-    calmar          REAL,
-    max_drawdown    REAL,
-    classification  TEXT    NOT NULL,
-    signal_fetch_ts TEXT,
-    computed_at     TEXT    NOT NULL,
-    created_at      TEXT    DEFAULT (datetime('now'))
-)
-"""
-
-# accelerates get_latest_classifications' per-symphony MAX(computed_at) lookup
-_CREATE_CLASSIFICATION_SYMPHONY_COMPUTED_INDEX_SQL = """
-CREATE INDEX IF NOT EXISTS idx_frontrunner_classification_symphony_computed
-    ON frontrunner_classification_snapshots (symphony_id, computed_at)
-"""
-
-_CREATE_RUN_METADATA_SQL = """
-CREATE TABLE IF NOT EXISTS frontrunner_run_metadata (
-    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-    symphony_id          TEXT    NOT NULL,
-    signals_unavailable  INTEGER NOT NULL,
-    reason               TEXT,
-    computed_at          TEXT    NOT NULL,
-    created_at           TEXT    DEFAULT (datetime('now'))
-)
-"""
-
-# accelerates get_latest_run_marker's per-symphony (or table-wide) MAX(computed_at) lookup
-_CREATE_RUN_METADATA_SYMPHONY_COMPUTED_INDEX_SQL = """
-CREATE INDEX IF NOT EXISTS idx_frontrunner_run_metadata_symphony_computed
-    ON frontrunner_run_metadata (symphony_id, computed_at)
-"""
-
-
-def _ensure_classification_schema(conn: sqlite3.Connection) -> None:
-    """Self-sufficient: creates both classification tables on demand, never
-    depending on a prior init_frontrunner_signal_snapshots_db() call (mirrors
-    atlas_cache.cached_pull's self-sufficiency precedent)."""
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute(_CREATE_CLASSIFICATION_SNAPSHOTS_SQL)
-    conn.execute(_CREATE_CLASSIFICATION_SYMPHONY_COMPUTED_INDEX_SQL)
-    conn.execute(_CREATE_RUN_METADATA_SQL)
-    conn.execute(_CREATE_RUN_METADATA_SYMPHONY_COMPUTED_INDEX_SQL)
-    conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -627,137 +552,3 @@ def classify_fr_checks(fr_checks: list[dict], signal_rows: list[dict]) -> list[d
     except Exception:  # noqa: BLE001 - defensive; never-raises contract
         logger.debug("classify_fr_checks: unexpected error", exc_info=True)
         return []
-
-
-# ---------------------------------------------------------------------------
-# PM-ruling extension: classification-row + run-marker persistence/accessors
-# ---------------------------------------------------------------------------
-
-
-def persist_classification_run(
-    symphony_id: str,
-    classification_rows: list[dict],
-    *,
-    signals_unavailable: bool = False,
-    reason: str | None = None,
-    computed_at: str | None = None,
-    db_path=None,
-) -> None:
-    """Write one classification_snapshots row per fr_key + exactly ONE
-    run_metadata row, atomically, sharing a single computed_at (explicit if
-    passed, else generated once — never per-row). Valid with
-    classification_rows=[] (the AC-5 degraded case) — the run marker is still
-    written."""
-    resolved = _warehouse_db_file(db_path)
-    resolved_computed_at = computed_at or datetime.now(UTC).isoformat()
-
-    conn = _connect(resolved)
-    try:
-        _ensure_classification_schema(conn)
-        for row in classification_rows:
-            branch_path = row.get("branch_path")
-            conn.execute(
-                """
-                INSERT INTO frontrunner_classification_snapshots
-                (symphony_id, fr_key, fn, comparator, branch_path, rsi_live, rsi_live_at,
-                 cagr, sharpe, sortino, calmar, max_drawdown, classification,
-                 signal_fetch_ts, computed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    symphony_id,
-                    row["fr_key"],
-                    row.get("fn"),
-                    row.get("comparator"),
-                    json.dumps(branch_path) if branch_path is not None else None,
-                    row.get("rsi_live"),
-                    row.get("rsi_live_at"),
-                    row.get("cagr"),
-                    row.get("sharpe"),
-                    row.get("sortino"),
-                    row.get("calmar"),
-                    row.get("max_drawdown"),
-                    row["classification"],
-                    row.get("signal_fetch_ts"),
-                    resolved_computed_at,
-                ),
-            )
-        conn.execute(
-            """
-            INSERT INTO frontrunner_run_metadata
-            (symphony_id, signals_unavailable, reason, computed_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (symphony_id, int(bool(signals_unavailable)), reason, resolved_computed_at),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def get_latest_classifications(symphony_id=None, *, db_path=None) -> list[dict]:
-    """symphony_id given: that symphony's own latest batch (greatest
-    computed_at for that symphony_id). symphony_id=None: EVERY symphony's own
-    latest batch — a per-symphony greatest-n-per-group, never a single global
-    max that would silently drop older symphonies' rows.
-
-    branch_path is returned as a native list (deserialized here) — callers
-    never json.loads() it themselves."""
-    resolved = _warehouse_db_file(db_path)
-    conn = _connect(resolved)
-    try:
-        _ensure_classification_schema(conn)
-        base_query = """
-            SELECT * FROM frontrunner_classification_snapshots t
-            WHERE t.computed_at = (
-                SELECT MAX(computed_at) FROM frontrunner_classification_snapshots t2
-                WHERE t2.symphony_id = t.symphony_id
-            )
-        """
-        if symphony_id is not None:
-            rows = conn.execute(base_query + " AND t.symphony_id = ?", (symphony_id,)).fetchall()
-        else:
-            rows = conn.execute(base_query).fetchall()
-
-        result = []
-        for r in rows:
-            row = dict(r)
-            raw_branch_path = row.get("branch_path")
-            if raw_branch_path is not None:
-                try:
-                    row["branch_path"] = json.loads(raw_branch_path)
-                except (json.JSONDecodeError, TypeError):
-                    row["branch_path"] = None
-            result.append(row)
-        return result
-    finally:
-        conn.close()
-
-
-def get_latest_run_marker(symphony_id=None, *, db_path=None) -> dict | None:
-    """symphony_id given: that symphony's own latest marker row. symphony_id=
-    None: the single most-recently-computed row across the WHOLE table,
-    arbitrary which symphony that happens to be — deliberately NO aggregation
-    (no any-symphony-degraded-implies-True logic). None when no row has ever
-    been written for the requested scope."""
-    resolved = _warehouse_db_file(db_path)
-    conn = _connect(resolved)
-    try:
-        _ensure_classification_schema(conn)
-        if symphony_id is not None:
-            row = conn.execute(
-                "SELECT * FROM frontrunner_run_metadata WHERE symphony_id = ? "
-                "ORDER BY computed_at DESC LIMIT 1",
-                (symphony_id,),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT * FROM frontrunner_run_metadata ORDER BY computed_at DESC LIMIT 1"
-            ).fetchone()
-        if row is None:
-            return None
-        result = dict(row)
-        result["signals_unavailable"] = bool(result["signals_unavailable"])
-        return result
-    finally:
-        conn.close()

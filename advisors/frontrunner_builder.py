@@ -1428,37 +1428,20 @@ def _run_build_for_symphony(symphony_id: str) -> None:
     # AC-5 signals hoist (Cluster D wiring): mirrors the atlas_patterns hoist
     # above — load Atlas frontrunner-signals ONCE per symphony run, extract
     # this incumbent's OWN FR-checks ONCE (extract_fr_checks walks the whole
-    # tree, not per-cascade), classify+persist ONCE. Previously NONE of this
-    # was wired: filter_positive_edge_signal_keys, candidate_contains_tier1_
-    # remove_key, build_signal_provenance, resolve_signals_unavailable_marker
-    # and persist_classification_run were all correct in isolation but had
-    # zero production call sites — the warehouse tables and the AC-7
-    # dashboard tab stayed permanently empty.
+    # tree, not per-cascade), classify ONCE. AC-R2 de-productization
+    # (2026-07-16, operator ruling — the classification tab/warehouse
+    # persistence was a PM-initiated addition never asked for; the actual ask
+    # was the builder consuming live signal data): classification is still
+    # computed EVERY run (filter_positive_edge_signal_keys /
+    # candidate_contains_tier1_remove_key / build_signal_provenance below),
+    # it is simply no longer persisted or rendered on a dashboard tab.
     from advisors import frontrunner_signals  # noqa: PLC0415 - CC-2 lazy
 
     signals_result = frontrunner_signals.load_frontrunner_signals()
     signal_rows = signals_result.get("signals") or []
-    # Reuses the SAME pre-fetched signals_result (no second Atlas read for
-    # this run) — see resolve_signals_unavailable_marker's signals_result kwarg.
-    run_marker = resolve_signals_unavailable_marker(symphony_id, signals_result=signals_result)
 
     fr_checks = frontrunner_detector.extract_fr_checks(tree)
     classification_rows = _build_classification_rows_from_fr_checks(fr_checks, signal_rows)
-
-    try:
-        frontrunner_signals.persist_classification_run(
-            symphony_id,
-            classification_rows,
-            signals_unavailable=run_marker["signals_unavailable"],
-            reason=run_marker["reason"],
-        )
-    except Exception:
-        logger.debug(
-            "_run_build_for_symphony: symphony_id=%s failed to persist "
-            "classification run — proceeding (never blocks the build)",
-            symphony_id,
-            exc_info=True,
-        )
 
     positive_edge_keys = filter_positive_edge_signal_keys(classification_rows)
     edge_signal_context = build_signal_provenance(positive_edge_keys, classification_rows)
@@ -1959,8 +1942,9 @@ def approve_frontrunner_proposal(proposal_id: int) -> ApprovalResult:
 
 # ---------------------------------------------------------------------------
 # AC-5: builder generation gating on signal data + the crossover/vs
-# persist-format functions (PM ruling extension — crossover/vs FRChecks are
-# persisted and rendered, never silently dropped).
+# classification-row-building functions (PM ruling extension — crossover/vs
+# FRChecks are always represented in the in-memory classification_rows list,
+# never silently dropped).
 # ---------------------------------------------------------------------------
 
 
@@ -2005,35 +1989,6 @@ def build_signal_provenance(fr_keys: list[str], classification_rows: list[dict])
     return {key: rows_by_key[key] for key in fr_keys or [] if key in rows_by_key}
 
 
-def resolve_signals_unavailable_marker(
-    symphony_id: str, *, signals_result: dict | None = None
-) -> dict:
-    """AC-5(d): resolve the current per-symphony signals_unavailable marker
-    by checking Atlas signal availability (per-symphony call — fr-engine
-    confirmed 2026-07-16, never hoisted to a batch-global flag). Never
-    silent: `{signals_unavailable, reason}`, reason carries the D-1 string
-    when degraded, None when healthy. Never raises.
-
-    ``signals_result``: accepts a pre-fetched ``load_frontrunner_signals()``
-    return value (the same run-scoped result the caller already holds for
-    ``classify_fr_checks``) so a caller that needs BOTH the signal rows AND
-    this marker never triggers a second Atlas read for the same run. Fetches
-    internally (default, unchanged behavior) when omitted.
-    """
-    from advisors import frontrunner_signals  # noqa: PLC0415 - CC-2 lazy
-
-    result = (
-        signals_result
-        if signals_result is not None
-        else frontrunner_signals.load_frontrunner_signals()
-    )
-    available = bool(result.get("available"))
-    return {
-        "signals_unavailable": not available,
-        "reason": None if available else result.get("reason"),
-    }
-
-
 # Three canonical display-identity formats (PM ruling — containment rule: all
 # format construction lives HERE, in ONE place, so no ad-hoc format ever
 # appears elsewhere). Non-collision invariant: a genuine Atlas fr_key's third
@@ -2059,9 +2014,9 @@ def build_classification_row_for_crossover(
     *, ticker: str, window: int | None, rhs_fn: str, rhs_val: str, branch_path: list[str]
 ) -> dict:
     """A classification_rows-shaped dict for a crossover FRCheck — PM ruling:
-    crossover checks ARE persisted and rendered, never silently dropped.
-    Always classification="no_edge_data" (nothing to join a crossover key
-    to), every edge stat None."""
+    crossover checks are ALWAYS represented in the in-memory classification_rows
+    list, never silently dropped. Always classification="no_edge_data"
+    (nothing to join a crossover key to), every edge stat None."""
     return {
         "fr_key": format_crossover_fr_key(
             ticker=ticker, window=window, rhs_fn=rhs_fn, rhs_val=rhs_val
@@ -2093,16 +2048,17 @@ def _build_classification_rows_from_fr_checks(
     fr_checks: list, signal_rows: list[dict]
 ) -> list[dict]:
     """Convert one symphony run's ``extract_fr_checks`` output into
-    classification rows ready for ``persist_classification_run`` —
+    classification rows consumed by ``filter_positive_edge_signal_keys`` /
+    ``candidate_contains_tier1_remove_key`` / ``build_signal_provenance`` —
     dispatching each ``FRCheck`` to the right path per its own documented
     invariant (exactly one of ``fr_key`` or ``rhs_ticker`` populated):
 
       - ``fr_key`` populated (genuine fixed-threshold check): joined against
         ``signal_rows`` via the real ``classify_fr_checks`` (AC-4).
       - ``rhs_ticker`` populated (genuine ticker-vs-ticker crossover, never
-        joinable — no fixed threshold to look up): persisted directly as a
+        joinable — no fixed threshold to look up): represented directly as a
         ``no_edge_data`` row carrying a ``format_vs_fr_key`` display key (PM
-        ruling: crossover checks are persisted and rendered, never silently
+        ruling: crossover checks are always represented, never silently
         dropped).
       - ``rhs_fn`` populated without ``rhs_ticker`` (the ``xover(...)``
         shape kept on the dataclass for shape stability — no live
