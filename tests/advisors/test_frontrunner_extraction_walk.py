@@ -4,8 +4,10 @@ Module under test: advisors.frontrunner_detector.extract_fr_checks (NEW
 function on the EXISTING frontrunner_detector.py module). Implementer:
 fr-engine (composer-alpaca-integration).
 
-CONTRACT SOURCE (feature-plans/frontrunner-signals.md AC-3 + FALSIFIER
-AMENDMENT, plus fr-engine's final locked FRCheck shape, 2026-07-16):
+CONTRACT SOURCE (feature-plans/frontrunner-signals.md AC-3, FINAL discriminator
+per fr-falsifier2's verdict — .claude/fr-signals-inputs/mirror-pattern-verdict.md,
+2026-07-16, superseding the intermediate rhs-fn-presence rule this file
+originally shipped with):
 
     extract_fr_checks(tree: dict) -> list[FRCheck]
 
@@ -15,7 +17,21 @@ if-node's `is-else-condition?` — never inferred, never size-based).
 Self-referential VIX-timing gates (subject ticker itself VIX-family) yield
 NO FRCheck at all (silent omission, not a partial/flagged record).
 
-FRCheck (fr-engine's final locked dataclass, 2026-07-16):
+FINAL DISCRIMINATOR (verdict, exceptionless across ~1,900 real nodes, ZERO
+counterexamples — E4/X1 in the verdict doc): a node is a fixed-threshold
+check (joinable fr_key) IFF `rhs-val` parses as a number (equivalently
+`rhs-fixed-value?` is truthy / there is no nested rhs ticker operand).
+Otherwise (`rhs-val` is a ticker string) it is a genuine crossover — no
+fr_key. **`rhs-fn` and `rhs-window-days` are IRRELEVANT vestigial echoes
+that must be IGNORED** — this directly REVERSES the intermediate
+"rhs-fn presence = crossover" rule (which over-fired on 166 confirmed-fixed
+self-mirror nodes, e.g. REZ:10:77/IGOV:10:77, and would have wrongly
+excluded 21 real fr_keys / ~45-47 memberships). The existing
+`_parse_rsi_threshold` in this module already implements the CORRECT rule
+(`rhs-fixed-value? is False -> None; else float(rhs-val) or None`) — the
+earlier error was analysis-layer, not code-layer.
+
+FRCheck (fr-engine's locked dataclass, 2026-07-16):
     fr_key: str | None            # f"{ticker}:{window}:{threshold}" — populated ONLY
                                     # for a genuine fixed-numeric-threshold condition
     ticker: str
@@ -28,83 +44,79 @@ FRCheck (fr-engine's final locked dataclass, 2026-07-16):
                                     # last entry always "true" by construction
     node_id: str | None
     group_name: str | None
-    rhs_fn: str | None = None      # populated ONLY for a crossover (rhs-fn present)
-    rhs_val: str | None = None     # populated ALONGSIDE rhs_fn for the same crossover
-    rhs_ticker: str | None = None  # populated ONLY for a ticker-vs-ticker condition
+    rhs_fn: str | None = None      # see OPEN QUESTION below
+    rhs_val: str | None = None     # see OPEN QUESTION below
+    rhs_ticker: str | None = None  # populated for a ticker-vs-ticker condition
                                     # (rhs-fixed-value? False, rhs-val is a ticker string)
 
-INVARIANT (fr-engine, explicit): exactly one of
-{fr_key populated}, {rhs_fn+rhs_val populated}, {rhs_ticker populated}
-is true for any FRCheck. Never more than one.
+OPEN QUESTION (asked of fr-engine 2026-07-16, NOT yet answered — this file
+deliberately does NOT assert a specific value for `rhs_fn` on the ticker-
+crossover exemplar below pending the answer): the verdict's own E5 shows a
+GENUINE ticker-crossover node's `rhs-fn` is semantically MEANINGFUL (e.g.
+LQD-vs-XLV really is `RSI(LQD) gt RSI(XLV)` — the RHS `rhs-fn` tells you
+WHICH indicator to apply to the RHS ticker), unlike the fixed-threshold
+case where `rhs-fn` is genuinely vestigial noise to ignore. So it is an open
+question whether FRCheck.rhs_fn should be populated ALONGSIDE rhs_ticker for
+a genuine crossover (describing "which indicator, on which ticker"), rather
+than the three buckets being strictly mutually exclusive as originally
+specified. This file only asserts the CERTAIN invariant (fr_key XOR
+rhs_ticker — a node is never both a fixed threshold AND a ticker crossover)
+until fr-engine confirms rhs_fn's role for the crossover case.
 
-FALSIFIER AMENDMENT — the rhs-fn discriminator (HARD, plan @ 77060593):
-`rhs-fixed-value?` is True on BOTH a genuine fixed-threshold node AND an
-indicator-vs-indicator crossover node — it is NOT a valid discriminator.
-The correct discriminator is `rhs-fn` PRESENCE. A condition whose RHS
-carries an `rhs-fn` key is a crossover (rhs-val is the RHS indicator's
-window, not a threshold) — fr_key/threshold MUST be None for it.
-
-DISPUTE STATUS UPDATE (team-lead STOP-CHECK #2, 2026-07-16, msg 7722f63a /
-3f697b3e — supersedes the "settled under both hypotheses" claim below AND
-the "grounded three independent ways" framing this file originally shipped
-with): fr-falsifier2's E3/E4 evidence indicates the REAL discriminator key
-is `rhs-fixed-value?` + numeric-vs-ticker `rhs-val` (fixed=true+numeric =>
-genuine fixed threshold, REGARDLESS of any rhs-fn echo; fixed absent/False +
-ticker rhs-val => genuine crossover) — NOT rhs-fn presence alone. Under this
-competing rule, the Paragons/iaSO/n2oo trio (rhs-fn present BUT
-rhs-fixed-value?=True with a NUMERIC rhs-val) are GENUINE fixed-threshold
-checks, not crossovers — the opposite of this file's original premise. This
-is DISPUTED, not resolved (verdict pending in
-.claude/fr-signals-inputs/mirror-pattern-verdict.md). Correction to the
-earlier "three independent ways, all converging" claim: all three
-derivations (falsifier, my own re-scan, fr-engine's byte-level check)
-applied the SAME rhs-fn-presence rule — that is convergence on one rule,
-not independent validation of the discriminator itself.
-
-Consequence for this file: the Paragons node (892d862a) is now covered by a
-SEPARATE xfail-pending test
-(test_paragons_class_node_crossover_status_disputed_pending_verdict) rather
-than being the primary crossover-exclusion exemplar. The primary exemplar
-is now a SETTLED ticker-RHS node (real_tree_06's LQD-vs-XLV,
-rhs-fixed-value?=False, ticker rhs-val) — a genuine crossover under EVERY
-hypothesis on the table, since there is no numeric threshold to dispute in
-the first place. A separate SCOPE HOLD (also team-lead, still in flight,
-distinct from the above) covers a same-fn "self-mirror" sub-pattern
-(rhs-fn==lhs-fn AND matching window, e.g. REZ:10:77/IGOV:10:77) — no
-same-fn mirror node is used anywhere in this file either.
+CONTRACT HISTORY (for anyone reading old commits/PRs — the discriminator
+went through 3 revisions before landing; keeping the record honest rather
+than silently rewriting):
+  1. Original grounding (rhs-fixed-value?==True alone) — this was actually
+     CORRECT, matching the final verdict, but was not yet cross-verified.
+  2. "falsifier-1" (direction-validation.md): rhs-fn PRESENCE is the
+     discriminator — WRONG, an analysis-layer error from generalizing off
+     2 nodes without checking the full ~1,900-node population. Concluded
+     genuine SPY:10:31 = 5 symphonies (Gpaw/INfC/MoAk/hvPi/qF5Z), excluding
+     iaSO/Paragons/n2oo as "false positives."
+  3. "falsifier-2" (mirror-pattern-verdict.md, THIS file's current basis):
+     rhs-val-numeric / rhs-fixed-value?-truthy is the discriminator —
+     CONFIRMED exceptionless. RETRACTS falsifier-1's "5 not 8": iaSO/
+     Paragons/n2oo (and REZ:10:77/IGOV:10:77) are genuine fixed-threshold
+     checks. TRUE-branch tracing (verdict X4) confirms all three symphonies'
+     SPY:10:31 gates fire VIX-long (UVIX/UVXY) — genuine SPY:10:31 cull set
+     = 8 (the operator's original number), vindicating the operator's own
+     "8 of 11" claim. Only real_tree_01/5Xjz remains excluded — a genuine
+     fixed gate whose TRUE branch fires no VIX ticker at all (BTAL only).
 
 FIXTURE PROVENANCE — every node id below independently re-verified by direct
 inspection (not inherited from any teammate's report), against the 11
 producer-captured real_tree_0{1-11}_*.json fixtures:
-  - GENUINE positive: real_tree_11_qF5ZU7ALjrlhxrGEwsyJ.json, if-child id
+  - GENUINE positive #1: real_tree_11_qF5ZU7ALjrlhxrGEwsyJ.json, if-child id
     44a6ad64-cb3f-419b-99ef-4ad749b0e2e4 — RSI(SPY,10) gt 31, no rhs-fn key
-    AT ALL (genuine under every hypothesis — this is not the disputed
-    "rhs-fn present but numeric" shape), fires VIXY-family —
+    at all (the "plain" int-convention shape), fires VIXY-family —
     fr_key="SPY:10:31", branch_path 7 hops
     ['false','false','false','true','true','true','true'].
-  - CROSSOVER exclusion, SETTLED exemplar: real_tree_06_hvPiGP1O7AHfutHE3Fjy.json,
-    if-child id 0d98c2bb-1839-4eee-aa0b-6f10bf384871 — RSI(LQD) gt RSI(XLV),
-    rhs-fixed-value?=False, rhs-val="XLV" (a ticker, not a number) — fires
-    UVXY. fr_key=None, threshold=None, rhs_fn=None, rhs_val=None,
-    rhs_ticker="XLV". Doubles as the ticker-vs-ticker (vs case) exemplar
-    below — same node, two assertions.
-  - CROSSOVER exclusion, DISPUTED (xfail): real_tree_08_lW4ZzWuqR8tEO2DhXbil.json,
-    if-child id 892d862a-94a8-4496-a5ed-ea2528fd278c — RSI(SPY,10) gt
-    moving-average-return(31) UNDER THE RHS-FN-PRESENCE RULE, but possibly
-    genuine RSI(SPY,10) gt 31 under the competing fixed-value?+numeric rule.
+  - GENUINE positive #2 (the verdict-reinstated case): real_tree_08_lW4ZzWuqR8tEO2DhXbil.json
+    (Paragons), if-child id 892d862a-94a8-4496-a5ed-ea2528fd278c —
+    `rhs-fn="moving-average-return"` IS present (vestigial echo, per the
+    verdict IGNORED) but `rhs-fixed-value?=true` + numeric `rhs-val="31"` ->
+    genuine RSI(SPY,10) gt 31, fr_key="SPY:10:31", threshold=31.0.
     branch_path 6 hops ['false','false','true','true','true','true'] (the
     two leading "false" entries are genuine else-hops through risk-on
-    gate(s) above it) — this part is NOT disputed, direction is independent
-    of RHS-shape classification.
+    gate(s) above it — the ELSE-branch negative-control shape the plan
+    calls for, still valid: direction correctness was never in dispute).
+  - TICKER-VS-TICKER crossover exemplar (settled, unaffected by the whole
+    saga above — there was never a numeric threshold to dispute here):
+    real_tree_06_hvPiGP1O7AHfutHE3Fjy.json, if-child id
+    0d98c2bb-1839-4eee-aa0b-6f10bf384871 — RSI(LQD) gt RSI(XLV),
+    rhs-fixed-value?=False, rhs-val="XLV" (a ticker, not a number) — fires
+    UVXY. fr_key=None, threshold=None, rhs_ticker="XLV". rhs_fn's expected
+    value is the OPEN QUESTION above — not asserted here.
   - NO_VIX_EITHER_SIDE negative control: real_tree_01_5XjzXjdGnjh99MIsdM97.json,
     if-nodes cc0f45de-4025-4412-ba18-3a5fb9759eef and
-    8fdd1b89-ff40-47e8-bbb7-b2ed4093c3da — RSI(SPY,10) gt
-    moving-average-return(31) shape, condition's own subtree only contains
-    ticker 'BTAL' (non-VIX). DUAL MECHANISM, both independently verified true
-    in this 0715 capture: these nodes ARE rhs-fn crossovers AND their fire
-    branch reaches no VIX ticker at all — either reason alone would exclude
-    them; both are genuinely present simultaneously (team-lead-requested
-    documentation of which mechanism the fixture shows, 2026-07-16).
+    8fdd1b89-ff40-47e8-bbb7-b2ed4093c3da — genuine fixed RSI(SPY,10) gt 31
+    gates (rhs-fixed-value?=true, numeric rhs-val="31" — same shape as
+    Paragons) whose TRUE branch's only ticker is BTAL (non-VIX). The
+    EARLIER "dual mechanism" framing (rhs-fn crossover AND no-VIX,
+    independently) is WRONG per the verdict — these are NOT crossovers at
+    all, they are genuine fixed gates. The sole exclusion reason is
+    VIX-unreachability: AC-3's walk criterion (TRUE branch reaches VIX)
+    fails before crossover-vs-genuine classification is ever reached.
 """
 
 from __future__ import annotations
@@ -136,15 +148,15 @@ def _find(checks, node_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Genuine fixed-threshold positive match
+# Genuine fixed-threshold positive matches
 # ---------------------------------------------------------------------------
 
 
 def test_genuine_fixed_threshold_extracts_fr_key_and_direction_explicit_branch_path(mod):
     """real_tree_11/Golden Age: a genuine RSI(SPY,10) gt 31 -> VIXY-family
-    condition (no rhs-fn key) must extract fr_key="SPY:10:31" with the exact
-    root-to-node branch_path (7 hops, direction read off is-else-condition?
-    — never inferred)."""
+    condition (no rhs-fn key at all) must extract fr_key="SPY:10:31" with
+    the exact root-to-node branch_path (7 hops, direction read off
+    is-else-condition? — never inferred)."""
     tree = _load_tree("real_tree_11_qF5ZU7ALjrlhxrGEwsyJ.json")
     checks = mod.extract_fr_checks(tree)
 
@@ -170,7 +182,10 @@ def test_genuine_fixed_threshold_extracts_fr_key_and_direction_explicit_branch_p
 
 def test_genuine_check_populates_exactly_fr_key_never_rhs_descriptor_fields(mod):
     """Invariant: for a genuine fixed-threshold check, ONLY fr_key/threshold
-    are populated — rhs_fn/rhs_val/rhs_ticker must all be None."""
+    are populated — rhs_val/rhs_ticker must be None (rhs_fn's expected value
+    for a genuine check is ALSO None — the verdict is explicit that rhs-fn
+    is vestigial noise for the fixed case specifically, so this assertion IS
+    certain even though the crossover-case rhs_fn question is still open)."""
     tree = _load_tree("real_tree_11_qF5ZU7ALjrlhxrGEwsyJ.json")
     checks = mod.extract_fr_checks(tree)
     check = _find(checks, "44a6ad64-cb3f-419b-99ef-4ad749b0e2e4")
@@ -180,84 +195,42 @@ def test_genuine_check_populates_exactly_fr_key_never_rhs_descriptor_fields(mod)
     assert check.rhs_ticker is None
 
 
-# ---------------------------------------------------------------------------
-# Crossover exclusion — the rhs-fn discriminator (falsifier amendment, HARD)
-# ---------------------------------------------------------------------------
-
-
-def test_ticker_rhs_condition_yields_no_fr_key_settled_under_every_hypothesis(mod):
-    """SETTLED crossover exemplar (team-lead ruling 2026-07-16, msg 3f697b3e):
-    a ticker-RHS condition (rhs-fixed-value?=False, rhs-val is a ticker
-    string, not numeric) is a genuine crossover under EVERY discriminator
-    hypothesis on the table — unlike the disputed fixed=true+numeric-rhs-val
-    Paragons-class nodes (see test_paragons_class_node_crossover_status_
-    disputed_pending_verdict below), this shape has zero ambiguity: there is
-    no numeric threshold to dispute, `rhs-val` is structurally a ticker.
-    Reuses real_tree_06's LQD-vs-XLV node (same node the rhs_ticker-shape
-    test below verifies) as the primary crossover-exclusion exemplar."""
-    tree = _load_tree("real_tree_06_hvPiGP1O7AHfutHE3Fjy.json")
-    checks = mod.extract_fr_checks(tree)
-
-    target_id = "0d98c2bb-1839-4eee-aa0b-6f10bf384871"
-    check = _find(checks, target_id)
-    assert check is not None, (
-        f"a crossover node must still produce an FRCheck (direction/VIX-reachability is "
-        f"independent of RHS shape) — none found for node_id={target_id!r}"
-    )
-    assert check.fr_key is None, (
-        f"a ticker-RHS condition must NEVER produce a joinable fr_key; got {check.fr_key!r}."
-    )
-    assert check.threshold is None
-    assert check.rhs_ticker == "XLV", f"expected rhs_ticker captured, got {check.rhs_ticker!r}"
-    assert check.rhs_fn is None, "a crossover and a ticker-vs-ticker condition are mutually exclusive"
-    assert check.rhs_val is None
-    assert check.ticker == "LQD"
-
-
-@pytest.mark.xfail(
-    reason=(
-        "DISPUTED, not settled (team-lead STOP-CHECK #2, 2026-07-16, msg 7722f63a / 3f697b3e): "
-        "fr-falsifier2's E3/E4 evidence indicates the real discriminator key is "
-        "rhs-fixed-value? + numeric-vs-ticker rhs-val, NOT rhs-fn presence. Under that competing "
-        "rule, this Paragons node (rhs-fn='moving-average-return' but rhs-fixed-value?=True with a "
-        "NUMERIC rhs-val='31') is a GENUINE fixed-threshold check, not a crossover — the opposite "
-        "of what this test currently asserts. Verdict pending in "
-        ".claude/fr-signals-inputs/mirror-pattern-verdict.md. strict=False: this test may pass or "
-        "fail depending on which GREEN implementation choice fr-engine ships first — do not let a "
-        "flip in either direction fail the suite."
-    ),
-    strict=False,
-)
-def test_paragons_class_node_crossover_status_disputed_pending_verdict(mod):
-    """Originally pinned as THE canonical rhs-fn discriminator case under the
-    now-superseded rhs-fn-presence-alone rule. Kept as a live (xfail, not
-    deleted) regression probe so whichever way the verdict lands, re-running
-    this file immediately shows the correct classification without needing
-    a new test written from scratch — see the swapped-in SETTLED exemplar
-    above for the assertions this file's crossover-exclusion coverage no
-    longer depends on this node for."""
+def test_paragons_node_is_genuine_fixed_threshold_not_crossover(mod):
+    """THE verdict-reinstated case (mirror-pattern-verdict.md, 2026-07-16):
+    the Paragons node carries a vestigial `rhs-fn='moving-average-return'`
+    echo, but `rhs-fixed-value?=true` + numeric `rhs-val='31'` make it a
+    GENUINE fixed threshold — the exceptionless discriminator ignores the
+    rhs-fn echo entirely. This directly REVERSES the intermediate
+    rhs-fn-presence rule this file previously encoded (see module docstring
+    CONTRACT HISTORY). fr_key must be "SPY:10:31", NOT None."""
     tree = _load_tree("real_tree_08_lW4ZzWuqR8tEO2DhXbil.json")
     checks = mod.extract_fr_checks(tree)
 
     target_id = "892d862a-94a8-4496-a5ed-ea2528fd278c"
     check = _find(checks, target_id)
-    assert check is not None
-    assert check.fr_key is None, (
-        f"under the rhs-fn-presence rule this should be None (crossover); got {check.fr_key!r}. "
-        "If the verdict confirms the fixed-value?+numeric rule instead, this assertion inverts to "
-        "fr_key == 'SPY:10:31' — update this test (not just re-run it) once the verdict is final."
+    assert check is not None, f"expected an FRCheck for node_id={target_id!r}, none found"
+    assert check.fr_key == "SPY:10:31", (
+        f"expected fr_key='SPY:10:31' (genuine, per the verdict's exceptionless "
+        f"rhs-val-numeric discriminator — the rhs-fn echo is vestigial noise), got {check.fr_key!r}"
     )
-    assert check.threshold is None
+    assert check.threshold == 31.0
+    assert check.ticker == "SPY"
+    assert check.window == 10
+    assert check.comparator == "gt"
+    assert check.rhs_val is None, (
+        "a genuine fixed-threshold check must not carry rhs_val — the threshold IS "
+        "check.threshold, not a leftover crossover field"
+    )
+    assert check.rhs_ticker is None
 
 
-def test_paragons_node_branch_path_is_correct_regardless_of_crossover_dispute(mod):
-    """Direction correctness (branch_path) is INDEPENDENT of the disputed
-    crossover-vs-genuine classification — AC-3's walk criterion (TRUE branch
-    reaches VIX) fires regardless of RHS shape, so an FRCheck exists for this
-    node under EITHER hypothesis, and its ancestry is a structural fact about
-    the tree, not an interpretation of rhs-fn/rhs-fixed-value? semantics.
-    This assertion is NOT xfail — it holds no matter how the dispute
-    resolves."""
+def test_paragons_node_branch_path_is_correct(mod):
+    """Direction correctness (branch_path) was never actually in dispute
+    through any revision of the discriminator — AC-3's walk criterion (TRUE
+    branch reaches VIX) is independent of fixed-vs-crossover classification.
+    This is the ELSE-branch negative-control shape the plan calls for: a VIX
+    leaf reached only via two genuine else-hops through risk-on gate(s)
+    above it."""
     tree = _load_tree("real_tree_08_lW4ZzWuqR8tEO2DhXbil.json")
     checks = mod.extract_fr_checks(tree)
     check = _find(checks, "892d862a-94a8-4496-a5ed-ea2528fd278c")
@@ -268,32 +241,36 @@ def test_paragons_node_branch_path_is_correct_regardless_of_crossover_dispute(mo
 
 
 # ---------------------------------------------------------------------------
-# Ticker-vs-ticker condition — the rhs_ticker case
+# Ticker-vs-ticker condition — the rhs_ticker case (settled, unaffected by
+# the discriminator saga — there was never a numeric threshold here to
+# dispute in the first place)
 # ---------------------------------------------------------------------------
 
 
-def test_ticker_vs_ticker_condition_populates_rhs_ticker_not_fr_key_or_rhs_fn(mod):
+def test_ticker_vs_ticker_condition_populates_rhs_ticker_not_fr_key(mod):
     """real_tree_06: RSI(LQD) gt RSI(XLV) — rhs-fixed-value?=False, rhs-val
-    is a TICKER string ("XLV"), not a numeric threshold. Structurally
-    distinct from BOTH the genuine-threshold and crossover cases: fr_key/
-    threshold/rhs_fn/rhs_val must all be None, rhs_ticker must carry the
-    real value."""
+    is a TICKER string ("XLV"), not a numeric threshold — a genuine crossover
+    under every discriminator hypothesis that has ever been on the table.
+    fr_key/threshold must be None, rhs_ticker must carry the real value.
+    Does NOT assert rhs_fn's value — see module docstring OPEN QUESTION
+    (fr-engine has not yet confirmed whether rhs_fn should be populated
+    alongside rhs_ticker for a genuine crossover)."""
     tree = _load_tree("real_tree_06_hvPiGP1O7AHfutHE3Fjy.json")
     checks = mod.extract_fr_checks(tree)
 
     target_id = "0d98c2bb-1839-4eee-aa0b-6f10bf384871"
     check = _find(checks, target_id)
     assert check is not None, f"expected an FRCheck for the ticker-vs-ticker node_id={target_id!r}"
-    assert check.fr_key is None
+    assert check.fr_key is None, (
+        f"a ticker-RHS condition must NEVER produce a joinable fr_key; got {check.fr_key!r}."
+    )
     assert check.threshold is None
-    assert check.rhs_fn is None
-    assert check.rhs_val is None
     assert check.rhs_ticker == "XLV", f"expected rhs_ticker='XLV', got {check.rhs_ticker!r}"
     assert check.ticker == "LQD"
 
 
 # ---------------------------------------------------------------------------
-# Exactly-one-of-three invariant (fr-engine, explicit) — hostile sweep
+# Fixed-vs-crossover exclusivity — the CERTAIN half of the invariant
 # ---------------------------------------------------------------------------
 
 
@@ -306,33 +283,24 @@ def test_ticker_vs_ticker_condition_populates_rhs_ticker_not_fr_key_or_rhs_fn(mo
         "real_tree_11_qF5ZU7ALjrlhxrGEwsyJ.json",
     ],
 )
-def test_exactly_one_of_fr_key_rhs_fn_rhs_ticker_is_populated_across_every_extracted_check(
-    mod, filename
-):
-    """Hostile invariant sweep across real trees carrying a mix of shapes:
-    for every extracted FRCheck, exactly one of {fr_key}, {rhs_fn+rhs_val},
-    {rhs_ticker} is populated — never zero, never two."""
+def test_fr_key_and_rhs_ticker_are_mutually_exclusive_across_every_extracted_check(mod, filename):
+    """Hostile invariant sweep: a node is NEVER both a genuine fixed
+    threshold AND a ticker crossover — exactly one of {fr_key populated},
+    {rhs_ticker populated} holds (or neither, for a node whose RHS shape
+    extract_fr_checks doesn't recognize at all). Deliberately does NOT
+    assert anything about rhs_fn's role here — see module docstring OPEN
+    QUESTION; this is the narrower, certain half of the original 3-way
+    invariant, kept testable while that question is unresolved."""
     tree = _load_tree(filename)
     checks = mod.extract_fr_checks(tree)
     assert checks, f"{filename}: expected extraction to find at least one FRCheck"
 
     for check in checks:
-        buckets_populated = sum(
-            [
-                check.fr_key is not None,
-                check.rhs_fn is not None,
-                check.rhs_ticker is not None,
-            ]
+        assert not (check.fr_key is not None and check.rhs_ticker is not None), (
+            f"{filename} node_id={check.node_id!r}: fr_key and rhs_ticker are both populated "
+            f"(fr_key={check.fr_key!r}, rhs_ticker={check.rhs_ticker!r}) — a node cannot be both "
+            f"a genuine fixed threshold and a ticker crossover"
         )
-        assert buckets_populated == 1, (
-            f"{filename} node_id={check.node_id!r}: expected exactly ONE of "
-            f"fr_key/rhs_fn/rhs_ticker populated, got {buckets_populated} "
-            f"(fr_key={check.fr_key!r}, rhs_fn={check.rhs_fn!r}, rhs_ticker={check.rhs_ticker!r})"
-        )
-        if check.rhs_fn is not None:
-            assert check.rhs_val is not None, (
-                f"node_id={check.node_id!r}: rhs_fn populated without rhs_val"
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -363,13 +331,14 @@ def test_self_referential_vix_timing_gate_never_extracted(mod):
 
 
 def test_no_vix_either_side_condition_never_extracted(mod):
-    """real_tree_01/5Xjz: two RSI(SPY,10)-gt-31-shaped if-nodes whose fire
-    branch's only ticker is BTAL (non-VIX). DUAL MECHANISM in this 0715
-    capture (both independently true, documented per team-lead's request):
-    these nodes are ALSO rhs-fn crossovers, but even setting that aside,
-    the VIX-reachability criterion alone excludes them — neither branch
-    reaches a VIX-family ticker at all. No FRCheck must be emitted for
-    either node id."""
+    """real_tree_01/5Xjz: two genuine fixed RSI(SPY,10) gt 31 gates
+    (rhs-fixed-value?=true, numeric rhs-val — same shape as the reinstated
+    Paragons case) whose fire branch's only ticker is BTAL (non-VIX). These
+    are NOT crossovers (the earlier "dual mechanism" framing was wrong per
+    the verdict) — the sole exclusion reason is VIX-unreachability: AC-3's
+    walk criterion (TRUE branch reaches VIX) fails before fixed-vs-crossover
+    classification is ever reached, so no FRCheck is emitted for either
+    node id, genuine gate or not."""
     tree = _load_tree("real_tree_01_5XjzXjdGnjh99MIsdM97.json")
     checks = mod.extract_fr_checks(tree)
 
@@ -378,13 +347,13 @@ def test_no_vix_either_side_condition_never_extracted(mod):
         "8fdd1b89-ff40-47e8-bbb7-b2ed4093c3da",
     }
     # The FRCheck's own node_id is the if-CHILD's id (the condition-bearing
-    # branch), not the outer if-node's — check by BTAL-only-ticker signature
-    # via the ticker field instead of a node_id match, since we're asserting
-    # ABSENCE, not presence.
-    btal_only_checks = [c for c in checks if c.ticker == "SPY" and c.window == 10 and c.threshold == 31.0]
-    assert not btal_only_checks, (
-        f"expected NO genuine SPY:10:31 FRCheck from tree 01's NO_VIX_EITHER_SIDE nodes "
-        f"({excluded_if_node_ids}), got {btal_only_checks}"
+    # branch), not the outer if-node's — check by ticker/window/threshold
+    # signature instead of a node_id match, since we're asserting ABSENCE.
+    spy_10_31_checks = [c for c in checks if c.ticker == "SPY" and c.window == 10 and c.threshold == 31.0]
+    assert not spy_10_31_checks, (
+        f"expected NO SPY:10:31 FRCheck from tree 01's NO_VIX_EITHER_SIDE nodes "
+        f"({excluded_if_node_ids}) — the genuine gate exists but its TRUE branch never "
+        f"reaches VIX, got {spy_10_31_checks}"
     )
 
 
