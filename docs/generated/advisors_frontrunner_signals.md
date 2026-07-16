@@ -11,9 +11,9 @@
 
 The module has three layers, all in this one file per the Architecture doc:
 
-1. **AC-1/AC-2 — ingest + persist.** `load_frontrunner_signals` pulls the collection through the daily `atlas_cache` seam (dedicated cache key, `ttl_days=1` — distinct from the weekly `strategies` cache used elsewhere) and persists every non-cache-hit pull into the warehouse third-DB. `get_latest_signal_rows` reads the most recent snapshot batch.
-2. **AC-4 — edge classification.** `classify_fr_checks` joins extracted FR-checks (from `advisors.frontrunner_detector.extract_fr_checks`) to the persisted signal rows by exact `fr_key`, guards the comparator/fn mismatch traps, and classifies `remove`/`prune`/`keep`/`no_edge_data`.
-3. **PM-ruling extension — classification + run-marker persistence.** AC-7 (the dashboard tab) renders PERSISTED rows only, never live-computes in a Flask request thread (extraction needs `/score` fetches — network I/O, banned on the dashboard path). `persist_classification_run` / `get_latest_classifications` / `get_latest_run_marker` are the write/read pair for a second table set in the same warehouse DB file — written by `advisors/frontrunner_builder.py`'s background compute path (the on-demand run executor + the weekly scheduler, the same place trees are already fetched), read by the AI Advisor Frontrunner tab.
+1. **AC-1/AC-2 — ingest + persist.** `load_frontrunner_signals` pulls the collection through the daily `atlas_cache` seam (dedicated cache key, `ttl_days=1` — distinct from the weekly `strategies` cache used elsewhere) and persists every non-cache-hit pull into the warehouse third-DB. `get_latest_signal_rows` reads the most recent snapshot batch. **Fully wired and production-live.**
+2. **AC-4 — edge classification.** `classify_fr_checks` joins extracted FR-checks (from `advisors.frontrunner_detector.extract_fr_checks`) to the persisted signal rows by exact `fr_key`, guards the comparator/fn mismatch traps, and classifies `remove`/`prune`/`keep`/`no_edge_data`. **Correct and unit-tested; not yet called from any production path as of this writing — see the caveat below.**
+3. **PM-ruling extension — classification + run-marker persistence.** AC-7 (the dashboard tab) renders PERSISTED rows only, never live-computes in a Flask request thread (extraction needs `/score` fetches — network I/O, banned on the dashboard path). `persist_classification_run` / `get_latest_classifications` / `get_latest_run_marker` are the write/read pair for a second table set in the same warehouse DB file. **The READ side (`get_latest_classifications`/`get_latest_run_marker`, consumed by the AI Advisor Frontrunner tab) is wired and live. The WRITE side (`persist_classification_run`) is NOT yet called from production** — fr-review's Cluster-D pass (`bf6f026b`) found `advisors/frontrunner_builder.py`'s background compute path does not yet call `classify_fr_checks` or `persist_classification_run`; wiring is in progress as a separate item. Until it lands, the classification tables have no production rows and the tab's "Live Signal Classification" subsection renders its honest empty state. See `DE-FR-SIGNALS-001` for the current status.
 
 Off-execution-path (never imported by `alpha_bot_execution.py`). `pymongo` is lazy-imported inside the fetch closure only (CC-2) — the module stays importable without `pymongo` installed. D-1 never-raises throughout.
 
@@ -57,25 +57,25 @@ AC-4. Joins extracted FR-checks to signal rows by exact `fr_key` AND the live ch
 
 **Classification (in order):** `remove` (Tier 1) when `cagr < 0 or sharpe < 0`; `prune` (Tier 2) when `sharpe < FR_WEAK_SHARPE_THRESHOLD` (strict `<`); `keep` otherwise; `no_edge_data` when the check is not edge-comparable at all (wrong comparator, wrong fn, or genuinely absent from the collection, or the matched doc has incomplete `cagr`/`sharpe`) — never scored against a mismatched backtest, never invented.
 
-**Returns:** one dict per input check: `{fr_key, fn, comparator, branch_path, classification, rsi_live, rsi_live_at, cagr, sharpe, sortino, calmar, max_drawdown, signal_fetch_ts}`. A `no_edge_data` row never carries a borrowed/mismatched edge stat — every stat field is `None`. Pure function (no I/O). Never raises (D-1) — malformed/empty inputs degrade to `[]`.
+**Returns:** one dict per input check: `{fr_key, fn, comparator, branch_path, classification, rsi_live, rsi_live_at, cagr, sharpe, sortino, calmar, max_drawdown, signal_fetch_ts}`. A `no_edge_data` row never carries a borrowed/mismatched edge stat — every stat field is `None`. Pure function (no I/O). Never raises (D-1) — malformed/empty inputs degrade to `[]`. **Correct and unit-tested at the function level; not yet called from any production path — see the Overview caveat.**
 
 ---
 
 ### `persist_classification_run(symphony_id: str, classification_rows: list[dict], *, signals_unavailable: bool = False, reason: str | None = None, computed_at: str | None = None, db_path=None) -> None`
 
-PM-ruling extension. Writes one `frontrunner_classification_snapshots` row per `fr_key` plus exactly one `frontrunner_run_metadata` row, sharing a single `computed_at` (explicit if passed, else generated once — never per-row). Valid with `classification_rows=[]` (the AC-5 degraded case) — the run marker is still written so the tab can render an honest degraded state.
+PM-ruling extension. Writes one `frontrunner_classification_snapshots` row per `fr_key` plus exactly one `frontrunner_run_metadata` row, sharing a single `computed_at` (explicit if passed, else generated once — never per-row). Valid with `classification_rows=[]` (the AC-5 degraded case) — the run marker is still written so the tab can render an honest degraded state. **Correct and unit-tested; not yet called from any production path — see the Overview caveat. The classification tables are empty in production until this is wired.**
 
 ---
 
 ### `get_latest_classifications(symphony_id=None, *, db_path=None) -> list[dict]`
 
-`symphony_id` given: that symphony's own latest batch (greatest `computed_at` for that `symphony_id`). `symphony_id=None`: EVERY symphony's own latest batch — a per-symphony greatest-n-per-group, never a single global max that would silently drop older symphonies' rows. `branch_path` is deserialized here (returned as a native list) — callers never `json.loads()` it themselves.
+`symphony_id` given: that symphony's own latest batch (greatest `computed_at` for that `symphony_id`). `symphony_id=None`: EVERY symphony's own latest batch — a per-symphony greatest-n-per-group, never a single global max that would silently drop older symphonies' rows. `branch_path` is deserialized here (returned as a native list) — callers never `json.loads()` it themselves. **Wired and live** — called by `app.py::ai_advisor_tab()`; currently returns `[]` in production since nothing writes to the underlying table yet (see `persist_classification_run` above).
 
 ---
 
 ### `get_latest_run_marker(symphony_id=None, *, db_path=None) -> dict | None`
 
-`symphony_id` given: that symphony's own latest marker row. `symphony_id=None`: the single most-recently-computed row across the WHOLE table, arbitrary which symphony that happens to be — deliberately NO aggregation (no any-symphony-degraded-implies-True logic). `None` when no row has ever been written for the requested scope.
+`symphony_id` given: that symphony's own latest marker row. `symphony_id=None`: the single most-recently-computed row across the WHOLE table, arbitrary which symphony that happens to be — deliberately NO aggregation (no any-symphony-degraded-implies-True logic). `None` when no row has ever been written for the requested scope. **Wired and live** — called by `app.py::ai_advisor_tab()`; currently returns `None` in production for the same reason as `get_latest_classifications` above.
 
 ---
 
@@ -91,11 +91,11 @@ Append-only. `id, fr_key, ticker, "window", threshold, comparator, rsi_live, rsi
 
 ### `frontrunner_classification_snapshots` (PM-ruling extension)
 
-Append-only. `id, symphony_id, fr_key, fn, comparator, branch_path, rsi_live, rsi_live_at, cagr, sharpe, sortino, calmar, max_drawdown, classification, signal_fetch_ts, computed_at, created_at`. `fr_key` stays `NOT NULL` — a crossover/vs check's `FRCheck.fr_key` is `None` in the pure dataclass, but `advisors/frontrunner_builder.py`'s persist call site formats a deterministic display-identity string into this column before the insert (see that module's AC-5 section). Indexed on `(symphony_id, computed_at)`.
+Append-only. `id, symphony_id, fr_key, fn, comparator, branch_path, rsi_live, rsi_live_at, cagr, sharpe, sortino, calmar, max_drawdown, classification, signal_fetch_ts, computed_at, created_at`. `fr_key` stays `NOT NULL` — a crossover/vs check's `FRCheck.fr_key` is `None` in the pure dataclass, but `advisors/frontrunner_builder.py`'s intended persist call site (not yet wired, see Overview) formats a deterministic display-identity string into this column before the insert (see that module's AC-5 section). Indexed on `(symphony_id, computed_at)`. Empty in production as of this writing — see the write-side caveat above.
 
 ### `frontrunner_run_metadata` (PM-ruling extension)
 
-Append-only. `id, symphony_id, signals_unavailable, reason, computed_at, created_at`. Indexed on `(symphony_id, computed_at)`.
+Append-only. `id, symphony_id, signals_unavailable, reason, computed_at, created_at`. Indexed on `(symphony_id, computed_at)`. Empty in production as of this writing — see the write-side caveat above.
 
 ## Internal Mechanics
 
@@ -116,7 +116,7 @@ The AC-4 classifier is implemented in this file per the Architecture doc, even t
 - `tests/advisors/test_frontrunner_signals_ingest.py` — AC-1/AC-2 (daily-cache wiring, D-1 degradation paths, warehouse persistence + pytest sentinel)
 - `tests/advisors/test_frontrunner_signals_classification.py` — AC-4 (comparator/fn guard traps, classification tiers against the known table, `no_edge_data` honesty)
 - `tests/advisors/test_frontrunner_signals_warehouse.py` — classification/run-marker persistence + accessor round-trips
-- 110/110 across the full RED batch on this branch as of `bf6f026b` (includes fr-data's AC-1/AC-2 tests, fr-engine's AC-4 tests, and fr-fe's AC-7 tab tests) — see `DE-FR-SIGNALS-001` in `DECISIONS.md` for the full verification record once fr-test/fr-review's final counts land.
+- 110/110 across the full RED batch on this branch as of `bf6f026b` (includes fr-data's AC-1/AC-2 tests, fr-engine's AC-4 tests, and fr-fe's AC-7 tab tests). **These are function/unit-level tests.** No test in this battery proves `frontrunner_builder`'s background compute path actually calls `classify_fr_checks`/`persist_classification_run` in production, because as of this writing it does not — see the Overview caveat and `DE-FR-SIGNALS-001` in `DECISIONS.md` for the current wiring status and the full verification record once fr-test/fr-review's final counts land.
 
 ## Internal Dependencies
 
@@ -125,6 +125,6 @@ The AC-4 classifier is implemented in this file per the Architecture doc, even t
 - `sqlite3`, `json`, `concurrent.futures`, `datetime`, `logging`, `os`, `sys` — stdlib only otherwise
 
 **Reverse dependencies (who calls into this module):**
-- `advisors/frontrunner_builder.py::resolve_signals_unavailable_marker` — calls `load_frontrunner_signals()` per-symphony (CC-2 lazy import) to resolve the AC-5 degraded marker
-- `advisors/frontrunner_builder.py`'s background compute path — calls `classify_fr_checks` (join) then `persist_classification_run` (write) inside the on-demand run executor and the weekly scheduler
-- `app.py::ai_advisor_tab()` — calls `get_latest_classifications()` / `get_latest_run_marker(symphony_id=<id>)` (once per unique `symphony_id`, never bare) to render the AC-7 Frontrunner tab's "Live Signal Classification" subsection — no live Composer/network I/O in the request thread
+- `advisors/frontrunner_builder.py::resolve_signals_unavailable_marker` — defined to call `load_frontrunner_signals()` per-symphony (CC-2 lazy import) to resolve the AC-5 degraded marker, but `resolve_signals_unavailable_marker` itself has no production caller yet (see that module's own doc, AC-5 status caveat)
+- `app.py::ai_advisor_tab()` — calls `get_latest_classifications()` / `get_latest_run_marker(symphony_id=<id>)` (once per unique `symphony_id`, never bare) to render the AC-7 Frontrunner tab's "Live Signal Classification" subsection — no live Composer/network I/O in the request thread. **This IS wired and live** — the gap is entirely on the write side (nothing populates the tables yet), not this read path.
+- **NOT YET a reverse dependency (tracked gap, fr-review Cluster-D finding, `bf6f026b`):** `advisors/frontrunner_builder.py`'s background compute path (the on-demand run executor + the weekly scheduler) does not currently call `classify_fr_checks` or `persist_classification_run` — this is the intended design per the Architecture doc, being wired as a separate, currently-open item. See `DE-FR-SIGNALS-001` for status.
