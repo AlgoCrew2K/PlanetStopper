@@ -44,24 +44,27 @@ FRCheck (fr-engine's locked dataclass, 2026-07-16):
                                     # last entry always "true" by construction
     node_id: str | None
     group_name: str | None
-    rhs_fn: str | None = None      # see OPEN QUESTION below
-    rhs_val: str | None = None     # see OPEN QUESTION below
+    rhs_fn: str | None = None      # RESOLVED below — optional enrichment, never
+                                    # load-bearing for joinability
+    rhs_val: str | None = None     # RESOLVED below — has no live population path;
+                                    # kept on the dataclass, always None in practice
     rhs_ticker: str | None = None  # populated for a ticker-vs-ticker condition
                                     # (rhs-fixed-value? False, rhs-val is a ticker string)
 
-OPEN QUESTION (asked of fr-engine 2026-07-16, NOT yet answered — this file
-deliberately does NOT assert a specific value for `rhs_fn` on the ticker-
-crossover exemplar below pending the answer): the verdict's own E5 shows a
-GENUINE ticker-crossover node's `rhs-fn` is semantically MEANINGFUL (e.g.
-LQD-vs-XLV really is `RSI(LQD) gt RSI(XLV)` — the RHS `rhs-fn` tells you
-WHICH indicator to apply to the RHS ticker), unlike the fixed-threshold
-case where `rhs-fn` is genuinely vestigial noise to ignore. So it is an open
-question whether FRCheck.rhs_fn should be populated ALONGSIDE rhs_ticker for
-a genuine crossover (describing "which indicator, on which ticker"), rather
-than the three buckets being strictly mutually exclusive as originally
-specified. This file only asserts the CERTAIN invariant (fr_key XOR
-rhs_ticker — a node is never both a fixed threshold AND a ticker crossover)
-until fr-engine confirms rhs_fn's role for the crossover case.
+RESOLVED (fr-engine, 2026-07-16, msg 2026-07-16T16:46:56.405Z, unblocking the
+prior OPEN QUESTION this file previously carried here): the invariant is
+**exactly one of `{fr_key populated}` or `{rhs_ticker populated}`** — never
+both, never neither, for any real extracted check. When `rhs_ticker` is
+populated, `rhs_fn` MAY populate alongside it as an optional enrichment
+(present on the node -> captured; absent -> stays None) — describing WHICH
+indicator is applied to the RHS ticker (e.g. LQD-vs-XLV really is
+`RSI(LQD) gt RSI(XLV)`; `rhs_fn` names the RHS `RSI`). This is the mirror
+image of the fixed-threshold case, where the SAME raw `rhs-fn` key is proven
+vestigial noise and must NOT be captured (capturing known-noise as "data"
+would mislead, not help). `rhs_val` has no live population path under the
+final discriminator (the "crossover with a numeric value" bucket it was
+originally meant for is structurally impossible) — kept on the dataclass
+for contract-shape stability, always None in both branches.
 
 CONTRACT HISTORY (for anyone reading old commits/PRs — the discriminator
 went through 3 revisions before landing; keeping the record honest rather
@@ -105,8 +108,12 @@ producer-captured real_tree_0{1-11}_*.json fixtures:
     real_tree_06_hvPiGP1O7AHfutHE3Fjy.json, if-child id
     0d98c2bb-1839-4eee-aa0b-6f10bf384871 — RSI(LQD) gt RSI(XLV),
     rhs-fixed-value?=False, rhs-val="XLV" (a ticker, not a number) — fires
-    UVXY. fr_key=None, threshold=None, rhs_ticker="XLV". rhs_fn's expected
-    value is the OPEN QUESTION above — not asserted here.
+    UVXY. fr_key=None, threshold=None, rhs_ticker="XLV",
+    rhs_fn="relative-strength-index" (RESOLVED — re-verified directly
+    against the raw node JSON: `"rhs-fn": "relative-strength-index"` is
+    present alongside `rhs-fn-params.window: 50`, matching the LHS RSI
+    window; fr-engine confirmed this is the exact expected enrichment
+    value, not just a plausible guess), rhs_val=None.
   - NO_VIX_EITHER_SIDE negative control: real_tree_01_5XjzXjdGnjh99MIsdM97.json,
     if-nodes cc0f45de-4025-4412-ba18-3a5fb9759eef and
     8fdd1b89-ff40-47e8-bbb7-b2ed4093c3da — genuine fixed RSI(SPY,10) gt 31
@@ -182,10 +189,11 @@ def test_genuine_fixed_threshold_extracts_fr_key_and_direction_explicit_branch_p
 
 def test_genuine_check_populates_exactly_fr_key_never_rhs_descriptor_fields(mod):
     """Invariant: for a genuine fixed-threshold check, ONLY fr_key/threshold
-    are populated — rhs_val/rhs_ticker must be None (rhs_fn's expected value
-    for a genuine check is ALSO None — the verdict is explicit that rhs-fn
-    is vestigial noise for the fixed case specifically, so this assertion IS
-    certain even though the crossover-case rhs_fn question is still open)."""
+    are populated — rhs_val/rhs_ticker must be None, and rhs_fn must ALSO be
+    None (the verdict is explicit that rhs-fn is vestigial noise for the
+    fixed case specifically and must not be captured — the mirror image of
+    the now-resolved ticker-crossover case, where rhs_fn IS a meaningful
+    enrichment; see module docstring RESOLVED section)."""
     tree = _load_tree("real_tree_11_qF5ZU7ALjrlhxrGEwsyJ.json")
     checks = mod.extract_fr_checks(tree)
     check = _find(checks, "44a6ad64-cb3f-419b-99ef-4ad749b0e2e4")
@@ -252,9 +260,11 @@ def test_ticker_vs_ticker_condition_populates_rhs_ticker_not_fr_key(mod):
     is a TICKER string ("XLV"), not a numeric threshold — a genuine crossover
     under every discriminator hypothesis that has ever been on the table.
     fr_key/threshold must be None, rhs_ticker must carry the real value.
-    Does NOT assert rhs_fn's value — see module docstring OPEN QUESTION
-    (fr-engine has not yet confirmed whether rhs_fn should be populated
-    alongside rhs_ticker for a genuine crossover)."""
+    RESOLVED (fr-engine, 2026-07-16 — see module docstring): rhs_fn now
+    asserts the confirmed enrichment value ("relative-strength-index",
+    independently re-verified against the raw node JSON, not just fr-engine's
+    say-so) — describing WHICH indicator applies to the RHS ticker. rhs_val
+    stays None; it has no live population path under the final discriminator."""
     tree = _load_tree("real_tree_06_hvPiGP1O7AHfutHE3Fjy.json")
     checks = mod.extract_fr_checks(tree)
 
@@ -267,6 +277,14 @@ def test_ticker_vs_ticker_condition_populates_rhs_ticker_not_fr_key(mod):
     assert check.threshold is None
     assert check.rhs_ticker == "XLV", f"expected rhs_ticker='XLV', got {check.rhs_ticker!r}"
     assert check.ticker == "LQD"
+    assert check.rhs_fn == "relative-strength-index", (
+        f"expected rhs_fn to carry the RHS indicator enrichment 'relative-strength-index' "
+        f"(the raw node's own rhs-fn value), got {check.rhs_fn!r}"
+    )
+    assert check.rhs_val is None, (
+        "rhs_val has no live population path under the final discriminator — the RHS "
+        "'value' for a ticker crossover IS rhs_ticker, never a separate rhs_val"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -287,10 +305,13 @@ def test_fr_key_and_rhs_ticker_are_mutually_exclusive_across_every_extracted_che
     """Hostile invariant sweep: a node is NEVER both a genuine fixed
     threshold AND a ticker crossover — exactly one of {fr_key populated},
     {rhs_ticker populated} holds (or neither, for a node whose RHS shape
-    extract_fr_checks doesn't recognize at all). Deliberately does NOT
-    assert anything about rhs_fn's role here — see module docstring OPEN
-    QUESTION; this is the narrower, certain half of the original 3-way
-    invariant, kept testable while that question is unresolved."""
+    extract_fr_checks doesn't recognize at all). Also sweeps the now-RESOLVED
+    rhs_val invariant (see module docstring): rhs_val has no live population
+    path under the final discriminator, so it must be None for every
+    extracted check regardless of which of the two buckets it falls in —
+    rhs_fn's own value is deliberately NOT swept here (it is optional
+    enrichment only in the rhs_ticker branch; its presence/absence tracks
+    the raw node, not a structural invariant to assert generically)."""
     tree = _load_tree(filename)
     checks = mod.extract_fr_checks(tree)
     assert checks, f"{filename}: expected extraction to find at least one FRCheck"
@@ -300,6 +321,10 @@ def test_fr_key_and_rhs_ticker_are_mutually_exclusive_across_every_extracted_che
             f"{filename} node_id={check.node_id!r}: fr_key and rhs_ticker are both populated "
             f"(fr_key={check.fr_key!r}, rhs_ticker={check.rhs_ticker!r}) — a node cannot be both "
             f"a genuine fixed threshold and a ticker crossover"
+        )
+        assert check.rhs_val is None, (
+            f"{filename} node_id={check.node_id!r}: rhs_val={check.rhs_val!r} — rhs_val has no "
+            f"live population path under the final discriminator and must always be None"
         )
 
 
