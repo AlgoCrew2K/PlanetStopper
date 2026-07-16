@@ -35,6 +35,12 @@ Evidence base (already captured, 2026-07-16): `docs/fr-signals-inputs/joined.jso
 
 ## Architecture
 - `advisors/frontrunner_signals.py` (NEW): fetch (bounded, projected) → daily cache → warehouse persist → accessors (`load_frontrunner_signals`, `get_latest_signal_rows`, `classify_fr_checks`). Pure-stdlib + pymongo lazy import inside fetch fn only.
+
+**[PM-RULING 2026-07-16 — classification persistence (closes the gap fr-fe found)]** AC-7 renders PERSISTED rows ONLY — never live compute in a Flask request thread (extraction needs `/score` fetches = network I/O, banned on the dashboard path). Therefore:
+1. Per-symphony classification rows (`symphony_id, fr_key, fn, comparator, branch_path, rsi_live, rsi_live_at, edge stats, classification, computed_at, signal_fetch_ts`) persist to the WAREHOUSE third-DB in a new append-only table alongside the signal snapshots — same DB file so the read accessor serves both without any cross-DB join.
+2. The run-level `signals_unavailable` marker (AC-5) persists in the SAME warehouse DB as run-level metadata queryable with the latest classification set — NOT on the state-DB `frontrunner_proposals` table (keeps state-DB schema untouched this cycle; no migration).
+3. Classification compute+persist runs in the builder's BACKGROUND path only (on-demand run executor + weekly scheduler) — the same place trees are already fetched.
+4. Ownership: fr-data = DDL + accessors (extends AC-2); fr-engine = compute + persist call sites (extends AC-3/4/5); fr-fe = reads the accessor only (AC-7). Staleness surfaced from BOTH `rsi_live_at` (>48h chip) and `computed_at` (rows may predate today's signal snapshot — render honestly, never imply live).
 - `advisors/frontrunner_detector.py` (MODIFY): AC-3 walk replaces/augments the signature; keep the AC-2 self-referential exclusion; expose `extract_fr_checks(tree) -> list[FRCheck]`.
 - `advisors/frontrunner_builder.py` (MODIFY): consume signals in generation (AC-5); provenance fields; degraded-mode marker.
 - `app.py` + `templates/ai_advisor.html` + `static/ai_advisor.js` (MODIFY): AC-7 surface on the FR tab.
