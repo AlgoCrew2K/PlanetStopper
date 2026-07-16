@@ -110,7 +110,9 @@ def test_extract_fr_checks_credential_less_is_pure_no_network_at_all(credential_
     try:
         result = frontrunner_detector.extract_fr_checks(tree)
     except Exception as exc:  # noqa: BLE001
-        pytest.fail(f"extract_fr_checks raised {type(exc).__name__}: {exc} under credential-less env")
+        pytest.fail(
+            f"extract_fr_checks raised {type(exc).__name__}: {exc} under credential-less env"
+        )
     assert isinstance(result, list)
 
 
@@ -120,7 +122,9 @@ def test_classify_fr_checks_credential_less_is_pure_no_network_at_all(credential
     try:
         result = frontrunner_signals.classify_fr_checks([], [])
     except Exception as exc:  # noqa: BLE001
-        pytest.fail(f"classify_fr_checks raised {type(exc).__name__}: {exc} under credential-less env")
+        pytest.fail(
+            f"classify_fr_checks raised {type(exc).__name__}: {exc} under credential-less env"
+        )
     assert result == []
 
 
@@ -206,10 +210,12 @@ def test_frontrunner_signals_module_lazy_imports_pymongo_inside_fetch_fn_only():
     import (which would make advisors.frontrunner_signals unimportable
     without pymongo installed, and would risk an import-time connection
     attempt on daemon startup)."""
-    source = _read_source("advisors/frontrunner_signals.py") if (
-        _REPO_ROOT / "advisors" / "frontrunner_signals.py"
-    ).exists() else pytest.fail(
-        "advisors/frontrunner_signals.py does not exist yet — expected RED until GREEN lands"
+    source = (
+        _read_source("advisors/frontrunner_signals.py")
+        if (_REPO_ROOT / "advisors" / "frontrunner_signals.py").exists()
+        else pytest.fail(
+            "advisors/frontrunner_signals.py does not exist yet — expected RED until GREEN lands"
+        )
     )
     tree = ast.parse(source)
     module_level_pymongo_imports = [
@@ -235,10 +241,12 @@ def test_frontrunner_signals_module_lazy_imports_pymongo_inside_fetch_fn_only():
 def test_frontrunner_signals_module_never_references_settings_write_allowlist():
     """AC-9: '_SETTINGS_WRITE_ALLOWLIST untouched' — the new module must never
     even reference this app.py symbol; it has no legitimate reason to."""
-    source = _read_source("advisors/frontrunner_signals.py") if (
-        _REPO_ROOT / "advisors" / "frontrunner_signals.py"
-    ).exists() else pytest.fail(
-        "advisors/frontrunner_signals.py does not exist yet — expected RED until GREEN lands"
+    source = (
+        _read_source("advisors/frontrunner_signals.py")
+        if (_REPO_ROOT / "advisors" / "frontrunner_signals.py").exists()
+        else pytest.fail(
+            "advisors/frontrunner_signals.py does not exist yet — expected RED until GREEN lands"
+        )
     )
     assert "_SETTINGS_WRITE_ALLOWLIST" not in source, (
         "advisors/frontrunner_signals.py references _SETTINGS_WRITE_ALLOWLIST — "
@@ -247,10 +255,12 @@ def test_frontrunner_signals_module_never_references_settings_write_allowlist():
 
 
 def test_frontrunner_signals_module_never_sets_live_execution():
-    source = _read_source("advisors/frontrunner_signals.py") if (
-        _REPO_ROOT / "advisors" / "frontrunner_signals.py"
-    ).exists() else pytest.fail(
-        "advisors/frontrunner_signals.py does not exist yet — expected RED until GREEN lands"
+    source = (
+        _read_source("advisors/frontrunner_signals.py")
+        if (_REPO_ROOT / "advisors" / "frontrunner_signals.py").exists()
+        else pytest.fail(
+            "advisors/frontrunner_signals.py does not exist yet — expected RED until GREEN lands"
+        )
     )
     assert "LIVE_EXECUTION" not in source, (
         "advisors/frontrunner_signals.py references LIVE_EXECUTION — AC-9 violation, "

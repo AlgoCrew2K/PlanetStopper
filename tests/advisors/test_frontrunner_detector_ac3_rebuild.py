@@ -206,6 +206,8 @@ def test_detector_never_raises_across_all_11_real_trees(mod):
         try:
             result = mod.detect_frontrunner_cascades(tree)
         except Exception as exc:  # noqa: BLE001
-            pytest.fail(f"{filename}: detect_frontrunner_cascades raised {type(exc).__name__}: {exc}")
+            pytest.fail(
+                f"{filename}: detect_frontrunner_cascades raised {type(exc).__name__}: {exc}"
+            )
         assert result.cascades is not None
         assert isinstance(result.cascades, list)

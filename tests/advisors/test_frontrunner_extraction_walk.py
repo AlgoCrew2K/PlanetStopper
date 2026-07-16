@@ -374,7 +374,9 @@ def test_no_vix_either_side_condition_never_extracted(mod):
     # The FRCheck's own node_id is the if-CHILD's id (the condition-bearing
     # branch), not the outer if-node's — check by ticker/window/threshold
     # signature instead of a node_id match, since we're asserting ABSENCE.
-    spy_10_31_checks = [c for c in checks if c.ticker == "SPY" and c.window == 10 and c.threshold == 31.0]
+    spy_10_31_checks = [
+        c for c in checks if c.ticker == "SPY" and c.window == 10 and c.threshold == 31.0
+    ]
     assert not spy_10_31_checks, (
         f"expected NO SPY:10:31 FRCheck from tree 01's NO_VIX_EITHER_SIDE nodes "
         f"({excluded_if_node_ids}) — the genuine gate exists but its TRUE branch never "

@@ -69,7 +69,9 @@ def detector():
     deliberately NOT named test_*.py so pytest never auto-collects it —
     mirrors test_execution_seam_detector_coverage.py's own loading idiom)."""
     module_path = _REPO_ROOT / "tests" / "tools" / "execution_seam_detector.py"
-    spec = importlib.util.spec_from_file_location("execution_seam_detector_mongo_check", module_path)
+    spec = importlib.util.spec_from_file_location(
+        "execution_seam_detector_mongo_check", module_path
+    )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)

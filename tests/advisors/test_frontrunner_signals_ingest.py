@@ -140,7 +140,9 @@ def test_uses_a_dedicated_cache_key_distinct_from_the_weekly_strategies_key(mod,
     with patch("advisors.atlas_cache.cached_pull", side_effect=_capture_and_shortcircuit):
         mod.load_frontrunner_signals()
 
-    assert captured.get("collection_name"), "load_frontrunner_signals must call cached_pull with a collection_name"
+    assert captured.get("collection_name"), (
+        "load_frontrunner_signals must call cached_pull with a collection_name"
+    )
     assert captured["collection_name"] != "captplanet.strategies", (
         f"cache key {captured['collection_name']!r} collides with community_strats.py's "
         "weekly key — AC-1 requires a DEDICATED key."
@@ -208,9 +210,9 @@ def test_fetch_projection_excludes_equity_curve_and_suppresses_object_id(mod, mo
         f"could not locate the projection dict in find() call: args={call.args} kwargs={call.kwargs}"
     )
     assert projection.get("_id") == 0, f"projection must suppress _id (got {projection!r})"
-    assert not any("equity_curve" in str(k) for k in projection if projection.get(k) not in (0, False)), (
-        f"projection must exclude backtest.equity_curve (a large per-doc array); got {projection!r}"
-    )
+    assert not any(
+        "equity_curve" in str(k) for k in projection if projection.get(k) not in (0, False)
+    ), f"projection must exclude backtest.equity_curve (a large per-doc array); got {projection!r}"
 
 
 def test_unmocked_fetch_fails_fast_not_slow(mod, monkeypatch):
@@ -272,7 +274,9 @@ def test_fast_fetch_returns_available_true_with_signals(mod, raw_atlas_docs, mon
         result = mod.load_frontrunner_signals()
         elapsed = time.monotonic() - t0
 
-    assert elapsed < 5.0, f"fast fetch must not incur timeout-wrapper overhead; elapsed={elapsed:.2f}s"
+    assert elapsed < 5.0, (
+        f"fast fetch must not incur timeout-wrapper overhead; elapsed={elapsed:.2f}s"
+    )
     assert result["available"] is True
     assert isinstance(result["signals"], list)
     assert len(result["signals"]) >= 1
@@ -330,9 +334,15 @@ def test_never_raises_across_multiple_seam_failure_modes(mod, monkeypatch):
     monkeypatch.setenv("MONGO_URI", "mongodb+srv://fake-uri-for-test/db")
 
     scenarios = [
-        ("cached_pull raises", patch("advisors.atlas_cache.cached_pull", side_effect=RuntimeError("boom"))),
+        (
+            "cached_pull raises",
+            patch("advisors.atlas_cache.cached_pull", side_effect=RuntimeError("boom")),
+        ),
         ("cached_pull returns garbage", patch("advisors.atlas_cache.cached_pull", return_value=42)),
-        ("cached_pull returns bad shape", patch("advisors.atlas_cache.cached_pull", return_value={"x": 1})),
+        (
+            "cached_pull returns bad shape",
+            patch("advisors.atlas_cache.cached_pull", return_value={"x": 1}),
+        ),
     ]
     for name, patcher in scenarios:
         with patcher:
