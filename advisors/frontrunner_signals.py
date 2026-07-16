@@ -257,7 +257,17 @@ def _ensure_classification_schema(conn: sqlite3.Connection) -> None:
 
 def _normalize_doc(doc: dict) -> dict | None:
     """Flatten one raw Atlas doc into a typed row. Returns None (dropped, never
-    fabricated) when the doc lacks its identity fields (fr_key/ticker)."""
+    fabricated) when the doc lacks its identity fields (fr_key/ticker).
+
+    No _strip_secrets call here (unlike lens_warehouse.persist_lens_snapshot) —
+    INTENTIONAL, not an oversight: this extracts a fixed, named-field allowlist
+    from the raw doc (fr_key/ticker/window/... below) and never persists the
+    raw doc payload itself, so there is no arbitrary-shaped dict for a stray
+    credential key to hide in. _strip_secrets exists to scrub payloads whose
+    shape isn't controlled by the persisting code (lens_warehouse's raw_payload
+    is caller-supplied and stored near-verbatim); a strict whitelist extraction
+    has no equivalent leak surface by construction.
+    """
     fr_key = doc.get("fr_key")
     ticker = doc.get("ticker")
     if not fr_key or not ticker:
