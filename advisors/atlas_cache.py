@@ -33,6 +33,7 @@ import json
 import logging
 import os
 import sqlite3
+import sys
 from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
@@ -45,8 +46,25 @@ _DEFAULT_TTL_DAYS = 7
 
 
 def _atlas_cache_db() -> str:
-    """Resolve the cache DB file path from ATLAS_CACHE_DB_PATH env (default alphabot_atlas_cache.db)."""  # noqa: E501  # un-wrappable long line
-    return os.environ.get("ATLAS_CACHE_DB_PATH", "alphabot_atlas_cache.db")
+    """Resolve the cache DB file path from ATLAS_CACHE_DB_PATH env (default alphabot_atlas_cache.db).
+
+    Guard: under pytest, resolving to the production basename is always a
+    test isolation bug — every caller (community_strats, frontrunner_signals,
+    universe_provider, ...) must pass an explicit non-default
+    ATLAS_CACHE_DB_PATH (or use a fixture that sets one) before touching this
+    cache. Mirrors database._db_file's exact pattern. Converts a silent
+    test-hits-real-warm-cache leak (confirmed live: an unmocked call returned
+    1,527 real rows) into a loud, immediate failure. CRITICAL: gated on
+    "pytest" in sys.modules so the live daemon (which never imports pytest)
+    is completely unaffected.
+    """
+    resolved = os.environ.get("ATLAS_CACHE_DB_PATH", "alphabot_atlas_cache.db")
+    if "pytest" in sys.modules and os.path.basename(resolved) == "alphabot_atlas_cache.db":
+        raise RuntimeError(
+            f"test attempted to open the production Atlas cache DB at {resolved!r} — "
+            "cache isolation bug: set the ATLAS_CACHE_DB_PATH env var to a temp file."
+        )
+    return resolved
 
 
 def _ensure_atlas_cache_schema(conn: sqlite3.Connection) -> None:
