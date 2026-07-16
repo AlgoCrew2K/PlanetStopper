@@ -8,14 +8,10 @@ WHY THIS FILE EXISTS (team-lead, 2026-07-16, URGENT dispatch): fr-review
 verified by reading _run_build_for_symphony end-to-end (frontrunner_builder.py:
 1339-1502, pre-this-cycle) that every AC-5 function
 (filter_positive_edge_signal_keys, candidate_contains_tier1_remove_key,
-build_signal_provenance, resolve_signals_unavailable_marker,
-persist_classification_run) is correct in ISOLATION
-(tests/advisors/test_frontrunner_builder_signal_gating.py,
-tests/advisors/test_frontrunner_signals_warehouse.py — both GREEN) and NOTHING
+build_signal_provenance) is correct in ISOLATION
+(tests/advisors/test_frontrunner_builder_signal_gating.py — GREEN) and NOTHING
 calls them from production: no classification, no edge stats in
-signal_context, no Tier-1 gate, no provenance in metrics_json, and
-persist_classification_run invoked NOWHERE. The warehouse tables and the
-AC-7 dashboard tab would stay permanently empty in production. This is the
+signal_context, no Tier-1 gate, no provenance in metrics_json. This is the
 "route-level-RED" lesson recurring at the builder level (memory:
 feedback_route_level_red_for_mocked_analytics_fns) — unit-testing the pieces
 can't catch missing wiring; only an integration-level test that drives the
@@ -30,34 +26,29 @@ composer_backtest_client.run_backtest, advisors.community_strats.
 load_community_strategies (Atlas — autouse, mirrors that file's own
 _no_live_atlas_calls guard), and advisors.frontrunner_signals.
 load_frontrunner_signals (the ONE new external seam this file adds — the
-Atlas frontrunner-signals collection read). extract_fr_checks,
-classify_fr_checks, and persist_classification_run/get_latest_classifications/
-get_latest_run_marker are the REAL functions, run for real, so a genuinely
+Atlas frontrunner-signals collection read). extract_fr_checks and
+classify_fr_checks are the REAL functions, run for real, so a genuinely
 wired implementation is provably exercised end-to-end — not spied-and-stubbed
 into passing.
 
-WAREHOUSE DB ROUTING: advisors.frontrunner_signals._warehouse_db_file enforces
-a pytest sentinel (RuntimeError on db_path=None under pytest — mirrors
-lens_warehouse._warehouse_db_file). _run_build_for_symphony's current
-signature has no db_path parameter, and this file deliberately does NOT
-prescribe whether fr-engine's wiring threads an explicit db_path kwarg through
-from run_frontrunner_build or relies on the default. Patching
-_warehouse_db_file directly (the lowest common seam every persist/read call
-funnels through) routes every real warehouse call to a temp file regardless
-of which shape fr-engine picks — forcing the OUTCOME (rows land somewhere
-inspectable) without over-pinning the call-site signature, per team-lead's
-explicit instruction ("force that shape without over-pinning line numbers").
-
-Team-lead's 6-point ask (URGENT dispatch, 2026-07-16T17:17:22.800Z) + the
-explicit negative pin, each mapped to one test below:
+DE-PRODUCTIZATION (2026-07-16, ADDENDUM 2 AC-R2, operator directive): the
+classification-persistence layer (persist_classification_run,
+get_latest_classifications, get_latest_run_marker, the WAREHOUSE DB ROUTING
+fixture that patched _warehouse_db_file) was REMOVED from this file — it
+productized a one-time PM cull-analysis deliverable, not a product ask. The
+builder still classifies every run in memory; it no longer persists a row
+or a marker. Team-lead's original 7-point ask (URGENT dispatch,
+2026-07-16T17:17:22.800Z) had 2 points (#2 persist+read-back, #7 the
+negative pin on the read accessors) about that removed surface — both
+DELETED here; the remaining 5, each mapped to one test below, are
+unaffected in-memory wiring coverage:
   1. extract_fr_checks -> classify_fr_checks actually execute on the real run
-  2. persist_classification_run called + warehouse contains the rows after
-  3. generation prompt carries the positive-edge signal's stat lines
-  4. a Tier-1-remove-watching candidate is rejected before any backtest call
-  5. metrics_json on a persisted proposal carries signal_provenance
-  6. signals-unavailable degrades to structural-only AND persists the marker
-  7. (negative pin) a healthy-signals run does NOT show the empty-state
-     condition on get_latest_classifications/get_latest_run_marker
+  2. generation prompt carries the positive-edge signal's stat lines
+  3. a Tier-1-remove-watching candidate is rejected before any backtest call
+  4. metrics_json on a persisted proposal carries signal_provenance
+  5. signals-unavailable degrades to structural-only generation (never
+     silently skips the symphony) — the "AND persists the marker" half of
+     the original point #6 was deleted along with the persistence layer
 """
 
 from __future__ import annotations
@@ -88,20 +79,6 @@ def _no_live_atlas_calls():
         "advisors.community_strats.load_community_strategies",
         return_value={"available": False, "candidates": [], "stats": {}, "source": "captplanet"},
     ):
-        yield
-
-
-@pytest.fixture
-def warehouse_db_path(tmp_path) -> str:
-    return str(tmp_path / "test_frontrunner_wiring_warehouse.db")
-
-
-@pytest.fixture(autouse=True)
-def _route_warehouse_to_temp_db(warehouse_db_path):
-    """Every real frontrunner_signals persistence/read call in this file must
-    land in a temp file, never the production warehouse DB, and never trip
-    the pytest sentinel — see module docstring's WAREHOUSE DB ROUTING note."""
-    with patch("advisors.frontrunner_signals._warehouse_db_file", return_value=warehouse_db_path):
         yield
 
 
@@ -143,7 +120,9 @@ def _make_fake_result(n_days: int = 100, base_return: float = 0.001):
         returns[d.isoformat()] = base_return * (1 + (i % 5) * 0.1 - 0.2)
         d += timedelta(days=1)
 
-    return BacktestResult(stats={"sharpe": 0.5, "cagr": 0.08}, data_warnings=[], daily_returns=returns)
+    return BacktestResult(
+        stats={"sharpe": 0.5, "cagr": 0.08}, data_warnings=[], daily_returns=returns
+    )
 
 
 def _make_shaped_result(shape_pct: list, n_days: int = 100):
@@ -159,7 +138,9 @@ def _make_shaped_result(shape_pct: list, n_days: int = 100):
         returns[d.isoformat()] = shape_pct[i % len(shape_pct)] / 100.0
         d += timedelta(days=1)
 
-    return BacktestResult(stats={"sharpe": 0.5, "cagr": 0.08}, data_warnings=[], daily_returns=returns)
+    return BacktestResult(
+        stats={"sharpe": 0.5, "cagr": 0.08}, data_warnings=[], daily_returns=returns
+    )
 
 
 def _mocked_fable_overlay_client(
@@ -182,7 +163,11 @@ def _mocked_fable_overlay_client(
             "rhs": {"fixed": threshold},
         },
         "then": [
-            {"kind": "weight", "scheme": "equal", "children": [{"kind": "asset", "ticker": vix_ticker}]}
+            {
+                "kind": "weight",
+                "scheme": "equal",
+                "children": [{"kind": "asset", "ticker": vix_ticker}],
+            }
         ],
         "else": [
             {
@@ -280,7 +265,9 @@ def test_extract_fr_checks_and_classify_fr_checks_actually_execute_on_the_real_r
     assert spy_classify.called, "classify_fr_checks was never called during a real build run"
     classify_call = spy_classify.call_args
     signal_rows_arg = (
-        classify_call.args[1] if len(classify_call.args) > 1 else classify_call.kwargs.get("signal_rows")
+        classify_call.args[1]
+        if len(classify_call.args) > 1
+        else classify_call.kwargs.get("signal_rows")
     )
     assert signal_rows_arg == fake_signals["signals"], (
         f"classify_fr_checks was not given the signal rows load_frontrunner_signals "
@@ -289,51 +276,7 @@ def test_extract_fr_checks_and_classify_fr_checks_actually_execute_on_the_real_r
 
 
 # ---------------------------------------------------------------------------
-# 2. persist_classification_run called + warehouse contains the rows after
-# ---------------------------------------------------------------------------
-
-
-def test_persist_classification_run_is_called_and_warehouse_contains_the_rows_after_the_run(
-    fbld, incumbent_symphony, warehouse_db_path
-):
-    """AC-5 wiring: the classified rows must actually be persisted, not just
-    computed in memory — proven by reading them back via
-    get_latest_classifications after the run, through the temp db_path this
-    file routes _warehouse_db_file to (see module docstring)."""
-    from advisors import frontrunner_signals
-
-    fake_signals = _healthy_signals()
-    fake_result = _make_fake_result()
-
-    with (
-        patch("symphony_logic.fetch_symphony_score", return_value=incumbent_symphony),
-        patch("advisors.frontrunner_signals.load_frontrunner_signals", return_value=fake_signals),
-        _patched_fable(fbld),
-        patch("advisors.composer_backtest_client.run_backtest", return_value=fake_result),
-        patch("database.insert_frontrunner_proposal"),
-        patch("database.insert_advisor_observation"),
-        patch("database.insert_dof_ledger_row"),
-    ):
-        fbld._run_build_for_symphony("wiring-test-symphony")
-
-    rows = frontrunner_signals.get_latest_classifications(
-        "wiring-test-symphony", db_path=warehouse_db_path
-    )
-    assert rows, (
-        "get_latest_classifications returned no rows after a real build run — "
-        "persist_classification_run was never actually called, so the "
-        "warehouse tables (fr-data's Cluster A) and the AC-7 dashboard tab "
-        "(fr-fe's Cluster E) would stay permanently empty in production"
-    )
-    fr_keys = {r["fr_key"] for r in rows}
-    assert "SPY:10:31" in fr_keys, (
-        f"expected the incumbent's own classified fr_key 'SPY:10:31' among "
-        f"the persisted rows, got {sorted(fr_keys)}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# 3. generation prompt carries the positive-edge signal's stat lines
+# 2. generation prompt carries the positive-edge signal's stat lines
 # ---------------------------------------------------------------------------
 
 
@@ -395,7 +338,7 @@ def test_generation_prompt_carries_positive_edge_signal_stat_lines(fbld, incumbe
 
 
 # ---------------------------------------------------------------------------
-# 4. a Tier-1-remove-watching candidate is rejected before any backtest call
+# 3. a Tier-1-remove-watching candidate is rejected before any backtest call
 # ---------------------------------------------------------------------------
 
 
@@ -435,7 +378,7 @@ def test_run_build_rejects_a_tier1_remove_candidate_before_any_backtest_spend(
 
 
 # ---------------------------------------------------------------------------
-# 5. metrics_json on a persisted proposal carries signal_provenance
+# 4. metrics_json on a persisted proposal carries signal_provenance
 # ---------------------------------------------------------------------------
 
 
@@ -495,22 +438,23 @@ def test_persisted_proposal_metrics_json_carries_signal_provenance(fbld, incumbe
 
 
 # ---------------------------------------------------------------------------
-# 6. signals-unavailable degrades to structural-only AND persists the marker
+# 5. signals-unavailable degrades to structural-only generation
 # ---------------------------------------------------------------------------
 
 
-def test_signals_unavailable_run_proceeds_structural_only_and_persists_the_marker(
-    fbld, incumbent_symphony, warehouse_db_path
-):
+def test_signals_unavailable_run_proceeds_structural_only(fbld, incumbent_symphony):
     """AC-5(d): 'When signals are unavailable (D-1 degraded), generation
-    degrades to structural-only WITH an explicit signals_unavailable marker
-    on the run — never silently.' Proves BOTH halves: (1) the run still
-    proceeds to generate/backtest a candidate structurally (never aborts the
-    whole symphony just because Atlas is down), and (2) get_latest_run_marker
-    reflects signals_unavailable=True with the D-1 reason string, not
-    silently absent."""
-    from advisors import frontrunner_signals
+    degrades to structural-only ... never silently [skips the symphony].'
+    Proves the run still proceeds to generate/backtest a candidate
+    structurally (never aborts the whole symphony just because Atlas is
+    down).
 
+    DE-PRODUCTIZATION NOTE (2026-07-16, ADDENDUM 2 AC-R2): this test
+    originally ALSO asserted the degraded run persisted a run marker
+    (get_latest_run_marker) — that persistence layer was removed (it
+    productized a one-time PM cull-analysis deliverable, not a product
+    ask); the underlying "never silently skip the symphony" behavior this
+    test now covers is unaffected and remains a real AC-5(d) requirement."""
     degraded_signals = {
         "available": False,
         "reason": "AtlasFetchTimeout",
@@ -522,7 +466,9 @@ def test_signals_unavailable_run_proceeds_structural_only_and_persists_the_marke
 
     with (
         patch("symphony_logic.fetch_symphony_score", return_value=incumbent_symphony),
-        patch("advisors.frontrunner_signals.load_frontrunner_signals", return_value=degraded_signals),
+        patch(
+            "advisors.frontrunner_signals.load_frontrunner_signals", return_value=degraded_signals
+        ),
         _patched_fable(fbld),
         patch(
             "advisors.composer_backtest_client.run_backtest", return_value=fake_result
@@ -537,68 +483,4 @@ def test_signals_unavailable_run_proceeds_structural_only_and_persists_the_marke
         "the build aborted entirely when signals were unavailable — AC-5(d) "
         "requires degrading to structural-only generation, never silently "
         "skipping the whole symphony just because Atlas is down"
-    )
-
-    marker = frontrunner_signals.get_latest_run_marker(
-        "wiring-degraded-symphony", db_path=warehouse_db_path
-    )
-    assert marker is not None, (
-        "no run marker was persisted for a symphony run with signals "
-        "unavailable — AC-5(d) requires an explicit marker, never silence"
-    )
-    assert marker["signals_unavailable"] is True
-    assert marker["reason"] == "AtlasFetchTimeout", (
-        f"the D-1 reason must be propagated onto the persisted run marker, "
-        f"not swallowed; got {marker.get('reason')!r}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# 7. Negative pin: a healthy-signals run does NOT show the empty-state
-# ---------------------------------------------------------------------------
-
-
-def test_signals_available_run_does_not_show_the_empty_state_condition(
-    fbld, incumbent_symphony, warehouse_db_path
-):
-    """Negative pin (team-lead's explicit ask): the healthy-signals case must
-    NOT show the degraded/empty-state condition on get_latest_classifications
-    or get_latest_run_marker — proving the wiring is genuinely conditional on
-    real signal availability, not a heuristic that always reports one state
-    regardless of input (the exact failure mode a mock that always returns a
-    canned 'degraded' or always returns a canned 'healthy' result would
-    produce without anyone noticing)."""
-    from advisors import frontrunner_signals
-
-    fake_signals = _healthy_signals(fr_key="SPY:10:31", cagr=0.06, sharpe=1.0)
-    fake_result = _make_fake_result()
-
-    with (
-        patch("symphony_logic.fetch_symphony_score", return_value=incumbent_symphony),
-        patch("advisors.frontrunner_signals.load_frontrunner_signals", return_value=fake_signals),
-        _patched_fable(fbld),
-        patch("advisors.composer_backtest_client.run_backtest", return_value=fake_result),
-        patch("database.insert_frontrunner_proposal"),
-        patch("database.insert_advisor_observation"),
-        patch("database.insert_dof_ledger_row"),
-    ):
-        fbld._run_build_for_symphony("wiring-healthy-symphony")
-
-    rows = frontrunner_signals.get_latest_classifications(
-        "wiring-healthy-symphony", db_path=warehouse_db_path
-    )
-    assert rows, "expected classification rows to be persisted for a healthy-signals run"
-    assert not all(r["classification"] == "no_edge_data" for r in rows), (
-        f"every persisted row is no_edge_data even though signals were "
-        f"available and a positive-edge key ('SPY:10:31', cagr=0.06, "
-        f"sharpe=1.0) was supplied — the empty-state condition is showing "
-        f"up when it should not; rows={rows!r}"
-    )
-
-    marker = frontrunner_signals.get_latest_run_marker(
-        "wiring-healthy-symphony", db_path=warehouse_db_path
-    )
-    assert marker is not None, "expected a run marker to be persisted even for a healthy run"
-    assert marker["signals_unavailable"] is False, (
-        f"expected signals_unavailable=False for a healthy run, got marker={marker}"
     )

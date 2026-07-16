@@ -1,47 +1,43 @@
-"""RED tests — AC-5: builder generation gating on signal data + the
-crossover/vs persist-format behavior (PM ruling extension).
+"""RED tests — AC-5: builder generation gating on signal data (in-memory) +
+the crossover/vs display-key format behavior.
 
-Module under test: advisors.frontrunner_builder (EXISTING module, MODIFIED —
-new signal-consumption gating + a new persist call site in the background
-build path). Implementer: fr-engine.
+Module under test: advisors.frontrunner_builder. Implementer: fr-engine.
 
-CONTRACT SOURCE (feature-plans/frontrunner-signals.md AC-5, PM ruling
-committed 101df72a, crossover-persist reversal 2026-07-16):
+CONTRACT SOURCE (feature-plans/frontrunner-signals.md AC-5; crossover-format
+reversal 2026-07-16):
 
 AC-5 core: "Candidate frontrunner generation consumes the signal data:
 proposed checks must have a matching fr_key with positive edge (cagr > 0 and
 sharpe > 0); any candidate containing a Tier-1 remove key is rejected before
 backtest spend; generation prompt/context receives the edge stat lines for
 the signals it may use. Provenance on each candidate records the signal keys
-+ their edge stats. When signals are unavailable (D-1 degraded), generation
-degrades to structural-only WITH an explicit signals_unavailable marker on
-the run — never silently."
++ their edge stats."
 
-PM ruling (101df72a): the builder's background path computes classification
-(extract_fr_checks + classify_fr_checks) AND persists it via fr-data's
-`persist_classification_run(symphony_id, classification_rows, *,
-signals_unavailable=..., reason=..., computed_at=..., db_path=...)`.
-`signals_unavailable` is per-symphony (fr-engine-confirmed, 2026-07-16) —
-computed independently inside each per-symphony call, `symphony_id` always
-populated (never a fleet-wide/None persist call in production).
-
-Crossover-persist reversal (team-lead, 2026-07-16, broadcast ruling —
-supersedes an earlier "filter crossovers out before persist" design):
-crossover/ticker-vs-ticker FRChecks (fr_key=None) ARE persisted, formatted
-to a display-form key at the persist call site (fr-engine's 3 canonical
-functions):
+DE-PRODUCTIZATION (2026-07-16, ADDENDUM 2 AC-R2, operator directive): the
+classification-persistence layer this file used to also cover
+(`persist_classification_run` + the `resolve_signals_unavailable_marker`
+run-marker helper, whose ONLY caller was that persist call) was REMOVED — it
+productized a one-time PM cull-analysis deliverable, not a product ask. The
+builder still computes classification in memory every run
+(extract_fr_checks + classify_fr_checks); it no longer persists a marker or
+a row. This file now covers ONLY the in-memory gating/formatting functions:
+positive-edge proposal gating, the Tier-1 pre-spend veto, provenance
+attachment, and the crossover/vs display-key format functions below
+(team-lead, 2026-07-16, broadcast ruling): crossover/ticker-vs-ticker
+FRChecks (fr_key=None) are FORMATTED to a display-form key by fr-engine's 3
+canonical functions:
     genuine:   passthrough of FRCheck.fr_key
     crossover: f"{ticker}:{window}:xover({rhs_fn},{rhs_val})"
     vs:        f"{ticker}:{window}:vs({rhs_ticker})"
 Every crossover/vs row's classification is always "no_edge_data", every edge
-stat is None, and — per AC-5(d) below — such a row must NEVER appear in
-anything the builder proposes from.
+stat is None, and such a row must NEVER appear in anything the builder
+proposes from.
 
 This file mocks the signal/classification seams (classify_fr_checks,
-extract_fr_checks, persist_classification_run) rather than re-driving the
-full existing generation pipeline (SDK calls, plan_tree_compiler,
-backtest_gate_engine) — those are covered by the existing frontrunner-builder
-test suite (PR #96) and are unaffected by this cycle's scope.
+extract_fr_checks) rather than re-driving the full existing generation
+pipeline (SDK calls, plan_tree_compiler, backtest_gate_engine) — those are
+covered by the existing frontrunner-builder test suite (PR #96) and are
+unaffected by this cycle's scope.
 """
 
 from __future__ import annotations
@@ -110,7 +106,9 @@ def test_candidate_containing_a_tier1_remove_key_is_rejected_before_backtest_spe
 
     with patch(
         "advisors.composer_backtest_client.run_backtest",
-        side_effect=AssertionError("backtest called on a Tier-1-remove candidate — veto did not fire pre-spend"),
+        side_effect=AssertionError(
+            "backtest called on a Tier-1-remove candidate — veto did not fire pre-spend"
+        ),
     ):
         rejected = mod.candidate_contains_tier1_remove_key(
             candidate_watching_removed_key, classification_rows
@@ -146,39 +144,6 @@ def test_candidate_provenance_records_signal_keys_and_their_edge_stats(mod):
 
 
 # ---------------------------------------------------------------------------
-# AC-5(d): signals_unavailable — never silent
-# ---------------------------------------------------------------------------
-
-
-def test_signals_unavailable_degrades_to_structural_only_with_explicit_marker(mod):
-    """AC-5: 'When signals are unavailable (D-1 degraded), generation
-    degrades to structural-only WITH an explicit signals_unavailable marker
-    on the run — never silently.'"""
-    with patch(
-        "advisors.frontrunner_signals.load_frontrunner_signals",
-        return_value={"available": False, "reason": "AtlasFetchTimeout", "signals": [], "stats": {}, "source": "captplanet"},
-    ):
-        run_marker = mod.resolve_signals_unavailable_marker("sym-degraded")
-
-    assert run_marker["signals_unavailable"] is True
-    assert run_marker["reason"] == "AtlasFetchTimeout", (
-        f"the D-1 reason must be propagated onto the run marker, not swallowed; "
-        f"got {run_marker.get('reason')!r}"
-    )
-
-
-def test_signals_available_produces_signals_unavailable_false(mod):
-    with patch(
-        "advisors.frontrunner_signals.load_frontrunner_signals",
-        return_value={"available": True, "reason": None, "signals": [{"fr_key": "SPY:10:80"}], "stats": {}, "source": "captplanet"},
-    ):
-        run_marker = mod.resolve_signals_unavailable_marker("sym-healthy")
-
-    assert run_marker["signals_unavailable"] is False
-    assert run_marker["reason"] is None
-
-
-# ---------------------------------------------------------------------------
 # PM-ruling extension: crossover/vs persist-format at the builder's call site
 # ---------------------------------------------------------------------------
 
@@ -186,7 +151,9 @@ def test_signals_available_produces_signals_unavailable_false(mod):
 def test_crossover_fr_check_is_formatted_to_xover_display_key_before_persist(mod):
     """fr-engine's canonical format function: f"{ticker}:{window}:xover({rhs_fn},{rhs_val})".
     Reproducible byte-for-byte given the same node — the Paragons example."""
-    formatted = mod.format_crossover_fr_key(ticker="SPY", window=10, rhs_fn="moving-average-return", rhs_val="31")
+    formatted = mod.format_crossover_fr_key(
+        ticker="SPY", window=10, rhs_fn="moving-average-return", rhs_val="31"
+    )
     assert formatted == "SPY:10:xover(moving-average-return,31)"
 
 
@@ -198,7 +165,9 @@ def test_vs_ticker_comparison_is_formatted_to_vs_display_key_before_persist(mod)
     hedge — the collision-freedom property (letters+parens never appear in a
     genuine numeric segment) holds regardless and is tested separately."""
     formatted = mod.format_vs_fr_key(ticker="LQD", window=None, rhs_ticker="XLV")
-    assert formatted == "LQD:None:vs(XLV)", f"expected the literal f-string rendering, got {formatted!r}"
+    assert formatted == "LQD:None:vs(XLV)", (
+        f"expected the literal f-string rendering, got {formatted!r}"
+    )
 
     formatted_with_window = mod.format_vs_fr_key(ticker="LQD", window=10, rhs_ticker="XLV")
     assert formatted_with_window == "LQD:10:vs(XLV)"
@@ -209,7 +178,9 @@ def test_display_key_formats_never_collide_with_a_genuine_atlas_key_shape(mod):
     always a plain number; both display forms always contain a letter and a
     parenthesis, which can never appear in a genuine numeric segment —
     structurally disjoint string spaces."""
-    xover_key = mod.format_crossover_fr_key(ticker="SPY", window=10, rhs_fn="moving-average-return", rhs_val="31")
+    xover_key = mod.format_crossover_fr_key(
+        ticker="SPY", window=10, rhs_fn="moving-average-return", rhs_val="31"
+    )
     vs_key = mod.format_vs_fr_key(ticker="LQD", window=10, rhs_ticker="XLV")
 
     for key in (xover_key, vs_key):
@@ -223,7 +194,11 @@ def test_crossover_row_persisted_with_no_edge_data_and_null_edge_stats(mod):
     classification='no_edge_data' and every edge stat None — never joined,
     since there is nothing to join a crossover key to."""
     row = mod.build_classification_row_for_crossover(
-        ticker="SPY", window=10, rhs_fn="moving-average-return", rhs_val="31", branch_path=["false", "true"]
+        ticker="SPY",
+        window=10,
+        rhs_fn="moving-average-return",
+        rhs_val="31",
+        branch_path=["false", "true"],
     )
     assert row["fr_key"] == "SPY:10:xover(moving-average-return,31)"
     assert row["classification"] == "no_edge_data"
@@ -239,7 +214,11 @@ def test_crossover_row_never_appears_in_positive_edge_filtered_keys(mod):
     rows = [
         _classification_row("SPY:10:80", "keep", cagr=0.06, sharpe=1.0),
         mod.build_classification_row_for_crossover(
-            ticker="SPY", window=10, rhs_fn="moving-average-return", rhs_val="31", branch_path=["false", "true"]
+            ticker="SPY",
+            window=10,
+            rhs_fn="moving-average-return",
+            rhs_val="31",
+            branch_path=["false", "true"],
         ),
     ]
     positive_edge_keys = mod.filter_positive_edge_signal_keys(rows)
