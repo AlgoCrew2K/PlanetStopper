@@ -659,6 +659,8 @@ frontrunner_proposals = database.get_pending_frontrunner_proposals()
 
 **`candidate_tree` bounding (never rendered as a live dict):** the full spliced candidate symphony (potentially 8,000+ nodes) is popped off each row and replaced with a JSON-dumped, truncated preview string (`_FR_TREE_PREVIEW_MAX_CHARS = 4000`) stamped as `candidate_tree_preview` before the row ever reaches the template. Wrapped in `try/except` -- any failure (query error, malformed row) leaves `frontrunner_proposals = []` and the template renders its existing empty-state; never a 500.
 
+**Frontrunner-signals cycle addition (2026-07-16, `ae5fe22d`, feature-plans/frontrunner-signals.md AC-7):** the same `ai_advisor_tab()` function additively calls `advisors.frontrunner_signals.get_latest_classifications()` and `get_latest_run_marker(symphony_id=<id>)` (once per unique `symphony_id`, never bare) to prefetch the Frontrunner Builder tab's new read-only "Live Signal Classification" subsection — a per-symphony table of `fr_key → live RSI → edge stats → keep/prune/remove/no_edge_data` rows. No live Composer/network I/O in the request thread (both accessors read only from the warehouse third-DB, `alphabot_warehouse.db`). Render-degrade path logs a type-name-only message and falls back to the template's empty state. **As of this writing, this read path is wired and returns empty in production** — the corresponding write path (`advisors.frontrunner_signals.classify_fr_checks`/`persist_classification_run`) has zero production call sites (fr-review's Cluster-D finding, `DE-FR-SIGNALS-001` in `DECISIONS.md`); see [advisors/frontrunner_signals](advisors_frontrunner_signals.md) for the full accessor contract and current wiring status.
+
 ---
 
 ### State Helpers
