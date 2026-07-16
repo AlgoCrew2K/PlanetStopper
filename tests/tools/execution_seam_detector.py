@@ -8,11 +8,16 @@ Run it manually as part of a PM/reviewer re-gate:
 
 (no args -> the R2-3 asset-swap test superset, see _R2_3_DEFAULT_TARGETS below)
 
-Covers BOTH real-money network seams this reasoning port introduces or
-touches (team-lead ruling, R2-3): the LLM seam (anthropic.Anthropic) AND the
-Composer backtest seam (the requests.post call composer_backtest_client.py
-wraps). Each is patched to record-then-raise on every reachable-unmocked
-call, the given pytest target(s) are run IN-PROCESS from a neutral cwd
+Covers THREE real-money/real-network seams this project introduces or
+touches: the LLM seam (anthropic.Anthropic), the Composer backtest seam (the
+requests.post call composer_backtest_client.py wraps) — both R2-3 — and the
+Atlas/Mongo seam (pymongo.MongoClient) added for the frontrunner-signals
+cycle (fr-review finding, team-lead-ratified hard AC-8 scope, 2026-07-16):
+AC-1 introduces the first live-Mongo read path outside community_strats.py's
+own tests, and per standing project lesson, credential-less-pass alone is
+not a sufficient no-live-API detector. Each seam is patched to
+record-then-raise on every reachable-unmocked call, the given pytest
+target(s) are run IN-PROCESS from a neutral cwd
 (mirrors this project's "pytest.main(), neutral dir" no-xdist gate technique
 — never spawns a nested subprocess pytest, always -n0, per the host
 memory-cap hard rule — CLAUDE.md's "NEVER run full suite uncapped or with
@@ -77,6 +82,11 @@ class LiveComposerCallError(AssertionError):
     attempted while the detector is active."""
 
 
+class LiveMongoClientConstructedError(AssertionError):
+    """Raised the instant a real pymongo.MongoClient(...) is constructed
+    while the detector is active (frontrunner-signals cycle, AC-8)."""
+
+
 def _is_composer_backtest_url(url: object) -> bool:
     """Return True iff `url` is (or targets) Composer's /backtest endpoint.
 
@@ -102,25 +112,65 @@ def _extract_url(args: tuple, kwargs: dict) -> object:
     return kwargs.get("url")
 
 
-def run_seam_detector(test_paths: list[str]) -> tuple[int, list[str], list[str]]:
-    """Run `test_paths` under pytest with BOTH the Anthropic SDK constructor
-    AND the Composer /backtest network call patched to record-then-raise.
+def make_mongo_guard() -> tuple[list[str], object]:
+    """Return (call_sites, guard_fn) for the Mongo/Atlas seam — extracted as
+    its own factory (not inlined in run_seam_detector) so the raise mechanism
+    is independently testable WITHOUT going through a nested pytest.main()
+    sub-run.
+
+    WHY THIS MATTERS: run_seam_detector's own patch is applied in the OUTER
+    process, then pytest.main() launches a FRESH nested pytest session —
+    tests/conftest.py's own session-autouse `_no_live_mongo_atlas_connections`
+    fixture re-establishes ITS OWN `patch("pymongo.MongoClient", ...)` inside
+    that nested session, which (being the innermost/most-recently-applied
+    patch for the session's duration) shadows whatever the OUTER caller
+    patched beforehand. A test that calls `run_seam_detector([...])` and then
+    asserts on `mongo_calls` would actually be proving conftest's guard
+    fires, not this tool's own — a false-positive self-test. Calling
+    `make_mongo_guard()` directly, inside an ALREADY-RUNNING test (no nested
+    pytest.main() involved), sidesteps this entirely: unittest.mock.patch
+    correctly nests (test_no_live_mongo_guard.py's own
+    test_a_tests_own_pymongo_mock_still_overrides_the_guard proves a test's
+    own local patch takes precedence over the outer session fixture for its
+    duration) — applying this guard as the test's OWN innermost patch
+    demonstrates the detector's real raise mechanism, uncontaminated by the
+    nested-session shadowing problem.
+    """
+    calls: list[str] = []
+
+    def _record_then_raise_mongo(self, *args, **kwargs):
+        calls.append("".join(traceback.format_stack(limit=8)))
+        raise LiveMongoClientConstructedError(
+            "execution_seam_detector: a REAL pymongo.MongoClient(...) was constructed "
+            "during this run — an Atlas-seam mock is leaking. See the recorded call site "
+            "in the returned construction list."
+        )
+
+    return calls, _record_then_raise_mongo
+
+
+def run_seam_detector(test_paths: list[str]) -> tuple[int, list[str], list[str], list[str]]:
+    """Run `test_paths` under pytest with the Anthropic SDK constructor, the
+    Composer /backtest network call, AND pymongo.MongoClient construction
+    all patched to record-then-raise.
 
     Returns:
-        (pytest_exit_code, anthropic_call_sites, composer_call_sites) —
-        each call-sites list holds one formatted stack trace per live-call
-        attempt on that seam. A non-empty list on EITHER means at least one
-        test left a real hole in its seam mocking, regardless of that test's
-        own reported outcome.
+        (pytest_exit_code, anthropic_call_sites, composer_call_sites,
+        mongo_call_sites) — each call-sites list holds one formatted stack
+        trace per live-call attempt on that seam. A non-empty list on ANY of
+        the three means at least one test left a real hole in its seam
+        mocking, regardless of that test's own reported outcome.
     """
     import anthropic  # local import — keeps this tool importable even in an
 
     # environment without the SDK installed, since only __main__/callers that
     # actually invoke this function need it present.
+    import pymongo
     import requests
 
     anthropic_calls: list[str] = []
     composer_calls: list[str] = []
+    mongo_calls, _record_then_raise_mongo = make_mongo_guard()
 
     def _record_then_raise_anthropic(self, *args, **kwargs):
         anthropic_calls.append("".join(traceback.format_stack(limit=8)))
@@ -153,6 +203,7 @@ def run_seam_detector(test_paths: list[str]) -> tuple[int, list[str], list[str]]
         with (
             patch.object(anthropic.Anthropic, "__init__", _record_then_raise_anthropic),
             patch("requests.post", side_effect=_guarded_post),
+            patch.object(pymongo.MongoClient, "__init__", _record_then_raise_mongo),
         ):
             import pytest  # local import, same reasoning as above
 
@@ -160,7 +211,7 @@ def run_seam_detector(test_paths: list[str]) -> tuple[int, list[str], list[str]]
     finally:
         os.chdir(original_cwd)
 
-    return int(rc), anthropic_calls, composer_calls
+    return int(rc), anthropic_calls, composer_calls, mongo_calls
 
 
 # The R2-3 asset-swap reasoning-port test superset — default target when run
@@ -196,6 +247,25 @@ _R2_3_DEFAULT_TARGETS: list[str] = [
 ]
 
 
+# The frontrunner-signals cycle's own test surface — default target for a
+# no-args run scoped to THIS cycle (distinct from _R2_3_DEFAULT_TARGETS,
+# which covers the asset-swap reasoning port). AC-1 introduces the first
+# live-Mongo read path outside community_strats.py's own tests, so this list
+# exists specifically to exercise the new Mongo seam guard end-to-end against
+# this cycle's real test files, not just the pre-existing Anthropic/Composer
+# seams. fr-review-requested, 2026-07-16.
+_FR_SIGNALS_DEFAULT_TARGETS: list[str] = [
+    "tests/advisors/test_frontrunner_signals_ingest.py",
+    "tests/advisors/test_frontrunner_signals_warehouse.py",
+    "tests/advisors/test_frontrunner_signals_classification.py",
+    "tests/advisors/test_frontrunner_extraction_walk.py",
+    "tests/advisors/test_frontrunner_detector_ac3_rebuild.py",
+    "tests/advisors/test_frontrunner_builder_signal_gating.py",
+    "tests/advisors/test_frontrunner_signals_no_live_api.py",
+    "tests/app/test_frontrunner_signals_tab_render.py",
+]
+
+
 def _report(label: str, sites: list[str]) -> None:
     print(f"{label}: {len(sites)} live call(s)")
     for i, site in enumerate(sites, 1):
@@ -205,13 +275,15 @@ def _report(label: str, sites: list[str]) -> None:
 
 if __name__ == "__main__":
     targets = sys.argv[1:] or _R2_3_DEFAULT_TARGETS
-    exit_code, anthropic_sites, composer_sites = run_seam_detector(targets)
+    exit_code, anthropic_sites, composer_sites, mongo_sites = run_seam_detector(targets)
     print(
         f"\nexecution_seam_detector: pytest rc={exit_code}, "
-        f"anthropic calls={len(anthropic_sites)}, composer calls={len(composer_sites)}"
+        f"anthropic calls={len(anthropic_sites)}, composer calls={len(composer_sites)}, "
+        f"mongo calls={len(mongo_sites)}"
     )
     _report("ANTHROPIC", anthropic_sites)
     _report("COMPOSER", composer_sites)
-    if anthropic_sites or composer_sites:
+    _report("MONGO", mongo_sites)
+    if anthropic_sites or composer_sites or mongo_sites:
         sys.exit(1)
     sys.exit(0 if exit_code == 0 else exit_code)

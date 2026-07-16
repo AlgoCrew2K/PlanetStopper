@@ -1,0 +1,367 @@
+[
+  {
+    "fr_key": "XLF:10:79",
+    "comparator": "gt",
+    "first_seen_at": "2026-04-27 13:44:23.979000",
+    "rsi_live": 72.93,
+    "rsi_live_at": "2026-07-16 07:01:28.970000",
+    "rsi_live_source": "alpaca",
+    "threshold": 79,
+    "ticker": "XLF",
+    "total_strategy_count": 233,
+    "updated_at": "2026-07-16 07:01:05.396000",
+    "vix_destination_summary": {
+      "UVXY": 299,
+      "UVIX": 26,
+      "VIXY": 34,
+      "VXX": 4
+    },
+    "window": 10,
+    "backtest": {
+      "summary": {
+        "cagr": 0.047948582161008835,
+        "sharpe": 0.656951586734297,
+        "sortino": 1.6790454719319898,
+        "calmar": 0.39394186785595076,
+        "max_drawdown": 0.12171486727717341,
+        "volatility": 0.07533519763591817,
+        "cumulative_return": 1.6061589821627367,
+        "first_day": "2006-01-12",
+        "last_day": "2026-07-10",
+        "n_points": 5154
+      },
+      "computedAt": "2026-07-11 07:02:09.805000",
+      "true_ticker": "VIXY",
+      "false_ticker": "BIL"
+    }
+  },
+  {
+    "fr_key": "SPY:10:30",
+    "comparator": "gt",
+    "first_seen_at": "2026-04-27 13:44:23.983000",
+    "rsi_live": 59.94,
+    "rsi_live_at": "2026-07-16 07:01:28.970000",
+    "rsi_live_source": "alpaca",
+    "threshold": 30,
+    "ticker": "SPY",
+    "total_strategy_count": 4,
+    "updated_at": "2026-07-16 07:01:05.400000",
+    "vix_destination_summary": {
+      "SVXY": 2,
+      "SVIX": 1,
+      "VIXY": 1
+    },
+    "window": 10,
+    "backtest": {
+      "summary": {
+        "cagr": -0.37856027086430566,
+        "sharpe": -0.434353331969682,
+        "sortino": -0.9682194084515404,
+        "calmar": -0.378571790890609,
+        "max_drawdown": 0.9999695697709641,
+        "volatility": 0.6400070515901305,
+        "cumulative_return": -0.9999408358804603,
+        "first_day": "2006-01-12",
+        "last_day": "2026-07-15",
+        "n_points": 5157
+      },
+      "computedAt": "2026-07-16 07:01:36.194000",
+      "true_ticker": "VIXY",
+      "false_ticker": "BIL"
+    }
+  },
+  {
+    "fr_key": "SPY:10:31",
+    "comparator": "gt",
+    "first_seen_at": "2026-04-27 13:44:23.998000",
+    "rsi_live": 59.94,
+    "rsi_live_at": "2026-07-16 07:01:28.970000",
+    "rsi_live_source": "alpaca",
+    "threshold": 31,
+    "ticker": "SPY",
+    "total_strategy_count": 1,
+    "updated_at": "2026-07-16 07:01:05.411000",
+    "vix_destination_summary": {
+      "UVIX": 1,
+      "UVXY": 1
+    },
+    "window": 10,
+    "backtest": {
+      "summary": {
+        "cagr": -0.3682179968893192,
+        "sharpe": -0.41912371968397727,
+        "sortino": -0.9549178863365112,
+        "calmar": -0.36823147485177943,
+        "max_drawdown": 0.9999633981248734,
+        "volatility": 0.633647241561993,
+        "cumulative_return": -0.9999170624441212,
+        "first_day": "2006-01-12",
+        "last_day": "2026-07-15",
+        "n_points": 5157
+      },
+      "computedAt": "2026-07-16 07:03:25.564000",
+      "true_ticker": "VIXY",
+      "false_ticker": "BIL"
+    }
+  },
+  {
+    "fr_key": "SPY:21:30",
+    "comparator": "gt",
+    "first_seen_at": "2026-04-27 13:44:23.978000",
+    "rsi_live": 57.78,
+    "rsi_live_at": "2026-07-16 07:01:28.970000",
+    "rsi_live_source": "alpaca",
+    "threshold": 30,
+    "ticker": "SPY",
+    "total_strategy_count": 71,
+    "updated_at": "2026-07-16 07:01:05.395000",
+    "vix_destination_summary": {
+      "VIXM": 133,
+      "VXX": 1,
+      "UVXY": 1,
+      "VIXY": 1,
+      "VXZ": 1
+    },
+    "window": 21,
+    "backtest": {
+      "summary": {
+        "cagr": -0.43718621639294186,
+        "sharpe": -0.5443705029135608,
+        "sortino": -1.0606107922172112,
+        "calmar": -0.43718778875574005,
+        "max_drawdown": 0.9999964034613075,
+        "volatility": 0.6639039360349845,
+        "cumulative_return": -0.9999920147377114,
+        "first_day": "2006-01-30",
+        "last_day": "2026-07-15",
+        "n_points": 5146
+      },
+      "computedAt": "2026-07-16 07:02:11.713000",
+      "true_ticker": "VIXY",
+      "false_ticker": "BIL"
+    }
+  },
+  {
+    "fr_key": "PBE:10:79",
+    "comparator": "gt",
+    "first_seen_at": "2026-04-27 13:44:23.995000",
+    "rsi_live": 52.3,
+    "rsi_live_at": "2026-07-16 07:01:28.970000",
+    "rsi_live_source": "alpaca",
+    "threshold": 79,
+    "ticker": "PBE",
+    "total_strategy_count": 54,
+    "updated_at": "2026-07-16 07:01:05.408000",
+    "vix_destination_summary": {
+      "VIXY": 69,
+      "UVXY": 1,
+      "UVIX": 1
+    },
+    "window": 10,
+    "backtest": {
+      "summary": {
+        "cagr": -0.003065830288579874,
+        "sharpe": -0.017118179583342996,
+        "sortino": -0.07179084060793717,
+        "calmar": -0.01065886868886759,
+        "max_drawdown": 0.2876318658266153,
+        "volatility": 0.06332609755540757,
+        "cumulative_return": -0.06090290178366553,
+        "first_day": "2006-01-12",
+        "last_day": "2026-07-15",
+        "n_points": 5157
+      },
+      "computedAt": "2026-07-16 07:02:40.792000",
+      "true_ticker": "VIXY",
+      "false_ticker": "BIL"
+    }
+  },
+  {
+    "fr_key": "DBE:10:77",
+    "comparator": "gt",
+    "first_seen_at": "2026-04-27 13:44:23.995000",
+    "rsi_live": 66.34,
+    "rsi_live_at": "2026-07-16 07:01:28.970000",
+    "rsi_live_source": "alpaca",
+    "threshold": 77,
+    "ticker": "DBE",
+    "total_strategy_count": 51,
+    "updated_at": "2026-07-16 07:01:05.409000",
+    "vix_destination_summary": {
+      "VIXY": 66,
+      "UVXY": 1,
+      "UVIX": 1
+    },
+    "window": 10,
+    "backtest": {
+      "summary": {
+        "cagr": -0.0007235699978954679,
+        "sharpe": 0.05519219222350854,
+        "sortino": -0.009204538518473125,
+        "calmar": -0.0016511080907492882,
+        "max_drawdown": 0.4382329672717582,
+        "volatility": 0.12427298693148757,
+        "cumulative_return": -0.013964597440250914,
+        "first_day": "2007-01-29",
+        "last_day": "2026-07-15",
+        "n_points": 4896
+      },
+      "computedAt": "2026-07-16 07:02:40.958000",
+      "true_ticker": "VIXY",
+      "false_ticker": "BIL"
+    }
+  },
+  {
+    "fr_key": "DUST:10:80",
+    "comparator": "gt",
+    "first_seen_at": "2026-04-27 13:44:23.981000",
+    "rsi_live": 56.89,
+    "rsi_live_at": "2026-07-16 07:01:28.970000",
+    "rsi_live_source": "alpaca",
+    "threshold": 80,
+    "ticker": "DUST",
+    "total_strategy_count": 232,
+    "updated_at": "2026-07-16 07:01:05.398000",
+    "vix_destination_summary": {
+      "VIXY": 296,
+      "UVXY": 256,
+      "VIXM": 111,
+      "VXX": 37,
+      "VXZ": 3,
+      "UVIX": 14
+    },
+    "window": 10,
+    "backtest": {
+      "summary": {
+        "cagr": 0.03484793718517465,
+        "sharpe": 0.36850415767076417,
+        "sortino": 0.9136594980043357,
+        "calmar": 0.3143916842305889,
+        "max_drawdown": 0.11084242660698244,
+        "volatility": 0.10608699282796796,
+        "cumulative_return": 0.9874591295162205,
+        "first_day": "2006-06-13",
+        "last_day": "2026-07-15",
+        "n_points": 5053
+      },
+      "computedAt": "2026-07-16 07:01:30.638000",
+      "true_ticker": "VIXY",
+      "false_ticker": "BIL"
+    }
+  },
+  {
+    "fr_key": "RINF:10:80",
+    "comparator": "gt",
+    "first_seen_at": "2026-04-27 13:44:23.981000",
+    "rsi_live": 49.35,
+    "rsi_live_at": "2026-07-16 07:01:28.970000",
+    "rsi_live_source": "alpaca",
+    "threshold": 80,
+    "ticker": "RINF",
+    "total_strategy_count": 405,
+    "updated_at": "2026-07-16 07:01:05.398000",
+    "vix_destination_summary": {
+      "VIXY": 431,
+      "UVXY": 301,
+      "VIXM": 204,
+      "VXX": 36,
+      "UVIX": 59,
+      "VXZ": 3
+    },
+    "window": 10,
+    "backtest": {
+      "summary": {
+        "cagr": 0.025167057220321087,
+        "sharpe": 0.24842876138987846,
+        "sortino": 0.44901539345696295,
+        "calmar": 0.07867645570918251,
+        "max_drawdown": 0.3198804139493511,
+        "volatility": 0.13102217656632342,
+        "cumulative_return": 0.4306621419884318,
+        "first_day": "2012-02-03",
+        "last_day": "2026-07-15",
+        "n_points": 3631
+      },
+      "computedAt": "2026-07-16 07:01:30.858000",
+      "true_ticker": "VIXY",
+      "false_ticker": "BIL"
+    }
+  },
+  {
+    "fr_key": "ZSL:10:84",
+    "comparator": "gt",
+    "first_seen_at": "2026-04-27 13:44:23.986000",
+    "rsi_live": 60.65,
+    "rsi_live_at": "2026-07-16 07:01:28.970000",
+    "rsi_live_source": "alpaca",
+    "threshold": 84,
+    "ticker": "ZSL",
+    "total_strategy_count": 371,
+    "updated_at": "2026-07-16 07:01:05.402000",
+    "vix_destination_summary": {
+      "UVXY": 291,
+      "VIXY": 407,
+      "VIXM": 199,
+      "VXX": 25,
+      "VXZ": 3,
+      "UVIX": 45
+    },
+    "window": 10,
+    "backtest": {
+      "summary": {
+        "cagr": 0.03612019287853374,
+        "sharpe": 0.36923793146997236,
+        "sortino": 0.7503383872990343,
+        "calmar": 0.22323640427361277,
+        "max_drawdown": 0.1618024309075617,
+        "volatility": 0.11070107957549462,
+        "cumulative_return": 1.067080838892867,
+        "first_day": "2006-01-12",
+        "last_day": "2026-07-15",
+        "n_points": 5157
+      },
+      "computedAt": "2026-07-16 07:01:44.493000",
+      "true_ticker": "VIXY",
+      "false_ticker": "BIL"
+    }
+  },
+  {
+    "fr_key": "SPY:10:80",
+    "comparator": "gt",
+    "first_seen_at": "2026-04-27 13:44:23.958000",
+    "rsi_live": 59.94,
+    "rsi_live_at": "2026-07-16 07:01:28.970000",
+    "rsi_live_source": "alpaca",
+    "threshold": 80,
+    "ticker": "SPY",
+    "total_strategy_count": 2462,
+    "updated_at": "2026-07-16 07:01:05.378000",
+    "vix_destination_summary": {
+      "VIXY": 4686,
+      "UVXY": 8815,
+      "VIXM": 434,
+      "VXX": 574,
+      "UVIX": 703,
+      "VXZ": 17,
+      "SVXY": 4
+    },
+    "window": 10,
+    "backtest": {
+      "summary": {
+        "cagr": 0.06254029646452874,
+        "sharpe": 1.009082815015675,
+        "sortino": 2.8011187011095346,
+        "calmar": 0.8574458167602875,
+        "max_drawdown": 0.07293789909760895,
+        "volatility": 0.06195737520587125,
+        "cumulative_return": 2.458010848583126,
+        "first_day": "2006-01-12",
+        "last_day": "2026-07-10",
+        "n_points": 5154
+      },
+      "computedAt": "2026-07-11 07:02:13.332000",
+      "true_ticker": "VIXY",
+      "false_ticker": "BIL"
+    }
+  }
+]

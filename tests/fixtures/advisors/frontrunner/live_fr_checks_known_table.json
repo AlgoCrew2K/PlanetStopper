@@ -1,0 +1,123 @@
+[
+  {
+    "fr_key": "SPY:10:30",
+    "ticker": "SPY",
+    "fn": "relative-strength-index",
+    "comparator": "lt",
+    "window": 10,
+    "threshold": 30.0,
+    "branch_path": [
+      "true"
+    ]
+  },
+  {
+    "fr_key": "SPY:10:31",
+    "ticker": "SPY",
+    "fn": "relative-strength-index",
+    "comparator": "gt",
+    "window": 10,
+    "threshold": 31.0,
+    "branch_path": [
+      "true"
+    ]
+  },
+  {
+    "fr_key": "SPY:21:30",
+    "ticker": "SPY",
+    "fn": "relative-strength-index",
+    "comparator": "gt",
+    "window": 21,
+    "threshold": 30.0,
+    "branch_path": [
+      "true"
+    ]
+  },
+  {
+    "fr_key": "PBE:10:79",
+    "ticker": "PBE",
+    "fn": "relative-strength-index",
+    "comparator": "gt",
+    "window": 10,
+    "threshold": 79.0,
+    "branch_path": [
+      "true"
+    ]
+  },
+  {
+    "fr_key": "DBE:10:77",
+    "ticker": "DBE",
+    "fn": "relative-strength-index",
+    "comparator": "gt",
+    "window": 10,
+    "threshold": 77.0,
+    "branch_path": [
+      "true"
+    ]
+  },
+  {
+    "fr_key": "DUST:10:80",
+    "ticker": "DUST",
+    "fn": "relative-strength-index",
+    "comparator": "gt",
+    "window": 10,
+    "threshold": 80.0,
+    "branch_path": [
+      "true"
+    ]
+  },
+  {
+    "fr_key": "RINF:10:80",
+    "ticker": "RINF",
+    "fn": "relative-strength-index",
+    "comparator": "gt",
+    "window": 10,
+    "threshold": 80.0,
+    "branch_path": [
+      "true"
+    ]
+  },
+  {
+    "fr_key": "ZSL:10:84",
+    "ticker": "ZSL",
+    "fn": "relative-strength-index",
+    "comparator": "gt",
+    "window": 10,
+    "threshold": 84.0,
+    "branch_path": [
+      "true"
+    ]
+  },
+  {
+    "fr_key": "SPY:10:80",
+    "ticker": "SPY",
+    "fn": "relative-strength-index",
+    "comparator": "gt",
+    "window": 10,
+    "threshold": 80.0,
+    "branch_path": [
+      "true"
+    ]
+  },
+  {
+    "fr_key": "SPY:1:0",
+    "ticker": "SPY",
+    "fn": "cumulative-return",
+    "comparator": "lt",
+    "window": 1,
+    "threshold": 0.0,
+    "branch_path": [
+      "true"
+    ]
+  },
+  {
+    "fr_key": "ZZZZ:10:50",
+    "ticker": "ZZZZ",
+    "fn": "relative-strength-index",
+    "comparator": "gt",
+    "window": 10,
+    "threshold": 50.0,
+    "branch_path": [
+      "true"
+    ]
+  }
+]
