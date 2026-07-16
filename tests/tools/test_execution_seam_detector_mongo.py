@@ -25,14 +25,30 @@ actually be proving CONFTEST's guard fires, not this tool's own — a
 false-positive self-test that proves nothing about the code actually added
 here. Calling make_mongo_guard() directly, applying its patch as THIS test's
 own innermost context (no nested pytest.main() involved), correctly
-demonstrates the real mechanism: unittest.mock.patch nesting means a test's
-own local patch takes precedence over the outer session fixture for its
-duration (proven by the existing test_a_tests_own_pymongo_mock_still_overrides_
-the_guard in tests/test_no_live_mongo_guard.py) — this is the SAME technique.
+demonstrates the real mechanism.
+
+PATCH STYLE: `patch("pymongo.MongoClient", side_effect=guard_fn)` — a
+NAME-REPLACEMENT patch, NOT `patch.object(pymongo.MongoClient, "__init__",
+...)`. This distinction is load-bearing, not stylistic (RCA, caught by the
+first actual pytest run of this file): tests/conftest.py's session-autouse
+fixture has ALREADY replaced the `pymongo.MongoClient` NAME with a Mock
+before ANY test in the outer session runs, so by the time a test here
+executes, `pymongo.MongoClient` already IS a Mock — and `patch.object(<a
+Mock instance>, "__init__", ...)` raises "Attempting to set unsupported
+magic method '__init__'" (unittest.mock disallows setting dunder attributes
+on a Mock this way). unittest.mock's "a test's own local patch overrides the
+outer session fixture" guarantee (proven by
+test_a_tests_own_pymongo_mock_still_overrides_the_guard in
+tests/test_no_live_mongo_guard.py) holds for NAME-REPLACEMENT patches
+(`patch("target", ...)`, which simply reassigns whatever is currently
+there) but NOT for `patch.object`-style patches, which need to mutate an
+attribute ON the current target object and fail when that object is already
+a Mock. make_mongo_guard()'s own docstring in execution_seam_detector.py
+carries the full RCA.
 
 NO live network calls anywhere in this file — a harmless placeholder URI is
 passed only to prove CONSTRUCTION is intercepted before any connection
-attempt; the patched __init__ raises before any real dial happens.
+attempt; the patched constructor raises before any real dial happens.
 """
 
 from __future__ import annotations
@@ -74,7 +90,7 @@ def test_make_mongo_guard_raises_on_real_but_harmless_construction(detector):
     calls, guard_fn = detector.make_mongo_guard()
     assert calls == [], "sanity: no calls recorded before construction"
 
-    with patch.object(pymongo.MongoClient, "__init__", guard_fn):
+    with patch("pymongo.MongoClient", side_effect=guard_fn):
         with pytest.raises(detector.LiveMongoClientConstructedError):
             pymongo.MongoClient("mongodb://harmless-placeholder-never-dialed")
 
@@ -91,7 +107,7 @@ def test_make_mongo_guard_error_message_names_the_real_money_risk(detector):
 
     _calls, guard_fn = detector.make_mongo_guard()
 
-    with patch.object(pymongo.MongoClient, "__init__", guard_fn):
+    with patch("pymongo.MongoClient", side_effect=guard_fn):
         with pytest.raises(detector.LiveMongoClientConstructedError) as exc_info:
             pymongo.MongoClient("mongodb://harmless-placeholder-never-dialed")
 
@@ -111,7 +127,7 @@ def test_two_separate_guards_maintain_independent_call_lists(detector):
     calls_a, guard_a = detector.make_mongo_guard()
     calls_b, _guard_b = detector.make_mongo_guard()
 
-    with patch.object(pymongo.MongoClient, "__init__", guard_a):
+    with patch("pymongo.MongoClient", side_effect=guard_a):
         with pytest.raises(detector.LiveMongoClientConstructedError):
             pymongo.MongoClient("mongodb://a")
 
@@ -130,7 +146,7 @@ def test_a_tests_own_pymongo_mock_still_overrides_this_guard_too(detector):
     _calls, guard_fn = detector.make_mongo_guard()
     sentinel_client = object()
 
-    with patch.object(pymongo.MongoClient, "__init__", guard_fn):
+    with patch("pymongo.MongoClient", side_effect=guard_fn):
         with patch("pymongo.MongoClient", return_value=sentinel_client):
             result = pymongo.MongoClient("mongodb://irrelevant")
             assert result is sentinel_client

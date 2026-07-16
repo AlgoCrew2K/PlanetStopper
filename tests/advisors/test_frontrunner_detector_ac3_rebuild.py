@@ -18,28 +18,53 @@ prior '8' were rhs-fn crossovers; raw flat presence = 9 incl. 5Xjz where
 neither branch reaches VIX). The old signature's 0-match behavior is a
 regression test (it must never be the sole gate again)."
 
-AC-6 EXPECTED SET — grounded THREE independent ways, all converging
-(2026-07-16): (1) team-lead's falsifier, fresh /score trees pulled 2026-07-16;
-(2) my own direct byte-level re-inspection of these 0715-captured fixture
-trees (corrected for the rhs-fn discriminator, reported and cross-checked
-against the falsifier's result — exact match, no discrepancy); (3)
-fr-engine's independent byte-level verification of the specific node ids.
-Genuine fixed-threshold RSI(SPY,10) gt 31 -> VIX-family exists in EXACTLY:
+AC-6 EXPECTED SET — DISPUTED, NOT SETTLED (team-lead STOP-CHECK #2,
+2026-07-16, msg 7722f63a / 3f697b3e — supersedes the module's original
+"grounded THREE independent ways, all converging" claim). CORRECTION to that
+original claim: all three derivations below (falsifier, my own re-scan,
+fr-engine's byte-level check) applied the SAME rhs-fn-presence discriminator
+rule — that is convergence on one candidate rule, not independent
+validation of the discriminator itself. fr-falsifier2's E3/E4 evidence now
+indicates a COMPETING rule (`rhs-fixed-value?` + numeric-vs-ticker `rhs-val`,
+not rhs-fn presence) may be the correct one, under which the Paragons/iaSO/
+n2oo trio (real_tree_07/08/09's SPY:10:31-shaped nodes) would be GENUINE
+fixed-threshold checks, not crossovers — meaning the genuine set below could
+expand back toward the original claimed 8, not stay at 5. Verdict pending in
+.claude/fr-signals-inputs/mirror-pattern-verdict.md.
+
+Original (now-disputed) grounding, preserved for context: (1) team-lead's
+falsifier, fresh /score trees pulled 2026-07-16; (2) my own direct
+byte-level re-inspection of these 0715-captured fixture trees; (3)
+fr-engine's independent byte-level verification of the specific node ids —
+all three under the rhs-fn-presence rule:
     real_tree_03_Gpaw3IhZghQPRE6AdEKx.json   (Gpaw)
     real_tree_04_INfCn3eKsu6i4oTTqdUp.json   (INfC)
     real_tree_05_MoAkUHnavSYw3oONiUxe.json   (MoAk)
     real_tree_06_hvPiGP1O7AHfutHE3Fjy.json   (hvPi)
     real_tree_11_qF5ZU7ALjrlhxrGEwsyJ.json   (qF5Z)
-NOT in real_tree_07/08/09 (rhs-fn crossovers — the false positives) nor
-real_tree_01 (NO_VIX_EITHER_SIDE, also dual-mechanism a crossover).
+NOT in real_tree_07/08/09 UNDER THE RHS-FN-PRESENCE RULE ONLY — this
+exclusion is exactly what's disputed. real_tree_01 (NO_VIX_EITHER_SIDE) is
+UNAFFECTED by the dispute — its exclusion reason is VIX-unreachability, a
+structural fact about ticker membership independent of the rhs-fn/
+rhs-fixed-value? classification question.
 
-REGRESSION GUARD (mechanistic, not merely historical): the OLD size-cliff
-signature's `_RSI_OVERBOUGHT_MIN = 50.0` floor (frontrunner_detector.py, as
-it stood before this cycle) REJECTS any RSI threshold below 50 as "not an
-overbought trigger" — SPY:10:31's threshold of 31.0 is structurally below
-that floor. This file proves the old gate's 0-match failure mechanistically
-by calling the OLD threshold-range constant directly against the real
-threshold value, rather than only asserting a historical fact.
+The 3 acceptance/generalization tests below (test_detects_a_cascade_
+carrying_the_genuine_spy_10_31_threshold, test_crossover_only_trees_never_
+report_a_genuine_spy_10_31_cascade, test_rebuilt_detector_finds_spy_10_31_
+across_the_full_genuine_set_not_just_one_tree) are marked xfail(strict=False)
+pending the verdict — do not delete, do not un-xfail without confirming the
+verdict first.
+
+REGRESSION GUARD (mechanistic, not merely historical, UNAFFECTED by the
+dispute above — this is pure arithmetic, not a tree-classification claim):
+the OLD size-cliff signature's `_RSI_OVERBOUGHT_MIN = 50.0` floor
+(frontrunner_detector.py, as it stood before this cycle) REJECTS any RSI
+threshold below 50 as "not an overbought trigger" — SPY:10:31's threshold of
+31.0 is structurally below that floor regardless of whether any given
+SPY:10:31-shaped node turns out to be genuine or a crossover. This file
+proves the old gate's 0-match failure mechanistically by calling the OLD
+threshold-range constant directly against the real threshold value, rather
+than only asserting a historical fact.
 
 SCOPE HOLD: this file makes NO assertion about REZ:10:77/IGOV:10:77 or any
 same-fn self-mirror node — that sub-case is formally unresolved pending
@@ -82,10 +107,25 @@ def _load_tree(filename: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# AC-6 acceptance: detect SPY:10:31 in exactly the genuine 5
+# AC-6 acceptance: detect SPY:10:31 in exactly the genuine 5 — DISPUTED,
+# xfail(strict=False) pending mirror-pattern-verdict.md. See module
+# docstring "AC-6 EXPECTED SET — DISPUTED, NOT SETTLED".
 # ---------------------------------------------------------------------------
 
+_DISPUTED_GENUINE_SET_XFAIL = pytest.mark.xfail(
+    reason=(
+        "DISPUTED (team-lead STOP-CHECK #2, 2026-07-16, msg 7722f63a / 3f697b3e): the "
+        "5-symphony genuine set assumes the rhs-fn-presence discriminator; fr-falsifier2's "
+        "E3/E4 evidence suggests a competing rhs-fixed-value?+numeric-vs-ticker rule under "
+        "which real_tree_07/08/09 may be genuine too, expanding the set back toward 8. "
+        "Verdict pending in .claude/fr-signals-inputs/mirror-pattern-verdict.md. "
+        "strict=False: do not fail the suite on either outcome."
+    ),
+    strict=False,
+)
 
+
+@_DISPUTED_GENUINE_SET_XFAIL
 @pytest.mark.parametrize("filename", _GENUINE_SPY_10_31_TREES)
 def test_detects_a_cascade_carrying_the_genuine_spy_10_31_threshold(mod, filename):
     """Against each of the 5 grounded-genuine trees, detect_frontrunner_cascades
@@ -106,6 +146,7 @@ def test_detects_a_cascade_carrying_the_genuine_spy_10_31_threshold(mod, filenam
     )
 
 
+@_DISPUTED_GENUINE_SET_XFAIL
 @pytest.mark.parametrize("filename", _CROSSOVER_ONLY_TREES)
 def test_crossover_only_trees_never_report_a_genuine_spy_10_31_cascade(mod, filename):
     """The 3 rhs-fn crossover trees (the false positives the falsifier caught)
@@ -150,6 +191,7 @@ def test_old_overbought_range_floor_structurally_rejects_the_genuine_threshold(m
     )
 
 
+@_DISPUTED_GENUINE_SET_XFAIL
 def test_rebuilt_detector_finds_spy_10_31_across_the_full_genuine_set_not_just_one_tree(mod):
     """A single-tree pass could accidentally special-case one fixture. This
     test proves the rebuilt signature generalizes: ALL 5 genuine trees must

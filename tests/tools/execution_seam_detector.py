@@ -118,27 +118,49 @@ def make_mongo_guard() -> tuple[list[str], object]:
     is independently testable WITHOUT going through a nested pytest.main()
     sub-run.
 
-    WHY THIS MATTERS: run_seam_detector's own patch is applied in the OUTER
-    process, then pytest.main() launches a FRESH nested pytest session —
-    tests/conftest.py's own session-autouse `_no_live_mongo_atlas_connections`
-    fixture re-establishes ITS OWN `patch("pymongo.MongoClient", ...)` inside
-    that nested session, which (being the innermost/most-recently-applied
-    patch for the session's duration) shadows whatever the OUTER caller
-    patched beforehand. A test that calls `run_seam_detector([...])` and then
-    asserts on `mongo_calls` would actually be proving conftest's guard
-    fires, not this tool's own — a false-positive self-test. Calling
-    `make_mongo_guard()` directly, inside an ALREADY-RUNNING test (no nested
-    pytest.main() involved), sidesteps this entirely: unittest.mock.patch
-    correctly nests (test_no_live_mongo_guard.py's own
-    test_a_tests_own_pymongo_mock_still_overrides_the_guard proves a test's
-    own local patch takes precedence over the outer session fixture for its
-    duration) — applying this guard as the test's OWN innermost patch
-    demonstrates the detector's real raise mechanism, uncontaminated by the
-    nested-session shadowing problem.
+    WHY THIS MATTERS (nested-session shadowing): run_seam_detector's own
+    patch is applied in the OUTER process, then pytest.main() launches a
+    FRESH nested pytest session — tests/conftest.py's own session-autouse
+    `_no_live_mongo_atlas_connections` fixture re-establishes ITS OWN
+    `patch("pymongo.MongoClient", ...)` inside that nested session, which
+    (being the innermost/most-recently-applied patch for the session's
+    duration) shadows whatever the OUTER caller patched beforehand. A test
+    that calls `run_seam_detector([...])` and then asserts on `mongo_calls`
+    would actually be proving conftest's guard fires, not this tool's own —
+    a false-positive self-test. Calling `make_mongo_guard()` directly, inside
+    an ALREADY-RUNNING test (no nested pytest.main() involved), sidesteps
+    this entirely.
+
+    WHY guard_fn TAKES NO `self` PARAM (a real bug this file shipped with
+    briefly, caught by the FIRST actual pytest run of this file — RCA below):
+    the earlier version returned a `patch.object(pymongo.MongoClient,
+    "__init__", guard_fn)`-shaped function (signature `(self, *args,
+    **kwargs)`). That form only works when `pymongo.MongoClient` is genuinely
+    the real class at patch-application time. Under pytest, tests/conftest.py's
+    OWN session-autouse fixture has ALREADY replaced the `pymongo.MongoClient`
+    NAME with a MagicMock before ANY test in the outer session runs (session
+    scope = established once, wraps the whole session) — so by the time a
+    test in THIS file executes, `pymongo.MongoClient` already IS a Mock, and
+    `patch.object(<a Mock instance>, "__init__", ...)` raises "Attempting to
+    set unsupported magic method '__init__'" (unittest.mock disallows setting
+    dunder attributes on a Mock this way). The unittest.mock nesting
+    guarantee ("a test's own local patch overrides the outer session
+    fixture") holds for NAME-REPLACEMENT-style patches
+    (`patch("target", ...)`, which simply reassigns whatever is currently
+    there) but NOT for `patch.object`-style patches (which need to mutate an
+    attribute ON the current target object, and fail when that object is
+    already a Mock with restricted dunder handling). Fix: guard_fn is now a
+    plain side_effect-compatible callable (no `self`), applied via
+    `patch("pymongo.MongoClient", side_effect=guard_fn)` everywhere it's
+    used — both here and in run_seam_detector below — which works
+    identically whether the current `pymongo.MongoClient` binding is the
+    real class (run_seam_detector's outer-process, pre-pytest application)
+    or an already-active Mock (this file's tests, running inside the outer
+    pytest session).
     """
     calls: list[str] = []
 
-    def _record_then_raise_mongo(self, *args, **kwargs):
+    def _record_then_raise_mongo(*args, **kwargs):
         calls.append("".join(traceback.format_stack(limit=8)))
         raise LiveMongoClientConstructedError(
             "execution_seam_detector: a REAL pymongo.MongoClient(...) was constructed "
@@ -164,8 +186,13 @@ def run_seam_detector(test_paths: list[str]) -> tuple[int, list[str], list[str],
     import anthropic  # local import — keeps this tool importable even in an
 
     # environment without the SDK installed, since only __main__/callers that
-    # actually invoke this function need it present.
-    import pymongo
+    # actually invoke this function need it present. pymongo is NOT imported
+    # here directly — patch("pymongo.MongoClient", ...) below resolves the
+    # string target itself (unittest.mock does its own import), and doing so
+    # is what makes it work correctly whether pymongo.MongoClient is still
+    # the real class or already patched by an outer/nested session guard —
+    # see make_mongo_guard()'s docstring for the full RCA on why the
+    # patch.object(..., "__init__", ...) style this used to use broke.
     import requests
 
     anthropic_calls: list[str] = []
@@ -203,7 +230,7 @@ def run_seam_detector(test_paths: list[str]) -> tuple[int, list[str], list[str],
         with (
             patch.object(anthropic.Anthropic, "__init__", _record_then_raise_anthropic),
             patch("requests.post", side_effect=_guarded_post),
-            patch.object(pymongo.MongoClient, "__init__", _record_then_raise_mongo),
+            patch("pymongo.MongoClient", side_effect=_record_then_raise_mongo),
         ):
             import pytest  # local import, same reasoning as above
 
