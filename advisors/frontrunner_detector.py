@@ -466,45 +466,59 @@ def _is_internal_hedge_subgate(node: dict) -> bool:
     """Return True if ``node`` (an ``if`` node reached INSIDE an already-
     confirmed fire branch) is internal hedge-basket logic — a de-escalation
     or weighting sub-gate that is not itself a reportable RSI cascade tier,
-    but whose TRUE branch is still genuinely hedge content (not core).
+    but whose smaller branch is still genuinely hedge content (not core).
 
     Real trees nest sub-gates keyed on indicators OTHER than RSI inside a
     fire branch — e.g. ``cumulative-return(UVXY) lt 5.5`` deciding whether to
     de-escalate a "Volmageddon protection" blend. These do not qualify as
     cascade RUNGS (``_qualifies_as_cascade_rung`` requires an RSI condition,
     since only RSI-gated rungs are reportable overbought triggers), but their
-    own TRUE side is still hedge content that must be compacted (continuation
-    side stubbed) rather than copied verbatim — copying verbatim would leak
-    whatever core content sits in that sub-gate's OWN continuation/else
-    branch.
-
-    AC-6 REGRESSION FIX (2026-07-16, defect #4 — fr-test's real_tree_04/
-    real_tree_06 finding): direction-explicit, matching
-    ``_qualifies_as_cascade_rung`` — the condition's TRUE branch (never
-    inferred from size) is checked for VIX-family content, replacing the old
-    small/large size-based split. The size split assumed the fire side was
-    always the physically smaller side; once branch size stopped correlating
-    with direction (the core premise of the AC-6 rebuild), that assumption
-    silently misidentified a genuine TRUE-branch hedge subgate as
-    "large"/continuation whenever it happened to be the larger side —
-    confirmed on a real BND-vs-SH sub-gate in real_tree_04 whose TRUE branch
-    (containing VIXY) is 20 nodes vs its ELSE branch's 18: the size split
-    picked the ELSE/core-laden branch as "small", found no VIX there, and
-    returned False, leaving that ELSE branch's CORE_ASSET_ placeholders
-    un-stubbed and leaking into the reported cascade's fire branch.
+    own small side is still hedge content that must be compacted (large side
+    stubbed) rather than copied verbatim — copying verbatim would leak
+    whatever core content sits in that sub-gate's OWN large/else branch.
 
     Unlike ``_qualifies_as_cascade_rung``, this check does NOT require an RSI
     condition, does NOT require comparator='gt', and does NOT require a
     non-self-referential condition — any indicator function, comparator, or
     self-reference is acceptable here, since this node's role is purely
-    "is this hedge-internal machinery that needs its continuation side
-    stubbed", not "is this a reportable cascade trigger".
+    "is this hedge-internal machinery that needs its large side stubbed",
+    not "is this a reportable cascade trigger".
+
+    FALSIFIED-AND-REVERTED ATTEMPT (2026-07-16, fr-test's cluster-3 finding,
+    commit 7ca7c0c6 — independently re-derived and then reverted again in
+    this same file by fr-engine before reading that finding): a
+    direction-explicit rewrite of this function (checking only cond_child's
+    TRUE branch for VIX, matching ``_qualifies_as_cascade_rung``) was tried
+    and DIRECTLY FALSIFIED — it introduces NEW failures (real_tree_04,
+    real_tree_09 on the VIX-ticker-presence test) by mislabeling a genuinely
+    STUBBED/continuation branch as "fire" on cascades where the raw
+    if-node's condition-side happens to be the larger, continuation-bound
+    side. Root cause: this function's own overlay-construction role
+    (``_compact_if_node``) is INTENTIONALLY size-based — a DIFFERENT model
+    from ``extract_fr_checks``'s AC-3 direction-explicit walk, which answers
+    a different question (does this node QUALIFY, not which physical side
+    is fire for compaction). Applying the AC-3 model here was a category
+    error conflating two distinct, intentionally-different functions — kept
+    size-based, unchanged from wave-1. The real AC-2 leak this was mistaken
+    for (a real BND-vs-SH sub-gate in real_tree_04 whose CORE_ASSET_-laden
+    branch went unstubbed) is fixed instead at its actual root: the
+    verbatim-copy fallback in ``_compact_subtree`` (see its docstring).
     """
     pair = _get_condition_branch_pair(node)
     if pair is None:
         return False
-    cond_child, _else_child = pair
-    return bool(_collect_tickers(cond_child) & VIX_FAMILY_TICKERS)
+    cond_child, else_child = pair
+    cond_n = _count_nodes(cond_child)
+    else_n = _count_nodes(else_child)
+    small, large = (cond_child, else_child) if cond_n <= else_n else (else_child, cond_child)
+    small_n = _count_nodes(small)
+    large_n = _count_nodes(large)
+    small_tickers = _collect_tickers(small)
+    if not (small_tickers & VIX_FAMILY_TICKERS):
+        return False
+    ratio_qualifies = large_n > 0 and (small_n / large_n) <= _SIZE_CLIFF_MAX_RATIO
+    absolute_qualifies = small_n <= _SIZE_CLIFF_MAX_ABSOLUTE_FIRE_NODES
+    return ratio_qualifies or absolute_qualifies
 
 
 # ---------------------------------------------------------------------------
@@ -613,9 +627,23 @@ def _build_cascade_overlay(root_if_node: dict) -> tuple[dict, list[float], set[s
     vix_tickers: set[str] = set()
 
     def _compact_if_node(node: dict) -> dict:
-        """Reconstruct one if-node: fire (TRUE) branch recursively compacted
-        (in case it contains a further nested tier), continuation (ELSE)
-        branch stubbed.
+        """Reconstruct one if-node: fire branch recursively compacted (in case
+        it contains a further nested tier), large/continuation branch stubbed.
+
+        FALSIFIED-AND-REVERTED ATTEMPT (2026-07-16, fr-test's cluster-3
+        finding, commit 7ca7c0c6 — independently re-derived and then
+        reverted again in this same file by fr-engine before reading that
+        finding): a direction-explicit rewrite of fire/continuation selection
+        here (fire = cond_child always, matching AC-3's TRUE-branch rule) was
+        tried and DIRECTLY FALSIFIED — it introduces NEW failures
+        (real_tree_04, real_tree_09 on the VIX-ticker-presence test) by
+        mislabeling a genuinely STUBBED/continuation branch as "fire" on
+        cascades where the raw if-node's condition-side happens to be the
+        larger, continuation-bound side. This function's overlay-construction
+        role is INTENTIONALLY size-based — a DIFFERENT model from
+        ``extract_fr_checks``'s AC-3 direction-explicit walk, which answers a
+        different question (does this node QUALIFY, not which physical side
+        is fire for compaction). Kept size-based, unchanged from wave-1.
         """
         pair = _get_condition_branch_pair(node)
         if pair is None:
@@ -636,40 +664,31 @@ def _build_cascade_overlay(root_if_node: dict) -> tuple[dict, list[float], set[s
             if threshold is not None:
                 thresholds.append(threshold)
 
-        # AC-6 REGRESSION FIX (2026-07-16, defect #4): fire/continuation is
-        # direction-explicit (is-else-condition?), never inferred from node
-        # count — mirrors _qualifies_as_cascade_rung and
-        # _is_internal_hedge_subgate. The old size-based split (fire = the
-        # physically smaller of the two branches) silently swapped fire and
-        # continuation whenever a genuine TRUE-branch hedge subgate happened
-        # to be the LARGER side (confirmed: a real BND-vs-SH sub-gate in
-        # real_tree_04 whose TRUE branch, containing VIXY, is 20 nodes vs its
-        # ELSE branch's 18 CORE_ASSET_-laden nodes) — stubbing the wrong
-        # (actually-fire) side and copying the wrong (actually-core) side
-        # verbatim, leaking CORE_ASSET_ placeholders into the reported
-        # cascade's fire branch.
-        fire_child = cond_child
-        continuation_child = else_child
+        cond_n = _count_nodes(cond_child)
+        else_n = _count_nodes(else_child)
+        fire_child = cond_child if cond_n <= else_n else else_child
+        continuation_child = else_child if fire_child is cond_child else cond_child
 
         vix_tickers.update(_collect_tickers(fire_child) & VIX_FAMILY_TICKERS)
 
         rebuilt_fire = {k: v for k, v in fire_child.items() if k != "children"}
         rebuilt_fire["children"] = [_compact_subtree(c) for c in fire_child.get("children") or []]
+        fire_node_count = _count_nodes(rebuilt_fire)
 
-        # The continuation (else) branch is core content past this cascade's
+        # The continuation (large) branch is core content past this cascade's
         # boundary — its real content is never included verbatim (no real
-        # tickers/structure leak through). The stub is padded with synthetic
-        # placeholder leaves sized to the ORIGINAL continuation branch's real
-        # node count purely for observability (so the overlay visibly shows
-        # how much was elided) — never a placeholder for scale that could be
-        # mistaken for a real ticker. There is no size relationship to
-        # preserve against the fire branch: once direction (not size)
-        # identifies which branch is fire, a continuation genuinely CAN be
-        # smaller than its sibling fire branch, and the stub is not padded
-        # to hide that.
-        placeholder_leaf_count = max(
-            _count_nodes(continuation_child) - 1, 0
-        )  # -1 for the if-child itself
+        # tickers/structure leak through). It IS still deliberately kept
+        # LARGER than the fire branch by node count: callers (including the
+        # detector's own consumers) derive "which of the two direct branches
+        # is the fire branch" from relative size, so collapsing the
+        # continuation stub to near-zero would invert that comparison and
+        # misidentify the stub itself as the fire branch. The stub's size is
+        # therefore anchored to the ORIGINAL continuation branch's real node
+        # count (always >= the fire branch's, by construction of "fire =
+        # smaller side") using synthetic placeholder leaves — never a
+        # placeholder for scale that could be mistaken for a real ticker.
+        original_continuation_n = max(_count_nodes(continuation_child), fire_node_count + 1)
+        placeholder_leaf_count = original_continuation_n - 1  # -1 for the if-child node itself
         stub_continuation = {
             "step": _STEP_IF_CHILD,
             "id": continuation_child.get("id"),
@@ -703,83 +722,87 @@ def _build_cascade_overlay(root_if_node: dict) -> tuple[dict, list[float], set[s
         needs its own large/continuation branch stubbed:
 
           - A node that fully qualifies as a cascade rung (RSI-gated,
-            VIX-bearing fire side, direction-explicit — self-reference
-            allowed here, see ``_qualifies_as_cascade_rung``'s docstring): a
-            genuine scale-in TIER of the SAME cascade. Contributes its own
-            threshold (if parseable) and VIX tickers.
+            VIX-bearing fire side, size-cliff — self-reference allowed here,
+            see ``_qualifies_as_cascade_rung``'s docstring): a genuine
+            scale-in TIER of the SAME cascade. Contributes its own threshold
+            (if parseable) and VIX tickers.
           - A node that is internal hedge-basket machinery keyed on a
             NON-RSI indicator (``_is_internal_hedge_subgate`` — e.g.
             ``cumulative-return(UVXY) lt 5.5`` deciding de-escalation): its
-            own TRUE side is still genuinely hedge content, so it must be
-            compacted (continuation side stubbed) even though it isn't a
-            reportable cascade tier. Reuses ``_compact_if_node`` — the
-            threshold-append branch inside it only fires for an RSI
-            condition, so a non-RSI sub-gate simply contributes no
-            threshold, correctly.
+            own small side is still genuinely hedge content, so it must be
+            compacted (large side stubbed) even though it isn't a reportable
+            cascade tier. Reuses ``_compact_if_node`` — the threshold-append
+            branch inside it only fires for an RSI condition, so a non-RSI
+            sub-gate simply contributes no threshold, correctly.
 
-        Any OTHER nested if-node (e.g. a genuinely unrelated core-strategy
-        gate whose branches carry no VIX ticker at all) is normally copied
-        verbatim — it is not hedge-basket content, and compacting it would
-        be fabricating a boundary that isn't there.
+        Any OTHER node is recursed into generically.
 
-        AC-6 REGRESSION FIX (2026-07-16, defect #5 — fr-test's INfCn/hvPi
-        finding): the ONE exception to "copy a non-qualifying if-node
-        verbatim" is when it carries a CORE_ASSET_ placeholder anywhere in
-        its own subtree (``_has_core_placeholder``) AND neither of its own
-        branches reaches VIX at all (checked directly here, not just via
-        the TRUE-branch-only qualification helpers). A real basket commonly
-        nests an unrelated core-vs-core allocation sub-decision as a SIBLING
-        (same wt-cash-equal group) to the genuine hedge pick — e.g. a
-        CORE_ASSET_-vs-GLD/SLV/DBC choice sitting beside a VIXY pick, both
-        inside the SAME outer cascade's confirmed TRUE/fire branch. That
-        sibling if-node fails BOTH qualification checks (neither of ITS OWN
-        branches reaches VIX ANYWHERE, correctly — it genuinely isn't hedge
-        machinery) but recursing into it verbatim still leaks its
-        CORE_ASSET_ content into the reported fire branch, violating AC-2.
-        Since this function has already classified the node as NOT part of
-        the hedge signal (both qualification checks failed) AND neither
-        branch has VIX content to lose, the whole node is replaced with a
-        single stub leaf instead of being recursed into.
+        AC-6 REGRESSION FIX (2026-07-16, defect #5 — fr-test's INfCn/hvPi/
+        real_tree_04/06 finding, commit 7ca7c0c6 root-cause narrative):
+        after each child is recursively compacted (which already correctly
+        handles any deeper qualifying tier nested within it — a rung or
+        hedge subgate several levels down still gets its OWN continuation
+        stubbed by the two branches above, unaffected by this fix), the
+        RESULT is checked: if it still carries a CORE_ASSET_ placeholder
+        anywhere (``_has_core_placeholder``) AND has NO VIX-family ticker
+        anywhere within it, that one child specifically is replaced with a
+        single stub leaf instead of being kept.
 
-        The "neither branch has VIX" guard is deliberate and NOT redundant
-        with the qualification checks above: those check the TRUE branch
-        only (``_is_internal_hedge_subgate``'s own contract). A DIFFERENT,
-        NOT-yet-resolved case (real_tree_09/n2oo, flagged to team-lead,
-        2026-07-16) has genuine VIX content (VXX/UVXY) sitting in the ELSE
-        branch of a non-qualifying if-node, with CORE_ASSET_ placeholders in
-        its TRUE branch — an apparently inverted-polarity hedge gate. Both
-        qualification checks correctly say "not hedge machinery" (per their
-        TRUE-branch-only contract), but a blanket "stub whenever a core
-        placeholder is present" would ALSO erase that node's own genuine
-        VXX/UVXY content, which is a strictly worse outcome than the known
-        CORE_ASSET_ leak — content loss, not just impurity. Checking both
-        branches for VIX before stubbing prevents that: this node falls
-        through to the ordinary verbatim-copy/recurse path instead (the
-        pre-existing behavior, and pre-existing known leak, for this
-        specific unresolved case) rather than losing real signal.
+        This is deliberately a LOCAL, PER-CHILD, SYMMETRIC check — not a
+        "pick the fire side" decision, and not a change to
+        ``_compact_if_node``/``_is_internal_hedge_subgate``'s ratified
+        size-based selection model (a direction-based rewrite of THAT model
+        was tried and falsified, see ``_is_internal_hedge_subgate``'s
+        docstring). It never discards a child that has ANY VIX content
+        (however deeply nested), so it cannot reproduce that falsified
+        rewrite's failure mode (mislabeling a genuine, VIX-bearing branch as
+        disposable). It resolves three confirmed real cases without content
+        loss:
+          - INfCn/hvPi: a nested if-node (neither a rung nor a hedge
+            subgate) whose TRUE side is CORE_ASSET_ content and whose ELSE
+            side is unrelated real tickers (GLD/SLV/DBC, no VIX) — its
+            CORE_ASSET_ side gets stubbed, its ELSE side is untouched.
+          - real_tree_04/06 (fr-test's original finding): a BND-vs-SH
+            ticker-crossover if-node (fails ``_qualifies_as_cascade_rung`` —
+            ticker RHS, no fixed threshold) whose TRUE side genuinely
+            contains VIXY/BTAL/TMF (plus a deeper properly-compacted nested
+            tier) and whose ELSE side is un-gated CORE_ASSET_ leaf content
+            with no VIX anywhere — only the ELSE side gets stubbed; the
+            genuine TRUE-side hedge content, including the deeper tier, is
+            fully preserved.
+          - real_tree_09/n2oo: an inverted-polarity node whose VIX content
+            (VXX/UVXY) sits in its ELSE branch and whose CORE_ASSET_ content
+            sits in its TRUE branch — the TRUE side gets stubbed, the ELSE
+            side (genuine hedge content) is fully preserved. Resolved as a
+            side effect of this per-child design, without needing to decide
+            "which side is fire" for this node at all.
         """
         if not isinstance(node, dict):
             return node
-        if node.get("step") == _STEP_IF:
-            if _qualifies_as_cascade_rung(node, is_nested_tier=True) or _is_internal_hedge_subgate(
-                node
-            ):
-                return _compact_if_node(node)
-            pair = _get_condition_branch_pair(node)
-            branch_has_vix = pair is not None and bool(
-                (_collect_tickers(pair[0]) | _collect_tickers(pair[1])) & VIX_FAMILY_TICKERS
-            )
-            if _has_core_placeholder(node) and not branch_has_vix:
-                return {
-                    "step": _STEP_ASSET,
-                    "ticker": "_STUBBED_CORE_CONTINUATION",
-                    "id": f"{node.get('id')}-unrelated-stub",
-                    "children": [],
-                }
+        if node.get("step") == _STEP_IF and (
+            _qualifies_as_cascade_rung(node, is_nested_tier=True)
+            or _is_internal_hedge_subgate(node)
+        ):
+            return _compact_if_node(node)
         out = {k: v for k, v in node.items() if k != "children"}
         children = node.get("children")
         if isinstance(children, list):
-            out["children"] = [_compact_subtree(c) for c in children]
+            compacted_children = []
+            for c in children:
+                compacted_c = _compact_subtree(c)
+                if (
+                    isinstance(compacted_c, dict)
+                    and _has_core_placeholder(compacted_c)
+                    and not (_collect_tickers(compacted_c) & VIX_FAMILY_TICKERS)
+                ):
+                    compacted_c = {
+                        "step": _STEP_ASSET,
+                        "ticker": "_STUBBED_CORE_CONTINUATION",
+                        "id": f"{compacted_c.get('id', 'unknown')}-unrelated-stub",
+                        "children": [],
+                    }
+                compacted_children.append(compacted_c)
+            out["children"] = compacted_children
         else:
             out = copy.deepcopy(node)
         return out
@@ -836,13 +859,32 @@ def detect_frontrunner_cascades(tree: dict) -> DetectionResult:
         cascades: list[Cascade] = []
         for root_node, group_name in candidate_roots:
             overlay_tree, thresholds, vix_tickers = _build_cascade_overlay(root_node)
-            if (
-                _has_core_placeholder(overlay_tree)
-                and len(_collect_tickers(overlay_tree) & VIX_FAMILY_TICKERS) == 0
-            ):
-                # Defensive: an overlay that swallowed core placeholder content
-                # AND has no VIX ticker of its own is not a real cascade — skip
-                # this one rather than report a corrupted overlay.
+            if len(_collect_tickers(overlay_tree) & VIX_FAMILY_TICKERS) == 0:
+                # Defensive: an overlay with NO VIX-family ticker anywhere is
+                # not a real cascade, full stop — skip it rather than report
+                # a non-hedge basket as a frontrunner.
+                #
+                # AC-6 REGRESSION FIX (2026-07-16, defect #6): this used to
+                # ALSO require _has_core_placeholder(overlay_tree) — a proxy
+                # for "corrupted", back when a size-vs-direction disagreement
+                # on the root (it qualifies because its TRUE branch reaches
+                # VIX somewhere, but _compact_if_node's size-based fire pick
+                # chooses the OTHER, non-VIX-bearing side, entirely stubbing
+                # away the genuine VIX content as "continuation") reliably
+                # left a raw CORE_ASSET_ leak behind as a side effect. Once
+                # _compact_subtree's per-child purification (see its
+                # docstring) started cleaning that leak up BEFORE this check
+                # runs, the proxy silently stopped firing on exactly these
+                # cases — 3 confirmed instances in real_tree_09/n2oo where a
+                # root qualifies on direction but its compacted overlay ends
+                # up with zero VIX content (a leveraged-ETF basket like
+                # QQQU/SOXL/TECL/TQQQ/UPRO, no hedge ticker at all) would
+                # otherwise slip through as a false-positive cascade. The "no
+                # VIX anywhere" condition alone is the real invariant a
+                # legitimate cascade must satisfy; checking it directly,
+                # without the now-unreliable core-placeholder proxy, closes
+                # this gap without depending on _compact_subtree's internal
+                # cleanup behavior.
                 continue
             cascades.append(
                 Cascade(
