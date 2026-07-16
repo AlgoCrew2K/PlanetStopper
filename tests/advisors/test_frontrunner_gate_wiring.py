@@ -389,21 +389,37 @@ def test_a_weak_candidate_that_clears_the_fdr_veto_is_still_rejected_on_oos_alph
     oos_alpha <= default_oos_alpha`) is evaluated BEFORE the panel
     comparison and is untouched by that fix.
 
-    Fixture design: a clean, low-relative-variance, but MODEST-magnitude
-    candidate (mostly +0.10%/day with small -0.02%/day dips) — significant
-    enough to clear BHY/FDR (probe-verified vetoes_passed=True,
-    winner_p_adj≈0.017 < HARVEY_LIU_FDR_Q=0.05) but too small in absolute
-    terms to beat the incumbent's full-100-day baseline from just its
-    20-day validation fold (probe-verified oos_alpha=1.52 vs incumbent
-    full-period=1.7 → KEEP_INCUMBENT). Directly probed BOTH against the
-    current (pre-fix) empty-params construction AND a simulated post-fix
-    tied-panel construction (identical non-empty candidate_params/
-    incumbent_params/theory_prior_params, panel_score=1.0 for both sides)
-    — decision is KEEP_INCUMBENT in BOTH cases, confirming this reject is
-    genuinely panel-independent, not an artifact of the current bug.
+    ALSO SERVES AS THE AC-G2-5 SELF-GUARD (feature-plans/frontrunner-signals.md
+    ADDENDUM 2026-07-16, "reject-label semantics preserved: oos_inferior_to_
+    incumbent still fires when the like-for-like comparison genuinely
+    loses"). g2-test AUDIT NOTE (2026-07-16): the ORIGINAL fixture here
+    (candidate_shape_pct averaging 0.076%/day full-series) was itself a
+    victim of the Gate#2 fold-vs-full defect this addendum fixes — probed
+    directly, it is actually PER-DAY-BETTER than the incumbent (0.076%/day
+    vs the incumbent's 0.017%/day), so once the baseline becomes a genuine
+    fold-vs-fold comparison it FLIPS to ADOPT_CANDIDATE (fold 1.52 >
+    incumbent fold 0.34) and Calmar acceptance independently passes too
+    (candidate_calmar=971.4 > incumbent_calmar=43.7) — the old fixture's
+    "genuinely too weak" premise was an artifact of the same bug, not a real
+    property of the data. Replaced with a UNIFORMLY SCALED-DOWN copy of the
+    same 8-up/2-down cadence (k=0.15x) — Sortino/BHY significance is
+    scale-invariant under uniform positive scaling (mean and downside
+    deviation both scale by k, so their ratio — and every bootstrap
+    resample's ratio — is unchanged), so the scaled candidate keeps
+    clearing BHY (probe-verified winner_p_adj≈0.0159, essentially identical
+    to the original's ≈0.017) while its average (0.0114%/day) now falls
+    genuinely BELOW the incumbent's 0.017%/day. Probed BOTH baselines
+    directly against the real evaluate_candidate_batch: buggy full-sum
+    (incumbent full-sum=1.7) and fixed fold-sum (incumbent fold=0.34) —
+    KEEP_INCUMBENT / reject_reason="oos_inferior_to_incumbent" in BOTH
+    regimes, confirming this reject is genuinely fold-vs-fold-honest, not
+    an artifact of either the pre-fix or post-fix baseline choice.
     """
     incumbent_shape_pct = [0.10, -0.05, 0.08, -0.10, 0.12, -0.03, 0.05, -0.08, 0.10, -0.02]
-    candidate_shape_pct = [0.10, 0.10, 0.10, 0.10, -0.02, 0.10, 0.10, 0.10, 0.10, -0.02]
+    # Uniformly scaled-down (k=0.15) copy of the original 8-up/2-down
+    # candidate cadence — see docstring: scaling preserves BHY significance
+    # while genuinely dropping the average below the incumbent's rate.
+    candidate_shape_pct = [0.015, 0.015, 0.015, 0.015, -0.003, 0.015, 0.015, 0.015, 0.015, -0.003]
 
     incumbent_result = _make_shaped_result(incumbent_shape_pct, n_days=100)
     candidate_result = _make_shaped_result(candidate_shape_pct, n_days=100)
@@ -491,13 +507,28 @@ def test_a_gate_and_calmar_surviving_candidate_is_queued_with_metrics(fbld, incu
     returns genuinely warrant it. This assertion is NOT weakened to route
     around the finding — a worse implementation (one that never fixes the
     panel-score construction) must continue to fail this test.
+
+    AC-G2-3 NARRATIVE CORRECTION (feature-plans/frontrunner-signals.md
+    ADDENDUM 2026-07-16, cycle-caused-stale ruling): the inline comment
+    below originally compared the candidate's validation-fold sum against
+    the incumbent's FULL-100-day sum ("oos_alpha ≈ 9.4 vs incumbent
+    full-period ≈ 1.7") — that was describing the Gate#2 fold-vs-full
+    baseline DEFECT this addendum fixes, not the correct mechanism. The
+    ASSERTIONS below are unaffected either way (re-probed against a
+    like-for-like fold-vs-fold baseline: incumbent's OWN validation-fold
+    sum ≈ 0.34, still comfortably beaten by the candidate's fold sum ≈ 9.4
+    — an even bigger margin than the buggy comparison gave it), so nothing
+    here needed to change except this narrative.
     """
     incumbent_shape_pct = [0.10, -0.05, 0.08, -0.10, 0.12, -0.03, 0.05, -0.08, 0.10, -0.02]
     # Strong, mostly-positive candidate with genuine (not near-zero-float-noise)
     # down days every 5th day — clears BHY/FDR significance (probe-verified
-    # winner_p_adj ≈ 0.037 < HARVEY_LIU_FDR_Q=0.05) and its 20-day validation-fold
-    # sum comfortably beats the incumbent's full 100-day sum (probe-verified
-    # oos_alpha ≈ 9.4 vs incumbent full-period ≈ 1.7).
+    # winner_p_adj ≈ 0.037 < HARVEY_LIU_FDR_Q=0.05) and its 20-day validation
+    # fold comfortably beats the incumbent's OWN validation-fold sum, the
+    # correct like-for-like Gate#2 baseline (probe-verified candidate fold
+    # oos_alpha ≈ 9.4 vs incumbent fold oos_alpha ≈ 0.34 — see the AC-G2-3
+    # narrative correction above; this margin holds even wider than the old,
+    # buggy full-period comparison did).
     candidate_shape_pct = [0.60, 0.60, 0.60, 0.60, -0.05, 0.60, 0.60, 0.60, 0.60, -0.05]
 
     incumbent_result = _make_shaped_result(incumbent_shape_pct, n_days=100)
@@ -931,3 +962,170 @@ def test_a_gate_engine_exception_does_not_crash_the_whole_symphony_batch(fbld, i
                 "run_frontrunner_build — D-1 requires this to degrade to a "
                 "logged skip, never crash the batch"
             )
+
+
+# ---------------------------------------------------------------------------
+# AC-G2: Gate#2 fold-vs-full baseline defect (feature-plans/frontrunner-
+# signals.md ADDENDUM 2026-07-16, [PM-ASSUMED]). _gate_and_accept_candidate's
+# incumbent_oos_alpha (frontrunner_builder.py:1634) is currently the
+# incumbent's FULL-series sum, compared against the candidate's VALIDATION-
+# FOLD-only oos_alpha (backtest_gate_engine.py:551-552, ~20% of the series)
+# — an apples-to-oranges ~5x unit bias that rejects genuinely per-day-better
+# candidates against any profitable incumbent (addendum probe #4). These
+# tests call the REAL _gate_and_accept_candidate directly (mocking only the
+# backtest fetch) rather than going through the full _run_build_for_symphony
+# orchestration — a surgical unit test of the exact defective comparison,
+# matching the (accepted, metrics) tuple _gate_and_accept_candidate returns.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_g2_2_per_day_better_candidate_beats_a_profitable_incumbent_fold_vs_fold(
+    fbld, incumbent_symphony
+):
+    """AC-G2-1/AC-G2-2: a candidate that is per-day-BETTER than a PROFITABLE
+    incumbent, and clears BHY/Yekutieli significance on its validation fold,
+    must be ACCEPTED — the Gate#2 baseline must compare the incumbent's own
+    validation-FOLD sum against the candidate's fold sum (both ~20% of the
+    series, the SAME fold-transform backtest_gate_engine.py already applies
+    to the candidate), never the incumbent's FULL-series sum against the
+    candidate's fold-only sum.
+
+    Fixture design (10-day cycle, n_days=100, probe-verified directly
+    against the real evaluate_candidate_batch/_fold_transform_single/
+    evaluate_calmar_acceptance — see this cycle's g2-test dispatch record):
+      incumbent_shape_pct: avg 0.25%/day, WITH one genuine down day per
+        10-day cycle so max_drawdown != 0 — an all-positive incumbent makes
+        frontrunner_acceptance.compute_calmar return None (division by a
+        literal-zero drawdown) and rejects for an UNRELATED reason,
+        independent of the Gate#2 baseline this test targets.
+      candidate_shape_pct: avg 0.31%/day, same 8-up/2-down cadence so its
+        20-day validation fold is noisy enough to clear BHY (an all-positive
+        fold hits the +1e6 Sortino sentinel and gets filtered by the
+        bootstrap SE trap — self-defeating).
+
+    PROBED AT HEAD (buggy: fallback_oos_alpha = incumbent FULL-sum = 25.0,
+    candidate fold-sum = 6.2): decision=KEEP_INCUMBENT,
+    reject_reason="oos_inferior_to_incumbent" — this is the RED failure this
+    test pins.
+    PROBED against the fold-vs-fold fix (fallback_oos_alpha = incumbent
+    validation-FOLD-sum = 5.0): decision=ADOPT_CANDIDATE, reject_reason=None,
+    vetoes_passed=True, panel_score=1.0 (the R1 _TREE_SPLICE_PANEL_PARAMS_
+    SENTINEL tie is independently confirmed still reachable — this test is
+    NOT blocked on that fix, only on AC-G2-1). Calmar acceptance
+    independently probed too: incumbent_calmar≈1751.2,
+    candidate_calmar≈2361.1, tags={'performance'}, accepted=True — so the
+    fixed gate reaches accepted=True end-to-end through
+    _gate_and_accept_candidate, not just through the isolated gate call.
+    """
+    incumbent_shape_pct = [0.325, 0.325, 0.325, 0.325, -0.05, 0.325, 0.325, 0.325, 0.325, -0.05]
+    candidate_shape_pct = [0.40, 0.40, 0.40, 0.40, -0.05, 0.40, 0.40, 0.40, 0.40, -0.05]
+
+    incumbent_result = _make_shaped_result(incumbent_shape_pct, n_days=100)
+    candidate_result = _make_shaped_result(candidate_shape_pct, n_days=100)
+    # Trivial, deliberately distinct from incumbent_symphony — node counts
+    # of the two trees are irrelevant to this test (Path 1 IMPROVE in
+    # evaluate_calmar_acceptance fires on Calmar alone, independent of
+    # node-count deltas), so a minimal stub is honest and avoids implying
+    # the candidate tree's actual shape matters here.
+    candidate_tree = {"step": "root", "children": []}
+
+    call_count = {"n": 0}
+
+    def _side_effect(*args, **kwargs):
+        call_count["n"] += 1
+        return incumbent_result if call_count["n"] == 1 else candidate_result
+
+    with (
+        patch("advisors.composer_backtest_client.run_backtest", side_effect=_side_effect),
+        patch("database.insert_dof_ledger_row"),
+    ):
+        accepted, metrics = fbld._gate_and_accept_candidate(
+            symphony_id="test-symphony-id",
+            incumbent_tree=incumbent_symphony,
+            candidate_tree=candidate_tree,
+        )
+
+    assert accepted is True, (
+        f"expected accepted=True for a per-day-better candidate (0.31%/day) "
+        f"against a PROFITABLE incumbent (0.25%/day) — got accepted=False, "
+        f"reject_reason={metrics.get('reject_reason')!r}. This is the "
+        f"AC-G2-2 RED signal: the Gate#2 baseline must compare the "
+        f"incumbent's validation-fold sum against the candidate's "
+        f"validation-fold sum (like-for-like), not the incumbent's "
+        f"full-series sum against the candidate's fold-only sum (see this "
+        f"test's docstring / the plan addendum's probe #4)."
+    )
+    assert metrics.get("reject_reason") is None, (
+        f"an accepted candidate's metrics dict must not carry a "
+        f"reject_reason, got {metrics.get('reject_reason')!r}"
+    )
+
+
+def test_ac_g2_4_an_insignificant_candidate_is_still_rejected_regardless_of_the_gate2_baseline(
+    fbld, incumbent_symphony
+):
+    """AC-G2-4 self-guard: Gate#1 (BHY/Yekutieli significance) must be
+    completely UNAFFECTED by the Gate#2 baseline fix — an insignificant
+    candidate is rejected on winner-selection grounds (p_adj > FDR q) before
+    the OOS-superiority comparison is even reached, so incumbent_oos_alpha's
+    value (buggy full-sum or fixed fold-sum) cannot change the outcome.
+
+    Fixture: both incumbent and candidate use the all-positive single-
+    cyclical-multiplier shape (mirrors _make_fake_result's own formula,
+    scaled to 0.2%/0.3%) — this is KNOWN to hit the +1e6 Sortino sentinel /
+    bootstrap-SE-filter trap (see test_a_gate_and_calmar_surviving_
+    candidate_is_queued_with_metrics's docstring for the mechanism), so the
+    candidate never clears BHY significance despite a numerically "bigger"
+    raw return. Probed directly against evaluate_candidate_batch under BOTH
+    the buggy full-sum baseline (20.0) and the fixed fold-sum baseline
+    (4.0): IDENTICAL result both times — decision=REJECT_VETO_FAILED,
+    rejection_reason="fdr_not_winner", vetoes_passed=False,
+    winner_p_adj=0.5 — proving the BHY veto never even inspects
+    incumbent_oos_alpha. This test is GREEN today and must stay GREEN after
+    the AC-G2-1 fix lands with zero production change required to pass it
+    (a genuine pin, not a second RED signal).
+    """
+    from advisors.composer_backtest_client import BacktestResult
+
+    def _fake_positive_cyclic(base_return_pct: float, n_days: int = 100):
+        returns: dict[str, float] = {}
+        d = date(2022, 1, 1)
+        for i in range(n_days):
+            returns[d.isoformat()] = (base_return_pct * (1 + (i % 5) * 0.1 - 0.2)) / 100.0
+            d += timedelta(days=1)
+        return BacktestResult(stats={"sharpe": 0.5, "cagr": 0.08}, data_warnings=[], daily_returns=returns)
+
+    incumbent_result = _fake_positive_cyclic(0.2)  # profitable, avg 0.2%/day
+    candidate_result = _fake_positive_cyclic(0.3)  # "better" raw magnitude, but insignificant
+
+    call_count = {"n": 0}
+
+    def _side_effect(*args, **kwargs):
+        call_count["n"] += 1
+        return incumbent_result if call_count["n"] == 1 else candidate_result
+
+    with (
+        patch("advisors.composer_backtest_client.run_backtest", side_effect=_side_effect),
+        patch("database.insert_dof_ledger_row"),
+    ):
+        accepted, metrics = fbld._gate_and_accept_candidate(
+            symphony_id="test-symphony-id",
+            incumbent_tree=incumbent_symphony,
+            candidate_tree={"step": "root", "children": []},
+        )
+
+    assert accepted is False, (
+        f"an all-positive, statistically-insignificant candidate must stay "
+        f"rejected on BHY grounds regardless of the Gate#2 baseline fix — "
+        f"got accepted=True, metrics={metrics!r}"
+    )
+    assert metrics.get("reject_reason", "").startswith("gate rejected candidate:"), (
+        f"expected a gate-level rejection (not a Calmar rejection or a "
+        f"backtest-failure reject), got reject_reason="
+        f"{metrics.get('reject_reason')!r}"
+    )
+    assert "fdr_not_winner" in metrics["reject_reason"], (
+        f"expected the underlying gate rejection_reason to be "
+        f"'fdr_not_winner' (BHY significance veto — untouched by the "
+        f"Gate#2 baseline fix), got {metrics['reject_reason']!r}"
+    )
