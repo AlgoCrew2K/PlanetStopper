@@ -1,0 +1,65 @@
+# Feature: Frontrunner Signals — live Atlas signal ingestion, edge-scored cull, and builder integration
+Status: ready
+Created: 2026-07-16
+Operator directive (2026-07-16, verbatim intent): "you will pull the live signals into our db on a daily cache, and you will find what signals I should cull from my live Frontrunners while actually building the proper Frontrunner Builder in the advisor suite." No further iteration is acceptable — this cycle delivers the working feature, shown against real signals.
+
+## Summary
+The shipped frontrunner builder (PR #96) is structural-only: it detects cascade shapes and generates replacements but NEVER reads the live signal data the operator pointed at. That data exists: Atlas collection **`captplanet.frontrunners`** (~3,402 docs; one per `TICKER:WINDOW:THRESHOLD`, comparator always `gt`) carries `rsi_live` (current RSI, alpaca-sourced, refreshed ~07:01 ET daily) + `backtest.summary` (20-yr standalone edge of `RSI(t,w) gt thr ? VIXY : BIL`: cagr/sharpe/sortino/calmar/max_drawdown/volatility/n_points) + `vix_destination_summary` + `total_strategy_count` + `backtest.true_ticker/false_ticker`. This cycle wires that source in end-to-end:
+
+1. **Ingest** — a new `advisors/frontrunner_signals.py` pulls `captplanet.frontrunners` on a DAILY cache (`atlas_cache.cached_pull(ttl_days=1)`, dedicated cache key) and persists each pull into our DB (warehouse third-DB pattern).
+2. **Score & cull** — per live symphony: extract its FR-checks from the real `/score` tree (TRUE-branch→VIX-family walk), join to the signal data by `fr_key`, classify keep/prune/remove by real edge.
+3. **Builder integration** — candidate generation consumes edge data: propose only from edge-positive signals, never re-introduce a negative-edge key; fix the detector whose size-cliff signature matched **0** of the operator's real trees.
+4. **Surface** — advisor-suite Frontrunner tab renders per-symphony: FR-check → live RSI → edge stats → keep/cull flag, with honest empty/degraded states.
+
+Evidence base (already captured, 2026-07-16): `docs/fr-signals-inputs/joined.json` (177 live FR-checks joined to 152 exact Atlas matches), `docs/fr-signals-inputs/live_symphonies.json` (11 live hashes+names), `alphabot_atlas_cache.db` (worktree root, untracked) holding the 1,527-doc pull cached under `captplanet.frontrunners.fr_checks` at ttl_days=1 — REUSE this cache; do NOT re-pull Atlas during development.
+
+## Acceptance Criteria
+
+**AC-1 (daily-cached Atlas pull).** `advisors/frontrunner_signals.py` exposes `load_frontrunner_signals(*, force_refresh=False) -> dict` pulling `captplanet.frontrunners` through `atlas_cache.cached_pull` with `ttl_days=1` under a DEDICATED cache key (separate from the weekly `strategies` key). The fetch is bounded: server-side projection excludes `backtest.equity_curve` and includes `"_id": 0` (DE-ATLAS-CACHE-001); wall-clock-bounded via the `_bounded_fetch_fn` pattern (DE-CS-002); result `{available, signals, stats, fetched_at, source}`; D-1 never-raises (`available=False, reason=type(exc).__name__` on any failure). Bill-protection: at most one live Atlas read per day per process fleet; every consumer goes through the cache.
+
+**AC-2 (persist into our DB).** Every non-cache-hit pull is persisted to the warehouse DB (`lens_warehouse` third-DB pattern: append-only, parameterized, `_strip_secrets`, pytest sentinel honoring temp `db_path`). Per-signal rows carry at minimum: `fr_key, ticker, window, threshold, comparator, rsi_live, rsi_live_at, cagr, sharpe, sortino, calmar, max_drawdown, n_points, vix_destination_json, total_strategy_count, fetch_ts`. A read accessor returns the latest snapshot's rows. No cross-DB joins in app code.
+
+**AC-3 (per-symphony FR-check extraction, direction-explicit).** A tree-walk extractor over a real Composer `/score` tree returns every condition node whose **TRUE branch reaches a VIX-family ticker** (UVIX/UVXY/VIXY/VXX/VIXM), yielding `(fr_key, fn, comparator, branch_path)` where `branch_path` records the actual if/else route taken to the VIX leaf — direction is never inferred outside the tree. Self-referential VIX-timing gates (subject ticker itself VIX-family, e.g. `RSI(UVXY)`, `cumret(VIXY)`) are excluded. Golden-fixture tests use the operator's REAL captured trees (fixture provenance: captured-from-producer).
+
+**AC-4 (edge scoring + keep/cull classification).** Join extracted FR-checks to signals by exact `fr_key` AND comparator: only `gt` RSI checks are edge-comparable to the gt-only collection; `lt`-comparator or unmatched checks classify as `no_edge_data` (honest state — never scored against a gt backtest; the SPY:10:30 mis-join is the canonical trap and MUST be a test case). Classification: `remove` (Tier 1) when `cagr < 0 or sharpe < 0`; `prune` (Tier 2) when `sharpe < FR_WEAK_SHARPE_THRESHOLD` (named constant = 0.38, source comment: p10 of the 152 matched live FR-check Sharpe distribution, 2026-07-16 join); else `keep`. Classifier is pure and fixture-tested against `joined.json`-derived fixtures reproducing the known table (SPY:21:30 / SPY:10:31 / PBE:10:79 / DBE:10:77 = remove; REZ/SBB/UGL/RINF/IGOV/PSR/DBB/VGSH/DUST/ZSL keys = prune).
+
+**AC-5 (builder generation gating).** Candidate frontrunner generation consumes the signal data: proposed checks must have a matching `fr_key` with positive edge (`cagr > 0 and sharpe > 0`); any candidate containing a Tier-1 `remove` key is rejected before backtest spend; generation prompt/context receives the edge stat lines for the signals it may use. Provenance on each candidate records the signal keys + their edge stats. When signals are unavailable (D-1 degraded), generation degrades to structural-only WITH an explicit `signals_unavailable` marker on the run — never silently.
+
+**AC-6 (detector fixed against real trees).** The detector's cascade recognition is rebuilt to match the collection's own model (condition whose TRUE branch fires VIX-family, per AC-3 walk) instead of the size-cliff signature that matched 0 real trees. Against the operator's captured real trees it MUST detect the known frontrunner checks (e.g. `SPY:10:31` in the 8 symphonies that carry it); the old signature's 0-match behavior is a regression test (it must never be the sole gate again).
+
+**AC-7 (advisor-suite surface).** The Frontrunner tab renders a per-symphony table: FR-check (`fr_key`, fn, comparator) → live RSI (+ capture time) → edge stats (cagr/sharpe/calmar/maxDD) → classification chip (keep/prune/remove/no_edge_data), with per-symphony grouping, an honest empty state when signals are unavailable/stale, and the run-level `signals_unavailable` notice when generation degraded. Read-only; advisory-only; no new write endpoints beyond the existing approval flow; CSRF/auth posture unchanged.
+
+**AC-8 (no live API in tests).** All tests mock the Atlas seam (the module's fetch fn) and the Composer seam (`composer_backtest_client.run_backtest` / `symphony_logic.fetch_symphony_score`); the full battery passes CREDENTIAL-LESS (all 7 cred env vars = "") AND with-creds; zero live network in pytest (execution_seam_detector must stay green, extended to the Mongo/pymongo seam if not already covered).
+
+**AC-9 (off-execution-path).** Nothing in this cycle is imported by `alpha_bot_execution.py` / the minute engine path; CC-2 lazy imports at every daemon-adjacent boundary; `is_live` semantics untouched; `_SETTINGS_WRITE_ALLOWLIST` untouched; acceptance_gate.py / autotuner.py / math_engine.py ZERO diff.
+
+## Architecture
+- `advisors/frontrunner_signals.py` (NEW): fetch (bounded, projected) → daily cache → warehouse persist → accessors (`load_frontrunner_signals`, `get_latest_signal_rows`, `classify_fr_checks`). Pure-stdlib + pymongo lazy import inside fetch fn only.
+- `advisors/frontrunner_detector.py` (MODIFY): AC-3 walk replaces/augments the signature; keep the AC-2 self-referential exclusion; expose `extract_fr_checks(tree) -> list[FRCheck]`.
+- `advisors/frontrunner_builder.py` (MODIFY): consume signals in generation (AC-5); provenance fields; degraded-mode marker.
+- `app.py` + `templates/ai_advisor.html` + `static/ai_advisor.js` (MODIFY): AC-7 surface on the FR tab.
+- Warehouse: reuse `advisors/lens_warehouse.py` table pattern — new `frontrunner_signal_snapshots` table (append-only) via idempotent `init_*` in the same DB file. NO state-DB migration needed (third-DB pattern).
+
+## Edge Cases
+- Atlas unreachable / SRV DNS hang → bounded timeout → `available=False`, builder degrades structural-only + marker (AC-5), tab shows honest degraded state (AC-7).
+- `lt`-comparator live checks (e.g. SPY:10:30 oversold→vol) → `no_edge_data`, never scored vs gt backtest (AC-4).
+- Tickers absent from the collection (BITO/COIN/GBTC — non-RSI crypto gates) → `no_edge_data`, listed, never invented.
+- Ticker-only matches (same ticker, different window/threshold) → NOT edge-comparable; classify `no_edge_data`, optionally display nearest-key stats clearly labeled "nearest signal, not exact".
+- Stale `rsi_live_at` (>48h) → render with a staleness flag.
+- Duplicate fr_keys across symphonies → dedupe in the join, fan back out per symphony for display.
+
+## Security Considerations
+- MONGO_URI stays in `.env`; `_strip_secrets` on every persisted payload; no URI/credential ever rendered or logged.
+- Read-only Mongo access; one bounded pull/day; no unbounded cursors (server-side `$in`/projection/limit).
+- No new dashboard write paths; advisory-only; no `LIVE_EXECUTION` interaction.
+
+## Testing Strategy
+- TDD via /tdd → /tdd-implement → /tdd-finalize. RED first on: cache-key/TTL wiring, D-1 degradation, warehouse persistence + sentinel, extraction direction on real-tree fixtures (incl. the Paragons ELSE-branch case as a NEGATIVE control — a VIX leaf reached only via an ELSE of a risk-on gate must still be captured with its true branch_path, and a non-VIX TRUE branch must NOT produce an fr_key), comparator guard (SPY:10:30 trap), classifier tiers against the known table, builder gating + degraded marker, route/JS render incl. empty states.
+- Fixtures: real captured `/score` trees + real Atlas doc shapes from `joined.json` (captured-from-producer provenance). No live API in tests (AC-8).
+- Full targeted battery `-n0` with mem-cap + temp DB_PATH; CI (`-n2`) is the authoritative full-tree gate; credential-less pass mandatory before ship.
+
+## Scope Boundaries
+- NO changes to acceptance_gate.py, autotuner.py, math_engine.py, alpha_bot_execution.py.
+- NO auto-trading, no Composer deploy/invest calls; upload remains create-only behind per-candidate operator approval (unchanged from PR #96).
+- NO recomputation of RSI from any price feed — the Atlas `rsi_live` is the only live-RSI source rendered.
+- The cull LIST delivery to the operator (validated per-symphony direction evidence) is a PM deliverable running in parallel; this cycle builds the durable machinery that keeps it current.
