@@ -1644,7 +1644,31 @@ def _gate_and_accept_candidate(
         # better the candidate's per-day return was (fold-vs-full defect;
         # same defect class already fixed the same way in
         # logic_change_engine.py's H6/RC-1).
-        incumbent_oos_alpha = _fold_transform_single(incumbent_returns_pct).oos_alpha
+        #
+        # AC-G2-6: the fold-transform itself can degenerate on a short
+        # incumbent series — _fold_transform_single returns oos_alpha=0.0
+        # (its hardcoded thin-series sentinel) whenever purge_integrity_ok is
+        # False or thin_window is True, silently collapsing Gate#2 to a
+        # "beat zero" bar (fail-OPEN — a regression this fix itself would
+        # otherwise introduce, since the pre-AC-G2-1 full-series sum at least
+        # produced a real number). The candidate side already hard-vetoes on
+        # its own purge_integrity_ok/thin_window ("never fabricate a pass for
+        # a thin series") — an incumbent baseline built on an equally
+        # purge-broken/thin fold is equally untrustworthy, so it gets the
+        # same conservative-withhold treatment: float("inf") makes
+        # `oos_alpha <= incumbent_oos_alpha` (acceptance_gate.py's
+        # Stage-2 OOS-superiority check) always true, i.e. KEEP_INCUMBENT —
+        # never a silent fallback to beats-zero. Mirrors
+        # _SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA's existing edge-14 pattern
+        # (backtest_gate_engine.py:196). Both flags are read from the fold
+        # result itself, never re-derived locally, and the sentinel stays a
+        # local variable — it is never written into a persisted metrics dict.
+        incumbent_fold = _fold_transform_single(incumbent_returns_pct)
+        incumbent_oos_alpha = (
+            float("inf")
+            if not incumbent_fold.purge_integrity_ok or incumbent_fold.thin_window
+            else incumbent_fold.oos_alpha
+        )
         bt_candidates = [
             BacktestCandidate(
                 candidate_id="candidate",
