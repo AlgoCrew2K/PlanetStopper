@@ -1136,3 +1136,161 @@ def test_ac_g2_4_an_insignificant_candidate_is_still_rejected_regardless_of_the_
         f"'fdr_not_winner' (BHY significance veto — untouched by the "
         f"Gate#2 baseline fix), got {metrics['reject_reason']!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# AC-G2-6 (ratified 2026-07-16, team-lead plan @ 5a7b44e8 — g2-test's own
+# adjacent finding from AC-G2-1 sufficiency review). Reusing
+# _fold_transform_single for the incumbent (the AC-G2-1 fix, 570fd6fa)
+# introduced a NEW fail-OPEN regression: a short incumbent series (<65 days,
+# FOLD_TRANSFORM_MIN_TOTAL_DAYS) hits _fold_transform_single's own
+# thin-series branch, which returns oos_alpha=0.0 — a hardcoded sentinel,
+# not a real "no edge" measurement. That silently disables Gate#2's
+# OOS-superiority check (any positive-fold-sum candidate trivially "beats"
+# a baseline of zero). The OLD pre-AC-G2-1 code (sum(incumbent_returns_pct))
+# never had this failure mode — a 30-day incumbent's full-sum is still a
+# real, meaningful (nonzero) number. Per the edge-14 precedent already
+# established in this codebase (backtest_gate_engine.py's
+# _SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA = float("+inf") — "never silent
+# fallback to beats-zero"), the fix must make the incumbent's baseline
+# CONSERVATIVELY WITHHOLD (fail-closed) when its own series is too short for
+# a meaningful fold, not silently pass everything.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_g2_6_a_short_incumbent_series_gate_level_still_rejects_a_weak_candidate(
+    fbld, incumbent_symphony
+):
+    """AC-G2-6 primary RED: asserts the GATE-LEVEL rejection reason
+    specifically (not just the final accepted bool) — g2-test's own probe
+    (reported to team-lead) showed the downstream Calmar acceptance step
+    happens to ALSO reject this exact fixture (using the incumbent's real
+    full-series metrics, untouched by the fold-transform baseline), which
+    would make a bare `accepted is False` assertion pass EVEN under the
+    current buggy 0.0-sentinel behavior — masking the Gate#2 regression
+    entirely. Asserting on metrics['reject_reason'] specifically proves
+    WHICH stage caught it.
+
+    Fixture (probe-verified against HEAD eac4f606, both the buggy current
+    behavior and a simulated conservative-withhold fix):
+      incumbent: 30 days (< FOLD_TRANSFORM_MIN_TOTAL_DAYS=65), genuinely
+        strong (0.30%/day, one down day per 10-day cycle so max_drawdown
+        != 0 for Calmar).
+      candidate: 100 days, the same weak-but-BHY-significant k=0.15x
+        scale-invariant shape used in the AC-G2-5 self-guard
+        (0.0114%/day, clears BHY at winner_p_adj ~ 0.016).
+
+    PROBED AT HEAD eac4f606 (current, buggy-for-thin-incumbent):
+    evaluate_candidate_batch alone returns decision=ADOPT_CANDIDATE,
+    rejection_reason=None, vetoes_passed=True — Gate#2 wrongly waves the
+    weak candidate through. _gate_and_accept_candidate's FULL metrics dict
+    then shows reject_reason="calmar_acceptance_rejected" (Calmar is what
+    actually caught it, not Gate#2) — this is the RED failure this test
+    pins: reject_reason must be "gate rejected candidate:
+    oos_inferior_to_incumbent", not "calmar_acceptance_rejected".
+
+    PROBED against a simulated conservative-withhold fix (thin/purge-failed
+    incumbent fold -> float("+inf") baseline, mirroring
+    _SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA's edge-14 pattern):
+    evaluate_candidate_batch returns decision=KEEP_INCUMBENT,
+    rejection_reason="oos_inferior_to_incumbent", vetoes_passed=True (the
+    candidate's OWN vetoes still pass — +inf only affects the Stage-2
+    OOS-superiority comparison, never the Stage-1 hard vetoes) — so
+    _gate_and_accept_candidate's metrics dict becomes reject_reason="gate
+    rejected candidate: oos_inferior_to_incumbent", which is what this test
+    asserts.
+    """
+    incumbent_shape_pct = [0.30, 0.30, 0.30, 0.30, -0.05, 0.30, 0.30, 0.30, 0.30, -0.05]
+    candidate_shape_pct = [0.015, 0.015, 0.015, 0.015, -0.003, 0.015, 0.015, 0.015, 0.015, -0.003]
+
+    incumbent_result = _make_shaped_result(incumbent_shape_pct, n_days=30)
+    candidate_result = _make_shaped_result(candidate_shape_pct, n_days=100)
+
+    call_count = {"n": 0}
+
+    def _side_effect(*args, **kwargs):
+        call_count["n"] += 1
+        return incumbent_result if call_count["n"] == 1 else candidate_result
+
+    with (
+        patch("advisors.composer_backtest_client.run_backtest", side_effect=_side_effect),
+        patch("database.insert_dof_ledger_row"),
+    ):
+        accepted, metrics = fbld._gate_and_accept_candidate(
+            symphony_id="test-symphony-id",
+            incumbent_tree=incumbent_symphony,
+            candidate_tree={"step": "root", "children": []},
+        )
+
+    assert accepted is False, (
+        f"a weak candidate must not be accepted against a strong (if "
+        f"short-history) incumbent — got accepted=True, metrics={metrics!r}"
+    )
+    assert metrics.get("reject_reason") == "gate rejected candidate: oos_inferior_to_incumbent", (
+        f"expected Gate#2 ITSELF to correctly reject this candidate "
+        f"(conservative-withhold on a thin incumbent series, per the "
+        f"edge-14 float('+inf') precedent), got reject_reason="
+        f"{metrics.get('reject_reason')!r}. If this is "
+        f"'calmar_acceptance_rejected', Gate#2 is still wrongly ADOPTing "
+        f"the candidate and only the unrelated Calmar backstop is masking "
+        f"the regression — see this test's docstring."
+    )
+
+
+def test_ac_g2_6_no_non_finite_sentinel_values_leak_into_the_persisted_metrics_dict(
+    fbld, incumbent_symphony
+):
+    """AC-G2-6 defensive pin: whatever conservative-withhold sentinel the
+    fix uses for a thin incumbent series (e.g. float("+inf"), mirroring
+    _SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA), it must NEVER leak into the
+    metrics dict that gets persisted via database.insert_frontrunner_
+    proposal / database.insert_advisor_observation — strict JSON (RFC 8259,
+    what a browser's JSON.parse enforces) rejects the literal `Infinity`
+    token that Python's json.dumps emits by default for a raw inf float,
+    which would corrupt the dashboard's fetch/JSON.parse of this data.
+    json.dumps(metrics, allow_nan=False) recursively validates every
+    nested value is finite (or a non-float type) — it raises ValueError on
+    ANY inf/nan anywhere in the structure, so a single top-level call is a
+    complete recursive check, not just a shallow one.
+
+    Uses the SAME thin-incumbent fixture as the primary AC-G2-6 RED test
+    (a scenario a conservative-withhold sentinel is expected to touch) so
+    this pin is exercised against the exact code path most likely to leak
+    the sentinel value if a fix surfaces it directly on the metrics dict
+    for operator transparency (e.g. an 'incumbent_oos_alpha' debug field)
+    without sanitizing it to None first (the isfinite-or-None idiom).
+    """
+    import json
+
+    incumbent_shape_pct = [0.30, 0.30, 0.30, 0.30, -0.05, 0.30, 0.30, 0.30, 0.30, -0.05]
+    candidate_shape_pct = [0.015, 0.015, 0.015, 0.015, -0.003, 0.015, 0.015, 0.015, 0.015, -0.003]
+
+    incumbent_result = _make_shaped_result(incumbent_shape_pct, n_days=30)
+    candidate_result = _make_shaped_result(candidate_shape_pct, n_days=100)
+
+    call_count = {"n": 0}
+
+    def _side_effect(*args, **kwargs):
+        call_count["n"] += 1
+        return incumbent_result if call_count["n"] == 1 else candidate_result
+
+    with (
+        patch("advisors.composer_backtest_client.run_backtest", side_effect=_side_effect),
+        patch("database.insert_dof_ledger_row"),
+    ):
+        _accepted, metrics = fbld._gate_and_accept_candidate(
+            symphony_id="test-symphony-id",
+            incumbent_tree=incumbent_symphony,
+            candidate_tree={"step": "root", "children": []},
+        )
+
+    try:
+        json.dumps(metrics, allow_nan=False)
+    except ValueError as exc:
+        pytest.fail(
+            f"metrics dict contains a non-finite value (inf/nan) that "
+            f"strict JSON cannot represent — {exc}; metrics={metrics!r}. "
+            f"Sanitize any conservative-withhold sentinel to None before "
+            f"including it in a persisted/rendered dict (isfinite-or-None "
+            f"idiom)."
+        )
