@@ -1,9 +1,9 @@
 # advisors/frontrunner_builder
 
-> Orchestrates the Frontrunner Builder pipeline: detect the incumbent frontrunner overlay, generate a candidate via Fable, splice it into the symphony, independently re-backtest and gate both sides, apply Calmar acceptance, and queue survivors for operator approval.
+> Orchestrates the Frontrunner Builder pipeline: detect the incumbent frontrunner overlay, generate a candidate via Fable, splice it into the symphony, independently re-backtest and gate both sides, apply Calmar acceptance, and queue survivors for operator approval. Candidate generation is now signal-gated against live Atlas edge data (AC-5, frontrunner-signals cycle).
 
 **Source:** `advisors/frontrunner_builder.py`
-**Last updated:** 2026-07-11 (Wave-2 UI shipped in-branch at `eb1b612` -- see DE-FRONTRUNNER-002 and "Wave-2 UI (built, 2026-07-11)" below; prior: Wave-1 backend, frreview-APPROVED, P2-1 iterative-traversal hardening landed at `26c1364`)
+**Last updated:** 2026-07-16 (AC-5 signal-gating GREEN at `bf6f026b` — see "AC-5: Signal-Gated Generation" below and `DE-FR-SIGNALS-001` in `DECISIONS.md`; prior: Wave-2 UI shipped in-branch at `eb1b612` -- see DE-FRONTRUNNER-002 and "Wave-2 UI (built, 2026-07-11)" below; Wave-1 backend, frreview-APPROVED, P2-1 iterative-traversal hardening landed at `26c1364`)
 
 ## Overview
 
@@ -11,9 +11,9 @@
 
 **detect** (`frontrunner_detector`) → **gather Atlas patterns** (`community_strats`, 7-day cache, once per run) → **generate** a candidate overlay via **Fable** (`claude-fable-5`) → **compile** (`plan_tree_compiler`) → **splice** into the incumbent symphony → **independently re-backtest BOTH incumbent and candidate** (`composer_backtest_client`) → **gate** (`backtest_gate_engine.evaluate_candidate_batch`, mandatory, never bypassed) → **Calmar acceptance** (`frontrunner_acceptance`) → **queue for operator approval** (`database.insert_frontrunner_proposal`).
 
-This module is the **backend** (wave-1). The pipeline is wired into the existing **weekly** scheduler (`advisors/strategy_builder_scheduler.run_weekly_build` calls `run_frontrunner_build()` over all live symphonies after the four Strategy-Builder objectives complete, AC-1) and the `propose_strategies` **retrofit** queues its own accepted candidates onto the same `frontrunner_proposals` table (`proposal_source="strategy_builder_retrofit"`, AC-10). The on-demand `POST /ai-advisor/frontrunner-builder/run` route, the `/approve`/`/reject` routes, and the Advisor-tab UI that surfaces pending proposals for the operator to Approve/Reject were shipped in wave-2 (2026-07-11, `eb1b612`) -- see "Wave-2 UI (built, 2026-07-11)" below.
+This module is the **backend** (wave-1). The pipeline is wired into the existing **weekly** scheduler (`advisors/strategy_builder_scheduler.run_weekly_build` calls `run_frontrunner_build()` over all live symphonies after the four Strategy-Builder objectives complete, AC-1) and the `propose_strategies` **retrofit** queues its own accepted candidates onto the same `frontrunner_proposals` table (`proposal_source="strategy_builder_retrofit"`, AC-10). The on-demand `POST /ai-advisor/frontrunner-builder/run` route, the `/approve`/`/reject` routes, and the Advisor-tab UI that surfaces pending proposals for the operator to Approve/Reject were shipped in wave-2 (2026-07-11, `eb1b612`) -- see "Wave-2 UI (built, 2026-07-11)" below. **Candidate generation is now gated against live Atlas signal edge data** (feature-plans/frontrunner-signals.md AC-5, this cycle) -- see "AC-5: Signal-Gated Generation" below.
 
-**Review status:** `frreview` (quant-code-reviewer) reviewed the full `0bcbd1a..4daf0fe` wave-1 backend diff (28 commits, 32 files, +7304/-2) and returned **APPROVE** — no P0/P1 findings. Three non-blocking P2 items were dispositioned before doc-writing: P2-1 (iterative-traversal hardening, landed `26c1364`, see Internal Mechanics below), P2-2 (a landmine comment on the Atlas-hoist call site, landed `07bdc8c`, see Internal Mechanics below), and a pre-existing unrelated test-hygiene item (2 stale skips in `test_community_strats.py`, out of scope for this cycle).
+**Review status:** `frreview` (quant-code-reviewer) reviewed the full `0bcbd1a..4daf0fe` wave-1 backend diff (28 commits, 32 files, +7304/-2) and returned **APPROVE** — no P0/P1 findings. Three non-blocking P2 items were dispositioned before doc-writing: P2-1 (iterative-traversal hardening, landed `26c1364`, see Internal Mechanics below), P2-2 (a landmine comment on the Atlas-hoist call site, landed `07bdc8c`, see Internal Mechanics below), and a pre-existing unrelated test-hygiene item (2 stale skips in `test_community_strats.py`, out of scope for this cycle). The AC-5 signal-gating additions (this cycle) are pending fr-review's Cluster B/C/D pass at `bf6f026b` — see `DE-FR-SIGNALS-001` for the verdict once it lands.
 
 Off-execution-path, advisory-only. Never raises anywhere on the module's public surface (D-1) — a per-symphony or per-candidate failure is logged and skipped, never aborting the batch.
 
@@ -117,6 +117,34 @@ On ANY failure (proposal not found, cap reached, Composer 4xx/5xx, `verify_undep
 
 **Shared by both proposal sources.** `frontrunner_proposals.proposal_source` distinguishes `'frontrunner_builder'` rows (this module's own pipeline) from `'strategy_builder_retrofit'` rows (`advisors/strategy_builder_engine.py::_persist_survivor`, AC-10) — both flow through this exact same function, so there is one approval→create code path for the whole feature, not two.
 
+## AC-5: Signal-Gated Generation (frontrunner-signals cycle, 2026-07-16)
+
+Candidate frontrunner generation now consumes live Atlas signal edge data (`docs/generated/advisors_frontrunner_signals.md`) rather than generating structurally-only. Six new functions, all in this module per the Architecture doc:
+
+### `filter_positive_edge_signal_keys(classification_rows: list[dict]) -> list[str]`
+
+AC-5(a). Returns only the `fr_key`s classified `"keep"` — the sole positive-edge tier (`cagr>0 and sharpe>0` by `classify_fr_checks`' construction). Candidate generation may only propose from these keys. Never raises — malformed rows are skipped, never fabricated.
+
+### `candidate_contains_tier1_remove_key(candidate: dict, classification_rows: list[dict]) -> bool`
+
+AC-5(b). `True` if the candidate's watched `fr_key` is classified `"remove"` (Tier 1) in the current classification snapshot — the caller vetoes the candidate BEFORE any backtest spend. Pure lookup, no I/O — never calls the backtest seam itself.
+
+### `build_signal_provenance(fr_keys: list[str], classification_rows: list[dict]) -> dict[str, dict]`
+
+AC-5(c). `{fr_key: {cagr, sharpe, classification, ...}}` for the given `fr_keys`, sourced from the current classification snapshot — the provenance record attached to each candidate. Keys absent from `classification_rows` are simply omitted, never fabricated.
+
+### `resolve_signals_unavailable_marker(symphony_id: str) -> dict`
+
+AC-5(d). Resolves the current per-symphony `signals_unavailable` marker by checking Atlas signal availability — a genuinely **per-symphony** call (fr-engine confirmed 2026-07-16, deliberately never hoisted to a batch-global flag), via a CC-2 lazy import of `advisors.frontrunner_signals`. Never silent: `{signals_unavailable, reason}` — `reason` carries the D-1 string when degraded, `None` when healthy. Never raises.
+
+### `format_crossover_fr_key(*, ticker, window, rhs_fn, rhs_val) -> str` / `format_vs_fr_key(*, ticker, window, rhs_ticker) -> str`
+
+PM-ruling display-identity formatters — crossover and ticker-vs-ticker `FRCheck`s (`fr_key=None` in the pure dataclass, see `docs/generated/advisors_frontrunner_detector.md`'s `FRCheck` invariant) are PERSISTED and RENDERED, never silently dropped: `SPY:10:xover(moving-average-return,31)` / `EYEG:10:vs(KMLM)`. Both formats live in ONE place (containment rule — no ad-hoc format ever appears elsewhere) with a documented non-collision invariant: a genuine Atlas `fr_key`'s third segment is always a plain number; both display forms always contain a letter + parenthesis, a structurally disjoint string space. See `DE-FR-SIGNALS-001` for the full rationale (the Paragons misdiagnosis this rule exists to prevent from recurring) — note that after the discriminator's Stage-2 correction, `format_crossover_fr_key`'s numeric-`rhs_val` case is structurally defined but has NO confirmed live occurrence in the operator's real trees (see the detector doc's discriminator section); `format_vs_fr_key` is the one confirmed-populated non-joinable form.
+
+### `build_classification_row_for_crossover(*, ticker, window, rhs_fn, rhs_val, branch_path) -> dict`
+
+Builds a `classification_rows`-shaped dict for a crossover `FRCheck`. Always `classification="no_edge_data"` (nothing to join a crossover key to), every edge stat `None`.
+
 ## Internal Mechanics
 
 ### Batch-composition fix (2026-07-11)
@@ -157,8 +185,9 @@ Independently re-backtests both incumbent and candidate (never trusts the incumb
 - `tests/advisors/test_frontrunner_deep_tree_hardening.py` — 5 tests (P2-1: 3 depth-hardening tests against a 3,000-deep synthetic tree + 2 regression guards on the public D-1 boundary/skip-reason contract; shared with `frontrunner_detector` — see that module's doc)
 - `tests/security/test_frontrunner_no_trade_boundary.py` — 10 tests (adversarial source-scan: no invest/deploy symbol or URL fragment anywhere in the frontrunner surface, `run_frontrunner_build` never calls `save_symphony`)
 - `tests/test_no_live_mongo_guard.py` — 4 tests (session-autouse guard: any live `pymongo.MongoClient` construction under pytest fails loud, real-money-critical — composes suite-wide with `community_strats`/`atlas_cache`)
+- `tests/advisors/test_frontrunner_builder_signal_gating.py` — AC-5 (frontrunner-signals cycle): positive-edge filtering, Tier-1 remove-key veto, provenance building, per-symphony `signals_unavailable` resolution, the crossover/vs display-format functions' non-collision invariant.
 
-**PM-authoritative gate run** (quiet window, `-n0`, unique `DB_PATH`, process table checked clear before running) on `26c1364`: **207 passed, 2 skipped, 44.31s** across the 9 frontrunner files + `test_no_live_mongo_guard.py` + `test_community_strats.py` + `test_atlas_cache.py` (+5 vs the prior 202 = the new deep-tree hardening file). The 2 skips are pre-existing/stale (`test_community_strats.py` claiming the module doesn't exist — it does; unrelated to this cycle, not fixed here). Warnings are benign quantstats divide-by-zero on zero-max-drawdown edges.
+**PM-authoritative gate run** (quiet window, `-n0`, unique `DB_PATH`, process table checked clear before running) on `26c1364`: **207 passed, 2 skipped, 44.31s** across the 9 frontrunner files + `test_no_live_mongo_guard.py` + `test_community_strats.py` + `test_atlas_cache.py` (+5 vs the prior 202 = the new deep-tree hardening file). The 2 skips are pre-existing/stale (`test_community_strats.py` claiming the module doesn't exist — it does; unrelated to this cycle, not fixed here). Warnings are benign quantstats divide-by-zero on zero-max-drawdown edges. **This cycle's AC-5 addition:** 55/55 own RED tests GREEN at `bf6f026b` (shared commit with the AC-3/AC-4/AC-6 work in `frontrunner_detector.py`/`frontrunner_signals.py`); 110/110 across the full RED batch on the frontrunner-signals branch. See `DE-FR-SIGNALS-001` for the final PM-authoritative gate run once fr-test/fr-review's counts land.
 
 ## Internal Dependencies
 
@@ -169,6 +198,7 @@ Independently re-backtests both incumbent and candidate (never trusts the incumb
 - `database` — CC-2 lazy imports throughout (`load_state`, `insert_dof_ledger_row`, `insert_advisor_observation`, `insert_frontrunner_proposal`, `get_frontrunner_proposal`, `count_uploaded_frontrunner_proposals`, `update_frontrunner_proposal_status`)
 - `symphony_logic` — CC-2 lazy import inside `_run_build_for_symphony` (`fetch_symphony_score`)
 - `advisors.composer_draft_client` — imported at module scope inside `approve_frontrunner_proposal` only (never referenced from the build/run path)
+- `advisors.frontrunner_signals` — CC-2 lazy import inside `resolve_signals_unavailable_marker` (AC-5, this cycle)
 - `anthropic` SDK — lazy-imported inside `_build_client` (factory seam, mirrors `build_plan_generator._build_client`)
 
 **Reverse dependencies (who calls into this module):**
@@ -185,13 +215,15 @@ The Advisor-tab UI and its three POST action routes are built and reviewed as pa
 
 `run_frontrunner_build` and `approve_frontrunner_proposal` are both now operator-reachable through the dashboard, not just via tests or a Python shell.
 
+**Frontrunner-signals cycle addition (2026-07-16):** the same 7th tab panel gains a read-only "Live Signal Classification" subsection (AC-7, `advisors/frontrunner_signals.py`'s companion doc) — per-symphony cards rendering persisted `fr_key → live RSI → edge stats → keep/prune/remove/no_edge_data` rows, sourced exclusively from `get_latest_classifications()`/`get_latest_run_marker()`, no live network I/O in the request thread. See `docs/generated/advisors_frontrunner_signals.md` for the full accessor contract.
+
 **Still open -- operator-gated task-zero live test.** One real `save_symphony` create against the operator's Composer account, then immediately `verify_undeployed`, then delete the throwaway symphony (feature-plans/frontrunner-builder.md §Architecture "Build task ZERO"). **The wave-2 UI being built and reviewed does NOT mean the approve→create path has been exercised against the real Composer API** -- `approve_frontrunner_proposal` has to date only been called against mocked Composer responses in tests. This gate must pass before the operator's first real "Approve" click in production.
 
 See `DE-FRONTRUNNER-002` in `DECISIONS.md` for the wave-2 UI decisions (async-202 dispatch rationale, generic source-agnostic route shape, `candidate_tree` preview-bounding, render-security posture).
 
 ## Pending CLAUDE.md Key-Files amendments (apply at ship -- operator-gated)
 
-Not applied. For PM/team-lead review and manual application to `.claude/CLAUDE.md`'s `## Key Files` table at ship. Three amendments -- append the bracketed text to the existing cell for each row (all three rows already exist in the table).
+Not applied. For PM/team-lead review and manual application to `.claude/CLAUDE.md`'s `## Key Files` table at ship. Three amendments -- append the bracketed text to the existing cell for each row (all three rows already exist in the table). **Status update (frontrunner-signals cycle, 2026-07-16): confirmed still unapplied — `.claude/CLAUDE.md` has ZERO rows for any frontrunner module as of this cycle's start (verified directly, not assumed). See `docs/audit-inputs/claude-md-draft-fr-signals.md` for the consolidated draft covering both these wave-2 amendments AND this cycle's new additions, prepared as one coherent set for PM application rather than layering another unapplied draft on top of this unmerged one.**
 
 **`app.py` row** -- append:
 > **Frontrunner Builder wave-2 routes (2026-07-11, `eb1b612`):** `GET /ai-advisor/frontrunner-builder` → 302 redirect (no standalone page, mirrors the strategy-builder stub); `POST /ai-advisor/frontrunner-builder/run` -- async 202 dispatch to a dedicated `_FRONTRUNNER_BUILD_EXECUTOR` (single-worker, `atexit`-registered, deliberately separate from `_DISMISS_EXECUTOR`), fail-fast on missing `ANTHROPIC_API_KEY` before submit, submitted work wrapped in a log-and-swallow closure (`_run_frontrunner_build_background`) as defense-in-depth against a D-1 contract violation on an unawaited `Future`; `POST /ai-advisor/proposal/approve` -- generic/source-agnostic (`proposal_id`-keyed), the ONLY route in the app that can reach `composer_draft_client.save_symphony` (exclusively via `advisors.frontrunner_builder.approve_frontrunner_proposal`); `POST /ai-advisor/proposal/reject` -- status-only DB write. `ai_advisor_tab()` additively prefetches `database.get_pending_frontrunner_proposals()`, bounding each row's `candidate_tree` to a 4000-char JSON preview (`candidate_tree_preview`) before template render -- the full spliced tree (potentially 8,000+ nodes) is never passed to Jinja. See `docs/generated/app.md` §"Frontrunner Builder Routes" and `DE-FRONTRUNNER-002` in `DECISIONS.md`.
