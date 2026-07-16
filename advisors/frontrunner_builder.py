@@ -1598,7 +1598,11 @@ def _gate_and_accept_candidate(
     unexpected-error path. Never raises (D-1).
     """
     try:
-        from advisors.backtest_gate_engine import BacktestCandidate, evaluate_candidate_batch
+        from advisors.backtest_gate_engine import (
+            BacktestCandidate,
+            _fold_transform_single,
+            evaluate_candidate_batch,
+        )
         from advisors.composer_backtest_client import run_backtest
         from advisors.frontrunner_acceptance import evaluate_calmar_acceptance
         from analytics import compute_quantstats_metrics
@@ -1631,7 +1635,16 @@ def _gate_and_accept_candidate(
         # member). Putting the incumbent INTO the batch would make it compete
         # with the candidate for the single BHY-winner slot instead of serving
         # as the baseline — a distinct bug, not this gate's intended usage.
-        incumbent_oos_alpha = sum(incumbent_returns_pct)
+        # AC-G2-1: the baseline is fold-matched (_fold_transform_single) — the
+        # incumbent's validation-fold sum via the IDENTICAL 60/20/20 +
+        # PURGE_DAYS/EMBARGO_DAYS transform the gate applies to the candidate
+        # internally (backtest_gate_engine.py:551-552) — not a full-history
+        # sum. A fold-vs-full mismatch previously biased Gate#2 toward
+        # KEEP_INCUMBENT for any profitable incumbent regardless of how much
+        # better the candidate's per-day return was (fold-vs-full defect;
+        # same defect class already fixed the same way in
+        # logic_change_engine.py's H6/RC-1).
+        incumbent_oos_alpha = _fold_transform_single(incumbent_returns_pct).oos_alpha
         bt_candidates = [
             BacktestCandidate(
                 candidate_id="candidate",
