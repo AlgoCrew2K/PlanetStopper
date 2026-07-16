@@ -696,3 +696,94 @@ def test_watched_tickers_derivation_never_leaks_a_core_asset_placeholder(fd):
         f"{len(leaks)} cascade(s) — this would surface fake ticker identity "
         f"to Fable's generation prompt: {leaks[:5]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Executable tripwire for the confirmed-real (not fixture-artifact) production
+# gap (team-lead ruling, 2026-07-16, after the direct fresh-tree cross-check
+# in 0ab3ae78): a marker-free variant of the leak the test above guards
+# against. DELIBERATELY xfail(strict=False) — this documents a known,
+# accepted, next-cycle-scope limitation in CODE rather than prose only,
+# stays out of the way of the green tree, and will XPASS the moment a
+# marker-free fix lands (the signal to remove this xfail and tighten the
+# assertion above to cover real tickers too).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "confirmed-real production gap, documented in DE-FR-SIGNALS-001 — real "
+        "core tickers can reach fire-basket/watched_tickers content via a "
+        "non-qualifying nested crossover's verbatim-copied sibling; fix requires "
+        "marker-free core-content identification, next-cycle scope"
+    ),
+)
+def test_real_looking_core_tickers_do_not_leak_into_watched_tickers(fd):
+    """Reproduces the exact real_tree_04 BND-vs-SH leak shape fr-engine
+    originally found (101ad377's commit message: 'TRUE branch [containing
+    VIXY] is 20 nodes vs its ELSE branch's 18 CORE_ASSET_-laden nodes'),
+    confirmed REAL by direct fresh-tree cross-check (not a trimming
+    artifact — see 0ab3ae78), but built here with a SYNTHETIC tree using
+    real-looking tickers (AAPL/MSFT/GOOGL — no CORE_ASSET_ marker anywhere)
+    so it cannot be satisfied by the fixture-domain-only guard above.
+
+    Mechanism, empirically verified before writing this assertion (not
+    guessed): a ticker-vs-ticker crossover if-node (RSI(BND,20) gt
+    RSI(SH,60)) always fails _qualifies_as_cascade_rung (no fixed
+    threshold). When its TRUE branch (hedge assets) is node-count LARGER
+    than its ELSE branch (core-strategy assets), _is_internal_hedge_subgate's
+    small-side pick lands on the ELSE branch, finds no VIX ticker there, and
+    also returns False — so NEITHER qualification path recognizes the node,
+    and _compact_subtree's generic fallback copies BOTH branches verbatim,
+    unstubbed. The ELSE branch's real core tickers survive into the overlay
+    and, via _collect_step_keyed_signal_tickers, into watched_tickers —
+    unlike the CORE_ASSET_-prefixed case, which defect #5/#6's per-child
+    purification (_has_core_placeholder) DOES catch, since real tickers
+    never carry that prefix."""
+    from advisors import frontrunner_builder as fb, symphony_schema as ss
+
+    real_core_tickers = {"AAPL", "MSFT", "GOOGL"}
+
+    # TRUE branch (hedge) padded strictly larger than ELSE (core) branch —
+    # required for _is_internal_hedge_subgate's small-side pick to land on
+    # ELSE (matching fr-engine's exact original 20-vs-18 node-count shape).
+    hedge_side_assets = [ss.make_asset(t) for t in ("VIXY", "BTAL", "TMF")] + [
+        ss.make_asset(f"HEDGEPAD{i:02d}") for i in range(5)
+    ]
+    non_qualifying_crossover = ss.make_if(
+        ss.make_condition(
+            ss.make_indicator("relative-strength-index", "BND", window=20),
+            "gt",
+            "SH",
+            rhs_indicator=ss.make_indicator("relative-strength-index", "SH", window=60),
+        ),
+        then_children=[ss.make_weight_equal(hedge_side_assets)],
+        else_children=[ss.make_weight_equal([ss.make_asset(t) for t in sorted(real_core_tickers)])],
+    )
+    # Outer cascade's own continuation padded larger than its fire branch —
+    # the ordinary size-cliff shape every other real tree has — so the
+    # OUTER root's own fire/continuation selection doesn't itself get
+    # inverted (a different, already-understood mechanism, not what this
+    # test targets).
+    padding_assets = [ss.make_asset(f"PAD{i:03d}") for i in range(60)]
+    outer_cascade = ss.make_if(
+        ss.make_condition(ss.make_indicator("relative-strength-index", "SPY", window=10), "gt", 80),
+        then_children=[non_qualifying_crossover],
+        else_children=[ss.make_weight_equal(padding_assets)],
+    )
+    tree = ss.make_root("Tripwire Synthetic Symphony", "daily", [outer_cascade])
+
+    result = fd.detect_frontrunner_cascades(tree)
+    assert result.cascades, "sanity: the outer RSI(SPY,10) gt 80 cascade must be detected"
+
+    leaked: set[str] = set()
+    for cascade in result.cascades:
+        watched = fb._collect_step_keyed_signal_tickers(cascade.overlay_tree)
+        leaked |= watched & real_core_tickers
+
+    assert not leaked, (
+        f"real core-strategy tickers leaked into watched_tickers: {sorted(leaked)} — "
+        f"expected under the confirmed-real production gap (DE-FR-SIGNALS-001); "
+        f"a marker-free fix would make this assertion pass (XPASS)"
+    )
