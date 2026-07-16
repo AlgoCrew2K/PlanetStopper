@@ -756,12 +756,15 @@ def _build_generation_prompt(signal_context: dict) -> str:
 
     Embeds the frontrunner-specific DSL grammar reminder + the AC-4 hard
     constraints + the caller-supplied signal_context (watched tickers /
-    Atlas-derived patterns) so Fable has concrete grounding.
+    Atlas-derived patterns / AC-5 live edge signals) so Fable has concrete
+    grounding.
     """
     watched = signal_context.get("watched_tickers") or []
     atlas_patterns = signal_context.get("atlas_patterns") or []
+    edge_signals = signal_context.get("edge_signals") or {}
     watched_hint = ", ".join(str(t) for t in watched[:20]) or "(none supplied)"
     atlas_hint = json.dumps(atlas_patterns[:5]) if atlas_patterns else "(none supplied)"
+    edge_signals_hint = json.dumps(edge_signals) if edge_signals else "(none supplied)"
 
     return (
         "You are designing a FRONTRUNNER overlay for a Composer trading symphony: "
@@ -790,7 +793,12 @@ def _build_generation_prompt(signal_context: dict) -> str:
         "pattern better than a flat single-signal if — this is optional, a flat "
         "if is equally valid when that is what the pattern calls for.\n\n"
         f"Watched core signal tickers to consider: {watched_hint}\n"
-        f"Atlas-derived frontrunner patterns for reference: {atlas_hint}\n\n"
+        f"Atlas-derived frontrunner patterns for reference: {atlas_hint}\n"
+        f"Positive-edge frontrunner signals observed LIVE for this symphony "
+        f"(each key is TICKER:WINDOW:THRESHOLD; prefer watching one of these "
+        f"exact ticker/window/threshold combinations when it fits the pattern "
+        f"— these are proven, currently-'keep'-classified real edge stats, "
+        f"not hypothetical): {edge_signals_hint}\n\n"
         "Emit exactly ONE candidate overlay node using the emit_frontrunner_overlay "
         "tool. The node's 'kind' is 'if' or 'if_compound' — EITHER WAY the "
         "condition fields live under a nested 'condition' key: lhs_fn, "
@@ -1417,11 +1425,50 @@ def _run_build_for_symphony(symphony_id: str) -> None:
     # will silently no-op forever with an empty list.
     atlas_patterns = _gather_atlas_frontrunner_patterns(watched_tickers=[])
 
+    # AC-5 signals hoist (Cluster D wiring): mirrors the atlas_patterns hoist
+    # above — load Atlas frontrunner-signals ONCE per symphony run, extract
+    # this incumbent's OWN FR-checks ONCE (extract_fr_checks walks the whole
+    # tree, not per-cascade), classify+persist ONCE. Previously NONE of this
+    # was wired: filter_positive_edge_signal_keys, candidate_contains_tier1_
+    # remove_key, build_signal_provenance, resolve_signals_unavailable_marker
+    # and persist_classification_run were all correct in isolation but had
+    # zero production call sites — the warehouse tables and the AC-7
+    # dashboard tab stayed permanently empty.
+    from advisors import frontrunner_signals  # noqa: PLC0415 - CC-2 lazy
+
+    signals_result = frontrunner_signals.load_frontrunner_signals()
+    signal_rows = signals_result.get("signals") or []
+    # Reuses the SAME pre-fetched signals_result (no second Atlas read for
+    # this run) — see resolve_signals_unavailable_marker's signals_result kwarg.
+    run_marker = resolve_signals_unavailable_marker(symphony_id, signals_result=signals_result)
+
+    fr_checks = frontrunner_detector.extract_fr_checks(tree)
+    classification_rows = _build_classification_rows_from_fr_checks(fr_checks, signal_rows)
+
+    try:
+        frontrunner_signals.persist_classification_run(
+            symphony_id,
+            classification_rows,
+            signals_unavailable=run_marker["signals_unavailable"],
+            reason=run_marker["reason"],
+        )
+    except Exception:
+        logger.debug(
+            "_run_build_for_symphony: symphony_id=%s failed to persist "
+            "classification run — proceeding (never blocks the build)",
+            symphony_id,
+            exc_info=True,
+        )
+
+    positive_edge_keys = filter_positive_edge_signal_keys(classification_rows)
+    edge_signal_context = build_signal_provenance(positive_edge_keys, classification_rows)
+
     for cascade in cascades:
         watched_tickers = sorted(_collect_step_keyed_signal_tickers(cascade.overlay_tree))
         signal_context = {
             "watched_tickers": watched_tickers,
             "atlas_patterns": atlas_patterns,
+            "edge_signals": edge_signal_context,
         }
         result = generate_candidate_overlay(signal_context)
         if result.candidate is None:
@@ -1429,6 +1476,22 @@ def _run_build_for_symphony(symphony_id: str) -> None:
                 "_run_build_for_symphony: symphony_id=%s candidate generation failed (%s)",
                 symphony_id,
                 result.error,
+            )
+            continue
+
+        # AC-5(b): veto a candidate watching a Tier-1 "remove"-classified
+        # fr_key BEFORE any backtest spend — checked on the DSL candidate
+        # itself, before splicing/backtesting either side.
+        candidate_fr_key = _derive_flat_candidate_fr_key(result.candidate)
+        if candidate_fr_key and candidate_contains_tier1_remove_key(
+            {"fr_key": candidate_fr_key}, classification_rows
+        ):
+            logger.info(
+                "_run_build_for_symphony: symphony_id=%s candidate watches a "
+                "Tier-1 remove-classified fr_key (%s) — vetoed before "
+                "backtest spend",
+                symphony_id,
+                candidate_fr_key,
             )
             continue
 
@@ -1479,6 +1542,17 @@ def _run_build_for_symphony(symphony_id: str) -> None:
                         exc_info=True,
                     )
             continue
+
+        # AC-5(c): attach the signal provenance (keys + edge stats) this
+        # accepted candidate actually watches to the persisted metrics_json.
+        # An empty dict (never fabricated) when no flat fr_key is derivable
+        # (e.g. a compound candidate) or the watched key has no classified
+        # row.
+        metrics["signal_provenance"] = (
+            build_signal_provenance([candidate_fr_key], classification_rows)
+            if candidate_fr_key
+            else {}
+        )
 
         try:
             import database  # noqa: PLC0415 - CC-2 lazy
@@ -1894,15 +1968,28 @@ def build_signal_provenance(fr_keys: list[str], classification_rows: list[dict])
     return {key: rows_by_key[key] for key in fr_keys or [] if key in rows_by_key}
 
 
-def resolve_signals_unavailable_marker(symphony_id: str) -> dict:
+def resolve_signals_unavailable_marker(
+    symphony_id: str, *, signals_result: dict | None = None
+) -> dict:
     """AC-5(d): resolve the current per-symphony signals_unavailable marker
     by checking Atlas signal availability (per-symphony call — fr-engine
     confirmed 2026-07-16, never hoisted to a batch-global flag). Never
     silent: `{signals_unavailable, reason}`, reason carries the D-1 string
-    when degraded, None when healthy. Never raises."""
+    when degraded, None when healthy. Never raises.
+
+    ``signals_result``: accepts a pre-fetched ``load_frontrunner_signals()``
+    return value (the same run-scoped result the caller already holds for
+    ``classify_fr_checks``) so a caller that needs BOTH the signal rows AND
+    this marker never triggers a second Atlas read for the same run. Fetches
+    internally (default, unchanged behavior) when omitted.
+    """
     from advisors import frontrunner_signals  # noqa: PLC0415 - CC-2 lazy
 
-    result = frontrunner_signals.load_frontrunner_signals()
+    result = (
+        signals_result
+        if signals_result is not None
+        else frontrunner_signals.load_frontrunner_signals()
+    )
     available = bool(result.get("available"))
     return {
         "signals_unavailable": not available,
@@ -1955,3 +2042,112 @@ def build_classification_row_for_crossover(
         "classification": "no_edge_data",
         "signal_fetch_ts": None,
     }
+
+
+# ---------------------------------------------------------------------------
+# AC-5 wiring (Cluster D) — orchestration-level helpers consumed by
+# _run_build_for_symphony. Every function above this section was already
+# unit-tested but had zero production call sites; these two helpers are the
+# glue that actually wires them into the real build path.
+# ---------------------------------------------------------------------------
+
+
+def _build_classification_rows_from_fr_checks(
+    fr_checks: list, signal_rows: list[dict]
+) -> list[dict]:
+    """Convert one symphony run's ``extract_fr_checks`` output into
+    classification rows ready for ``persist_classification_run`` —
+    dispatching each ``FRCheck`` to the right path per its own documented
+    invariant (exactly one of ``fr_key`` or ``rhs_ticker`` populated):
+
+      - ``fr_key`` populated (genuine fixed-threshold check): joined against
+        ``signal_rows`` via the real ``classify_fr_checks`` (AC-4).
+      - ``rhs_ticker`` populated (genuine ticker-vs-ticker crossover, never
+        joinable — no fixed threshold to look up): persisted directly as a
+        ``no_edge_data`` row carrying a ``format_vs_fr_key`` display key (PM
+        ruling: crossover checks are persisted and rendered, never silently
+        dropped).
+      - ``rhs_fn`` populated without ``rhs_ticker`` (the ``xover(...)``
+        shape kept on the dataclass for shape stability — no live
+        population path under the verdict-confirmed discriminator, see
+        ``FRCheck``'s own docstring): routed through
+        ``build_classification_row_for_crossover`` for completeness.
+      - Neither populated (a malformed FRCheck violating its own
+        invariant): skipped — never fabricated.
+
+    Never raises (D-1) — ``classify_fr_checks`` is itself never-raising, and
+    this function performs no I/O of its own.
+    """
+    from advisors import frontrunner_signals  # noqa: PLC0415 - CC-2 lazy
+
+    classifiable: list[dict] = []
+    prebuilt: list[dict] = []
+    for check in fr_checks or []:
+        if check.fr_key:
+            classifiable.append(
+                {
+                    "fr_key": check.fr_key,
+                    "fn": check.fn,
+                    "comparator": check.comparator,
+                    "branch_path": check.branch_path,
+                }
+            )
+        elif check.rhs_ticker:
+            prebuilt.append(
+                {
+                    "fr_key": format_vs_fr_key(
+                        ticker=check.ticker, window=check.window, rhs_ticker=check.rhs_ticker
+                    ),
+                    "fn": check.fn,
+                    "comparator": check.comparator,
+                    "branch_path": check.branch_path,
+                    "rsi_live": None,
+                    "rsi_live_at": None,
+                    "cagr": None,
+                    "sharpe": None,
+                    "sortino": None,
+                    "calmar": None,
+                    "max_drawdown": None,
+                    "classification": "no_edge_data",
+                    "signal_fetch_ts": None,
+                }
+            )
+        elif check.rhs_fn:
+            prebuilt.append(
+                build_classification_row_for_crossover(
+                    ticker=check.ticker,
+                    window=check.window,
+                    rhs_fn=check.rhs_fn,
+                    rhs_val=check.rhs_val or "",
+                    branch_path=check.branch_path,
+                )
+            )
+
+    classified = frontrunner_signals.classify_fr_checks(classifiable, signal_rows)
+    return classified + prebuilt
+
+
+def _derive_flat_candidate_fr_key(candidate: dict) -> str | None:
+    """Derive the ``TICKER:WINDOW:THRESHOLD`` display key a generated
+    candidate's flat (``kind='if'``) condition watches — the same canonical
+    format ``extract_fr_checks`` uses for a genuine fixed-threshold
+    ``FRCheck``. Used to check a just-generated candidate against the
+    current classification snapshot (AC-5(b) veto, AC-5(c) provenance).
+
+    Only the flat shape is handled — a compound (``kind='if_compound'``)
+    candidate's condition has no single watched ticker/window/threshold to
+    key on. Never raises — a malformed/incomplete/compound condition
+    degrades to None (never fabricated).
+    """
+    if not isinstance(candidate, dict) or candidate.get("kind") != "if":
+        return None
+    cond = candidate.get("condition")
+    if not isinstance(cond, dict):
+        return None
+    ticker = cond.get("lhs_ticker")
+    window = cond.get("window")
+    rhs = cond.get("rhs")
+    threshold = rhs.get("fixed") if isinstance(rhs, dict) else None
+    if not isinstance(ticker, str) or not ticker or threshold is None:
+        return None
+    return f"{ticker}:{window}:{threshold}"
