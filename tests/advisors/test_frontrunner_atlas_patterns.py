@@ -46,6 +46,32 @@ def fbld():
     return _fbld
 
 
+@pytest.fixture(autouse=True)
+def _no_live_frontrunner_signals_calls():
+    """2026-07-16 (fr-engine's Cluster D wiring, 95dac72c): this file's one
+    _run_build_for_symphony call site (test_run_build_for_symphony_populates_
+    atlas_patterns_in_the_signal_context) newly reaches the wired-in
+    frontrunner_signals.load_frontrunner_signals() call, which routes through
+    atlas_cache.cached_pull (a SECOND live-Mongo-on-cache-miss exposure class,
+    same shape as test_frontrunner_gate_wiring.py's own _no_live_atlas_calls
+    guard for community_strats — see that fixture's docstring for the full
+    incident history this mirrors). This file's own community_strats mocking
+    stays per-test/explicit (this module's own docstring's PATCH-TARGET
+    STRATEGY) — only the NEW frontrunner_signals seam gets an autouse guard,
+    since none of the existing per-test patches know about it."""
+    with patch(
+        "advisors.frontrunner_signals.load_frontrunner_signals",
+        return_value={
+            "available": False,
+            "reason": "TestGuardNoLiveAtlas",
+            "signals": [],
+            "stats": {},
+            "source": "captplanet",
+        },
+    ):
+        yield
+
+
 def _make_frontrunner_shaped_tree(name: str = "Atlas Frontrunner Candidate") -> dict:
     """A minimal but genuinely-detectable frontrunner cascade tree — identical
     construction pattern to test_frontrunner_gate_wiring.py's incumbent_symphony

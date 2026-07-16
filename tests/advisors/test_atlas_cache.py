@@ -711,3 +711,143 @@ def test_no_importlib_reload_in_this_test_module():
         "monkeypatch.setenv(ATLAS_CACHE_DB_PATH) + tmp_path instead (atlas_cache reads "
         "the path at call time)."
     )
+
+
+# ---------------------------------------------------------------------------
+# Pytest sentinel guard (2026-07-16, frontrunner-signals cycle, team-lead-ruled
+# in-cycle bill-protection scope): unlike database._db_file and
+# advisors.frontrunner_signals._warehouse_db_file — both of which raise
+# RuntimeError under pytest when resolving to their production-default
+# basename — _atlas_cache_db() has NO such guard. Its path comes purely from
+# ATLAS_CACHE_DB_PATH env (this file's own `atlas_cache_db` fixture always
+# sets it), so every test in THIS file is already safe — but any test
+# elsewhere in the suite that calls a real atlas_cache consumer
+# (community_strats.load_community_strategies, frontrunner_signals.
+# load_frontrunner_signals, universe_provider) WITHOUT mocking the consumer
+# AND without setting ATLAS_CACHE_DB_PATH silently resolves to the real
+# alphabot_atlas_cache.db — confirmed live: fr-engine found an unmocked call
+# returned 1,527 real cached rows in 10ms outside any test context, and with
+# a stale/absent cache (CI, fresh clone) the same call attempts a genuine
+# Mongo Atlas connection. Mirrors GUARD-1/GUARD-4 in
+# tests/test_prod_db_write_guard.py exactly (same two-sided contract: fires
+# under pytest on the prod default, stays silent for the live daemon).
+#
+# SCOPE NOTE: the immediate exposure in the 3 test files fr-engine identified
+# (test_frontrunner_gate_wiring.py, test_frontrunner_atlas_patterns.py,
+# test_frontrunner_generation_quality.py) is closed directly in those files
+# (autouse mocks on advisors.frontrunner_signals.load_frontrunner_signals) —
+# this class is the STRUCTURAL guard that makes the NEXT such gap loud
+# instead of silent, regardless of which consumer or test file introduces it.
+# ---------------------------------------------------------------------------
+
+
+class TestAtlasCacheDbPytestSentinel:
+    """GUARD: advisors.atlas_cache._atlas_cache_db() must raise RuntimeError
+    under pytest whenever it would resolve to the production-default
+    basename (alphabot_atlas_cache.db) — whether that's because
+    ATLAS_CACHE_DB_PATH is unset, or explicitly misconfigured to the prod
+    name. An explicit non-default path (the normal test posture) must pass
+    through unaffected. The guard must be completely silent outside pytest
+    (daemon safety) — mirrors GUARD-4 in tests/test_prod_db_write_guard.py."""
+
+    _PROD_BASENAME = "alphabot_atlas_cache.db"
+
+    def test_raises_when_path_unset_under_pytest(self, monkeypatch):
+        """The exact live-exposure precondition fr-engine hit: no
+        ATLAS_CACHE_DB_PATH set, pytest running. Before the guard exists,
+        this silently returns the production basename — RED."""
+        import advisors.atlas_cache as atlas_cache_module
+
+        monkeypatch.delenv("ATLAS_CACHE_DB_PATH", raising=False)
+
+        with pytest.raises(RuntimeError, match=self._PROD_BASENAME):
+            atlas_cache_module._atlas_cache_db()
+
+    def test_raises_when_path_explicitly_set_to_prod_basename_under_pytest(self, monkeypatch):
+        """Defence-in-depth: a misconfigured CI env explicitly setting
+        ATLAS_CACHE_DB_PATH=alphabot_atlas_cache.db must also be blocked,
+        not just the unset case."""
+        import advisors.atlas_cache as atlas_cache_module
+
+        monkeypatch.setenv("ATLAS_CACHE_DB_PATH", self._PROD_BASENAME)
+
+        with pytest.raises(RuntimeError, match=self._PROD_BASENAME):
+            atlas_cache_module._atlas_cache_db()
+
+    def test_does_not_raise_when_path_is_an_explicit_temp_path(self, monkeypatch, tmp_path):
+        """Normal test operation (this file's own atlas_cache_db fixture uses
+        exactly this shape) — the guard must stay silent for any non-default
+        path. Documents the guard's safe side so a future regression (guard
+        firing on legitimate temp paths, breaking every test in this file)
+        is immediately visible."""
+        import advisors.atlas_cache as atlas_cache_module
+
+        temp_path = str(tmp_path / "test_sentinel_atlas_cache.db")
+        monkeypatch.setenv("ATLAS_CACHE_DB_PATH", temp_path)
+
+        result = atlas_cache_module._atlas_cache_db()
+        assert result == temp_path
+
+    def test_guard_does_not_fire_outside_pytest(self, monkeypatch):
+        """GUARD-4 equivalent: with 'pytest' removed from sys.modules
+        (simulating the live daemon) and ATLAS_CACHE_DB_PATH unset, the
+        function must return the production default WITHOUT raising — the
+        real daemon must never see this exception."""
+        import sys
+
+        import advisors.atlas_cache as atlas_cache_module
+
+        monkeypatch.delenv("ATLAS_CACHE_DB_PATH", raising=False)
+        saved_pytest = sys.modules.pop("pytest", None)
+        try:
+            result = atlas_cache_module._atlas_cache_db()
+        except RuntimeError as exc:
+            pytest.fail(
+                f"_atlas_cache_db() raised RuntimeError outside pytest "
+                f"(sys.modules has no 'pytest' entry): {exc!r} — the guard "
+                f"must be gated on 'pytest' in sys.modules; the live daemon "
+                f"must never see this exception."
+            )
+        finally:
+            if saved_pytest is not None:
+                sys.modules["pytest"] = saved_pytest
+        assert result == self._PROD_BASENAME, (
+            f"expected the production default {self._PROD_BASENAME!r} to be "
+            f"returned in a non-pytest context with no env override, got {result!r}"
+        )
+
+    def test_guard_fires_when_pytest_is_present(self, monkeypatch):
+        """Counterpart proving the guard condition is genuinely gated on
+        `'pytest' in sys.modules`, not merely always-on: confirms pytest IS
+        present during this test run (the normal case) and the guard fires."""
+        import sys
+
+        import advisors.atlas_cache as atlas_cache_module
+
+        assert "pytest" in sys.modules, "expected pytest to be in sys.modules during a pytest run"
+        monkeypatch.delenv("ATLAS_CACHE_DB_PATH", raising=False)
+
+        with pytest.raises(RuntimeError, match=self._PROD_BASENAME):
+            atlas_cache_module._atlas_cache_db()
+
+    def test_cached_pull_itself_raises_through_the_full_call_path(self, monkeypatch):
+        """Integration-level proof, not just the isolated helper: calling
+        cached_pull() (the actual public seam every consumer uses —
+        community_strats, frontrunner_signals, universe_provider) with
+        ATLAS_CACHE_DB_PATH unset under pytest must ALSO raise loud, before
+        ever reaching fetch_fn or a real sqlite3.connect call. Proves the
+        guard protects the real exposed path, not just a function nobody
+        calls directly."""
+        import advisors.atlas_cache as atlas_cache_module
+
+        monkeypatch.delenv("ATLAS_CACHE_DB_PATH", raising=False)
+        fetch_fn = _spy_fetch(return_value={"never": "reached"})
+
+        with pytest.raises(RuntimeError, match=self._PROD_BASENAME):
+            atlas_cache_module.cached_pull("some_collection", fetch_fn)
+
+        assert not fetch_fn.called, (
+            "fetch_fn was called despite the sentinel guard — the guard must "
+            "fire BEFORE any DB open attempt or fetch_fn invocation, exactly "
+            "like the DB_FILE/warehouse guards it mirrors"
+        )

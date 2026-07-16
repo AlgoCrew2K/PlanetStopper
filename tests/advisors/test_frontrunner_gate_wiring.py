@@ -84,10 +84,36 @@ def _no_live_atlas_calls():
     remember the patch per-test; scoped to THIS file only, not conftest.py
     (test_frontrunner_atlas_patterns.py has its own explicit, deliberate
     community_strats mocking per test and must not be affected by this).
+
+    EXTENDED 2026-07-16 (fr-engine's Cluster D wiring, 95dac72c): the SAME
+    exposure class now exists for a SECOND Atlas collection —
+    _run_build_for_symphony's new unconditional
+    frontrunner_signals.load_frontrunner_signals() call, which routes through
+    atlas_cache.cached_pull with a DIFFERENT collection name
+    (captplanet.frontrunners.fr_checks vs community_strats' captplanet.strategies)
+    but the identical live-Mongo-on-cache-miss risk. atlas_cache.py itself has
+    NO pytest sentinel (unlike database._db_file/lens_warehouse._warehouse_db_file,
+    both of which raise under pytest) — this file's 10 _run_build_for_symphony
+    call sites were silently exposed the moment the wiring landed, protected
+    only by an incidentally-warm local cache on this machine, not by any test
+    guard. Patched here at the same seam-of-origin the mongo-guard/no-trade-
+    boundary idiom this project already uses.
     """
-    with patch(
-        "advisors.community_strats.load_community_strategies",
-        return_value={"available": False, "candidates": [], "stats": {}, "source": "captplanet"},
+    with (
+        patch(
+            "advisors.community_strats.load_community_strategies",
+            return_value={"available": False, "candidates": [], "stats": {}, "source": "captplanet"},
+        ),
+        patch(
+            "advisors.frontrunner_signals.load_frontrunner_signals",
+            return_value={
+                "available": False,
+                "reason": "TestGuardNoLiveAtlas",
+                "signals": [],
+                "stats": {},
+                "source": "captplanet",
+            },
+        ),
     ):
         yield
 

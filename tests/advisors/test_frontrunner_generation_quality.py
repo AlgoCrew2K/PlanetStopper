@@ -71,6 +71,31 @@ def fbld():
     return _fbld
 
 
+@pytest.fixture(autouse=True)
+def _no_live_frontrunner_signals_calls():
+    """2026-07-16 (fr-engine's Cluster D wiring, 95dac72c): this file's
+    _run_build_for_symphony call sites (via _run_build_capturing_signal_context,
+    below) newly reach the wired-in frontrunner_signals.load_frontrunner_signals()
+    call, which routes through atlas_cache.cached_pull — a live-Mongo-on-
+    cache-miss exposure, same shape as test_frontrunner_gate_wiring.py's own
+    _no_live_atlas_calls guard for community_strats (see that fixture's
+    docstring for the full incident history this mirrors). This module's
+    docstring states "No live Atlas/Fable/Composer call is made anywhere in
+    this file" — that was true when written, before this seam existed;
+    autoused here to keep it true."""
+    with patch(
+        "advisors.frontrunner_signals.load_frontrunner_signals",
+        return_value={
+            "available": False,
+            "reason": "TestGuardNoLiveAtlas",
+            "signals": [],
+            "stats": {},
+            "source": "captplanet",
+        },
+    ):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # Shared fixture builders — real symphony_schema constructors only.
 # ---------------------------------------------------------------------------
