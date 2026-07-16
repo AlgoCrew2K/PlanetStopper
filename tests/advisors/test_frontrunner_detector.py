@@ -639,14 +639,32 @@ def test_recurses_into_all_parallel_substrategy_groups():
 # assert against — a fr-review finding (2026-07-16, relayed after 7ca7c0c6)
 # flagged that the CORE_ASSET_ leak defects #4/#5 could also surface here,
 # since _run_build_for_symphony feeds watched_tickers straight into the Fable
-# generation prompt/signal_context. Empirically swept (not assumed) after
-# fr-engine's defect #5/#6 fix (42ffe560): 0 of 1,306 cascades across all 11
-# real fixtures leak a CORE_ASSET_ placeholder into
-# _collect_step_keyed_signal_tickers' output — the same per-child
-# purification that fixed the fire-branch tests protects this consumer too,
-# since both read the identical (now-purified) overlay_tree. This test pins
-# that as a permanent regression guard rather than leaving it as an
-# unverified assumption.
+# generation prompt/signal_context.
+#
+# CORRECTED 2026-07-16 (this test's own original comment overclaimed — fixed
+# rather than silently left standing): the version of this comment written
+# alongside the test's first commit (ae097ef6) said fr-engine's defect #5/#6
+# per-child purification "protects this consumer too." fr-review directly
+# falsified that: the purification triggers on the `CORE_ASSET_` PREFIX,
+# which is a fixture-only synthetic anonymization marker (real Composer
+# tickers never carry it) — the fix can structurally never fire in
+# production, only against these test fixtures. Independently re-confirmed
+# by direct fresh-tree cross-check (not assumed): the ORIGINAL real_tree_04
+# BND-vs-SH leak this whole defect-#4/#5/#6 saga started from is a REAL
+# structural pattern, not a trimming artifact — verified at the exact same
+# node ids in .claude/fr-signals-inputs/fresh-trees-0716/INfCn3eKsu6i4oTTqdUp.json:
+# node 91ec89dd...'s genuine tickers there are EDV/KMLM/TQQQ/UPRO/VT (real,
+# unanonymized core-strategy holdings), sitting in the exact branch the
+# trimmed fixture correctly (not erroneously) anonymized to CORE_ASSET_
+# placeholders. So this test below is a real, narrow regression guard for
+# the FIXTURE DOMAIN specifically (never let a CORE_ASSET_ literal leak into
+# watched_tickers) — it is NOT evidence that real core-strategy tickers
+# cannot leak into watched_tickers in production. That production-level gap
+# is confirmed to exist and is currently unguarded by any test or production
+# code; per team-lead's ruling this is tracked as a documented open
+# limitation (low severity — watched_tickers only feeds a generation
+# PROMPT HINT, never a trade decision), not fixed in this cycle. See
+# DE-FR-SIGNALS-001 for the documented-limitation record.
 # ---------------------------------------------------------------------------
 
 
@@ -655,12 +673,12 @@ def test_watched_tickers_derivation_never_leaks_a_core_asset_placeholder(fd):
     _run_build_for_symphony's watched_tickers, which lands directly in the
     generation prompt (test_frontrunner_builder_signal_wiring.py pins that
     prompt-rendering behavior). If a CORE_ASSET_ placeholder ever leaked into
-    watched_tickers, it would be surfaced to Fable as a real signal ticker —
-    a genuine AC-2-adjacent leak one level downstream of the fire-branch
-    purity this file already guards. Swept across every real fixture's every
-    detected cascade, not just one representative tree, since the leak this
-    guards against was itself fixture-specific (real_tree_04/06) the first
-    time it was found."""
+    watched_tickers, it would be surfaced to Fable as a fake signal ticker.
+    Swept across every real fixture's every detected cascade, not just one
+    representative tree. NARROW GUARD ONLY — see the module comment above
+    this test for what this does and does NOT prove; it does not cover real
+    (non-CORE_ASSET_-prefixed) core-strategy tickers leaking the same way,
+    which is a confirmed, separate, currently-unguarded production gap."""
     from advisors import frontrunner_builder as fb
 
     leaks: list[tuple[str, list[str]]] = []
