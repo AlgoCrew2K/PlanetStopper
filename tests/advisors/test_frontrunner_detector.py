@@ -741,7 +741,8 @@ def test_real_looking_core_tickers_do_not_leak_into_watched_tickers(fd):
     unlike the CORE_ASSET_-prefixed case, which defect #5/#6's per-child
     purification (_has_core_placeholder) DOES catch, since real tickers
     never carry that prefix."""
-    from advisors import frontrunner_builder as fb, symphony_schema as ss
+    from advisors import frontrunner_builder as fb
+    from advisors import symphony_schema as ss
 
     real_core_tickers = {"AAPL", "MSFT", "GOOGL"}
 

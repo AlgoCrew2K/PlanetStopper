@@ -71,7 +71,9 @@ def live_symphonies() -> dict:
     return json.loads(path.read_text())
 
 
-def _classification_row(symphony_id, fr_key, classification, cagr=None, sharpe=None, rsi_live_at=None, computed_at=None):
+def _classification_row(
+    symphony_id, fr_key, classification, cagr=None, sharpe=None, rsi_live_at=None, computed_at=None
+):
     return {
         "symphony_id": symphony_id,
         "fr_key": fr_key,
@@ -92,7 +94,11 @@ def _classification_row(symphony_id, fr_key, classification, cagr=None, sharpe=N
 
 
 def _run_marker(signals_unavailable=False, reason=None, computed_at="2026-07-16T15:00:00Z"):
-    return {"signals_unavailable": signals_unavailable, "reason": reason, "computed_at": computed_at}
+    return {
+        "signals_unavailable": signals_unavailable,
+        "reason": reason,
+        "computed_at": computed_at,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +129,9 @@ def test_route_never_calls_extraction_or_composer_seams_directly(client):
         f"expected 200 rendering purely from accessor mocks, got {resp.status_code}. "
         f"If a live-compute seam fired, the AssertionError above would have propagated as a 500."
     )
-    assert b"SPY:10:80" in resp.data, "expected the fr_key from the mocked accessor to appear in the rendered page"
+    assert b"SPY:10:80" in resp.data, (
+        "expected the fr_key from the mocked accessor to appear in the rendered page"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +157,9 @@ def test_run_marker_called_once_per_unique_symphony_id_never_bare(client):
 
     with (
         patch("advisors.frontrunner_signals.get_latest_classifications", return_value=rows),
-        patch("advisors.frontrunner_signals.get_latest_run_marker", side_effect=_tracking_run_marker),
+        patch(
+            "advisors.frontrunner_signals.get_latest_run_marker", side_effect=_tracking_run_marker
+        ),
     ):
         resp = client.get("/ai-advisor")
 
@@ -180,7 +190,9 @@ def test_degraded_symphony_notice_renders_per_card_not_as_a_global_banner(client
 
     with (
         patch("advisors.frontrunner_signals.get_latest_classifications", return_value=rows),
-        patch("advisors.frontrunner_signals.get_latest_run_marker", side_effect=_marker_by_symphony),
+        patch(
+            "advisors.frontrunner_signals.get_latest_run_marker", side_effect=_marker_by_symphony
+        ),
     ):
         resp = client.get("/ai-advisor")
 
@@ -213,7 +225,9 @@ def test_empty_state_renders_when_no_persisted_classification_rows_exist(client)
 # ---------------------------------------------------------------------------
 
 
-def test_accessor_failure_degrades_to_empty_state_and_logs_the_exact_confirmed_format(client, caplog):
+def test_accessor_failure_degrades_to_empty_state_and_logs_the_exact_confirmed_format(
+    client, caplog
+):
     """fr-fe's confirmed exact log line:
     logger.warning("frontrunner signals render degraded: %s", type(exc).__name__)
     — before setting the empty-state flag. The route must never 500."""
@@ -242,7 +256,9 @@ def test_accessor_failure_degrades_to_empty_state_and_logs_the_exact_confirmed_f
 # ---------------------------------------------------------------------------
 
 
-def test_card_header_shows_resolved_symphony_name_with_hash_as_secondary_label(client, live_symphonies):
+def test_card_header_shows_resolved_symphony_name_with_hash_as_secondary_label(
+    client, live_symphonies
+):
     """fr-fe's confirmed contract: primary text = symphony_name if resolved
     via database.load_state(), hash still renders as a secondary label."""
     real_hash, entry = next(iter(live_symphonies.items()))
@@ -260,15 +276,21 @@ def test_card_header_shows_resolved_symphony_name_with_hash_as_secondary_label(c
 
     assert resp.status_code == 200
     page = resp.data.decode("utf-8", errors="replace")
-    assert real_name in page, f"expected the resolved symphony name {real_name!r} to appear in the page"
-    assert real_hash in page, f"expected the hash {real_hash!r} to still appear as a secondary label"
+    assert real_name in page, (
+        f"expected the resolved symphony name {real_name!r} to appear in the page"
+    )
+    assert real_hash in page, (
+        f"expected the hash {real_hash!r} to still appear as a secondary label"
+    )
 
 
 def test_card_header_falls_back_to_hash_only_when_load_state_fails_table_still_populated(client):
     """A database.load_state() failure must fall back to hash-only headers
     WITHOUT triggering the empty state — the name lookup's own inner
     try/except is separate from the outer degrade-to-empty-state guard."""
-    rows = [_classification_row("unresolvable-hash-xyz", "SPY:10:80", "keep", cagr=0.06, sharpe=1.0)]
+    rows = [
+        _classification_row("unresolvable-hash-xyz", "SPY:10:80", "keep", cagr=0.06, sharpe=1.0)
+    ]
 
     with (
         patch("advisors.frontrunner_signals.get_latest_classifications", return_value=rows),
@@ -283,7 +305,9 @@ def test_card_header_falls_back_to_hash_only_when_load_state_fails_table_still_p
         "expected hash-only fallback header, table must still populate (not empty-stated) "
         "when ONLY the name lookup fails"
     )
-    assert "SPY:10:80" in page, "the classification table itself must still render despite the name-lookup failure"
+    assert "SPY:10:80" in page, (
+        "the classification table itself must still render despite the name-lookup failure"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +327,12 @@ def test_stale_rsi_live_at_over_48h_is_flagged(client):
     fresh_rsi_live_at = "2026-07-16T07:01:00Z"
     rows = [
         _classification_row(
-            "sym-stale-rsi", "SPY:10:80", "keep", cagr=0.06, sharpe=1.0, rsi_live_at=stale_rsi_live_at
+            "sym-stale-rsi",
+            "SPY:10:80",
+            "keep",
+            cagr=0.06,
+            sharpe=1.0,
+            rsi_live_at=stale_rsi_live_at,
         )
     ]
 
@@ -316,9 +345,9 @@ def test_stale_rsi_live_at_over_48h_is_flagged(client):
     assert resp.status_code == 200
     page = resp.data.decode("utf-8", errors="replace")
     assert "2026-07-10" in page, (
-        f"expected the stale rsi_live_at date (2026-07-10, >48h old) to surface honestly in "
-        f"the rendered page — a row silently presented without its real capture date could "
-        f"mislead the operator into thinking the RSI is current"
+        "expected the stale rsi_live_at date (2026-07-10, >48h old) to surface honestly in "
+        "the rendered page — a row silently presented without its real capture date could "
+        "mislead the operator into thinking the RSI is current"
     )
     assert fresh_rsi_live_at not in page, (
         "the row's real (stale) rsi_live_at must render, not a fabricated fresh timestamp"
@@ -332,7 +361,12 @@ def test_stale_computed_at_predating_todays_snapshot_is_flagged(client):
     stale_computed_at = "2026-07-10T15:00:00Z"
     rows = [
         _classification_row(
-            "sym-stale-computed", "SPY:10:80", "keep", cagr=0.06, sharpe=1.0, computed_at=stale_computed_at
+            "sym-stale-computed",
+            "SPY:10:80",
+            "keep",
+            cagr=0.06,
+            sharpe=1.0,
+            computed_at=stale_computed_at,
         )
     ]
 
