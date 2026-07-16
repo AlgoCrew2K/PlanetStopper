@@ -498,6 +498,138 @@ def get_latest_signal_rows(*, db_path=None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# AC-4: edge scoring + keep/prune/remove/no_edge_data classification
+# (fr-engine owns this logic; lives in this file per the Architecture doc)
+# ---------------------------------------------------------------------------
+
+# Weak-edge floor for the prune tier — a check with cagr>=0 and sharpe>=0
+# (so it isn't a remove) but sharpe below this floor is a weak, marginal
+# signal, not worth keeping. p10 of the 152 matched live FR-check Sharpe
+# distribution (docs/fr-signals-inputs/joined.json, 2026-07-16 join).
+# Strict "<" — a check with sharpe exactly AT the threshold is kept, not
+# pruned (test_sharpe_exactly_at_weak_threshold_is_not_pruned).
+FR_WEAK_SHARPE_THRESHOLD: float = 0.38
+
+# The Atlas frontrunners collection is exclusively RSI-based (fr-key format
+# TICKER:WINDOW:THRESHOLD from RSI(t,w) gt thr) — a live check whose OWN fn
+# is not RSI-family must never be treated as edge-comparable, even when its
+# fr_key string numerically coincides with a real Atlas doc (the
+# cumulative-return SPY:1:0 trap).
+_RSI_FN = "relative-strength-index"
+
+
+def classify_fr_checks(fr_checks: list[dict], signal_rows: list[dict]) -> list[dict]:
+    """AC-4: join extracted FR-checks to signal rows by exact `fr_key` AND
+    the LIVE check's own `comparator=="gt"` — the collection is gt-only, so a
+    live `lt`-check must never be scored against a coincidentally-matching
+    `gt` Atlas doc (the SPY:10:30 mis-join trap). The live check's own `fn`
+    must also be RSI-family — a numeric fr_key coincidence with a non-RSI fn
+    (e.g. cumulative-return) must never be treated as edge-comparable either.
+
+    Classification: `remove` (Tier 1) when `cagr < 0 or sharpe < 0`; `prune`
+    (Tier 2) when `sharpe < FR_WEAK_SHARPE_THRESHOLD` (strict); `keep`
+    otherwise; `no_edge_data` when the check is not edge-comparable at all
+    (wrong comparator, wrong fn, or genuinely absent from the collection) —
+    never scored against a mismatched backtest, never invented.
+
+    Pure function (no I/O). Never raises (D-1) — malformed/empty inputs
+    degrade to `[]` or an honest `no_edge_data` row; a `no_edge_data` row
+    never carries a borrowed/mismatched edge stat.
+    """
+    try:
+        signal_by_key: dict[str, dict] = {}
+        for row in signal_rows or []:
+            key = row.get("fr_key")
+            if isinstance(key, str) and key:
+                signal_by_key[key] = row
+
+        results: list[dict] = []
+        for check in fr_checks or []:
+            fr_key = check.get("fr_key")
+            comparator = check.get("comparator")
+            fn = check.get("fn")
+            edge_comparable = (
+                isinstance(fr_key, str)
+                and bool(fr_key)
+                and comparator == "gt"
+                and fn == _RSI_FN
+                and fr_key in signal_by_key
+            )
+
+            base_row = {
+                "fr_key": fr_key,
+                "fn": fn,
+                "comparator": comparator,
+                "branch_path": check.get("branch_path"),
+            }
+
+            if not edge_comparable:
+                results.append(
+                    {
+                        **base_row,
+                        "classification": "no_edge_data",
+                        "rsi_live": None,
+                        "rsi_live_at": None,
+                        "cagr": None,
+                        "sharpe": None,
+                        "sortino": None,
+                        "calmar": None,
+                        "max_drawdown": None,
+                        "signal_fetch_ts": None,
+                    }
+                )
+                continue
+
+            signal = signal_by_key[fr_key]
+            cagr = signal.get("cagr")
+            sharpe = signal.get("sharpe")
+            if cagr is None or sharpe is None:
+                # A matched doc with an incomplete backtest is honestly
+                # no_edge_data too — never a fabricated classification.
+                results.append(
+                    {
+                        **base_row,
+                        "classification": "no_edge_data",
+                        "rsi_live": None,
+                        "rsi_live_at": None,
+                        "cagr": None,
+                        "sharpe": None,
+                        "sortino": None,
+                        "calmar": None,
+                        "max_drawdown": None,
+                        "signal_fetch_ts": None,
+                    }
+                )
+                continue
+
+            if cagr < 0 or sharpe < 0:
+                classification = "remove"
+            elif sharpe < FR_WEAK_SHARPE_THRESHOLD:
+                classification = "prune"
+            else:
+                classification = "keep"
+
+            results.append(
+                {
+                    **base_row,
+                    "classification": classification,
+                    "rsi_live": signal.get("rsi_live"),
+                    "rsi_live_at": signal.get("rsi_live_at"),
+                    "cagr": cagr,
+                    "sharpe": sharpe,
+                    "sortino": signal.get("sortino"),
+                    "calmar": signal.get("calmar"),
+                    "max_drawdown": signal.get("max_drawdown"),
+                    "signal_fetch_ts": signal.get("fetch_ts"),
+                }
+            )
+        return results
+    except Exception:  # noqa: BLE001 - defensive; never-raises contract
+        logger.debug("classify_fr_checks: unexpected error", exc_info=True)
+        return []
+
+
+# ---------------------------------------------------------------------------
 # PM-ruling extension: classification-row + run-marker persistence/accessors
 # ---------------------------------------------------------------------------
 

@@ -1844,3 +1844,114 @@ def approve_frontrunner_proposal(proposal_id: int) -> ApprovalResult:
     except Exception as exc:
         logger.debug("approve_frontrunner_proposal: unexpected error", exc_info=True)
         return ApprovalResult(success=False, error=type(exc).__name__)
+
+
+# ---------------------------------------------------------------------------
+# AC-5: builder generation gating on signal data + the crossover/vs
+# persist-format functions (PM ruling extension — crossover/vs FRChecks are
+# persisted and rendered, never silently dropped).
+# ---------------------------------------------------------------------------
+
+
+def filter_positive_edge_signal_keys(classification_rows: list[dict]) -> list[str]:
+    """AC-5(a): return only the fr_keys classified "keep" — the sole
+    positive-edge tier (cagr>0 and sharpe>0 by classify_fr_checks'
+    construction). Candidate generation may only propose from these keys.
+    Never raises — malformed rows are skipped, never fabricated."""
+    return [
+        row["fr_key"]
+        for row in classification_rows or []
+        if isinstance(row, dict) and row.get("classification") == "keep" and row.get("fr_key")
+    ]
+
+
+def candidate_contains_tier1_remove_key(candidate: dict, classification_rows: list[dict]) -> bool:
+    """AC-5(b): True if the candidate's watched fr_key is classified "remove"
+    (Tier 1) in the current classification snapshot — the caller vetoes the
+    candidate BEFORE any backtest spend. Pure lookup, no I/O — never calls
+    the backtest seam itself."""
+    fr_key = candidate.get("fr_key") if isinstance(candidate, dict) else None
+    if not fr_key:
+        return False
+    remove_keys = {
+        row["fr_key"]
+        for row in classification_rows or []
+        if isinstance(row, dict) and row.get("classification") == "remove" and row.get("fr_key")
+    }
+    return fr_key in remove_keys
+
+
+def build_signal_provenance(fr_keys: list[str], classification_rows: list[dict]) -> dict[str, dict]:
+    """AC-5(c): {fr_key: {cagr, sharpe, classification, ...}} for the given
+    fr_keys, sourced from the current classification snapshot — the
+    provenance record attached to each candidate. Keys absent from
+    classification_rows are simply omitted, never fabricated."""
+    rows_by_key = {
+        row["fr_key"]: row
+        for row in classification_rows or []
+        if isinstance(row, dict) and row.get("fr_key")
+    }
+    return {key: rows_by_key[key] for key in fr_keys or [] if key in rows_by_key}
+
+
+def resolve_signals_unavailable_marker(symphony_id: str) -> dict:
+    """AC-5(d): resolve the current per-symphony signals_unavailable marker
+    by checking Atlas signal availability (per-symphony call — fr-engine
+    confirmed 2026-07-16, never hoisted to a batch-global flag). Never
+    silent: `{signals_unavailable, reason}`, reason carries the D-1 string
+    when degraded, None when healthy. Never raises."""
+    from advisors import frontrunner_signals  # noqa: PLC0415 - CC-2 lazy
+
+    result = frontrunner_signals.load_frontrunner_signals()
+    available = bool(result.get("available"))
+    return {
+        "signals_unavailable": not available,
+        "reason": None if available else result.get("reason"),
+    }
+
+
+# Three canonical display-identity formats (PM ruling — containment rule: all
+# format construction lives HERE, in ONE place, so no ad-hoc format ever
+# appears elsewhere). Non-collision invariant: a genuine Atlas fr_key's third
+# segment is always a plain number (int or decimal); both display forms below
+# always contain a letter + parenthesis, which can never appear in a genuine
+# numeric segment — structurally disjoint string spaces.
+
+
+def format_crossover_fr_key(*, ticker: str, window: int | None, rhs_fn: str, rhs_val: str) -> str:
+    """Display-identity for a crossover FRCheck (fr_key=None in the pure
+    dataclass) — reproducible byte-for-byte given the same node."""
+    return f"{ticker}:{window}:xover({rhs_fn},{rhs_val})"
+
+
+def format_vs_fr_key(*, ticker: str, window: int | None, rhs_ticker: str) -> str:
+    """Display-identity for a ticker-vs-ticker FRCheck (fr_key=None in the
+    pure dataclass). Plain f-string — a None window renders literally as the
+    string "None" (no special-casing)."""
+    return f"{ticker}:{window}:vs({rhs_ticker})"
+
+
+def build_classification_row_for_crossover(
+    *, ticker: str, window: int | None, rhs_fn: str, rhs_val: str, branch_path: list[str]
+) -> dict:
+    """A classification_rows-shaped dict for a crossover FRCheck — PM ruling:
+    crossover checks ARE persisted and rendered, never silently dropped.
+    Always classification="no_edge_data" (nothing to join a crossover key
+    to), every edge stat None."""
+    return {
+        "fr_key": format_crossover_fr_key(
+            ticker=ticker, window=window, rhs_fn=rhs_fn, rhs_val=rhs_val
+        ),
+        "fn": None,
+        "comparator": None,
+        "branch_path": branch_path,
+        "rsi_live": None,
+        "rsi_live_at": None,
+        "cagr": None,
+        "sharpe": None,
+        "sortino": None,
+        "calmar": None,
+        "max_drawdown": None,
+        "classification": "no_edge_data",
+        "signal_fetch_ts": None,
+    }
