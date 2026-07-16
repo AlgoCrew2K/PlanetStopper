@@ -102,7 +102,12 @@ def _no_live_atlas_calls():
     with (
         patch(
             "advisors.community_strats.load_community_strategies",
-            return_value={"available": False, "candidates": [], "stats": {}, "source": "captplanet"},
+            return_value={
+                "available": False,
+                "candidates": [],
+                "stats": {},
+                "source": "captplanet",
+            },
         ),
         patch(
             "advisors.frontrunner_signals.load_frontrunner_signals",
@@ -1093,7 +1098,9 @@ def test_ac_g2_4_an_insignificant_candidate_is_still_rejected_regardless_of_the_
         for i in range(n_days):
             returns[d.isoformat()] = (base_return_pct * (1 + (i % 5) * 0.1 - 0.2)) / 100.0
             d += timedelta(days=1)
-        return BacktestResult(stats={"sharpe": 0.5, "cagr": 0.08}, data_warnings=[], daily_returns=returns)
+        return BacktestResult(
+            stats={"sharpe": 0.5, "cagr": 0.08}, data_warnings=[], daily_returns=returns
+        )
 
     incumbent_result = _fake_positive_cyclic(0.2)  # profitable, avg 0.2%/day
     candidate_result = _fake_positive_cyclic(0.3)  # "better" raw magnitude, but insignificant
