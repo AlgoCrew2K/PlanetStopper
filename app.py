@@ -4324,6 +4324,59 @@ def ai_advisor_tab():
     except Exception:
         pass  # Empty-state rendered by template on [].
 
+    # ------------------------------------------------------------------ #
+    # AC-7: Frontrunner live signal classification surface. Reads        #
+    # PERSISTED per-symphony classification rows + per-symphony run      #
+    # markers ONLY (advisors.frontrunner_signals accessors) — extraction #
+    # needs a live Composer /score fetch, which never happens in a Flask #
+    # request thread (PM ruling 101df72a). CC-2 lazy import.             #
+    # ------------------------------------------------------------------ #
+    frontrunner_signal_groups: list[dict] = []
+    frontrunner_signals_empty = True
+    try:
+        from advisors.frontrunner_signals import (  # noqa: PLC0415
+            get_latest_classifications,
+            get_latest_run_marker,
+        )
+
+        _fr_rows = get_latest_classifications()
+
+        _fr_grouped: dict[str, list[dict]] = {}
+        for _fr_row in _fr_rows:
+            _fr_grouped.setdefault(_fr_row["symphony_id"], []).append(_fr_row)
+
+        # Name resolution is its OWN inner try/except, a separate failure
+        # domain from the outer guard below — a state-read hiccup degrades
+        # every card to hash-only headers, it must never blank the table.
+        try:
+            _fr_bot_state = database.load_state()
+            _fr_name_by_id = {
+                _k: _v.get("name") for _k, _v in _fr_bot_state.items() if isinstance(_v, dict)
+            }
+        except Exception:
+            _fr_name_by_id = {}
+
+        for _sid, _sid_rows in _fr_grouped.items():
+            # signals_unavailable is computed+persisted per-symphony, never
+            # a batch-global flag (fr-engine-confirmed) — one call per
+            # unique symphony_id, never a bare/None call (that would imply
+            # a fleet-wide signal that does not architecturally exist).
+            frontrunner_signal_groups.append(
+                {
+                    "symphony_id": _sid,
+                    "symphony_name": _fr_name_by_id.get(_sid),
+                    "rows": _sid_rows,
+                    "run_marker": get_latest_run_marker(symphony_id=_sid),
+                }
+            )
+
+        frontrunner_signal_groups.sort(key=lambda g: g.get("symphony_name") or g["symphony_id"])
+        frontrunner_signals_empty = not frontrunner_signal_groups
+    except Exception as exc:
+        _daemon_log.warning("frontrunner signals render degraded: %s", type(exc).__name__)
+        frontrunner_signal_groups = []
+        frontrunner_signals_empty = True
+
     # AC-1/AC-2/AC-3 (attribution honesty): resolved at request time so a
     # monkeypatch or an env-var change takes effect without a daemon restart —
     # same pattern as every other accessor-driven value on this page.
@@ -4352,6 +4405,8 @@ def ai_advisor_tab():
         market_prism_summary=market_prism_summary,
         market_prism_verification=market_prism_verification,
         frontrunner_proposals=frontrunner_proposals,
+        frontrunner_signal_groups=frontrunner_signal_groups,
+        frontrunner_signals_empty=frontrunner_signals_empty,
         advisor_suggestion_model=advisor_suggestion_model,
         advisor_synthesis_model=advisor_synthesis_model,
     )
