@@ -6423,6 +6423,12 @@ added as r2-stats/r2-analytics/r2-test land each fix, exactly as
 | M1 (MEDIUM, folded in from R4) | AC-5 | Producer-side fix: `composer_backtest_client` emits simple (not log) returns; the `input_convention`-kwarg design is DEAD (no log producers remain) | PLAN-RULED, RED pending |
 | (exit criterion, not a single finding) | AC-6 | A nightly-run probe demonstrating selection/adoption numbers are genuinely out-of-sample, kept as a regression test | PLAN-RULED, RED pending |
 
+**Note:** a SIXTH item, not in VERDICT.md and not a numbered AC, was
+discovered mid-plan-round and is documented in "AC-1 ruling history" below:
+the regime-lookback purity trap (ADDENDUM 5, PM retraction ADDENDUM 6) --
+a latent R1-era bug that split-level scoring would have newly activated,
+caught and fixed before any code was written.
+
 ### AC-1 ruling history (three-step record -- never compressed to just the final answer)
 
 **Step 1 (plan, `ea89b5a4`):** original framing -- "`_aggregate_cpcv_paths`
@@ -6463,16 +6469,28 @@ split-level loop (dated-return identity unchanged); `n_effective` additive
 accounting is preserved. Fallback Option B (honest single-fold split) was
 explicitly REJECTED -- 15 purged splits are strictly better than 1 fold,
 and dispersion consumers finally get real variance to work with.
-**Path machinery retirement:** `_aggregate_cpcv_paths` and path
-reconstruction are RETIRED FROM THE SCORING PATH -- deleted if r2-stats's
-consumer trace finds zero remaining consumers (no backwards-compat hacks),
-else kept with a documented non-scoring role; the pre-existing
-path-completeness tests get a root-cause SUPERSESSION verdict (they
-correctly pin a refit-world construct that the design no longer uses for
-scoring -- a documented supersede, never a blind deletion). **Cost
-correction (ADDENDUM 4):** 15 splits x ~1/3-window each is
-date-volume-NEUTRAL vs. today's 5 full-window paths -- the "3x more work"
-read of the plan-round discussion counted calls, not dates.
+**Path machinery retirement -- CONFIRMED DELETE (ADDENDUM 5, consumer
+trace complete):** r2-stats's full consumer trace found zero DB columns,
+zero OC/Spec-Critic readers, and `compute_pbo` independently implementing
+its own S=8 CSCV (its body is zero-diff -- only `cscv_date_returns`'s
+construction moves from path- to split-provenance). Verdict:
+`_aggregate_cpcv_paths` and `path_membership` are DELETED outright (no
+backwards-compat hacks; ADDENDUM 3's conditional "else kept with a
+documented non-scoring role" branch resolved to the clean-delete branch,
+not the keep branch). Renamed for behavior-honesty: `path_scores` user_attr
+-> `split_scores`; `_CPCV_N_PATHS` -> `_CPCV_N_SPLITS`. The pre-existing
+path-completeness tests get per-test root-cause SUPERSESSION verdicts
+routed to r2-test: `TestAC2PathAggregation`'s 4 tests -- documented
+supersede; `test_objective_calls_aggregate_not_fifteen_separate_evaluations`
+-- re-pinned as no-trial-count-inflation (a sibling test already covers
+it); fold-key assertions drop `path_membership`; sentinel-filter tests
+re-derive at N=15 preserving the same structural behavior;
+`test_haircut_tstat_no_path_duplication` gets NO supersession -- its
+date-keyed dedup invariant survives the redesign unchanged. Never a blind
+deletion of a test that still pins something real. **Cost correction
+(ADDENDUM 4):** 15 splits x ~1/3-window each is date-volume-NEUTRAL vs.
+today's 5 full-window paths -- the "3x more work" read of the plan-round
+discussion counted calls, not dates.
 
 **Restated observable contract (ADDENDUM 3):** (1) 15 split test-sets are
 pairwise-distinct, each a strict ~1/3 subset, purged; (2) per-split scores
@@ -6482,12 +6500,51 @@ selection statistic responds to a sub-window data change; (4) the
 (5) the t-stat input vector has NON-ZERO variance on the discriminating
 fixture (today structurally zero -- the MA-2 damage, pinned explicitly).
 
-**AC-2 interaction (ADDENDUM 4):** fold-level purge bounds
+**Regime-lookback purity trap -- a NEW finding, not in VERDICT.md,
+caught by r2-stats mid-plan-round (ADDENDUM 5), with one PM clause RETRACTED
+the same day (ADDENDUM 6 -- recorded honestly below, never silently
+corrected in place):** `_collect_sim_returns[_dated]` derives its regime
+chronology from the keys of whatever history dict it is passed; the CPCV
+call site passes a pre-filtered `_path_hist`, which was harmless only
+because MA-2's degeneracy made every "path" the full window. Under
+split-level scoring, a restricted dict would corrupt
+`_replay_resolve_regime_exit_ticks`'s trailing window into a gappy
+~1/3-window sample -- a latent R1-era bug, dormant behind MA-2, that this
+cycle's own AC-1 fix would otherwise have newly activated. **Fix ruled
+(ADDENDUM 5):** a keyword-only `score_dates` parameter on both simulation
+functions; call sites always pass the FULL history dict for
+regime-chronology purposes, restricting only which dates get
+scored/replayed. Efficiency shape ruled date-volume-neutral: regime
+resolution reads only input EOD returns (not replay outputs) from the full
+chronology; replay itself still executes only for the scored dates (~15 x
+1/3-window ~= 5 full-window-equivalents).
+
+**ADDENDUM 4 originally ruled (since RETRACTED -- reproduced here, not
+deleted, per the standing honesty rule):** "fold-level purge bounds
 `_replay_resolve_regime_exit_ticks`'s trailing lookback -- purge genuinely
-load-bearing post-split-level-scoring, resolving ADDENDUM 1's open "does
-purge keep a role" question in the affirmative. `compute_pbo` runs its own
-S=8 CSCV, structurally unaffected by the split-level change -- only
-`cscv_date_returns`'s provenance changes.
+load-bearing," resolving ADDENDUM 1's open "does purge keep a role in the
+regime channel" question in the affirmative. **ADDENDUM 6 RETRACTS this
+clause as a PM ratification error, caught by r2-stats asking a clarifying
+question before writing any code:** restricting the regime window to a
+split's `train_dates` would reintroduce the exact gappy-trailing-window
+distortion ADDENDUM 5 exists to prevent -- `train_dates` are non-contiguous
+(test groups punched out, purge trims both seams), so purge-bounding the
+regime lookback is not a narrower-but-safe version of the fix, it is the
+SAME bug ADDENDUM 5 just fixed, reintroduced through a different door.
+**Final ruling (ADDENDUM 6):** the regime-resolution trailing window is the
+TRUE GLOBAL CHRONOLOGY, strictly before the resolved date -- never
+purge-bounded. Rationale (the load-bearing sentence for future readers):
+the regime label is a decision INPUT, exactly like the day's own ticks --
+production computes it from true trailing calendar days, replay fidelity
+demands the same; it is not a fitted artifact, so fold separation does not
+apply to it, and strictly-before-d alone fully preserves the no-lookahead
+contract. **Purge remains load-bearing in exactly two places: split
+test-set construction, and the AC-2 train-only holdout boundary -- never in
+the regime input channel.**
+
+`compute_pbo` runs its own S=8 CSCV, structurally unaffected by the
+split-level change -- only `cscv_date_returns`'s provenance moves from
+path- to split-level.
 
 ### AC-5 ruling history (three-step record)
 
