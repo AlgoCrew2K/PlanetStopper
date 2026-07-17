@@ -67,7 +67,7 @@ import synthetic_history
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _SYNTH_PATH = _REPO_ROOT / "synthetic_history.py"
 _AUTOTUNER_PATH = _REPO_ROOT / "autotuner.py"
-_FIXTURE_DIR = _REPO_ROOT / "tests" / "fixtures" / "math"
+_FIXTURE_DIR = _REPO_ROOT / "tests" / "fixtures" / "math_engine"
 _MC_SENSITIVITY_FIXTURE = _FIXTURE_DIR / "ma1_lpc_per_tick_mc_sensitivity.json"
 _BUILD_REPLAY_DAY_FIXTURE = _FIXTURE_DIR / "ma1_build_replay_day_lpc_stamping.json"
 
