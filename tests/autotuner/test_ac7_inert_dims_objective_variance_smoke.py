@@ -355,21 +355,48 @@ def _build_wf_history_data(sym_id: str, day_closes: dict[str, list[float]]) -> d
 
 def test_take_profit_mc_pct_varies_the_objective_over_real_bar_derived_walk_forward() -> None:
     """The genuine walk-forward-level RED signal: 3 days of bar-derived
-    history (each day a deep decline from a c=101.5 open, matching the
-    AC-6-validated arm-band price) for one symphony, through the REAL
+    history for one symphony, through the REAL
     synthetic_history.build_replay_day -> autotuner.run_simulation pipeline.
 
-    RED pre-AC-1 (verified live): every day's mc_prob is CONSTANT across all
-    its ticks (~64-66 across the 3 days, never varying tick-to-tick within a
-    day -- reproducing MA-1's "day-constant mc_prob" finding directly) and
-    never crosses the TAKE_PROFIT_MC_PCT=5.0-vs-10.0 sweep boundary --
-    both sweep values give the IDENTICAL objective (-0.0, no exit fires
-    either way). This is the audit's literal "objective-inert" claim.
+    FIXTURE-REPAIR HISTORY (r1-engine's post-AC-1 finding, PM-directed
+    repair -- do not re-litigate without re-deriving live): the ORIGINAL
+    all-three-days-at-c=101.5 fixture correctly reproduced the audit's
+    fully-degenerate pre-AC-1 claim (-0.0 objective for both sweep values --
+    mc_prob day-constant, no per-tick signal at all), but after r1-engine's
+    AC-1 fix landed the failure signature MOVED rather than resolving: real
+    per-tick-lpc-driven mc_prob was demonstrably flowing (tick 0 = 15.33 /
+    14.33 / 13.33 across the 3 days -- verified live, not day-constant --
+    ticks 1-4 correctly saturate at 100.0 for a -20%-to-26% decline with no
+    historical analog in the +-2% AAA distribution), yet BOTH sweep values
+    (5.0 and 10.0) produced the IDENTICAL objective (112.05). Root cause:
+    every day's tick-0 mc sat >= 10.0 (never inside [5.0, 10.0)), so the TP
+    arm condition (mc < take_profit_mc_pct) never flips between the two
+    sweep values on ANY tick -- a fixture-construction gap (day_closes never
+    placed a discriminating tick inside the swept band), not an
+    implementation defect. Repair: 2026-04-07's opening tick moved from
+    c=101.5 (mc=14.33, never in-band regardless of TP_PCT sweep) to
+    c=101.65 (mc=9.33 at the replay's real 300-path MC config, verified live
+    via fine-grained scan on this exact sym_id/date pair -- the seed is
+    sym_id+date-keyed, so this value does NOT transfer from any other file's
+    scan) -- inside [5.0, 10.0), so TAKE_PROFIT_MC_PCT=10.0 arms TP on this
+    tick (9.33 < 10.0) while 5.0 does not (9.33 is not < 5.0), producing a
+    genuine objective delta. 2026-04-06/08 are unchanged (both non-
+    discriminating at either sweep value -- contribute identically to both
+    objectives, which is fine; only ONE day needs to discriminate).
+
+    RED pre-AC-1 (still verified live against the repaired fixture): mc_prob
+    is CONSTANT across every tick of every day (the day-constant-mc-prob
+    degeneracy is a property of the REPLAY BUG, not of this specific price
+    sequence), so the tick-0 discriminator this repair relies on does not
+    exist yet either -- both sweep values still collapse to the identical
+    degenerate objective. This is the audit's literal "objective-inert"
+    claim, now demonstrated on a fixture that ALSO closes the post-AC-1 gap
+    r1-engine found, rather than needing a second repair once AC-1 landed.
     """
     sym_id = "sym-ac7-wf-001"
     day_closes = {
         "2026-04-06": [101.5, 80.0, 78.0, 76.0, 74.0],
-        "2026-04-07": [101.5, 80.0, 78.0, 76.0, 74.0],
+        "2026-04-07": [101.65, 80.0, 78.0, 76.0, 74.0],
         "2026-04-08": [101.5, 80.0, 78.0, 76.0, 74.0],
     }
     history_data = _build_wf_history_data(sym_id, day_closes)
