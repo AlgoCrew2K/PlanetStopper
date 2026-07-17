@@ -130,6 +130,44 @@ def _seed_symphony_names(positions: dict) -> None:
     )
 
 
+def _seed_shadow_history_for_detail(positions: dict) -> dict[str, float]:
+    """One shadow_history row per symphony, dated TODAY, carrying the
+    captured production `current_return` snapshot (tests/fixtures/prod_droplet
+    /bot_state_positions.json — real data, not fabricated).
+
+    math-r0 AC-6 (MAPERF-06): the History Detail column emits
+    at_return - current_return (guard-alpha pp), sourced from the LATEST
+    shadow_history row per symphony (`ORDER BY ts_utc DESC LIMIT 1` —
+    app.py's intraday backfill query). Seeding exactly one row per symphony
+    makes that LATEST lookup deterministic (every today's exit for a given
+    symphony resolves to the SAME current_return), so the expected detail
+    value for every row is independently re-derivable here, not hardcoded.
+
+    Returns {symphony_id: current_return} for callers to compute expected
+    detail values.
+    """
+    current_returns: dict[str, float] = {}
+    today = _today_et().isoformat()
+    for i, (sym_id, entry) in enumerate(positions.items()):
+        cr = entry.get("current_return")
+        if cr is None:
+            continue
+        current_returns[sym_id] = float(cr)
+        database.record_shadow_observation(
+            symphony_id=sym_id,
+            account_id=entry.get("account"),
+            cycle_id=f"prod-fixture-shadow-{i}",
+            ts_utc=f"{today}T20:00:00Z",
+            ts_et=f"{today}T16:00:00",
+            trading_day=today,
+            current_return=cr,
+            shadow_return=cr,
+            is_post_trigger=0,
+            trigger_id=None,
+        )
+    return current_returns
+
+
 def _today_et() -> date:
     return datetime.now(_ET).date()
 
@@ -148,8 +186,16 @@ class TestTodayFallbackIsDateFiltered:
 
         RED today: the fallback SELECT has no date filter and returns LIMIT 50
         across all days.
+
+        math-r0 AC-6 (MAPERF-06): detail is now at_return - current_return
+        (guard-alpha pp), sourced from the LATEST shadow_history row per
+        symphony — not the raw at_return. We seed one shadow_history row per
+        symphony (real captured current_return snapshots,
+        _seed_shadow_history_for_detail) so detail is computable, and derive
+        the expected per-row value from that same source.
         """
         _seed_symphony_names(positions)
+        current_returns = _seed_shadow_history_for_detail(positions)
         seeded = _shift_and_seed_exit_triggers(exit_trigger_rows, _today_et())
         todays_rows = [r for r in seeded if r["ts_et"][:10] == _today_et().isoformat()]
         assert todays_rows, "fixture integrity: newest production day must carry exits"
@@ -165,13 +211,18 @@ class TestTodayFallbackIsDateFiltered:
             f"todays_exits returned {len(exits)} rows; the current ET trading day has "
             f"{len(todays_rows)} real exits — the all-time feed is leaking into 'Today'"
         )
-        # The rows must BE today's rows: the per-row return values must match the
-        # multiset of today's captured at_return values (order-independent).
-        expected_returns = sorted(round(r["at_return"], 4) for r in todays_rows)
-        got_returns = sorted(
+        # The rows must BE today's rows: the per-row guard-alpha-pp detail values
+        # must match the multiset of today's captured
+        # (at_return - current_return) values (order-independent).
+        expected_details = sorted(
+            round(r["at_return"] - current_returns[r["symphony_id"]], 4)
+            for r in todays_rows
+            if r["symphony_id"] in current_returns
+        )
+        got_details = sorted(
             round(float(e["detail"]), 4) for e in exits if isinstance(e.get("detail"), (int, float))
         )
-        assert got_returns == expected_returns, "returned exit rows are not today's production rows"
+        assert got_details == expected_details, "returned exit rows are not today's production rows"
 
     def test_zero_exit_day_yields_empty_todays_exits_not_alltime_feed(
         self, client, pm_dir, exit_trigger_rows, positions
@@ -239,8 +290,13 @@ class TestFallbackRowsMatchConsumedShape:
 
         Shape/format assertions only; the one value equality (symphony_name) is
         against the captured production name for that id.
+
+        math-r0 AC-6: detail requires a shadow_history current_return lookup
+        to compute the guard-alpha-pp value — seed one row per symphony
+        (_seed_shadow_history_for_detail) so detail is honestly numeric.
         """
         _seed_symphony_names(positions)
+        _seed_shadow_history_for_detail(positions)
         _shift_and_seed_exit_triggers(exit_trigger_rows, _today_et())
 
         resp = client.get(f"/api/history/{_WIDE_WINDOW_DAYS}")

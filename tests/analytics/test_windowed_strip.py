@@ -209,25 +209,54 @@ class TestWindowedGuardAlpha:
         assert alpha_all == pytest.approx(
             _epoch_additive_alpha(old_scen["shadow_history_rows"]), abs=1e-6
         )
-        assert abs(alpha_30) < abs(alpha_all) - 1e-6, (
-            f"30d-window alpha {alpha_30} must be smaller than ALL {alpha_all} when the "
-            "divergence is OLDER than 30 days — windowing must bite."
+        # math-r0 AC-8b: a 30d window over data aged 40+ days back has < 2
+        # in-window rows -- the deliberate conservatism floor -- so windowing
+        # "bites" so completely the function honestly reports None (insufficient
+        # data) rather than a fabricated smaller-but-nonzero number. None is the
+        # strongest form of "smaller than ALL" here (there is no windowed signal
+        # left at all), not a regression of this test's intent.
+        assert alpha_30 is None, (
+            f"30d-window alpha must be None (< 2 in-window rows -- the divergence is "
+            "aged 40+ days outside the 30-calendar-day window, so the AC-8b "
+            f"conservatism floor never clears); got {alpha_30}"
         )
 
     def test_never_triggered_zero_on_every_window(self, fixture, tmp_path):
+        """Never-triggered -> a genuinely-COMPUTED 0.0 on every window that has
+        >=2 in-window rows (real data confirming zero divergence). A window
+        that excludes the fixture's rows entirely (< 2 in-window — the fixture's
+        trading_days are fixed calendar dates that age relative to whenever this
+        suite runs) is math-r0 AC-8b's "insufficient data" state: None, not a
+        fabricated 0.0 — that distinction is the whole point of AC-8b, so this
+        test derives the expected outcome per window from the fixture's OWN
+        dates rather than assuming every window clears the >=2-row floor."""
         import analytics
 
         scen = fixture["scenarios"]["never_triggered_n2ooA"]
         if_held = scen["if_held_pct"]
         sym_id = scen["symphony_id"]
         db_file = _make_db(tmp_path, {"a": scen})
+        row_dates = [r["trading_day"] for r in scen["shadow_history_rows"]]
         for window in ("all", "30d", "90d", "1y", "ytd"):
+            cutoff = analytics._window_cutoff_date(window)
+            cutoff_iso = cutoff.isoformat() if cutoff is not None else None
+            in_window_count = sum(1 for d in row_dates if cutoff_iso is None or d >= cutoff_iso)
+
             alpha = analytics.compute_windowed_symphony_guard_alpha(
                 _sym_dict(sym_id, if_held, 10000.0), None, window=window, db_path=db_file
             )
-            assert alpha == pytest.approx(0.0, abs=1e-9), (
-                f"never-triggered guard alpha must be 0.0 on window={window}; got {alpha}"
-            )
+            if in_window_count < 2:
+                assert alpha is None, (
+                    f"window={window} has only {in_window_count} in-window row(s) "
+                    f"(< 2, the AC-8b conservatism floor) -- expected None (insufficient "
+                    f"data), got {alpha}"
+                )
+            else:
+                assert alpha == pytest.approx(0.0, abs=1e-9), (
+                    f"never-triggered guard alpha must be a genuinely-computed 0.0 on "
+                    f"window={window} ({in_window_count} in-window rows, shadow==current "
+                    f"on all of them); got {alpha}"
+                )
 
 
 # ===========================================================================

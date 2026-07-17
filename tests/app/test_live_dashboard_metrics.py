@@ -1086,10 +1086,18 @@ class TestHistoryRouteTriggerCountBackfill:
     todays_exits.length in history.js, not from trigger_count.
     """
 
+    # math-r0 AC-6 (MAPERF-06): the Detail column now emits
+    # at_return - current_return (guard-alpha pp), sourced from the LATEST
+    # shadow_history row per symphony. db_with_exit_triggers_only's
+    # shadow_history rows carry these current_return values (distinct from
+    # at_return so the two candidate semantics are numerically distinguishable).
+    _SHADOW_CURRENT_RETURNS = {"SYM_A": 0.4, "SYM_B": -0.6, "SYM_C": 0.1}
+
     @pytest.fixture
     def db_with_exit_triggers_only(self, tmp_path, monkeypatch):
-        """Minimal DB: today's exit_triggers rows (real schema incl. ts_et), no
-        post_mortem files. Rows dated today ET — the backfill is date-filtered."""
+        """Minimal DB: today's exit_triggers rows (real schema incl. ts_et) +
+        matching shadow_history rows, no post_mortem files. Rows dated today
+        ET — the backfill is date-filtered."""
         from datetime import datetime as _dt
         from zoneinfo import ZoneInfo as _ZoneInfo
 
@@ -1105,6 +1113,14 @@ class TestHistoryRouteTriggerCountBackfill:
                 at_return REAL NOT NULL,
                 triggered_reason TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS shadow_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symphony_id TEXT NOT NULL,
+                trading_day TEXT NOT NULL,
+                ts_utc TEXT NOT NULL,
+                shadow_return REAL NOT NULL,
+                current_return REAL NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS bot_state (
                 id INTEGER PRIMARY KEY,
                 data TEXT
@@ -1117,6 +1133,15 @@ class TestHistoryRouteTriggerCountBackfill:
                 ("SYM_A", f"{_today_et}T13:43:00Z", f"{_today_et}T09:43:00", 2.5, "TAKE_PROFIT"),
                 ("SYM_B", f"{_today_et}T14:23:00Z", f"{_today_et}T10:23:00", 1.8, "VWAP_BREAKDOWN"),
                 ("SYM_C", f"{_today_et}T15:01:00Z", f"{_today_et}T11:01:00", 0.9, "VWAP_BREAKDOWN"),
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO shadow_history "
+            "(symphony_id, trading_day, ts_utc, shadow_return, current_return) "
+            "VALUES (?,?,?,?,?)",
+            [
+                (sym_id, _today_et, f"{_today_et}T20:00:00Z", cr, cr)
+                for sym_id, cr in self._SHADOW_CURRENT_RETURNS.items()
             ],
         )
         conn.execute("INSERT INTO bot_state (id, data) VALUES (1, '{}')")
