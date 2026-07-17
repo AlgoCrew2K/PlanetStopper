@@ -53,6 +53,7 @@ import math
 from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
+import database
 from acceptance_gate import AcceptanceVerdict, evaluate_acceptance_gate
 
 # ---------------------------------------------------------------------------
@@ -68,6 +69,7 @@ from autotuner import (  # noqa: E402
     EMBARGO_DAYS,
     HARVEY_LIU_FDR_Q,
     PURGE_DAYS,
+    RETURN_PCT_TO_FRACTION,
     TRAIN_RATIO,
     VALIDATION_RATIO,
     benjamini_hochberg_adjust,
@@ -166,9 +168,16 @@ def _stable_seed_from_candidate_id(candidate_id: str) -> int:
 # ---------------------------------------------------------------------------
 
 # CRRA risk-aversion coefficient passed to math_engine.compute_pbo.
-# Mirrors the autotuner's gamma (autotuner.py: GAMMA = 1.0, default CRRA parameter).
-# Source: Bailey & López de Prado 2014, §3 CSCV algorithm; autotuner.py module constant.
-_BATCH_PBO_GAMMA: float = 1.0
+# Aligned to the frozen Phase-1 THEORY gamma (database.PHASE1_THEORY_GAMMA = "2.0",
+# council synthesis §2.5 — the canonical, most risk-averse value in the W-H2 fixture
+# set {0.5, 1.0, 2.0}), consumed via float() exactly as autotuner.py:1592 does
+# (`float(database.PHASE1_THEORY_GAMMA)`) — single source of truth, no duplicated
+# literal. The prior value here cited an autotuner module constant that does not
+# exist and diverged from the frozen THEORY gamma, giving the advisor PBO veto a
+# different risk-aversion than the autotuner's own PBO gate for the "same" decision
+# (DE-MATH-AUDIT-001 MA-STATS-M2 — false-citation finding).
+# Source: database.py PHASE1_THEORY_GAMMA; Bailey & López de Prado 2014 §3 CSCV algorithm.
+_BATCH_PBO_GAMMA: float = float(database.PHASE1_THEORY_GAMMA)
 
 # Minimum number of date-keyed configs required to compute a meaningful batch PBO.
 # compute_pbo with K=1 cannot rank the IS-best against other OOS configs (no ranking
@@ -652,12 +661,31 @@ def evaluate_candidate_batch(
     # Mirrors autotuner.py:2518-2538 (pbo=None when K<2; one batch pbo applied to
     # every candidate's evaluate_acceptance_gate call as a batch-level statistic).
     # Source: Bailey & López de Prado 2014 §3.4; autotuner.py PBO wiring pattern.
+    #
+    # UNIT BOUNDARY (AC-1, DE-MATH-AUDIT-001 MA-3): every producer of
+    # BacktestCandidate.dated_returns writes PERCENT-scale values (``r * 100.0`` on
+    # a Composer log-return, traced through composer_backtest_client.py:182 ->
+    # strategy_builder_engine.py:997, asset_swap_engine.py:954,
+    # logic_change_engine.py:677, frontrunner_builder.py:1605). math_engine.compute_pbo
+    # (math_engine.py:1939-1942) requires DECIMAL returns -- it feeds
+    # compute_crra_eu_objective's ``W = max(WEALTH_ARG_FLOOR, 1 + r)`` wealth argument,
+    # which saturates at the floor for any percent-scale value below -1.0 (i.e. any
+    # real trading day worse than -1%), producing a loss-magnitude-blind, saturating
+    # utility that corrupts the IS-best/OOS ranking the PBO veto depends on. This is
+    # the identical bug class the autotuner already fixed on its own path
+    # (autotuner.py:2369-2374); the advisor path never received the fix. We convert
+    # HERE, once, at the batch boundary -- a fresh dict per candidate (never mutating
+    # candidate.dated_returns, which other callers may still consume in its native
+    # percent scale) -- using the same named constant the autotuner divide uses
+    # (RETURN_PCT_TO_FRACTION = 100.0, imported above).
     # --------------------------------------------------------------------------
     import math_engine as _math_engine  # local import — avoids circular import risk
 
     _batch_pbo: float | None = None
     _dated_configs: list[dict[str, float]] = [
-        dict(c.dated_returns) for c in candidates if c.dated_returns
+        {date: pct / RETURN_PCT_TO_FRACTION for date, pct in c.dated_returns.items()}
+        for c in candidates
+        if c.dated_returns
     ]
     if len(_dated_configs) >= _PBO_MIN_CONFIGS:
         # Intersection of all date keys: only dates present in every config.
