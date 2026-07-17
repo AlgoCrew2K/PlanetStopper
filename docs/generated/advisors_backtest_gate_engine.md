@@ -1,9 +1,10 @@
 # advisors/backtest_gate_engine
 
-> M2 backtest-and-gate engine: fold-transforms Composer backtest return series into walk-forward folds and runs batch BHY/Yekutieli FDR + acceptance gate over the full candidate set; C5b (2026-06-20) adds batch PBO veto and real SPY-OOS-fold baseline; AC-D3 (2026-07-12) fixes candidate-order dependence in the bootstrap seed.
+> M2 backtest-and-gate engine: fold-transforms Composer backtest return series into walk-forward folds and runs batch BHY/Yekutieli FDR + acceptance gate over the full candidate set; C5b (2026-06-20) adds batch PBO veto and real SPY-OOS-fold baseline; AC-D3 (2026-07-12) fixes candidate-order dependence in the bootstrap seed; **AC-1/AC-2 (2026-07-17, `DE-MATH-R0-001`) fix the PBO veto's unit corruption** — the batch PBO boundary now converts percent-scale `dated_returns` to decimal before calling `math_engine.compute_pbo`, and `_BATCH_PBO_GAMMA` is aligned to the frozen Phase-1 THEORY gamma instead of a nonexistent constant citation.
 
 **Source:** `advisors/backtest_gate_engine.py`
-**Last updated:** 2026-07-13 (advisor-remediation-r1, DE-ADVISOR-R1-001 — AC-17 panel-tie neutralization + AC-7b 4th rejection class + AC-4/5 gate-strength parity for Asset Swaps/Logic Changes)
+**Last updated:** 2026-07-17 (math-r0, `DE-MATH-R0-001` — AC-1 PBO percent-to-decimal unit boundary fix, closes `DE-MATH-AUDIT-001` MA-3 CRITICAL, + AC-2 THEORY-gamma alignment, closes M2)
+**Prior update:** 2026-07-13 (advisor-remediation-r1, DE-ADVISOR-R1-001 — AC-17 panel-tie neutralization + AC-7b 4th rejection class + AC-4/5 gate-strength parity for Asset Swaps/Logic Changes)
 
 ## Overview
 
@@ -28,6 +29,7 @@ Off-execution-path: MUST NOT be imported or called from `alpha_bot_execution.py`
 - **C5b SPY date-alignment (not positional):** SPY is aligned to the candidate date span via date intersection BEFORE fold-transform; positional-only alignment would land the fold window on different calendar dates for a longer SPY series, producing a wrong baseline.
 - **C5b edge-14 (+inf, not -inf):** `_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA = float("+inf")`. Using `-inf` would make the `oos_alpha <= default_oos_alpha` withhold-clause in `acceptance_gate.py:257` always-false for finite candidates, collapsing to beats-zero — the exact behaviour AC-25 edge-14 forbids. With `+inf` the clause is always-true → KEEP_INCUMBENT (conservative WITHHOLD) for every finite candidate when SPY is unavailable.
 - **AC-D3 order-independence (2026-07-12):** `evaluate_candidate_batch`'s output for a FIXED candidate set must not depend on the order those candidates were submitted in. See "Bug Fix — Order-Dependent Bootstrap Seed" below.
+- **Percent-to-decimal boundary (AC-1, `DE-MATH-R0-001`, 2026-07-17):** `dated_returns` arrives percent-scale from every producer; `math_engine.compute_pbo` requires decimal. The conversion happens exactly once, at this module's batch-PBO boundary — never at the producer, and never mutating the caller's `BacktestCandidate.dated_returns` dict.
 
 ## Constants
 
@@ -40,6 +42,7 @@ Off-execution-path: MUST NOT be imported or called from `alpha_bot_execution.py`
 | `PURGE_DAYS` | `autotuner` | Boundary purge width (train-side) |
 | `EMBARGO_DAYS` | `autotuner` | Embargo width at train-validation boundary |
 | `HARVEY_LIU_FDR_Q` | `autotuner` | BHY FDR significance level |
+| `RETURN_PCT_TO_FRACTION` | `autotuner` | `100.0` — divisor used at the batch-PBO boundary (AC-1) to convert percent-scale `dated_returns` to decimal before `math_engine.compute_pbo`; same named constant the autotuner's own PBO path already divides by (`autotuner.py:2369-2374`) |
 | `FOLD_TRANSFORM_MIN_VALIDATION_DAYS` | local | 5 — minimum validation days for a defensible t-stat |
 | `FOLD_TRANSFORM_MIN_TOTAL_DAYS` | local | Derived minimum total series length: `ceil((PURGE_DAYS + EMBARGO_DAYS + 5) / (1 - TRAIN_RATIO))` |
 
@@ -47,7 +50,7 @@ Off-execution-path: MUST NOT be imported or called from `alpha_bot_execution.py`
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `_BATCH_PBO_GAMMA` | `1.0` | CRRA risk-aversion coefficient passed to `math_engine.compute_pbo`; mirrors `autotuner.GAMMA` |
+| `_BATCH_PBO_GAMMA` | `float(database.PHASE1_THEORY_GAMMA)` (`2.0`) | CRRA risk-aversion coefficient passed to `math_engine.compute_pbo`; aligned to the frozen Phase-1 THEORY gamma (`database.PHASE1_THEORY_GAMMA` is a `str`, cast via `float()` — same pattern as `autotuner.py:1592`). **Fixed 2026-07-17 (`DE-MATH-R0-001` AC-2):** pre-fix this cited a nonexistent `autotuner.py: GAMMA = 1.0` constant and diverged from the autotuner's own PBO gate for the "same" decision (`DE-MATH-AUDIT-001` M2). |
 | `_PBO_MIN_CONFIGS` | `2` | Minimum number of date-keyed configs to compute a meaningful batch PBO; fewer → `pbo=None`, veto does not fire |
 | `_PBO_MIN_ALIGNED_DATES` | `8` | Minimum intersection dates across all configs; fewer → `pbo=None` (CSCV needs ≥1 date per block, S=8 blocks) |
 | `_SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA` | `float("+inf")` | Conservative SPY-unavailable sentinel. `+inf` makes `oos_alpha <= default_oas_alpha` always-true for every finite candidate → KEEP_INCUMBENT (conservative WITHHOLD). `-inf` would make it always-false → beats-zero fallback, which AC-25 edge-14 forbids. Withheld candidates carry `rejection_reason="below_spy_alpha"`. |
@@ -81,7 +84,7 @@ One advisor-proposed variant to be fold-transformed and gated.
 | `theory_prior_params` | `dict` | Theory-anchor parameter dict for prior-anchor scoring (D4) |
 | `nn1_compliant` | `bool` | Default `True` for all Composer backtest paths; override for audit |
 | `purge_integrity_ok` | `bool` | Default `True`; series-derived check wins over caller-supplied `True` |
-| `dated_returns` | `dict[str, float]` | **C5b (AC-24/25).** Date-keyed returns (`"YYYY-MM-DD" -> pct`). Enables batch PBO computation and SPY date-alignment. Default `{}` — callers that omit this field receive `pbo=None` (PBO veto does not fire) and the SPY-unavailable conservative WITHHOLD. In production `propose_strategies` populates this from `result.daily_returns` pct-scaled. |
+| `dated_returns` | `dict[str, float]` | **C5b (AC-24/25).** Date-keyed returns (`"YYYY-MM-DD" -> pct`), **percent-scale** as written by every producer. Enables batch PBO computation and SPY date-alignment. Default `{}` — callers that omit this field receive `pbo=None` (PBO veto does not fire) and the SPY-unavailable conservative WITHHOLD. In production `propose_strategies` populates this from `result.daily_returns` pct-scaled. **AC-1 (`DE-MATH-R0-001`):** this dict is NEVER mutated by `evaluate_candidate_batch` — the percent-to-decimal conversion happens on a fresh copy at the `compute_pbo` call boundary, so other callers that read `dated_returns` still see its native percent scale. |
 
 ### `CandidateGateResult` (NamedTuple)
 
@@ -146,7 +149,8 @@ Fold-transform a batch of Composer backtest candidates and run them through the 
 **Pipeline:**
 
 ```
-C5b Step 0a: batch PBO (math_engine.compute_pbo over dated_returns intersection)
+C5b Step 0a: batch PBO — dated_returns converted percent→decimal (AC-1), then
+             math_engine.compute_pbo over the intersection, gamma=_BATCH_PBO_GAMMA
 C5b Step 0b: SPY-fold baseline (align SPY to candidate dates → _fold_transform_single)
 Step 1: _fold_transform_single per candidate (60/20/20 + purge)
 Step 2: compute_sortino_tstat per candidate (seed=_stable_seed_from_candidate_id(cand.candidate_id) — AC-D3, see below)
@@ -169,14 +173,16 @@ Step 5: evaluate_acceptance_gate per candidate (pbo=_batch_pbo, default_oos_alph
 
 **[PM-ASSUMED] marker (operator may overrule):** this changes the advisor suite's adoption semantics — candidates can now actually be adopted where none ever could before. See `DECISIONS.md` `DE-ADVISOR-R1-001` §AC-17 for the full proof, the narrative-correction this forces (the long-standing "0 survivors is expected — the gate is intentionally strict" explanation was incomplete; structural unreachability was the dominant cause, gate strictness secondary), and the doc-tree sweep this proof triggered.
 
-**C5b batch PBO details (AC-24):**
+**C5b batch PBO details (AC-24; unit boundary fixed 2026-07-17, `DE-MATH-R0-001` AC-1):**
 
-- `dated_returns` dicts from all candidates are collected into a list of configs.
-- If `len(configs) >= _PBO_MIN_CONFIGS` (2) AND the intersection of all date keys has `>= _PBO_MIN_ALIGNED_DATES` (8) dates, `math_engine.compute_pbo` is called with the intersection dates and `_BATCH_PBO_GAMMA=1.0`.
+- `dated_returns` dicts from all candidates are PERCENT-scale as written by every producer (`composer_backtest_client.py:182` -> `strategy_builder_engine.py:997`, `asset_swap_engine.py:954`, `logic_change_engine.py:677`, `frontrunner_builder.py:1605`) — collected into a list of configs, **converted to DECIMAL scale at this boundary** (`pct / RETURN_PCT_TO_FRACTION`, a fresh dict per candidate, never mutating `candidate.dated_returns`, which other callers still consume in its native percent scale) before being passed to `math_engine.compute_pbo`, which requires decimal returns (`math_engine.py:1939-1941`).
+- If `len(configs) >= _PBO_MIN_CONFIGS` (2) AND the intersection of all date keys has `>= _PBO_MIN_ALIGNED_DATES` (8) dates, `math_engine.compute_pbo` is called with the intersection dates and `_BATCH_PBO_GAMMA=float(database.PHASE1_THEORY_GAMMA)` (2.0).
 - Result is threaded into every `evaluate_acceptance_gate(pbo=_batch_pbo)` call.
 - If either condition is not met, `_batch_pbo` stays `None` — the veto correctly does NOT fire (no false reject on thin batches).
-- In production, `propose_strategies` populates `BacktestCandidate.dated_returns` from `result.daily_returns` with date keys preserved and values pct-scaled (`r * 100.0`), identical to the `daily_returns_pct` scale.
-- Mirrors `autotuner.py:2699-2711` wiring pattern.
+- In production, `propose_strategies` populates `BacktestCandidate.dated_returns` from `result.daily_returns` with date keys preserved and values pct-scaled (`r * 100.0`), identical to the `daily_returns_pct` scale — the percent-to-decimal conversion happens ONLY at the `compute_pbo` call boundary inside `evaluate_candidate_batch`, never at the producer.
+- Mirrors `autotuner.py:2699-2711` wiring pattern **and** the identical unit-boundary fix the autotuner already applied to its own PBO path (`autotuner.py:2369-2374`) — the advisor path never received it until this cycle.
+
+**Pre-fix defect (`DE-MATH-AUDIT-001` MA-3, CRITICAL; fixed `DE-MATH-R0-001` AC-1, commit `616da6b0`):** before this fix, `compute_pbo` received the percent-scale values UNCHANGED — a single -2% day scored `U=-6.908` (wealth-floor saturation in `compute_crra_eu_objective`) instead of the correct `-0.0202`, corrupting the IS-best/OOS ranking the veto depends on and flipping the veto decision arbitrarily w.r.t. an accidental unit scale (40/60 and 7/20 seeded probe flips, two independent DGPs, per the audit). Golden fixture (`tests/fixtures/math/pbo_unit_boundary_flip.json`): PBO=0.8714 (vetoes) at decimal scale vs PBO=0.1714 (passes) at percent scale, identical data. See `DECISIONS.md` `DE-MATH-R0-001` §AC-1/AC-2 for the full record.
 
 **C5b SPY-fold baseline details (AC-25, edge-14):**
 
@@ -222,7 +228,8 @@ Panel criterion D4 (prior-anchor / theory-consistency). Same normalised-L1 formu
 ## Internal Dependencies
 
 - `acceptance_gate` — `AcceptanceVerdict`, `evaluate_acceptance_gate`
-- `autotuner` — fold constants (`TRAIN_RATIO`, `VALIDATION_RATIO`, `PURGE_DAYS`, `EMBARGO_DAYS`, `HARVEY_LIU_FDR_Q`); `benjamini_hochberg_adjust`, `compute_haircut_pvalue`, `compute_sortino_tstat`
+- `autotuner` — fold constants (`TRAIN_RATIO`, `VALIDATION_RATIO`, `PURGE_DAYS`, `EMBARGO_DAYS`, `HARVEY_LIU_FDR_Q`, `RETURN_PCT_TO_FRACTION`); `benjamini_hochberg_adjust`, `compute_haircut_pvalue`, `compute_sortino_tstat`
+- `database` — `PHASE1_THEORY_GAMMA` (AC-2, `DE-MATH-R0-001`, module-level import — `_BATCH_PBO_GAMMA`'s single source of truth)
 - `math_engine` — `compute_pbo` (C5b batch PBO, AC-24); `PBO_REJECT_THRESHOLD` (imported locally inside the per-candidate loop to avoid circular import risk)
 - `hashlib` — stdlib, `_stable_seed_from_candidate_id` (AC-D3)
 

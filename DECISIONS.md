@@ -5461,3 +5461,299 @@ A post-ship skeptical falsification pass found `_gate_and_accept_candidate`'s Ga
 DE-FR-SIGNALS-001; branch `feature/frontrunner-signals`; plan `feature-plans/frontrunner-signals.md`; verdict `.claude/fr-signals-inputs/mirror-pattern-verdict.md`; addendum in `direction-validation.md`; fresh-tree corpus `.claude/fr-signals-inputs/fresh-trees-0716/`. Commits cited: `915ba65f` (plan), `101df72a` (AC-7 persisted-render ruling), `77060593` (Stage-1 discriminator, retracted), `d166d871` (xover-form ruling), `99960a57` (vs-form + self-mirror UNRESOLVED, later mooted), `06c6ebf6` (AC-4 fixture-table fix), `93e27efb` (the verdict), `07b4c0cb` (FRCheck amendment), `212f41a5` (AC-1/AC-2 GREEN), `ae5fe22d` (AC-7 UI GREEN), `bf6f026b` (AC-3/4/5/6 GREEN), `7ca7c0c6` (stale-cluster fix + falsified fire/continuation attempt 1), `101ad377` (independently-derived, later-reverted fire/continuation attempt 2 + the discriminator completeness fix, which was kept), `42ffe560` (the revert + the final per-child purification + the false-positive-filter production fix), `aad7c49b` (unrelated hedge-ticker fixture restoration, fr-falsifier3), `ae097ef6` (watched_tickers guard test, initially overclaiming), `0ab3ae78` (the fresh-tree cross-check confirming the leak is real + the guard-test comment correction), `95dac72c` (Cluster D wiring, fr-review sign-off not yet separately tracked), `e90a1626`/`c595b97b`/`5bd4c8b0` (this doc-writer's three detector-doc correction commits) `f2e51fd5` (this entry's first residuals update, itself now partially superseded by this second update). Supersedes `DE-FRONTRUNNER-001`'s wave-1 detector description for the cascade-recognition rule. This entry remains incomplete pending fr-review's Cluster D sign-off, a reconciled full-battery count, the PM's live E2E, and CI's full-tree run -- update the Verification section, not this Reference section, when those land.
 
 **G2 fix + de-productization slices, additional commits cited:** `e60999e0` (Gate#2 ADDENDUM plan), `d1074080` (AC-G2-3b ratification), `5a7b44e8` (AC-G2-6 ratification), `30427691` (AC-G2-1/2 RED), `570fd6fa` (AC-G2-1 GREEN, g2-review APPROVE), `eac4f606` (ruff-format nit), `9b63218c` (AC-G2-6 RED), `cbacb678` (AC-G2-6 GREEN, g2-review APPROVE), `6d11522c` (ADDENDUM 2 de-productization plan), `059dfa3c` (AC-R4 test reconciliation, lands first), `f563f16c` (AC-R1 UI removal), `6715d654` (AC-R2/R3 persistence removal, g2-review APPROVE AC-R1..R5). Cluster D wiring's sign-off question (raised in the Verification section above as outstanding) is now MOOT for the persistence half -- that code was removed, not signed off -- and CLOSED for the in-memory half, which g2-review's `6715d654` verdict covers directly.
+
+## DE-MATH-R0-001 -- Math Remediation R0: PBO veto unit fix + performance/history render truth (2026-07-17)
+
+Branch: `fix/math-r0` | Base: `origin/main` f8e6e295 | HEAD (this entry): 6c99630e
+
+### Summary
+
+R0 is the first executed phase of the math remediation program launched from the
+app-math audit (`DE-MATH-AUDIT-001`, `docs/audit/math-audit/VERDICT.md`, synthesized
+by ma-lead). It fixes the two failure classes the operator sees every day: the
+advisor overfitting veto's unit corruption (VERDICT MA-3/M2, CRITICAL) and five
+operator-facing render defects on the Performance/History/strip dashboard surfaces
+(VERDICT MA-6/MA-7/ma-perf-03/04/05/06/13, HIGH/MED) -- plus one mid-cycle escalation
+(AC-8b) that the plan did not originally scope. No engine, autotuner, or
+`math_engine.py` changes -- those findings (MA-1, MA-2, MA-4, MA-5, MA-8, MA-9, MA-10,
+MA-11, MA-12) are explicitly out of scope, deferred to R1-R3 (`feature-plans/math-r0.md`
+Scope Boundaries). `feature-plans/math-r0.md` AC-1..8 + the ADDENDUM is the plan of
+record; `DE-MATH-AUDIT-001` is the findings basis. Ship path: advisory (FF to
+origin/main after gates + PM live E2E) -- no LIVE_EXECUTION surface touched, no new
+write paths, all routes remain read-only.
+
+**Finding-ID translation table** -- three numbering schemes name the same defects
+across the audit's two docs and this plan; a reader following any one ID should be
+able to find the other two here:
+
+| VERDICT.md (severity-ranked) | ma-perf-findings.md | math-r0.md AC | One-line |
+|---|---|---|---|
+| MA-3 (CRITICAL) | C2 | AC-1 | PBO veto computed on percent-scale returns vs `compute_pbo`'s decimal contract |
+| M2 | -- | AC-2 | `_BATCH_PBO_GAMMA` cited a nonexistent constant; frozen THEORY gamma is 2.0 |
+| MA-6 (HIGH) | MAPERF-01 | AC-3 | Per-symphony risk metrics from a trigger-day event sample, not consecutive days |
+| MA-7 (HIGH) | MAPERF-02 | AC-4 | Zero-trigger symphonies render whole-portfolio metrics under their name |
+| -- | MAPERF-03 | AC-5 | Hero chart windows by trading days, strip/History by calendar days |
+| -- | MAPERF-06 | AC-6 | History "Detail" column flips semantics between two sources |
+| -- | MAPERF-05 | AC-7 | Volatility delta rendered green when the bot is MORE volatile |
+| -- | MAPERF-04 + MAPERF-13 | AC-8 | Strip fallback overwrites a legitimate 0.0; cross-day arithmetic; permanent 30d arming |
+| (not in the audit -- found in-cycle by r0-test) | -- | AC-8b | `compute_windowed_symphony_guard_alpha` conflated "insufficient window" with "genuine zero" |
+
+### Decision: AC-1 (MA-3, CRITICAL) + AC-2 (M2) -- PBO percent-to-decimal boundary + THEORY gamma align
+
+**The bug (VERDICT MA-3):** every producer of `BacktestCandidate.dated_returns`
+writes PERCENT-scale values (`r * 100.0` on a Composer log return, traced through
+`composer_backtest_client.py:182` -> `strategy_builder_engine.py:997`,
+`asset_swap_engine.py:954`, `logic_change_engine.py:677`,
+`frontrunner_builder.py:1605`). `math_engine.compute_pbo`
+(`math_engine.py:1939-1941`) requires DECIMAL returns -- it feeds
+`compute_crra_eu_objective`'s `W = max(WEALTH_ARG_FLOOR, 1 + r)` wealth argument,
+which saturates at the floor for any percent-scale value below -1.0 (any real
+trading day worse than -1%), corrupting the IS-best/OOS ranking the PBO veto
+depends on. Bundled: `_BATCH_PBO_GAMMA=1.0` cited a nonexistent
+`autotuner.py: GAMMA = 1.0` constant (audit's lead-grep: zero hits) instead of the
+frozen Phase-1 THEORY gamma, `database.PHASE1_THEORY_GAMMA = "2.0"`.
+
+**Fix (`advisors/backtest_gate_engine.py`, commit `616da6b0`):** the batch-PBO
+boundary at `evaluate_candidate_batch` now builds `_dated_configs` as
+`{date: pct / RETURN_PCT_TO_FRACTION for date, pct in c.dated_returns.items()}`
+-- a fresh dict per candidate, never mutating `candidate.dated_returns` (which
+other callers may still consume in its native percent scale) -- using the same
+named constant (`RETURN_PCT_TO_FRACTION = 100.0`, imported from `autotuner`) the
+autotuner's own divide already uses for the identical bug class it fixed on its
+own path (`autotuner.py:2369-2374`) but never propagated to the advisor path.
+`_BATCH_PBO_GAMMA` is now `float(database.PHASE1_THEORY_GAMMA)` -- consumed via
+`float()` exactly as `autotuner.py:1592` does, single source of truth, no
+duplicated literal. **Note:** `PHASE1_THEORY_GAMMA` is a `str` ("2.0") in
+`database.py:1913` -- the cast is required, not decorative; r0-doc flagged this
+cross-check during planning and r0-engine's implementation already matched
+`autotuner.py:1592`'s pattern.
+
+**Golden fixture (`tests/fixtures/math/pbo_unit_boundary_flip.json`,
+`tests/advisors/test_pbo_unit_boundary.py`):** identical data, decimal scale, real
+(never-mocked) `compute_pbo` call: PBO=0.8714 (vetoes, `> PBO_REJECT_THRESHOLD`);
+percent scale: PBO=0.1714 (passes) -- reproducing the audit's flip case to four
+decimal places. A dedicated boundary test spies (not mocks) `math_engine.compute_pbo`
+via `monkeypatch` to assert the values it actually receives are decimal-scale, not a
+copied literal.
+
+### Decision: AC-3 (MA-6/MAPERF-01, HIGH) + AC-4 (MA-7/MAPERF-02, HIGH) -- per-symphony shadow_history source + scope-gated fallback
+
+**The bug:** `/api/performance?scope=symphony` sourced its series from
+`compute_per_symphony_returns` over post-mortem trigger arrays -- a
+selection-biased event sample containing ONLY days the symphony triggered, with
+every zero-trigger day silently absent. `compute_quantstats_metrics` then placed
+those K trigger-day observations on a synthetic CONSECUTIVE daily index and
+annualized as if they were K consecutive trading days (a 4-trigger sample
+averaging ~0.45%/day annualizing to ~209.8% "CAGR"). The route's own Finding-4
+comment already condemned exactly this source class for the aggregate scope, which
+had been moved off it -- symphony scope was left behind. Compounding: both
+`if not dates:` day-1-droplet fallbacks were unconditional, so a zero-trigger
+symphony rendered whole-PORTFOLIO metrics under that symphony's name.
+
+**Fix (`analytics.py` new function + `app.py`, commit `1289ff0b`):**
+`analytics.get_symphony_bot_and_held_daily_returns(symphony_id, db_file=None,
+days=125)` is the per-symphony analogue of the aggregate's canonical continuous
+source -- reads the last row per `(symphony_id, trading_day)` from
+`shadow_history` directly (Bot = `shadow_return`, Held = `current_return`, no
+weighting needed for a single symphony), so every trading day the symphony has a
+`shadow_history` row appears, triggered or not. Returns `None` below 2 distinct
+trading days, mirroring the aggregate function's own floor. `/api/performance`'s
+`scope == "symphony"` branch now calls this instead of the post-mortem path. Both
+day-1-droplet fallbacks (`if not dates:`) are now scope-gated to
+`scope == "aggregate"` -- a symphony-scoped request with zero data renders an
+honest empty state, never the portfolio's non-empty series mislabeled under the
+symphony's name. The dashboard Risk Profile panel (`static/index.js:461`) inherits
+the fix via the same route.
+
+**Regression pin:** `tests/app/test_performance_symphony_scope_source.py` pins a
+4-trigger symphony NOT annualizing to triple-digit CAGR from event-sample
+treatment, and asserts the source callsite is `get_symphony_bot_and_held_daily_returns`,
+never `compute_per_symphony_returns`, for `scope=symphony`.
+
+### Decision: AC-5 (ma-perf-03, MED) -- one calendar-window semantic everywhere
+
+**The bug:** the SAME picker click windowed the hero chart by TRADING days
+(`fetch_days` day-count fed into `analytics.get_portfolio_bot_and_held_daily_returns`)
+and the strip/History/Performance by CALENDAR days (`analytics._window_cutoff_date`)
+-- a ~40% window-length mismatch at "1y" (252 trading days vs 365 calendar days).
+Performance's YTD button independently computed an approximate calendar-day count
+fed into a trading-day slice, a second contract for the same token.
+
+**Fix (`app.py`, commit `1289ff0b`):** new helper `_slice_series_by_window_cutoff`
+fetches the full `shadow_history` series once (`days=None`) and slices it to the
+SAME calendar cutoff `analytics._window_cutoff_date` resolves for the window token
+-- the identical cutoff `/api/strip` already canonicalizes -- so a picker click
+covers the same calendar span on the hero chart, the strip, and `/api/performance`'s
+`ytd` token alike. `GET /api/hero-chart/<window>` no longer branches on
+per-token trading-day counts; `window="all"` (and any unrecognized token) resolves
+to no cutoff (full series), matching `_window_cutoff_date`'s own lifetime
+semantics. `/api/performance`'s `days` query param keeps its DELIBERATE dual
+contract: the six numeric buttons (30/60/90/125/252/1260) stay trading-day counts
+by design (untouched); only the literal string `"ytd"` now resolves via the shared
+calendar-cutoff helper instead of an approximate day-count. `static/performance.js`'s
+`resolveDays()` sends the literal `'ytd'` string instead of a client-computed
+day count (`ytdDays()` helper deleted). Degrades to "no filter" (never raises or
+silently empties) when cutoff resolution doesn't yield a real date -- defensive
+against a fully-mocked `analytics` module in older route tests.
+
+**Cross-surface pin:** `tests/app/test_window_semantic_parity.py` +
+`tests/app/test_default_hero_window_consistency.py` assert the hero chart and the
+strip cover the identical calendar span for the same window token.
+
+### Decision: AC-6 (ma-perf-06, MED -- the operator's "TP saved me 10%" sighting) -- History Detail column single semantic
+
+**The bug:** the History "Detail" column flipped semantics between its two
+sources -- the post-mortem path (`analytics.py get_history_summary`) emits
+`saved_pct_guard_alpha`, while the intraday `todays_exits` fallback
+(`app.py get_history`) emitted the raw `at_return` (exit-level return) under the
+identical `"detail"` key and `"+X.XX%"` cell -- two different quantities silently
+interchangeable depending on time-of-day.
+
+**Fix (`app.py`, commit `1289ff0b`):** the intraday fallback's query now joins each
+`exit_triggers` row against the symphony's latest `shadow_history.current_return`
+(same subquery pattern as the strip fallback), and a new `_guard_alpha_detail(
+at_return, current_return)` helper computes `at_return - current_return` (honest
+`None` on either missing input, never a `TypeError`) -- matching the post-mortem
+path's guard-alpha-pp semantic exactly. A schema-compatibility fallback (minimal/
+legacy DB without `shadow_history`) degrades to the raw columns with
+`detail=None` explicitly (never re-introduces the retired raw-`at_return` value
+under the same key).
+
+**Regression pin:** `tests/app/test_history_detail_column_semantics.py` (new,
+179 lines) pins the single semantic across both sources.
+
+### Decision: AC-7 (ma-perf-05, MED) -- volatility delta polarity
+
+**The bug:** `static/performance.js`'s `deltaClass(live, shadow)` colored every
+metric's delta the same way (positive delta = green) regardless of whether the
+metric was higher-is-better or lower-is-better -- so the bot showing MORE
+volatility than if-held rendered green/improvement-colored, inverted from every
+other risk metric on the panel. `static/index.js`'s Risk Profile panel already had
+the correct `invertDelta` pattern (`index.js:466-479`).
+
+**Fix (`static/performance.js`, commit `1289ff0b`):** `METRIC_LABELS`'s tuple
+shape gains an optional 5th `invert` field (defaults falsy when omitted); the
+`volatility` row is tagged `true`. The delta-color decision is inlined at the
+`renderMetrics` call site (mirroring `index.js`'s own inline `deltaGood = invert
+? (delta <= 0) : (delta >= 0)` pattern rather than a shared helper) -- the
+displayed VALUE and arrow direction are unchanged by `invert`; only the color
+decision flips. The standalone `deltaClass` helper is deleted (inlined).
+
+**Regression pin:** `tests/ui/test_performance_volatility_delta_polarity.py`
+(new, 160 lines).
+
+### Decision: AC-8 (ma-perf-04 + ma-perf-13, MED) -- strip fallback None-vs-falsy, day-filter, honest 30d state
+
+**The bug (three-part):** (1) the strip route's intraday guard-alpha fallback
+triggered on `not strip.get("guard_alpha")` -- true for BOTH a missing value AND a
+legitimate windowed `0.0` (an untriggered symphony's genuine zero divergence),
+silently overwriting the real zero with a cross-day estimate. (2) the fallback's
+`exit_triggers` query was unfiltered by date, pairing an exit_triggers row from
+ANY day against the symphony's LATEST `current_return` -- a cross-day-incoherent
+subtraction (returns from two different days' bases). (3) 30 calendar days can
+never contain 30 trading days, so the 30d window's insufficient-history floor
+permanently armed the fallback for that window.
+
+**Fix (`app.py`, commit `1289ff0b`, both the strip route and the sibling
+`guard_alpha_summary()` dollar-estimate route):** the guard is now `strip.get(
+"insufficient_history") and strip.get("guard_alpha") is None` -- explicit `is
+None`, never falsy. Both the strip fallback and the `guard-alpha-summary`
+dollar-estimate query are day-filtered to the current ET trading day
+(`WHERE substr(t.ts_et, 1, 10) = ?`), with a schema-compatibility except-branch
+that degrades to the unfiltered pre-fix query only when the DB lacks a `ts_et`
+column at all (a real migrated schema always has it). The "insufficient window
+that can never be satisfied" state (part 3) is resolved structurally by AC-8b
+below, which makes the underlying `<2`-row floor return an honest `None` instead
+of a fabricated `0.0` -- the strip route's `is None` check this decision
+introduces is what makes that honest signal actually reach the fallback logic.
+
+**Regression pin:** `tests/app/test_strip_fallback_none_vs_falsy.py` (new,
+470 lines) -- the largest new test file in the cycle, covering all three parts.
+
+### Decision: AC-8b (mid-cycle escalation -> PM ruling, `e8cad920`) -- insufficient-window None vs genuine-zero 0.0
+
+**Not in the original plan or the audit.** Discovered by r0-test while
+implementing AC-8's `is None` check: `analytics.compute_windowed_symphony_guard_alpha`
+returned an identical `0.0` for two structurally different states -- (1)
+genuinely-zero divergence, and (2) the deliberate `<2` windowed-rows conservatism
+floor in `_get_windowed_divergence_trajectory` (`analytics.py:1622-1623`), even
+though the epoch-additive math is mathematically valid from a single row. AC-8's
+new `is None` check would therefore have silently REGRESSED the previously-shipped
+DE-PROD-ACCURACY-001 day-1 behavior: a real ~3pp divergence sitting behind a thin
+window would now render a flat `0.0` with the intraday fallback withheld (because
+`0.0 is not None`) -- exactly the class of self-introduced regression the
+`AC-G2-6` precedent (frontrunner-signals cycle, thin-incumbent fail-open) rules a
+cycle must catch and fix in-cycle rather than ship.
+
+**PM ruling (`e8cad920`):** fix in-cycle. The `<2`-row floor case now propagates
+`None` up through `compute_windowed_symphony_guard_alpha` -- the floor itself is
+UNCHANGED (its statistical conservatism was not R0's to relitigate); only its
+return ENCODING changes. A genuinely-computed zero-divergence trajectory still
+returns a real `0.0`.
+
+**Caller sweep (mandatory per the ruling):** every consumer of the changed
+function was traced. `compute_windowed_portfolio_strip`'s per-symphony
+value-weighted aggregation loop already had `if sym_alpha is None: continue`
+(skip-and-count) from before this fix -- it required ZERO code change; the
+pre-existing pattern (originally there for the "no symphony id" case) already
+handled the newly-honest thin-window `None` correctly. The strip route's `is
+None` fallback guard (AC-8 above) is the only caller that needed to change, and it
+already had.
+
+**Fix commits:** `e8cad920` (plan ruling) -> `fc41a3c2` (RED: stale AC-3/AC-8
+test premises corrected + AC-8b RED added) -> `7c49e606` (GREEN:
+`compute_windowed_symphony_guard_alpha` returns `None` for the `<2`-row floor) ->
+`6c99630e` (r0-test's post-GREEN re-triage: 6 further test failures traced to the
+SAME two ruled semantic changes -- AC-8b's honest `None` and AC-6's guard-alpha-pp
+detail semantic -- across `tests/app/test_default_hero_window_consistency.py`,
+`tests/analytics/test_windowed_strip.py`, `tests/app/test_history_today_fallback_date_filter.py`,
+`tests/app/test_live_dashboard_metrics.py`; none were code bugs, all were stale
+test premises (a fixture that never seeded `shadow_history`, and two fixed-date
+JSON fixtures whose short-window row counts had drifted below the `<2`-row floor
+relative to "today"). Full re-run at `6c99630e`: 79/79 passed across the 7
+touched/verified files.
+
+### Files changed (this cycle, 98901abf..6c99630e)
+
+- `advisors/backtest_gate_engine.py` -- AC-1/AC-2 PBO boundary + gamma
+- `analytics.py` -- AC-3 new `get_symphony_bot_and_held_daily_returns`; AC-8b
+  `compute_windowed_symphony_guard_alpha` None-encoding fix
+- `app.py` -- AC-3/4/5/6/8 route changes (`/api/performance`, `/api/hero-chart/<window>`,
+  `/api/strip/<window>`, `/api/guard-alpha-summary`, `/api/history/<days>`)
+- `static/performance.js` -- AC-5 (`resolveDays`) + AC-7 (invert-aware delta color)
+- `feature-plans/math-r0.md` -- ADDENDUM (AC-8b ruling)
+- 8 new test files (`test_pbo_unit_boundary.py`, `test_performance_symphony_scope_source.py`,
+  `test_strip_fallback_none_vs_falsy.py`, `test_window_semantic_parity.py`,
+  `test_history_detail_column_semantics.py`, `test_performance_volatility_delta_polarity.py`,
+  plus fixture `tests/fixtures/math/pbo_unit_boundary_flip.json`) + 5 existing test
+  files updated for stale premises / caller-sweep consequences
+
+### Verification
+
+**r0-review verdict (`quant-code-reviewer`, full-diff pass 98901abf..6c99630e):**
+"Verdict: APPROVE-pending-PM-live-gate @ 6c99630e (fix/math-r0). Zero BLOCKs across
+all sections." One LOW/non-blocking observation: broad `except Exception` in the
+schema-compatibility degrade path added to `/api/strip` and `/api/guard-alpha-summary`
+(pre-existing pattern from AC-8's original commit, not new to this cycle) -- flagged
+for a future narrowing if that code is touched again, not a blocker.
+
+**r0-review's own batteries (self-reported, cited here for the audit trail --
+NOT a substitute for the PM's independent full-tree gate below):** AC-1/AC-2
+regression 51/0/0; a broader `tests/app/` + `tests/analytics/` + `tests/ui/` sweep,
+1858 passed / 25 skipped (pre-existing, unrelated) / 1 deselected / 0 failed / 0
+errors, 367.9s; `js_syntax` 11/11 (covers `performance.js`); ruff clean.
+
+**Outstanding before merge (per `feedback_pm_always_run_suite_before_merge` --
+this entry will be updated, not re-created, when these land):** the PM's own
+independent full-tree gate run (quoting `N passed / M failed / K errors on <SHA>`)
+and the PM's live E2E against the real running dashboard. r0-review's verdict is
+explicitly conditional on both (`APPROVE-pending-PM-live-gate`) -- this cycle is
+NOT cleared to merge to `origin/main` until they are recorded here.
+
+### Reference
+
+`DE-MATH-R0-001`; branch `fix/math-r0`; HEAD `6c99630e`; plan
+`feature-plans/math-r0.md`; findings basis `docs/audit/math-audit/VERDICT.md`
+(`DE-MATH-AUDIT-001`). R1-R3 (autotuner replay fidelity, CPCV, live disarm band,
+dead squeeze knob, and the remaining MEDs/LOWs) are NOT covered by this entry --
+see the audit's "Suggested remediation order" for the deferred queue.
