@@ -1660,9 +1660,14 @@ def compute_windowed_symphony_guard_alpha(
     The guard alpha IS the epoch-additive divergence (dry_run − if_held cancels the
     if_held baseline), so this is the window-sliced, epoch-regrouped, epoch-additive
     sum. window="all" reproduces the AC-1 lifetime guard alpha EXACTLY. Untriggered
-    symphonies (shadow == current) yield 0.0 on every window. Returns None when the
-    symphony has no id (cannot read shadow history); 0.0 when the window has < 2 days
-    of recorded divergence (no recorded guard effect in the window).
+    symphonies (shadow == current) yield a genuinely-computed 0.0 on every window.
+    Returns None when the symphony has no id (cannot read shadow history) OR when
+    the window has < 2 days of recorded divergence — the deliberate conservatism
+    floor in ``_get_windowed_divergence_trajectory`` (AC-8b: this is an "unknown,
+    insufficient data" state, not a computed zero; the floor itself is unchanged,
+    only its return encoding — collapsing both cases into a fabricated 0.0 made
+    the two indistinguishable to callers, which silently withheld the day-1
+    intraday fallback even when a thin window held a REAL divergence).
     """
     symphony_id = sym_dict.get("id")
     if not symphony_id:
@@ -1670,7 +1675,7 @@ def compute_windowed_symphony_guard_alpha(
     _db_file = db_path if db_path is not None else _get_shadow_db_file()
     trajectory = _get_windowed_divergence_trajectory(symphony_id, _db_file, window)
     if trajectory is None:
-        return 0.0
+        return None
     return _epoch_additive_divergence(trajectory)
 
 

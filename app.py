@@ -2635,13 +2635,27 @@ def get_windowed_strip(window):
                 # symphony's LATEST current_return, subtracting returns from two
                 # different days' bases (cross-day incoherent). Mirrors the
                 # /api/history intraday backfill's substr(ts_et,1,10) pattern.
-                _rows = _conn.execute(
-                    "SELECT t.symphony_id, t.at_return, "
-                    "  (SELECT current_return FROM shadow_history "
-                    "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1) "
-                    "FROM exit_triggers t WHERE substr(t.ts_et, 1, 10) = ?",
-                    (trading_day,),
-                ).fetchall()
+                try:
+                    _rows = _conn.execute(
+                        "SELECT t.symphony_id, t.at_return, "
+                        "  (SELECT current_return FROM shadow_history "
+                        "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1) "
+                        "FROM exit_triggers t WHERE substr(t.ts_et, 1, 10) = ?",
+                        (trading_day,),
+                    ).fetchall()
+                except Exception:
+                    # A minimal/legacy exit_triggers table without a ts_et column
+                    # cannot express "today" at all — degrade to the unfiltered
+                    # query (the pre-AC-8 behavior) rather than silently zeroing
+                    # out; a real (migrated) schema always carries ts_et, so this
+                    # path is schema-compatibility only. Same pattern as the
+                    # guard-alpha-summary fallback below.
+                    _rows = _conn.execute(
+                        "SELECT t.symphony_id, t.at_return, "
+                        "  (SELECT current_return FROM shadow_history "
+                        "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1) "
+                        "FROM exit_triggers t"
+                    ).fetchall()
 
             finally:
                 _conn.close()
