@@ -3,7 +3,7 @@
 > Core per-cycle execution engine: fetches live portfolio state from Composer, runs all per-symphony exit decisions, calls autotuner post-market, and writes state back to the DB.
 
 **Source:** `alpha_bot_execution.py`
-**Last updated:** 2026-06-21 (startup-seed-symphonies)
+**Last updated:** 2026-06-21 (startup-seed-symphonies) — confirmed ZERO diff for Math Remediation R1 (2026-07-17, `DE-MATH-R1-001`); see the Replay-Fidelity Boundary section below
 
 ## Overview
 
@@ -116,12 +116,22 @@ At startup (before any execution cycle), `alpha_bot_execution.py` calls `databas
 
 ---
 
+### Replay-Fidelity Boundary (Math Remediation R1, `DE-MATH-R1-001`, 2026-07-17)
+
+This module carries **literal zero diff** for the R1 replay-fidelity cycle (per-tick lpc, fail-open arm, regime-conditional exit ticks — MA-1/MA-10/F5). This is a deliberate architecture ruling, not an oversight, and is worth documenting explicitly since a future reader tracing MA-1's fix might otherwise expect it here.
+
+`bot_state["current_holdings"]` is written by two live construction sites in this module (`:888-894`, in the DATA-PHASE update block, and `:1557-1560`, a second per-cycle write) — both emit ticker+allocation ONLY, no `last_percent_change`. **This remains true after R1 and is expected to remain true going forward**, by ruling: `current_holdings` is read back at `:1191` (the triggered-symphony shadow override) into the LIVE `run_monte_carlo` call at `:1270`, whose `mc_prob` is persisted to the live dashboard. Stamping lpc onto this dict would be a live-execution-path behavior change and would relocate the MA-1 degeneracy (the live snapshot refreshes once per cycle, not per tick) rather than fix it. R1's actual fix — a real per-tick `last_percent_change` — is stamped entirely inside `synthetic_history.build_replay_day`, onto a fresh, non-mutating, replay-local structure that is never written back into `bot_state`. See [synthetic_history](synthetic_history.md) for the fix itself and `DE-MATH-R1-001` for the full architecture ruling.
+
+This boundary is enforced as a standing test invariant, not just documented: `tests/execution/test_ac8_live_path_zero_diff_lpc_fix.py` adversarially source-scans that this module never imports `synthetic_history`, and pins that both `current_holdings` construction sites continue to emit ticker+allocation only. A future change that reintroduces lpc onto this shared live dict should treat that as a deliberate, explicitly-ruled scope change — not a silent side effect of an unrelated refactor.
+
+---
+
 ## Module-Level Configuration Constants
 
 | Constant | Source | Description |
 |----------|--------|-------------|
 | `LIVE_EXECUTION` | `os.getenv("LIVE_EXECUTION", "False")` | Master safety flag — must be explicit True for live orders |
-| `EXECUTION_START_TIME` | `os.getenv("EXECUTION_START_TIME", "09:30")` | Market session start HH:MM |
+| `EXECUTION_START_TIME` | `os.getenv("EXECUTION_START_TIME", "09:30")` | Market session start HH:MM. **Read by the replay, not just production, as of Math Remediation R1** — `autotuner._replay_execution_start_offset_minutes` reads this SAME module attribute (never a replay-local mirror constant) so the two can never drift; see `DE-MATH-R1-001` AC-5/F6. |
 | `VWAP_OPEN_WINDOW_GRACE_MINUTES` | `os.getenv("...", "15")` | Suppress VWAP exits for this many minutes after open |
 | `TRIGGER_THRESHOLD_PCT` | `os.getenv("...", "15.0")` | MC probability ceiling to arm the risk guard |
 | `SIMULATION_PATHS` | `os.getenv("...", "5000")` | MC path count per cycle |
@@ -135,3 +145,5 @@ At startup (before any execution cycle), `alpha_bot_execution.py` calls `databas
 - `autotuner` — `run_autotuner` (post-market)
 - `reporting` — `generate_eod_snapshot`, Discord notifications
 - `analytics` — performance metric computation
+
+**Never imports `synthetic_history`** — enforced by `tests/execution/test_ac8_live_path_zero_diff_lpc_fix.py` as a standing structural invariant (`DE-MATH-R1-001`), not merely a current fact.

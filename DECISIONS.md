@@ -5765,3 +5765,537 @@ satisfied -- this cycle is cleared to merge to `origin/main`.
 (`DE-MATH-AUDIT-001`). R1-R3 (autotuner replay fidelity, CPCV, live disarm band,
 dead squeeze knob, and the remaining MEDs/LOWs) are NOT covered by this entry --
 see the audit's "Suggested remediation order" for the deferred queue.
+
+## DE-MATH-R1-001 -- Math Remediation R1: replay fidelity -- per-tick lpc, fail-open arm, regime-conditional exit ticks (2026-07-17)
+
+Branch: `fix/math-r1` | Base: `origin/main` (post-R0) `0626ef86` | HEAD (this entry): `46051dd5`
+
+### Summary
+
+R1 is the second executed phase of the math remediation program launched from the
+app-math audit (`DE-MATH-AUDIT-001`, `docs/audit/math-audit/VERDICT.md`). It makes
+the autotuner's walk-forward replay faithful to production's exit-decision
+semantics on three independent fronts: the replay's Monte-Carlo baseline was fed
+zeroed, day-constant holdings (no per-tick `last_percent_change`), making
+Trailing-Stop and Take-Profit exits mathematically unreachable across the full
+250-day window (MA-1, CRITICAL) -- three of the six Optuna-tuned parameters
+(`TAKE_PROFIT_MC_PCT`, `PARABOLIC_VELOCITY_THRESHOLD`, `MAX_PARABOLIC_SQUEEZE`)
+were objective-inert noise shipped to live money; the replay dropped production's
+fail-open arming when MC opinion is absent (MA-10, HIGH); and the replay
+hardcoded exit-confirm ticks to 3 instead of production's regime-conditional
+2/5/3 (F5, MEDIUM). A fourth divergence (F6, session-window parity with
+`EXECUTION_START_TIME`) was resolved as an input during plan-approval (droplet
+reality '9:35'; the replay must honor the same env var production reads).
+`feature-plans/math-r1.md` AC-1..8 plus SEVEN dated addenda (`debc9537`..`cd7e668d`)
+is the plan of record -- the addenda ARE the decision record for this cycle, not
+a footnote; several rulings materially changed scope mid-cycle and are
+reproduced here, not compressed. No CPCV/adoption-cascade changes (MA-2/5/9 --
+R2), no live disarm-band or squeeze-floor changes (MA-4/11 -- R3), no
+advisor-gate changes (MA-3 shipped R0). Ship path: PR to origin (trade-touching
+-- autotuner output is applied to live money; the advisory FF lane does not
+apply to this cycle).
+
+**Finding-ID translation table:**
+
+| VERDICT.md ID | ma-core-findings.md ID | math-r1.md AC | One-line |
+|---|---|---|---|
+| MA-1 (CRITICAL) | F1 | AC-1, AC-2 | Replay holdings carried no per-tick lpc -> day-constant degenerate MC -> Trailing-Stop/Take-Profit exits unreachable |
+| MA-10 (HIGH) | F3 | AC-3 | Replay dropped production's fail-open arming on MC-absent ticks |
+| F5 (MED) | F5 | AC-4 | Replay hardcoded `exit_confirm_ticks=3` instead of production's regime-conditional 2/5/3 |
+| F6 (MED, conditional) | F6 | AC-5 | Replay assumed code-default 09:30 session start; droplet runs `EXECUTION_START_TIME='9:35'` |
+| (acceptance heart, not a single finding) | -- | AC-6 | Bar-level replay-vs-production parity battery, tick-for-tick, across all four fixes at once |
+| (MA-1 consequence, not a separate finding) | -- | AC-7 | Demonstrate the three previously-inert Optuna dims now move the objective |
+| (process requirement) | -- | AC-8 | Zero live-execution-path behavior change |
+
+### Decision: AC-1 (MA-1, CRITICAL) -- per-tick lpc stamped into replay holdings, confined to synthetic_history.py
+
+**The bug:** `synthetic_history.build_replay_day` called `math_engine.run_monte_carlo(holdings, ...)`
+with `holdings` = ticker+allocation dicts carrying no `last_percent_change` at
+all. `math_engine.py:1162-1166`'s existing (correct, unchanged) lpc-exclusion
+contract dropped every such holding from the MC baseline sum -- so `mc_prob`
+for a replay day was a function of WHICH tickers were held, not of the day's
+actual price action, and was constant across every tick of that day (the
+audit's lead probe: no-lpc = lpc=0 exactly; a real +/-2% lpc swing moves mc
+10.3<->96.7). The Trailing-Stop arm band `[5,15)` and the exit gate `>=60`
+were mutually exclusive under a day-constant mc, so those exits could never
+fire in replay, no matter what `TAKE_PROFIT_MC_PCT`/`PARABOLIC_VELOCITY_THRESHOLD`/
+`MAX_PARABOLIC_SQUEEZE` were set to.
+
+**Architecture ruling (ADDENDUM 1, plan-approval round, superseding the plan's
+original Architecture section):** r1-engine's investigation found the plan's
+originally-cited fix sites -- `alpha_bot_execution.py:888-894`/`:1557-1560`,
+where production writes `bot_state["current_holdings"]` -- are structurally
+OFF-LIMITS for this cycle. That dict is read back at
+`alpha_bot_execution.py:1191` (the triggered-symphony shadow override) into
+the LIVE `run_monte_carlo` call at `:1270` and its `mc_prob` is persisted --
+stamping lpc there would be a live-path behavior change (an automatic AC-8
+violation) and would relocate the day-constant degeneracy rather than fix it
+(the live current_holdings snapshot refreshes once per cycle, not per tick).
+**Ruling: the fix lands in `synthetic_history.py` ONLY.** `build_replay_day`
+now computes `tick_lpc: dict[str, float]` per tick from the SAME
+`(c - y_close) / y_close` fraction already computed for `agg_ret`, keyed by
+ticker (never stamped onto `holdings`/`h` in place -- `holdings` is
+closure-captured and reused across every day of the same symphony's
+`Parallel(n_jobs=...)` replay; an in-place stamp would leak a stale value
+forward into a later day's call). A fresh, non-mutating
+`priced_holdings = [{**h, "last_percent_change": tick_lpc.get(h["ticker"])} for h in holdings]`
+is built and passed to `run_monte_carlo` in place of `holdings`. A ticker
+with no bar this tick (or a non-positive `y_close`) gets no `tick_lpc` entry
+-> `last_percent_change=None` -> the EXISTING `math_engine.py:1162-1166`
+exclusion drops it exactly as it does for a genuinely lpc-less live holding
+-- never a fabricated `0.0`. `alpha_bot_execution.py` and `math_engine.py`
+carry **zero diff** for AC-1; both files are pinned to zero-diff by
+`tests/execution/test_ac8_live_path_zero_diff_lpc_fix.py`.
+
+**lpc semantic CONFIRMED (ADDENDUM 1, settled by arithmetic, no
+re-litigation):** the plan's `[PM-ASSUMED]` lpc-derivation note is now a
+confirmed fact, not an assumption -- `tests/fixtures/composer/symphony_stats_meta.json`
+(captured-from-producer, commit `6432c6ff`) cross-check:
+`last_dollar_change / (value - last_dollar_change) = -0.0199895` vs the
+fixture's stated `last_percent_change = -0.02` -- fraction confirmed against
+prior session close; the alternative /100-percent hypothesis implies $0.33 vs
+the fixture's actual $32.83 and is refuted.
+
+**Call-site completeness (approval condition, satisfied):**
+`tests/integration/test_run_monte_carlo_consumers_enumerated.py`'s
+`_BASELINE_CALL_SITES` enumerates every `run_monte_carlo` call site
+repo-wide, classified live/replay/advisory: `alpha_bot_execution.py` 1 (live),
+`synthetic_history.py` 1 (replay -- the changed site), `autotuner.py` 0,
+`reporting.py` 0. `synthetic_history.py:428` (now feeding `priced_holdings`)
+is confirmed the ONLY replay-path call site.
+
+**Correction (ADDENDUM 7, mid-cycle, recorded honestly per the standing
+"agreement != truth" rule):** ADDENDUM 6's sufficiency review originally
+closed AC-1's gapped-bar edge case with the line "holiday-gap coverage ==
+the existing missing-prior-close test -- same `yesterday_closes.get` path,
+closed with r1-review directly." **This was WRONG on both counts**, caught by
+r1-review's own follow-up empirical proof against the real `build_replay_day`:
+a missing PRIOR CLOSE (key absent from `yesterday_closes` -> code falls back
+to `c` -> `ret=0.0`, a REAL value that IS included in the MC sum) and a
+missing INTRADAY BAR (no bar for the tick -> no `tick_lpc` entry ->
+`last_percent_change=None` -> EXCLUDED via `math_engine.py:1162-1166`) are
+**two distinct branches with opposite outcomes**, not the same path. The
+implementation was verified correct for both once examined -- but the
+gapped-bar case (named in the plan's own Edge Cases section) had genuinely
+never been tested. Fix: `tests/fixtures/math/ma1_gapped_bar_lpc_exclusion.json`
++ a dedicated golden in `tests/autotuner/test_ma1_replay_per_tick_lpc_stamping.py`
+-- a missing bar excludes that ticker (None, no crash, no NaN) while a
+sibling ticker with a real bar still gets a real lpc stamp in the same tick.
+
+**Process correction (PM error, on record):** the "closed with r1-review
+directly" phrasing in ADDENDUM 6 recorded a PROPOSED bilateral closure as
+SETTLED while r1-review was still independently verifying it -- it was not
+yet settled when written. Ruling going forward, on record: **a bilateral
+closure is not settled until the counterparty confirms -- "agreement !=
+truth" applies to closures exactly as it does to findings.** ADDENDUM 6's
+historical text stands unedited (the project's dated-addenda convention);
+ADDENDUM 7 supersedes its AC-1 line rather than rewriting it.
+
+**Golden fixtures:** `tests/fixtures/math/ma1_build_replay_day_lpc_stamping.json`,
+`ma1_gapped_bar_lpc_exclusion.json`, `ma1_lpc_per_tick_mc_sensitivity.json`;
+`tests/autotuner/test_ma1_replay_per_tick_lpc_stamping.py` (576 lines) pins
+intra-day mc_prob variance as lpc varies (the audit's 10.3<->96.7 sensitivity
+now reproduced in replay), the gapped-bar exclusion, and non-mutation of the
+caller's `holdings` argument across repeated calls.
+
+**Commits:** `debc9537` (plan ADDENDUM -- architecture ruling), `4979ccce`
+(RED), `6014622e` (file relocation to ruled paths), `a46be889` (plan
+ADDENDUM 2), `f597c845` (GREEN -- `fix(engine): AC-1 (MA-1)`), `cd7e668d`
+(plan ADDENDUM 7 -- correction), `46051dd5` (GREEN -- gapped-bar golden).
+
+### Decision: AC-2 (MA-1 consequence, golden exit-reachability) + AC-6 (parity battery, the charter's acceptance heart)
+
+**Combined by design** -- both landed in one file,
+`tests/autotuner/test_ac6_bar_level_replay_production_parity.py` (527 lines),
+since AC-2's exit-reachability goldens are a subset of AC-6's bar-level
+battery scenarios. The battery drives IDENTICAL canned-day bar inputs through
+production's exit-decision logic (via a from-real-primitives harness, NOT a
+hand-rolled duplicate -- see the parity-oracle-sync ruling below) and through
+`autotuner.replay_exit_sequence`, asserting identical decisions tick-for-tick:
+exit type, tick index, and now (this cycle's extension) `armed`/`tp_armed`/
+`para_armed` STATE at every tick, not just the final exit decision. Coverage:
+trailing-stop fire day, take-profit fire day, VWAP-exit day, MC-absent
+fail-open day, regime-tick-variation days (2/5/3), and a no-exit day -- the
+AC-6 minimum set from the plan, all present.
+
+**AC-2 status (ADDENDUM 1, adjudicated not assumed):** r1-engine's
+"reachability falls out of AC-1 alone, zero further `autotuner.py` diff
+needed for AC-2 itself" was flagged explicitly as a hypothesis for the
+goldens to adjudicate, not a given -- the PM ruling was to never widen the
+AC-1 diff into `autotuner.py` just to force a green. The goldens fired the
+Trailing-Stop and Take-Profit exits correctly once AC-1's lpc stamping was
+live (AC-2 needed no dedicated `autotuner.py` diff of its own; AC-3/AC-4/AC-5's
+separate `autotuner.py` changes below were independently required by their
+own findings, not manufactured to satisfy AC-2).
+
+**Parity-oracle sync (ADDENDUM 2, ruled in-scope for RED):**
+`test_c3_replay_exit_parity.py`'s pre-existing `_production_exit_sequence`
+hand-mirror predated the audit and carried the SAME MA-10/F5/F6 gaps as the
+replay it was meant to validate against -- an oracle that shared the bug it
+was supposed to catch. r1-test synced it to real production behavior during
+RED authoring (root-cause-determines-role: the oracle was itself stale, not
+a new-scope item); the new AC-6 bar-level harness uses REAL `math_engine`
+decision primitives with a minimal orchestration mirror that cites the exact
+production line each block mirrors, and r1-review audited both files
+line-against-production as a standing oracle-fidelity duty (commit
+`c616960e`, 0 newly-failing baseline diff on the pre-existing C3 file).
+
+**BLOCKING fix -- MC-config parity (ADDENDUM 4, r1-review RED-audit
+finding):** r1-review found the harness's `_production_ticks_from_bars` ran
+MC at `math_engine.MC_DEFAULT_SIMULATION_PATHS` (5000) while the real replay
+runs at `synthetic_history._MC_REPLAY_SIMULATION_PATHS` (300) -- a measured
+divergence that flips arm decisions at real fixture price points (`c=101.5`:
+14.82 in-band at 5000 paths vs 16.67 out-of-band at 300). **Ruling: the
+parity battery tests DECISION-LOGIC parity, not MC-sampling parity -- both
+sides share the replay's real 300-path config.** `_MC_REPLAY_SIMULATION_PATHS`
+itself was NOT changed. All empirical fixture comments were re-derived at
+300 paths (commit `76e0c178`): degenerate pre-fix baseline 67.33 (was 64.98,
+still far outside the arm band either way -- the degeneracy-discrimination
+property is config-independent), the take-profit scenario needed no
+re-tune, the arm-band scenario was re-tuned `c=101.5 -> c=101.65` (mc=9.0
+in-band at 300 paths, verified via fine-grained scan). **Residual, recorded
+here per the ruling:** the 300-vs-5000 path-count difference is a
+PRE-EXISTING, deliberate replay-throughput approximation this cycle does not
+change (seeded determinism keeps the replay internally reproducible;
+sampling variance sits around the same expected value) -- whether 300 paths
+is precise enough for stable arm decisions near band edges under FUTURE
+tuned params (post-retune) joins the **R3 pre-retune checklist**, alongside
+the AC-4 residual below.
+
+**Commits:** `3256ac42` (RED -- AC-2+AC-6), `76e0c178` (BLOCKING
+MC-config-parity fix, ADDENDUM 4), `c616960e` (parity-oracle sync).
+
+### Decision: AC-3 (MA-10, HIGH) -- replay fail-open arming on MC-absent ticks
+
+**The bug:** production's `alpha_bot_execution.py:1324-1326` fail-opens the
+protective stop's arm state when MC opinion is unavailable
+(`mc_available=False`) -- an absent second opinion must never silently leave
+the stop dark. `autotuner.py:1181-1187`'s replay had no such branch at all,
+AND its own in-file comment asserted the OPPOSITE of production behavior
+("An absent MC opinion drives no arm...").
+
+**Fix (`_replay_exit_tick`, commit `ae8b4cc4`):** `should_arm` is now reset
+to `False` every tick (matching production's own per-tick reset) and set
+`True` either when `mc_available and take_profit_mc <= mc < trigger_threshold`
+(the pre-existing arm condition, unchanged) OR when `not mc_available`
+(MA-10 fail-open, new). The disarm branch is UNCHANGED and still requires an
+available, extreme MC reading with a positive return -- MC-absent can never
+disarm, only arm. The stale, production-contradicting comment is corrected
+in the same diff. The `EXIT_CONFIRM_TICKS` ladder still gates actual
+liquidation downstream, so a transient one-tick MC gap cannot trigger a sale
+on the fail-open arm alone -- it can only start the confirm-tick count.
+
+**Regression pin:** `tests/autotuner/test_ac3_replay_fail_open_arm_parity.py`
+(293 lines).
+
+**Commits:** `f4a691ff` (RED), `ae8b4cc4` (GREEN, combined with AC-4/AC-5 in
+one commit).
+
+### Decision: AC-4 (F5, MED) -- regime-conditional exit_confirm_ticks, recompute-fresh no-lookahead, PARTIALLY WIRED (satisfied form, R2-deferred residual)
+
+**The bug:** production resolves `exit_confirm_ticks` per-symphony via
+`apply_regime_exit_adjustment(regime_label, base_ticks)` (2/5/3 depending on
+the cached live regime label); `autotuner.py:1228-1235`'s replay hardcoded
+`3` unconditionally, on every simulated day, regardless of what regime that
+historical day actually sat in.
+
+**Design ruling (ADDENDUM 2, r1-tuner call, approved) -- REPLAY MUST
+RECOMPUTE, NEVER READ THE LIVE CACHE:** `database.get_cached_regime_label`
+is **FORBIDDEN in replay code** -- it is a single-row, latest-wins live
+table with no per-historical-date granularity; reading it for a
+walk-forward day would inject TODAY's label into every one of the ~250
+replayed days (a lookahead violation as severe as the MA-1/MA-10/F5 gaps
+this cycle fixes). Instead, `_replay_resolve_regime_exit_ticks(dates_data,
+sorted_dates, date_idx)` (new, `autotuner.py`) recomputes the label FRESH
+per simulated day via `regime_classifier.classify_regime()` over trailing
+EOD daily returns from dates **strictly before** the simulated day only
+(`sorted_dates[:date_idx][-regime_classifier.MIN_LABEL_SERIES_LENGTH:]`,
+converted to decimal fraction via `RETURN_PCT_TO_FRACTION`) -- mirroring
+production's `apply_regime_exit_adjustment` composition but with a
+walk-forward-safe label source. Insufficient trailing history
+(`< MIN_LABEL_SERIES_LENGTH`, =20) -> `classify_regime` returns `None` ->
+`apply_regime_exit_adjustment`'s own existing safe default fires (base
+ticks unchanged) -- never an invented replay-only fallback.
+
+**Wired call site (commit `ae8b4cc4`):** `_replay_exit_tick` gained an
+`exit_confirm_ticks: int = math_engine.EXIT_CONFIRM_TICKS` keyword param
+(defaulting to the SAME constant `compute_exit_confirmation` itself defaults
+to, so any caller that never resolves a regime label sees byte-unchanged
+behavior), passed explicitly into `math_engine.compute_exit_confirmation`
+rather than left to that function's own module-level default.
+`_collect_sim_returns_dated` -- the date-labeled variant feeding the
+CSCV/PBO STAGE-1 veto gate and the BHY selection haircut -- now calls
+`_replay_resolve_regime_exit_ticks` once per simulated day and threads the
+result through.
+
+**Satisfied form RULED (ADDENDUM 6, sufficiency review, r1-test finding --
+recorded verbatim, never compressed to "AC-4 done"):** r1-tuner wired
+regime-conditional ticks into `_collect_sim_returns_dated` (the
+SELECTION/diagnostic path -- CSCV/PBO user-attrs and the BHY haircut basis)
+but explicitly, flaggedly, **NOT** into the undated `_collect_sim_returns`/
+`run_simulation` (Optuna's per-trial SEARCH-score objective, `objective()`
+lines 2416/2529) -- this was a called-out blast-radius decision, not an
+oversight. **Ruling: the deferral is ACCEPTED; the residual's home is R2**,
+because the unwired surfaces are exactly the objective-computation
+machinery R2's CPCV redesign rebuilds wholesale -- wiring the undated path
+now would be immediately churned by R2. Severity assessed as a
+search-efficiency/consistency wart, NOT a shipped-decision correctness
+cliff: TPE explores the parameter space on a 3-tick-confirm signal, but the
+LAYER THAT DECIDES which surviving params actually ship (the CSCV/PBO gate
++ BHY haircut, both fed by the now-regime-faithful
+`_collect_sim_returns_dated`) is regime-faithful.
+
+**Binding riders (ADDENDUM 6):** (a) the **R3 pre-retune checklist** gains
+a hard precondition -- the retune runs ONLY after the search objective
+itself is regime-faithful, i.e. after R2's undated-path wiring lands; no
+retune ships on a mismatched optimizer. (b) an in-cycle
+`xfail(strict=False)` TRIPWIRE test pins "the undated path uses default
+ticks today" -- it will structurally XPASS (impossible to silently forget)
+the moment R2 wires the undated path, at which point it flips from
+tripwire to regression pin. This is the ONE deliberate xfail in the final
+GREEN battery (128 passed / **1 xfailed** / 0 errors @ `46051dd5`).
+
+**Regression pins:**
+`tests/autotuner/test_ac4_regime_conditional_exit_ticks.py` (382 lines,
+no-lookahead + insufficient-history-default + explicit-kwarg-reaches-primitive
+assertions); `tests/autotuner/test_ac4_r2_residual_tripwire.py` (151 lines,
+the xfail).
+
+**Commits:** `5ff73955` (RED), `ae8b4cc4` (GREEN, combined with AC-3/AC-5),
+`af266a63` (plan ADDENDUM 6 -- satisfied-form ruling), `8dead4b9` (tripwire
+test).
+
+### Decision: AC-5 (F6, MED) -- replay session window honors EXECUTION_START_TIME through production's own config path
+
+**The bug:** production gates its entire ACTION PHASE (para-arm, MC
+arm/disarm, trailing-stop confirm, TP confirm, VWAP checks, exit firing)
+behind `if current_time < market_open and not force_run: return`
+(`alpha_bot_execution.py:951-953`) anchored on `EXECUTION_START_TIME`; only
+the DATA phase (HWM tracking) runs unconditionally from the true 09:30
+session open (`alpha_bot_execution.py:876-885`). The replay had no
+equivalent gate at all -- it ran its action-phase logic from tick 0
+regardless of `EXECUTION_START_TIME`, structurally unable to disagree with
+itself but ALSO structurally unable to agree with a droplet running a
+non-default value ('9:35', confirmed via the phase-2 droplet check cited in
+the plan's Summary).
+
+**Fix (commit `ae8b4cc4`):** new `_replay_in_action_phase(tick_idx,
+execution_start_hhmm)` mirrors the production gate exactly (tick_idx < the
+session-open-anchored offset -> action phase has not opened -> the tick's
+exit processing returns `None` immediately, before any para-arm/MC-arm/
+confirm logic runs); `_replay_exit_tick` calls it right after the
+(unconditional) DATA-phase HWM update, matching production's phase
+ordering. The offset arithmetic (`(h - 9) * 60 + (m - 30)`) was ALREADY
+computed inline inside the pre-existing `_replay_in_open_window_grace`
+(N-3, VWAP-grace suppression) -- this cycle extracts it into a new shared
+`_replay_execution_start_offset_minutes(execution_start_hhmm)` helper so
+the two consumers (the pre-existing grace gate and this cycle's new
+action-phase gate) can never drift apart; `_replay_in_open_window_grace`
+itself is refactored to call the new helper, zero behavior change (pinned).
+
+**AC-5 scope ruling (ADDENDUM 1, r1-review catch):** the pre-existing
+`autotuner.py:60-103` grace-window helpers (commit `8443c1360`, 2026-05-22)
+cover VWAP-grace suppression ONLY and predate this cycle -- AC-5 is
+specifically the exit-confirm tick LOOP's own session anchoring, a
+genuinely new gate; the diff gets no credit toward AC-5 for the
+pre-existing grace helper.
+
+**Latent test-isolation gap found + fixed (ADDENDUM 5, r1-tuner
+escalation):** once the action-phase gate went live, 26 pre-existing tests
+across 10 `tests/autotuner/` files collapsed to no-op action phases -- the
+worktree's local `.env` carries the droplet-real
+`EXECUTION_START_TIME='9:35'`, and every short hand-specified-tick test
+(3-6 ticks) sat entirely before offset=5, with no conftest isolation for
+this env var protecting them. Single root cause, grep-proven; LOCAL-ONLY
+exposure (CI runs credential-less, no `.env`, code-default 09:30).
+**Remedy:** one new `autouse=True` fixture in `tests/conftest.py`,
+`_pin_execution_start_time_to_code_default`, pinning
+`alpha_bot_execution.EXECUTION_START_TIME` to `"09:30"` suite-wide via
+`monkeypatch.setattr(..., raising=False)` -- the same established pattern
+as `_isolate_db`/`_disable_auth_for_tests`/`_disable_csrf_for_tests`.
+Explicit per-test opt-out is preserved (a test that wants a non-default
+value monkeypatches again within its own body/fixture, which wins for that
+test's duration under monkeypatch's teardown stack) --
+`test_ac5_replay_action_phase_gated_by_execution_start_time.py` and the
+N-3 grace-window tests never read this ambient attribute at all (they pass
+explicit params), so neither needed to change. `test_c3_replay_exit_parity.py`'s
+own pre-existing local pin (same value, same target) is now redundant but
+harmless. All 26 collapsed tests confirmed to un-collapse cleanly against
+the honest (post-AC-5) action phase after the fixture landed.
+
+**Commits:** `c85472e5` (RED), `ae8b4cc4` (GREEN, combined with AC-3/AC-4),
+`65a24d31` (plan ADDENDUM 5 -- isolation-gap ruling), `3cd72ed3` (conftest
+autouse fixture, 26/26 collapse resolved).
+
+### Decision: AC-7 (MA-1 consequence) -- inert-dims objective-variance verification, TWO-LAYER satisfied form (never compress to "all three proven")
+
+**The requirement:** demonstrate the three dims the audit found
+objective-inert pre-fix (`TAKE_PROFIT_MC_PCT`, `PARABOLIC_VELOCITY_THRESHOLD`,
+`MAX_PARABOLIC_SQUEEZE`) now MOVE the walk-forward objective -- the e2e-exam
+lesson that "N results" can hide a factor that never actually varied
+anything.
+
+**Satisfied form RULED (ADDENDUM 3, r1-test flag at RED time):** a
+hand-specified constant-mc single-layer draft gave ZERO RED signal (it
+passed identically pre- and post-fix), so it could not have been a real
+test. AC-7 ships as two distinct layers, and DE-MATH-R1-001 records this
+exact form -- **never compressed to "all three dims proven identically":**
+1. **`TAKE_PROFIT_MC_PCT` proven at the WALK-FORWARD level** -- a
+   bar-derived RED test reproducing the audit's literal claim ("day-constant
+   mc_prob never crosses the sweep boundary") against a REAL walk-forward
+   smoke, now GREEN because AC-1's per-tick lpc makes mc_prob genuinely vary
+   within a day.
+2. **`PARABOLIC_VELOCITY_THRESHOLD`/`MAX_PARABOLIC_SQUEEZE` proven at the
+   WIRING level plus mechanism-removal** -- these two dims still armed
+   `para_armed` in the pre-fix replay (they were never mechanically dead),
+   but were inert via the never-confirming exit gate downstream; their
+   inertness CAUSE is exactly what AC-1 (MC now varies) + AC-3 (fail-open
+   arm) + AC-5 (action phase actually runs) jointly remove, proven by the
+   AC-2 exit-reachability goldens actually firing. The FULL walk-forward
+   objective-variance demonstration for these two parabolic dims
+   specifically is **DEFERRED to the R3 pre-retune checklist**, where it
+   becomes LOAD-BEARING under a hard rule this cycle establishes: **no
+   retune ships live parameters without demonstrating objective variance on
+   every tuned dimension** -- joining the AC-6 MC-path-count-precision item
+   and the AC-4 undated-path item on that same checklist.
+
+**Fixture repair (post-AC-1 verification finding, commit `c2bf654f`):**
+r1-engine's post-AC-1 read-only verification found the walk-forward smoke's
+failure signature had MOVED (as expected -- real per-tick lpc was
+demonstrably flowing: tick-0 mc_prob = 15.33/14.33/13.33 across 3 fixture
+days, not day-constant) but had not yet RESOLVED -- both swept
+`TAKE_PROFIT_MC_PCT` values (5.0/10.0) still produced the identical
+objective (112.05). Root cause: every fixture day's tick-0 mc sat >=10.0,
+never inside the swept `[5.0, 10.0)` band -- a fixture-CONSTRUCTION gap, not
+an implementation defect (confirmed via r1-engine's standalone repro
+decoupled from `autotuner.py`'s in-flight state). Repair: one day's opening
+tick retuned from `c=101.5` (mc=14.33, never in-band regardless of sweep) to
+`c=101.65` (mc=9.33 at the replay's real 300-path MC config, verified via a
+fine-grained scan keyed to that exact `sym_id`+date pair -- the MC seed is
+`(sym_id, date)`-keyed, so this value does not transfer from any other
+file's scan, including AC-6's) -- 9.33 sits inside `[5.0, 10.0)`, so
+`TAKE_PROFIT_MC_PCT=10.0` now arms TP on that tick while `5.0` does not,
+producing a genuine objective delta. The two other fixture days were left
+unchanged (non-discriminating at either sweep value is fine; only one day
+needs to discriminate). The repaired fixture still correctly shows the
+FULLY degenerate case pre-AC-1 (both sweep values identical) since the
+day-constant degeneracy is a property of the bug itself, independent of
+this specific price sequence.
+
+**Regression pin:**
+`tests/autotuner/test_ac7_inert_dims_objective_variance_smoke.py` (415
+lines + a 45-line repair diff).
+
+**Commits:** `428809dc` (RED), `57789ff4` (plan ADDENDUM 3 -- two-layer form
+ruling), `c2bf654f` (fixture repair).
+
+### Decision: AC-8 -- zero live-execution-path regression, made STRUCTURAL by the AC-1 architecture ruling
+
+**Requirement:** zero behavior change on the live execution path; live-path
+exit decisions on existing golden fixtures byte/value-identical pre/post.
+
+**How this cycle satisfies it:** because ADDENDUM 1 confined ALL of this
+cycle's production-file diffs to `autotuner.py` (the replay orchestration
+file, never imported by the live execution path) and `synthetic_history.py`
+(the replay data-fetch file, likewise never imported by the live path) --
+with `alpha_bot_execution.py` and `math_engine.py` carrying **literal zero
+diff** -- AC-8 is satisfied STRUCTURALLY, not just empirically: the live
+import graph never reaches any changed line.
+`tests/execution/test_ac8_live_path_zero_diff_lpc_fix.py` (222 lines) makes
+this an enforced, standing invariant rather than an incidental fact:
+- `test_alpha_bot_execution_never_imports_synthetic_history` -- adversarial
+  source-scan, the structural core of the proof.
+- `test_current_holdings_construction_sites_exist` /
+  `test_current_holdings_construction_sites_emit_ticker_allocation_only` --
+  pins that `bot_state["current_holdings"]` at BOTH live construction sites
+  (`:888-894`/`:1557-1560`) remains ticker+allocation ONLY, by design,
+  forever (or until a future cycle explicitly rules otherwise) -- guards
+  against a future refactor accidentally reintroducing lpc onto the shared
+  live dict and silently relocating the MA-1 degeneracy instead of fixing
+  it.
+- `test_live_run_monte_carlo_call_receives_holdings_variable_not_current_holdings_directly`
+  -- confirms the live `run_monte_carlo` call site's argument provenance is
+  unchanged.
+- `test_fictional_mc_history_quarantine_comment_present` -- an existing
+  pre-cycle quarantine comment (unrelated finding, F7-adjacent) is
+  confirmed still present, not accidentally removed by the surrounding
+  diff.
+
+Both `tests/execution/` and the engine suites were run for every touch
+(mocking-consumers lesson) -- no `alpha_bot_execution.py` touch occurred, so
+this is a confirmatory/regression run, not a live-path diff review.
+
+**Commits:** `3f2e4926` (RED).
+
+### Files changed (this cycle, `c08b3eb7`..`46051dd5`)
+
+- `synthetic_history.py` -- AC-1 (MA-1): `build_replay_day` stamps per-tick
+  `last_percent_change` into a fresh, non-mutating `priced_holdings` list
+  before every `run_monte_carlo` call (21 lines)
+- `autotuner.py` -- AC-3 (MA-10) fail-open arm; AC-4 (F5) regime-conditional
+  `exit_confirm_ticks` via new `_replay_resolve_regime_exit_ticks`; AC-5
+  (F6) new `_replay_in_action_phase` gate + `_replay_execution_start_offset_minutes`
+  extraction; `replay_exit_sequence`'s observability output gains
+  `armed`/`tp_armed`/`para_armed` per-tick state for AC-6 (160 lines)
+- `tests/conftest.py` -- new suite-wide `_pin_execution_start_time_to_code_default`
+  autouse fixture (ADDENDUM 5, 50 lines)
+- `tests/autotuner/test_c3_replay_exit_parity.py` -- parity-oracle synced to
+  real production behavior (125 lines, prereq for AC-3/4/5)
+- 7 new test files: `test_ac3_replay_fail_open_arm_parity.py` (293),
+  `test_ac4_regime_conditional_exit_ticks.py` (382),
+  `test_ac4_r2_residual_tripwire.py` (151, the xfail),
+  `test_ac5_replay_action_phase_gated_by_execution_start_time.py` (332),
+  `test_ac6_bar_level_replay_production_parity.py` (527, covers AC-2 also),
+  `test_ac7_inert_dims_objective_variance_smoke.py` (415 + 45-line repair),
+  `test_ma1_replay_per_tick_lpc_stamping.py` (576)
+- `tests/execution/test_ac8_live_path_zero_diff_lpc_fix.py` -- new (222
+  lines)
+- 3 new golden fixtures: `tests/fixtures/math/ma1_build_replay_day_lpc_stamping.json`,
+  `ma1_gapped_bar_lpc_exclusion.json`, `ma1_lpc_per_tick_mc_sensitivity.json`
+- `feature-plans/math-r1.md` -- SEVEN dated ADDENDUM sections recording
+  every mid-cycle ruling (the decision record for this cycle)
+
+**Zero diff (structural AC-8 proof):** `alpha_bot_execution.py`, `math_engine.py`.
+
+### Verification
+
+**r1-review verdict:** OUTSTANDING -- r1-review's combined verdict is in
+flight at the stable GREEN SHA `46051dd5` as this entry is drafted. This
+slot will be updated in place (never re-created as a new entry) the moment
+the verdict lands, per the R0 update-in-place discipline.
+
+**Battery state (self-reported by the team, cited for the audit trail --
+NOT a substitute for the PM's independent gate below):** RED-complete
+`3f2e4926` -- 23 failed / 104 passed / 0 errors (11-file targeted `-n0`
+battery); full GREEN `46051dd5` -- **128 passed / 1 xfailed / 0 errors**
+(the xfail is the deliberate AC-4 R2-residual tripwire, ADDENDUM 6 -- an
+intended, named XFAIL, not a skipped or hidden failure).
+
+**PM independent gate:** OUTSTANDING -- the PM's own targeted `-n0` battery
+(both live and credential-blanked) and `ruff` pass have not yet been run at
+the time this entry is drafted.
+
+**PM live E2E:** OUTSTANDING -- required before merge per this cycle's PR
+ship path (trade-touching; the advisory FF lane does not apply). Will
+confirm, at minimum: a real symphony's replay walk-forward shows
+non-constant `mc_prob` within a day; the three previously-inert dims show
+non-zero objective sensitivity on a live bounded smoke; the live execution
+path (a real dashboard cycle or a live-path golden-fixture run) is
+byte-identical to pre-cycle behavior.
+
+*This Verification section is updated in place as each outstanding item
+lands -- never re-created as a new DECISIONS.md entry.*
+
+### Reference
+
+`DE-MATH-R1-001`; branch `fix/math-r1`; HEAD (at time of writing)
+`46051dd5`; plan `feature-plans/math-r1.md` + its seven addenda
+(`debc9537`, `a46be889`, `57789ff4`, `5416a0f9`, `65a24d31`, `af266a63`,
+`cd7e668d`); findings basis `docs/audit/math-audit/VERDICT.md`
+(`DE-MATH-AUDIT-001`); program charter `feature-plans/math-remediation-program.md`.
+R2 (CPCV genuine consumption or honest single-fold revert; the AC-4
+undated-path residual this entry records; MA-5/MA-9) and R3 (live
+disarm-band ruling + retune, HARD-GATED on this entry's residual checklist:
+AC-6's MC-path-count precision, AC-4's undated-path wiring, AC-7's
+parabolic walk-forward variance demo) are NOT covered by this entry -- see
+the program charter's phase ordering.

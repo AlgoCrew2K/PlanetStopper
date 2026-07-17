@@ -3,13 +3,13 @@
 > Optuna walk-forward optimizer: runs 500 trials per symphony over a 250-day sliding window, selects the best trial via the CRRA-EU objective + Harvey & Liu BHY haircut + CSCV PBO acceptance gate, and enforces NN1 spec-freeze discipline throughout. Also provides `run_calibration_sweep` — a separate, advisory-only 2-param sweep over `PARABOLIC_VELOCITY_THRESHOLD` and `VWAP_CROSS_HWM_PCT`.
 
 **Source:** `autotuner.py`
-**Last updated:** 2026-07-12 (Workstream E, advisor-rewire cycle — DoF-ledger S sum hoisted before `save_autotune_run` so `s_count` is actually persisted; prior: 2026-06-29)
+**Last updated:** 2026-07-17 (Math Remediation R1 — replay fail-open arm (MA-10), regime-conditional exit ticks (F5), session-window action-phase gate (F6); prior: 2026-07-12, Workstream E)
 
 ## Overview
 
 `autotuner.py` implements the per-symphony Bayesian optimization loop. At each autotuner run it:
 
-1. Fetches 250 trading days of synthetic replay history via `synthetic_history.generate_synthetic_history`, passing `n_jobs=_AUTOTUNE_REPLAY_N_JOBS` (= 1) to bound intraday-replay parallelism on the 2-core / 3.0 GiB droplet (DE-AUTOTUNE-OOM).
+1. Fetches 250 trading days of synthetic replay history via `synthetic_history.generate_synthetic_history`, passing `n_jobs=_AUTOTUNE_REPLAY_N_JOBS` (= 1) to bound intraday-replay parallelism on the 2-core / 3.0 GiB droplet (DE-AUTOTUNE-OOM). **Math Remediation R1 (`DE-MATH-R1-001`):** as of this cycle, the holdings this history carries are stamped with a REAL per-tick `last_percent_change` by `synthetic_history.build_replay_day` itself (see [synthetic_history](synthetic_history.md) — the fix lives there, not here) — this module's replay loop now receives genuinely price-sensitive MC opinions instead of a day-constant degenerate baseline.
 2. Splits history 60/20/20 (train/validation/frozen-eval) with `PURGE_DAYS=20` and `EMBARGO_DAYS=1` per López de Prado 2018.
 3. Builds CPCV folds via `_generate_cpcv_folds` (N=6 groups, k=2 test groups, 15 splits, 5 complete OOS paths) and aggregates paths via `_aggregate_cpcv_paths`.
 4. Runs `OPTUNA_N_TRIALS_PRODUCTION` (500) Optuna TPE trials; each trial's objective uses the CRRA-EU branch (`run_simulation_crra_eu`) or the legacy Sortino branch. `locked_vars` keys are excluded from `suggest_*` calls.
@@ -53,19 +53,37 @@ Raises `ValueError` if `spec_bundle_id` is `None` — the caller must resolve it
 ### Walk-Forward Simulation
 
 #### `run_simulation(params: dict, history_data: dict, acc_sym_ids: list, current_date_str: str, deviation_dict: dict) → float`
-Runs the validation-fold simulation with `params` and returns the aggregate guard-alpha. Used for OOS re-validation in `ai_advisor.revalidate_suggestion_oos`.
+Runs the validation-fold simulation with `params` and returns the aggregate guard-alpha. Used for OOS re-validation in `ai_advisor.revalidate_suggestion_oos`. **R1 residual (`DE-MATH-R1-001` AC-4, tripwired):** this is one of the two UNDATED simulation entry points — it still resolves `exit_confirm_ticks` via `_replay_exit_tick`'s module default (`math_engine.EXIT_CONFIRM_TICKS`, not regime-conditional). Deferred to R2 (see `_replay_resolve_regime_exit_ticks` below); guarded by `tests/autotuner/test_ac4_r2_residual_tripwire.py`'s `xfail(strict=False)`, which will XPASS the day this changes.
 
 #### `_collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviation_dict) → list[float]`
-Runs the guard-alpha simulation and returns per-triggered-day guard-alpha values. Shared tick loop with `run_simulation` via `_replay_exit_tick`. No recency decay (Decision D5).
+Runs the guard-alpha simulation and returns per-triggered-day guard-alpha values. Shared tick loop with `run_simulation` via `_replay_exit_tick`. No recency decay (Decision D5). **R1 residual:** the second UNDATED entry point — same AC-4 deferral as `run_simulation` above.
 
 #### `_collect_sim_returns_dated(p, history_data, acc_sym_ids, current_date_str, deviation_dict) → dict[str, float]`
-Runs the guard-alpha simulation and returns a date-keyed dict of decimal-fraction returns. Used by `_haircut_select` to build `configs_date_returns` for `math_engine.compute_pbo` (STAGE-1 PBO veto).
+Runs the guard-alpha simulation and returns a date-keyed dict of decimal-fraction returns. Used by `_haircut_select` to build `configs_date_returns` for `math_engine.compute_pbo` (STAGE-1 PBO veto). **Math Remediation R1 (AC-4/F5, `DE-MATH-R1-001`):** this is the DATED entry point, and the only one wired to regime-conditional `exit_confirm_ticks` this cycle — for each simulated date it calls `_replay_resolve_regime_exit_ticks` once (sorted-dates precomputed once per symphony, not resorted per date) and threads the result into `_replay_exit_tick`. Feeds the CSCV/PBO STAGE-1 veto gate and the BHY selection haircut, so the layer that decides which candidate parameters survive IS regime-faithful even though the undated search-score path (`run_simulation`/`_collect_sim_returns` above) is not yet.
 
 #### `replay_exit_sequence(ticks, params, *, grace_minutes) → list[dict]`
-Pure observability helper. Runs the per-tick exit loop over one day and returns one `{"tick_idx", "exit_reason"}` dict per executed tick. Used by AC-6 parity tests.
+Pure observability helper. Runs the per-tick exit loop over one day and returns one `{"tick_idx", "exit_reason", "armed", "tp_armed", "para_armed"}` dict per executed tick — exit_reason is the `resolve_trigger_priority` exit-reason string on the tick the position exits, `None` on every non-exit tick; the loop stops after the first exit (production commits the exit and freezes the symphony for the day). **Math Remediation R1 (AC-6, `DE-MATH-R1-001`):** the three `*_armed` keys are new this cycle — they mirror `test_c3_replay_exit_parity.py`'s `_production_exit_sequence` output shape so the AC-6 bar-level parity battery can compare per-tick STATE, not just the final exit decision. AC-4 is deliberately NOT wired through this function — day-level regime resolution lives one layer up, in `_collect_sim_returns_dated` above, and every AC-6 scenario uses `regime_label=None` to match this function's implicit default; extending this signature would break that alignment. Used by AC-6 parity tests.
 
-#### `_replay_exit_tick(state, tick, tick_idx, n_ticks, p, grace_minutes) → str | None`
-Single-tick exit core. All three simulation callers call this function — one canonical copy of the exit orchestration. Returns the `resolve_trigger_priority` exit-reason string when an exit fires, else `None`.
+#### `_replay_exit_tick(state, tick, tick_idx, n_ticks, p, grace_minutes, execution_start_hhmm: str = "09:30", exit_confirm_ticks: int = math_engine.EXIT_CONFIRM_TICKS) → str | None`
+Single-tick exit core. All three simulation callers (`run_simulation`, `_collect_sim_returns`, `_collect_sim_returns_dated` via `replay_exit_sequence`) call this function — one canonical copy of the exit orchestration. Returns the `resolve_trigger_priority` exit-reason string when an exit fires, else `None`.
+
+**Math Remediation R1 (`DE-MATH-R1-001`) — three fixes landed in this function:**
+- **AC-5/F6 (session-window action-phase gate):** immediately after the unconditional DATA-phase HWM update, calls `_replay_in_action_phase(tick_idx, execution_start_hhmm)` and returns `None` before any decision logic if the action phase has not opened yet — mirroring production's `if current_time < market_open and not force_run: return` gate (`alpha_bot_execution.py:951-953`). Distinct from the pre-existing N-3 VWAP-grace suppression, which only silences VWAP signals inside a grace window AFTER the action phase has already opened.
+- **AC-3/MA-10 (fail-open arm):** `should_arm` resets to `False` every tick and is set `True` either on the pre-existing `mc_available and take_profit_mc <= mc < trigger_threshold` condition OR, new this cycle, when `not mc_available` — an absent MC opinion now ARMS the protective stop (mirrors `alpha_bot_execution.py:1324-1326`, audit rule H-3) instead of leaving it dark. Disarm is unchanged: still requires an available, extreme MC reading with a positive return; MC-absent can never disarm.
+- **AC-4/F5 (regime-conditional confirm ticks):** the new `exit_confirm_ticks` keyword param is passed explicitly into `math_engine.compute_exit_confirmation` rather than left to that function's own module-level default — defaults to the SAME `math_engine.EXIT_CONFIRM_TICKS` constant, so a caller that never resolves a regime label (both undated entry points, see above) sees byte-unchanged behavior.
+
+`state` is a mutable dict carrying per-position transient state across ticks within a single day. `n_ticks` is the day's tick count, used to derive time_ratio from the actual session length.
+
+#### `_replay_in_action_phase(tick_idx: int, execution_start_hhmm: str) → bool`
+**New, Math Remediation R1 (AC-5/F6).** Returns `True` iff `tick_idx` is at or after `EXECUTION_START_TIME`'s session-open-anchored offset — i.e. production's ACTION PHASE would have run on this tick. Mirrors `alpha_bot_execution.py:951-953`'s hard gate; the DATA phase (HWM tracking) runs unconditionally from the true 09:30 open regardless of this gate.
+
+#### `_replay_execution_start_offset_minutes(execution_start_hhmm: str) → int`
+**New, Math Remediation R1.** Returns `EXECUTION_START_TIME`'s minute-bar offset past the 09:30 ET session open (tick_idx 0): `(h - 9) * 60 + (m - 30)`. Single source of truth for this formula, extracted this cycle so the pre-existing `_replay_in_open_window_grace` (N-3, VWAP-grace suppression) and the new `_replay_in_action_phase` (AC-5) can never drift apart — both now call this helper instead of each computing the offset inline.
+
+#### `_replay_resolve_regime_exit_ticks(dates_data: dict, sorted_dates: list, date_idx: int) → int`
+**New, Math Remediation R1 (AC-4/F5).** Recomputes the regime-conditional `exit_confirm_ticks` FRESH for one replay day, using ONLY EOD daily returns from dates strictly before `sorted_dates[date_idx]` (no lookahead). Resolves the regime label via `regime_classifier.classify_regime()` over the trailing `regime_classifier.MIN_LABEL_SERIES_LENGTH` (=20) days rather than reading `database.get_cached_regime_label` — that accessor is a single-row, latest-wins LIVE cache with no per-historical-date granularity, so consulting it during a walk-forward replay would inject today's label into every one of the ~250 replayed days (a lookahead violation). Insufficient trailing history → `classify_regime` returns `None` → `math_engine.apply_regime_exit_adjustment`'s own safe default fires (base ticks unchanged), never an invented replay-only fallback. Mirrors production's `apply_regime_exit_adjustment(regime_label, base_ticks)` composition (`alpha_bot_execution.py:1436-1448`) with a walk-forward-safe label source.
+
+**R1 residual (accepted, `DE-MATH-R1-001` ADDENDUM 6):** only wired into `_collect_sim_returns_dated` (the CSCV/PBO selection path), NOT into the undated `run_simulation`/`_collect_sim_returns` (Optuna's per-trial search-score objective). Deferred to R2 — the unwired surfaces are exactly the objective-computation machinery R2's CPCV redesign rebuilds; wiring now would be immediately churned. Ruled a search-efficiency wart, not a shipped-decision correctness cliff, since the layer that decides which surviving params ship (the CSCV/PBO gate + BHY haircut) IS regime-faithful. **Binding rider: no R3 retune ships until this is wired** (the search objective itself must be regime-faithful before a retune is meaningful). Guarded by `tests/autotuner/test_ac4_r2_residual_tripwire.py` (`xfail(strict=False)` — XPASSes the day R2 wires the undated path).
 
 ---
 
@@ -81,6 +99,8 @@ Path assignment uses canonical mlfinlab first-available-slot algorithm.
 
 #### `_aggregate_cpcv_paths(folds: list, n_paths: int = _CPCV_N_PATHS) → list`
 Assembles `n_paths` OOS backtest paths from fold descriptors. Returns a list of `n_paths` sorted date lists.
+
+**Known limitation (out of R1 scope — see `DE-MATH-AUDIT-001` MA-2, CRITICAL, R2 territory):** `_aggregate_cpcv_paths` reads only `test_dates`; `train_dates` and all purge/embargo arithmetic have zero consumers, so every one of the 5 assembled paths currently resolves to the identical full in-sample window — trial selection is in-sample dressed as walk-forward validation. Not touched by this cycle; deferred to R2.
 
 ---
 
@@ -328,11 +348,14 @@ NN1-frozen facets that must NEVER appear in the search space: `gamma`, `utility_
 
 The calibration sweep uses a SEPARATE, narrower 2-key space (`PARABOLIC_VELOCITY_THRESHOLD`, `VWAP_CROSS_HWM_PCT`) — it does NOT modify `OPTUNA_SEARCH_SPACE_KEYS`.
 
+**Math Remediation R1 note (`DE-MATH-R1-001`):** as of this cycle, `TAKE_PROFIT_MC_PCT` is no longer objective-inert in the replay (AC-1/AC-2/AC-7 fixed the day-constant MC degeneracy that made it unreachable); `PARABOLIC_VELOCITY_THRESHOLD`/`MAX_PARABOLIC_SQUEEZE` have had their inertness CAUSE removed (see `_replay_exit_tick`'s AC-3/AC-5 fixes above) but a full walk-forward objective-variance demonstration for those two specifically is deferred to the R3 pre-retune checklist. **No retune ships on any of the six search-space keys until that checklist clears** — see `DE-MATH-R1-001`.
+
 ## Internal Dependencies
 
-- `math_engine` — all per-tick decision primitives, `WEALTH_ARG_FLOOR`, `_SORTINO_SENTINEL`, `compute_pbo`, `compute_crra_eu_objective`
-- `database` — `get_spec_bundle_by_id`, `save_autotune_run` (now called with `s_count=`, Workstream E), `advisor_ro_query`
-- `synthetic_history` — `generate_synthetic_history`
+- `math_engine` — all per-tick decision primitives, `WEALTH_ARG_FLOOR`, `_SORTINO_SENTINEL`, `compute_pbo`, `compute_crra_eu_objective`, `EXIT_CONFIRM_TICKS`, `apply_regime_exit_adjustment` (R1: regime-conditional confirm-tick resolution)
+- `database` — `get_spec_bundle_by_id`, `save_autotune_run` (now called with `s_count=`, Workstream E), `advisor_ro_query`. **`get_cached_regime_label` is explicitly NEVER called from this module** — forbidden by ruling (`DE-MATH-R1-001` AC-4): it is a live, latest-wins single-row cache and would inject lookahead into the replay if consulted for a historical date.
+- `regime_classifier` — `classify_regime`, `MIN_LABEL_SERIES_LENGTH` (R1: fresh per-day regime-label recomputation for the replay, no-lookahead; pre-existing module, newly wired here)
+- `synthetic_history` — `generate_synthetic_history`, `_MC_REPLAY_SIMULATION_PATHS` (R1: the AC-6 parity battery shares this MC-path-count config rather than `math_engine`'s 5000-path default)
 - `acceptance_gate` — reusable overfitting acceptance gate
 - `advisors.overfitting_conscience` — `run_overfitting_conscience`
 - `advisors.spec_critic` — `run_spec_critic`
