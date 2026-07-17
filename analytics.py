@@ -1406,6 +1406,86 @@ def get_portfolio_bot_and_held_daily_returns(
     return out_dates, bot_returns, held_returns
 
 
+def get_symphony_bot_and_held_daily_returns(
+    symphony_id: str,
+    db_file: str | None = None,
+    days: int | None = 125,
+) -> tuple[list[str], list[float], list[float]] | None:
+    """Per-symphony analogue of ``get_portfolio_bot_and_held_daily_returns`` — the
+    canonical CONTINUOUS shadow_history series for ONE symphony (AC-3 / MA-6 /
+    MAPERF-01).
+
+    Fix direction: ``/api/performance?scope=symphony`` was sourcing its series from
+    ``compute_per_symphony_returns`` over post-mortem trigger arrays — a selection-
+    biased event sample containing ONLY the days the symphony triggered (every
+    zero-trigger day silently absent). ``compute_quantstats_metrics`` then placed
+    those K trigger-day observations on a synthetic CONSECUTIVE daily index and
+    annualized as if they were K consecutive trading days (a 4-trigger sample
+    averaging ~0.45%/day annualizing to ~209.8% CAGR). This function instead reads
+    the last row per (symphony_id, trading_day) from shadow_history directly — the
+    same source class the aggregate scope uses (Finding 4) — so every trading day
+    the symphony has a shadow_history row appears, triggered or not.
+
+    NOT epoch-scoped: like its portfolio sibling, this is the continuous per-day
+    series for risk-metric computation, distinct from the epoch-additive guard-alpha
+    trajectory (``compute_windowed_symphony_guard_alpha`` et al.) used by the
+    History tab / windowed strip, which remains untouched.
+
+    Per day: Bot = ``shadow_return``, Held = ``current_return`` (no weighting needed
+    — a single symphony contributes to itself).
+
+    Args:
+        symphony_id: the symphony to read.
+        db_file: shadow DB path override (tests); defaults to the live shadow DB.
+        days:    cap on the most recent trading days to include. ``None`` = all
+                 history.
+
+    Returns:
+        (dates_ascending, bot_daily_returns_pct, held_daily_returns_pct), or None
+        when fewer than 2 distinct trading days exist for this symphony (mirrors
+        the aggregate function's floor — the route's own honest-empty-state path
+        takes over below that).
+    """
+    import sqlite3
+
+    _db_file = db_file if db_file is not None else _get_shadow_db_file()
+    try:
+        conn = sqlite3.connect(f"file:{_db_file}?mode=ro", uri=True, timeout=10.0)
+        rows = conn.execute(
+            "SELECT trading_day, shadow_return, current_return "
+            "FROM shadow_history "
+            "WHERE symphony_id = ? "
+            "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+            "                WHERE s2.symphony_id = shadow_history.symphony_id "
+            "                  AND s2.trading_day = shadow_history.trading_day) "
+            "ORDER BY trading_day ASC",
+            (symphony_id,),
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return None
+
+    if not rows:
+        return None
+
+    all_dates = [r[0] for r in rows]
+    all_bot = [float(r[1]) if r[1] is not None else 0.0 for r in rows]
+    all_held = [float(r[2]) if r[2] is not None else 0.0 for r in rows]
+
+    # Keep the most recent `days` trading days (all history when days is None).
+    if days is None:
+        out_dates, bot_returns, held_returns = all_dates, all_bot, all_held
+    else:
+        out_dates = all_dates[-days:]
+        bot_returns = all_bot[-days:]
+        held_returns = all_held[-days:]
+
+    if len(out_dates) < 2:
+        return None
+
+    return out_dates, bot_returns, held_returns
+
+
 def get_single_day_shadow_returns(
     db_file: str | None = None,
 ) -> tuple[list[str], list[float], list[float]] | None:

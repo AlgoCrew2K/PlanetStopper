@@ -14,7 +14,7 @@ import sys
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import dotenv as _dotenv_module
@@ -2456,38 +2456,57 @@ def api_symphony_logs(symphony_id):
         _ro_conn.close()
 
 
+def _slice_series_by_window_cutoff(
+    series: tuple[list, list, list] | None, window: object
+) -> tuple[list, list, list] | None:
+    """Slice a (dates, a, b) series to the CALENDAR cutoff analytics._window_cutoff_date
+    resolves for `window` — the SAME cutoff function /api/strip's
+    compute_windowed_portfolio_strip already canonicalizes (AC-5 / MAPERF-03), so a
+    picker click covers the same calendar span on the hero chart, the strip, and
+    /api/performance's "ytd" token alike.
+
+    `window="all"` (and any unrecognized token) resolves to a None cutoff — no
+    filtering, the full series passes through — matching _window_cutoff_date's own
+    lifetime semantics.
+
+    Degrades to "no filter" (rather than raising) when the cutoff resolution
+    doesn't yield a real date — e.g. under a fully-mocked `analytics` module in
+    older route tests, `_window_cutoff_date` returns a Mock, not a date/None; the
+    conservative behavior is to pass the series through unfiltered, not to crash
+    or silently empty it.
+    """
+    if series is None:
+        return None
+    dates, series_a, series_b = series
+    try:
+        cutoff = analytics._window_cutoff_date(window)
+    except Exception:
+        cutoff = None
+    cutoff_iso = cutoff.isoformat() if isinstance(cutoff, date) else None
+    idx = [i for i, d in enumerate(dates) if cutoff_iso is None or str(d) >= cutoff_iso]
+    return [dates[i] for i in idx], [series_a[i] for i in idx], [series_b[i] for i in idx]
+
+
 @app.route("/api/hero-chart/<window>")
 def get_hero_chart(window):
     """Return hist_dates/hist_bot/hist_held for the requested time window.
 
     window values: 30d, 60d, 90d, 125d, ytd, 1y, all
-    Fetches from shadow_history with an appropriate days parameter so each
-    window returns a distinct, correctly-sized slice. "all" fetches the full
-    history (days=None) — the lifetime/All-Time view.
-    """
-    now = datetime.now(_ET)
-    if window == "all":
-        # All Time: fetch the full history. analytics treats days=None as "all".
-        fetch_days = None
-    elif window == "ytd":
-        jan1 = datetime(now.year, 1, 1).date()
-        days_since_jan1 = max((now.date() - jan1).days, 1)
-        fetch_days = min(days_since_jan1 + 30, 365)
-    elif window == "1y":
-        fetch_days = 365
-    elif window == "125d":
-        fetch_days = 125
-    elif window == "90d":
-        fetch_days = 90
-    elif window == "60d":
-        fetch_days = 60
-    else:
-        fetch_days = 30
 
-    # Minimum trading days needed for the window to be meaningful. "all" has no
-    # floor (whatever history exists is the lifetime view).
-    _min_days = {"30d": 20, "60d": 40, "90d": 60, "125d": 80, "ytd": 10, "1y": 100, "all": 2}
-    required = _min_days.get(window, 10)
+    AC-5 (MAPERF-03): every window token resolves to the SAME calendar cutoff
+    /api/strip already uses (analytics._window_cutoff_date) — the chart fetches
+    the full shadow_history series once and slices it to that cutoff, instead of
+    trading-day-slicing a per-token day count. Before this fix the SAME picker
+    click windowed the chart by TRADING days and the strip by CALENDAR days
+    (e.g. "30d" = last 30 trading days on the chart vs trading days within the
+    last 30 calendar days on the strip — a ~40% window mismatch at "1y").
+    """
+    # Minimum trading days needed for the window to be meaningful (soft UI signal
+    # only — not a math correctness gate). "all" has no floor. Scaled down from
+    # the pre-AC-5 trading-day-count thresholds by ~252/365 now that windows are
+    # calendar-based (fewer trading days fall inside the same calendar span).
+    _min_days = {"30d": 14, "60d": 28, "90d": 42, "125d": 55, "ytd": 7, "1y": 70, "all": 2}
+    required = _min_days.get(window, 7)
 
     def _compound(daily: list[float]) -> list[float]:
         """Compound a per-day pct return series into a running cumulative-return curve."""
@@ -2498,27 +2517,17 @@ def get_hero_chart(window):
             out.append(round((running - 1.0) * 100.0, 4))
         return out
 
-    def _trim_ytd(dates, *series):
-        """For the YTD window, drop rows before Jan 1 across dates + every parallel series."""
-        if window != "ytd":
-            return (dates, *series)
-        jan1_str = str(datetime(now.year, 1, 1).date())
-        idx = 0
-        while idx < len(dates) and dates[idx] < jan1_str:
-            idx += 1
-        return (dates[idx:], *[s[idx:] for s in series])
-
     try:
         # AC-4b: use the REAL (bot, held) daily-return source so the dashed "If held"
         # line is a genuine second series, not a verbatim copy of Bot. bot = guarded
         # shadow path; held = un-guarded if-held path (diverges only after a trigger).
-        # Each series is compounded INDEPENDENTLY into its own cumulative curve.
-        bh = analytics.get_portfolio_bot_and_held_daily_returns(days=fetch_days)
-        if bh is not None:
-            dates, bot_daily, held_daily = bh
+        bh = analytics.get_portfolio_bot_and_held_daily_returns(days=None)
+        sliced = _slice_series_by_window_cutoff(bh, window)
+        if sliced is not None:
+            dates, bot_daily, held_daily = sliced
+            # Each series is compounded INDEPENDENTLY into its own cumulative curve.
             bot_series = _compound(bot_daily)
             held_series = _compound(held_daily)
-            dates, bot_series, held_series = _trim_ytd(dates, bot_series, held_series)
             insufficient = len(dates) < required
             return jsonify(
                 {
@@ -2606,7 +2615,13 @@ def get_windowed_strip(window):
     # AC-4b: bot_state is a SINGLE-ROW JSON BLOB (id, data TEXT) — there is no
     # position_value column and no symphony_id column.  Mirror the AC-1b fix:
     # use database.load_state() (isolated try/except → degrades to {}).
-    if strip.get("insufficient_history") and not strip.get("guard_alpha"):
+    #
+    # AC-8 (MAPERF-04): explicit `is None` check — `not strip.get("guard_alpha")`
+    # was also True for a LEGITIMATE windowed 0.0 (an untriggered symphony yields
+    # a genuine 0.0 divergence on every window; analytics.py's
+    # compute_windowed_symphony_guard_alpha docstring), silently overwriting a
+    # real zero with this cross-day estimate.
+    if strip.get("insufficient_history") and strip.get("guard_alpha") is None:
         try:
             try:
                 _bot_state_dict = database.load_state()
@@ -2614,11 +2629,18 @@ def get_windowed_strip(window):
                 _bot_state_dict = {}
             _conn = database.get_connection()
             try:
+                # AC-8 (MAPERF-04): day-filtered to the CURRENT ET trading day —
+                # the query was previously unfiltered, pairing every exit_triggers
+                # row EVER recorded (including stale, prior-day rows) against the
+                # symphony's LATEST current_return, subtracting returns from two
+                # different days' bases (cross-day incoherent). Mirrors the
+                # /api/history intraday backfill's substr(ts_et,1,10) pattern.
                 _rows = _conn.execute(
                     "SELECT t.symphony_id, t.at_return, "
                     "  (SELECT current_return FROM shadow_history "
                     "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1) "
-                    "FROM exit_triggers t"
+                    "FROM exit_triggers t WHERE substr(t.ts_et, 1, 10) = ?",
+                    (trading_day,),
                 ).fetchall()
 
             finally:
@@ -2731,12 +2753,34 @@ def guard_alpha_summary():
             conn = database.get_connection()
             try:
                 count = conn.execute("SELECT COUNT(*) FROM exit_triggers").fetchone()[0]
-                rows = conn.execute(
-                    "SELECT t.symphony_id, t.at_return, "
-                    "  (SELECT current_return FROM shadow_history "
-                    "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1) "
-                    "FROM exit_triggers t"
-                ).fetchall()
+                # AC-8 (MAPERF-04, same-class sibling of the strip fallback above):
+                # the dollar-estimate rows are day-filtered to the CURRENT ET trading
+                # day — pairing a stale (non-today) exit_triggers row against the
+                # symphony's LATEST current_return is cross-day incoherent (returns
+                # from two different days' bases). guard_event_count above stays the
+                # true all-time COUNT(*) — only the money-math rows are day-scoped.
+                _today_et = datetime.now(_ET).date().isoformat()
+                try:
+                    rows = conn.execute(
+                        "SELECT t.symphony_id, t.at_return, "
+                        "  (SELECT current_return FROM shadow_history "
+                        "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1) "
+                        "FROM exit_triggers t WHERE substr(t.ts_et, 1, 10) = ?",
+                        (_today_et,),
+                    ).fetchall()
+                except Exception:
+                    # A minimal/legacy exit_triggers table without a ts_et column
+                    # cannot express "today" at all — degrade to the unfiltered
+                    # query (the pre-AC-8 behavior) rather than silently zeroing
+                    # out; a real (migrated) schema always carries ts_et, so this
+                    # path is schema-compatibility only, not a reintroduction of
+                    # the cross-day estimate for a schema that CAN day-filter.
+                    rows = conn.execute(
+                        "SELECT t.symphony_id, t.at_return, "
+                        "  (SELECT current_return FROM shadow_history "
+                        "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1) "
+                        "FROM exit_triggers t"
+                    ).fetchall()
 
             finally:
                 conn.close()
@@ -3041,12 +3085,38 @@ def get_history(days):
             _today_et = datetime.now(_ET).date().isoformat()
             _conn = database.get_connection()
             try:
-                _rows = _conn.execute(
-                    "SELECT symphony_id, ts_et, at_return, triggered_reason "
-                    "FROM exit_triggers WHERE substr(ts_et, 1, 10) = ? "
-                    "ORDER BY ts_utc DESC",
-                    (_today_et,),
-                ).fetchall()
+                # AC-6 (MAPERF-06): the Detail column has ONE semantic across both
+                # sources — saved-alpha (guard-alpha pp), matching the post-mortem
+                # path's saved_pct_guard_alpha (analytics.py get_history_summary).
+                # `at_return` alone (the raw exit-level return) is a DIFFERENT
+                # quantity under the same label; pair it with the symphony's latest
+                # current_return (same shadow-subquery pattern as the strip
+                # fallback below) so detail = at_return - current_return.
+                try:
+                    _rows = _conn.execute(
+                        "SELECT t.symphony_id, t.ts_et, t.at_return, t.triggered_reason, "
+                        "  (SELECT current_return FROM shadow_history "
+                        "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1) "
+                        "FROM exit_triggers t WHERE substr(t.ts_et, 1, 10) = ? "
+                        "ORDER BY t.ts_utc DESC",
+                        (_today_et,),
+                    ).fetchall()
+                except Exception:
+                    # shadow_history may not exist on a minimal/legacy DB (a fresh
+                    # droplet before the first shadow-history cycle ever writes a
+                    # row) — degrade to the raw exit_triggers columns so the row
+                    # still renders; _guard_alpha_detail below still emits an
+                    # honest None (never the pre-AC-6 raw-at_return-as-detail
+                    # regression this fix removes).
+                    _rows = [
+                        (_sid, _ts_et, _at_ret, _reason, None)
+                        for _sid, _ts_et, _at_ret, _reason in _conn.execute(
+                            "SELECT symphony_id, ts_et, at_return, triggered_reason "
+                            "FROM exit_triggers WHERE substr(ts_et, 1, 10) = ? "
+                            "ORDER BY ts_utc DESC",
+                            (_today_et,),
+                        ).fetchall()
+                    ]
             finally:
                 _conn.close()
             if _rows:
@@ -3058,13 +3128,22 @@ def get_history(days):
                     }
                 except Exception:
                     _name_map = {}
+
+                def _guard_alpha_detail(at_return, current_return):
+                    if at_return is None or current_return is None:
+                        return None
+                    try:
+                        return float(at_return) - float(current_return)
+                    except (TypeError, ValueError):
+                        return None
+
                 stats["todays_exits"] = [
                     {
                         "ts": (r[1] or "").split("T")[-1],
                         "symphony_id": r[0],
                         "symphony_name": _name_map.get(r[0]) or r[0],
                         "reason": r[3],
-                        "detail": r[2],
+                        "detail": _guard_alpha_detail(r[2], r[4]),
                     }
                     for r in _rows
                 ]
@@ -3140,15 +3219,27 @@ def api_performance():
             }
         ), 400
 
-    try:
-        days = int(request.args.get("days", 60))
-    except (TypeError, ValueError):
-        return jsonify(
-            {
-                "status": "error",
-                "message": "days must be an integer",
-            }
-        ), 400
+    raw_days = request.args.get("days", "60")
+    # AC-5 (MAPERF-03, cross-plan correction): the Performance tab's YTD button
+    # sends the literal token "ytd" (not a computed calendar-days-since-Jan-1
+    # count) — resolved here to a Jan-1 CALENDAR cutoff via the same
+    # analytics._window_cutoff_date helper /api/hero-chart and /api/strip use.
+    # Every OTHER value on this param (the six numeric buttons: 30/60/90/125/
+    # 252/1260) stays a deliberate TRADING-day count by design — only YTD's
+    # contract changes; the numeric buttons are untouched.
+    is_ytd = raw_days == "ytd"
+    if is_ytd:
+        days: int | str = "ytd"
+    else:
+        try:
+            days = int(raw_days)
+        except (TypeError, ValueError):
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": "days must be an integer",
+                }
+            ), 400
 
     symphony_id = request.args.get("symphony_id")
     if scope == "symphony" and not symphony_id:
@@ -3159,6 +3250,11 @@ def api_performance():
             }
         ), 400
 
+    # "ytd" fetches the FULL series and slices it to the Jan-1 cutoff (both
+    # scopes); every other value fetches exactly `days` trailing trading days
+    # (unchanged trading-day-count contract for the six numeric buttons).
+    _fetch_days = None if is_ytd else days
+
     if scope == "aggregate":
         # Finding 4: the aggregate series is the CANONICAL value-weighted portfolio
         # series from shadow_history — the same series /api/hero-chart compounds —
@@ -3167,7 +3263,9 @@ def api_performance():
         # chart on the same screen).  Every shadow_history trading day appears.
         dates, live_returns, shadow_returns = [], [], []
         try:
-            _series = analytics.get_portfolio_bot_and_held_daily_returns(days=days)
+            _series = analytics.get_portfolio_bot_and_held_daily_returns(days=_fetch_days)
+            if is_ytd:
+                _series = _slice_series_by_window_cutoff(_series, "ytd")
             if _series is not None:
                 # Producer returns (dates, bot, held); the payload vocabulary is
                 # live_returns = if-held (held), shadow_returns = PS-exited (bot) —
@@ -3176,17 +3274,34 @@ def api_performance():
         except Exception:
             _daemon_log.debug("api_performance: canonical shadow series failed", exc_info=True)
     else:
-        history = analytics.get_history_with_cache_invalidation(
-            days=days, base_dir=analytics._POST_MORTEMS_DIR
-        )
-        dates, live_returns, shadow_returns = analytics.compute_per_symphony_returns(
-            history, symphony_id
-        )
+        # AC-3 (MA-6/MAPERF-01): source the per-symphony series from shadow_history
+        # per-day rows — the per-symphony analogue of the aggregate's canonical
+        # continuous source (analytics.get_symphony_bot_and_held_daily_returns) —
+        # NEVER the post-mortem trigger arrays (a selection-biased exit-snapshot
+        # event sample that annualizes a handful of trigger days as if they were
+        # that many consecutive trading days).
+        dates, live_returns, shadow_returns = [], [], []
+        try:
+            _sym_series = analytics.get_symphony_bot_and_held_daily_returns(
+                symphony_id, days=_fetch_days
+            )
+            if is_ytd:
+                _sym_series = _slice_series_by_window_cutoff(_sym_series, "ytd")
+            if _sym_series is not None:
+                dates, shadow_returns, live_returns = _sym_series
+        except Exception:
+            _daemon_log.debug("api_performance: per-symphony shadow series failed", exc_info=True)
+
+    # AC-2/AC-4 (MA-7/MAPERF-02): the day-1-droplet fallbacks below are
+    # AGGREGATE-ONLY. A scope=symphony request for a symphony with zero
+    # shadow_history rows must render an honest empty state — never the whole
+    # PORTFOLIO's non-empty series mislabeled under that symphony's name (both
+    # fallbacks were previously unconditional).
 
     # AC-2: when the series is still empty (day-1 droplet), fall back to
     # shadow_history for the series so the chart is non-empty from day one.
     # The insufficient_history / quantstats-min-obs guard is unchanged.
-    if not dates:
+    if not dates and scope == "aggregate":
         try:
             _fallback = analytics.get_portfolio_bot_and_held_daily_returns()
             if _fallback is not None:
@@ -3200,7 +3315,7 @@ def api_performance():
     # 2 distinct trading days exist.  On a fresh droplet (day one), that guard fires
     # and leaves dates empty.  Fall back to the single-day seam so the chart is
     # non-empty even before the 2-day guard can pass.
-    if not dates:
+    if not dates and scope == "aggregate":
         try:
             _single = analytics.get_single_day_shadow_returns()
             if _single is not None:

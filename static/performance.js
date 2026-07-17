@@ -31,10 +31,15 @@
     // (fraction scale, e.g. -0.17 = -17%) — convert to pct for display.
     // win_rate is always a fraction [0,1] from .mean().
     //
-    // Tuple shape (Phase 2): [key, label, kind, isPrimary].
+    // Tuple shape (Phase 2): [key, label, kind, isPrimary, invert].
     // Order defines rendering order; risk-adjusted metrics lead per the design hierarchy
     // (ux-design-deliverable.md §2.1 — capital preservation north star ranks risk above return).
     // kind 'pp' = fraction-scale delta rendered as percentage points (e.g. +1.70pp).
+    // invert (AC-7 / MAPERF-05, optional — defaults falsy when omitted): true for
+    // lower-is-better metrics (e.g. volatility), mirroring index.js's Risk Profile
+    // panel invertDelta flag (index.js:466-479) — flips which sign of the raw
+    // (shadow - live) delta renders as the "good" color. The displayed VALUE and
+    // arrow direction are UNCHANGED by invert — only the color decision flips.
     // The trailing entries (upside_capture / downside_capture) are Tier 2 benchmark
     // placeholders: they have no data feed yet, so they render as 'not yet available'
     // (data-unavail) — never a fabricated number.
@@ -46,7 +51,7 @@
         ['max_drawdown_delta',  'Max DD reduction',          'pp',       false],  // derived
         ['calmar',              'Calmar',                    'num',      false],
         // --- volatility ---
-        ['volatility',          'Annualized volatility',     'pct_frac', false],  // Tier 1
+        ['volatility',          'Annualized volatility',     'pct_frac', false, true],  // Tier 1, invert (lower is better)
         ['volatility_delta',    'Volatility reduction',      'pp',       false],  // Tier 1, derived
         // --- return ---
         ['total_return',        'Total return',              'pct_frac', true],
@@ -87,15 +92,10 @@
         return formatted;
     }
 
-    function deltaClass(live, shadow) {
-        if (live === null || shadow === null || live === undefined || shadow === undefined) return 'neutral';
-        if (typeof live !== 'number' || typeof shadow !== 'number') return 'neutral';
-        if (!isFinite(live) || !isFinite(shadow)) return 'neutral';
-        var delta = shadow - live;
-        if (delta > 0) return 'pos';
-        if (delta < 0) return 'neg';
-        return 'neutral';
-    }
+    // Delta color decision lives inline in renderMetrics (AC-7 / MAPERF-05) —
+    // mirrors index.js's Risk Profile panel, which also inlines its
+    // invert-aware deltaGood check at the render call site rather than a
+    // shared helper (index.js:479).
 
     function cumulative(returns) {
         // Series values are percentage points (e.g. -0.56 = -0.56%).
@@ -318,7 +318,7 @@
         }
 
         var rows = METRIC_LABELS.map(function (spec) {
-            var key = spec[0], label = spec[1], kind = spec[2], isPrimary = spec[3];
+            var key = spec[0], label = spec[1], kind = spec[2], isPrimary = spec[3], invert = spec[4];
 
             // Tier 2 benchmark metrics: no data feed → always a placeholder row.
             if (TIER2_PLACEHOLDER_KEYS.indexOf(key) !== -1) {
@@ -327,7 +327,17 @@
 
             var liveVal   = live[key];
             var shadowVal = shadow[key];
-            var dc = deltaClass(liveVal, shadowVal);
+            // AC-7 (MAPERF-05): invert-polarity metrics (volatility — lower is
+            // better) flip which sign of the raw (shadow - live) delta counts as
+            // an improvement, mirroring index.js's Risk Profile panel (index.js:479
+            // deltaGood = invert ? (delta <= 0) : (delta >= 0)). The displayed
+            // VALUE + arrow (fmtDelta below) are unchanged by invert — only the
+            // color decision flips.
+            var dcHasBoth = typeof liveVal === 'number' && typeof shadowVal === 'number'
+                            && isFinite(liveVal) && isFinite(shadowVal);
+            var dcDelta = dcHasBoth ? (shadowVal - liveVal) : null;
+            var dcGood = dcDelta === null ? null : (invert ? (dcDelta <= 0) : (dcDelta >= 0));
+            var dc = dcDelta === null ? 'neutral' : (dcGood ? 'pos' : 'neg');
             var primaryAttr = isPrimary ? ' data-primary="true"' : '';
             var deltaColor = dc === 'pos' ? 'var(--studio-pos)' : dc === 'neg' ? 'var(--studio-neg)' : 'inherit';
             var barFill = key === 'max_drawdown' ? 'var(--studio-neg)' : 'var(--studio-accent)';
@@ -438,14 +448,17 @@
         return active ? active.getAttribute('data-value') : '';
     }
 
-    function ytdDays() {
-        var now  = new Date();
-        var jan1 = new Date(now.getFullYear(), 0, 1);
-        return Math.max(1, Math.round((now - jan1) / 86400000));
-    }
-
+    // AC-5 (MAPERF-03, cross-plan correction): YTD sends the LITERAL string
+    // 'ytd' — not a computed calendar-days-since-Jan-1 count. The six other
+    // Performance-tab buttons (30/60/90/125/252/1260) stay deliberate
+    // TRADING-day counts by design; only YTD's contract changes. The server
+    // (/api/performance) resolves the literal 'ytd' token to a Jan-1 CALENDAR
+    // cutoff via analytics._window_cutoff_date — the same helper the dashboard
+    // hero-chart/strip picker already uses — instead of the old approximate
+    // calendar-count-fed-into-a-trading-day-slice (which over-fetched past
+    // Jan 1 whenever the ratio of calendar-to-trading days diverged).
     function resolveDays(raw) {
-        if (raw === 'ytd') return String(ytdDays());
+        if (raw === 'ytd') return 'ytd';
         return raw;
     }
 
