@@ -1,0 +1,30 @@
+{
+  "name": "ma1_lpc_per_tick_mc_sensitivity",
+  "description": "MA-1 (AC-1): math_engine.run_monte_carlo's current_symphony_return sum (math_engine.py:1162-1166) excludes any holding whose last_percent_change is None/missing. This fixture pins that a REAL, materially different last_percent_change on an otherwise-identical holdings/historical_data/seed input produces a DIFFERENT mc_prob output -- the sensitivity the audit's lead probe demonstrated (lpc swings of a few percent moved mc_prob from ~10 to ~97 on the audit's own holdings). We do not hardcode the audit's exact numbers (different holdings/history here) -- the test asserts the INEQUALITY property (scenario_low != scenario_high), never a literal expected mc_prob.",
+  "function": "run_monte_carlo",
+  "historical_data_spec": {
+    "kind": "alternating",
+    "num_days": 45,
+    "spy_amplitude": 0.006,
+    "aaa_amplitude": 0.012
+  },
+  "spy_today_return": 0.4,
+  "simulation_paths": 5000,
+  "neighbor_k": 150,
+  "numpy_seed": 7,
+  "scenarios": {
+    "lpc_low": {
+      "description": "Holding down sharply vs prior close.",
+      "holdings": [
+        {"ticker": "AAA", "allocation": 1.0, "last_percent_change": -0.03}
+      ]
+    },
+    "lpc_high": {
+      "description": "Same ticker/allocation/history/seed; only last_percent_change differs (up sharply vs prior close).",
+      "holdings": [
+        {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.03}
+      ]
+    }
+  },
+  "derivation": "45 raw alternating days -> eligible_days = 45 - (MC_VOL_WINDOW_DAYS - 1) = 45 - 19 = 26 >= MC_MIN_HISTORY_DAYS (20) -- a real (non-sentinel) mc_prob is returned for both scenarios. No mc_prob value is pinned here; the test computes both scenarios live via math_engine.run_monte_carlo and asserts they differ. This is the direct-math-layer half of AC-1 -- the build_replay_day wiring half is covered by ma1_build_replay_day_lpc_stamping.json."
+}
