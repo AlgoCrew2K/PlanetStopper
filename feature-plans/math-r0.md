@@ -15,6 +15,15 @@ Fix the CRITICAL advisor-veto unit corruption and the operator-facing render def
 - **AC-7 (ma-perf 05, MED):** volatility delta renders with correct polarity (bot MORE volatile = negative/red), reusing the existing `invertDelta` pattern from index.js in performance.js.
 - **AC-8 (ma-perf 04 + 13, MED):** the strip fallback triggers on `guard_alpha is None` — never on falsy 0.0 (a legitimate $0.00 window renders $0.00); the fallback estimate is day-filtered (no cross-day at_return minus today's current_return arithmetic); the 30d window either uses an honest available-trading-days floor or renders an explicit "insufficient window" state — never a silent fallback (30 calendar days can never meet a 30-trading-day floor; that permanent arming is the bug).
 
+## ADDENDUM — AC-8b (PM ruling on r0-test's escalation, 2026-07-17): distinguish "insufficient window" from "genuine zero" at the source
+**Finding (r0-test, verified at analytics.py:1587-1674):** `compute_windowed_symphony_guard_alpha` returns an identical `0.0` for two structurally different states: (1) genuinely-zero divergence, and (2) the deliberate `<2 windowed rows` conservatism floor (`_get_windowed_divergence_trajectory`, :1622-1623) — even though the epoch-additive math is valid from a single row. AC-8's literal `is None` check therefore silently regresses the previously-shipped DE-PROD-ACCURACY-001 day-1 behavior: a real ~3pp divergence on a thin-window state renders flat 0.0 with the fallback withheld.
+**RULING: fix in-cycle (the AC-G2-6 precedent — a cycle never ships a fix that introduces its own silent regression).**
+- **AC-8b-1:** the `<2`-row floor case propagates **None** (unknown/insufficient) up through `compute_windowed_symphony_guard_alpha` — the floor itself STAYS (its statistical conservatism is not R0's to relitigate); only its return ENCODING changes. A computed zero-divergence trajectory keeps returning **0.0** (a real zero).
+- **AC-8b-2 (caller sweep, mandatory):** every consumer of the changed functions is traced and handles the new None explicitly — the strip route's `is None` fallback now discriminates as AC-8 intended; any aggregation (e.g. `compute_windowed_portfolio_strip`) must skip-and-count or render honest-insufficient, never coerce None to 0, never TypeError.
+- **AC-8b-3 (RED first):** a discriminating test pair on the day-1 fixture — thin-window real divergence surfaces (~3.0pp via the fallback) AND a genuinely-untriggered symphony stays an honest 0.0 with NO fallback.
+- The 6 held tests in test_live_dashboard_metrics.py are re-triaged AFTER AC-8b lands (expected: mostly green again, minimal updates).
+- Ratified as correctly-fixed stale tests: test_api_performance_symphony_happy_path (retired-callsite mock) + the connect-site count 7→8.
+
 ## Architecture
 Surfaces: `advisors/backtest_gate_engine.py` (AC-1/2), `app.py` performance/history/strip routes (AC-3/4/5/8), `analytics.py` window helpers (AC-5/8), `static/performance.js` + `static/index.js` + `static/history.js` (AC-3/5/6/7 render), `templates/history.html`/`performance.html` as needed (AC-6 labeling). Fork base f8e6e295 (== post-ship main).
 
