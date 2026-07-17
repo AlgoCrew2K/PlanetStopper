@@ -6282,10 +6282,16 @@ this is a confirmatory/regression run, not a live-path diff review.
 
 ### Verification
 
-**r1-review verdict:** OUTSTANDING -- r1-review's combined verdict is in
-flight at the stable GREEN SHA `46051dd5` as this entry is drafted. This
-slot will be updated in place (never re-created as a new entry) the moment
-the verdict lands, per the R0 update-in-place discipline.
+**r1-review verdict (`quant-code-reviewer`):** **APPROVE-pending-PM-live-gate
+@ `46051dd5`** -- all 8 review sections, zero routed findings. Counts
+independently re-run by r1-review (not merely re-cited from the team's own
+report): 127 passed / 0 failed consolidated battery, 765 passed / 1
+deselected / 0 failed on the full `tests/autotuner/` sweep, 57/57 passed on
+a dedicated boundary battery. **One line still OUTSTANDING within this
+verdict:** r1-review's format-only extension of the verdict to the tip
+(`91ca5d58`) was reported in flight as of the PM's gate results landing --
+to be quoted verbatim in place the moment it lands; not blocking, since it
+is format-only (no new findings expected against a docs-only diff).
 
 **Battery state (self-reported by the team, cited for the audit trail --
 NOT a substitute for the PM's independent gate below):** RED-complete
@@ -6294,25 +6300,53 @@ battery); full GREEN `46051dd5` -- **128 passed / 1 xfailed / 0 errors**
 (the xfail is the deliberate AC-4 R2-residual tripwire, ADDENDUM 6 -- an
 intended, named XFAIL, not a skipped or hidden failure).
 
-**PM independent gate:** OUTSTANDING -- the PM's own targeted `-n0` battery
-(both live and credential-blanked) and `ruff` pass have not yet been run at
-the time this entry is drafted.
+**PM independent gate -- LANDED:** RUN A (live env) -- **2427 passed / 3
+deselected / 1 xfailed / 0 failed**, 7m01s @ `46051dd5`; command: `python
+-m pytest tests/execution/ tests/math_engine/ tests/autotuner/
+tests/synthetic_history/
+tests/integration/test_run_monte_carlo_consumers_enumerated.py -n0 -q`.
+RUN B (identical battery, all credential env vars blanked) -- byte-identical
+pass count to RUN A; no test in this cycle's surface silently depends on a
+live credential. `ruff check .` + `ruff format --check .` both clean
+repo-wide, post-`082a87e1`'s reformat. PM final consolidated battery @
+`91ca5d58` (this entry's own doc commit -- confirms the doc-only diff on
+top of GREEN introduced zero regressions): **128 passed / 1 xfailed / 0
+failed, 21.92s.**
 
-**PM live E2E:** OUTSTANDING -- required before merge per this cycle's PR
-ship path (trade-touching; the advisory FF lane does not apply). Will
-confirm, at minimum: a real symphony's replay walk-forward shows
-non-constant `mc_prob` within a day; the three previously-inert dims show
-non-zero objective sensitivity on a live bounded smoke; the live execution
-path (a real dashboard cycle or a live-path golden-fixture run) is
-byte-identical to pre-cycle behavior.
+**PM live E2E -- LANDED** (real Alpaca data through the real
+`generate_synthetic_history(n_jobs=1)` -> `replay_exit_sequence` pipeline,
+`EXECUTION_START_TIME='9:35'` honored via the module attribute exactly as
+AC-5 requires): 250 replay days generated; **243/250 days show INTRADAY
+mc_prob variance** (pre-fix: 0/250, day-constant every day -- this is the
+direct live confirmation of AC-1's fix). Exit counts across the run: VWAP
+Breakdown 111, VWAP Bleed Cut 38, **Take-Profit 6, Trailing Stop 2** (both
+structurally unreachable pre-fix -- this is the direct live confirmation of
+AC-2). Earliest exit at `tick_idx=17`, consistent with the `>=5`
+action-phase gate (AC-5) holding correctly (no exit fires before the gate
+opens). r1-review's `APPROVE-pending-PM-live-gate` condition is now
+SATISFIED by this result.
 
-*This Verification section is updated in place as each outstanding item
-lands -- never re-created as a new DECISIONS.md entry.*
+**Ship status:** all three Verification items required for this
+trade-touching cycle's PR ship path are LANDED (one non-blocking format-only
+line from r1-review still pending, see above) -- **PR #97** is open against
+`origin/main` and ready for the PM's merge decision (verified
+`origin/main` still at `0626ef86` as of this update -- not yet merged; this
+line will be updated once it is).
+
+*This Verification section is updated in place as each item lands -- never
+re-created as a new DECISIONS.md entry.*
 
 ### Reference
 
-`DE-MATH-R1-001`; branch `fix/math-r1`; HEAD (at time of writing)
-`46051dd5`; plan `feature-plans/math-r1.md` + its seven addenda
+`DE-MATH-R1-001`; branch `fix/math-r1`; code GREEN at `46051dd5`
+(128 passed / 1 xfailed / 0 errors); **PR #97** open against
+`origin/main` (verified `origin/main` still at `0626ef86` -- the pre-R0
+post-merge tip -- as of this update; not yet merged). All three gate
+conditions this cycle's PR ship path requires have landed (`/review`
+skill APPROVE-pending-PM-live-gate, PM independent gate, PM live E2E --
+see Verification above); merge is a PM action, not this entry's to
+declare -- this Reference will be updated again once PR #97 actually
+merges. Plan `feature-plans/math-r1.md` + its seven addenda
 (`debc9537`, `a46be889`, `57789ff4`, `5416a0f9`, `65a24d31`, `af266a63`,
 `cd7e668d`); findings basis `docs/audit/math-audit/VERDICT.md`
 (`DE-MATH-AUDIT-001`); program charter `feature-plans/math-remediation-program.md`.
