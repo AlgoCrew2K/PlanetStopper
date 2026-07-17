@@ -130,6 +130,8 @@ def _production_exit_sequence(
     *,
     session_open_hhmm: str = "09:30",
     grace_minutes: int,
+    regime_label: str | None = None,
+    execution_start_hhmm: str | None = None,
 ) -> list[dict]:
     """Drive a tick sequence through the production exit path.
 
@@ -137,6 +139,39 @@ def _production_exit_sequence(
     is the resolve_trigger_priority string on the tick the position exits;
     None on every non-exit tick. After an exit fires the loop stops (the
     production engine commits the exit and freezes the symphony for the day).
+
+    ORACLE SYNC (math-r1 AC-3/AC-4/AC-5, PM addendum 2 @ a46be889, r1-tuner's
+    cross-cutting finding): this reference predates the math-r1 audit and
+    carried the SAME 3 gaps the pre-fix replay has — no MA-10 fail-open arm,
+    no regime-conditional exit_confirm_ticks, no EXECUTION_START_TIME
+    action-phase gate. All three are added here, additively, sourced from the
+    exact production lines cited below. The pre-existing VWAP-grace / TP-
+    re-arm / trailing-stop-primitive behavior this oracle already modeled
+    correctly is untouched.
+
+    New optional parameters (both default to the exact prior behavior, so
+    every existing caller is unaffected):
+      regime_label: fed into math_engine.apply_regime_exit_adjustment to
+        resolve exit_confirm_ticks, mirroring alpha_bot_execution.py:
+        1436-1448. None (the default) resolves to base_ticks unchanged —
+        identical to compute_exit_confirmation's own implicit default that
+        every pre-sync caller relied on.
+      execution_start_hhmm: the action-phase gate anchor (see below). None
+        (the default) falls back to session_open_hhmm's value, preserving
+        this file's existing convention exactly (all current fixtures/tests
+        pin EXECUTION_START_TIME == session open == "09:30").
+
+    TICK-0-ANCHOR BUG FIX (found while adding the action-phase gate): the
+    prior implementation overwrote base_open's hour/minute FROM
+    session_open_hhmm, conflating "tick_idx 0's wall clock" (production:
+    ALWAYS 09:30 — the data phase runs from session open regardless of
+    EXECUTION_START_TIME, alpha_bot_execution.py:876-885/681) with
+    "EXECUTION_START_TIME" (an independently configurable value). This never
+    manifested as a wrong RESULT because every existing caller only ever
+    passed session_open_hhmm="09:30" (both values coincided), but it was
+    latently wrong. base_open is now hardcoded to 09:30 unconditionally;
+    session_open_hhmm/execution_start_hhmm are consulted ONLY for the
+    grace-window and action-phase-gate comparisons, matching production.
     """
     hwm = -999.0
     armed = False
@@ -153,10 +188,30 @@ def _production_exit_sequence(
     take_profit_mc = params["TAKE_PROFIT_MC_PCT"]
     trigger_threshold = params["TRIGGER_THRESHOLD_PCT"]
 
-    # Production minute timeline: tick_idx 0 == session open.
+    effective_exec_start = (
+        execution_start_hhmm if execution_start_hhmm is not None else session_open_hhmm
+    )
+
+    # AC-4/F5: regime-conditional exit_confirm_ticks, resolved ONCE (mirrors
+    # production reading the offline-computed cached label once per cycle;
+    # the label does not change intra-day/intra-tick).
+    # alpha_bot_execution.py:1436-1448.
+    _regime_exit_ticks = math_engine.apply_regime_exit_adjustment(
+        regime_label=regime_label, base_ticks=math_engine.EXIT_CONFIRM_TICKS
+    )
+
+    # AC-5/F6: the action phase (para-arm, MC arm/disarm, trailing-stop
+    # confirm, TP confirm, VWAP checks, exit firing) does not run at all
+    # before EXECUTION_START_TIME (alpha_bot_execution.py:951-953, the hard
+    # `if current_time < market_open and not force_run: return` gate). Only
+    # the DATA phase (HWM/shadow_hwm tracking, :876-885) runs unconditionally
+    # from the true 09:30 session open. tick_idx 0 == 09:30 (N-3 convention).
+    _h, _m = effective_exec_start.split(":")
+    _action_phase_start_offset = (int(_h) - 9) * 60 + (int(_m) - 30)
+
+    # Production minute timeline: tick_idx 0 == the TRUE session open (09:30),
+    # unconditionally — never parameterized (see TICK-0-ANCHOR BUG FIX above).
     base_open = datetime(2026, 4, 6, 9, 30, tzinfo=_ET)
-    h, m = map(int, session_open_hhmm.split(":"))
-    base_open = base_open.replace(hour=h, minute=m)
 
     out: list[dict] = []
     for tick_idx, tick in enumerate(ticks):
@@ -170,27 +225,54 @@ def _production_exit_sequence(
         vwap_diff = tick.get("vwap_diff", 0.0)
         valid_vwap_weight = tick.get("valid_vwap_weight", 1.0)
 
+        # DATA PHASE (alpha_bot_execution.py:876-885): HWM/safe_hwm tracking
+        # runs unconditionally, even before EXECUTION_START_TIME.
         if ret > hwm:
             hwm = ret
         safe_hwm = max(hwm, ret)
 
+        if tick_idx < _action_phase_start_offset:
+            # ACTION PHASE NOT YET OPEN (alpha_bot_execution.py:951-953):
+            # production returns before evaluating para-arm, MC arm/disarm,
+            # trailing-stop confirm, TP confirm, VWAP, or firing. armed,
+            # below_stop_count, tp_armed, above_tp_count, para_armed,
+            # prev_return, breakeven_locked, hwm_hold_ticks, vwap_ticks,
+            # vwap_bleed_ticks all stay exactly as they were.
+            out.append(
+                {
+                    "tick_idx": tick_idx,
+                    "exit_reason": None,
+                    "armed": armed,
+                    "tp_armed": tp_armed,
+                    "para_armed": para_armed,
+                }
+            )
+            continue
+
         para_threshold = params.get("PARABOLIC_VELOCITY_THRESHOLD", 2.0)
         effective_prev = ret if prev_return is None else prev_return
-        _velocity, should_arm = math_engine.compute_para_arm_decision(
+        _velocity, should_arm_para = math_engine.compute_para_arm_decision(
             current_return=ret,
             prev_return=effective_prev,
             para_threshold=para_threshold,
             currently_armed=para_armed,
         )
         prev_return = ret
-        if should_arm:
+        if should_arm_para:
             para_armed = True
 
-        # MC arm / disarm — gated on mc_available (alpha_bot_execution.py:
-        # 1140-1163). An absent MC opinion drives no arm and no disarm.
+        # MC arm / disarm (alpha_bot_execution.py:1302-1347). MA-10 fail-open:
+        # an ABSENT MC opinion (mc_available=False) ARMS — never silently
+        # leaves the protective stop dark. should_arm is reset every tick
+        # (matches production's should_arm = False at the top of this block).
+        should_arm = False
         if mc_available and take_profit_mc <= mc < trigger_threshold:
-            if not armed:
-                armed = True
+            should_arm = True
+        elif not mc_available:
+            should_arm = True  # MA-10 fail-open (:1324-1326)
+
+        if should_arm and not armed:
+            armed = True
         elif armed:
             if mc_available and mc > (trigger_threshold * 2) and ret > 0.0:
                 armed = False
@@ -216,7 +298,9 @@ def _production_exit_sequence(
             False,
         )
 
-        # Check 1: Trailing Stop — the real production primitive.
+        # Check 1: Trailing Stop — the real production primitive. AC-4/F5:
+        # exit_confirm_ticks is now the regime-resolved value, never the
+        # implicit module default.
         below_stop_count, is_trailing_hit = math_engine.compute_exit_confirmation(
             armed=armed,
             is_triggered=False,
@@ -224,6 +308,7 @@ def _production_exit_sequence(
             stop_trigger_level=stop_level,
             prob_underperforming=mc,
             current_below_stop_count=below_stop_count,
+            exit_confirm_ticks=_regime_exit_ticks,
         )
 
         # Check 2: Take Profit — the REAL production primitive.
@@ -262,7 +347,7 @@ def _production_exit_sequence(
             )
         )
         current_et = base_open + timedelta(minutes=tick_idx)
-        if math_engine.is_in_open_window_grace(current_et, session_open_hhmm, grace_minutes):
+        if math_engine.is_in_open_window_grace(current_et, effective_exec_start, grace_minutes):
             is_vwap_broken = False
             is_vwap_bleed_broken = False
 
@@ -273,10 +358,26 @@ def _production_exit_sequence(
                 is_vwap_bleed_broken=is_vwap_bleed_broken,
                 is_trailing_stop_hit=is_trailing_hit,
             )
-            out.append({"tick_idx": tick_idx, "exit_reason": reason})
+            out.append(
+                {
+                    "tick_idx": tick_idx,
+                    "exit_reason": reason,
+                    "armed": armed,
+                    "tp_armed": tp_armed,
+                    "para_armed": para_armed,
+                }
+            )
             return out
 
-        out.append({"tick_idx": tick_idx, "exit_reason": None})
+        out.append(
+            {
+                "tick_idx": tick_idx,
+                "exit_reason": None,
+                "armed": armed,
+                "tp_armed": tp_armed,
+                "para_armed": para_armed,
+            }
+        )
 
     return out
 

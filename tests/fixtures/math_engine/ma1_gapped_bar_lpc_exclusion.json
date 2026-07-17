@@ -1,0 +1,75 @@
+{
+  "name": "ma1_gapped_bar_lpc_exclusion",
+  "description": "AC-1 (MA-1) golden -- Scenario B from r1-review's empirical correction (ADDENDUM 7 @ cd7e668d): a genuine gapped intraday bar (a ticker with NO bar entry for a given tick -- e.g. a trading halt or data gap, distinct from a missing prior-session close) must stamp last_percent_change=None for that ticker/tick (excluded from run_monte_carlo's current_symphony_return sum) while a SIBLING ticker that DOES have a bar the same tick still gets its real, finite last_percent_change stamped (included). This is a DIFFERENT code branch from the missing-prior-close case (tests/math_engine/test_ma1_replay_per_tick_lpc_stamping.py's test_missing_prior_close_does_not_raise_or_produce_non_finite_lpc, which exercises yesterday_closes.get(ticker, c) falling back to c -> ret=0.0, a real included-as-zero value) -- the outer per-ticker guard `if ticker in intraday_by_date[date_str] and i < len(intraday_by_date[date_str][ticker])` is what gates this scenario, not the y_close lookup. Both branches were independently found correct by construction; only this gapped-bar branch was previously untested (the plan's own Edge Cases section names 'missing/gapped bars (holiday, half-day)' explicitly).",
+  "sym_id": "sym-ac1-gap-001",
+  "date_str": "2026-04-06",
+  "holdings": [
+    {"ticker": "AAA", "allocation": 0.5},
+    {"ticker": "BBB", "allocation": 0.5}
+  ],
+  "yesterday_closes": {"AAA": 100.0, "BBB": 50.0},
+  "ticks": [
+    {
+      "t": "2026-04-06T09:30:00Z",
+      "bars": {"AAA": {"c": 100.0, "vwap": 100.0}, "BBB": {"c": 50.0, "vwap": 50.0}},
+      "note": "both tickers have a bar this tick -- baseline, both get a real (zero, at prior close) lpc"
+    },
+    {
+      "t": "2026-04-06T09:31:00Z",
+      "bars": {"AAA": {"c": 101.0, "vwap": 101.0}},
+      "note": "BBB has NO bar entry this tick -- a genuine gap (trading halt / data gap). AAA still has one and must get its real per-tick lpc; BBB must be excluded (None), never a fabricated 0.0 or a crash."
+    }
+  ],
+  "historical_data_spec": {
+    "kind": "rows",
+    "rows": [
+      {"date": "2026-01-01", "SPY": 0.008699, "AAA": -0.003372, "BBB": -0.003372},
+      {"date": "2026-01-02", "SPY": -0.011317, "AAA": -0.004389, "BBB": -0.004389},
+      {"date": "2026-01-03", "SPY": -0.004296, "AAA": -0.012604, "BBB": -0.012604},
+      {"date": "2026-01-04", "SPY": -0.000152, "AAA": 0.012547, "BBB": 0.012547},
+      {"date": "2026-01-05", "SPY": -0.008223, "AAA": 0.002952, "BBB": 0.002952},
+      {"date": "2026-01-06", "SPY": 0.004126, "AAA": -0.015204, "BBB": -0.015204},
+      {"date": "2026-01-07", "SPY": -0.008957, "AAA": -0.014317, "BBB": -0.014317},
+      {"date": "2026-01-08", "SPY": -0.003915, "AAA": -0.013142, "BBB": -0.013142},
+      {"date": "2026-01-09", "SPY": -0.006295, "AAA": 0.007542, "BBB": 0.007542},
+      {"date": "2026-01-10", "SPY": 0.004041, "AAA": -0.010652, "BBB": -0.010652},
+      {"date": "2026-01-11", "SPY": -0.001306, "AAA": 0.016507, "BBB": 0.016507},
+      {"date": "2026-01-12", "SPY": -0.003925, "AAA": -0.007241, "BBB": -0.007241},
+      {"date": "2026-01-13", "SPY": -0.007962, "AAA": -0.006551, "BBB": -0.006551},
+      {"date": "2026-01-14", "SPY": -0.003467, "AAA": -0.004219, "BBB": -0.004219},
+      {"date": "2026-01-15", "SPY": -0.0043, "AAA": -0.007718, "BBB": -0.007718},
+      {"date": "2026-01-16", "SPY": -0.007974, "AAA": 0.004053, "BBB": 0.004053},
+      {"date": "2026-01-17", "SPY": -0.000363, "AAA": -0.002374, "BBB": -0.002374},
+      {"date": "2026-01-18", "SPY": 0.007428, "AAA": 0.008943, "BBB": 0.008943},
+      {"date": "2026-01-19", "SPY": -0.000522, "AAA": -0.013318, "BBB": -0.013318},
+      {"date": "2026-01-20", "SPY": 0.002671, "AAA": 0.016431, "BBB": 0.016431},
+      {"date": "2026-01-21", "SPY": -0.000467, "AAA": 0.016775, "BBB": 0.016775},
+      {"date": "2026-01-22", "SPY": 0.009194, "AAA": 0.009092, "BBB": 0.009092},
+      {"date": "2026-01-23", "SPY": 0.007846, "AAA": 0.006637, "BBB": 0.006637},
+      {"date": "2026-01-24", "SPY": -0.000806, "AAA": -0.010847, "BBB": -0.010847},
+      {"date": "2026-01-25", "SPY": -0.006622, "AAA": 0.004824, "BBB": 0.004824},
+      {"date": "2026-01-26", "SPY": -0.002043, "AAA": 0.014662, "BBB": 0.014662},
+      {"date": "2026-01-27", "SPY": -0.006684, "AAA": -0.010073, "BBB": -0.010073},
+      {"date": "2026-01-28", "SPY": 0.005139, "AAA": 0.00115, "BBB": 0.00115},
+      {"date": "2026-02-01", "SPY": -0.009975, "AAA": -0.007617, "BBB": -0.007617},
+      {"date": "2026-02-02", "SPY": 0.006892, "AAA": 0.001378, "BBB": 0.001378},
+      {"date": "2026-02-03", "SPY": -0.009569, "AAA": -0.019655, "BBB": -0.019655},
+      {"date": "2026-02-04", "SPY": -0.011437, "AAA": 0.002203, "BBB": 0.002203},
+      {"date": "2026-02-05", "SPY": 0.002328, "AAA": 0.003094, "BBB": 0.003094},
+      {"date": "2026-02-06", "SPY": 0.007038, "AAA": -0.0099, "BBB": -0.0099},
+      {"date": "2026-02-07", "SPY": 0.007598, "AAA": -0.000543, "BBB": -0.000543},
+      {"date": "2026-02-08", "SPY": -0.006786, "AAA": -0.003091, "BBB": -0.003091},
+      {"date": "2026-02-09", "SPY": -0.006137, "AAA": 0.012108, "BBB": 0.012108},
+      {"date": "2026-02-10", "SPY": 0.007932, "AAA": 0.012117, "BBB": 0.012117},
+      {"date": "2026-02-11", "SPY": 0.011648, "AAA": 0.000198, "BBB": 0.000198},
+      {"date": "2026-02-12", "SPY": -0.002905, "AAA": -0.015545, "BBB": -0.015545},
+      {"date": "2026-02-13", "SPY": -0.000372, "AAA": 0.018246, "BBB": 0.018246},
+      {"date": "2026-02-14", "SPY": -0.006657, "AAA": -0.005041, "BBB": -0.005041},
+      {"date": "2026-02-15", "SPY": -0.004881, "AAA": 0.001285, "BBB": 0.001285},
+      {"date": "2026-02-16", "SPY": 0.004643, "AAA": 0.014488, "BBB": 0.014488},
+      {"date": "2026-02-17", "SPY": -0.01139, "AAA": 0.016439, "BBB": 0.016439}
+    ]
+  },
+  "spy_today_return": 0.4,
+  "derivation": "Verified live against the real synthetic_history.build_replay_day (not assumed): at tick 1, AAA's stamped last_percent_change = (101.0 - 100.0) / 100.0 = 0.01 exactly (same formula as the non-gapped golden), while BBB -- which has no bar entry for tick 1 in intraday_by_date -- gets last_percent_change=None (dict.get default; tick_lpc never receives a BBB entry because the outer `if ticker in intraday_by_date[date_str] and i < len(...)` guard is False for that ticker/tick). No exception raised, no NaN/inf produced. This reproduces r1-review's independent empirical finding exactly (ADDENDUM 7)."
+}

@@ -15,6 +15,7 @@ import optuna
 import acceptance_gate as _acceptance_gate
 import database
 import math_engine
+import regime_classifier
 import synthetic_history
 from advisors import divergence_explainer as _de
 from advisors import overfitting_conscience as _oc
@@ -72,6 +73,19 @@ def _replay_execution_start_time() -> str:
     return alpha_bot_execution.EXECUTION_START_TIME
 
 
+def _replay_execution_start_offset_minutes(execution_start_hhmm: str) -> int:
+    """Return EXECUTION_START_TIME's minute-bar offset past the 09:30 ET
+    session open (tick_idx 0).
+
+    Single source of truth for the ``(h - 9) * 60 + (m - 30)`` formula,
+    shared by ``_replay_in_open_window_grace`` (N-3, VWAP-grace suppression
+    window) and ``_replay_in_action_phase`` (AC-5/F6, the action-phase gate)
+    so the two consumers can never drift apart.
+    """
+    h, m = execution_start_hhmm.split(":")
+    return (int(h) - 9) * 60 + (int(m) - 30)
+
+
 def _replay_in_open_window_grace(
     tick_idx: int, execution_start_hhmm: str, grace_minutes: int
 ) -> bool:
@@ -96,11 +110,29 @@ def _replay_in_open_window_grace(
         + grace_minutes). AC-5 / N-3 — closes the replay-vs-production
         grace-window misalignment.
     """
-    h, m = execution_start_hhmm.split(":")
     # The session opens at 09:30 ET; tick_idx 0 == 09:30. exec_start sits
     # this many minutes past tick 0.
-    start_offset = (int(h) - 9) * 60 + (int(m) - 30)
+    start_offset = _replay_execution_start_offset_minutes(execution_start_hhmm)
     return start_offset <= tick_idx < start_offset + grace_minutes
+
+
+def _replay_in_action_phase(tick_idx: int, execution_start_hhmm: str) -> bool:
+    """Return True iff `tick_idx` is at or after EXECUTION_START_TIME's
+    session-open-anchored offset — i.e. production's ACTION PHASE would have
+    run on this tick.
+
+    AC-5/F6 (DISTINCT from and NOT satisfied by the N-3 VWAP-grace gate
+    above): production's entire action phase — para-arm, MC arm/disarm,
+    trailing-stop confirm, TP confirm, VWAP checks, and exit firing — never
+    runs before EXECUTION_START_TIME (the hard
+    ``if current_time < market_open and not force_run: return`` gate,
+    alpha_bot_execution.py:951-953). Only the DATA phase (HWM tracking) runs
+    unconditionally from the true 09:30 session open
+    (alpha_bot_execution.py:876-885). tick_idx < the offset means the action
+    phase has not opened yet.
+    """
+    start_offset = _replay_execution_start_offset_minutes(execution_start_hhmm)
+    return tick_idx >= start_offset
 
 
 # --- PORT-LEVEL REPLAY BLIND SPOT (AC-8 / plan D-C3b) ---
@@ -1124,6 +1156,7 @@ def _replay_exit_tick(
     p,
     grace_minutes,
     execution_start_hhmm: str = "09:30",
+    exit_confirm_ticks: int = math_engine.EXIT_CONFIRM_TICKS,
 ):
     """Run ONE replay tick of the production exit path; mutate `state` in place.
 
@@ -1143,13 +1176,18 @@ def _replay_exit_tick(
 
     `state` is a mutable dict carrying per-position transient state across
     ticks within a single day. `n_ticks` is the day's tick count, used to
-    derive time_ratio from the actual session length.
+    derive time_ratio from the actual session length. `exit_confirm_ticks`
+    (AC-4/F5) is the regime-resolved confirm-tick count a day-level caller
+    may pass through to compute_exit_confirmation; it defaults to the same
+    module constant compute_exit_confirmation itself defaults to, so a
+    caller that never resolves a regime label sees unchanged behavior.
     """
     ret = tick.get("return", 0.0)
     # mc_prob may be the None sentinel (MC unavailable / insufficient MC
     # history) — production's run_monte_carlo None contract. mc_available
     # gates every MC-driven branch exactly as production does; an absent MC
-    # opinion drives no arm, no disarm, no TP transition, and no MC veto.
+    # opinion drives no disarm and no TP transition, but DOES fail-open the
+    # arm (MA-10, below).
     mc = tick.get("mc_prob", 50.0)
     mc_available = mc is not None
     vol = tick.get("vol", 1.0)
@@ -1159,9 +1197,21 @@ def _replay_exit_tick(
     take_profit_mc = p.get("TAKE_PROFIT_MC_PCT", 5.0)
     trigger_threshold = p.get("TRIGGER_THRESHOLD_PCT", 15.0)
 
+    # DATA PHASE (alpha_bot_execution.py:876-885): HWM tracking runs
+    # unconditionally from the true 09:30 session open, even before
+    # EXECUTION_START_TIME.
     if ret > state["hwm"]:
         state["hwm"] = ret
     safe_hwm = max(state["hwm"], ret)
+
+    # AC-5/F6: production's ACTION PHASE (para-arm through firing, below)
+    # does not run at all before EXECUTION_START_TIME — see
+    # _replay_in_action_phase's docstring for the exact production gate this
+    # mirrors. This is DISTINCT from the N-3 VWAP-grace suppression further
+    # down, which only silences VWAP signals inside a grace window AFTER the
+    # action phase has already opened.
+    if not _replay_in_action_phase(tick_idx, execution_start_hhmm):
+        return None
 
     # --- PARABOLIC SQUEEZE LOGIC ---
     para_threshold = p.get("PARABOLIC_VELOCITY_THRESHOLD", 2.0)
@@ -1176,11 +1226,22 @@ def _replay_exit_tick(
     if should_arm:
         state["para_armed"] = True
 
-    # MC arm / disarm — gated on mc_available (alpha_bot_execution.py
-    # 1140-1163). An absent MC opinion drives neither an arm nor a disarm.
+    # MC arm / disarm (alpha_bot_execution.py:1302-1347). MA-10 fail-open: an
+    # ABSENT MC opinion (mc_available=False) ARMS the protective stop — an
+    # absent second opinion must never silently leave it dark. The
+    # EXIT_CONFIRM_TICKS ladder below still gates the actual liquidation, so
+    # a transient one-tick MC gap cannot trigger a sale on its own. should_arm
+    # is reset every tick, matching production's should_arm = False at the
+    # top of this block. Disarm still REQUIRES an available, extreme MC
+    # reading with a positive return — MC-absent can never disarm.
+    should_arm = False
     if mc_available and take_profit_mc <= mc < trigger_threshold:
-        if not state["armed"]:
-            state["armed"] = True
+        should_arm = True
+    elif not mc_available:
+        should_arm = True  # MA-10 fail-open (alpha_bot_execution.py:1324-1326)
+
+    if should_arm and not state["armed"]:
+        state["armed"] = True
     elif state["armed"]:
         if mc_available and mc > (trigger_threshold * 2) and ret > 0.0:
             state["armed"] = False
@@ -1220,11 +1281,14 @@ def _replay_exit_tick(
     )
 
     # Check 1: Trailing Stop — the canonical math_engine primitive. It owns
-    # MAGNITUDE_FLOOR_PCT, MC_BREAKDOWN_THRESHOLD and EXIT_CONFIRM_TICKS; the
-    # replay never duplicates those exit-rule literals (AC-1). The replay passes
+    # MAGNITUDE_FLOOR_PCT and MC_BREAKDOWN_THRESHOLD; the replay never
+    # duplicates those exit-rule literals (AC-1). The replay passes
     # prob_underperforming=mc to the SAME primitive, so the corrected gate
     # (>= MC_BREAKDOWN_THRESHOLD) flows through automatically — replay parity is
     # preserved by a value-preserving rename (mc local is unchanged).
+    # exit_confirm_ticks (AC-4/F5) is passed EXPLICITLY, never left to
+    # compute_exit_confirmation's own module-level default, so a day-level
+    # caller's regime-resolved tick count actually reaches this call.
     state["below_stop_count"], is_trailing_hit = math_engine.compute_exit_confirmation(
         armed=state["armed"],
         is_triggered=False,
@@ -1232,6 +1296,7 @@ def _replay_exit_tick(
         stop_trigger_level=stop_level,
         prob_underperforming=mc,
         current_below_stop_count=state["below_stop_count"],
+        exit_confirm_ticks=exit_confirm_ticks,
     )
 
     # Check 2: Take Profit — the shared, pure math_engine.compute_tp_confirmation
@@ -1320,15 +1385,25 @@ def replay_exit_sequence(ticks, params, *, grace_minutes):
     """Run the replay's per-tick exit loop over one day; return the decision trace.
 
     Pure helper exposing the replay's per-tick exit decision (AC-6). Returns
-    one {"tick_idx", "exit_reason"} dict per executed tick — exit_reason is the
-    resolve_trigger_priority string on the tick the position exits, None on
-    every non-exit tick. The loop stops after the first exit (production
-    commits the exit and freezes the symphony for the day).
+    one {"tick_idx", "exit_reason", "armed", "tp_armed", "para_armed"} dict
+    per executed tick — exit_reason is the resolve_trigger_priority string on
+    the tick the position exits, None on every non-exit tick; the three
+    *_armed keys mirror test_c3_replay_exit_parity._production_exit_sequence's
+    output shape so AC-6's parity battery can compare STATE, not just the
+    exit decision. The loop stops after the first exit (production commits
+    the exit and freezes the symphony for the day).
 
     Runs the SAME _replay_exit_tick per-tick core that run_simulation and
     _collect_sim_returns call — so this helper IS the replay path, not a copy.
     It is the observability seam the bit-identical AC-6 parity test compares
     against the production exit harness.
+
+    AC-4 is deliberately NOT wired through here: day-level regime resolution
+    lives above this single-day entry point (see _collect_sim_returns_dated),
+    and _production_exit_sequence's AC-6 scenarios all use regime_label=None
+    to match this function's implicit default — extending this signature
+    would break that alignment (test_ac6_bar_level_replay_production_parity.py
+    module docstring).
     """
     state = _fresh_replay_state()
     n_ticks = len(ticks)
@@ -1346,7 +1421,15 @@ def replay_exit_sequence(ticks, params, *, grace_minutes):
             grace_minutes,
             execution_start_hhmm=execution_start_hhmm,
         )
-        out.append({"tick_idx": tick_idx, "exit_reason": reason})
+        out.append(
+            {
+                "tick_idx": tick_idx,
+                "exit_reason": reason,
+                "armed": state["armed"],
+                "tp_armed": state["tp_armed"],
+                "para_armed": state["para_armed"],
+            }
+        )
         if reason is not None:
             break
     return out
@@ -1428,6 +1511,39 @@ def _collect_sim_returns(
     return daily_returns
 
 
+def _replay_resolve_regime_exit_ticks(dates_data: dict, sorted_dates: list, date_idx: int) -> int:
+    """AC-4/F5: recompute the regime-conditional exit_confirm_ticks fresh for
+    one replay day, using ONLY EOD daily returns from dates STRICTLY BEFORE
+    ``sorted_dates[date_idx]`` (no lookahead — walk-forward integrity).
+
+    Mirrors production's apply_regime_exit_adjustment(regime_label, base_ticks)
+    composition (alpha_bot_execution.py:1436-1448), but resolves the label via
+    regime_classifier.classify_regime() over the replay's own trailing history
+    instead of the live per-symphony regime-label cache accessor in
+    database.py — reading that FORBIDDEN in replay code (ruled contract, PM
+    addendum 2 @ a46be889): it is a single-row latest-wins live table with no
+    per-historical-date granularity, so consulting it for a walk-forward day
+    would inject TODAY's label into every one of the ~250 replayed days.
+
+    Insufficient trailing history (< regime_classifier.MIN_LABEL_SERIES_LENGTH)
+    -> classify_regime returns None -> apply_regime_exit_adjustment's own safe
+    default (base_ticks unchanged) — never an invented replay-only fallback.
+
+    `sorted_dates`/`date_idx` are precomputed once per symphony by the caller
+    (not resorted per date) so this stays O(window) per call.
+    """
+    trailing_dates = sorted_dates[:date_idx][-regime_classifier.MIN_LABEL_SERIES_LENGTH :]
+    trailing_returns = [
+        dates_data[d][-1].get("return", 0.0) / RETURN_PCT_TO_FRACTION
+        for d in trailing_dates
+        if dates_data.get(d)
+    ]
+    label = regime_classifier.classify_regime(trailing_returns)
+    return math_engine.apply_regime_exit_adjustment(
+        regime_label=label, base_ticks=math_engine.EXIT_CONFIRM_TICKS
+    )
+
+
 def _collect_sim_returns_dated(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
     """Date-labeled variant of _collect_sim_returns for the CSCV PBO gate.
 
@@ -1440,6 +1556,12 @@ def _collect_sim_returns_dated(p, history_data, acc_sym_ids, current_date_str, d
     (which return flat floats) do not intercept the dated-variant call.  The two
     functions share the same per-tick exit logic via ``_replay_exit_tick`` and
     ``_fresh_replay_state``; the only difference is the return type.
+
+    AC-4/F5: this is the per-date replay loop that resolves the
+    regime-conditional exit_confirm_ticks fresh per simulated day (see
+    _replay_resolve_regime_exit_ticks) — the day-level orchestration
+    test_ac4_regime_conditional_exit_ticks.py's no-lookahead test drives
+    directly.
     """
     dated_returns: list[tuple[str, float]] = []
     grace_minutes = _replay_grace_minutes()
@@ -1447,6 +1569,8 @@ def _collect_sim_returns_dated(p, history_data, acc_sym_ids, current_date_str, d
 
     for sym_id in acc_sym_ids:
         dates_data = history_data.get(sym_id, {})
+        sorted_dates = sorted(dates_data.keys())
+        date_to_idx = {d: i for i, d in enumerate(sorted_dates)}
         for date, ticks in dates_data.items():
             if not ticks:
                 continue
@@ -1454,6 +1578,9 @@ def _collect_sim_returns_dated(p, history_data, acc_sym_ids, current_date_str, d
             triggered_return = None
             eod_return = ticks[-1]["return"]
             n_ticks = len(ticks)
+            _regime_exit_ticks = _replay_resolve_regime_exit_ticks(
+                dates_data, sorted_dates, date_to_idx[date]
+            )
             for tick_idx, tick in enumerate(ticks):
                 reason_str = _replay_exit_tick(
                     day_state,
@@ -1463,6 +1590,7 @@ def _collect_sim_returns_dated(p, history_data, acc_sym_ids, current_date_str, d
                     p,
                     grace_minutes,
                     execution_start_hhmm=execution_start_hhmm,
+                    exit_confirm_ticks=_regime_exit_ticks,
                 )
                 if reason_str is not None:
                     penalty = deviation_dict.get(reason_str, -0.20)
