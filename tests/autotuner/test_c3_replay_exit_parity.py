@@ -236,7 +236,15 @@ def _production_exit_sequence(
             # below_stop_count, tp_armed, above_tp_count, para_armed,
             # prev_return, breakeven_locked, hwm_hold_ticks, vwap_ticks,
             # vwap_bleed_ticks all stay exactly as they were.
-            out.append({"tick_idx": tick_idx, "exit_reason": None})
+            out.append(
+                {
+                    "tick_idx": tick_idx,
+                    "exit_reason": None,
+                    "armed": armed,
+                    "tp_armed": tp_armed,
+                    "para_armed": para_armed,
+                }
+            )
             continue
 
         para_threshold = params.get("PARABOLIC_VELOCITY_THRESHOLD", 2.0)
@@ -348,10 +356,26 @@ def _production_exit_sequence(
                 is_vwap_bleed_broken=is_vwap_bleed_broken,
                 is_trailing_stop_hit=is_trailing_hit,
             )
-            out.append({"tick_idx": tick_idx, "exit_reason": reason})
+            out.append(
+                {
+                    "tick_idx": tick_idx,
+                    "exit_reason": reason,
+                    "armed": armed,
+                    "tp_armed": tp_armed,
+                    "para_armed": para_armed,
+                }
+            )
             return out
 
-        out.append({"tick_idx": tick_idx, "exit_reason": None})
+        out.append(
+            {
+                "tick_idx": tick_idx,
+                "exit_reason": None,
+                "armed": armed,
+                "tp_armed": tp_armed,
+                "para_armed": para_armed,
+            }
+        )
 
     return out
 
