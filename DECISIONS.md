@@ -6353,3 +6353,99 @@ disarm-band ruling + retune, HARD-GATED on this entry's residual checklist:
 AC-6's MC-path-count precision, AC-4's undated-path wiring, AC-7's
 parabolic walk-forward variance demo) are NOT covered by this entry -- see
 the program charter's phase ordering.
+
+## DE-MATH-R2-001 -- Math Remediation R2: honest validation statistics -- CPCV genuine consumption, adoption holdout, frozen-eval metric, R1-tripwire clearance, quantstats input convention (2026-07-17)
+
+Branch: `fix/math-r2` | Base: `origin/main` (post-R1) `3835f8e6` | HEAD (this entry): `19087788`
+
+### Summary
+
+R2 is the third executed phase of the math remediation program launched from
+the app-math audit (`DE-MATH-AUDIT-001`, `docs/audit/math-audit/VERDICT.md`).
+It targets the autotuner's validation-statistics layer: CPCV cross-validation
+was a structural no-op (MA-2, CRITICAL) -- `_aggregate_cpcv_paths`
+(`autotuner.py:595-622`) attributed every fold's combined 2-group test-date
+union onto BOTH of that fold's path slots, so all 5 assembled OOS paths
+converged to the identical full in-sample window and trial selection was
+in-sample dressed as walk-forward validation; the adoption cascade's "OOS
+validation" scored the Optuna winner on a subset of its own selection window
+with a hardcoded `purge_integrity_ok=True` false attestation (MA-5, HIGH);
+frozen-eval produced no metric at all under the production CRRA-EU objective
+(MA-9, HIGH); R1's AC-4 `xfail` tripwire (regime-conditional exit ticks
+unwired from the undated Optuna search path, `DE-MATH-R1-001`) is targeted
+for clearance; and the advisor-path quantstats unit boundary (M1, folded in
+from R4 per this cycle's plan Decision -- "keeps R4 pure advisor-classification
+work") is targeted for a fix. `feature-plans/math-r2.md` AC-1..6 plus dated
+addenda (`911fc508`, `19087788` as of this entry) is the plan of record --
+the addenda ARE the decision record for this cycle, same convention as R1.
+No live disarm-band or squeeze-floor changes (MA-4/11 -- R3), no advisor-gate
+changes (MA-3 shipped R0), no retune this cycle. Ship path: PR to origin
+(trade-touching -- autotuner selection/adoption feeds live params).
+
+**This entry is a living skeleton, filled in incrementally as each AC lands**
+(Summary + finding-ID table + the ruled residuals below are current as of
+`19087788`; per-AC Decision sections are added as r2-stats/r2-analytics/
+r2-test land each fix, exactly as `DE-MATH-R1-001` was built up commit by
+commit -- see that entry's own "updated in place, never re-created" note).
+
+**Finding-ID translation table:**
+
+| VERDICT.md ID | math-r2.md AC | One-line | Status @ this entry |
+|---|---|---|---|
+| MA-2 (CRITICAL) | AC-1 | CPCV paths were not genuinely disjoint OOS windows -- per-group date-attribution bug in `_aggregate_cpcv_paths` (reframed from the plan's original "unconsumed train_dates" framing per ADDENDUM `911fc508`; pending r2-stats's independent mechanism-trace confirmation before GREEN -- if refuted, the escalation clause reopens the honest-single-fold-fallback alternative) | PLANNED |
+| MA-5 (HIGH) | AC-2 | Adoption cascade "OOS validation" scores the winner in-sample; `purge_integrity_ok=True` hardcoded (attestation branch bounded on r2-stats's AC-1 trace, ADDENDUM `911fc508`) | PLANNED |
+| MA-9 (HIGH) | AC-3 | Frozen-eval produces no metric under the CRRA-EU objective | PLANNED |
+| R1 tripwire (`DE-MATH-R1-001` AC-4 residual) | AC-4 | Regime-conditional `exit_confirm_ticks` unwired from the undated Optuna search-score path (`run_simulation`/`_collect_sim_returns`) | PLANNED |
+| M1 (MEDIUM, folded in from R4) | AC-5 | Advisor-path quantstats compounds log returns with the simple-return formula -- reframed as a log-vs-simple CATEGORY error, not a scale bug (ADDENDUM `911fc508`); ruled as a consumer-side `input_convention` kwarg on `compute_quantstats_metrics` (`simple_pct` default byte-identical, `log_pct` = `exp(v/100)-1`), NOT a client-boundary conversion -- r2-analytics's sweep found the client-boundary fix would double-convert the same arrays feeding the PBO/BHY gate (ADDENDUM 2, `19087788`) | PLANNED |
+| (exit criterion, not a single finding) | AC-6 | A nightly-run probe demonstrating selection/adoption numbers are genuinely out-of-sample, kept as a regression test | PLANNED |
+
+### Residuals ruled this round (ADDENDUM 2, `19087788` -- recorded now, not gated on AC landings)
+
+**1. Latent log-decimal-into-PBO finding (recorded, NOT fixed this cycle):**
+r2-analytics's AC-5 consumer sweep surfaced that the PBO/BHY gate
+(`BacktestCandidate`/`_fold_transform_single`) receives LOG-decimal returns
+(`log x100 / RETURN_PCT_TO_FRACTION`) where `math_engine.compute_pbo`'s
+decimal contract presumably assumes simple-decimal -- a second-order unit
+divergence, distinct from and uncorrected by AC-5's own compounding-formula
+fix. Out of R2 scope; filed as an R3/R4 scoping candidate alongside MA-8.
+
+**2. Group-C dormant blend (documented landmine, not fixed):**
+`advisors/strategy_builder_engine.py:532`/`:618` mixes log x100 with
+simple-pct returns pre-boundary. Currently unreachable -- both production
+callers pass `live_returns=[]` -- so this is left in place and documented
+rather than fixed blind (open-question-with-defensible-default, the
+project's standing L1 precedent: fix the doc/record, not the code, until a
+real caller exists). A future cycle that wires a genuine `live_returns`
+caller must resolve this before that caller goes live.
+
+**3. MAPERF-15 RESOLVED, tracks-logic (out-of-band solo probe, not a
+math-r2 AC):** the live-sold-symphonies-book-~$0-saved fear (VERDICT.md
+ma-perf 15, conditional) is REFUTED -- `last_percent_change` tracks
+post-sale logic rather than the frozen sold basket (high observed
+confidence: `/go-to-cash` trace, raw-lpc source proof, two independent
+production pulls showing post-trigger movement). `DE-GUARD-ALPHA-SAVED-001`'s
+existing design stands unchanged, no fix required. See
+`docs/research/composer/maperf15-post-sale-lpc-semantics.md`. Backlog item
+opened: a passive staleness tripwire riding the F7 fictional-MC-history
+quarantine work (VERDICT.md ma-core F7), not scheduled this cycle. Charter
+(`feature-plans/math-remediation-program.md`) phase-2 droplet-check item 6
+updated in place to record this resolution.
+
+### Verification
+
+**OUTSTANDING** -- no code has landed as of `19087788` (plan-round only).
+This section is filled in, update-in-place, as reviewer verdict / PM battery
+gate / PM live E2E each land -- never re-created as a new entry, per the
+`DE-MATH-R1-001` convention.
+
+### Reference
+
+`DE-MATH-R2-001`; branch `fix/math-r2`; plan `feature-plans/math-r2.md` @
+`ea89b5a4` + addenda (`911fc508`, `19087788`); findings basis
+`docs/audit/math-audit/VERDICT.md` (`DE-MATH-AUDIT-001`); program charter
+`feature-plans/math-remediation-program.md` (this cycle's M1 fold-in and
+MAPERF-15 resolution patched into the charter's R2/R4 bullets and
+phase-2-check item 6, same commit as this entry). Predecessor
+`DE-MATH-R1-001` (PR #97, merged `c38af283`). R3 (live disarm-band ruling +
+retune) remains HARD-GATED on R1+R2's combined residual checklist -- not
+covered by this entry.
