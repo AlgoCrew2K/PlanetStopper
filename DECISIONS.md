@@ -6354,69 +6354,244 @@ AC-6's MC-path-count precision, AC-4's undated-path wiring, AC-7's
 parabolic walk-forward variance demo) are NOT covered by this entry -- see
 the program charter's phase ordering.
 
-## DE-MATH-R2-001 -- Math Remediation R2: honest validation statistics -- CPCV genuine consumption, adoption holdout, frozen-eval metric, R1-tripwire clearance, quantstats input convention (2026-07-17)
+## DE-MATH-R2-001 -- Math Remediation R2: honest validation statistics -- CPCV split-level scoring, train-only adoption holdout, frozen-eval metric, R1-tripwire clearance, quantstats producer-side simple-return convention (2026-07-17)
 
-Branch: `fix/math-r2` | Base: `origin/main` (post-R1) `3835f8e6` | HEAD (this entry): `19087788`
+Branch: `fix/math-r2` | Base: `origin/main` (post-R1) `3835f8e6` | HEAD (this entry): `148e43ba` (plan round CLOSED -- r2-test/r2-stats/r2-analytics/r2-review all APPROVED)
 
 ### Summary
 
 R2 is the third executed phase of the math remediation program launched from
 the app-math audit (`DE-MATH-AUDIT-001`, `docs/audit/math-audit/VERDICT.md`).
-It targets the autotuner's validation-statistics layer: CPCV cross-validation
-was a structural no-op (MA-2, CRITICAL) -- `_aggregate_cpcv_paths`
-(`autotuner.py:595-622`) attributed every fold's combined 2-group test-date
-union onto BOTH of that fold's path slots, so all 5 assembled OOS paths
-converged to the identical full in-sample window and trial selection was
-in-sample dressed as walk-forward validation; the adoption cascade's "OOS
-validation" scored the Optuna winner on a subset of its own selection window
-with a hardcoded `purge_integrity_ok=True` false attestation (MA-5, HIGH);
-frozen-eval produced no metric at all under the production CRRA-EU objective
-(MA-9, HIGH); R1's AC-4 `xfail` tripwire (regime-conditional exit ticks
-unwired from the undated Optuna search path, `DE-MATH-R1-001`) is targeted
-for clearance; and the advisor-path quantstats unit boundary (M1, folded in
-from R4 per this cycle's plan Decision -- "keeps R4 pure advisor-classification
-work") is targeted for a fix. `feature-plans/math-r2.md` AC-1..6 plus dated
-addenda (`911fc508`, `19087788` as of this entry) is the plan of record --
-the addenda ARE the decision record for this cycle, same convention as R1.
-No live disarm-band or squeeze-floor changes (MA-4/11 -- R3), no advisor-gate
-changes (MA-3 shipped R0), no retune this cycle. Ship path: PR to origin
-(trade-touching -- autotuner selection/adoption feeds live params).
+It targets the autotuner's validation-statistics layer. Two of this cycle's
+five findings went through multi-step plan-round corrections before the
+design settled -- both are recorded honestly below, including the falsified
+intermediate hypotheses, per the same "agreement != truth" rule
+`DE-MATH-R1-001` ADDENDUM 7 established. **Final ruled design, all five:**
 
-**This entry is a living skeleton, filled in incrementally as each AC lands**
-(Summary + finding-ID table + the ruled residuals below are current as of
-`19087788`; per-AC Decision sections are added as r2-stats/r2-analytics/
-r2-test land each fix, exactly as `DE-MATH-R1-001` was built up commit by
-commit -- see that entry's own "updated in place, never re-created" note).
+- **MA-2 (CRITICAL, AC-1):** CPCV was a structural no-op -- all 5 assembled
+  "paths" converged to the identical full ~200-day window, so trial
+  selection was in-sample dressed as walk-forward validation. Ruled fix:
+  **SPLIT-LEVEL SCORING**, not a path-aggregation repair -- the audit's own
+  "path" concept is a refit-world construct that has no honest meaning
+  without per-fold refit (see "AC-1 ruling history" below for why).
+- **MA-5 (HIGH, AC-2):** the adoption cascade's "OOS validation" scored the
+  Optuna winner on a subset of its own selection window, with a hardcoded
+  `purge_integrity_ok=True` false attestation. Ruled fix: trial scoring
+  restricted to the TRAIN-only purged window, making `history_test` a
+  genuine never-seen holdout; the attestation RESOLVES to COMPUTED-FOR-REAL
+  (purge genuinely constrains the train-only construction).
+- **MA-9 (HIGH, AC-3):** frozen-eval produced no metric under the production
+  CRRA-EU objective. Ruled fix: a real CRRA-EU metric into the
+  already-wired persisted column.
+- **R1 tripwire (AC-4):** regime-conditional `exit_confirm_ticks` gets wired
+  into the undated Optuna search-score path, reusing R1's
+  `_replay_resolve_regime_exit_ticks`; `test_ac4_r2_residual_tripwire.py`'s
+  `xfail` marker is removed.
+- **M1 (MEDIUM, folded in from R4, AC-5):** advisor-path quantstats
+  compounded log returns with the simple-return formula. Ruled fix:
+  **PRODUCER-SIDE** -- `composer_backtest_client._extract_returns` now
+  emits genuinely SIMPLE returns (`curr_val/prev_val - 1`, not `math.log`),
+  documented as the emission contract. This fix also resolves, for free, a
+  previously-latent SECOND instance of the same category error in the
+  PBO/BHY gate path (see "AC-5 ruling history" below) -- MA-3's category
+  half, left untraced when R1 fixed MA-3's scale half.
+
+No live disarm-band or squeeze-floor changes (MA-4/11 -- R3), no advisor-gate
+changes beyond the AC-5 fold-in (MA-3 shipped R0), no retune this cycle.
+Ship path: PR to origin (trade-touching -- autotuner selection/adoption
+feeds live params). `feature-plans/math-r2.md` AC-1..6 plus FOUR dated
+addenda (`911fc508`, `19087788`, `85242888`, `148e43ba`) is the plan of
+record -- the addenda ARE the decision record for this cycle, same
+convention as R1's seven.
+
+**This entry is a living skeleton, filled in incrementally as each AC
+lands.** The Summary, finding-ID table, both ruling-history subsections, and
+the residuals below are current as of `148e43ba` (plan round closed, RED not
+yet started). Per-AC Decision sections (with test/commit citations) are
+added as r2-stats/r2-analytics/r2-test land each fix, exactly as
+`DE-MATH-R1-001` was built up commit by commit -- see that entry's own
+"updated in place, never re-created" note.
 
 **Finding-ID translation table:**
 
-| VERDICT.md ID | math-r2.md AC | One-line | Status @ this entry |
+| VERDICT.md ID | math-r2.md AC | Ruled design (final) | Status @ this entry |
 |---|---|---|---|
-| MA-2 (CRITICAL) | AC-1 | CPCV paths were not genuinely disjoint OOS windows -- per-group date-attribution bug in `_aggregate_cpcv_paths` (reframed from the plan's original "unconsumed train_dates" framing per ADDENDUM `911fc508`; pending r2-stats's independent mechanism-trace confirmation before GREEN -- if refuted, the escalation clause reopens the honest-single-fold-fallback alternative) | PLANNED |
-| MA-5 (HIGH) | AC-2 | Adoption cascade "OOS validation" scores the winner in-sample; `purge_integrity_ok=True` hardcoded (attestation branch bounded on r2-stats's AC-1 trace, ADDENDUM `911fc508`) | PLANNED |
-| MA-9 (HIGH) | AC-3 | Frozen-eval produces no metric under the CRRA-EU objective | PLANNED |
-| R1 tripwire (`DE-MATH-R1-001` AC-4 residual) | AC-4 | Regime-conditional `exit_confirm_ticks` unwired from the undated Optuna search-score path (`run_simulation`/`_collect_sim_returns`) | PLANNED |
-| M1 (MEDIUM, folded in from R4) | AC-5 | Advisor-path quantstats compounds log returns with the simple-return formula -- reframed as a log-vs-simple CATEGORY error, not a scale bug (ADDENDUM `911fc508`); ruled as a consumer-side `input_convention` kwarg on `compute_quantstats_metrics` (`simple_pct` default byte-identical, `log_pct` = `exp(v/100)-1`), NOT a client-boundary conversion -- r2-analytics's sweep found the client-boundary fix would double-convert the same arrays feeding the PBO/BHY gate (ADDENDUM 2, `19087788`) | PLANNED |
-| (exit criterion, not a single finding) | AC-6 | A nightly-run probe demonstrating selection/adoption numbers are genuinely out-of-sample, kept as a regression test | PLANNED |
+| MA-2 (CRITICAL) | AC-1 | Split-level scoring: each of the 15 purged CSCV splits scored on its own 2-group test_dates; path aggregation retired from the scoring path | PLAN-RULED, RED pending |
+| MA-5 (HIGH) | AC-2 | Train-only purged window scoring makes `history_test` a genuine holdout; `purge_integrity_ok` resolves to computed-for-real | PLAN-RULED, RED pending |
+| MA-9 (HIGH) | AC-3 | Real CRRA-EU frozen-eval metric, reported into the already-wired persisted column | PLAN-RULED, RED pending |
+| R1 tripwire (`DE-MATH-R1-001` AC-4 residual) | AC-4 | Regime-conditional `exit_confirm_ticks` wired into the undated search-score path; xfail marker removed | PLAN-RULED, RED pending |
+| M1 (MEDIUM, folded in from R4) | AC-5 | Producer-side fix: `composer_backtest_client` emits simple (not log) returns; the `input_convention`-kwarg design is DEAD (no log producers remain) | PLAN-RULED, RED pending |
+| (exit criterion, not a single finding) | AC-6 | A nightly-run probe demonstrating selection/adoption numbers are genuinely out-of-sample, kept as a regression test | PLAN-RULED, RED pending |
 
-### Residuals ruled this round (ADDENDUM 2, `19087788` -- recorded now, not gated on AC landings)
+### AC-1 ruling history (three-step record -- never compressed to just the final answer)
 
-**1. Latent log-decimal-into-PBO finding (recorded, NOT fixed this cycle):**
-r2-analytics's AC-5 consumer sweep surfaced that the PBO/BHY gate
-(`BacktestCandidate`/`_fold_transform_single`) receives LOG-decimal returns
-(`log x100 / RETURN_PCT_TO_FRACTION`) where `math_engine.compute_pbo`'s
-decimal contract presumably assumes simple-decimal -- a second-order unit
-divergence, distinct from and uncorrected by AC-5's own compounding-formula
-fix. Out of R2 scope; filed as an R3/R4 scoping candidate alongside MA-8.
+**Step 1 (plan, `ea89b5a4`):** original framing -- "`_aggregate_cpcv_paths`
+reads only `test_dates`; `train_dates` + purge/embargo have zero
+consumers." Fix direction assumed: consume `train_dates` as CPCV intends.
 
-**2. Group-C dormant blend (documented landmine, not fixed):**
-`advisors/strategy_builder_engine.py:532`/`:618` mixes log x100 with
-simple-pct returns pre-boundary. Currently unreachable -- both production
-callers pass `live_returns=[]` -- so this is left in place and documented
-rather than fixed blind (open-question-with-defensible-default, the
-project's standing L1 precedent: fix the doc/record, not the code, until a
-real caller exists). A future cycle that wires a genuine `live_returns`
-caller must resolve this before that caller goes live.
+**Step 2 (ADDENDUM 1, `911fc508`) -- REFRAMED, later falsified:** r2-test's
+root-cause traced the defect more precisely to per-group date attribution
+in `_aggregate_cpcv_paths` (`autotuner.py:595-622`) -- each fold's COMBINED
+2-group `test_dates` union was hypothesized to be stamped onto BOTH of that
+fold's path slots, compounding over 15 folds until every path converges to
+the full window. Ratified as the LEADING hypothesis, pending r2-stats's
+independent trace.
+
+**Step 3 (ADDENDUM 3, `85242888`) -- ADDENDUM 1's hypothesis FALSIFIED by
+r2-test's own live probe (a ratification error owned on the record, the
+same "probe-before-build" discipline as R1's ADDENDUM 7):** canonical CPCV
+at N=6/k=2 FORCES every path to union all 6 groups by construction (phi=5
+paths x 3 disjoint splits each; a pre-existing GREEN test from the
+walk-forward-overhaul cycle correctly pins this path-completeness property).
+With NO per-fold refit, a date's guard_alpha is a pure function of
+`(ticks, params)` -- identical path date-sets therefore produce
+bitwise-identical path scores BY CONSTRUCTION. **No aggregation fix of any
+kind can produce distinct path scores** -- the "backtest path" is a
+REFIT-WORLD construct that has no honest meaning without refit; without
+refit, the CSCV-native honest granularity is the `C(N,k)`=15 split
+ensemble itself.
+
+**Final ruling (ADDENDUM 3, ratified by three independent derivations per
+ADDENDUM 4 -- r2-test's live probe, r2-stats's `phi=C(N-1,k-1)` bijection
+proof + 150-date empirical check, and the PM's refit-world argument):**
+**Option A -- SPLIT-LEVEL SCORING.** Score each of the 15 purged splits on
+its own 2-group `test_dates`; trial selection uses the existing
+haircut/CRRA machinery aggregating over the 15 split scores instead of 5
+path scores; `compute_crra_eu_tstat` and other dispersion consumers move to
+the split-score vector; PBO's `cscv_date_returns` is built in the same
+split-level loop (dated-return identity unchanged); `n_effective` additive
+accounting is preserved. Fallback Option B (honest single-fold split) was
+explicitly REJECTED -- 15 purged splits are strictly better than 1 fold,
+and dispersion consumers finally get real variance to work with.
+**Path machinery retirement:** `_aggregate_cpcv_paths` and path
+reconstruction are RETIRED FROM THE SCORING PATH -- deleted if r2-stats's
+consumer trace finds zero remaining consumers (no backwards-compat hacks),
+else kept with a documented non-scoring role; the pre-existing
+path-completeness tests get a root-cause SUPERSESSION verdict (they
+correctly pin a refit-world construct that the design no longer uses for
+scoring -- a documented supersede, never a blind deletion). **Cost
+correction (ADDENDUM 4):** 15 splits x ~1/3-window each is
+date-volume-NEUTRAL vs. today's 5 full-window paths -- the "3x more work"
+read of the plan-round discussion counted calls, not dates.
+
+**Restated observable contract (ADDENDUM 3):** (1) 15 split test-sets are
+pairwise-distinct, each a strict ~1/3 subset, purged; (2) per-split scores
+are not-all-identical on a discriminating fixture; (3) the trial-level
+selection statistic responds to a sub-window data change; (4) the
+5x-identical-full-window degeneracy pin is kept as the failing baseline;
+(5) the t-stat input vector has NON-ZERO variance on the discriminating
+fixture (today structurally zero -- the MA-2 damage, pinned explicitly).
+
+**AC-2 interaction (ADDENDUM 4):** fold-level purge bounds
+`_replay_resolve_regime_exit_ticks`'s trailing lookback -- purge genuinely
+load-bearing post-split-level-scoring, resolving ADDENDUM 1's open "does
+purge keep a role" question in the affirmative. `compute_pbo` runs its own
+S=8 CSCV, structurally unaffected by the split-level change -- only
+`cscv_date_returns`'s provenance changes.
+
+### AC-5 ruling history (three-step record)
+
+**Step 1 (plan, `ea89b5a4`):** original framing -- `analytics.py:370-375`
+compounds what `composer_backtest_client.py:182` emits as log return
+percent as if it were simple percent; audit-cited error magnitudes (CAGR
+-2pp/yr @1x vol, -30pp/yr @3x). Fix direction assumed: "one conversion at
+the boundary."
+
+**Step 2 (ADDENDUM 1, `911fc508`) -- REFRAMED as a category error:**
+r2-test's root-cause: this is a log-vs-simple CATEGORY error, not a scale
+bug -- `compute_quantstats_metrics` compounds via `prod(1+r)-1` (correct
+for simple returns) when the input is actually log returns (correct
+compounding is `exp(sum(r))-1`). Direction ruled: convert at the CLIENT
+boundary (`exp(r)-1`), CONDITIONAL on r2-analytics's consumer sweep proving
+no existing consumer is log-aware.
+
+**Step 3 (ADDENDUM 2, `19087788`) -- boundary DEVIATES to consumer-side,
+later superseded:** r2-analytics's sweep found the client-boundary
+conversion was DEAD ON ARRIVAL -- the same `returns_pct` arrays fed the
+PBO/BHY gate path (`BacktestCandidate`/`_fold_transform_single`), so
+emitting simple returns at the client would silently change the veto
+layer's live inputs with no AC/tests/audit basis to justify that change.
+Ruled instead: a consumer-side `input_convention` keyword on
+`compute_quantstats_metrics` (`simple_pct` default, byte-identical to
+today; `log_pct` = `exp(v/100)-1`), with explicit per-call-site
+discrimination across 3 "Group-B" sites, "Group-A" sites untouched, and a
+`ValueError` on an unrecognized convention. In the same addendum, a NEW
+LATENT finding was recorded (not yet fixed): the PBO gate itself receives
+LOG-decimal returns where `math_engine.compute_pbo`'s wealth-ratio contract
+(`W = 1 + r_i`) means simple-decimal -- an untraced second instance of the
+same category error, filed as an R3/R4 residual alongside MA-8.
+
+**Final ruling (ADDENDUM 4, `148e43ba`) -- REVISED to PRODUCER-SIDE,
+superseding ADDENDUM 2's consumer-side kwarg (the third and final boundary
+ruling):** r2-analytics's completed consumer sweep found (a) no consumer
+anywhere double-converts, and (b) the "latent PBO finding" from ADDENDUM 2
+is not separate territory -- it is the SAME bug, untraced back to its
+producer. R1 had already fixed MA-3's SCALE half
+(`backtest_gate_engine.py:686`'s `/RETURN_PCT_TO_FRACTION` division,
+pinned by `tests/advisors/test_pbo_unit_boundary.py`); the CATEGORY half
+survived because the trace back to `composer_backtest_client.py:182`'s
+`math.log()` call was never made at R1 time. Full chain (r2-analytics's
+citation trail): `composer_backtest_client.py:182` (`math.log(curr_val/
+prev_val)`, docstring at `:88` explicitly says "log returns") ->
+`strategy_builder_engine.py:996-997` / `frontrunner_builder.py:1603-1605` /
+`asset_swap_engine.py:926-954` / `logic_change_engine.py:650-677`
+(`r * 100.0`, still log-scale) -> `BacktestCandidate.dated_returns` ->
+`backtest_gate_engine.py:686` (`/RETURN_PCT_TO_FRACTION`) ->
+`math_engine.compute_pbo` (`math_engine.py:1908-1950`) ->
+`compute_crra_eu_objective` (`math_engine.py:1756-1781`, docstring:
+"daily return r_i (decimal fraction, e.g. 0.01 = 1%)", `W = max
+(WEALTH_ARG_FLOOR, 1 + r_i)`) -- `W=1+r` is only exact for simple returns,
+so PBO veto decisions were being computed on the wrong return category.
+**Ruled fix:** `composer_backtest_client._extract_returns` emits genuinely
+SIMPLE returns computed directly as `curr_val/prev_val - 1` (algebraically
+identical to `exp(log)-1`, but simpler and directly reviewable at the
+producer); the emission contract is documented in the docstring and pinned
+by a unit test. **The `input_convention` kwarg design from ADDENDUM 2 is
+DEAD** -- with no log producers left anywhere, `compute_quantstats_metrics`
+callers all feed simple percent and the Group-A/Group-B distinction
+dissolves. **ADDENDUM 2's "latent log-decimal-PBO residual" is thereby
+FIXED as a side effect of AC-5, not merely recorded** (see the Residuals
+section below for how this changes Residual 1's status from ADDENDUM 2).
+
+**Class-3 compounding rider (ADDENDUM 4, ruled IN the same PR):**
+`_fold_transform_single`'s `oos_alpha = sum(returns_pct)` is exact for log
+returns (`sum(log) = log(prod)`, monotone ranking) but becomes only a
+first-order approximation under simple returns -- close enough to flip
+accept/reject calls across candidates of different volatility. Ruled:
+compound genuinely (`prod(1 + r/100) - 1`, self-consistent across
+candidate/incumbent/SPY since all three flow through the identical
+transform) in the same PR as AC-5; `compute_sortino_tstat`'s per-day input
+shift is routed to blast-radius triage rather than assumed safe.
+
+**Fixture standard (ADDENDUM 2, still binding):** direction + relative
+vol-scaling (3x delta > 1x delta) + a Group-A zero-drift pin -- never the
+audit's illustrative absolute pp figures, which were specific to the
+pre-fix defect magnitude, not a golden target.
+
+### Residuals (status as of `148e43ba`, plan round closed)
+
+**1. Latent log-decimal-into-PBO finding -- RECORDED IN ADDENDUM 2, FIXED
+BY AC-5 (ADDENDUM 4), not a surviving residual:** originally filed as "out
+of R2 scope, R3/R4 candidate" (ADDENDUM 2). r2-analytics's completed sweep
+found this is the SAME category error AC-5 fixes, just an untraced second
+consumer -- the producer-side fix resolves it for both `compute_quantstats_metrics`
+and the PBO/BHY gate path simultaneously. See "AC-5 ruling history" above
+for the full citation chain. **This entry is kept here, not deleted,** so
+the record shows the finding was correctly identified before it was known
+to be free -- consistent with never silently erasing a superseded plan
+state.
+
+**2. Group-C dormant blend (documented landmine, still not fixed --
+updated for the post-producer-fix world, ADDENDUM 4):**
+`advisors/strategy_builder_engine.py:532`/`:618` mixes what were log x100
+and simple-pct returns pre-boundary. Post-AC-5 (producer now emits simple
+returns everywhere), both sides of this dormant blend are PERCENT-scale
+and convention-consistent -- the landmine reduces from a live category-error
+risk to plain unreachable code (both production callers pass
+`live_returns=[]`). Left in place and documented rather than fixed blind,
+per the project's standing L1 precedent (fix the doc/record, not the code,
+until a real caller exists). A future cycle that wires a genuine
+`live_returns` caller must re-verify this before that caller goes live.
 
 **3. MAPERF-15 RESOLVED, tracks-logic (out-of-band solo probe, not a
 math-r2 AC):** the live-sold-symphonies-book-~$0-saved fear (VERDICT.md
@@ -6424,28 +6599,29 @@ ma-perf 15, conditional) is REFUTED -- `last_percent_change` tracks
 post-sale logic rather than the frozen sold basket (high observed
 confidence: `/go-to-cash` trace, raw-lpc source proof, two independent
 production pulls showing post-trigger movement). `DE-GUARD-ALPHA-SAVED-001`'s
-existing design stands unchanged, no fix required. See
-`docs/research/composer/maperf15-post-sale-lpc-semantics.md`. Backlog item
-opened: a passive staleness tripwire riding the F7 fictional-MC-history
-quarantine work (VERDICT.md ma-core F7), not scheduled this cycle. Charter
-(`feature-plans/math-remediation-program.md`) phase-2 droplet-check item 6
-updated in place to record this resolution.
+existing design stands unchanged, no fix required. Full report:
+`docs/research/composer/maperf15-post-sale-lpc-semantics.md` (committed
+`ba6fdfcf`). Backlog item opened: a passive staleness tripwire riding the
+F7 fictional-MC-history quarantine work (VERDICT.md ma-core F7), not
+scheduled this cycle. Charter (`feature-plans/math-remediation-program.md`)
+phase-2 droplet-check item 6 updated in place to record this resolution.
 
 ### Verification
 
-**OUTSTANDING** -- no code has landed as of `19087788` (plan-round only).
-This section is filled in, update-in-place, as reviewer verdict / PM battery
-gate / PM live E2E each land -- never re-created as a new entry, per the
-`DE-MATH-R1-001` convention.
+**OUTSTANDING** -- plan round closed at `148e43ba` (r2-test, r2-stats,
+r2-analytics, r2-review all APPROVED); no RED or GREEN code has landed as
+of this entry. This section is filled in, update-in-place, as reviewer
+verdict / PM battery gate / PM live E2E each land -- never re-created as a
+new entry, per the `DE-MATH-R1-001` convention.
 
 ### Reference
 
 `DE-MATH-R2-001`; branch `fix/math-r2`; plan `feature-plans/math-r2.md` @
-`ea89b5a4` + addenda (`911fc508`, `19087788`); findings basis
-`docs/audit/math-audit/VERDICT.md` (`DE-MATH-AUDIT-001`); program charter
-`feature-plans/math-remediation-program.md` (this cycle's M1 fold-in and
-MAPERF-15 resolution patched into the charter's R2/R4 bullets and
-phase-2-check item 6, same commit as this entry). Predecessor
-`DE-MATH-R1-001` (PR #97, merged `c38af283`). R3 (live disarm-band ruling +
-retune) remains HARD-GATED on R1+R2's combined residual checklist -- not
-covered by this entry.
+`ea89b5a4` + FOUR addenda (`911fc508`, `19087788`, `85242888`, `148e43ba`);
+findings basis `docs/audit/math-audit/VERDICT.md` (`DE-MATH-AUDIT-001`);
+program charter `feature-plans/math-remediation-program.md` (this cycle's
+M1 fold-in and MAPERF-15 resolution patched into the charter's R2/R4
+bullets and phase-2-check item 6). Predecessor `DE-MATH-R1-001` (PR #97,
+merged `c38af283`). R3 (live disarm-band ruling + retune) remains
+HARD-GATED on R1+R2's combined residual checklist -- not covered by this
+entry.
