@@ -167,7 +167,10 @@ def _very_short_historical_data() -> dict:
     EVERY tick regardless of lpc -- the deliberate mechanism for an
     MC-absent scenario, distinct from (and simpler to construct than)
     triggering the regime-match-quality guard."""
-    return {row["date"]: {"SPY": {"daily_ret": row["SPY"]}, "AAA": {"daily_ret": row["AAA"]}} for row in _HISTORY_ROWS[:10]}
+    return {
+        row["date"]: {"SPY": {"daily_ret": row["SPY"]}, "AAA": {"daily_ret": row["AAA"]}}
+        for row in _HISTORY_ROWS[:10]
+    }
 
 
 _SYM_ID = "sym-ac6-001"
@@ -181,7 +184,9 @@ def _replay_ticks_from_bars(*, closes: list[float], historical_data: dict) -> li
     parity comparison."""
     holdings = [{"ticker": _TICKER, "allocation": 1.0}]
     timestamps = [f"{_DATE_STR}T09:{30 + i:02d}:00Z" for i in range(len(closes))]
-    intraday_by_date = {_DATE_STR: {_TICKER: [{"t": ts, "c": c, "vwap": c} for ts, c in zip(timestamps, closes)]}}
+    intraday_by_date = {
+        _DATE_STR: {_TICKER: [{"t": ts, "c": c, "vwap": c} for ts, c in zip(timestamps, closes)]}
+    }
     yesterday_closes = {_TICKER: _YESTERDAY_CLOSE}
     return synthetic_history.build_replay_day(
         sym_id=_SYM_ID,
@@ -302,7 +307,15 @@ def test_replay_exit_sequence_exposes_armed_state_per_tick() -> None:
     RED (pre-fix): replay_exit_sequence's dicts only have tick_idx/exit_reason.
     """
     ticks = [
-        {"time": "09:30", "return": 1.0, "mc_prob": 50.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0}
+        {
+            "time": "09:30",
+            "return": 1.0,
+            "mc_prob": 50.0,
+            "vol": 0.5,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 0.0,
+        }
     ]
     out = autotuner.replay_exit_sequence(ticks, _DEFAULT_PARAMS, grace_minutes=0)
     assert out, "replay_exit_sequence returned an empty sequence for a 1-tick input."

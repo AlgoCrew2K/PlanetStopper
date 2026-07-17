@@ -188,7 +188,9 @@ def _production_exit_sequence(
     take_profit_mc = params["TAKE_PROFIT_MC_PCT"]
     trigger_threshold = params["TRIGGER_THRESHOLD_PCT"]
 
-    effective_exec_start = execution_start_hhmm if execution_start_hhmm is not None else session_open_hhmm
+    effective_exec_start = (
+        execution_start_hhmm if execution_start_hhmm is not None else session_open_hhmm
+    )
 
     # AC-4/F5: regime-conditional exit_confirm_ticks, resolved ONCE (mirrors
     # production reading the offline-computed cached label once per cycle;

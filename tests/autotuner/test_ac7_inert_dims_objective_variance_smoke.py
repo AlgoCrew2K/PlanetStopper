@@ -56,10 +56,10 @@ file catches that even though AC-1/AC-3/AC-4/AC-5 are otherwise fully fixed
 
 from __future__ import annotations
 
-import math_engine
 import pytest
 
 import autotuner
+import math_engine
 import synthetic_history
 
 _BASE_PARAMS = {
@@ -100,12 +100,22 @@ def _objective(ticks: list[dict], params: dict) -> float:
 
 def test_take_profit_confirmation_primitive_is_sensitive_to_threshold() -> None:
     armed_low, _, _ = math_engine.compute_tp_confirmation(
-        mc_available=True, prob_underperforming=8.0, take_profit_mc_pct=5.0,
-        current_return=1.0, is_triggered=False, tp_armed=False, above_tp_count=0,
+        mc_available=True,
+        prob_underperforming=8.0,
+        take_profit_mc_pct=5.0,
+        current_return=1.0,
+        is_triggered=False,
+        tp_armed=False,
+        above_tp_count=0,
     )
     armed_high, _, _ = math_engine.compute_tp_confirmation(
-        mc_available=True, prob_underperforming=8.0, take_profit_mc_pct=10.0,
-        current_return=1.0, is_triggered=False, tp_armed=False, above_tp_count=0,
+        mc_available=True,
+        prob_underperforming=8.0,
+        take_profit_mc_pct=10.0,
+        current_return=1.0,
+        is_triggered=False,
+        tp_armed=False,
+        above_tp_count=0,
     )
     assert armed_low != armed_high, (
         "compute_tp_confirmation must be sensitive to take_profit_mc_pct at "
@@ -214,10 +224,20 @@ def test_parabolic_velocity_threshold_varies_the_objective() -> None:
     ticks = _velocity_squeeze_ticks()
 
     obj_low = _objective(
-        ticks, {**_VELOCITY_SQUEEZE_PARAMS, "PARABOLIC_VELOCITY_THRESHOLD": 0.5, "MAX_PARABOLIC_SQUEEZE": 0.1}
+        ticks,
+        {
+            **_VELOCITY_SQUEEZE_PARAMS,
+            "PARABOLIC_VELOCITY_THRESHOLD": 0.5,
+            "MAX_PARABOLIC_SQUEEZE": 0.1,
+        },
     )
     obj_high = _objective(
-        ticks, {**_VELOCITY_SQUEEZE_PARAMS, "PARABOLIC_VELOCITY_THRESHOLD": 20.0, "MAX_PARABOLIC_SQUEEZE": 0.1}
+        ticks,
+        {
+            **_VELOCITY_SQUEEZE_PARAMS,
+            "PARABOLIC_VELOCITY_THRESHOLD": 20.0,
+            "MAX_PARABOLIC_SQUEEZE": 0.1,
+        },
     )
 
     assert obj_low != obj_high, (
@@ -244,10 +264,20 @@ def test_max_parabolic_squeeze_varies_the_objective() -> None:
     ticks = _velocity_squeeze_ticks()
 
     obj_tight = _objective(
-        ticks, {**_VELOCITY_SQUEEZE_PARAMS, "PARABOLIC_VELOCITY_THRESHOLD": 0.5, "MAX_PARABOLIC_SQUEEZE": 0.1}
+        ticks,
+        {
+            **_VELOCITY_SQUEEZE_PARAMS,
+            "PARABOLIC_VELOCITY_THRESHOLD": 0.5,
+            "MAX_PARABOLIC_SQUEEZE": 0.1,
+        },
     )
     obj_wide = _objective(
-        ticks, {**_VELOCITY_SQUEEZE_PARAMS, "PARABOLIC_VELOCITY_THRESHOLD": 0.5, "MAX_PARABOLIC_SQUEEZE": 1.5}
+        ticks,
+        {
+            **_VELOCITY_SQUEEZE_PARAMS,
+            "PARABOLIC_VELOCITY_THRESHOLD": 0.5,
+            "MAX_PARABOLIC_SQUEEZE": 1.5,
+        },
     )
 
     assert obj_tight != obj_wide, (
@@ -299,28 +329,50 @@ def test_take_profit_mc_pct_three_point_sweep_shows_non_degenerate_variance() ->
 # empirically-validated fixture: is_unprecedented=False, eligible_days=26 >=
 # MC_MIN_HISTORY_DAYS, mc_prob genuinely varies with lpc).
 _WF_HISTORY_ROWS = [
-    ("2026-01-01", 0.008699, -0.003372), ("2026-01-02", -0.011317, -0.004389),
-    ("2026-01-03", -0.004296, -0.012604), ("2026-01-04", -0.000152, 0.012547),
-    ("2026-01-05", -0.008223, 0.002952), ("2026-01-06", 0.004126, -0.015204),
-    ("2026-01-07", -0.008957, -0.014317), ("2026-01-08", -0.003915, -0.013142),
-    ("2026-01-09", -0.006295, 0.007542), ("2026-01-10", 0.004041, -0.010652),
-    ("2026-01-11", -0.001306, 0.016507), ("2026-01-12", -0.003925, -0.007241),
-    ("2026-01-13", -0.007962, -0.006551), ("2026-01-14", -0.003467, -0.004219),
-    ("2026-01-15", -0.0043, -0.007718), ("2026-01-16", -0.007974, 0.004053),
-    ("2026-01-17", -0.000363, -0.002374), ("2026-01-18", 0.007428, 0.008943),
-    ("2026-01-19", -0.000522, -0.013318), ("2026-01-20", 0.002671, 0.016431),
-    ("2026-01-21", -0.000467, 0.016775), ("2026-01-22", 0.009194, 0.009092),
-    ("2026-01-23", 0.007846, 0.006637), ("2026-01-24", -0.000806, -0.010847),
-    ("2026-01-25", -0.006622, 0.004824), ("2026-01-26", -0.002043, 0.014662),
-    ("2026-01-27", -0.006684, -0.010073), ("2026-01-28", 0.005139, 0.00115),
-    ("2026-02-01", -0.009975, -0.007617), ("2026-02-02", 0.006892, 0.001378),
-    ("2026-02-03", -0.009569, -0.019655), ("2026-02-04", -0.011437, 0.002203),
-    ("2026-02-05", 0.002328, 0.003094), ("2026-02-06", 0.007038, -0.0099),
-    ("2026-02-07", 0.007598, -0.000543), ("2026-02-08", -0.006786, -0.003091),
-    ("2026-02-09", -0.006137, 0.012108), ("2026-02-10", 0.007932, 0.012117),
-    ("2026-02-11", 0.011648, 0.000198), ("2026-02-12", -0.002905, -0.015545),
-    ("2026-02-13", -0.000372, 0.018246), ("2026-02-14", -0.006657, -0.005041),
-    ("2026-02-15", -0.004881, 0.001285), ("2026-02-16", 0.004643, 0.014488),
+    ("2026-01-01", 0.008699, -0.003372),
+    ("2026-01-02", -0.011317, -0.004389),
+    ("2026-01-03", -0.004296, -0.012604),
+    ("2026-01-04", -0.000152, 0.012547),
+    ("2026-01-05", -0.008223, 0.002952),
+    ("2026-01-06", 0.004126, -0.015204),
+    ("2026-01-07", -0.008957, -0.014317),
+    ("2026-01-08", -0.003915, -0.013142),
+    ("2026-01-09", -0.006295, 0.007542),
+    ("2026-01-10", 0.004041, -0.010652),
+    ("2026-01-11", -0.001306, 0.016507),
+    ("2026-01-12", -0.003925, -0.007241),
+    ("2026-01-13", -0.007962, -0.006551),
+    ("2026-01-14", -0.003467, -0.004219),
+    ("2026-01-15", -0.0043, -0.007718),
+    ("2026-01-16", -0.007974, 0.004053),
+    ("2026-01-17", -0.000363, -0.002374),
+    ("2026-01-18", 0.007428, 0.008943),
+    ("2026-01-19", -0.000522, -0.013318),
+    ("2026-01-20", 0.002671, 0.016431),
+    ("2026-01-21", -0.000467, 0.016775),
+    ("2026-01-22", 0.009194, 0.009092),
+    ("2026-01-23", 0.007846, 0.006637),
+    ("2026-01-24", -0.000806, -0.010847),
+    ("2026-01-25", -0.006622, 0.004824),
+    ("2026-01-26", -0.002043, 0.014662),
+    ("2026-01-27", -0.006684, -0.010073),
+    ("2026-01-28", 0.005139, 0.00115),
+    ("2026-02-01", -0.009975, -0.007617),
+    ("2026-02-02", 0.006892, 0.001378),
+    ("2026-02-03", -0.009569, -0.019655),
+    ("2026-02-04", -0.011437, 0.002203),
+    ("2026-02-05", 0.002328, 0.003094),
+    ("2026-02-06", 0.007038, -0.0099),
+    ("2026-02-07", 0.007598, -0.000543),
+    ("2026-02-08", -0.006786, -0.003091),
+    ("2026-02-09", -0.006137, 0.012108),
+    ("2026-02-10", 0.007932, 0.012117),
+    ("2026-02-11", 0.011648, 0.000198),
+    ("2026-02-12", -0.002905, -0.015545),
+    ("2026-02-13", -0.000372, 0.018246),
+    ("2026-02-14", -0.006657, -0.005041),
+    ("2026-02-15", -0.004881, 0.001285),
+    ("2026-02-16", 0.004643, 0.014488),
     ("2026-02-17", -0.01139, 0.016439),
 ]
 
@@ -338,7 +390,9 @@ def _build_wf_history_data(sym_id: str, day_closes: dict[str, list[float]]) -> d
     for date_str, closes in day_closes.items():
         holdings = [{"ticker": "AAA", "allocation": 1.0}]
         timestamps = [f"{date_str}T09:{30 + i:02d}:00Z" for i in range(len(closes))]
-        intraday_by_date = {date_str: {"AAA": [{"t": t, "c": c, "vwap": c} for t, c in zip(timestamps, closes)]}}
+        intraday_by_date = {
+            date_str: {"AAA": [{"t": t, "c": c, "vwap": c} for t, c in zip(timestamps, closes)]}
+        }
         yesterday_closes = {"AAA": 100.0}
         out[sym_id][date_str] = synthetic_history.build_replay_day(
             sym_id=sym_id,

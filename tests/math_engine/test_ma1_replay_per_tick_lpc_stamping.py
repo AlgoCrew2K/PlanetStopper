@@ -278,9 +278,7 @@ def _build_replay_day_inputs(fx: dict):
     date_str = fx["date_str"]
     ticker = fx["holdings"][0]["ticker"]
     intraday_by_date = {
-        date_str: {
-            ticker: [{"t": t["t"], "c": t["c"], "vwap": t["vwap"]} for t in fx["ticks"]]
-        }
+        date_str: {ticker: [{"t": t["t"], "c": t["c"], "vwap": t["vwap"]} for t in fx["ticks"]]}
     }
     timestamps = [t["t"] for t in fx["ticks"]]
     yesterday_closes = {ticker: fx["yesterday_close"]}

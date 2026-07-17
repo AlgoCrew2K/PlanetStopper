@@ -157,7 +157,9 @@ def test_replay_arms_once_execution_start_time_is_reached() -> None:
             grace_minutes=0,
             execution_start_hhmm=exec_start,
         )
-    assert state["armed"] is False, "Fixture self-check: must still be unarmed entering tick_idx=offset."
+    assert state["armed"] is False, (
+        "Fixture self-check: must still be unarmed entering tick_idx=offset."
+    )
 
     autotuner._replay_exit_tick(
         state,

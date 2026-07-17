@@ -181,7 +181,9 @@ def test_current_holdings_construction_sites_emit_ticker_allocation_only() -> No
 # ===========================================================================
 
 
-def test_live_run_monte_carlo_call_receives_holdings_variable_not_current_holdings_directly() -> None:
+def test_live_run_monte_carlo_call_receives_holdings_variable_not_current_holdings_directly() -> (
+    None
+):
     """Documents and pins the exact data-flow AC-8 depends on: the live
     run_monte_carlo call (:1270) receives a local `holdings` variable that,
     for a triggered symphony, is REASSIGNED from
@@ -196,7 +198,7 @@ def test_live_run_monte_carlo_call_receives_holdings_variable_not_current_holdin
     src = _EXEC_PATH.read_text(encoding="utf-8")
     assert 'holdings = bot_state[symphony_id].get("current_holdings", [])' in src, (
         "The triggered-symphony 'TRUE SHADOW RETURN OVERRIDE' reassignment "
-        "(holdings = bot_state[symphony_id].get(\"current_holdings\", [])) was not "
+        '(holdings = bot_state[symphony_id].get("current_holdings", [])) was not '
         "found verbatim in alpha_bot_execution.py. If this line moved or changed "
         "shape, test_current_holdings_construction_sites_emit_ticker_allocation_only "
         "no longer transitively guards the live run_monte_carlo call's input for "

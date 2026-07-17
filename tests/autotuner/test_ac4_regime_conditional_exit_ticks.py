@@ -109,7 +109,9 @@ def test_replay_exit_tick_accepts_exit_confirm_ticks_parameter() -> None:
     )
 
 
-def test_replay_exit_tick_passes_explicit_exit_confirm_ticks_kwarg_to_compute_exit_confirmation() -> None:
+def test_replay_exit_tick_passes_explicit_exit_confirm_ticks_kwarg_to_compute_exit_confirmation() -> (
+    None
+):
     """AST pin (team-lead: 'your AST approach is fine'), mirroring the
     established N-3 TestInLoopGateUsesHelper pattern: _replay_exit_tick's
     call to math_engine.compute_exit_confirmation must carry an explicit
@@ -172,7 +174,9 @@ def test_get_cached_regime_label_has_zero_occurrences_in_autotuner() -> None:
     it's simpler" regression.
     """
     src = _AUTOTUNER_PATH.read_text(encoding="utf-8")
-    occurrences = [i for i, line in enumerate(src.splitlines(), start=1) if "get_cached_regime_label" in line]
+    occurrences = [
+        i for i, line in enumerate(src.splitlines(), start=1) if "get_cached_regime_label" in line
+    ]
     assert not occurrences, (
         f"autotuner.py contains {len(occurrences)} occurrence(s) of "
         f"'get_cached_regime_label' at line(s) {occurrences}. This is FORBIDDEN in "
@@ -358,7 +362,9 @@ def test_no_lookahead_trailing_window_excludes_current_and_future_days() -> None
         "a regime label at all)."
     )
 
-    day_pct_to_fraction = {k: v / autotuner.RETURN_PCT_TO_FRACTION for k, v in day_returns_pct.items()}
+    day_pct_to_fraction = {
+        k: v / autotuner.RETURN_PCT_TO_FRACTION for k, v in day_returns_pct.items()
+    }
     for call_returns in calls:
         for date, fraction in day_pct_to_fraction.items():
             # A same-day or future-day lookahead would surface as that day's

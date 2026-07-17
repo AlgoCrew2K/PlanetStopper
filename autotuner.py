@@ -1511,9 +1511,7 @@ def _collect_sim_returns(
     return daily_returns
 
 
-def _replay_resolve_regime_exit_ticks(
-    dates_data: dict, sorted_dates: list, date_idx: int
-) -> int:
+def _replay_resolve_regime_exit_ticks(dates_data: dict, sorted_dates: list, date_idx: int) -> int:
     """AC-4/F5: recompute the regime-conditional exit_confirm_ticks fresh for
     one replay day, using ONLY EOD daily returns from dates STRICTLY BEFORE
     ``sorted_dates[date_idx]`` (no lookahead — walk-forward integrity).
