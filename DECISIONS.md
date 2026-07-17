@@ -6324,11 +6324,16 @@ action-phase gate (AC-5) holding correctly (no exit fires before the gate
 opens). r1-review's `APPROVE-pending-PM-live-gate` condition is now
 SATISFIED by this result.
 
-**Ship status:** all Verification items required for this trade-touching
-cycle's PR ship path are LANDED, including r1-review's verdict extension to
-the tip -- **PR #97** is open against `origin/main` and ready for the PM's
-merge decision (re-verified `origin/main` still at `0626ef86` as of this
-update -- not yet merged; this line will be updated once it is).
+**Ship status: SHIPPED.** PR #97 MERGED 2026-07-17 ~20:41Z at merge commit
+`c38af283` (branch tip `9d7ffa90`; PR CI `pytest` GREEN on that exact head,
+8m52s full-tree; merge via admin path after the required check passed -- the
+repo's review-approval requirement cannot be self-satisfied single-account
+and was met by the cycle's own r1-review + `/review` gates, per the
+pre-declared protocol). DEPLOYED to the droplet same hour: drift-check
+clean, DB backup `*.pre-r1-deploy-20260717-204406`, FF to `c38af283`,
+daemon restarted (PID 1018792) and verified (journal clean, endpoints
+serving; market closed at deploy time, so the next engine cycle runs Monday
+on the new code -- replay-only change class, live path zero-diff).
 
 *This Verification section is updated in place as each item lands -- never
 re-created as a new DECISIONS.md entry.*
@@ -6336,14 +6341,9 @@ re-created as a new DECISIONS.md entry.*
 ### Reference
 
 `DE-MATH-R1-001`; branch `fix/math-r1`; code GREEN at `46051dd5`
-(128 passed / 1 xfailed / 0 errors); **PR #97** open against
-`origin/main` (verified `origin/main` still at `0626ef86` -- the pre-R0
-post-merge tip -- as of this update; not yet merged). All three gate
-conditions this cycle's PR ship path requires have landed (`/review`
-skill APPROVE-pending-PM-live-gate, PM independent gate, PM live E2E --
-see Verification above); merge is a PM action, not this entry's to
-declare -- this Reference will be updated again once PR #97 actually
-merges. Plan `feature-plans/math-r1.md` + its seven addenda
+(128 passed / 1 xfailed / 0 errors); **PR #97 MERGED to `origin/main` at
+`c38af283`** (tip `9d7ffa90`, 2026-07-17) and deployed to the droplet the
+same hour -- see Ship status above. Plan `feature-plans/math-r1.md` + its seven addenda
 (`debc9537`, `a46be889`, `57789ff4`, `5416a0f9`, `65a24d31`, `af266a63`,
 `cd7e668d`); findings basis `docs/audit/math-audit/VERDICT.md`
 (`DE-MATH-AUDIT-001`); program charter `feature-plans/math-remediation-program.md`.
