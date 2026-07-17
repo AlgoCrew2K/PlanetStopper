@@ -303,3 +303,168 @@ def test_ac8_30d_window_with_ample_real_history_is_not_silently_armed(client):
         "REAL history existing for this symphony -- MAPERF-13's permanent-arming bug. "
         f"Full strip: {strip}"
     )
+
+
+# ===========================================================================
+# AC-8b (ADDENDUM, feature-plans/math-r0.md -- PM ruling on r0-test's
+# escalation, 2026-07-17): compute_windowed_symphony_guard_alpha collapses TWO
+# structurally different states into the identical 0.0 (analytics.py:1672-1673
+# `if trajectory is None: return 0.0`):
+#   (1) the deliberate <2-in-window-rows conservatism floor
+#       (_get_windowed_divergence_trajectory, analytics.py:1622-1623) -- even
+#       though _epoch_additive_divergence's compound-product-per-epoch formula
+#       is mathematically valid from a SINGLE row;
+#   (2) a genuinely-computed zero divergence (>=2 rows, shadow == current
+#       throughout).
+# AC-8's `guard_alpha is None` check (RED-12/13/14 above) can't tell these
+# apart, so it ALSO withholds the fallback for case (1) -- silently
+# regressing the previously-shipped DE-PROD-ACCURACY-001 day-1 behavior (a
+# real divergence on a thin-window state should still surface via the
+# fallback; a genuinely-zero divergence should not).
+#
+# AC-8b-1: the <2-row floor case propagates None (not 0.0) up through
+#   compute_windowed_symphony_guard_alpha -- the floor itself is unchanged
+#   (its statistical conservatism is not R0's to relitigate), only its return
+#   ENCODING changes so callers can discriminate "unknown" from "zero".
+# AC-8b-2 (caller sweep): compute_windowed_symphony_guard_alpha has exactly
+#   ONE production caller (compute_windowed_portfolio_strip's VW loop,
+#   analytics.py:1735) -- and it ALREADY does `if sym_alpha is None: continue`
+#   (skip-and-count), so no caller-side change is required; this file's
+#   route-level test proves that end-to-end (not just asserted by inspection).
+# AC-8b-3: the discriminating test pair below.
+# ===========================================================================
+
+
+def _sym_dict_for(symphony_id: str) -> dict:
+    """Minimal symphonies_list entry -- only "id" is read by
+    compute_windowed_symphony_guard_alpha (bot_state_entry is unused in its
+    body); mirrors the shape app.py's strip route builds."""
+    return {"id": symphony_id}
+
+
+def test_ac8b_thin_window_single_row_returns_none_not_zero():
+    """UNIT pin (AC-8b-1): a symphony with exactly 1 in-window shadow_history
+    row -- a REAL divergence (shadow_return != current_return), so there is
+    genuine information, just not enough rows to clear the deliberate <2-row
+    floor -- must return None from compute_windowed_symphony_guard_alpha, not
+    a fabricated 0.0.
+
+    MUST FAIL at 1289ff0b: `if trajectory is None: return 0.0` collapses this
+    case (and the genuine-zero case below) to the same 0.0."""
+    symphony_id = "sym_thin_window_real_divergence"
+    today = date.today().isoformat()
+    database.record_shadow_observation(
+        symphony_id=symphony_id,
+        account_id="acct-1",
+        cycle_id="cyc-1",
+        ts_utc=f"{today}T20:00:00Z",
+        ts_et=f"{today}T16:00:00",
+        trading_day=today,
+        current_return=-0.5,
+        shadow_return=2.5,  # real 3.0pp divergence -- NOT a genuine zero
+        is_post_trigger=1,
+        trigger_id=None,
+    )
+
+    result = analytics.compute_windowed_symphony_guard_alpha(
+        _sym_dict_for(symphony_id), None, window="30d"
+    )
+    assert result is None, (
+        f"a single-row (thin-window) real-divergence symphony must return None "
+        f"(insufficient windowed data, not a computed zero); got {result!r}. "
+        "AC-8b-1 requires the <2-row floor to propagate None, distinguishing it "
+        "from a genuinely-computed zero divergence."
+    )
+
+
+def test_ac8b_computed_zero_divergence_still_returns_real_zero():
+    """UNIT pin (AC-8b-1, companion): a symphony with >=2 in-window rows where
+    shadow_return == current_return on EVERY row -- a genuinely-computed zero
+    divergence, not an insufficient-data case -- must still return exactly
+    0.0, not None. The floor-vs-computed distinction must not accidentally
+    turn every zero into None.
+
+    Self-guard: this must PASS both before and after the AC-8b-1 fix (it pins
+    the case AC-8b-1 explicitly says stays 0.0)."""
+    symphony_id = "sym_computed_zero_divergence"
+    dates = _recent_dates(5)  # >=2 rows clears the floor
+    for i, d in enumerate(dates):
+        database.record_shadow_observation(
+            symphony_id=symphony_id,
+            account_id="acct-1",
+            cycle_id=f"cyc-{i}",
+            ts_utc=f"{d}T20:00:00Z",
+            ts_et=f"{d}T16:00:00",
+            trading_day=d,
+            current_return=0.2,
+            shadow_return=0.2,  # identical every day -- genuinely zero divergence
+            is_post_trigger=0,
+            trigger_id=None,
+        )
+
+    result = analytics.compute_windowed_symphony_guard_alpha(
+        _sym_dict_for(symphony_id), None, window="30d"
+    )
+    assert result == pytest.approx(0.0), (
+        f"a >=2-row genuinely-zero-divergence symphony must return a real 0.0 "
+        f"(not None -- there IS enough data, and it computed to zero); got {result!r}"
+    )
+
+
+def test_ac8b_thin_window_real_divergence_surfaces_via_route_fallback(client):
+    """ROUTE-level pin (AC-8b-2/3, the regression-fix proof): with the
+    compute_windowed_symphony_guard_alpha fix landed, a thin-window (1-day)
+    symphony with a REAL divergence must have its portfolio-level guard_alpha
+    become genuinely None (the sole symphony is skipped by the VW loop's
+    existing `if sym_alpha is None: continue`) -- which correctly ARMS the
+    day-filtered intraday fallback (AC-8's `is None` check), surfacing the
+    real divergence instead of a flat 0.0. This is the exact scenario the 6
+    held tests in test_live_dashboard_metrics.py were probing.
+
+    MUST FAIL until AC-8b-1 lands: today compute_windowed_symphony_guard_alpha
+    returns 0.0 (not None) for this fixture, so guard_alpha is a real 0.0 at
+    the portfolio level and AC-8's is-None check correctly (but, for THIS
+    case, wrongly) withholds the fallback -- flattening a real divergence to
+    0.0."""
+    symphony_id = "sym_thin_window_route_level"
+    today = date.today().isoformat()
+    at_return = 2.5
+    current_return = -0.5  # matches the shadow row below -- real 3.0pp divergence
+    database.record_shadow_observation(
+        symphony_id=symphony_id,
+        account_id="acct-1",
+        cycle_id="cyc-1",
+        ts_utc=f"{today}T20:00:00Z",
+        ts_et=f"{today}T16:00:00",
+        trading_day=today,
+        current_return=current_return,
+        shadow_return=at_return,
+        is_post_trigger=1,
+        trigger_id=None,
+    )
+    _seed_bot_state({symphony_id: {"name": "Thin Window Route", "current_value": 15000.0}})
+    database.record_exit_trigger(
+        symphony_id=symphony_id,
+        account_id="acct-1",
+        triggered_reason="take_profit",
+        at_return=at_return,
+        cycle_id="cyc-2",
+        ts_utc=f"{today}T15:54:00Z",
+        ts_et=f"{today}T11:54:00",
+    )
+
+    resp = client.get("/api/strip/30d")
+    assert resp.status_code == 200
+    strip = resp.get_json()
+
+    expected_estimate = at_return - current_return
+    assert strip.get("intraday_only") is True, (
+        f"a thin-window (1-day) symphony with a real divergence must arm the "
+        f"day-filtered intraday fallback; got intraday_only={strip.get('intraday_only')!r}, "
+        f"full strip: {strip}"
+    )
+    assert strip.get("guard_alpha") == pytest.approx(expected_estimate), (
+        f"the armed fallback must surface the real divergence "
+        f"({expected_estimate} = at_return({at_return}) - current_return({current_return})); "
+        f"got {strip.get('guard_alpha')!r}"
+    )
