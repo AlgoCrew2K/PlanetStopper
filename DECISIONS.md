@@ -6287,11 +6287,9 @@ this is a confirmatory/regression run, not a live-path diff review.
 independently re-run by r1-review (not merely re-cited from the team's own
 report): 127 passed / 0 failed consolidated battery, 765 passed / 1
 deselected / 0 failed on the full `tests/autotuner/` sweep, 57/57 passed on
-a dedicated boundary battery. **One line still OUTSTANDING within this
-verdict:** r1-review's format-only extension of the verdict to the tip
-(`91ca5d58`) was reported in flight as of the PM's gate results landing --
-to be quoted verbatim in place the moment it lands; not blocking, since it
-is format-only (no new findings expected against a docs-only diff).
+a dedicated boundary battery. **Verdict extension to the tip, r1-review's
+exact words:** "APPROVE-pending-PM-live-gate extends to `91ca5d58`; format
+commit content-read clean; battery 128/1xf/0 at tip."
 
 **Battery state (self-reported by the team, cited for the audit trail --
 NOT a substitute for the PM's independent gate below):** RED-complete
@@ -6326,12 +6324,11 @@ action-phase gate (AC-5) holding correctly (no exit fires before the gate
 opens). r1-review's `APPROVE-pending-PM-live-gate` condition is now
 SATISFIED by this result.
 
-**Ship status:** all three Verification items required for this
-trade-touching cycle's PR ship path are LANDED (one non-blocking format-only
-line from r1-review still pending, see above) -- **PR #97** is open against
-`origin/main` and ready for the PM's merge decision (verified
-`origin/main` still at `0626ef86` as of this update -- not yet merged; this
-line will be updated once it is).
+**Ship status:** all Verification items required for this trade-touching
+cycle's PR ship path are LANDED, including r1-review's verdict extension to
+the tip -- **PR #97** is open against `origin/main` and ready for the PM's
+merge decision (re-verified `origin/main` still at `0626ef86` as of this
+update -- not yet merged; this line will be updated once it is).
 
 *This Verification section is updated in place as each item lands -- never
 re-created as a new DECISIONS.md entry.*
