@@ -217,6 +217,28 @@ def _production_ticks_from_bars(*, closes: list[float], historical_data: dict) -
       - the REAL math_engine.compute_vwap_signals / calculate_20d_vol /
         calculate_14d_atr_pct -- unmodified by this cycle, called exactly
         as build_replay_day calls them.
+
+    MC PATH-COUNT RATIONALE (r1-review finding, PM addendum 4 -- blocking
+    fix): this call MUST use synthetic_history._MC_REPLAY_SIMULATION_PATHS
+    (300), NOT math_engine.MC_DEFAULT_SIMULATION_PATHS (5000) -- the two
+    produce MATERIALLY DIFFERENT mc_prob at the same lpc (e.g. c=101.5 gave
+    14.82 at 5000 paths, in the default arm band [5,15), but 16.67 at 300
+    paths, outside it). An earlier draft used 5000 and could have flipped
+    arm decisions post-AC-1 for path-count reasons unrelated to the
+    arm/confirm/gate semantics this cycle actually fixes.
+
+    This battery tests DECISION-LOGIC parity, not MC-sampling parity -- both
+    sides must share the REPLAY's real MC config so the only variable under
+    test is the exit-decision layer. The 300-vs-5000 divergence itself is a
+    PRE-EXISTING, deliberate replay approximation (throughput -- 300 paths
+    across every tick of a 250-day walk-forward is materially cheaper than
+    5000; seeded determinism keeps the replay internally consistent
+    run-to-run; the two path counts sample around the same expected value,
+    just with different sampling variance) -- NOT something this cycle
+    changes or should change. Whether 300 paths is precise enough for stable
+    arm decisions near a band edge under the tuned/live params is an open
+    question that belongs on the R3 pre-retune checklist, not here; this
+    file's job is only to hold MC config equal between its two sides.
     """
     holdings_base = [{"ticker": _TICKER, "allocation": 1.0}]
     vol = math_engine.calculate_20d_vol(holdings_base, historical_data)
@@ -231,7 +253,7 @@ def _production_ticks_from_bars(*, closes: list[float], historical_data: dict) -
             holdings,
             historical_data,
             _SPY_TODAY_RETURN,
-            math_engine.MC_DEFAULT_SIMULATION_PATHS,
+            synthetic_history._MC_REPLAY_SIMULATION_PATHS,
             math_engine.MC_DEFAULT_NEIGHBOR_K,
             seed=seed,
         )
@@ -307,17 +329,25 @@ def test_trailing_stop_reachable_and_replay_matches_production_bar_level() -> No
     so this may never fire or fire on the wrong tick (AC-2's never-fires
     regression case).
     """
-    # c=101.5 (lpc=+1.5%) empirically produces mc_prob=14.82, inside the
-    # DEFAULT arm band [TAKE_PROFIT_MC_PCT=5.0, TRIGGER_THRESHOLD_PCT=15.0)
-    # -- verified live against _HISTORY_ROWS/this seed, not hardcoded as an
-    # expected decision. Deliberately NOT using a widened custom band here:
-    # the DEGENERATE pre-AC-1 mc_prob (current_symphony_return always
-    # excluded -> always the c=100/lpc=0.0 baseline, mc_prob≈64.98) sits
-    # OUTSIDE the default [5,15) band, so pre-fix this scenario correctly
-    # never arms at all (a widened band bracketing 64.98 would have let the
-    # degenerate value arm too, making this scenario fail to discriminate
-    # AC-1's fix -- an earlier draft made exactly that mistake).
-    closes = [101.5, 80.0, 78.0, 76.0, 74.0, 72.0]  # tick0 arms; deep sustained decline confirms
+    # c=101.65 (lpc=+1.65%) empirically produces mc_prob=9.0 at the replay's
+    # REAL MC config (synthetic_history._MC_REPLAY_SIMULATION_PATHS=300, NOT
+    # math_engine.MC_DEFAULT_SIMULATION_PATHS=5000 -- see
+    # _production_ticks_from_bars' MC PATH-COUNT RATIONALE docstring), inside
+    # the DEFAULT arm band [TAKE_PROFIT_MC_PCT=5.0, TRIGGER_THRESHOLD_PCT=15.0)
+    # -- verified live against _HISTORY_ROWS/this seed at 300 paths, not
+    # hardcoded as an expected decision. (An earlier draft used c=101.5,
+    # which produced 14.82 -- in-band -- at 5000 paths but 16.67 -- out of
+    # band -- at the replay's real 300 paths; r1-review caught the path-count
+    # mismatch and PM addendum 4 ruled the fix. c=101.5 itself is NOT in-band
+    # at 300 paths, hence the re-tune to 101.65.) Deliberately NOT using a
+    # widened custom band here: the DEGENERATE pre-AC-1 mc_prob
+    # (current_symphony_return always excluded -> always the c=100/lpc=0.0
+    # baseline, mc_prob≈67.33 at 300 paths) sits OUTSIDE the default [5,15)
+    # band, so pre-fix this scenario correctly never arms at all (a widened
+    # band bracketing the degenerate baseline would have let it arm too,
+    # making this scenario fail to discriminate AC-1's fix -- an earlier
+    # draft made exactly that mistake, independent of the path-count one).
+    closes = [101.65, 80.0, 78.0, 76.0, 74.0, 72.0]  # tick0 arms; deep sustained decline confirms
     hist = _historical_data()
     production_ticks = _production_ticks_from_bars(closes=closes, historical_data=hist)
     replay_ticks = _replay_ticks_from_bars(closes=closes, historical_data=hist)
@@ -344,10 +374,16 @@ def test_take_profit_reachable_and_replay_matches_production_bar_level() -> None
     a LOW mc_prob = strong outperformance) confirms a Take Profit exit.
     """
     # c=102 (lpc=+2%) empirically produces mc_prob=0.0 (< TAKE_PROFIT_MC_PCT=5.0
-    # default -> ARMS TP), c=101 (lpc=+1%) empirically produces mc_prob≈30.4
+    # default -> ARMS TP), c=101 (lpc=+1%) empirically produces mc_prob=35.0
     # (>= 5.0, with return > 0 -> CONFIRMS; TP_CONFIRM_TICKS=2 consecutive
-    # such ticks needed) -- verified live against _HISTORY_ROWS/this seed,
-    # not hardcoded as an expected decision.
+    # such ticks needed) -- verified live at the replay's real MC config
+    # (synthetic_history._MC_REPLAY_SIMULATION_PATHS=300, see
+    # _production_ticks_from_bars' MC PATH-COUNT RATIONALE docstring) against
+    # _HISTORY_ROWS/this seed, not hardcoded as an expected decision. (Both
+    # values happen to land on the same side of their respective thresholds
+    # at 300 paths as they did at the previously-used 5000 paths -- only the
+    # exact number shifted from 30.4 to 35.0 -- so this scenario needed no
+    # price re-tune, unlike the trailing-stop scenario above.)
     closes = [100.0, 102.0, 101.0, 101.0]
     hist = _historical_data()
     production_ticks = _production_ticks_from_bars(closes=closes, historical_data=hist)
@@ -439,16 +475,17 @@ def test_execution_start_time_pre_action_gate_replay_matches_production_bar_leve
     """
     # Ticks 0-4 (before the action phase opens at offset=5) are gated no
     # matter what price they carry -- padded at the prior close (c=100,
-    # ret=0.0) so HWM stays flat. Tick 5 (c=101.5, mc_prob=14.82 empirically
-    # -- inside the DEFAULT arm band [5,15), same value verified for the
-    # trailing-stop scenario above) is the FIRST evaluated tick and arms.
-    # The degenerate pre-AC-1 mc_prob (always the c=100/lpc=0.0 baseline,
-    # mc_prob≈64.98) sits outside [5,15), so pre-fix this scenario correctly
-    # never arms regardless of the action-phase gate -- deliberately NOT
-    # using a widened band (see the trailing-stop scenario's note on why
-    # that would fail to discriminate AC-1's fix). Ticks 6-8 (deep decline)
-    # confirm via magnitude + MC_BREAKDOWN_THRESHOLD=60.0.
-    closes = [100.0, 100.0, 100.0, 100.0, 100.0, 101.5, 80.0, 78.0, 76.0]
+    # ret=0.0) so HWM stays flat. Tick 5 (c=101.65, mc_prob=9.0 empirically
+    # at the replay's real MC config -- inside the DEFAULT arm band [5,15),
+    # same value verified for the trailing-stop scenario above) is the FIRST
+    # evaluated tick and arms. The degenerate pre-AC-1 mc_prob (always the
+    # c=100/lpc=0.0 baseline, mc_prob≈67.33 at 300 paths) sits outside
+    # [5,15), so pre-fix this scenario correctly never arms regardless of
+    # the action-phase gate -- deliberately NOT using a widened band (see
+    # the trailing-stop scenario's note on why that would fail to
+    # discriminate AC-1's fix). Ticks 6-8 (deep decline) confirm via
+    # magnitude + MC_BREAKDOWN_THRESHOLD=60.0.
+    closes = [100.0, 100.0, 100.0, 100.0, 100.0, 101.65, 80.0, 78.0, 76.0]
     hist = _historical_data()
     production_ticks = _production_ticks_from_bars(closes=closes, historical_data=hist)
     replay_ticks = _replay_ticks_from_bars(closes=closes, historical_data=hist)
