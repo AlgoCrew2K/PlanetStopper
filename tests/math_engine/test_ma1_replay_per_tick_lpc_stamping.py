@@ -70,6 +70,7 @@ _AUTOTUNER_PATH = _REPO_ROOT / "autotuner.py"
 _FIXTURE_DIR = _REPO_ROOT / "tests" / "fixtures" / "math_engine"
 _MC_SENSITIVITY_FIXTURE = _FIXTURE_DIR / "ma1_lpc_per_tick_mc_sensitivity.json"
 _BUILD_REPLAY_DAY_FIXTURE = _FIXTURE_DIR / "ma1_build_replay_day_lpc_stamping.json"
+_GAPPED_BAR_FIXTURE = _FIXTURE_DIR / "ma1_gapped_bar_lpc_exclusion.json"
 
 
 def _load_json(path: pathlib.Path) -> dict:
@@ -450,3 +451,126 @@ def test_input_holdings_object_is_never_mutated_across_repeated_calls(mc_spy) ->
             "shared holdings object in place — under joblib Parallel(), this object is "
             "reused across every day of the same symphony's replay."
         )
+
+
+# ===========================================================================
+# 6 — Genuine gapped intraday bar (ADDENDUM 7 @ cd7e668d): a DIFFERENT
+#     branch from the missing-prior-close edge case above, empirically
+#     falsified by r1-review's independent check when a bilateral closure
+#     between r1-test and r1-review incorrectly treated them as equivalent.
+#
+#     Missing prior close (test 4 above): yesterday_closes.get(ticker, c)
+#     falls back to c -> ret = 0.0 -> a REAL, finite value, INCLUDED in the
+#     MC sum.
+#     Genuine gapped bar (this test): the ticker has NO bar entry for this
+#     tick at all (a trading halt / data gap) -> the outer per-ticker guard
+#     (`if ticker in intraday_by_date[date_str] and i < len(...)`) is False
+#     -> tick_lpc never receives an entry for that ticker -> stamped
+#     last_percent_change = None -> EXCLUDED from run_monte_carlo's
+#     current_symphony_return sum entirely.
+#
+#     Both branches were independently verified correct BY CONSTRUCTION
+#     (neither crashes, neither fabricates a value) — this test's job is
+#     coverage of the previously-untested branch, not a bug fix. The plan's
+#     own Edge Cases section names "missing/gapped bars (holiday, half-day)"
+#     explicitly.
+# ===========================================================================
+
+
+def _build_gapped_bar_inputs(fx: dict) -> dict:
+    """Build build_replay_day kwargs from the gapped-bar fixture's per-tick
+    `{ticker: {c, vwap}}` bar-map shape -- distinct from
+    _build_replay_day_inputs' single-ticker flat-list shape, since this
+    fixture needs to express "ticker X has no bar this tick" per tick."""
+    date_str = fx["date_str"]
+    timestamps = [t["t"] for t in fx["ticks"]]
+    intraday_by_date: dict = {date_str: {}}
+    for h in fx["holdings"]:
+        ticker = h["ticker"]
+        bars_for_ticker = []
+        for tick_spec in fx["ticks"]:
+            if ticker in tick_spec["bars"]:
+                bar = tick_spec["bars"][ticker]
+                bars_for_ticker.append({"t": tick_spec["t"], "c": bar["c"], "vwap": bar["vwap"]})
+            # else: no entry appended -- this ticker's bar list is SHORTER
+            # than `timestamps`, exactly reproducing a genuine gap (the real
+            # production shape: intraday_by_date[date][ticker] simply lacks
+            # an element for a halted/gapped tick, so `i < len(...)` goes
+            # False for that ticker at that tick_idx).
+        intraday_by_date[date_str][ticker] = bars_for_ticker
+    return {
+        "sym_id": fx["sym_id"],
+        "date_str": date_str,
+        "holdings": [dict(h) for h in fx["holdings"]],
+        "intraday_by_date": intraday_by_date,
+        "timestamps": timestamps,
+        "hist_data_up_to_yesterday": _build_history(fx["historical_data_spec"]),
+        "yesterday_closes": fx["yesterday_closes"],
+        "spy_today": fx["spy_today_return"],
+    }
+
+
+def test_gapped_intraday_bar_excludes_only_the_gapped_ticker_sibling_stays_real(mc_spy) -> None:
+    """AC-1 golden (ADDENDUM 7): a genuine gapped intraday bar (a ticker with
+    no bar entry for a given tick -- distinct from a missing prior close)
+    must stamp last_percent_change=None for ONLY the gapped ticker at that
+    tick -- excluded from run_monte_carlo's current_symphony_return sum,
+    never a fabricated 0.0, never a crash/NaN -- while a SIBLING ticker that
+    DOES have a bar the same tick still gets its real, finite per-tick lpc
+    stamped and included.
+
+    Fixture: AAA has a bar at both ticks; BBB has a bar only at tick 0 (a
+    gap at tick 1). Verified live against the real build_replay_day before
+    locking this fixture in (see the fixture's own "derivation" field) --
+    not assumed, and not the same code path
+    test_missing_prior_close_does_not_raise_or_produce_non_finite_lpc
+    exercises (an earlier, incorrect closure claimed they were equivalent;
+    r1-review falsified that claim empirically -- see ADDENDUM 7).
+    """
+    fx = _load_json(_GAPPED_BAR_FIXTURE)
+    kwargs = _build_gapped_bar_inputs(fx)
+
+    ticks = synthetic_history.build_replay_day(**kwargs)  # must not raise
+
+    assert len(ticks) == len(fx["ticks"]), (
+        f"Expected {len(fx['ticks'])} ticks back, got {len(ticks)}."
+    )
+    assert len(mc_spy.calls) == len(fx["ticks"]), (
+        f"Expected one run_monte_carlo call per tick ({len(fx['ticks'])}), "
+        f"observed {len(mc_spy.calls)}."
+    )
+
+    # Tick 0: both AAA and BBB have a bar -- both must be real, finite values
+    # (at the prior close, so 0.0 for both -- a genuine zero-return tick, not
+    # the gap case).
+    tick0_holdings = {h["ticker"]: h for h in mc_spy.calls[0]["holdings"]}
+    for ticker in ("AAA", "BBB"):
+        lpc = tick0_holdings[ticker].get("last_percent_change")
+        assert lpc is not None and math.isfinite(lpc), (
+            f"Tick 0: {ticker} has a bar this tick and must get a real, finite "
+            f"last_percent_change. Got {lpc!r}."
+        )
+
+    # Tick 1: AAA has a bar (c=101.0, prior close 100.0 -> lpc=0.01 exactly);
+    # BBB has NO bar this tick -- the genuine gap -- and must be None.
+    tick1_holdings = {h["ticker"]: h for h in mc_spy.calls[1]["holdings"]}
+    aaa_lpc = tick1_holdings["AAA"].get("last_percent_change")
+    assert aaa_lpc == pytest.approx(0.01, abs=1e-9), (
+        # abs=1e-9: same-arithmetic float-representation tolerance only
+        # (101.0 - 100.0) / 100.0 on exact decimal inputs, not a genuine
+        # formula-mismatch allowance.
+        f"Tick 1: AAA has a bar this tick (c=101.0, prior close=100.0) and must "
+        f"get last_percent_change=0.01. Got {aaa_lpc!r}."
+    )
+    bbb_lpc = tick1_holdings["BBB"].get("last_percent_change")
+    assert bbb_lpc is None, (
+        f"Tick 1: BBB has NO bar this tick (a genuine gap -- trading halt / "
+        f"data gap) and must be stamped last_percent_change=None (excluded "
+        f"from run_monte_carlo's current_symphony_return sum via "
+        f"math_engine.py:1162-1166's existing exclusion contract), never a "
+        f"fabricated 0.0. Got {bbb_lpc!r}."
+    )
+    assert "ticker" in tick1_holdings["BBB"] and "allocation" in tick1_holdings["BBB"], (
+        "BBB's holdings dict must still carry ticker/allocation even when "
+        "excluded -- only last_percent_change is None, not the whole entry."
+    )
