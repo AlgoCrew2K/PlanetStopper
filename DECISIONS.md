@@ -5878,22 +5878,35 @@ missing INTRADAY BAR (no bar for the tick -> no `tick_lpc` entry ->
 implementation was verified correct for both once examined -- but the
 gapped-bar case (named in the plan's own Edge Cases section) had genuinely
 never been tested. Fix: `tests/fixtures/math/ma1_gapped_bar_lpc_exclusion.json`
-+ a dedicated golden in `tests/autotuner/test_ma1_replay_per_tick_lpc_stamping.py`
++ a dedicated golden in `tests/math_engine/test_ma1_replay_per_tick_lpc_stamping.py`
 -- a missing bar excludes that ticker (None, no crash, no NaN) while a
 sibling ticker with a real bar still gets a real lpc stamp in the same tick.
 
-**Process correction (PM error, on record):** the "closed with r1-review
-directly" phrasing in ADDENDUM 6 recorded a PROPOSED bilateral closure as
-SETTLED while r1-review was still independently verifying it -- it was not
-yet settled when written. Ruling going forward, on record: **a bilateral
-closure is not settled until the counterparty confirms -- "agreement !=
-truth" applies to closures exactly as it does to findings.** ADDENDUM 6's
-historical text stands unedited (the project's dated-addenda convention);
-ADDENDUM 7 supersedes its AC-1 line rather than rewriting it.
+**Process correction (PM error, on record) -- team-lead's exact words,
+quoted rather than softened, per instruction:** r1-test originally closed
+this AC-1 edge-case question (gapped/holiday intraday bars) by claiming it
+was covered by an existing test; r1-review checked empirically against the
+real `build_replay_day` and found the claim wrong (the two genuinely
+distinct branches described above). ADDENDUM 6's "closed with r1-review
+directly" phrasing recorded that PROPOSED bilateral closure as SETTLED
+while r1-review was still independently verifying it -- it was not yet
+settled when written. Team-lead's own ruling, verbatim: **"I'm issuing
+ADDENDUM 7 correcting the record -- the ADDENDUM 6 line cited your closure
+as settled before r1-review had verified it, which is my process error,
+not yours alone: a bilateral closure is not settled until the counterparty
+confirms."** This is kept as a standing process lesson, not a footnote
+about one contributor's mistake: **a bilateral closure is not settled
+until the counterparty confirms -- "agreement != truth" applies to
+closures exactly as it does to findings.** ADDENDUM 6's historical text
+stands unedited (the project's dated-addenda convention); ADDENDUM 7
+supersedes its AC-1 line rather than rewriting it. The missing golden
+landed as `test_gapped_intraday_bar_excludes_only_the_gapped_ticker_sibling_stays_real`
+in `tests/math_engine/test_ma1_replay_per_tick_lpc_stamping.py`
+(commit `46051dd5`, verified present at that exact path+name).
 
 **Golden fixtures:** `tests/fixtures/math/ma1_build_replay_day_lpc_stamping.json`,
 `ma1_gapped_bar_lpc_exclusion.json`, `ma1_lpc_per_tick_mc_sensitivity.json`;
-`tests/autotuner/test_ma1_replay_per_tick_lpc_stamping.py` (576 lines) pins
+`tests/math_engine/test_ma1_replay_per_tick_lpc_stamping.py` (576 lines) pins
 intra-day mc_prob variance as lpc varies (the audit's 10.3<->96.7 sensitivity
 now reproduced in replay), the gapped-bar exclusion, and non-mutation of the
 caller's `holdings` argument across repeated calls.
@@ -6184,7 +6197,17 @@ this specific price sequence.
 
 **Regression pin:**
 `tests/autotuner/test_ac7_inert_dims_objective_variance_smoke.py` (415
-lines + a 45-line repair diff).
+lines + a 45-line repair diff) -- Layer 1 (`TAKE_PROFIT_MC_PCT`, verified
+present at this path) is
+`test_take_profit_mc_pct_varies_the_objective_over_real_bar_derived_walk_forward`
+(line 410; a distinct, earlier hand-specified
+`test_take_profit_mc_pct_varies_the_objective` at line 155 also exists in
+the same file and predates this cycle's bar-derived walk-forward version
+-- the two are not duplicates, the earlier one is the pre-existing
+hand-specified-tick check this cycle's real bar-derived test
+supplements); Layer 2 (the parabolic dims' wiring-level +
+mechanism-removal proof) is Section 0/1 of the same file (r1-test's own
+naming for the two sub-sections).
 
 **Commits:** `428809dc` (RED), `57789ff4` (plan ADDENDUM 3 -- two-layer form
 ruling), `c2bf654f` (fixture repair).
