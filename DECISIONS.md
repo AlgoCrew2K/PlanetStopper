@@ -5743,12 +5743,20 @@ regression 51/0/0; a broader `tests/app/` + `tests/analytics/` + `tests/ui/` swe
 1858 passed / 25 skipped (pre-existing, unrelated) / 1 deselected / 0 failed / 0
 errors, 367.9s; `js_syntax` 11/11 (covers `performance.js`); ruff clean.
 
-**Outstanding before merge (per `feedback_pm_always_run_suite_before_merge` --
-this entry will be updated, not re-created, when these land):** the PM's own
-independent full-tree gate run (quoting `N passed / M failed / K errors on <SHA>`)
-and the PM's live E2E against the real running dashboard. r0-review's verdict is
-explicitly conditional on both (`APPROVE-pending-PM-live-gate`) -- this cycle is
-NOT cleared to merge to `origin/main` until they are recorded here.
+**PM independent gate (both prior outstanding items now CLOSED):** a
+15-file targeted `-n0` battery at `6c99630e` -- RUN A: 157 passed / 0 failed / 0
+errors; RUN B (identical battery, all 8 credential env vars blanked): 157/157,
+byte-identical pass count -- no test in this cycle's surface silently depends on a
+live credential. `ruff check .` + `ruff format --check .` clean repo-wide (672
+files). **PM live E2E** (real running dashboard, port 8091, from the R0 worktree):
+`/api/strip/30d` returns the honest insufficient state (`guard_alpha=null`, no
+fabricated fallback -- AC-8/AC-8b live-verified); `days=ytd` token -> HTTP 200
+(AC-5 live-verified); a nonexistent-symphony scope request returns an honest empty
+shape, never portfolio numbers under the wrong name (AC-4 live-verified); the
+Performance tab renders honest em-dashes plus an explicit insufficient-history
+banner on thin data, zero browser console errors (screenshot read directly by the
+PM). r0-review's verdict conditions (`APPROVE-pending-PM-live-gate`) are now BOTH
+satisfied -- this cycle is cleared to merge to `origin/main`.
 
 ### Reference
 
