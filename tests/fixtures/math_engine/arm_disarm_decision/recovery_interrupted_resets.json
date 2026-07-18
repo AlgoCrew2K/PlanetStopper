@@ -1,0 +1,12 @@
+{
+  "layer": "arm_disarm_decision",
+  "scenario": "interrupted_recovery_resets_ladder",
+  "provenance": "MA-4 AC-2 hysteresis. A non-qualifying tick (prob back in-band, >= floor) mid-count resets the recovery ladder to 0 and the position STAYS armed; a subsequent recovery must re-count from 0 (no chatter). Edge case from plan Edge Cases.",
+  "constants": {"take_profit_mc_pct": 5.0, "trigger_threshold_pct": 15.0, "disarm_confirm_ticks": 3},
+  "initial": {"armed": true, "disarm_confirm_count": 0},
+  "sequence": [
+    {"prob_underperforming": 3.0, "is_triggered": false, "expect_armed": true, "expect_count": 1, "note": "recovery tick 1 -> count 1"},
+    {"prob_underperforming": 8.0, "is_triggered": false, "expect_armed": true, "expect_count": 0, "note": "prob back in-band (8.0 >= 5.0) -> non-qualifying -> ladder reset to 0, stays armed"},
+    {"prob_underperforming": 3.0, "is_triggered": false, "expect_armed": true, "expect_count": 1, "note": "recovery resumes -> re-counts from 0, NOT from 1"}
+  ]
+}

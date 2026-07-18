@@ -26,9 +26,11 @@ WHAT IS PINNED
 2. ARM BAND unchanged: the replay arms when the MC reading is in the
    [TAKE_PROFIT_MC_PCT, TRIGGER_THRESHOLD_PCT) band — rename-only, behavior
    preserved.
-3. DISARM unchanged: the replay disarms ("Conditions Recovered") when the MC
-   reading exceeds 2x TRIGGER_THRESHOLD_PCT AND the return is positive —
-   rename-only, behavior preserved.
+3. DISARM (MA-4-corrected, R3-b): the replay disarms ("Conditions Recovered")
+   ONLY on genuine recovery — prob < TAKE_PROFIT_MC_PCT sustained for the
+   hysteresis ladder. Deterioration (mc >= TRIGGER_THRESHOLD_PCT, incl. > 2x)
+   KEEPS the stop armed. The OLD "disarm on mc > 2x threshold AND return > 0" was
+   the inverted MA-4 bug — see test_replay_stays_armed_on_high_mc_deterioration.
 
 These exercise the REAL autotuner._replay_exit_tick (no mocking of math_engine).
 
@@ -176,39 +178,49 @@ def test_replay_does_not_arm_outside_band() -> None:
     )
 
 
-def test_replay_disarm_behavior_unchanged() -> None:
-    """
-    DISARM (rename-only): the replay disarms ("Conditions Recovered") when the
-    MC reading exceeds 2x TRIGGER_THRESHOLD_PCT (= 30) AND the return is
-    positive. Drive an already-armed state with mc=40, return +2% -> must
-    disarm and reset below_stop_count. Behavior identical to pre-rename.
+def test_replay_stays_armed_on_high_mc_deterioration() -> None:
+    """ROOT-CAUSE REWRITE (was test_replay_disarm_behavior_unchanged).
 
-    RED pre-fix: the rename is incomplete. The disarm operator/threshold are
-    unchanged — this pins behavior preservation.
+    VERDICT: the original PINNED THE MA-4 BUG as correct — it asserted that mc=40
+    (> 2x TRIGGER_THRESHOLD_PCT) with a positive return DISARMS the stop. mc is HIGH
+    when badly underperforming, so mc=40 is DETERIORATION -> the stop must STAY armed
+    (the OLD disarm stripped it exactly when compute_exit_confirmation's exit gate
+    was opening). Settled ruling charter:7,:35.
+
+    RED on base 57a8a897: the replay's OLD inverted disarm fires -> armed=False.
+    GREEN once the replay delegates to compute_arm_disarm_decision.
+
+    below_stop_count still ends at 0 — now via compute_exit_confirmation's
+    MC-breakdown veto (mc=40 < MC_BREAKDOWN_THRESHOLD 60), NOT via a disarm.
     """
     state = _fresh_state(armed=True)
-    state["below_stop_count"] = 2  # should reset on disarm
+    state["below_stop_count"] = 2  # zeroed by the exit-confirmation veto, not a disarm
     autotuner._replay_exit_tick(state, _tick(2.0, 40.0), 0, 3, _PARAMS, grace_minutes=0)
-    assert state["armed"] is False, (
-        "DISARM changed: mc=40 (> 2x TRIGGER_THRESHOLD_PCT=30) with a positive "
-        "return must disarm the position ('Conditions Recovered'); the rename "
-        "must preserve this."
+    assert state["armed"] is True, (
+        "MA-4: mc=40 (deterioration, > 2x TRIGGER_THRESHOLD_PCT) must KEEP the stop "
+        "armed; the OLD inverted disarm wrongly stripped it. Disarm keys on genuine "
+        "recovery (prob < TAKE_PROFIT_MC_PCT) only."
     )
     assert state["below_stop_count"] == 0, (
-        f"DISARM must reset below_stop_count to 0; got {state['below_stop_count']}."
+        "below_stop_count is zeroed by compute_exit_confirmation's MC-breakdown veto "
+        "(mc=40 < 60), not by a disarm (none fires on deterioration)."
     )
 
 
 def test_replay_does_not_disarm_when_return_non_positive() -> None:
-    """
-    DISARM guard (rename-only): the disarm requires return > 0. With mc=40 (high)
-    but a NEGATIVE return, the armed position must STAY armed — recovery is not
-    confirmed while still down. Pins that the rename preserved the `and ret > 0`
-    guard.
+    """SURVIVES with a CORRECTED root cause (docstring rewrite; assertion unchanged).
+
+    With mc=40 (high) and a NEGATIVE return the armed stop stays armed.
+
+    OLD reasoning (pinned the bug): "the disarm requires return > 0; the negative
+    return blocks it." POST-MA-4 that `ret > 0` leg is DELETED — the return sign is
+    IRRELEVANT to the disarm. The stop stays armed because mc=40 is DETERIORATION
+    (prob >= TRIGGER_THRESHOLD_PCT), not genuine recovery (prob < TAKE_PROFIT_MC_PCT).
+    The assertion holds for BOTH the OLD and the NEW code — but for the RIGHT reason now.
     """
     state = _fresh_state(armed=True)
     autotuner._replay_exit_tick(state, _tick(-2.0, 40.0), 0, 3, _PARAMS, grace_minutes=0)
     assert state["armed"] is True, (
-        "A high MC reading with a NEGATIVE return must NOT disarm (recovery "
-        "unconfirmed while down); the rename must preserve the `ret > 0` guard."
+        "mc=40 is deterioration, not recovery -> the stop stays armed regardless of "
+        "the return sign (the OLD `ret > 0` disarm leg is deleted)."
     )

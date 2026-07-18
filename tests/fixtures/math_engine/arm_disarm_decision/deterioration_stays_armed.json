@@ -1,0 +1,11 @@
+{
+  "layer": "arm_disarm_decision",
+  "scenario": "deterioration_and_breakdown_keep_armed",
+  "provenance": "MA-4 THE FIX. run_monte_carlo output is HIGH (~100) when badly underperforming (scoping.md §1). prob >= 15 (incl. >= 60 breakdown) is DETERIORATION, not recovery -> the stop STAYS armed so compute_exit_confirmation can fire. The OLD inverted disarm wrongly stripped armed here. Categorical spec decision.",
+  "constants": {"take_profit_mc_pct": 5.0, "trigger_threshold_pct": 15.0, "disarm_confirm_ticks": 3},
+  "initial": {"armed": true, "disarm_confirm_count": 0},
+  "sequence": [
+    {"prob_underperforming": 35.0, "is_triggered": false, "expect_armed": true, "expect_count": 0, "note": "35.0 > 2x trigger (30) -> OLD code disarmed here; FIX keeps armed (deterioration != recovery)"},
+    {"prob_underperforming": 70.0, "is_triggered": false, "expect_armed": true, "expect_count": 0, "note": "70.0 >= MC_BREAKDOWN_THRESHOLD (60) -> stays armed so the exit gate opens"}
+  ]
+}

@@ -100,9 +100,11 @@ def _mc_inband_tick(mc: float = 10.0, ret: float = 1.0) -> dict:
     }
 
 
-def _mc_disarm_tick(mc: float, ret: float) -> dict:
-    """A tick engineered to satisfy production's disarm condition
-    (mc_available and mc > 2*TRIGGER_THRESHOLD_PCT and ret > 0.0)."""
+def _mc_deterioration_tick(mc: float, ret: float) -> dict:
+    """A tick engineered to hit the OLD inverted-disarm condition
+    (mc > 2*TRIGGER_THRESHOLD_PCT and ret > 0.0). run_monte_carlo is HIGH when badly
+    underperforming, so post-MA-4 this is DETERIORATION, not recovery -- it must NOT
+    disarm (see test_replay_no_longer_disarms_on_extreme_mc_deterioration)."""
     return {
         "time": "09:31",
         "return": ret,
@@ -201,8 +203,10 @@ def test_replay_stays_armed_on_mc_absent_tick_no_forced_disarm() -> None:
 
 
 # ===========================================================================
-# 3 — Regression guards: the EXISTING correct arm/disarm behavior for an
-#     AVAILABLE MC opinion must not be disturbed by the AC-3 fix.
+# 3 — Regression guards: the EXISTING correct ARM behavior for an AVAILABLE MC
+#     opinion must not be disturbed by the AC-3 fix. NOTE: the DISARM regression
+#     guard below was REWRITTEN by MA-4 (R3-b) — the OLD inverted disarm it pinned
+#     was the bug; disarm now keys on genuine recovery (prob < TAKE_PROFIT_MC_PCT).
 # ===========================================================================
 
 
@@ -224,29 +228,46 @@ def test_replay_still_arms_on_in_band_available_mc() -> None:
     )
 
 
-def test_replay_still_disarms_on_extreme_available_mc_with_positive_return() -> None:
-    """Regression guard: mc_available AND mc > 2*TRIGGER_THRESHOLD_PCT AND
-    ret > 0.0 must still disarm -- this path is already correct and the AC-3
-    fix must not disturb it."""
+def test_replay_no_longer_disarms_on_extreme_mc_deterioration() -> None:
+    """ROOT-CAUSE REWRITE (was test_replay_still_disarms_on_extreme_available_mc_with_positive_return).
+
+    VERDICT: the original test PINNED THE MA-4 BUG as correct — it asserted that an
+    extreme MC reading (mc > 2*TRIGGER_THRESHOLD_PCT) with a positive return DISARMS
+    the stop. That is the inversion: run_monte_carlo is HIGH (~100) when badly
+    underperforming, so mc=31 is DETERIORATION, and disarming there strips the
+    protective stop exactly as compute_exit_confirmation's exit gate opens. The
+    settled ruling (charter:7,:35) is the arbiter — disarm ONLY on genuine recovery
+    (prob < TAKE_PROFIT_MC_PCT). So an extreme-MC/positive-return tick must now KEEP
+    the stop armed.
+
+    RED on base 57a8a897: the replay's OLD inverted disarm fires here -> armed=False.
+    GREEN once the replay delegates to compute_arm_disarm_decision.
+
+    below_stop_count still ends at 0 — but the ROOT CAUSE changed: it is now zeroed by
+    compute_exit_confirmation's MC-breakdown veto (mc=31 < MC_BREAKDOWN_THRESHOLD 60
+    -> the exit tick resets the count), NOT by a disarm (which no longer fires here).
+    """
     state = autotuner._fresh_replay_state()
     state["armed"] = True
-    state["below_stop_count"] = 2  # must reset to 0 on disarm
+    state["below_stop_count"] = 2
 
     trigger_threshold = _DEFAULT_PARAMS["TRIGGER_THRESHOLD_PCT"]
     autotuner._replay_exit_tick(
         state,
-        _mc_disarm_tick(mc=(trigger_threshold * 2) + 1.0, ret=1.0),
+        _mc_deterioration_tick(mc=(trigger_threshold * 2) + 1.0, ret=1.0),
         tick_idx=0,
         n_ticks=5,
         p=_DEFAULT_PARAMS,
         grace_minutes=0,
     )
-    assert state["armed"] is False, (
-        "Regression: an available, extreme MC opinion with a positive return must "
-        "still disarm the stop."
+    assert state["armed"] is True, (
+        "MA-4: an extreme MC reading (deterioration, mc > 2x trigger) must NOT disarm "
+        "-- the OLD inverted disarm did, stripping the protective stop at the worst "
+        "moment. Disarm keys on genuine recovery (prob < TAKE_PROFIT_MC_PCT) only."
     )
     assert state["below_stop_count"] == 0, (
-        "Regression: disarm must still reset below_stop_count to 0."
+        "below_stop_count is zeroed by compute_exit_confirmation's MC-breakdown veto "
+        "(mc=31 < 60 -> the exit tick resets the count), NOT by a disarm (none fires here)."
     )
 
 

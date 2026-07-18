@@ -38,11 +38,18 @@ silently re-arms, or leaks the fix into the MC-present path MUST fail.
 
 Structural approach
 ===================
-The arming gate lives in alpha_bot_execution.py (not a pure function). This file
-tests it via:
+POST R3-b (MA-4): the arm/disarm decision was EXTRACTED into the pure seam
+``math_engine.compute_arm_disarm_decision`` (called by both production and the
+autotuner replay). The inline arming block this file used to inspect via AST no
+longer exists — so Section 1 now asserts the SAME fail-open / arm-band /
+disarm-requires-mc / triggered-guard contracts BEHAVIORALLY against that seam
+(a strict upgrade over AST-structure matching), plus a light guard that
+production DELEGATES to the seam (the fail-open arm is preserved, not dropped).
+This file tests it via:
 
-1. AST-structural inspection of the arming block: asserts the fail-open branch
-   exists and has the correct guard predicates.
+1. Behavioral assertions against math_engine.compute_arm_disarm_decision: the
+   fail-open arm on MC-absent, the MC-present arm band, the triggered guard, and
+   the disarm-requires-mc-available contract (Section 1).
 2. Integration-style: exercises compute_exit_confirmation directly with armed=True
    and prob_underperforming=None (verifying the math layer is already correct and fires).
 3. Golden-fixture parametrised tests: sequence assertions for the ticks-below-stop
@@ -52,10 +59,12 @@ tests it via:
 
 Scope guard
 ===========
-This file covers the ARMING GATE (alpha_bot_execution.py:1292-1316) and the
-exit-confirmation layer (math_engine.compute_exit_confirmation) with prob_underperforming=None.
-It does NOT cover: TP arming, parabolic arming, breakeven logic, disarm-with-MC,
-or any other trigger type.
+This file covers the ARM/DISARM SEAM (math_engine.compute_arm_disarm_decision,
+fail-open + disarm-requires-mc facets) and the exit-confirmation layer
+(math_engine.compute_exit_confirmation) with prob_underperforming=None. It does
+NOT cover: the recovery-disarm hysteresis ladder (see
+tests/math_engine/test_r3b_disarm_recovery_hysteresis.py), TP arming, parabolic
+arming, breakeven logic, or any other trigger type.
 """
 
 from __future__ import annotations
@@ -90,265 +99,105 @@ def _load_fixture(name: str) -> dict:
         return json.load(fh)
 
 
-# ---------------------------------------------------------------------------
-# AST helpers for inspecting the arming gate
-# ---------------------------------------------------------------------------
-
-
-def _parse_exec_module() -> ast.Module:
-    source = _EXEC_FILE.read_text(encoding="utf-8")
-    return ast.parse(source)
-
-
-def _find_arming_gate_block(tree: ast.Module) -> ast.If:
-    """
-    Locate the `if should_arm and not bot_state[...]['armed'] and ...` node.
-    Returns the ast.If node or raises AssertionError with diagnostic.
-    """
-    # Walk all If nodes; look for one whose test contains a Name('should_arm').
-    candidates: list[ast.If] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef):
-            continue
-        for sub in ast.walk(node):
-            if isinstance(sub, ast.If):
-                # Collect all Name nodes in the test
-                names_in_test = {n.id for n in ast.walk(sub.test) if isinstance(n, ast.Name)}
-                if "should_arm" in names_in_test:
-                    candidates.append(sub)
-    assert len(candidates) >= 1, (
-        "Could not find the arming gate `if should_arm and ...` in "
-        f"{_EXEC_FILE}. The fix must preserve this gate structure."
-    )
-    # Return the first (there should only be one should_arm gate)
-    return candidates[0]
-
-
-def _find_should_arm_assignment_block(tree: ast.Module) -> list[ast.Assign]:
-    """
-    Find all `should_arm = True` / `should_arm = False` assignments in the
-    module, to verify the fail-open path sets should_arm=True when mc_available=False.
-    """
-    assignments: list[ast.Assign] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        for tgt in node.targets:
-            if isinstance(tgt, ast.Name) and tgt.id == "should_arm":
-                assignments.append(node)
-    return assignments
-
-
-def _find_mc_available_false_arm_branch(tree: ast.Module) -> bool:
-    """
-    Returns True if the module contains an arming branch that fires when
-    mc_available is False (or its negation `not mc_available`), setting
-    should_arm = True.
-
-    A correct fix will have a branch shaped like one of:
-        if not mc_available and not currently_armed and not is_triggered:
-            should_arm = True
-        OR combined as:
-            if not mc_available:
-                should_arm = True
-        OR as an `elif not mc_available`:
-            should_arm = True
-
-    We detect this by looking for an If whose test contains (a) a negation of
-    'mc_available' (either `not mc_available` or a comparison `mc_available is
-    False` / `mc_available == False`) and (b) an assignment `should_arm = True`
-    (as ast.Constant(value=True)) in its body.
-    """
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.If,)):
-            continue
-        test = node.test
-        # Detect: `not mc_available` as ast.UnaryOp(op=Not, operand=Name('mc_available'))
-        negated_mc = _test_contains_negated_mc_available(test)
-        if not negated_mc:
-            continue
-        # Check body for `should_arm = True`
-        for stmt in ast.walk(node):
-            if isinstance(stmt, ast.Assign):
-                for tgt in stmt.targets:
-                    if (
-                        isinstance(tgt, ast.Name)
-                        and tgt.id == "should_arm"
-                        and isinstance(stmt.value, ast.Constant)
-                        and stmt.value.value is True
-                    ):
-                        return True
-    return False
-
-
-def _test_contains_negated_mc_available(test: ast.expr) -> bool:
-    """
-    Returns True if the test expression contains `not mc_available`
-    (UnaryOp Not over Name mc_available) at any depth.
-    """
-    for node in ast.walk(test):
-        if (
-            isinstance(node, ast.UnaryOp)
-            and isinstance(node.op, ast.Not)
-            and isinstance(node.operand, ast.Name)
-            and node.operand.id == "mc_available"
-        ):
-            return True
-    return False
-
-
-def _find_arming_gate_guards_triggered(tree: ast.Module) -> bool:
-    """
-    Returns True if the should_arm gate (`if should_arm and ... :`) has
-    `not triggered` or `not bot_state[...]['triggered']` in its guard condition.
-    A correct fix must NOT arm an already-triggered position.
-    """
-    # Find the arming gate
-    arming_gate = _find_arming_gate_block(tree)
-    test = arming_gate.test
-    # Look for 'triggered' in the guard predicates (via attribute/subscript access
-    # or simple Name) that is negated
-    for node in ast.walk(test):
-        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-            # Check if operand contains 'triggered' anywhere
-            for sub in ast.walk(node.operand):
-                if isinstance(sub, ast.Constant) and sub.value == "triggered":
-                    return True
-                if isinstance(sub, ast.Name) and sub.id == "triggered":
-                    return True
-    return False
-
-
 # ===========================================================================
-# SECTION 1: AST Structural Tests — the arming gate fail-open branch
+# SECTION 1: Behavioral contracts at the extracted seam
+# (post R3-b: the arm/disarm decision moved into
+#  math_engine.compute_arm_disarm_decision; these were AST-structure checks on the
+#  old inline arming block and are now behavioral against the seam — a strict upgrade.)
 # ===========================================================================
 
 
-def test_arming_gate_has_fail_open_branch_for_mc_absent() -> None:
+def test_seam_fail_opens_arm_on_mc_absent() -> None:
+    """MA-10 fail-open, now at the seam: an MC-absent reading (prob=None) while
+    UNARMED must ARM the protective stop — an absent second opinion must never
+    leave the stop dark. (Was an AST assertion on the inline `not mc_available ->
+    should_arm=True` branch; the arm decision moved to the seam.)
+
+    RED on base: math_engine.compute_arm_disarm_decision does not exist yet.
     """
-    STRUCTURAL RED: After the H-3 fix, alpha_bot_execution.py MUST contain an
-    arming branch that fires when mc_available is False (MC absent), setting
-    should_arm = True.
-
-    Pre-fix: the ONLY `should_arm = True` path is guarded by `if mc_available and ...`.
-    When mc_available is False, should_arm stays False and armed never becomes True.
-
-    A correct fix adds a branch shaped like:
-        if not mc_available and not bot_state[...]['armed'] and not ...'triggered']:
-            should_arm = True
-    (or structurally equivalent).
-
-    Catches any fix that omits the fail-open branch entirely, or wraps it so
-    mc_available=False still prevents arming.
-    """
-    tree = _parse_exec_module()
-    found = _find_mc_available_false_arm_branch(tree)
-    assert found, (
-        "H-3 fail-open fix NOT found: alpha_bot_execution.py has no arming "
-        "branch where `not mc_available` sets `should_arm = True`. "
-        "The fix must add an arming path that activates when MC is absent."
+    new_armed, _ = math_engine.compute_arm_disarm_decision(
+        prob_underperforming=None,
+        is_triggered=False,
+        armed=False,
+        disarm_confirm_count=0,
+        take_profit_mc_pct=5.0,
+        trigger_threshold_pct=15.0,
+    )
+    assert new_armed is True, (
+        "MA-10 fail-open lost in the extraction: an absent MC opinion (prob=None) "
+        "must arm the protective stop while unarmed."
     )
 
 
-def test_arming_gate_triggered_guard_present() -> None:
-    """
-    STRUCTURAL: The `if should_arm and not armed and not triggered:` guard
-    must remain intact after the fix. A fix that arms triggered positions
-    corrupts live state.
-
-    This test verifies 'triggered' appears as a negated operand in the should_arm
-    gate condition.
-    """
-    tree = _parse_exec_module()
-    found = _find_arming_gate_guards_triggered(tree)
-    assert found, (
-        "Arming gate is missing the 'not triggered' guard. After the H-3 fix, "
-        "the should_arm gate must still exclude already-triggered positions."
+def test_seam_does_not_arm_triggered_position() -> None:
+    """The not-triggered guard, now at the seam: an in-band reading must NOT arm a
+    TRIGGERED position (production guarded the whole arm/disarm block on
+    not-triggered). Was an AST assertion on the inline `not triggered` guard."""
+    new_armed, _ = math_engine.compute_arm_disarm_decision(
+        prob_underperforming=10.0,
+        is_triggered=True,
+        armed=False,
+        disarm_confirm_count=0,
+        take_profit_mc_pct=5.0,
+        trigger_threshold_pct=15.0,
+    )
+    assert new_armed is False, (
+        "The not-triggered guard was lost: an already-triggered position must never "
+        "be (re-)armed by the seam."
     )
 
 
-def test_mc_present_arming_path_still_present() -> None:
-    """
-    STRUCTURAL REGRESSION: The original `if mc_available and TAKE_PROFIT_MC_PCT
-    <= prob_underperforming < TRIGGER_THRESHOLD_PCT: should_arm = True` path MUST
-    still exist after the fix. Removing the MC-present arming path is a scope
-    violation.
-
-    Detects: a fix that replaces rather than extends the arming block.
-    """
-    tree = _parse_exec_module()
-    # Look for an If that tests mc_available (positive) AND assigns should_arm = True
-    found = False
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.If):
-            continue
-        test = node.test
-        # Check: mc_available appears as a non-negated Name in the test
-        has_positive_mc_available = False
-        for sub in ast.walk(test):
-            if isinstance(sub, ast.Name) and sub.id == "mc_available":
-                # Make sure it is not directly wrapped in a Not
-                has_positive_mc_available = True
-        if not has_positive_mc_available:
-            continue
-        # Check body for should_arm = True
-        for stmt in ast.walk(node):
-            if isinstance(stmt, ast.Assign):
-                for tgt in stmt.targets:
-                    if (
-                        isinstance(tgt, ast.Name)
-                        and tgt.id == "should_arm"
-                        and isinstance(stmt.value, ast.Constant)
-                        and stmt.value.value is True
-                    ):
-                        found = True
-    assert found, (
-        "REGRESSION: The mc_available=True arming path (`if mc_available and ... "
-        "should_arm = True`) is missing from alpha_bot_execution.py. The H-3 fix "
-        "must EXTEND the arming block, not replace the existing MC-present path."
+def test_seam_arms_on_mc_present_in_band() -> None:
+    """The MC-present arm band, now at the seam: prob in
+    [TAKE_PROFIT_MC_PCT, TRIGGER_THRESHOLD_PCT) must arm — the original MC-present
+    arming path preserved (the extraction must EXTEND, not drop it)."""
+    new_armed, _ = math_engine.compute_arm_disarm_decision(
+        prob_underperforming=10.0,
+        is_triggered=False,
+        armed=False,
+        disarm_confirm_count=0,
+        take_profit_mc_pct=5.0,
+        trigger_threshold_pct=15.0,
+    )
+    assert new_armed is True, (
+        "The MC-present arm band [TAKE_PROFIT_MC_PCT, TRIGGER_THRESHOLD_PCT) must "
+        "still arm the stop."
     )
 
 
-def test_mc_present_disarm_branch_still_requires_mc_available() -> None:
-    """
-    STRUCTURAL REGRESSION: The disarm branch must still require mc_available=True.
-    Specifically, `if mc_available and prob_underperforming > TRIGGER_THRESHOLD_PCT * 2
-    and current_return > 0.0: armed = False` must survive the fix.
+def test_seam_disarm_requires_mc_available() -> None:
+    """The disarm-requires-mc contract, now at the seam: an MC-absent tick
+    (prob=None) while ARMED must NOT disarm — an absent opinion cannot manufacture
+    a recovery signal (the disarm requires an available reading confirming genuine
+    recovery, prob < TAKE_PROFIT_MC_PCT). Was an AST assertion that the inline
+    disarm required mc_available.
 
-    A fix that drops mc_available from the disarm condition would disarm on every
-    MC-absent tick where return happens to be positive — a false disarm.
-
-    We assert that 'mc_available' appears as a Name in the disarm condition by
-    looking for any If whose body contains `bot_state[...]["armed"] = False` and
-    whose test contains `mc_available`.
+    A regression that disarmed on MC-absent would silently drop the protective stop
+    on a data gap — the exact fail-dangerous path this test forbids.
     """
-    tree = _parse_exec_module()
-    found = False
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.If):
-            continue
-        test = node.test
-        # Check test contains mc_available positively
-        has_mc_available = any(
-            isinstance(sub, ast.Name) and sub.id == "mc_available" for sub in ast.walk(test)
-        )
-        if not has_mc_available:
-            continue
-        # Check body: bot_state[...]["armed"] = False
-        for stmt in ast.walk(node):
-            if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Constant):
-                if stmt.value.value is False:
-                    for tgt in stmt.targets:
-                        # Subscript assignment: bot_state[symphony_id]["armed"] = False
-                        if isinstance(tgt, ast.Subscript):
-                            # Check the slice is a Constant with value "armed"
-                            for sub in ast.walk(tgt):
-                                if isinstance(sub, ast.Constant) and sub.value == "armed":
-                                    found = True
-    assert found, (
-        "REGRESSION: The disarm branch `if mc_available and ... armed = False` "
-        "is missing or no longer requires mc_available=True. The disarm branch "
-        "must only fire when MC is available to avoid false disarms on MC-absent ticks."
+    new_armed, _ = math_engine.compute_arm_disarm_decision(
+        prob_underperforming=None,
+        is_triggered=False,
+        armed=True,
+        disarm_confirm_count=0,
+        take_profit_mc_pct=5.0,
+        trigger_threshold_pct=15.0,
+    )
+    assert new_armed is True, (
+        "MC-absent must NOT disarm an armed stop — the disarm requires an available "
+        "MC reading confirming genuine recovery (prob < TAKE_PROFIT_MC_PCT)."
+    )
+
+
+def test_production_arming_delegates_to_shared_seam() -> None:
+    """The arm/disarm decision now lives in the extracted seam; production MUST
+    delegate to it (so the fail-open arm is preserved, not silently re-inlined /
+    dropped). RED on base: alpha_bot_execution.py does not yet call the seam."""
+    src = _EXEC_FILE.read_text(encoding="utf-8")
+    assert "compute_arm_disarm_decision" in src, (
+        "alpha_bot_execution.py no longer routes arming through "
+        "math_engine.compute_arm_disarm_decision — the fail-open arm and the "
+        "recovery-disarm must be preserved via the shared seam, not re-inlined."
     )
 
 
@@ -669,18 +518,19 @@ def test_exit_confirmation_mc_absent_no_magnitude_no_increment(
 # ===========================================================================
 
 
-def test_arming_gate_is_in_alpha_bot_execution_not_math_engine() -> None:
+def test_exit_confirmation_stays_free_of_arming_identifiers() -> None:
     """
-    Scope guard: the fail-open arming logic (should_arm = True when
-    mc_available=False) must live in alpha_bot_execution.py, NOT in
-    math_engine.compute_exit_confirmation.
+    Scope guard (updated for R3-b): the arm/disarm DECISION now lives in the
+    dedicated pure seam math_engine.compute_arm_disarm_decision — but
+    math_engine.compute_exit_confirmation must REMAIN free of arming logic
+    (should_arm / arm_reason / mc_available identifiers, or any `armed` assignment).
+    The two concerns stay separate: compute_exit_confirmation is the pure
+    exit-confirmation ladder; the arm/disarm gate is its own seam.
 
-    math_engine.compute_exit_confirmation is already correct: it accepts
-    prob_underperforming=None and treats None as MC-sanity-gate-pass (fail-safe,
-    implemented in the H-1 cycle). The H-3 fix is purely in the arming gate
-    in alpha_bot_execution.py.
+    compute_exit_confirmation accepts prob_underperforming=None and treats None as
+    MC-breakdown-gate-pass (fail-safe, H-1 cycle) — unchanged by R3-b.
 
-    Catches: a fix that moves fail-open logic into compute_exit_confirmation,
+    Catches: a fix that leaks arm/disarm logic into compute_exit_confirmation,
     which would change the math layer's behaviour for NOT-armed calls (wrong lane).
     """
     src_path = pathlib.Path(math_engine.__file__)
