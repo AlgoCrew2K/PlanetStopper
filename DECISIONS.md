@@ -7920,3 +7920,202 @@ entry closes 2 of `DE-MATH-R1-001`'s 3-item pre-retune checklist residuals
 (the 3rd, AC-4 undated-path wiring, was already closed by `DE-MATH-R2-001`).
 R3-b (MA-4 disarm-band), R3-c (MA-11 MAX_SQUEEZE_FLOOR), and R3-d (the
 retune itself, operator-gated) remain -- not covered by this entry.
+
+## DE-MATH-R3B-001 -- Math Remediation R3-b: MA-4 inverted trailing-stop disarm fix (2026-07-18, cycle in progress)
+
+Branch: `fix/math-r3b` | Base: `origin/main` (post-R3-a) `7e0b7778` | HEAD
+(this entry): `bbe94fbb` (RED complete, production GREEN, replay GREEN, the
+Toxic Pair's own sufficiency review APPROVED by r3b-test -- see
+"Verification" below). **r3b-review's independent blast-radius/correctness/
+parity verdict and the PM's live E2E on a real giveback scenario are
+PENDING.** Per PM ruling, this entry's status framing, the program charter's
+MA-4 line-status flip, and the CLAUDE.md key-files cell flip do NOT land
+until that verdict is in -- this entry describes the bug and the change
+made, it does not yet certify the bug closed.
+
+### Summary
+
+MA-4 is the second executed live-execution-path phase of the math
+remediation program (`DE-MATH-AUDIT-001`), gated after R3-a (tests-only,
+`DE-MATH-R3A-001`). Scope basis: `feature-plans/math-r3b.md` +
+`feature-plans/math-r3b-scoping.md` (r3b-scout, file:line-verified against
+`7e0b7778`).
+
+**The bug, proven from source (r3b-scout):** `math_engine.run_monte_carlo`
+returns the fraction of regime-matched kNN analog paths that BEAT the
+portfolio's current return -- HIGH (~100) means badly underperforming, LOW
+(~0) means outperforming (`math_engine.py:1264-1266`, `compute_exit_
+confirmation` docstring). The pre-fix inline disarm at (old)
+`alpha_bot_execution.py:1394-1402` fired when `prob_underperforming >
+2 * TRIGGER_THRESHOLD_PCT (30.0) AND current_return > 0.0` -- that is
+DETERIORATION, never recovery -- while printing `"DISARMED (Conditions
+Recovered)"`. Because `compute_exit_confirmation` only allows the
+Trailing-Stop exit to fire once `prob_underperforming >= MC_SANITY_
+THRESHOLD (60.0)` (a superset of `prob > 30`), the buggy disarm stripped
+`armed` exactly as the exit gate opened -- a position that arms at a peak
+(`prob` in `[5, 15)`) and then gives back into a loss as `prob` climbs
+past 30 disarms before the exit gate ever opens, and (arm-band re-entry
+requiring `prob` back in `[5,15)`) can never re-arm on the way down. The
+audit's `+3% -> -1.5%` giveback scenario never exits under the old code.
+The IDENTICAL inverted disarm was independently duplicated in the autotuner
+replay (`autotuner.py`, old `_replay_exit_tick:1220-1223`) -- doubly
+important because R3-d retunes by replaying exit decisions, so a divergent
+production/replay exit surface would invalidate the tune.
+
+**The change made this cycle:** the inline disarm block in BOTH
+`alpha_bot_execution.py` (production) and `autotuner.py:_replay_exit_tick`
+(replay) was replaced with a call to one new pure seam,
+`math_engine.compute_arm_disarm_decision` (`math_engine.py:307`), making
+production/replay parity structural rather than hand-maintained. The new
+disarm condition requires `prob_underperforming` to fall STRICTLY below
+`TAKE_PROFIT_MC_PCT` (5.0, the arm-band's own lower edge) for
+`DISARM_CONFIRM_TICKS` (new frozen constant, `math_engine.py:304`, = 3)
+CONSECUTIVE ticks before `armed` flips to `False` -- `current_return` is no
+longer a parameter to the disarm decision at all. Deterioration (any
+`prob >= 15`, including `>= 60`) now keeps the stop armed, so `compute_
+exit_confirmation`'s Trailing-Stop exit can fire.
+
+### Decision: the seam contract (r3b-test's authoritative pin, PM-approved 2-tuple)
+
+`compute_arm_disarm_decision(prob_underperforming, is_triggered, armed,
+disarm_confirm_count, take_profit_mc_pct, trigger_threshold_pct,
+disarm_confirm_ticks=DISARM_CONFIRM_TICKS) -> tuple[bool, int]` (returns
+`(new_armed, new_disarm_confirm_count)`). Pure -- no I/O, no telemetry
+string, no `below_stop_count` read/write. `mc_available` is derived
+internally as `prob_underperforming is not None`, never a parameter.
+`current_return` is deliberately NOT a parameter -- the bug's `current_
+return > 0` leg is gone; recovery is prob-based only. A triggered position
+freezes (`is_triggered` -> returns `armed`/`disarm_confirm_count`
+unchanged). The arm band (`take_profit_mc_pct <= prob < trigger_threshold_
+pct`) and MA-10 fail-open (`mc_available is False` -> arm) are unchanged
+from the pre-fix code. Two input guards were added beyond the behavioral
+spec (`_reject_non_finite` on the float inputs; `disarm_confirm_ticks <= 0`
+rejected with `ValueError` -- a disableable ladder would defeat the
+hysteresis it exists to provide) -- neither was pinned by an original RED
+test; r3b-test closed that gap with 13 dedicated regression-lock tests
+(`tests/math_engine/test_r3b_arm_disarm_input_guards.py`) rather than
+leaving an unpinned "a worse implementation could also pass" gap.
+
+### Decision: hysteresis ladder sizing -- `DISARM_CONFIRM_TICKS = 3`, frozen, not tuned
+
+A bare single-tick `prob < 5.0` disarm would chatter: R3-a's `mc_band_edge_
+stability_probe.py` measured a ~28% single-tick MC arm-decision flip-rate
+near a band boundary (`feature-plans/math-r3b-scoping.md` SS5). Three
+consecutive confirming ticks reduces a spurious disarm to `~0.28^3 ~= 2.2%`,
+matching the existing rigor of `EXIT_CONFIRM_TICKS`/`TP_CONFIRM_TICKS` on
+the same underlying MC-probability metric. `DISARM_CONFIRM_TICKS` is a
+`[PM-ASSUMED]` judgment call (MA-4 is a settled bug per the charter, not an
+operator question) -- named, source-commented in `math_engine.py`, and
+explicitly NOT added to `autotuner.OPTUNA_SEARCH_SPACE_KEYS` (do not widen
+the search mid-remediation). Any non-qualifying tick (still in-band,
+deteriorating, or MC-absent) resets the ladder to 0 and leaves the position
+armed -- an MC-absent tick can never itself confirm a recovery.
+
+### Decision: production/replay parity via ONE shared seam, not hand-maintained duplication
+
+r3b-scout's highest-leverage finding: the arm/disarm block was inline in
+`main()`'s loop, the one exit primitive not already extracted to
+`math_engine` (unlike `compute_exit_confirmation`/`compute_tp_
+confirmation`), and the disarm literal was independently duplicated in the
+replay. Extraction makes divergence structurally impossible rather than a
+future hand-maintenance risk. Both call sites pass `is_triggered` in a
+call-appropriate form: production reads `bot_state[symphony_id]["triggered"]`
+live (`alpha_bot_execution.py:1389`); the replay passes the literal `False`
+(`autotuner.py:1223`) because `_replay_exit_tick`'s loop breaks on the first
+exit and never re-enters a tick with triggered state mid-day (mirrors the
+same `is_triggered=False` literal already passed to `compute_exit_
+confirmation`/`compute_tp_confirmation`/`compute_vwap_breakdown_update` in
+the same function). Telemetry (the ARM/DISARM prints) and the AC-7 `below_
+stop_count=0` reset are caller-side in both call sites -- the seam returns
+no string, matching the `compute_tp_confirmation` idiom -- diffing a
+locally-scoped `armed_before_disarm_decision` against the seam's return
+(deliberately NOT reusing production's pre-existing `prev_armed`, a
+cycle-start snapshot consumed later by an unrelated `chart_event="Armed"`
+diff -- reusing that name would have silently corrupted that downstream
+check; caught during implementation, before the GREEN battery ran).
+
+### Decision: TP-disarm (`compute_tp_confirmation`, `math_engine.py:712-723`) -- adjudicated NO CHANGE
+
+r3b-scout's adjudication, carried forward unchanged: the take-profit
+disarm is structurally different from MA-4's trailing-stop disarm -- it
+stands down a profit-taking arm (which only exists because of an
+exceptional GAIN, `prob < 5.0`) when that gain mean-reverts with no profit
+left, removing NO downside protection (the trailing stop is independent and
+untouched). Its telemetry (`alpha_bot_execution.py`, old `:1544-1561`) is
+accurate. Confirmed out of scope; the reviewer verifies zero diff to this
+function and its telemetry in the R3-b diff.
+
+### Decision: AC-8 -- bug-pinning tests rewritten with root-cause verdicts, not blind-made-green
+
+Two existing tests encoded the inverted disarm as correct behavior and were
+REWRITTEN (not deleted, not merely adjusted to pass):
+`test_ac3_replay_fail_open_arm_parity.py::test_replay_still_disarms_on_
+extreme_available_mc_with_positive_return` -> `test_replay_no_longer_
+disarms_on_extreme_mc_deterioration`; `test_h1_replay_underperformance_
+parity.py::test_replay_disarm_behavior_unchanged` -> `test_replay_stays_
+armed_on_high_mc_deterioration`. A third test's docstring was corrected to
+reflect the right reason it survives (`test_replay_does_not_disarm_when_
+return_non_positive`), and `test_h3_failopen_arming.py`'s AST-based
+Section-1 guards were replaced with 5 behavioral seam tests (dead AST
+helpers removed) since the disarm logic no longer exists as inline source
+for an AST scan to inspect. Matches the settled-ruling convention (charter
+`feature-plans/math-remediation-program.md:7,:35`): a test that pins a
+proven bug is a defect in the test, root-caused and fixed, never
+blind-made-green.
+
+### Files changed (this cycle, `57a8a897`..`bbe94fbb`)
+
+- `math_engine.py` -- new `compute_arm_disarm_decision` (`:307`) +
+  `DISARM_CONFIRM_TICKS = 3` (`:304`)
+- `alpha_bot_execution.py` -- arm/disarm block delegated to the seam
+  (`main()`, ~`:1383-1411`); `disarm_confirm_count` state key added at all
+  applicable bot_state init/reset sites (DATA-phase create, position-recycle
+  reset, main-loop init + legacy-backfill key list, startup-seed) --
+  deliberately NOT added to the post-trigger reset, which never touched
+  `below_stop_count` either (byte-for-byte parity preserved, AC-7)
+- `autotuner.py` -- `_replay_exit_tick`'s disarm block delegated to the same
+  seam (~`:1219-1234`); `disarm_confirm_count` added to `_fresh_replay_
+  state`
+- New test files: `tests/math_engine/test_r3b_disarm_recovery_hysteresis.py`
+  (26), `test_r3b_disarm_confirm_ticks_frozen.py` (3), `test_r3b_giveback_
+  seam_golden.py` (1), `test_r3b_arm_disarm_input_guards.py` (13),
+  `tests/autotuner/test_r3b_giveback_exits_via_replay.py` (2),
+  `test_r3b_arm_disarm_parity.py` (5); 10 JSON fixtures under
+  `tests/fixtures/math_engine/arm_disarm_decision/`
+- Rewritten (AC-8): `tests/autotuner/test_ac3_replay_fail_open_arm_
+  parity.py`, `test_h1_replay_underperformance_parity.py`,
+  `tests/execution/test_h3_failopen_arming.py`,
+  `test_main_insufficient_mc_failsafe.py` (docstring only); 6 pre-existing
+  wholesale-`math_engine`-mock test files patched with a neutral `mock_
+  math.compute_arm_disarm_decision.return_value = (False, 0)` (mock-surface
+  gap from the new call, not a behavior change -- root-caused by r3b-test,
+  see `.claude/tdd-handoff.md`)
+
+### Verification
+
+**This entry is a living skeleton, filled in incrementally as each piece
+lands** (same convention as R1/R2/F7/R3-a). At `bbe94fbb`: r3b-test's RED
+phase produced 39 new/rewritten RED tests (0 collection errors), the
+giveback golden proven RED on `57a8a897`; r3b-engine's production GREEN and
+r3b-tuner's replay GREEN together pass the full targeted battery (`tests/
+math_engine/` + `tests/execution/` + `tests/autotuner/`); r3b-test's own
+sufficiency review (Red/Green/Revise) read the full diff against the seam
+contract, found it FAITHFUL, closed one unpinned-guard gap with 13 new
+regression-lock tests, and issued **SUFFICIENT -- APPROVED** (Toxic Pair's
+own gate, not the independent review). **STILL OUTSTANDING, blocking this
+entry's status framing:** r3b-review's independent blast-radius/
+correctness/parity verdict (Task #9) and the PM's own live E2E against a
+real giveback scenario (necessary, never sufficient on tests-green alone).
+Updated in place as each lands -- never re-created as a new DECISIONS.md
+entry.
+
+### Reference
+
+`DE-MATH-R3B-001`; branch `fix/math-r3b`; plan `feature-plans/math-r3b.md`;
+scoping report `feature-plans/math-r3b-scoping.md` (r3b-scout); TDD handoff
+`.claude/tdd-handoff.md`; findings basis `docs/audit/math-audit/VERDICT.md`
+(`DE-MATH-AUDIT-001`); program charter `feature-plans/math-remediation-
+program.md`. Predecessors `DE-MATH-R3A-001` (tests-only, PR merged into
+`7e0b7778`) / `DE-MATH-R2-001` (PR #98) / `DE-MATH-R1-001` (PR #97) /
+`DE-MATH-F7-001` (PR #99). R3-c (MA-11 MAX_SQUEEZE_FLOOR) and R3-d (the
+retune itself, operator-gated) remain -- not covered by this entry.

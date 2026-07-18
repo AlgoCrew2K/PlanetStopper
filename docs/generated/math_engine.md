@@ -3,7 +3,7 @@
 > Pure risk-math primitives: trailing-stop mechanics, CRRA-EU utility, CVaR diagnostics, Monte Carlo gating, regime-match guard, VWAP signals, and the 6-layer exit-trigger resolver.
 
 **Source:** `math_engine.py`
-**Last updated:** 2026-06-02
+**Last updated:** 2026-07-18 (Math Remediation R3-b, `DE-MATH-R3B-001`, cycle in progress) — new `compute_arm_disarm_decision` seam + `DISARM_CONFIRM_TICKS` constant; see the new Arm/Disarm Decision section below. Prior: 2026-06-02 (initial generation)
 
 ## Overview
 
@@ -108,6 +108,36 @@ Returns `(new_hold_ticks, new_breakeven_locked, stop_trigger_level)`. The breake
 
 #### `compute_para_arm_decision(current_return, prev_return, para_threshold, currently_armed) → tuple[float, bool]`
 Returns `(velocity, should_arm_transition)`. Velocity is `current_return - prev_return`. Arms once on the first tick where velocity ≥ threshold; never re-arms. Caller is responsible for state mutation.
+
+---
+
+### Arm/Disarm Decision (Trailing Stop)
+
+#### `compute_arm_disarm_decision(prob_underperforming: float | None, is_triggered: bool, armed: bool, disarm_confirm_count: int, take_profit_mc_pct: float, trigger_threshold_pct: float, disarm_confirm_ticks: int = DISARM_CONFIRM_TICKS) → tuple[bool, int]`
+Returns `(new_armed, new_disarm_confirm_count)`. Computes the trailing-stop's arm/disarm state update — the gate whose `armed` output feeds `compute_exit_confirmation`. Pure; `mc_available` is derived internally as `prob_underperforming is not None` (never a parameter); `current_return` is NOT a parameter. Extracted this cycle (Math Remediation R3-b, `DE-MATH-R3B-001`) from an inline block previously duplicated in both `alpha_bot_execution.py` and `autotuner.py:_replay_exit_tick`, replacing a disarm condition that had been INVERTED (MA-4) — it fired on a high `prob_underperforming` reading (deterioration) rather than a low one (recovery). See `DE-MATH-R3B-001` in `DECISIONS.md` for the full bug account and fix rationale.
+
+**Behavior:**
+- `is_triggered=True` → returns `(armed, disarm_confirm_count)` unchanged (frozen no-op).
+- **Arm:** `should_arm = (mc_available and take_profit_mc_pct <= prob_underperforming < trigger_threshold_pct) or (not mc_available)` (the second clause is the MA-10 fail-open — an absent MC opinion arms the stop rather than leaving it dark). `should_arm and not armed` → `(True, 0)`, a fresh arm with the ladder reset.
+- **Disarm (recovery-gated, hysteresis ladder):** while `armed`, a tick where `mc_available and prob_underperforming < take_profit_mc_pct` (strictly below the arm-band's own lower edge) increments `disarm_confirm_count`; once it reaches `disarm_confirm_ticks` (default `DISARM_CONFIRM_TICKS`), returns `(False, 0)` — disarmed. Any non-qualifying tick (still in-band, deteriorating, or MC-absent) resets the count to 0 and returns `(True, 0)` — stays armed. An MC-absent tick can never itself confirm a recovery.
+- Otherwise (not armed, not arming) → `(False, 0)`.
+
+**Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| `prob_underperforming` | `float \| None` | `run_monte_carlo`'s output — fraction of regime-matched paths that beat the portfolio; `None` = MC unavailable |
+| `is_triggered` | `bool` | Freezes the decision (no-op) once the position has already triggered |
+| `armed` | `bool` | Current arm state |
+| `disarm_confirm_count` | `int` | Current recovery-tick ladder count |
+| `take_profit_mc_pct` | `float` | Arm-band lower edge / recovery-disarm threshold (`TAKE_PROFIT_MC_PCT`, 5.0) |
+| `trigger_threshold_pct` | `float` | Arm-band upper edge (`TRIGGER_THRESHOLD_PCT`, 15.0) |
+| `disarm_confirm_ticks` | `int` | Consecutive qualifying ticks required to disarm; defaults to `DISARM_CONFIRM_TICKS` |
+
+**Returns:** `(new_armed, new_disarm_confirm_count)`.
+
+**Raises:** `ValueError` on non-finite float inputs (`_reject_non_finite`) or `disarm_confirm_ticks <= 0` (a disableable ladder would defeat the hysteresis it exists to provide).
+
+**Caller responsibility:** returns no telemetry string — both call sites diff prev/new `armed` to drive ARM/DISARM prints and the `below_stop_count=0` reset on disarm, matching the `compute_tp_confirmation` idiom.
 
 ---
 
@@ -263,6 +293,7 @@ Computes rolling `MC_VOL_WINDOW_DAYS`-day standard deviation of SPY returns. Ret
 | `MULT_CLOSE` | 0.5 | Dynamic stop multiplier at market close |
 | `EXIT_CONFIRM_TICKS` | 3 | Consecutive ticks to confirm trailing-stop exit |
 | `TP_CONFIRM_TICKS` | 2 | Consecutive ticks to confirm take-profit exit |
+| `DISARM_CONFIRM_TICKS` | 3 | Consecutive recovery ticks (`prob_underperforming` below `TAKE_PROFIT_MC_PCT`) required before `compute_arm_disarm_decision` disarms the trailing stop; frozen, not in `autotuner.OPTUNA_SEARCH_SPACE_KEYS` |
 | `MC_SANITY_THRESHOLD` | 60.0 | MC probability above which trailing stop is vetoed |
 | `PBO_REJECT_THRESHOLD` | 0.5 | PBO > this value signals backtest overfitting |
 | `_CSCV_TOP_K` | 20 | Top-K PRE-BHY configs fed into `compute_pbo` |
