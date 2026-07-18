@@ -1,0 +1,16 @@
+{
+  "name": "squeeze_floor_negative_is_legacy_passthrough",
+  "description": "AC-1 edge: a negative squeeze_floor is the <=0 escape hatch (no clamp), NOT a rejected value and NOT a negative-distance floor. Byte-identical legacy squeezed value. (Negative is finite, so it must NOT trip the non-finite reject; it is simply an opt-out.)",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 0.30,
+    "dynamic_multiplier": 1.0,
+    "dynamic_min_stop": 0.10,
+    "para_armed": true,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.5,
+    "squeeze_floor": -0.5
+  },
+  "expected": 0.15,
+  "derivation": "pre_squeeze=0.30. active=0.30*0.5=0.15. squeeze_floor=-0.5 -> `squeeze_floor > 0` is False -> no clamp. Output 0.15 (unchanged); a negative floor never places or lifts the stop."
+}

@@ -1,0 +1,16 @@
+{
+  "name": "squeeze_floor_zero_is_legacy_passthrough",
+  "description": "AC-1 edge: squeeze_floor=0.0 is treated as 'no clamp' (the <=0 escape hatch), NOT as a floor of 0 (which would be a no-op anyway) and NOT rejected. Byte-identical legacy squeezed value.",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 0.30,
+    "dynamic_multiplier": 1.0,
+    "dynamic_min_stop": 0.10,
+    "para_armed": true,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.5,
+    "squeeze_floor": 0.0
+  },
+  "expected": 0.15,
+  "derivation": "pre_squeeze=0.30. active=0.30*0.5=0.15. squeeze_floor=0.0 -> the `squeeze_floor > 0` guard is False -> no clamp. Output 0.15 (unchanged)."
+}

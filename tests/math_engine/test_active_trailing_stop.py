@@ -254,8 +254,20 @@ def test_either_flag_set_applies_squeeze_exactly_once(
         0.25x instead of 0.5x for sq=0.5)
       - used AND instead of OR (would yield the no-squeeze branch for the
         single-flag cases)
-      - re-applied the min_stop floor AFTER the squeeze (would clamp small
-        outputs and break fixture 12).
+      - re-applied the dynamic_min_stop floor AFTER the squeeze (that floor is
+        applied ONCE, BEFORE the squeeze, and is never re-applied on
+        dynamic_min_stop; such an impl would clamp small outputs and break
+        fixture 12).
+
+    R3-c ROOT-CAUSE NOTE (MA-11): this test calls the 6-arg form, so the NEW
+    optional ``squeeze_floor`` parameter defaults to None -> NO post-squeeze
+    clamp is applied and every number here is unchanged. ``squeeze_floor`` is a
+    SEPARATE, opt-in post-squeeze stop-DISTANCE floor: a positive finite value
+    clamps the collapsed stop UP to ``min(squeeze_floor, pre_squeeze)`` (see
+    tests/math_engine/test_squeeze_floor_clamp.py). It never re-applies
+    dynamic_min_stop, and it is inert in this test. The contract this test pins
+    is the None-default legacy ordering — floor-before-squeeze with no
+    post-squeeze re-floor of dynamic_min_stop.
     """
     sym_vol = 2.0
     mult = 1.5

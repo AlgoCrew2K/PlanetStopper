@@ -62,6 +62,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+import alpha_bot_execution
 import autotuner
 import math_engine
 
@@ -280,6 +281,11 @@ def _production_exit_sequence(
 
         time_ratio = tick_idx / max(1, len(ticks) - 1)
         dynamic_multiplier, dynamic_min_stop = math_engine.compute_time_squeeze_decay(time_ratio)
+        # R3-c AC-4: the production reference mirrors alpha_bot_execution.py:1467,
+        # which now passes squeeze_floor=acc_MAX_SQUEEZE_FLOOR. Source the floor
+        # from the params dict, defaulting to the alpha_bot_execution MODULE ATTR
+        # (the same source production defaults from — R1/F6 idiom), so a
+        # key-absent legacy params dict falls back identically on both sides.
         active_stop_dist = math_engine.compute_active_trailing_stop(
             vol,
             dynamic_multiplier,
@@ -287,6 +293,7 @@ def _production_exit_sequence(
             para_armed,
             breakeven_locked,
             params.get("MAX_PARABOLIC_SQUEEZE", 0.50),
+            squeeze_floor=params.get("MAX_SQUEEZE_FLOOR", alpha_bot_execution.MAX_SQUEEZE_FLOOR),
         )
         base_stop = safe_hwm - active_stop_dist
         hwm_hold_ticks, breakeven_locked, stop_level = math_engine.compute_breakeven_update(
@@ -452,6 +459,12 @@ def _default_params() -> dict:
         "parity_tp_rearm_dip.json",
         "parity_no_exit_session.json",
         "parity_mc_sanity_veto.json",
+        # R3-c AC-4: floor-binding parity. Key-PRESENT (MAX_SQUEEZE_FLOOR in
+        # params) and key-ABSENT (falls back to the module attr on BOTH sides).
+        # If only ONE call site clamps, the sustained noise dip fires an exit on
+        # the replay while the production reference holds -> divergence -> RED.
+        "parity_squeeze_floor_binding_key_present.json",
+        "parity_squeeze_floor_binding_key_absent.json",
     ],
 )
 def test_replay_exit_decision_matches_production(fixture_name: str) -> None:
@@ -521,4 +534,67 @@ def test_replay_exit_and_production_exit_fire_on_same_tick() -> None:
     assert replay_exit["exit_reason"] == prod_exit["exit_reason"], (
         f"Exit-reason parity broken: production={prod_exit['exit_reason']}, "
         f"replay={replay_exit['exit_reason']}."
+    )
+
+
+# ===========================================================================
+# R3-c AC-4 — squeeze-floor fallback parity (key-ABSENT sources the floor from
+# the SAME module attr on both sides; a monkeypatch of that attr must shift
+# BOTH paths in lockstep — proving the fallback VALUE flows from the attr, not
+# a hardcoded literal on either side).
+# ===========================================================================
+
+
+def _decisions(seq: list[dict]) -> list[tuple[int, str | None]]:
+    return [(d["tick_idx"], d["exit_reason"]) for d in seq]
+
+
+def test_key_absent_fallback_sources_floor_from_module_attr_on_both_sides(monkeypatch) -> None:
+    """AC-4 fallback-drift guard.
+
+    A legacy params dict lacking MAX_SQUEEZE_FLOOR must make BOTH the production
+    reference (falls back to ``alpha_bot_execution.MAX_SQUEEZE_FLOOR``) and the
+    replay (falls back to ``autotuner._replay_squeeze_floor_default()`` — the
+    SAME attr) clamp identically. Monkeypatching that module attr must shift
+    both sides together: parity holds at every value, AND the exit outcome
+    flips with the attr — so the fallback value provably flows from the attr
+    into both call paths, not from a hardcoded 0.20 on one side.
+
+    RED at HEAD: the production reference calls the 7-arg seam (TypeError) and
+    the replay ignores the floor entirely — the test cannot pass until BOTH
+    sides read the module attr live.
+    """
+    fx = _load_fixture("parity_squeeze_floor_binding_key_absent.json")
+    ticks = fx["ticks"]
+    params = fx["params"]
+    grace = fx["grace_minutes"]
+    assert "MAX_SQUEEZE_FLOOR" not in params, "fixture must omit the key to exercise the fallback"
+
+    # Binding fallback (0.20): the squeezed noise dip is clamped -> NO exit on
+    # either side; parity holds.
+    monkeypatch.setattr(alpha_bot_execution, "MAX_SQUEEZE_FLOOR", 0.20, raising=False)
+    prod_bind = _decisions(_production_exit_sequence(ticks, params, grace_minutes=grace))
+    replay_bind = _decisions(_replay_seq(ticks, params, grace))
+    assert replay_bind == prod_bind, (
+        f"fallback parity broken at floor=0.20:\n  prod:   {prod_bind}\n  replay: {replay_bind}"
+    )
+    assert all(reason is None for _, reason in prod_bind), (
+        "with the fallback floor 0.20 wired, the squeezed noise dip must be "
+        f"clamped -> no exit. Got {prod_bind}."
+    )
+
+    # Non-binding fallback (near zero): the floor no longer binds -> the dip
+    # breaches the (effectively unclamped) stop and BOTH sides exit; parity
+    # still holds. The outcome flipped ONLY because the module attr changed ->
+    # the fallback value flows from the attr into both paths.
+    monkeypatch.setattr(alpha_bot_execution, "MAX_SQUEEZE_FLOOR", 1e-4, raising=False)
+    prod_tiny = _decisions(_production_exit_sequence(ticks, params, grace_minutes=grace))
+    replay_tiny = _decisions(_replay_seq(ticks, params, grace))
+    assert replay_tiny == prod_tiny, (
+        f"fallback parity broken at floor=1e-4:\n  prod:   {prod_tiny}\n  replay: {replay_tiny}"
+    )
+    assert any(reason is not None for _, reason in prod_tiny), (
+        "with a near-zero fallback floor the noise dip must breach the stop -> "
+        "exit; if it did not, the fallback value is NOT flowing from the module "
+        f"attr into the clamp. Got {prod_tiny}."
     )

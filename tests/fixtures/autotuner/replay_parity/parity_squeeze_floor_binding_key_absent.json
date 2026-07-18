@@ -1,0 +1,133 @@
+{
+  "_description": "R3-c AC-4 floor-binding parity (key ABSENT). Legacy params dict lacking MAX_SQUEEZE_FLOOR: production falls back to alpha_bot_execution.MAX_SQUEEZE_FLOOR, replay to _replay_squeeze_floor_default() -- the SAME module attr. Identical clamped stops on both sides guard against silent fallback drift.",
+  "_provenance": "Hand-derived INPUT ticks (schema = synthetic_history tick schema). vol=0.01 makes the vol-scale term lose so pre_squeeze == dynamic_min_stop. VWAP disabled (cross 99, bleed ticks 999); TP never arms (no mc<5). idx0 (mc 10) arms the stop; idx1 (+0.15) jumps velocity 0.35>=0.3 -> para arms, HWM=0.15 (0.15<0.2 breakeven-activation so breakeven never locks); idx2..9 hold; idx10..12 are a sustained noise dip (ret -0.08, mc 70). At time_ratio 0.833/0.917/1.0 the UNCLAMPED squeezed stop (0.106/0.097/0.075) is breached by -0.08 -> 3-tick confirm -> 'Trailing Stop' exit at idx12 WITHOUT the floor; the CLAMPED floor stop (0.20/0.193/0.15) is NOT breached by -0.08 -> no exit WITH the floor. Both production reference and replay apply the floor identically, so parity holds (both 'no exit'); a one-sided wire diverges (replay exits idx12, production holds). The test asserts RELATIONAL parity only -- no producer stop value is hardcoded.",
+  "grace_minutes": 0,
+  "params": {
+    "TRIGGER_THRESHOLD_PCT": 15.0,
+    "TAKE_PROFIT_MC_PCT": 5.0,
+    "VWAP_CROSS_HWM_PCT": 99.0,
+    "VWAP_BLEED_MULTIPLIER": 1.5,
+    "VWAP_BLEED_TICKS": 999,
+    "PARABOLIC_VELOCITY_THRESHOLD": 0.3,
+    "MAX_PARABOLIC_SQUEEZE": 0.5
+  },
+  "ticks": [
+    {
+      "time": "09:30",
+      "return": -0.2,
+      "mc_prob": 10.0,
+      "vol": 0.01,
+      "vwap_diff": 0.0,
+      "base_atr_pct": 0.5,
+      "valid_vwap_weight": 0.0
+    },
+    {
+      "time": "09:31",
+      "return": 0.15,
+      "mc_prob": 10.0,
+      "vol": 0.01,
+      "vwap_diff": 0.0,
+      "base_atr_pct": 0.5,
+      "valid_vwap_weight": 0.0
+    },
+    {
+      "time": "09:32",
+      "return": 0.15,
+      "mc_prob": 10.0,
+      "vol": 0.01,
+      "vwap_diff": 0.0,
+      "base_atr_pct": 0.5,
+      "valid_vwap_weight": 0.0
+    },
+    {
+      "time": "09:33",
+      "return": 0.15,
+      "mc_prob": 10.0,
+      "vol": 0.01,
+      "vwap_diff": 0.0,
+      "base_atr_pct": 0.5,
+      "valid_vwap_weight": 0.0
+    },
+    {
+      "time": "09:34",
+      "return": 0.15,
+      "mc_prob": 10.0,
+      "vol": 0.01,
+      "vwap_diff": 0.0,
+      "base_atr_pct": 0.5,
+      "valid_vwap_weight": 0.0
+    },
+    {
+      "time": "09:35",
+      "return": 0.15,
+      "mc_prob": 10.0,
+      "vol": 0.01,
+      "vwap_diff": 0.0,
+      "base_atr_pct": 0.5,
+      "valid_vwap_weight": 0.0
+    },
+    {
+      "time": "09:36",
+      "return": 0.15,
+      "mc_prob": 10.0,
+      "vol": 0.01,
+      "vwap_diff": 0.0,
+      "base_atr_pct": 0.5,
+      "valid_vwap_weight": 0.0
+    },
+    {
+      "time": "09:37",
+      "return": 0.15,
+      "mc_prob": 10.0,
+      "vol": 0.01,
+      "vwap_diff": 0.0,
+      "base_atr_pct": 0.5,
+      "valid_vwap_weight": 0.0
+    },
+    {
+      "time": "09:38",
+      "return": 0.15,
+      "mc_prob": 10.0,
+      "vol": 0.01,
+      "vwap_diff": 0.0,
+      "base_atr_pct": 0.5,
+      "valid_vwap_weight": 0.0
+    },
+    {
+      "time": "09:39",
+      "return": 0.15,
+      "mc_prob": 10.0,
+      "vol": 0.01,
+      "vwap_diff": 0.0,
+      "base_atr_pct": 0.5,
+      "valid_vwap_weight": 0.0
+    },
+    {
+      "time": "09:40",
+      "return": -0.08,
+      "mc_prob": 70.0,
+      "vol": 0.01,
+      "vwap_diff": 0.0,
+      "base_atr_pct": 0.5,
+      "valid_vwap_weight": 0.0
+    },
+    {
+      "time": "09:41",
+      "return": -0.08,
+      "mc_prob": 70.0,
+      "vol": 0.01,
+      "vwap_diff": 0.0,
+      "base_atr_pct": 0.5,
+      "valid_vwap_weight": 0.0
+    },
+    {
+      "time": "09:42",
+      "return": -0.08,
+      "mc_prob": 70.0,
+      "vol": 0.01,
+      "vwap_diff": 0.0,
+      "base_atr_pct": 0.5,
+      "valid_vwap_weight": 0.0
+    }
+  ]
+}
