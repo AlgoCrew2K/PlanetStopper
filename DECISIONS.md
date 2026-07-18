@@ -7429,36 +7429,50 @@ so they aren't lost, not because F7 caused or is responsible for either.
 
 ### Verification
 
-**Code review LANDED.** f7-review's combined verdict, as relayed by
-team-lead (not a verbatim quote from f7-review's own message -- this
-entry summarizes the relay, matching the substance below):
+**Code review LANDED.** f7-review's combined verdict, quoted verbatim
+(relayed by team-lead from f7-review's own message):
 
-> **APPROVE-pending-PM-live-gate** at `ed194259`. Zero BLOCKs. AC-1's
-> two-persist-site guard, AC-2's render honesty across the three
-> genuinely-live surfaces, AC-3's single-sentence tooltip correction, and
-> AC-4's staleness tripwire all independently verified against live
-> source. `math_engine.py` zero-diff
-> confirmed. One non-blocking ask: document why the AC-4 tripwire's `else`
-> branch resets `_maperf15_warned` alongside the streak -- addressed in the
-> AC-4 Decision section above (enables next-session re-warn on persistent
-> staleness rather than a forever-silent latch after one blip), with two
-> polish items recorded as backlog (inline code comment; a dedicated
-> cross-session-reset test), both deliberate deferrals since the tripwire
-> is log-only and carries zero trade/money risk. The main-table render
-> path's orphaned status (no live DOM consumer post-card-SPA) was
-> independently confirmed via call-path falsification, matching f7-dash's
-> finding -- a genuine discrepancy with the audit's own live-surface count,
-> recorded as backlog, not an F7 defect.
+> VERDICT: APPROVE-pending-PM-live-gate, quoting
+> `ed1942592d080fdf6827a25931ac63f2f0644b87`. No BLOCKs. One non-blocking
+> doc-completeness ask (AC-4 reset-semantics rationale) for f7-doc. Two
+> non-blocking pre-existing findings for the backlog (orphaned
+> `table_partial.html` render path, dead `openChartModal` reference).
 
-**Still outstanding at this entry:** the PM's independent battery + live
-behavioral/functional E2E gate (per standing protocol: tests-green is
-necessary, never sufficient -- the PM must LOOK at the three genuinely-live
-render surfaces (MC dial, detail Risk Math, chart fallback) plus the
-main-table column (template-correct, confirmed orphaned) on a running local
-dashboard with a triggered symphony seeded, and confirm the tripwire log
-path). This section is filled in-place as each lands, exactly as
-`DE-MATH-R1-001`/`DE-MATH-R2-001` were built up commit by commit -- never
-re-created.
+The doc-completeness ask was closed in the AC-4 Decision section above (the
+`else`-branch reset rationale + the two backlog polish items); both
+pre-existing findings are recorded in the "Files changed" section's backlog
+list above.
+
+**PM gate PASSED (first-hand, at doc tip `b91674b7`).** RUN A (F7-affected
+suites, `-n0`): 1961 passed / 0 failed / 0 errors. RUN B (credential-less):
+42 passed. Both ruff gates clean. **LIVE VISUAL GATE PASS (Playwright,
+first-hand):** MC dial rendered `"—"`; detail-view Risk Math held `"—"`
+through chart load; the chart's MC line showed genuine gaps across the
+triggered period (not a resurrected stale value); `/api/state`'s `mc_prob`
+confirmed `null` for the triggered symphony. **The orphan claim was
+CONFIRMED first-hand, not merely by static call-path analysis:**
+`/api/state`'s `"html"` field for the main table rendered as an empty
+`<table><tbody></tbody></table>` -- zero rows, corroborating the render
+path is genuinely dead in the live application, not just unreferenced by
+grep.
+
+**`/review` skill: APPROVE**, no blocking findings.
+
+**CI:** 1st run (at doc tip `b91674b7`) RED on
+`tests/error_handling/test_exception_specificity.py` -- a brittle
+exception-lineno guard, not an F7 code defect: F7's +80 lines in
+`alpha_bot_execution.py` shifted 2 pre-existing whitelisted handlers off a
+raw-lineno whitelist. Fixed test-only at `2fc071eb` (re-keyed to
+enclosing-function + marker, line-shift-proof -- immune to this class of
+false-positive going forward). 2nd run (CI run `29632994613`) GREEN.
+
+**MERGED @ `bd2c8d5d`** (PR #99, `--admin`, CI-green verified same-turn).
+**Deployed to the droplet @ `bd2c8d5`** (daemon PID 1029839 active and
+serving, DB fresh as of 06:03:03, `LIVE_EXECUTION=False`).
+
+This closes `DE-MATH-F7-001`. Ship path complete: PR -> `/review` -> PM live
+gate -> merge -> droplet deploy, matching the
+`DE-MATH-R1-001`/`DE-MATH-R2-001` precedent.
 
 ### Reference
 
