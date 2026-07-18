@@ -164,8 +164,9 @@ _PARAM_DEFINITIONS: dict[str, dict[str, str]] = {
     },
     _UNTUNED_SUGGESTIBLE_KEY: {
         "definition": (
-            "Floor on the squeeze multiplier applied to the active stop. "
-            "Optuna structurally never tunes this — hand-set only; the "
+            "Floor on the post-squeeze stop distance — the tightest the stop "
+            "can shrink once the log-time squeeze is armed. Optuna "
+            "structurally never tunes this — hand-set only; the "
             "highest-value advisory target."
         ),
         "risk_polarity": "raising loosens risk",

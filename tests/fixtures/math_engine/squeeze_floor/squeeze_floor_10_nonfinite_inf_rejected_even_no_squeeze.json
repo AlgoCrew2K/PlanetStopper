@@ -1,0 +1,16 @@
+{
+  "name": "squeeze_floor_inf_rejected_even_when_no_squeeze",
+  "description": "AC-1 / M-2 (defense in depth): a non-finite floor is rejected at entry UNCONDITIONALLY -- even when para_armed=False AND breakeven_locked=False so the clamp would never fire. A mistuned non-finite parameter is invalid regardless of whether it is used this tick (mirrors the multiplier's unconditional <=0 rejection). squeeze_floor is the string sentinel 'inf'.",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 0.30,
+    "dynamic_multiplier": 1.0,
+    "dynamic_min_stop": 0.10,
+    "para_armed": false,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.5,
+    "squeeze_floor": "inf"
+  },
+  "expect_raises": "ValueError",
+  "derivation": "squeeze_floor is +Inf and both flags are False. The entry _reject_non_finite guard fires BEFORE the branch check, so the ValueError is raised even though the squeeze (and its clamp) never execute this call."
+}

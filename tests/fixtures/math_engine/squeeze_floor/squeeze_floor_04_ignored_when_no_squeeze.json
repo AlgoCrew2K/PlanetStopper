@@ -1,0 +1,16 @@
+{
+  "name": "squeeze_floor_ignored_when_no_squeeze",
+  "description": "AC-1 squeeze-scoping (7-arg twin of fixture 06): with para_armed=False AND breakeven_locked=False the squeeze branch never fires, so the floor must NEVER be applied even when it is a positive value that would otherwise bind. A positive tiny min_stop (0.001) survives untouched. An always-on floor (applied outside the squeeze branch) would clamp this to 0.20 and FAIL -- the same regression the untouched fixture 06 guards from the 6-arg side.",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 1e-9,
+    "dynamic_multiplier": 1.0,
+    "dynamic_min_stop": 0.001,
+    "para_armed": false,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.5,
+    "squeeze_floor": 0.20
+  },
+  "expected": 0.001,
+  "derivation": "safe_vol=1e-9 (>0, not clamped to VOL_FALLBACK). raw=1e-9. active=max(1e-9,0.001)=0.001. para_armed=False AND breakeven_locked=False -> the squeeze branch does NOT execute -> the squeeze_floor clamp (which lives INSIDE that branch) is never reached. Output 0.001. An impl that floors unconditionally returns 0.20 (200x wrong)."
+}

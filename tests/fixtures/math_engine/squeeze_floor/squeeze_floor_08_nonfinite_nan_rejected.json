@@ -1,0 +1,16 @@
+{
+  "name": "squeeze_floor_nan_rejected",
+  "description": "AC-1 / M-2: a NaN squeeze_floor is rejected at entry with ValueError (reject-don't-coerce, same policy as the non-finite guard on the other float params). A NaN floor silently poisoning a max()/min() comparison could suppress the clamp. squeeze_floor is a string sentinel here ('nan') that the loader converts to float('nan').",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 0.30,
+    "dynamic_multiplier": 1.0,
+    "dynamic_min_stop": 0.10,
+    "para_armed": true,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.5,
+    "squeeze_floor": "nan"
+  },
+  "expect_raises": "ValueError",
+  "derivation": "squeeze_floor is NaN. _reject_non_finite(squeeze_floor=nan) raises ValueError at function entry, before any clamp arithmetic. No value is returned."
+}

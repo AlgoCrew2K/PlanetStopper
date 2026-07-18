@@ -11,5 +11,5 @@
     "parabolic_squeeze_multiplier": 0.2
   },
   "expected": 0.6,
-  "derivation": "safe_vol = 2.0. raw = safe_vol * dynamic_multiplier = 2.0 * 1.5 = 3.0. max(3.0, dynamic_min_stop 0.30) = 3.0. para_armed=True -> active *= parabolic_squeeze_multiplier 0.2 -> 3.0 * 0.2 = 0.6. Output = 0.6 (strictly positive — the squeeze tightens but does not collapse the stop). The min_stop floor is NOT re-applied after the squeeze; this fixture pins the producer's exact ordering (floor before squeeze)."
+  "derivation": "safe_vol = 2.0. raw = safe_vol * dynamic_multiplier = 2.0 * 1.5 = 3.0. max(3.0, dynamic_min_stop 0.30) = 3.0. para_armed=True -> active *= parabolic_squeeze_multiplier 0.2 -> 3.0 * 0.2 = 0.6. Output = 0.6 (strictly positive — the squeeze tightens but does not collapse the stop). The dynamic_min_stop floor is NOT re-applied after the squeeze; this fixture pins the producer's exact ordering (floor before squeeze). R3-c NOTE (MA-11): this is the 6-arg golden, so the new optional squeeze_floor defaults to None -> NO post-squeeze clamp is applied and the output stays 0.6. squeeze_floor is a SEPARATE opt-in post-squeeze DISTANCE floor (min(floor, pre_squeeze)), inert here; it never re-applies dynamic_min_stop. The floor-binding path is covered by tests/fixtures/math_engine/squeeze_floor/."
 }

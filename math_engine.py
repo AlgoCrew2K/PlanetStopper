@@ -460,6 +460,7 @@ def compute_active_trailing_stop(
     para_armed: bool,
     breakeven_locked: bool,
     parabolic_squeeze_multiplier: float,
+    squeeze_floor: float | None = None,
 ) -> float:
     """
     Computes the active trailing-stop distance (in percentage points).
@@ -478,6 +479,22 @@ def compute_active_trailing_stop(
     places the stop ABOVE the high-water mark. Clamping would mask a mistuned
     Optuna MAX_PARABOLIC_SQUEEZE parameter; rejection surfaces it.
 
+    squeeze_floor (OPTIONAL, MA-11 / DE-MATH-R3C-001): a post-squeeze lower
+    clamp on the stop DISTANCE (pp), wiring the previously-dead
+    MAX_SQUEEZE_FLOOR knob. None or <= 0 means no clamp — every pre-existing
+    6-arg call site keeps byte-identical behavior. When a squeeze is armed
+    (para_armed or breakeven_locked) AND squeeze_floor is a positive finite
+    number, the squeezed distance is clamped UP to
+    min(squeeze_floor, pre_squeeze_active) — the pre-squeeze value the floor
+    is bounded by. This is a NO-WIDENING clamp: at defaults the floor (0.20)
+    exceeds dynamic_min_stop near close (0.15), so a naive
+    max(squeezed, squeeze_floor) would WIDEN the stop past its pre-squeeze
+    value, inverting the squeeze's purpose. Bounding the floor by
+    pre_squeeze_active first means the clamp can only limit SHRINKAGE below
+    the pre-squeeze distance, never raise it above. squeeze_floor participates
+    in the entry _reject_non_finite check unconditionally (NaN/Inf reject even
+    when the squeeze branch does not fire).
+
     Pure. No I/O. No state. CALLER is responsible for normalizing
     bot_state[...].get("para_armed") and ...get("breakeven_locked") to
     strict Python bool BEFORE passing (typically via bool(...)).
@@ -487,6 +504,7 @@ def compute_active_trailing_stop(
         dynamic_multiplier=dynamic_multiplier,
         dynamic_min_stop=dynamic_min_stop,
         parabolic_squeeze_multiplier=parabolic_squeeze_multiplier,
+        squeeze_floor=squeeze_floor,
     )
     if parabolic_squeeze_multiplier <= 0:
         raise ValueError(
@@ -495,7 +513,10 @@ def compute_active_trailing_stop(
     safe_vol = symphony_vol if symphony_vol > 0 else VOL_FALLBACK
     active = max(safe_vol * dynamic_multiplier, dynamic_min_stop)
     if para_armed or breakeven_locked:
+        pre_squeeze_active = active
         active *= parabolic_squeeze_multiplier
+        if squeeze_floor is not None and squeeze_floor > 0:
+            active = max(active, min(squeeze_floor, pre_squeeze_active))
     return float(active)
 
 

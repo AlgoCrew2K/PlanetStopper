@@ -1,0 +1,16 @@
+{
+  "name": "squeeze_floor_inf_rejected",
+  "description": "AC-1 / M-2: a +Inf squeeze_floor is rejected at entry with ValueError. An infinite floor would clamp every squeezed stop up to pre_squeeze unconditionally (silently disabling the squeeze) -- a mistuned value that must surface loudly, not coerce. squeeze_floor is the string sentinel 'inf'.",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 0.30,
+    "dynamic_multiplier": 1.0,
+    "dynamic_min_stop": 0.10,
+    "para_armed": true,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.5,
+    "squeeze_floor": "inf"
+  },
+  "expect_raises": "ValueError",
+  "derivation": "squeeze_floor is +Inf. _reject_non_finite(squeeze_floor=inf) raises ValueError at function entry."
+}

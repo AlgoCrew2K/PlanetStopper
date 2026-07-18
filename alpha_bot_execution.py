@@ -1473,6 +1473,7 @@ def main():
                     parabolic_squeeze_multiplier=acc_params.get(
                         "MAX_PARABOLIC_SQUEEZE", MAX_PARABOLIC_SQUEEZE
                     ),
+                    squeeze_floor=acc_MAX_SQUEEZE_FLOOR,
                 )
 
                 base_stop_level = safe_hwm - active_trailing_stop

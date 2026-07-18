@@ -8154,3 +8154,274 @@ program.md`. Predecessors `DE-MATH-R3A-001` (tests-only, PR merged into
 `7e0b7778`) / `DE-MATH-R2-001` (PR #98) / `DE-MATH-R1-001` (PR #97) /
 `DE-MATH-F7-001` (PR #99). R3-c (MA-11 MAX_SQUEEZE_FLOOR) and R3-d (the
 retune itself, operator-gated) remain -- not covered by this entry.
+
+**Ship status update (2026-07-18):** SHIPPED @ `origin/main` `f3c7e050`
+(PR #101, CI green) + droplet-deployed + verified 2026-07-18 (daemon
+restarted clean, WAL mtime advanced, `LIVE_EXECUTION=False`); the PM's
+live E2E PASSED first-hand (giveback exits `"Trailing Stop"`; a faithful
+reproduction of the old code's inverted disarm never exits) -- supersedes
+the "STILL OUTSTANDING: the PM's own live E2E" caveat in the Verification
+section above and the "necessary, never sufficient... a failure there
+reverses this flip" caveat in "Decision: status flip" above. Both caveats'
+prose is left in place (never rewritten) -- this paragraph is the
+superseding fact, recorded where it lands chronologically. R3-c (MA-11
+MAX_SQUEEZE_FLOOR, `DE-MATH-R3C-001` below) and R3-d (the retune itself,
+operator-gated) remain.
+
+## DE-MATH-R3C-001 -- Math Remediation R3-c: MA-11 wire MAX_SQUEEZE_FLOOR as the post-squeeze stop-distance floor (2026-07-18)
+
+Branch: `fix/math-r3c` | Base: `origin/main` (post-R3-b) `f3c7e050` | HEAD
+(this entry): `7e5a2cad` (RED @ `5b77023d` -> GREEN x3 -- `dff26652`
+dash / `6f38b86e` engine / `0fd80f0a` tuner, each lane-scoped -> a
+test-only stub-arity fix at `a5c011dd` -> ruff-format at `7e5a2cad`;
+production diff total 5 files, +51/-4). Toxic Pair's own sufficiency
+review (Red/Green/Revise): FAITHFUL, 94/0 on the touch-set battery, no
+new RED. **r3c-review's independent blast-radius/correctness/parity/
+no-widening verdict: APPROVED, zero blocking findings** (see "Decision:
+status flip" below). **MA-11 is FIXED as of this entry**, per the same
+double-gate convention `DE-MATH-R3B-001` used -- both the independent
+review's APPROVE and the PM's own live E2E have landed (unlike R3-b's
+flip, which landed before its live E2E; R3-c's flip lands after both).
+
+### Summary
+
+R3-c is the third executed live-execution-path phase of the math
+remediation program (`DE-MATH-AUDIT-001`), gated after R3-a (tests-only,
+`DE-MATH-R3A-001`) and R3-b (MA-4, the second live-execution-path phase,
+`DE-MATH-R3B-001`, SHIPPED -- see that entry's ship-status update above).
+Scope basis: `feature-plans/math-r3c-scoping.md` (r3c-scout,
+file:line-verified against `f3c7e050`, adversarially falsified by
+r3c-falsifier -- all 8 claims CONFIRMED, see its ADDENDUM).
+
+**The bug, proven from source (r3c-scout):** `MAX_SQUEEZE_FLOOR` is
+assigned (`alpha_bot_execution.py:1236`, `acc_MAX_SQUEEZE_FLOOR`) but
+never read again anywhere in the repo -- a dead knob, fully
+operator-writable (Settings UI), advisor-suggestible, and
+`.env`-configurable, with zero engine consumption. Meanwhile
+`math_engine.compute_active_trailing_stop` (`:497-498`) multiplies the
+trailing-stop distance by `parabolic_squeeze_multiplier` (default 0.50)
+once `para_armed` or `breakeven_locked`, AFTER the `dynamic_min_stop`
+floor has already been applied -- collapsing the effective stop distance
+to as little as 0.015 pp (0.15 x 0.1, at the extreme of the multiplier's
+tunable [0.1, 0.8] range) with no re-floor. The stop then sits on the
+high-water mark and a single noise tick can exit the position
+prematurely.
+
+**Operator ruling (2026-07-18, verbatim "Wire it"):** wire the floor as
+the real post-squeeze lower clamp on the stop DISTANCE, do not remove it.
+This resolves the two open questions r3c-scout's report surfaced:
+WIRE-vs-REMOVE (operator ruled WIRE) and the semantic conflict in what
+the knob floors -- stop-distance (Option A, the dominant human-facing
+reading: every operator-facing string is distance-worded, and the
+multiplier reading is inert at defaults, `max(0.50, 0.20)`) vs. multiplier
+(Option B, minority reading, the source of the misleading `unit="x"` /
+"floor on the squeeze multiplier" wording that AC-7 corrects). PM ruling
+on the delegated semantic fork: **Option A.**
+
+**The settled clamp form (PM ruling, no-widening invariant):** scoped
+INSIDE the squeeze branch (`if para_armed or breakeven_locked:`) -- an
+always-on floor would break fixture 06's no-squeeze case and contradicts
+the "during Time Squeeze" wording -- `active = max(active *
+parabolic_squeeze_multiplier, min(squeeze_floor, pre_squeeze_active))`.
+The `min(squeeze_floor, pre_squeeze_active)` term is load-bearing: at
+defaults the floor (0.20) EXCEEDS `dynamic_min_stop` near close (0.15),
+so a naive `max(squeezed, floor)` would WIDEN the stop above its
+pre-squeeze value, inverting the squeeze's purpose. The floor can only
+limit shrinkage, never widen.
+
+### Decisions (PM-ruled, do not re-litigate -- see the plan's own Decisions table for the falsifier's per-row supporting evidence)
+
+| Decision | Rationale |
+|----------|-----------|
+| WIRE, not remove | Operator ruling, verbatim "Wire it" (2026-07-18) -- realizes the design intent; guards against premature noise exits. |
+| Option A -- stop-DISTANCE floor (pp) | Every operator-facing string is distance-worded; the multiplier reading is inert at defaults (`max(0.50, 0.20)`) -- a theater wire. r3c-falsifier's C6 arithmetic confirms only A binds. |
+| Squeeze-branch-scoped clamp | An always-on floor breaks fixture 06 (`06_symphony_vol_tiny_positive_not_clamped`, expected 0.001, no-squeeze) and contradicts the "during Time Squeeze" wording (falsifier caveat 1). |
+| No-widening invariant (`min(floor, pre_squeeze)`) | Floor bounds SHRINKAGE only; a naive `max()` would make arming the squeeze WIDEN the stop near close (0.20 > 0.15), inverting its purpose. |
+| Optional-trailing `squeeze_floor: float \| None = None` param | A required param TypeErrors every existing 6-arg call to `compute_active_trailing_stop`; optional keeps the blast radius to new tests only (falsifier caveat 2). |
+| Replay default from `alpha_bot_execution.MAX_SQUEEZE_FLOOR` module attr | R1/F6 idiom (`EXECUTION_START_TIME`) -- never a replay-local mirror; keeps prod<->replay defaults structurally identical. |
+| Advisor range 0.05-0.50 kept numerically, re-worded to pp | Numerically plausible as pp (brackets MIN_STOP 0.15-0.30); range re-TUNING is R3-d's, not R3-c's. |
+| `MAX_PARABOLIC_SQUEEZE` [0.1, 0.8] range untouched | Charter assigns its re-examination to R3-d "once non-inert" -- this entry notes it only. |
+
+### Decision: status flip -- LANDED (r3c-review APPROVE + the PM's live E2E close the double-gate)
+
+Per the PM's binding double-gate ruling (the same one applied to
+`DE-MATH-R3A-001`'s AC-9 checklist flip and `DE-MATH-R3B-001`'s own status
+flip): "FIXED"-status claims for MA-11 -- this entry's own status framing,
+the program charter's MA-11 line-status flip, and the CLAUDE.md key-files
+cell flip -- do not land until BOTH r3c-review's independent verdict AND
+the PM's own live E2E are in. Both landed:
+
+**r3c-review's independent verdict: APPROVE, zero blocking findings**
+across all 8 gates, with all 7 independent reproductions confirmed:
+behavioral RED-on-old reproduced at `5b77023d` (a genuine behavioral
+failure, not a TypeError -- the pre-fix `_replay_exit_tick` fires
+`"Trailing Stop"` at tick 2 on the noise-dip fixture the wired floor is
+meant to survive); the parity-divergence check correctly scoped; fixture
+06 (`06_symphony_vol_tiny_positive_not_clamped`) confirmed byte-untouched;
+the no-widening property rerun independently; the AC-9 scope guard
+confirmed; the module-attr (not a literal) default proven via a lockstep
+monkeypatch of `alpha_bot_execution.MAX_SQUEEZE_FLOOR`; and an independent
+battery run (4955 passed / 27 skipped / 0 failed / 0 errors @ `a5c011dd`)
+plus both ruff gates at `7e5a2cad`.
+
+**The PM's own live E2E: PASSED first-hand.** The noise-dip scenario was
+driven old-vs-new through the real primitives at production config: the
+OLD (unwired) code exits the position at tick 2 on the noise dip; the NEW
+(wired) code survives that same dip under the floored stop; the deeper
+breakdown-dip fixture still exits under BOTH old and new (the floor
+guards against noise, not genuine breakdown -- it is not a blanket
+noise-immunity mechanism). The operator before/after artifact built from
+this E2E was presented to the operator BEFORE any droplet deploy, per the
+plan's Testing Strategy commitment.
+
+**The double-gate is satisfied.** The charter flip (`feature-plans/math-
+remediation-program.md` line 36) lands in the SAME commit as this update
+-- an APPENDED FIXED-note, never a rewrite of the historical prose
+(matching the AC-9/R3-a/R3-b convention). The CLAUDE.md key-files cell
+flip is a SEPARATE action -- the PM owns and applies that file (three
+ready-to-apply cell drafts were handed to the PM directly, not committed
+here).
+
+**What is NOT yet gated by this flip (the one honest remaining caveat):**
+merge to `origin/main` and the droplet deploy. Unlike `DE-MATH-R3B-001`'s
+flip -- which landed BEFORE its own live E2E, leaving that as the
+outstanding caveat -- R3-c's flip lands AFTER both the independent review
+and the live E2E; the only remaining step is shipping the already-verified
+code (PR review + merge-on-READ-green + SHA-guard + droplet deploy),
+recorded as a "Ship status update" appended to this entry once it lands
+(the same pattern used for `DE-MATH-R3B-001` above).
+
+### Decision: the seam contract, as landed (r3c-engine/r3c-tuner/r3c-dash)
+
+`math_engine.compute_active_trailing_stop` gains one optional trailing
+param, `squeeze_floor: float | None = None` (`math_engine.py:463`). `None`
+or `<= 0` means no clamp -- every pre-existing 6-arg call site, including
+the seam's third caller `docs/research/risk/scripts/i2_compounding_sim.py:73`,
+stays byte-identical. `squeeze_floor` participates in the entry
+`_reject_non_finite` check unconditionally (`:507`) -- a non-finite value
+rejects even when the squeeze branch never fires. Inside the existing `if
+para_armed or breakeven_locked:` block (`:515-519`), `pre_squeeze_active`
+is snapshotted BEFORE the `*= parabolic_squeeze_multiplier` step, and when
+`squeeze_floor` is a positive finite number the clamp applies as `active =
+max(active, min(squeeze_floor, pre_squeeze_active))` -- the settled
+no-widening form.
+
+**Production wiring (r3c-engine):** `alpha_bot_execution.py`'s
+`compute_active_trailing_stop` call now passes
+`squeeze_floor=acc_MAX_SQUEEZE_FLOOR` (`:1476`) -- the `:1236` assignment
+gains its first-ever reader. No other production exit logic changed.
+
+**Replay wiring (r3c-tuner):** a new `_replay_squeeze_floor_default()`
+helper (`autotuner.py:76`) returns `alpha_bot_execution.MAX_SQUEEZE_FLOOR`
+-- the SAME module attribute production's own `acc_params.get(
+"MAX_SQUEEZE_FLOOR", MAX_SQUEEZE_FLOOR)` fallback reads (`alpha_bot_
+execution.py:1236`), never a replay-local mirror literal (the R1/F6
+`EXECUTION_START_TIME` idiom, reused). The import is function-local
+(a top-level `import alpha_bot_execution` would be circular); the
+attribute is read live at call time, so an operator's env override or a
+test monkeypatch reaches the replay exactly as it reaches production.
+`_replay_exit_tick`'s own `compute_active_trailing_stop` call (`autotuner.
+py:1276`) passes `squeeze_floor=p.get("MAX_SQUEEZE_FLOOR",
+_replay_squeeze_floor_default())`.
+
+**Metadata (r3c-dash, AC-7):** `app.py`'s `_ALGO_PARAM_META["MAX_SQUEEZE_
+FLOOR"]` unit `"x"` -> `"%"`, kind `"mult"` -> `"pct"` (`app.py:3536-3538`,
+matching the MIN_STOP-style params); `ai_advisor.py`'s
+`_PARAM_DEFINITIONS[_UNTUNED_SUGGESTIBLE_KEY]["definition"]` reworded from
+"Floor on the squeeze multiplier..." to "Floor on the post-squeeze stop
+distance..." (`ai_advisor.py:165-172`); `risk_polarity` ("raising loosens
+risk") and the `_PARAM_VALID_RANGES` 0.05-0.50 bounds are UNCHANGED, per
+plan (the range is numerically plausible as pp, and re-tuning it is
+R3-d's job, not R3-c's).
+
+### Files changed (this cycle, `f870275d`..`a5c011dd`)
+
+- `math_engine.py` (+21/-0) -- the `squeeze_floor` param + no-widening
+  clamp on `compute_active_trailing_stop` (`:456-520`)
+- `alpha_bot_execution.py` (+1/-0) -- one-line production wiring at `:1476`
+- `autotuner.py` (+24/-0) -- new `_replay_squeeze_floor_default()`
+  (`:76-97`) + one-line replay wiring at `:1276`
+- `app.py` (+2/-2) -- AC-7 metadata honesty (unit/kind wording, no range
+  change)
+- `ai_advisor.py` (+3/-2) -- AC-7 metadata honesty (definition wording,
+  no range change)
+- New test files (31 new RED tests @ `5b77023d`, 11 seam-golden + 2
+  property + 1 behavioral-crux + 9 parity + 4 AST-wiring + 4 metadata):
+  `tests/math_engine/test_squeeze_floor_clamp.py` (+10 JSON fixtures under
+  `tests/fixtures/math_engine/squeeze_floor/`),
+  `tests/math_engine/test_squeeze_floor_no_widening_property.py`,
+  `tests/autotuner/test_squeeze_floor_behavioral_golden.py` (+2 JSON
+  fixtures under `tests/fixtures/autotuner/squeeze_floor/`),
+  `tests/execution/test_r3c_production_squeeze_floor_wiring.py`,
+  `tests/autotuner/test_r3c_replay_squeeze_floor_wiring.py`,
+  `tests/app/test_r3c_squeeze_floor_metadata.py`,
+  `tests/ai_advisor/test_r3c_squeeze_floor_definition.py`,
+  `tests/autotuner/test_r3c_scope_guard.py` (AC-9, GREEN from the start --
+  a regression guard, not a RED test)
+- Edited pre-existing tests (AC-6, root-caused prose only -- numbers
+  unchanged): `tests/math_engine/test_active_trailing_stop.py`'s
+  `test_either_flag_set_applies_squeeze_exactly_once` docstring and
+  fixture `12_*.json`'s derivation prose, both updated to describe the new
+  floor semantics instead of asserting "no re-applied floor after
+  squeeze"; `tests/autotuner/test_c3_replay_exit_parity.py` extended with
+  a floor-binding parity case (2 new fixtures:
+  `parity_squeeze_floor_binding_key_present.json` /
+  `..._key_absent.json`)
+- One test-only stub-arity fix (`a5c011dd`): `tests/autotuner/
+  test_run_simulation_characterization.py`'s `_stub_active_stop_const`
+  pre-dated this cycle
+  (introduced `43c8160a`) and had a fixed 6-arg call signature; the new
+  optional trailing param broke it. Root-caused as a stale test stub, NOT
+  a production regression -- fixed test-side.
+
+### Scope Boundaries
+
+**IN:** the seam extension (AC-1/AC-2, `math_engine.compute_active_trailing_stop`) + two 1-line pass-throughs (AC-3 production, AC-4 replay) + behavioral/parity/property goldens (AC-5) + root-caused pin updates on the two existing tests that explicitly pinned "no re-applied floor after squeeze" (AC-6) + metadata honesty on `app.py`/`ai_advisor.py` (AC-7) + docs incl. the DE-MATH-R3B-001 SHIPPED stamp (AC-8, see above).
+
+**OUT:** the R3-d retune; `MAX_PARABOLIC_SQUEEZE` range changes; any Optuna search-space change; removing/renaming the param; new constants; TP-disarm/arm-disarm-seam/VWAP/MC-gating logic; `database.py:45` seed-value change; `.env.example` value change (wording only if touched by AC-7).
+
+### Verification
+
+**This entry is a living skeleton, filled in incrementally as each
+piece lands (same convention as R1/R2/R3-a/R3-b).** r3c-test's RED
+phase produced 31 new failing tests @ `5b77023d` (0 stubs, no new
+modules -- every change extends an existing file); the crux behavioral
+golden was proven RED-on-old BEHAVIORALLY, not via TypeError (the
+floor value flows through the params dict, which the pre-fix
+signature already accepted -- the old `_replay_exit_tick` fires
+`"Trailing Stop"` at tick 2 on a noise dip the wired floor is meant
+to survive). r3c-dash's, r3c-engine's, and r3c-tuner's GREEN lanes
+landed at `dff26652` / `6f38b86e` / `0fd80f0a` respectively, each
+PM-verified lane-scoped (explicit pathspec, no cross-lane file
+touches); a stale pre-cycle test stub's fixed call arity (`43c8160a`,
+predates this cycle) was root-caused and fixed test-side at
+`a5c011dd` -- confirmed NOT a production regression. r3c-test's own
+sufficiency review (Red/Green/Revise) read the full production diff
+against the handoff contract and found it FAITHFUL: **94 passed / 0
+failed on the touch-set battery at `a5c011dd`, no new RED.**
+
+**LANDED:** r3c-review's independent blast-radius/correctness/parity/
+no-widening verdict -- **APPROVE, zero blocking findings** (see
+"Decision: status flip" above for the full evidence list: behavioral
+RED-on-old, parity-divergence, fixture-06, no-widening property, scope
+guard, module-attr default, independent battery 4955/27skip/0F/0E @
+`a5c011dd`, both ruff at `7e5a2cad`). The PM's first-hand noise-dip
+before/after (old-vs-new, production config) -- **PASSED**, presented
+to the operator BEFORE the droplet deploy. **STILL OUTSTANDING:**
+merge to `origin/main` (PR review + merge-on-READ-green + SHA-guard)
+and the droplet deploy -- to be recorded as a "Ship status update"
+appended to this entry once landed (the `DE-MATH-R3B-001` pattern).
+Updated in place as each lands -- never re-created as a new
+DECISIONS.md entry.
+
+### Reference
+
+`DE-MATH-R3C-001`; branch `fix/math-r3c`; plan `feature-plans/math-r3c.md`;
+scoping report `feature-plans/math-r3c-scoping.md` (r3c-scout, falsified
+by r3c-falsifier); findings basis `docs/audit/math-audit/VERDICT.md`
+(`DE-MATH-AUDIT-001`); program charter `feature-plans/math-remediation-
+program.md`. Predecessors `DE-MATH-R3B-001` (MA-4, SHIPPED @ `f3c7e050`,
+PR #101) / `DE-MATH-R3A-001` (tests-only, PR merged into `7e0b7778`) /
+`DE-MATH-R2-001` (PR #98) / `DE-MATH-R1-001` (PR #97) / `DE-MATH-F7-001`
+(PR #99). R3-d (the retune itself, operator-gated) remains -- not covered
+by this entry.

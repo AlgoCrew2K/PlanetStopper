@@ -1,0 +1,16 @@
+{
+  "name": "squeeze_floor_binding_clamp",
+  "description": "AC-1: para_armed squeeze collapses the stop distance below the floor; the floor clamps it back UP (its whole reason for existing). Catches an impl that never applies the floor, or applies it outside the squeeze branch.",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 0.30,
+    "dynamic_multiplier": 1.0,
+    "dynamic_min_stop": 0.10,
+    "para_armed": true,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.5,
+    "squeeze_floor": 0.20
+  },
+  "expected": 0.20,
+  "derivation": "safe_vol=0.30. raw=0.30*1.0=0.30. pre_squeeze=max(0.30,0.10)=0.30. para_armed -> active=0.30*0.5=0.15. squeeze_floor=0.20 is positive+finite and 0.20 <= pre_squeeze 0.30, so clamp = max(0.15, min(0.20,0.30)) = max(0.15,0.20) = 0.20. The floor BINDS: it lifts the collapsed 0.15 back up to 0.20. Output 0.20."
+}

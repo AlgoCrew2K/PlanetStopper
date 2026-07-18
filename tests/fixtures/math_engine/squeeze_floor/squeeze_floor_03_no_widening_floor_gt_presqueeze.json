@@ -1,0 +1,16 @@
+{
+  "name": "squeeze_floor_no_widening_floor_gt_presqueeze",
+  "description": "AC-2 no-widening invariant: the floor (0.30) EXCEEDS the pre-squeeze distance (0.15). A naive max(squeezed, floor) would WIDEN the stop to 0.30 -- above its pre-squeeze value -- inverting the squeeze into a widener. The correct min(floor, pre_squeeze) bound caps the clamp AT pre_squeeze (0.15). This is the single most important adversarial fixture: it proves the floor limits SHRINKAGE only.",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 0.15,
+    "dynamic_multiplier": 1.0,
+    "dynamic_min_stop": 0.10,
+    "para_armed": true,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.5,
+    "squeeze_floor": 0.30
+  },
+  "expected": 0.15,
+  "derivation": "safe_vol=0.15. raw=0.15*1.0=0.15. pre_squeeze=max(0.15,0.10)=0.15. para_armed -> active=0.15*0.5=0.075. squeeze_floor=0.30 > pre_squeeze 0.15, so min(0.30,0.15)=0.15; clamp=max(0.075,0.15)=0.15. Output 0.15 == pre_squeeze, NEVER 0.30. A naive max(0.075,0.30)=0.30 impl (widening the stop above pre-squeeze) FAILS here."
+}

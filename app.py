@@ -3534,8 +3534,8 @@ _ALGO_PARAM_META = {
     },
     "MAX_SQUEEZE_FLOOR": {
         "help": "Tightest the stop distance can shrink under the log-time squeeze.",
-        "unit": "×",
-        "kind": "mult",
+        "unit": "%",
+        "kind": "pct",
     },
     "VWAP_CROSS_HWM_PCT": {
         "help": "Return needed to activate the VWAP Breakdown defense (System A).",
