@@ -5975,6 +5975,24 @@ is precise enough for stable arm decisions near band edges under FUTURE
 tuned params (post-retune) joins the **R3 pre-retune checklist**, alongside
 the AC-4 residual below.
 
+**Checklist item (b) MET-WITH-FINDING (2026-07-18, `DE-MATH-R3A-001`,
+r3a-review APPROVE @ `c8615201`):** `scripts/mc_band_edge_stability_probe.py`
+measured the 300-path replay estimator's arm-decision flip-rate against
+higher reference counts near this exact boundary. For the committed
+near-edge scenario (0.3pp inside the boundary), instability is
+proximity-driven and NOT reducible by more paths -- even a 5000-vs-5000
+production-parity self-comparison flips 28% of the time -- so no bump is
+taken and `_MC_REPLAY_SIMULATION_PATHS` stays 300. A broader offset scan
+found this irreducibility holds through ~0.6pp from the boundary, while
+instability at >=~1.0pp IS path-reducible (certified targets at the
+artifact's canonical `n_seeds=300`: 1.0pp->2000, 1.5pp->600 -- the ~1pp
+transition's exact target is itself n_seeds-sensitive, see
+`DE-MATH-R3A-001`'s Supplementary Characterization for the full
+reproducible table and caveat). **Never compress this to "300 is
+stable"** -- it is a real, offset-dependent input for R3-b/c/d's own
+arm-band-proximity reasoning. See `docs/generated/mc-band-edge-stability.md`
+and `DE-MATH-R3A-001`.
+
 **Commits:** `3256ac42` (RED -- AC-2+AC-6), `76e0c178` (BLOCKING
 MC-config-parity fix, ADDENDUM 4), `c616960e` (parity-oracle sync).
 
@@ -6172,6 +6190,19 @@ exact form -- **never compressed to "all three dims proven identically":**
    every tuned dimension** -- joining the AC-6 MC-path-count-precision item
    and the AC-4 undated-path item on that same checklist.
 
+**Checklist item (a) MET (2026-07-18, `DE-MATH-R3A-001`, r3a-review
+APPROVE @ `c8615201`):** the FULL walk-forward objective-variance
+demonstration deferred above is now delivered -- new
+`scripts/objective_variance_probe.py` proves non-zero walk-forward
+objective variance for `PARABOLIC_VELOCITY_THRESHOLD` and
+`MAX_PARABOLIC_SQUEEZE` (plus the three VWAP dims, never walk-forward-
+tested before this cycle, and a re-confirmation of `TAKE_PROFIT_MC_PCT`)
+-- all six dims in `autotuner.OPTUNA_SEARCH_SPACE_KEYS`, source-derived
+enumeration + an AST-based `trial.suggest_*` drift-guard, with a
+`force_inert` non-vacuity control and config-robustness across
+`EXECUTION_START_TIME` in {09:30, 9:35} (the droplet-production value the
+retune runs under). See `DE-MATH-R3A-001`.
+
 **Fixture repair (post-AC-1 verification finding, commit `c2bf654f`):**
 r1-engine's post-AC-1 read-only verification found the walk-forward smoke's
 failure signature had MOVED (as expected -- real per-tick lpc was
@@ -6353,6 +6384,19 @@ disarm-band ruling + retune, HARD-GATED on this entry's residual checklist:
 AC-6's MC-path-count precision, AC-4's undated-path wiring, AC-7's
 parabolic walk-forward variance demo) are NOT covered by this entry -- see
 the program charter's phase ordering.
+
+**Checklist status update (2026-07-18, `DE-MATH-R3A-001`, r3a-review
+APPROVE @ `c8615201`):** of the residual checklist named above, the AC-4
+undated-path item was already closed by `DE-MATH-R2-001` (see that entry's
+own "Decision: AC-4" section). AC-6's MC-path-count precision and AC-7's
+parabolic walk-forward variance demo are now closed by `DE-MATH-R3A-001`:
+**AC-7's item is MET; AC-6's item is MET-WITH-FINDING** (300 retained, no
+bump taken -- near-boundary instability is proximity-driven and
+path-irreducible, farther-from-boundary instability is path-reducible; see
+`DE-MATH-R3A-001` for the full record). **All three pre-retune checklist
+items are now closed.** R3-b (MA-4 disarm-band) and R3-c (MA-11
+MAX_SQUEEZE_FLOOR) remain, both still required -- alongside operator
+before/after sign-off -- before R3-d (the retune itself).
 
 ## DE-MATH-R2-001 -- Math Remediation R2: honest validation statistics -- CPCV split-level scoring, train-only adoption holdout, frozen-eval metric, R1-tripwire clearance, quantstats producer-side simple-return convention (2026-07-17)
 
@@ -7488,3 +7532,391 @@ basis). Predecessors `DE-MATH-R0-001` / `DE-MATH-R1-001` (PR #97, merged
 closes R2's own Residual #3 backlog item. Program charter
 `feature-plans/math-remediation-program.md` phase-2-check item 6 updated in
 place on write (mirrors R2's convention) to record the tripwire shipping.
+
+## DE-MATH-R3A-001 -- Math Remediation R3-a: pre-retune checklist prerequisites (2026-07-18)
+
+Branch: `fix/math-r3a` | Base: `origin/main` (post-F7) `77551f1c` | HEAD (this
+entry): `c8615201` (AC-1..AC-10 all GREEN, 65/65 on the two new test files,
+twice-confirmed independently by r3a-doc and r3a-review; r3a-review APPROVE;
+AC-9's checklist flip LANDED in this doc-only follow-up commit -- see
+"Decision: AC-9" below)
+
+### Summary
+
+R3-a is the third executed phase of the math remediation program launched
+from the app-math audit (`DE-MATH-AUDIT-001`, `docs/audit/math-audit/VERDICT.md`).
+It is the first sub-phase of R3 (live-path behavior corrections + retune,
+`feature-plans/math-remediation-program.md`), split by `r3-scout`
+(`feature-plans/math-r3-scoping.md`) into a gated sequence: **R3-a (this
+entry, tests-only, low-risk on-ramp) -> R3-b (MA-4 disarm-band fix,
+live-path) -> R3-c (MA-11 MAX_SQUEEZE_FLOOR, live-path) -> R3-d (the first
+trustworthy retune, an operator-gated OPERATION, not a code PR)**.
+
+`DE-MATH-R1-001`'s Reference section (`DECISIONS.md:6350-6355`) recorded a
+3-item pre-retune checklist hard-gating R3-d: AC-6's MC-path-count
+precision, AC-4's undated-path wiring, AC-7's parabolic walk-forward
+variance demo. `DE-MATH-R2-001` AC-4 already closed the undated-path item
+(commit `c66457dd`). **R3-a delivers the remaining two:**
+
+- **Item (a) -- parabolic walk-forward variance demo:** `DE-MATH-R1-001`
+  AC-7 proved `TAKE_PROFIT_MC_PCT` objective-sensitive at the real
+  walk-forward level, but the two parabolic dims
+  (`PARABOLIC_VELOCITY_THRESHOLD`, `MAX_PARABOLIC_SQUEEZE`) were proven
+  inert-free only at the wiring level -- the gap this item closes. New
+  `scripts/objective_variance_probe.py` extends walk-forward
+  objective-variance coverage to ALL SIX dims in
+  `autotuner.OPTUNA_SEARCH_SPACE_KEYS`, including the three VWAP dims,
+  which had NEVER been walk-forward-tested at all (the pre-existing
+  `test_ac7_inert_dims_objective_variance_smoke.py` fixture always sets
+  `vwap == close`, structurally inert to them).
+- **Item (b) -- 300-path band-edge stability:** `DE-MATH-R1-001` ADDENDUM 4
+  recorded a measured divergence (14.82 in-band at 5000 paths vs 16.67
+  out-of-band at 300 paths) as a residual for this checklist, with no
+  artifact ever produced. New `scripts/mc_band_edge_stability_probe.py`
+  measures the replay's 300-path Monte Carlo estimator's arm-decision
+  flip-rate against higher reference path counts near the arm-band
+  boundary, and emits a committed bump-vs-accept recommendation.
+
+Both deliverables are **tests-only and off the live-execution path** --
+confirmed by a direct diff, not merely by claim: `git diff fb695cf9 c8615201
+-- . ':!tests' ':!scripts' ':!docs/generated' ':!feature-plans'` is EMPTY.
+No live exit decision, no live stop distance, no live-execution-path code
+changed. `alpha_bot_execution.py`, `math_engine.py`, `autotuner.py`, and
+`synthetic_history.py` all carry **zero diff** for this cycle -- the two new
+probe modules live entirely under `scripts/`, imported only by their own
+test files.
+
+### Decision: AC-1..AC-5 (item (a) -- walk-forward objective-variance, all 6 tuned dims)
+
+**Source-derived enumeration (AC-1), never hardcoded:**
+`scripts/objective_variance_probe.py`'s `production_tuned_dims()` reads
+`autotuner.OPTUNA_SEARCH_SPACE_KEYS` (`autotuner.py:157`) directly -- the
+production authority -- so a future dim added to the search space without a
+matching sweep fixture makes the consuming test FAIL, not silently pass.
+
+**Belt-and-suspenders drift-guard (AC-1, PM binding ruling mid-cycle):**
+r3a-test flagged that `OPTUNA_SEARCH_SPACE_KEYS` is itself only a
+validation-contract constant that could in principle drift from the REAL
+`trial.suggest_*` calls it is meant to mirror. `suggest_names_in_run_autotuner_objective()`
+closes this gap: a pure AST seam (`_extract_suggest_names_from_source`)
+reads `autotuner.py`'s own live source via `inspect.getsource`, scoped
+structurally to `run_autotuner`'s function subtree only (a sibling function
+like `run_calibration_sweep` is never visited), and extracts every
+`trial.suggest_*("<NAME>", ...)` string literal actually present. The test
+asserts this set equals `OPTUNA_SEARCH_SPACE_KEYS` exactly --
+`test_optuna_search_space_keys_matches_actual_suggest_calls`. A companion
+assertion, `test_trigger_threshold_pct_is_not_a_tuned_dim`, confirms
+`TRIGGER_THRESHOLD_PCT` is absent from BOTH the constant and the real
+suggest-call set -- it is a frozen, non-tuned default read via
+`p.get("TRIGGER_THRESHOLD_PCT", 15.0)` (`autotuner.py:1173`), never a
+`trial.suggest_*` call. (The plan's own AC-1 "known expected set" line
+originally listed `TRIGGER_THRESHOLD_PCT` and omitted the three VWAP dims --
+caught and corrected pre-RED, `e3c204a1`, per the same PM ruling.)
+
+**Real walk-forward scoring (AC-2), never `autotuner.run_autotuner`:**
+`walkforward_dim_sweep(dim, force_inert=False)` scores each of
+`SWEEP_VALUES_PER_DIM` (2) swept values via `autotuner.run_simulation` over
+bar-derived history built through the REAL `synthetic_history.build_replay_day`
+pipeline. Every one of the 6 registered fixtures
+(`TAKE_PROFIT_MC_PCT` reuses AC-7's proven 3-day fixture verbatim; the
+other 5 are new bar-derived fixtures, one per dim) sweeps >=2 in-range
+values with all other dims held at an inert baseline
+(`_INERT_BASELINE_PARAMS`), asserting the resulting walk-forward objective
+is NOT identical across the swept values --
+`test_dim_produces_nonzero_walkforward_objective_variance`, parametrized
+over all 6 dims.
+
+**Fixture-fired codepath proof (AC-3):** each fixture's `fire_predicate`
+reads `autotuner.replay_exit_sequence`'s per-tick trace -- the SAME per-tick
+core (`_replay_exit_tick`) `run_simulation` scores with, not a second
+simulation -- and counts ticks where the dim's decision codepath actually
+engaged (`para_armed`, `tp_armed`, or a matching `exit_reason`).
+`test_dim_decision_codepath_actually_fires_in_fixture` asserts this count is
+nonzero for every dim; a dim whose codepath never fires cannot yield honest
+variance and fails loudly rather than passing on a vacuous zero.
+
+**Determinism (AC-4):** `build_replay_day`'s Monte Carlo seed derives
+deterministically from `sym_id`+`date_str` (`math_engine.derive_cycle_mc_seed`)
+and every per-tick primitive is pure -- no extra seeding needed.
+`test_walkforward_sweep_is_deterministic` confirms byte-identical objectives
+across two calls, per dim.
+
+**Bounded / cheap (AC-5):** `SWEEP_VALUES_PER_DIM=2`, `SWEEP_MAX_DAYS=3` (the
+`TAKE_PROFIT_MC_PCT` fixture's max; every other dim uses a single day).
+`test_sweep_budget_is_bounded_not_production_scale` and
+`test_sweep_does_not_invoke_full_run_autotuner` confirm the smoke never
+touches `OPTUNA_N_TRIALS_PRODUCTION` (500) or `autotuner.run_autotuner`.
+
+**Config-robustness finding (RED-review, `a0e3bec1` + `db164fb8`):**
+r3a-test's RED-review found the original sensitivity proof was an artifact
+of the test-suite's conftest-pinned `EXECUTION_START_TIME=09:30` -- at the
+droplet-production value (`9:35`, the config the R3-d retune actually runs
+`run_autotuner` under), all 6 dims went dead (span=0, fires=0), because
+every fixture's discriminating ticks sat at tick_idx 0-14, before the
+action-phase gate (`_replay_in_action_phase`) opens at a 5-minute offset,
+and the 3 VWAP fixtures' neutral pad cleared the grace window's lower bound
+at 09:30 but not the shifted `[5, 20)` window at 9:35. **Fix (`db164fb8`,
+timing-only, zero mechanism change, zero production diff):** every fixture
+now pads `_NEUTRAL_PAD_TICKS` (30) neutral ticks before its discriminating
+ticks -- comfortably clearing the action-phase gate and the 15-minute VWAP
+grace at both `09:30` and `9:35`, with headroom for other plausible
+operator start-times. The `TAKE_PROFIT_MC_PCT` fixture reuses AC-7's exact
+closes verbatim (the discriminating tick's `mc_prob` is bit-identical
+regardless of tick position -- `build_replay_day`'s MC seed is
+`sym_id`+`date`-keyed, not tick-keyed); the parabolic/squeeze pullback
+margins were re-derived and widened for the tighter
+`dynamic_multiplier`/`dynamic_min_stop` decay a late-day tick_idx produces.
+Confirmed: 44 passed / 0 failed / 0 errors (`-n0`), reproduced across 2
+separate process runs.
+
+**Non-vacuity crux extended to both configs (PM addition, `c8615201`):** the
+`force_inert=True` collapse control (pins the swept dim to one fixed
+baseline value for every sweep point -- the swept value never reaches
+`params[dim]` at all) was itself only proven under the conftest `09:30` pin
+-- the same assumption the config-robustness finding above disproved for the
+live-variance side. `test_dim_variance_assertion_collapses_when_dim_forced_inert`
+is now parametrized across `EXECUTION_START_TIME in {09:30, 9:35}` with a
+two-clause contract per (dim, start-time): (1) the live sweep MUST vary
+(guards a dead fixture from making clause 2 trivially pass), and (2)
+`force_inert` MUST collapse it to byte-identical objectives (the variance is
+the dim's, not a fixture artifact). `test_dim_variance_and_fire_hold_under_retune_execution_start_time`
+provides the matching variance+fire pin at both configs.
+
+**Regression pin:** `tests/autotuner/test_r3a_walkforward_variance_all_dims.py`
+(472 lines). See `docs/generated/scripts_objective_variance_probe.md` and
+`docs/generated/autotuner.md`'s "Optuna Search Space" section for full
+technical detail.
+
+### Decision: AC-6..AC-8 (item (b) -- 300-path band-edge stability probe)
+
+**Real-estimator flip-rate measurement (AC-6):** `measure_flip_rate` builds
+a synthetic single-ticker kNN fixture whose true underperformance
+probability is exactly known by construction (`_build_band_edge_fixture` --
+`neighbor_k` set to the full pool size so `run_monte_carlo`'s
+`len(distances) <= neighbor_k` branch selects every candidate day
+unconditionally, sidestepping SPY-return/vol-based neighbor selection
+entirely), then drives the REAL `math_engine.run_monte_carlo` (never a
+reimplemented Binomial -- confirmed by
+`test_probe_drives_the_real_monte_carlo_at_300_and_each_reference`'s spy) at
+the focal 300-path count and each reference count, over `n_seeds`
+independently-seeded draws, counting the fraction whose side of the
+boundary disagrees. **Non-vacuity crux
+(`test_near_edge_flip_rate_materially_exceeds_mid_band_control`):** a
+near-edge scenario's flip-rate must MATERIALLY exceed a mid-band control's
+(~0, many sampling-std from either boundary) -- proving the probe measures
+genuine boundary instability, not a constant.
+
+**Pure decision function (AC-7):** `recommend(flip_rate, threshold=0.05)`
+returns `"bump"` iff `flip_rate >= threshold`, else `"accept"` -- both
+branches are test-driven, no hardcoded outcome
+(`test_recommendation_is_a_pure_threshold_decision`). `run_probe()` runs the
+headline near-edge scenario (0.3pp inside the 5.0% lower arm boundary),
+decides the verdict, and writes both `docs/generated/mc-band-edge-stability.md`
+and its `.json` sidecar
+(`test_probe_emits_recommendation_artifact_with_required_fields`,
+`test_default_artifact_paths_live_under_docs_generated` -- PM ruling: the
+generated report's home is `docs/generated/`, never `feature-plans/`).
+
+**Evidence-based bump-target search (AC-7/AC-8, PM ruling on the R3-a (b)
+plan):** IF the headline verdict is `"bump"`, `_select_bump_target` searches
+`_BUMP_CANDIDATE_LADDER` (400 -> 5000) ascending and certifies the SMALLEST
+candidate whose OWN flip-rate vs `_PRODUCTION_PARITY_PATHS` (5000) is below
+threshold -- never an unmeasured value. If no candidate up to and including
+production parity clears the bar, returns `stable=False` (comparing 5000
+against itself is still two independently-drawn estimates, so even parity
+self-comparison is not guaranteed stable this close to a boundary).
+
+**Non-vacuity of the search itself (r3a-test sufficiency-review finding,
+`dbd06f0e`):** the committed headline scenario's search ALWAYS returns
+`stable=False` (see the Finding below) -- so the `stable=True` branch was
+never exercised by the AC-6 tests above, and a search that always returned
+"no stable target" would produce the identical committed finding.
+`tests/autotuner/test_r3a_band_edge_stability_probe.py` gained a dedicated
+non-vacuity module (`_bump_search_results` fixture, module-scoped) pinning
+the search against BOTH a path-REDUCIBLE offset (6.5%, 1.5pp inside the
+boundary) and the path-IRREDUCIBLE near-edge offset (5.3%, 0.3pp): the
+reducible scenario MUST certify `stable=True` with a real candidate from the
+ladder (`test_bump_search_finds_stable_target_when_instability_is_path_reducible`),
+the irreducible scenario MUST certify `stable=False` with the
+production-parity self-comparison itself at/above threshold
+(`test_bump_search_reports_no_target_at_irreducible_near_edge`), and the two
+verdicts MUST differ (`test_bump_search_responds_to_offset_not_a_constant_oracle`)
+-- a constant-oracle search that always says "no target" would fail this
+last assertion.
+
+**Scope guard (AC-8/AC-10):** `test_live_engine_mc_path_count_is_unchanged`
+confirms `alpha_bot_execution.SIMULATION_PATHS` stays `5000` (the live
+engine's MC fidelity, off-limits to R3-a);
+`test_sanctioned_knob_is_the_replay_constant_not_the_live_one` confirms
+`SANCTIONED_KNOB` names only `synthetic_history._MC_REPLAY_SIMULATION_PATHS`;
+`test_replay_constant_is_currently_the_probed_300` pins the probed baseline.
+`scripts/mc_band_edge_stability_probe.py` NEVER imports
+`alpha_bot_execution` -- the arm-band boundary and production-parity
+reference are mirrored constants, not imports (source docstring, "SCOPE
+GUARD" section).
+
+**Finding (committed artifact, `docs/generated/mc-band-edge-stability.{md,json}`):**
+for the headline near-edge scenario (0.3pp inside the 5.0% lower arm
+boundary, `p_true_estimate=5.3%`, `n_seeds=300`), the 300-path flip-rate vs
+1000/5000/20000-path references is 48.00% / 39.67% / 35.33% respectively --
+all far above the 5% `[PM-ASSUMED]` bump threshold, so the headline
+recommendation is `"bump"`. But the evidence-based target search over the
+full candidate ladder (400 through 5000) found **no candidate whose own
+flip-rate vs the 5000-path production-parity reference clears 5%** -- even
+5000-vs-5000 (production parity compared against itself) flips 28.00% of
+the time. **The instability at this offset is dominated by proximity to the
+boundary, not reducible by more paths alone.** No constant change is made;
+`synthetic_history._MC_REPLAY_SIMULATION_PATHS` stays `300`.
+
+**Supplementary characterization (verified independently by r3a-doc,
+reproducible via the exact function calls cited below, NOT itself
+persisted to the committed artifact -- Option A, PM/r3a-test ruling: the
+committed artifact covers only the single 0.3pp headline scenario, and
+`run_probe` is deliberately NOT extended to multiple offsets, which would
+be a code change for no AC):**
+
+- **Headline flip-rate (0.3pp): 39.67% at 300-vs-5000** -- reproduce via
+  `mc_band_edge_stability_probe.measure_flip_rate(target_true_prob_pct=5.3,
+  boundary_pct=5.0, n_seeds=300, reference_counts=(1000, 5000, 20000),
+  base_seed=20260718).flip_rate_by_reference[5000]` -- the exact value in
+  the committed `mc-band-edge-stability.json`.
+- **Certified bump target per offset** -- reproduce via
+  `mc_band_edge_stability_probe._select_bump_target(target_true_prob_pct=<5.0+offset>,
+  boundary_pct=5.0, n_seeds=300, base_seed=20260718, threshold=0.05)` ->
+  `.stable` / `.target_path_count`, at the artifact's own canonical
+  `n_seeds=300` (`_ARTIFACT_N_SEEDS`, the same value `run_probe` passes to
+  both functions -- resolves two earlier discrepancies at non-canonical
+  seed counts, both caught and corrected before landing):
+
+| offset from boundary | true prob | `.stable` | `.target_path_count` | flip-rate at target vs 5000 |
+|---|---|---|---|---|
+| 0.3pp | 5.3% | `False` | `None` (5000-vs-5000 self-flip 28.00%, matches the committed artifact) | -- |
+| 0.6pp | 5.6% | `False` | `None` (5000-vs-5000 self-flip 8.33%) | -- |
+| 1.0pp | 6.0% | `True` | **2000** | 2.33% |
+| 1.5pp | 6.5% | `True` | 600 | 3.33% |
+
+**n_seeds-sensitivity caveat (verbatim, PM-specified):** "The certified
+target at the ~1pp reducibility transition is n_seeds-sensitive --
+candidate 1500's flip straddles the 0.05 threshold (0.045 @ ns=200, exactly
+0.05 @ ns=300, 0.0533 @ ns=150), so it qualifies at ns=200 but not at the
+canonical ns=300; the search certifies 2000 at ns=300. The qualitative
+finding (<=~0.6pp irreducible / >=~1pp path-reducible; 1.5pp->600 robust)
+is stable across n_seeds."
+
+**This is an offset-dependent finding, framed QUALITATIVELY as the robust
+R3-d input, never over-pinned to a single number:** instability at/very
+close to the boundary (<=~0.6pp) is proximity-driven and irreducible by
+more paths; instability farther from the boundary (>=~1.0pp) IS reducible,
+at a materially lower path count than production parity -- the exact
+certified target right at the ~1pp transition itself moves with `n_seeds`
+(see caveat above), but the qualitative irreducible/reducible split does
+not. This is an input for R3-b/c/d's own arm-band-proximity reasoning, not
+a claim that 300 paths is broadly safe or broadly unsafe.
+
+**Regression pin:** `tests/autotuner/test_r3a_band_edge_stability_probe.py`
+(459 lines). See `docs/generated/scripts_mc_band_edge_stability_probe.md`
+and `docs/generated/synthetic_history.md`'s `_MC_REPLAY_SIMULATION_PATHS`
+constant row for full technical detail.
+
+### Decision: AC-9 (checklist status flip) -- LANDED
+
+r3a-review posted **APPROVE @ `c8615201`**, quoted verbatim below (relayed
+by r3a-test from r3a-review's own message -- same convention as
+`DE-MATH-F7-001`'s Verification section, "quoted verbatim (relayed by
+team-lead from f7-review's own message)"):
+
+> Fresh-state preamble: worktree `.../worktrees/math-r3a`, branch
+> `fix/math-r3a`, HEAD `c8615201` (verified via `git rev-parse HEAD`
+> immediately BEFORE and AFTER the full verification pass -- identical,
+> `git status --porcelain` empty both times, zero teammate drift). Battery:
+> `pytest -n0 tests/autotuner/test_r3a_walkforward_variance_all_dims.py
+> tests/autotuner/test_r3a_band_edge_stability_probe.py` run TWICE at this
+> SHA -- 65 passed / 0 failed / 0 errors both times (31.89s, 31.85s),
+> matching r3a-doc's own independent re-run exactly. Both ruff gates
+> (`format --check`, `check`) clean on all 4 new/changed files.
+>
+> Verdict: APPROVE @ c8615201 -- conditional on the PM's live gate
+> (tests-green is necessary, never sufficient; per the project's E2E
+> ship-gate rule)
+
+Section results (verbatim headers): "Math safety -- PASS", "Live-trade
+boundary -- PASS", "Fixture provenance -- PASS", "Schema reversibility --
+N/A", "Secrets hygiene -- PASS", "Engine constants -- N/A", "Logging
+redaction -- N/A", "Dashboard side effects -- N/A". Closing: "Zero findings
+for you to encode as new RED."
+
+**The double-gate is satisfied** -- non-vacuity + scope-guard independently
+verified GREEN, per PM binding ruling this closes the precondition for
+landing AC-9. The DECISIONS.md pre-retune checklist flip (three sites:
+`DE-MATH-R1-001` ADDENDUM 4's item (b) residual at ~5969-5976, the AC-7
+ruling's item (a) deferral at ~6161-6173, and the 3-item checklist
+enumeration in `DE-MATH-R1-001`'s own Reference section at ~6350-6355) is
+landed in the SAME commit as this update -- each site gets an APPENDED
+correction note, never a rewrite of the historical prose (matching the
+AC-4/R2 closure convention already established at `DECISIONS.md:6790-6795`).
+**Item (a) is MET; item (b) is MET-WITH-FINDING** -- 300 is RETAINED (no
+bump taken), and the finding itself (near-boundary instability is
+proximity-driven and path-irreducible; farther-from-boundary instability is
+path-reducible) is a real input for R3-b/c/d, never compressed to "300 is
+stable."
+
+### Decision: AC-10 (no live-path leakage) -- scope guard confirmed
+
+Direct diff, not claim: `git diff fb695cf9 c8615201 -- . ':!tests'
+':!scripts' ':!docs/generated' ':!feature-plans'` is EMPTY across the
+entire cycle. `alpha_bot_execution.py` decision logic, `math_engine.py`
+live-stop math, and every live exit decision / stop distance are
+byte-unchanged. `autotuner.py` and `synthetic_history.py` (the two modules
+the probes read from, via `run_simulation`/`replay_exit_sequence`/
+`build_replay_day`/`_MC_REPLAY_SIMULATION_PATHS`) also carry zero diff --
+R3-a's entire footprint is additive: two new `scripts/` modules, two new
+test files, and the committed `docs/generated/mc-band-edge-stability.{md,json}`
+artifact. The one sanctioned exception (AC-8, a single-constant edit to
+`synthetic_history._MC_REPLAY_SIMULATION_PATHS` IF a bump were both
+recommended AND evidence-certified) was NOT taken -- see the item (b)
+Finding above.
+
+### Files changed (this cycle, `fb695cf9`..`c8615201`)
+
+- `scripts/objective_variance_probe.py` (new, 609 lines) -- item (a)
+- `scripts/mc_band_edge_stability_probe.py` (new, 474 lines) -- item (b)
+- `scripts/__init__.py` (new, empty -- package marker)
+- `tests/autotuner/test_r3a_walkforward_variance_all_dims.py` (new, 472
+  lines)
+- `tests/autotuner/test_r3a_band_edge_stability_probe.py` (new, 459 lines)
+- `docs/generated/mc-band-edge-stability.md` + `.json` (new, committed
+  probe artifact)
+- `feature-plans/math-r3a-checklist.md` (AC-1 expected-set correction +
+  AC-9 gating clarification, `e3c204a1`)
+- Not touched: `alpha_bot_execution.py`, `math_engine.py`, `autotuner.py`,
+  `synthetic_history.py` (AC-10, confirmed by direct diff above)
+
+### Verification
+
+**This entry is a living skeleton, filled in incrementally as each piece
+lands** (same convention as R1/R2/F7). GREEN at `c8615201`, confirmed
+independently TWICE (r3a-doc's own re-run + r3a-review's own re-run, both
+`-n0`, temp `DB_PATH`): **65 passed / 0 failed / 0 errors**, both runs.
+Both ruff gates clean. **r3a-review's non-vacuity + scope-guard verdict:
+APPROVE @ `c8615201`** -- quoted verbatim under "Decision: AC-9" above.
+AC-9's checklist flip is LANDED in this same commit. **Still outstanding:**
+the PM's independent full battery (`tests/autotuner/` + the hot-file guard
+suites `tests/error_handling/`, `tests/execution/`, `tests/math_engine/`,
+per the plan's Testing Strategy) + the PM's own gate -- tests-green
+(twice-confirmed) is necessary, never sufficient. Updated in place as each
+lands -- never re-created as a new DECISIONS.md entry.
+
+### Reference
+
+`DE-MATH-R3A-001`; branch `fix/math-r3a`; plan
+`feature-plans/math-r3a-checklist.md` (+ the AC-1/AC-9 correction,
+`e3c204a1`); scoping report `feature-plans/math-r3-scoping.md`
+(`r3-scout`); findings basis `docs/audit/math-audit/VERDICT.md`
+(`DE-MATH-AUDIT-001`); program charter
+`feature-plans/math-remediation-program.md`. Predecessors `DE-MATH-R0-001` /
+`DE-MATH-R1-001` (PR #97, merged `c38af283`) / `DE-MATH-R2-001` (PR #98,
+merged `0f1c508f`) / `DE-MATH-F7-001` (PR #99, merged `bd2c8d5d`) -- this
+entry closes 2 of `DE-MATH-R1-001`'s 3-item pre-retune checklist residuals
+(the 3rd, AC-4 undated-path wiring, was already closed by `DE-MATH-R2-001`).
+R3-b (MA-4 disarm-band), R3-c (MA-11 MAX_SQUEEZE_FLOOR), and R3-d (the
+retune itself, operator-gated) remain -- not covered by this entry.
