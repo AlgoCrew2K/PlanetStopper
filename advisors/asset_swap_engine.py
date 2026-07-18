@@ -845,11 +845,12 @@ def _evaluate_single_variant(
       structurally invalid, or the incumbent is absent (AC-X5 / R2-3 AC-3)
     - proposal_shell is a SwapProposalResult with backtest_error set on failure
     - baseline_stats is the stats dict from the baseline backtest (or None on failure)
-    - baseline_returns_pct is the baseline's daily log-returns converted to
-      percent scale (or [] when the baseline was never backtested — the
-      incumbent-not-in-tree / structurally-invalid branches, before any
-      backtest call). AC-13: callers reuse this instead of re-backtesting the
-      identical baseline tree a second time.
+    - baseline_returns_pct is the baseline's daily simple returns (AC-5 /
+      DE-MATH-R2-001: composer_backtest_client._extract_returns emits simple,
+      not log, returns) converted to percent scale (or [] when the baseline
+      was never backtested — the incumbent-not-in-tree / structurally-invalid
+      branches, before any backtest call). AC-13: callers reuse this instead
+      of re-backtesting the identical baseline tree a second time.
 
     Cycle-3 AC-5: when ``lens_scores`` is provided, the rationale incorporates
     lens evidence for ``candidate_asset``.
@@ -947,7 +948,8 @@ def _evaluate_single_variant(
             baseline_returns_pct,
         )
 
-    # Convert log-returns → percent for the fold-transform.
+    # Convert simple returns → percent for the fold-transform (AC-5: the
+    # producer emits simple returns, not log — composer_backtest_client._extract_returns).
     variant_returns_pct = [r * 100.0 for r in variant_result.daily_returns.values()]
     # AC-4: date-keyed pct-scale returns enable the batch PBO veto (mirrors
     # strategy_builder_engine.py:843).
