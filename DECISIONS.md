@@ -7950,7 +7950,7 @@ confirmation` docstring). The pre-fix inline disarm at (old)
 2 * TRIGGER_THRESHOLD_PCT (30.0) AND current_return > 0.0` -- that is
 DETERIORATION, never recovery -- while printing `"DISARMED (Conditions
 Recovered)"`. Because `compute_exit_confirmation` only allows the
-Trailing-Stop exit to fire once `prob_underperforming >= MC_SANITY_
+Trailing-Stop exit to fire once `prob_underperforming >= MC_BREAKDOWN_
 THRESHOLD (60.0)` (a superset of `prob > 30`), the buggy disarm stripped
 `armed` exactly as the exit gate opened -- a position that arms at a peak
 (`prob` in `[5, 15)`) and then gives back into a loss as `prob` climbs

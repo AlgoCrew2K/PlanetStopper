@@ -144,7 +144,7 @@ Returns `(new_armed, new_disarm_confirm_count)`. Computes the trailing-stop's ar
 ### Exit Confirmation
 
 #### `compute_exit_confirmation(armed, is_triggered, current_return, stop_trigger_level, prob_beating: float | None, current_below_stop_count, exit_confirm_ticks=EXIT_CONFIRM_TICKS) → tuple[int, bool]`
-Returns `(new_below_stop_count, is_trailing_stop_hit)`. `exit_confirm_ticks` consecutive qualifying ticks required (defaulting to `EXIT_CONFIRM_TICKS=3`; the regime-adjusted threshold is passed by the execution path). MC sanity gate: when `prob_beating >= MC_SANITY_THRESHOLD`, the exit is vetoed. When `prob_beating is None` (MC unavailable), the gate passes — insufficient MC data must never disable the protective stop.
+Returns `(new_below_stop_count, is_trailing_stop_hit)`. `exit_confirm_ticks` consecutive qualifying ticks required (defaulting to `EXIT_CONFIRM_TICKS=3`; the regime-adjusted threshold is passed by the execution path). MC sanity gate: when `prob_beating >= MC_BREAKDOWN_THRESHOLD`, the exit is vetoed. When `prob_beating is None` (MC unavailable), the gate passes — insufficient MC data must never disable the protective stop.
 
 #### `compute_tp_confirmation(mc_available, prob_beating, take_profit_mc_pct, current_return, is_triggered, tp_armed, above_tp_count) → tuple[bool, int, bool]`
 Returns `(new_tp_armed, new_above_tp_count, is_tp_hit)`. Arms when MC drops below `take_profit_mc_pct`; confirms when MC rises back above and `TP_CONFIRM_TICKS` ticks elapse. MC-unavailable ticks reset the counter.
@@ -294,7 +294,7 @@ Computes rolling `MC_VOL_WINDOW_DAYS`-day standard deviation of SPY returns. Ret
 | `EXIT_CONFIRM_TICKS` | 3 | Consecutive ticks to confirm trailing-stop exit |
 | `TP_CONFIRM_TICKS` | 2 | Consecutive ticks to confirm take-profit exit |
 | `DISARM_CONFIRM_TICKS` | 3 | Consecutive recovery ticks (`prob_underperforming` below `TAKE_PROFIT_MC_PCT`) required before `compute_arm_disarm_decision` disarms the trailing stop; frozen, not in `autotuner.OPTUNA_SEARCH_SPACE_KEYS` |
-| `MC_SANITY_THRESHOLD` | 60.0 | MC probability above which trailing stop is vetoed |
+| `MC_BREAKDOWN_THRESHOLD` | 60.0 | MC probability above which trailing stop is vetoed (H1 rename; the old name `MC_SANITY_THRESHOLD` survives only in a source-comment historical note, `math_engine.py:586`) |
 | `PBO_REJECT_THRESHOLD` | 0.5 | PBO > this value signals backtest overfitting |
 | `_CSCV_TOP_K` | 20 | Top-K PRE-BHY configs fed into `compute_pbo` |
 | `_CSCV_S` | 8 | Number of contiguous chronological blocks for IS/OOS partition |
