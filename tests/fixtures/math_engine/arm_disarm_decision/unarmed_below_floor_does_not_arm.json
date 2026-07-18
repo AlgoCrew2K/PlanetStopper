@@ -1,0 +1,10 @@
+{
+  "layer": "arm_disarm_decision",
+  "scenario": "unarmed_prob_below_floor_does_not_arm",
+  "provenance": "MA-4 settled ruling. prob < TAKE_PROFIT_MC_PCT while UNARMED is outside the arm band and is NOT the fail-open case (MC is present) -> no arm. scoping.md §1 + existing test_replay_does_not_arm_on_in_band_mc_below_take_profit_floor.",
+  "constants": {"take_profit_mc_pct": 5.0, "trigger_threshold_pct": 15.0, "disarm_confirm_ticks": 3},
+  "initial": {"armed": false, "disarm_confirm_count": 0},
+  "sequence": [
+    {"prob_underperforming": 3.0, "is_triggered": false, "expect_armed": false, "expect_count": 0, "note": "3.0 < 5.0 floor, MC present -> not arm band, not fail-open -> stays unarmed"}
+  ]
+}

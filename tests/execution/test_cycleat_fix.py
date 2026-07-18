@@ -159,6 +159,11 @@ def _run_eod_patched(initial_bot_state: dict | None = None) -> dict:
         mock_math.calculate_20d_vol.return_value = 0.15
         mock_math.compute_vwap_signals.return_value = (0.0, 0.0)
         mock_math.compute_para_arm_decision.return_value = (0.0, False)
+        # MA-4 (R3-b): complete the main() math surface — main() now calls the extracted
+        # arm/disarm seam. Defensive: this scenario doesn't reach the action phase today,
+        # but keeps the full mock surface configured so a future scenario can't break the
+        # unpack. prob=80 (deterioration) + unarmed -> (False, 0), matching OLD inline.
+        mock_math.compute_arm_disarm_decision.return_value = (False, 0)
         mock_math.compute_time_squeeze_decay.return_value = (1.0, 0.5)
         mock_math.compute_active_trailing_stop.return_value = 2.0
         mock_math.compute_breakeven_update.return_value = (0, False, -2.0)

@@ -275,6 +275,10 @@ def _run_one_cycle(
         mock_math.calculate_20d_vol.return_value = 0.15
         mock_math.compute_vwap_signals.return_value = (0.0, 0.0)
         mock_math.compute_para_arm_decision.return_value = (0.0, False)
+        # MA-4 (R3-b): main() now calls the extracted arm/disarm seam; configure it
+        # alongside the other math fns. prob=80 (deterioration) + unarmed -> (False, 0),
+        # matching the OLD inline logic (no behavior change; fixes the mock-unpack).
+        mock_math.compute_arm_disarm_decision.return_value = (False, 0)
         mock_math.compute_time_squeeze_decay.return_value = (1.0, 0.5)
         mock_math.compute_active_trailing_stop.return_value = 2.0
         mock_math.compute_breakeven_update.return_value = (0, False, -2.0)

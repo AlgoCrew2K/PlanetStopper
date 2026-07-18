@@ -317,17 +317,22 @@ def test_insufficient_mc_does_not_spuriously_disarm_symphony(
     patched_environment,
 ) -> None:
     """
-    AC-2 / Ruling 1. The disarm gate (alpha_bot_execution.py:1148) fires when a
-    real prob_underperforming is very high. With MC unavailable it must NOT disarm an
-    already-armed symphony — the absent opinion cannot manufacture a recovery
-    signal. The symphony stays armed so its protective stop remains live.
+    AC-2 / Ruling 1 + MA-4 (R3-b). With MC unavailable (prob_underperforming is None)
+    an already-armed symphony must NOT be disarmed — the absent opinion cannot
+    manufacture a recovery signal, and post-MA-4 the recovery-disarm
+    (math_engine.compute_arm_disarm_decision) requires mc_available AND genuine
+    recovery (prob < TAKE_PROFIT_MC_PCT). The symphony stays armed so its protective
+    stop remains live. This drives the REAL main(), so it also guards that the
+    extracted seam is wired into production for the MC-absent case.
 
-    RED against un-fixed consumers; GREEN once the disarm gate branches on
-    ``is None``.
+    GREEN on base (MC-absent already could not trip the inverted disarm) and GREEN
+    post-extraction (the seam's disarm requires mc_available) — a behavioral
+    survival guard, not a RED test.
     """
     env = patched_environment
-    # A positive return so the disarm gate's ``current_return > 0`` half is
-    # satisfied — only the prob_underperforming half should keep the disarm from firing.
+    # A positive return: under the OLD inverted disarm this satisfied its (now
+    # deleted) ``current_return > 0`` half; post-MA-4 the return sign is irrelevant —
+    # MC-absent alone keeps the stop armed (the disarm requires an available reading).
     env["fetch_symphony_stats"].return_value = [_make_symphony_payload(last_percent_change=0.05)]
     env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(500.0)
     env["db"].load_state.return_value = _seed_state(armed=True, hwm=10.0)

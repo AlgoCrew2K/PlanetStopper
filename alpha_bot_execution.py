@@ -799,6 +799,7 @@ def main():
                             "mc_history": [],
                             "below_stop_count": 0,
                             "above_tp_count": 0,
+                            "disarm_confirm_count": 0,
                             "vwap_ticks": 0,
                             "vwap_bleed_ticks": 0,
                             "breakeven_locked": False,
@@ -859,6 +860,7 @@ def main():
                             entry["hwm_hold_ticks"] = 0
                             entry["below_stop_count"] = 0
                             entry["above_tp_count"] = 0
+                            entry["disarm_confirm_count"] = 0
                             entry["vwap_ticks"] = 0
                             entry["vwap_bleed_ticks"] = 0
                             entry["stop_trigger"] = None
@@ -1279,6 +1281,7 @@ def main():
                         "mc_history": [],
                         "below_stop_count": 0,
                         "above_tp_count": 0,
+                        "disarm_confirm_count": 0,
                         "vwap_ticks": 0,
                         "vwap_bleed_ticks": 0,
                         "breakeven_locked": False,
@@ -1299,6 +1302,7 @@ def main():
                 for key in [
                     "below_stop_count",
                     "above_tp_count",
+                    "disarm_confirm_count",
                     "vwap_ticks",
                     "vwap_bleed_ticks",
                     "hwm_hold_ticks",
@@ -1354,9 +1358,6 @@ def main():
                     bleed_multiplier=acc_VWAP_BLEED_MULTIPLIER,
                 )
 
-                should_arm = False
-                arm_reason = ""
-
                 # run_monte_carlo returns the out-of-band insufficient sentinel
                 # (None) when MC history is too short. Insufficient MC = the MC
                 # second opinion is absent: no disarm, no TP — and no MC veto of
@@ -1370,36 +1371,44 @@ def main():
                 # to None (unprecedented regime); both paths converge here.
                 mc_available = prob_underperforming is not None
 
-                if (
-                    mc_available
-                    and acc_TAKE_PROFIT_MC_PCT <= prob_underperforming < acc_TRIGGER_THRESHOLD_PCT
-                ):
-                    should_arm = True
-                    arm_reason = f"MC Prob {prob_underperforming:.1f}%"
-                elif not mc_available:
-                    should_arm = True
-                    arm_reason = "MC Absent (fail-open)"
+                # Arm/disarm decision (R3-b, MA-4 fix): delegated to the shared
+                # pure seam so production and the autotuner replay share ONE
+                # decision surface. Recovery-disarm is prob-based only (the OLD
+                # inverted disarm's `current_return > 0` leg is gone) and requires
+                # a disarm_confirm_ticks-tick hysteresis ladder — see
+                # math_engine.compute_arm_disarm_decision's docstring.
+                # NOTE: distinct from `prev_armed` above (cycle-start snapshot
+                # consumed by the chart_event "Armed" diff at :~1650) — this is
+                # the seam's own before/after pair, scoped to this transition.
+                armed_before_disarm_decision = bot_state[symphony_id]["armed"]
+                (
+                    bot_state[symphony_id]["armed"],
+                    bot_state[symphony_id]["disarm_confirm_count"],
+                ) = math_engine.compute_arm_disarm_decision(
+                    prob_underperforming=prob_underperforming,
+                    is_triggered=bot_state[symphony_id]["triggered"],
+                    armed=armed_before_disarm_decision,
+                    disarm_confirm_count=bot_state[symphony_id]["disarm_confirm_count"],
+                    take_profit_mc_pct=acc_TAKE_PROFIT_MC_PCT,
+                    trigger_threshold_pct=acc_TRIGGER_THRESHOLD_PCT,
+                )
 
-                if (
-                    should_arm
-                    and not bot_state[symphony_id]["armed"]
-                    and not bot_state[symphony_id]["triggered"]
-                ):
-                    bot_state[symphony_id]["armed"] = True
+                # Telemetry + the AC-7 below_stop_count reset are CALLER-side (the
+                # seam returns no string) — diff before/after armed, matching the
+                # compute_tp_confirmation transition-print idiom below.
+                if not armed_before_disarm_decision and bot_state[symphony_id]["armed"]:
+                    arm_reason = (
+                        f"MC Prob {prob_underperforming:.1f}%"
+                        if mc_available
+                        else "MC Absent (fail-open)"
+                    )
                     print(f"  *** {symphony_name} ARMED ({arm_reason}) ***")
                     database.log_symphony_event(
                         symphony_id, f"{symphony_name} ARMED ({arm_reason})", "armed"
                     )
-
-                elif bot_state[symphony_id]["armed"] and not bot_state[symphony_id]["triggered"]:
-                    if (
-                        mc_available
-                        and prob_underperforming > (acc_TRIGGER_THRESHOLD_PCT * 2)
-                        and current_return > 0.0
-                    ):
-                        bot_state[symphony_id]["armed"] = False
-                        bot_state[symphony_id]["below_stop_count"] = 0
-                        print(f"  *** {symphony_name} DISARMED (Conditions Recovered) ***")
+                elif armed_before_disarm_decision and not bot_state[symphony_id]["armed"]:
+                    bot_state[symphony_id]["below_stop_count"] = 0
+                    print(f"  *** {symphony_name} DISARMED (Conditions Recovered) ***")
 
                 # Do not pollute the rolling MC history with:
                 #   (a) the None sentinel — a None entry breaks averaging/comparison;
@@ -2031,6 +2040,7 @@ def seed_symphonies_into_bot_state(bot_state: dict) -> int:
                 "mc_history": [],
                 "below_stop_count": 0,
                 "above_tp_count": 0,
+                "disarm_confirm_count": 0,
                 "vwap_ticks": 0,
                 "vwap_bleed_ticks": 0,
                 "breakeven_locked": False,

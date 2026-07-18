@@ -1,0 +1,12 @@
+{
+  "layer": "arm_disarm_decision",
+  "scenario": "arm_band_is_reentrant_after_recovery_disarm",
+  "provenance": "MA-4 plan Edge Cases: a position that arms, genuinely recovers (disarms), then re-deteriorates must be able to RE-ARM (the arm band is re-entrant). Categorical spec decision.",
+  "constants": {"take_profit_mc_pct": 5.0, "trigger_threshold_pct": 15.0, "disarm_confirm_ticks": 2},
+  "initial": {"armed": true, "disarm_confirm_count": 0},
+  "sequence": [
+    {"prob_underperforming": 3.0, "is_triggered": false, "expect_armed": true, "expect_count": 1, "note": "recovery tick 1"},
+    {"prob_underperforming": 1.0, "is_triggered": false, "expect_armed": false, "expect_count": 0, "note": "recovery tick 2 reaches disarm_confirm_ticks=2 -> DISARM, now unarmed"},
+    {"prob_underperforming": 10.0, "is_triggered": false, "expect_armed": true, "expect_count": 0, "note": "prob back in arm band [5,15) while unarmed -> RE-ARM (band is re-entrant)"}
+  ]
+}

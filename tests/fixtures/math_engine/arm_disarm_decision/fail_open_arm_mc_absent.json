@@ -1,0 +1,10 @@
+{
+  "layer": "arm_disarm_decision",
+  "scenario": "mc_absent_fail_open_arms_unarmed_position",
+  "provenance": "MA-10 fail-open contract preserved through the extraction (scoping.md §3a; plan AC-7). An absent MC opinion (prob=None) must never silently leave the protective stop dark. Categorical decision from the spec.",
+  "constants": {"take_profit_mc_pct": 5.0, "trigger_threshold_pct": 15.0, "disarm_confirm_ticks": 3},
+  "initial": {"armed": false, "disarm_confirm_count": 0},
+  "sequence": [
+    {"prob_underperforming": null, "is_triggered": false, "expect_armed": true, "expect_count": 0, "note": "MC absent while unarmed -> fail-open arm"}
+  ]
+}

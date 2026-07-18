@@ -3,7 +3,7 @@
 > Core per-cycle execution engine: fetches live portfolio state from Composer, runs all per-symphony exit decisions, calls autotuner post-market, and writes state back to the DB.
 
 **Source:** `alpha_bot_execution.py`
-**Last updated:** 2026-07-18 (Math Remediation F7, `DE-MATH-F7-001`) — post-trigger MC display honesty (AC-1) + MAPERF-15 staleness tripwire (AC-4); see the new section below. Prior: 2026-06-21 (startup-seed-symphonies) — confirmed ZERO diff for Math Remediation R1 (2026-07-17, `DE-MATH-R1-001`); see the Replay-Fidelity Boundary section below
+**Last updated:** 2026-07-18 (Math Remediation R3-b, `DE-MATH-R3B-001`, cycle in progress) — the arm/disarm block is now delegated to a new shared `math_engine.compute_arm_disarm_decision` seam (replaces the prior inline, MA-4-inverted disarm); a new `disarm_confirm_count` bot_state key is added at the applicable init/reset sites; see the new section below. Prior: 2026-07-18 (Math Remediation F7, `DE-MATH-F7-001`) — post-trigger MC display honesty (AC-1) + MAPERF-15 staleness tripwire (AC-4); prior: 2026-06-21 (startup-seed-symphonies) — confirmed ZERO diff for Math Remediation R1 (2026-07-17, `DE-MATH-R1-001`); see the Replay-Fidelity Boundary section below
 
 ## Overview
 
@@ -61,7 +61,7 @@ Creates baseline `bot_state` entries for every symphony not already present.
   - `high_water_mark` / `shadow_hwm` initialized from `(last_percent_change or 0.0) * 100`
   - `armed`, `tp_armed`, `para_armed`, `triggered`, `breakeven_locked` = `False`
   - `mc_history`, `current_holdings` = `[]`
-  - `below_stop_count`, `above_tp_count`, `vwap_ticks`, `vwap_bleed_ticks`, `hwm_hold_ticks` = `0`
+  - `below_stop_count`, `above_tp_count`, `disarm_confirm_count`, `vwap_ticks`, `vwap_bleed_ticks`, `hwm_hold_ticks` = `0`
   - `prev_return` = `None`
   - `position_epoch` = `database.mint_position_epoch()` (fresh epoch per AC-3 — not the shadow_history write path)
   - `name` from `sym.get("name", "")`
@@ -143,6 +143,17 @@ F7's fix guards the value at the two persist sites rather than touching the MC c
 **AC-4 — MAPERF-15 passive staleness tripwire.** A triggered symphony's `current_return` (persisted to `shadow_history.current_return`, raw Composer `last_percent_change * 100`) is the if-held basis `reporting.py`'s Guard-Alpha $-saved math depends on (`DE-GUARD-ALPHA-SAVED-001`). `docs/research/composer/maperf15-post-sale-lpc-semantics.md` empirically confirmed this field keeps moving (tracks-logic) after a live sell, but its own Option B flagged that a silent future Composer behavior change would otherwise be undetectable. This tripwire (`:963-989`) is that check: it watches the same raw `current_return` per triggered symphony while `maperf15_market_hours_now` (`:646` — a real-market-hours discriminator that is independent of `--force`, so a forced run on a closed day/pre-open can never fire a false alarm) holds. A streak counter increments each cycle the value is bit-identical to the prior cycle; a single `logging.warning` fires once the streak reaches `MAPERF15_STATIC_LPC_CYCLES` (`= 30`, ~30 minutes at this project's 1-minute cadence — chosen as a conservative floor well above the sub-second liveness the research doc observed).
 
 **Latch semantics (ruled intentional, not a gap):** the warning fires once per continuous stale episode — `_maperf15_warned` suppresses repeats until the streak resets, and the streak resets to 0 the instant the symphony leaves the `triggered`-AND-market-hours state (untriggers, or the market closes/session ends). A fresh session therefore re-accumulates a full `MAPERF15_STATIC_LPC_CYCLES` before it can warn again — the tripwire never carries a partial count across sessions, and never fires only once for the lifetime of the process. Never raises, never gates any decision, no schema change — passive bookkeeping plus one log line.
+
+---
+
+### Trailing-Stop Arm/Disarm Delegation (Math Remediation R3-b, `DE-MATH-R3B-001`, 2026-07-18, cycle in progress)
+
+The arm/disarm block in `main()` (`~:1373-:1411`) — previously an inline conditional that both armed the protective trailing stop on an in-band MC reading and disarmed it — now delegates the whole decision to `math_engine.compute_arm_disarm_decision` (see [math_engine](math_engine.md)). This replaces a disarm condition that had been INVERTED (MA-4): the old code disarmed on `prob_underperforming > 2 * TRIGGER_THRESHOLD_PCT and current_return > 0.0` — a HIGH MC reading, which `run_monte_carlo`'s own convention makes DETERIORATION, not recovery — while printing `"DISARMED (Conditions Recovered)"`. The new disarm requires `prob_underperforming` to fall back below `TAKE_PROFIT_MC_PCT` (the arm-band's own lower edge) for `DISARM_CONFIRM_TICKS` consecutive ticks. See `DE-MATH-R3B-001` in `DECISIONS.md` for the full bug account, the seam contract, and the parity requirement with the autotuner replay (`autotuner.py:_replay_exit_tick`, same seam).
+
+**Caller-side responsibilities (the seam itself is pure and returns no telemetry):**
+- A locally-scoped `armed_before_disarm_decision` snapshot is taken immediately before the seam call and diffed against the seam's return to drive the ARM/DISARM console prints and DB event log — deliberately NOT the pre-existing `prev_armed` variable (a cycle-start snapshot consumed later by the unrelated `chart_event="Armed"` diff).
+- The AC-7 `below_stop_count=0` reset fires on the same before/after diff, on the transition into disarm.
+- A new `disarm_confirm_count` state key (int, the recovery-tick ladder counter) is threaded alongside `armed` at every bot_state init/reset site that already carries `armed`/`below_stop_count`: the DATA-phase create block, the position-recycle fresh-baseline reset, the main-loop init (plus its legacy-backfill key list), and `seed_symphonies_into_bot_state` (see above). It is deliberately NOT added to the post-trigger reset — that reset never touched `below_stop_count` either, preserving byte-for-byte parity there.
 
 ---
 

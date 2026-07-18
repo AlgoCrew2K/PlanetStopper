@@ -1201,26 +1201,37 @@ def _replay_exit_tick(
     if should_arm:
         state["para_armed"] = True
 
-    # MC arm / disarm (alpha_bot_execution.py:1302-1347). MA-10 fail-open: an
-    # ABSENT MC opinion (mc_available=False) ARMS the protective stop — an
-    # absent second opinion must never silently leave it dark. The
-    # EXIT_CONFIRM_TICKS ladder below still gates the actual liquidation, so
-    # a transient one-tick MC gap cannot trigger a sale on its own. should_arm
-    # is reset every tick, matching production's should_arm = False at the
-    # top of this block. Disarm still REQUIRES an available, extreme MC
-    # reading with a positive return — MC-absent can never disarm.
-    should_arm = False
-    if mc_available and take_profit_mc <= mc < trigger_threshold:
-        should_arm = True
-    elif not mc_available:
-        should_arm = True  # MA-10 fail-open (alpha_bot_execution.py:1324-1326)
-
-    if should_arm and not state["armed"]:
-        state["armed"] = True
-    elif state["armed"]:
-        if mc_available and mc > (trigger_threshold * 2) and ret > 0.0:
-            state["armed"] = False
-            state["below_stop_count"] = 0
+    # Arm/disarm decision (R3-b, MA-4 fix): delegated to the shared pure seam
+    # so replay and production (alpha_bot_execution.py) share ONE decision
+    # surface — R3-d retunes by replaying exit decisions, so a divergent exit
+    # surface would invalidate the tune. Recovery-disarm is prob-based only
+    # (current_return plays no role) and requires a disarm_confirm_ticks-tick
+    # hysteresis ladder to avoid chatter near the boundary — see
+    # math_engine.compute_arm_disarm_decision's docstring. MA-10 fail-open
+    # (an absent MC opinion ARMS the stop) is preserved inside the seam.
+    # is_triggered=False is a LITERAL, not read from `state` (which carries no
+    # "triggered" key): the replay breaks on the first trigger and never
+    # re-enters a tick with triggered state mid-day (see this function's
+    # docstring), so the seam is called only on not-yet-triggered ticks by
+    # construction — mirrors the is_triggered=False already passed below to
+    # compute_exit_confirmation, compute_tp_confirmation and
+    # compute_vwap_breakdown_update.
+    armed_before_disarm_decision = state["armed"]
+    state["armed"], state["disarm_confirm_count"] = math_engine.compute_arm_disarm_decision(
+        prob_underperforming=mc,
+        is_triggered=False,
+        armed=armed_before_disarm_decision,
+        disarm_confirm_count=state["disarm_confirm_count"],
+        take_profit_mc_pct=take_profit_mc,
+        trigger_threshold_pct=trigger_threshold,
+    )
+    # AC-7: the below_stop_count=0 reset is CALLER-side (the seam returns no
+    # telemetry) — mirrors production's diff-before/after pattern
+    # (alpha_bot_execution.py:1396-1411). No print here: the replay path has
+    # never printed (it is a silent walk-forward simulation), matching the
+    # pre-fix code.
+    if armed_before_disarm_decision and not state["armed"]:
+        state["below_stop_count"] = 0
 
     # --- TIME SQUEEZE DECAY LOGIC ---
     # time_ratio is derived from the ACTUAL session length so half-day
@@ -1351,6 +1362,7 @@ def _fresh_replay_state():
         "hwm_hold_ticks": 0,
         "below_stop_count": 0,
         "above_tp_count": 0,
+        "disarm_confirm_count": 0,
         "vwap_ticks": 0,
         "vwap_bleed_ticks": 0,
     }
