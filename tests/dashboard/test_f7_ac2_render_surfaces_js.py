@@ -229,6 +229,41 @@ def test_render_risk_math_panel_checks_triggered_before_scanning() -> None:
     )
 
 
+def test_render_risk_math_panel_mc_bar_resets_on_null_not_left_stale() -> None:
+    """Sufficiency-review addition (f7-dash flagged this during GREEN,
+    2026-07-18): the ``dp-rm-mc-bar`` element's width/color must be reset
+    to a neutral state when ``mcProb`` is null (exited symphony), not left
+    showing whatever width/color a PREVIOUS (possibly pre-trigger) render
+    last drew. This is the same "never a stale number" requirement AC-2
+    already states, applied to the bar's visual state, not just the text
+    label -- a gap the original RED battery didn't cover because it only
+    checked the text (``mcText``), not the bar. Regression-pin: this
+    surface is already correct in the GREEN implementation; this test
+    locks it in."""
+    content = _read_index_js()
+    body = _slice_function(content, "function renderRiskMathPanel(")
+
+    mc_bar_match = re.search(r"getElementById\(\s*['\"]dp-rm-mc-bar['\"]\s*\)", body)
+    assert mc_bar_match, "dp-rm-mc-bar element lookup not found in renderRiskMathPanel."
+
+    # The reset must appear textually AFTER the mcBar lookup (i.e. inside its
+    # null-handling branch), and must touch BOTH width and background --
+    # resetting only one would still leave a stale visual (e.g. right width,
+    # wrong color, or vice versa).
+    tail = body[mc_bar_match.end() :]
+    width_reset = re.search(r"mcBar\.style\.width\s*=\s*['\"]0%['\"]", tail)
+    background_reset = re.search(r"mcBar\.style\.background\s*=", tail)
+    assert width_reset, (
+        "AC-2 FAIL: no reset of mcBar.style.width to a neutral value found "
+        "after the dp-rm-mc-bar lookup -- an exited symphony's Risk Math "
+        "bar can be left showing a stale pre-trigger width."
+    )
+    assert background_reset and background_reset.start() != width_reset.start(), (
+        "AC-2 FAIL: mcBar.style.background is not reset alongside the width "
+        "-- resetting only the width still leaves a stale color on the bar."
+    )
+
+
 # ---------------------------------------------------------------------------
 # populateRiskMathFromState -- regression-only proof ("already correct")
 # ---------------------------------------------------------------------------
