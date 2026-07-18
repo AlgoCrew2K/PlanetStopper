@@ -40,3 +40,12 @@ TDD via /tdd → /tdd-implement → /tdd-finalize. RED first on: the post-trigge
 ## Scope Boundaries
 - **IN**: AC-1..5; the tooltip sweep; the tripwire.
 - **OUT**: any exit-decision change (R3); any shadow-portfolio MC statistic; MA-4/MA-11 (R3); the retune (R3); advisor re-base (R4); F8's if-held compounding (only load-bearing if a MAPERF-15 fix persists the reconstruction — it doesn't, tracks-logic stands).
+
+## ADDENDUM (PM rulings from f7-review's baseline recon, 2026-07-18 ~02:5xZ)
+- **Chart-fallback resurrection = BINDING design constraint (the cycle's sharpest case):** the backward null-scan (index.js ~661-666/~832-848) would resurrect the last PRE-trigger mc as current for an exited symphony — a null-scan cannot distinguish no-data-yet from exited. The render MUST short-circuit on trigger STATE; a mixed pre/post-trigger golden is a required RED case.
+- **MC dial stale-skip = named AC-2 hard-fail case:** `!= null → skip update` (index.js:1033-1037) freezes a stale pre-trigger reading on screen; the exited state must actively update the dial.
+- **Sentinel = None, CONDITIONALLY ratified:** contingent on end-to-end JSON-null serialization checks (never 0.0-coerced, never key-dropped, Jinja `is not none` + JS `!= null` verified); if the consumer trace finds a genuine None-choker, the codebase's numeric-sentinel idiom (isSentinel |v|>=900) is the ruled fallback — decided at plan approval, never bilaterally.
+- **"Already works" is not evidence:** the two surfaces with existing None guards (table column "---", detail Risk Math sentinelToNull) still get tests exercising JSON-serialized None through the REAL path.
+- **Persist completeness:** f7-engine's trace must answer whether :1549 is the ONLY fabricated-mc persist (chart_history historical writers matter — the chart surface reads history).
+- **Decision-path purity, stated precisely:** the AC-1 guard lives strictly at the persist site; an untriggered symphony's decision path sees byte-identical prob_underperforming; no decision function ever receives a guard-produced None for an untriggered symphony.
+- **Tooltip second hit:** .design-handoff's tracked mirror carries the same "beats SPY" claim — fix or explicitly scope out with a stated reason; silence is a finding.
