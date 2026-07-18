@@ -84,8 +84,8 @@ class BacktestResult:
 
     On success: ``stats`` is the ``stats`` dict from the response,
     ``data_warnings`` is a list of any ticker-level history warnings,
-    ``daily_returns`` is a date-keyed dict of log returns derived from the
-    per-day portfolio values, and ``error`` is ``None``.
+    ``daily_returns`` is a date-keyed dict of simple (arithmetic) returns
+    derived from the per-day portfolio values, and ``error`` is ``None``.
 
     On failure: ``stats`` is ``None``, ``error`` is a non-empty string
     describing the failure reason, and all other fields are empty defaults.
@@ -98,7 +98,8 @@ class BacktestResult:
     # Always a list (never None) regardless of the raw response shape.
     data_warnings: list[Any]
 
-    # Date-keyed (ISO string) log returns derived from dvm_capital portfolio values.
+    # Date-keyed (ISO string) simple (arithmetic) returns derived from dvm_capital
+    # portfolio values (AC-5 / DE-MATH-R2-001: simple, not log — see _extract_returns).
     # Gate layer consumes this for walk-forward fold construction.
     # Empty dict on failure or when dvm_capital is absent.
     daily_returns: dict[str, float] = field(default_factory=dict)
