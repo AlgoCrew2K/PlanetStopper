@@ -28,13 +28,22 @@ operator's "TP saved me 10%" sighting):
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
 import analytics
 import app as app_module
 import database
+
+# Same ET-day derivation the /api/history route under test uses (app.py:3099:
+# `_today_et = datetime.now(_ET).date().isoformat()`). The bare
+# datetime.date.today() built-in returns the machine's LOCAL calendar date,
+# which drifts a full day ahead of the ET trading day on CI (UTC clock)
+# between 00:00-04:00 UTC, silently seeding rows the day-filtered route can
+# never find. NEVER the bare date.today() built-in in this file.
+_ET = ZoneInfo("America/New_York")
 
 
 @pytest.fixture(autouse=True)
@@ -75,7 +84,7 @@ def test_ac6_intraday_detail_is_guard_alpha_not_raw_exit_level_return(client, pm
     MUST FAIL at 98901abf: app.py:3067 emits `"detail": r[2]` where r[2] is
     the raw exit_triggers.at_return column, unchanged."""
     symphony_id = "sym_intraday_detail"
-    today = date.today().isoformat()
+    today = datetime.now(_ET).date().isoformat()
     at_return = 3.2
     current_return = 0.9  # deliberately different from at_return
 
@@ -134,7 +143,7 @@ def test_ac6_intraday_detail_semantic_matches_postmortem_semantic_shape(client, 
 
     MUST FAIL at 98901abf for the same reason as the test above."""
     symphony_id = "sym_cross_path_consistency"
-    today = date.today().isoformat()
+    today = datetime.now(_ET).date().isoformat()
     at_return = -1.8
     current_return = -4.5
 

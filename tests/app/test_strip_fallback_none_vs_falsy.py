@@ -28,7 +28,8 @@ stacked defects) + MAPERF-13 (LOW, permanent-arming):
 from __future__ import annotations
 
 import os
-from datetime import date, timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -37,6 +38,13 @@ import app as app_module
 import database
 
 _ET_ISO = "%Y-%m-%d"
+# Same ET-day derivation the routes under test use (app.py:2582:
+# `trading_day = datetime.now(_ET).strftime("%Y-%m-%d")`). The bare
+# datetime.date.today() built-in returns the machine's LOCAL calendar date,
+# which drifts a full day ahead of the ET trading day on CI (UTC clock)
+# between 00:00-04:00 UTC, silently seeding rows the day-filtered route can
+# never find. NEVER the bare date.today() built-in in this file.
+_ET = ZoneInfo("America/New_York")
 
 
 @pytest.fixture(autouse=True)
@@ -79,7 +87,7 @@ def _seed_shadow_rows(
 
 def _recent_dates(n: int) -> list[str]:
     """The n most recent calendar dates ending today (inclusive)."""
-    today = date.today()
+    today = datetime.now(_ET).date()
     return [(today - timedelta(days=i)).isoformat() for i in range(n - 1, -1, -1)]
 
 
@@ -352,7 +360,7 @@ def test_ac8b_thin_window_single_row_returns_none_not_zero():
     MUST FAIL at 1289ff0b: `if trajectory is None: return 0.0` collapses this
     case (and the genuine-zero case below) to the same 0.0."""
     symphony_id = "sym_thin_window_real_divergence"
-    today = date.today().isoformat()
+    today = datetime.now(_ET).date().isoformat()
     database.record_shadow_observation(
         symphony_id=symphony_id,
         account_id="acct-1",
@@ -427,7 +435,7 @@ def test_ac8b_thin_window_real_divergence_surfaces_via_route_fallback(client):
     case, wrongly) withholds the fallback -- flattening a real divergence to
     0.0."""
     symphony_id = "sym_thin_window_route_level"
-    today = date.today().isoformat()
+    today = datetime.now(_ET).date().isoformat()
     at_return = 2.5
     current_return = -0.5  # matches the shadow row below -- real 3.0pp divergence
     database.record_shadow_observation(
