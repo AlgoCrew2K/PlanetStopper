@@ -3,7 +3,7 @@
 > Optuna walk-forward optimizer: runs 500 trials per symphony over a 250-day sliding window, selects the best trial via the CRRA-EU objective + Harvey & Liu BHY haircut + CSCV PBO acceptance gate, and enforces NN1 spec-freeze discipline throughout. Also provides `run_calibration_sweep` — a separate, advisory-only 2-param sweep over `PARABOLIC_VELOCITY_THRESHOLD` and `VWAP_CROSS_HWM_PCT`.
 
 **Source:** `autotuner.py`
-**Last updated:** 2026-07-18 (Math Remediation R3-b, `DE-MATH-R3B-001`, SHIPPED @ `origin/main` `f3c7e050`, droplet-deployed + verified) — `_replay_exit_tick`'s arm/disarm block is now delegated to the shared `math_engine.compute_arm_disarm_decision` seam, replacing the disarm condition that had been INVERTED (MA-4) and was independently duplicated from production; a new `disarm_confirm_count` key is added to `_fresh_replay_state`; see the corrected note below. Prior: 2026-07-18, Math Remediation R3-a, `DE-MATH-R3A-001` — pre-retune checklist item (a): walk-forward objective-variance coverage extended to all 6 tuned dims (`scripts/objective_variance_probe.py`), source-derived enumeration + suggest-call drift-guard, config-robust across `EXECUTION_START_TIME ∈ {09:30, 9:35}`; prior: 2026-07-17, Math Remediation R2, `DE-MATH-R2-001` — split-level CPCV scoring replacing the 5-path aggregation, train-only adoption holdout, real CRRA-EU frozen-eval metric, regime-conditional exit ticks wired into the undated search path; prior: 2026-07-17, Math Remediation R1 — replay fail-open arm (MA-10), regime-conditional exit ticks (F5), session-window action-phase gate (F6); prior: 2026-07-12, Workstream E)
+**Last updated:** 2026-07-18 (Math Remediation R3-c, `DE-MATH-R3C-001`, code-complete on `fix/math-r3c` @ `a5c011dd`, independent review IN FLIGHT -- NOT yet merged/deployed) — `_replay_exit_tick`'s `compute_active_trailing_stop` call (`:1276`) now passes `squeeze_floor=p.get("MAX_SQUEEZE_FLOOR", _replay_squeeze_floor_default())`; new `_replay_squeeze_floor_default()` helper (`:76`) returns `alpha_bot_execution.MAX_SQUEEZE_FLOOR` live, matching production's own fallback source (never a replay-local mirror); see the new Squeeze-Floor Replay Parity section below. Prior: 2026-07-18 (Math Remediation R3-b, `DE-MATH-R3B-001`, SHIPPED @ `origin/main` `f3c7e050`, droplet-deployed + verified) — `_replay_exit_tick`'s arm/disarm block is now delegated to the shared `math_engine.compute_arm_disarm_decision` seam, replacing the disarm condition that had been INVERTED (MA-4) and was independently duplicated from production; a new `disarm_confirm_count` key is added to `_fresh_replay_state`; see the corrected note below. Prior: 2026-07-18, Math Remediation R3-a, `DE-MATH-R3A-001` — pre-retune checklist item (a): walk-forward objective-variance coverage extended to all 6 tuned dims (`scripts/objective_variance_probe.py`), source-derived enumeration + suggest-call drift-guard, config-robust across `EXECUTION_START_TIME ∈ {09:30, 9:35}`; prior: 2026-07-17, Math Remediation R2, `DE-MATH-R2-001` — split-level CPCV scoring replacing the 5-path aggregation, train-only adoption holdout, real CRRA-EU frozen-eval metric, regime-conditional exit ticks wired into the undated search path; prior: 2026-07-17, Math Remediation R1 — replay fail-open arm (MA-10), regime-conditional exit ticks (F5), session-window action-phase gate (F6); prior: 2026-07-12, Workstream E)
 
 ## Overview
 
@@ -89,6 +89,28 @@ Single-tick exit core. All three simulation callers (`run_simulation`, `_collect
 **New, Math Remediation R1 (AC-4/F5).** Recomputes the regime-conditional `exit_confirm_ticks` FRESH for one replay day, using ONLY EOD daily returns from dates strictly before `sorted_dates[date_idx]` (no lookahead). Resolves the regime label via `regime_classifier.classify_regime()` over the trailing `regime_classifier.MIN_LABEL_SERIES_LENGTH` (=20) days rather than reading `database.get_cached_regime_label` — that accessor is a single-row, latest-wins LIVE cache with no per-historical-date granularity, so consulting it during a walk-forward replay would inject today's label into every one of the ~250 replayed days (a lookahead violation). Insufficient trailing history → `classify_regime` returns `None` → `math_engine.apply_regime_exit_adjustment`'s own safe default fires (base ticks unchanged), never an invented replay-only fallback. Mirrors production's `apply_regime_exit_adjustment(regime_label, base_ticks)` composition (`alpha_bot_execution.py:1436-1448`) with a walk-forward-safe label source.
 
 **R1 residual, CLOSED by Math Remediation R2 (`DE-MATH-R2-001` AC-4):** R1 wired this helper into `_collect_sim_returns_dated` only (the CSCV/PBO selection path), deliberately deferring the undated `run_simulation`/`_collect_sim_returns` (Optuna's per-trial search-score objective) to R2, since those surfaces were about to be rebuilt by R2's CPCV redesign anyway. **As of R2, all three simulation entry points call this same helper** — `run_simulation` (`autotuner.py:1864`), `_collect_sim_returns` (`autotuner.py:1475`), and `_collect_sim_returns_dated` (`autotuner.py:1603`) — so Optuna's per-trial search score and the selection/diagnostic layer finally share ONE exit semantic. `run_simulation_crra_eu` needed no separate change — it delegates entirely to `_collect_sim_returns` and inherits regime-faithfulness for free. R1's binding rider ("no R3 retune ships until the search objective itself is regime-faithful") is now satisfied. `tests/autotuner/test_ac4_r2_residual_tripwire.py`'s `xfail(strict=False)` marker is REMOVED — the test passes for real.
+
+---
+
+### Squeeze-Floor Replay Parity (Math Remediation R3-c, `DE-MATH-R3C-001`, 2026-07-18, code-complete on `fix/math-r3c` @ `a5c011dd`, independent review IN FLIGHT -- NOT yet merged/deployed)
+
+#### `_replay_squeeze_floor_default() → float`
+Returns `alpha_bot_execution.MAX_SQUEEZE_FLOOR` — the SAME module
+attribute production's own `acc_params.get("MAX_SQUEEZE_FLOOR",
+MAX_SQUEEZE_FLOOR)` fallback reads (`alpha_bot_execution.py:1236`), never
+a replay-local mirror literal (the R1/F6 `EXECUTION_START_TIME` idiom,
+reused — see `_replay_execution_start_time` above). The `import
+alpha_bot_execution` is function-local because a top-level import would be
+circular (`alpha_bot_execution` imports `autotuner`). Read live at call
+time, not cached at import — an operator's env override or a test
+monkeypatch of the module attribute reaches the replay exactly as it
+reaches production.
+
+`_replay_exit_tick`'s own `compute_active_trailing_stop` call (`:1276`)
+passes `squeeze_floor=p.get("MAX_SQUEEZE_FLOOR",
+_replay_squeeze_floor_default())` — a per-symphony params dict missing the
+key resolves to the identical floor on both paths. See
+[math_engine](math_engine.md) for the seam contract itself.
 
 ---
 

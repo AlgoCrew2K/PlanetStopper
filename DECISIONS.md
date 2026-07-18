@@ -8171,11 +8171,18 @@ operator-gated) remain.
 ## DE-MATH-R3C-001 -- Math Remediation R3-c: MA-11 wire MAX_SQUEEZE_FLOOR as the post-squeeze stop-distance floor (2026-07-18)
 
 Branch: `fix/math-r3c` | Base: `origin/main` (post-R3-b) `f3c7e050` | HEAD
-(this entry): `1a7bf2fd` (plan approved; RED not yet started -- r3c-test
-is still reading the plan, r3c-engine's own plan is approved and waiting
-on r3c-test's `.claude/tdd-handoff.md`). **This entry is a living
-skeleton, filled in incrementally as each piece lands (same convention as
-R1/R2/R3-a/R3-b) -- no code has landed on this branch yet.**
+(this entry): `a5c011dd` (RED @ `5b77023d` -> GREEN x3 -- `dff26652`
+dash / `6f38b86e` engine / `0fd80f0a` tuner, each lane-scoped -> a
+test-only stub-arity fix at `a5c011dd`; production diff total 5 files,
++51/-4). Toxic Pair's own sufficiency review (Red/Green/Revise): read
+the full production diff against the handoff, found it FAITHFUL --
+**94/0 on the touch-set battery, no new RED.** **r3c-review's
+independent blast-radius/correctness/parity/no-widening verdict is IN
+FLIGHT, not yet landed.** This entry is a living skeleton, filled in
+incrementally as each piece lands (same convention as R1/R2/R3-a/R3-b)
+-- **no "FIXED" status-framing lands here, and the charter's MA-11
+line stays untouched, until r3c-review's APPROVE is in** (the identical
+double-gate `DE-MATH-R3B-001`'s "Decision: status flip" used).
 
 ### Summary
 
@@ -8236,6 +8243,89 @@ limit shrinkage, never widen.
 | Advisor range 0.05-0.50 kept numerically, re-worded to pp | Numerically plausible as pp (brackets MIN_STOP 0.15-0.30); range re-TUNING is R3-d's, not R3-c's. |
 | `MAX_PARABOLIC_SQUEEZE` [0.1, 0.8] range untouched | Charter assigns its re-examination to R3-d "once non-inert" -- this entry notes it only. |
 
+### Decision: the seam contract, as landed (r3c-engine/r3c-tuner/r3c-dash)
+
+`math_engine.compute_active_trailing_stop` gains one optional trailing
+param, `squeeze_floor: float | None = None` (`math_engine.py:463`). `None`
+or `<= 0` means no clamp -- every pre-existing 6-arg call site, including
+the seam's third caller `docs/research/risk/scripts/i2_compounding_sim.py:73`,
+stays byte-identical. `squeeze_floor` participates in the entry
+`_reject_non_finite` check unconditionally (`:507`) -- a non-finite value
+rejects even when the squeeze branch never fires. Inside the existing `if
+para_armed or breakeven_locked:` block (`:515-519`), `pre_squeeze_active`
+is snapshotted BEFORE the `*= parabolic_squeeze_multiplier` step, and when
+`squeeze_floor` is a positive finite number the clamp applies as `active =
+max(active, min(squeeze_floor, pre_squeeze_active))` -- the settled
+no-widening form.
+
+**Production wiring (r3c-engine):** `alpha_bot_execution.py`'s
+`compute_active_trailing_stop` call now passes
+`squeeze_floor=acc_MAX_SQUEEZE_FLOOR` (`:1476`) -- the `:1236` assignment
+gains its first-ever reader. No other production exit logic changed.
+
+**Replay wiring (r3c-tuner):** a new `_replay_squeeze_floor_default()`
+helper (`autotuner.py:76`) returns `alpha_bot_execution.MAX_SQUEEZE_FLOOR`
+-- the SAME module attribute production's own `acc_params.get(
+"MAX_SQUEEZE_FLOOR", MAX_SQUEEZE_FLOOR)` fallback reads (`alpha_bot_
+execution.py:1236`), never a replay-local mirror literal (the R1/F6
+`EXECUTION_START_TIME` idiom, reused). The import is function-local
+(a top-level `import alpha_bot_execution` would be circular); the
+attribute is read live at call time, so an operator's env override or a
+test monkeypatch reaches the replay exactly as it reaches production.
+`_replay_exit_tick`'s own `compute_active_trailing_stop` call (`autotuner.
+py:1276`) passes `squeeze_floor=p.get("MAX_SQUEEZE_FLOOR",
+_replay_squeeze_floor_default())`.
+
+**Metadata (r3c-dash, AC-7):** `app.py`'s `_ALGO_PARAM_META["MAX_SQUEEZE_
+FLOOR"]` unit `"x"` -> `"%"`, kind `"mult"` -> `"pct"` (`app.py:3536-3538`,
+matching the MIN_STOP-style params); `ai_advisor.py`'s
+`_PARAM_DEFINITIONS[_UNTUNED_SUGGESTIBLE_KEY]["definition"]` reworded from
+"Floor on the squeeze multiplier..." to "Floor on the post-squeeze stop
+distance..." (`ai_advisor.py:165-172`); `risk_polarity` ("raising loosens
+risk") and the `_PARAM_VALID_RANGES` 0.05-0.50 bounds are UNCHANGED, per
+plan (the range is numerically plausible as pp, and re-tuning it is
+R3-d's job, not R3-c's).
+
+### Files changed (this cycle, `f870275d`..`a5c011dd`)
+
+- `math_engine.py` (+21/-0) -- the `squeeze_floor` param + no-widening
+  clamp on `compute_active_trailing_stop` (`:456-520`)
+- `alpha_bot_execution.py` (+1/-0) -- one-line production wiring at `:1476`
+- `autotuner.py` (+24/-0) -- new `_replay_squeeze_floor_default()`
+  (`:76-97`) + one-line replay wiring at `:1276`
+- `app.py` (+2/-2) -- AC-7 metadata honesty (unit/kind wording, no range
+  change)
+- `ai_advisor.py` (+3/-2) -- AC-7 metadata honesty (definition wording,
+  no range change)
+- New test files (31 new RED tests @ `5b77023d`, 11 seam-golden + 2
+  property + 1 behavioral-crux + 9 parity + 4 AST-wiring + 4 metadata):
+  `tests/math_engine/test_squeeze_floor_clamp.py` (+10 JSON fixtures under
+  `tests/fixtures/math_engine/squeeze_floor/`),
+  `tests/math_engine/test_squeeze_floor_no_widening_property.py`,
+  `tests/autotuner/test_squeeze_floor_behavioral_golden.py` (+2 JSON
+  fixtures under `tests/fixtures/autotuner/squeeze_floor/`),
+  `tests/execution/test_r3c_production_squeeze_floor_wiring.py`,
+  `tests/autotuner/test_r3c_replay_squeeze_floor_wiring.py`,
+  `tests/app/test_r3c_squeeze_floor_metadata.py`,
+  `tests/ai_advisor/test_r3c_squeeze_floor_definition.py`,
+  `tests/autotuner/test_r3c_scope_guard.py` (AC-9, GREEN from the start --
+  a regression guard, not a RED test)
+- Edited pre-existing tests (AC-6, root-caused prose only -- numbers
+  unchanged): `tests/math_engine/test_active_trailing_stop.py`'s
+  `test_either_flag_set_applies_squeeze_exactly_once` docstring and
+  fixture `12_*.json`'s derivation prose, both updated to describe the new
+  floor semantics instead of asserting "no re-applied floor after
+  squeeze"; `tests/autotuner/test_c3_replay_exit_parity.py` extended with
+  a floor-binding parity case (2 new fixtures:
+  `parity_squeeze_floor_binding_key_present.json` /
+  `..._key_absent.json`)
+- One test-only stub-arity fix (`a5c011dd`): `tests/autotuner/
+  test_run_simulation_characterization.py`'s `_stub_active_stop_const`
+  pre-dated this cycle
+  (introduced `43c8160a`) and had a fixed 6-arg call signature; the new
+  optional trailing param broke it. Root-caused as a stale test stub, NOT
+  a production regression -- fixed test-side.
+
 ### Scope Boundaries
 
 **IN:** the seam extension (AC-1/AC-2, `math_engine.compute_active_trailing_stop`) + two 1-line pass-throughs (AC-3 production, AC-4 replay) + behavioral/parity/property goldens (AC-5) + root-caused pin updates on the two existing tests that explicitly pinned "no re-applied floor after squeeze" (AC-6) + metadata honesty on `app.py`/`ai_advisor.py` (AC-7) + docs incl. the DE-MATH-R3B-001 SHIPPED stamp (AC-8, see above).
@@ -8244,13 +8334,40 @@ limit shrinkage, never widen.
 
 ### Verification
 
-**STILL OUTSTANDING (nothing has landed yet):** r3c-test's RED phase
-(`.claude/tdd-handoff.md` not yet created), r3c-engine's production GREEN
-(AC-1/AC-2/AC-3), r3c-tuner's replay GREEN (AC-4), r3c-dash's metadata
-GREEN (AC-7), r3c-review's independent blast-radius/correctness/parity/
-no-widening review, and the PM's own live E2E + operator before/after
-(committed per the plan's Testing Strategy). Updated in place as each
-lands -- never re-created as a new DECISIONS.md entry.
+**This entry is a living skeleton, filled in incrementally as each
+piece lands (same convention as R1/R2/R3-a/R3-b).** r3c-test's RED
+phase produced 31 new failing tests @ `5b77023d` (0 stubs, no new
+modules -- every change extends an existing file); the crux behavioral
+golden was proven RED-on-old BEHAVIORALLY, not via TypeError (the
+floor value flows through the params dict, which the pre-fix
+signature already accepted -- the old `_replay_exit_tick` fires
+`"Trailing Stop"` at tick 2 on a noise dip the wired floor is meant
+to survive). r3c-dash's, r3c-engine's, and r3c-tuner's GREEN lanes
+landed at `dff26652` / `6f38b86e` / `0fd80f0a` respectively, each
+PM-verified lane-scoped (explicit pathspec, no cross-lane file
+touches); a stale pre-cycle test stub's fixed call arity (`43c8160a`,
+predates this cycle) was root-caused and fixed test-side at
+`a5c011dd` -- confirmed NOT a production regression. r3c-test's own
+sufficiency review (Red/Green/Revise) read the full production diff
+against the handoff contract and found it FAITHFUL: **94 passed / 0
+failed on the touch-set battery at `a5c011dd`, no new RED.**
+
+**STILL OUTSTANDING:** r3c-review's independent blast-radius/
+correctness/parity/no-widening verdict (in flight -- the PM's
+reject-if-missing-evidence bar requires reproduced behavioral
+RED-on-old, a parity-divergence check, fixture-06 byte-untouched
+confirmation, the AC-9 scope-guard diff, the module-attr-not-a-literal
+default check, and counts quoted WITH the SHA); the PM's own
+gate battery (targeted `-n0` across `tests/execution` + `tests/
+math_engine` + `tests/autotuner` + `tests/error_handling` + `tests/
+ai_advisor` + `tests/app`) at the frozen `.py` surface; both ruff
+gates; the PM's first-hand noise-dip before/after (old-vs-new,
+production config) presented to the operator BEFORE the droplet
+deploy; and the operator before/after sign-off itself. Updated in
+place as each lands -- never re-created as a new DECISIONS.md entry.
+No "FIXED" status-framing lands on this entry, the charter's MA-11
+line, or the CLAUDE.md key-files table until r3c-review's APPROVE is
+in (double-gated, same convention as `DE-MATH-R3B-001`).
 
 ### Reference
 

@@ -3,7 +3,7 @@
 > Pure risk-math primitives: trailing-stop mechanics, CRRA-EU utility, CVaR diagnostics, Monte Carlo gating, regime-match guard, VWAP signals, and the 6-layer exit-trigger resolver.
 
 **Source:** `math_engine.py`
-**Last updated:** 2026-07-18 (Math Remediation R3-b, `DE-MATH-R3B-001`, SHIPPED @ `origin/main` `f3c7e050`, droplet-deployed + verified) — new `compute_arm_disarm_decision` seam + `DISARM_CONFIRM_TICKS` constant; see the new Arm/Disarm Decision section below. Prior: 2026-06-02 (initial generation)
+**Last updated:** 2026-07-18 (Math Remediation R3-c, `DE-MATH-R3C-001`, code-complete on `fix/math-r3c` @ `a5c011dd`, independent review IN FLIGHT -- NOT yet merged/deployed) — `compute_active_trailing_stop` gains an optional `squeeze_floor` param, see the extended entry below. Prior: 2026-07-18 (Math Remediation R3-b, `DE-MATH-R3B-001`, SHIPPED @ `origin/main` `f3c7e050`, droplet-deployed + verified) — new `compute_arm_disarm_decision` seam + `DISARM_CONFIRM_TICKS` constant; see the Arm/Disarm Decision section below. Prior: 2026-06-02 (initial generation)
 
 ## Overview
 
@@ -100,8 +100,10 @@ Returns `(dynamic_multiplier, dynamic_min_stop)`. `time_ratio` must be in `[0.0,
 
 **Reference:** `docs/research/m3-provenance/literature-pass.md §1`
 
-#### `compute_active_trailing_stop(symphony_vol, dynamic_multiplier, dynamic_min_stop, para_armed, breakeven_locked, parabolic_squeeze_multiplier) → float`
+#### `compute_active_trailing_stop(symphony_vol, dynamic_multiplier, dynamic_min_stop, para_armed, breakeven_locked, parabolic_squeeze_multiplier, squeeze_floor: float | None = None) → float`
 Returns the active trailing-stop distance in percentage points. `parabolic_squeeze_multiplier` must be strictly positive (rejects with `ValueError`). If `para_armed` or `breakeven_locked`, the stop is multiplied by `parabolic_squeeze_multiplier`.
+
+**`squeeze_floor` (optional, Math Remediation R3-c, `DE-MATH-R3C-001`, `:463`):** a post-squeeze lower clamp on the stop DISTANCE (pp), wiring the previously-dead `MAX_SQUEEZE_FLOOR` knob (MA-11) — one prior repo-wide hit (`alpha_bot_execution.py:1236`, assigned, never read). `None` or `<= 0` means no clamp; every pre-existing 6-arg call site (incl. `docs/research/risk/scripts/i2_compounding_sim.py:73`) stays byte-identical. Scoped INSIDE the squeeze branch (`:515-519`): once `para_armed or breakeven_locked` fires, `pre_squeeze_active` is snapshotted BEFORE the `*= parabolic_squeeze_multiplier` step, and when `squeeze_floor` is a positive finite number the clamp applies as `active = max(active, min(squeeze_floor, pre_squeeze_active))` — a NO-WIDENING clamp: bounding the floor by `pre_squeeze_active` means it can only limit shrinkage, never raise the stop above its pre-squeeze value (at defaults the floor, 0.20, exceeds `dynamic_min_stop` near close, 0.15, so a naive `max(squeezed, floor)` would have inverted the squeeze). `squeeze_floor` participates in the entry `_reject_non_finite` check unconditionally — a non-finite value rejects even when the squeeze branch never fires. Independent review is IN FLIGHT (`DE-MATH-R3C-001`) — not yet merged/deployed.
 
 #### `compute_breakeven_update(current_return, symphony_vol, base_stop_level, current_hold_ticks, currently_breakeven_locked, is_triggered) → tuple[int, bool, float]`
 Returns `(new_hold_ticks, new_breakeven_locked, stop_trigger_level)`. The breakeven latch is one-way: once `currently_breakeven_locked=True`, it is always `True`. The floor `0.0` is applied once the latch fires ("lock gains hard"). When `is_triggered=True`, returns `TRIGGERED_OVERRIDE_LEVEL` (-999.0).
