@@ -5,6 +5,16 @@ idiom below mirrors tests/dashboard/test_cards_live_updates.py's
 AC-CL.10/AC-CL.11 established rigor bar, confirmed acceptable at plan
 approval).
 
+NECESSARY-NOT-SUFFICIENT (team-lead note, 2026-07-18): a source-text
+assertion can pass while the underlying logic is still wrong -- these tests
+check the CONTRACT SHAPE (does a triggered/exited check exist, and does it
+run BEFORE the null-bailout / backward-scan it must gate), not full runtime
+behavior. The BEHAVIORAL guarantee for the dial stale-skip and
+chart-resurrection fixes comes from the PM's live visual gate (looking at
+the rendered dashboard) plus f7-review's code read -- NOT from this file
+alone. Do not treat a GREEN run of this file as proof the dial/chart
+actually render correctly in a browser.
+
 Cycle context (feature-plans/math-f7.md + ADDENDUM 2, LOCKED at plan
 approval)
 ---------------------------------------------------------------------------
@@ -31,11 +41,12 @@ populate) is a SEPARATE, ALREADY-correct code path (sentinelToNull-guarded)
 ADDENDUM: "already works is not evidence" -- proven via the poll-path route
 test in tests/app/test_f7_ac2_poll_path_null_passthrough.py, not here.
 
-RED STATUS (HEAD a904374d, no F7 code yet)
+RED STATUS (HEAD 7752bb00, no F7 code yet)
 -------------------------------------------
-* test_render_mc_dial_references_triggered_state -- RED (no "trigger"
-  reference anywhere in the current function).
-* test_load_charts_call_site_does_not_unconditionally_skip_exited_dial /
+* test_render_mc_dial_actively_handles_exited_state_before_any_null_bailout
+  -- RED (no trigger/exited check anywhere, so the positional check fails
+  outright).
+* test_load_charts_call_site_passes_or_derives_triggered_state_to_dial /
   test_update_cards_call_site_is_triggered_aware -- RED.
 * test_render_risk_math_panel_checks_triggered_before_scanning -- RED (the
   backward scan today has no sym.triggered check at all, at any position).
@@ -83,22 +94,47 @@ _TRIGGER_WORD_PATTERN = re.compile(r"\btrigger(ed)?\b", re.IGNORECASE)
 # ---------------------------------------------------------------------------
 # MC-dial stale-skip (hard-fail case)
 # ---------------------------------------------------------------------------
-def test_render_mc_dial_references_triggered_state() -> None:
+_NULL_BAILOUT_PATTERN = re.compile(r"mcProb\s*===\s*null\s*\)\s*return")
+
+
+def test_render_mc_dial_actively_handles_exited_state_before_any_null_bailout() -> None:
     """renderMcDial's internal null-handling (~840, ``if (mcProb === null)
-    return;``) must no longer be an UNCONDITIONAL skip -- an exited
-    symphony needs an ACTIVE render (muted arc + "-" label), not a frozen
-    last-good reading. Minimum signal: the function body now reasons about
-    trigger/exited state at all, not silently returning on every null."""
+    return;``) must no longer be an UNCONDITIONAL skip reached BEFORE any
+    triggered/exited-state check -- an exited symphony needs an ACTIVE
+    render (muted arc + "-" label), not a frozen last-good reading.
+
+    Positional, not just "trigger appears somewhere" (team-lead note,
+    2026-07-18: a same-function co-occurrence check is necessary but not
+    sufficient -- it can pass while the bail-out still fires first). If the
+    literal null-bailout pattern still exists, a trigger/exited check must
+    appear BEFORE it in the source. If the implementer restructured the
+    bail-out away entirely, at minimum some trigger/exited reference must
+    still exist (else this test would pass vacuously on an unrelated
+    rewrite)."""
     content = _read_index_js()
     body = _slice_function(content, "function renderMcDial(")
-    assert _TRIGGER_WORD_PATTERN.search(body), (
-        "AC-2 FAIL: renderMcDial has no reference to trigger/exited state "
-        "anywhere in its body -- the current unconditional "
-        "`if (mcProb === null) return;` (~index.js:840) freezes the dial at "
-        "its last pre-trigger reading instead of actively rendering an "
-        "honest exited state. The fix must reason about triggered/exited "
-        "state, not just null-ness."
-    )
+    trigger_match = _TRIGGER_WORD_PATTERN.search(body)
+    null_bailout_match = _NULL_BAILOUT_PATTERN.search(body)
+
+    if null_bailout_match is not None:
+        assert trigger_match is not None and trigger_match.start() < null_bailout_match.start(), (
+            "AC-2 FAIL: renderMcDial's `mcProb === null` bail-out "
+            "(~index.js:840) is still reached before any triggered/"
+            "exited-state check (or no such check exists at all) -- an "
+            "exited symphony hits the SAME unconditional null return as a "
+            "genuine no-data-yet case, and the dial freezes instead of "
+            "actively rendering an honest exited state. The trigger/exited "
+            "check must come BEFORE this bail-out (or replace it with a "
+            "triggered-aware branch)."
+        )
+    else:
+        assert trigger_match is not None, (
+            "AC-2 FAIL: renderMcDial no longer contains the old "
+            "unconditional `mcProb === null` bail-out, but also has no "
+            "trigger/exited-state reference anywhere in its body -- verify "
+            "the exited-state render path actually exists rather than "
+            "having been silently dropped during a rewrite."
+        )
 
 
 def _window_around(content: str, needle: str, before: int = 200, after: int = 200) -> str:
