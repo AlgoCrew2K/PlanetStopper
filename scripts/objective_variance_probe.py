@@ -41,16 +41,26 @@ single-date rule -- but its fire-check reads `tp_armed`, which is gated by
 regime-conditional `exit_confirm_ticks` -- so the divergence is structurally
 irrelevant to that dim's fire-check.)
 
-GRACE-WINDOW TRAP (the reason the 3 VWAP fixtures pad 15 neutral ticks before
-the discriminating ticks): `_replay_in_open_window_grace` forces
-`is_vwap_broken`/`is_vwap_bleed_broken` to False for every tick inside
-`[EXECUTION_START_TIME, EXECUTION_START_TIME + VWAP_OPEN_WINDOW_GRACE_MINUTES)`
--- 15 minutes past 09:30 ET by default (`alpha_bot_execution.py`). A VWAP
-fixture with only a handful of ticks starting at 09:30 would have every one of
-its VWAP signals silently suppressed. Each VWAP-dim fixture below runs 15
-ticks of neutral, non-qualifying bars (ticks 0-14) before its discriminating
-ticks (>= tick_idx 15), so the confirming tick always lands outside the grace
-window.
+GRACE-WINDOW TRAP + CONFIG ROBUSTNESS (why every fixture pads
+`_NEUTRAL_PAD_TICKS` (30) neutral ticks before its discriminating ticks):
+`_replay_in_open_window_grace` forces `is_vwap_broken`/`is_vwap_bleed_broken`
+to False for every tick inside `[EXECUTION_START_TIME, EXECUTION_START_TIME +
+VWAP_OPEN_WINDOW_GRACE_MINUTES)` (15 minutes by default), and
+`_replay_in_action_phase` skips EVERY check (trailing-stop, TP, para-arm, VWAP
+alike) entirely before `EXECUTION_START_TIME`. Both gates are keyed off
+`alpha_bot_execution.EXECUTION_START_TIME`, which is operator-configurable
+(env `EXECUTION_START_TIME`, default "09:30" -- the value the test-suite
+conftest pins; the droplet's PRODUCTION `.env` sets it to "9:35", the config
+the R3-d retune actually runs `run_autotuner` under). A fixture whose
+discriminating ticks sit at tick_idx 0-14 proves sensitivity only under the
+code default -- at "9:35" the action-phase gate alone (offset 5 min) skips a
+tick_idx-0 discriminating tick outright, and the grace window shifts to
+`[5, 20)`, swallowing a 15-tick VWAP pad entirely. Every fixture below starts
+its discriminating ticks at tick_idx `_NEUTRAL_PAD_TICKS` (10:00 ET) --
+comfortably past both gates at 09:30, at 9:35, and at any other plausible
+operator start-time -- so the sensitivity proof holds under the config the
+retune actually runs under, not just the test-pinned default (memory: prove
+each factor varies UNDER THE REAL CONFIG).
 """
 
 from __future__ import annotations
@@ -256,9 +266,21 @@ def _closes(*returns_pct: float, y_close: float = 100.0) -> list[float]:
     return [y_close * (1.0 + r / 100.0) for r in returns_pct]
 
 
-def _neutral_bars(n: int, *, price: float = 100.0) -> list[tuple[float, float]]:
+# Every fixture's discriminating ticks start at this tick_idx (10:00 ET) --
+# past the action-phase gate and the 15-min VWAP grace at BOTH the code
+# default (09:30) and the droplet-production (9:35) EXECUTION_START_TIME, with
+# headroom for other plausible operator configs (module docstring, "GRACE-
+# WINDOW TRAP + CONFIG ROBUSTNESS").
+_NEUTRAL_PAD_TICKS = 30
+
+
+def _neutral_bars(
+    n: int = _NEUTRAL_PAD_TICKS, *, price: float = 100.0
+) -> list[tuple[float, float]]:
     """n ticks of flat, non-qualifying (close, vwap) pairs: zero return, zero
-    vwap_diff. Used to pad past the 15-minute VWAP open-window grace."""
+    vwap_diff. Pads every fixture's discriminating ticks past the action-phase
+    gate and the VWAP open-window grace, at every EXECUTION_START_TIME the
+    proof must survive (module docstring)."""
     return [(price, price)] * n
 
 
@@ -325,11 +347,16 @@ def _tp_mc_pct_fixture() -> _DimFixture:
     # 101.65 -- not 101.5 -- on 04-07's opening tick): mc_prob is a real kNN
     # bootstrap result, not something derivable from a target percent, so the
     # discriminating tick's close is reused byte-for-byte from the proven
-    # fixture rather than re-derived.
+    # fixture rather than re-derived. Each day is prefixed with
+    # _NEUTRAL_PAD_TICKS neutral ticks (config robustness -- module docstring)
+    # -- build_replay_day's per-tick mc_prob is a pure function of THAT tick's
+    # own close-derived lpc + hist_data_up_to_yesterday + the day-keyed MC
+    # seed, with no cross-tick memory, so the discriminating tick's mc_prob is
+    # bit-identical whether it sits at tick_idx 0 or _NEUTRAL_PAD_TICKS.
     bars_by_date = {
-        "2026-04-06": [(c, c) for c in [101.5, 80.0, 78.0, 76.0, 74.0]],
-        "2026-04-07": [(c, c) for c in [101.65, 80.0, 78.0, 76.0, 74.0]],
-        "2026-04-08": [(c, c) for c in [101.5, 80.0, 78.0, 76.0, 74.0]],
+        "2026-04-06": _neutral_bars() + [(c, c) for c in [101.5, 80.0, 78.0, 76.0, 74.0]],
+        "2026-04-07": _neutral_bars() + [(c, c) for c in [101.65, 80.0, 78.0, 76.0, 74.0]],
+        "2026-04-08": _neutral_bars() + [(c, c) for c in [101.5, 80.0, 78.0, 76.0, 74.0]],
     }
 
     def fire(trace: list[dict]) -> int:
@@ -351,17 +378,23 @@ def _tp_mc_pct_fixture() -> _DimFixture:
 
 # ---------------------------------------------------------------------------
 # Dim 2/6: PARABOLIC_VELOCITY_THRESHOLD -- short (MC-insufficient) history so
-# MA-10 fail-open arms the stop from tick 0, isolating the velocity-arm effect
-# from MC noise. A velocity spike (0.0 -> 3.0) then a 3-tick pullback to 2.2;
-# a LOW threshold (1.0) arms para on the spike (velocity 3.0 >= 1.0), a HIGH
+# MA-10 fail-open arms the stop unconditionally, isolating the velocity-arm
+# effect from MC noise. _NEUTRAL_PAD_TICKS neutral ticks (config robustness),
+# then a velocity spike (0.0 -> 3.0) and a 3-tick pullback to 2.3; a LOW
+# threshold (1.0) arms para on the spike (velocity 3.0 >= 1.0), a HIGH
 # threshold (4.0) does not (3.0 < 4.0) -- changing whether MAX_PARABOLIC_SQUEEZE
 # (fixed baseline 0.5) tightens active_stop_dist enough for the pullback to
-# confirm a Trailing Stop exit.
+# confirm a Trailing Stop exit. The pullback (2.3, not the tighter margin a
+# tick_idx-0 fixture could use) is calibrated for the MUCH tighter
+# dynamic_multiplier/dynamic_min_stop decay a late-day tick_idx produces
+# (time_ratio = tick_idx / (n_ticks - 1) is close to 1.0 this late in a padded
+# day), leaving a comfortable margin between the armed (confirms) and unarmed
+# (never confirms) outcomes.
 # ---------------------------------------------------------------------------
 
 
 def _parabolic_velocity_threshold_fixture() -> _DimFixture:
-    bars = [(c, c) for c in _closes(0.0, 3.0, 2.2, 2.2, 2.2)]
+    bars = _neutral_bars() + [(c, c) for c in _closes(3.0, 2.3, 2.3, 2.3)]
     baseline = dict(_INERT_BASELINE_PARAMS)
     baseline["MAX_PARABOLIC_SQUEEZE"] = 0.5
 
@@ -383,15 +416,17 @@ def _parabolic_velocity_threshold_fixture() -> _DimFixture:
 
 
 # ---------------------------------------------------------------------------
-# Dim 3/6: MAX_PARABOLIC_SQUEEZE -- same velocity-spike shape, but
+# Dim 3/6: MAX_PARABOLIC_SQUEEZE -- same padded velocity-spike shape, but
 # PARABOLIC_VELOCITY_THRESHOLD fixed low (1.0) so both swept squeeze values
-# arm para IDENTICALLY on the spike; the pullback (to 2.3) confirms a Trailing
-# Stop under a TIGHT squeeze (0.1) but not under a WIDE one (0.8).
+# arm para IDENTICALLY on the spike; the pullback (to 2.6 -- widened from a
+# tick_idx-0 fixture's margin for the same late-day-decay reason as the
+# velocity-dim fixture above) confirms a Trailing Stop under a TIGHT squeeze
+# (0.1) but not under a WIDE one (0.8).
 # ---------------------------------------------------------------------------
 
 
 def _max_parabolic_squeeze_fixture() -> _DimFixture:
-    bars = [(c, c) for c in _closes(0.0, 3.0, 2.3, 2.3, 2.3)]
+    bars = _neutral_bars() + [(c, c) for c in _closes(3.0, 2.6, 2.6, 2.6)]
     baseline = dict(_INERT_BASELINE_PARAMS)
     baseline["PARABOLIC_VELOCITY_THRESHOLD"] = 1.0
 
@@ -415,16 +450,19 @@ def _max_parabolic_squeeze_fixture() -> _DimFixture:
 # ---------------------------------------------------------------------------
 # Dim 4/6: VWAP_CROSS_HWM_PCT -- NEW bar-derived coverage (AC-7's helper
 # always sets vwap == close, so this dim has never been walk-forward-tested).
-# 15 neutral padding ticks (grace window), then a tick that sets HWM=1.5%
-# with vwap above close (weighted_vwap_diff < 0), followed by 3 ticks holding
-# at +1.3% (< HWM) with the same vwap divergence -- confirms VWAP Breakdown
-# (System A) at LOW threshold (1.0, since safe_hwm 1.5 >= 1.0) but never at
-# HIGH threshold (2.0, since 1.5 < 2.0).
+# _NEUTRAL_PAD_TICKS padding ticks (config robustness), then a tick that sets
+# HWM=1.5% with vwap above close (weighted_vwap_diff < 0), followed by 3 ticks
+# holding at +1.3% (< HWM) with the same vwap divergence -- confirms VWAP
+# Breakdown (System A) at LOW threshold (1.0, since safe_hwm 1.5 >= 1.0) but
+# never at HIGH threshold (2.0, since 1.5 < 2.0). The trailing-stop safety
+# margin here is asymptotically invariant to the pad length: the tightest
+# tick's active_stop_dist depends only on tick_idx/(n_ticks-1) == 1.0 at the
+# FINAL tick, unchanged regardless of how many neutral ticks precede it.
 # ---------------------------------------------------------------------------
 
 
 def _vwap_cross_hwm_pct_fixture() -> _DimFixture:
-    neutral = _neutral_bars(15)
+    neutral = _neutral_bars()
     spike_close = _closes(1.5)[0]
     hold_close = _closes(1.3)[0]
     # vwap set well above close on every discriminating tick -> weighted_vwap_diff
@@ -451,18 +489,18 @@ def _vwap_cross_hwm_pct_fixture() -> _DimFixture:
 
 
 # ---------------------------------------------------------------------------
-# Dim 5/6: VWAP_BLEED_TICKS -- 15 neutral padding ticks, then exactly 3 ticks
-# of a -0.55% dip (vwap == close, so System A stays inert; VWAP_BLEED_MULTIPLIER
-# fixed at its production-bounds minimum 0.5 -> arm threshold clamps to -0.5,
-# so -0.55 qualifies every dip tick without ever breaching the trailing stop --
-# see the module docstring's grace-window note). A LOW tick-count (3) confirms
-# VWAP Bleed Cut on the 3rd dip tick; a HIGH one (10) never does (only 3 dip
-# ticks exist).
+# Dim 5/6: VWAP_BLEED_TICKS -- _NEUTRAL_PAD_TICKS padding ticks (config
+# robustness), then exactly 3 ticks of a -0.55% dip (vwap == close, so System
+# A stays inert; VWAP_BLEED_MULTIPLIER fixed at its production-bounds minimum
+# 0.5 -> arm threshold clamps to -0.5, so -0.55 qualifies every dip tick
+# without ever breaching the trailing stop -- see the module docstring). A LOW
+# tick-count (3) confirms VWAP Bleed Cut on the 3rd dip tick; a HIGH one (10)
+# never does (only 3 dip ticks exist).
 # ---------------------------------------------------------------------------
 
 
 def _vwap_bleed_ticks_fixture() -> _DimFixture:
-    neutral = _neutral_bars(15)
+    neutral = _neutral_bars()
     dip_close = _closes(-0.55)[0]
     dip = [(dip_close, dip_close)] * 3
     bars = neutral + dip
@@ -492,16 +530,17 @@ def _vwap_bleed_ticks_fixture() -> _DimFixture:
 # degenerate vol=0.0 clamps the arm threshold to -0.5 regardless of the
 # multiplier, falsely making this dim inert. 25 days of alternating +/-2% AAA
 # returns give a known population stdev of 2.0 (>= LOOKBACK_DAYS=20, still
-# < 39 so MC stays insufficient). 15 neutral padding ticks, then 3 ticks of a
-# -1.2% dip: at mult=0.5 the arm threshold clamps to -1.0 (dip qualifies,
-# confirms VWAP Bleed Cut); at mult=3.0 it clamps to -3.0 (dip never
-# qualifies). VWAP_BLEED_TICKS fixed at its production-bounds minimum (3) so
-# the LOW-multiplier case confirms within the 3 dip ticks.
+# < 39 so MC stays insufficient). _NEUTRAL_PAD_TICKS padding ticks (config
+# robustness), then 3 ticks of a -1.2% dip: at mult=0.5 the arm threshold
+# clamps to -1.0 (dip qualifies, confirms VWAP Bleed Cut); at mult=3.0 it
+# clamps to -3.0 (dip never qualifies). VWAP_BLEED_TICKS fixed at its
+# production-bounds minimum (3) so the LOW-multiplier case confirms within
+# the 3 dip ticks.
 # ---------------------------------------------------------------------------
 
 
 def _vwap_bleed_multiplier_fixture() -> _DimFixture:
-    neutral = _neutral_bars(15)
+    neutral = _neutral_bars()
     dip_close = _closes(-1.2)[0]
     dip = [(dip_close, dip_close)] * 3
     bars = neutral + dip
