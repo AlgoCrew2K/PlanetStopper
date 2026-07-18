@@ -3,7 +3,7 @@
 > 250-day Alpaca historical fetcher with parallel bar download, file cache, and eligibility guards — feeds the autotuner walk-forward replay.
 
 **Source:** `synthetic_history.py`
-**Last updated:** 2026-07-17 (Math Remediation R1, `DE-MATH-R1-001` AC-1/MA-1 — `build_replay_day` stamps a real per-tick `last_percent_change` into replay holdings before every `run_monte_carlo` call; prior: 2026-06-29)
+**Last updated:** 2026-07-18 (Math Remediation R3-a, `DE-MATH-R3A-001` — pre-retune checklist item (b), MC band-edge arm-decision stability probed; `_MC_REPLAY_SIMULATION_PATHS` value unchanged, see the Monte Carlo Constants row below; prior: 2026-07-17, Math Remediation R1, `DE-MATH-R1-001` AC-1/MA-1 — `build_replay_day` stamps a real per-tick `last_percent_change` into replay holdings before every `run_monte_carlo` call; prior: 2026-06-29)
 
 ## Overview
 
@@ -102,7 +102,7 @@ Raised when synthetic-history generation cannot meet the trading-day floor after
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `_MC_REPLAY_SIMULATION_PATHS` | 300 | Path count `build_replay_day` passes to `math_engine.run_monte_carlo` — deliberately lower than `math_engine.MC_DEFAULT_SIMULATION_PATHS` (5000) as a replay-throughput approximation over 250 days × N symphonies. `DE-MATH-R1-001`'s AC-6 parity battery matches this config exactly (rather than the 5000-path default) so the battery tests decision-logic parity, not MC-sampling parity. Whether 300 paths is precise enough for stable arm decisions near band edges under future (post-retune) tuned params is an open item on the R3 pre-retune checklist — not changed by this cycle. |
+| `_MC_REPLAY_SIMULATION_PATHS` | 300 | Path count `build_replay_day` passes to `math_engine.run_monte_carlo` — deliberately lower than `math_engine.MC_DEFAULT_SIMULATION_PATHS` (5000) as a replay-throughput approximation over 250 days × N symphonies. `DE-MATH-R1-001`'s AC-6 parity battery matches this config exactly (rather than the 5000-path default) so the battery tests decision-logic parity, not MC-sampling parity. **Math Remediation R3-a (`DE-MATH-R3A-001`, 2026-07-18) — probed, value unchanged:** `scripts/mc_band_edge_stability_probe.py` measured the arm-decision flip-rate of this 300-path estimate against higher reference counts near the lower arm-band boundary. Finding: instability very close to the boundary (committed headline scenario, 0.3pp inside the boundary) is proximity-driven and NOT reducible by more paths — even a production-parity-vs-parity (5000-vs-5000) self-comparison flips ~28% of the time (see `docs/generated/mc-band-edge-stability.md`) — while instability at larger offsets from the boundary IS reducible by more paths. No single-constant bump target is certified for the committed near-edge scenario, so **this value is unchanged by R3-a**, confirmed by a dedicated scope-guard test (`test_replay_constant_is_currently_the_probed_300`). See `DE-MATH-R3A-001` in `DECISIONS.md` for the full pre-retune checklist record — an input for R3-b/c/d, not itself a live-path change. |
 
 ## Internal Dependencies
 
