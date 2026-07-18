@@ -5975,6 +5975,24 @@ is precise enough for stable arm decisions near band edges under FUTURE
 tuned params (post-retune) joins the **R3 pre-retune checklist**, alongside
 the AC-4 residual below.
 
+**Checklist item (b) MET-WITH-FINDING (2026-07-18, `DE-MATH-R3A-001`,
+r3a-review APPROVE @ `c8615201`):** `scripts/mc_band_edge_stability_probe.py`
+measured the 300-path replay estimator's arm-decision flip-rate against
+higher reference counts near this exact boundary. For the committed
+near-edge scenario (0.3pp inside the boundary), instability is
+proximity-driven and NOT reducible by more paths -- even a 5000-vs-5000
+production-parity self-comparison flips 28% of the time -- so no bump is
+taken and `_MC_REPLAY_SIMULATION_PATHS` stays 300. A broader offset scan
+found this irreducibility holds through ~0.6pp from the boundary, while
+instability at >=~1.0pp IS path-reducible (certified targets at the
+artifact's canonical `n_seeds=300`: 1.0pp->2000, 1.5pp->600 -- the ~1pp
+transition's exact target is itself n_seeds-sensitive, see
+`DE-MATH-R3A-001`'s Supplementary Characterization for the full
+reproducible table and caveat). **Never compress this to "300 is
+stable"** -- it is a real, offset-dependent input for R3-b/c/d's own
+arm-band-proximity reasoning. See `docs/generated/mc-band-edge-stability.md`
+and `DE-MATH-R3A-001`.
+
 **Commits:** `3256ac42` (RED -- AC-2+AC-6), `76e0c178` (BLOCKING
 MC-config-parity fix, ADDENDUM 4), `c616960e` (parity-oracle sync).
 
@@ -6172,6 +6190,19 @@ exact form -- **never compressed to "all three dims proven identically":**
    every tuned dimension** -- joining the AC-6 MC-path-count-precision item
    and the AC-4 undated-path item on that same checklist.
 
+**Checklist item (a) MET (2026-07-18, `DE-MATH-R3A-001`, r3a-review
+APPROVE @ `c8615201`):** the FULL walk-forward objective-variance
+demonstration deferred above is now delivered -- new
+`scripts/objective_variance_probe.py` proves non-zero walk-forward
+objective variance for `PARABOLIC_VELOCITY_THRESHOLD` and
+`MAX_PARABOLIC_SQUEEZE` (plus the three VWAP dims, never walk-forward-
+tested before this cycle, and a re-confirmation of `TAKE_PROFIT_MC_PCT`)
+-- all six dims in `autotuner.OPTUNA_SEARCH_SPACE_KEYS`, source-derived
+enumeration + an AST-based `trial.suggest_*` drift-guard, with a
+`force_inert` non-vacuity control and config-robustness across
+`EXECUTION_START_TIME` in {09:30, 9:35} (the droplet-production value the
+retune runs under). See `DE-MATH-R3A-001`.
+
 **Fixture repair (post-AC-1 verification finding, commit `c2bf654f`):**
 r1-engine's post-AC-1 read-only verification found the walk-forward smoke's
 failure signature had MOVED (as expected -- real per-tick lpc was
@@ -6353,6 +6384,19 @@ disarm-band ruling + retune, HARD-GATED on this entry's residual checklist:
 AC-6's MC-path-count precision, AC-4's undated-path wiring, AC-7's
 parabolic walk-forward variance demo) are NOT covered by this entry -- see
 the program charter's phase ordering.
+
+**Checklist status update (2026-07-18, `DE-MATH-R3A-001`, r3a-review
+APPROVE @ `c8615201`):** of the residual checklist named above, the AC-4
+undated-path item was already closed by `DE-MATH-R2-001` (see that entry's
+own "Decision: AC-4" section). AC-6's MC-path-count precision and AC-7's
+parabolic walk-forward variance demo are now closed by `DE-MATH-R3A-001`:
+**AC-7's item is MET; AC-6's item is MET-WITH-FINDING** (300 retained, no
+bump taken -- near-boundary instability is proximity-driven and
+path-irreducible, farther-from-boundary instability is path-reducible; see
+`DE-MATH-R3A-001` for the full record). **All three pre-retune checklist
+items are now closed.** R3-b (MA-4 disarm-band) and R3-c (MA-11
+MAX_SQUEEZE_FLOOR) remain, both still required -- alongside operator
+before/after sign-off -- before R3-d (the retune itself).
 
 ## DE-MATH-R2-001 -- Math Remediation R2: honest validation statistics -- CPCV split-level scoring, train-only adoption holdout, frozen-eval metric, R1-tripwire clearance, quantstats producer-side simple-return convention (2026-07-17)
 
@@ -7492,9 +7536,10 @@ place on write (mirrors R2's convention) to record the tripwire shipping.
 ## DE-MATH-R3A-001 -- Math Remediation R3-a: pre-retune checklist prerequisites (2026-07-18)
 
 Branch: `fix/math-r3a` | Base: `origin/main` (post-F7) `77551f1c` | HEAD (this
-entry): `c8615201` (AC-1..AC-8/AC-10 all GREEN, 65/65 on the two new test
-files; AC-9's checklist flip is a SEPARATE, gated action -- see "Decision:
-AC-9" below)
+entry): `c8615201` (AC-1..AC-10 all GREEN, 65/65 on the two new test files,
+twice-confirmed independently by r3a-doc and r3a-review; r3a-review APPROVE;
+AC-9's checklist flip LANDED in this doc-only follow-up commit -- see
+"Decision: AC-9" below)
 
 ### Summary
 
@@ -7724,48 +7769,96 @@ boundary, not reducible by more paths alone.** No constant change is made;
 `synthetic_history._MC_REPLAY_SIMULATION_PATHS` stays `300`.
 
 **Supplementary characterization (verified independently by r3a-doc,
-reproducible via the same functions, not itself persisted to the committed
-artifact -- the committed artifact covers only the single 0.3pp headline
-scenario):** the module's general-purpose `measure_flip_rate`/
-`_select_bump_target` were exercised at additional offsets from the same
-5.0% boundary, same `n_seeds=150`/`base_seed=20260718` as the sufficiency
-module's reducible/irreducible fixture, confirmed deterministic across two
-independent runs:
+reproducible via the exact function calls cited below, NOT itself
+persisted to the committed artifact -- Option A, PM/r3a-test ruling: the
+committed artifact covers only the single 0.3pp headline scenario, and
+`run_probe` is deliberately NOT extended to multiple offsets, which would
+be a code change for no AC):**
 
-| offset from boundary | true prob | search verdict | certified target | flip-rate at target vs 5000 |
+- **Headline flip-rate (0.3pp): 39.67% at 300-vs-5000** -- reproduce via
+  `mc_band_edge_stability_probe.measure_flip_rate(target_true_prob_pct=5.3,
+  boundary_pct=5.0, n_seeds=300, reference_counts=(1000, 5000, 20000),
+  base_seed=20260718).flip_rate_by_reference[5000]` -- the exact value in
+  the committed `mc-band-edge-stability.json`.
+- **Certified bump target per offset** -- reproduce via
+  `mc_band_edge_stability_probe._select_bump_target(target_true_prob_pct=<5.0+offset>,
+  boundary_pct=5.0, n_seeds=300, base_seed=20260718, threshold=0.05)` ->
+  `.stable` / `.target_path_count`, at the artifact's own canonical
+  `n_seeds=300` (`_ARTIFACT_N_SEEDS`, the same value `run_probe` passes to
+  both functions -- resolves two earlier discrepancies at non-canonical
+  seed counts, both caught and corrected before landing):
+
+| offset from boundary | true prob | `.stable` | `.target_path_count` | flip-rate at target vs 5000 |
 |---|---|---|---|---|
-| 0.3pp | 5.3% | irreducible (`stable=False`) | none (5000-vs-5000 self-flip 28.00%) | -- |
-| 0.6pp | 5.6% | irreducible (`stable=False`) | none (5000-vs-5000 self-flip 8.00%) | -- |
-| 1.0pp | 6.0% | **reducible (`stable=True`)** | **2000** | 2.67% |
-| 1.5pp | 6.5% | reducible (`stable=True`) | 600 | 4.00% |
+| 0.3pp | 5.3% | `False` | `None` (5000-vs-5000 self-flip 28.00%, matches the committed artifact) | -- |
+| 0.6pp | 5.6% | `False` | `None` (5000-vs-5000 self-flip 8.33%) | -- |
+| 1.0pp | 6.0% | `True` | **2000** | 2.33% |
+| 1.5pp | 6.5% | `True` | 600 | 3.33% |
 
-**This is an offset-dependent finding, not a blanket "300 is unstable":**
-instability sits at/very close to the boundary (<=~0.6pp) is
-proximity-driven and irreducible by more paths; instability farther from
-the boundary (>=~1.0pp) IS reducible, at a materially lower path count than
-production parity. This is an input for R3-b/c/d's own arm-band-proximity
-reasoning, not a claim that 300 paths is broadly safe or broadly unsafe.
+**n_seeds-sensitivity caveat (verbatim, PM-specified):** "The certified
+target at the ~1pp reducibility transition is n_seeds-sensitive --
+candidate 1500's flip straddles the 0.05 threshold (0.045 @ ns=200, exactly
+0.05 @ ns=300, 0.0533 @ ns=150), so it qualifies at ns=200 but not at the
+canonical ns=300; the search certifies 2000 at ns=300. The qualitative
+finding (<=~0.6pp irreducible / >=~1pp path-reducible; 1.5pp->600 robust)
+is stable across n_seeds."
+
+**This is an offset-dependent finding, framed QUALITATIVELY as the robust
+R3-d input, never over-pinned to a single number:** instability at/very
+close to the boundary (<=~0.6pp) is proximity-driven and irreducible by
+more paths; instability farther from the boundary (>=~1.0pp) IS reducible,
+at a materially lower path count than production parity -- the exact
+certified target right at the ~1pp transition itself moves with `n_seeds`
+(see caveat above), but the qualitative irreducible/reducible split does
+not. This is an input for R3-b/c/d's own arm-band-proximity reasoning, not
+a claim that 300 paths is broadly safe or broadly unsafe.
 
 **Regression pin:** `tests/autotuner/test_r3a_band_edge_stability_probe.py`
 (459 lines). See `docs/generated/scripts_mc_band_edge_stability_probe.md`
 and `docs/generated/synthetic_history.md`'s `_MC_REPLAY_SIMULATION_PATHS`
 constant row for full technical detail.
 
-### Decision: AC-9 (checklist status flip) -- HELD, not yet landed
+### Decision: AC-9 (checklist status flip) -- LANDED
 
-**AC-9 requires DECISIONS.md's pre-retune checklist items (a) and (b) to be
-flipped from UNMET to MET with pointers to the artifacts above.** Per PM
-binding ruling (2026-07-18, echoed in `feature-plans/math-r3a-checklist.md`'s
-own AC-9 gating clarification and Decisions table): **this flip lands ONLY
-after r3a-review posts an APPROVE verdict on the tests -- never merely
-because they are green.** A flip that outruns a clean, independently-verified
-non-vacuity verdict is itself a BLOCK, because it is the flip that unlocks
-the R3-d live-money retune. **As of this entry's HEAD (`c8615201`), that
-verdict has not yet been confirmed to r3a-doc** (Task #4, review, shows
-completed on the team roster, but no APPROVE verdict text has been
-delivered as of this writing) -- the checklist flip is DRAFTED, ready, and
-will be applied in a dedicated follow-up commit the moment the verdict
-lands, never bundled silently into this entry.
+r3a-review posted **APPROVE @ `c8615201`**, quoted verbatim below (relayed
+by r3a-test from r3a-review's own message -- same convention as
+`DE-MATH-F7-001`'s Verification section, "quoted verbatim (relayed by
+team-lead from f7-review's own message)"):
+
+> Fresh-state preamble: worktree `.../worktrees/math-r3a`, branch
+> `fix/math-r3a`, HEAD `c8615201` (verified via `git rev-parse HEAD`
+> immediately BEFORE and AFTER the full verification pass -- identical,
+> `git status --porcelain` empty both times, zero teammate drift). Battery:
+> `pytest -n0 tests/autotuner/test_r3a_walkforward_variance_all_dims.py
+> tests/autotuner/test_r3a_band_edge_stability_probe.py` run TWICE at this
+> SHA -- 65 passed / 0 failed / 0 errors both times (31.89s, 31.85s),
+> matching r3a-doc's own independent re-run exactly. Both ruff gates
+> (`format --check`, `check`) clean on all 4 new/changed files.
+>
+> Verdict: APPROVE @ c8615201 -- conditional on the PM's live gate
+> (tests-green is necessary, never sufficient; per the project's E2E
+> ship-gate rule)
+
+Section results (verbatim headers): "Math safety -- PASS", "Live-trade
+boundary -- PASS", "Fixture provenance -- PASS", "Schema reversibility --
+N/A", "Secrets hygiene -- PASS", "Engine constants -- N/A", "Logging
+redaction -- N/A", "Dashboard side effects -- N/A". Closing: "Zero findings
+for you to encode as new RED."
+
+**The double-gate is satisfied** -- non-vacuity + scope-guard independently
+verified GREEN, per PM binding ruling this closes the precondition for
+landing AC-9. The DECISIONS.md pre-retune checklist flip (three sites:
+`DE-MATH-R1-001` ADDENDUM 4's item (b) residual at ~5969-5976, the AC-7
+ruling's item (a) deferral at ~6161-6173, and the 3-item checklist
+enumeration in `DE-MATH-R1-001`'s own Reference section at ~6350-6355) is
+landed in the SAME commit as this update -- each site gets an APPENDED
+correction note, never a rewrite of the historical prose (matching the
+AC-4/R2 closure convention already established at `DECISIONS.md:6790-6795`).
+**Item (a) is MET; item (b) is MET-WITH-FINDING** -- 300 is RETAINED (no
+bump taken), and the finding itself (near-boundary instability is
+proximity-driven and path-irreducible; farther-from-boundary instability is
+path-reducible) is a real input for R3-b/c/d, never compressed to "300 is
+stable."
 
 ### Decision: AC-10 (no live-path leakage) -- scope guard confirmed
 
@@ -7801,17 +7894,17 @@ Finding above.
 ### Verification
 
 **This entry is a living skeleton, filled in incrementally as each piece
-lands** (same convention as R1/R2/F7). GREEN at `c8615201`: targeted run of
-both new test files, `-n0`, temp `DB_PATH` -- **65 passed / 0 failed / 0
-errors** (r3a-doc, independent re-run, this doc pass). Both ruff gates
-clean (r3a-tuner/r3a-engine, per-commit). Still outstanding as of this
-entry: **r3a-review's non-vacuity + scope-guard verdict** (Task #4 shows
-completed on the roster; verdict text not yet relayed to r3a-doc -- the
-AC-9 checklist flip is gated on it, see "Decision: AC-9" above) and the
-PM's independent full battery (`tests/autotuner/` + the hot-file guard
+lands** (same convention as R1/R2/F7). GREEN at `c8615201`, confirmed
+independently TWICE (r3a-doc's own re-run + r3a-review's own re-run, both
+`-n0`, temp `DB_PATH`): **65 passed / 0 failed / 0 errors**, both runs.
+Both ruff gates clean. **r3a-review's non-vacuity + scope-guard verdict:
+APPROVE @ `c8615201`** -- quoted verbatim under "Decision: AC-9" above.
+AC-9's checklist flip is LANDED in this same commit. **Still outstanding:**
+the PM's independent full battery (`tests/autotuner/` + the hot-file guard
 suites `tests/error_handling/`, `tests/execution/`, `tests/math_engine/`,
-per the plan's Testing Strategy) + PM gate. Updated in place as each lands
--- never re-created as a new DECISIONS.md entry.
+per the plan's Testing Strategy) + the PM's own gate -- tests-green
+(twice-confirmed) is necessary, never sufficient. Updated in place as each
+lands -- never re-created as a new DECISIONS.md entry.
 
 ### Reference
 

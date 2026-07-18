@@ -11,6 +11,8 @@ Local `main` is STALE at `cc1eaaa3` (PR #80, pre-R0) — the charter + all R0–
 3. **R3-c — MA-11 MAX_SQUEEZE_FLOOR knob (LIVE-PATH PR, own review + PM live E2E).**
 4. **R3-d — the first trustworthy retune (an OPERATION, NOT a code PR).** Gated on R3-a green + R3-b/c merged+deployed + **explicit operator before/after sign-off before tuned params persist to live symphonies.**
 
+> **SUPERSEDED (2026-07-18, `DE-MATH-R3A-001`, r3a-review APPROVE @ `c8615201`):** items (a) and (b) below are now MET / MET-WITH-FINDING -- this section is a dated snapshot of the 2026-07-18 scoping pass, kept verbatim for the historical record, not rewritten. See `DE-MATH-R3A-001` in `DECISIONS.md` for the current, authoritative status of all three checklist items.
+
 ## 1. PRE-RETUNE CHECKLIST (DECISIONS.md:6350-6355) — 1 of 3 MET
 - **(a) Parabolic walk-forward variance demo — UNMET** (R1 AC-7 deferred it here; DECISIONS.md:6161-6173). Partial: `tests/autotuner/test_ac7_inert_dims_objective_variance_smoke.py` proves `TAKE_PROFIT_MC_PCT` at walk-forward but the 2 parabolic dims (`PARABOLIC_VELOCITY_THRESHOLD`, `MAX_PARABOLIC_SQUEEZE`) only at wiring level. R3-a must add a bounded deterministic-seed walk-forward smoke showing non-zero objective variance across swept values of ALL tuned dims. Hard rule: no retune ships live params without demonstrating objective variance on every tuned dim.
 - **(b) 300-path band-edge stability — UNMET** (no artifact; `_MC_REPLAY_SIMULATION_PATHS=300`; DE-MATH-R1-001 ADDENDUM 4, DECISIONS.md:5969-5976). R3-a must add a stability probe: arm-decision flip-rate at 300 vs higher path count near the band edge → decide bump vs accept.
