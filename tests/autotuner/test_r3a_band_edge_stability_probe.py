@@ -207,6 +207,134 @@ def test_reference_ladder_default_is_at_least_1000_and_includes_live_5000() -> N
 
 
 # ===========================================================================
+# AC-6/AC-7 non-vacuity of the EVIDENCE-BASED BUMP-TARGET SEARCH (r3a-test
+# sufficiency review of the (b) GREEN diff). The committed probe's headline
+# scenario (0.3pp inside the boundary) always returns stable=False ("no path
+# count fixes it"), so the search's stable=True branch is NEVER exercised by
+# the tests above. A search that ALWAYS returned "no stable target" would
+# produce the IDENTICAL committed finding — the honest-degenerate conclusion is
+# only trustworthy if the search demonstrably FINDS a target when instability
+# is genuinely path-reducible. These guards pin that the search RESPONDS to the
+# offset (memory: an "N results" test hid a dead factor).
+#
+# Values are deterministic (all seeds derive from the base seed); assertions
+# are threshold INEQUALITIES, never pinned floats, so they stay robust to the
+# exact measured rate while still failing on a constant-oracle regression.
+# ===========================================================================
+
+# A path-REDUCIBLE offset (1.5pp inside the 5.0 boundary): the 300-path replay
+# is unstable here (flip vs 5000 >= threshold) but a higher path count IS stable
+# — the regime where a bump genuinely helps. Contrast with the irreducible
+# near-edge _NEAR_EDGE_TRUE_PROB_PCT (0.3pp) where even 5000-vs-5000 flips.
+_PATH_REDUCIBLE_TRUE_PROB_PCT = 6.5
+_BUMP_SEARCH_N_SEEDS = 150
+_BUMP_SEARCH_BASE_SEED = 20260718
+
+
+@pytest.fixture(scope="module")
+def _bump_search_results():
+    """Compute the reducible + irreducible bump-search outcomes once (module
+    scope — the search is the expensive part; no cross-test mutable state)."""
+    probe = _require_probe()
+    thr = float(probe.RECOMMENDATION_THRESHOLD)
+    reducible = probe._select_bump_target(
+        target_true_prob_pct=_PATH_REDUCIBLE_TRUE_PROB_PCT,
+        boundary_pct=_LOWER_BOUNDARY_PCT,
+        n_seeds=_BUMP_SEARCH_N_SEEDS,
+        base_seed=_BUMP_SEARCH_BASE_SEED,
+        threshold=thr,
+    )
+    irreducible = probe._select_bump_target(
+        target_true_prob_pct=_NEAR_EDGE_TRUE_PROB_PCT,
+        boundary_pct=_LOWER_BOUNDARY_PCT,
+        n_seeds=_BUMP_SEARCH_N_SEEDS,
+        base_seed=_BUMP_SEARCH_BASE_SEED,
+        threshold=thr,
+    )
+    reducible_300_flip = probe.measure_flip_rate(
+        target_true_prob_pct=_PATH_REDUCIBLE_TRUE_PROB_PCT,
+        boundary_pct=_LOWER_BOUNDARY_PCT,
+        n_seeds=_BUMP_SEARCH_N_SEEDS,
+        reference_counts=(probe._PRODUCTION_PARITY_PATHS,),
+        base_seed=_BUMP_SEARCH_BASE_SEED,
+    ).flip_rate_by_reference[probe._PRODUCTION_PARITY_PATHS]
+    return reducible, irreducible, reducible_300_flip
+
+
+def test_bump_search_finds_stable_target_when_instability_is_path_reducible(
+    _bump_search_results,
+) -> None:
+    """The search MUST be able to say 'yes, bump to N' — otherwise the committed
+    'no target' finding could be a broken always-negative search."""
+    probe = _require_probe()
+    reducible, _irreducible, reducible_300_flip = _bump_search_results
+    thr = float(probe.RECOMMENDATION_THRESHOLD)
+
+    # This offset is genuinely unstable at 300 (a bump is warranted)...
+    assert reducible_300_flip >= thr, (
+        f"the path-reducible scenario's 300-vs-parity flip ({reducible_300_flip!r}) "
+        f"is below the threshold ({thr}) — pick an offset where 300 is actually "
+        "unstable so 'a bump helps' is a meaningful claim."
+    )
+    # ...and a HIGHER path count is provably stable → the search finds it.
+    assert reducible["stable"] is True, (
+        "the bump-target search returned stable=False at a PATH-REDUCIBLE offset "
+        f"(candidates_tried={reducible['candidates_tried']}). If the search can "
+        "never find a stable target, its 'no target' verdict at the near-edge is "
+        "vacuous — the whole bump recommendation would be meaningless."
+    )
+    assert reducible["target_path_count"] in probe._BUMP_CANDIDATE_LADDER, (
+        f"stable target {reducible['target_path_count']!r} is not a member of the "
+        "candidate ladder — the search must certify a MEASURED candidate."
+    )
+    assert reducible["candidates_tried"][reducible["target_path_count"]] < thr, (
+        "the certified target's own flip-rate vs parity must be below threshold "
+        f"(got {reducible['candidates_tried'][reducible['target_path_count']]!r})."
+    )
+
+
+def test_bump_search_reports_no_target_at_irreducible_near_edge(_bump_search_results) -> None:
+    """The committed finding: at the near-edge offset even production parity is
+    unstable, so NO path count is certified. Pin it so a threshold/pool change
+    that silently turns this 'stable' is caught."""
+    probe = _require_probe()
+    _reducible, irreducible, _flip = _bump_search_results
+    thr = float(probe.RECOMMENDATION_THRESHOLD)
+
+    assert irreducible["stable"] is False, (
+        "the near-edge scenario unexpectedly certified a stable bump target "
+        f"(candidates_tried={irreducible['candidates_tried']}). The committed "
+        "finding is that this offset's instability is boundary-proximity-"
+        "dominated and NOT reducible by more paths — if this flips to stable, "
+        "the pool/threshold has changed and the artifact must be regenerated."
+    )
+    assert irreducible["target_path_count"] is None, (
+        "stable=False must carry target_path_count=None (no unmeasured bump)."
+    )
+    parity = probe._PRODUCTION_PARITY_PATHS
+    assert irreducible["candidates_tried"].get(parity, 0.0) >= thr, (
+        f"even the production-parity self-comparison ({parity}-vs-{parity}) must "
+        "flip at/above the threshold at this near-edge offset — that is WHY no "
+        "path count is stable. A parity flip below threshold would contradict the "
+        "'irreducible' finding."
+    )
+
+
+def test_bump_search_responds_to_offset_not_a_constant_oracle(_bump_search_results) -> None:
+    """CRUX: the search's verdict must DIFFER between the reducible and
+    irreducible scenarios. Identical verdicts on both = a dead search whose
+    output is independent of the data — the exact vacuity this cycle exists to
+    reject."""
+    reducible, irreducible, _flip = _bump_search_results
+    assert reducible["stable"] != irreducible["stable"], (
+        "the bump-target search returned the SAME stability verdict "
+        f"(reducible={reducible['stable']}, irreducible={irreducible['stable']}) "
+        "for a path-reducible AND an irreducible scenario — it is not measuring "
+        "path-count reducibility at all, making the recommendation a constant."
+    )
+
+
+# ===========================================================================
 # AC-7 — deterministic bump-vs-accept recommendation artifact.
 # ===========================================================================
 
