@@ -55,6 +55,7 @@ def _fresh_state(*, armed: bool = False) -> dict:
         "para_armed": False,
         "armed": armed,
         "below_stop_count": 0,
+        "disarm_confirm_count": 0,  # MA-4 (R3-b): the seam threads this recovery-tick counter
         "hwm_hold_ticks": 0,
         "breakeven_locked": False,
         "tp_armed": False,
