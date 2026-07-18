@@ -8132,7 +8132,13 @@ against the seam contract, found it FAITHFUL, closed one unpinned-guard
 gap with 13 new regression-lock tests, and issued **SUFFICIENT --
 APPROVED**. r3b-review's independent blast-radius/correctness/parity
 review (Task #9) **APPROVED**, zero blocking findings, one doc-nit fixed
-at `ae450872` (see "Decision: status flip" above). **STILL OUTSTANDING:**
+at `ae450872` (see "Decision: status flip" above) -- r3b-review's own
+run, relayed via the PM, confirms **2511 passed** on the full battery,
+superseding the narrower **240 passed** figure in `.claude/tdd-
+handoff.md`'s Phase line (that count covered only the Toxic Pair's
+targeted `tests/math_engine/` + `tests/execution/` + `tests/autotuner/`
+battery at `bbe94fbb`; r3b-review's is the wider, independently-run
+figure). **STILL OUTSTANDING:**
 the PM's own live E2E against a real giveback scenario on the running
 engine (necessary, never sufficient on tests-green + both reviews alone).
 Updated in place as each lands -- never re-created as a new DECISIONS.md
