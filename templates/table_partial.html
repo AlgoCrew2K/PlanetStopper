@@ -43,7 +43,7 @@
                         <th class="px-3 py-2.5 font-medium cursor-pointer hover:text-white transition-colors group select-none" onclick="setSort('name')">
                             Symphony Name <span class="inline-block ml-1 transition-opacity opacity-{{ '100 text-blue-400' if sort_col == 'name' else '0 group-hover:opacity-50' }}">{{ '↓' if sort_dir == 'desc' and sort_col == 'name' else '↑' }}</span>
                         </th>
-                        <th class="px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none" title="Monte Carlo probability this symphony beats SPY over the simulation horizon. Low values arm and trigger the trailing stop — the bot expects underperformance." onclick="setSort('mc_prob')">
+                        <th class="px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none" title="Monte Carlo probability this symphony underperforms its own regime-matched historical baseline." onclick="setSort('mc_prob')">
                             MC Prob <span class="inline-block ml-1 transition-opacity opacity-{{ '100 text-blue-400' if sort_col == 'mc_prob' else '0 group-hover:opacity-50' }}">{{ '↓' if sort_dir == 'desc' and sort_col == 'mc_prob' else '↑' }}</span>
                         </th>
                         <th class="px-3 py-2.5 font-medium text-center cursor-pointer hover:text-white transition-colors group select-none" title="Guard state: STANDBY (watching) → ARMED (stop conditions building) → TP-ARMED / PARA-ARMED → TRIGGERED (bot exited to cash). (1/2 Ticks) = waiting for second confirmation." onclick="setSort('status')">
