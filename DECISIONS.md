@@ -6899,7 +6899,7 @@ The file's other two `sum()`-based tests were verified NOT affected (they
 exercise `evaluate_acceptance_gate`'s decision logic on
 self-consistent locally-constructed numbers, never compare against
 `_fold_transform_single`'s actual output). 7/7 passed on
-`tests/advisors/test_advisor_liveness_gate.py`, both ruff gates clean.
+`tests/advisors/test_advisor_liveness_gate.py`, both ruff gates clean (this specific file only -- NOT one of the 9 files r2-review's verdict pass later found failing `ruff format --check`; see the Verification section's settlement note for the honest cycle-wide sequence).
 
 ### Decision: AC-6 (charter exit criterion) -- selection/adoption date disjointness, kept as a regression test
 
@@ -6930,7 +6930,7 @@ deselected / 0 errors**. `alpha_bot_execution.py`/`math_engine.py` carry
 **zero diff** for this cycle, verified both by r2-stats
 (`git diff origin/main..HEAD -- alpha_bot_execution.py math_engine.py`)
 and r2-analytics (`git diff 09dc053b -- alpha_bot_execution.py math_engine.py`)
--- both empty. Both ruff gates clean on every touched file, both commits.
+-- both empty. Both ruff gates clean on the PRODUCTION files each commit touched (`autotuner.py` for `c66457dd`; `advisors/composer_backtest_client.py`/`advisors/backtest_gate_engine.py` for `e57c2970`) -- this claim did NOT cover the cycle's test files, which is where r2-review's verdict pass found a real gap; see the Verification section's settlement note.
 
 ### Residuals (status as of `e57c2970`, all ACs GREEN)
 
@@ -6985,11 +6985,49 @@ floor 2451 passed / 1 skipped / 3 deselected / 0 failed (r2-stats) and 1662
 passed / 0 failed / 2 deselected (r2-analytics); `compute_sortino_tstat`
 blast-radius pair 21/21 passed, no regression. `alpha_bot_execution.py`/
 `math_engine.py` zero diff confirmed by both implementers independently.
-Both ruff gates clean on every touched file. **Still OUTSTANDING:**
+Both ruff gates clean on every touched PRODUCTION file (see the AC-6
+Decision section footnote above for exact scope). **Still OUTSTANDING:**
 r2-test's sufficiency review (Red/Green/Revise cycle), r2-review's combined
-verdict, and the PM's independent battery + live E2E gate. This section is
-filled in, update-in-place, as each lands -- never re-created as a new
-entry, per the `DE-MATH-R1-001` convention.
+verdict, and the PM's independent battery + live E2E gate.
+
+**Settlement correction (found-by-verification, recorded honestly --
+r2-review's own verdict pass is what caught this, not a self-report):**
+the cycle-complete summary above claimed "both ruff gates clean" without
+qualification -- inaccurate. r2-review's verdict pass found `ruff format
+--check` FAILING on 9 of the cycle's test files (cosmetic re-wrapping
+only, confirmed via `--diff`; zero behavioral drift). Four settlement
+commits landed to close this and related r2-review findings, all
+comment/docstring/formatting-only, zero production-logic diff:
+- `7355dba1` -- retires `_generate_cpcv_folds`'s stale path-assignment
+  docstring + the dead `group_path_ptr` local (closes r2-doc's own AC-1
+  docstring finding).
+- `12c9b80a` -- `ruff format` applied to the 9 failing test files
+  (`test_ac1_cpcv_genuine_split_dispersion.py`,
+  `test_ac1_regime_lookback_chronology_purity.py`,
+  `test_ac3_frozen_eval_real_crra_metric.py`,
+  `test_ac4_r2_residual_tripwire.py`,
+  `test_ac4_undated_path_regime_faithful.py`,
+  `test_ac6_charter_exit_criterion_probe.py`, `test_cpcv_fold_generation.py`,
+  `test_ac5_log_return_compounding_boundary.py`,
+  `test_ac5_fold_transform_genuine_compounding.py`); both ruff gates
+  re-verified clean on all 9, affected battery re-run (88 passed / 1
+  skipped expected / 0 failed) confirming zero behavioral drift from the
+  reformat. **This is the fix point the "both ruff gates clean" claim
+  should have waited for.**
+- `fa090896` + `7f3360cc` -- close r2-review's expanded consumer sweep for
+  stale "log return(s)" wording (7 locations total, comment/docstring-only,
+  zero behavior change, distinct from and in addition to `147720b2`'s
+  earlier 2-location fix in `composer_backtest_client.py` itself):
+  `advisors/asset_swap_engine.py:848`/`:950`/`:1517`,
+  `advisors/logic_change_engine.py:578`/`:673`/`:949`,
+  `advisors/strategy_builder_engine.py:992` (`fa090896` fixed 5 of the 7;
+  `7f3360cc` closed the remaining 2 plus a separate stale line-number
+  citation in the same `strategy_builder_engine.py:992` comment --
+  `"asset_swap_engine.py:577"`, which had drifted to point at unrelated
+  lens-scoring code, repointed to the correct `:951`).
+
+This section is filled in, update-in-place, as each lands -- never
+re-created as a new entry, per the `DE-MATH-R1-001` convention.
 
 ### Reference
 
