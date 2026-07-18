@@ -28,6 +28,7 @@ Design authority (operator delegation, 2026-07-17, verbatim in the PM ledger): *
 - **MA-2** (CRITICAL): CPCV paths score genuinely disjoint test folds (consume the fold structure as designed) — or explicitly revert to the honest purged single-fold split.
 - **MA-5** (HIGH): the adoption cascade's "OOS validation" evaluated on data outside the selection window; kill the `purge_integrity_ok=True` false attestation.
 - **MA-9** (HIGH): frozen-eval produces a real CRRA-EU metric that is reported and gateable.
+- **M1** (quantstats input convention: one documented producer convention, converted at the consumer boundary) — moved in from R4 (`feature-plans/math-r2.md` Decision: "M1 folded into R2 | Same statistics-honesty theme, small boundary fix, keeps R4 pure advisor-classification work"; see `DE-MATH-R2-001`).
 - Exit criterion: a nightly run whose selection/adoption numbers are demonstrably out-of-sample (probe harness kept as a regression test).
 
 ### R3 — Live-path behavior corrections + retune (trade-touching: PR path; HARD-GATED on R1+R2)
@@ -37,7 +38,7 @@ Design authority (operator delegation, 2026-07-17, verbatim in the PM ledger): *
 
 ### R4 — Advisor methodology (advisory path)
 - **MA-8** (paired-difference adoption test per QUESTION-02) + **MA-12** (no-op pre-screen: series-diff/never-fires check with its own rejection_reason — recovers the ~32% wasted generation spend).
-- **M1** (quantstats input convention: one documented producer convention, converted at the consumer boundary), **M3** (SPY fold calendar alignment), **M5** (bootstrap validity floor behavior at m=0).
+- **M3** (SPY fold calendar alignment), **M5** (bootstrap validity floor behavior at m=0). *(M1 moved to R2 — see DE-MATH-R2-001.)*
 - **P2 design research**: conditional/stress-window evaluation for tail hedges (researcher phase before any A/C).
 
 ### Cross-cutting backlog (scheduled opportunistically, tracked here)
@@ -51,7 +52,7 @@ Design authority (operator delegation, 2026-07-17, verbatim in the PM ledger): *
 3. One rendered $-saved + one windowed guard-alpha recomputed from raw droplet rows.
 4. `EXECUTION_START_TIME` value → resolves F6.
 5. Composer backtest default window pin (one live call) → closes the identical-CAGR dormancy bound.
-6. (MAPERF-15) `symphony_live_mode` states + any live trigger days → does $-saved book ~$0 for live-sold positions?
+6. (MAPERF-15) `symphony_live_mode` states + any live trigger days → does $-saved book ~$0 for live-sold positions? **RESOLVED (math-r2 cycle, out-of-band probe):** `last_percent_change` tracks post-sale logic, not the sold basket — the ≈$0-saved fear is refuted; `DE-GUARD-ALPHA-SAVED-001`'s design stands. See `docs/research/composer/maperf15-post-sale-lpc-semantics.md` and `DE-MATH-R2-001`.
 
 ## Process law (unchanged)
 Every phase: /scaffold plan committed → real Agent Team (Toxic Pair TDD + reviewer + doc-gen) → targeted `-n0` batteries + credential-less + ruff → PM first-hand live E2E → trade-touching phases via PR + /review to origin; advisory phases FF after gates. No phase builds on unshipped work.

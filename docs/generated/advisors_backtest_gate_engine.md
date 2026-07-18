@@ -3,7 +3,8 @@
 > M2 backtest-and-gate engine: fold-transforms Composer backtest return series into walk-forward folds and runs batch BHY/Yekutieli FDR + acceptance gate over the full candidate set; C5b (2026-06-20) adds batch PBO veto and real SPY-OOS-fold baseline; AC-D3 (2026-07-12) fixes candidate-order dependence in the bootstrap seed; **AC-1/AC-2 (2026-07-17, `DE-MATH-R0-001`) fix the PBO veto's unit corruption** — the batch PBO boundary now converts percent-scale `dated_returns` to decimal before calling `math_engine.compute_pbo`, and `_BATCH_PBO_GAMMA` is aligned to the frozen Phase-1 THEORY gamma instead of a nonexistent constant citation.
 
 **Source:** `advisors/backtest_gate_engine.py`
-**Last updated:** 2026-07-17 (math-r0, `DE-MATH-R0-001` — AC-1 PBO percent-to-decimal unit boundary fix, closes `DE-MATH-AUDIT-001` MA-3 CRITICAL, + AC-2 THEORY-gamma alignment, closes M2)
+**Last updated:** 2026-07-17 (math-r2, `DE-MATH-R2-001` AC-5 rider — `_fold_transform_single.oos_alpha` now compounds genuinely instead of naive-summing, following the producer-side fix that makes its input genuinely simple-scale returns)
+**Prior update:** 2026-07-17 (math-r0, `DE-MATH-R0-001` — AC-1 PBO percent-to-decimal unit boundary fix, closes `DE-MATH-AUDIT-001` MA-3 CRITICAL, + AC-2 THEORY-gamma alignment, closes M2)
 **Prior update:** 2026-07-13 (advisor-remediation-r1, DE-ADVISOR-R1-001 — AC-17 panel-tie neutralization + AC-7b 4th rejection class + AC-4/5 gate-strength parity for Asset Swaps/Logic Changes)
 
 ## Overview
@@ -95,7 +96,7 @@ Gate result for one candidate.
 | `candidate_id` | `str` | Echoes the `BacktestCandidate` identifier |
 | `verdict` | `AcceptanceVerdict` | From `acceptance_gate.evaluate_acceptance_gate` |
 | `validation_days` | `int` | Days in the post-purge validation fold |
-| `oos_alpha` | `float` | Sum of validation-fold daily returns (percent) |
+| `oos_alpha` | `float` | Genuinely compounded validation-fold return (percent) — `(prod(1 + r/100 for r in validation_returns) - 1) * 100`. **Changed 2026-07-17 (`DE-MATH-R2-001` AC-5 rider):** was `sum(validation_returns)` — naive-summing was mathematically exact under the pre-fix log-return convention, but became a first-order approximation once the producer boundary was fixed to emit simple returns (AC-5), and could flip close accept/reject rankings between different-volatility candidates. See `_fold_transform_single` below. |
 | `caveats` | `list[str]` | Plain-text caveats; always non-empty for `ADOPT_CANDIDATE` |
 | `winner_p_adj` | `float \| None` | BHY-adjusted p-value for this candidate (audit trail) |
 | `rejection_reason` | `str \| None` | **C5b + AC-7b.** Why the candidate was culled, or `None` for survivors. FOUR possible non-`None` values as of AC-7b (2026-07-13, `3fa2e7f8`): `pbo_veto`, `below_spy_alpha`, `fdr_not_winner`, `oos_inferior_to_incumbent`. Deterministic stage-order precedence — see below. On SPY-unavailable, withheld candidates carry `"below_spy_alpha"` (the `+inf` sentinel makes the alpha-gate clause always-true). |
@@ -213,7 +214,9 @@ Deterministic bootstrap seed derived from a candidate's own `candidate_id` via `
 
 ### `_fold_transform_single(daily_returns_pct) -> _FoldResult`
 
-Slices a daily return series into the walk-forward fold structure (60/20/20 + PURGE_DAYS boundary purge). Returns validation-fold returns, OOS alpha (sum), validation days, purge integrity flag, and thin-window flag. Series shorter than `FOLD_TRANSFORM_MIN_TOTAL_DAYS` returns an empty fold with `purge_integrity_ok=False` (WITHHOLD, never fabricate).
+Slices a daily return series into the walk-forward fold structure (60/20/20 + PURGE_DAYS boundary purge). Returns validation-fold returns, OOS alpha, validation days, purge integrity flag, and thin-window flag. Series shorter than `FOLD_TRANSFORM_MIN_TOTAL_DAYS` returns an empty fold with `purge_integrity_ok=False` (WITHHOLD, never fabricate).
+
+**OOS alpha compounding (`advisors/backtest_gate_engine.py:570`, changed 2026-07-17, `DE-MATH-R2-001` AC-5 rider):** `oos_alpha = (math.prod(1.0 + r / 100.0 for r in validation_returns) - 1.0) * 100.0` — genuine compounding, not `sum(validation_returns)`. The producer this module consumes (`composer_backtest_client._extract_returns`) now emits genuinely simple returns (AC-5); naive-summing was exact under the OLD log-return convention (`sum(log) = log(compounded factor)`, so ranking by sum was monotonic-correct) but that exactness does not carry over to simple returns, where it ignores variance drag (Jensen's inequality) and can flip close accept/reject rankings between different-volatility candidates at this gate's core acceptance boundary. All 7 production call sites of `_fold_transform_single` across `advisors/` feed percent-scale lists — the `* 100.0` rescale preserves that contract.
 
 Non-finite values are stripped before computation (conservative: gate on finite observations; too-few remaining → WITHHOLD via min-length check).
 
@@ -232,5 +235,6 @@ Panel criterion D4 (prior-anchor / theory-consistency). Same normalised-L1 formu
 - `database` — `PHASE1_THEORY_GAMMA` (AC-2, `DE-MATH-R0-001`, module-level import — `_BATCH_PBO_GAMMA`'s single source of truth)
 - `math_engine` — `compute_pbo` (C5b batch PBO, AC-24); `PBO_REJECT_THRESHOLD` (imported locally inside the per-candidate loop to avoid circular import risk)
 - `hashlib` — stdlib, `_stable_seed_from_candidate_id` (AC-D3)
+- `math` — stdlib, `math.prod` for genuine compounding in `_fold_transform_single.oos_alpha` (`DE-MATH-R2-001` AC-5 rider)
 
 No import of `alpha_bot_execution`, `app`, or any execution module. Off-execution-path; advisory-only.

@@ -558,7 +558,16 @@ def _fold_transform_single(daily_returns_pct: list) -> _FoldResult:
     # with how autotuner.py:history_test = history_validation_full feeds the
     # OOS cascade.
     validation_returns = daily_returns_pct[val_start_idx:frozen_start_idx]
-    oos_alpha = sum(validation_returns)
+    # AC-5 rider (DE-MATH-R2-001): genuine compounding, not naive sum.
+    # composer_backtest_client._extract_returns now emits SIMPLE returns
+    # (AC-5), so `sum(validation_returns)` is only a first-order approximation
+    # of the true compounded return (it ignores variance drag / Jensen's
+    # inequality) — under the OLD log-return convention, summing was exact
+    # (sum of logs = log of the compounded factor), but that exactness does
+    # not carry over to simple returns. Compound genuinely instead:
+    # Π(1 + r/100) - 1, rescaled back to percent so every caller's existing
+    # percent-scale contract (all 7 call sites across advisors/) is preserved.
+    oos_alpha = (math.prod(1.0 + r / 100.0 for r in validation_returns) - 1.0) * 100.0
     validation_days = len(validation_returns)
 
     thin = validation_days < FOLD_TRANSFORM_MIN_VALIDATION_DAYS

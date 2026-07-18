@@ -989,7 +989,8 @@ def propose_strategies(
                     info.backtest_error = f"backtest failed: {result.error}"
                     info.data_warnings = result.data_warnings
                     continue
-                # Convert log returns → pct (EXACTLY as in asset_swap_engine.py:577).
+                # Convert simple returns → pct (EXACTLY as in asset_swap_engine.py:951;
+                # AC-5: the producer emits simple returns, not log).
                 # Preserve the date keys in a parallel dict for the batch PBO (AC-24)
                 # and SPY date-alignment (AC-25). Both use the same ×100 pct scale so
                 # the fold transform receives identical values from either field.

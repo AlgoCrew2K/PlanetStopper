@@ -251,23 +251,32 @@ class TestH6EngineFeedsFoldMatchedBaseline:
     """
 
     def test_propose_swap_default_baseline_is_fold_matched_not_full_history(
-        self, swap_engine, h6_fixture
+        self, swap_engine, gate_engine, h6_fixture
     ):
         """When no incumbent_oos_alpha is supplied, the gate's fallback_oos_alpha
-        must equal the baseline's VALIDATION-FOLD sum, not its full-history sum.
+        must equal the baseline's VALIDATION-FOLD oos_alpha, not its full-history sum.
 
         We spy on the real gate (evaluate_candidate_batch) to capture the
         incumbent_oos_alpha the engine passes, and assert it is fold-scaled.
         run_backtest is mocked to return a known deterministic baseline series.
-        """
-        from autotuner import TRAIN_RATIO, VALIDATION_RATIO
 
+        AC-5 rider correction (DE-MATH-R2-001): the reference value is derived
+        by calling the REAL gate_engine._fold_transform_single directly on the
+        FULL baseline series (it performs its own internal 60/20/20 split and
+        returns the genuine oos_alpha for its own validation fold) — not a
+        hand-rolled sum() over a manually-sliced fold. _fold_transform_single's
+        own oos_alpha now compounds genuinely (Pi(1+r/100)-1, not naive sum)
+        since composer_backtest_client emits simple returns instead of log
+        returns. This test's own H6/RC-1 invariant (fold-matched, not
+        full-history-matched) is unaffected and still asserted via the
+        belt-and-suspenders check below — only the exact reference number,
+        which must track whatever _fold_transform_single itself computes,
+        needed correcting.
+        """
         n = h6_fixture["series_length"]
         baseline_series_pct = [h6_fixture["incumbent"]["per_day_pct"]] * n  # percent/day
         baseline_full_history_sum = sum(baseline_series_pct)
-        baseline_fold_sum = sum(
-            _validation_fold_slice(baseline_series_pct, TRAIN_RATIO, TRAIN_RATIO + VALIDATION_RATIO)
-        )
+        baseline_fold_sum = gate_engine._fold_transform_single(baseline_series_pct).oos_alpha
 
         # The engine reads run_backtest(...).daily_returns.values() as FRACTIONS
         # (_backtest_returns_from_tree multiplies by 100 to get percent). So feed

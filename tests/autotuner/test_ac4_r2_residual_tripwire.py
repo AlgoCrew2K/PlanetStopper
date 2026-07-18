@@ -28,31 +28,41 @@ shipped-decision correctness cliff. It DOES mean the plan-Summary's "faithful
 to production exit-decision semantics" claim is true for the selection/
 diagnostic layer only, not the search layer.
 
-THIS FILE'S PURPOSE: a cheap, permanent tripwire -- NOT a new RED test for
-this cycle, and NOT something r1-tuner or r1-engine needs to make pass. It
-asserts the DESIRED FUTURE state (the undated path IS regime-faithful) and is
-marked xfail(strict=False) because that assertion is CURRENTLY false (verified
-live below, not assumed). The day R2 wires _replay_resolve_regime_exit_ticks
-(or an equivalent) into _collect_sim_returns, this test will unexpectedly PASS
-(XPASS) -- visible in the test report, never build-breaking with
-strict=False -- so the residual structurally cannot be silently forgotten.
+THIS FILE'S ORIGINAL PURPOSE (R1, historical): a cheap, permanent tripwire --
+NOT a RED test for R1, and NOT something r1-tuner or r1-engine needed to make
+pass. It asserted the DESIRED FUTURE state (the undated path IS
+regime-faithful) and was marked xfail(strict=False) because that assertion
+was false at R1 ship time (verified live, not assumed).
 
-DO NOT DELETE OR SILENCE THIS TEST without either (a) R2 wiring the fix and
-this test flipping to a real passing test (remove the xfail marker at that
-point -- do not just delete the file), or (b) an explicit, reviewed PM
-decision that the residual is permanently out of scope.
+R2 CONVERSION (this cycle, math-r2.md AC-4): R2 is the cycle that owns
+resolving this residual (see test_ac4_undated_path_regime_faithful.py for the
+full RED battery -- AST pins, real-fixture-derived tick counts, no-lookahead
+spies, insufficient-history default -- covering _collect_sim_returns,
+run_simulation, and run_simulation_crra_eu). This file's xfail marker is
+REMOVED as of this cycle: the assertion below is now a genuine RED test,
+expected to FAIL until R2's implementer wires
+_replay_resolve_regime_exit_ticks into _collect_sim_returns, then PASS for
+real once that lands. Do not silence, skip, or re-add an xfail marker to this
+test without an explicit, reviewed PM decision that the residual is
+permanently out of scope -- the historical xfail reasoning above the test
+function is retained for provenance but no longer governs this test's
+execution.
 
 BINDING RIDER (R3 pre-retune checklist, ADDENDUM 6): the retune must NEVER
-run on the mismatched optimizer -- R3 begins only after this test's xfail
-marker has been removed (i.e. R2's undated-path wiring has landed and this
-test passes for real).
+run on the mismatched optimizer -- R3 begins only after this test passes for
+real (i.e. R2's undated-path wiring has landed).
 """
 
 from __future__ import annotations
 
-import pytest
+import datetime as _dt
+import json
+import pathlib
 
 import autotuner
+import regime_classifier
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 _SYM_ID = "sym-tripwire-001"
 _DATE = "2026-04-06"
@@ -93,27 +103,10 @@ def _three_confirming_tick_sequence() -> list[dict]:
     return [_tick(0.0, 10.0), _tick(-20.0, 70.0), _tick(-21.0, 70.0), _tick(-22.0, 70.0)]
 
 
-@pytest.mark.xfail(
-    reason=(
-        "R2 residual (PM ADDENDUM 6): _collect_sim_returns (the undated "
-        "search-objective path feeding Optuna's actual per-trial score) does "
-        "not yet resolve regime-conditional exit_confirm_ticks -- it always "
-        "uses _replay_exit_tick's hardcoded default (math_engine."
-        "EXIT_CONFIRM_TICKS=3), regardless of the day's regime. This test "
-        "asserts the DESIRED regime-faithful future state and is expected to "
-        "fail until R2 wires _replay_resolve_regime_exit_ticks (or "
-        "equivalent) into _collect_sim_returns / run_simulation. See this "
-        "file's module docstring for the full ruling. DO NOT silence or "
-        "delete this xfail without either landing the R2 fix (remove the "
-        "marker, let the test pass for real) or an explicit PM decision "
-        "that the residual is permanently out of scope."
-    ),
-    strict=False,
-)
 def test_undated_path_is_regime_faithful_not_hardcoded_three_ticks() -> None:
-    """Desired future state (R2): _collect_sim_returns resolves a
-    regime-conditional exit_confirm_ticks per day, the same way
-    _collect_sim_returns_dated already does (test_ac4_regime_conditional_exit_ticks.py).
+    """Desired state (R2): _collect_sim_returns resolves a regime-conditional
+    exit_confirm_ticks per day, the same way _collect_sim_returns_dated
+    already does (test_ac4_regime_conditional_exit_ticks.py).
 
     Scenario: a day with exactly 3 magnitude-and-breakdown-qualifying
     confirming ticks after arming -- enough to fire under the hardcoded
@@ -123,20 +116,55 @@ def test_undated_path_is_regime_faithful_not_hardcoded_three_ticks() -> None:
     triggered return (empty result) -- the position needs 2 more confirming
     ticks before the regime-adjusted ladder is satisfied.
 
-    XFAIL today (verified live, not assumed): _collect_sim_returns currently
-    fires on this exact sequence (hardcoded 3-tick default), so
-    ``daily_returns`` is non-empty -- the assertion below fails as expected.
-    XPASS the day R2 lands the fix and this day is correctly evaluated as
-    mean-reverting with a 5-tick ladder that these 4 ticks cannot satisfy.
-
-    NOTE: this test does not need to construct a genuine 20-day trailing
-    history that classify_regime would label "mean-reverting" -- it pins the
-    CONSEQUENCE regime-conditioning must have (this specific tick count no
-    longer fires), which is true regardless of which mechanism R2 uses to
-    resolve the label, as long as it reaches this path at all.
+    CORRECTION (R2, this cycle): the original module-docstring claim that
+    "this test does not need to construct a genuine 20-day trailing history
+    ... regardless of which mechanism R2 uses to resolve the label, as long
+    as it reaches this path at all" is WRONG given R1's ruled no-lookahead
+    safe-default contract (ADDENDUM 2 @ a46be889): insufficient trailing
+    history (< regime_classifier.MIN_LABEL_SERIES_LENGTH=20) MUST resolve to
+    the UNCHANGED base_ticks default, never an invented fallback -- see
+    test_ac4_undated_path_regime_faithful.py's
+    test_insufficient_trailing_history_keeps_hardcoded_default, which pins
+    exactly this as a hard, correct contract. A history_data dict containing
+    ONLY the target day (as originally written here) supplies ZERO trailing
+    days, so a CORRECT regime-faithful implementation can never resolve
+    "mean-reverting" for it -- it would always fall through to the safe
+    default (3 ticks, unchanged) and this test could never legitimately pass.
+    Fixed here by adding 20 real trailing days reproducing
+    tests/fixtures/math/regime_classifier/mean_reverting_basic.json's return
+    series (the same fixture-derivation discipline as the AC-4 R2 battery),
+    so the scenario genuinely discriminates a correct fix from the bug.
     """
+    fx = json.loads(
+        (
+            _REPO_ROOT
+            / "tests"
+            / "fixtures"
+            / "math"
+            / "regime_classifier"
+            / "mean_reverting_basic.json"
+        ).read_text(encoding="utf-8")
+    )
+    label = regime_classifier.classify_regime(fx["inputs"]["returns"])
+    assert label == "mean-reverting", "Fixture self-check failed."
+
+    trailing_days: dict[str, list[dict]] = {}
+    d = _dt.date.fromisoformat("2026-03-01")
+    added = 0
+    for fraction in fx["inputs"]["returns"]:
+        while d.weekday() >= 5:
+            d += _dt.timedelta(days=1)
+        ret_pct = fraction * autotuner.RETURN_PCT_TO_FRACTION
+        trailing_days[d.isoformat()] = [_tick(ret_pct, 50.0)]
+        d += _dt.timedelta(days=1)
+        added += 1
+    assert added == len(fx["inputs"]["returns"])
+    assert max(trailing_days.keys()) < _DATE, (
+        "Trailing day construction overran the target date -- adjust the start date."
+    )
+
     ticks = _three_confirming_tick_sequence()
-    history_data = {_SYM_ID: {_DATE: ticks}}
+    history_data = {_SYM_ID: {**trailing_days, _DATE: ticks}}
 
     daily_returns = autotuner._collect_sim_returns(_PARAMS, history_data, [_SYM_ID], _DATE, {})
 
@@ -144,8 +172,5 @@ def test_undated_path_is_regime_faithful_not_hardcoded_three_ticks() -> None:
         "R2 residual RESOLVED: _collect_sim_returns no longer fires on a "
         "3-confirming-tick sequence that requires 5 ticks under "
         "MEAN_REVERTING_EXIT_TICKS-faithful semantics -- the undated "
-        "search-objective path now appears regime-faithful. This is an "
-        "XPASS, not a failure: remove this test's xfail marker (do not "
-        "delete the test) and update DE-MATH-R1-001 / the R3 pre-retune "
-        f"checklist to record that the R2 residual has landed. Got: {daily_returns!r}"
+        f"search-objective path now appears regime-faithful. Got: {daily_returns!r}"
     )

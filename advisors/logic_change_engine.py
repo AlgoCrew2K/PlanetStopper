@@ -575,10 +575,12 @@ def _evaluate_single_variant(
       invalid (AC-X5).
     - proposal has backtest_error set on failure.
     - baseline_stats is the stats dict from the baseline (or None on failure).
-    - baseline_returns_pct is the baseline's daily log-returns converted to
-      percent scale (or [] when the baseline was never backtested — the
-      tweak-not-found branch, before any backtest call). AC-13: callers reuse
-      this instead of re-backtesting the identical baseline tree a second time.
+    - baseline_returns_pct is the baseline's daily simple returns (AC-5 /
+      DE-MATH-R2-001: composer_backtest_client._extract_returns emits simple,
+      not log, returns) converted to percent scale (or [] when the baseline
+      was never backtested — the tweak-not-found branch, before any backtest
+      call). AC-13: callers reuse this instead of re-backtesting the
+      identical baseline tree a second time.
     """
     candidate_id = _make_candidate_id(symphony_id, tweak)
     rationale = _build_objective_rationale(tweak, objective)
@@ -670,7 +672,8 @@ def _evaluate_single_variant(
             baseline_returns_pct,
         )
 
-    # Convert log-returns → percent for the fold-transform (same contract as M3).
+    # Convert simple returns → percent for the fold-transform (same contract as
+    # M3; AC-5: the producer emits simple returns, not log).
     variant_returns_pct = [r * 100.0 for r in variant_result.daily_returns.values()]
     # AC-4: date-keyed pct-scale returns enable the batch PBO veto (mirrors
     # strategy_builder_engine.py:843).
@@ -946,7 +949,7 @@ def generate_reasoned_logic_candidates(
 
 
 def _backtest_returns_from_tree(raw_value: dict, symphony_id: str) -> list:
-    """Run backtest on raw_value and return log-returns list.  Returns empty list on failure."""
+    """Run backtest on raw_value and return simple-returns list.  Returns empty list on failure."""
     result = run_backtest(raw_value, symphony_id=symphony_id)
     if result.error:
         return []
