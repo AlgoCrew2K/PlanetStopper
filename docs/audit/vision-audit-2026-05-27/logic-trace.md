@@ -1,5 +1,7 @@
 # Logic Trace — Sprint 3 Final (2026-05-27)
 
+> **Superseded claim, 2026-07-18 (`DE-MATH-F7-001`):** §2.a's MC-gating row below describes `run_monte_carlo` as "returning a probability that the symphony beats SPY today" -- an accurate transcription, at the time, of the codebase's own (mislabeled) tooltip claim, not an independent verification of the statistic. Math Remediation F7 corrected the live tooltip to "Monte Carlo probability this symphony underperforms its own regime-matched historical baseline" -- SPY only selects the regime-matching historical analog days the kNN pool draws from; it is never the compared benchmark. This banner corrects the record; the audit body below is preserved unedited as a historical snapshot of the Sprint-3-era engine trace, not a rewrite. See `DE-MATH-F7-001` in `DECISIONS.md` for the full ruling.
+
 ## Metadata
 - Auditor: **logic-narrator** (vision-audit team)
 - Worktree: `.claude/audit-worktrees/vision-audit`
