@@ -326,7 +326,14 @@
             if (!sym || !sym.id) return;
             fetch('/api/chart/' + sym.id)
                 .then(function (r) { return r.json(); })
-                .then(function (data) { renderSparkline(sym.id, data, sym); renderMcDial(sym.id, data); })
+                .then(function (data) {
+                    renderSparkline(sym.id, data, sym);
+                    // Thread the triggered/exited flag onto chartData so renderMcDial
+                    // can actively render the honest exited state instead of scanning
+                    // history for a (possibly stale, resurrected) reading.
+                    data.triggered = sym.triggered;
+                    renderMcDial(sym.id, data);
+                })
                 .catch(function () {});
         });
     }
@@ -658,11 +665,18 @@
         var last = data.slice(-1)[0] || {};
         sym = sym || {};
 
-        // mc_prob: scan data array backwards (top-level is null); skip sentinels
+        // mc_prob: for a TRIGGERED (exited) symphony, never scan history for a
+        // stale pre-trigger reading -- once post-trigger rows carry the honest
+        // None sentinel (AC-1), a backward null-scan cannot tell "no data yet"
+        // from "exited" and would resurrect the last real pre-trigger value as
+        // if it were current. Short-circuit on trigger STATE before the scan.
         var mcProb = null;
-        for (var i = data.length - 1; i >= 0; i--) {
-            var candidate = sentinelToNull(data[i].mc_prob != null ? data[i].mc_prob : null);
-            if (candidate != null) { mcProb = candidate; break; }
+        if (!sym.triggered) {
+            // mc_prob: scan data array backwards (top-level is null); skip sentinels
+            for (var i = data.length - 1; i >= 0; i--) {
+                var candidate = sentinelToNull(data[i].mc_prob != null ? data[i].mc_prob : null);
+                if (candidate != null) { mcProb = candidate; break; }
+            }
         }
 
         // stop distance = shadow_hwm - current stop level (sentinel-guard both)
@@ -688,10 +702,17 @@
         var mcText = mcProb != null ? mcProb.toFixed(1) + '%' : '—';
         setEl('dp-rm-mc', mcText);
         var mcBar = document.getElementById('dp-rm-mc-bar');
-        if (mcBar && mcProb != null) {
-            var pct = Math.max(0, Math.min(100, mcProb));
-            mcBar.style.width = pct + '%';
-            mcBar.style.background = mcProb < 15 ? cs('--studio-warn') : (mcProb > 80 ? cs('--studio-ink-dim') : cs('--studio-accent'));
+        if (mcBar) {
+            if (mcProb != null) {
+                var pct = Math.max(0, Math.min(100, mcProb));
+                mcBar.style.width = pct + '%';
+                mcBar.style.background = mcProb < 15 ? cs('--studio-warn') : (mcProb > 80 ? cs('--studio-ink-dim') : cs('--studio-accent'));
+            } else {
+                // Neutral reset -- never leave the bar showing a stale
+                // width/color from a previous (possibly pre-trigger) render.
+                mcBar.style.width = '0%';
+                mcBar.style.background = cs('--studio-ink-faint');
+            }
         }
 
         setEl('dp-rm-stop', stopDist);
@@ -829,6 +850,25 @@
     var MC_CIRCUMFERENCE = 94.25; // 2 * π * 15
 
     function renderMcDial(symId, chartData) {
+        var dials = document.querySelectorAll('[data-testid="mc-dial"][data-sym-id="' + symId + '"]');
+
+        // Exited/triggered: actively render an honest "-" state. Never scan
+        // history for a stale pre-trigger reading (that would resurrect it as
+        // "current"), and never silently skip the render (that freezes the
+        // dial at whatever was last drawn) -- both are the F7 defects.
+        if (chartData && chartData.triggered) {
+            dials.forEach(function (svg) {
+                var arc = svg.querySelector('.mc-arc');
+                var text = svg.querySelector('.mc-text');
+                if (arc) {
+                    arc.setAttribute('stroke-dashoffset', MC_CIRCUMFERENCE.toFixed(2));
+                    arc.style.stroke = cs('--studio-ink-faint');
+                }
+                if (text) text.textContent = '—';
+            });
+            return;
+        }
+
         // mc_prob in chart data points is 0-100 scale; top-level chartData.mc_prob may be null.
         // Use last non-null mc_prob from data array, falling back to top-level fields.
         var mcProb = null;
@@ -847,7 +887,6 @@
         var arcColor = mcProb < 15 ? cs('--studio-warn')
                      : mcProb > 80 ? cs('--studio-ink-dim')
                      : cs('--studio-accent');
-        var dials = document.querySelectorAll('[data-testid="mc-dial"][data-sym-id="' + symId + '"]');
         dials.forEach(function (svg) {
             var arc = svg.querySelector('.mc-arc');
             var text = svg.querySelector('.mc-text');
@@ -1033,9 +1072,10 @@
             // Update MC dial from sym.mc_prob on every poll. renderMcDial accepts a
             // chartData object; pass a minimal stub so the arc updates without a
             // full chart fetch. The mc-dial querySelector is inside renderMcDial.
-            if (sym.mc_prob != null) {
-                renderMcDial(id, { mc_prob: sym.mc_prob, data: [] });
-            }
+            // Always call (never skip on null) -- an exited symphony's mc_prob is
+            // honestly null (AC-1), and renderMcDial must actively render that
+            // state rather than freeze at whatever was last drawn.
+            renderMcDial(id, { triggered: sym.triggered, mc_prob: sym.mc_prob, data: [] });
 
             // Find the card element by data-sym-id attribute; there may be one in
             // active section and one in standby — update whichever exists.

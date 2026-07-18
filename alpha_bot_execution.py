@@ -73,6 +73,17 @@ EXECUTION_START_TIME = os.getenv("EXECUTION_START_TIME", "09:30")
 # to avoid open-volatility false exits (V2, AC-V2.1). TP and Trailing Stop are unaffected.
 VWAP_OPEN_WINDOW_GRACE_MINUTES = int(os.getenv("VWAP_OPEN_WINDOW_GRACE_MINUTES", "15"))
 
+# --- MAPERF-15 STALENESS TRIPWIRE (AC-4, DE-MATH-F7-001) ---
+# Consecutive 1-minute engine cycles (this project's cadence -- CLAUDE.md
+# "Engine runs 1-minute cadence during market hours") of a bit-static
+# post-trigger current_return before logging a single loud warning.
+# docs/research/composer/maperf15-post-sale-lpc-semantics.md's evidence shows
+# Composer's last_percent_change moving within 3 seconds under normal live
+# conditions -- 30 cycles (~30 minutes) is a conservative floor well above
+# any legitimate quiet period, chosen to avoid false alarms while still
+# catching a genuine tracking-behavior freeze within the same session.
+MAPERF15_STATIC_LPC_CYCLES = 30
+
 # --- STRATEGY PARAMETERS ---
 TRIGGER_THRESHOLD_PCT = float(os.getenv("TRIGGER_THRESHOLD_PCT", "15.0"))
 MAX_SQUEEZE_FLOOR = float(os.getenv("MAX_SQUEEZE_FLOOR", "0.20"))
@@ -626,6 +637,14 @@ def main():
         # data gate: US equity open is always 09:30 ET regardless of EXECUTION_START_TIME
         REAL_MARKET_OPEN = dt_time(9, 30)
 
+        # AC-4: real market-hours discriminator for the MAPERF-15 tripwire,
+        # independent of --force. force_run bypasses the closed-market
+        # early-returns below (:636, :952) so the per-symphony loop can still
+        # execute on a closed day/pre-open — this flag lets the tripwire
+        # itself refuse to fire in that case rather than trusting "the loop
+        # ran" as a proxy for "the market is open".
+        maperf15_market_hours_now = is_trading and REAL_MARKET_OPEN <= current_time < market_close
+
         # Fully closed: holiday/weekend, after post-mortem window, or before 09:30 —
         # persist Composer inception fields and sleep. The pre-09:30 case preserves
         # bc65d57 behavior: dashboard gets fresh CR/MDD even before market open.
@@ -932,6 +951,42 @@ def main():
                         # AC-3: scope this row to the current position epoch.
                         position_epoch=bot_state[s_id].get("position_epoch"),
                     )
+
+                    # AC-4 (DE-MATH-F7-001): passive MAPERF-15 staleness
+                    # tripwire. Watches THIS raw current_return (Composer
+                    # last_percent_change * 100, the value just written to
+                    # shadow_history above) for a triggered symphony -- NOT
+                    # the action-phase True-Shadow-Return override, which is a
+                    # completely separate, engine-reconstructed value that
+                    # never reaches shadow_history. Never raises, never gates
+                    # any decision -- passive bookkeeping + a single log line.
+                    if is_post_trigger and maperf15_market_hours_now:
+                        _prev_raw_return = bot_state[s_id].get("_maperf15_last_raw_return")
+                        if _prev_raw_return is not None and current_return == _prev_raw_return:
+                            _static_streak = bot_state[s_id].get("_maperf15_static_streak", 0) + 1
+                        else:
+                            _static_streak = 0
+                        bot_state[s_id]["_maperf15_static_streak"] = _static_streak
+                        if _static_streak >= MAPERF15_STATIC_LPC_CYCLES and not bot_state[s_id].get(
+                            "_maperf15_warned"
+                        ):
+                            logging.warning(
+                                "[MAPERF-15] %s (%s): current_return static across "
+                                "%d consecutive market-hours cycles post-trigger -- "
+                                "DE-GUARD-ALPHA-SAVED-001's if-held source "
+                                "(shadow_history.current_return / Composer "
+                                "last_percent_change) may have stopped tracking. "
+                                "See docs/research/composer/"
+                                "maperf15-post-sale-lpc-semantics.md.",
+                                s_id,
+                                sym.get("name", ""),
+                                MAPERF15_STATIC_LPC_CYCLES,
+                            )
+                            bot_state[s_id]["_maperf15_warned"] = True
+                    else:
+                        bot_state[s_id]["_maperf15_static_streak"] = 0
+                        bot_state[s_id]["_maperf15_warned"] = False
+                    bot_state[s_id]["_maperf15_last_raw_return"] = current_return
 
                     # AC-2 / D12 bookkeeping: persist the current cycle's
                     # holdings-positive boolean so the NEXT cycle's
@@ -1538,7 +1593,29 @@ def main():
                     print(f"  🩸 {symphony_name[:35]} VWAP Bleed Limit Reached. Forcing exit.")
 
                 safe_name = symphony_name[:35].encode("ascii", "ignore").decode("ascii")
-                arm_prob_str = f"{prob_underperforming:.1f}%" if mc_available else "N/A"
+                # DE-MATH-F7-001 (AC-1): post-trigger, prob_underperforming is
+                # computed against a fictional 0% baseline -- the True-Shadow-
+                # Return override above (:1189-1204) swaps in frozen
+                # current_holdings with no last_percent_change, collapsing
+                # run_monte_carlo's baseline to 0. This guards the console
+                # print AND the two persist sites below (bot_state +
+                # chart_history) against that fabricated value, reusing the
+                # SAME bot_state[symphony_id]["triggered"] flag the PA-M4
+                # comment above already reads for the identical reason. All
+                # decision math above (arm/disarm/TP-confirm/exit-confirm/
+                # VWAP) already consumed the real, unguarded
+                # prob_underperforming for this cycle -- an untriggered
+                # symphony's displayed/persisted value stays byte-identical.
+                # ADDENDUM 2 timing: on the cycle the stop actually fires,
+                # this flag is still False (it flips at :1808, later, in the
+                # execution-queue pass) so that cycle's real reading is never
+                # suppressed.
+                is_triggered_now = bot_state[symphony_id]["triggered"]
+                persisted_mc_prob = None if is_triggered_now else prob_underperforming
+                if is_triggered_now:
+                    arm_prob_str = "Exited"
+                else:
+                    arm_prob_str = f"{prob_underperforming:.1f}%" if mc_available else "N/A"
                 print(
                     f"  -> {safe_name}: Ret: {current_return:.2f}% | HWM: {high_water_mark:.2f}% | Stop Dist: {active_trailing_stop:.2f}% | ArmProb: {arm_prob_str}"  # noqa: E501  # un-wrappable long line
                 )
@@ -1546,7 +1623,7 @@ def main():
                 bot_state[symphony_id]["name"] = symphony_name
                 bot_state[symphony_id]["account"] = account
                 bot_state[symphony_id]["current_return"] = current_return
-                bot_state[symphony_id]["mc_prob"] = prob_underperforming
+                bot_state[symphony_id]["mc_prob"] = persisted_mc_prob
                 bot_state[symphony_id]["stop_trigger"] = stop_trigger_level
                 bot_state[symphony_id]["active_stop_distance"] = active_trailing_stop
                 bot_state[symphony_id]["symphony_vol"] = symphony_vol
@@ -1595,7 +1672,7 @@ def main():
                         "return": current_return,
                         "stop": tracked_stop,
                         "event": chart_event,
-                        "mc_prob": prob_underperforming,
+                        "mc_prob": persisted_mc_prob,
                         "vol": symphony_vol,
                         "vwap_diff": weighted_vwap_diff,
                         "base_atr_pct": 0.0,

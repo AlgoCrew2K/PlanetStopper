@@ -7111,3 +7111,366 @@ bullets and phase-2-check item 6). Predecessor `DE-MATH-R1-001` (PR #97,
 merged `c38af283`). R3 (live disarm-band ruling + retune) remains
 HARD-GATED on R1+R2's combined residual checklist -- not covered by this
 entry.
+
+## DE-MATH-F7-001 -- Math Remediation F7: honest post-trigger MC display + MAPERF-15 staleness tripwire (2026-07-18)
+
+Branch: `fix/math-f7` | Base: `origin/main` (post-R2) `f2932368` | HEAD (this entry): `ed194259` (AC-1/AC-2/AC-3/AC-4/AC-5 all GREEN; plan rounds closed at `a904374d` + the plan-approval-round rulings)
+
+### Summary
+
+F7 is the fourth executed phase of the math remediation program launched from
+the app-math audit (`DE-MATH-AUDIT-001`, `docs/audit/math-audit/VERDICT.md`,
+finding ma-core F7 + the MAPERF-15 addendum). Unlike R0-R2 (which fixed
+validation/scoring math), F7 is a display-truth cycle: it closes the backlog
+item R2's own Residual #3 opened ("a passive staleness tripwire riding the F7
+fictional-MC-history quarantine work ... not scheduled this cycle" -- see
+`DE-MATH-R2-001` above) and fixes a display defect the audit flagged as JOINT
+HIGH-boundary -- never a money-path bug, but a number the operator reads every
+cycle that meant nothing.
+
+**The defect:** after a symphony's guard exit fires, `alpha_bot_execution.py`
+keeps computing `prob_underperforming` (`math_engine.run_monte_carlo`) every
+cycle, but the pre-existing TRUE SHADOW RETURN OVERRIDE swaps its `holdings`
+input for `bot_state[symphony_id]["current_holdings"]` -- a frozen
+ticker+allocation snapshot with no `last_percent_change` -- so every input
+return collapses to zero and the resulting probability is fabricated. Pre-F7
+this fabricated number was persisted to two sites and rendered on three
+genuinely-live operator surfaces (MC dial, detail-view Risk Math, chart
+fallback), plus the main-table MC Prob column -- which f7-dash found, and
+f7-review's independent call-path falsification CONFIRMED, is an ORPHANED
+render path (no live DOM consumer since the card-SPA redesign removed the
+`morphdom` injector) -- a discrepancy with the audit's own premise, which
+counted the main table as live. The MC Prob tooltip additionally
+mis-described the
+statistic as "probability this symphony beats SPY" on both the live and
+(if ever re-wired) the orphaned surface.
+
+**Ruled fix (all five ACs):**
+- **AC-1:** guard the value at persist time, not the MC math. `is_triggered_now
+  = bot_state[symphony_id]["triggered"]` gates both persist sites to a bare
+  `None` sentinel.
+- **AC-2:** every render consumer of `mc_prob` actively renders an honest
+  exited state for a triggered symphony -- never a stale frozen number, never
+  a silent skip.
+- **AC-3:** the tooltip ships a single corrected sentence; the proposed second
+  (directional) sentence was code-verified BACKWARDS and dropped rather than
+  shipping a second misselling.
+- **AC-4:** a passive MAPERF-15 staleness tripwire (log-only, never gates)
+  closes R2's backlog item.
+- **AC-5:** zero diff to `math_engine.py`; no exit-decision math touched.
+
+No live disarm-band or squeeze-floor changes (R3, untouched), no
+shadow-portfolio MC statistic invented (out of scope, R4-adjacent if ever
+wanted). Ship path: PR to origin -- engine-file caution applies
+(`alpha_bot_execution.py` is touched) even though the change is
+display/diagnostic-only, no exit-decision math altered.
+`feature-plans/math-f7.md` plus its ADDENDUM + ADDENDUM 2 + the
+plan-approval-round rulings is the plan of record -- the addenda ARE the
+decision record for this cycle, same convention as R1/R2.
+
+**This entry is a living skeleton, filled in incrementally as each piece
+lands** (same convention as R1/R2). Both surfaces are GREEN and code is
+FROZEN at `ed194259` (engine `ed194259`, dash `fa91b8ee`, test-tightening
+`1b5c7f36`/`6f2e93bc`). Still outstanding: f7-review's combined verdict and
+the PM's independent battery + live E2E gate -- see Verification below,
+updated in place as each lands.
+
+**Finding-ID translation table:**
+
+| VERDICT.md ID | math-f7.md AC | Ruled design (final) | Status @ this entry |
+|---|---|---|---|
+| ma-core F7 (JOINT HIGH-boundary) | AC-1/AC-2/AC-3 | Persist-time `None` guard on both sites + four-surface honest render + single-sentence corrected tooltip | GREEN @ `ed194259`/`fa91b8ee` |
+| ma-perf addendum / MAPERF-15 (conditional, RESOLVED tracks-logic in R2) | AC-4 | Passive staleness tripwire, `MAPERF15_STATIC_LPC_CYCLES=30`, log-only, never gates | GREEN @ `ed194259` |
+| (no-regression exit criterion) | AC-5 | `math_engine.py` zero diff; R1/R2 batteries stay green | GREEN (confirmed by both implementers + `tests/test_scope_guard_f7.py`) |
+
+### Decision: AC-1 (ma-core F7) -- persist-time honest sentinel, two sites, one guard flag
+
+Full technical detail: `docs/generated/alpha_bot_execution.md`'s "Post-Trigger
+MC Display Honesty" section. Record here: the fabricated value is persisted
+at BOTH `bot_state[symphony_id]["mc_prob"]` (`:1626`) and
+`chart_history[...]["mc_prob"]` (`:1675`) -- the plan's original single-site
+framing (`:1549`) was expanded to both sites mid-plan-round (ADDENDUM 2)
+after f7-review's baseline recon traced the chart surface's own
+history-reading consumer. Both are guarded by the same `is_triggered_now =
+bot_state[symphony_id]["triggered"]` (`:1613`) read. Guard condition timing is
+deliberate and independently re-confirmed by f7-engine: `triggered` does not
+flip to `True` until the execution-queue drain (`:1885`), well after both
+persist sites run for that cycle -- so the triggering cycle's real,
+pre-override probability is never suppressed; only cycle N+1 onward, once the
+shadow override is active, does the guard suppress the value. No decision
+function in the six math layers (arm/disarm/TP-confirm/exit-confirm/VWAP)
+ever receives a guard-produced `None` -- confirmed by
+`tests/execution/test_f7_ac1_persist_guard.py` and the scope guard below.
+
+**Sentinel shape: bare `None`, ratified, no numeric fallback.** The plan
+conditionally proposed the codebase's existing numeric-sentinel idiom
+(`isSentinel |v|>=900`) as a fallback if any consumer choked on `None`.
+f7-engine traced every downstream reader before this cycle shipped and found
+none: `app.py`'s poll passthrough (`:2391`), `_FROZEN_SYM_DEFAULTS` (already
+`None`-shaped), the dashboard's `sentinelToNull` (null-safe), and
+`templates/table_partial.html`'s MC Prob cell (`:98`, pre-existing `is not
+none` guard). The conditional ratifies to unconditional: `None`, no fallback
+needed.
+
+**Left untouched, by design:** the `execution_queue` item construction
+(`:1764`) and the `record_exit_trigger`/`reporting.send_discord_alert` calls
+(`:1899`/`:1939`) all run on the triggering cycle itself, before the shadow
+override is active -- genuine one-time real-value snapshots, not fabricated
+numbers; guarding them would have discarded real data. f7-review verified
+these are diff-free.
+
+**Minor honesty sweep, ruled IN at plan approval:** the console `ArmProb`
+print (`:1613-1618`) gets the same guard -- post-trigger it now prints
+`"Exited"` to the operator-readable journal instead of the fabricated
+percentage. Not a math change; no golden required.
+
+### Decision: AC-2 (ma-core F7) -- four-surface honest render, no resurrection, no freeze
+
+Full technical detail: `docs/generated/static_index_js.md`'s new API entries
+for `renderMcDial` and the detail-view chart-fallback. Record here: two
+distinct defect shapes were named as binding design constraints during
+f7-review's baseline recon (ADDENDUM), both confirmed present pre-fix and
+both fixed:
+
+1. **Chart-fallback resurrection (the cycle's sharpest case):** the
+   pre-existing backward null-scan over chart history (`static/index.js:674`
+   area) cannot distinguish "no data yet" from "exited" -- for a triggered
+   symphony it would resurrect the last real PRE-trigger `mc_prob` and
+   display it as current. Fixed by short-circuiting the scan entirely
+   (`sym.triggered` check, `:674`) before it runs, and by threading
+   `data.triggered = sym.triggered` onto the chart payload (`:334`) so
+   `renderMcDial` can make the same decision.
+2. **MC dial stale-skip:** the pre-existing poll-path render call only fired
+   `if (sym.mc_prob != null)` (`static/index.js:1075` area, pre-fix) -- since
+   an exited symphony's `mc_prob` is now honestly `null` (AC-1), this froze
+   the dial at whatever was last drawn instead of updating it. Fixed by
+   calling `renderMcDial` unconditionally every poll, passing `sym.triggered`
+   explicitly.
+
+`renderMcDial` (`:852`) gains an explicit triggered branch (`:859`):
+full-circumference arc in a faint color + `'—'` text, returned before the
+non-triggered scan logic runs. The detail-view Risk Math bar
+(`#dp-rm-mc-bar`) gains a neutral reset (`:711`, a sufficiency-review gap
+caught by f7-test post-GREEN, `6f2e93bc`) -- width `0%`, faint color -- so it
+never keeps showing a stale width/color from a previous render.
+
+**"Already works" is not evidence, honored:** the two surfaces that already
+had a `None`-safe guard before this cycle (`templates/table_partial.html:98`'s
+`"---"` cell render, the detail view's pre-existing `sentinelToNull`) still
+got tests exercising JSON-serialized `None` through the real poll path
+(`tests/app/test_f7_ac2_poll_path_null_passthrough.py`), per the ADDENDUM's
+explicit ruling that pre-existing guards are not proof they work end-to-end.
+
+### Decision: AC-3 (ma-core F7) -- single-sentence corrected tooltip, no re-misselling
+
+`templates/table_partial.html`'s MC Prob column header tooltip changes from
+*"Monte Carlo probability this symphony beats SPY over the simulation
+horizon. Low values arm and trigger the trailing stop -- the bot expects
+underperformance."* to a single sentence: **"Monte Carlo probability this
+symphony underperforms its own regime-matched historical baseline."** SPY
+only selects the regime-matching historical analog days the kNN pool draws
+from -- it is never the compared benchmark, which the original tooltip
+mis-stated.
+
+**The proposed directional second sentence was code-verified BACKWARDS and
+dropped -- this is the interesting finding, not just a wording choice.** The
+same statistic, `prob_underperforming`, gates two mechanisms in OPPOSITE
+directions at different points in a position's lifecycle:
+- **ARM** (trailing-stop): fires on a LOW-middle band,
+  `acc_TAKE_PROFIT_MC_PCT (5.0) <= prob_underperforming <
+  acc_TRIGGER_THRESHOLD_PCT (15.0)` (`alpha_bot_execution.py:1371-1378`);
+  DISARM requires `prob_underperforming > acc_TRIGGER_THRESHOLD_PCT * 2
+  (30.0)` AND `current_return > 0.0` (`:1391-1397`).
+- **CONFIRM** (the already-armed position actually exits): requires prob to
+  have RISEN to HIGH, `prob_underperforming >= MC_BREAKDOWN_THRESHOLD
+  (60.0)` (`math_engine.compute_exit_confirmation`, `:552`).
+
+So "low values arm" is true for the arm gate, but "low values trigger" is
+false -- the confirm/trigger gate needs the opposite (high) direction, later
+in the same position's life. A one-line tooltip cannot carry a two-gate,
+opposite-direction, lifecycle-staged mechanism without becoming a
+multi-clause explainer, and any shorthand risks reintroducing a
+confidently-wrong claim -- replacing one misselling ("beats SPY") with
+another ("low values arm and trigger", true for one gate, false for the
+other). Ruled: ship the corrected statistic definition only; no directional
+claim. `tests/dashboard/test_f7_ac3_tooltip_first_sentence.py` pins the final
+wording.
+
+**Second hit swept and scope-decided, not silent:**
+`.design-handoff/project/templates/table_partial.html:46` (a Claude-Design
+tracked export bundle) carries the identical pre-fix "beats SPY" tooltip
+text. RULED SCOPE-OUT, not fixed, with the reasoning recorded per the
+ADDENDUM's "silence is a finding" standard: both f7-dash and f7-engine
+independently grepped `app.py` and found zero references to this path
+(`Flask(__name__)`, no `template_folder`/custom loader override --
+architecturally unreachable, not merely unused); the bundle's own README
+instructs against copying its structure; it is a frozen, non-live, non-served
+snapshot owned by the external Claude-Design authority (project memory:
+Claude-Design owns this UI). The live, operator-facing tooltip at
+`templates/table_partial.html:46` fully covers the real surface. Editing
+another authority's frozen artifact for zero functional gain was judged out
+of scope; a re-sync, if ever wanted, is a Claude-Design task, not F7's.
+`.design-handoff/` was not touched.
+
+### Decision: AC-4 (MAPERF-15 addendum, closes R2's backlog item) -- passive staleness tripwire
+
+Closes the backlog item R2's own Residual #3 opened: *"a passive staleness
+tripwire riding the F7 fictional-MC-history quarantine work ... not scheduled
+this cycle"* (see `DE-MATH-R2-001` above; `feature-plans/math-remediation-program.md`
+phase-2-check item 6 updated in place to record this closure).
+`docs/research/composer/maperf15-post-sale-lpc-semantics.md` empirically
+confirmed (two independent live-production data pulls, source-code trace)
+that Composer's `last_percent_change` keeps tracking a triggered symphony's
+model-logic performance rather than freezing at the now-cash account state --
+refuting the audit's feared "$0-saved for every live-sold symphony" failure
+mode -- but its own Option B flagged that a silent future Composer behavior
+change would be undetectable without an active check.
+
+Full technical detail: `docs/generated/alpha_bot_execution.md`'s "Post-Trigger
+MC Display Honesty" section, AC-4 paragraph. Record here:
+`MAPERF15_STATIC_LPC_CYCLES = 30` (`alpha_bot_execution.py:85`) is a
+conservative floor -- the research doc observed the underlying field moving
+within 3 seconds under normal live conditions, so ~30 minutes of bit-static
+readings during real market hours is a genuine anomaly signal, not noise.
+The tripwire (`:963-989`) is gated on `maperf15_market_hours_now` (`:646`), a
+real-market-hours discriminator independent of `--force`, so a forced run on
+a closed day/pre-open can never fire a false alarm.
+
+**Latch semantics, ruled intentional:** the warning fires once per continuous
+stale episode (`_maperf15_warned` suppresses repeats) and the streak resets
+to 0 the instant the symphony leaves the triggered-AND-market-hours state --
+a fresh session re-accumulates the full 30-cycle floor before it can warn
+again. Never raises, never gates any decision, no schema change.
+`tests/execution/test_f7_ac4_maperf15_tripwire.py` covers the
+streak/latch/reset/market-hours-gate behavior.
+
+**Why the `else` branch resets `_maperf15_warned` too, not just the streak
+(f7-review's one non-blocking ask):** if only the streak reset and
+`_maperf15_warned` stayed `True` forever after the first warning, a
+persistent staleness condition spanning multiple sessions (e.g. Composer's
+tracking genuinely breaks and stays broken for a week) would warn exactly
+ONCE in its entire lifetime and then latch silent -- indistinguishable from
+a real fix. Resetting `_maperf15_warned = False` alongside the streak means
+each new session (or each re-trigger) gets its own fresh 30-cycle floor and
+its own one-time warning opportunity: a PERSISTENT problem re-warns every
+session it recurs in, while a one-off blip (the symphony untriggers, or the
+market closes) still only ever produced one warning for that specific stale
+episode. The same-session latch behavior (streak N-1/N/N+5, no duplicate
+warnings within one continuous episode) is tested by
+`tests/execution/test_f7_ac4_maperf15_tripwire.py`; the cross-session reset
+itself is documented-intentional here, not separately tested this cycle.
+**Backlog (deliberate deferral, zero money risk -- the tripwire is log-only
+and never gates a trade decision):** (a) add an inline code comment at the
+`else` branch stating this reset rationale directly in
+`alpha_bot_execution.py`; (b) add a dedicated test exercising the
+cross-session reset path explicitly (warn once, leave the
+triggered/market-hours state, re-enter it, re-accumulate, warn again).
+
+### Decision: AC-5 -- zero-diff scope guard
+
+`math_engine.py` carries literal zero diff for this cycle -- confirmed
+independently by both f7-engine and f7-dash at plan-approval time and
+structurally enforced by `tests/test_scope_guard_f7.py`. No live disarm-band,
+squeeze-floor, or exit-decision logic was touched; the entire fix is a
+persist/display-time guard in `alpha_bot_execution.py` plus render-only fixes
+in `static/index.js` + a tooltip-text change in `templates/table_partial.html`.
+R1's replay-fidelity boundary and R2's validation-statistics fixes are both
+unaffected (no shared code paths touched).
+
+### Files changed (this cycle, `f2932368`..`ed194259`)
+
+- `alpha_bot_execution.py` -- `MAPERF15_STATIC_LPC_CYCLES` constant,
+  `maperf15_market_hours_now` discriminator, the AC-4 tripwire block, the
+  AC-1 persist guard (both sites + console print)
+- `static/index.js` -- `renderMcDial` exited branch, chart-fetch `triggered`
+  threading, detail-view mcProb short-circuit + Risk Math bar neutral reset,
+  poll-path unconditional `renderMcDial` call
+- `templates/table_partial.html` -- MC Prob tooltip corrected (single
+  sentence)
+- `tests/execution/test_f7_ac1_persist_guard.py`,
+  `tests/execution/test_f7_ac4_maperf15_tripwire.py`,
+  `tests/dashboard/test_f7_ac2_render_surfaces_js.py`,
+  `tests/dashboard/test_f7_ac3_tooltip_first_sentence.py`,
+  `tests/app/test_f7_ac2_poll_path_null_passthrough.py`,
+  `tests/fixtures/dashboard/f7_ac2_poll_path/api_state_triggered_none_mc.json`,
+  `tests/test_scope_guard_f7.py` -- RED battery + test-tightening
+  (`1b5c7f36`/`6f2e93bc`)
+- Not touched: `math_engine.py` (AC-5), `.design-handoff/` (AC-3 scope-out),
+  `database.py` (no schema change)
+
+**Backlog items surfaced this cycle, explicitly OUT of F7 scope -- neither
+is an F7 defect, F7 never touched either:**
+
+1. **`templates/table_partial.html`'s main-table surface is a CONFIRMED
+   ORPHANED render path** (f7-dash's finding, independently confirmed by
+   f7-review's own call-path falsification): no live DOM consumer since the
+   card-SPA redesign removed
+   the `morphdom` injector that used to inject this template's output. This
+   is a genuine discrepancy with the audit's own premise (`VERDICT.md`
+   counted the main table as one of the four live surfaces). F7 fixed the
+   tooltip/value there regardless -- template-correct, defensively honest
+   if the surface is ever re-wired -- but did NOT re-wire it (scope
+   discipline; re-wiring would be new functionality, not a display-truth
+   fix). Corroborating evidence: the same template's "View Intraday Chart"
+   button (`table_partial.html:170`) calls `onclick="openChartModal(...)"`,
+   a function that is NOT defined anywhere in the live `static/` JS --
+   `openChartModal` only exists in the frozen `.design-handoff/` mockup
+   (`.design-handoff/project/templates/index.html:1399`) -- consistent
+   with this surface having been superseded and not exercised by any real
+   user path. **Backlog: decide delete-vs-rewire** (likely intentionally
+   dead post-SPA).
+2. **The dead `openChartModal()` reference itself** (`table_partial.html:170`,
+   undefined in any live JS) is a second, independent pre-existing defect
+   on the same orphaned surface -- if the surface is ever re-wired, this
+   button would throw a JS error today. **Backlog, out of F7 scope.**
+
+Both items predate F7 and are unrelated to the MC-display fix; recorded here
+so they aren't lost, not because F7 caused or is responsible for either.
+
+### Verification
+
+**Code review LANDED.** f7-review's combined verdict, as relayed by
+team-lead (not a verbatim quote from f7-review's own message -- this
+entry summarizes the relay, matching the substance below):
+
+> **APPROVE-pending-PM-live-gate** at `ed194259`. Zero BLOCKs. AC-1's
+> two-persist-site guard, AC-2's render honesty across the three
+> genuinely-live surfaces, AC-3's single-sentence tooltip correction, and
+> AC-4's staleness tripwire all independently verified against live
+> source. `math_engine.py` zero-diff
+> confirmed. One non-blocking ask: document why the AC-4 tripwire's `else`
+> branch resets `_maperf15_warned` alongside the streak -- addressed in the
+> AC-4 Decision section above (enables next-session re-warn on persistent
+> staleness rather than a forever-silent latch after one blip), with two
+> polish items recorded as backlog (inline code comment; a dedicated
+> cross-session-reset test), both deliberate deferrals since the tripwire
+> is log-only and carries zero trade/money risk. The main-table render
+> path's orphaned status (no live DOM consumer post-card-SPA) was
+> independently confirmed via call-path falsification, matching f7-dash's
+> finding -- a genuine discrepancy with the audit's own live-surface count,
+> recorded as backlog, not an F7 defect.
+
+**Still outstanding at this entry:** the PM's independent battery + live
+behavioral/functional E2E gate (per standing protocol: tests-green is
+necessary, never sufficient -- the PM must LOOK at the three genuinely-live
+render surfaces (MC dial, detail Risk Math, chart fallback) plus the
+main-table column (template-correct, confirmed orphaned) on a running local
+dashboard with a triggered symphony seeded, and confirm the tripwire log
+path). This section is filled in-place as each lands, exactly as
+`DE-MATH-R1-001`/`DE-MATH-R2-001` were built up commit by commit -- never
+re-created.
+
+### Reference
+
+`DE-MATH-F7-001`; branch `fix/math-f7`; plan `feature-plans/math-f7.md` +
+ADDENDUM (`1e6a9025`) + ADDENDUM 2 (`a904374d`) + the plan-approval-round
+rulings (ArmProb honesty sweep IN, tooltip second-sentence dropped,
+`.design-handoff` scope-out) -- the addenda ARE the decision record for this
+cycle; findings basis `docs/audit/math-audit/VERDICT.md` (`DE-MATH-AUDIT-001`,
+ma-core F7 + the MAPERF-15 addendum) and
+`docs/research/composer/maperf15-post-sale-lpc-semantics.md` (AC-4's design
+basis). Predecessors `DE-MATH-R0-001` / `DE-MATH-R1-001` (PR #97, merged
+`c38af283`) / `DE-MATH-R2-001` (PR #98, merged `0f1c508f`) -- this cycle
+closes R2's own Residual #3 backlog item. Program charter
+`feature-plans/math-remediation-program.md` phase-2-check item 6 updated in
+place on write (mirrors R2's convention) to record the tripwire shipping.

@@ -1,0 +1,25 @@
+{
+  "_provenance": "hand-authored; schema derived from alpha_bot_execution.py bot_state structure and tests/fixtures/dashboard/cards_live/api_state_with_cards.json. Represents the POST-FIX bot_state shape for F7 AC-1/AC-2: a TRIGGERED symphony whose mc_prob has already been suppressed to the honest sentinel (None/null) at the persist site. Used to prove /api/state's JSON serialization passes that null through unchanged (never 0, never a dropped key).",
+  "sym_f7_triggered": {
+    "id": "sym_f7_triggered",
+    "name": "F7 AC2 Triggered Symphony",
+    "account": "ACC1",
+    "current_return": -1.2,
+    "current_value": 9880.0,
+    "armed": false,
+    "triggered": true,
+    "triggered_reason": "Trailing Stop",
+    "triggered_at_return": -1.2,
+    "mc_prob": null
+  },
+  "sym_f7_untriggered": {
+    "id": "sym_f7_untriggered",
+    "name": "F7 AC2 Untriggered Symphony",
+    "account": "ACC1",
+    "current_return": 2.4,
+    "current_value": 10240.0,
+    "armed": true,
+    "triggered": false,
+    "mc_prob": 13.34
+  }
+}
