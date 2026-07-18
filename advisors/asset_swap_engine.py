@@ -1514,7 +1514,7 @@ def propose_operator_swap(
 
 
 def _backtest_returns_from_tree(raw_value: dict, symphony_id: str) -> list:
-    """Run backtest on raw_value and return log-returns list.  Returns empty list on failure."""
+    """Run backtest on raw_value and return simple-returns list.  Returns empty list on failure."""
     result = run_backtest(raw_value, symphony_id=symphony_id)
     if result.error:
         return []
