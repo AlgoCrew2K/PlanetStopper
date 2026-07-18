@@ -455,6 +455,9 @@ _CPCV_K_TEST_GROUPS = 2  # k: number of groups held out as test per split
 _CPCV_N_SPLITS = math.comb(_CPCV_N_GROUPS, _CPCV_K_TEST_GROUPS)
 # φ[N,k] = (k/N)·C(N,k) — number of complete OOS backtest paths.
 # At N=6, k=2: φ = (2/6)·15 = 5 paths, each assembled from N/k=3 non-overlapping splits.
+# Retained as documented combinatorial theory (φ = C(N−1,k−1)); NOT consumed by
+# any runtime scoring path post-R2 — split-level scoring uses _CPCV_N_SPLITS
+# exclusively (DE-MATH-R2-001).
 _CPCV_N_PATHS = int((_CPCV_K_TEST_GROUPS / _CPCV_N_GROUPS) * _CPCV_N_SPLITS)
 
 
