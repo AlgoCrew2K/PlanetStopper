@@ -6972,7 +6972,7 @@ phase-2 droplet-check item 6 updated in place to record this resolution.
 
 ### Verification
 
-**Code GREEN, reviewer/PM gates OUTSTANDING.** All six ACs landed GREEN
+**Code GREEN, PM gate LANDED.** All six ACs landed GREEN
 (`c66457dd` AC-1/AC-1-adjacent/AC-2/AC-3/AC-4/AC-6; `36f7df82` follow-up
 comment; `e57c2970` AC-5; `06e29f08` blast-radius test fix -- the H6/RC-1
 stale-baseline follow-up noted under AC-5's Decision section above, now
@@ -6986,9 +6986,17 @@ passed / 0 failed / 2 deselected (r2-analytics); `compute_sortino_tstat`
 blast-radius pair 21/21 passed, no regression. `alpha_bot_execution.py`/
 `math_engine.py` zero diff confirmed by both implementers independently.
 Both ruff gates clean on every touched PRODUCTION file (see the AC-6
-Decision section footnote above for exact scope). **Still OUTSTANDING:**
-r2-test's sufficiency review (Red/Green/Revise cycle), r2-review's combined
-verdict, and the PM's independent battery + live E2E gate.
+Decision section footnote above for exact scope). r2-test's sufficiency
+review (Red/Green/Revise cycle) and r2-review's combined verdict both
+LANDED prior to the PM gate below (confirmed by the PM proceeding to gate
+at all -- process order is sufficiency -> review verdict -> PM gate); the
+verdict's exact text was not relayed to r2-doc to quote verbatim at time
+of writing -- team-lead's note: "r2-review's verdict extension will cover
+`4a4cb9eb`->(`85ca4a78` + this commit) at PR time," so a re-bracketed
+verdict covering the settlement range is expected then. This entry will
+be updated in place with the verbatim quote when provided, matching the
+`DE-MATH-R1-001` convention of quoting reviewer verdicts exactly rather
+than paraphrasing.
 
 **Settlement correction (found-by-verification, recorded honestly --
 r2-review's own verdict pass is what caught this, not a self-report):**
@@ -7025,6 +7033,38 @@ comment/docstring/formatting-only, zero production-logic diff:
   citation in the same `strategy_builder_engine.py:992` comment --
   `"asset_swap_engine.py:577"`, which had drifted to point at unrelated
   lens-scoring code, repointed to the correct `:951`).
+
+**PM independent gate -- LANDED (results verbatim from the PM, this
+entry's authoritative record):**
+
+- **RUN A (live env):** 3916 passed / 5 skipped (attributed) / 4
+  deselected / 1 xfailed (pre-existing, `DE-FR-SIGNALS-001` -- not this
+  cycle's) / 0 failed / 0 errors in 909s. Command:
+  `python -m pytest tests/autotuner/ tests/advisors/ tests/analytics/
+  tests/execution/ tests/math_engine/
+  tests/integration/test_run_monte_carlo_consumers_enumerated.py -n0 -q`
+  @ `85ca4a78`.
+- **RUN B (10-var credential-blanked environment):** identical counts to
+  RUN A, 910s -- no test in this cycle's surface silently depends on a
+  live credential.
+- **PM ruff:** both gates clean, 688 files repo-wide.
+
+**PM live E2E -- LANDED** (real bounded autotune, 8 trials, real Alpaca
+data, scratch DB, spec-bundle-pinned): **8/8 trials produced 15
+genuinely-varying split scores (sample stdev 0.003061) -- MA-2's
+degeneracy is dead on live data**, the direct empirical confirmation of
+AC-1. The FDR haircut honestly REJECTED the toy proposal (best adjusted
+p 1.0); the adoption cascade evaluated Fallback/Default on the genuine
+129-purged-train-day construction (AC-2's holdout, live-confirmed
+non-trivial); `oos_alpha=-inf` per the designed no-winner sentinel.
+**Explicit attribution, recorded so this smoke is never misread:**
+`frozen_eval_sharpe=None` on this particular run is the DESIGNED
+not-adopted path (the pre-existing N-1 null-on-rejection rule, unchanged
+by R2) -- **NOT a recurrence of MA-9.** AC-3's real-metric-on-adoption
+behavior is covered by the committed battery (`test_ac3_frozen_eval_real_crra_metric.py`'s
+`test_accepted_crra_eu_proposal_persists_nonnull_frozen_eval_sharpe` +
+its golden), not by this particular 8-trial smoke, which happened not to
+select a winner.
 
 This section is filled in, update-in-place, as each lands -- never
 re-created as a new entry, per the `DE-MATH-R1-001` convention.
