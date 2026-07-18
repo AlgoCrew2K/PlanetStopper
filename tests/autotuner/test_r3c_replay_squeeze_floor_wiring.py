@@ -76,8 +76,10 @@ def test_replay_passes_squeeze_floor_via_params_get() -> None:
     assert val.func.attr == "get" and isinstance(val.func.value, ast.Name), (
         f"squeeze_floor must come from `<params>.get(...)`, got: {ast.dump(val.func)}"
     )
-    assert val.args and isinstance(val.args[0], ast.Constant) and (
-        val.args[0].value == "MAX_SQUEEZE_FLOOR"
+    assert (
+        val.args
+        and isinstance(val.args[0], ast.Constant)
+        and (val.args[0].value == "MAX_SQUEEZE_FLOOR")
     ), "the p.get first arg must be the literal 'MAX_SQUEEZE_FLOOR'."
     assert len(val.args) >= 2, (
         "p.get('MAX_SQUEEZE_FLOOR', <default>) must supply a default (the module "

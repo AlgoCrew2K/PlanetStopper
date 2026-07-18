@@ -35,8 +35,7 @@ def test_definition_is_not_multiplier_worded() -> None:
     """AC-7: the definition must NOT call the knob a squeeze multiplier."""
     text = _DEF["definition"].lower()
     assert "multiplier" not in text, (
-        f"MAX_SQUEEZE_FLOOR definition must not call it a multiplier, "
-        f"got: {_DEF['definition']!r}"
+        f"MAX_SQUEEZE_FLOOR definition must not call it a multiplier, got: {_DEF['definition']!r}"
     )
 
 

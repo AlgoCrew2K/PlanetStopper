@@ -119,8 +119,7 @@ def test_squeeze_floor_clamp_matches_derived_expected(
     actual = _call(fixture)
     expected = fixture["expected"]
     assert actual == pytest.approx(expected, rel=APPROX_REL, abs=APPROX_ABS), (
-        f"[{fixture_name}] expected {expected} (derivation: {fixture['derivation']}), "
-        f"got {actual}"
+        f"[{fixture_name}] expected {expected} (derivation: {fixture['derivation']}), got {actual}"
     )
 
 

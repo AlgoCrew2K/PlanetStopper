@@ -95,6 +95,5 @@ def test_squeezed_breakdown_dip_still_exits() -> None:
         "stop but must never suppress a genuine breakdown."
     )
     assert fired[1] == fx["expected_exit_reason"], (
-        f"expected exit reason {fx['expected_exit_reason']!r}, got {fired[1]!r} "
-        f"at tick {fired[0]}."
+        f"expected exit reason {fx['expected_exit_reason']!r}, got {fired[1]!r} at tick {fired[0]}."
     )
