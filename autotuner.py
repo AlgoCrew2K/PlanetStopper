@@ -73,6 +73,29 @@ def _replay_execution_start_time() -> str:
     return alpha_bot_execution.EXECUTION_START_TIME
 
 
+def _replay_squeeze_floor_default() -> float:
+    """Return the replay's default MAX_SQUEEZE_FLOOR (R3-c / MA-11, AC-4).
+
+    Shares production's single source of truth (alpha_bot_execution.MAX_SQUEEZE_FLOOR
+    — the same attr production's acc_params.get("MAX_SQUEEZE_FLOOR", MAX_SQUEEZE_FLOOR)
+    falls back to, alpha_bot_execution.py:1236) so a per-symphony params dict
+    missing the key resolves to the IDENTICAL floor on both paths — never a
+    replay-local mirror literal. Read live at call time (not cached at import),
+    so an operator's env override or a test monkeypatch of the module attr
+    reaches the replay exactly as it reaches production. The import is
+    function-local because a top-level `import alpha_bot_execution` would be
+    circular (alpha_bot_execution imports autotuner).
+
+    Called inline at the single compute_active_trailing_stop call site inside
+    _replay_exit_tick — every caller of _replay_exit_tick gets this default
+    automatically; there is nothing for a future call site to remember to
+    thread through.
+    """
+    import alpha_bot_execution
+
+    return alpha_bot_execution.MAX_SQUEEZE_FLOOR
+
+
 def _replay_execution_start_offset_minutes(execution_start_hhmm: str) -> int:
     """Return EXECUTION_START_TIME's minute-bar offset past the 09:30 ET
     session open (tick_idx 0).
@@ -1250,6 +1273,7 @@ def _replay_exit_tick(
         state["para_armed"],
         state["breakeven_locked"],
         p.get("MAX_PARABOLIC_SQUEEZE", 0.50),
+        squeeze_floor=p.get("MAX_SQUEEZE_FLOOR", _replay_squeeze_floor_default()),
     )
     base_stop = safe_hwm - active_stop_dist
 
