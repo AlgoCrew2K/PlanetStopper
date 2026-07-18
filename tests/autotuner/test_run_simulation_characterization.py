@@ -160,11 +160,20 @@ def _stub_time_squeeze_passthrough(time_ratio):
     return (1.5, 0.5)
 
 
-def _stub_active_stop_const(vol, mult, min_stop, para_armed, breakeven_locked, max_para_squeeze):
+def _stub_active_stop_const(
+    vol, mult, min_stop, para_armed, breakeven_locked, max_para_squeeze, squeeze_floor=None
+):
     """compute_active_trailing_stop: returns a fixed 5.0pct trailing distance —
     far enough below the tick return regime that the trailing-stop branch
     does NOT fire on its own; the only way to fire a trigger in these tests
-    is via the VWAP-break stub or via mc_prob-driven take-profit."""
+    is via the VWAP-break stub or via mc_prob-driven take-profit.
+
+    R3-c (MA-11): the real seam gained an optional trailing ``squeeze_floor``
+    param, which the replay now always passes as a keyword. This double mirrors
+    that signature (trailing ``squeeze_floor=None``) and IGNORES it for its
+    constant return — exactly as it already ignores ``max_para_squeeze`` — so
+    the run_simulation characterization outcomes are unchanged. A fixed-arity
+    stub that omitted this would TypeError on the new keyword."""
     return 5.0
 
 
