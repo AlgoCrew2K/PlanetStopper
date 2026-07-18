@@ -161,9 +161,7 @@ def _split_score(history_data: dict, test_dates: list[str]) -> float:
     [r / RETURN_PCT_TO_FRACTION for r in path_returns], gamma))) -- applied
     to a SPLIT's own test_dates instead of a PATH's full-window dates."""
     date_set = set(test_dates)
-    split_history = {
-        _SYM_ID: {d: t for d, t in history_data[_SYM_ID].items() if d in date_set}
-    }
+    split_history = {_SYM_ID: {d: t for d, t in history_data[_SYM_ID].items() if d in date_set}}
     returns_pct = autotuner._collect_sim_returns(
         _PARAMS, split_history, [_SYM_ID], "2025-06-01", {}
     )
@@ -250,9 +248,7 @@ def test_run_autotuner_objective_source_does_not_reference_full_window_path_hist
     )
     assert objective_fn is not None, "objective() closure not found inside run_autotuner"
 
-    referenced_names = {
-        node.id for node in ast.walk(objective_fn) if isinstance(node, ast.Name)
-    }
+    referenced_names = {node.id for node in ast.walk(objective_fn) if isinstance(node, ast.Name)}
     assert "_cpcv_path_histories" not in referenced_names, (
         "objective() still references _cpcv_path_histories (the closure-captured "
         "5-full-window-path precompute fed by _aggregate_cpcv_paths) -- AC-1 "
@@ -294,12 +290,18 @@ class TestSplitLevelScoringPrimitivesProduceGenuineDispersion:
         empty-series contract) -- not a coincidental near-miss."""
         history_data = _build_history_data()
         folds = _generate_folds()
-        hot_dates = set(_sorted_dates()[_HOT_GROUP_IDX * _N_DAYS_PER_GROUP : (_HOT_GROUP_IDX + 1) * _N_DAYS_PER_GROUP])
+        hot_dates = set(
+            _sorted_dates()[
+                _HOT_GROUP_IDX * _N_DAYS_PER_GROUP : (_HOT_GROUP_IDX + 1) * _N_DAYS_PER_GROUP
+            ]
+        )
 
         hot_splits = [f for f in folds if hot_dates & set(f["test_dates"])]
         cold_splits = [f for f in folds if not (hot_dates & set(f["test_dates"]))]
         assert hot_splits, "Fixture self-check: no split contains the hot group -- adjust fixture."
-        assert cold_splits, "Fixture self-check: every split contains the hot group -- adjust fixture."
+        assert cold_splits, (
+            "Fixture self-check: every split contains the hot group -- adjust fixture."
+        )
 
         for f in hot_splits:
             score = _split_score(history_data, f["test_dates"])
@@ -326,7 +328,9 @@ class TestSplitLevelScoringPrimitivesProduceGenuineDispersion:
         folds = _generate_folds()
 
         target_date = _sorted_dates()[_HOT_GROUP_IDX * _N_DAYS_PER_GROUP]  # first hot-group day
-        baseline_scores = {i: _split_score(history_data, f["test_dates"]) for i, f in enumerate(folds)}
+        baseline_scores = {
+            i: _split_score(history_data, f["test_dates"]) for i, f in enumerate(folds)
+        }
 
         # Mutate ONLY target_date's tick sequence (deeper decline -> more negative
         # guard_alpha) -- a real, non-mocked perturbation via the same primitive
@@ -334,10 +338,10 @@ class TestSplitLevelScoringPrimitivesProduceGenuineDispersion:
         mutated = _build_history_data()
         mutated[_SYM_ID][target_date] = _qualifying_trigger_sequence(magnitude=-40.0)
 
-        affected_split_indices = {
-            i for i, f in enumerate(folds) if target_date in f["test_dates"]
-        }
-        assert affected_split_indices, "Fixture self-check: target_date not in any split's test_dates."
+        affected_split_indices = {i for i, f in enumerate(folds) if target_date in f["test_dates"]}
+        assert affected_split_indices, (
+            "Fixture self-check: target_date not in any split's test_dates."
+        )
 
         for i, f in enumerate(folds):
             mutated_score = _split_score(mutated, f["test_dates"])

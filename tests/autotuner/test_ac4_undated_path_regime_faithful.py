@@ -279,7 +279,8 @@ class TestCollectSimReturnsRegimeFaithful:
         safe default fires (base_ticks unchanged) -- 3 confirming ticks still
         fires exactly as the pre-R2 hardcoded behavior did."""
         short_trailing = {
-            f"2026-03-{d:02d}": [_tick(0.1, 50.0)] for d in range(1, 6)  # only 5 days
+            f"2026-03-{d:02d}": [_tick(0.1, 50.0)]
+            for d in range(1, 6)  # only 5 days
         }
         history_data = {
             _SYM_ID: {
@@ -365,11 +366,7 @@ def test_collect_sim_returns_no_lookahead_trailing_window_excludes_current_and_f
         "2026-04-07": -41.0,
         "2026-04-08": -43.0,
     }
-    history_data = {
-        _SYM_ID: {
-            date: [_tick(ret, 50.0)] for date, ret in day_returns_pct.items()
-        }
-    }
+    history_data = {_SYM_ID: {date: [_tick(ret, 50.0)] for date, ret in day_returns_pct.items()}}
 
     calls: list[list[float]] = []
     real_classify = regime_classifier.classify_regime
@@ -402,11 +399,7 @@ def test_run_simulation_no_lookahead_trailing_window_excludes_current_and_future
         "2026-04-07": -41.0,
         "2026-04-08": -43.0,
     }
-    history_data = {
-        _SYM_ID: {
-            date: [_tick(ret, 50.0)] for date, ret in day_returns_pct.items()
-        }
-    }
+    history_data = {_SYM_ID: {date: [_tick(ret, 50.0)] for date, ret in day_returns_pct.items()}}
 
     calls: list[list[float]] = []
     real_classify = regime_classifier.classify_regime

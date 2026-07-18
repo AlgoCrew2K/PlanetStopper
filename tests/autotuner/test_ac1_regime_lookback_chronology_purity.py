@@ -96,7 +96,13 @@ def _three_confirming_tick_sequence() -> list[dict]:
     fire under a mean-reverting (5-tick) regime-faithful reading -- same
     scenario class as test_ac4_r2_residual_tripwire.py and
     test_ac4_undated_path_regime_faithful.py."""
-    return [_tick(0.0, 10.0), _tick(-20.0, 70.0), _tick(-21.0, 70.0), _tick(-22.0, 70.0), _tick(0.0, 10.0)]
+    return [
+        _tick(0.0, 10.0),
+        _tick(-20.0, 70.0),
+        _tick(-21.0, 70.0),
+        _tick(-22.0, 70.0),
+        _tick(0.0, 10.0),
+    ]
 
 
 def _build_full_history_data() -> dict:
@@ -127,9 +133,7 @@ def _restricted_history_dict(full_history: dict) -> dict:
     full chronology has a genuine 20-day trailing window."""
     dates = _sorted_dates()
     keep_indices = set(range(0, 10)) | set(range(70, _TARGET_IDX + 1))
-    restricted_days = {
-        dates[i]: full_history[_SYM_ID][dates[i]] for i in keep_indices
-    }
+    restricted_days = {dates[i]: full_history[_SYM_ID][dates[i]] for i in keep_indices}
     return {_SYM_ID: restricted_days}
 
 
@@ -166,7 +170,7 @@ def test_full_and_restricted_chronology_regime_resolution_disagree_on_this_fixtu
     )
     restricted_trailing_returns = [
         restricted_history[_SYM_ID][d][-1]["return"] / autotuner.RETURN_PCT_TO_FRACTION
-        for d in restricted_prior[-regime_classifier.MIN_LABEL_SERIES_LENGTH:]
+        for d in restricted_prior[-regime_classifier.MIN_LABEL_SERIES_LENGTH :]
     ]
     restricted_label = regime_classifier.classify_regime(restricted_trailing_returns)
     assert restricted_label is None, (

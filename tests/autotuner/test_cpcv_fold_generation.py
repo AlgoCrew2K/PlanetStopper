@@ -988,7 +988,6 @@ def _find_test_blocks(test_sorted: list[str], date_to_idx: dict[str, int]) -> li
     return blocks
 
 
-
 # ===========================================================================
 # SUPERSEDED AND DELETED (AC-1, R2, team-lead RULED Option A / split-level
 # scoring -- see feature-plans/math-r2.md ADDENDUM 3): TestAC2CanonicalPathCompleteness
@@ -1012,4 +1011,3 @@ def _find_test_blocks(test_sorted: list[str], date_to_idx: dict[str, int]) -> li
 # UNAFFECTED by this supersession; only how the objective CONSUMES its output
 # changed.
 # ===========================================================================
-

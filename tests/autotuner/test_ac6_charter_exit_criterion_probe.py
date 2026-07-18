@@ -221,7 +221,9 @@ def _run_probe(*, study_best_params: dict) -> dict:
                 return_value={"params": _full_params(), "locked_vars": []},
             )
         )
-        stack.enter_context(patch.object(autotuner.database, "DEFAULT_STRATEGY", new=_full_params()))
+        stack.enter_context(
+            patch.object(autotuner.database, "DEFAULT_STRATEGY", new=_full_params())
+        )
         stack.enter_context(
             patch.object(
                 autotuner.database,

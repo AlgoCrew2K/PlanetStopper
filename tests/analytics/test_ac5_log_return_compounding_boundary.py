@@ -137,9 +137,7 @@ def _ground_truth_metrics_via_correct_simple_returns(values: list[float]) -> dic
     reference values compute_quantstats_metrics itself computes from
     quantstats internals (not hand-derived, so no independent CAGR/calmar
     formula is invented here)."""
-    simple_returns_pct = [
-        (values[i] / values[i - 1] - 1.0) * 100.0 for i in range(1, len(values))
-    ]
+    simple_returns_pct = [(values[i] / values[i - 1] - 1.0) * 100.0 for i in range(1, len(values))]
     return analytics.compute_quantstats_metrics(simple_returns_pct)
 
 

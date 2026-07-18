@@ -193,7 +193,9 @@ def _run_autotuner_crra_eu_with_patches(
                 return_value={"params": _full_params(), "locked_vars": []},
             )
         )
-        stack.enter_context(patch.object(autotuner.database, "DEFAULT_STRATEGY", new=_full_params()))
+        stack.enter_context(
+            patch.object(autotuner.database, "DEFAULT_STRATEGY", new=_full_params())
+        )
         stack.enter_context(
             patch.object(
                 autotuner.database,
@@ -266,8 +268,7 @@ class TestCrraEuFrozenEvalProducesRealMetric:
             f"Harness diagnostic: {captured.get('_harness_exception', '<no exception>')}"
         )
         assert captured.get("baseline_decision") == "Adopted AI", (
-            "Harness sanity: expected 'Adopted AI'; got "
-            f"{captured.get('baseline_decision')!r}."
+            f"Harness sanity: expected 'Adopted AI'; got {captured.get('baseline_decision')!r}."
         )
         assert captured.get("frozen_eval_sharpe") is not None, (
             "AC-3 (MA-9) VIOLATED: the crra_eu branch persisted "

@@ -87,11 +87,7 @@ def _build_daily_returns_pct(validation_fold: list[float]) -> list[float]:
         f"changed such that the {_N_TOTAL_DAYS}-day validation slice is no longer "
         "20 days. Adjust _N_TOTAL_DAYS or the validation-fold length."
     )
-    return (
-        [0.0] * val_start_idx
-        + validation_fold
-        + [0.0] * (_N_TOTAL_DAYS - frozen_start_idx)
-    )
+    return [0.0] * val_start_idx + validation_fold + [0.0] * (_N_TOTAL_DAYS - frozen_start_idx)
 
 
 class TestFlipCaseSelfCheck:

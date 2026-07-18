@@ -136,8 +136,14 @@ def test_undated_path_is_regime_faithful_not_hardcoded_three_ticks() -> None:
     so the scenario genuinely discriminates a correct fix from the bug.
     """
     fx = json.loads(
-        (_REPO_ROOT / "tests" / "fixtures" / "math" / "regime_classifier" / "mean_reverting_basic.json")
-        .read_text(encoding="utf-8")
+        (
+            _REPO_ROOT
+            / "tests"
+            / "fixtures"
+            / "math"
+            / "regime_classifier"
+            / "mean_reverting_basic.json"
+        ).read_text(encoding="utf-8")
     )
     label = regime_classifier.classify_regime(fx["inputs"]["returns"])
     assert label == "mean-reverting", "Fixture self-check failed."
