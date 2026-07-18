@@ -478,16 +478,13 @@ def _generate_cpcv_folds(
     Each returned fold descriptor is a dict:
         ``train_dates``     — set of effective (post-purge/embargo) training dates
         ``test_dates``      — set of raw test dates (all k_test groups, unpurged)
-        ``path_membership`` — list of path indices this split contributes to
 
-    Path assignment: canonical mlfinlab ``_fill_backtest_paths`` first-available-slot
-    algorithm. Each group tracks a "next available path pointer" initialised to 0.
-    Combinations are iterated in lexicographic order; for each combination, each of
-    its k test-groups (lower group index first) is assigned to that group's current
-    pointer, then that group's pointer is incremented. A fold's ``path_membership``
-    is the UNIQUE (deduplicated, sorted) set of path indices its k groups were
-    assigned to. Membership length is VARIABLE: adjacent pairs share one path
-    (length 1) while non-adjacent pairs span two paths (length 2).
+    (Historical note, AC-1/R2/DE-MATH-R2-001: fold descriptors carried a
+    ``path_membership`` key — the mlfinlab canonical first-available-slot
+    φ-path assignment — through R1. Split-level scoring retired path
+    reconstruction entirely (canonical CPCV backtest paths are a refit-world
+    construct, mathematically forced to span the full eligible window in a
+    no-refit codebase); this function now returns only the two keys above.)
 
     Purge/embargo per-seam arithmetic (LdP 2018 Ch.7.4):
         For each contiguous train segment adjacent to a test block, remove
@@ -511,7 +508,6 @@ def _generate_cpcv_folds(
     Reference: López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4.
     """
     n_dates = len(sorted_dates)
-    n_paths = int((k_test / n_groups) * math.comb(n_groups, k_test))
     # Build group index boundaries (contiguous equal-ish partitions).
     # Using integer floor partitioning: group g contains indices [starts[g], starts[g+1]).
     group_size, remainder = divmod(n_dates, n_groups)
@@ -525,12 +521,8 @@ def _generate_cpcv_folds(
     # Precompute each group's date set.
     groups: list[list] = [sorted_dates[starts[g] : starts[g + 1]] for g in range(n_groups)]
 
-    # Canonical first-available-slot path assignment (mlfinlab _fill_backtest_paths):
-    # each group tracks the index of the next unoccupied path slot.
-    group_path_ptr: list[int] = [0] * n_groups
-
     folds = []
-    for split_idx, test_combo in enumerate(itertools.combinations(range(n_groups), k_test)):
+    for test_combo in itertools.combinations(range(n_groups), k_test):
         test_group_set = set(test_combo)
         train_group_indices = [g for g in range(n_groups) if g not in test_group_set]
 
