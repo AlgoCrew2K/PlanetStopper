@@ -6988,15 +6988,23 @@ blast-radius pair 21/21 passed, no regression. `alpha_bot_execution.py`/
 Both ruff gates clean on every touched PRODUCTION file (see the AC-6
 Decision section footnote above for exact scope). r2-test's sufficiency
 review (Red/Green/Revise cycle) and r2-review's combined verdict both
-LANDED prior to the PM gate below (confirmed by the PM proceeding to gate
-at all -- process order is sufficiency -> review verdict -> PM gate); the
-verdict's exact text was not relayed to r2-doc to quote verbatim at time
-of writing -- team-lead's note: "r2-review's verdict extension will cover
-`4a4cb9eb`->(`85ca4a78` + this commit) at PR time," so a re-bracketed
-verdict covering the settlement range is expected then. This entry will
-be updated in place with the verbatim quote when provided, matching the
-`DE-MATH-R1-001` convention of quoting reviewer verdicts exactly rather
-than paraphrasing.
+LANDED prior to the PM gate below. The verdict, quoted verbatim from
+r2-review's PR-time extension (closing this entry's placeholder):
+
+> r2-review combined verdict: **APPROVE-pending-PM-live-gate** at
+> `4a4cb9eb246b365697a69f5b5d9085bc1d56dd74` (extended and reconfirmed
+> unchanged at `d1c6387a14f7efd578aa44dba815da028d980c43`, PR #98 merge
+> tip). Zero BLOCKs across all eight review gates. All five ACs (AC-1
+> split-level CPCV scoring, AC-2 train-only adoption holdout, AC-3 real
+> CRRA-EU frozen-eval, AC-4 R1-tripwire clearance, AC-5 producer-side
+> simple-return fix) independently verified by construction against live
+> source -- not self-reports. `math_engine.py`/`alpha_bot_execution.py`
+> zero-diff confirmed throughout. Independent test battery across the
+> review: 4,240 passed / 0 failed / 0 errors, own commands, own counts,
+> two verified SHAs. Both ruff gates independently re-verified clean at
+> the settled tip. No live-trade-boundary or secrets exposure. Scoped to
+> code review -- the PM's live behavioral/functional gate against the
+> real environment is the final ship condition per standing protocol.
 
 **Settlement correction (found-by-verification, recorded honestly --
 r2-review's own verdict pass is what caught this, not a self-report):**
@@ -7068,6 +7076,29 @@ select a winner.
 
 This section is filled in, update-in-place, as each lands -- never
 re-created as a new entry, per the `DE-MATH-R1-001` convention.
+
+**Ship status: SHIPPED, with a PM process error on the record.** PR #98
+MERGED 2026-07-18 ~02:01Z at merge commit `0f1c508f` -- **while the PR's
+CI check was FAILING (6 failed / 9,795 passed): the PM's chained command
+ran the `--admin` merge without reading the just-fetched checks result
+(gate violation, owned; the merge-only-on-read-green rule is now in
+project memory).** The 6 failures were outside every battery run this
+cycle: (a) 2 cycle-caused-stale golden pins in
+`tests/ai_advisor/test_backtest_fold_transform.py` asserting the OLD
+naive-sum `oos_alpha` contract the AC-5 rider deliberately replaced --
+re-derived via the real `_fold_transform_single` + realistic fixture
+magnitudes (`e801cd0d`); (b) 4 LATENT time-of-day failures in R0-era
+`tests/app/` files seeding "today" rows via `date.today()` (local
+calendar date) against routes that filter by the ET TRADING day --
+deterministic on any CI run in the 00:00-04:00 UTC window and invisible
+outside it (both red runs were ~02:00Z; every prior green run was
+daytime); fixed to the production `datetime.now(_ET)` idiom, all 5
+occurrences across both files (`6ce47fa2`). Fix-forward advisory-FF'd to
+main; the proof run (29626862085) ran INSIDE the mismatch window and
+passed the FULL tree -- structural proof, not luck. DEPLOYED to the
+droplet 2026-07-18 ~02:31Z: drift-clean, DB backup
+`*.pre-r2-deploy-20260718-023120`, FF to `6ce47fa`, daemon restarted
+(PID 1026943), journal clean, endpoints serving.
 
 ### Reference
 
