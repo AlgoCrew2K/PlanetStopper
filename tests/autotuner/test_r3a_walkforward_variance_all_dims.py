@@ -375,3 +375,70 @@ def test_sweep_does_not_invoke_full_run_autotuner(monkeypatch) -> None:
     monkeypatch.setattr(autotuner, "run_autotuner", _poison)
     # Any one dim suffices to prove the code path avoids run_autotuner.
     probe.walkforward_dim_sweep(sorted(SWEPT_DIMS)[0])
+
+
+# ===========================================================================
+# CONFIG-ROBUSTNESS (r3a-test sufficiency review of the (a) GREEN diff; PM
+# ruling 2026-07-18). The whole (a) certification must hold UNDER THE CONFIG
+# THE RETUNE ACTUALLY RUNS. The replay's action phase + VWAP open-window grace
+# are gated by `alpha_bot_execution.EXECUTION_START_TIME`:
+#   - code default (09:30, alpha_bot_execution.py:71 os.getenv fallback) — what
+#     conftest's autouse `_pin_execution_start_time_to_code_default` pins tests to.
+#   - droplet PRODUCTION (9:35, the worktree .env value) — the config the R3-d
+#     retune runs `run_autotuner` under on the droplet.
+# The original fixtures front-load their discriminating ticks at 09:30-09:34
+# (parabolic/TP) or inside the 9:35 open-window grace (VWAP), so the ENTIRE
+# sensitivity proof goes all-dead (span=0, fires=0 for every dim) at 9:35 —
+# a certification that evaporates under production config is not a certification
+# (memory: prove each factor varies UNDER THE REAL CONFIG). These tests pin
+# variance + fires at BOTH start-times; 9:35 is the load-bearing case and is
+# RED until the fixtures are re-timed to clear action-start + the 15-min grace
+# at both (discriminating ticks at ~10:00+). Each param OVERRIDES the conftest
+# 09:30 pin via monkeypatch (an in-test monkeypatch wins over the autouse one
+# and is reverted at teardown).
+# ===========================================================================
+
+# Config values (NOT producer-computed): the two start-times the (a) proof must
+# survive. Sourced above — code default vs the droplet .env production value.
+_CODE_DEFAULT_EXECUTION_START = "09:30"
+_DROPLET_PRODUCTION_EXECUTION_START = "9:35"
+
+
+@pytest.mark.parametrize(
+    "start_time",
+    [_CODE_DEFAULT_EXECUTION_START, _DROPLET_PRODUCTION_EXECUTION_START],
+)
+@pytest.mark.parametrize("dim", sorted(SWEPT_DIMS))
+def test_dim_variance_and_fire_hold_under_retune_execution_start_time(
+    dim: str, start_time: str, monkeypatch
+) -> None:
+    """The (a) sensitivity proof must be CONFIG-ROBUST, not an artifact of the
+    test-pinned 09:30. At the droplet-production 9:35 (the config R3-d runs
+    under) each dim must STILL show non-zero walk-forward variance AND fire its
+    codepath — otherwise the certification the retune leans on is dead under the
+    config the retune actually uses.
+    """
+    import alpha_bot_execution
+
+    # Override the conftest autouse 09:30 pin to the parametrized start-time.
+    monkeypatch.setattr(alpha_bot_execution, "EXECUTION_START_TIME", start_time)
+
+    probe = _require_probe()
+    result = probe.walkforward_dim_sweep(dim)
+    objectives = dict(result.objectives)
+    span = _distinct_objectives_span(objectives)
+
+    assert span > _MIN_MEANINGFUL_OBJECTIVE_DELTA, (
+        f"[{dim} @ EXECUTION_START_TIME={start_time}] walk-forward objective did "
+        f"NOT vary (objectives={objectives}, span={span!r}). The dim's sensitivity "
+        "proof is an artifact of the test-pinned 09:30 and is dead under this "
+        "start-time. Re-time the fixture's discriminating ticks past the "
+        "action-start + 15-min VWAP grace at BOTH start-times (~10:00+)."
+    )
+    assert int(result.codepath_fires) > 0, (
+        f"[{dim} @ EXECUTION_START_TIME={start_time}] the dim's decision codepath "
+        f"never fired (codepath_fires={result.codepath_fires!r}) — the "
+        "discriminating ticks fall before the action phase or inside the VWAP "
+        "open-window grace at this start-time. Re-time them to ~10:00+ so they "
+        "clear action-start + the 15-min grace at both 09:30 and 9:35."
+    )
