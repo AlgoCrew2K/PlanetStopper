@@ -263,25 +263,53 @@ def test_dim_produces_nonzero_walkforward_objective_variance(dim: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "start_time",
+    ["09:30", "9:35"],  # code default vs droplet-production (see config-robustness section)
+)
 @pytest.mark.parametrize("dim", sorted(SWEPT_DIMS))
-def test_dim_variance_assertion_collapses_when_dim_forced_inert(dim: str) -> None:
-    """NON-VACUITY CRUX: prove the AC-2 assertion CAN fail.
+def test_dim_variance_assertion_collapses_when_dim_forced_inert(
+    dim: str, start_time: str, monkeypatch
+) -> None:
+    """NON-VACUITY CRUX: prove the AC-2 assertion CAN fail — AT THE RETUNE'S CONFIG.
 
     force_inert=True pins the swept dim to a single baseline value for every
     sweep point (its value no longer reaches the objective). The objective must
-    then COLLAPSE to one distinct value — demonstrating that the AC-2 variance
-    assertion above is a real gate, not a tautology that passes regardless.
+    then COLLAPSE — demonstrating the AC-2 variance is DIM-DRIVEN, not a
+    tautology. Parametrized across start-times (PM ruling 2026-07-18): proving
+    dim-attribution only under the conftest-pinned 09:30 is the SAME assumption
+    the EXECUTION_START_TIME blocker disproved — it must hold under the droplet
+    9:35 the retune runs under.
+
+    Two clauses, together immune to vacuity:
+      (1) the LIVE sweep MUST vary at this start-time (there is variance to
+          attribute) — a dead fixture would make force_inert "collapse"
+          trivially, hiding whether the variance was ever dim-driven;
+      (2) force_inert MUST collapse it — the variance is the dim's, not a
+          fixture artifact.
+    RED at 9:35 until r3a-tuner's re-timed fixtures are alive there; a re-timed
+    fixture whose 9:35 variance PERSISTS under force_inert is a real finding.
     """
+    import alpha_bot_execution
+
+    monkeypatch.setattr(alpha_bot_execution, "EXECUTION_START_TIME", start_time)
     probe = _require_probe()
-    result = probe.walkforward_dim_sweep(dim, force_inert=True)
-    objectives = dict(result.objectives)
-    span = _distinct_objectives_span(objectives)
-    assert span <= _MIN_MEANINGFUL_OBJECTIVE_DELTA, (
-        f"[{dim}] with the dim FORCED INERT the objective still varied "
-        f"(objectives={objectives}, span={span!r}). Either force_inert does not "
-        "actually pin the dim, or the observed variance in the live sweep comes "
-        "from something OTHER than this dim — the AC-2 gate would be vacuous. "
-        "The sweep's variance must be attributable to the dim under test."
+
+    live_span = _distinct_objectives_span(probe.walkforward_dim_sweep(dim).objectives)
+    inert = probe.walkforward_dim_sweep(dim, force_inert=True)
+    inert_span = _distinct_objectives_span(inert.objectives)
+
+    assert live_span > _MIN_MEANINGFUL_OBJECTIVE_DELTA, (
+        f"[{dim} @ EXECUTION_START_TIME={start_time}] no live variance to attribute "
+        f"(live_span={live_span!r}) — the collapse guard is VACUOUS here because the "
+        "fixture is dead at this start-time. Re-time discriminating ticks to ~10:00+."
+    )
+    assert inert_span <= _MIN_MEANINGFUL_OBJECTIVE_DELTA, (
+        f"[{dim} @ EXECUTION_START_TIME={start_time}] with the dim FORCED INERT the "
+        f"objective still varied (objectives={dict(inert.objectives)}, span={inert_span!r}). "
+        "Either force_inert does not actually pin the dim, or this start-time's "
+        "variance comes from something OTHER than this dim — the AC-2 gate would be "
+        "vacuous at the retune's config. The variance must be attributable to the dim."
     )
 
 
