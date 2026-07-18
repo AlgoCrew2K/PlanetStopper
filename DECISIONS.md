@@ -7921,17 +7921,21 @@ entry closes 2 of `DE-MATH-R1-001`'s 3-item pre-retune checklist residuals
 R3-b (MA-4 disarm-band), R3-c (MA-11 MAX_SQUEEZE_FLOOR), and R3-d (the
 retune itself, operator-gated) remain -- not covered by this entry.
 
-## DE-MATH-R3B-001 -- Math Remediation R3-b: MA-4 inverted trailing-stop disarm fix (2026-07-18, cycle in progress)
+## DE-MATH-R3B-001 -- Math Remediation R3-b: MA-4 inverted trailing-stop disarm fix (2026-07-18)
 
 Branch: `fix/math-r3b` | Base: `origin/main` (post-R3-a) `7e0b7778` | HEAD
-(this entry): `bbe94fbb` (RED complete, production GREEN, replay GREEN, the
-Toxic Pair's own sufficiency review APPROVED by r3b-test -- see
-"Verification" below). **r3b-review's independent blast-radius/correctness/
-parity verdict and the PM's live E2E on a real giveback scenario are
-PENDING.** Per PM ruling, this entry's status framing, the program charter's
-MA-4 line-status flip, and the CLAUDE.md key-files cell flip do NOT land
-until that verdict is in -- this entry describes the bug and the change
-made, it does not yet certify the bug closed.
+(this entry): `ae450872` (RED complete, production GREEN, replay GREEN,
+the Toxic Pair's own sufficiency review APPROVED by r3b-test, and
+r3b-review's independent blast-radius/correctness/parity review (Task #9)
+APPROVED with zero blocking findings -- one doc-nit (a stale
+`MC_SANITY_THRESHOLD` -> `MC_BREAKDOWN_THRESHOLD` reference in this entry,
+relayed via r3b-test) fixed at `ae450872` -- see "Verification" below).
+MA-4 is FIXED as of this entry, per PM ruling now that r3b-review's
+APPROVE has landed (the double-gate on "fixed" status-framing language is
+satisfied -- see "Decision: status flip" below). **The PM's own live E2E
+on a real giveback scenario against the running engine remains PENDING --
+necessary, never sufficient on tests-green + both reviews alone; a failure
+there reverses this flip.**
 
 ### Summary
 
@@ -8063,6 +8067,30 @@ for an AST scan to inspect. Matches the settled-ruling convention (charter
 proven bug is a defect in the test, root-caused and fixed, never
 blind-made-green.
 
+### Decision: status flip -- LANDED (r3b-review APPROVE closes the double-gate)
+
+Per the PM's binding double-gate ruling (`~/.claude/CLAUDE.md`'s promoted
+rules, applied identically to `DE-MATH-R3A-001`'s AC-9 checklist flip):
+"fixed"-status claims for MA-4 -- this entry's own status framing, the
+program charter's MA-4 line-status flip, and the CLAUDE.md key-files cell
+flip -- do not land until r3b-review's independent verdict is in. That
+verdict landed: Task #9 (r3b-review, blast-radius/correctness/parity)
+APPROVED, zero blocking findings, relayed via r3b-test and independently
+corroborated by Task #9's `completed` status in the shared task tracker.
+**The double-gate is satisfied.** The charter flip (`feature-plans/math-
+remediation-program.md` lines 7 and 35) lands in the SAME commit as this
+update -- each site gets an APPENDED correction note, never a rewrite of
+the historical prose (matching the AC-9/R3-a convention). The CLAUDE.md
+key-files cell flip is a SEPARATE action -- the PM owns and applies that
+file, not this branch's doc-writer (see `docs/generated` update below for
+the doc-writer's own living-reference update, already landed).
+
+**What is NOT yet gated by this flip:** the PM's own live E2E against a
+real giveback scenario on the running engine. Tests-green (twice-confirmed
+-- r3b-test's sufficiency review + r3b-review's independent review) is
+necessary, never sufficient; the live E2E is the final validation before
+merge/deploy, and per PM ruling a failure there reverses this flip.
+
 ### Files changed (this cycle, `57a8a897`..`bbe94fbb`)
 
 - `math_engine.py` -- new `compute_arm_disarm_decision` (`:307`) +
@@ -8094,18 +8122,19 @@ blind-made-green.
 ### Verification
 
 **This entry is a living skeleton, filled in incrementally as each piece
-lands** (same convention as R1/R2/F7/R3-a). At `bbe94fbb`: r3b-test's RED
-phase produced 39 new/rewritten RED tests (0 collection errors), the
-giveback golden proven RED on `57a8a897`; r3b-engine's production GREEN and
-r3b-tuner's replay GREEN together pass the full targeted battery (`tests/
-math_engine/` + `tests/execution/` + `tests/autotuner/`); r3b-test's own
-sufficiency review (Red/Green/Revise) read the full diff against the seam
-contract, found it FAITHFUL, closed one unpinned-guard gap with 13 new
-regression-lock tests, and issued **SUFFICIENT -- APPROVED** (Toxic Pair's
-own gate, not the independent review). **STILL OUTSTANDING, blocking this
-entry's status framing:** r3b-review's independent blast-radius/
-correctness/parity verdict (Task #9) and the PM's own live E2E against a
-real giveback scenario (necessary, never sufficient on tests-green alone).
+lands** (same convention as R1/R2/F7/R3-a). r3b-test's RED phase produced
+39 new/rewritten RED tests (0 collection errors), the giveback golden
+proven RED on `57a8a897`; r3b-engine's production GREEN and r3b-tuner's
+replay GREEN together pass the full targeted battery (`tests/math_engine/`
++ `tests/execution/` + `tests/autotuner/`), confirmed at `bbe94fbb`;
+r3b-test's own sufficiency review (Red/Green/Revise) read the full diff
+against the seam contract, found it FAITHFUL, closed one unpinned-guard
+gap with 13 new regression-lock tests, and issued **SUFFICIENT --
+APPROVED**. r3b-review's independent blast-radius/correctness/parity
+review (Task #9) **APPROVED**, zero blocking findings, one doc-nit fixed
+at `ae450872` (see "Decision: status flip" above). **STILL OUTSTANDING:**
+the PM's own live E2E against a real giveback scenario on the running
+engine (necessary, never sufficient on tests-green + both reviews alone).
 Updated in place as each lands -- never re-created as a new DECISIONS.md
 entry.
 
