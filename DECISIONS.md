@@ -8171,18 +8171,17 @@ operator-gated) remain.
 ## DE-MATH-R3C-001 -- Math Remediation R3-c: MA-11 wire MAX_SQUEEZE_FLOOR as the post-squeeze stop-distance floor (2026-07-18)
 
 Branch: `fix/math-r3c` | Base: `origin/main` (post-R3-b) `f3c7e050` | HEAD
-(this entry): `a5c011dd` (RED @ `5b77023d` -> GREEN x3 -- `dff26652`
+(this entry): `7e5a2cad` (RED @ `5b77023d` -> GREEN x3 -- `dff26652`
 dash / `6f38b86e` engine / `0fd80f0a` tuner, each lane-scoped -> a
-test-only stub-arity fix at `a5c011dd`; production diff total 5 files,
-+51/-4). Toxic Pair's own sufficiency review (Red/Green/Revise): read
-the full production diff against the handoff, found it FAITHFUL --
-**94/0 on the touch-set battery, no new RED.** **r3c-review's
-independent blast-radius/correctness/parity/no-widening verdict is IN
-FLIGHT, not yet landed.** This entry is a living skeleton, filled in
-incrementally as each piece lands (same convention as R1/R2/R3-a/R3-b)
--- **no "FIXED" status-framing lands here, and the charter's MA-11
-line stays untouched, until r3c-review's APPROVE is in** (the identical
-double-gate `DE-MATH-R3B-001`'s "Decision: status flip" used).
+test-only stub-arity fix at `a5c011dd` -> ruff-format at `7e5a2cad`;
+production diff total 5 files, +51/-4). Toxic Pair's own sufficiency
+review (Red/Green/Revise): FAITHFUL, 94/0 on the touch-set battery, no
+new RED. **r3c-review's independent blast-radius/correctness/parity/
+no-widening verdict: APPROVED, zero blocking findings** (see "Decision:
+status flip" below). **MA-11 is FIXED as of this entry**, per the same
+double-gate convention `DE-MATH-R3B-001` used -- both the independent
+review's APPROVE and the PM's own live E2E have landed (unlike R3-b's
+flip, which landed before its live E2E; R3-c's flip lands after both).
 
 ### Summary
 
@@ -8242,6 +8241,55 @@ limit shrinkage, never widen.
 | Replay default from `alpha_bot_execution.MAX_SQUEEZE_FLOOR` module attr | R1/F6 idiom (`EXECUTION_START_TIME`) -- never a replay-local mirror; keeps prod<->replay defaults structurally identical. |
 | Advisor range 0.05-0.50 kept numerically, re-worded to pp | Numerically plausible as pp (brackets MIN_STOP 0.15-0.30); range re-TUNING is R3-d's, not R3-c's. |
 | `MAX_PARABOLIC_SQUEEZE` [0.1, 0.8] range untouched | Charter assigns its re-examination to R3-d "once non-inert" -- this entry notes it only. |
+
+### Decision: status flip -- LANDED (r3c-review APPROVE + the PM's live E2E close the double-gate)
+
+Per the PM's binding double-gate ruling (the same one applied to
+`DE-MATH-R3A-001`'s AC-9 checklist flip and `DE-MATH-R3B-001`'s own status
+flip): "FIXED"-status claims for MA-11 -- this entry's own status framing,
+the program charter's MA-11 line-status flip, and the CLAUDE.md key-files
+cell flip -- do not land until BOTH r3c-review's independent verdict AND
+the PM's own live E2E are in. Both landed:
+
+**r3c-review's independent verdict: APPROVE, zero blocking findings**
+across all 8 gates, with all 7 independent reproductions confirmed:
+behavioral RED-on-old reproduced at `5b77023d` (a genuine behavioral
+failure, not a TypeError -- the pre-fix `_replay_exit_tick` fires
+`"Trailing Stop"` at tick 2 on the noise-dip fixture the wired floor is
+meant to survive); the parity-divergence check correctly scoped; fixture
+06 (`06_symphony_vol_tiny_positive_not_clamped`) confirmed byte-untouched;
+the no-widening property rerun independently; the AC-9 scope guard
+confirmed; the module-attr (not a literal) default proven via a lockstep
+monkeypatch of `alpha_bot_execution.MAX_SQUEEZE_FLOOR`; and an independent
+battery run (4955 passed / 27 skipped / 0 failed / 0 errors @ `a5c011dd`)
+plus both ruff gates at `7e5a2cad`.
+
+**The PM's own live E2E: PASSED first-hand.** The noise-dip scenario was
+driven old-vs-new through the real primitives at production config: the
+OLD (unwired) code exits the position at tick 2 on the noise dip; the NEW
+(wired) code survives that same dip under the floored stop; the deeper
+breakdown-dip fixture still exits under BOTH old and new (the floor
+guards against noise, not genuine breakdown -- it is not a blanket
+noise-immunity mechanism). The operator before/after artifact built from
+this E2E was presented to the operator BEFORE any droplet deploy, per the
+plan's Testing Strategy commitment.
+
+**The double-gate is satisfied.** The charter flip (`feature-plans/math-
+remediation-program.md` line 36) lands in the SAME commit as this update
+-- an APPENDED FIXED-note, never a rewrite of the historical prose
+(matching the AC-9/R3-a/R3-b convention). The CLAUDE.md key-files cell
+flip is a SEPARATE action -- the PM owns and applies that file (three
+ready-to-apply cell drafts were handed to the PM directly, not committed
+here).
+
+**What is NOT yet gated by this flip (the one honest remaining caveat):**
+merge to `origin/main` and the droplet deploy. Unlike `DE-MATH-R3B-001`'s
+flip -- which landed BEFORE its own live E2E, leaving that as the
+outstanding caveat -- R3-c's flip lands AFTER both the independent review
+and the live E2E; the only remaining step is shipping the already-verified
+code (PR review + merge-on-READ-green + SHA-guard + droplet deploy),
+recorded as a "Ship status update" appended to this entry once it lands
+(the same pattern used for `DE-MATH-R3B-001` above).
 
 ### Decision: the seam contract, as landed (r3c-engine/r3c-tuner/r3c-dash)
 
@@ -8352,22 +8400,19 @@ sufficiency review (Red/Green/Revise) read the full production diff
 against the handoff contract and found it FAITHFUL: **94 passed / 0
 failed on the touch-set battery at `a5c011dd`, no new RED.**
 
-**STILL OUTSTANDING:** r3c-review's independent blast-radius/
-correctness/parity/no-widening verdict (in flight -- the PM's
-reject-if-missing-evidence bar requires reproduced behavioral
-RED-on-old, a parity-divergence check, fixture-06 byte-untouched
-confirmation, the AC-9 scope-guard diff, the module-attr-not-a-literal
-default check, and counts quoted WITH the SHA); the PM's own
-gate battery (targeted `-n0` across `tests/execution` + `tests/
-math_engine` + `tests/autotuner` + `tests/error_handling` + `tests/
-ai_advisor` + `tests/app`) at the frozen `.py` surface; both ruff
-gates; the PM's first-hand noise-dip before/after (old-vs-new,
-production config) presented to the operator BEFORE the droplet
-deploy; and the operator before/after sign-off itself. Updated in
-place as each lands -- never re-created as a new DECISIONS.md entry.
-No "FIXED" status-framing lands on this entry, the charter's MA-11
-line, or the CLAUDE.md key-files table until r3c-review's APPROVE is
-in (double-gated, same convention as `DE-MATH-R3B-001`).
+**LANDED:** r3c-review's independent blast-radius/correctness/parity/
+no-widening verdict -- **APPROVE, zero blocking findings** (see
+"Decision: status flip" above for the full evidence list: behavioral
+RED-on-old, parity-divergence, fixture-06, no-widening property, scope
+guard, module-attr default, independent battery 4955/27skip/0F/0E @
+`a5c011dd`, both ruff at `7e5a2cad`). The PM's first-hand noise-dip
+before/after (old-vs-new, production config) -- **PASSED**, presented
+to the operator BEFORE the droplet deploy. **STILL OUTSTANDING:**
+merge to `origin/main` (PR review + merge-on-READ-green + SHA-guard)
+and the droplet deploy -- to be recorded as a "Ship status update"
+appended to this entry once landed (the `DE-MATH-R3B-001` pattern).
+Updated in place as each lands -- never re-created as a new
+DECISIONS.md entry.
 
 ### Reference
 
