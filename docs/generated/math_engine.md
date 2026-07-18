@@ -3,7 +3,7 @@
 > Pure risk-math primitives: trailing-stop mechanics, CRRA-EU utility, CVaR diagnostics, Monte Carlo gating, regime-match guard, VWAP signals, and the 6-layer exit-trigger resolver.
 
 **Source:** `math_engine.py`
-**Last updated:** 2026-07-18 (Math Remediation R3-b, `DE-MATH-R3B-001`, cycle in progress) — new `compute_arm_disarm_decision` seam + `DISARM_CONFIRM_TICKS` constant; see the new Arm/Disarm Decision section below. Prior: 2026-06-02 (initial generation)
+**Last updated:** 2026-07-18 (Math Remediation R3-b, `DE-MATH-R3B-001`, SHIPPED @ `origin/main` `f3c7e050`, droplet-deployed + verified) — new `compute_arm_disarm_decision` seam + `DISARM_CONFIRM_TICKS` constant; see the new Arm/Disarm Decision section below. Prior: 2026-06-02 (initial generation)
 
 ## Overview
 

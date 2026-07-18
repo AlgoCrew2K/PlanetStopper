@@ -3,7 +3,7 @@
 > Core per-cycle execution engine: fetches live portfolio state from Composer, runs all per-symphony exit decisions, calls autotuner post-market, and writes state back to the DB.
 
 **Source:** `alpha_bot_execution.py`
-**Last updated:** 2026-07-18 (Math Remediation R3-b, `DE-MATH-R3B-001`, cycle in progress) — the arm/disarm block is now delegated to a new shared `math_engine.compute_arm_disarm_decision` seam (replaces the prior inline, MA-4-inverted disarm); a new `disarm_confirm_count` bot_state key is added at the applicable init/reset sites; see the new section below. Prior: 2026-07-18 (Math Remediation F7, `DE-MATH-F7-001`) — post-trigger MC display honesty (AC-1) + MAPERF-15 staleness tripwire (AC-4); prior: 2026-06-21 (startup-seed-symphonies) — confirmed ZERO diff for Math Remediation R1 (2026-07-17, `DE-MATH-R1-001`); see the Replay-Fidelity Boundary section below
+**Last updated:** 2026-07-18 (Math Remediation R3-b, `DE-MATH-R3B-001`, SHIPPED @ `origin/main` `f3c7e050`, droplet-deployed + verified) — the arm/disarm block is now delegated to a new shared `math_engine.compute_arm_disarm_decision` seam (replaces the prior inline, MA-4-inverted disarm); a new `disarm_confirm_count` bot_state key is added at the applicable init/reset sites; see the new section below. Prior: 2026-07-18 (Math Remediation F7, `DE-MATH-F7-001`) — post-trigger MC display honesty (AC-1) + MAPERF-15 staleness tripwire (AC-4); prior: 2026-06-21 (startup-seed-symphonies) — confirmed ZERO diff for Math Remediation R1 (2026-07-17, `DE-MATH-R1-001`); see the Replay-Fidelity Boundary section below
 
 ## Overview
 
@@ -146,7 +146,7 @@ F7's fix guards the value at the two persist sites rather than touching the MC c
 
 ---
 
-### Trailing-Stop Arm/Disarm Delegation (Math Remediation R3-b, `DE-MATH-R3B-001`, 2026-07-18, cycle in progress)
+### Trailing-Stop Arm/Disarm Delegation (Math Remediation R3-b, `DE-MATH-R3B-001`, 2026-07-18, SHIPPED @ `origin/main` `f3c7e050`, droplet-deployed + verified)
 
 The arm/disarm block in `main()` (`~:1373-:1411`) — previously an inline conditional that both armed the protective trailing stop on an in-band MC reading and disarmed it — now delegates the whole decision to `math_engine.compute_arm_disarm_decision` (see [math_engine](math_engine.md)). This replaces a disarm condition that had been INVERTED (MA-4): the old code disarmed on `prob_underperforming > 2 * TRIGGER_THRESHOLD_PCT and current_return > 0.0` — a HIGH MC reading, which `run_monte_carlo`'s own convention makes DETERIORATION, not recovery — while printing `"DISARMED (Conditions Recovered)"`. The new disarm requires `prob_underperforming` to fall back below `TAKE_PROFIT_MC_PCT` (the arm-band's own lower edge) for `DISARM_CONFIRM_TICKS` consecutive ticks. See `DE-MATH-R3B-001` in `DECISIONS.md` for the full bug account, the seam contract, and the parity requirement with the autotuner replay (`autotuner.py:_replay_exit_tick`, same seam).
 
