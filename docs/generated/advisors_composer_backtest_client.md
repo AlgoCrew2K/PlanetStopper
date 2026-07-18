@@ -54,7 +54,7 @@ Submit an inline symphony tree and parse the result. Never raises.
 | `costs` | `dict[str, float]` | Cost breakdown. Empty dict on failure. |
 | `error` | `str \| None` | `None` on success; non-empty failure-reason string on any error path. |
 
-**Docstring/comment audit finding (filed to r2-analytics, not self-edited):** the class docstring (`advisors/composer_backtest_client.py:87-88`, "``daily_returns`` is a date-keyed dict of **log returns** derived from the per-day portfolio values") and the `daily_returns` field's inline comment (`:101`, "Date-keyed (ISO string) **log returns** derived from dvm_capital portfolio values") both still say "log returns." The AC-5 commit (`e57c2970`) rewrote `_extract_returns`'s own docstring to describe the new simple-return contract correctly but did not touch these two other, now-stale mentions of "log returns" in the same file. Two-line fix, same pattern as the `_extract_returns` docstring rewrite.
+**Docstring/comment audit finding, FIXED at `147720b2`:** the class docstring and the `daily_returns` field's inline comment both said "log returns" after the AC-5 commit (`e57c2970`) rewrote `_extract_returns`'s own docstring to the new simple-return contract but missed these two other mentions in the same file. r2-analytics fixed both (docstring now reads "simple (arithmetic) returns"; the field comment cites AC-5/`DE-MATH-R2-001` explicitly) and confirmed no other stale "log return" mentions remain in the file — the two that DO still say "log returns" (inside `_extract_returns`'s own docstring, describing the OLD pre-fix behavior for context) are correctly contextual, not stale claims about current behavior.
 
 ## Internal Helpers
 
