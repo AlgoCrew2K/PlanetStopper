@@ -6873,21 +6873,33 @@ Log). `tests/advisors/test_strategy_builder_engine.py:363`'s original
 ADDENDUM-2-era coupling-flag concern is moot under the final producer-side
 design (no flag exists) -- closed, not open.
 
-**Known follow-up, NOT part of the AC-5 boundary story, NOT fixed this
-cycle (routed to test-writer):** r2-analytics's extra thoroughness pass
+**Follow-up, NOT part of the AC-5 boundary story, FIXED at `06e29f08`
+(`test(advisors): fix stale naive-sum baseline reference (AC-5 rider blast
+radius)`):** r2-analytics's extra thoroughness pass
 (`tests/advisors/ tests/analytics/`, beyond the routed battery) found
 `tests/advisors/test_advisor_liveness_gate.py::TestH6EngineFeedsFoldMatchedBaseline::test_propose_swap_default_baseline_is_fold_matched_not_full_history`
-fails post-AC-5-rider -- a PRIOR (H6/RC-1) cycle's test whose own
-"expected" helper mirrors `_fold_transform_single`'s OLD naive-sum
-internals (`sum(...)` instead of the genuine-compounding formula). Root
-cause: stale test-helper assumption, not a regression in the AC-5 rider
-(the test's actual intent -- fold-slice selection, not aggregation method
--- is untouched; the belt-and-suspenders assertion `captured_baseline !=
-full_history_sum` still holds, `4.0794 != 20.0`). Suggested fix (documented
-in `.claude/tdd-handoff.md`, not yet applied): update the stale helper to
-the same `(math.prod(1.0 + r/100.0 for r in slice) - 1.0) * 100.0` formula.
-Tracked here so it does not silently disappear before r2-test's sufficiency
-pass.
+failing post-AC-5-rider -- a PRIOR (H6/RC-1) cycle's test whose own
+"expected" helper hand-rolled a `sum(...)` over a manually-sliced fold,
+mirroring `_fold_transform_single`'s OLD naive-sum internals. Root cause
+independently re-verified (not merely trusted from r2-analytics's
+diagnosis): reproduced the failure, confirmed the captured baseline
+(`4.0794`, genuine compound) sits nowhere near the full-history sum
+(`20.0`) the test guards against -- only the exact reference number was
+wrong, not the test's actual H6/RC-1 intent (fold-slice selection, not
+aggregation method). **Fix (mirror-drift-elimination pattern, worth
+naming as its own discipline):** rather than hand-rolling the compounding
+formula a second time in the test (which would just reintroduce the same
+class of drift the next time `_fold_transform_single` changes), the fixed
+test derives its reference by calling the REAL
+`gate_engine._fold_transform_single` directly on the full baseline series
+and reading its own `oos_alpha` -- the test now tracks whatever the
+production function actually computes, structurally, rather than
+maintaining a second implementation that can silently diverge from it.
+The file's other two `sum()`-based tests were verified NOT affected (they
+exercise `evaluate_acceptance_gate`'s decision logic on
+self-consistent locally-constructed numbers, never compare against
+`_fold_transform_single`'s actual output). 7/7 passed on
+`tests/advisors/test_advisor_liveness_gate.py`, both ruff gates clean.
 
 ### Decision: AC-6 (charter exit criterion) -- selection/adoption date disjointness, kept as a regression test
 
@@ -6962,7 +6974,9 @@ phase-2 droplet-check item 6 updated in place to record this resolution.
 
 **Code GREEN, reviewer/PM gates OUTSTANDING.** All six ACs landed GREEN
 (`c66457dd` AC-1/AC-1-adjacent/AC-2/AC-3/AC-4/AC-6; `36f7df82` follow-up
-comment; `e57c2970` AC-5). Self-reported battery counts (cited for the
+comment; `e57c2970` AC-5; `06e29f08` blast-radius test fix -- the H6/RC-1
+stale-baseline follow-up noted under AC-5's Decision section above, now
+resolved, 7/7 passed). Self-reported battery counts (cited for the
 audit trail, NOT a substitute for the PM's independent gate -- verified
 above per-AC against live source, not merely re-cited): r2-stats's targeted
 10-file battery 84 collected / 83 passed / 1 skipped (expected) / 0 failed
