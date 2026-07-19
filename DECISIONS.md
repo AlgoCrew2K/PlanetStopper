@@ -8407,11 +8407,15 @@ RED-on-old, parity-divergence, fixture-06, no-widening property, scope
 guard, module-attr default, independent battery 4955/27skip/0F/0E @
 `a5c011dd`, both ruff at `7e5a2cad`). The PM's first-hand noise-dip
 before/after (old-vs-new, production config) -- **PASSED**, presented
-to the operator BEFORE the droplet deploy. **STILL OUTSTANDING:**
-merge to `origin/main` (PR review + merge-on-READ-green + SHA-guard)
-and the droplet deploy -- to be recorded as a "Ship status update"
-appended to this entry once landed (the `DE-MATH-R3B-001` pattern).
-Updated in place as each lands -- never re-created as a new
+to the operator BEFORE the droplet deploy.
+
+**Ship status update (2026-07-18):** SHIPPED @ `origin/main` `d92a6f4f`
+(PR #102, CI green) + droplet-deployed + verified 2026-07-18 ~16:18Z --
+supersedes the "STILL OUTSTANDING" note in an earlier revision of this
+entry (fact confirmed by team-lead from the PM ledger during the
+`DE-AUTOTUNE-REPORTING-001` reconcile sweep, this doc-writer's own
+tree-wide grep having flagged the stale note but not the droplet-deploy
+status). Updated in place as each lands -- never re-created as a new
 DECISIONS.md entry.
 
 ### Reference
