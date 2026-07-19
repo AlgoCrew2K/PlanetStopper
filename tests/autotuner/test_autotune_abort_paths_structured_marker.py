@@ -103,8 +103,7 @@ def _assert_structured_abort_marker(result, *, case_label: str) -> None:
         f"dict -- AC-4 requires the structured marker shape."
     )
     assert result.get("aborted") is True, (
-        f"[{case_label}] run_autotuner's abort return ({result!r}) does not "
-        f"carry aborted=True."
+        f"[{case_label}] run_autotuner's abort return ({result!r}) does not carry aborted=True."
     )
     reason = result.get("reason")
     assert isinstance(reason, str) and reason, (
@@ -148,9 +147,7 @@ def test_run_autotuner_structured_marker_when_insufficient_days_for_wfa(monkeypa
         # :2365) but total_days collapses to 1 -- below the WFA floor of 2.
         return {"sym-A": {"2026-05-08": {"c": 100.0, "o": 100.0, "h": 100.0, "l": 100.0}}}
 
-    monkeypatch.setattr(
-        autotuner.synthetic_history, "generate_synthetic_history", _one_day_history
-    )
+    monkeypatch.setattr(autotuner.synthetic_history, "generate_synthetic_history", _one_day_history)
 
     result = autotuner.run_autotuner(
         _minimal_bot_state(), "2026-05-10", ["acc-1"], **_spec_bundle_kwarg()
@@ -172,9 +169,7 @@ def _configure_exception_abort(monkeypatch) -> None:
     def _raise_shortfall(*args, **kwargs):
         raise exc_type("synthetic_history: persistent history shortfall")
 
-    monkeypatch.setattr(
-        autotuner.synthetic_history, "generate_synthetic_history", _raise_shortfall
-    )
+    monkeypatch.setattr(autotuner.synthetic_history, "generate_synthetic_history", _raise_shortfall)
 
 
 def _configure_empty_history_abort(monkeypatch) -> None:
@@ -192,9 +187,7 @@ def _configure_short_days_abort(monkeypatch) -> None:
     def _one_day_history(*args, **kwargs):
         return {"sym-A": {"2026-05-08": {"c": 100.0, "o": 100.0, "h": 100.0, "l": 100.0}}}
 
-    monkeypatch.setattr(
-        autotuner.synthetic_history, "generate_synthetic_history", _one_day_history
-    )
+    monkeypatch.setattr(autotuner.synthetic_history, "generate_synthetic_history", _one_day_history)
 
 
 _ABORT_CASES = [

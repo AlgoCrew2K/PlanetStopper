@@ -297,8 +297,7 @@ def test_eod_post_golden_normal_delta_only_day_renders_unchanged(tmp_path, monke
                 break
 
     assert opt_embed is not None, (
-        f"no {expected_title!r} embed found in the captured payloads -- "
-        f"captured: {captured!r}"
+        f"no {expected_title!r} embed found in the captured payloads -- captured: {captured!r}"
     )
     assert opt_embed["description"] == expected_desc, (
         f"the happy-path optimization embed description changed.\n"
