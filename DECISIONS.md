@@ -8425,3 +8425,51 @@ PR #101) / `DE-MATH-R3A-001` (tests-only, PR merged into `7e0b7778`) /
 `DE-MATH-R2-001` (PR #98) / `DE-MATH-R1-001` (PR #97) / `DE-MATH-F7-001`
 (PR #99). R3-d (the retune itself, operator-gated) remains -- not covered
 by this entry.
+
+## DE-AUTOTUNE-REPORTING-001 -- Autotune-day reporting reliability: EOD crash guard + structured abort marker (2026-07-19)
+
+Branch: `fix/autotune-reporting` | Base: `origin/main` (post-R3-c) `d92a6f4f` | HEAD (this entry): `8891336c` (GREEN; independent review by at-rev in progress at time of writing)
+
+### Problem
+
+Two confidence-audit findings (F-015, F-004) in the autotune-day EOD reporting pipeline.
+
+**F-015 (crash):** `reporting.send_eod_discord_post`'s per-symphony changes-iteration loop unconditionally indexed `vals["old"]`/`vals["new"]` after skip-listing only two special keys (`_baseline_chosen`, `_selection_stats`). `autotuner.run_autotuner` writes an `eval_window_days` entry (`autotuner.py:2855`, a per-fold day-count stats block, not a `{old,new}` delta) into every symphony's changes dict unconditionally -- the loop KeyError'd on that entry, and `KeyError` was not in the surrounding `except` tuple (`OSError, ValueError, requests.RequestException, TypeError`), so the exception propagated uncaught and killed the ENTIRE EOD Discord push on every autotune day -- no summary, no autotune results, no error detail delivered.
+
+**F-004 (silent abort):** `run_autotuner` has three graceful-abort return sites (history-shortfall exception, empty synthetic history, <2 WFA days). Only the first returned the structured `{"aborted": True, "reason": ...}` marker `reporting.py` already knew how to render as an explicit "Autotuner Aborted" notice; the other two returned bare `None`, which `send_eod_discord_post`'s falsy-check rendered as "No optimization changes." -- indistinguishable from a genuine no-op day.
+
+### Fix
+
+**`reporting.py:479-488`:** added a shape guard before indexing -- `if not (isinstance(vals, dict) and "old" in vals and "new" in vals): continue`. Guards the VALUE'S SHAPE, not an enumerated key name (AC-2's "guard the shape, don't grow the skip-list" design -- the root cause is unguarded indexing, not the specific `eval_window_days` key; any future non-delta sibling entry is skipped the same way, with no maintenance burden). Real `{old,new}` deltas in the same dict still render regardless of where the malformed entry sits in iteration order. `reporting.py:547`: the surrounding `except` tuple widened to add `KeyError`, defense-in-depth for any malformed-entry failure mode the shape guard doesn't anticipate.
+
+**`autotuner.py:2367`, `:2378`:** both bare `return` statements (empty-history abort, <2-day abort) now `return {"aborted": True, "reason": <str>}`, matching the shape the third site (`:2364`) already returned. All three abort sites are now uniform.
+
+### Decision: guard-the-shape over enumerate-more-skip-keys (AC-2, the root-cause insight)
+
+The tempting quick fix was adding `eval_window_days` to the existing 2-key skip-list. Rejected: that fixes today's crash but leaves the loop structurally fragile to the NEXT non-delta key any future `autotuner.py` change writes into the changes dict -- a recurring category of bug, not a one-off. The shape guard (`isinstance(vals, dict) and "old" in vals and "new" in vals`) is robust to ANY future non-delta key by construction, with zero incremental maintenance. See the plan's own Decisions table (`feature-plans/fix-autotune-reporting.md`).
+
+### Invariants preserved
+
+- AC-6 (regression guard): a normal all-`{old,new}` day renders byte-for-byte identically to the pre-fix happy path -- the fix adds robustness, not new behavior on the happy path.
+- No autotune MATH, search space, or trigger/trading behavior touched -- this cycle is reporting/return-shape only (per the plan's explicit Scope Boundaries).
+- No live-Discord or live-DB write in the test suite; fixtures derive the `eval_window_days` shape verbatim from the real `autotuner.py:2855-2861` write, not hand-invented.
+
+### Tests
+
+17 new tests, both files `-n0`: `tests/reporting/test_eod_changes_dict_shape_guard.py` (9 tests, AC-1/AC-2/AC-3/AC-6) + `tests/autotuner/test_autotune_abort_paths_structured_marker.py` (8 tests, AC-4/AC-5, parametrized across all 3 abort trigger conditions, contract-locking the marker shape end-to-end through `reporting.send_eod_discord_post`). Verified RED on `origin/main` @ `d92a6f4f` (14 failed / 3 passed -- the 3 passes are the AC-6 golden, correctly green pre-fix, and one already-fixed prior-cycle parametrization). GREEN at `8891336c`: 83 passed / 1 pre-existing unrelated skip on the reporting + abort-regression suites; ruff format/check clean.
+
+### Reconcile sweep (doc-writer)
+
+Whole-tree grep of `docs/generated/`, `docs/research/**`, `docs/audit/`, `doc-archive/**`, `README.md`, and this file for prior claims about F-015/F-004/silent-abort/bare-None-return behavior found NONE -- this subsystem's crash/silent-abort behavior was never documented as either broken or fixed, so this cycle's docs are net-new, not a correction. One unrelated stale claim was found and fixed incidentally while editing `docs/generated/autotuner.md` for this cycle: its header (and the "Squeeze-Floor Replay Parity" section header) still read "independent review IN FLIGHT -- NOT yet merged/deployed" for `DE-MATH-R3C-001`, but `git log` confirms PR #102 (`fix/math-r3c`) merged to `origin/main` as `d92a6f4f`, an ancestor of this branch -- corrected to state the merge (droplet-deploy status left unstated; not verified by this doc-writer, outside this cycle's scope). This file's own `DE-MATH-R3C-001` entry still says "STILL OUTSTANDING: merge to origin/main... and the droplet deploy" -- that entry's own "Ship status update" append is a separate cycle's territory and was flagged to the PM rather than edited here.
+
+### Files changed
+
+- `reporting.py` -- `send_eod_discord_post` shape guard (`:479-488`) + widened `except` (`:547`).
+- `autotuner.py` -- `run_autotuner`'s two bare-`None` abort returns (`:2367`, `:2378`) now structured.
+- `tests/reporting/test_eod_changes_dict_shape_guard.py` (9 tests, new), `tests/autotuner/test_autotune_abort_paths_structured_marker.py` (8 tests, new).
+- `docs/generated/reporting.md` -- new `send_eod_discord_post` API Reference entry (was previously undocumented).
+- `docs/generated/autotuner.md` -- `run_autotuner` Returns section extended with the graceful-abort shape; incidental stale-claim fix (see Reconcile sweep above).
+
+### Reference
+
+`feature-plans/fix-autotune-reporting.md`; branch `fix/autotune-reporting`; worktree `.claude/worktrees/fix-autotune-reporting`; RED commit `3d5236d0`; GREEN commit `8891336c`.
