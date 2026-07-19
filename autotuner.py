@@ -2364,7 +2364,7 @@ def run_autotuner(
         return {"aborted": True, "reason": str(e)}
     if not history_125d:
         print("  -> Autotuner aborted: Failed to generate synthetic history.")
-        return
+        return {"aborted": True, "reason": "Failed to generate synthetic history."}
 
     # Extract global dates and partition 60/20/20 (train / validation / frozen-eval).
     all_dates = set()
@@ -2375,7 +2375,7 @@ def run_autotuner(
     total_days = len(sorted_dates)
     if total_days < 2:
         print("  -> Autotuner aborted: Need at least 2 days of history for WFA.")
-        return
+        return {"aborted": True, "reason": "Need at least 2 days of history for WFA."}
 
     # Three-fold split: TRAIN_RATIO / VALIDATION_RATIO / FROZEN_EVAL_RATIO (60/20/20).
     # Reference: López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4.
