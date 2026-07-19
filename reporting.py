@@ -479,6 +479,13 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
                     for var, vals in changes.items():
                         if var in ("_baseline_chosen", "_selection_stats"):
                             continue
+                        # Shape guard (F-015): only real {old,new} delta dicts belong here.
+                        # Other entries -- e.g. the eval_window_days stats block autotuner.py
+                        # unconditionally writes into every symphony's changes dict -- are not
+                        # deltas and must be skipped, not indexed, so one malformed sibling
+                        # entry can't crash the render for every symphony.
+                        if not (isinstance(vals, dict) and "old" in vals and "new" in vals):
+                            continue
                         # Delta-Only Filter: Only add to string if the value actually changed
                         if vals["old"] != vals["new"]:
                             sym_changes_text += f"- `{var}`: {vals['old']} -> {vals['new']}\n"
@@ -537,8 +544,8 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
 
         print("  -> Discord Push Complete.")
 
-    except (OSError, ValueError, requests.RequestException, TypeError) as e:
-        # OSError: file I/O; ValueError: json.load/strptime/JSONDecodeError; RequestException: Discord POST; TypeError: json.dumps non-serializable  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
+    except (OSError, ValueError, requests.RequestException, TypeError, KeyError) as e:
+        # OSError: file I/O; ValueError: json.load/strptime/JSONDecodeError; RequestException: Discord POST; TypeError: json.dumps non-serializable; KeyError: malformed changes-dict entry the shape guard above didn't anticipate  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
         logging.error("send_eod_discord_post: failed to send EOD webhook: %s", e)
 
 
