@@ -36,6 +36,15 @@ Small; Tier 1.
 - **DEP-1:** tighten `anthropic~=0.85.0` and `feedparser>=6.0` to exact `==` pins in
   `requirements.txt` / `pyproject.toml`.
 
+### `POST /ai-advisor/suggest` does not hash-resolve `composer_symphony_id` (found 2026-07-20, F-023 doc-audit)
+`ai_advisor_suggest()` (`app.py:5796`) resolves the client's raw `symphony_id` to a canonical
+normalized name for everything else, but passes it straight through unresolved as
+`composer_symphony_id` -- which `assemble_advisor_context`'s Composer `/score` call
+(`ai_advisor.py:1601-1604`) requires to be a HASH, not a name; a name silently degrades that
+request's condensed-logic context to empty (D-1, never crashes). Pre-existing (predates F-023),
+out of scope for that cycle. Fix candidate: reuse `resolved_id`'s existing hash-match loop.
+Tier 1.
+
 ---
 
 ## Low priority / tracked follow-on
