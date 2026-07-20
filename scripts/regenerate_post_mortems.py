@@ -64,6 +64,8 @@ import sqlite3
 import sys
 from datetime import UTC, datetime
 
+import analytics
+
 # Stage-1 post-mortem freeze fires in the 15:54 ET minute; every row through
 # the end of that minute is on the declared snapshot basis. Verified against
 # the 2026-07-09 audit ground truth: this cutoff reproduces -0.67 (06-24 LQD),
@@ -198,6 +200,24 @@ def regenerate_file(
                     "new": new,
                 }
             )
+        elif not analytics.is_valid_post_mortem_entry(entry):
+            # Values already match shadow_history truth (old == new above),
+            # but the provenance stamp is missing or unrecognized (e.g. a
+            # pre-DE-GUARD-ALPHA-SAVED-001 capture) — analytics.
+            # is_valid_post_mortem_entry (the single source of truth for the
+            # F-008 read-time guard) would otherwise keep excluding a
+            # verified-correct entry from every live consumer forever.
+            # Stamp-only repair: no value field changes, provenance only.
+            entry["if_held_source"] = "shadow_history"
+            changes.append(
+                {
+                    "day": trading_day,
+                    "symphony": entry.get("symphony_name"),
+                    "old": old,
+                    "new": new,
+                    "stamp_only": True,
+                }
+            )
 
     # Producer semantic (reporting.py Stage 1): count of entries whose UNROUNDED
     # recomputed saved_pct is positive (pf-review finding 3 — the rounded stored
@@ -259,11 +279,21 @@ def main(argv: list[str] | None = None) -> int:
             f"({len(changes)} of {len(new_report.get('triggers', []))} entries){marker}"
         )
         for c in changes:
-            print(
-                f"    {c['symphony'][:45]}: if-held {c['old']['shadow_return']} -> "
-                f"{c['new']['shadow_return']}, saved ${c['old']['saved_dollars']:+.2f} -> "
-                f"${c['new']['saved_dollars']:+.2f}"
-            )
+            if c.get("stamp_only"):
+                # Distinct from the old->new arrow line below on purpose: old
+                # == new here (values already verified correct), so printing
+                # the arrow format would read as a no-op and hide that a
+                # provenance repair happened.
+                print(
+                    f"    {c['symphony'][:45]}: verified correct, stamped provenance "
+                    f"(if-held {c['new']['shadow_return']}, saved ${c['new']['saved_dollars']:+.2f})"
+                )
+            else:
+                print(
+                    f"    {c['symphony'][:45]}: if-held {c['old']['shadow_return']} -> "
+                    f"{c['new']['shadow_return']}, saved ${c['old']['saved_dollars']:+.2f} -> "
+                    f"${c['new']['saved_dollars']:+.2f}"
+                )
 
     print(
         f"\nTOTAL: booked ${old_grand:+.2f} -> corrected ${new_grand:+.2f} "
