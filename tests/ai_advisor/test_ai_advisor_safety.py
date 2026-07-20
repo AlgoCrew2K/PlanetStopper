@@ -1025,6 +1025,72 @@ def test_gate3_fails_closed_when_no_matching_account_found(current_strategy):
     )
 
 
+def test_gate3_matches_account_when_symphony_id_and_bot_state_name_differ_only_in_case(
+    current_strategy,
+):
+    """DE-ADVISOR-GATE3-DIRECTION-001 (unplanned scope note, flagged by
+    f13-impl and approved by main): a mixed-case ``symphony_id`` must still
+    resolve to its matching bot_state account when its NORMALIZED form
+    equals the account's normalized name — even though the raw strings
+    differ in case.
+
+    Pre-existing bug (pre-F-013): the acc_sym_ids match only normalized the
+    bot_state side (``database.normalize_name(v.get("name","")) ==
+    symphony_id``) and never normalized the incoming ``symphony_id`` — so
+    this exact scenario (bot_state name and symphony_id differing only in
+    case) always resolved to an empty acc_sym_ids, wrongly tripping AC-5's
+    "no matching account" fail-closed path even though the account genuinely
+    exists. The real route passes symphony_id un-normalized (app.py:5846);
+    the advisor's canonical symphony id is ``normalize_name(name)`` —
+    matching the identical double-normalize comparison used at
+    app.py:4660/5011/5313/5784.
+
+    This is a DEDICATED regression pin for that contract — distinct from the
+    incidental sym-A fixtures used throughout this file, whose symphony_id
+    and bot_state name happen to share exact case in most tests and so never
+    exercised the case-mismatch path this bug depended on.
+    """
+    _mixed_case_bot_state = {
+        "acc-sym-mixed": {
+            "name": "Sym-Mixed-Case",
+            "current_return": 0.0,
+            "high_water_mark": 0.0,
+        }
+    }
+    _mixed_case_history_data = {"acc-sym-mixed": dict(_FIXTURE_HISTORY_DATA["acc-sym-a"])}
+
+    baseline_ga = 1.0
+    patched_ga = 2.5  # strictly beats baseline — also exercises AC-1 end-to-end
+
+    with (
+        patch("database.load_state", return_value=_mixed_case_bot_state),
+        patch(
+            "synthetic_history.generate_synthetic_history",
+            return_value=_mixed_case_history_data,
+        ),
+        patch("autotuner.calculate_historical_deviation", return_value={}),
+        patch(
+            "autotuner.run_simulation",
+            side_effect=[_ga_to_raw(baseline_ga), _ga_to_raw(patched_ga)],
+        ) as mock_sim,
+    ):
+        result = ai_advisor.revalidate_suggestion_oos(
+            symphony_id="SYM-MIXED-CASE",  # differs from "Sym-Mixed-Case" in case only
+            config_key="MAX_SQUEEZE_FLOOR",
+            suggested_value=0.30,
+            current_strategy=current_strategy,
+        )
+
+    assert mock_sim.call_count == 2, (
+        "the account must be matched case-insensitively and run_simulation "
+        "called — a case-only mismatch between symphony_id and the bot_state "
+        "name must NOT be treated as 'no matching account'"
+    )
+    assert result["passed"] is True
+    assert result["patched_guard_alpha"] == patched_ga
+    assert result["baseline_guard_alpha"] == baseline_ga
+
+
 def test_gate3_fails_closed_on_insufficient_holdout_history(current_strategy):
     """F-013 AC-5 / Edge Case: when the replay window is too short to carve
     out a real holdout (purge + minimum holdout size), the gate must fail
