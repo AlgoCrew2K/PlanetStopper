@@ -8603,3 +8603,67 @@ Whole-tree grep of `docs/generated/`, `docs/audit/`, `docs/handoff/`, `docs/rese
 ### Reference
 
 `DE-PANIC-STOP-CONFIRM-001`; branch `fix/f003-panic-stop`; worktree `.claude/worktrees/fix-f003-panic-stop`; plan `feature-plans/fix-f003-panic-stop.md`; RED `4683e603`; GREEN `23064fab`; HEAD `c2571c23`. Dashboard display of the new structured outcome is an explicit, tracked follow-up (out of scope this cycle) -- see the Decision above.
+
+
+## DE-PERFVIEW-ID-MISMATCH -- Performance-Tab Symphony Picker ID/Name Mismatch (F-023) (2026-07-20)
+
+Branch: `fix/f023-perf-view` | Base: `origin/main` (post `DE-PANIC-STOP-CONFIRM-001`) `0534fe0a` | RED: `369ca376` | GREEN: `84c5d22f` | sufficiency-review addition: `910ea076` | blast-radius RED: `ff788cb5` | blast-radius fix (FINAL, client-side): `8b8af24d` | HEAD (this entry): `5872e6ac`.
+
+### Problem
+
+The Performance-tab "Per-symphony" scope returned "0 observations" / all-metrics-"--" for EVERY one of the 11 live symphonies, behind the SAME "Insufficient history" banner used for genuinely sparse data -- a whole operator capability was silently dead AND disguised as an honest empty state. Root cause: `GET /api/performance/symphonies` (`app.py:3383`, `api_performance_symphonies()`, docstring wrongly said "symphony_ids") returned human-readable NAMES used as both the picker's label AND its value. The picked NAME was then sent as `symphony_id` (`performance.js:469`) into `analytics.get_symphony_bot_and_held_daily_returns` -> `SELECT ... FROM shadow_history WHERE symphony_id = ?` -- but `shadow_history.symphony_id` stores ONLY hash IDs, so the WHERE clause matched zero rows every time. Data was healthy (7,330+ real rows existed under the correct hash); this was a pure app-layer id/name mismatch, never a data gap. The endpoint has TWO consumers -- `static/performance.js` and `static/ai_advisor.js:568` -- both needed updating for the new shape.
+
+### Fix
+
+`api_performance_symphonies()` rebuilt to source `[{id, name}]` pairs from `database.load_state()` (bot_state, keyed by the Composer hash) instead of `analytics.get_history_with_cache_invalidation` + `analytics.list_available_symphonies` (a post-mortem-history-derived list of bare names); `id` is the hash key, `name` is the display label; malformed bot_state entries (non-dict, or missing `name`) are silently skipped; sorted by `name`; empty bot_state returns `{"symphonies": []}`, never a crash. `GET /api/performance?scope=symphony` gains a new `symphony_id_recognized` boolean field (AC-4) -- `symphony_id in database.load_state()` -- distinguishing a genuine no-data hash (still an honest "Insufficient history") from a totally unrecognized id; scoped to `scope=symphony` only, never emitted on `scope=aggregate`. `static/performance.js`'s picker uses `sym.id` as the option value (its downstream query is hash-keyed) and `renderBanner()` surfaces a distinct "Strategy not recognized" message when `symphony_id_recognized === false`, restoring the original Jinja-rendered banner markup otherwise.
+
+### Blast-radius finding + two false starts (doc-audit pass, before merge -- full uncensored account)
+
+While writing the `static/ai_advisor.js` consumer doc for AC-5, f23-doc traced `#symphony-id-input`'s downstream consumers beyond just `loadSymphonies()`'s own rendering and found the FIRST GREEN pass (`84c5d22f`) had set `opt.value = sym.id` on `ai_advisor.js`'s picker too -- matching `performance.js`, but WRONG for this file. That same select element also feeds `getSuggestions()` -> `POST /ai-advisor/suggest` -> `renderSuggestions()` -> each card's `acceptSuggestion(index, symphonyId)`/`rejectSuggestion(index, symphonyId)` -> `POST /ai-advisor/accept`/`POST /ai-advisor/reject`. `/ai-advisor/suggest` (`app.py:5773-5786`) already dual-resolves either a hash OR a name to a canonical normalized id, so it was unaffected -- but `/ai-advisor/accept` (`app.py:5843`) uses `symphony_id` DIRECTLY with no resolution, calling `database.get_symphony_strategy(symphony_id)`/`database.save_symphony_strategy(symphony_id, ...)` (`database.py:508-509`/`538-539`), both `normalize_name(display_name)`-keyed only. A hash-valued `symphony_id` would miss the real `symphony_strategies` row (`get_symphony_strategy` returns empty defaults, corrupting the OOS-revalidation baseline) and, on gate pass, `save_symphony_strategy` would INSERT a phantom row keyed by the lowercased hash -- an accepted config change would silently never take effect, despite a `{"status": "accepted"}` response. `reject` is unaffected (writes only an audit-log row; the hash lands in `llm_suggestions.symphony_name`, a labeling inaccuracy, not a functional break). No existing or F-023 RED test exercised the accept/reject path with the new picker shape (`tests/app/test_f023_performance_symphony_id_mismatch.py` covers picker-population, endpoint-shape, and `node --check` only), so this would not have surfaced GREEN or in review without the doc-audit trace.
+
+Two remediation directions were tried and retracted before landing on the final fix:
+1. **Server-side hash resolution inside `ai_advisor_accept()`** (`24ff47c6`, mirroring `/ai-advisor/suggest`'s existing dual-resolution) -- ruled OUT-OF-SCOPE by the team lead (hard rule: no server-side route changes to a live-config-write route this cycle without a dedicated plan-approval pass) and reverted (`b82a7512`).
+2. **A second consideration of the same server-side direction** (`c95de9d1`, added then immediately reverted at `5872e6ac`) -- superseded by the same ruling; net zero diff vs. the client-side fix below.
+
+**Final fix (client-side only, `8b8af24d`):** `static/ai_advisor.js`'s `loadSymphonies()` sets `opt.value = sym.name` (unchanged from pre-F023 behavior -- the accept/suggest flow's canonical key has always been the display name) and `opt.textContent = sym.name`; it reads the new `{id, name}` response shape but deliberately never touches `sym.id`. `app.py` carries ZERO diff vs. the `84c5d22f` GREEN baseline for `/ai-advisor/accept`/`/ai-advisor/suggest` -- confirmed by direct diff (`git diff 84c5d22f..HEAD -- app.py` is empty). `static/performance.js` is unaffected by this correction (its picker legitimately needs `sym.id`, a genuinely different consumer contract -- its downstream `GET /api/performance?scope=symphony&symphony_id=` query is hash-keyed).
+
+### Decision: `performance.js` and `ai_advisor.js` deliberately diverge on the picker's option value
+
+`performance.js`'s picker sends `sym.id` (hash); `ai_advisor.js`'s picker sends `sym.name` (display name) -- both fed by the SAME `GET /api/performance/symphonies` `{id, name}` response, but consumed by two structurally different downstream contracts (a hash-keyed `shadow_history` query vs. a `normalize_name(display_name)`-keyed `symphony_strategies` table). This is intentional and documented in both files' generated docs (`docs/generated/static_performance_js.md`, `docs/generated/static_ai_advisor_js.md`) -- not an inconsistency to converge in a future cycle.
+
+### Decision: the `composer_symphony_id` gap is a pre-existing, out-of-scope finding, not silently dropped
+
+Tracing the blast radius also surfaced that `POST /ai-advisor/suggest` passes the raw client `symphony_id` straight through as `composer_symphony_id` with no hash resolution, while `ai_advisor.assemble_advisor_context`'s condensed-logic dependency (`ai_advisor.py:1601-1604`) requires the Composer hash for `fetch_symphony_score` -- a documented failure mode in that file's own inline comment ("bug fix: passing the normalized name produced HTTP 400 and an all-empty logic struct"). Because the corrected `ai_advisor.js` picker sends a NAME (by design, per above), every Advisor-tab suggestion request degrades (D-1, never crashes) that context section to empty. This predates F-023 (the pre-fix picker also sent a bare name) and is explicitly out of scope for this cycle's server-side-changes ruling -- captured as its own backlog item (`feature-plans/BACKLOG.md`, "`POST /ai-advisor/suggest` does not hash-resolve `composer_symphony_id`") rather than left undocumented.
+
+### Invariants preserved
+
+- `scope=aggregate` responses are byte-unchanged -- no `symphony_id_recognized` key present (`test_performance_aggregate_scope_response_shape_unchanged`, `test_performance_aggregate_scope_never_has_symphony_id_recognized_key`).
+- `analytics.get_symphony_bot_and_held_daily_returns`'s parameterized `WHERE symphony_id = ?` query is untouched -- it already matched by hash correctly; only the value the route now receives changed.
+- `POST /ai-advisor/accept` / `POST /ai-advisor/suggest` server-side logic carries zero diff vs. the `84c5d22f` GREEN baseline (`test_accept_with_display_name_input_still_resolves_correctly` pins this).
+- `POST /ai-advisor/reject` unaffected (audit-log-only, no `symphony_strategies` write).
+
+### Tests
+
+188/188 passed (f23-tw's independent re-verification at HEAD `5872e6ac`), both ruff gates green, `node --check` clean on both changed JS files (extends the parametrized `tests/js_syntax/` module, no new per-file checks added). `tests/app/test_f023_performance_symphony_id_mismatch.py` (new, AC-1..AC-6 -- `{id,name}` shape, malformed-bot_state skip guard, sorted-by-name, picker value/label source-consumption checks for both JS files, end-to-end hash-vs-name observation-count proof via a seeded on-disk `shadow_history` fixture, `symphony_id_recognized` true/false, aggregate-scope byte-unchanged, SQL-injection-payload and oversized-input hardening) and `tests/app/test_advisor_run_advisor_persists_suggestion.py` (blast-radius addition -- pins that `/ai-advisor/accept` needs zero server-side change given the corrected display-name contract). Verified RED at `369ca376` (AC-1..AC-6) and `ff788cb5` (blast-radius), GREEN at `84c5d22f` / `8b8af24d` (final). `-n0`, no live API, no live Discord, no production DB (per-test tmp_path shadow_history fixtures only).
+
+### Reconcile sweep (doc-writer)
+
+Whole-tree grep for `/api/performance/symphonies`, `api_performance_symphonies`, and the old bare-names response shape found no stale claims requiring correction beyond the files updated this cycle -- `docs/handoff/COMPREHENSIVE-AUDIT.md` and `docs/handoff/VERIFY-code-2026-05-19T00-00-00Z.md` reference a DIFFERENT, already-CLOSED finding (A-COD-04, "picker calls the wrong endpoint") predating and unrelated to the id/name shape; `feature-plans/live-dashboard-metrics.md` and `DECISIONS.md`'s day-1-fallback entry mention the route only in passing (stale line-number citations, no shape claim) -- left as dated-snapshot references per convention. Updated this cycle:
+- `docs/generated/app.md` -- `GET /api/performance/symphonies` section rewritten (was a stale 2-line stub describing a post-mortem breakdown route the code never actually implemented); `GET /api/performance`'s new `symphony_id_recognized` field documented; header prepended.
+- `docs/generated/static_performance_js.md` (new) -- first doc-gen entry for `static/performance.js`, previously undocumented.
+- `docs/generated/static_ai_advisor_js.md` -- `loadSymphonies()` section rewritten for the `{id,name}` contract + the divergence-from-`performance.js` decision + the pre-existing `composer_symphony_id` gap callout; header prepended.
+- `docs/generated/INDEX.md` -- `app` row + new `static/performance` row; header prepended.
+- `feature-plans/BACKLOG.md` -- new entry for the `composer_symphony_id` gap (team-lead directive).
+
+### Files changed
+
+- `app.py` -- `api_performance()` gains `symphony_id_recognized` (scope=symphony only); `api_performance_symphonies()` rebuilt to source `{id,name}` from `database.load_state()`; docstring corrected.
+- `static/performance.js` -- `loadSymphonies()` picker value=`sym.id`/label=`sym.name`; `renderBanner()` gains the AC-4 unrecognized-id branch + `_defaultBannerHtml` capture.
+- `static/ai_advisor.js` -- `loadSymphonies()` picker value=`sym.name`/label=`sym.name` (both label and value the display name -- see the divergence decision above).
+- `tests/app/test_f023_performance_symphony_id_mismatch.py` (new).
+- `tests/app/test_advisor_run_advisor_persists_suggestion.py` (blast-radius addition).
+- `docs/generated/app.md`, `docs/generated/static_performance_js.md` (new), `docs/generated/static_ai_advisor_js.md`, `docs/generated/INDEX.md`, `feature-plans/BACKLOG.md`.
+
+### Reference
+
+`DE-PERFVIEW-ID-MISMATCH`; branch `fix/f023-perf-view`; worktree `.claude/worktrees/fix-f023-perf-view`; plan `feature-plans/fix-f023-perf-view.md`; RED `369ca376`; GREEN `84c5d22f`; blast-radius RED `ff788cb5`; final fix `8b8af24d`; HEAD `5872e6ac`. The `composer_symphony_id` gap is tracked in `feature-plans/BACKLOG.md`, not this entry's scope.
