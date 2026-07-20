@@ -474,20 +474,39 @@ def test_api_performance_symphony_unknown_id_returns_empty_state(client, mock_an
 # ---------------------------------------------------------------------------
 
 
-def test_api_performance_symphonies_returns_sorted_list(client, mock_analytics):
+def test_api_performance_symphonies_returns_sorted_list(client, mock_analytics, monkeypatch):
     """
-    GET /api/performance/symphonies returns ``{"symphonies": [...]}`` for the
-    UI dropdown.  We mock ``list_available_symphonies`` and assert the values
-    flow through unchanged.
+    GET /api/performance/symphonies returns ``{"symphonies": [{"id","name"}, ...]}``
+    for the UI dropdown, sorted by name.
+
+    F-023 (DE-PERFVIEW-ID-MISMATCH): the endpoint used to return bare NAME
+    strings (from post-mortem history) used as both the picker's label AND its
+    value; that value was then sent as ``symphony_id`` into a hash-keyed
+    ``shadow_history`` query, matching zero rows for every symphony. The
+    endpoint's data source is now ``database.load_state()`` (bot_state, keyed
+    by hash — each value has ``"name"``), matching the same hash<->name
+    co-location pattern ``get_settings()`` already uses elsewhere in app.py.
+    See tests/app/test_f023_performance_symphony_id_mismatch.py for the full
+    RED coverage (end-to-end id round-trip, unknown-id distinction, JS picker
+    updates); this test is the narrow "old shape is gone" regression guard.
     """
-    mock_analytics.get_history_with_cache_invalidation.return_value = {}
-    mock_analytics.list_available_symphonies.return_value = ["sym-A", "sym-B"]
+    fake_state = {
+        "hash-b-222": {"name": "sym-B"},
+        "hash-a-111": {"name": "sym-A"},
+    }
+    monkeypatch.setattr(app_module.database, "load_state", lambda: fake_state)
 
     resp = client.get("/api/performance/symphonies")
     assert resp.status_code == 200
     body = resp.get_json()
     assert "symphonies" in body
-    assert body["symphonies"] == ["sym-A", "sym-B"]
+    symphonies = body["symphonies"]
+    assert all(isinstance(entry, dict) and "id" in entry and "name" in entry for entry in symphonies), (
+        f"expected [{{id,name}}] objects, got {symphonies!r} — the old bare-name-"
+        "list shape must be gone (F-023)"
+    )
+    assert [e["name"] for e in symphonies] == ["sym-A", "sym-B"], "list must be sorted by name"
+    assert {e["id"] for e in symphonies} == set(fake_state.keys())
 
 
 # ---------------------------------------------------------------------------
