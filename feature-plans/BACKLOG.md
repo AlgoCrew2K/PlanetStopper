@@ -45,6 +45,20 @@ request's condensed-logic context to empty (D-1, never crashes). Pre-existing (p
 out of scope for that cycle. Fix candidate: reuse `resolved_id`'s existing hash-match loop.
 Tier 1.
 
+### Test-infra hardening: `test_live_*.py` needs a second opt-in gate beyond the `live` marker (found 2026-07-20, F-013 doc-verification incident)
+`tests/*/test_live_*.py` files rely solely on `pytestmark = pytest.mark.live` + pyproject.toml's
+default `-m 'not live and not slow and not perf'` addopts filter to stay excluded from normal
+runs. That `-m` filter is a single point of failure: any invocation that overrides addopts
+(e.g. `pytest ... -o addopts=""`, attempted as a workaround for an unrelated xdist issue) silently
+strips it, and if `ANTHROPIC_API_KEY` (or the equivalent live credential) is present in the
+environment, the test's own self-skip guard does not fire either — the live test runs for real.
+Confirmed 2026-07-20: an `-o addopts=""` invocation during F-013 doc-verification caused one
+unsanctioned real Anthropic API call via `tests/ai_advisor/test_live_claude_advisor.py`'s
+module-scoped fixture (advisor-context content, no trade action, cost trivial; disclosed and
+accepted as a low-impact process incident, DE-ADVISOR-GATE3-DIRECTION-001 doc-cycle). Fix
+candidate: require an explicit opt-in env var (e.g. `ALPHABOT_RUN_LIVE_TESTS=1`) in addition to
+the `live` marker, so a stripped `-m` filter alone can never let a live test execute. Tier 1.
+
 ---
 
 ## Low priority / tracked follow-on
