@@ -157,10 +157,14 @@ def test_symphonies_endpoint_returns_id_and_name_objects_not_bare_strings(client
     ids = {e["id"] for e in symphonies}
     names = {e["name"] for e in symphonies}
     assert ids == set(fake_state.keys()), "id values must be the bot_state hash keys"
-    assert names == {v["name"] for v in fake_state.values()}, "name values must be the bot_state display names"
+    assert names == {v["name"] for v in fake_state.values()}, (
+        "name values must be the bot_state display names"
+    )
 
 
-def test_symphonies_endpoint_id_is_the_state_hash_key_name_is_the_display_label(client, monkeypatch):
+def test_symphonies_endpoint_id_is_the_state_hash_key_name_is_the_display_label(
+    client, monkeypatch
+):
     fake_state = {
         "a1b2c3-hash-alpha": {"name": "Sym Alpha"},
         "d4e5f6-hash-beta": {"name": "Sym Beta"},
@@ -196,7 +200,9 @@ def test_symphonies_endpoint_empty_bot_state_returns_empty_list_no_crash(client,
     assert body["symphonies"] == []
 
 
-def test_symphonies_endpoint_skips_malformed_bot_state_entries_without_crashing(client, monkeypatch):
+def test_symphonies_endpoint_skips_malformed_bot_state_entries_without_crashing(
+    client, monkeypatch
+):
     """Sufficiency-review addition (Red/Green/Revise): the new {id,name} list
     comprehension reads data["name"] per bot_state entry -- a malformed entry
     (non-dict value, or a dict missing "name") must be silently skipped, not
@@ -238,14 +244,18 @@ def test_symphonies_endpoint_list_sorted_by_name(client, monkeypatch):
 
 def test_performance_js_symphony_picker_uses_id_as_value_and_name_as_label():
     src = (_STATIC_DIR / "performance.js").read_text(encoding="utf-8")
-    body = _extract_function_body(src, "function loadSymphonies", "function wireSegControl", "performance.js")
+    body = _extract_function_body(
+        src, "function loadSymphonies", "function wireSegControl", "performance.js"
+    )
 
     assert "sym.id" in body, (
         "loadSymphonies() must set the option value from sym.id (the new "
         "{id,name} shape) -- today it assigns the bare `sym` (a display NAME) "
         "to option.value, which is exactly the F-023 bug."
     )
-    assert "sym.name" in body, "loadSymphonies() must set the option label/textContent from sym.name."
+    assert "sym.name" in body, (
+        "loadSymphonies() must set the option label/textContent from sym.name."
+    )
     assert not re.search(r"opt\.value\s*=\s*sym\s*;", body), (
         "loadSymphonies() still assigns the bare `sym` value to option.value -- must use sym.id."
     )
@@ -259,12 +269,16 @@ def test_performance_js_symphony_picker_uses_id_as_value_and_name_as_label():
 # ---------------------------------------------------------------------------
 
 
-def test_performance_symphony_id_from_picker_yields_nonzero_observations(client, monkeypatch, tmp_path):
+def test_performance_symphony_id_from_picker_yields_nonzero_observations(
+    client, monkeypatch, tmp_path
+):
     real_hash = "a1b2c3-real-hash-alpha"
     display_name = "Sym Real Alpha"
     n_rows = 15
 
-    monkeypatch.setattr(app_module.database, "load_state", lambda: {real_hash: {"name": display_name}})
+    monkeypatch.setattr(
+        app_module.database, "load_state", lambda: {real_hash: {"name": display_name}}
+    )
 
     shadow_db = tmp_path / "f023_shadow.db"
     _seed_shadow_history_db(shadow_db, real_hash, n_rows)
@@ -292,14 +306,18 @@ def test_performance_symphony_id_from_picker_yields_nonzero_observations(client,
     )
 
 
-def test_performance_symphony_name_instead_of_id_yields_zero_observations(client, monkeypatch, tmp_path):
+def test_performance_symphony_name_instead_of_id_yields_zero_observations(
+    client, monkeypatch, tmp_path
+):
     """Negative-control regression guard -- documents WHY the bug happened.
     Passes today AND after the fix: a display NAME (not a hash) legitimately
     matches zero shadow_history rows, because the column stores only hashes."""
     real_hash = "a1b2c3-real-hash-alpha"
     display_name = "Sym Real Alpha"
 
-    monkeypatch.setattr(app_module.database, "load_state", lambda: {real_hash: {"name": display_name}})
+    monkeypatch.setattr(
+        app_module.database, "load_state", lambda: {real_hash: {"name": display_name}}
+    )
 
     shadow_db = tmp_path / "f023_shadow_name_control.db"
     _seed_shadow_history_db(shadow_db, real_hash, 15)
@@ -315,9 +333,13 @@ def test_performance_symphony_name_instead_of_id_yields_zero_observations(client
 # ---------------------------------------------------------------------------
 
 
-def test_performance_symphony_known_hash_zero_rows_is_recognized_true(client, monkeypatch, tmp_path):
+def test_performance_symphony_known_hash_zero_rows_is_recognized_true(
+    client, monkeypatch, tmp_path
+):
     known_hash = "known-hash-no-data-xyz"
-    monkeypatch.setattr(app_module.database, "load_state", lambda: {known_hash: {"name": "Sym No Data"}})
+    monkeypatch.setattr(
+        app_module.database, "load_state", lambda: {known_hash: {"name": "Sym No Data"}}
+    )
 
     shadow_db = tmp_path / "f023_empty_shadow.db"
     _seed_shadow_history_db(shadow_db, known_hash, 0)
@@ -336,7 +358,9 @@ def test_performance_symphony_known_hash_zero_rows_is_recognized_true(client, mo
 
 
 def test_performance_symphony_unknown_id_is_recognized_false(client, monkeypatch, tmp_path):
-    monkeypatch.setattr(app_module.database, "load_state", lambda: {"some-other-hash": {"name": "Sym Other"}})
+    monkeypatch.setattr(
+        app_module.database, "load_state", lambda: {"some-other-hash": {"name": "Sym Other"}}
+    )
 
     shadow_db = tmp_path / "f023_empty_shadow2.db"
     _seed_shadow_history_db(shadow_db, "unused", 0)
@@ -357,7 +381,9 @@ def test_performance_js_render_banner_branches_on_symphony_id_recognized():
     PM live-render-harness verifies the actual visual behavior; see the
     'Questions for User' section of .claude/tdd-handoff.md."""
     src = (_STATIC_DIR / "performance.js").read_text(encoding="utf-8")
-    body = _extract_function_body(src, "function renderBanner", "function setHeadlineStat", "performance.js")
+    body = _extract_function_body(
+        src, "function renderBanner", "function setHeadlineStat", "performance.js"
+    )
 
     assert "symphony_id_recognized" in body, (
         "renderBanner() must branch on payload.symphony_id_recognized so an "
@@ -374,27 +400,62 @@ def test_performance_js_render_banner_branches_on_symphony_id_recognized():
 
 
 # ---------------------------------------------------------------------------
-# AC-5 -- static/ai_advisor.js picker gets the same {id,name} update
+# AC-5 -- static/ai_advisor.js picker gets the {id,name} update, but keeps
+# NAME as its option VALUE (not id/hash) -- corrected direction, see below.
 # ---------------------------------------------------------------------------
+#
+# CORRECTION (post-approval blast-radius finding, team-lead ruling): unlike
+# performance.js (which genuinely needs the HASH as its option value, since
+# it feeds GET /api/performance?scope=symphony&symphony_id=<hash>),
+# ai_advisor.js's #symphony-id-input picker feeds acceptSuggestion() ->
+# POST /ai-advisor/accept (app.py:5843), which reads database.get_symphony_
+# strategy/save_symphony_strategy directly -- both normalize_name(display_
+# name)-keyed ONLY, no hash resolution (unlike /ai-advisor/suggest, which
+# already dual-resolves). Pre-F023 this picker's option.value was ALREADY the
+# correct NAME (opt.value = sym, where sym was a bare name string) -- an
+# original implementer pass (since retracted, see .claude/tdd-handoff.md
+# "BLOCKING finding") set opt.value = sym.id here too, which would have sent
+# a hash into a route that can't resolve one, silently writing a phantom
+# symphony_strategies row. Ruling: the fix stays in ai_advisor.js only --
+# NEVER touch the server-side accept/suggest route logic. The endpoint now
+# returns {id,name} objects (not bare strings) either way, so the JS must
+# read sym.name explicitly (bare `sym` is a JS object here, not a string) --
+# it just must NOT switch to sym.id for the option value.
 
 
-def test_ai_advisor_js_symphony_picker_uses_id_as_value_and_name_as_label():
+def test_ai_advisor_js_symphony_picker_uses_name_as_value_not_id():
+    """The accept/suggest flow's canonical key is the display name, not the
+    Composer hash -- option.value must read sym.name, never sym.id, even
+    though the endpoint now returns {id,name} objects."""
     src = (_STATIC_DIR / "ai_advisor.js").read_text(encoding="utf-8")
     body = _extract_function_body(
-        src, "function loadSymphonies", "document.addEventListener('DOMContentLoaded'", "ai_advisor.js"
+        src,
+        "function loadSymphonies",
+        "document.addEventListener('DOMContentLoaded'",
+        "ai_advisor.js",
     )
 
-    assert "sym.id" in body, (
-        "ai_advisor.js loadSymphonies() must set the option value from sym.id "
-        "(the new {id,name} shape) -- today it assigns the bare `sym` (a "
-        "display NAME) to option.value, the same F-023 bug as performance.js."
+    assert not re.search(r"opt\.value\s*=\s*sym\.id\s*;", body), (
+        "ai_advisor.js loadSymphonies() must NOT set option.value from sym.id -- "
+        "the accept/suggest flow (POST /ai-advisor/accept, app.py:5843) reads "
+        "database.get_symphony_strategy/save_symphony_strategy directly with no "
+        "hash resolution; a hash-valued symphony_id silently writes a phantom "
+        "symphony_strategies row instead of the real one (see .claude/tdd-handoff.md "
+        "'BLOCKING finding')."
     )
-    assert "sym.name" in body, "ai_advisor.js loadSymphonies() must set the option label from sym.name."
+    assert re.search(r"opt\.value\s*=\s*sym\.name\s*;", body), (
+        "ai_advisor.js loadSymphonies() must set option.value from sym.name -- "
+        "the {id,name} endpoint shape means `sym` is now an object, not a bare "
+        "string, so this must read sym.name explicitly (not the bare `sym` object, "
+        "which would stringify to '[object Object]')."
+    )
+    assert re.search(r"opt\.textContent\s*=\s*sym\.name\s*;", body), (
+        "ai_advisor.js loadSymphonies() must set the option label from sym.name."
+    )
     assert not re.search(r"opt\.value\s*=\s*sym\s*;", body), (
-        "ai_advisor.js loadSymphonies() still assigns the bare `sym` value to option.value."
-    )
-    assert not re.search(r"opt\.textContent\s*=\s*sym\s*;", body), (
-        "ai_advisor.js loadSymphonies() still assigns the bare `sym` value to option.textContent."
+        "ai_advisor.js loadSymphonies() must not assign the bare `sym` object "
+        "to option.value (the endpoint now returns {id,name} objects, not "
+        "strings -- this would stringify to '[object Object]')."
     )
 
 
@@ -458,7 +519,9 @@ def test_performance_aggregate_scope_never_has_symphony_id_recognized_key(client
 # ---------------------------------------------------------------------------
 
 
-def test_symphony_id_sql_injection_payload_does_not_crash_or_leak_500(client, monkeypatch, tmp_path):
+def test_symphony_id_sql_injection_payload_does_not_crash_or_leak_500(
+    client, monkeypatch, tmp_path
+):
     shadow_db = tmp_path / "f023_injection_shadow.db"
     _seed_shadow_history_db(shadow_db, "unused", 0)
     monkeypatch.setattr(app_module.analytics, "DB_FILE", str(shadow_db))
