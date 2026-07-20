@@ -2718,6 +2718,7 @@ def guard_alpha_summary():
 
     cumulative_saved_dollars = 0.0
     guard_event_count = 0
+    excluded_invalid_count = 0
     dates: list[str] = []
 
     for fpath in files:
@@ -2730,10 +2731,18 @@ def guard_alpha_summary():
             )
             continue
 
+        # F-008: only entries with a recognized if_held_source provenance stamp
+        # contribute — a missing/unrecognized stamp means the if-held basis is
+        # untrustworthy (see analytics.is_valid_post_mortem_entry). Distinct
+        # from the malformed-file except-path above: this is a per-entry
+        # semantic check, never a whole-file skip.
         triggers = pm.get("triggers", [])
         for t in triggers:
-            cumulative_saved_dollars += float(t.get("saved_dollars", 0.0))
-        guard_event_count += len(triggers)
+            if analytics.is_valid_post_mortem_entry(t):
+                cumulative_saved_dollars += float(t.get("saved_dollars", 0.0))
+                guard_event_count += 1
+            else:
+                excluded_invalid_count += 1
 
         # Extract YYYY-MM-DD from filename post_mortem_YYYY-MM-DD.json
         basename = os.path.basename(fpath)
@@ -2822,6 +2831,7 @@ def guard_alpha_summary():
         {
             "cumulative_saved_dollars": cumulative_saved_dollars,
             "guard_event_count": guard_event_count,
+            "excluded_invalid_count": excluded_invalid_count,
             "date_range": date_range,
             "basis_label": basis_label,
             "source": source,

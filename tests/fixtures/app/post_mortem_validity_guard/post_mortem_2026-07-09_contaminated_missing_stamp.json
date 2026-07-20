@@ -1,0 +1,30 @@
+{
+    "date": "2026-07-09",
+    "summary": {
+        "total_monitored": 1,
+        "total_triggered": 1,
+        "positive_guard_alpha_count": 1
+    },
+    "tomorrow_target_holdings": {
+        "STATUS": "Pending Composer Rebalance"
+    },
+    "triggers": [
+        {
+            "symphony_name": "Pre-Fix Sign-Flip Epsilon",
+            "symphony_value": 1900.0,
+            "account_id": "acct-vhg-4",
+            "exit_reason": "VWAP Breakdown",
+            "exit_return": 0.5,
+            "attempted_trigger_level": 1.2,
+            "shadow_return": -1.9,
+            "shadow_hwm": 1.2,
+            "saved_pct_guard_alpha": 5.7,
+            "saved_dollars": 108.3,
+            "hwm_at_trigger": 1.2,
+            "time_triggered": "10:18",
+            "symphony_vol": 1.6,
+            "strategy_params": {},
+            "next_day_holdings": ["Pending..."]
+        }
+    ]
+}

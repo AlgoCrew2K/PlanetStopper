@@ -17,6 +17,7 @@
             "shadow_hwm": 2.5,
             "saved_pct_guard_alpha": 2.1,
             "saved_dollars": 315.0,
+            "if_held_source": "shadow_history",
             "hwm_at_trigger": 2.5,
             "time_triggered": "13:10:00",
             "symphony_vol": 0.21,

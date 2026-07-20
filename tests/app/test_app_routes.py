@@ -768,12 +768,31 @@ def test_api_history_aggregates_post_mortems_within_window(client, tmp_path, mon
     f1_date = today.strftime(fmt)
     f2_date = (today - __import__("datetime").timedelta(days=1)).strftime(fmt)
 
+    # F-008: get_history_summary now excludes entries lacking a recognized
+    # if_held_source provenance stamp — these fixtures represent ordinary
+    # valid data (not the F-008 contamination this guard targets), so they
+    # carry the stamp real production triggers have had since PR #80.
     triggers_f1 = [
-        {"saved_pct_guard_alpha": 0.5, "saved_dollars": 100.0, "exit_reason": "Stop"},
-        {"saved_pct_guard_alpha": -0.1, "saved_dollars": -20.0, "exit_reason": "Stop"},
+        {
+            "saved_pct_guard_alpha": 0.5,
+            "saved_dollars": 100.0,
+            "exit_reason": "Stop",
+            "if_held_source": "shadow_history",
+        },
+        {
+            "saved_pct_guard_alpha": -0.1,
+            "saved_dollars": -20.0,
+            "exit_reason": "Stop",
+            "if_held_source": "shadow_history",
+        },
     ]
     triggers_f2 = [
-        {"saved_pct_guard_alpha": 0.25, "saved_dollars": 50.0, "exit_reason": "VWAP"},
+        {
+            "saved_pct_guard_alpha": 0.25,
+            "saved_dollars": 50.0,
+            "exit_reason": "VWAP",
+            "if_held_source": "shadow_history",
+        },
     ]
     (tmp_path / f"post_mortem_{f1_date}.json").write_text(json.dumps({"triggers": triggers_f1}))
     (tmp_path / f"post_mortem_{f2_date}.json").write_text(json.dumps({"triggers": triggers_f2}))
