@@ -2229,15 +2229,15 @@ def revalidate_suggestion_oos(
     bot_state = database.load_state()
 
     # acc_sym_ids: the bot_state keys whose normalized symphony name matches
-    # symphony_id. Both sides are normalized — symphony_id arrives from the
-    # route un-normalized (app.py:5846 reads it straight from the request
-    # payload) — matching the identical double-normalize comparison used at
-    # app.py:4660/5011/5313/5784. Pre-existing bug (single-sided normalize)
-    # fixed here as part of F-013 because AC-5's honest "no matching account"
-    # fail-closed path depends on acc_sym_ids resolving correctly — the
-    # pre-fix code masked the mismatch by calling run_simulation
-    # unconditionally regardless of whether acc_sym_ids was empty (an
-    # accidental tie, not an honest rejection).
+    # symphony_id. Both sides are normalized: the advisor canonical ID is
+    # normalize_name(name), but the route passes symphony_id un-normalized
+    # (app.py:5846 reads it straight off the request payload) — matching the
+    # identical double-normalize comparison used at app.py:4660/5011/5313/5784.
+    # Pre-existing bug (single-sided normalize) fixed here as part of F-013
+    # because AC-5's honest "no matching account" fail-closed path depends on
+    # acc_sym_ids resolving correctly — the pre-fix code masked the mismatch
+    # by calling run_simulation unconditionally regardless of whether
+    # acc_sym_ids was empty (an accidental tie, not an honest rejection).
     acc_sym_ids = [
         k
         for k, v in bot_state.items()
