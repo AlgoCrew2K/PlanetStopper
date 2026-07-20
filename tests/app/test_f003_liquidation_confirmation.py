@@ -217,14 +217,16 @@ def test_liquidation_non_2xx_on_one_symphony_does_not_abort_the_rest(monkeypatch
 @pytest.mark.parametrize("exc_type", [ValueError, KeyError, TypeError])
 def test_liquidation_isolates_non_request_exception_types_per_symphony(monkeypatch, exc_type):
     """
-    The per-symphony catch must be a bare ``except Exception`` — never
-    narrowly scoped to ``requests.RequestException`` — so a panic-stop
+    The per-symphony catch must be broadly typed as ``except Exception`` —
+    never narrowly scoped to ``requests.RequestException`` — so a panic-stop
     cannot be stranded by a non-request fault on one symphony (e.g. a
     malformed sym dict raising KeyError/ValueError while building the sell
-    URL/payload). The exception is injected at the POST call boundary using
-    non-request exception TYPES as a stand-in for "any per-symphony fault";
-    the assertion is about the catch being untyped-broad, not the exact
-    origin of the fault.
+    URL/payload). (A truly bare ``except:`` is NOT required or desired here —
+    that would also swallow ``SystemExit``/``KeyboardInterrupt``, which
+    ``except Exception`` correctly does not.) The exception is injected at
+    the POST call boundary using non-request exception TYPES as a stand-in
+    for "any per-symphony fault"; the assertion is about the catch being
+    ``Exception``-broad, not the exact origin of the fault.
     """
     symphonies = [{"symphony_id": "S1", "name": "Alpha"}, {"symphony_id": "S2", "name": "Beta"}]
 
