@@ -102,11 +102,14 @@ def is_valid_post_mortem_entry(entry: object) -> bool:
     of post_mortem_*.json trigger entries (this module's load_post_mortem_history
     and get_history_summary, plus app.py's guard_alpha_summary) routes through
     this function so they cannot diverge. Never raises — non-dict input is
-    simply invalid.
+    simply invalid, and a non-string if_held_source (e.g. a corrupted-but-
+    syntactically-valid file stamping a list/dict) is invalid rather than
+    crashing the frozenset membership check on an unhashable type.
     """
     if not isinstance(entry, dict):
         return False
-    return entry.get("if_held_source") in _TRUSTED_IF_HELD_SOURCES
+    value = entry.get("if_held_source")
+    return isinstance(value, str) and value in _TRUSTED_IF_HELD_SOURCES
 
 
 # ---------------------------------------------------------------------------
