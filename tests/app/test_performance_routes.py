@@ -501,7 +501,9 @@ def test_api_performance_symphonies_returns_sorted_list(client, mock_analytics, 
     body = resp.get_json()
     assert "symphonies" in body
     symphonies = body["symphonies"]
-    assert all(isinstance(entry, dict) and "id" in entry and "name" in entry for entry in symphonies), (
+    assert all(
+        isinstance(entry, dict) and "id" in entry and "name" in entry for entry in symphonies
+    ), (
         f"expected [{{id,name}}] objects, got {symphonies!r} — the old bare-name-"
         "list shape must be gone (F-023)"
     )
