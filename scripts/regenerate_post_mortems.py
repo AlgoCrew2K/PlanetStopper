@@ -64,7 +64,17 @@ import sqlite3
 import sys
 from datetime import UTC, datetime
 
-import analytics
+# Bootstrap the repo root onto sys.path BEFORE importing analytics: Python's
+# script-mode sys.path[0] is this script's OWN directory (scripts/), not the
+# repo root, so `python scripts/regenerate_post_mortems.py` (the documented
+# USAGE invocation below) raises ModuleNotFoundError from a neutral cwd with
+# no PYTHONPATH set — the exact droplet failure this fixes. pytest is
+# unaffected (it always puts the repo root on sys.path for collection).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+import analytics  # noqa: E402
 
 # Stage-1 post-mortem freeze fires in the 15:54 ET minute; every row through
 # the end of that minute is on the declared snapshot basis. Verified against
@@ -78,8 +88,6 @@ SNAPSHOT_CUTOFF_ET = "15:54:59"
 # the module docstring above.
 DEFAULT_START = "2026-06-22"
 DEFAULT_END = "2026-07-09"
-
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def load_name_account_map(db_path: str) -> dict[tuple[str, str], str]:
