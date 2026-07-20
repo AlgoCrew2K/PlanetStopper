@@ -3396,17 +3396,38 @@ def perform_account_liquidation(account_id, key, secret, live_mode):
         "Content-Type": "application/json",
     }
     url = f"{COMPOSER_BASE_URL}/portfolio/accounts/{account_id}/symphony-stats-meta"
+    outcomes = {}
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 200:
             for sym in resp.json().get("symphonies", []):
                 if live_mode:
+                    name = sym.get("name")
                     sell_url = f"{COMPOSER_BASE_URL}/deploy/accounts/{account_id}/symphonies/{sym.get('symphony_id') or sym.get('id')}/go-to-cash"  # noqa: E501  # un-wrappable long line
-                    sell_resp = requests.post(sell_url, headers=headers, json={}, timeout=10)
-                    print(f"Liquidated {sym.get('name')} (HTTP {sell_resp.status_code})")
+                    # Per-symphony isolation: a status rejection OR any raised
+                    # exception on one symphony must not abort the rest of the
+                    # panic-stop queue (F-003).
+                    try:
+                        sell_resp = requests.post(sell_url, headers=headers, json={}, timeout=10)
+                        if sell_resp.status_code in (200, 201, 202):
+                            print(f"Liquidated {name} (HTTP {sell_resp.status_code})")
+                            outcomes[name] = {"ok": True, "status": sell_resp.status_code}
+                        else:
+                            print(
+                                f"LIQUIDATION FAILED {name} — HTTP {sell_resp.status_code} — {sell_resp.text[:200]}"  # noqa: E501  # un-wrappable long line
+                            )
+                            outcomes[name] = {
+                                "ok": False,
+                                "status": sell_resp.status_code,
+                                "reason": sell_resp.text[:200],
+                            }
+                    except Exception as e:
+                        print(f"LIQUIDATION FAILED {name} — {type(e).__name__}")
+                        outcomes[name] = {"ok": False, "reason": type(e).__name__}
                     time.sleep(1.5)
     except Exception as e:
         print(f"Liquidation Error: {e}")
+    return outcomes
 
 
 @app.route("/api/sell_account", methods=["POST"])

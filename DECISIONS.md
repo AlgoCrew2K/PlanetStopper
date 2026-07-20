@@ -8538,3 +8538,68 @@ Whole-tree grep of `docs/generated/`, `docs/research/`, `docs/handoff/`, `docs/a
 ### Reference
 
 `DE-POSTMORTEM-INTEGRITY-001`; branch `fix/f008-data-integrity`; worktree `.claude/worktrees/fix-f008-data-integrity`; plan `feature-plans/fix-f008-data-integrity.md`; RED `f33684b4`; GREEN round 1 `500964ff`; GREEN round 2 `2eac42d0`; HEAD `ded5f853`. Predecessor `DE-GUARD-ALPHA-SAVED-001` (PR #80, introduced the `if_held_source` write-time provenance stamp this cycle now also enforces at read time). Live droplet DATA repair remains a separate PM-gated operational step, not covered by this entry.
+
+## DE-PANIC-STOP-CONFIRM-001 -- Panic-Stop Liquidation Confirmation: per-symphony status-code gate + fault isolation (F-003) (2026-07-20)
+
+Branch: `fix/f003-panic-stop` | Base: `origin/main` (post `DE-POSTMORTEM-INTEGRITY-001`) `72fa9f6b` | RED: `4683e603` | GREEN: `23064fab` | review-nit docstring fix: `c2571c23` | HEAD (this entry): `c2571c23`. **Review: f3-rev independently re-verified and confirmed APPROVE at HEAD `c2571c23` -- zero blocks, same 8-gate findings as the original `23064fab` review; no further review rounds pending.**
+
+### Problem
+
+`perform_account_liquidation` (`app.py:3392`, the background thread `POST /api/sell_account` spawns for a live emergency liquidation) had two defects, both invisible to the operator until a real panic-stop hit them:
+
+1. **The success line printed UNCONDITIONALLY.** `print(f"Liquidated {name} (HTTP {sell_resp.status_code})")` ran regardless of the sell response's status code -- a 429/400/422/500 rejection still read as a false "Liquidated" (contrast `alpha_bot_execution.py:execute_sell_to_cash`, which already checks `status_code in (200, 201, 202)`).
+2. **One try/except wrapped the WHOLE per-symphony loop.** A raised exception on symphony N aborted every remaining symphony -- the queue silently stopped, with no distinct log line marking where or why.
+
+During a real emergency the console/journal print is the operator's ONLY per-symphony ground truth for "did the account actually go to cash." A false "Liquidated" under a plausible Composer 429 -- market-stress rate-limiting is likely in exactly the scenario that triggers a panic-stop -- could make the operator stand down while real money stayed exposed. Rated CONDITIONAL-CRITICAL / must-fix-before-live; currently unreachable in the droplet's default config because `sell_account()` returns the `dry_run` branch before spawning the thread when `LIVE_EXECUTION` is not true (`app.py:3483-3496`).
+
+### Fix
+
+`perform_account_liquidation` restructured exactly per `feature-plans/fix-f003-panic-stop.md`'s AC-1..AC-6, with each per-symphony sell attempt (the POST + status check + log) now wrapped in its own `try`/`except Exception as e:`:
+
+- **Status-code gate (AC-1).** Only `sell_resp.status_code in (200, 201, 202)` logs the existing success line. Anything else logs, exact format: `f"LIQUIDATION FAILED {name} — HTTP {sell_resp.status_code} — {sell_resp.text[:200]}"` (em-dash, response body truncated to 200 chars before it ever reaches `print` or the outcome dict -- never an unbounded body).
+- **Per-symphony isolation (AC-2).** The inner catch is broadly typed `except Exception` -- not narrowed to `requests.RequestException` -- so a non-request fault (e.g. a malformed `sym` dict raising `KeyError`/`ValueError` while building the sell URL) is isolated exactly like an HTTP rejection. The exception branch logs `f"LIQUIDATION FAILED {name} — {type(e).__name__}"` (exception TYPE only, mirroring `alpha_bot_execution.py`'s `[API CRASH]` convention of never logging raw exception text that could carry a request/response detail). The OUTER try/except around the initial GET call is untouched -- a GET failure legitimately means there is no symphony list to iterate, and stays a single top-level "no list" case, not a per-symphony one.
+- **Structured outcome (AC-3/AC-4).** The function now RETURNS a dict keyed by symphony name: `{"ok": True, "status": 200}` on success; `{"ok": False, "status": code, "reason": text[:200]}` on a non-2xx status; `{"ok": False, "reason": type(e).__name__}` on a raised exception. Empty symphony list, a failed GET, or `live_mode=False` all return `{}` (never `None`) -- a mixed success/failure run reports every symphony individually, never a single opaque `"Liquidation Error: {e}"` that hides which symphonies did or didn't liquidate.
+- **`time.sleep(1.5)`** now runs once per symphony attempt regardless of outcome (success, non-2xx, or exception), not only on the prior success/no-exception path -- required so the existing pacing survives the isolation restructure (previously an exception jumped straight past it to the outer handler, aborting the whole loop; now the loop continues, so the same 1.5s value still applies between every attempt). No test pins `time.sleep`'s call count or placement -- flagged here as a design choice, not a test-driven requirement.
+
+### Decision: confirmation + isolation + return value only; dashboard display deferred
+
+The corrected per-symphony LOG line already restores the operator's ground truth -- the finding calls the console print the operator's only ground truth, and that is what this cycle fixes. A dashboard surface to DISPLAY the new structured outcome is a separable follow-up, not part of the CONDITIONAL-CRITICAL fix: `perform_account_liquidation` is invoked via `threading.Thread(target=perform_account_liquidation, args=(...))` (`app.py:3498-3505`), and `threading.Thread` discards a target function's return value -- the outcome dict is real and directly tested (see the Tests section below) but is not yet surfaced to the `/api/sell_account` HTTP response or any dashboard element. This is an explicit, tracked deferral (`feature-plans/fix-f003-panic-stop.md` Scope Boundaries), not a gap this entry is hiding.
+
+### Decision: no retry/backoff added this cycle
+
+The fix spec required correct-detection + isolation, not new retry logic. A panic-stop retry/backoff on a 429 is a separable robustness enhancement, noted but not required -- and the handoff explicitly forbade importing or replicating `execute_sell_to_cash`'s own retry loop into this function.
+
+### Invariants preserved (AC-5, hard no-trade-behavior-change guard)
+
+- The GET call's URL, headers, and timeout are byte-unchanged.
+- The sell POST's URL, headers, `json={}` body, and `timeout=10` are byte-unchanged (`test_liquidation_post_url_headers_and_payload_unchanged`, `test_liquidation_get_symphony_stats_meta_call_unchanged`).
+- The SET of symphonies attempted is unchanged -- every symphony in `resp.json().get("symphonies", [])` is still attempted exactly once, now REGARDLESS of a prior failure (`test_liquidation_calls_post_exactly_once_per_symphony_even_under_failure` -- pre-fix, only 2 of 3 symphonies were attempted because an exception on #2 aborted #3; this is the isolation-bug proof).
+- `live_mode=False` still issues zero POSTs (`test_liquidation_live_mode_false_still_issues_zero_posts`) -- the `sell_account()` route's own `LIVE_EXECUTION` dry-run gate (`app.py:3483-3496`) is untouched by this cycle.
+- A happy-path all-2xx run logs the success line per symphony exactly as before (AC-6 golden regression, `test_liquidation_golden_all_success_logs_each_symphony`).
+- The function never lets an exception escape, even under a mix of failures across every symphony (`test_liquidation_never_raises_for_any_failure_mix`).
+
+### Tests
+
+72 passed, `-n0` (no xdist), independently re-verified by this doc-writer at HEAD `c2571c23`: `tests/app/test_f003_liquidation_confirmation.py` (new, 25 tests -- AC-1..AC-6 plus the 5 regression pins listed above), `tests/app/test_app_routes.py` (pre-existing, 3 tests reference `perform_account_liquidation` -- 2 call it directly with live_mode=True/False, 1 asserts the route-spawned `threading.Thread` target equals the function -- none assert on print content or a return value -- unaffected), `tests/app/test_sell_account_panic_confirm.py` (pre-existing, the route-level confirm-phrase/confirm-account-id gate tests -- unaffected, this cycle never touched `sell_account()` itself). Both `ruff format --check` and `ruff check` clean on `app.py` and the new test file. Fixtures are response-shape mocks (`status_code`/`text` on `app.requests.post`, `app.requests.get`, `app.time.sleep`) -- no live Composer/Alpaca calls, no live DB. Verified RED at `4683e603` (18 of 72 failing per the test-writer's handoff split), GREEN at `23064fab` (72/72), review-nit docstring fix at `c2571c23` (still 72/72, zero assertion changes).
+
+### Reconcile sweep (doc-writer)
+
+Whole-tree grep of `docs/generated/`, `docs/audit/`, `docs/handoff/`, `docs/research/`, `README.md`, and `DECISIONS.md` for `sell_account`/`perform_account_liquidation`/`Liquidat`/panic-stop found no stale claims requiring correction -- every existing hit describes the ROUTE-level gating (confirm phrase, `confirm_account_id`, `LIVE_EXECUTION`, manual-operator-click-only) or the frontend panic modal, all of which are byte-unchanged by this cycle (AC-5) -- each hit below was re-checked IN CONTEXT, not by grep-count alone:
+- `docs/generated/static_chrome_js.md` (`openPanicModal`/`submitPanicLiquidation` -- describes the frontend POST only, makes no claim about backend per-symphony confirmation correctness either before or after this fix).
+- `README.md:182` ("the operator must explicitly click" / "the engine never fires it autonomously") -- a surface-level trade-gate claim, still true, no implied claim about per-symphony confirmation truthfulness.
+- `DECISIONS.md:300` (`DE-S4-003`, CSRF-header rollout history mentioning the sell_account panic button) -- unrelated to confirmation logic.
+- `docs/audit/security-review.md:114,116` (A-2/A-3 findings on route-level gating and dashboard auth) -- describes gating requirements, not confirmation-log/return-value internals; unaffected.
+- `docs/audit/sprint-3-port-removal-manifest.md:10,212-224` (SITE-D6/D7, the KEEP-MANUAL retention rationale for this button) -- dated retention-decision snapshot, its claims about the route being manual-only and never autonomous remain true; left as-is per the dated-snapshot convention.
+- `docs/audit/vision-audit-2026-05-27/logic-trace.md:86` (cites the port-removal manifest's KEEP-MANUAL classification) -- same, dated and unaffected.
+`docs/generated/app.md` (the `POST /api/sell_account` section) and `docs/generated/INDEX.md` (the `app` row + regenerated-header chain) are the only docs updated this cycle -- see Files changed.
+
+### Files changed
+
+- `app.py` -- `perform_account_liquidation` (`:3392-3430`) restructured: per-symphony `try`/`except Exception`, status-code gate, structured `outcomes` dict return value. `sell_account()` route (`:3433+`) carries zero diff.
+- `tests/app/test_f003_liquidation_confirmation.py` (new, 471 lines, 25 tests).
+- `docs/generated/app.md` (`POST /api/sell_account` section expanded; header prepended).
+- `docs/generated/INDEX.md` (header prepended; `app` row description prepended + Last-Updated date bumped to 2026-07-20).
+
+### Reference
+
+`DE-PANIC-STOP-CONFIRM-001`; branch `fix/f003-panic-stop`; worktree `.claude/worktrees/fix-f003-panic-stop`; plan `feature-plans/fix-f003-panic-stop.md`; RED `4683e603`; GREEN `23064fab`; HEAD `c2571c23`. Dashboard display of the new structured outcome is an explicit, tracked follow-up (out of scope this cycle) -- see the Decision above.
