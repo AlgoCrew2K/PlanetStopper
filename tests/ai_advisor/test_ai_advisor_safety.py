@@ -1130,15 +1130,23 @@ def test_revalidate_oos_passes_run_simulation_with_5_positional_args(
             f"call {call_idx}: arg 0 (p) must be a dict of strategy params, "
             f"got {type(p).__name__!r}"
         )
-        # F-013: history_data must be DERIVED from what generate_synthetic_history
-        # returned, not an unrelated object — but it is no longer required to be
-        # the identical object. AC-4 (see the holdout tests below) requires
-        # revalidate_suggestion_oos to slice history_data down to a held-out tail
-        # before calling run_simulation, so an identity check here would be
-        # mutually exclusive with a genuine holdout fix. Structural
-        # subset-of-the-fixture check preserves this test's original intent
-        # (fixture data flows through, nothing unrelated is substituted) while
-        # permitting the AC-4 narrowing.
+        # DE-ADVISOR-GATE3-DIRECTION-001: this identity pin (`history_data is
+        # _FIXTURE_HISTORY_DATA`) originally encoded the pre-F-013 full-window
+        # pass-through contract — superseded now that AC-4 requires
+        # revalidate_suggestion_oos to slice history_data down to a held-out
+        # tail before calling run_simulation (a real slice is necessarily a
+        # different, smaller dict; an identity check would be mutually
+        # exclusive with a genuine holdout fix). Replaced with a structural
+        # subset-of-the-fixture check, preserving this test's original intent
+        # (fixture data flows through, nothing unrelated is substituted).
+        #
+        # Deliberately NOT re-adding an "arg1 is the same object across both
+        # calls" identity pin here — the apples-to-apples invariant is already
+        # covered, more robustly, by test_gate3_evaluates_holdout_tail_not_full_window's
+        # `baseline_dates == patched_dates` VALUE check below, which tolerates
+        # a correct GREEN that slices once-per-call (two structurally-equal
+        # but non-identical dict objects) rather than forcing a specific
+        # slice-once-reuse-twice implementation shape.
         assert isinstance(history_data, dict) and history_data, (
             f"call {call_idx}: arg 1 (history_data) must be a non-empty dict "
             f"derived from generate_synthetic_history's fixture return, got "
