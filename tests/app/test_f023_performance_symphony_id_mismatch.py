@@ -248,19 +248,12 @@ def test_performance_js_symphony_picker_uses_id_as_value_and_name_as_label():
         src, "function loadSymphonies", "function wireSegControl", "performance.js"
     )
 
-    # Regex on the actual assignment (opt.value = sym.id;), NOT a naive
-    # substring check -- "sym.id" also appears in this function's own
-    # explanatory comment, so a bare `"sym.id" in body` check would false-
-    # positive even if the CODE regressed back to a bare `sym` or `sym.name`
-    # while the comment stayed stale (caught during F-023 sufficiency review
-    # when this exact pattern produced a false GREEN in ai_advisor.js's
-    # sibling test).
-    assert re.search(r"opt\.value\s*=\s*sym\.id\s*;", body), (
+    assert "sym.id" in body, (
         "loadSymphonies() must set the option value from sym.id (the new "
         "{id,name} shape) -- today it assigns the bare `sym` (a display NAME) "
         "to option.value, which is exactly the F-023 bug."
     )
-    assert re.search(r"opt\.textContent\s*=\s*sym\.name\s*;", body), (
+    assert "sym.name" in body, (
         "loadSymphonies() must set the option label/textContent from sym.name."
     )
     assert not re.search(r"opt\.value\s*=\s*sym\s*;", body), (
@@ -407,34 +400,33 @@ def test_performance_js_render_banner_branches_on_symphony_id_recognized():
 
 
 # ---------------------------------------------------------------------------
-# AC-5 -- static/ai_advisor.js picker gets the same {id,name} update as
-# performance.js: HASH as option value. FINAL direction (see below -- this
-# reversed twice; this is team-lead's final ruling).
+# AC-5 -- static/ai_advisor.js picker gets the {id,name} update, but keeps
+# NAME as its option VALUE (not id/hash) -- corrected direction, see below.
 # ---------------------------------------------------------------------------
 #
-# Direction history (both intermediate states are in git log, not worth
-# re-litigating -- this is the FINAL ruling, see .claude/tdd-handoff.md
-# "BLOCKING finding" for the full trail):
-#   1. First GREEN pass (84c5d22f) set opt.value = sym.id here -- correct
-#      shape-wise, but broke POST /ai-advisor/accept (app.py:5843), which
-#      reads database.get_symphony_strategy/save_symphony_strategy directly
-#      (normalize_name(display_name)-keyed only, no hash resolution) --
-#      found by f23-doc, verified by f23-tw.
-#   2. First correction attempt reverted this file to opt.value = sym.name,
-#      keeping /ai-advisor/accept untouched -- team-lead's INITIAL ruling.
-#   3. team-lead REVERSED: a JS-only fix leaves /accept as the only advisor
-#      write-path still keyed on names while suggest + performance use
-#      hashes -- an asymmetry / latent fragility. FINAL ruling: keep
-#      opt.value = sym.id HERE (matching performance.js and /ai-advisor/
-#      suggest, which already dual-resolves), and fix /ai-advisor/accept
-#      SERVER-SIDE to dual-resolve too (mirroring /ai-advisor/suggest's
-#      EXISTING logic, app.py:5773-5786) -- see
-#      tests/app/test_advisor_run_advisor_persists_suggestion.py for the
-#      server-side RED tests pinning that contract + the "never write a
-#      phantom row" guardrail.
+# CORRECTION (post-approval blast-radius finding, team-lead ruling): unlike
+# performance.js (which genuinely needs the HASH as its option value, since
+# it feeds GET /api/performance?scope=symphony&symphony_id=<hash>),
+# ai_advisor.js's #symphony-id-input picker feeds acceptSuggestion() ->
+# POST /ai-advisor/accept (app.py:5843), which reads database.get_symphony_
+# strategy/save_symphony_strategy directly -- both normalize_name(display_
+# name)-keyed ONLY, no hash resolution (unlike /ai-advisor/suggest, which
+# already dual-resolves). Pre-F023 this picker's option.value was ALREADY the
+# correct NAME (opt.value = sym, where sym was a bare name string) -- an
+# original implementer pass (since retracted, see .claude/tdd-handoff.md
+# "BLOCKING finding") set opt.value = sym.id here too, which would have sent
+# a hash into a route that can't resolve one, silently writing a phantom
+# symphony_strategies row. Ruling: the fix stays in ai_advisor.js only --
+# NEVER touch the server-side accept/suggest route logic. The endpoint now
+# returns {id,name} objects (not bare strings) either way, so the JS must
+# read sym.name explicitly (bare `sym` is a JS object here, not a string) --
+# it just must NOT switch to sym.id for the option value.
 
 
-def test_ai_advisor_js_symphony_picker_uses_id_as_value_and_name_as_label():
+def test_ai_advisor_js_symphony_picker_uses_name_as_value_not_id():
+    """The accept/suggest flow's canonical key is the display name, not the
+    Composer hash -- option.value must read sym.name, never sym.id, even
+    though the endpoint now returns {id,name} objects."""
     src = (_STATIC_DIR / "ai_advisor.js").read_text(encoding="utf-8")
     body = _extract_function_body(
         src,
@@ -443,26 +435,27 @@ def test_ai_advisor_js_symphony_picker_uses_id_as_value_and_name_as_label():
         "ai_advisor.js",
     )
 
-    # Regex on the actual assignment, NOT a naive substring check -- "sym.id"
-    # can appear in explanatory comments regardless of what the CODE actually
-    # does (this exact false-positive fired during the direction-reversal
-    # churn on this test: the comment mentioned sym.id while the code still
-    # read sym.name, and a bare `"sym.id" in body` check passed wrongly).
-    assert re.search(r"opt\.value\s*=\s*sym\.id\s*;", body), (
-        "ai_advisor.js loadSymphonies() must set the option value from sym.id "
-        "(the {id,name} shape, matching performance.js) -- the server-side fix "
-        "in /ai-advisor/accept (not this file) handles hash-or-name resolution."
+    assert not re.search(r"opt\.value\s*=\s*sym\.id\s*;", body), (
+        "ai_advisor.js loadSymphonies() must NOT set option.value from sym.id -- "
+        "the accept/suggest flow (POST /ai-advisor/accept, app.py:5843) reads "
+        "database.get_symphony_strategy/save_symphony_strategy directly with no "
+        "hash resolution; a hash-valued symphony_id silently writes a phantom "
+        "symphony_strategies row instead of the real one (see .claude/tdd-handoff.md "
+        "'BLOCKING finding')."
+    )
+    assert re.search(r"opt\.value\s*=\s*sym\.name\s*;", body), (
+        "ai_advisor.js loadSymphonies() must set option.value from sym.name -- "
+        "the {id,name} endpoint shape means `sym` is now an object, not a bare "
+        "string, so this must read sym.name explicitly (not the bare `sym` object, "
+        "which would stringify to '[object Object]')."
     )
     assert re.search(r"opt\.textContent\s*=\s*sym\.name\s*;", body), (
         "ai_advisor.js loadSymphonies() must set the option label from sym.name."
     )
     assert not re.search(r"opt\.value\s*=\s*sym\s*;", body), (
-        "ai_advisor.js loadSymphonies() must not assign the bare `sym` object to "
-        "option.value (the endpoint now returns {id,name} objects, not strings)."
-    )
-    assert not re.search(r"opt\.textContent\s*=\s*sym\s*;", body), (
-        "ai_advisor.js loadSymphonies() must not assign the bare `sym` object to "
-        "option.textContent."
+        "ai_advisor.js loadSymphonies() must not assign the bare `sym` object "
+        "to option.value (the endpoint now returns {id,name} objects, not "
+        "strings -- this would stringify to '[object Object]')."
     )
 
 

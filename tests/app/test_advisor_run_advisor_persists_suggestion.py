@@ -163,34 +163,29 @@ def test_accept_record_carries_before_and_after_values(client, mock_database, mo
 
 
 # ===========================================================================
-# F-023 blast radius (DE-PERFVIEW-ID-MISMATCH) — /ai-advisor/accept must
-# resolve a Composer-hash symphony_id server-side. FINAL direction (this
-# reversed twice -- see tests/app/test_f023_performance_symphony_id_mismatch.py
-# "AC-5" section comment + .claude/tdd-handoff.md "BLOCKING finding" for the
-# full trail; this is team-lead's final ruling):
+# F-023 blast radius (DE-PERFVIEW-ID-MISMATCH) — /ai-advisor/accept's
+# server-side contract stays UNCHANGED; the fix lives in ai_advisor.js only.
 #
-# static/ai_advisor.js's #symphony-id-input picker sends the Composer HASH
-# (matching performance.js and /ai-advisor/suggest, which already dual-
-# resolves hash-or-name at app.py:5773-5786). /ai-advisor/accept must mirror
-# that SAME resolution logic before touching symphony_strategies --
-# get_symphony_strategy/save_symphony_strategy are normalize_name(display_
-# name)-keyed ONLY (database.py:508-509/538-539) and have no hash awareness
-# of their own. team-lead's hard guardrails for the fix:
-#   1. Faithful mirror only -- reuse /ai-advisor/suggest's existing hash-or-
-#      name resolution logic, no new/parallel resolution scheme.
-#   2. DB stays keyed by the canonical normalized name after resolution --
-#      the persisted symphony_strategies row must be the REAL name-keyed
-#      row, NEVER a phantom (see test #2 below -- this is stricter than a
-#      pure faithful-mirror would give you, see that test's docstring).
-#   3. No trade/engine/LIVE_EXECUTION behavior change; accept stays
-#      advisory config-write only; no analytics-query change.
-#   4. Both directions tested: hash-valued accept resolves + persists
-#      correctly (test #1); name-valued accept still works (test #3,
-#      unaffected either way since it was never broken).
-#   5. f23-rev re-reviews this specific server change before it clears.
+# CORRECTION (team-lead ruling, post-approval blast-radius finding): an
+# EARLIER draft of this cycle's remediation resolved a Composer hash server-
+# side (mirroring /ai-advisor/suggest's dual hash-or-name resolution,
+# app.py:5773-5786) inside ai_advisor_accept() itself. That direction was
+# RETRACTED — HARD OUT-OF-SCOPE to touch /ai-advisor/accept's route logic
+# (or /ai-advisor/suggest, or analytics, or engine code) for this cycle. The
+# actual fix stays entirely in static/ai_advisor.js: its #symphony-id-input
+# picker keeps sending the display NAME (its accept/suggest flow's canonical
+# key, always has been) — see
+# tests/app/test_f023_performance_symphony_id_mismatch.py::
+# test_ai_advisor_js_symphony_picker_uses_name_as_value_not_id for the
+# JS-side RED test pinning that contract.
 #
-# Found by f23-doc during the doc-audit pass, verified independently by
-# f23-tw via direct read.
+# This test proves the SERVER side needs no change: /ai-advisor/accept
+# ALREADY works correctly given a display-name symphony_id
+# (get_symphony_strategy/save_symphony_strategy are normalize_name(display_
+# name)-keyed, database.py:508-509/538-539) — which is exactly what the
+# corrected ai_advisor.js contract guarantees it will always receive. Found
+# by f23-doc during the doc-audit pass, verified independently by f23-tw via
+# direct read.
 # ===========================================================================
 
 _HASH_ID = "a1b2c3-composer-hash-xyz"
@@ -198,95 +193,14 @@ _SYMPHONY_NAME_FOR_HASH = "Sym Hash Regression Test"
 _SYMPHONY_NORMALIZED_FOR_HASH = "sym hash regression test"
 
 
-def test_accept_resolves_composer_hash_to_canonical_name_before_strategy_write(
-    client, mock_database, mock_advisor_gates
-):
-    """Test #1 (guardrails 1, 2, 4-hash-direction): a hash-valued symphony_id
-    that DOES match a known bot_state entry must resolve to the canonical
-    normalized name BEFORE reading/writing symphony_strategies -- never reach
-    get_symphony_strategy/save_symphony_strategy as the raw hash. This also
-    indirectly proves Gate 3's OOS-revalidation baseline (flat_params/
-    locked_vars, read from the SAME get_symphony_strategy call) is sourced
-    from the resolved name too -- f23-rev flagged this as worth confirming;
-    a wrong read argument here would mean Gate 3 validates against the wrong
-    (phantom-default) baseline."""
-    mock_database.load_state.return_value = {_HASH_ID: {"name": _SYMPHONY_NAME_FOR_HASH}}
-
-    resp = client.post(
-        "/ai-advisor/accept",
-        json={"symphony_id": _HASH_ID, "suggestion": _suggestion_payload()},
-        content_type="application/json",
-    )
-    assert resp.status_code == 200, f"got {resp.status_code}: {resp.data!r}"
-    assert resp.get_json().get("status") == "accepted", (
-        "a resolvable hash must be a real accept, not a rejection"
-    )
-
-    assert mock_database.get_symphony_strategy.called, "accept must read the current strategy row"
-    read_arg = mock_database.get_symphony_strategy.call_args.args[0]
-    assert read_arg.strip().lower() == _SYMPHONY_NORMALIZED_FOR_HASH, (
-        f"get_symphony_strategy must be called with a value that resolves to the "
-        f"CANONICAL symphony name ({_SYMPHONY_NORMALIZED_FOR_HASH!r}), not the raw "
-        f"Composer hash ({read_arg!r}) — otherwise it silently reads the wrong "
-        "(empty-default) strategy row, AND Gate 3's OOS baseline is wrong too."
-    )
-
-    assert mock_database.save_symphony_strategy.called, "accept must persist the config write"
-    write_arg = mock_database.save_symphony_strategy.call_args.args[0]
-    assert write_arg.strip().lower() == _SYMPHONY_NORMALIZED_FOR_HASH, (
-        f"save_symphony_strategy must be called with a value that resolves to the "
-        f"CANONICAL symphony name ({_SYMPHONY_NORMALIZED_FOR_HASH!r}), not the raw "
-        f"Composer hash ({write_arg!r}) — otherwise it writes a PHANTOM row the "
-        "live exec engine never reads, and the accepted change silently never "
-        "takes effect."
-    )
-
-
-def test_accept_with_unresolvable_symphony_id_does_not_write_phantom_row_or_report_success(
-    client, mock_database, mock_advisor_gates
-):
-    """Test #2 (guardrail 2 -- 'never a phantom', the misleading-success
-    concern team-lead asked to be confirmed): /ai-advisor/suggest's OWN
-    resolution loop falls through to the RAW (unresolved) symphony_id when
-    no bot_state match exists (app.py:5777, 'fallback: pass as-is if no
-    match found') -- a faithful, literal mirror of JUST that loop would
-    inherit the same silent fallback here. For a READ-only route (suggest)
-    that's low-risk; for a WRITE route (accept) it would write a phantom
-    symphony_strategies row under the still-unresolved raw value AND still
-    report {"status": "accepted"} -- the exact misleading-success failure
-    mode guardrail 2 ('never a phantom') forbids. This is the one guardrail
-    that overrides 'faithful mirror only' (guardrail 1) for this specific
-    branch: the resolution LOOP itself must be a faithful mirror, but an
-    UNRESOLVED result must reject (mirroring this route's OWN existing
-    gate-rejection pattern, e.g. Gate 1/3/4 -> {"status": "rejected", ...}),
-    never fall through to a phantom write."""
-    mock_database.load_state.return_value = {_HASH_ID: {"name": _SYMPHONY_NAME_FOR_HASH}}
-
-    resp = client.post(
-        "/ai-advisor/accept",
-        json={"symphony_id": "totally-unresolvable-id", "suggestion": _suggestion_payload()},
-        content_type="application/json",
-    )
-    body = resp.get_json()
-    assert body.get("status") != "accepted", (
-        f"an unresolvable symphony_id must NOT report success — got {body!r}. "
-        "A silent fallback to the raw (unresolved) value would write a phantom "
-        "symphony_strategies row while still claiming success."
-    )
-    assert not mock_database.save_symphony_strategy.called, (
-        "an unresolvable symphony_id must never reach save_symphony_strategy — "
-        "no phantom row, ever."
-    )
-
-
 def test_accept_with_display_name_input_still_resolves_correctly(
     client, mock_database, mock_advisor_gates
 ):
-    """Test #3 (guardrail 4 -- name direction): a display-NAME symphony_id
-    (a valid input regardless of this fix — e.g. a stale bookmark, or any
-    other future consumer) must continue to resolve to the same canonical
-    normalized name it always has. This path was never broken; the
-    hash-resolution fix must not break it either."""
+    """Regression guard: /ai-advisor/accept's server-side logic is UNCHANGED
+    by this cycle -- a display-NAME symphony_id (the corrected, and only
+    ever, contract ai_advisor.js's picker sends) must resolve to the correct
+    canonical normalized name. No server-side fix is needed or wanted; this
+    pins that the existing behavior the client-side fix relies on is real."""
     mock_database.load_state.return_value = {_HASH_ID: {"name": _SYMPHONY_NAME_FOR_HASH}}
 
     resp = client.post(
