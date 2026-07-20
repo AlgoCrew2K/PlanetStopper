@@ -28,9 +28,15 @@ binding contract these tests pin (GREEN implements exactly this):
         symphony_id: str, config_key: str, suggested_value,
         current_strategy: dict,
     ) -> dict:
-        # -> {passed: bool, oos_alpha: float, baseline_oos_alpha: float,
-        #     detail: str}. Routes an accepted suggestion through the
-        #    autotuner's run_simulation OOS gate BEFORE live config write.
+        # -> {passed: bool, patched_guard_alpha: float,
+        #     baseline_guard_alpha: float, detail: str}. Routes an accepted
+        #    suggestion through the autotuner's run_simulation gate, BEFORE
+        #    live config write, evaluated on a HELD-OUT tail slice of the
+        #    replay window (never the full training window — F-013).
+        #    `passed` is True iff patched_guard_alpha STRICTLY exceeds
+        #    baseline_guard_alpha — both fields hold REAL guard-alpha
+        #    (re-negated from run_simulation's raw `-total_guard_alpha`
+        #    return; see the F-013 note below).
         # CRITICAL: imports ``autotuner`` LAZILY inside the function body.
 
 Why these gates exist (prompt-methodology.md §2.2, §3, config-surface.md §2):
@@ -92,6 +98,38 @@ The real ``autotuner.run_simulation`` signature is:
 and thus silently passed when ``revalidate_suggestion_oos`` called the function
 with only 2 args. New tests inspect ``call_args_list`` to pin the full arity
 contract; they are RED against the current 2-arg implementation.
+
+F-013 direction + holdout fix (RED — this cycle)
+--------------------------------------------------
+The original "Test 4 + 5" tests below mocked ``autotuner.run_simulation``
+with raw, un-negated "alpha" values (bigger literal number = the scenario's
+intended winner) and asserted the ``>`` comparison the (buggy) implementation
+already used. That mock never reflected the REAL contract —
+``run_simulation`` returns ``-total_guard_alpha`` (autotuner.py:1949,
+SMALLER = better) — so the tests stayed GREEN across a genuinely INVERTED
+production gate: an accepted suggestion that made guard-alpha WORSE was
+greenlit, and a genuine improvement was blocked. Confirmed unfired in
+production (``llm_suggestions`` has zero rows — no operator Accept has ever
+reached this gate).
+
+The tests are rewritten to mirror the real ``-GA`` contract via
+``_ga_to_raw()`` — they express scenarios in REAL guard-alpha terms and let
+the helper compute what ``run_simulation`` would actually return, so a test
+cannot silently pass just because its mock and the (possibly buggy)
+comparison direction happen to agree on an untrue sign convention. This is
+the F-013 counterpart to the F-008 sys.path lesson: a fixture/mock that
+doesn't mirror its real source can hide an inverted contract indefinitely.
+
+The fix also makes the gate a genuine holdout comparison: the previous
+implementation fed the FULL 125-day replay window to both ``run_simulation``
+calls (in-sample despite being named "OOS"). The corrected implementation
+slices a tail holdout (with a purge gap) from ``history_data`` before either
+call — see the holdout tests below. Field names ``oos_alpha`` /
+``baseline_oos_alpha`` are renamed to ``patched_guard_alpha`` /
+``baseline_guard_alpha`` (holding REAL, re-negated guard-alpha) — verified
+safe: the sole production reader (``app.py:5880-5881``) reads only
+``passed``/``detail``; the full dict is stored as an opaque JSON blob
+(``database.py:961``, ``oos_revalidation`` column) with zero rows to date.
 """
 
 from __future__ import annotations
@@ -100,7 +138,8 @@ import importlib
 import pathlib
 import re
 import sys
-from unittest.mock import patch
+from datetime import date, timedelta
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -625,9 +664,43 @@ def current_strategy() -> dict:
 # Fixture data is deliberately minimal but structurally valid:
 #   - bot_state has one entry whose normalize_name("name") == "sym-a"
 #     (database.normalize_name strips + lowercases; tests use symphony_id="sym-A")
-#   - history_data is a non-empty dict so isinstance(…, dict) asserts pass
+#   - history_data is a realistically-sized {date: [ticks]} dict per symphony
+#     (F-013: the holdout-slicing tests below need real dated material to
+#     slice; run_simulation is ALWAYS mocked in this file, so tick CONTENTS
+#     are never consumed by production code — only the date keys matter)
 #   - deviation_dict is an empty dict (valid: no deviations recorded)
 # ---------------------------------------------------------------------------
+
+
+def _sequential_dates(n: int, start: str = "2026-01-01") -> list[str]:
+    """``n`` sequential calendar-day ISO date strings starting at ``start``.
+
+    Calendar days, not trading days — the holdout-slicing logic under test
+    (F-013) operates purely on dict keys/ordering; run_simulation is always
+    mocked in this file so weekday-ness is never consumed.
+    """
+    start_date = date.fromisoformat(start)
+    return [(start_date + timedelta(days=i)).isoformat() for i in range(n)]
+
+
+# _OOS_REPLAY_TOTAL_DAYS: mirrors the real 125-day synthetic replay window
+# (ai_advisor.py:207, synthetic_history.py:511-513 — "exactly half" the
+# 250-day autotuner walk-forward window) so the F-013 holdout-slicing tests
+# below operate over a realistically sized window rather than a toy one.
+_OOS_REPLAY_TOTAL_DAYS = 125
+_OOS_REPLAY_DATES = _sequential_dates(_OOS_REPLAY_TOTAL_DAYS)
+
+
+def _ga_to_raw(guard_alpha: float) -> float:
+    """Convert a REAL guard-alpha value into what ``autotuner.run_simulation``
+    actually returns: ``-total_guard_alpha`` (autotuner.py:1949, smaller =
+    better). Tests express scenarios in real guard-alpha terms and let this
+    helper mirror the true sign convention — see the F-013 module-docstring
+    note above for why a mock that doesn't do this can hide an inverted
+    comparison indefinitely.
+    """
+    return -guard_alpha
+
 
 _FIXTURE_BOT_STATE = {
     "acc-sym-a": {
@@ -636,7 +709,7 @@ _FIXTURE_BOT_STATE = {
         "high_water_mark": 0.0,
     }
 }
-_FIXTURE_HISTORY_DATA: dict = {"acc-sym-a": {}}
+_FIXTURE_HISTORY_DATA: dict = {"acc-sym-a": {d: [{"return": 0.0}] for d in _OOS_REPLAY_DATES}}
 _FIXTURE_DEVIATION_DICT: dict = {}
 
 
@@ -672,21 +745,21 @@ def oos_assembly_mocks():
 
 
 def test_revalidate_oos_passes_when_suggestion_beats_baseline(current_strategy, oos_assembly_mocks):
-    """A suggestion whose OOS alpha BEATS the baseline OOS alpha must pass the
-    gate -> ``passed: True``.
+    """A suggestion whose REAL guard-alpha strictly BEATS the baseline's must
+    pass the gate -> ``passed: True`` (F-013 AC-1).
 
-    ``run_simulation`` is called twice (baseline strategy, then the patched
-    strategy). We make the suggested-strategy call return the higher alpha.
-    The test asserts only the pass/fail DECISION and the relative ordering of
-    the two returned alphas — never a hardcoded alpha literal.
+    ``run_simulation`` returns ``-guard_alpha`` (autotuner.py:1949); the mock
+    mirrors that real contract via ``_ga_to_raw`` instead of asserting on raw
+    signs, so this test cannot pass by accident the way the pre-F-013 version
+    did (see the F-013 module-docstring note).
     """
-    baseline_alpha = 1.0
-    suggested_alpha = 2.5  # strictly beats baseline
+    baseline_ga = 1.0
+    patched_ga = 2.5  # strictly beats baseline in REAL guard-alpha terms
 
-    # First call -> baseline, second call -> suggested config.
+    # First call -> baseline, second call -> patched config.
     with patch(
         "autotuner.run_simulation",
-        side_effect=[baseline_alpha, suggested_alpha],
+        side_effect=[_ga_to_raw(baseline_ga), _ga_to_raw(patched_ga)],
     ) as mock_sim:
         result = ai_advisor.revalidate_suggestion_oos(
             symphony_id="sym-A",
@@ -696,27 +769,41 @@ def test_revalidate_oos_passes_when_suggestion_beats_baseline(current_strategy, 
         )
 
     assert result["passed"] is True
-    assert result["oos_alpha"] > result["baseline_oos_alpha"]
+    assert result["patched_guard_alpha"] > result["baseline_guard_alpha"]
+    # These are test-fixture-chosen values (via _ga_to_raw), not
+    # producer-computed math — asserting on them is not the hardcoded-value
+    # anti-pattern the project's testing rule forbids.
+    assert result["patched_guard_alpha"] == patched_ga
+    assert result["baseline_guard_alpha"] == baseline_ga
+    assert "oos_alpha" not in result, "F-013: old dishonest field name must not survive"
+    assert "baseline_oos_alpha" not in result, "F-013: old dishonest field name must not survive"
     assert isinstance(result["detail"], str) and result["detail"]
+    assert "OOS alpha" not in result["detail"], (
+        "F-013: the pre-fix detail string called the raw negated objective "
+        "'OOS alpha' — neither honestly OOS (pre-holdout-fix) nor alpha (it "
+        "is a negated guard-alpha). Must not survive."
+    )
     assert mock_sim.call_count == 2
 
 
 def test_revalidate_oos_fails_when_suggestion_worse_than_baseline(
     current_strategy, oos_assembly_mocks
 ):
-    """A suggestion whose OOS alpha is WORSE than baseline must NOT be
-    greenlit -> ``passed: False``.
+    """A suggestion whose REAL guard-alpha is WORSE than baseline must NOT be
+    greenlit -> ``passed: False`` (F-013 AC-1).
 
     This is the load-bearing safety property: an operator-accepted suggestion
-    that degrades OOS performance must be blocked from reaching live config,
-    exactly the gate Optuna's own output faces.
+    that degrades guard-alpha must be blocked from reaching live config. This
+    exact scenario is what the pre-F-013 inverted gate got backwards: under
+    the buggy ``>`` comparison on raw (negated) run_simulation output, THIS
+    case (patched genuinely worse) was greenlit.
     """
-    baseline_alpha = 2.0
-    suggested_alpha = 0.5  # strictly worse than baseline
+    baseline_ga = 2.0
+    patched_ga = 0.5  # strictly worse than baseline in REAL guard-alpha terms
 
     with patch(
         "autotuner.run_simulation",
-        side_effect=[baseline_alpha, suggested_alpha],
+        side_effect=[_ga_to_raw(baseline_ga), _ga_to_raw(patched_ga)],
     ) as mock_sim:
         result = ai_advisor.revalidate_suggestion_oos(
             symphony_id="sym-A",
@@ -726,22 +813,25 @@ def test_revalidate_oos_fails_when_suggestion_worse_than_baseline(
         )
 
     assert result["passed"] is False
-    assert result["oos_alpha"] < result["baseline_oos_alpha"]
+    assert result["patched_guard_alpha"] < result["baseline_guard_alpha"]
+    assert result["patched_guard_alpha"] == patched_ga
+    assert result["baseline_guard_alpha"] == baseline_ga
     assert isinstance(result["detail"], str) and result["detail"]
+    assert "OOS alpha" not in result["detail"]
     assert mock_sim.call_count == 2
 
 
 def test_revalidate_oos_tie_does_not_pass(current_strategy, oos_assembly_mocks):
-    """A suggestion that merely TIES the baseline OOS alpha must not pass —
-    the autotuner's own cascade uses a strict-positive rule (oos must strictly
-    beat the baseline). A tie buys no validated improvement, so it must not be
-    greenlit for a live config write.
+    """A suggestion that merely TIES the baseline's REAL guard-alpha must not
+    pass — the autotuner's own cascade uses a strict-positive rule (must
+    strictly beat the baseline). A tie buys no validated improvement, so it
+    must not be greenlit for a live config write (F-013 AC-2).
     """
-    equal_alpha = 1.5
+    equal_ga = 1.5
 
     with patch(
         "autotuner.run_simulation",
-        side_effect=[equal_alpha, equal_alpha],
+        side_effect=[_ga_to_raw(equal_ga), _ga_to_raw(equal_ga)],
     ):
         result = ai_advisor.revalidate_suggestion_oos(
             symphony_id="sym-A",
@@ -751,6 +841,226 @@ def test_revalidate_oos_tie_does_not_pass(current_strategy, oos_assembly_mocks):
         )
 
     assert result["passed"] is False
+    assert result["patched_guard_alpha"] == result["baseline_guard_alpha"]
+
+
+# ===========================================================================
+# F-013 AC-4 — real holdout: both run_simulation calls must be evaluated on
+# a HELD-OUT tail slice of the replay window, never the full window (the
+# pre-fix implementation's false "OOS" claim — it evaluated in-sample).
+#
+# These tests pin STRUCTURAL invariants only — no hardcoded holdout
+# fraction or purge-day count. The exact sizing is an implementation design
+# call (named constants + source comments required — reviewed by f13-rev,
+# not numerically pinned here); see feature-plans/fix-f013-advisor-gate.md
+# Architecture + Decisions.
+# ===========================================================================
+
+
+def test_gate3_evaluates_holdout_tail_not_full_window(current_strategy, oos_assembly_mocks):
+    """F-013 AC-4: both run_simulation calls receive a non-empty holdout
+    slice that is strictly shorter than the full 125-day window, is a
+    genuine TAIL (includes the most recent date, excludes the earliest
+    dates), and is IDENTICAL across the baseline and patched calls
+    (apples-to-apples).
+    """
+    mock_sim = Mock(return_value=-1.0)
+    with patch("autotuner.run_simulation", mock_sim):
+        ai_advisor.revalidate_suggestion_oos(
+            symphony_id="sym-A",
+            config_key="MAX_SQUEEZE_FLOOR",
+            suggested_value=0.30,
+            current_strategy=current_strategy,
+        )
+
+    assert mock_sim.call_count == 2, "expected exactly 2 run_simulation calls (baseline + patched)"
+
+    full_dates = set(_OOS_REPLAY_DATES)
+    baseline_history = mock_sim.call_args_list[0][0][1]
+    patched_history = mock_sim.call_args_list[1][0][1]
+
+    assert "acc-sym-a" in baseline_history and "acc-sym-a" in patched_history, (
+        "holdout slicing must preserve the {sym_id: {date: ticks}} shape "
+        "run_simulation's real implementation expects (autotuner.py:1868)"
+    )
+
+    baseline_dates = set(baseline_history["acc-sym-a"].keys())
+    patched_dates = set(patched_history["acc-sym-a"].keys())
+
+    assert baseline_dates == patched_dates, (
+        "AC-4: baseline and patched calls must receive the IDENTICAL "
+        "holdout slice — apples-to-apples comparison"
+    )
+    assert 0 < len(baseline_dates) < len(full_dates), (
+        f"AC-4: holdout must be non-empty and strictly shorter than the "
+        f"full {len(full_dates)}-day window — got {len(baseline_dates)} "
+        f"days. A full-length holdout means the fix silently kept "
+        f"full-window in-sample evaluation."
+    )
+    assert baseline_dates <= full_dates, "holdout dates must be a subset of the real replay window"
+    assert max(baseline_dates) == max(full_dates), (
+        "AC-4: holdout must be a TAIL — it must include the most recent date in the window"
+    )
+    assert min(baseline_dates) > min(_OOS_REPLAY_DATES), (
+        "AC-4: holdout must EXCLUDE the earliest dates — a holdout "
+        "starting at the window's first date is the full window, not a tail"
+    )
+
+
+def test_gate3_holdout_has_a_purge_gap_before_its_start(current_strategy, oos_assembly_mocks):
+    """F-013 AC-4: the holdout boundary must not be flush against the tail
+    cutoff by a single day (which could arise from an off-by-one on a plain
+    fraction split) — there must be a deliberate multi-day purge buffer
+    separating the excluded head of the window from the holdout tail.
+
+    Weak sentinel by design (>=2 excluded days) rather than a hardcoded
+    purge-day count — the exact PURGE constant is the implementer's call
+    (named constant + source comment, per the math-layer no-magic-numbers
+    rule), reviewed by f13-rev rather than numerically pinned here.
+    """
+    mock_sim = Mock(return_value=-1.0)
+    with patch("autotuner.run_simulation", mock_sim):
+        ai_advisor.revalidate_suggestion_oos(
+            symphony_id="sym-A",
+            config_key="MAX_SQUEEZE_FLOOR",
+            suggested_value=0.30,
+            current_strategy=current_strategy,
+        )
+
+    holdout_dates = set(mock_sim.call_args_list[0][0][1]["acc-sym-a"].keys())
+    excluded_count = len(_OOS_REPLAY_DATES) - len(holdout_dates)
+
+    # Distinguishes a deliberate purge buffer from a single-day rounding
+    # artifact at the tail boundary.
+    _MIN_EXCLUDED_DAYS_SENTINEL = 2
+    assert excluded_count >= _MIN_EXCLUDED_DAYS_SENTINEL, (
+        f"AC-4: expected a deliberate purge gap of at least "
+        f"{_MIN_EXCLUDED_DAYS_SENTINEL} excluded days between the unused "
+        f"head of the window and the holdout tail; got only "
+        f"{excluded_count} excluded day(s) — looks like a flush tail-slice "
+        f"with no purge."
+    )
+
+
+# ===========================================================================
+# F-013 AC-5 — fail-closed edges: non-finite objective, no matching account,
+# and an undersized replay window must all fail the gate honestly, never
+# crash, and never silently fall back to full-window in-sample evaluation.
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    "baseline_raw, patched_raw",
+    [
+        pytest.param(float("nan"), -2.0, id="nan-in-baseline-call"),
+        pytest.param(-1.0, float("inf"), id="inf-in-patched-call"),
+    ],
+)
+def test_gate3_fails_closed_on_non_finite_objective(
+    current_strategy, oos_assembly_mocks, baseline_raw, patched_raw
+):
+    """F-013 AC-5: a non-finite (nan/inf) run_simulation return from EITHER
+    call must fail closed with a detail that HONESTLY names the data-quality
+    problem — not the generic "does not strictly beat baseline" wording,
+    which would misrepresent a computation failure as a genuine underperform.
+
+    Note: for nan/inf inputs, Python's ``>``/``<`` always evaluate False, so
+    `passed=False` alone holds under the PRE-FIX comparison too — it is the
+    detail-content assertion below that is genuinely RED against current
+    code (the pre-fix detail never mentions non-finite/invalid data).
+    """
+    with patch("autotuner.run_simulation", side_effect=[baseline_raw, patched_raw]):
+        result = ai_advisor.revalidate_suggestion_oos(
+            symphony_id="sym-A",
+            config_key="MAX_SQUEEZE_FLOOR",
+            suggested_value=0.30,
+            current_strategy=current_strategy,
+        )
+
+    assert result["passed"] is False
+    detail_lower = result["detail"].lower()
+    assert any(kw in detail_lower for kw in ("non-finite", "invalid", "degraded")), (
+        f"AC-5: a non-finite objective must produce an honest detail naming "
+        f"the data-quality problem, not the generic 'worse than baseline' "
+        f"wording. Got: {result['detail']!r}"
+    )
+
+
+def test_gate3_fails_closed_when_no_matching_account_found(current_strategy):
+    """F-013 AC-5: when no bot_state account matches symphony_id (empty
+    acc_sym_ids), the gate must fail closed WITHOUT ever calling
+    run_simulation — an accidental tie (both calls made with an empty
+    account list, everyone gets 0.0 guard-alpha) is a silent-pass-shaped
+    bug, not an honest "no matching symphony" rejection.
+    """
+    _no_match_bot_state = {
+        "acc-other": {
+            "name": "totally-different-symphony",
+            "current_return": 0.0,
+            "high_water_mark": 0.0,
+        }
+    }
+
+    with (
+        patch("database.load_state", return_value=_no_match_bot_state),
+        patch(
+            "synthetic_history.generate_synthetic_history",
+            return_value=_FIXTURE_HISTORY_DATA,
+        ),
+        patch("autotuner.calculate_historical_deviation", return_value={}),
+        patch("autotuner.run_simulation", return_value=-1.0) as mock_sim,
+    ):
+        result = ai_advisor.revalidate_suggestion_oos(
+            symphony_id="sym-A",
+            config_key="MAX_SQUEEZE_FLOOR",
+            suggested_value=0.30,
+            current_strategy=current_strategy,
+        )
+
+    assert result["passed"] is False
+    assert isinstance(result["detail"], str) and result["detail"]
+    assert mock_sim.call_count == 0, (
+        "AC-5: run_simulation must NOT be called when no bot_state account "
+        "matches symphony_id — an accidental tie is not an honest rejection"
+    )
+
+
+def test_gate3_fails_closed_on_insufficient_holdout_history(current_strategy):
+    """F-013 AC-5 / Edge Case: when the replay window is too short to carve
+    out a real holdout (purge + minimum holdout size), the gate must fail
+    closed with an honest detail — and it must NEVER silently fall back to
+    evaluating the full (tiny) window in-sample, which would resurrect the
+    exact false-OOS claim this cycle exists to remove. run_simulation must
+    not be called at all.
+    """
+    _tiny_dates = _sequential_dates(3)  # far below any sane holdout+purge floor
+    _tiny_history_data = {"acc-sym-a": {d: [{"return": 0.0}] for d in _tiny_dates}}
+
+    with (
+        patch("database.load_state", return_value=_FIXTURE_BOT_STATE),
+        patch(
+            "synthetic_history.generate_synthetic_history",
+            return_value=_tiny_history_data,
+        ),
+        patch("autotuner.calculate_historical_deviation", return_value={}),
+        patch("autotuner.run_simulation", return_value=-1.0) as mock_sim,
+    ):
+        result = ai_advisor.revalidate_suggestion_oos(
+            symphony_id="sym-A",
+            config_key="MAX_SQUEEZE_FLOOR",
+            suggested_value=0.30,
+            current_strategy=current_strategy,
+        )
+
+    assert result["passed"] is False
+    assert "insufficient" in result["detail"].lower(), (
+        f"expected an honest 'insufficient holdout history'-style detail "
+        f"per the plan's Edge Cases section, got: {result['detail']!r}"
+    )
+    assert mock_sim.call_count == 0, (
+        "AC-5: must NEVER silently fall back to full-window in-sample "
+        "evaluation when the holdout can't be carved out"
+    )
 
 
 # ===========================================================================
