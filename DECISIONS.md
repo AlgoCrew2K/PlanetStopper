@@ -8667,3 +8667,51 @@ Whole-tree grep for `/api/performance/symphonies`, `api_performance_symphonies`,
 ### Reference
 
 `DE-PERFVIEW-ID-MISMATCH`; branch `fix/f023-perf-view`; worktree `.claude/worktrees/fix-f023-perf-view`; plan `feature-plans/fix-f023-perf-view.md`; RED `369ca376`; GREEN `84c5d22f`; blast-radius RED `ff788cb5`; final fix `8b8af24d`; HEAD `5872e6ac`. The `composer_symphony_id` gap is tracked in `feature-plans/BACKLOG.md`, not this entry's scope.
+
+
+## DE-F008-REGEN-STAMP-001 -- F-008 Completion: regen script stamps verified-unchanged entries (2026-07-20)
+
+Branch: `fix/f008-regen-stamp` | Base: `origin/main` (post `DE-PERFVIEW-ID-MISMATCH`) `ba19dc79` | plan: `ec3d0af9` | RED: `2a78d8ec` | HEAD (this entry): `dbf70932` (GREEN; independent review by f8s-rev confirmed clean, APPROVE sent to main)
+
+### Problem
+
+`scripts/regenerate_post_mortems.py`'s per-entry repair loop (`regenerate_file`, ~line 192) stamped `if_held_source = "shadow_history"` ONLY inside the `if old != new:` branch -- i.e. only when the recomputed if-held basis actually differed from the stored value. An entry the script RESOLVES against `shadow_history` and confirms byte-equal to the stored values was left completely untouched, including its `if_held_source` field. Because the `DE-POSTMORTEM-INTEGRITY-001` read-time guard (`analytics.is_valid_post_mortem_entry`) treats a missing/unrecognized `if_held_source` as invalid and excludes the entry from every live consumer, a verified-CORRECT entry could be silently and permanently excluded from the operator's $-saved headline, History, and Performance tabs -- the repair tool's own successful verification produced no durable evidence of that verification. Confirmed in production: the 2026-07-20 droplet repair run of `post_mortem_2026-06-22.json` left 1 of 11 entries unstamped ("(INVEST) LQD + EYEG 5 ways Full Market", **$+28.72**) despite the script having resolved and verified it against `shadow_history` truth.
+
+### Fix
+
+`regenerate_file` gains an `elif not analytics.is_valid_post_mortem_entry(entry):` branch alongside the existing `if old != new:` branch (`scripts/regenerate_post_mortems.py:192-220`). An entry that reaches this branch has already been resolved to a `shadow_history` row and confirmed `old == new` -- the elif fires only when the existing stamp is missing or not one of the 3 trusted values `analytics.is_valid_post_mortem_entry` recognizes (`shadow_history`, `shadow_history_post_cutoff`, `bot_state_fallback`). The branch stamps `if_held_source = "shadow_history"` (no value fields touched) and appends a `changes` record carrying a new `stamp_only: True` marker -- reusing the existing `changes`-non-empty rewrite gate so the file is rewritten and the fix actually lands on disk, which a value-only check would have skipped entirely (the same gap that produced the production miss above). The CLI report prints a distinct line for `stamp_only` entries ("verified correct, stamped provenance") rather than the old-arrow-new format, since printing `old -> new` for an entry where `old == new` would read as a no-op and hide that a repair happened.
+
+**New dependency:** the script imports `analytics` (specifically `analytics.is_valid_post_mortem_entry`) for the first time -- previously it was a deliberately import-free stdlib-only tool (see the decision below).
+
+### Decision: import `analytics.is_valid_post_mortem_entry` directly rather than mirror the trusted set
+
+The plan (`feature-plans/fix-f008-regen-stamp.md` Architecture) left this open: mirror the trusted-value frozenset locally (matching the existing `SNAPSHOT_CUTOFF_ET` AST-drift-guard pattern the script already uses for `reporting.STAGE1_SNAPSHOT_CUTOFF_ET`) or import `analytics` directly. f8s-impl chose the direct import: `analytics.py` has zero heavy dependencies (no Flask, no network, no eager DB connection at import time -- confirmed by direct import timing during doc verification, ~0.3s), so the "runs standalone on the droplet" property is preserved in practice even though the script is no longer literally import-free. A mirrored frozenset would have reintroduced exactly the two-declarations-can-drift risk `DE-POSTMORTEM-INTEGRITY-001` exists to guard against, for a repair tool whose entire purpose is trusting that guard's verdict -- importing the single source of truth is strictly safer here than the `SNAPSHOT_CUTOFF_ET` precedent, which mirrors only because `reporting.py` itself is judged too heavy (Discord/webhook code) to import from this script. **Doc correction:** the existing `docs/generated/scripts_regenerate_post_mortems.md` Overview claim "import-free... deliberately no dependency on the rest of the codebase" was stale after this fix and is corrected in this cycle's doc update; the `SNAPSHOT_CUTOFF_ET` AST-guard rationale is otherwise unaffected (untouched by this diff).
+
+### Invariants preserved
+
+- **AC-2:** an entry already carrying a TRUSTED `if_held_source` (`shadow_history`, `shadow_history_post_cutoff`, `bot_state_fallback`) with equal values hits neither branch -- no re-stamp, no rewrite churn.
+- **AC-3:** value-changed entries behave exactly as before this cycle -- the `if old != new:` branch is untouched.
+- **AC-4 (idempotency):** a second run after a stamp-only `--apply` finds `if_held_source == "shadow_history"` (now trusted) and `old == new` (unchanged) -- neither branch fires, zero changes, nothing rewritten.
+- **AC-5:** the all-or-nothing unresolved-entry refusal is untouched (the elif only ever runs on already-resolved entries, past both `continue` sites for unmapped/unresolved entries).
+- **AC-6:** dry-run vs `--apply` still share the same `changes`-driven report/rewrite-gate machinery -- dry-run prints the stamp-only line and writes nothing.
+- **AC-7:** `analytics.py` and `app.py` carry zero diff this cycle (confirmed via `git diff ba19dc79 dbf70932 --stat` -- only `scripts/regenerate_post_mortems.py` and its test module changed).
+
+### Tests
+
+13 passed on `tests/scripts/test_regenerate_post_mortems_window.py` (`-o addopts=""`, no xdist), re-verified directly by this doc-writer at HEAD `dbf70932`: `TestStampOnlyEntryGetsStamped` (AC-1), `TestTrustedStampEqualValuesUntouched` (AC-2), `TestValueChangedRegression` (AC-3), `TestStampOnlyIdempotency` (AC-4), `TestAllOrNothingRefusalUnchanged` (AC-5), `TestDryRunStampOnly` (AC-6), plus the pre-existing `TestDefaultWindowCoversBothBoundaryDays`/`TestExplicitCallerWindowIsInclusive` (the parent F-008 AC-1 window regression, unaffected by this cycle). f8s-rev's independent review confirmed clean (APPROVE, blast-radius and AC mapping verified). No live DB, no droplet -- temp-SQLite fixture pattern reused from the parent F-008 cycle.
+
+### Reconcile sweep (doc-writer)
+
+Grepped this file's own `DE-POSTMORTEM-INTEGRITY-001` entry and `docs/generated/` for prior claims about the regen script's stamping behavior: the parent entry's Fix/Files-changed sections describe only the AC-1 window widening, never the value-vs-stamp branch logic, so no correction needed there. `docs/generated/scripts_regenerate_post_mortems.md` (the module's own doc from the parent cycle) DID carry the now-stale "import-free" claim addressed above -- corrected in this cycle's doc update, see below.
+
+### Files changed
+
+- `scripts/regenerate_post_mortems.py` -- `import analytics`; new `elif` branch in `regenerate_file` (stamp-only repair + `stamp_only` marker); CLI report gains a distinct stamp-only print format.
+- `tests/scripts/test_regenerate_post_mortems_window.py` -- 6 new test classes (`TestStampOnlyEntryGetsStamped`, `TestTrustedStampEqualValuesUntouched`, `TestValueChangedRegression`, `TestStampOnlyIdempotency`, `TestAllOrNothingRefusalUnchanged`, `TestDryRunStampOnly`).
+- `feature-plans/fix-f008-regen-stamp.md` (new, plan).
+- `docs/generated/scripts_regenerate_post_mortems.md` -- new dated section + Overview import-free correction + Last-updated bump.
+- `docs/generated/INDEX.md` -- module-index row updated; header prepended.
+
+### Reference
+
+`DE-F008-REGEN-STAMP-001`; branch `fix/f008-regen-stamp`; worktree `.claude/worktrees/fix-f008-stamp`; plan `feature-plans/fix-f008-regen-stamp.md`; RED `2a78d8ec`; GREEN `dbf70932`. Predecessor `DE-POSTMORTEM-INTEGRITY-001` (introduced the `if_held_source` read-time guard this cycle closes a stamping gap against). Live droplet re-run of `regenerate_post_mortems.py --apply` over the already-repaired window to pick up any remaining stamp-only entries (e.g. the 06-22 LQD+EYEG $+28.72 entry) remains a separate PM-gated operational step, not covered by this entry.
