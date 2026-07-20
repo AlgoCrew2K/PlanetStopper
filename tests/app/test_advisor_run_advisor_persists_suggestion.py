@@ -163,6 +163,88 @@ def test_accept_record_carries_before_and_after_values(client, mock_database, mo
 
 
 # ===========================================================================
+# F-023 blast radius (DE-PERFVIEW-ID-MISMATCH) — /accept must resolve a
+# Composer-hash symphony_id, not just a display name.
+#
+# The Performance-tab fix (feature-plans/fix-f023-perf-view.md) switched
+# static/ai_advisor.js's #symphony-id-input picker value from a bare display
+# NAME to the Composer HASH (mirroring /ai-advisor/suggest's own dual
+# hash-or-name resolution, app.py:5773-5786 — that route was ALREADY
+# hash-safe). /ai-advisor/accept was NOT: it passes the raw payload
+# symphony_id straight into database.get_symphony_strategy / save_symphony_
+# strategy, which are normalize_name(display_name)-keyed ONLY (database.py:
+# 508-509, 538-539) and have no hash awareness. Post-fix, a hash-valued
+# symphony_id (now what the picker actually sends) silently reads empty
+# defaults and writes a PHANTOM row under the lowercased hash string instead
+# of the real symphony_strategies row the exec engine reads — an accepted
+# config change would silently never take effect. Found by f23-doc during
+# the doc-audit pass, verified independently by f23-tw via direct read.
+# ===========================================================================
+
+_HASH_ID = "a1b2c3-composer-hash-xyz"
+_SYMPHONY_NAME_FOR_HASH = "Sym Hash Regression Test"
+_SYMPHONY_NORMALIZED_FOR_HASH = "sym hash regression test"
+
+
+def test_accept_resolves_composer_hash_to_canonical_name_before_strategy_write(
+    client, mock_database, mock_advisor_gates
+):
+    """A hash-valued symphony_id (the new picker contract) must resolve to the
+    canonical normalized symphony name BEFORE reading/writing symphony_strategies
+    — never reach get_symphony_strategy/save_symphony_strategy as the raw hash."""
+    mock_database.load_state.return_value = {_HASH_ID: {"name": _SYMPHONY_NAME_FOR_HASH}}
+
+    resp = client.post(
+        "/ai-advisor/accept",
+        json={"symphony_id": _HASH_ID, "suggestion": _suggestion_payload()},
+        content_type="application/json",
+    )
+    assert resp.status_code == 200, f"got {resp.status_code}: {resp.data!r}"
+
+    assert mock_database.get_symphony_strategy.called, "accept must read the current strategy row"
+    read_arg = mock_database.get_symphony_strategy.call_args.args[0]
+    assert read_arg.strip().lower() == _SYMPHONY_NORMALIZED_FOR_HASH, (
+        f"get_symphony_strategy must be called with a value that resolves to the "
+        f"CANONICAL symphony name ({_SYMPHONY_NORMALIZED_FOR_HASH!r}), not the raw "
+        f"Composer hash ({read_arg!r}) — otherwise it silently reads the wrong "
+        "(empty-default) strategy row."
+    )
+
+    assert mock_database.save_symphony_strategy.called, "accept must persist the config write"
+    write_arg = mock_database.save_symphony_strategy.call_args.args[0]
+    assert write_arg.strip().lower() == _SYMPHONY_NORMALIZED_FOR_HASH, (
+        f"save_symphony_strategy must be called with a value that resolves to the "
+        f"CANONICAL symphony name ({_SYMPHONY_NORMALIZED_FOR_HASH!r}), not the raw "
+        f"Composer hash ({write_arg!r}) — otherwise it writes a PHANTOM row the "
+        "live exec engine never reads, and the accepted change silently never "
+        "takes effect."
+    )
+
+
+def test_accept_with_display_name_input_still_resolves_correctly(
+    client, mock_database, mock_advisor_gates
+):
+    """Regression guard: a display-NAME symphony_id (still a valid input — e.g.
+    a stale bookmark, or any other future consumer) must continue to resolve to
+    the same canonical normalized name it always has. The hash-resolution fix
+    above must not break this pre-existing path."""
+    mock_database.load_state.return_value = {_HASH_ID: {"name": _SYMPHONY_NAME_FOR_HASH}}
+
+    resp = client.post(
+        "/ai-advisor/accept",
+        json={"symphony_id": _SYMPHONY_NAME_FOR_HASH, "suggestion": _suggestion_payload()},
+        content_type="application/json",
+    )
+    assert resp.status_code == 200, f"got {resp.status_code}: {resp.data!r}"
+
+    write_arg = mock_database.save_symphony_strategy.call_args.args[0]
+    assert write_arg.strip().lower() == _SYMPHONY_NORMALIZED_FOR_HASH, (
+        f"a display-name symphony_id must still resolve to the same canonical "
+        f"name ({_SYMPHONY_NORMALIZED_FOR_HASH!r}), got {write_arg!r}"
+    )
+
+
+# ===========================================================================
 # AC-5b — /reject records a 'rejected' llm_suggestions row.
 # ===========================================================================
 
