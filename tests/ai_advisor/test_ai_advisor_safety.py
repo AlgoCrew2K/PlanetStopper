@@ -1130,13 +1130,32 @@ def test_revalidate_oos_passes_run_simulation_with_5_positional_args(
             f"call {call_idx}: arg 0 (p) must be a dict of strategy params, "
             f"got {type(p).__name__!r}"
         )
-        # history_data must be exactly what generate_synthetic_history returned —
-        # the function must not transform or drop the fixture value.
-        assert history_data is _FIXTURE_HISTORY_DATA, (
-            f"call {call_idx}: arg 1 (history_data) must be the value returned "
-            "by generate_synthetic_history (the fixture dict); got a different "
-            f"object: {history_data!r}"
+        # F-013: history_data must be DERIVED from what generate_synthetic_history
+        # returned, not an unrelated object — but it is no longer required to be
+        # the identical object. AC-4 (see the holdout tests below) requires
+        # revalidate_suggestion_oos to slice history_data down to a held-out tail
+        # before calling run_simulation, so an identity check here would be
+        # mutually exclusive with a genuine holdout fix. Structural
+        # subset-of-the-fixture check preserves this test's original intent
+        # (fixture data flows through, nothing unrelated is substituted) while
+        # permitting the AC-4 narrowing.
+        assert isinstance(history_data, dict) and history_data, (
+            f"call {call_idx}: arg 1 (history_data) must be a non-empty dict "
+            f"derived from generate_synthetic_history's fixture return, got "
+            f"{history_data!r}"
         )
+        assert set(history_data.keys()) <= set(_FIXTURE_HISTORY_DATA.keys()), (
+            f"call {call_idx}: arg 1 (history_data) symphony keys must be a "
+            f"subset of the fixture's — F-013 holdout slicing narrows dates "
+            f"within a symphony, never introduces symphonies outside the fixture"
+        )
+        for sym_id, dated_ticks in history_data.items():
+            assert set(dated_ticks.keys()) <= set(_FIXTURE_HISTORY_DATA[sym_id].keys()), (
+                f"call {call_idx}: arg 1 (history_data) dates for {sym_id!r} "
+                f"must be a subset of the fixture's dates for that symphony — "
+                f"F-013 holdout slicing narrows the window, it never invents "
+                f"dates outside it"
+            )
         assert isinstance(acc_sym_ids, (list, tuple)), (
             f"call {call_idx}: arg 2 (acc_sym_ids) must be a list or tuple, "
             f"got {type(acc_sym_ids).__name__!r}"
