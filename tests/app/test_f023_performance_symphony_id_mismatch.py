@@ -248,12 +248,20 @@ def test_performance_js_symphony_picker_uses_id_as_value_and_name_as_label():
         src, "function loadSymphonies", "function wireSegControl", "performance.js"
     )
 
-    assert "sym.id" in body, (
+    # Regex on the actual assignment, NOT a naive substring check -- "sym.id"
+    # also appears in this function's own explanatory comment
+    # (static/performance.js:566), so a bare `"sym.id" in body` check would
+    # false-positive even if the CODE regressed back to a bare `sym` while
+    # the comment stayed stale (this exact pattern produced a false GREEN
+    # for ai_advisor.js's sibling test during the F-023 direction churn --
+    # f23-rev caught this one still using the naive form and flagged it as
+    # a non-blocking follow-up; fixing it here rather than deferring).
+    assert re.search(r"opt\.value\s*=\s*sym\.id\s*;", body), (
         "loadSymphonies() must set the option value from sym.id (the new "
         "{id,name} shape) -- today it assigns the bare `sym` (a display NAME) "
         "to option.value, which is exactly the F-023 bug."
     )
-    assert "sym.name" in body, (
+    assert re.search(r"opt\.textContent\s*=\s*sym\.name\s*;", body), (
         "loadSymphonies() must set the option label/textContent from sym.name."
     )
     assert not re.search(r"opt\.value\s*=\s*sym\s*;", body), (
