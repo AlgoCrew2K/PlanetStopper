@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+from datetime import date, timedelta
 
 import pytest
 
@@ -55,15 +56,23 @@ _REAL_DROPLET_DIR = (
     pathlib.Path(__file__).parent.parent / "fixtures" / "prod_droplet" / "post_mortems"
 )
 
-# get_history_summary computes its window from wall-clock datetime.now(), not
-# from the test-run's simulated "today" — unlike load_post_mortem_history
-# (which just keeps the N most-recent files by filename sort, no calendar
-# arithmetic). The fixture files above are dated 2026-02-02..2026-07-09,
-# fixed points in time. A window wide enough to always cover them regardless
-# of when the suite runs avoids coupling these tests to the current date.
-# Matches the established pattern in
-# tests/app/test_history_today_fallback_date_filter.py's _WIDE_WINDOW_DAYS.
-_WIDE_WINDOW_DAYS = 36500
+
+def _recent_date_str(days_ago: int) -> str:
+    """A date guaranteed inside get_history_summary's wall-clock window.
+
+    get_history_summary computes its window from datetime.now() at call
+    time, not from the fixture's baked-in "date" field (which is never read
+    for filtering — only the FILENAME date is) — unlike load_post_mortem_
+    history, which just keeps the N most-recent files by filename sort with
+    no calendar arithmetic. Writing fixtures under a dynamically-recent
+    filename (team-lead ruling 2026-07-20: mock/freeze the clock OR use
+    dynamically-recent dates — this file uses the latter) keeps these tests
+    deterministic regardless of which day the suite runs, rather than
+    coupling them to a fixed historical date that only happens to be inside
+    the window today.
+    """
+    return (date.today() - timedelta(days=days_ago)).isoformat()
+
 
 _PM_VALID_SHADOW_HISTORY = json.loads(
     (_VALID_FIXTURE_DIR / "post_mortem_2026-02-02_valid_shadow_history.json").read_text()
@@ -261,9 +270,9 @@ class TestGetHistorySummaryValidityGuard:
     to scope at plan-approval 2026-07-20 (AC-5b)."""
 
     def test_missing_stamp_entry_excluded_from_total_saved(self, tmp_path):
-        _write_pm(tmp_path, "2026-07-09", _PM_CONTAMINATED_MISSING_STAMP)
+        _write_pm(tmp_path, _recent_date_str(1), _PM_CONTAMINATED_MISSING_STAMP)
 
-        result = analytics.get_history_summary(days=_WIDE_WINDOW_DAYS, base_dir=str(tmp_path))
+        result = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
 
         assert result["total_saved"] == pytest.approx(0.0, abs=1e-9), (
             f"total_saved={result['total_saved']} — the contaminated day's dollars leaked "
@@ -274,13 +283,13 @@ class TestGetHistorySummaryValidityGuard:
         )
 
     def test_valid_and_contaminated_mixed_total_saved_matches_valid_only(self, tmp_path):
-        _write_pm(tmp_path, "2026-02-02", _PM_VALID_SHADOW_HISTORY)
-        _write_pm(tmp_path, "2026-07-09", _PM_CONTAMINATED_MISSING_STAMP)
+        _write_pm(tmp_path, _recent_date_str(1), _PM_VALID_SHADOW_HISTORY)
+        _write_pm(tmp_path, _recent_date_str(2), _PM_CONTAMINATED_MISSING_STAMP)
 
         expected_saved = _sum_dollars(_PM_VALID_SHADOW_HISTORY)
         expected_count = _count_triggers(_PM_VALID_SHADOW_HISTORY)
 
-        result = analytics.get_history_summary(days=_WIDE_WINDOW_DAYS, base_dir=str(tmp_path))
+        result = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
 
         assert result["total_saved"] == pytest.approx(expected_saved, abs=0.01), (
             f"total_saved={result['total_saved']} != valid-only {expected_saved}"
@@ -293,12 +302,13 @@ class TestGetHistorySummaryValidityGuard:
         ids=["shadow_history", "shadow_history_post_cutoff", "bot_state_fallback"],
     )
     def test_each_recognized_value_included_in_total(self, tmp_path, fixture):
-        date_str = fixture["date"]
-        _write_pm(tmp_path, date_str, fixture)
+        # Dynamic filename date — the fixture's own baked-in "date" field is
+        # never read by get_history_summary's window filter (filename-only).
+        _write_pm(tmp_path, _recent_date_str(1), fixture)
         expected_saved = _sum_dollars(fixture)
         expected_count = _count_triggers(fixture)
 
-        result = analytics.get_history_summary(days=_WIDE_WINDOW_DAYS, base_dir=str(tmp_path))
+        result = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
 
         assert result["total_saved"] == pytest.approx(expected_saved, abs=0.01), (
             f"if_held_source={fixture['triggers'][0]['if_held_source']!r} must be trusted"
@@ -308,15 +318,15 @@ class TestGetHistorySummaryValidityGuard:
     def test_real_captured_06_22_excluded_from_history_tab_total(self, tmp_path):
         """The specific defect that motivated F-008: the History tab's headline
         total_saved must not include the real 06-22 capture's contamination."""
-        _write_pm(tmp_path, "2026-02-02", _PM_VALID_SHADOW_HISTORY)
-        _write_pm(tmp_path, "2026-06-22", _PM_REAL_CONTAMINATED_06_22)
+        _write_pm(tmp_path, _recent_date_str(1), _PM_VALID_SHADOW_HISTORY)
+        _write_pm(tmp_path, _recent_date_str(2), _PM_REAL_CONTAMINATED_06_22)
 
         expected_saved = _sum_dollars(_PM_VALID_SHADOW_HISTORY)
         expected_count = _count_triggers(_PM_VALID_SHADOW_HISTORY)
         real_contaminated = _sum_dollars(_PM_REAL_CONTAMINATED_06_22)
         assert real_contaminated != 0.0, "fixture integrity: real 06-22 must be nonzero"
 
-        result = analytics.get_history_summary(days=_WIDE_WINDOW_DAYS, base_dir=str(tmp_path))
+        result = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
 
         assert result["total_saved"] == pytest.approx(expected_saved, abs=0.01), (
             f"total_saved={result['total_saved']} != valid-only {expected_saved} — the "
@@ -327,9 +337,9 @@ class TestGetHistorySummaryValidityGuard:
     def test_all_valid_golden_regression_matches_naive_sum(self, tmp_path):
         """AC-6 for the History-tab consumer: all-valid input is unaffected by
         the guard."""
-        _write_pm(tmp_path, "2026-02-02", _PM_VALID_SHADOW_HISTORY)
-        _write_pm(tmp_path, "2026-02-03", _PM_VALID_POST_CUTOFF)
-        _write_pm(tmp_path, "2026-02-04", _PM_VALID_BOT_STATE_FALLBACK)
+        _write_pm(tmp_path, _recent_date_str(1), _PM_VALID_SHADOW_HISTORY)
+        _write_pm(tmp_path, _recent_date_str(2), _PM_VALID_POST_CUTOFF)
+        _write_pm(tmp_path, _recent_date_str(3), _PM_VALID_BOT_STATE_FALLBACK)
 
         naive_saved = _sum_dollars(
             _PM_VALID_SHADOW_HISTORY, _PM_VALID_POST_CUTOFF, _PM_VALID_BOT_STATE_FALLBACK
@@ -338,7 +348,7 @@ class TestGetHistorySummaryValidityGuard:
             _PM_VALID_SHADOW_HISTORY, _PM_VALID_POST_CUTOFF, _PM_VALID_BOT_STATE_FALLBACK
         )
 
-        result = analytics.get_history_summary(days=_WIDE_WINDOW_DAYS, base_dir=str(tmp_path))
+        result = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
 
         assert result["total_saved"] == pytest.approx(naive_saved, abs=1e-9), (
             f"guard altered a valid-only total: {result['total_saved']} != naive {naive_saved}"
@@ -346,15 +356,15 @@ class TestGetHistorySummaryValidityGuard:
         assert result["trigger_count"] == naive_count
 
     def test_malformed_json_still_skipped_not_double_handled(self, tmp_path):
-        _write_pm(tmp_path, "2026-02-02", _PM_VALID_SHADOW_HISTORY)
-        (tmp_path / "post_mortem_2026-02-05.json").write_text(
+        _write_pm(tmp_path, _recent_date_str(1), _PM_VALID_SHADOW_HISTORY)
+        (tmp_path / f"post_mortem_{_recent_date_str(2)}.json").write_text(
             "not json at all {{{", encoding="utf-8"
         )
 
         expected_saved = _sum_dollars(_PM_VALID_SHADOW_HISTORY)
         expected_count = _count_triggers(_PM_VALID_SHADOW_HISTORY)
 
-        result = analytics.get_history_summary(days=_WIDE_WINDOW_DAYS, base_dir=str(tmp_path))
+        result = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
 
         assert result["total_saved"] == pytest.approx(expected_saved, abs=0.01)
         assert result["trigger_count"] == expected_count

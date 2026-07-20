@@ -36,7 +36,6 @@ FIXTURE PROVENANCE (captured-from-producer):
 from __future__ import annotations
 
 import json
-import shutil
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -74,11 +73,29 @@ def client():
 
 @pytest.fixture
 def pm_dir(tmp_path, monkeypatch) -> Path:
-    """Real production post-mortem files, served from a temp dir."""
+    """Real production post-mortem files, served from a temp dir.
+
+    F-008 (team-lead ruling 2026-07-20): this file's tests are about DATE
+    filtering (today-fallback, windowed count, row shape, time-column
+    mapping) — not the validity guard, which has its own dedicated coverage
+    in tests/app/test_post_mortem_validity_guard.py and
+    tests/analytics/test_post_mortem_validity_guard_analytics.py. The real
+    prod_droplet captures are genuinely unstamped (pre-PR-80), so serving
+    them as-is would make every count here 0 post-guard — useless for
+    testing date-filtering. DECOUPLED: stamp the COPIES this fixture writes
+    into the temp dir (never the real fixture files under
+    tests/fixtures/prod_droplet/, which stay byte-for-byte untouched — other
+    tests depend on their historical provenance) so this file's tests
+    exercise date-filtering against trustworthy data, exactly as before the
+    guard existed.
+    """
     pm = tmp_path / "post_mortems"
     pm.mkdir()
     for src in (_FIXTURE_DIR / "post_mortems").glob("post_mortem_*.json"):
-        shutil.copy(src, pm)
+        data = json.loads(src.read_text(encoding="utf-8"))
+        for t in data.get("triggers", []):
+            t["if_held_source"] = "shadow_history"
+        (pm / src.name).write_text(json.dumps(data), encoding="utf-8")
     monkeypatch.setattr(analytics, "_POST_MORTEMS_DIR", str(pm))
     return pm
 
@@ -86,18 +103,14 @@ def pm_dir(tmp_path, monkeypatch) -> Path:
 def _windowed_trigger_count(pm_dir: Path) -> int:
     """The true windowed count — derived by summing the real files' triggers.
 
-    F-008: get_history_summary now excludes any trigger lacking a recognized
-    if_held_source provenance stamp (analytics.is_valid_post_mortem_entry).
-    These are the REAL captured prod_droplet post-mortem files — genuinely
-    unstamped (captured before PR #80 added the field; this IS the F-008
-    contamination signature, not a fixture defect). The reference helper must
-    apply the same guard the route now does, or it compares against a stale
-    pre-guard ground truth that the route can no longer produce.
+    No validity-guard filtering here by design (see the pm_dir fixture
+    docstring): this helper's copies are all stamped valid, so an unguarded
+    sum and a guarded sum are identical — kept unguarded to stay decoupled
+    from (and not duplicate) the dedicated validity-guard test coverage.
     """
     total = 0
     for f in pm_dir.glob("post_mortem_*.json"):
-        triggers = json.loads(f.read_text(encoding="utf-8")).get("triggers", [])
-        total += sum(1 for t in triggers if analytics.is_valid_post_mortem_entry(t))
+        total += len(json.loads(f.read_text(encoding="utf-8")).get("triggers", []))
     return total
 
 
@@ -270,17 +283,8 @@ class TestWindowedTriggerCountNotClobbered:
         """
         _seed_symphony_names(positions)
         _shift_and_seed_exit_triggers(exit_trigger_rows, _today_et())
-        # Fixture-integrity check uses the RAW (unguarded) trigger count — the
-        # real prod_droplet files are all genuinely unstamped (the F-008
-        # contamination signature), so the GUARDED expected_count below is
-        # legitimately 0. This only confirms the fixture set itself is
-        # non-trivial, not that the guarded count is nonzero.
-        raw_trigger_count = sum(
-            len(json.loads(f.read_text(encoding="utf-8")).get("triggers", []))
-            for f in pm_dir.glob("post_mortem_*.json")
-        )
-        assert raw_trigger_count > 0, "fixture integrity: production files carry triggers"
         expected_count = _windowed_trigger_count(pm_dir)
+        assert expected_count > 0, "fixture integrity: production files carry triggers"
 
         resp = client.get(f"/api/history/{_WIDE_WINDOW_DAYS}")
         assert resp.status_code == 200
