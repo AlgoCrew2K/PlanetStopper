@@ -16,6 +16,11 @@
 
     var chartInstance = null;
 
+    // Captured once from the Jinja-rendered "Insufficient history" markup so
+    // renderBanner() can restore it after overwriting the banner with the
+    // AC-4 unrecognized-symphony-id message (F-023 / DE-PERFVIEW-ID-MISMATCH).
+    var _defaultBannerHtml = null;
+
     function hexToRgba(hex, alpha) {
         hex = hex.replace(/^#/, '');
         if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
@@ -369,7 +374,18 @@
     function renderBanner(payload) {
         var banner = document.getElementById('insufficient-banner');
         if (!banner) return;
-        banner.style.display = payload.insufficient_history ? '' : 'none';
+        if (_defaultBannerHtml === null) {
+            _defaultBannerHtml = banner.innerHTML;
+        }
+        // AC-4 (F-023): a totally unrecognized symphony_id (stale/typo'd
+        // picker value) must surface a DISTINCT message, never masquerade as
+        // the generic "Insufficient history" empty state — both cases yield
+        // observation_count 0, but only one means the id itself is wrong.
+        var unrecognized = payload.symphony_id_recognized === false;
+        banner.innerHTML = unrecognized
+            ? '<strong>Strategy not recognized.</strong> This symphony ID isn\'t known — the picker may be showing a stale value.'
+            : _defaultBannerHtml;
+        banner.style.display = (unrecognized || payload.insufficient_history) ? '' : 'none';
     }
 
     // Set a headline stat value element's text + sign color. delta is in the
@@ -547,8 +563,12 @@
                 } else {
                     symphonies.forEach(function (sym, idx) {
                         var opt = document.createElement('option');
-                        opt.value = sym;
-                        opt.textContent = sym;
+                        // F-023 / DE-PERFVIEW-ID-MISMATCH: value must be the
+                        // bot_state hash (sym.id), never the display name —
+                        // the hash is what shadow_history's symphony_id
+                        // column actually stores.
+                        opt.value = sym.id;
+                        opt.textContent = sym.name;
                         if (idx === 0) opt.selected = true;
                         picker.appendChild(opt);
                     });

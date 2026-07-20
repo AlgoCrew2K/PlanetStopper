@@ -573,8 +573,10 @@
                 selectEl.innerHTML = '<option value="">Select symphony…</option>';
                 syms.forEach(function (sym) {
                     var opt = document.createElement('option');
-                    opt.value = sym;
-                    opt.textContent = sym;
+                    // F-023 / DE-PERFVIEW-ID-MISMATCH: value must be the
+                    // bot_state hash (sym.id), never the display name.
+                    opt.value = sym.id;
+                    opt.textContent = sym.name;
                     selectEl.appendChild(opt);
                 });
                 if (prevVal) selectEl.value = prevVal;

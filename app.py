@@ -3365,27 +3365,50 @@ def api_performance():
     live_returns_out = [float(r) for r in live_returns]
     shadow_returns_out = [float(r) for r in shadow_returns]
 
-    return jsonify(
-        {
-            "scope": scope,
-            "dates": list(dates),
-            "live_returns": live_returns_out,
-            "shadow_returns": shadow_returns_out,
-            "live_metrics": live_metrics,
-            "shadow_metrics": shadow_metrics,
-            "observation_count": observation_count,
-            "insufficient_history": insufficient_history,
-            "window_days": days,
-        }
-    )
+    response_body = {
+        "scope": scope,
+        "dates": list(dates),
+        "live_returns": live_returns_out,
+        "shadow_returns": shadow_returns_out,
+        "live_metrics": live_metrics,
+        "shadow_metrics": shadow_metrics,
+        "observation_count": observation_count,
+        "insufficient_history": insufficient_history,
+        "window_days": days,
+    }
+    if scope == "symphony":
+        # AC-4 (F-023 / DE-PERFVIEW-ID-MISMATCH): distinguishes a genuine
+        # no-data symphony (a real bot_state hash, just <threshold rows) from
+        # a totally unrecognized symphony_id (stale/typo'd picker value) —
+        # both produce observation_count == 0, but only the latter means the
+        # id itself is wrong. Scoped to scope=symphony only; never emitted on
+        # scope=aggregate responses.
+        response_body["symphony_id_recognized"] = symphony_id in database.load_state()
+
+    return jsonify(response_body)
 
 
 @app.route("/api/performance/symphonies")
 def api_performance_symphonies():
-    """Sorted list of symphony_ids present in the post-mortem history."""
-    history = analytics.get_history_with_cache_invalidation(base_dir=analytics._POST_MORTEMS_DIR)
-    symphonies = analytics.list_available_symphonies(history)
-    return jsonify({"symphonies": list(symphonies)})
+    """Sorted [{id, name}] list of live symphonies for the Performance-tab picker.
+
+    Sourced from database.load_state() (bot_state, keyed by the Composer
+    hash — the same hash<->name co-location pattern get_settings() already
+    uses at app.py:3621-3628), NOT post-mortem history. F-023 /
+    DE-PERFVIEW-ID-MISMATCH: the old post-mortem-derived list returned bare
+    display NAMES as both label and value; that name was then sent as
+    symphony_id into the hash-keyed shadow_history query and matched zero
+    rows for every symphony. id is now the hash so it round-trips correctly
+    into GET /api/performance?scope=symphony&symphony_id=.
+    """
+    state = database.load_state()
+    symphonies = [
+        {"id": sym_id, "name": data["name"]}
+        for sym_id, data in state.items()
+        if isinstance(data, dict) and "name" in data
+    ]
+    symphonies.sort(key=lambda entry: entry["name"])
+    return jsonify({"symphonies": symphonies})
 
 
 # --- 3. Account Liquidation ---
