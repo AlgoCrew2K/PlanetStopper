@@ -196,6 +196,27 @@ def test_symphonies_endpoint_empty_bot_state_returns_empty_list_no_crash(client,
     assert body["symphonies"] == []
 
 
+def test_symphonies_endpoint_skips_malformed_bot_state_entries_without_crashing(client, monkeypatch):
+    """Sufficiency-review addition (Red/Green/Revise): the new {id,name} list
+    comprehension reads data["name"] per bot_state entry -- a malformed entry
+    (non-dict value, or a dict missing "name") must be silently skipped, not
+    crash the whole picker for every OTHER symphony in bot_state."""
+    fake_state = {
+        "hash-good": {"name": "Sym Good"},
+        "hash-missing-name": {"current_value": 500.0},  # no "name" key
+        "hash-not-a-dict": "not-a-dict-value",
+    }
+    monkeypatch.setattr(app_module.database, "load_state", lambda: fake_state)
+
+    resp = client.get("/api/performance/symphonies")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["symphonies"] == [{"id": "hash-good", "name": "Sym Good"}], (
+        f"malformed bot_state entries must be silently skipped, not crash or "
+        f"leak into the picker list -- got {body['symphonies']!r}"
+    )
+
+
 def test_symphonies_endpoint_list_sorted_by_name(client, monkeypatch):
     fake_state = {
         "hash-zzz": {"name": "Zebra Strategy"},
