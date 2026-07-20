@@ -38,7 +38,10 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -734,3 +737,67 @@ class TestDryRunStampOnly:
         )
         assert "DRY RUN" in output
         assert path.read_bytes() == before_bytes, "dry run must write nothing"
+
+
+# ===========================================================================
+# F-008 completion follow-up: documented invocation must resolve imports
+# path-independently (DE-F008-REGEN-STAMP-001 addendum)
+# ===========================================================================
+#
+# THE BUG: scripts/regenerate_post_mortems.py:67 does a bare `import
+# analytics` at module scope. Python's script-mode sys.path[0] is the
+# DIRECTORY CONTAINING THE SCRIPT (scripts/), not the repo root — so the
+# documented invocation (`python scripts/regenerate_post_mortems.py`, see
+# the module docstring's USAGE block) raises ModuleNotFoundError: No module
+# named 'analytics' the moment it's run outside a context that happens to
+# already have the repo root on sys.path.
+#
+# WHY EVERY EXISTING TEST IN THIS FILE MISSED IT: pytest always puts the
+# repo root on sys.path for collection, regardless of invocation form — so
+# `import scripts.regenerate_post_mortems as regen_mod` (used by every other
+# test above) can never reproduce this. Only a real subprocess invocation,
+# the way an operator or a droplet cron/systemd unit would actually run it,
+# exercises the real failure mode.
+#
+# PRODUCTION SYMPTOM (droplet, 2026-07-20): `python
+# scripts/regenerate_post_mortems.py` -> ModuleNotFoundError. The PM's
+# manual PYTHONPATH export masked it during the live data repair; the
+# DOCUMENTED command in the module's own USAGE block does not work as
+# written.
+
+
+class TestScriptInvocationResolvesImportsPathIndependently:
+    """The documented invocation must work from a NEUTRAL cwd with no
+    PYTHONPATH pre-set — exactly how an operator or a cron/systemd unit
+    would run it, and exactly how the droplet failure reproduced."""
+
+    def test_direct_invocation_from_neutral_cwd_with_no_pythonpath(self, tmp_path):
+        script_path = Path(regen_mod.__file__).resolve()
+
+        # Strip PYTHONPATH explicitly so this test can't pass by accident
+        # because the dev/CI shell happens to already have the repo root on
+        # the path — the real failure mode is a BARE invocation with none of
+        # that scaffolding, which is what an operator or systemd unit gets.
+        env = os.environ.copy()
+        env.pop("PYTHONPATH", None)
+
+        result = subprocess.run(
+            [sys.executable, str(script_path), "--help"],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+
+        assert result.returncode == 0, (
+            "the documented invocation (module docstring USAGE block) must work "
+            "from a neutral cwd with no PYTHONPATH — this is the exact production "
+            "failure shape (ModuleNotFoundError: No module named 'analytics'); "
+            f"got rc={result.returncode}\nstdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
+        assert "usage" in result.stdout.lower(), (
+            f"--help must print argparse usage on stdout once imports resolve; "
+            f"got stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
