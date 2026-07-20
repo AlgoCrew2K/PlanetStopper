@@ -5844,6 +5844,24 @@ def ai_advisor_accept():
     """Apply an accepted suggestion through all three C2 safety gates."""
     payload = request.json or {}
     symphony_id = payload.get("symphony_id", "")
+    # Resolve Composer hash ID -> normalized symphony name, same as
+    # ai_advisor_suggest() (app.py:5773-5786). F-023 / DE-PERFVIEW-ID-MISMATCH
+    # blast radius: static/ai_advisor.js's picker now sends the Composer hash
+    # (not a display name), but get_symphony_strategy/save_symphony_strategy
+    # are normalize_name(display_name)-keyed only — an unresolved hash would
+    # silently read empty defaults and write a phantom row the exec engine
+    # never reads.
+    _bot_state = database.load_state()
+    resolved_id = symphony_id  # fallback: pass as-is if no match found
+    for _sym_key, _sym_data in _bot_state.items():
+        if not isinstance(_sym_data, dict) or "name" not in _sym_data:
+            continue
+        _norm_name = database.normalize_name(_sym_data["name"])
+        if database.normalize_name(_sym_key) == database.normalize_name(
+            symphony_id
+        ) or _norm_name == database.normalize_name(symphony_id):
+            resolved_id = _norm_name
+            break
     suggestion_data = payload.get("suggestion", {})
 
     suggestion_obj = ai_advisor.ConfigSuggestion(
@@ -5865,14 +5883,14 @@ def ai_advisor_accept():
     ai_advisor.check_risk_direction_agreement(suggestion_obj)
 
     # C2 Gate 3: OOS revalidation — pass flat params, not the DB wrapper
-    current_strategy_row = database.get_symphony_strategy(symphony_id) or {
+    current_strategy_row = database.get_symphony_strategy(resolved_id) or {
         "params": {},
         "locked_vars": [],
     }
     flat_params = dict(current_strategy_row.get("params", {}))
     locked_vars = current_strategy_row.get("locked_vars", [])
     oos_result = ai_advisor.revalidate_suggestion_oos(
-        symphony_id,
+        resolved_id,
         suggestion_obj.config_key,
         suggestion_obj.suggested_value,
         flat_params,
@@ -5888,7 +5906,7 @@ def ai_advisor_accept():
     # All gates passed — write the config change
     patched_params = dict(flat_params)
     patched_params[suggestion_obj.config_key] = suggestion_obj.suggested_value
-    database.save_symphony_strategy(symphony_id, patched_params, locked_vars)
+    database.save_symphony_strategy(resolved_id, patched_params, locked_vars)
 
     # AC-5: persist the operator decision to the immutable llm_suggestions audit
     # trail so the table is no longer empty after an accepted suggestion.
@@ -5898,7 +5916,7 @@ def ai_advisor_accept():
     database.record_llm_suggestion(
         session_id=os.urandom(8).hex(),
         created_at=_now,
-        symphony_name=database.normalize_name(symphony_id),
+        symphony_name=database.normalize_name(resolved_id),
         operator_identity="",
         prompt_inputs={},
         model_id=ai_advisor.resolve_advisor_model(),
