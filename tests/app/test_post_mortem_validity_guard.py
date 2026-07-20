@@ -330,6 +330,61 @@ class TestGuardAlphaSummaryMalformedNotDoubleHandled:
         assert data["cumulative_saved_dollars"] == pytest.approx(expected_dollars, abs=0.01)
         assert data["guard_event_count"] == expected_count
 
+    def test_syntactically_valid_json_with_non_string_if_held_source_does_not_crash_route(
+        self, client, pm_dir
+    ):
+        """REVIEW GAP (post-GREEN): a JSON array/object is a valid JSON value for
+        if_held_source — the file parses fine (not caught by the malformed-JSON
+        except-path), but `is_valid_post_mortem_entry`'s frozenset membership
+        check raises TypeError on an unhashable value, which was uncaught and
+        would 500 the whole route for one weird entry in one file. AC-4 requires
+        this to be non-fatal like every other invalid-entry case."""
+        _write_pm(pm_dir, "2026-02-02", _PM_VALID_SHADOW_HISTORY)
+        weird_pm = {
+            "date": "2026-02-06",
+            "summary": {
+                "total_monitored": 1,
+                "total_triggered": 1,
+                "positive_guard_alpha_count": 0,
+            },
+            "tomorrow_target_holdings": {},
+            "triggers": [
+                {
+                    "symphony_name": "Weird Type Zeta",
+                    "symphony_value": 500.0,
+                    "account_id": "acct-weird",
+                    "exit_reason": "Trailing Stop",
+                    "exit_return": 0.5,
+                    "attempted_trigger_level": 0.3,
+                    "shadow_return": 0.1,
+                    "shadow_hwm": 0.5,
+                    "saved_pct_guard_alpha": 0.4,
+                    "saved_dollars": 2.0,
+                    "if_held_source": ["shadow_history"],
+                    "hwm_at_trigger": 0.5,
+                    "time_triggered": "10:00",
+                    "symphony_vol": 0.2,
+                    "strategy_params": {},
+                    "next_day_holdings": [],
+                }
+            ],
+        }
+        _write_pm(pm_dir, "2026-02-06", weird_pm)
+
+        expected_dollars = _sum_dollars(_PM_VALID_SHADOW_HISTORY)
+        expected_count = _count_triggers(_PM_VALID_SHADOW_HISTORY)
+
+        resp = client.get("/api/guard-alpha-summary")
+        assert resp.status_code == 200, (
+            f"a non-string if_held_source value must not crash the route; got {resp.status_code}"
+        )
+        data = resp.get_json()
+        assert data["cumulative_saved_dollars"] == pytest.approx(expected_dollars, abs=0.01), (
+            "the weird-typed entry must be excluded like any other invalid entry, "
+            "not crash or silently count"
+        )
+        assert data["guard_event_count"] == expected_count
+
 
 # ===========================================================================
 # AC-6: golden regression — all-valid set is byte-identical to the naive sum

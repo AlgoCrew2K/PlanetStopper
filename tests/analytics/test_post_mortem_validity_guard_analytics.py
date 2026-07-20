@@ -55,6 +55,16 @@ _REAL_DROPLET_DIR = (
     pathlib.Path(__file__).parent.parent / "fixtures" / "prod_droplet" / "post_mortems"
 )
 
+# get_history_summary computes its window from wall-clock datetime.now(), not
+# from the test-run's simulated "today" — unlike load_post_mortem_history
+# (which just keeps the N most-recent files by filename sort, no calendar
+# arithmetic). The fixture files above are dated 2026-02-02..2026-07-09,
+# fixed points in time. A window wide enough to always cover them regardless
+# of when the suite runs avoids coupling these tests to the current date.
+# Matches the established pattern in
+# tests/app/test_history_today_fallback_date_filter.py's _WIDE_WINDOW_DAYS.
+_WIDE_WINDOW_DAYS = 36500
+
 _PM_VALID_SHADOW_HISTORY = json.loads(
     (_VALID_FIXTURE_DIR / "post_mortem_2026-02-02_valid_shadow_history.json").read_text()
 )
@@ -124,6 +134,30 @@ class TestSharedValidityHelperContract:
         the caller — treat as invalid rather than raising."""
         for bad_entry in (None, "not-a-dict", 42, []):
             assert analytics.is_valid_post_mortem_entry(bad_entry) is False
+
+    @pytest.mark.parametrize(
+        "unhashable_value",
+        [["shadow_history"], {"nested": "dict"}, [1, 2, 3]],
+        ids=["list", "dict", "list-of-ints"],
+    )
+    def test_unhashable_if_held_source_value_does_not_raise(self, unhashable_value):
+        """REVIEW GAP (post-GREEN): a JSON array or object is a perfectly valid
+        JSON value for if_held_source — a malformed/corrupted-but-syntactically-
+        valid post-mortem file could have `"if_held_source": ["shadow_history"]`
+        or `{}` instead of a plain string. `entry.get("if_held_source") in
+        _TRUSTED_IF_HELD_SOURCES` (a frozenset membership test) raises
+        `TypeError: unhashable type` for these — a real crash, not a graceful
+        exclusion. Confirmed via direct probe of the GREEN implementation
+        (500964ff) before writing this test. AC-4 requires 'never a crash';
+        the plan's Security Considerations require the guard not to leak
+        exception strings — an uncaught TypeError bubbling into a Flask 500
+        violates both.
+        """
+        entry = {"if_held_source": unhashable_value, "saved_dollars": 10.0}
+        assert analytics.is_valid_post_mortem_entry(entry) is False, (
+            f"if_held_source={unhashable_value!r} (a valid JSON value, not a string) "
+            "must be treated as invalid, not crash the caller"
+        )
 
 
 # ===========================================================================
@@ -229,7 +263,7 @@ class TestGetHistorySummaryValidityGuard:
     def test_missing_stamp_entry_excluded_from_total_saved(self, tmp_path):
         _write_pm(tmp_path, "2026-07-09", _PM_CONTAMINATED_MISSING_STAMP)
 
-        result = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
+        result = analytics.get_history_summary(days=_WIDE_WINDOW_DAYS, base_dir=str(tmp_path))
 
         assert result["total_saved"] == pytest.approx(0.0, abs=1e-9), (
             f"total_saved={result['total_saved']} — the contaminated day's dollars leaked "
@@ -246,7 +280,7 @@ class TestGetHistorySummaryValidityGuard:
         expected_saved = _sum_dollars(_PM_VALID_SHADOW_HISTORY)
         expected_count = _count_triggers(_PM_VALID_SHADOW_HISTORY)
 
-        result = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
+        result = analytics.get_history_summary(days=_WIDE_WINDOW_DAYS, base_dir=str(tmp_path))
 
         assert result["total_saved"] == pytest.approx(expected_saved, abs=0.01), (
             f"total_saved={result['total_saved']} != valid-only {expected_saved}"
@@ -264,7 +298,7 @@ class TestGetHistorySummaryValidityGuard:
         expected_saved = _sum_dollars(fixture)
         expected_count = _count_triggers(fixture)
 
-        result = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
+        result = analytics.get_history_summary(days=_WIDE_WINDOW_DAYS, base_dir=str(tmp_path))
 
         assert result["total_saved"] == pytest.approx(expected_saved, abs=0.01), (
             f"if_held_source={fixture['triggers'][0]['if_held_source']!r} must be trusted"
@@ -282,7 +316,7 @@ class TestGetHistorySummaryValidityGuard:
         real_contaminated = _sum_dollars(_PM_REAL_CONTAMINATED_06_22)
         assert real_contaminated != 0.0, "fixture integrity: real 06-22 must be nonzero"
 
-        result = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
+        result = analytics.get_history_summary(days=_WIDE_WINDOW_DAYS, base_dir=str(tmp_path))
 
         assert result["total_saved"] == pytest.approx(expected_saved, abs=0.01), (
             f"total_saved={result['total_saved']} != valid-only {expected_saved} — the "
@@ -304,7 +338,7 @@ class TestGetHistorySummaryValidityGuard:
             _PM_VALID_SHADOW_HISTORY, _PM_VALID_POST_CUTOFF, _PM_VALID_BOT_STATE_FALLBACK
         )
 
-        result = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
+        result = analytics.get_history_summary(days=_WIDE_WINDOW_DAYS, base_dir=str(tmp_path))
 
         assert result["total_saved"] == pytest.approx(naive_saved, abs=1e-9), (
             f"guard altered a valid-only total: {result['total_saved']} != naive {naive_saved}"
@@ -320,7 +354,7 @@ class TestGetHistorySummaryValidityGuard:
         expected_saved = _sum_dollars(_PM_VALID_SHADOW_HISTORY)
         expected_count = _count_triggers(_PM_VALID_SHADOW_HISTORY)
 
-        result = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
+        result = analytics.get_history_summary(days=_WIDE_WINDOW_DAYS, base_dir=str(tmp_path))
 
         assert result["total_saved"] == pytest.approx(expected_saved, abs=0.01)
         assert result["trigger_count"] == expected_count
