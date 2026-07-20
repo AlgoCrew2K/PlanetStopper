@@ -1,0 +1,31 @@
+{
+    "date": "2026-02-03",
+    "summary": {
+        "total_monitored": 1,
+        "total_triggered": 1,
+        "positive_guard_alpha_count": 1
+    },
+    "tomorrow_target_holdings": {
+        "STATUS": "Pending Composer Rebalance"
+    },
+    "triggers": [
+        {
+            "symphony_name": "Off-Schedule Post Cutoff Gamma",
+            "symphony_value": 2600.0,
+            "account_id": "acct-vhg-2",
+            "exit_reason": "Take-Profit",
+            "exit_return": 2.1,
+            "attempted_trigger_level": 2.1,
+            "shadow_return": 0.6,
+            "shadow_hwm": 2.3,
+            "saved_pct_guard_alpha": 1.5,
+            "saved_dollars": 39.0,
+            "if_held_source": "shadow_history_post_cutoff",
+            "hwm_at_trigger": 2.3,
+            "time_triggered": "16:07",
+            "symphony_vol": 1.1,
+            "strategy_params": {},
+            "next_day_holdings": ["Pending..."]
+        }
+    ]
+}
