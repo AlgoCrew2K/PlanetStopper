@@ -81,6 +81,33 @@ _MIN_QUANTSTATS_OBSERVATIONS = 2
 # compute_quantstats_metrics' `volatility` key. Source: ux-design-deliverable.md §Change 4.
 _ANNUALIZATION_TRADING_DAYS = 252
 
+# F-008: the 3 if_held_source values reporting.py:generate_eod_snapshot stamps
+# on every trigger since DE-GUARD-ALPHA-SAVED-001 (PR #80). A trigger entry
+# lacking this field (pre-PR-80 capture, e.g. the real 2026-06-22 droplet
+# file) or carrying an unrecognized value is semantically untrustworthy.
+_TRUSTED_IF_HELD_SOURCES = frozenset(
+    {"shadow_history", "shadow_history_post_cutoff", "bot_state_fallback"}
+)
+
+
+# ---------------------------------------------------------------------------
+# is_valid_post_mortem_entry
+# ---------------------------------------------------------------------------
+
+
+def is_valid_post_mortem_entry(entry: object) -> bool:
+    """Return True iff `entry` carries a recognized if_held_source provenance stamp.
+
+    Single source of truth for the F-008 data-integrity guard — every reader
+    of post_mortem_*.json trigger entries (this module's load_post_mortem_history
+    and get_history_summary, plus app.py's guard_alpha_summary) routes through
+    this function so they cannot diverge. Never raises — non-dict input is
+    simply invalid.
+    """
+    if not isinstance(entry, dict):
+        return False
+    return entry.get("if_held_source") in _TRUSTED_IF_HELD_SOURCES
+
 
 # ---------------------------------------------------------------------------
 # load_post_mortem_history
@@ -144,6 +171,8 @@ def load_post_mortem_history(days: int = 60, base_dir: str = ".") -> dict:
         day_entries: dict = {}
         for trig in triggers:
             if not isinstance(trig, dict):
+                continue
+            if not is_valid_post_mortem_entry(trig):
                 continue
             symphony_id = trig.get(_PRODUCER_SYMPHONY_ID)
             if symphony_id is None:
@@ -1818,6 +1847,8 @@ def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
                 data = _json.load(fh)
             day_alpha = 0.0
             for t in data.get("triggers", []):
+                if not is_valid_post_mortem_entry(t):
+                    continue
                 alpha = t.get("saved_pct_guard_alpha", 0.0)
                 dollars = t.get("saved_dollars", 0.0)
                 reason = t.get("exit_reason", "Unknown")

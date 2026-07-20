@@ -40,10 +40,13 @@ USAGE:
         --post-mortems-dir post_mortems --start 2026-06-23 --end 2026-07-08
     python scripts/regenerate_post_mortems.py --apply               # gated
 
-Default window 2026-06-23..2026-07-08: 06-22 was manually regenerated
-post-close and already matches truth; 07-09 onward is written correctly by
-the fixed Stage-1 (DE-PROD-ACCURACY-001). The 07-09 exit_triggers rows 80-83
-4x-duplicate is a SEPARATE gated data repair — deliberately out of scope.
+Default window 2026-06-22..2026-07-09 (widened 2026-07-20, F-008): both
+boundary days are contaminated per the F-008 data-integrity audit — the
+prior default (2026-06-23..2026-07-08) rested on a refuted assumption that
+06-22 was already manually regenerated to truth and that 07-09 was written
+correctly by the fixed Stage-1 (see tests/app/test_post_mortem_validity_
+guard.py for the real-06-22-capture evidence). The 07-09 exit_triggers rows
+80-83 4x-duplicate is a SEPARATE gated data repair — deliberately out of scope.
 
 PRECISION NOTE: the file's exit_return is stored rounded to 2dp, so the
 recomputed saved_dollars inherits ~±0.005pp of that rounding (≈±$0.06 on a
@@ -67,11 +70,12 @@ from datetime import UTC, datetime
 # 7.22 (06-23 Golden Age), 1.89 (06-23 Reasonabilists) exactly.
 SNAPSHOT_CUTOFF_ET = "15:54:59"
 
-# Default repair window per team-lead ruling 2026-07-09: 06-22 already
-# correct (manual post-close regen); 07-09+ written correctly by the fixed
-# Stage-1 sourcing.
-DEFAULT_START = "2026-06-23"
-DEFAULT_END = "2026-07-08"
+# Default repair window widened 2026-07-20 (F-008 data-integrity fix): both
+# 06-22 and 07-09 are contaminated per the F-008 audit — the prior "06-22
+# already correct" / "07-09+ written correctly" assumption is refuted, see
+# the module docstring above.
+DEFAULT_START = "2026-06-22"
+DEFAULT_END = "2026-07-09"
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
