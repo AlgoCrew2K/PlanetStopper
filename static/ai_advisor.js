@@ -573,9 +573,17 @@
                 selectEl.innerHTML = '<option value="">Select symphony…</option>';
                 syms.forEach(function (sym) {
                     var opt = document.createElement('option');
-                    // F-023 / DE-PERFVIEW-ID-MISMATCH: value must be the
-                    // bot_state hash (sym.id), never the display name.
-                    opt.value = sym.id;
+                    // F-023 / DE-PERFVIEW-ID-MISMATCH correction: the
+                    // accept/suggest flow's canonical key is the display
+                    // NAME, not the Composer hash -- POST /ai-advisor/accept
+                    // reads database.get_symphony_strategy/save_symphony_
+                    // strategy directly (normalize_name(display_name)-keyed
+                    // only, no hash resolution). The endpoint now returns
+                    // {id,name} objects (not bare strings), so this must
+                    // read sym.name explicitly -- but it stays the option
+                    // value, unlike performance.js's picker (which genuinely
+                    // needs sym.id since it feeds a hash-keyed query).
+                    opt.value = sym.name;
                     opt.textContent = sym.name;
                     selectEl.appendChild(opt);
                 });
