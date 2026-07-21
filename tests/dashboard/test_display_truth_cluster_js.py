@@ -97,6 +97,39 @@ class TestF011SectionBadgesReadRealField:
             "referenced incidentally elsewhere in the function."
         )
 
+    def test_update_section_meta_excludes_non_symphony_top_level_metadata(self):
+        """Sufficiency-review addition (fdc-tw, post-GREEN): `data.state`/
+        `data.bot_state` is a MIXED dict -- some keys are per-symphony dicts,
+        but at least one (`last_successful_cycle_at`, app.py:1389/2325) is a
+        flat top-level scalar carried in the SAME dict, not a symphony entry.
+        A naive `Object.values(stateObj)` (satisfying the two tests above on
+        their own) would count that scalar as a phantom standby symphony --
+        it fails both `s.armed` (undefined on a string) and every other flag
+        check, so `!s.armed && !s.tp_armed && ...` is vacuously true for it,
+        inflating standbyCount by 1 on every poll. The real fix filters to
+        dict entries carrying "name" (mirroring app.py's own
+        `isinstance(v, dict) and "name" in v` convention, used identically at
+        app.py:1169/2131-2134/2587) BEFORE the armed/standby classification --
+        this test requires that filter to exist and to run before the
+        classification, not just the bare field-source switch."""
+        content = _read_index_js()
+        body = _slice_function(content, "function updateSectionMeta(")
+
+        filter_match = re.search(r"\.filter\(\s*function\s*\(\s*s\s*\)", body)
+        assert filter_match is not None, (
+            "the badge-count .filter(function (s) {...}) construct was not found -- "
+            "this test's location assumptions may be stale; update the markers."
+        )
+        prefix = body[: filter_match.start()]
+        assert re.search(r"['\"]name['\"]\s*in\s+\w+", prefix), (
+            "F-011 FAIL: no 'name' in <entry> membership check appears before the "
+            "armed/standby classification -- data.state/data.bot_state carries a "
+            "flat non-symphony key (last_successful_cycle_at) alongside the "
+            "per-symphony dict entries; without filtering to symphony-shaped "
+            "entries first, that scalar is miscounted as a phantom standby "
+            "symphony on every poll."
+        )
+
 
 # ===========================================================================
 # F-014 -- the "Cumulative · lifetime" row must source the lifetime
