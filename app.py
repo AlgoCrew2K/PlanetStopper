@@ -577,9 +577,13 @@ _account_totals_last_success_at: str | None = None
 # Named constant for the Composer HTTP timeout; promotes the bare literal at line 769.
 _ACCOUNT_TOTALS_HTTP_TIMEOUT_S = 10
 # F-010: cumulative count of known Composer read-timeouts hit by
-# _refresh_account_totals — scheduler-thread-only (single minute-cadence
-# caller, no lock needed) — surfaced as aggregation context in the compact
-# one-line log below instead of a full traceback per occurrence.
+# _refresh_account_totals — surfaced as aggregation context in the compact
+# one-line log below instead of a full traceback per occurrence. _refresh_
+# account_totals has 3 real concurrent call sites (the minute-scheduler
+# tick, a _notify_cycle_complete-spawned thread, and a flush-resync
+# thread), so the increment is protected by _account_totals_cache_lock
+# (this function's existing convention for its other shared-state writes)
+# — never an unsynchronized read-modify-write.
 _account_totals_timeout_count = 0
 # ET-format timestamp string used for account_basis_as_of / _account_totals_last_success_at
 # across _refresh_account_totals and both the live and frozen stale-cache fallback paths.
@@ -870,11 +874,18 @@ def _refresh_account_totals() -> None:
         # a full traceback. Any OTHER requests exception (ConnectionError,
         # etc.) or unexpected exception type is NOT caught here — it falls
         # through to the except Exception branch below and keeps its full
-        # traceback (timeout-only match).
-        _account_totals_timeout_count += 1
+        # traceback (timeout-only match). The increment is a real
+        # read-modify-write shared across 3 concurrent call sites (scheduler
+        # tick, cycle-complete thread, flush-resync thread), so it's
+        # protected by this function's existing shared-state lock; the log
+        # call reads a stable post-lock snapshot rather than holding the
+        # lock during logging.
+        with _account_totals_cache_lock:
+            _account_totals_timeout_count += 1
+            _timeout_count_snapshot = _account_totals_timeout_count
         _daemon_log.warning(
             "_refresh_account_totals: Composer read-timeout (#%d, timeout=%ss) — cache unchanged",
-            _account_totals_timeout_count,
+            _timeout_count_snapshot,
             _ACCOUNT_TOTALS_HTTP_TIMEOUT_S,
         )
     except Exception as _exc:
@@ -1871,6 +1882,21 @@ def get_state():
                 # snapshot["trading_day"] so analytics reads from shadow_history for
                 # that day (R14 contract — NOT today's date).
                 _snap_trading_day = snapshot.get("trading_day")
+                # F-1 (frozen branch): ONE shared read-only connection for BOTH the
+                # per-symphony TC/CR/MDD loop right below AND the 3 portfolio-level
+                # analytics calls further down this same frozen-snapshot block —
+                # mirrors the live branch's fix (this is the branch most likely to
+                # have served the PM's original off-hours/Saturday repro).
+                # Function-local/per-request scope, closed once both sections are
+                # done (below, after the account-totals try/except). Falls back to
+                # None (each analytics call opens its own connection, today's
+                # behavior) if the shared connection itself fails to open.
+                try:
+                    _frozen_shadow_conn = sqlite3.connect(
+                        f"file:{analytics._get_shadow_db_file()}?mode=ro", uri=True, timeout=10.0
+                    )
+                except Exception:
+                    _frozen_shadow_conn = None
                 for _acc_syms in _snap_accounts_map.values():
                     for _sym in _acc_syms or []:
                         if not isinstance(_sym, dict):
@@ -1890,19 +1916,28 @@ def get_state():
                         }
                         try:
                             _sym["_tc"] = analytics.get_symphony_today_change(
-                                _sym_dict, _sym, trading_day=_snap_trading_day
+                                _sym_dict,
+                                _sym,
+                                trading_day=_snap_trading_day,
+                                conn=_frozen_shadow_conn,
                             )
                         except (KeyError, TypeError, ValueError):
                             _sym["_tc"] = {"if_held": None, "dry_run": None}
                         try:
                             _sym["_cr"] = analytics.get_symphony_cumulative_return(
-                                _sym_dict, _sym, trading_day=_snap_trading_day
+                                _sym_dict,
+                                _sym,
+                                trading_day=_snap_trading_day,
+                                conn=_frozen_shadow_conn,
                             )
                         except (KeyError, TypeError, ValueError):
                             _sym["_cr"] = {"if_held": None, "dry_run": None}
                         try:
                             _sym["_mdd"] = analytics.get_symphony_max_drawdown(
-                                _sym_dict, _sym, trading_day=_snap_trading_day
+                                _sym_dict,
+                                _sym,
+                                trading_day=_snap_trading_day,
+                                conn=_frozen_shadow_conn,
                             )
                         except (KeyError, TypeError, ValueError):
                             _sym["_mdd"] = {"if_held": None, "dry_run": None}
@@ -2028,10 +2063,16 @@ def get_state():
 
                     # VW intermediates (same calls as live path).
                     _snap_vw_tc = analytics.get_portfolio_today_change(
-                        _snap_symphonies_list, _snap_bot_state, trading_day=_snap_trading_day
+                        _snap_symphonies_list,
+                        _snap_bot_state,
+                        trading_day=_snap_trading_day,
+                        conn=_frozen_shadow_conn,
                     )
                     _snap_vw_cr = analytics.get_portfolio_cumulative_return(
-                        _snap_symphonies_list, _snap_bot_state, trading_day=_snap_trading_day
+                        _snap_symphonies_list,
+                        _snap_bot_state,
+                        trading_day=_snap_trading_day,
+                        conn=_frozen_shadow_conn,
                     )
 
                     # Wrap TC and CR through the account-basis helpers INDEPENDENTLY
@@ -2066,7 +2107,10 @@ def get_state():
                         "today_change": _snap_tc_final,
                         "cumulative_return": _snap_cr_final,
                         "max_drawdown": analytics.get_portfolio_max_drawdown(
-                            _snap_symphonies_list, _snap_bot_state, trading_day=_snap_trading_day
+                            _snap_symphonies_list,
+                            _snap_bot_state,
+                            trading_day=_snap_trading_day,
+                            conn=_frozen_shadow_conn,
                         ),
                         "account_value": (
                             _snap_cached_value
@@ -2105,6 +2149,12 @@ def get_state():
                         # Same frozen-snapshot semantics as the happy path above.
                         "data_as_of": _snap_data_as_of,
                     }
+
+                # F-1: both the per-symphony loop and the portfolio-level calls above
+                # are done with the shared connection by this point (happy path or
+                # the except-fallback above — either way this line is reached).
+                if _frozen_shadow_conn is not None:
+                    _frozen_shadow_conn.close()
 
                 try:
                     _frozen_html = render_template(

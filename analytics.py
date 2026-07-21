@@ -1971,6 +1971,11 @@ def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
                         "symphony_id": t.get("symphony_id", ""),
                         "reason": reason,
                         "detail": t.get("detail", alpha),
+                        # Same sourcing as the todays_exits path below (Finding 11) —
+                        # zero new I/O, same `t` dict, same loop iteration.
+                        "time_triggered": t.get("time_triggered")
+                        or t.get("timestamp")
+                        or t.get("ts", ""),
                     }
                 )
             daily_map[date_part] = daily_map.get(date_part, 0.0) + day_alpha
