@@ -2397,12 +2397,18 @@ def get_state():
             tc = s.get("_tc") or {}
             cr = s.get("_cr") or {}
             mdd = s.get("_mdd") or {}
-            tc_bot = (tc.get("dry_run") if isinstance(tc, dict) else tc) or None
-            tc_held = (tc.get("if_held") if isinstance(tc, dict) else None) or None
-            cr_bot = (cr.get("dry_run") if isinstance(cr, dict) else cr) or None
-            cr_held = (cr.get("if_held") if isinstance(cr, dict) else None) or None
-            mdd_bot = (mdd.get("dry_run") if isinstance(mdd, dict) else mdd) or None
-            mdd_held = (mdd.get("if_held") if isinstance(mdd, dict) else None) or None
+            # F-016 (3rd locus): the trailing `or None` this function used to have
+            # converted a genuine 0.0 (falsy in Python) into a fabricated null --
+            # `.get()` on a missing key already returns None, so `or None` was
+            # redundant AND the only thing silently misrendering a real "no change
+            # today" (or cumulative/MDD) value as the empty-state '--' on every
+            # /api/state poll. Same pattern, same fix, on all six fields.
+            tc_bot = tc.get("dry_run") if isinstance(tc, dict) else tc
+            tc_held = tc.get("if_held") if isinstance(tc, dict) else None
+            cr_bot = cr.get("dry_run") if isinstance(cr, dict) else cr
+            cr_held = cr.get("if_held") if isinstance(cr, dict) else None
+            mdd_bot = mdd.get("dry_run") if isinstance(mdd, dict) else mdd
+            mdd_held = mdd.get("if_held") if isinstance(mdd, dict) else None
             return tc_bot, tc_held, cr_bot, cr_held, mdd_bot, mdd_held
 
         _symphonies_for_cards: list[dict] = []
