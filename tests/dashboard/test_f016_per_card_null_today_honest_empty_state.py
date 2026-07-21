@@ -47,6 +47,12 @@ import pytest
 import app as app_module
 
 # ---------------------------------------------------------------------------
+# fdc-rev review finding (2026-07-21): F-016 has a THIRD locus, not covered by
+# the original RED battery -- see TestApiStateGenuineZeroTodayNotMisrenderedAsNull
+# below.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
 # Fixtures (mirrors test_mdd_honest_framing.py)
 # ---------------------------------------------------------------------------
 
@@ -218,3 +224,112 @@ class TestGenuineZeroTodayStillRendersZero:
                 f"honest-empty-state fix for null must not also suppress a real "
                 f"zero. Rendered spans: {spans!r}"
             )
+
+
+# ===========================================================================
+# F-016 THIRD LOCUS (fdc-rev finding, 2026-07-21): the LIVE /api/state poll
+# path silently converts a genuine 0.0 into null -- the OPPOSITE direction
+# bug from loci 1/2 above, but squarely within AC-3's own text: "genuine 0.0
+# still renders '+0.00%' ... Fleet-wide (portfolio header + per-card)".
+# ===========================================================================
+
+
+class TestApiStateGenuineZeroTodayNotMisrenderedAsNull:
+    """ROOT CAUSE (pre-existing, untouched by this cycle's diff, confirmed via
+    direct source read): app.py's `_tc_cr_mdd_floats` (~2396-2406, defined
+    inside the `/api/state` route) computes:
+
+        tc_bot  = (tc.get("dry_run") if isinstance(tc, dict) else tc) or None
+        tc_held = (tc.get("if_held") if isinstance(tc, dict) else None) or None
+
+    `0.0 or None` evaluates to `None` in Python (0.0 is falsy) -- a genuine
+    "no change today" (dry_run=0.0/if_held=0.0, a fully plausible real value:
+    a flat market, a fresh trading day, etc.) is silently converted to None
+    BEFORE it ever reaches `_symphonies_for_cards` (app.py:2429-2430), which
+    feeds `data.symphonies[].tc_bot`/`tc_held` in the REAL `/api/state` JSON
+    response. static/index.js's `updateCards` (the "cards-live" feature,
+    wired into `updateDashboard`'s per-poll pipeline -- reachable on every
+    30s poll, not dead code) renders this via `_fmtSignedPct`, which
+    correctly returns `'--'` for `null` -- so the net effect is: a genuine
+    0.0% Today change gets silently misrendered as the empty-state em-dash
+    on every live re-poll, on every card. This is the exact opposite of
+    loci 1/2 (there: null -> false zero; here: genuine zero -> false null),
+    but it is the SAME finding (F-016) and the SAME AC (AC-3's "genuine 0.0
+    still renders '+0.00%' ... Fleet-wide") -- the initial SSR page-load is
+    now correct (loci 1/2), but this bug re-corrupts the cards on the very
+    next poll via a path neither the JS-source-pin battery nor the
+    route-level test battery originally touched.
+    """
+
+    def test_api_state_symphony_tc_bot_and_held_are_zero_not_null_when_genuinely_zero(
+        self, client, mock_database, monkeypatch
+    ):
+        mock_database.load_state.return_value = _one_symphony_state(section="active")
+        mock_database.get_last_trigger_per_symphony.return_value = {}
+        monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
+        monkeypatch.setattr(
+            app_module,
+            "analytics",
+            _analytics_mock(symphony_today_change={"if_held": 0.0, "dry_run": 0.0}),
+        )
+        monkeypatch.setattr(app_module, "get_market_state", lambda dt: "open")
+
+        resp = client.get("/api/state")
+        assert resp.status_code == 200, f"/api/state returned {resp.status_code}"
+        body = resp.get_json()
+        symphonies = body.get("symphonies")
+        assert isinstance(symphonies, list) and symphonies, (
+            "fixture sanity: /api/state must return a non-empty 'symphonies' list "
+            "for this test to be meaningful."
+        )
+        sym = next((s for s in symphonies if s.get("id") == "sym-tc-probe"), None)
+        assert sym is not None, "fixture symphony 'sym-tc-probe' missing from the response."
+
+        assert sym.get("tc_bot") == 0.0, (
+            f"F-016 FAIL (3rd locus): /api/state symphonies[].tc_bot == "
+            f"{sym.get('tc_bot')!r} for a GENUINE 0.0 today-change -- "
+            f"_tc_cr_mdd_floats' `tc.get('dry_run') or None` pattern silently "
+            f"converts a real 0.0 (falsy) into a fabricated null, which "
+            f"static/index.js's updateCards then misrenders as the empty-state "
+            f"'--' on every live poll instead of the honest '+0.0%'."
+        )
+        assert sym.get("tc_held") == 0.0, (
+            f"F-016 FAIL (3rd locus): /api/state symphonies[].tc_held == "
+            f"{sym.get('tc_held')!r} for a GENUINE 0.0 today-change (same bug as "
+            f"tc_bot above, `tc.get('if_held') or None`)."
+        )
+
+    def test_api_state_symphony_tc_bot_and_held_are_still_null_when_genuinely_null(
+        self, client, mock_database, monkeypatch
+    ):
+        """Regression pin (the other half of the same fix): a GENUINELY missing
+        today-change (analytics returns {"if_held": None, "dry_run": None}, the
+        real "no data yet" shape) must still surface as null in the JSON --
+        the fix must not overcorrect into fabricating a false 0.0 for real
+        missing data."""
+        mock_database.load_state.return_value = _one_symphony_state(section="active")
+        mock_database.get_last_trigger_per_symphony.return_value = {}
+        monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
+        monkeypatch.setattr(
+            app_module,
+            "analytics",
+            _analytics_mock(symphony_today_change={"if_held": None, "dry_run": None}),
+        )
+        monkeypatch.setattr(app_module, "get_market_state", lambda dt: "open")
+
+        resp = client.get("/api/state")
+        assert resp.status_code == 200, f"/api/state returned {resp.status_code}"
+        body = resp.get_json()
+        symphonies = body.get("symphonies")
+        sym = next((s for s in (symphonies or []) if s.get("id") == "sym-tc-probe"), None)
+        assert sym is not None, "fixture symphony 'sym-tc-probe' missing from the response."
+
+        assert sym.get("tc_bot") is None, (
+            f"regression FAIL: /api/state symphonies[].tc_bot == {sym.get('tc_bot')!r} "
+            f"for a genuinely null today-change -- must stay None, not be coerced "
+            f"to some other value by the F-016 3rd-locus fix."
+        )
+        assert sym.get("tc_held") is None, (
+            f"regression FAIL: /api/state symphonies[].tc_held == "
+            f"{sym.get('tc_held')!r} for a genuinely null today-change."
+        )
