@@ -333,3 +333,98 @@ class TestApiStateGenuineZeroTodayNotMisrenderedAsNull:
             f"regression FAIL: /api/state symphonies[].tc_held == "
             f"{sym.get('tc_held')!r} for a genuinely null today-change."
         )
+
+
+# ===========================================================================
+# PM RULING (2026-07-21, resolving fdc-rev's block on HEAD 02bca884): KEEP
+# the 6-field fix in _tc_cr_mdd_floats; the cr/mdd half was untested by the
+# original RED battery above (which only pinned tc_bot/tc_held) -- this class
+# closes that gap. Same bug shape, same fix, same function as the Today pair:
+# `0.0 or None` fabricates a null from a genuine 0.0 cumulative-return or MDD
+# (a never-triggered symphony has a real 0.0 MDD -- not a rare edge case).
+# Ruling explicitly distinguishes this from the earlier `_safe_analytics`
+# Today-only precedent: that ruling narrowed a DIFFERENT-direction bug
+# (None->0.0 un-coercion) to protect UNVERIFIED template consumers from
+# receiving a raw None; this locus is the OPPOSITE direction (0.0->None
+# fabrication) on a JSON path whose client consumers are VERIFIED null-safe
+# (fdc-rev's own rerun) -- honesty-restoring with no unverified blast radius.
+# ===========================================================================
+
+
+class TestApiStateGenuineZeroCrAndMddNotMisrenderedAsNull:
+    @pytest.mark.parametrize(
+        "mock_attr, bot_key, held_key",
+        [
+            ("get_symphony_cumulative_return", "cr_bot", "cr_held"),
+            ("get_symphony_max_drawdown", "mdd_bot", "mdd_held"),
+        ],
+    )
+    def test_genuine_zero_renders_zero_not_null(
+        self, client, mock_database, monkeypatch, mock_attr, bot_key, held_key
+    ):
+        mock_database.load_state.return_value = _one_symphony_state(section="active")
+        mock_database.get_last_trigger_per_symphony.return_value = {}
+        monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
+        analytics_mock = _analytics_mock(symphony_today_change={"if_held": 1.0, "dry_run": 1.0})
+        getattr(analytics_mock, mock_attr).return_value = {"if_held": 0.0, "dry_run": 0.0}
+        monkeypatch.setattr(app_module, "analytics", analytics_mock)
+        monkeypatch.setattr(app_module, "get_market_state", lambda dt: "open")
+
+        resp = client.get("/api/state")
+        assert resp.status_code == 200, f"/api/state returned {resp.status_code}"
+        body = resp.get_json()
+        sym = next(
+            (s for s in (body.get("symphonies") or []) if s.get("id") == "sym-tc-probe"), None
+        )
+        assert sym is not None, "fixture symphony 'sym-tc-probe' missing from the response."
+
+        assert sym.get(bot_key) == 0.0, (
+            f"F-016 FAIL (3rd locus, cr/mdd extension): /api/state "
+            f"symphonies[].{bot_key} == {sym.get(bot_key)!r} for a GENUINE 0.0 "
+            f"value -- same `or None` fabrication bug as tc_bot/tc_held, same "
+            f"fix, same function ({mock_attr} feeds this field)."
+        )
+        assert sym.get(held_key) == 0.0, (
+            f"F-016 FAIL (3rd locus, cr/mdd extension): /api/state "
+            f"symphonies[].{held_key} == {sym.get(held_key)!r} for a GENUINE 0.0 "
+            f"value."
+        )
+
+    @pytest.mark.parametrize(
+        "mock_attr, bot_key, held_key",
+        [
+            ("get_symphony_cumulative_return", "cr_bot", "cr_held"),
+            ("get_symphony_max_drawdown", "mdd_bot", "mdd_held"),
+        ],
+    )
+    def test_genuine_null_stays_null_regression(
+        self, client, mock_database, monkeypatch, mock_attr, bot_key, held_key
+    ):
+        """Regression pin (the other half of the same fix, mirroring
+        TestApiStateGenuineZeroTodayNotMisrenderedAsNull's null-stays-null
+        case): a genuinely missing cumulative-return/MDD must still surface as
+        null -- the fix must not overcorrect into fabricating a false 0.0."""
+        mock_database.load_state.return_value = _one_symphony_state(section="active")
+        mock_database.get_last_trigger_per_symphony.return_value = {}
+        monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
+        analytics_mock = _analytics_mock(symphony_today_change={"if_held": 1.0, "dry_run": 1.0})
+        getattr(analytics_mock, mock_attr).return_value = {"if_held": None, "dry_run": None}
+        monkeypatch.setattr(app_module, "analytics", analytics_mock)
+        monkeypatch.setattr(app_module, "get_market_state", lambda dt: "open")
+
+        resp = client.get("/api/state")
+        assert resp.status_code == 200, f"/api/state returned {resp.status_code}"
+        body = resp.get_json()
+        sym = next(
+            (s for s in (body.get("symphonies") or []) if s.get("id") == "sym-tc-probe"), None
+        )
+        assert sym is not None, "fixture symphony 'sym-tc-probe' missing from the response."
+
+        assert sym.get(bot_key) is None, (
+            f"regression FAIL: /api/state symphonies[].{bot_key} == "
+            f"{sym.get(bot_key)!r} for a genuinely null value -- must stay None."
+        )
+        assert sym.get(held_key) is None, (
+            f"regression FAIL: /api/state symphonies[].{held_key} == "
+            f"{sym.get(held_key)!r} for a genuinely null value."
+        )
