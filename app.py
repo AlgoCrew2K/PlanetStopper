@@ -935,22 +935,45 @@ def dashboard():
             "trading_day": _dash_today,
         }
 
-        def _safe_analytics(fn, *args, **kwargs):
+        def _safe_analytics(fn, *args, coerce_none: bool = True, **kwargs):
             try:
                 result = fn(*args, **kwargs)
                 if not isinstance(result, dict):
-                    return {"if_held": 0.0, "dry_run": 0.0}
+                    return (
+                        {"if_held": 0.0, "dry_run": 0.0}
+                        if coerce_none
+                        else {
+                            "if_held": None,
+                            "dry_run": None,
+                        }
+                    )
+                if not coerce_none:
+                    return result
                 return {k: (v if v is not None else 0.0) for k, v in result.items()}
             except Exception:
-                return {"if_held": 0.0, "dry_run": 0.0}
+                return (
+                    {"if_held": 0.0, "dry_run": 0.0}
+                    if coerce_none
+                    else {
+                        "if_held": None,
+                        "dry_run": None,
+                    }
+                )
 
         if "_cr" not in _s:
             _s["_cr"] = _safe_analytics(
                 analytics.get_symphony_cumulative_return, _sym_dict, _s, trading_day=_dash_today
             )
         if "_tc" not in _s:
+            # F-016: _tc feeds the per-card Today cells only (templates/index.html),
+            # which now have their own None-aware guard -- do NOT coerce a genuine
+            # None to 0.0 here, that fabricates a false "+0.0%" for missing data.
             _s["_tc"] = _safe_analytics(
-                analytics.get_symphony_today_change, _sym_dict, _s, trading_day=_dash_today
+                analytics.get_symphony_today_change,
+                _sym_dict,
+                _s,
+                trading_day=_dash_today,
+                coerce_none=False,
             )
         if "_mdd" not in _s:
             _s["_mdd"] = _safe_analytics(
@@ -1392,6 +1415,11 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
             "hist_dates": hist_dates,
             "hist_bot": hist_bot,
             "hist_held": hist_held,
+            # F-026: hist_bot/hist_held here are genuinely shadow_history-sourced
+            # (analytics.get_portfolio_bot_and_held_daily_returns) -- must be set
+            # explicitly or _build_meta's ps.get("hist_source", "post_mortem")
+            # silently serves the wrong default.
+            "hist_source": "shadow_history",
             "data_as_of": _data_as_of,
         }
 
@@ -2369,12 +2397,18 @@ def get_state():
             tc = s.get("_tc") or {}
             cr = s.get("_cr") or {}
             mdd = s.get("_mdd") or {}
-            tc_bot = (tc.get("dry_run") if isinstance(tc, dict) else tc) or None
-            tc_held = (tc.get("if_held") if isinstance(tc, dict) else None) or None
-            cr_bot = (cr.get("dry_run") if isinstance(cr, dict) else cr) or None
-            cr_held = (cr.get("if_held") if isinstance(cr, dict) else None) or None
-            mdd_bot = (mdd.get("dry_run") if isinstance(mdd, dict) else mdd) or None
-            mdd_held = (mdd.get("if_held") if isinstance(mdd, dict) else None) or None
+            # F-016 (3rd locus): the trailing `or None` this function used to have
+            # converted a genuine 0.0 (falsy in Python) into a fabricated null --
+            # `.get()` on a missing key already returns None, so `or None` was
+            # redundant AND the only thing silently misrendering a real "no change
+            # today" (or cumulative/MDD) value as the empty-state '--' on every
+            # /api/state poll. Same pattern, same fix, on all six fields.
+            tc_bot = tc.get("dry_run") if isinstance(tc, dict) else tc
+            tc_held = tc.get("if_held") if isinstance(tc, dict) else None
+            cr_bot = cr.get("dry_run") if isinstance(cr, dict) else cr
+            cr_held = cr.get("if_held") if isinstance(cr, dict) else None
+            mdd_bot = mdd.get("dry_run") if isinstance(mdd, dict) else mdd
+            mdd_held = mdd.get("if_held") if isinstance(mdd, dict) else None
             return tc_bot, tc_held, cr_bot, cr_held, mdd_bot, mdd_held
 
         _symphonies_for_cards: list[dict] = []

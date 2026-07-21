@@ -843,6 +843,11 @@
               <div class="legend-swatch dashed"></div>
               <span>If held</span>
             </div>
+            <!-- F-025: distinguishes this chart's day-by-day cumulative (shadow-history)
+                 basis from the adjacent "Cumulative · lifetime" scalar comparison row a
+                 few lines below -- without this an operator has no way to tell the two
+                 numbers are different metrics on different bases. -->
+            <span class="legend-basis-note" style="font-size:10px;color:var(--studio-ink-faint);">Day-by-day cumulative &middot; shadow-history basis</span>
             <span id="hero-data-as-of" class="legend-as-of">
               data as of {{ meta.portfolio.data_as_of if meta is defined and meta.portfolio is defined else '--' }}
             </span>
@@ -1076,16 +1081,23 @@
           </div>
 
           <div data-testid="dual-value-headline" class="dual-value-headline">
+            {# F-016: None-aware Today guard (mirrors the MDD row's precedent below
+               -- `_mdd_bot_raw is not none`) -- a genuinely None dry_run/if_held
+               renders the honest '--' instead of coercing None to 0.0 via
+               .get(key, 0), which fabricated a false '+0.0%' for missing data. A
+               genuine 0.0 still renders '+0.0%'. #}
             {% set tc_h = sym.get("_tc") or {} %}
-            {% set bot_tc = (tc_h.get("dry_run", 0) if tc_h is mapping else (tc_h or 0)) | float %}
-            {% set held_tc = (tc_h.get("if_held", 0) if tc_h is mapping else 0) | float %}
+            {% set _tc_bot_raw = tc_h.get("dry_run") if tc_h is mapping else none %}
+            {% set _tc_held_raw = tc_h.get("if_held") if tc_h is mapping else none %}
+            {% set bot_tc = _tc_bot_raw | float if _tc_bot_raw is not none else 0.0 %}
+            {% set held_tc = _tc_held_raw | float if _tc_held_raw is not none else 0.0 %}
             <div class="dv-block">
               <span data-field="dv-label-bot" class="dv-label">Bot{% if sym.get("triggered") %} &middot; frozen{% endif %}</span>
-              <span data-field="tc-bot" class="dv-value {% if bot_tc >= 0 %}pos{% else %}neg{% endif %}">{% if bot_tc >= 0 %}+{% endif %}{{ "%.1f"|format(bot_tc) }}%</span>
+              <span data-field="tc-bot" class="dv-value {% if bot_tc >= 0 %}pos{% else %}neg{% endif %}">{% if _tc_bot_raw is not none %}{% if bot_tc >= 0 %}+{% endif %}{{ "%.1f"|format(bot_tc) }}%{% else %}&mdash;{% endif %}</span>
             </div>
             <div class="dv-block" style="padding-left:14px;border-left:1px solid var(--studio-rule);">
               <span class="dv-label">If held{% if sym.get("triggered") %} &middot; live{% endif %}</span>
-              <span data-field="tc-held" class="dv-value {% if held_tc >= 0 %}pos{% else %}neg{% endif %}" style="font-size:16px;opacity:0.6;">{% if held_tc >= 0 %}+{% endif %}{{ "%.1f"|format(held_tc) }}%</span>
+              <span data-field="tc-held" class="dv-value {% if held_tc >= 0 %}pos{% else %}neg{% endif %}" style="font-size:16px;opacity:0.6;">{% if _tc_held_raw is not none %}{% if held_tc >= 0 %}+{% endif %}{{ "%.1f"|format(held_tc) }}%{% else %}&mdash;{% endif %}</span>
             </div>
           </div>
 
@@ -1118,8 +1130,13 @@
             {% set cr = sym.get("_cr") or {} %}
             {% set tc_d = sym.get("_tc") or {} %}
             {% set mdd_d = sym.get("_mdd") or {} %}
-            {% set tc_bot  = (tc_d.get("dry_run",  0) if tc_d  is mapping else (tc_d  or 0)) | float %}
-            {% set tc_held = (tc_d.get("if_held",  0) if tc_d  is mapping else 0) | float %}
+            {# F-016: None-aware Today guard (mirrors the MDD bot guard just below)
+               -- a genuinely None dry_run/if_held renders '--' instead of coercing
+               None to 0.0, which fabricated a false '+0.0%' for missing data. #}
+            {% set _tc_bot_raw = tc_d.get("dry_run") if tc_d is mapping else none %}
+            {% set _tc_held_raw = tc_d.get("if_held") if tc_d is mapping else none %}
+            {% set tc_bot  = _tc_bot_raw | float if _tc_bot_raw is not none else 0.0 %}
+            {% set tc_held = _tc_held_raw | float if _tc_held_raw is not none else 0.0 %}
             {% set cr_bot  = (cr.get("dry_run",    0) or 0) | float %}
             {% set cr_held = (cr.get("if_held",    0) or 0) | float %}
             {# AC-6: None-aware MDD bot guard — dry_run=None (< 2 trading days) renders
@@ -1133,8 +1150,8 @@
             <div class="card-footer-grid">
               <div class="cfg-cell">
                 <span class="cfg-label">Today <span data-field="tc-alpha-badge" class="cfg-alpha-badge {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(tc_alpha) }}</span></span>
-                <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="tc-bot" class="cfg-val {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{{ "%+.1f"|format(tc_bot) }}%</span></div>
-                <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="tc-held" class="cfg-val {% if tc_held >= 0 %}pos{% else %}neg{% endif %}" style="opacity:0.7;">{{ "%+.1f"|format(tc_held) }}%</span></div>
+                <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="tc-bot" class="cfg-val {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{% if _tc_bot_raw is not none %}{{ "%+.1f"|format(tc_bot) }}%{% else %}&mdash;{% endif %}</span></div>
+                <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="tc-held" class="cfg-val {% if tc_held >= 0 %}pos{% else %}neg{% endif %}" style="opacity:0.7;">{% if _tc_held_raw is not none %}{{ "%+.1f"|format(tc_held) }}%{% else %}&mdash;{% endif %}</span></div>
               </div>
               <div class="cfg-cell">
                 <span class="cfg-label">Cum <span data-field="cr-alpha-badge" class="cfg-alpha-badge {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(cr_alpha) }}</span></span>
@@ -1179,24 +1196,32 @@
           </div>
 
           <div data-testid="dual-value-headline" class="dual-value-headline">
+            {# F-016: None-aware Today guard -- see the active-section block above
+               for the full rationale. #}
             {% set tc_h = sym.get("_tc") or {} %}
-            {% set bot_tc = (tc_h.get("dry_run", 0) if tc_h is mapping else (tc_h or 0)) | float %}
-            {% set held_tc = (tc_h.get("if_held", 0) if tc_h is mapping else 0) | float %}
+            {% set _tc_bot_raw = tc_h.get("dry_run") if tc_h is mapping else none %}
+            {% set _tc_held_raw = tc_h.get("if_held") if tc_h is mapping else none %}
+            {% set bot_tc = _tc_bot_raw | float if _tc_bot_raw is not none else 0.0 %}
+            {% set held_tc = _tc_held_raw | float if _tc_held_raw is not none else 0.0 %}
             <div class="dv-block">
               <span data-field="dv-label-bot" class="dv-label">Bot</span>
-              <span data-field="tc-bot" class="dv-value {% if bot_tc >= 0 %}pos{% else %}neg{% endif %}">{% if bot_tc >= 0 %}+{% endif %}{{ "%.1f"|format(bot_tc) }}%</span>
+              <span data-field="tc-bot" class="dv-value {% if bot_tc >= 0 %}pos{% else %}neg{% endif %}">{% if _tc_bot_raw is not none %}{% if bot_tc >= 0 %}+{% endif %}{{ "%.1f"|format(bot_tc) }}%{% else %}&mdash;{% endif %}</span>
             </div>
             <div class="dv-block" style="padding-left:14px;border-left:1px solid var(--studio-rule);">
               <span class="dv-label">If held</span>
-              <span data-field="tc-held" class="dv-value {% if held_tc >= 0 %}pos{% else %}neg{% endif %}" style="font-size:16px;opacity:0.6;">{% if held_tc >= 0 %}+{% endif %}{{ "%.1f"|format(held_tc) }}%</span>
+              <span data-field="tc-held" class="dv-value {% if held_tc >= 0 %}pos{% else %}neg{% endif %}" style="font-size:16px;opacity:0.6;">{% if _tc_held_raw is not none %}{% if held_tc >= 0 %}+{% endif %}{{ "%.1f"|format(held_tc) }}%{% else %}&mdash;{% endif %}</span>
             </div>
           </div>
           <div style="height:64px;overflow:hidden;margin-top:0.5rem;"><canvas data-testid="card-spark" class="spark" data-sym-id="{{ sym.get('id', '') }}" style="display:block;width:100%;height:64px;"></canvas></div>
           {% set cr = sym.get("_cr") or {} %}
           {% set tc_d = sym.get("_tc") or {} %}
           {% set mdd_d = sym.get("_mdd") or {} %}
-          {% set tc_bot  = (tc_d.get("dry_run",  0) if tc_d  is mapping else (tc_d  or 0)) | float %}
-          {% set tc_held = (tc_d.get("if_held",  0) if tc_d  is mapping else 0) | float %}
+          {# F-016: None-aware Today guard -- see the active-section block above
+             for the full rationale. #}
+          {% set _tc_bot_raw = tc_d.get("dry_run") if tc_d is mapping else none %}
+          {% set _tc_held_raw = tc_d.get("if_held") if tc_d is mapping else none %}
+          {% set tc_bot  = _tc_bot_raw | float if _tc_bot_raw is not none else 0.0 %}
+          {% set tc_held = _tc_held_raw | float if _tc_held_raw is not none else 0.0 %}
           {% set cr_bot  = (cr.get("dry_run",    0) or 0) | float %}
           {% set cr_held = (cr.get("if_held",    0) or 0) | float %}
           {# AC-6: None-aware MDD bot guard — dry_run=None (< 2 trading days) renders
@@ -1210,8 +1235,8 @@
           <div class="card-footer-grid" style="margin-top:0.375rem;">
             <div class="cfg-cell">
               <span class="cfg-label">Today <span data-field="tc-alpha-badge" class="cfg-alpha-badge {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(tc_alpha) }}</span></span>
-              <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="tc-bot" class="cfg-val {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{{ "%+.1f"|format(tc_bot) }}%</span></div>
-              <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="tc-held" class="cfg-val {% if tc_held >= 0 %}pos{% else %}neg{% endif %}" style="opacity:0.7;">{{ "%+.1f"|format(tc_held) }}%</span></div>
+              <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="tc-bot" class="cfg-val {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{% if _tc_bot_raw is not none %}{{ "%+.1f"|format(tc_bot) }}%{% else %}&mdash;{% endif %}</span></div>
+              <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="tc-held" class="cfg-val {% if tc_held >= 0 %}pos{% else %}neg{% endif %}" style="opacity:0.7;">{% if _tc_held_raw is not none %}{{ "%+.1f"|format(tc_held) }}%{% else %}&mdash;{% endif %}</span></div>
             </div>
             <div class="cfg-cell">
               <span class="cfg-label">Cum <span data-field="cr-alpha-badge" class="cfg-alpha-badge {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(cr_alpha) }}</span></span>

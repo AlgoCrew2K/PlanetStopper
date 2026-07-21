@@ -3,9 +3,9 @@
 > Performance/History tab data layer -- loads per-day `post_mortem_<YYYY-MM-DD>.json` snapshots and exposes aggregate/per-symphony return series plus quantstats-derived risk metrics.
 
 **Source:** `analytics.py`
-**Last updated:** 2026-07-20 (fix-f008-data-integrity, `DE-POSTMORTEM-INTEGRITY-001` -- first doc-gen entry for this module; round-2 review hardening at `2eac42d0`)
+**Last updated:** 2026-07-21 (fix-display-cluster, `DE-DISPLAY-TRUTH-001` F-018 -- `compute_windowed_portfolio_strip` documented for the first time; see the new section below). Prior: 2026-07-20 (fix-f008-data-integrity, `DE-POSTMORTEM-INTEGRITY-001` -- first doc-gen entry for this module; round-2 review hardening at `2eac42d0`)
 
-**Coverage note (honest scope):** `analytics.py` is a large module (quantstats risk metrics, windowed strip/history aggregation, portfolio return series) with no prior `docs/generated/` entry. This file documents only the post-mortem-reading surface this cycle touched or depends on -- `_POST_MORTEMS_DIR`, `is_valid_post_mortem_entry`, `load_post_mortem_history`, and `get_history_summary`. The remainder of the module's public API (quantstats metrics, windowed-strip computation, portfolio return-series helpers, etc.) is a pre-existing documentation gap, flagged to the PM as backlog -- not silently backfilled here, to keep this entry scoped to what was actually verified against the GREEN diff.
+**Coverage note (honest scope):** `analytics.py` is a large module (quantstats risk metrics, windowed strip/history aggregation, portfolio return series) with no exhaustive `docs/generated/` entry. This file documents the post-mortem-reading surface (`_POST_MORTEMS_DIR`, `is_valid_post_mortem_entry`, `load_post_mortem_history`, `get_history_summary`) plus, as of this cycle, `compute_windowed_portfolio_strip` -- the functions successive cycles have actually touched or depended on. The remainder of the module's public API (quantstats metrics, portfolio return-series helpers, etc.) is a pre-existing documentation gap, flagged to the PM as backlog -- not silently backfilled here, to keep this entry scoped to what was actually verified against each cycle's GREEN diff.
 
 ## Overview
 
@@ -13,9 +13,21 @@
 
 ## API Reference
 
+### `compute_windowed_portfolio_strip(symphonies: list, bot_state: dict, *, window: str, db_path: str | None = None) -> dict`
+
+Computes the windowed portfolio strip (the hero guard-alpha headline's data source) for a given time window token (`30d`/`60d`/`90d`/`125d`/`ytd`/`1y`/`all`), including `guard_alpha` -- the value-weighted `windowed_alpha` across the portfolio's symphonies.
+
+**F-018 basis-consistency fix (`DE-DISPLAY-TRUTH-001`, 2026-07-21).** The `windowed_alpha` loop now excludes the TWR-fallback symphony (`sym.get("simple_return") == 0.0 and sym.get("net_deposits") == 0.0` -- the identical condition `get_symphony_cumulative_return` checks at `analytics.py:826` to set `_twr_fallback`), matching the exclusion its own `if_held` anchor already applies via `get_portfolio_cumulative_return` -> `_value_weighted_portfolio` (the shipped F4 fix, `analytics.py:972-978`).
+
+**Why this matters:** before this fix, `windowed_alpha` was value-weighted across *all* symphonies (including the TWR-fallback one) while the `if_held` anchor it is compared against excluded that same symphony -- two different weighting populations feeding one ratio. Net effect: the windowed guard-alpha headline (the tool's core value metric, e.g. "GUARD ALPHA 30D") systematically **under-reported** roughly 2x on every window. Verified on the golden fixture `tests/fixtures/math/guard_alpha_windowed_basis_mix.json` (`tests/analytics/test_windowed_strip.py::TestF018WindowedAlphaBasisConsistency`, expected values derived in-test from raw `shadow_history` rows, never hardcoded) and independently corroborated against a real live-DB snapshot recompute (`docs/audit/confidence-program/truth/f014-lifetime-label-basis-mismatch.md`): **0.627195 (old, mixed-basis) vs 1.241529 (fixed, 10-symphony-consistent basis)**.
+
+This is a **display-truth fix, not a math-layer redesign**: the exclusion condition is inlined with a comment (not extracted to a new named constant) because it mirrors an existing shipped exclusion at `analytics.py:826` rather than introducing a new tunable threshold. See `DE-DISPLAY-TRUTH-001` in `DECISIONS.md` for the full account, including the F-016 escalation this cycle also shipped.
+
+---
+
 ### `is_valid_post_mortem_entry(entry: object) -> bool`
 
-**New in this cycle (F-008, `DE-POSTMORTEM-INTEGRITY-001`).** Single source of truth for the post-mortem data-integrity guard -- returns `True` iff `entry` is a `dict` and its `if_held_source` field is a `str` matching one of the 3 producer-recognized values:
+Single source of truth for the post-mortem data-integrity guard (`F-008`, `DE-POSTMORTEM-INTEGRITY-001`) -- returns `True` iff `entry` is a `dict` and its `if_held_source` field is a `str` matching one of the 3 producer-recognized values:
 
 ```python
 _TRUSTED_IF_HELD_SOURCES = frozenset(
@@ -44,7 +56,7 @@ Loads up to `days` most-recent `post_mortem_<YYYY-MM-DD>.json` files from `base_
 
 **F-008 validity guard (AC-5):** each trigger entry is passed through `is_valid_post_mortem_entry` before being folded into the returned shape -- an entry lacking a recognized `if_held_source` is skipped, the same as a `None`/non-dict trigger.
 
-**Resilience (unchanged by this cycle):**
+**Resilience:**
 - Missing/unreadable files are silently skipped.
 - Malformed JSON is silently skipped (does not raise).
 - Files without a parseable date in the filename are skipped.
@@ -65,4 +77,4 @@ Aggregates guard-alpha history for the History tab. Returns the envelope `GET /a
 - `database` -- consulted by other (undocumented-in-this-entry) parts of this module for live state.
 - `reporting.py` -- upstream producer whose `generate_eod_snapshot` trigger schema this module consumes; `is_valid_post_mortem_entry`'s trusted set is a direct mirror of `reporting.py`'s 3-tier `if_held_source` lookup (see `docs/generated/reporting.md`).
 
-See `DE-POSTMORTEM-INTEGRITY-001` in `DECISIONS.md`.
+See `DE-POSTMORTEM-INTEGRITY-001` and `DE-DISPLAY-TRUTH-001` in `DECISIONS.md`.

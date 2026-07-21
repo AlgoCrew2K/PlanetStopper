@@ -466,6 +466,96 @@ def test_ac13_pool_candidates_empty_sources_yield_empty_pool(bpg):
     assert bpg.pool_candidates([], []) == []
 
 
+def _template_id(c) -> str | None:
+    """Resolve the template_id from an admitted candidate (object or dict).
+
+    Deliberately SEPARATE from _provenance() above: _provenance() reads
+    .params['provenance'], which is already correct today. template_id is
+    the field the F-027 bug actually lives in (build_plan_generator.py:1376
+    hardcodes the literal string "community" instead of the
+    PROVENANCE_ATLAS_SUGGESTED constant) — resolving it independently
+    ensures a fix that only patches .params['provenance'] and leaves
+    template_id untouched still fails this check."""
+    if isinstance(c, dict):
+        return c.get("template_id")
+    return getattr(c, "template_id", None)
+
+
+def _objective_param(c) -> str | None:
+    """Resolve params['objective'] from an admitted candidate (object or dict)."""
+    if isinstance(c, dict):
+        return (c.get("params", {}) or {}).get("objective")
+    params = getattr(c, "params", None)
+    if isinstance(params, dict):
+        return params.get("objective")
+    return None
+
+
+def test_ac13_f027_template_id_is_atlas_suggested_constant_not_hardcoded_community(bpg):
+    """F-027 (CLAUDE.md contract): admitted community candidates must surface
+    template_id=PROVENANCE_ATLAS_SUGGESTED (the existing constant) — NEVER the
+    literal string "community". CLAUDE.md is explicit: 'provenance tags are
+    built-new/atlas-suggested ... never "community"'. Contract-anchored, not
+    current-behavior-anchored (per plan instruction) — this asserts the
+    DOCUMENTED value, which the current hardcoded literal at
+    build_plan_generator.py:1376 does not satisfy. A fix that only updates
+    .params['provenance'] (already correct pre-fix, see
+    test_ac13_admitted_community_candidates_tagged_atlas_suggested above)
+    while leaving template_id="community" untouched must still fail here —
+    template_id is resolved independently via _template_id(), not via the
+    provenance() helper that reads the already-correct field."""
+    cands = [_candidate("a", {"Sharpe": "1.0"}), _candidate("b", {"Sharpe": "2.0"})]
+    admitted = bpg.admit_community_candidates(
+        _community_result(cands), _objective(bpg, "lift_risk_adjusted")
+    )
+    assert admitted, "fixture sanity: expected at least one admitted candidate"
+    for c in admitted:
+        tid = _template_id(c)
+        assert tid != "community", (
+            f"F-027 FAIL: template_id is still the literal 'community' string "
+            f"(CLAUDE.md-forbidden value) on candidate {c!r}."
+        )
+        assert tid == bpg.PROVENANCE_ATLAS_SUGGESTED, (
+            f"F-027 FAIL: expected template_id == PROVENANCE_ATLAS_SUGGESTED "
+            f"({bpg.PROVENANCE_ATLAS_SUGGESTED!r}), got {tid!r}."
+        )
+
+
+@pytest.mark.parametrize(
+    "objective_name", ["cut_drawdown", "volatility_mitigation", "lift_risk_adjusted", "diversify"]
+)
+def test_ac13_f027_params_objective_is_populated_matching_passed_objective(bpg, objective_name):
+    """F-027: params['objective'] must be populated with the objective that was
+    actually passed to admit_community_candidates — mirroring the built-new
+    path's precedent (strategy_builder_engine.py:443-448 sets
+    params['objective'] = plan.get('objective', '')). Today this key is
+    entirely absent from the community path's params dict (audit found
+    'objective blank on all 112 community rows'), so a naive `.get('objective')`
+    read returns None on every objective — this test is decisively RED against
+    that gap and would also catch a fix that populates the WRONG objective
+    (e.g. always 'diversify' regardless of what was passed) via the
+    per-objective parametrization."""
+    cands = [
+        _candidate(
+            "a", {"Sharpe": "1.0", "Max Drawdown %": "-5.00%", "Volatility (ann.) %": "10.00%"}
+        )
+    ]
+    admitted = bpg.admit_community_candidates(
+        _community_result(cands), _objective(bpg, objective_name)
+    )
+    assert admitted, "fixture sanity: expected at least one admitted candidate"
+    for c in admitted:
+        obj = _objective_param(c)
+        assert obj, (
+            f"F-027 FAIL: params['objective'] is missing/blank on candidate {c!r} "
+            f"(objective={objective_name!r} was passed to admit_community_candidates)."
+        )
+        assert obj == objective_name, (
+            f"F-027 FAIL: params['objective'] == {obj!r}, expected the PASSED "
+            f"objective {objective_name!r}."
+        )
+
+
 def test_ac13_pool_candidates_one_empty_source_preserves_the_other(bpg):
     """AC-13: pooling when one source is empty preserves the other source intact."""
     built_new = [{"plan_id": "bn1", "provenance": bpg.PROVENANCE_BUILT_NEW}]

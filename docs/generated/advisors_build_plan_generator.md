@@ -3,7 +3,7 @@
 > Build-Plan Generator for the real Strategy Builder (Component 2 + 2b): uses the Anthropic SDK in structured tool-use mode, via an accessor-driven, env-overridable model (`model_config.get_advisor_suggestion_model()`, default `claude-fable-5` per AC-16, operator directive 2026-07-13), to emit diverse objective-shaped build-plans expressed in a constrained strategy DSL, validates every proposed ticker against the tradeable membership set, admits objective-matched Atlas community strategies alongside the generated plans, and (R2-1) optionally injects the operator's real symphony/live-stats/lens context into the generation prompt for symphony-scoped runs.
 
 **Source:** `advisors/build_plan_generator.py`
-**Last updated:** 2026-07-13 (R2-1 — additive `reasoning_context` keyword param on `_build_generation_prompt`/`generate_build_plans`; CLOSES the context-blindness caveat below for symphony-scoped runs, `DE-ADVISOR-R2-1-001`; prior: advisor-remediation-r1 — context-blindness caveat + AC-16 model-neutral language sweep, DE-ADVISOR-R1-001)
+**Last updated:** 2026-07-21 (fix-display-cluster, `DE-DISPLAY-TRUTH-001` F-027 — `admit_community_candidates` now emits `template_id=PROVENANCE_ATLAS_SUGGESTED` instead of a hardcoded `"community"` literal, and populates `params["objective"]`; this file's own code example below was stale and is corrected). Prior: 2026-07-13 (R2-1 — additive `reasoning_context` keyword param on `_build_generation_prompt`/`generate_build_plans`; CLOSES the context-blindness caveat below for symphony-scoped runs, `DE-ADVISOR-R2-1-001`; prior: advisor-remediation-r1 — context-blindness caveat + AC-16 model-neutral language sweep, DE-ADVISOR-R1-001)
 
 ## Overview
 
@@ -137,17 +137,22 @@ class GeneratorResult:
 CandidateInfo(
     candidate_id = sid,                      # community strategy sid
     tree         = doc["tree"],              # the community strategy tree
-    template_id  = "community",
+    template_id  = PROVENANCE_ATLAS_SUGGESTED,  # "atlas-suggested" -- F-027 fix, was a
+                                                 # hardcoded "community" literal before
+                                                 # DE-DISPLAY-TRUTH-001 (2026-07-21)
     params       = {
         "sid":              str,
         "name":             str,
         "composition_hash": str,
         "provenance":       "atlas-suggested",  # AC-13: in params, not a top-level dict key
+        "objective":        str,                # F-027: obj_name, was never populated before
     },
     metrics      = {},
     backtest_error = None,
 )
 ```
+
+**F-027 fix (`DE-DISPLAY-TRUTH-001`, 2026-07-21):** `admit_community_candidates` previously hardcoded `template_id="community"` -- a literal the project's own contract explicitly forbids (CLAUDE.md: "provenance tags: built-new/atlas-suggested ... never 'community'") -- while the correct value (`PROVENANCE_ATLAS_SUGGESTED`) was already being written one field over into `params["provenance"]`. This code example above was itself stale (it documented the bug as the contract) until this fix; it now matches both the real code and the always-correct AC-13/C5 prose sections below. `params["objective"]` (`obj_name`, already in local scope in this function) is now also populated -- previously 0 of 112 admitted community rows ever carried an `objective`.
 
 `pool_candidates` concatenates built-new `dict` items (from `generate_build_plans`) and `CandidateInfo` items (from `admit_community_candidates`) without reshaping — each item's provenance is accessible as `item["provenance"]` for dicts and `item.params["provenance"]` for `CandidateInfo` objects.
 

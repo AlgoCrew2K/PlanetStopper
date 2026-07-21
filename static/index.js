@@ -118,7 +118,12 @@
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: { legend: { display: false } },
-                scales: { x: { display: false }, y: { display: false } }
+                // F-025: the y-axis (magnitude) must stay visible so this chart's
+                // day-by-day cumulative series (~-3% scale) can't be visually
+                // conflated with the adjacent VW-lifetime scalar headline (~+34%,
+                // opposite sign, ~12x magnitude). X stays hidden -- the
+                // hero-data-as-of legend span already covers time.
+                scales: { x: { display: false }, y: { display: true } }
             }
         });
         applyHeroWindow(_heroWindow);
@@ -916,16 +921,19 @@
         // comp-cumulative-delta / comp-mdd-delta) — not just bot/held text.
         var rows = [
             { id: 'today',      deltaTestid: 'comp-today-delta',      values: ps.today_change      || {}, higherIsBetter: true },
-            // Prefer windowed_cumulative_return (VW-basis, same window as guard_alpha)
-            // over cumulative_return (which may carry account-basis if_held ~63.95%).
-            // Falls back to cumulative_return when windowed_cumulative_return is absent
-            // (e.g. cold cache) so the row still renders rather than breaking.
-            { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.windowed_cumulative_return || ps.cumulative_return || {}, higherIsBetter: true },
+            // F-014: this row's SSR label reads "Cumulative · lifetime"
+            // (templates/index.html:920) -- it must source the lifetime
+            // cumulative_return only. Do NOT prefer a windowed value here; that
+            // clobbers the lifetime-labeled figure with a windowed one on every poll.
+            { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.cumulative_return || {}, higherIsBetter: true },
             { id: 'mdd',        deltaTestid: 'comp-mdd-delta',        values: ps.max_drawdown      || {}, higherIsBetter: false }
         ];
         rows.forEach(function (row) {
-            var bot  = sentinelToNull(typeof row.values.dry_run === 'number' ? row.values.dry_run : (Number(row.values.dry_run) || null)) || 0;
-            var held = sentinelToNull(typeof row.values.if_held  === 'number' ? row.values.if_held  : (Number(row.values.if_held)  || null)) || 0;
+            // F-016: sentinelToNull's null result must survive to fmtPct (which has
+            // its own honest '--' branch for null) -- do NOT coerce to 0 here, that
+            // fabricates a false "no change" reading for a genuinely missing value.
+            var bot  = sentinelToNull(typeof row.values.dry_run === 'number' ? row.values.dry_run : (Number(row.values.dry_run) || null));
+            var held = sentinelToNull(typeof row.values.if_held  === 'number' ? row.values.if_held  : (Number(row.values.if_held)  || null));
             var maxAbs = Math.max(Math.abs(bot), Math.abs(held), 1);
 
             var botBars  = document.querySelectorAll('[data-testid="comp-bar-bot"][data-row="'  + row.id + '"]');
@@ -942,11 +950,16 @@
             var heldText = document.querySelector('[data-testid="comp-' + row.id + '-held-text"]');
             if (botText) {
                 botText.textContent = 'Bot ' + fmtPct(bot);
-                setPosNeg(botText, row.higherIsBetter ? bot : -bot);
+                // F-016: guard setPosNeg -- its `value >= 0` check is TRUE for null in
+                // JS (null coerces to 0), which would mis-classify a missing value as
+                // positive/green if called unguarded.
+                if (bot !== null) setPosNeg(botText, row.higherIsBetter ? bot : -bot);
+                else botText.classList.remove('pos', 'neg');
             }
             if (heldText) {
                 heldText.textContent = 'Held ' + fmtPct(held);
-                setPosNeg(heldText, row.higherIsBetter ? held : -held);
+                if (held !== null) setPosNeg(heldText, row.higherIsBetter ? held : -held);
+                else heldText.classList.remove('pos', 'neg');
             }
 
             // AC-4a: recompute + write the alpha (.vs-delta) span every poll so the
@@ -957,11 +970,16 @@
             // matching the template's mdd_alpha and the per-card convention.
             var deltaEl = document.querySelector('[data-testid="' + row.deltaTestid + '"]');
             if (deltaEl) {
-                var deltaAlpha = row.higherIsBetter
-                    ? (bot - held)
-                    : (Math.abs(held) - Math.abs(bot));
-                deltaEl.textContent = 'α ' + fmtPct(deltaAlpha);
-                setPosNeg(deltaEl, deltaAlpha);
+                if (bot !== null && held !== null) {
+                    var deltaAlpha = row.higherIsBetter
+                        ? (bot - held)
+                        : (Math.abs(held) - Math.abs(bot));
+                    deltaEl.textContent = 'α ' + fmtPct(deltaAlpha);
+                    setPosNeg(deltaEl, deltaAlpha);
+                } else {
+                    deltaEl.textContent = 'α ' + fmtPct(null);
+                    deltaEl.classList.remove('pos', 'neg');
+                }
             }
         });
 
@@ -1190,7 +1208,15 @@
     // Section counts derive from data.symphonies list (active = armed/triggered/tp_armed/para_armed).
     // The "data as of" legend span refreshes from meta.portfolio.data_as_of each tick.
     function updateSectionMeta(data) {
-        var syms = Array.isArray(data.symphonies) ? data.symphonies : [];
+        // F-011: data.symphonies genuinely does not exist on the closed/frozen
+        // /api/state branch (app.py emits state/bot_state only there) -- read the
+        // real field, present on BOTH branches, and filter to symphony entries the
+        // same way the server does (isinstance(v, dict) and "name" in v) since
+        // state/bot_state also carries flat non-symphony metadata keys.
+        var stateObj = (data && (data.bot_state || data.state)) || {};
+        var syms = Object.keys(stateObj)
+            .map(function (k) { return stateObj[k]; })
+            .filter(function (v) { return v && typeof v === 'object' && 'name' in v; });
         var activeCount  = syms.filter(function (s) {
             return s.armed || s.tp_armed || s.para_armed || s.triggered;
         }).length;

@@ -3,7 +3,7 @@
 > Client-side dashboard controller: state polling, event-driven updates via SSE, guard-alpha panel, window-picker, visible staleness cue, and honest post-trigger MC rendering.
 
 **Source:** `static/index.js`
-**Last updated:** 2026-07-18 (Math Remediation F7, `DE-MATH-F7-001`) — MC dial + detail-view chart-fallback exited-state render honesty (AC-2); see the new section below. Prior: 2026-06-23 (feat/dashboard-realtime-push: EventSource SSE wiring + showConnectionLost staleness cue)
+**Last updated:** 2026-07-21 (fix-display-cluster, `DE-DISPLAY-TRUTH-001`) — F-011 (`updateSectionMeta` field fix), F-014 (`updateComparisonRows` lifetime-source fix), F-016 locus 1 (`updateComparisonRows` null-vs-zero honest empty-state), F-025 (`renderHeroChart` y-axis visible); see the new sections below. Prior: 2026-07-18 (Math Remediation F7, `DE-MATH-F7-001`) — MC dial + detail-view chart-fallback exited-state render honesty (AC-2); see the F7 section below. Prior: 2026-06-23 (feat/dashboard-realtime-push: EventSource SSE wiring + showConnectionLost staleness cue)
 
 ## Overview
 
@@ -15,6 +15,9 @@
 - **Guard-alpha dollar-saved panel** — `fetchGuardAlphaSummary()` calls `/api/guard-alpha-summary` once on page load and populates the `#dollar-saved-headline` / `#guard-event-count` / `#dollar-saved-basis-label` elements.
 - **Window picker** — `fetchWindowedStrip(token)` calls `/api/strip/<token>` when the operator clicks a time-window button; re-windows the hero headline and comparison rows without a full page reload.
 - **MC dial + detail render honesty** — `renderMcDial()` and the detail-view Risk Math panel actively render an explicit exited/"—" state for a triggered symphony instead of scanning history for (or freezing on) a stale pre-trigger reading (Math Remediation F7, `DE-MATH-F7-001`).
+- **Section-count badges** — `updateSectionMeta()` reads `data.state`/`data.bot_state` (present on every `/api/state` branch) rather than the sometimes-absent `data.symphonies`, so the active/standby counts don't collapse to 0 on the closed/frozen branch (F-011).
+- **Comparison rows** — `updateComparisonRows()` re-renders the Today/Cumulative/MDD rows on every poll; the Cumulative row sources the lifetime `cumulative_return` only (F-014) and preserves a genuine `null` through to the honest empty-state instead of coercing it to a false zero (F-016 locus 1).
+- **Hero chart axis + label** — `renderHeroChart()`'s Chart.js config keeps the y-axis visible so the chart's day-by-day cumulative series can't be visually mistaken for the adjacent lifetime scalar headline (F-025).
 
 ## API Reference
 
@@ -35,6 +38,23 @@ Visible staleness cue (AC-8). Targets three real DOM element IDs (from `_chrome.
 Called by `loadState()` on fetch failure. Does NOT suppress or replace the poll retry — `setInterval` continues, so the badge self-heals on the next successful poll.
 
 **Prior defect (fixed this cycle):** The original implementation targeted `#engine-status-badge` and `[data-testid="data-as-of"]`/`.data-as-of` — selectors that do not exist in the production template. `getElementById` returned `null` for all three; the staleness cue was silently a no-op: the operator saw no visual indication of a dropped connection.
+
+### `updateSectionMeta(data)`
+Computes the active/standby section-count badges from the live symphony set.
+
+**F-011 fix (`DE-DISPLAY-TRUTH-001`, 2026-07-21):** previously read `Array.isArray(data.symphonies) ? data.symphonies : []` — `data.symphonies` genuinely does not exist on the closed/frozen `/api/state` branch (`app.py` emits `state`/`bot_state` only there), so the badges deterministically read 0 (empty array) whenever the market was closed. Fixed to read `data.bot_state || data.state` — present on BOTH branches — filtered to symphony-shaped entries (`typeof v === 'object' && 'name' in v`), matching the same filter `app.py` itself applies (`isinstance(v, dict) and "name" in v`) since `state`/`bot_state` also carries flat non-symphony metadata keys (e.g. `last_successful_cycle_at`) at the top level that a naive `Object.values()` would miscount as a phantom standby symphony.
+
+### `updateComparisonRows(data)`
+Renders the Today / Cumulative · lifetime / Max DD comparison rows (bot vs. held bars, per-row alpha) on every poll.
+
+**F-014 fix (`DE-DISPLAY-TRUTH-001`, 2026-07-21):** the Cumulative row's `values:` previously preferred `ps.windowed_cumulative_return || ps.cumulative_return`. The row's own SSR label reads "Cumulative · lifetime" (`templates/index.html:920`) and is correctly sourced server-side — but this JS re-poll clobbered it with a windowed value every 30 s. Fixed to source `ps.cumulative_return` only, dropping the windowed preference entirely. (Numerically invisible while the dataset is < 30 days old — the fix is pinned on the SOURCE EXPRESSION, not a numeric-equality test.)
+
+**F-016 locus 1 fix (`DE-DISPLAY-TRUTH-001`, 2026-07-21):** the bot/held extraction previously did `sentinelToNull(...) || 0`, discarding a genuine `null` before `fmtPct`'s own honest `'--'` branch could ever run. Fixed by dropping the `|| 0` coercion. Because `setPosNeg`'s `value >= 0` check evaluates `true` for `null` in JS (null coerces to `0` in a numeric comparison), every downstream `setPosNeg` call and the delta-alpha (`α`) calculation are now explicitly null-guarded too — a `null` bot/held value skips color-classification and renders `α --` rather than being silently treated as positive/green. See `DE-DISPLAY-TRUTH-001` in `DECISIONS.md` for the companion 3rd F-016 locus (`app.py`'s `_tc_cr_mdd_floats`, the opposite failure direction) this cycle also fixed.
+
+### `renderHeroChart()` — Chart.js config (hero chart)
+Builds the hero day-by-day cumulative chart (Chart.js line chart, bot vs. if-held datasets).
+
+**F-025 fix (`DE-DISPLAY-TRUTH-001`, 2026-07-21):** the `scales` config previously hid both axes (`{ x: { display: false }, y: { display: false } }`). The y-axis (magnitude) is now visible (`y: { display: true }`) so the chart's day-by-day cumulative series (~-3% at audit time) can't be visually conflated with the adjacent VW-lifetime scalar headline (~+34%, opposite sign, ~12x magnitude) — a naive glance at the hidden-axis version could read as "the tool contradicts itself." The x-axis stays hidden (PM ruling: the y-axis is the requirement since magnitude conflation was the defect; the `hero-data-as-of` legend span already covers time). `templates/index.html`'s chart-legend area also gains a "Day-by-day cumulative · shadow-history basis" label span distinguishing this chart's basis from the "Cumulative · lifetime" comparison row a few lines below. The plotted series (`applyHeroWindow`'s dataset assignments) is byte-unchanged — presentation-only, regression-pinned.
 
 ### SSE subscription (DOMContentLoaded block)
 ```js

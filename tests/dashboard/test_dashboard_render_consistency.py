@@ -166,10 +166,23 @@ class TestPollUpdatesDeltaSpans:
         js = _js_source()
         # Isolate the updateComparisonRows function body (best-effort brace-free slice:
         # from its declaration to the next top-level 'function ' at the same indent).
+        #
+        # DIAGNOSED 2026-07-21 (CI failure on PR #110, DE-DISPLAY-TRUTH-001): this used
+        # to be a FIXED `js[start:start+4000]` window, on the assumption "the function
+        # is well under this size" -- that assumption broke silently as later cycles
+        # (F-014/F-016 among them) added explanatory inline comments earlier in the
+        # function body, pushing the real `deltaEl.textContent = ...` write (still
+        # present and correct, per AC-4a's contract) to offset ~4040 -- 40 chars past
+        # the cutoff. Not a regression: the write survived, the test's brittle
+        # fixed-length slice just stopped reaching it. Switched to the same
+        # boundary-detection idiom this codebase already uses elsewhere (e.g.
+        # tests/dashboard/test_f7_ac2_render_surfaces_js.py's `_slice_function`) so
+        # future comment growth in this function can never silently blind this test
+        # again -- matches what this docstring/comment already claimed the slice did.
         start = js.find("function updateComparisonRows")
         assert start != -1, "static/index.js must define updateComparisonRows"
-        # Slice a generous window; the function is well under this size.
-        body = js[start : start + 4000]
+        next_fn = js.find("\n    function ", start + 1)
+        body = js[start:next_fn] if next_fn != -1 else js[start : start + 8000]
 
         for row in _DELTA_ROWS:
             assert f"comp-{row}-delta" in body, (

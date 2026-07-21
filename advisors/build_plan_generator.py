@@ -1373,12 +1373,15 @@ def admit_community_candidates(
                     CandidateInfo(
                         candidate_id=sid,
                         tree=doc.get("tree", {}),
-                        template_id="community",
+                        # F-027: template_id carries provenance, never a hardcoded
+                        # "community" literal (anti-hollow-core contract).
+                        template_id=PROVENANCE_ATLAS_SUGGESTED,
                         params={
                             "sid": sid,
                             "name": doc.get("name", ""),
                             "composition_hash": doc.get("composition_hash", ""),
                             "provenance": PROVENANCE_ATLAS_SUGGESTED,
+                            "objective": obj_name,
                         },
                         metrics={},
                         backtest_error=None,
