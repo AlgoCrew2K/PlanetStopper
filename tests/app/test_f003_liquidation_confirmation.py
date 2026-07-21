@@ -469,3 +469,139 @@ def test_liquidation_failure_text_truncated_to_200_chars_in_log(monkeypatch):
 
     assert long_text[:200] in out
     assert long_text not in out, "the full 300-char response body must never be logged unbounded"
+
+
+# ---------------------------------------------------------------------------
+# F-003 RESIDUAL (MUST-CLOSE-BEFORE-LIVE, confidence-program cycle):
+#
+# `name = sym.get(...)` and `sell_url = ...` (app.py:3462-3463) sit OUTSIDE
+# the per-symphony try (app.py:3467) that #105/this-file's AC-2 established.
+# A non-dict `sym` raises AttributeError at line 3462 BEFORE the try even
+# starts — the exception is only caught by the OUTER try (app.py:3457-3486),
+# which aborts the ENTIRE per-symphony loop, silently defeating the very
+# isolation this file otherwise pins. AC-6: move the extraction INSIDE the
+# per-symphony try; a malformed entry yields a per-symphony FAILED outcome
+# and the queue continues. HARD GUARD: zero change to sell-request
+# construction for valid entries (reuses the AC-5 pins above unchanged).
+# ---------------------------------------------------------------------------
+
+
+def _outcome_count(result) -> int:
+    """Shape-tolerant outcome count — dict-keyed-by-name or list-of-dicts."""
+    if result is None:
+        return 0
+    if isinstance(result, dict):
+        return len(result)
+    if isinstance(result, (list, tuple)):
+        return len(result)
+    return 0
+
+
+def _unmatched_outcomes(result, known_names):
+    """Outcomes NOT keyed/tagged by any of known_names — i.e. the malformed
+    entry's own outcome record, whatever key/shape the implementer chose.
+    """
+    if isinstance(result, dict):
+        return [
+            (k, v)
+            for k, v in result.items()
+            if not (k in known_names or (isinstance(v, dict) and v.get("name") in known_names))
+        ]
+    if isinstance(result, (list, tuple)):
+        return [
+            (None, v)
+            for v in result
+            if not (isinstance(v, dict) and v.get("name") in known_names)
+        ]
+    return []
+
+
+@pytest.mark.parametrize(
+    "malformed_entry", ["not-a-dict", None, 42, ["nested", "list"]], ids=["str", "none", "int", "list"]
+)
+def test_malformed_symphony_entry_does_not_abort_the_queue(monkeypatch, malformed_entry):
+    """AC-6: a malformed entry BEFORE a valid one must not prevent the valid
+    one from being processed — the exact defect: extraction outside the
+    per-symphony try aborts the whole loop via the OUTER except.
+    """
+    symphonies = [
+        {"symphony_id": "S1", "name": "Alpha"},
+        malformed_entry,
+        {"symphony_id": "S2", "name": "Beta"},
+    ]
+
+    def post_side_effect(url, **_kwargs):
+        return _make_sell_response(200, text="ok")
+
+    result, _out, calls = _run_liquidation(monkeypatch, symphonies, post_side_effect)
+
+    assert len(calls) == 2, (
+        f"both valid symphonies (Alpha, Beta — surrounding the malformed entry) must each "
+        f"get exactly one POST attempt; got {len(calls)} call(s): {calls!r}. A queue-abort "
+        "regression (the pre-fix bug) stops after the malformed entry, so Beta (which comes "
+        "AFTER it) would never be POSTed."
+    )
+    assert _outcome_for(result, "Alpha").get("ok") is True
+    assert _outcome_for(result, "Beta").get("ok") is True, (
+        "Beta comes AFTER the malformed entry in the input list — its outcome being missing "
+        "or not-ok proves the queue aborted instead of continuing past the malformed entry."
+    )
+
+
+def test_malformed_symphony_entry_produces_its_own_failed_outcome(monkeypatch):
+    """AC-6: the malformed entry itself must yield a per-symphony FAILED
+    outcome (not merely be silently skipped) — one outcome record per INPUT
+    entry, including the malformed one.
+    """
+    symphonies = [
+        {"symphony_id": "S1", "name": "Alpha"},
+        "not-a-dict",
+        {"symphony_id": "S2", "name": "Beta"},
+    ]
+
+    def post_side_effect(url, **_kwargs):
+        return _make_sell_response(200, text="ok")
+
+    result, _out, _calls = _run_liquidation(monkeypatch, symphonies, post_side_effect)
+
+    assert _outcome_count(result) == len(symphonies), (
+        f"expected one outcome per input entry (2 valid + 1 malformed = {len(symphonies)}), "
+        f"got {_outcome_count(result)} outcome(s): {result!r}. A malformed entry that is "
+        "silently skipped (rather than recorded as FAILED) still fails AC-6's "
+        "'produces a per-symphony FAILED outcome' requirement."
+    )
+
+    extras = _unmatched_outcomes(result, {"Alpha", "Beta"})
+    assert extras, (
+        f"no outcome record found for the malformed entry — result={result!r}. "
+        "AC-6 requires the malformed entry to leave its own FAILED outcome, not just "
+        "vanish from the queue."
+    )
+    for _key, outcome in extras:
+        assert isinstance(outcome, dict) and outcome.get("ok") is False, (
+            f"the malformed entry's outcome must be marked ok=False (a FAILED outcome, "
+            f"not a silent pass): got {outcome!r}"
+        )
+
+
+def test_malformed_entry_does_not_change_valid_entries_sell_request(monkeypatch):
+    """HARD GUARD (AC-6): a malformed entry anywhere in the queue must not
+    alter the sell-request construction for the surrounding valid entries —
+    same URL/json/timeout pin as test_liquidation_post_url_headers_and_payload_unchanged,
+    now proven with a malformed neighbor present.
+    """
+    symphonies = [
+        "not-a-dict",
+        {"symphony_id": "S1", "name": "Alpha"},
+    ]
+
+    def post_side_effect(url, **_kwargs):
+        return _make_sell_response(200, text="ok")
+
+    _result, _out, calls = _run_liquidation(monkeypatch, symphonies, post_side_effect)
+
+    assert len(calls) == 1, "only the one valid entry should ever reach requests.post"
+    url, kwargs = calls[0]
+    assert url == f"{app_module.COMPOSER_BASE_URL}/deploy/accounts/ACC1/symphonies/S1/go-to-cash"
+    assert kwargs["json"] == {}
+    assert kwargs["timeout"] == 10

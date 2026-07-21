@@ -229,3 +229,196 @@ def test_suggest_empty_symphony_id_does_not_crash():
     assert resp.status_code == 200
     data = resp.get_json()
     assert "suggestions" in data
+
+
+# ---------------------------------------------------------------------------
+# Backlog finding (found 2026-07-20, F-023 doc-audit; confirmed REAL by
+# foc-tw 2026-07-21 via BACKLOG.md:39-46 + ai_advisor.py:1618-1622 trace):
+#
+# "ai_advisor_suggest() (app.py:5796) resolves the client's raw symphony_id
+# to a canonical normalized name for everything else, but passes it straight
+# through unresolved as composer_symphony_id -- which
+# assemble_advisor_context's Composer /score call (ai_advisor.py:1601-1604)
+# requires to be a HASH, not a name; a name silently degrades that request's
+# condensed-logic context to empty (D-1, never crashes)."
+#
+# The tests above (test_suggest_resolves_hash_to_name_before_context_assembly
+# etc.) only pin the `symphony_id` kwarg (name-keyed autotune lookup) — they
+# say NOTHING about `composer_symphony_id`, which today is
+# `composer_symphony_id=symphony_id` (app.py:5830), the RAW unresolved
+# payload value. This section closes that separate gap: reuse the existing
+# hash-match loop to ALSO resolve composer_symphony_id -> the matched HASH
+# (_sym_key) regardless of which side (hash or name) the caller supplied.
+# ---------------------------------------------------------------------------
+
+
+def test_composer_symphony_id_resolves_to_hash_when_name_supplied():
+    """GIVEN a bot_state mapping HASH_ID -> SYMPHONY_NAME
+    WHEN   POST /ai-advisor/suggest is called with symphony_id=SYMPHONY_NAME (a NAME)
+    THEN   assemble_advisor_context's composer_symphony_id kwarg must be the
+           resolved HASH_ID, NOT the raw name — a name reaching Composer's
+           /score endpoint 400s and silently empties the condensed-logic context.
+    """
+    client = _make_client()
+    fake_context = {
+        "scope": "symphony",
+        "symphony_id": SYMPHONY_NAME.lower(),
+        "role_framing": "",
+        "suggestible_surface": [],
+        "locked_vars": [],
+        "optuna_evidence": {"available": True, "train_alpha": 0.12, "oos_alpha": 0.09},
+        "volatility_regime": {"available": True},
+        "data_window": {},
+        "risk_invariants": [],
+        "symphony_logic": None,
+    }
+
+    with (
+        patch("database.load_state", return_value=FAKE_BOT_STATE),
+        patch("ai_advisor.assemble_advisor_context", return_value=fake_context) as mock_ctx,
+        patch("ai_advisor.request_suggestions", return_value=(FAKE_SUGGESTIONS_RESPONSE, None)),
+        patch("database.get_latest_autotune_run", return_value=FAKE_AUTOTUNE_RUN),
+    ):
+        resp = client.post(
+            "/ai-advisor/suggest",
+            json={"symphony_id": SYMPHONY_NAME},
+            content_type="application/json",
+        )
+
+    assert resp.status_code == 200
+    mock_ctx.assert_called_once()
+    call_kwargs = mock_ctx.call_args.kwargs
+    assert call_kwargs.get("composer_symphony_id") == HASH_ID, (
+        f"composer_symphony_id must resolve the NAME input to the matching HASH "
+        f"({HASH_ID!r}) via the bot_state hash-match loop — got "
+        f"{call_kwargs.get('composer_symphony_id')!r}. Passing the unresolved name "
+        "through causes Composer's /score endpoint to 400 (silent D-1 degrade)."
+    )
+
+
+def test_composer_symphony_id_passthrough_preserved_when_hash_supplied():
+    """WHEN the caller already supplies the HASH (today's working case) THEN
+    composer_symphony_id must still be that same HASH — the fix must not
+    regress the currently-correct hash-in/hash-out path.
+    """
+    client = _make_client()
+    fake_context = {
+        "scope": "symphony",
+        "symphony_id": SYMPHONY_NAME.lower(),
+        "role_framing": "",
+        "suggestible_surface": [],
+        "locked_vars": [],
+        "optuna_evidence": {"available": True},
+        "volatility_regime": {"available": True},
+        "data_window": {},
+        "risk_invariants": [],
+        "symphony_logic": None,
+    }
+
+    with (
+        patch("database.load_state", return_value=FAKE_BOT_STATE),
+        patch("ai_advisor.assemble_advisor_context", return_value=fake_context) as mock_ctx,
+        patch("ai_advisor.request_suggestions", return_value=(FAKE_SUGGESTIONS_RESPONSE, None)),
+        patch("database.get_latest_autotune_run", return_value=FAKE_AUTOTUNE_RUN),
+    ):
+        resp = client.post(
+            "/ai-advisor/suggest",
+            json={"symphony_id": HASH_ID},
+            content_type="application/json",
+        )
+
+    assert resp.status_code == 200
+    mock_ctx.assert_called_once()
+    call_kwargs = mock_ctx.call_args.kwargs
+    assert call_kwargs.get("composer_symphony_id") == HASH_ID, (
+        f"composer_symphony_id must remain {HASH_ID!r} when the caller already "
+        f"supplied the hash — got {call_kwargs.get('composer_symphony_id')!r}"
+    )
+
+
+def test_composer_symphony_id_resolves_with_mixed_case_name_input():
+    """AC-7: mixed-case pinned — a mixed-case NAME must still resolve to the
+    correct HASH via normalize_name's case-insensitive comparison (both
+    resolution loops in the route already lowercase both sides).
+    """
+    client = _make_client()
+    fake_context = {
+        "scope": "symphony",
+        "symphony_id": SYMPHONY_NAME.lower(),
+        "role_framing": "",
+        "suggestible_surface": [],
+        "locked_vars": [],
+        "optuna_evidence": {"available": True},
+        "volatility_regime": {"available": True},
+        "data_window": {},
+        "risk_invariants": [],
+        "symphony_logic": None,
+    }
+    mixed_case_name = SYMPHONY_NAME.upper()
+
+    with (
+        patch("database.load_state", return_value=FAKE_BOT_STATE),
+        patch("ai_advisor.assemble_advisor_context", return_value=fake_context) as mock_ctx,
+        patch("ai_advisor.request_suggestions", return_value=(FAKE_SUGGESTIONS_RESPONSE, None)),
+        patch("database.get_latest_autotune_run", return_value=FAKE_AUTOTUNE_RUN),
+    ):
+        resp = client.post(
+            "/ai-advisor/suggest",
+            json={"symphony_id": mixed_case_name},
+            content_type="application/json",
+        )
+
+    assert resp.status_code == 200
+    mock_ctx.assert_called_once()
+    call_kwargs = mock_ctx.call_args.kwargs
+    assert call_kwargs.get("composer_symphony_id") == HASH_ID, (
+        f"a mixed-case name input ({mixed_case_name!r}) must still resolve to "
+        f"{HASH_ID!r} via case-insensitive normalize_name comparison — got "
+        f"{call_kwargs.get('composer_symphony_id')!r}"
+    )
+
+
+def test_composer_symphony_id_falls_back_to_raw_value_when_unresolvable():
+    """An unknown symphony_id (no bot_state match) must not crash — the
+    route degrades composer_symphony_id back to the raw input, same graceful
+    fallback contract as the existing unknown-hash test above.
+    """
+    client = _make_client()
+    unknown_id = "totally-unknown-symphony-reference"
+    fake_context = {
+        "scope": "symphony",
+        "symphony_id": unknown_id,
+        "role_framing": "",
+        "suggestible_surface": [],
+        "locked_vars": [],
+        "optuna_evidence": {"available": False},
+        "volatility_regime": {"available": False},
+        "data_window": {},
+        "risk_invariants": [],
+        "symphony_logic": None,
+    }
+
+    with (
+        patch("database.load_state", return_value=FAKE_BOT_STATE),
+        patch("ai_advisor.assemble_advisor_context", return_value=fake_context) as mock_ctx,
+        patch(
+            "ai_advisor.request_suggestions",
+            return_value=(ai_advisor.ConfigSuggestionsResponse(suggestions=[]), None),
+        ),
+    ):
+        resp = client.post(
+            "/ai-advisor/suggest",
+            json={"symphony_id": unknown_id},
+            content_type="application/json",
+        )
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert "error" not in data, f"unresolvable symphony_id must not error: {data}"
+    mock_ctx.assert_called_once()
+    call_kwargs = mock_ctx.call_args.kwargs
+    assert call_kwargs.get("composer_symphony_id") == unknown_id, (
+        f"an unresolvable symphony_id must fall back to the raw input value "
+        f"(graceful degradation, matching the existing symphony_id fallback contract) — "
+        f"got {call_kwargs.get('composer_symphony_id')!r}"
+    )
