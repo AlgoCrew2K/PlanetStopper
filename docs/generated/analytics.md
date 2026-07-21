@@ -3,7 +3,7 @@
 > Performance/History tab data layer -- loads per-day `post_mortem_<YYYY-MM-DD>.json` snapshots and exposes aggregate/per-symphony return series plus quantstats-derived risk metrics.
 
 **Source:** `analytics.py`
-**Last updated:** 2026-07-21 (fix-display-cluster, `DE-DISPLAY-TRUTH-001` F-018 -- `compute_windowed_portfolio_strip` documented for the first time; see the new section below). Prior: 2026-07-20 (fix-f008-data-integrity, `DE-POSTMORTEM-INTEGRITY-001` -- first doc-gen entry for this module; round-2 review hardening at `2eac42d0`)
+**Last updated:** 2026-07-21 (fix-ops-cluster, `DE-OPS-CLUSTER-001` F-1 -- an optional `conn: sqlite3.Connection | None = None` kwarg threaded through 11 functions to fix the `/api/state` ~157-connects/poll finding; see the new F-1 section below; and F-020 -- `get_history_summary` gains `daily_dates`/`daily_exits`, see that function's own section). Prior: 2026-07-21 (fix-display-cluster, `DE-DISPLAY-TRUTH-001` F-018 -- `compute_windowed_portfolio_strip` documented for the first time; see the new section below). Prior: 2026-07-20 (fix-f008-data-integrity, `DE-POSTMORTEM-INTEGRITY-001` -- first doc-gen entry for this module; round-2 review hardening at `2eac42d0`)
 
 **Coverage note (honest scope):** `analytics.py` is a large module (quantstats risk metrics, windowed strip/history aggregation, portfolio return series) with no exhaustive `docs/generated/` entry. This file documents the post-mortem-reading surface (`_POST_MORTEMS_DIR`, `is_valid_post_mortem_entry`, `load_post_mortem_history`, `get_history_summary`) plus, as of this cycle, `compute_windowed_portfolio_strip` -- the functions successive cycles have actually touched or depended on. The remainder of the module's public API (quantstats metrics, portfolio return-series helpers, etc.) is a pre-existing documentation gap, flagged to the PM as backlog -- not silently backfilled here, to keep this entry scoped to what was actually verified against each cycle's GREEN diff.
 
@@ -12,6 +12,32 @@
 `analytics.py` loads post-mortem snapshots written by `reporting.py:generate_eod_snapshot` and exposes aggregate / per-symphony return series plus quantstats-derived risk metrics for the Performance and History dashboard tabs. Every post-mortem trigger entry carries a producer-mapped field set (see `docs/generated/reporting.md`'s Stage-1 output keys) plus, since `DE-GUARD-ALPHA-SAVED-001` (PR #80), an `if_held_source` provenance stamp.
 
 ## API Reference
+
+### F-1 -- shared read-only connection threading (`DE-OPS-CLUSTER-001`, 2026-07-21)
+
+**The finding:** the PM reproduced ~157 SQLite connects / 1.4s on a single real `/api/state` poll. Every per-symphony and per-portfolio analytics helper below opened its OWN `sqlite3.connect()` call -- most of them internally, inside a loop over every symphony (via `_value_weighted_portfolio` and `_get_windowed_divergence_trajectory`) -- so a portfolio strip that fans out through 5 portfolio-level helpers times N symphonies produced O(helpers x symphonies) connects for ONE poll.
+
+**The fix:** an optional `conn: sqlite3.Connection | None = None` keyword param, added to the END of each function's signature (never repositioning existing positional/keyword params), threaded through 11 functions:
+
+| Function | Role |
+|----------|------|
+| `get_symphony_today_change` | per-symphony today-change |
+| `get_symphony_cumulative_return` | per-symphony cumulative return |
+| `get_symphony_max_drawdown` | per-symphony max drawdown |
+| `get_portfolio_today_change` | portfolio-level today-change (loops every symphony) |
+| `get_portfolio_cumulative_return` | portfolio-level cumulative return (loops every symphony) |
+| `get_portfolio_max_drawdown` | portfolio-level max drawdown (loops every symphony) |
+| `compute_windowed_symphony_guard_alpha` | per-symphony windowed guard-alpha |
+| `compute_windowed_portfolio_strip` | windowed portfolio strip (the hero headline's data source) |
+| `_load_latest_shadow_row_for_analytics` | internal: latest `shadow_history` row lookup |
+| `_get_shadow_divergence_trajectory` | internal: per-symphony divergence trajectory |
+| `_get_windowed_divergence_trajectory` | internal: windowed divergence trajectory (the loop `get_portfolio_*` helpers fan out through) |
+
+**Contract:** `conn=None` (the default on every one of the 11 functions) is byte-identical to pre-fix behavior -- each function opens and closes its own connection exactly as before. When a caller passes a pre-opened `sqlite3.Connection`, the function uses it instead and never closes it -- lifecycle ownership stays with the caller (`app.py`'s `get_api_state_dict()` / `get_state()`, see `docs/generated/app.md`). `_load_latest_shadow_row_for_analytics`'s `row_factory` save/restore is wrapped in an inner `try/finally` so the restore runs even if the query raises -- exception-safe regardless of whether it's operating on its own connection or a shared one; it is the ONLY function in this module that mutates `row_factory` (grep-confirmed).
+
+**Blast radius:** only 3 production files reference any of these 11 functions -- `alpha_bot_execution.py` (the engine's one call site, unaffected, no `conn=`), `analytics.py` itself (internal call chains), and `app.py` (the two threaded call sites plus `dashboard()`'s own separate per-symphony loop, `app.py` ~1018-1033, which is intentionally NOT threaded -- out of this fix's scope).
+
+---
 
 ### `compute_windowed_portfolio_strip(symphonies: list, bot_state: dict, *, window: str, db_path: str | None = None) -> dict`
 
@@ -71,6 +97,8 @@ Aggregates guard-alpha history for the History tab. Returns the envelope `GET /a
 **F-008 validity guard (AC-5b, added at plan-approval 2026-07-20 after `get_history_summary` was found to be a THIRD independent unguarded post-mortem consumer, not originally scoped in the plan's first draft):** each trigger entry within the `[start_date, end_date]` window is passed through `is_valid_post_mortem_entry` -- an invalid entry contributes to neither `total_alpha`/`total_saved`/`trigger_count`/`wins`/`by_reason`/`daily_alpha`. Without this, AC-5's stated goal (History/Performance don't serve contaminated days) would have been defeated by this route's own headline-stats producer.
 
 **Not touched by this guard:** the `todays_exits` intraday fallback (`exit_triggers`/`shadow_history` live query, not a post-mortem file read) -- the `if_held_source` provenance stamp only exists on post-mortem JSON, so it doesn't apply there.
+
+**F-020 per-day drill-down fields (`DE-OPS-CLUSTER-001`, 2026-07-21):** the envelope also carries `daily_dates` (a chronological list of ISO date strings, parallel index-for-index to `daily_alpha` -- backs `static/history.js`'s per-bar tooltip/click hook) and `daily_exits` (a `{date_str: [exit_entry, ...]}` map, one key per day that had at least one trigger -- a zero-trigger day is simply absent from the map, never an empty-list key). Both are a pure reshape of the SAME already-parsed `reason`/`alpha`/`t.get(...)` locals the rest of this function already computes inside its existing per-day loop -- zero new I/O, zero new computation. Each `daily_exits` entry additionally carries `time_triggered` (sourced `t.get("time_triggered") or t.get("timestamp") or t.get("ts", "")`, the identical sourcing expression `todays_exits` already uses) so the drill-down table can render a timestamp column the same way the live "Today's exits" table does.
 
 ## Internal Dependencies
 

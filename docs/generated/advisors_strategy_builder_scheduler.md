@@ -3,7 +3,7 @@
 > Weekly Strategy Builder Scheduler (AC-18): runs the real dual-mode builder (built-new + atlas-suggested) unattended for all four objectives with same-ISO-week idempotency and bounded retry, then runs the Frontrunner Builder over all live symphonies; advisory-only, never raises.
 
 **Source:** `advisors/strategy_builder_scheduler.py`
-**Last updated:** 2026-07-14 (branch-integration merge — Frontrunner Builder AC-1 weekly hook `f1592a2` integrated on top of the AC-A1 dedup TypeError fix; prior: 2026-06-20 C5 dual-mode Atlas injection 147a181)
+**Last updated:** 2026-07-21 (fix-ops-cluster, `DE-OPS-CLUSTER-001` F-030 -- `run_weekly_build()`'s `propose_strategies` call now passes `invocation_source="weekly-scheduler"`, tagging every advisory-DB row this scheduler writes as attributable to the weekly cadence, distinct from the on-demand HTTP route and a direct engine call; see `docs/generated/advisors_strategy_builder_engine.md`'s F-030 section). Prior: 2026-07-14 (branch-integration merge — Frontrunner Builder AC-1 weekly hook `f1592a2` integrated on top of the AC-A1 dedup TypeError fix; prior: 2026-06-20 C5 dual-mode Atlas injection 147a181)
 
 ## Overview
 
@@ -33,6 +33,7 @@ Run the real dual-mode builder for all four objectives; skip if already ran this
 1. **Idempotency check:** `_already_ran_this_week()` — if any `STRATEGY_BUILDER` `advisor_observations` row exists from the current ISO week (Monday 00:00 UTC → Sunday 23:59 UTC), log and return (no-op). Prevents multiple runs per week on restarts or cron-overlap.
 2. **Per-objective Atlas injection:** for each `Objective`, call `_bpg.load_atlas_candidates(objective)` (CC-2 lazy import as `advisors.build_plan_generator`, `strategy_builder_scheduler.py:134`). `load_atlas_candidates` is D-1 (never raises) and bill-protected (`force_refresh=False` inside). On any Atlas error the inner `try/except` sets `community_candidates=[]` and logs the class name — built-new always proceeds (`strategy_builder_scheduler.py:135-142`).
 3. **Per-objective build:** call `propose_strategies(objective=objective, universe=[], screen_config=ScreenConfig(), live_returns=[], community_candidates=community_candidates)`. `universe=[]` triggers C1 self-sourcing from `universe_provider.get_tradeable_set()` (Q2-A). Atlas-suggested candidates flow through the same single-batch FDR gate as built-new (AC-21).
+   **F-030 (`DE-OPS-CLUSTER-001`, 2026-07-21):** this call now also passes `invocation_source="weekly-scheduler"`, attributing every advisory observation this scheduler persists to the weekly cadence — closes the register finding where 3 production `STRATEGY_BUILDER` rows had no reconstructable production origin.
 4. **Bounded retry:** each objective retries up to `MAX_ATTEMPTS` times on exception. A failed objective is logged (class name only, D-1) and the loop continues to the next objective — one objective's failure does not abort the others.
 5. **Never raises (D-1):** all exceptions are caught and logged with `type(exc).__name__` only — no key/path/message leak.
 
