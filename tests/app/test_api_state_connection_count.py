@@ -36,6 +36,13 @@ monkeypatched to the same DB_PATH (analytics.py's documented test seam:
 live route calls the analytics functions WITHOUT a db_path kwarg.
 
 -n0 only. No live network (get_market_state forced to "open").
+
+FROZEN-BRANCH COVERAGE (added post-GREEN, foc-rev finding #1, main-ruled
+2026-07-21 OPTION 1 — extend now): the PM's original repro ran on a
+Saturday (market closed), so the market-closed/snapshot branch — NOT the
+live branch above — almost certainly served the measured symptom. See the
+tests below `frozen_client`/`_seed_frozen_snapshot` for the mirrored
+scaling-delta + ceiling coverage against app.py's closed_frozen code path.
 """
 
 from __future__ import annotations
@@ -295,3 +302,146 @@ def test_two_sequential_requests_both_succeed(client):
     resp_2 = client.get("/api/state")
     assert resp_1.status_code == 200
     assert resp_2.status_code == 200
+
+
+# ===========================================================================
+# RED — foc-rev finding #1 (main-ruled 2026-07-21, OPTION 1: extend now).
+#
+# The PM's 157-connects/1.4s reproduction ran 2026-07-19, a Saturday — market
+# closed — so the FROZEN/snapshot branch almost certainly served the
+# measured symptom, not the live branch the tests above exercise. The
+# frozen branch (app.py ~1874-2070, market_state in ("closed_frozen",
+# "pre_market")) still calls all 3 per-symphony analytics functions AND 3
+# MORE portfolio-level analytics calls (analytics.get_portfolio_today_change/
+# get_portfolio_cumulative_return/get_portfolio_max_drawdown, ~app.py:2030-
+# 2070) with no `conn=` kwarg anywhere in that block — confirmed via
+# `git diff --stat`/hunk listing: no hunk touches that region. Mirrors the
+# live-branch tests above exactly (scaling-delta + single-snapshot ceiling),
+# just against the closed_frozen code path and a last_market_close_snapshot
+# fixture instead of bot_state.
+# ===========================================================================
+
+
+def _seed_frozen_snapshot(n: int, *, start_index: int = 0) -> list[str]:
+    """Seed/extend a last_market_close_snapshot (app.py's frozen-branch input
+    shape — accounts_map of per-account symphony-dict lists, precedent:
+    tests/app/test_f011_state_field_availability.py:96-133) with n symphonies,
+    plus one shadow_history row each for the snapshot's trading_day. Returns
+    the list of symphony ids seeded (cumulative across repeated calls in one
+    test, mirroring _seed_symphonies' start_index re-seed pattern for the
+    2-then-6 scaling comparison).
+    """
+    today = _today_et()
+    state = database_module.load_state() or {}
+    snapshot = state.get("last_market_close_snapshot") or {
+        "captured_at_et": "16:00:00 ET",
+        "data_as_of": "16:00 ET",
+        "trading_day": today,
+        "accounts_map": {"ACC1": []},
+    }
+    ids = []
+    for i in range(start_index, start_index + n):
+        sym_id = f"sym-frozen-{i}"
+        ids.append(sym_id)
+        snapshot["accounts_map"]["ACC1"].append(
+            {
+                "id": sym_id,
+                "name": f"Frozen Symphony {i}",
+                "account": "ACC1",
+                "armed": False,
+                "tp_armed": False,
+                "para_armed": False,
+                "triggered": False,
+                "current_return": 1.5,
+                "current_value": 10000.0,
+                "simple_return": 0.02,
+                "net_deposits": 100.0,
+                "time_weighted_return": 0.021,
+                "max_drawdown": 0.05,
+            }
+        )
+    state["last_market_close_snapshot"] = snapshot
+    database_module.save_state(state)
+
+    db_path = os.environ["DB_PATH"]
+    conn = sqlite3.connect(db_path)
+    for i in range(start_index, start_index + n):
+        sym_id = f"sym-frozen-{i}"
+        conn.execute(
+            "INSERT INTO shadow_history "
+            "(ts_utc, ts_et, trading_day, symphony_id, current_return, shadow_return) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                datetime.now(_ET).isoformat(),
+                datetime.now(_ET).isoformat(),
+                today,
+                sym_id,
+                1.5,
+                1.5,
+            ),
+        )
+    conn.commit()
+    conn.close()
+    return ids
+
+
+@pytest.fixture()
+def frozen_client(monkeypatch):
+    monkeypatch.setattr(analytics_module, "DB_FILE", os.environ["DB_PATH"])
+    # Force the FROZEN branch — opposite of the `client` fixture above.
+    monkeypatch.setattr(app_module, "get_market_state", lambda dt: "closed_frozen")
+    app_module.app.config["TESTING"] = True
+    with app_module.app.test_client() as c:
+        yield c
+
+
+def test_frozen_branch_connection_count_does_not_scale_with_symphony_count(
+    frozen_client, monkeypatch
+):
+    real_connect = sqlite3.connect
+    spy = _CountingConnect(real_connect)
+    monkeypatch.setattr(sqlite3, "connect", spy)
+
+    _seed_frozen_snapshot(2)
+    spy.count = 0
+    resp_2 = frozen_client.get("/api/state")
+    assert resp_2.status_code == 200, (
+        f"unexpected status: {resp_2.status_code} {resp_2.get_data()!r}"
+    )
+    count_2 = spy.count
+
+    _seed_frozen_snapshot(4, start_index=2)  # now 6 symphonies total in the same snapshot
+    spy.count = 0
+    resp_6 = frozen_client.get("/api/state")
+    assert resp_6.status_code == 200, (
+        f"unexpected status: {resp_6.status_code} {resp_6.get_data()!r}"
+    )
+    count_6 = spy.count
+
+    delta = count_6 - count_2
+    assert delta <= 2, (
+        f"AC-1 GAP (frozen branch): adding 4 more symphonies (2 -> 6) to the "
+        f"market-closed snapshot increased the per-request SQLite connection count by "
+        f"{delta} ({count_2} -> {count_6}) — the FROZEN branch (app.py ~1874-2070) must "
+        f"share a connection across its per-symphony loop AND its 3 portfolio-level "
+        f"analytics calls, the same way the live branch already does. This is the branch "
+        f"most likely to have served the PM's original off-hours (Saturday) repro."
+    )
+
+
+def test_frozen_branch_connection_count_is_a_small_constant_for_a_single_symphony(
+    frozen_client, monkeypatch
+):
+    real_connect = sqlite3.connect
+    spy = _CountingConnect(real_connect)
+    monkeypatch.setattr(sqlite3, "connect", spy)
+
+    _seed_frozen_snapshot(1)
+    spy.count = 0
+    resp = frozen_client.get("/api/state")
+    assert resp.status_code == 200
+    assert spy.count <= 15, (
+        f"AC-1 GAP (frozen branch): a single-symphony market-closed /api/state request "
+        f"opened {spy.count} SQLite connections — expected a small constant (<=15, "
+        f"generously covering the non-per-symphony connect sites)."
+    )
