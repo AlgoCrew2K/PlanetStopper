@@ -9,6 +9,7 @@ import os
 import queue
 import secrets
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -375,6 +376,29 @@ def get_csrf_token():
     return jsonify({"csrf_token": _CSRF_TOKEN})
 
 
+@app.route("/health")
+def health():
+    """Minimal unauthenticated liveness probe (F-005).
+
+    Read-only: sources last_successful_cycle_at from database.load_state()
+    (the same top-level engine-written field app.py:2327 already reads) —
+    never opens a read-write connection. Exempt from the auth gate via
+    _AUTH_EXEMPT_ENDPOINTS (endpoint name 'health'). GET-only; POST 405s
+    via Flask's default routing (no methods=["POST"] registered).
+    """
+    try:
+        _state = database.load_state()
+    except Exception:
+        _state = {}
+    return jsonify(
+        {
+            "status": "ok",
+            "daemon_started_at": _DAEMON_STARTED_AT,
+            "last_successful_cycle_at": _state.get("last_successful_cycle_at"),
+        }
+    )
+
+
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
 
@@ -552,6 +576,11 @@ _account_totals_last_good: dict = {}
 _account_totals_last_success_at: str | None = None
 # Named constant for the Composer HTTP timeout; promotes the bare literal at line 769.
 _ACCOUNT_TOTALS_HTTP_TIMEOUT_S = 10
+# F-010: cumulative count of known Composer read-timeouts hit by
+# _refresh_account_totals — scheduler-thread-only (single minute-cadence
+# caller, no lock needed) — surfaced as aggregation context in the compact
+# one-line log below instead of a full traceback per occurrence.
+_account_totals_timeout_count = 0
 # ET-format timestamp string used for account_basis_as_of / _account_totals_last_success_at
 # across _refresh_account_totals and both the live and frozen stale-cache fallback paths.
 _ACCOUNT_BASIS_TS_FMT = "%Y-%m-%d %H:%M:%S ET"
@@ -774,7 +803,7 @@ def _refresh_account_totals() -> None:
     _account_totals_cache.refresh_written() to clear the stale flag atomically.
     Auth pattern mirrors alpha_bot_execution.get_composer_headers().
     """
-    global _account_totals_last_good, _account_totals_last_success_at
+    global _account_totals_last_good, _account_totals_last_success_at, _account_totals_timeout_count
     try:
         env_vars = dotenv_values(ENV_FILE_PATH)
         key_id = env_vars.get("COMPOSER_KEY_ID") or os.environ.get("COMPOSER_KEY_ID", "")
@@ -835,6 +864,19 @@ def _refresh_account_totals() -> None:
                 "_refresh_account_totals: Composer returned %s — cache unchanged",
                 resp.status_code,
             )
+    except requests.exceptions.ReadTimeout:
+        # F-010: the known Composer read-timeout case (~30/day in production)
+        # gets a compact one-line WARNING with aggregation context instead of
+        # a full traceback. Any OTHER requests exception (ConnectionError,
+        # etc.) or unexpected exception type is NOT caught here — it falls
+        # through to the except Exception branch below and keeps its full
+        # traceback (timeout-only match).
+        _account_totals_timeout_count += 1
+        _daemon_log.warning(
+            "_refresh_account_totals: Composer read-timeout (#%d, timeout=%ss) — cache unchanged",
+            _account_totals_timeout_count,
+            _ACCOUNT_TOTALS_HTTP_TIMEOUT_S,
+        )
     except Exception as _exc:
         _daemon_log.error(
             "_refresh_account_totals failed — account totals cache unchanged: %s",
@@ -1173,7 +1215,9 @@ def _build_meta(
 _DEFAULT_HERO_WINDOW = "30d"
 
 
-def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) -> dict:
+def _compute_portfolio_strip(
+    bot_state: dict, trading_day: str | None = None, conn: sqlite3.Connection | None = None
+) -> dict:
     """Compute portfolio_strip from bot_state using analytics helpers.
 
     Shared by get_api_state_dict() (Jinja render path) and get_state() (JSON
@@ -1185,6 +1229,12 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
     /api/strip/<window> uses — so the default hero matches the picker's first click. The
     account-lifetime CR (~Composer simple_return) is surfaced SEPARATELY as
     account_all_time_cr: it carries no window label and never windows.
+
+    conn: F-1 — optional pre-opened read-only connection, forwarded to the
+    portfolio CR/TC/MDD helpers below (each of which loops every symphony) so
+    the whole call shares ONE connection instead of opening one per symphony
+    per helper. This function never opens/closes conn itself — the caller
+    owns its lifecycle; None here just falls back to today's per-call behavior.
     """
     if trading_day is None:
         trading_day = datetime.now(_ET).strftime("%Y-%m-%d")
@@ -1250,7 +1300,7 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
             # guard_delta is measured on the VW basis first (dry_run and if_held share
             # the same symphony-value denominator), then scaled by invested_frac.
             _vw_cr = analytics.get_portfolio_cumulative_return(
-                symphonies_list, bot_state, trading_day=trading_day
+                symphonies_list, bot_state, trading_day=trading_day, conn=conn
             )
             cumulative_return: dict | None = (
                 analytics.get_portfolio_cumulative_return_account_basis(
@@ -1266,7 +1316,7 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
             _lg_cr = _account_totals_last_good.get("portfolio_cr")
             if _lg_cr is not None:
                 _vw_cr = analytics.get_portfolio_cumulative_return(
-                    symphonies_list, bot_state, trading_day=trading_day
+                    symphonies_list, bot_state, trading_day=trading_day, conn=conn
                 )
                 cumulative_return = analytics.get_portfolio_cumulative_return_account_basis(
                     _vw_cr, _lg_cr, account_value, _symphony_value_sum
@@ -1275,7 +1325,7 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
             else:
                 # Tier 2 — no last-good: fall back to VW (label applied below).
                 cumulative_return = analytics.get_portfolio_cumulative_return(
-                    symphonies_list, bot_state, trading_day=trading_day
+                    symphonies_list, bot_state, trading_day=trading_day, conn=conn
                 )
 
         # D-01 / B-2 fix: use the Composer-sourced today-change (includes cash in
@@ -1287,7 +1337,7 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         _cached_tc = _account_totals_cache.get("portfolio_tc")
         if _cached_tc is not None:
             _vw_tc = analytics.get_portfolio_today_change(
-                symphonies_list, bot_state, trading_day=trading_day
+                symphonies_list, bot_state, trading_day=trading_day, conn=conn
             )
             today_change: dict = analytics.get_portfolio_today_change_account_basis(
                 _vw_tc,
@@ -1300,7 +1350,7 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
             _lg_tc = _account_totals_last_good.get("portfolio_tc")
             if _lg_tc is not None:
                 _vw_tc = analytics.get_portfolio_today_change(
-                    symphonies_list, bot_state, trading_day=trading_day
+                    symphonies_list, bot_state, trading_day=trading_day, conn=conn
                 )
                 today_change = analytics.get_portfolio_today_change_account_basis(
                     _vw_tc, _lg_tc, account_value, _symphony_value_sum
@@ -1309,7 +1359,7 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
             else:
                 # Tier 2 — no last-good: fall back to VW (label applied below).
                 today_change = analytics.get_portfolio_today_change(
-                    symphonies_list, bot_state, trading_day=trading_day
+                    symphonies_list, bot_state, trading_day=trading_day, conn=conn
                 )
 
         # D-02: use Composer portfolio-level MDD (peak-to-trough on aggregate equity
@@ -1330,12 +1380,12 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
             max_drawdown: dict = {
                 "if_held": abs(_cached_mdd),
                 "dry_run": analytics.get_portfolio_max_drawdown(
-                    symphonies_list, bot_state, trading_day=trading_day
+                    symphonies_list, bot_state, trading_day=trading_day, conn=conn
                 ).get("dry_run"),
             }
         else:
             max_drawdown = analytics.get_portfolio_max_drawdown(
-                symphonies_list, bot_state, trading_day=trading_day
+                symphonies_list, bot_state, trading_day=trading_day, conn=conn
             )
 
         # Phase 2b: portfolio-level annualized volatility from the COMBINED
@@ -1459,7 +1509,7 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         # window are the windowed hero metric + its honest label.
         try:
             _default = analytics.compute_windowed_portfolio_strip(
-                symphonies_list, bot_state, window=_DEFAULT_HERO_WINDOW
+                symphonies_list, bot_state, window=_DEFAULT_HERO_WINDOW, conn=conn
             )
             if isinstance(_default, dict):
                 _ga = _default.get("guard_alpha")
@@ -1537,7 +1587,23 @@ def get_api_state_dict() -> dict:
         except Exception:
             pass
 
-    portfolio_strip = _compute_portfolio_strip(bot_state)
+    # F-1: function-local shared read-only connection for the ONE
+    # _compute_portfolio_strip call below (each of its portfolio CR/TC/MDD
+    # helpers loops every symphony internally, opening its own connection
+    # per symphony without this) — opened here, closed in the finally, never
+    # a module-global. Falls back to None (today's per-call behavior) if the
+    # shared connection itself fails to open.
+    try:
+        _shadow_conn = sqlite3.connect(
+            f"file:{analytics._get_shadow_db_file()}?mode=ro", uri=True, timeout=10.0
+        )
+    except Exception:
+        _shadow_conn = None
+    try:
+        portfolio_strip = _compute_portfolio_strip(bot_state, conn=_shadow_conn)
+    finally:
+        if _shadow_conn is not None:
+            _shadow_conn.close()
 
     return {
         "bot_state": bot_state,
@@ -2285,34 +2351,58 @@ def get_state():
 
         # Attach per-symphony TC/CR/MDD to each sym dict so the template can render them.
         _today_et = datetime.now(_ET).strftime("%Y-%m-%d")
-        for k in symphony_keys:
-            s = state_data[k]
-            sym_dict = next((d for d in symphonies_list if d["id"] == k), {})
-            try:
-                s["_tc"] = analytics.get_symphony_today_change(sym_dict, s, trading_day=_today_et)
-            except (KeyError, TypeError, ValueError):
-                s["_tc"] = {"if_held": None, "dry_run": None}
-            try:
-                s["_cr"] = analytics.get_symphony_cumulative_return(
-                    sym_dict, s, trading_day=_today_et
-                )
-            except (KeyError, TypeError, ValueError):
-                s["_cr"] = {"if_held": None, "dry_run": None}
-            try:
-                s["_mdd"] = analytics.get_symphony_max_drawdown(sym_dict, s, trading_day=_today_et)
-            except (KeyError, TypeError, ValueError):
-                s["_mdd"] = {"if_held": None, "dry_run": None}
-            # Additive: parabolic velocity (current_return − prev_return, percent units).
-            # prev_return is stored by the engine each cycle; None when symphony is new.
-            _cr_now = s.get("current_return")
-            _cr_prev = s.get("prev_return")
-            s["para_velocity"] = (
-                round(float(_cr_now) - float(_cr_prev), 6)
-                if _cr_now is not None and _cr_prev is not None
-                else None
+        # F-1: ONE shared read-only connection for the whole per-symphony
+        # enrichment loop AND the _compute_portfolio_strip call right below it
+        # (was: each of the 3 per-symphony analytics calls, PLUS every
+        # portfolio-level CR/TC/MDD helper's own internal per-symphony loop,
+        # opened its own connect() — ~157 connects/poll on a real portfolio).
+        # Function-local/per-request scope only — opened here, closed in the
+        # finally below, never a module-global. Falls back to None (each
+        # analytics call opens its own connection, today's behavior) if the
+        # shared connection itself fails to open.
+        try:
+            _shadow_conn = sqlite3.connect(
+                f"file:{analytics._get_shadow_db_file()}?mode=ro", uri=True, timeout=10.0
             )
-
-        portfolio_strip = _compute_portfolio_strip(state_data, trading_day=_today_et)
+        except Exception:
+            _shadow_conn = None
+        try:
+            for k in symphony_keys:
+                s = state_data[k]
+                sym_dict = next((d for d in symphonies_list if d["id"] == k), {})
+                try:
+                    s["_tc"] = analytics.get_symphony_today_change(
+                        sym_dict, s, trading_day=_today_et, conn=_shadow_conn
+                    )
+                except (KeyError, TypeError, ValueError):
+                    s["_tc"] = {"if_held": None, "dry_run": None}
+                try:
+                    s["_cr"] = analytics.get_symphony_cumulative_return(
+                        sym_dict, s, trading_day=_today_et, conn=_shadow_conn
+                    )
+                except (KeyError, TypeError, ValueError):
+                    s["_cr"] = {"if_held": None, "dry_run": None}
+                try:
+                    s["_mdd"] = analytics.get_symphony_max_drawdown(
+                        sym_dict, s, trading_day=_today_et, conn=_shadow_conn
+                    )
+                except (KeyError, TypeError, ValueError):
+                    s["_mdd"] = {"if_held": None, "dry_run": None}
+                # Additive: parabolic velocity (current_return − prev_return, percent units).
+                # prev_return is stored by the engine each cycle; None when symphony is new.
+                _cr_now = s.get("current_return")
+                _cr_prev = s.get("prev_return")
+                s["para_velocity"] = (
+                    round(float(_cr_now) - float(_cr_prev), 6)
+                    if _cr_now is not None and _cr_prev is not None
+                    else None
+                )
+            portfolio_strip = _compute_portfolio_strip(
+                state_data, trading_day=_today_et, conn=_shadow_conn
+            )
+        finally:
+            if _shadow_conn is not None:
+                _shadow_conn.close()
 
         # AC-7: top-level data_as_of is the JS fallback hero freshness signal
         # (index.js: `portfolio.data_as_of || data.data_as_of`).  Derive it from
@@ -3457,14 +3547,19 @@ def perform_account_liquidation(account_id, key, secret, live_mode):
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 200:
-            for sym in resp.json().get("symphonies", []):
+            for idx, sym in enumerate(resp.json().get("symphonies", [])):
                 if live_mode:
-                    name = sym.get("name")
-                    sell_url = f"{COMPOSER_BASE_URL}/deploy/accounts/{account_id}/symphonies/{sym.get('symphony_id') or sym.get('id')}/go-to-cash"  # noqa: E501  # un-wrappable long line
-                    # Per-symphony isolation: a status rejection OR any raised
-                    # exception on one symphony must not abort the rest of the
-                    # panic-stop queue (F-003).
+                    # F-003 residual: name/sell_url extraction moved INSIDE the
+                    # per-symphony try below (was outside it) — a malformed
+                    # entry (non-dict) raising AttributeError here used to
+                    # escape to the OUTER try/except, aborting the ENTIRE
+                    # panic-stop queue instead of isolating just this one
+                    # symphony. name stays None if extraction itself raises,
+                    # so the except branch can still key a FAILED outcome.
+                    name = None
                     try:
+                        name = sym.get("name")
+                        sell_url = f"{COMPOSER_BASE_URL}/deploy/accounts/{account_id}/symphonies/{sym.get('symphony_id') or sym.get('id')}/go-to-cash"  # noqa: E501  # un-wrappable long line
                         sell_resp = requests.post(sell_url, headers=headers, json={}, timeout=10)
                         if sell_resp.status_code in (200, 201, 202):
                             print(f"Liquidated {name} (HTTP {sell_resp.status_code})")
@@ -3479,8 +3574,9 @@ def perform_account_liquidation(account_id, key, secret, live_mode):
                                 "reason": sell_resp.text[:200],
                             }
                     except Exception as e:
-                        print(f"LIQUIDATION FAILED {name} — {type(e).__name__}")
-                        outcomes[name] = {"ok": False, "reason": type(e).__name__}
+                        _outcome_key = name if name is not None else f"<malformed-entry-{idx}>"
+                        print(f"LIQUIDATION FAILED {_outcome_key} — {type(e).__name__}")
+                        outcomes[_outcome_key] = {"ok": False, "reason": type(e).__name__}
                     time.sleep(1.5)
     except Exception as e:
         print(f"Liquidation Error: {e}")
@@ -5361,6 +5457,10 @@ def ai_advisor_strategy_builder_run():
             community_candidates=community_candidates,
             reasoning_context=reasoning_context,
             reasoning_manifest=reasoning_manifest,
+            # F-030: attribute every advisory-DB write from this call to this
+            # on-demand HTTP route (register finding — direct engine calls
+            # bypass Flask/HTTP logging and are otherwise unattributable).
+            invocation_source="http-route:/ai-advisor/strategy-builder/run",
         )
     except Exception as exc:
         _daemon_log.error("ai_advisor_strategy_builder_run failed: %s", exc, exc_info=True)
@@ -5809,6 +5909,11 @@ def ai_advisor_suggest():
         # Mirrors the hash→name resolution pattern at app.py:2497-2507.
         _bot_state = database.load_state()
         resolved_id = symphony_id  # fallback: pass as-is if no match found
+        # F-023: resolved_hash mirrors resolved_id but tracks the HASH side of
+        # the same match (_sym_key), not the name side — closes the gap where
+        # composer_symphony_id was passed through unresolved (raw caller input)
+        # regardless of whether the caller supplied a hash or a name.
+        resolved_hash = symphony_id  # fallback: pass as-is if no match found
         for _sym_key, _sym_data in _bot_state.items():
             if not isinstance(_sym_data, dict) or "name" not in _sym_data:
                 continue
@@ -5817,6 +5922,7 @@ def ai_advisor_suggest():
                 symphony_id
             ) or _norm_name == database.normalize_name(symphony_id):
                 resolved_id = _norm_name
+                resolved_hash = _sym_key
                 break
         # Fetch the autotune run here (through app.py's database reference) so
         # the per-symphony assessment can be built from real DB data — and so
@@ -5825,9 +5931,11 @@ def ai_advisor_suggest():
         context = ai_advisor.assemble_advisor_context(
             scope="symphony",
             symphony_id=resolved_id,
-            # Pass the original Composer hash so get_condensed_logic can call
-            # the Composer /score API correctly (it expects a hash, not a name).
-            composer_symphony_id=symphony_id,
+            # F-023: resolve to the matching Composer HASH regardless of
+            # whether the caller supplied a hash or a name — get_condensed_logic
+            # calls the Composer /score API, which requires a hash; passing a
+            # name through unresolved silently 400s and empties that context.
+            composer_symphony_id=resolved_hash,
             # Pass the pre-fetched autotune run so assemble_advisor_context
             # skips its own database.get_latest_autotune_run call — avoids a
             # second DB round-trip and ensures the route-level DB mock covers

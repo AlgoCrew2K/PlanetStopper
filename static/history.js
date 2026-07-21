@@ -14,6 +14,10 @@
     'use strict';
 
     var cs = null;
+    // F-020: the most recent /api/history payload, kept around so the day
+    // drill-down (renderDayDrilldown below) can read daily_exits without a
+    // second fetch.
+    var lastPayload = null;
 
     function color(varName) {
         if (!cs) cs = getComputedStyle(document.documentElement);
@@ -87,7 +91,7 @@
     // Daily alpha bar chart (SVG)
     // ---------------------------------------------------------------------------
 
-    function renderDailyChart(dailyAlpha) {
+    function renderDailyChart(dailyAlpha, dailyDates) {
         var svg = document.getElementById('daily-chart-svg');
         if (!svg || !dailyAlpha || dailyAlpha.length === 0) {
             if (svg) svg.innerHTML = '';
@@ -110,9 +114,15 @@
             var barH = Math.abs(v) / maxAbs * midY;
             var y = v >= 0 ? midY - barH : midY;
             var fill = v >= 0 ? posColor : negColor;
+            // F-020: per-bar date hook (data-date + a <title> tooltip) so a
+            // day is both hoverable and clickable for the drill-down below.
+            var dateStr = (dailyDates && dailyDates[i]) || '';
+            var dateAttr = dateStr ? ' data-date="' + escHtml(dateStr) + '"' : '';
+            var titleTag = dateStr ? '<title>' + escHtml(dateStr) + '</title>' : '';
             return '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" ' +
                 'width="' + barW.toFixed(1) + '" height="' + barH.toFixed(1) + '" ' +
-                'fill="' + escHtml(fill) + '" opacity="0.85"/>';
+                'fill="' + escHtml(fill) + '" opacity="0.85"' + dateAttr +
+                ' style="cursor:pointer;">' + titleTag + '</rect>';
         });
 
         // baseline
@@ -120,6 +130,15 @@
             'stroke="' + escHtml(color('--studio-rule')) + '" stroke-width="0.5"/>');
 
         svg.innerHTML = bars.join('');
+
+        // F-020: wire per-bar click -> day drill-down. Re-rendering replaces
+        // svg.innerHTML wholesale, so the old rects (and their listeners) are
+        // discarded each time — no double-binding across renders.
+        svg.querySelectorAll('rect[data-date]').forEach(function (rect) {
+            rect.addEventListener('click', function () {
+                renderDayDrilldown(rect.getAttribute('data-date'));
+            });
+        });
     }
 
     // ---------------------------------------------------------------------------
@@ -324,6 +343,32 @@
     }
 
     // ---------------------------------------------------------------------------
+    // Per-day drill-down (F-020)
+    // ---------------------------------------------------------------------------
+
+    function renderDayDrilldown(dateStr) {
+        var exits = (lastPayload && lastPayload.daily_exits && lastPayload.daily_exits[dateStr]) || [];
+        // Reuse the existing triggers-tbody surface rather than a parallel
+        // render target — renderTriggers sets its own "Today's exits (N)"
+        // heading first, overridden with the selected day's label below.
+        renderTriggers({
+            todays_exits: exits.map(function (e) {
+                return {
+                    ts: e.time_triggered || e.ts || '',
+                    symphony_id: e.symphony_id,
+                    symphony_name: e.symphony_name || e.symphony_id,
+                    reason: e.reason,
+                    detail: e.detail
+                };
+            })
+        });
+        var heading = document.getElementById('todays-exits-heading');
+        if (heading) {
+            heading.textContent = dateStr + ' exits (' + exits.length + ')';
+        }
+    }
+
+    // ---------------------------------------------------------------------------
     // Main fetch + render
     // ---------------------------------------------------------------------------
 
@@ -342,8 +387,9 @@
         fetch('/api/history/' + days)
             .then(function (resp) { return resp.json(); })
             .then(function (payload) {
+                lastPayload = payload; // F-020: source for the day drill-down
                 renderHero(payload);
-                renderDailyChart(payload.daily_alpha || []);
+                renderDailyChart(payload.daily_alpha || [], payload.daily_dates || []);
                 // V-28: canonicalize before rendering to enforce 4-card design spec.
                 renderReasonCards(payload.by_reason || {});
                 renderTriggers(payload);

@@ -633,6 +633,7 @@ def _persist_survivor(
     is_rejected: bool = False,
     run_id: str = "",
     evidence_injected: dict | None = None,
+    invocation_source: str = "unattributed-direct-call",
 ) -> None:
     """Persist an ADOPT_CANDIDATE survivor (or rejected candidate) as an advisory observation.
 
@@ -659,6 +660,11 @@ def _persist_survivor(
             same value on ProposalRun.provenance["evidence_injected"]);
             persisted so the row traces back to what reasoning evidence, if
             any, informed its generation.
+        invocation_source: F-030 (AC-5) — identifies the caller of the
+            propose_strategies run that produced this candidate (an HTTP
+            route tag, "weekly-scheduler", or the honest
+            "unattributed-direct-call" default), so every advisory-DB write
+            is attributable back to its production invocation path.
     """
     _live_returns = live_returns or []
     # returns_pct kwarg takes priority; info._returns_pct is a test/fallback seam
@@ -717,6 +723,8 @@ def _persist_survivor(
         # schema migration (raw_response is a free-form JSON blob column).
         "run_id": run_id,
         "evidence_injected": evidence_injected if evidence_injected is not None else {},
+        # F-030 (AC-5): additive, same free-form-blob precedent as run_id above.
+        "invocation_source": invocation_source,
     }
 
     # PA-3: live_baseline key is ABSENT (not None, not present) when live_returns empty.
@@ -793,6 +801,7 @@ def _persist_rejected(
     n_survivors: int = 0,
     run_id: str = "",
     evidence_injected: dict | None = None,
+    invocation_source: str = "unattributed-direct-call",
 ) -> None:
     """Persist a gate-rejected or screen-rejected candidate as an advisory observation.
 
@@ -813,6 +822,7 @@ def _persist_rejected(
         is_rejected=True,
         run_id=run_id,
         evidence_injected=evidence_injected,
+        invocation_source=invocation_source,
     )
 
 
@@ -834,6 +844,7 @@ def propose_strategies(
     reasoning_context: str | None = None,
     reasoning_manifest: dict | None = None,
     run_id: str | None = None,
+    invocation_source: str | None = None,
 ) -> ProposalRun:
     """Propose new candidate symphonies from scratch.
 
@@ -874,6 +885,13 @@ def propose_strategies(
         run_id: R2-1 — an optional caller-supplied run id, used verbatim
             instead of minting a fresh UUID4. Lets tests/callers pin a known
             id end-to-end. Omitted -> a UUID4 is minted.
+        invocation_source: F-030 (AC-5) — identifies the caller of this run
+            (e.g. an HTTP route tag, "weekly-scheduler") so every advisory-DB
+            write it produces is attributable back to a production invocation
+            path. Omitted -> resolves to the honest "unattributed-direct-call"
+            marker (mirrors reasoning_manifest's None -> ai_advisor._EMPTY_MANIFEST
+            pattern) — the exact register-finding scenario (a direct engine
+            call bypassing Flask/HTTP logging).
 
     Returns:
         ProposalRun where:
@@ -904,6 +922,13 @@ def propose_strategies(
     # source values, which already reflect whatever reasoning_manifest the
     # caller actually passed in (built before any Composer-key check ran).
     run_id = run_id or str(uuid.uuid4())
+    # F-030 (AC-5): same None-default-resolved-inside-the-function pattern as
+    # reasoning_manifest above — the honest "unattributed-direct-call" marker
+    # is the register finding's exact scenario (a direct engine call with no
+    # caller identification), never a silent None passthrough.
+    _invocation_source = (
+        invocation_source if invocation_source is not None else "unattributed-direct-call"
+    )
     provenance: dict = {
         "generation_model": model_config.get_advisor_suggestion_model(),
         "mode": "build-new",
@@ -1058,6 +1083,7 @@ def propose_strategies(
                     n_survivors=n_survivors,
                     run_id=run_id,
                     evidence_injected=provenance["evidence_injected"],
+                    invocation_source=_invocation_source,
                 )
                 obs_written += 1
             except Exception:
@@ -1090,6 +1116,7 @@ def propose_strategies(
                     n_survivors=n_survivors,
                     run_id=run_id,
                     evidence_injected=provenance["evidence_injected"],
+                    invocation_source=_invocation_source,
                 )
             except Exception:
                 logger.warning(
