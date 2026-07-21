@@ -1,0 +1,36 @@
+{
+  "_provenance": "Synthetic fixture built for F-018 (feature-plans/fix-display-cluster.md), shaped to reproduce the basis-mixing defect conf-truth identified in docs/audit/confidence-program/truth/f014-lifetime-label-basis-mismatch.md: compute_windowed_portfolio_strip's windowed_alpha loop includes ALL symphonies (no TWR-fallback exclusion), while its if_held anchor (via get_portfolio_cumulative_return) already EXCLUDES the TWR-fallback symphony per the shipped F4 fix (_value_weighted_portfolio, analytics.py:972-978). Two different weighting populations feeding one sum understates the windowed guard-alpha headline ~2x on every window.",
+  "_purpose": "F-018 golden fixture: prove windowed_alpha/dry_run are computed on the SAME 10-symphony-consistent basis as if_held (excluding the TWR-fallback symphony), not the mixed 11-symphony basis. All expected values (both the WRONG mixed-basis figure and the RIGHT consistent-basis figure) are DERIVED IN-TEST from these raw rows via the epoch-additive helper -- none hardcoded here.",
+  "_derivation": "Same epoch-additive semantic as guard_alpha_lifetime_epochs.json: per-symphony divergence = SUM over position-epochs E of (PROD_E(1+shadow/100) - PROD_E(1+current/100))*100. WRONG (current code): windowed_alpha = value-weighted average of BOTH normSym and twrSym's divergence. RIGHT (F-018 fix): windowed_alpha = value-weighted average excluding twrSym (the TWR-fallback symphony, simple_return==0.0 AND net_deposits==0.0, matching get_symphony_cumulative_return's own exclusion condition, analytics.py:826) -- with only one surviving symphony this collapses to normSym's own divergence.",
+  "_twr_fallback_condition": "simple_return == 0.0 AND net_deposits == 0.0 (analytics.py:826, get_symphony_cumulative_return). twrSymF018 satisfies this; normSymF018 does not (net_deposits=1000.0).",
+  "scenarios": {
+    "normal_symphony": {
+      "symphony_id": "normSymF018",
+      "description": "A normal (non-TWR-fallback) symphony with a modest guard divergence -- the 10-symphony-consistent basis this fixture proves windowed_alpha must reduce to when the outlier is correctly excluded.",
+      "value": 10000.0,
+      "if_held_pct": 20.0,
+      "net_deposits": 1000.0,
+      "shadow_history_rows": [
+        {"trading_day": "2026-06-01", "shadow_return":  1.00, "current_return":  1.00, "position_epoch": "EPOCH_A", "ts_utc": "2026-06-01T20:00:00Z"},
+        {"trading_day": "2026-06-02", "shadow_return":  1.50, "current_return":  1.00, "position_epoch": "EPOCH_A", "ts_utc": "2026-06-02T20:00:00Z"},
+        {"trading_day": "2026-06-03", "shadow_return": -2.00, "current_return": -2.00, "position_epoch": "EPOCH_A", "ts_utc": "2026-06-03T20:00:00Z"},
+        {"trading_day": "2026-06-04", "shadow_return":  0.80, "current_return":  0.50, "position_epoch": "EPOCH_A", "ts_utc": "2026-06-04T20:00:00Z"},
+        {"trading_day": "2026-06-05", "shadow_return":  0.00, "current_return":  0.00, "position_epoch": "EPOCH_A", "ts_utc": "2026-06-05T20:00:00Z"}
+      ]
+    },
+    "twr_fallback_symphony": {
+      "symphony_id": "twrSymF018",
+      "description": "A zero-deposit TWR-fallback symphony (simple_return=0.0, net_deposits=0.0) with a LARGE outlier guard divergence over the SAME trading days -- if windowed_alpha does not exclude this symphony (the current bug), it dominates the value-weighted average and pollutes the windowed guard-alpha headline even though the if_held anchor already excludes it.",
+      "value": 2000.0,
+      "twr_pct": 40.0,
+      "net_deposits": 0.0,
+      "shadow_history_rows": [
+        {"trading_day": "2026-06-01", "shadow_return":  5.00, "current_return":  1.00, "position_epoch": "EPOCH_A", "ts_utc": "2026-06-01T20:00:00Z"},
+        {"trading_day": "2026-06-02", "shadow_return":  3.00, "current_return":  1.00, "position_epoch": "EPOCH_A", "ts_utc": "2026-06-02T20:00:00Z"},
+        {"trading_day": "2026-06-03", "shadow_return": -1.00, "current_return": -1.00, "position_epoch": "EPOCH_A", "ts_utc": "2026-06-03T20:00:00Z"},
+        {"trading_day": "2026-06-04", "shadow_return":  2.00, "current_return":  0.50, "position_epoch": "EPOCH_A", "ts_utc": "2026-06-04T20:00:00Z"},
+        {"trading_day": "2026-06-05", "shadow_return":  0.00, "current_return":  0.00, "position_epoch": "EPOCH_A", "ts_utc": "2026-06-05T20:00:00Z"}
+      ]
+    }
+  }
+}
