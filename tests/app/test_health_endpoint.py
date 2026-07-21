@@ -185,8 +185,7 @@ def test_health_response_leaks_no_secret_env_values(client, monkeypatch):
     ):
         resp = client.get("/health")
     assert resp.status_code == 200, (
-        f"/health must return 200 for this security check to be meaningful, got "
-        f"{resp.status_code}"
+        f"/health must return 200 for this security check to be meaningful, got {resp.status_code}"
     )
     body = resp.get_data(as_text=True)
     assert _sentinel_secret not in body, (
@@ -205,8 +204,7 @@ def test_health_does_not_open_a_read_write_db_connection(client, rw_connection_s
     ):
         resp = client.get("/health")
     assert resp.status_code == 200, (
-        f"/health must return 200 for this read-only check to be meaningful, got "
-        f"{resp.status_code}"
+        f"/health must return 200 for this read-only check to be meaningful, got {resp.status_code}"
     )
     assert rw_connection_spy.call_count == 0, (
         f"/health opened a read-write DB connection {rw_connection_spy.call_count} time(s) — "

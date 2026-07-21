@@ -133,7 +133,9 @@ def test_explicit_invocation_source_persisted_verbatim(monkeypatch):
     )
     for _call_args, call_kwargs in insert_mock.call_args_list:
         raw_response = call_kwargs.get("raw_response", {})
-        assert raw_response.get("invocation_source") == "http-route:/ai-advisor/strategy-builder/run", (
+        assert (
+            raw_response.get("invocation_source") == "http-route:/ai-advisor/strategy-builder/run"
+        ), (
             f"AC-5 GAP: persisted raw_response['invocation_source'] "
             f"({raw_response.get('invocation_source')!r}) does not match the caller-supplied "
             "value — every advisory-DB write from this run must carry the SAME "

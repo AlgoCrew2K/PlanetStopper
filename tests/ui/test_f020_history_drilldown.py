@@ -155,8 +155,8 @@ def test_day_drilldown_function_references_daily_exits():
     fn_start_pattern = re.escape(fn_match.group(0))
     body = _extract_function_body(stripped, fn_start_pattern)
     assert "daily_exits" in body or "dailyExits" in body, (
-        f"the day-drilldown function must reference daily_exits (the per-day payload "
-        f"field) to actually show that day's exits — body did not reference it"
+        "the day-drilldown function must reference daily_exits (the per-day payload "
+        "field) to actually show that day's exits — body did not reference it"
     )
 
 
@@ -172,6 +172,6 @@ def test_day_drilldown_function_touches_the_triggers_surface():
     fn_start_pattern = re.escape(fn_match.group(0))
     body = _extract_function_body(stripped, fn_start_pattern)
     assert "triggers-tbody" in body or "renderTriggers" in body or "tbody" in body, (
-        f"the day-drilldown function must touch the existing triggers table surface "
-        f"(triggers-tbody / renderTriggers) to display the selected day's exits"
+        "the day-drilldown function must touch the existing triggers table surface "
+        "(triggers-tbody / renderTriggers) to display the selected day's exits"
     )

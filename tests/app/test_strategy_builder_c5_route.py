@@ -199,7 +199,9 @@ class TestF030RouteInvocationSource:
         assert resp.status_code == 200
         assert propose_mock.called, "route must call propose_strategies"
         call_kwargs = propose_mock.call_args.kwargs
-        assert call_kwargs.get("invocation_source") == "http-route:/ai-advisor/strategy-builder/run", (
+        assert (
+            call_kwargs.get("invocation_source") == "http-route:/ai-advisor/strategy-builder/run"
+        ), (
             "F-030 AC-5 GAP: the on-demand route must tag its propose_strategies call with "
             "the pinned 'http-route:/ai-advisor/strategy-builder/run' invocation_source so "
             "the resulting advisory-DB writes are attributable to this route, distinct from "

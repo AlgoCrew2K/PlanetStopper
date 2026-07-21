@@ -153,13 +153,17 @@ def test_connection_count_does_not_scale_with_symphony_count(client, monkeypatch
     _seed_symphonies(2)
     spy.count = 0  # reset — only count connections opened DURING the request
     resp_2 = client.get("/api/state")
-    assert resp_2.status_code == 200, f"unexpected status: {resp_2.status_code} {resp_2.get_data()!r}"
+    assert resp_2.status_code == 200, (
+        f"unexpected status: {resp_2.status_code} {resp_2.get_data()!r}"
+    )
     count_2 = spy.count
 
     _seed_symphonies(4, start_index=2)  # now 6 symphonies total in the same DB
     spy.count = 0
     resp_6 = client.get("/api/state")
-    assert resp_6.status_code == 200, f"unexpected status: {resp_6.status_code} {resp_6.get_data()!r}"
+    assert resp_6.status_code == 200, (
+        f"unexpected status: {resp_6.status_code} {resp_6.get_data()!r}"
+    )
     count_6 = spy.count
 
     delta = count_6 - count_2

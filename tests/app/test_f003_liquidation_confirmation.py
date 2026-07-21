@@ -509,15 +509,15 @@ def _unmatched_outcomes(result, known_names):
         ]
     if isinstance(result, (list, tuple)):
         return [
-            (None, v)
-            for v in result
-            if not (isinstance(v, dict) and v.get("name") in known_names)
+            (None, v) for v in result if not (isinstance(v, dict) and v.get("name") in known_names)
         ]
     return []
 
 
 @pytest.mark.parametrize(
-    "malformed_entry", ["not-a-dict", None, 42, ["nested", "list"]], ids=["str", "none", "int", "list"]
+    "malformed_entry",
+    ["not-a-dict", None, 42, ["nested", "list"]],
+    ids=["str", "none", "int", "list"],
 )
 def test_malformed_symphony_entry_does_not_abort_the_queue(monkeypatch, malformed_entry):
     """AC-6: a malformed entry BEFORE a valid one must not prevent the valid

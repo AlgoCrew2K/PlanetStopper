@@ -81,7 +81,9 @@ def test_daily_dates_key_present_and_same_length_as_daily_alpha(tmp_path):
 
     stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
 
-    assert "daily_dates" in stats, f"get_history_summary must expose 'daily_dates'; got keys {sorted(stats.keys())}"
+    assert "daily_dates" in stats, (
+        f"get_history_summary must expose 'daily_dates'; got keys {sorted(stats.keys())}"
+    )
     assert len(stats["daily_dates"]) == len(stats["daily_alpha"]), (
         f"daily_dates must be a PARALLEL array to daily_alpha (same length): "
         f"len(daily_dates)={len(stats['daily_dates'])}, len(daily_alpha)={len(stats['daily_alpha'])}"
@@ -134,7 +136,9 @@ def test_daily_exits_key_present_and_is_a_dict(tmp_path):
 
     stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
 
-    assert "daily_exits" in stats, f"get_history_summary must expose 'daily_exits'; got keys {sorted(stats.keys())}"
+    assert "daily_exits" in stats, (
+        f"get_history_summary must expose 'daily_exits'; got keys {sorted(stats.keys())}"
+    )
     assert isinstance(stats["daily_exits"], dict), (
         f"daily_exits must be a dict keyed by date string, got {type(stats['daily_exits'])}"
     )
@@ -177,6 +181,36 @@ def test_daily_exits_multiple_triggers_same_day_all_present(tmp_path):
     )
     reasons = {e.get("reason") for e in day1}
     assert reasons == {"Take-Profit", "VWAP Bleed Cut"}, f"got reasons={reasons!r}"
+
+
+def test_daily_exits_entries_carry_a_ts_field_sourced_like_todays_exits(tmp_path):
+    """RED — foc-rev finding #3: `time_triggered` is available on the SAME
+    `t` dict, in the SAME loop iteration, as zero new I/O (unlike
+    symphony_name, which genuinely needs database.load_state() and was
+    correctly excluded per this file's own AC-3b docstring) — yet it was
+    silently dropped from daily_exits. The `todays_exits` path 20 lines
+    below already solved this EXACT class of gap ("Finding 11" comment,
+    analytics.py ~2022-2024): `t.get("time_triggered") or t.get("timestamp")
+    or t.get("ts", "")`. daily_exits entries must use the same sourcing so
+    the drill-down's exit time isn't a silent blank (the client's
+    renderDayDrilldown already reads `e.time_triggered || e.ts || ''`
+    expecting exactly this).
+    """
+    _write_post_mortem(
+        tmp_path,
+        "2026-07-01",
+        [_valid_trigger(symphony_id="S-known", reason="Take-Profit")],  # time_triggered="14:00:00"
+    )
+
+    stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
+
+    entry = stats["daily_exits"]["2026-07-01"][0]
+    ts_value = entry.get("time_triggered") or entry.get("ts")
+    assert ts_value == "14:00:00", (
+        f"daily_exits entry must carry the trigger's time_triggered/ts value (fixture "
+        f"wrote time_triggered='14:00:00') — got entry={entry!r}. A drill-down row with "
+        f"a blank exit time undercuts AC-3's 'individual exit's details are inspectable'."
+    )
 
 
 def test_daily_exits_entries_carry_symphony_id_reason_and_detail(tmp_path):
@@ -223,8 +257,12 @@ def test_daily_exits_day_with_zero_valid_triggers_does_not_crash(tmp_path):
 def test_daily_exits_empty_history_is_an_empty_dict(tmp_path):
     stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))  # no files at all
 
-    assert stats["daily_exits"] == {}, f"no post_mortem files -> daily_exits must be {{}}, got {stats['daily_exits']!r}"
-    assert stats["daily_dates"] == [], f"no post_mortem files -> daily_dates must be [], got {stats['daily_dates']!r}"
+    assert stats["daily_exits"] == {}, (
+        f"no post_mortem files -> daily_exits must be {{}}, got {stats['daily_exits']!r}"
+    )
+    assert stats["daily_dates"] == [], (
+        f"no post_mortem files -> daily_dates must be [], got {stats['daily_dates']!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -238,4 +276,6 @@ def test_existing_keys_still_present_alongside_new_fields(tmp_path):
     stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
 
     for key in ("total_alpha", "total_saved", "trigger_count", "wins", "by_reason", "daily_alpha"):
-        assert key in stats, f"pre-existing key {key!r} must remain present; got {sorted(stats.keys())}"
+        assert key in stats, (
+            f"pre-existing key {key!r} must remain present; got {sorted(stats.keys())}"
+        )
