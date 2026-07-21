@@ -18,6 +18,7 @@ NEVER raises — every failure mode degrades to ``(None, error_message)``.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import time
 
@@ -93,6 +94,21 @@ _MAX_TREE_RENDER_CHARS: int = 6000
 # n_jobs=-1 forks 2 workers → parent ~2 GB + 2 copies > 3 GB → OOM-kill.
 # n_jobs=1 → joblib sequential backend (no fork), peak 2.03 GiB (990 MB headroom).
 _OOS_REPLAY_N_JOBS = 1
+
+# _OOS_HOLDOUT_FRACTION — F-013 (DE-ADVISOR-GATE3-DIRECTION-001): the fraction
+# of the OOS replay window Gate-3 carves off as a genuine held-out tail before
+# comparing a suggestion's guard-alpha to the baseline's. Mirrors
+# autotuner.FROZEN_EVAL_RATIO (autotuner.py:436, =0.20) — the same tail
+# fraction the autotuner's own 60/20/20 train/validation/frozen-eval
+# walk-forward split treats as genuinely unseen data.
+_OOS_HOLDOUT_FRACTION = 0.20
+
+# _OOS_HOLDOUT_PURGE_DAYS — F-013: the buffer of excluded days immediately
+# preceding the holdout tail, guarding against feature-lookback leakage into
+# the holdout. Half of autotuner.PURGE_DAYS (=20, autotuner.py:409), because
+# the 125-day OOS replay window is exactly half of the autotuner's 250-day
+# walk-forward window (synthetic_history.py:511-513: "exactly half").
+_OOS_HOLDOUT_PURGE_DAYS = 10
 
 
 def resolve_advisor_model() -> str:
@@ -2093,6 +2109,45 @@ def check_risk_direction_agreement(suggestion: ConfigSuggestion) -> dict:
     }
 
 
+def _slice_oos_holdout(history_data: dict, acc_sym_ids: list) -> dict | None:
+    """Slice ``history_data`` down to a held-out tail window (with a purge
+    gap) for Gate-3 OOS re-validation (F-013 AC-4,
+    DE-ADVISOR-GATE3-DIRECTION-001).
+
+    Computes the holdout tail from the union of dates across ``acc_sym_ids``
+    entries in ``history_data``, then returns a NEW dict of the same
+    ``{sym_id: {date: ticks}}`` shape, restricted to ``acc_sym_ids`` and
+    narrowed to the holdout tail dates. Each symphony's date-map is filtered
+    to the intersection of the holdout dates and that symphony's OWN dates —
+    a symphony missing some holdout dates simply contributes what it has,
+    never a KeyError or a zeroed-out slice for the others.
+
+    Returns ``None`` when the replay window is too short to carve out a real
+    holdout (purge + minimum holdout size not met) — the caller MUST fail
+    closed in this case, never fall back to the full window.
+    """
+    relevant_dates: set[str] = set()
+    for sym_id in acc_sym_ids:
+        relevant_dates.update(history_data.get(sym_id, {}).keys())
+
+    sorted_dates = sorted(relevant_dates)
+    total_days = len(sorted_dates)
+    holdout_days = int(total_days * _OOS_HOLDOUT_FRACTION)
+    purge_start_idx = total_days - holdout_days - _OOS_HOLDOUT_PURGE_DAYS
+
+    if holdout_days <= 0 or purge_start_idx < 0:
+        return None
+
+    holdout_dates = set(sorted_dates[total_days - holdout_days :])
+    return {
+        sym_id: {
+            d: ticks for d, ticks in history_data.get(sym_id, {}).items() if d in holdout_dates
+        }
+        for sym_id in acc_sym_ids
+        if sym_id in history_data
+    }
+
+
 def revalidate_suggestion_oos(
     symphony_id: str,
     config_key: str,
@@ -2103,12 +2158,19 @@ def revalidate_suggestion_oos(
 
     A Claude suggestion is an *unvalidated hypothesis*; Optuna's output is
     walk-forward validated. Before an accepted suggestion can reach live config,
-    it must pass the same out-of-sample gate Optuna's own output faces: its OOS
-    alpha must strictly beat the current strategy's baseline OOS alpha.
+    it must pass the same out-of-sample gate Optuna's own output faces: its
+    guard-alpha on a genuinely held-out tail slice of the replay window (see
+    ``_slice_oos_holdout``) must strictly beat the current strategy's baseline
+    guard-alpha on that SAME slice.
 
-    ``run_simulation`` is called TWICE over the same history window —
-    apples-to-apples: once with ``current_strategy`` (the baseline), once with
-    the strategy patched to ``suggested_value``.
+    ``run_simulation`` is called TWICE over the IDENTICAL held-out tail slice
+    — apples-to-apples: once with ``current_strategy`` (the baseline), once
+    with the strategy patched to ``suggested_value``. ``run_simulation``
+    returns ``-total_guard_alpha`` (autotuner.py:1949, smaller = better); both
+    raw returns are re-negated to REAL guard-alpha before comparison or
+    storage (F-013 / DE-ADVISOR-GATE3-DIRECTION-001 — comparing the raw,
+    un-negated values, as this function did before this fix, INVERTED the
+    gate: it greenlit suggestions that made guard-alpha worse).
 
     Pass rule is strict ``>``: a TIE does NOT pass — a tie buys no validated
     improvement, mirroring the autotuner's own strict-positive cascade rule.
@@ -2126,8 +2188,29 @@ def revalidate_suggestion_oos(
         current_strategy: the current per-symphony strategy dict — the baseline.
 
     Returns:
-        ``{passed: bool, oos_alpha: float, baseline_oos_alpha: float,
-        detail: str}``.
+        ``{passed: bool, patched_guard_alpha: float | None,
+        baseline_guard_alpha: float | None, detail: str}``.
+
+        ``patched_guard_alpha`` / ``baseline_guard_alpha`` hold REAL
+        (re-negated) guard-alpha on the held-out tail when both
+        ``run_simulation`` calls succeed with finite objectives; ``None`` on
+        any fail-closed edge below (never honestly computed), so a raw
+        NaN/Infinity literal never lands in the persisted JSON blob
+        (``database.py:961`` ``oos_revalidation`` column).
+
+        Fails closed (``passed: False``, both guard-alpha fields ``None``,
+        ``run_simulation`` NEVER called) when:
+        - no bot_state account matches ``symphony_id`` (empty acc_sym_ids) —
+          an accidental 0.0-vs-0.0 tie would misrepresent this as a genuine
+          comparison;
+        - the replay window is too short to carve out a real holdout tail
+          (purge + minimum holdout size not met) — NEVER silently falls back
+          to full-window in-sample evaluation.
+
+        Also fails closed (``passed: False``, both guard-alpha fields
+        ``None``) when EITHER ``run_simulation`` call returns a non-finite
+        (NaN/Infinity) objective — the detail honestly names the data-quality
+        problem rather than claiming a genuine underperform.
     """
     # Lazy imports — deferred past the anthropic-SDK / optuna import-collision
     # window. Module-scope imports of autotuner or synthetic_history would break
@@ -2146,13 +2229,38 @@ def revalidate_suggestion_oos(
     bot_state = database.load_state()
 
     # acc_sym_ids: the bot_state keys whose normalized symphony name matches
-    # symphony_id. Mirrors the derivation in autotuner.run_autotuner's objective
-    # closure (autotuner.py line 314).
+    # symphony_id. Both sides are normalized: the advisor canonical ID is
+    # normalize_name(name), but the route passes symphony_id un-normalized
+    # (app.py:5846 reads it straight off the request payload) — matching the
+    # identical double-normalize comparison used at app.py:4660/5011/5313/5784.
+    # Pre-existing bug (single-sided normalize) fixed here as part of F-013
+    # because AC-5's honest "no matching account" fail-closed path depends on
+    # acc_sym_ids resolving correctly — the pre-fix code masked the mismatch
+    # by calling run_simulation unconditionally regardless of whether
+    # acc_sym_ids was empty (an accidental tie, not an honest rejection).
     acc_sym_ids = [
         k
         for k, v in bot_state.items()
-        if isinstance(v, dict) and database.normalize_name(v.get("name", "")) == symphony_id
+        if isinstance(v, dict)
+        and database.normalize_name(v.get("name", "")) == database.normalize_name(symphony_id)
     ]
+
+    if not acc_sym_ids:
+        # Fail closed WITHOUT calling run_simulation (or even fetching replay
+        # history) — an accidental 0.0-vs-0.0 tie from an empty account list
+        # is a silent-pass-shaped bug, not an honest "no matching symphony"
+        # rejection (F-013 AC-5).
+        detail = (
+            f"OOS re-validation FAILED for {config_key}={suggested_value} on "
+            f"{symphony_id}: no bot_state account matches this symphony — "
+            f"cannot compute a guard-alpha comparison."
+        )
+        return {
+            "passed": False,
+            "patched_guard_alpha": None,
+            "baseline_guard_alpha": None,
+            "detail": detail,
+        }
 
     # history_data: 125-day synthetic replay history. This call is on the
     # operator-accept path (rare human action), NOT the 1-minute engine cycle.
@@ -2167,39 +2275,87 @@ def revalidate_suggestion_oos(
     # deviation_dict: 45-day trailing execution-deviation penalties by exit reason.
     deviation_dict = calculate_historical_deviation(current_date_str)
 
-    # Patch the strategy to the suggested value — same window, only one knob
-    # changes, so the OOS comparison is apples-to-apples.
+    # holdout_history: a genuine held-out tail slice (F-013 AC-4) — the
+    # pre-fix implementation evaluated the FULL replay window on both calls,
+    # a false "OOS" claim (actually in-sample). Computed ONCE and passed to
+    # BOTH run_simulation calls below so the comparison stays apples-to-apples.
+    holdout_history = _slice_oos_holdout(history_data, acc_sym_ids)
+    if holdout_history is None:
+        # Fail closed WITHOUT calling run_simulation — never silently fall
+        # back to full-window in-sample evaluation (F-013 AC-5).
+        detail = (
+            f"OOS re-validation FAILED for {config_key}={suggested_value} on "
+            f"{symphony_id}: insufficient holdout history to carve out a "
+            f"genuine held-out tail (after the purge buffer) from the "
+            f"available replay window — refusing to fall back to full-window "
+            f"in-sample evaluation."
+        )
+        return {
+            "passed": False,
+            "patched_guard_alpha": None,
+            "baseline_guard_alpha": None,
+            "detail": detail,
+        }
+
+    # Patch the strategy to the suggested value — same holdout window, only
+    # one knob changes, so the comparison is apples-to-apples.
     patched_strategy = dict(current_strategy)
     patched_strategy[config_key] = suggested_value
 
-    # Call run_simulation twice: baseline first, then the patched strategy.
-    baseline_oos_alpha = run_simulation(
-        current_strategy, history_data, acc_sym_ids, current_date_str, deviation_dict
+    # Call run_simulation twice on the IDENTICAL holdout slice: baseline
+    # first, then the patched strategy. Raw return is -total_guard_alpha
+    # (autotuner.py:1949, smaller = better) — re-negated below.
+    baseline_raw = run_simulation(
+        current_strategy, holdout_history, acc_sym_ids, current_date_str, deviation_dict
     )
-    patched_oos_alpha = run_simulation(
-        patched_strategy, history_data, acc_sym_ids, current_date_str, deviation_dict
+    patched_raw = run_simulation(
+        patched_strategy, holdout_history, acc_sym_ids, current_date_str, deviation_dict
     )
 
-    # Strict `>` — a tie does not pass (autotuner strict-positive cascade rule).
-    passed = patched_oos_alpha > baseline_oos_alpha
+    if not (math.isfinite(baseline_raw) and math.isfinite(patched_raw)):
+        # Fail closed with an HONEST detail — a non-finite objective is a
+        # data-quality problem, not a genuine underperform (F-013 AC-5).
+        detail = (
+            f"OOS re-validation FAILED for {config_key}={suggested_value} on "
+            f"{symphony_id}: run_simulation returned a non-finite guard-alpha "
+            f"objective (baseline_raw={baseline_raw!r}, "
+            f"patched_raw={patched_raw!r}) — degraded or invalid replay "
+            f"data, cannot honestly compare."
+        )
+        return {
+            "passed": False,
+            "patched_guard_alpha": None,
+            "baseline_guard_alpha": None,
+            "detail": detail,
+        }
+
+    # Re-negate to REAL guard-alpha (F-013 fix — the raw run_simulation
+    # return is -total_guard_alpha; comparing on that raw value inverted the
+    # gate). Strict `>` — a tie does not pass (autotuner strict-positive
+    # cascade rule).
+    baseline_guard_alpha = -baseline_raw
+    patched_guard_alpha = -patched_raw
+    passed = patched_guard_alpha > baseline_guard_alpha
 
     if passed:
         detail = (
             f"OOS re-validation PASSED for {config_key}={suggested_value} on "
-            f"{symphony_id}: patched OOS alpha {patched_oos_alpha} strictly "
-            f"beats baseline {baseline_oos_alpha}."
+            f"{symphony_id}: patched guard-alpha {patched_guard_alpha} "
+            f"strictly beats baseline guard-alpha {baseline_guard_alpha} on "
+            f"the held-out tail window."
         )
     else:
         detail = (
             f"OOS re-validation FAILED for {config_key}={suggested_value} on "
-            f"{symphony_id}: patched OOS alpha {patched_oos_alpha} does not "
-            f"strictly beat baseline {baseline_oos_alpha} — not greenlit for a "
-            f"live config write."
+            f"{symphony_id}: patched guard-alpha {patched_guard_alpha} does "
+            f"not strictly beat baseline guard-alpha {baseline_guard_alpha} "
+            f"on the held-out tail window — not greenlit for a live config "
+            f"write."
         )
 
     return {
         "passed": passed,
-        "oos_alpha": patched_oos_alpha,
-        "baseline_oos_alpha": baseline_oos_alpha,
+        "patched_guard_alpha": patched_guard_alpha,
+        "baseline_guard_alpha": baseline_guard_alpha,
         "detail": detail,
     }
