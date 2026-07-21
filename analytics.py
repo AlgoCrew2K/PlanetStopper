@@ -1768,6 +1768,16 @@ def compute_windowed_portfolio_strip(
             continue
         if not (math.isfinite(w) and w > 0.0):
             continue
+        # F-018: exclude the TWR-fallback symphony (zero-deposit, simple_return==0.0)
+        # from this value-weighted average -- the SAME exclusion condition
+        # get_symphony_cumulative_return checks (analytics.py:826) to set
+        # _twr_fallback and exclude it from _value_weighted_portfolio's if_held
+        # aggregate (the shipped F4 fix). windowed_alpha's if_held anchor already
+        # excludes it via that path; without the same exclusion here, this loop's
+        # own average mixes a different symphony population onto one basis,
+        # understating the windowed guard-alpha headline.
+        if sym.get("simple_return") == 0.0 and sym.get("net_deposits") == 0.0:
+            continue
         entry = bot_state.get(sym.get("id"))
         sym_alpha = compute_windowed_symphony_guard_alpha(
             sym, entry, window=window, db_path=_db_file

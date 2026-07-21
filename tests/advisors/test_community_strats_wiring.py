@@ -10,8 +10,10 @@ that coverage now lives in tests/advisors/test_build_plan_atlas_admission.py aga
 admit_community_candidates / load_atlas_candidates. The ENGINE-behaviour tests below (full-batch
 gating, per-candidate backtest isolation, provenance persistence, never-raises, None/[] no-
 regression) are PRESERVED and re-pointed: they build community CandidateInfo objects via the
-local `_make_community_candidate_infos` helper (mirroring admit_community_candidates' output:
-template_id="community", params.provenance="atlas-suggested") instead of the deleted adapter.
+local `_make_community_candidate_infos` helper (a LOCAL STUB with its own fixed
+template_id="community" test-input value -- independent of admit_community_candidates' real
+output, which emits template_id=PROVENANCE_ATLAS_SUGGESTED as of F-027) instead of the
+deleted adapter.
 
 Coverage retained here (engine contract — still valid):
   AC-2  gate receives FULL batch (built-new + community together)
@@ -173,10 +175,12 @@ def _make_community_candidate_infos(community_result: dict, *, max_candidates: i
     adapter was DELETED (EDGE-1) once the route + scheduler moved to the objective-matched
     build_plan_generator.load_atlas_candidates path. These engine-behaviour tests used the
     adapter only as a FIXTURE to construct community candidates; they are re-pointed to build
-    the same CandidateInfo shape directly — mirroring what admit_community_candidates emits:
-    candidate_id=sid, template_id="community", params carries sid/name/composition_hash AND
-    provenance="atlas-suggested". The objective-matched admission's own behaviour is covered
-    in tests/advisors/test_build_plan_atlas_admission.py — NOT here.
+    the same CandidateInfo shape directly — mirroring admit_community_candidates' params
+    (candidate_id=sid, params carries sid/name/composition_hash/provenance). This stub's own
+    template_id="community" value is a fixed test-input, independent of
+    admit_community_candidates' real output (which emits template_id=PROVENANCE_ATLAS_SUGGESTED
+    as of F-027). The objective-matched admission's own behaviour is covered in
+    tests/advisors/test_build_plan_atlas_admission.py — NOT here.
     """
     from advisors.build_plan_generator import PROVENANCE_ATLAS_SUGGESTED  # noqa: PLC0415
     from advisors.strategy_builder_engine import CandidateInfo  # noqa: PLC0415
