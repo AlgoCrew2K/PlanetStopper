@@ -37,6 +37,7 @@ Small; Tier 1.
   `requirements.txt` / `pyproject.toml`.
 
 ### `POST /ai-advisor/suggest` does not hash-resolve `composer_symphony_id` (found 2026-07-20, F-023 doc-audit)
+**[SHIPPED 2026-07-21 -- `DE-OPS-CLUSTER-001`, `fix-ops-cluster` cycle. See DECISIONS.md.]**
 `ai_advisor_suggest()` (`app.py:5796`) resolves the client's raw `symphony_id` to a canonical
 normalized name for everything else, but passes it straight through unresolved as
 `composer_symphony_id` -- which `assemble_advisor_context`'s Composer `/score` call
@@ -62,6 +63,32 @@ the `live` marker, so a stripped `-m` filter alone can never let a live test exe
 ---
 
 ## Low priority / tracked follow-on
+
+### Performance-tab double "+" glyph on pp-kind delta rows -- ACCEPTED-COSMETIC (F-024, register LOW, closed out 2026-07-21, `fix-ops-cluster`/`DE-OPS-CLUSTER-001`)
+`performance.js:77` and `:90` both self-sign their pp-kind delta rows (prepend `'+'` for a
+non-negative value) on top of an already-signed formatted string, producing a doubled glyph
+(e.g. "↑ ++0.64pp"). The underlying VALUE is correct -- only the glyph repeats. Explicitly kept
+OUT of scope by two prior cycles (`fix-f023-perf-view.md`, `fix-display-cluster.md`) and again by
+this FINAL confidence-program cycle's plan (`feature-plans/fix-ops-cluster.md` Scope Boundaries:
+"F-024 glyph (stays deferred cosmetic -- record as ACCEPTED-COSMETIC in the close-out)"). This is
+that close-out record: the finding is real, LOW severity, cosmetic-only, and deliberately not
+fixed across three consecutive cycles that all touched adjacent code (`fix-f023-perf-view`,
+`fix-display-cluster`, `fix-ops-cluster`) -- a standing decision, not an oversight. Trivial one-line fix (drop the redundant `'+'` prepend) if ever prioritized.
+
+### F-1 frozen-branch connection close isn't `try/finally`-wrapped -- LOW, accepted residual (found + accepted 2026-07-21, `fix-ops-cluster`/`DE-OPS-CLUSTER-001`)
+`get_state()`'s `closed_frozen`/`pre_market` branch (`app.py`, F-1 frozen-branch fix) opens a
+shared `_frozen_shadow_conn` and closes it with a plain statement after the per-symphony-loop-
+through-portfolio-calls span converges, NOT a `try/finally` wrapping that whole span (unlike the
+live branch's fix, which does use `try/finally`). An exception raised in the per-symphony loop
+itself, outside the narrow `(KeyError, TypeError, ValueError)` catch already there (e.g. a
+non-numeric `current_return` TypeErroring on `/100.0`), would propagate past the `close()` and
+leak the connection. Both foc-tw and foc-rev independently traced this during review and agreed:
+LOW severity (a read-only SQLite connection with no pending transaction, GC-recovered, no
+data-integrity risk; requires already-malformed snapshot data that would 500 the route
+regardless). Not fixed inline given cycle-velocity pressure and the severity gap. Optional cheap
+follow-up available (~4 lines: harden the two numeric coercions with try/except, closing both the
+leak AND the underlying pre-existing TypeError risk) if ever prioritized -- not blocking, PM's
+call. See `DE-OPS-CLUSTER-001` in `DECISIONS.md` for the full trace.
 
 ### Sleeves: mis-citing float-imprecision example in the price-rounding docstring — COSMETIC (found 2026-07-08, P3 smoke cycle)
 The bracket price-rounding (`_round_to_equity_tick`, sleeves/alpaca_orders.py, task #35) cites

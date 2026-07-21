@@ -166,6 +166,10 @@ def run_weekly_build() -> None:
                     screen_config=ScreenConfig(),
                     live_returns=[],
                     community_candidates=community_candidates,
+                    # F-030: attribute every advisory-DB write from this call
+                    # to the weekly scheduler, distinct from the on-demand
+                    # HTTP route and a direct engine call.
+                    invocation_source="weekly-scheduler",
                 )
                 logger.info("strategy_builder_scheduler: objective=%s completed", objective.value)
                 break  # success — no retry needed

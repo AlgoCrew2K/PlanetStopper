@@ -3,13 +3,27 @@
 > Phase-2 Strategy Builder proposal engine: drives the real C1→C2→C3 builder pipeline to generate candidates, backtests them, gates via Harvey-Liu FDR + C5b PBO veto + SPY-OOS baseline, persists survivors as advisory observations, and (R2-1) carries a run-level provenance object — generation model, mode, injected-evidence manifest, run-id — on every `ProposalRun`; (AC-10) also queues survivors for the Frontrunner Builder's shared approval-to-Composer-create path.
 
 **Source:** `advisors/strategy_builder_engine.py`
-**Last updated:** 2026-07-14 (branch-integration merge — Frontrunner Builder AC-10 retrofit `f1592a2` integrated with R2-1 provenance; 2026-07-13 (R2-1 -- `ProposalRun.run_id`/`.provenance` + `propose_strategies(reasoning_context=, reasoning_manifest=, run_id=)`, `DE-ADVISOR-R2-1-001`; Internal Dependencies corrected per r2-review's Finding-2 (transitive `alpha_bot_execution` import via the new `import ai_advisor` edge) -- see below; prior: advisor-outage-degrade: honest backtest_unavailable rollup, DE-SB-DEGRADE-001; also reconciled a pre-existing gap -- ProposalRun.error_category, added in R1 AC-11, was never documented here until now) ALSO: 2026-07-11 (AC-10 Frontrunner Builder retrofit, `f1592a2`; prior: 2026-06-20)
+**Last updated:** 2026-07-21 (fix-ops-cluster, `DE-OPS-CLUSTER-001` F-030 -- `propose_strategies`/`_persist_survivor`/`_persist_rejected` gain `invocation_source`, an additive advisory-DB write-attribution field; see the new F-030 section below). Prior: 2026-07-14 (branch-integration merge — Frontrunner Builder AC-10 retrofit `f1592a2` integrated with R2-1 provenance; 2026-07-13 (R2-1 -- `ProposalRun.run_id`/`.provenance` + `propose_strategies(reasoning_context=, reasoning_manifest=, run_id=)`, `DE-ADVISOR-R2-1-001`; Internal Dependencies corrected per r2-review's Finding-2 (transitive `alpha_bot_execution` import via the new `import ai_advisor` edge) -- see below; prior: advisor-outage-degrade: honest backtest_unavailable rollup, DE-SB-DEGRADE-001; also reconciled a pre-existing gap -- ProposalRun.error_category, added in R1 AC-11, was never documented here until now) ALSO: 2026-07-11 (AC-10 Frontrunner Builder retrofit, `f1592a2`; prior: 2026-06-20)
 
 ## Overview
 
 `advisors/strategy_builder_engine.py` proposes new candidate symphonies from scratch (versus engines that mutate live ones). The pipeline is: generate candidate trees via the real C1→C2→C3 builder (C4 body swap) and/or caller-injected community strategies → backtest via `composer_backtest_client` (1 req/s) → gate the full batch via `backtest_gate_engine.evaluate_candidate_batch` (Harvey-Liu BHY FDR, **C5b: + PBO veto + real SPY-OOS baseline**) → apply `ScreenConfig` post-gate presentation filters → persist survivors and rejected candidates as advisory observations.
 
 Off-execution-path (never imported from `alpha_bot_execution.py`). Advisory-only (`is_advisory_only=1` on all persisted observations). Never raises — all exceptions surface as `ProposalRun.error`.
+
+## F-030 -- advisory-DB write attribution (`DE-OPS-CLUSTER-001`, 2026-07-21)
+
+**The finding (register, LOW/governance):** 3 production `STRATEGY_BUILDER` advisory-DB rows (2026-07-13, pre-audit) were written via a DIRECT off-HTTP call to `propose_strategies` -- matching the on-demand route's default params but carrying zero HTTP/journal trace, unattributable to any production invocation path (the scheduler ran once that week, the route had zero hits, no cron/timer). The data itself was coherent and benign; the gap was that the production advisory DB could be written with no reconstructable audit trail.
+
+**Fix:** a new `invocation_source: str | None = None` param on `propose_strategies`, resolved inside the function (`invocation_source if invocation_source is not None else "unattributed-direct-call"`) -- the same None-resolved-inside-the-function pattern `reasoning_manifest` already uses. Threaded through both `_persist_survivor` and `_persist_rejected` (which also gained the same keyword-only param, default `"unattributed-direct-call"`) into `raw_response["invocation_source"]` -- additive, alongside the existing `run_id`/`evidence_injected` keys in that free-form JSON blob column (no schema migration). Each production caller tags its own call:
+
+| Caller | `invocation_source` value |
+|--------|---------------------------|
+| `POST /ai-advisor/strategy-builder/run` (`app.py`) | `"http-route:/ai-advisor/strategy-builder/run"` |
+| `advisors/strategy_builder_scheduler.py::run_weekly_build()` | `"weekly-scheduler"` |
+| A direct engine call with no `invocation_source` passed (dev/debug, the register finding's exact scenario) | `"unattributed-direct-call"` (honest default, never a silent `None`) |
+
+`ProposalRun`'s dataclass shape is genuinely untouched -- `invocation_source` lives only in the persisted `raw_response` blob, mirroring where `run_id`/`evidence_injected` already live.
 
 ## Constants
 
@@ -103,7 +117,7 @@ class ProposalRun:
 
 ## API Reference
 
-### `propose_strategies(objective, universe, screen_config, live_returns, symphony_id, *, incumbent_oos_alpha, default_oas_alpha, community_candidates, reasoning_context, reasoning_manifest, run_id) -> ProposalRun`
+### `propose_strategies(objective, universe, screen_config, live_returns, symphony_id, *, incumbent_oos_alpha, default_oas_alpha, community_candidates, reasoning_context, reasoning_manifest, run_id, invocation_source) -> ProposalRun`
 
 Propose new candidate symphonies from scratch. Never raises.
 
@@ -122,6 +136,7 @@ Propose new candidate symphonies from scratch. Never raises.
 | `reasoning_context` | `str \| None` | R2-1: an optional, ready-to-inject operator-context text block (see `ai_advisor.build_reasoning_context`), threaded into `_generate_candidate_trees` → `build_plan_generator.generate_build_plans`. Additive/keyword, default `None` — every pre-R2-1 caller's exact call shape is unaffected. |
 | `reasoning_manifest` | `dict \| None` | R2-1: the honest per-source manifest paired with `reasoning_context` (see `ai_advisor.build_reasoning_context`). Stamped into `ProposalRun.provenance["evidence_injected"]` verbatim; falls back to `ai_advisor._EMPTY_MANIFEST` (never fabricated as present) when omitted. |
 | `run_id` | `str \| None` | R2-1: an optional caller-supplied run id, used verbatim when provided; a fresh `str(uuid.uuid4())` is minted when omitted. Threaded onto `ProposalRun.run_id` and `ProposalRun.provenance["run_id"]`. |
+| `invocation_source` | `str \| None` | F-030 (`DE-OPS-CLUSTER-001`): identifies the caller of this run (e.g. `"http-route:/ai-advisor/strategy-builder/run"`, `"weekly-scheduler"`) so every advisory-DB write it produces is attributable back to a production invocation path. `None` (the default) resolves to the honest `"unattributed-direct-call"` marker — the register finding's exact scenario (a direct engine call bypassing Flask/HTTP logging). Same None-resolved-inside-the-function pattern as `reasoning_manifest`. Threaded through `_persist_survivor`/`_persist_rejected` into `raw_response["invocation_source"]`, additive alongside `run_id`/`evidence_injected` — `ProposalRun`'s dataclass shape is unchanged. |
 
 **Returns:** `ProposalRun` where:
 - `candidates` contains only successfully-backtested `CandidateInfo` objects

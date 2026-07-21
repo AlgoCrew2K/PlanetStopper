@@ -180,6 +180,35 @@ class TestAC19RouteParity:
         )
         assert isinstance(data["survivors"], list) and isinstance(data["rejected"], list)
 
+
+# ===========================================================================
+# F-030 / AC-5 — the route tags every propose_strategies call with a
+# distinguishable invocation_source, closing the register's "advisory-DB
+# writes with no reconstructable audit trail" gap for this call site.
+# Contract pinned in tests/advisors/test_strategy_builder_invocation_source.py.
+# ===========================================================================
+
+
+class TestF030RouteInvocationSource:
+    def test_route_tags_propose_strategies_with_http_route_source(self, client):
+        run = _proposal_run(survivors=[], rejected=[], n_candidates=0)
+        with patch(
+            "advisors.strategy_builder_engine.propose_strategies", return_value=run
+        ) as propose_mock:
+            resp = _post(client, {"objective": "diversify", "universe": []})
+        assert resp.status_code == 200
+        assert propose_mock.called, "route must call propose_strategies"
+        call_kwargs = propose_mock.call_args.kwargs
+        assert (
+            call_kwargs.get("invocation_source") == "http-route:/ai-advisor/strategy-builder/run"
+        ), (
+            "F-030 AC-5 GAP: the on-demand route must tag its propose_strategies call with "
+            "the pinned 'http-route:/ai-advisor/strategy-builder/run' invocation_source so "
+            "the resulting advisory-DB writes are attributable to this route, distinct from "
+            "a direct engine call or the weekly scheduler. "
+            f"Got call_kwargs={call_kwargs!r}"
+        )
+
     def test_route_sources_universe_from_provider_when_empty(self, client):
         """AC-19: with an EMPTY universe in the request body, the route must NOT hard-fail
         or require an operator ticker list — it passes an empty universe so the engine

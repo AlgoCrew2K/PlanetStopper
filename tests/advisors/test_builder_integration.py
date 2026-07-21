@@ -209,7 +209,15 @@ def test_ac20_propose_strategies_signature_unchanged(sbe):
     assertions below are the backward-compatibility proof: every pre-R2-1
     caller (positional objective/universe/screen_config/live_returns/
     symphony_id, keyword incumbent_oos_alpha/default_oos_alpha/
-    community_candidates) is unaffected by the addition."""
+    community_candidates) is unaffected by the addition.
+
+    Re-frozen AGAIN for the ops-cluster cycle (F-030/AC-5, fix-ops-cluster.md,
+    running-register.md F-030 — "log/audit-trail every propose_strategies
+    invocation at the engine level ... with its caller/source"): adds a 4th
+    keyword-only, default=None param — invocation_source — for the same
+    additive-traceability reason as run_id (main-ruled 2026-07-21: an
+    intentional, additive, keyword-only default=None change, update this
+    test rather than delete it, mirroring the exact R2-1 precedent above)."""
     sig = inspect.signature(sbe.propose_strategies)
     params = list(sig.parameters.keys())
     assert params == [
@@ -224,19 +232,26 @@ def test_ac20_propose_strategies_signature_unchanged(sbe):
         "reasoning_context",
         "reasoning_manifest",
         "run_id",
-    ], f"propose_strategies signature must be frozen (AC-20 + R2-1); got {params}"
+        "invocation_source",
+    ], f"propose_strategies signature must be frozen (AC-20 + R2-1 + F-030); got {params}"
     # universe stays positional-or-keyword with no required-arg change.
     assert sig.parameters["universe"].default is inspect.Parameter.empty or True
-    # R2-1 addition: all 3 new params must be keyword-only with default=None —
-    # a positional-or-keyword addition would risk silently shifting positional
-    # callers, and a non-None default would make omitting them not a no-op
-    # (AC-8's from-scratch byte-preservation contract).
-    for new_param in ("reasoning_context", "reasoning_manifest", "run_id"):
+    # R2-1 + F-030 additions: all 4 new params must be keyword-only with
+    # default=None — a positional-or-keyword addition would risk silently
+    # shifting positional callers, and a non-None default would make omitting
+    # them not a no-op (AC-8's from-scratch byte-preservation contract).
+    for new_param in (
+        "reasoning_context",
+        "reasoning_manifest",
+        "run_id",
+        "invocation_source",
+    ):
         assert sig.parameters[new_param].kind is inspect.Parameter.KEYWORD_ONLY, (
-            f"R2-1 GAP: {new_param!r} must be keyword-only, got {sig.parameters[new_param].kind}"
+            f"R2-1/F-030 GAP: {new_param!r} must be keyword-only, got "
+            f"{sig.parameters[new_param].kind}"
         )
         assert sig.parameters[new_param].default is None, (
-            f"R2-1 GAP: {new_param!r} must default to None (omitting it must be a "
+            f"R2-1/F-030 GAP: {new_param!r} must default to None (omitting it must be a "
             f"no-op), got {sig.parameters[new_param].default!r}"
         )
 
