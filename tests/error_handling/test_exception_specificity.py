@@ -105,7 +105,7 @@ ALPHA_BOT_PATH = REPO_ROOT / "alpha_bot_execution.py"
 #   (1) its enclosing function name is in WHITELISTED_ENCLOSING_FUNCTIONS
 #       (survives line shifts anywhere in the file), AND
 #   (2) the handler's OWN source span (not just somewhere in its function)
-#       carries _BROAD_EXCEPT_WHITELIST_MARKER (ties the exemption to that
+#       carries _BROAD_EXCEPT_WHITELIST_MARKERS (ties the exemption to that
 #       SPECIFIC handler -- a new, unrelated broad except added later
 #       inside either whitelisted function would NOT carry this marker and
 #       would still be caught; function-name-only keying would have
@@ -125,6 +125,11 @@ WHITELISTED_ENCLOSING_FUNCTIONS: frozenset[str] = frozenset(
         # Wraps load_state + presence-check + seed + save; must swallow all exception
         # types to prevent daemon crash at startup.
         "ensure_bot_state_seeded",
+        # main: P3 Managed Sleeves engine-tick isolation barrier (s3-review-approved
+        # epic invariant). ANY exception in sleeve processing must be caught so a
+        # sleeve bug can never break the exit machine's own symphony trading on the
+        # same 1-minute cycle; narrowing would defeat the guarantee it provides.
+        "main",
     }
 )
 
@@ -139,7 +144,15 @@ WHITELISTED_ENCLOSING_FUNCTIONS: frozenset[str] = frozenset(
 # else in the file. If a handler's comment is ever reworded to drop this
 # exact phrase, this test intentionally goes RED again — a real signal the
 # whitelist needs re-review, not silent drift.
-_BROAD_EXCEPT_WHITELIST_MARKER = "Mandated by tests/engine/test_startup_seed_symphonies.py"
+# Per-function marker phrases (merge of the seeding-era single marker and the
+# Managed Sleeves epic's barrier): each whitelisted function requires ITS OWN
+# phrase inside the handler span, so one function's justification can never
+# exempt another function's handler.
+_BROAD_EXCEPT_WHITELIST_MARKERS: dict[str, str] = {
+    "seed_symphonies_into_bot_state": "Mandated by tests/engine/test_startup_seed_symphonies.py",
+    "ensure_bot_state_seeded": "Mandated by tests/engine/test_startup_seed_symphonies.py",
+    "main": "Sleeve-tick isolation barrier",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +227,7 @@ def _is_whitelisted_broad_handler(
 ) -> bool:
     """Return True iff `handler` is an approved broad except -- BOTH its
     enclosing function is in WHITELISTED_ENCLOSING_FUNCTIONS AND its own
-    source span carries _BROAD_EXCEPT_WHITELIST_MARKER.
+    source span carries _BROAD_EXCEPT_WHITELIST_MARKERS.
 
     Requiring both prevents two failure modes a single-condition check
     would allow:
@@ -225,9 +238,10 @@ def _is_whitelisted_broad_handler(
         happened to contain the marker phrase would falsely exempt some
         other function's handler.
     """
-    if _enclosing_function_name(tree, handler) not in WHITELISTED_ENCLOSING_FUNCTIONS:
+    fn = _enclosing_function_name(tree, handler)
+    if fn not in WHITELISTED_ENCLOSING_FUNCTIONS:
         return False
-    return _BROAD_EXCEPT_WHITELIST_MARKER in _handler_source_span(source_lines, handler)
+    return _BROAD_EXCEPT_WHITELIST_MARKERS[fn] in _handler_source_span(source_lines, handler)
 
 
 def _find_broad_handlers(source: str) -> tuple[ast.Module, list[ast.ExceptHandler]]:

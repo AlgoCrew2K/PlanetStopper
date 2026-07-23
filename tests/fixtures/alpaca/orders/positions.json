@@ -1,0 +1,14 @@
+[
+  {
+    "asset_id": "b0b6dd9d-8b9b-48a9-ba46-b9d54906e415",
+    "symbol": "SPY",
+    "asset_class": "us_equity",
+    "qty": "10",
+    "avg_entry_price": "501.50",
+    "side": "long",
+    "market_value": "5180.00",
+    "cost_basis": "5015.00",
+    "unrealized_pl": "165.00",
+    "current_price": "518.00"
+  }
+]

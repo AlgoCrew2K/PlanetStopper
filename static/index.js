@@ -1511,4 +1511,78 @@
             });
         });
     });
+
+    // ---------------------------------------------------------------------------
+    // Managed Sleeves panel (AC-16) — arm-to-paper / disarm controls.
+    // Reuses the module's _csrfToken (fetched once on DOMContentLoaded above).
+    // Arm-live and envelope-widen have their own multi-gate ceremonies (AC-3/
+    // AC-14) and are deliberately NOT wired to a one-click control here — they
+    // need a dedicated confirm-phrase modal, a follow-up UI pass, not a bare
+    // button that could fat-finger a live-trading arm.
+    // ---------------------------------------------------------------------------
+
+    function armSleeveRuleToPaper(sleeveId, ruleId, btn) {
+        if (!window.confirm('Arm this rule to PAPER? It will start placing real paper-account orders.')) return;
+        btn.disabled = true;
+        fetch('/api/sleeves/' + sleeveId + '/rules/' + ruleId + '/arm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' },
+            body: JSON.stringify({ target_mode: 'PAPER' })
+        })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return { ok: r.ok, body: b }; }); })
+        .then(function (res) {
+            if (!res.ok) {
+                window.alert('Arm rejected: ' + ((res.body && res.body.message) || 'unknown error'));
+                btn.disabled = false;
+                return;
+            }
+            location.reload();
+        })
+        .catch(function (err) {
+            console.error('armSleeveRuleToPaper failed', err);
+            btn.disabled = false;
+        });
+    }
+    window.armSleeveRuleToPaper = armSleeveRuleToPaper;
+
+    function disarmSleeve(sleeveId, btn) {
+        if (!window.confirm('Disarm this sleeve? All autonomy stops immediately; re-arming requires the ceremony again.')) return;
+        btn.disabled = true;
+        fetch('/api/sleeves/' + sleeveId + '/disarm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' }
+        })
+        .then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            location.reload();
+        })
+        .catch(function (err) {
+            console.error('disarmSleeve failed', err);
+            btn.disabled = false;
+        });
+    }
+    window.disarmSleeve = disarmSleeve;
+
+    function deleteSleeve(sleeveId, btn) {
+        if (!window.confirm('Delete this sleeve? Refused unless it is flat (no open position) — delete never liquidates.')) return;
+        btn.disabled = true;
+        fetch('/api/sleeves/' + sleeveId + '/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' }
+        })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return { ok: r.ok, body: b }; }); })
+        .then(function (res) {
+            if (!res.ok) {
+                window.alert('Delete rejected: ' + ((res.body && res.body.message) || 'unknown error'));
+                btn.disabled = false;
+                return;
+            }
+            location.reload();
+        })
+        .catch(function (err) {
+            console.error('deleteSleeve failed', err);
+            btn.disabled = false;
+        });
+    }
+    window.deleteSleeve = deleteSleeve;
 })();

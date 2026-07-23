@@ -45,6 +45,8 @@ Findings are presented per integration point with status:
 ### 2.1 Historical bars (3y daily MC)
 - **VALIDATED.** `alpha_bot_execution.py:156-242` (`fetch_alpaca_history`). Explicit `timeout=30` (line 192). 3-attempt retry with linear backoff (`2*(attempt+1)`s → max 6s — bounded). Disk cache `history_cache.json` keyed on date+ticker list. **Read-only data endpoint (`data.alpaca.markets`)** — no broker / trading API used anywhere; paper-vs-live distinction is N/A for AlphaBot's Alpaca usage (Composer is the broker).
 
+> **Superseded on this point (2026-07-07):** "no broker / trading API used anywhere" and "Composer is the broker" are no longer true of the codebase as a whole. Managed Sleeves P1 added `sleeves/alpaca_orders.py`, a second, independent order-capable module that submits orders directly to Alpaca's Trading API (paper today; live once the operator provisions live keys). The historical-bars finding immediately above (read-only `data.alpaca.markets` usage in `alpha_bot_execution.py`/`synthetic_history.py`) is still accurate on its own terms -- those specific call sites remain read-only. See [`docs/generated/sleeves.md`](../../generated/sleeves.md) for the current trade-path architecture and the whole-repo containment invariant that keeps order-placing code confined to that one module.
+
 ### 2.2 Intraday VWAP feed
 - **VALIDATED.** `alpha_bot_execution.py:245-280` (`fetch_intraday_vwaps`). Explicit `timeout=15`. Feed pinned to `feed=iex` (covered by `tests/alpaca/test_feed_pinning.py`).
 
@@ -56,6 +58,8 @@ Findings are presented per integration point with status:
 
 ### 2.4 Paper-vs-live key separation
 - **N/A (VALIDATED by absence).** AlphaBot uses only `data.alpaca.markets` (read-only). No `paper-api` / `api.alpaca.markets` (broker) calls exist (`grep -i 'paper|api\.alpaca|trading\.alpaca|broker'` returned no matches across `.py` files). The `LIVE_EXECUTION` flag only gates Composer writes.
+
+> **Superseded on this point (2026-07-07):** this "N/A by absence" finding no longer holds. `sleeves/alpaca_orders.py` (Managed Sleeves P1) now calls both `paper-api.alpaca.markets` (paper, the P1 floor) and, once the operator provisions distinct `ALPACA_LIVE_KEY`/`ALPACA_LIVE_SECRET` env vars, `api.alpaca.markets` (live) -- gated through a single `resolve_host()` function, never the bare `LIVE_EXECUTION` flag this finding references (that flag continues to gate only Composer writes, unchanged). See [`docs/generated/sleeves.md`](../../generated/sleeves.md) for the host-gating architecture.
 
 ### 2.5 Autotuner replay path
 - **VALIDATED.** `autotuner.py` has zero `requests.` references (verified via grep). Replays from `synthetic_history.generate_synthetic_history` cache → no live API on the backtest path.

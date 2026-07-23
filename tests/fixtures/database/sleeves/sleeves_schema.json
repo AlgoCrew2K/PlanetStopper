@@ -1,0 +1,139 @@
+{
+  "_provenance": "Managed Sleeves P1: schema-derived with runtime validator. Column set authored from feature-plans/managed-sleeves.md §Architecture 'DB (additive migrations)' and the sleeve-db/sleeve-integration-impl/sleeve-risk-impl interface-agreement thread, cross-checked against migrations/033_sleeves.sql. No producer-computed values are captured; all assertions are shape/presence/constraint checks.",
+  "scenario": "sleeves_schema_validation",
+  "description": "Expected schema shape for the five Managed Sleeves P1 tables after migration 033_sleeves.sql is applied.",
+
+  "sleeves": {
+    "table_name": "sleeves",
+    "columns": {
+      "id":            { "notnull": true,  "is_pk": true,  "type_affinity": "INTEGER", "autoincrement": true },
+      "name":          { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "capital_usd":   { "notnull": true,  "has_default": false, "type_affinity": "REAL" },
+      "status":        { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
+      "envelope_json": { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
+      "created_at":    { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
+      "updated_at":    { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" }
+    },
+    "status_default": "SHADOW",
+    "status_values_app_level": ["SHADOW", "PAPER", "LIVE", "BENCHED", "PAUSED_RECONCILIATION", "DISARMED"],
+    "_note": "status is TEXT with no CHECK constraint (matches codebase convention -- enum enforcement is app-level, not DB-level). name has a UNIQUE index (idx_sleeves_name), not a PK.",
+    "unique_indexes": ["idx_sleeves_name (name)"]
+  },
+
+  "sleeve_rules": {
+    "table_name": "sleeve_rules",
+    "columns": {
+      "id":         { "notnull": true,  "is_pk": true,  "type_affinity": "INTEGER", "autoincrement": true },
+      "sleeve_id":  { "notnull": true,  "has_default": false, "type_affinity": "INTEGER" },
+      "name":       { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "json_doc":   { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
+      "mode":       { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
+      "enabled":    { "notnull": true,  "has_default": true,  "type_affinity": "INTEGER" },
+      "created_at": { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
+      "updated_at": { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" }
+    },
+    "_note": "Schema-ready for the P2 rule engine. sleeve_id is a soft FK to sleeves.id (no PRAGMA foreign_keys in this codebase). Not written or read by any P1 code path.",
+    "non_unique_indexes": ["idx_sleeve_rules_sleeve_id (sleeve_id)"]
+  },
+
+  "sleeve_orders": {
+    "table_name": "sleeve_orders",
+    "columns": {
+      "id":              { "notnull": true,  "is_pk": true,  "type_affinity": "INTEGER", "autoincrement": true },
+      "client_order_id": { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "alpaca_order_id": { "notnull": false, "has_default": true,  "type_affinity": "TEXT" },
+      "sleeve_id":       { "notnull": true,  "has_default": false, "type_affinity": "INTEGER" },
+      "rule_id":         { "notnull": false, "has_default": true,  "type_affinity": "INTEGER" },
+      "symbol":          { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "side":            { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "qty":             { "notnull": true,  "has_default": false, "type_affinity": "REAL" },
+      "reserved_price":  { "notnull": false, "has_default": true,  "type_affinity": "REAL" },
+      "order_class":     { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
+      "status":          { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
+      "submitted_at":    { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
+      "raw_json":        { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
+      "updated_at":      { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" }
+    },
+    "order_class_default": "simple",
+    "status_default": "RESERVED",
+    "status_values_app_level": {
+      "pre_ack_sleeve_side": ["RESERVED"],
+      "post_ack_alpaca_native_verbatim": [
+        "new", "partially_filled", "filled", "done_for_day", "canceled", "expired",
+        "replaced", "pending_cancel", "pending_replace", "accepted", "pending_new",
+        "accepted_for_bidding", "stopped", "rejected", "suspended", "calculated", "held"
+      ],
+      "_note": "No separate SUBMITTED/OPEN/PARTIALLY_FILLED synonyms invented for post-ack states -- Alpaca already names those; only the pre-ack window (before any alpaca_order_id exists) needed a new sleeve-side value."
+    },
+    "side_values_app_level": ["buy", "sell"],
+    "_note": "client_order_id is the durable correlation key, minted BEFORE the broker call so a row exists at reserve-time for crash-safe recovery (subprocess-per-minute engine, no in-memory-only state). alpaca_order_id is nullable and populated only once the broker acks. rule_id is nullable -- P1 has no rules yet, so every P1 order carries rule_id=NULL. qty is REAL (fractional shares). reserved_price is the estimate used to size the cash reservation at insert time -- distinct from the actual fill price in sleeve_fills. Sell orders (long-only, reduce-only) reserve SHARES not cash, so reserved_price is NULL for sells.",
+    "unique_indexes": [
+      "idx_sleeve_orders_client_order_id (client_order_id)",
+      "idx_sleeve_orders_alpaca_order_id (alpaca_order_id) WHERE alpaca_order_id IS NOT NULL"
+    ],
+    "non_unique_indexes": [
+      "idx_sleeve_orders_sleeve_id (sleeve_id)",
+      "idx_sleeve_orders_rule_id (rule_id) WHERE rule_id IS NOT NULL"
+    ]
+  },
+
+  "sleeve_fills": {
+    "table_name": "sleeve_fills",
+    "columns": {
+      "id":             { "notnull": true,  "is_pk": true,  "type_affinity": "INTEGER", "autoincrement": true },
+      "order_id":       { "notnull": true,  "has_default": false, "type_affinity": "INTEGER" },
+      "broker_fill_id": { "notnull": false, "has_default": true,  "type_affinity": "TEXT" },
+      "fill_price":     { "notnull": true,  "has_default": false, "type_affinity": "REAL" },
+      "filled_qty":     { "notnull": true,  "has_default": false, "type_affinity": "REAL" },
+      "filled_at":      { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "created_at":     { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" }
+    },
+    "_note": "order_id is a soft FK to sleeve_orders.id (the internal id, not alpaca_order_id/client_order_id). broker_fill_id is the Alpaca Account Activities (activity_type=FILL) `id` -- one row per discrete fill event including partials; nullable, UNIQUE when present, for dedup across overlapping reconciliation poll windows. filled_at is the broker-reported fill timestamp; created_at is row-insert time. Multiple fills per order are expected (partial fills) -- no uniqueness constraint on order_id.",
+    "unique_indexes": ["idx_sleeve_fills_broker_fill_id (broker_fill_id) WHERE broker_fill_id IS NOT NULL"],
+    "non_unique_indexes": ["idx_sleeve_fills_order_id (order_id)"]
+  },
+
+  "sleeve_runtime": {
+    "table_name": "sleeve_runtime",
+    "columns": {
+      "rule_id":     { "notnull": true, "is_pk": true, "type_affinity": "INTEGER" },
+      "key":         { "notnull": true, "is_pk": true, "type_affinity": "TEXT" },
+      "value":       { "notnull": true, "has_default": false, "type_affinity": "TEXT" },
+      "updated_at":  { "notnull": true, "has_default": true,  "type_affinity": "TEXT" }
+    },
+    "_note": "Composite PK (rule_id, key) -- no surrogate id column. Pure key/value runtime store, upserted via INSERT OR REPLACE (port_state precedent, migration 010). Schema-ready for the P2 rule engine's pacing/latch/bench state; not written or read by any P1 code path."
+  },
+
+  "sleeve_rule_fires": {
+    "table_name": "sleeve_rule_fires",
+    "_provenance": "Managed Sleeves P2: schema-derived from feature-plans/managed-sleeves.md + the DE-SLEEVES-P1-001 addendum (sleeve_rule_fires deferred from migration 033), authored against migrations/034_sleeve_rule_fires.sql. Reconciled 2026-07-08 across independent s2-db/s2-rules-impl/s2-test-writer proposals (SendMessage thread) -- s2-rules-impl signed off on clamp/episode/outcome_json; s2-test-writer contributed rule_class + created_at. No producer-computed values are captured; all assertions are shape/presence/constraint checks.",
+    "columns": {
+      "id":                   { "notnull": true,  "is_pk": true,  "type_affinity": "INTEGER", "autoincrement": true },
+      "rule_id":              { "notnull": true,  "has_default": false, "type_affinity": "INTEGER" },
+      "sleeve_id":            { "notnull": true,  "has_default": false, "type_affinity": "INTEGER" },
+      "fired_at":             { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
+      "action":               { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "rule_class":           { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "mode_at_fire":         { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "sensed_snapshot_json": { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
+      "outcome_json":         { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
+      "clamped":              { "notnull": true,  "has_default": true,  "type_affinity": "INTEGER" },
+      "clamp_reason":         { "notnull": false, "has_default": true,  "type_affinity": "TEXT" },
+      "episode_id":           { "notnull": false, "has_default": true,  "type_affinity": "TEXT" },
+      "order_id":             { "notnull": false, "has_default": true,  "type_affinity": "INTEGER" },
+      "created_at":           { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" }
+    },
+    "clamped_default": 0,
+    "mode_at_fire_values_app_level": ["SHADOW", "PAPER", "LIVE"],
+    "rule_class_values_app_level": ["DEFENSIVE", "ENTRY"],
+    "_note": "One row per tick evaluation that fired ('when'/'if' matched, 'then' attempted). rule_id/sleeve_id are soft FKs (sleeve_rules.id / sleeves.id); sleeve_id is denormalized off rule_id to avoid a join for per-sleeve panel queries, mirroring sleeve_orders' sleeve_id+rule_id pairing. rule_class and mode_at_fire snapshot the rule's AC-20 class derivation and mode AT FIRE TIME so a later rule edit or SHADOW->PAPER->LIVE transition never rewrites history. order_id is a soft FK to sleeve_orders.id (the internal id, NOT client_order_id/alpaca_order_id -- matches sleeve_fills.order_id's precedent), NULL for SHADOW fires and for actions that placed no order (notify/skip/envelope refusal). episode_id groups fires in one latch episode (AC-10 flat-latch / AC-11 churn-brake round-trip grouping) and is free-form TEXT -- format owned by the P2 runner, not presumed here. clamped/clamp_reason record whether envelope.clamp() reduced the attempted sizing (AC-2); clamp_reason is populated only when clamped=1. created_at is row-insert time, distinct from fired_at (the tick's own logical timestamp) -- mirrors sleeve_fills.filled_at/created_at.",
+    "non_unique_indexes": [
+      "idx_sleeve_rule_fires_rule_id (rule_id, fired_at)",
+      "idx_sleeve_rule_fires_sleeve_id (sleeve_id)",
+      "idx_sleeve_rule_fires_order_id (order_id) WHERE order_id IS NOT NULL",
+      "idx_sleeve_rule_fires_episode_id (episode_id) WHERE episode_id IS NOT NULL"
+    ]
+  },
+
+  "no_foreign_key_pragma": "PRAGMA foreign_keys is never set ON anywhere in this codebase (verified). All *_id references above are soft FKs: documented, not DB-enforced."
+}

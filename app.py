@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
 import dotenv as _dotenv_module
@@ -939,6 +939,224 @@ def run_scheduler():
         time.sleep(1)
 
 
+# AC-16 s3-ux live-render finding #1: all 6 named statuses must map to a
+# pairwise visually-distinct status-pill class -- PAUSED_RECONCILIATION in
+# particular must never collapse into the same class as a mundane fresh
+# SHADOW sleeve. Unrecognized statuses fail safe to "standby".
+_SLEEVE_STATUS_BADGE_CLASSES = {
+    "SHADOW": "standby",
+    "PAPER": "armed",
+    "LIVE": "triggered",
+    "BENCHED": "sleeve-benched",
+    "PAUSED_RECONCILIATION": "sleeve-paused",
+    "stale": "sleeve-stale",
+}
+
+
+def _sleeve_status_badge_class(status: str) -> str:
+    return _SLEEVE_STATUS_BADGE_CLASSES.get(status, "standby")
+
+
+def _build_sleeves_panel_context() -> list[dict]:
+    """Assemble per-sleeve panel rows for dashboard() (AC-16): status,
+    capital, ledger cash (vs the static capital_usd -- "cash ledger vs
+    broker truth"; the broker-truth-mismatch signal itself is the existing
+    sleeve.status column, PAUSED_RECONCILIATION already meaning "known
+    mismatch"), and per-rule mode/today-lifetime fire counts/realized P&L.
+    Never raises -- a read failure on one sleeve/rule degrades that row
+    rather than 500ing the whole dashboard (dashboard-truth rule).
+
+    Ledger cash, the sleeve-level realized P&L, and per-rule realized P&L are
+    all derived with ZERO new schema from sleeve_orders/sleeve_fills:
+    sleeves.ledger.reconstruct_from_history (sleeve-wide) for cash + the
+    sleeve's true realized figure, and sleeves.ledger.attribute_realized_fills
+    for the per-rule split -- BUY-side attribution (realized P&L belongs to
+    the entry rule whose lots the sell closed, not the rule that fired the
+    sell), so a defensive rule exiting another rule's position no longer
+    collapses every rule to $0.00 (audit finding #7). Per-rule values sum to
+    the sleeve figure by construction. On fold failure the value is None and
+    the template renders an explicit "n/a" marker -- $0.00 is a value claim,
+    never a degraded state.
+
+    Bench/stale visibility (AC-11/AC-16): per-rule benched comes from
+    sleeves.rules.limits.is_rule_benched (the engine's OWN read API -- bench
+    is keyed by ET trading day in sleeve_runtime, so the flag auto-clears
+    next trading day in lockstep with the engine's auto re-arm) and per-rule
+    stale from the STALE_NO_BARS_KEY runtime flag the tick writes. Both are
+    read-only lookups of engine-computed state -- the panel never reruns the
+    brake. The sleeve pill applies the ratified display precedence
+    (2026-07-09): PAUSED_RECONCILIATION > BENCHED (any rule benched) > stale
+    (EVERY enabled rule stale) > base status -- display-level only, the DB
+    sleeve.status is never rewritten by a badge.
+    """
+    from sleeves import ledger as sleeve_ledger  # noqa: PLC0415
+    from sleeves.rules import limits as sleeve_limits  # noqa: PLC0415
+
+    panel_sleeves: list[dict] = []
+    try:
+        sleeve_rows = database.get_all_sleeves()
+    except Exception:
+        return panel_sleeves
+
+    now_utc = datetime.now(UTC)
+    today_str = datetime.now(_ET).strftime("%Y-%m-%d")
+    for sleeve in sleeve_rows:
+        sleeve_id = sleeve.get("id")
+        capital_usd = sleeve.get("capital_usd") or 0.0
+        try:
+            rule_rows = (
+                database.get_sleeve_rules_for_sleeve(sleeve_id) if sleeve_id is not None else []
+            )
+        except Exception:
+            rule_rows = []
+
+        try:
+            order_history = (
+                database.get_sleeve_order_history(sleeve_id) if sleeve_id is not None else []
+            )
+        except Exception:
+            order_history = []
+
+        try:
+            ledger_state = sleeve_ledger.reconstruct_from_history(capital_usd, order_history)
+            ledger_cash_usd = ledger_state.cash_usd
+            sleeve_realized_pnl_usd = ledger_state.realized_pnl_usd
+        except Exception:
+            ledger_cash_usd = capital_usd
+            sleeve_realized_pnl_usd = None
+
+        try:
+            realized_by_rule = {}
+            for record in sleeve_ledger.attribute_realized_fills(order_history):
+                realized_by_rule[record.opening_rule_id] = (
+                    realized_by_rule.get(record.opening_rule_id, 0.0) + record.realized_delta_usd
+                )
+        except Exception:
+            # None (not {}): the fold FAILED, which must render as "n/a" per
+            # rule -- an empty dict would render every rule as a $0.00 value
+            # claim, the exact audit-#7 bug this replaces.
+            realized_by_rule = None
+
+        rules_panel = []
+        any_rule_benched = False
+        enabled_stale_flags: list[bool] = []
+        for rule in rule_rows:
+            rule_id = rule.get("id")
+            # COUNT accessors, never len(limited rows): the fires accessor's
+            # default limit=100 silently capped "lifetime" (audit #14), and
+            # prefix-comparing the ET day against UTC-stored fired_at
+            # misattributed evening fires (audit #15 -- the day accessor
+            # converts the ET day to its exact UTC window).
+            try:
+                lifetime_fires = (
+                    database.get_sleeve_rule_fire_count(rule_id) if rule_id is not None else 0
+                )
+                today_fires = (
+                    database.get_fire_count_for_rule_on_day(rule_id, today_str)
+                    if rule_id is not None
+                    else 0
+                )
+            except Exception:
+                lifetime_fires = 0
+                today_fires = 0
+
+            rule_realized_pnl = (
+                realized_by_rule.get(rule_id, 0.0) if realized_by_rule is not None else None
+            )
+
+            try:
+                benched = rule_id is not None and sleeve_limits.is_rule_benched(
+                    rule_id, now_utc=now_utc
+                )
+            except Exception:
+                benched = False
+            try:
+                stale = rule_id is not None and (
+                    database.get_sleeve_runtime(rule_id, sleeve_limits.STALE_NO_BARS_KEY) == "1"
+                )
+            except Exception:
+                stale = False
+            if benched:
+                any_rule_benched = True
+            if rule.get("enabled"):
+                enabled_stale_flags.append(stale)
+
+            rules_panel.append(
+                {
+                    "id": rule_id,
+                    "name": rule.get("name", ""),
+                    "mode": rule.get("mode", ""),
+                    "today_fires": today_fires,
+                    "lifetime_fires": lifetime_fires,
+                    "realized_pnl_usd": rule_realized_pnl,
+                    "benched": benched,
+                    "stale": stale,
+                }
+            )
+
+        status = sleeve.get("status", "")
+        badge_class = _sleeve_status_badge_class(status)
+        if status != "PAUSED_RECONCILIATION":
+            if any_rule_benched:
+                badge_class = _SLEEVE_STATUS_BADGE_CLASSES["BENCHED"]
+            elif enabled_stale_flags and all(enabled_stale_flags):
+                badge_class = _SLEEVE_STATUS_BADGE_CLASSES["stale"]
+
+        panel_sleeves.append(
+            {
+                "id": sleeve_id,
+                "name": sleeve.get("name", ""),
+                "status": status,
+                "status_badge_class": badge_class,
+                "capital_usd": sleeve.get("capital_usd"),
+                "ledger_cash_usd": ledger_cash_usd,
+                "realized_pnl_usd": sleeve_realized_pnl_usd,
+                "rules": rules_panel,
+            }
+        )
+    return panel_sleeves
+
+
+def _atlas_cache_health() -> dict:
+    """Read-only cache-row age + availability summary for the Atlas/Front
+    Runner weekly-cached catalog (audit MEDIUM-2). Reads directly from the
+    atlas_cache SQLite DB (advisors/atlas_cache.py's schema, opened read-only)
+    -- never calls the live loader/fetch path from this request handler (the
+    dashboard is never a live-trade-action surface, and the loader's own
+    weekly-cache refresh is triggered elsewhere, never from a Flask route).
+    Never raises -- returns a structural "no cache row yet"-style reason
+    rather than fabricating an error cause.
+    """
+    import sqlite3  # noqa: PLC0415 — stdlib, lazy for locality
+
+    db_path = os.environ.get("ATLAS_CACHE_DB_PATH", "alphabot_atlas_cache.db")
+    collection = "captplanet.strategies"
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.OperationalError:
+        return {"available": False, "age_days": None, "reason": "no_cache_db_yet"}
+    try:
+        row = conn.execute(
+            "SELECT fetched_at FROM atlas_cache WHERE collection = ?", (collection,)
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return {"available": False, "age_days": None, "reason": "no_cache_table_yet"}
+    finally:
+        conn.close()
+
+    if row is None:
+        return {"available": False, "age_days": None, "reason": "no_cache_row_yet"}
+
+    try:
+        fetched_at = datetime.fromisoformat(row[0])
+        if fetched_at.tzinfo is None:
+            fetched_at = fetched_at.replace(tzinfo=ZoneInfo("UTC"))
+        age_days = (datetime.now(ZoneInfo("UTC")) - fetched_at).total_seconds() / 86400.0
+        return {"available": True, "age_days": round(age_days, 1), "reason": None}
+    except (ValueError, TypeError):
+        return {"available": False, "age_days": None, "reason": "unparseable_fetched_at"}
+
+
 # --- 2. Web Dashboard Routes ---
 @app.route("/")
 def dashboard():
@@ -1091,6 +1309,8 @@ def dashboard():
         accounts_map=accounts_map,
         cvar_diagnostic=cvar_diagnostic,
         session_close_display=session_close_display,
+        sleeves=_build_sleeves_panel_context(),
+        atlas_cache_health=_atlas_cache_health(),
     )
 
 
@@ -3713,6 +3933,451 @@ def sell_account():
             "message": "Liquidation initiated.",
             "live_mode": True,
             "executed": True,
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Managed Sleeves (P3): sleeve/rule CRUD, arming ladder, disarm, envelope,
+# condition-replay routes (feature-plans/managed-sleeves.md).
+#
+# These are operator-config writes -- create/arm/disarm a sleeve or rule --
+# NEVER trade actions.  The only code path that ever places a broker order is
+# the engine tick (sleeves.rules.runner, wired into alpha_bot_execution.main());
+# these routes mutate sleeves/sleeve_rules status columns and read
+# sleeve_orders/sleeve_rule_fires, matching the dashboard's prime directive
+# that it is never a live-trade-action surface.  disarm_sleeve below is
+# SYNCHRONOUS and DB-only (reverts sleeve/rule status to SHADOW immediately)
+# -- it deliberately never calls sleeves.alpaca_orders.cancel_order or any
+# other order-capable function, since doing so would trip the pre-existing
+# whole-app.py containment invariant (tests/app/test_dashboard_no_order_path.py,
+# which denylists cancel_order in every route except sell_account).  Actual
+# cancellation of a disarmed sleeve's lingering open broker orders happens on
+# the engine's very next tick (sleeves/tick_orchestrator.py).
+# ---------------------------------------------------------------------------
+
+_ARM_LIVE_PHRASE = "ARM LIVE TRADING"
+_WIDEN_ENVELOPE_PHRASE = "WIDEN ENVELOPE"
+
+
+@app.route("/api/sleeves", methods=["GET"])
+def list_sleeves():
+    """Return every sleeve row (AC-16 panel data source)."""
+    return jsonify({"sleeves": database.get_all_sleeves()})
+
+
+@app.route("/api/sleeves", methods=["POST"])
+def create_sleeve_route():
+    """Create a sleeve (AC-1). Starts SHADOW; capital_usd is fixed at creation."""
+    payload = request.json or {}
+    name = payload.get("name")
+    if not name:
+        return jsonify({"status": "error", "message": "name is required"}), 400
+    capital_usd = payload.get("capital_usd")
+    if capital_usd is None:
+        return jsonify({"status": "error", "message": "capital_usd is required"}), 400
+    try:
+        capital_usd = float(capital_usd)
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "capital_usd must be numeric"}), 400
+
+    import json as _json  # noqa: PLC0415 — stdlib, lazy for locality
+
+    envelope = payload.get("envelope") or {}
+    sleeve_id = database.create_sleeve(name, capital_usd, envelope_json=_json.dumps(envelope))
+    return jsonify({"status": "success", "sleeve": database.get_sleeve(sleeve_id)})
+
+
+@app.route("/api/sleeves/<int:sleeve_id>/rules", methods=["GET"])
+def list_sleeve_rules(sleeve_id):
+    """Return every rule for one sleeve (AC-16 panel data source)."""
+    return jsonify({"rules": database.get_sleeve_rules_for_sleeve(sleeve_id)})
+
+
+@app.route("/api/sleeves/<int:sleeve_id>/rules", methods=["POST"])
+def create_sleeve_rule_route(sleeve_id):
+    """Create a rule for one sleeve (AC-4/AC-6). Always born SHADOW."""
+    if database.get_sleeve(sleeve_id) is None:
+        return jsonify({"status": "error", "message": "sleeve not found"}), 404
+
+    payload = request.json or {}
+
+    from sleeves.rules import schema as sleeve_schema  # noqa: PLC0415
+
+    validation = sleeve_schema.validate_rule_doc(payload)
+    if not validation.valid:
+        return jsonify(
+            {
+                "status": "error",
+                "message": "rule doc failed schema validation",
+                "errors": [{"field": e.field, "message": e.message} for e in validation.errors],
+            }
+        ), 400
+
+    import json as _json  # noqa: PLC0415 — stdlib, lazy for locality
+
+    # AC-6: every rule is BORN in SHADOW regardless of any "mode" the client
+    # sent in the create payload -- arming is a separate ceremony (see the
+    # arm route below).
+    rule_id = database.create_sleeve_rule(
+        sleeve_id, payload.get("name", ""), json_doc=_json.dumps(payload), mode="SHADOW"
+    )
+    return jsonify({"status": "success", "rule": database.get_sleeve_rule(rule_id)})
+
+
+@app.route("/api/sleeves/<int:sleeve_id>/rules/<int:rule_id>/arm", methods=["POST"])
+def arm_sleeve_rule(sleeve_id, rule_id):
+    """SHADOW -> PAPER arming (AC-13): rejected without >=1 recorded SHADOW fire.
+
+    A successful arm ALSO promotes the owning sleeve's status SHADOW -> PAPER
+    (PM design ruling, audit finding #3): sleeve status is the signal the
+    tick's step-0 cleanup, the panel badge, and the Disarm control all key
+    off, so a paper-armed rule inside a SHADOW-status sleeve had its orders
+    cancelled every tick while rendering a calm standby badge with Disarm
+    disabled. Promotion happens ONLY from SHADOW -- a LIVE sleeve is never
+    demoted by arming one more rule, and an arm while PAUSED_RECONCILIATION
+    is refused outright (409) so a money-truth pause can never be cleared as
+    a side effect of arming. disarm_sleeve below is the inverse (sleeve + all
+    rules back to SHADOW).
+
+    Never touches SLEEVE_LIVE_EXECUTION/ALPACA_LIVE_* -- PAPER stays
+    structurally confined to the paper host via sleeves.alpaca_orders.resolve_host.
+    """
+    rule_row = database.get_sleeve_rule(rule_id)
+    if rule_row is None or rule_row.get("sleeve_id") != sleeve_id:
+        return jsonify({"status": "error", "message": "rule not found"}), 404
+
+    payload = request.json or {}
+    if payload.get("target_mode") != "PAPER":
+        return jsonify(
+            {"status": "error", "message": "arm only supports target_mode=PAPER (SHADOW->PAPER)"}
+        ), 400
+
+    sleeve_status = (database.get_sleeve(sleeve_id) or {}).get("status")
+    if sleeve_status == "PAUSED_RECONCILIATION":
+        return jsonify(
+            {
+                "status": "error",
+                "message": "sleeve is PAUSED_RECONCILIATION — resolve the reconciliation "
+                "breach before arming (arming must never clear a money-truth pause)",
+            }
+        ), 409
+
+    # Mode-filtered COUNT, never any() over get_sleeve_rule_fires' limited
+    # page (review gap G8): 100+ newer PAPER fires from a previous armed life
+    # would push every SHADOW fire out of the page and spuriously 400 a
+    # legitimately re-armable rule.
+    has_shadow_fire = database.get_sleeve_rule_fire_count(rule_id, mode_at_fire="SHADOW") > 0
+    if not has_shadow_fire:
+        return jsonify(
+            {
+                "status": "error",
+                "message": "AC-13: no recorded SHADOW evaluation for this rule yet — arm rejected",
+            }
+        ), 400
+
+    database.update_sleeve_rule_mode(rule_id, "PAPER")
+    if sleeve_status == "SHADOW":
+        database.update_sleeve_status(sleeve_id, "PAPER")
+    return jsonify({"status": "success", "rule": database.get_sleeve_rule(rule_id)})
+
+
+@app.route("/api/sleeves/<int:sleeve_id>/arm-live", methods=["POST"])
+def arm_sleeve_live(sleeve_id):
+    """PAPER -> LIVE panic-flow ceremony (AC-14), modeled on sell_account's
+    6-gate chain (app.py, sell_account): confirm id + exact phrase, then
+    live keys + SLEEVE_LIVE_EXECUTION -- impossible by construction without
+    both. Every genuine ceremony attempt (gates 1-4 passed) is audited via
+    Discord + an ERROR log entry regardless of whether gates 5/6 subsequently
+    block the arm.
+    """
+    if database.get_sleeve(sleeve_id) is None:
+        return jsonify({"status": "error", "message": "sleeve not found"}), 404
+
+    payload = request.json or {}
+    confirm_sleeve_id = payload.get("confirm_sleeve_id")
+    confirm_phrase = payload.get("confirm_phrase")
+
+    # Gates 1-4: confirmation validation before any env/credential check.
+    if not confirm_sleeve_id:
+        return jsonify({"status": "error", "message": "confirm_sleeve_id is required"}), 400
+    if confirm_sleeve_id != sleeve_id:
+        return jsonify(
+            {"status": "error", "message": "confirm_sleeve_id does not match sleeve_id"}
+        ), 400
+    if not confirm_phrase:
+        return jsonify({"status": "error", "message": "confirm_phrase is required"}), 400
+    try:
+        phrase_matches = secrets.compare_digest(str(confirm_phrase), _ARM_LIVE_PHRASE)
+    except TypeError:
+        phrase_matches = False
+    if not phrase_matches:
+        return jsonify(
+            {"status": "error", "message": f"confirm_phrase must be exactly {_ARM_LIVE_PHRASE!r}"}
+        ), 400
+
+    env_vars = dotenv_values(ENV_FILE_PATH)
+    ts_et = datetime.now(_ET).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Audit: Discord alert + ERROR log on every genuine ceremony attempt
+    # (gates 1-4 passed) regardless of live-keys/flag outcome below --
+    # mirrors sell_account's "audit always fires" contract.
+    discord_url = env_vars.get("DISCORD_WEBHOOK_URL", "")
+    if discord_url:
+        try:
+            requests.post(
+                discord_url,
+                json={"content": f"SLEEVE LIVE-ARM CEREMONY on sleeve {sleeve_id} at {ts_et} ET"},
+                timeout=5,
+            )
+        except Exception:
+            pass
+    _daemon_log.error("SLEEVE LIVE-ARM CEREMONY attempted on sleeve %s at %s ET", sleeve_id, ts_et)
+
+    live_key = (env_vars.get("ALPACA_LIVE_KEY") or "").strip()
+    live_secret = (env_vars.get("ALPACA_LIVE_SECRET") or "").strip()
+    if not (live_key and live_secret):
+        return jsonify(
+            {
+                "status": "error",
+                "message": "ALPACA_LIVE_KEY/ALPACA_LIVE_SECRET are not both configured "
+                "— LIVE arming is impossible by construction",
+            }
+        ), 400
+
+    sleeve_live_execution = (env_vars.get("SLEEVE_LIVE_EXECUTION", "False") or "False").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+    if not sleeve_live_execution:
+        return jsonify({"status": "error", "message": "SLEEVE_LIVE_EXECUTION is not enabled"}), 400
+
+    database.update_sleeve_status(sleeve_id, "LIVE")
+    return jsonify({"status": "success", "sleeve": database.get_sleeve(sleeve_id)})
+
+
+@app.route("/api/sleeves/<int:sleeve_id>/disarm", methods=["POST"])
+def disarm_sleeve(sleeve_id):
+    """One-click per-sleeve kill switch (AC-12). SYNCHRONOUS, DB-only, and
+    route-local: reverts the sleeve's own status and every one of its rules'
+    mode back to SHADOW immediately -- autonomy stops right away; re-arming
+    requires the arm ceremony again.
+
+    This route deliberately never calls sleeves.alpaca_orders.cancel_order
+    (or any order-capable function) -- doing so would trip the pre-existing
+    whole-app.py containment invariant (tests/app/test_dashboard_no_order_path.py,
+    which denylists cancel_order in every route except sell_account).
+    Cancelling a disarmed sleeve's lingering open (non-terminal) broker
+    orders is the ENGINE's job instead: sleeves/tick_orchestrator.py cancels
+    any non-terminal sleeve_orders row it finds for a SHADOW-status sleeve on
+    the very next tick (see tests/sleeves/test_tick_orchestrator.py) --
+    positions and broker-side stops are never touched either way.
+    """
+    if database.get_sleeve(sleeve_id) is None:
+        return jsonify({"status": "error", "message": "sleeve not found"}), 404
+
+    database.update_sleeve_status(sleeve_id, "SHADOW")
+    for rule in database.get_sleeve_rules_for_sleeve(sleeve_id):
+        database.update_sleeve_rule_mode(rule["id"], "SHADOW")
+
+    return jsonify({"status": "success", "sleeve": database.get_sleeve(sleeve_id)})
+
+
+# Reuses database.get_daily_turnover_usd's / sleeves/tick_orchestrator.py's
+# exact terminal-status denylist so "is this order done, one way or another"
+# stays consistent with the rest of the codebase's Alpaca-status
+# classification. "RESERVED" (the pre-ack sleeve_orders default, broker
+# hasn't responded yet) is deliberately NOT in this tuple, so a single
+# "status not in this tuple" check covers both an accepted-but-unfilled
+# order and a still-RESERVED pre-ack row with no separate branch needed.
+_DELETE_TERMINAL_ORDER_STATUSES = (
+    "filled",
+    "canceled",
+    "expired",
+    "replaced",
+    "done_for_day",
+    "rejected",
+)
+
+
+@app.route("/api/sleeves/<int:sleeve_id>/delete", methods=["POST"])
+def delete_sleeve_route(sleeve_id):
+    """Delete a sleeve (AC-16 delete control). Refuses unless flat -- a
+    sleeve holding any nonzero position OR any non-terminal (still-open)
+    order is never deleted (delete never liquidates, plan Edge Cases:
+    "refuse unless flat"). The order-status check exists because a position
+    is only ever created by ledger.apply_fill() -- an order the broker has
+    accepted but not yet filled, or a still-RESERVED pre-ack row, produces
+    zero positions and would otherwise read as falsely flat (s3-review BLOCK
+    finding against the initial 821b385 GREEN) even though it's a live,
+    unrecoverable broker exposure: once the sleeve row is gone,
+    database.get_all_sleeves() never includes it again, so nothing would
+    ever poll/cancel/reconcile that order for the rest of the process's
+    life. Ledger reconstruction mirrors _build_sleeves_panel_context's own
+    zero-new-schema mechanism.
+    """
+    sleeve_row = database.get_sleeve(sleeve_id)
+    if sleeve_row is None:
+        return jsonify({"status": "error", "message": "sleeve not found"}), 404
+
+    from sleeves import ledger as sleeve_ledger  # noqa: PLC0415
+
+    try:
+        order_history = database.get_sleeve_order_history(sleeve_id)
+        ledger_state = sleeve_ledger.reconstruct_from_history(
+            sleeve_row.get("capital_usd") or 0.0, order_history
+        )
+        has_open_position = any(pos.qty != 0 for pos in ledger_state.positions.values())
+        has_non_terminal_order = any(
+            order.get("status") not in _DELETE_TERMINAL_ORDER_STATUSES for order in order_history
+        )
+    except Exception:
+        # Fail closed: an unreconstructable ledger/order-history read can't
+        # prove the sleeve is flat -- refuse the delete rather than risk
+        # losing a real position's or a live order's only record.
+        has_open_position = True
+        has_non_terminal_order = True
+
+    if has_open_position or has_non_terminal_order:
+        return jsonify(
+            {
+                "status": "error",
+                "message": "sleeve holds an open position or a still-open order — "
+                "delete refused (delete never liquidates)",
+            }
+        ), 409
+
+    database.delete_sleeve(sleeve_id)
+    return jsonify({"status": "success"})
+
+
+@app.route("/api/sleeves/<int:sleeve_id>/envelope", methods=["POST"])
+def update_sleeve_envelope_route(sleeve_id):
+    """Envelope widen/narrow (AC-3): narrowing applies immediately; widening
+    requires the same confirm-id + confirm-phrase ceremony shape as arm-live.
+    """
+    sleeve_row = database.get_sleeve(sleeve_id)
+    if sleeve_row is None:
+        return jsonify({"status": "error", "message": "sleeve not found"}), 404
+
+    payload = request.json or {}
+    new_envelope = payload.get("envelope")
+    if not isinstance(new_envelope, dict):
+        return jsonify({"status": "error", "message": "envelope (object) is required"}), 400
+
+    import json as _json  # noqa: PLC0415 — stdlib, lazy for locality
+
+    import sleeves.envelope  # noqa: PLC0415
+
+    old_envelope = _json.loads(sleeve_row.get("envelope_json") or "{}")
+    widened = sleeves.envelope.is_envelope_widened(old_envelope, new_envelope)
+
+    if widened:
+        confirm_sleeve_id = payload.get("confirm_sleeve_id")
+        confirm_phrase = payload.get("confirm_phrase")
+        if not confirm_sleeve_id or confirm_sleeve_id != sleeve_id:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": "AC-3: widening the envelope requires confirm_sleeve_id to match",
+                }
+            ), 400
+        if not confirm_phrase:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": "AC-3: widening the envelope requires confirm_phrase",
+                }
+            ), 400
+        try:
+            phrase_matches = secrets.compare_digest(str(confirm_phrase), _WIDEN_ENVELOPE_PHRASE)
+        except TypeError:
+            phrase_matches = False
+        if not phrase_matches:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"confirm_phrase must be exactly {_WIDEN_ENVELOPE_PHRASE!r}",
+                }
+            ), 400
+
+    database.update_sleeve_envelope(sleeve_id, _json.dumps(new_envelope))
+    return jsonify({"status": "success", "sleeve": database.get_sleeve(sleeve_id)})
+
+
+@app.route("/api/sleeves/<int:sleeve_id>/rules/<int:rule_id>/replay", methods=["GET"])
+def replay_sleeve_rule(sleeve_id, rule_id):
+    """Condition-replay diagnostic (AC-18) — NEVER an arming input, NEVER a
+    P&L claim (fill-simulating backtest is explicitly out of scope). Runs the
+    rule's OWN condition tree through the real sleeves.rules.conditions/senses
+    modules -- the same engine a live tick uses -- over the trailing N daily
+    bars, returning the dates it WOULD have fired plus the sensed values at
+    each.
+
+    P3 ships no historical daily-bar source of its own (out of this route's
+    committed scope — see feature-plans/managed-sleeves.md); with no cached
+    closes available, every indicator sense correctly reports
+    insufficient_history (senses.py's own fail-safe contract), so the
+    response is always an honest empty result rather than a fabricated fire.
+    """
+    rule_row = database.get_sleeve_rule(rule_id)
+    if rule_row is None or rule_row.get("sleeve_id") != sleeve_id:
+        return jsonify({"status": "error", "message": "rule not found"}), 404
+
+    days_raw = request.args.get("days", "30")
+    try:
+        days = int(days_raw)
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "days must be an integer"}), 400
+    if not (1 <= days <= 60):
+        return jsonify({"status": "error", "message": "days must satisfy 1 <= days <= 60"}), 400
+
+    import json as _json  # noqa: PLC0415 — stdlib, lazy for locality
+    from datetime import timedelta  # noqa: PLC0415 — stdlib, lazy for locality
+
+    from sleeves.rules import conditions as sleeve_conditions  # noqa: PLC0415
+    from sleeves.rules import senses as sleeve_senses  # noqa: PLC0415
+    from sleeves.rules.runner import _collect_sense_keys  # noqa: PLC0415
+
+    try:
+        doc = _json.loads(rule_row.get("json_doc") or "{}")
+    except (TypeError, ValueError):
+        doc = {}
+
+    condition_tree = doc.get("if")
+    would_have_fired: list[dict] = []
+
+    if isinstance(condition_tree, dict) and condition_tree.get("op"):
+        sense_keys = _collect_sense_keys(condition_tree)
+        today_et = datetime.now(_ET).date()
+        for offset in range(days, 0, -1):
+            as_of_date = today_et - timedelta(days=offset)
+            now_et = datetime(as_of_date.year, as_of_date.month, as_of_date.day, 16, 0, tzinfo=_ET)
+            sense_ctx = sleeve_senses.SenseContext(
+                now_et=now_et,
+                sleeve_row={},
+                closes=[],  # no historical daily-bar source wired in P3 — see docstring
+                fred_cache={},
+                as_of=as_of_date,
+            )
+            sensed = {key: sleeve_senses.resolve_sense(key, ctx=sense_ctx) for key in sense_keys}
+            eval_result = sleeve_conditions.evaluate_condition(condition_tree, sensed)
+            if eval_result.fireable:
+                would_have_fired.append(
+                    {
+                        "date": as_of_date.isoformat(),
+                        "sensed": {k: v.value for k, v in sensed.items()},
+                    }
+                )
+
+    return jsonify(
+        {
+            "status": "success",
+            "label": "condition_replay_diagnostic",
+            "rule_id": rule_id,
+            "days": days,
+            "would_have_fired": would_have_fired,
         }
     )
 

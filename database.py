@@ -10,10 +10,15 @@ import sqlite3
 import sys
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo
 
+# Eastern (XNYS) calendar zone for trading-day <-> stored-UTC conversions
+# (see get_fire_count_for_rule_on_day).
 import numpy as np
+
+_ET_ZONE = ZoneInfo("America/New_York")
 
 
 def _finite_or_none(x):
@@ -1743,6 +1748,8 @@ _MIGRATION_FILES = [
     "032_prism_audit_log.sql",
     "033_candidate_alert_state.sql",
     "034_frontrunner_proposals.sql",
+    "035_sleeves.sql",
+    "036_sleeve_rule_fires.sql",
 ]
 
 
@@ -3570,6 +3577,836 @@ def prune_old_triggers(retention_days: int) -> int:
     except Exception as exc:
         logging.error("prune_old_triggers failed: %s", exc)
     return deleted_total
+
+
+# --- Managed Sleeves P1: sleeve infrastructure + order layer (migration 035) ---
+# All read paths below use get_ro_connection() (arch constraint 5); all writes use
+# get_connection(). Every query is parameterized (? placeholders) -- no f-string
+# SQL interpolation of caller-supplied values anywhere in this section.
+
+_SLEEVE_COLUMNS = [
+    "id",
+    "name",
+    "capital_usd",
+    "status",
+    "envelope_json",
+    "created_at",
+    "updated_at",
+]
+_SLEEVE_RULE_COLUMNS = [
+    "id",
+    "sleeve_id",
+    "name",
+    "json_doc",
+    "mode",
+    "enabled",
+    "created_at",
+    "updated_at",
+]
+_SLEEVE_ORDER_COLUMNS = [
+    "id",
+    "client_order_id",
+    "alpaca_order_id",
+    "sleeve_id",
+    "rule_id",
+    "symbol",
+    "side",
+    "qty",
+    "reserved_price",
+    "order_class",
+    "status",
+    "submitted_at",
+    "raw_json",
+    "updated_at",
+]
+_SLEEVE_FILL_COLUMNS = [
+    "id",
+    "order_id",
+    "broker_fill_id",
+    "fill_price",
+    "filled_qty",
+    "filled_at",
+    "created_at",
+]
+_SLEEVE_RULE_FIRE_COLUMNS = [
+    "id",
+    "rule_id",
+    "sleeve_id",
+    "fired_at",
+    "action",
+    "rule_class",
+    "mode_at_fire",
+    "sensed_snapshot_json",
+    "outcome_json",
+    "clamped",
+    "clamp_reason",
+    "episode_id",
+    "order_id",
+    "created_at",
+]
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def create_sleeve(name: str, capital_usd: float, envelope_json: str = "{}") -> int:
+    """Insert one sleeve row (starts in SHADOW status) and return its new id.
+
+    capital_usd is the fixed-dollar allocation set once at creation (AC-1);
+    envelope_json is the caller-serialized hard-box JSON (ticker allowlist,
+    per-position/per-order/turnover caps, long-only/no-margin flags) -- schema
+    validation happens at the application layer, not here.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO sleeves (name, capital_usd, status, envelope_json) "
+            "VALUES (?, ?, 'SHADOW', ?)",
+            (name, capital_usd, envelope_json),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def get_sleeve(sleeve_id: int) -> "dict | None":
+    """Return one sleeve row as a dict, or None when absent."""
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT " + ", ".join(_SLEEVE_COLUMNS) + " FROM sleeves WHERE id = ?",
+            (sleeve_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(zip(_SLEEVE_COLUMNS, row)) if row else None
+
+
+def get_sleeve_by_name(name: str) -> "dict | None":
+    """Return one sleeve row by its unique name, or None when absent."""
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT " + ", ".join(_SLEEVE_COLUMNS) + " FROM sleeves WHERE name = ?",
+            (name,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(zip(_SLEEVE_COLUMNS, row)) if row else None
+
+
+def get_all_sleeves() -> "list[dict]":
+    """Return all sleeve rows ordered by id ascending."""
+    conn = get_ro_connection()
+    try:
+        rows = conn.execute(
+            "SELECT " + ", ".join(_SLEEVE_COLUMNS) + " FROM sleeves ORDER BY id ASC"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_SLEEVE_COLUMNS, row)) for row in rows]
+
+
+def update_sleeve_status(sleeve_id: int, status: str) -> None:
+    """Update one sleeve's status column and stamp updated_at to now UTC."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE sleeves SET status = ?, updated_at = ? WHERE id = ?",
+            (status, _utcnow_iso(), sleeve_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_sleeve_envelope(sleeve_id: int, envelope_json: str) -> None:
+    """Replace one sleeve's envelope_json and stamp updated_at to now UTC.
+
+    Widening vs. narrowing the envelope is an application-layer ceremony
+    decision (AC-3) -- this accessor performs the write unconditionally.
+    """
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE sleeves SET envelope_json = ?, updated_at = ? WHERE id = ?",
+            (envelope_json, _utcnow_iso(), sleeve_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_sleeve(sleeve_id: int) -> None:
+    """Delete one sleeve row by id (AC-16 delete control).
+
+    Refuse-unless-flat gating (open-position check via sleeves.ledger) is an
+    application-layer decision (app.py) -- this accessor performs the row
+    delete unconditionally. Soft-FK rows in sleeve_rules/sleeve_orders/
+    sleeve_fills/sleeve_runtime/sleeve_rule_fires referencing this sleeve_id
+    are left in place (no PRAGMA foreign_keys=ON anywhere in this schema --
+    matches every other cross-table reference's soft-FK convention); they
+    become orphaned history, never queried without a live sleeve_id match.
+    """
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM sleeves WHERE id = ?", (sleeve_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# --- sleeve_rules: schema-ready for the P2 rule engine ---
+# Not written or read by any P1 code path; provisioned now so sleeve_orders.rule_id
+# and sleeve_runtime.rule_id have a real FK target and P2 can build directly on it.
+
+
+def create_sleeve_rule(
+    sleeve_id: int,
+    name: str,
+    json_doc: str = "{}",
+    mode: str = "SHADOW",
+    enabled: bool = True,
+) -> int:
+    """Insert one sleeve_rules row and return its new id."""
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO sleeve_rules (sleeve_id, name, json_doc, mode, enabled) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (sleeve_id, name, json_doc, mode, 1 if enabled else 0),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def get_sleeve_rule(rule_id: int) -> "dict | None":
+    """Return one sleeve_rules row as a dict, or None when absent."""
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT " + ", ".join(_SLEEVE_RULE_COLUMNS) + " FROM sleeve_rules WHERE id = ?",
+            (rule_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(zip(_SLEEVE_RULE_COLUMNS, row)) if row else None
+
+
+def get_sleeve_rules_for_sleeve(sleeve_id: int) -> "list[dict]":
+    """Return all sleeve_rules rows for one sleeve, ordered by id ascending."""
+    conn = get_ro_connection()
+    try:
+        rows = conn.execute(
+            "SELECT "
+            + ", ".join(_SLEEVE_RULE_COLUMNS)
+            + " FROM sleeve_rules WHERE sleeve_id = ? ORDER BY id ASC",
+            (sleeve_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_SLEEVE_RULE_COLUMNS, row)) for row in rows]
+
+
+def update_sleeve_rule_mode(rule_id: int, mode: str) -> None:
+    """Update one sleeve_rules row's mode column and stamp updated_at to now UTC.
+
+    Mode-transition ceremony gating (AC-13 shadow-fire gate, AC-14 panic-flow
+    ceremony, AC-12 disarm revert-to-SHADOW) is an application-layer decision
+    -- this accessor performs the write unconditionally, mirroring
+    update_sleeve_status's contract.
+    """
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE sleeve_rules SET mode = ?, updated_at = ? WHERE id = ?",
+            (mode, _utcnow_iso(), rule_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# --- sleeve_orders / sleeve_fills: the P1 order layer ---
+#
+# client_order_id is the durable correlation key across the whole order
+# lifecycle (minted by the caller BEFORE the broker call, so a row exists at
+# reserve-time for crash recovery). alpaca_order_id is populated later, once
+# the broker acks, via attach_alpaca_order_id(). Both a client-id lookup and
+# an alpaca-id lookup are exposed since callers correlate from either side
+# (the runner mints client_order_id; broker poll/webhook responses key off
+# alpaca_order_id).
+
+
+def insert_sleeve_order(
+    client_order_id: str,
+    sleeve_id: int,
+    symbol: str,
+    side: str,
+    qty: float,
+    order_class: str = "simple",
+    status: str = "RESERVED",
+    rule_id: "int | None" = None,
+    reserved_price: "float | None" = None,
+    alpaca_order_id: "str | None" = None,
+    raw_json: str = "{}",
+) -> int:
+    """Insert one sleeve_orders row, normally at reserve-time (pre-broker-call).
+
+    client_order_id is UNIQUE (schema-enforced) -- re-inserting the same
+    client_order_id raises sqlite3.IntegrityError rather than silently
+    duplicating the row. alpaca_order_id is optional here (defaults to NULL)
+    because the whole point of client_order_id is supporting a row that
+    exists BEFORE the broker has acked and assigned one; pass it only if
+    the caller already has it (e.g. a synchronous submit path that got an
+    immediate broker response). Otherwise call attach_alpaca_order_id() once
+    the broker ack arrives.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO sleeve_orders "
+            "(client_order_id, alpaca_order_id, sleeve_id, rule_id, symbol, side, qty, "
+            "reserved_price, order_class, status, raw_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                client_order_id,
+                alpaca_order_id,
+                sleeve_id,
+                rule_id,
+                symbol,
+                side,
+                qty,
+                reserved_price,
+                order_class,
+                status,
+                raw_json,
+            ),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def attach_alpaca_order_id(
+    client_order_id: str,
+    alpaca_order_id: str,
+    status: "str | None" = None,
+    raw_json: "str | None" = None,
+) -> None:
+    """Populate alpaca_order_id on an existing RESERVED row once the broker acks.
+
+    Looks up by client_order_id (the pre-ack correlation key). Optionally also
+    updates status/raw_json in the same write. Stamps updated_at to now UTC.
+    No-op (no row touched) if client_order_id is unknown.
+    """
+    conn = get_connection()
+    try:
+        set_clauses = ["alpaca_order_id = ?", "updated_at = ?"]
+        params: list = [alpaca_order_id, _utcnow_iso()]
+        if status is not None:
+            set_clauses.append("status = ?")
+            params.append(status)
+        if raw_json is not None:
+            set_clauses.append("raw_json = ?")
+            params.append(raw_json)
+        params.append(client_order_id)
+        conn.execute(
+            f"UPDATE sleeve_orders SET {', '.join(set_clauses)} WHERE client_order_id = ?",
+            params,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_sleeve_order_status(
+    client_order_id: str, status: str, raw_json: "str | None" = None
+) -> None:
+    """Update one sleeve_orders row's status (and optionally raw_json) by client_order_id.
+
+    client_order_id (not alpaca_order_id) is the lookup key because it is
+    populated for the entire lifecycle, including the pre-ack RESERVED window
+    where alpaca_order_id is still NULL. Stamps updated_at to now UTC. No-op
+    (no row touched) if client_order_id is unknown -- callers should check
+    reconciliation state separately rather than relying on this raising for
+    an unknown order.
+    """
+    conn = get_connection()
+    try:
+        if raw_json is not None:
+            conn.execute(
+                "UPDATE sleeve_orders SET status = ?, raw_json = ?, updated_at = ? "
+                "WHERE client_order_id = ?",
+                (status, raw_json, _utcnow_iso(), client_order_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE sleeve_orders SET status = ?, updated_at = ? WHERE client_order_id = ?",
+                (status, _utcnow_iso(), client_order_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_sleeve_order_by_client_id(client_order_id: str) -> "dict | None":
+    """Return one sleeve_orders row by our own pre-broker correlation key, or None when absent."""
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT "
+            + ", ".join(_SLEEVE_ORDER_COLUMNS)
+            + " FROM sleeve_orders WHERE client_order_id = ?",
+            (client_order_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(zip(_SLEEVE_ORDER_COLUMNS, row)) if row else None
+
+
+def get_sleeve_order_by_alpaca_id(alpaca_order_id: str) -> "dict | None":
+    """Return one sleeve_orders row by broker order id, or None when absent (incl. pre-ack rows)."""
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT "
+            + ", ".join(_SLEEVE_ORDER_COLUMNS)
+            + " FROM sleeve_orders WHERE alpaca_order_id = ?",
+            (alpaca_order_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(zip(_SLEEVE_ORDER_COLUMNS, row)) if row else None
+
+
+def get_sleeve_orders(
+    sleeve_id: "int | None" = None,
+    rule_id: "int | None" = None,
+    status: "str | None" = None,
+    limit: int = 100,
+) -> "list[dict]":
+    """Read sleeve_orders rows with optional filters, newest-submitted first.
+
+    limit is server-side clamped to 500 max (get_triggers precedent, database.py).
+    """
+    limit = min(limit, 500)
+    conn = get_ro_connection()
+    clauses: list[str] = []
+    params: list = []
+    if sleeve_id is not None:
+        clauses.append("sleeve_id = ?")
+        params.append(sleeve_id)
+    if rule_id is not None:
+        clauses.append("rule_id = ?")
+        params.append(rule_id)
+    if status is not None:
+        clauses.append("status = ?")
+        params.append(status)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    try:
+        rows = conn.execute(
+            "SELECT " + ", ".join(_SLEEVE_ORDER_COLUMNS) + f" FROM sleeve_orders {where} "
+            "ORDER BY submitted_at DESC LIMIT ?",
+            params + [limit],
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_SLEEVE_ORDER_COLUMNS, row)) for row in rows]
+
+
+def get_sleeve_order_history(sleeve_id: int) -> "list[dict]":
+    """Return every sleeve_orders row for a sleeve, oldest-submitted first, each
+    augmented with a "fills" key holding its sleeve_fills rows (oldest-filled first).
+
+    This is raw event data only -- no cost-basis/P&L/reservation arithmetic is
+    performed here. It exists so sleeves.ledger (which owns that arithmetic in
+    tested pure functions -- reserve/release/apply_fill) can fold over a
+    sleeve's full order+fill history to reconstruct current LedgerState,
+    without database.py re-deriving conservation-critical math independently
+    in SQL. Deliberately not sliced by date/limit -- full replay needs the
+    complete history.
+    """
+    conn = get_ro_connection()
+    try:
+        order_rows = conn.execute(
+            "SELECT "
+            + ", ".join(_SLEEVE_ORDER_COLUMNS)
+            + " FROM sleeve_orders WHERE sleeve_id = ? ORDER BY submitted_at ASC",
+            (sleeve_id,),
+        ).fetchall()
+        orders = [dict(zip(_SLEEVE_ORDER_COLUMNS, row)) for row in order_rows]
+        for order in orders:
+            fill_rows = conn.execute(
+                "SELECT "
+                + ", ".join(_SLEEVE_FILL_COLUMNS)
+                + " FROM sleeve_fills WHERE order_id = ? ORDER BY filled_at ASC, id ASC",
+                (order["id"],),
+            ).fetchall()
+            order["fills"] = [dict(zip(_SLEEVE_FILL_COLUMNS, row)) for row in fill_rows]
+    finally:
+        conn.close()
+    return orders
+
+
+def get_daily_turnover_usd(sleeve_id: int, trading_day: str) -> float:
+    """Return one sleeve's total dollar turnover for trading_day ('YYYY-MM-DD').
+
+    Turnover = already-executed notional (SUM(filled_qty * fill_price) for
+    fills on trading_day) + still-reserved notional for orders submitted on
+    trading_day that have not reached a terminal status (their UNFILLED
+    remainder only: (qty - filled_so_far) * reserved_price, so a partially
+    filled order's executed portion is never double-counted against its
+    remaining reservation). Orders with reserved_price IS NULL (e.g. a sell,
+    which reserves shares rather than cash -- envelope.py/sizing.py concern,
+    not this sleeve's cash conservation) contribute 0 to the reserved term.
+
+    This is a plain SUM/JOIN aggregation, not P&L bookkeeping -- it does not
+    duplicate sleeves.ledger's cost-basis/realized-P&L arithmetic.
+
+    Terminal-status classification (denylist -- everything NOT in this set is
+    treated as still-reserving) is from Alpaca's documented order status enum
+    (tests/sleeves/_alpaca_fixtures.py ALPACA_ORDER_STATUS_VALUES) plus this
+    schema's own pre-ack 'RESERVED' value. Deliberately fails CLOSED: an
+    unrecognized/future status is treated as still-reserving (over-counts
+    turnover, the conservative direction for a risk cap) rather than silently
+    excluded (which would under-count and let a sleeve exceed its turnover
+    budget). 'stopped' and 'suspended' are intentionally NOT terminal here
+    (corrected per sleeve-integration-impl, who owns Alpaca status semantics):
+    'stopped' means a trade is GUARANTEED but has not yet occurred (still
+    pending execution -- classifying it terminal would under-count real
+    turnover about to happen, the unsafe direction); 'suspended' means "not
+    eligible for trading" with no guarantee it can't later resume, so the
+    fail-closed default (still-open, worst case over-counts) applies to it too.
+    """
+    _TERMINAL_STATUSES = (
+        "filled",
+        "canceled",
+        "expired",
+        "replaced",
+        "done_for_day",
+        "rejected",
+    )
+    conn = get_ro_connection()
+    try:
+        executed_row = conn.execute(
+            "SELECT COALESCE(SUM(sf.filled_qty * sf.fill_price), 0.0) "
+            "FROM sleeve_fills sf JOIN sleeve_orders so ON sf.order_id = so.id "
+            "WHERE so.sleeve_id = ? AND date(sf.filled_at) = ?",
+            (sleeve_id, trading_day),
+        ).fetchone()
+        executed_usd = float(executed_row[0])
+
+        placeholders = ",".join("?" * len(_TERMINAL_STATUSES))
+        reserved_row = conn.execute(
+            "SELECT COALESCE(SUM("
+            "  (so.qty - COALESCE("
+            "    (SELECT SUM(sf.filled_qty) FROM sleeve_fills sf WHERE sf.order_id = so.id), 0.0"
+            "  )) * so.reserved_price"
+            "), 0.0) "
+            "FROM sleeve_orders so "
+            "WHERE so.sleeve_id = ? AND date(so.submitted_at) = ? "
+            f"AND so.status NOT IN ({placeholders}) "
+            "AND so.reserved_price IS NOT NULL",
+            (sleeve_id, trading_day, *_TERMINAL_STATUSES),
+        ).fetchone()
+        reserved_remaining_usd = float(reserved_row[0])
+    finally:
+        conn.close()
+    return executed_usd + reserved_remaining_usd
+
+
+def insert_sleeve_fill(
+    order_id: int,
+    fill_price: float,
+    filled_qty: float,
+    filled_at: str,
+    broker_fill_id: "str | None" = None,
+) -> int:
+    """Insert one sleeve_fills row against an existing sleeve_orders.id and return its new id.
+
+    order_id is the INTERNAL sleeve_orders.id, not client_order_id/alpaca_order_id --
+    callers resolve the internal id via get_sleeve_order_by_client_id() or
+    get_sleeve_order_by_alpaca_id() first.
+
+    broker_fill_id (the Alpaca Account Activities `id` for this discrete fill
+    event) is UNIQUE when present (schema-enforced) -- re-inserting the same
+    broker_fill_id raises sqlite3.IntegrityError, which callers polling
+    overlapping activity windows should catch/ignore as "already recorded".
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO sleeve_fills (order_id, broker_fill_id, fill_price, filled_qty, filled_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (order_id, broker_fill_id, fill_price, filled_qty, filled_at),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def get_fills_for_order(order_id: int) -> "list[dict]":
+    """Return all sleeve_fills rows for one sleeve_orders.id, ordered by id ascending."""
+    conn = get_ro_connection()
+    try:
+        rows = conn.execute(
+            "SELECT "
+            + ", ".join(_SLEEVE_FILL_COLUMNS)
+            + " FROM sleeve_fills WHERE order_id = ? ORDER BY id ASC",
+            (order_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_SLEEVE_FILL_COLUMNS, row)) for row in rows]
+
+
+# --- sleeve_runtime: durable pacing/latch/bench state for the P2 rule engine ---
+# Schema-ready now (P1); not read or written by any P1 code path. The engine
+# is a fresh subprocess per minute, so P2's runner reads/writes this table on
+# every tick rather than holding state in memory.
+
+
+def get_sleeve_runtime(rule_id: int, key: str) -> "str | None":
+    """Return the stored value for (rule_id, key), or None when absent."""
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT value FROM sleeve_runtime WHERE rule_id = ? AND key = ?",
+            (rule_id, key),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else None
+
+
+def set_sleeve_runtime(rule_id: int, key: str, value: str) -> None:
+    """Upsert one sleeve_runtime row for (rule_id, key); stamps updated_at to now UTC."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO sleeve_runtime (rule_id, key, value, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            (rule_id, key, value, _utcnow_iso()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_all_sleeve_runtime_for_rule(rule_id: int) -> "dict[str, str]":
+    """Return all sleeve_runtime key/value pairs for one rule as a dict."""
+    conn = get_ro_connection()
+    try:
+        rows = conn.execute(
+            "SELECT key, value FROM sleeve_runtime WHERE rule_id = ?", (rule_id,)
+        ).fetchall()
+    finally:
+        conn.close()
+    return {k: v for k, v in rows}
+
+
+def delete_sleeve_runtime(rule_id: int, key: str) -> None:
+    """Delete one sleeve_runtime row for (rule_id, key). Idempotent -- safe when absent."""
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM sleeve_runtime WHERE rule_id = ? AND key = ?", (rule_id, key))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# --- sleeve_rule_fires: P2 rule engine fire log (migration 036) ---
+# One row per tick evaluation that fired (`when`/`if` matched, `then` attempted).
+# SHADOW rules record the fire + the would-have-ordered sizing and execute
+# nothing (AC-6); PAPER/LIVE fires additionally carry order_id once an order is
+# placed. Durable source for per-rule/per-sleeve attribution (AC-16, AC-19) and
+# an independent (ground-truth) fire count for the dashboard -- limits.py's own
+# pacing bookkeeping (cooldown/max_fires_per_day/episode latch/churn-brake
+# state) lives entirely in sleeve_runtime (P1's get/set_sleeve_runtime), not
+# on this table.
+
+
+def insert_sleeve_rule_fire(
+    rule_id: int,
+    sleeve_id: int,
+    action: str,
+    rule_class: str,
+    mode_at_fire: str,
+    sensed_snapshot_json: str = "{}",
+    outcome_json: str = "{}",
+    clamped: bool = False,
+    clamp_reason: "str | None" = None,
+    episode_id: "str | None" = None,
+    order_id: "int | None" = None,
+    fired_at: "str | None" = None,
+) -> int:
+    """Insert one sleeve_rule_fires row and return its new id.
+
+    rule_class ('DEFENSIVE'|'ENTRY') and mode_at_fire ('SHADOW'|'PAPER'|'LIVE')
+    are snapshots taken AT THIS TICK -- pass the caller's current derivation/
+    mode explicitly rather than re-deriving them later, so a subsequent rule
+    edit or SHADOW->PAPER->LIVE mode change never rewrites history. order_id
+    is the INTERNAL sleeve_orders.id (not client_order_id/alpaca_order_id,
+    matching sleeve_fills.order_id's precedent); leave it None for SHADOW
+    fires and for fires whose action placed no order (notify, skip, envelope
+    refusal). fired_at defaults to the SQL insert-time (schema DEFAULT) when
+    omitted; pass it explicitly to record the tick's own logical timestamp
+    instead of the moment this row happened to be written.
+    """
+    conn = get_connection()
+    try:
+        columns = [
+            "rule_id",
+            "sleeve_id",
+            "action",
+            "rule_class",
+            "mode_at_fire",
+            "sensed_snapshot_json",
+            "outcome_json",
+            "clamped",
+            "clamp_reason",
+            "episode_id",
+            "order_id",
+        ]
+        values: list = [
+            rule_id,
+            sleeve_id,
+            action,
+            rule_class,
+            mode_at_fire,
+            sensed_snapshot_json,
+            outcome_json,
+            1 if clamped else 0,
+            clamp_reason,
+            episode_id,
+            order_id,
+        ]
+        if fired_at is not None:
+            columns.append("fired_at")
+            values.append(fired_at)
+        placeholders = ", ".join("?" * len(values))
+        cursor = conn.execute(
+            f"INSERT INTO sleeve_rule_fires ({', '.join(columns)}) VALUES ({placeholders})",
+            values,
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def get_sleeve_rule_fire(fire_id: int) -> "dict | None":
+    """Return one sleeve_rule_fires row by its internal id, or None when absent."""
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT "
+            + ", ".join(_SLEEVE_RULE_FIRE_COLUMNS)
+            + " FROM sleeve_rule_fires WHERE id = ?",
+            (fire_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(zip(_SLEEVE_RULE_FIRE_COLUMNS, row)) if row else None
+
+
+def get_sleeve_rule_fires(
+    rule_id: "int | None" = None,
+    sleeve_id: "int | None" = None,
+    limit: int = 100,
+) -> "list[dict]":
+    """Read sleeve_rule_fires rows with optional filters, newest-fired first.
+
+    limit is server-side clamped to 500 max (get_sleeve_orders precedent).
+    """
+    limit = min(limit, 500)
+    conn = get_ro_connection()
+    clauses: list[str] = []
+    params: list = []
+    if rule_id is not None:
+        clauses.append("rule_id = ?")
+        params.append(rule_id)
+    if sleeve_id is not None:
+        clauses.append("sleeve_id = ?")
+        params.append(sleeve_id)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    try:
+        rows = conn.execute(
+            "SELECT " + ", ".join(_SLEEVE_RULE_FIRE_COLUMNS) + f" FROM sleeve_rule_fires {where} "
+            "ORDER BY fired_at DESC, id DESC LIMIT ?",
+            params + [limit],
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_SLEEVE_RULE_FIRE_COLUMNS, row)) for row in rows]
+
+
+def get_sleeve_rule_fire_count(rule_id: int, mode_at_fire: "str | None" = None) -> int:
+    """Ground-truth COUNT(*) of one rule's lifetime sleeve_rule_fires rows,
+    optionally filtered to one mode_at_fire ('SHADOW'|'PAPER'|'LIVE') -- the
+    panel/digest "lifetime" figure and the AC-13 arm gate's shadow-evidence
+    check. Exists because rendering len(get_sleeve_rule_fires(...)) silently
+    caps the figure at that accessor's default limit=100 (audit finding #14),
+    and any()-ing over that same limited page let 100+ newer PAPER fires push
+    every SHADOW fire out of the arm gate's view (review gap G8); a count or
+    existence check must never be derived from a limited row fetch.
+    """
+    clauses = ["rule_id = ?"]
+    params: list = [rule_id]
+    if mode_at_fire is not None:
+        clauses.append("mode_at_fire = ?")
+        params.append(mode_at_fire)
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM sleeve_rule_fires WHERE " + " AND ".join(clauses),
+            params,
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row[0])
+
+
+def get_fire_count_for_rule_on_day(rule_id: int, trading_day: str) -> int:
+    """Return the count of sleeve_rule_fires rows for one rule on trading_day
+    ('YYYY-MM-DD'), a ground-truth fire count for the dashboard panel's
+    today/lifetime attribution (AC-16) independent of limits.py's own
+    max_fires_per_day pacing counter (that pacing state lives entirely in
+    sleeve_runtime -- see get_sleeve_runtime/set_sleeve_runtime -- so this
+    accessor is a cross-check, not the runner's live pacing gate).
+
+    trading_day is caller-supplied (the runner computes it via
+    market_calendar.py, XNYS calendar) and is an EASTERN (America/New_York)
+    calendar day; fired_at is stored UTC (runner.py + the schema DEFAULT), so
+    the count spans the ET day's exact UTC instant window
+    [00:00 ET, next 00:00 ET) -- DST-correct via zoneinfo, matching the
+    stored "%Y-%m-%d %H:%M:%S" format lexicographically. Comparing the raw
+    UTC date prefix against an ET day misattributes evening fires to the
+    next day (audit finding #15). Counts every fire regardless of
+    action/outcome -- a rule that fired and was clamped-to-zero or rejected
+    still counts; callers that need an entries-only or exits-only count
+    should filter on `action` at the application layer.
+    """
+    day_start_et = datetime.strptime(trading_day, "%Y-%m-%d").replace(tzinfo=_ET_ZONE)
+    start_utc = day_start_et.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    end_utc = (day_start_et + timedelta(days=1)).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM sleeve_rule_fires "
+            "WHERE rule_id = ? AND fired_at >= ? AND fired_at < ?",
+            (rule_id, start_utc, end_utc),
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row[0])
 
 
 # --- 033: Frontrunner Proposals (mutable approval-status lifecycle) ---

@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 
 import requests
 
@@ -189,6 +189,145 @@ def generate_eod_snapshot(
 
         # We no longer send the Discord push directly from here.
         # It is handled by send_eod_discord_post() after the autotuner completes.
+
+
+def build_sleeves_digest_section(sleeve_summaries: list[dict]) -> str:
+    """Pure, never-raising EOD digest formatter for Managed Sleeves (AC-17).
+
+    sleeve_summaries: [{"name": str, "status": str, "rules": [{"name": str,
+    "today_fires": int, "lifetime_fires": int, "realized_pnl_usd": float,
+    "benched": bool}, ...]}, ...]. Returns "" (falsy) for an empty list -- no
+    phantom section when no sleeves exist. Every optional key is read
+    defensively so a minimal/incomplete summary dict degrades gracefully
+    rather than raising -- this is an EOD report, not a critical path.
+    """
+    if not sleeve_summaries:
+        return ""
+
+    lines = ["**Managed Sleeves**"]
+    for summary in sleeve_summaries:
+        if not isinstance(summary, dict):
+            continue
+        name = summary.get("name") or "unnamed sleeve"
+        status = summary.get("status") or "?"
+        lines.append(f"• **{name}** ({status})")
+        for rule in summary.get("rules") or []:
+            if not isinstance(rule, dict):
+                continue
+            rule_name = rule.get("name") or "unnamed rule"
+            today_fires = rule.get("today_fires", 0) or 0
+            lifetime_fires = rule.get("lifetime_fires", 0) or 0
+            # A non-numeric realized value (None = the attribution fold
+            # failed upstream) renders as an explicit "n/a" -- never a dollar
+            # figure fabricated from a placeholder (audit finding #8: "$+0.00"
+            # is a value claim).
+            realized_pnl = rule.get("realized_pnl_usd", 0.0)
+            realized_txt = (
+                f"${realized_pnl:+,.2f}"
+                if isinstance(realized_pnl, (int, float)) and not isinstance(realized_pnl, bool)
+                else "n/a"
+            )
+            benched_note = " — BENCHED" if rule.get("benched") else ""
+            lines.append(
+                f"    ◦ {rule_name}: today {today_fires} · lifetime {lifetime_fires} "
+                f"· realized {realized_txt}{benched_note}"
+            )
+    return "\n".join(lines)
+
+
+def _build_sleeve_digest_summaries(current_date_str: str) -> list[dict]:
+    """Assemble sleeve_summaries for build_sleeves_digest_section from live DB
+    rows (AC-17). Never raises -- a per-sleeve/per-rule read failure omits
+    that sleeve/rule rather than crashing the EOD scheduler thread.
+
+    realized_pnl_usd is derived from the SAME fold as the dashboard panel
+    (sleeves.ledger.attribute_realized_fills, buy-side attribution -- audit
+    finding #8 pinned panel/digest agreement), so the two operator surfaces
+    can never disagree on the same quantity. On fold failure the value is
+    None and the formatter renders "n/a" -- never a fabricated $0.00. benched
+    is real churn-brake state read through the engine's own
+    sleeves.rules.limits.is_rule_benched (AC-11 -- bench is keyed by ET
+    trading day, so the flag auto-clears in lockstep with the engine's
+    next-trading-day auto re-arm; never re-derived here).
+    """
+    from sleeves import ledger as sleeve_ledger  # noqa: PLC0415
+    from sleeves.rules import limits as sleeve_limits  # noqa: PLC0415
+
+    summaries: list[dict] = []
+    try:
+        sleeve_rows = database.get_all_sleeves()
+    except Exception:
+        return summaries
+
+    now_utc = datetime.now(UTC)
+    for sleeve in sleeve_rows or []:
+        sleeve_id = sleeve.get("id")
+        try:
+            rule_rows = (
+                database.get_sleeve_rules_for_sleeve(sleeve_id) if sleeve_id is not None else []
+            )
+        except Exception:
+            rule_rows = []
+
+        try:
+            order_history = (
+                database.get_sleeve_order_history(sleeve_id) if sleeve_id is not None else []
+            )
+            realized_by_rule = {}
+            for record in sleeve_ledger.attribute_realized_fills(order_history):
+                realized_by_rule[record.opening_rule_id] = (
+                    realized_by_rule.get(record.opening_rule_id, 0.0) + record.realized_delta_usd
+                )
+        except Exception:
+            # None (not {}): the fold FAILED -- every rule renders "n/a"; an
+            # empty dict would render $0.00 value claims (audit finding #8).
+            realized_by_rule = None
+
+        rule_summaries = []
+        for rule in rule_rows:
+            rule_id = rule.get("id")
+            # Same COUNT accessors as the panel (audit #14: len(limited rows)
+            # capped lifetime at 100; audit #15: ET-prefix vs UTC-stored
+            # fired_at misattributed evening fires -- the day accessor
+            # converts current_date_str's ET day to its exact UTC window).
+            try:
+                lifetime_fires = (
+                    database.get_sleeve_rule_fire_count(rule_id) if rule_id is not None else 0
+                )
+                today_fires = (
+                    database.get_fire_count_for_rule_on_day(rule_id, current_date_str)
+                    if rule_id is not None
+                    else 0
+                )
+            except Exception:
+                lifetime_fires = 0
+                today_fires = 0
+            try:
+                benched = rule_id is not None and sleeve_limits.is_rule_benched(
+                    rule_id, now_utc=now_utc
+                )
+            except Exception:
+                benched = False
+            rule_summaries.append(
+                {
+                    "name": rule.get("name", ""),
+                    "today_fires": today_fires,
+                    "lifetime_fires": lifetime_fires,
+                    "realized_pnl_usd": (
+                        realized_by_rule.get(rule_id, 0.0) if realized_by_rule is not None else None
+                    ),
+                    "benched": benched,
+                }
+            )
+
+        summaries.append(
+            {
+                "name": sleeve.get("name", ""),
+                "status": sleeve.get("status", ""),
+                "rules": rule_summaries,
+            }
+        )
+    return summaries
 
 
 def send_eod_discord_post(current_date_str, report_file, optimization_results, discord_webhook_url):
@@ -521,6 +660,20 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
                     "title": "⚙️ Optimization",
                     "color": 10181046,
                     "description": "No optimization changes.",
+                }
+            )
+
+        # 3. Managed Sleeves digest extension (AC-17): per-rule fires + benched
+        # rules. Silent when zero sleeves exist -- no phantom section.
+        sleeves_section = build_sleeves_digest_section(
+            _build_sleeve_digest_summaries(current_date_str)
+        )
+        if sleeves_section:
+            embeds.append(
+                {
+                    "title": "🗂️ Managed Sleeves",
+                    "color": 3447003,
+                    "description": sleeves_section[:4096],
                 }
             )
 

@@ -1,0 +1,18 @@
+{
+  "_comment": "Golden fixture for sleeves.rules.schema rule-class derivation (AC-20). This is a specification TABLE the test-writer is defining (analogous to envelope.py's REASON_* code table) -- not a producer-computed value being hardcoded. Each case lists a `then` action-type list and the class that MUST be derived from it structurally.",
+  "_action_vocabulary": "buy (position-opening), sell/go_to_cash/set_stop/notify (reduce-only / non-opening). go_to_cash is the SLEEVE's own liquidate-to-cash action (matches the `action` column example in migrations/034_sleeve_rule_fires.sql) -- distinct from the plan's separate 'existing Composer go-to-cash for symphonies' concept, which is out of actions.py's P2 scope.",
+  "_class_rule": "DEFENSIVE = every action is reduce-only (sell/go_to_cash/set_stop/notify -- no position-opening action). ENTRY = the action set contains at least one position-opening action (buy). A rule whose action set mixes buy with any other action is INVALID (expected_class: null) -- AC-20 forbids a rule claiming DEFENSIVE while holding entry actions, and a rule cannot be simultaneously both classes.",
+  "cases": [
+    {"name": "single_buy_is_entry", "action_types": ["buy"], "expected_class": "ENTRY"},
+    {"name": "single_sell_is_defensive", "action_types": ["sell"], "expected_class": "DEFENSIVE"},
+    {"name": "single_go_to_cash_is_defensive", "action_types": ["go_to_cash"], "expected_class": "DEFENSIVE"},
+    {"name": "single_set_stop_is_defensive", "action_types": ["set_stop"], "expected_class": "DEFENSIVE"},
+    {"name": "single_notify_is_defensive", "action_types": ["notify"], "expected_class": "DEFENSIVE"},
+    {"name": "sell_plus_notify_is_defensive", "action_types": ["sell", "notify"], "expected_class": "DEFENSIVE"},
+    {"name": "go_to_cash_plus_notify_is_defensive", "action_types": ["go_to_cash", "notify"], "expected_class": "DEFENSIVE"},
+    {"name": "buy_plus_notify_is_entry", "action_types": ["buy", "notify"], "expected_class": "ENTRY"},
+    {"name": "buy_plus_sell_is_invalid_mixed_class", "action_types": ["buy", "sell"], "expected_class": null},
+    {"name": "buy_plus_go_to_cash_is_invalid_mixed_class", "action_types": ["buy", "go_to_cash"], "expected_class": null},
+    {"name": "empty_actions_is_invalid", "action_types": [], "expected_class": null}
+  ]
+}

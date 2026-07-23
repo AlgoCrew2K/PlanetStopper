@@ -1,0 +1,24 @@
+{
+  "_comment": "Golden fixture for sleeves.rules.senses daily-bar indicator math (AC-4). Every series below is a hand-constructed, deterministic close-price list -- never captured from a live feed. Tests in tests/sleeves/rules/test_senses.py NEVER assert a hardcoded indicator output: they recompute SMA/EMA/RSI/momentum/realized_vol/drawdown_from_high from these raw closes via the exact formula pinned in senses.py's docstring contract, then compare that derived value to sleeves.rules.senses.sense_indicator's return. This fixture only supplies the raw inputs.",
+  "_provenance": "Schema-derived: plain float closes, not a captured Alpaca bar payload (senses.sense_indicator's contract takes `closes: list[float]` directly -- callers extract closes from synthetic_history.fetch_bars/lens_technicals-style bar dicts before calling in production).",
+  "mixed_series": {
+    "_comment": "20 closes, mixed up/down deltas -- exercises SMA/EMA/RSI/momentum/realized_vol with a non-degenerate gain/loss mix.",
+    "closes": [100.00, 101.00, 100.50, 102.00, 103.50, 102.75, 104.00, 105.50, 104.75, 106.00, 107.50, 106.75, 108.00, 109.50, 108.75, 110.00, 111.50, 110.75, 112.00, 113.50]
+  },
+  "monotonic_up_series": {
+    "_comment": "16 strictly increasing closes -- every day is a gain, zero losses. Exercises the RSI avg_loss==0 edge case (RSI must be exactly 100, not a divide-by-zero crash).",
+    "closes": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0, 110.0, 111.0, 112.0, 113.0, 114.0, 115.0]
+  },
+  "monotonic_down_series": {
+    "_comment": "16 strictly decreasing closes -- every day is a loss, zero gains. Exercises the RSI avg_gain==0 edge case (RSI must be exactly 0).",
+    "closes": [115.0, 114.0, 113.0, 112.0, 111.0, 110.0, 109.0, 108.0, 107.0, 106.0, 105.0, 104.0, 103.0, 102.0, 101.0, 100.0]
+  },
+  "insufficient_series": {
+    "_comment": "Only 3 closes -- shorter than every window under test (5/10/14) and shorter than momentum's window+1 requirement. Every indicator call against this series must return available=False, never an IndexError/ZeroDivisionError.",
+    "closes": [100.0, 101.0, 102.0]
+  },
+  "drawdown_series": {
+    "_comment": "Peaks at 110.0 (index 2) then declines to 104.0 -- exercises drawdown_from_high with a genuine peak-to-trough gap, distinct from the mostly-monotonic mixed_series (whose running high is its own last bar, giving a trivial zero drawdown).",
+    "closes": [100.0, 105.0, 110.0, 108.0, 106.0, 104.0]
+  }
+}

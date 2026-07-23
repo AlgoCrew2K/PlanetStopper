@@ -14,3 +14,5 @@ One-time data or schema migrations for AlphaBot's SQLite DBs.
 ## Index
 
 - `001_normalize_symphony_names.sql` — A6.5 normalize wiring fix. Required before first deploy of commit that wires `normalize_name()` into `get_symphony_strategy` / `save_symphony_strategy`.
+- `035_sleeves.sql` — Managed Sleeves P1: `sleeves`, `sleeve_rules` (schema-ready for P2), `sleeve_orders`, `sleeve_fills`, `sleeve_runtime`. Additive-only, no existing table modified.
+- `036_sleeve_rule_fires.sql` — Managed Sleeves P2: `sleeve_rule_fires` (rule-engine fire log, deferred from migration 035 per DE-SLEEVES-P1-001 addendum). Additive-only, no existing table modified.
