@@ -330,6 +330,57 @@
             border-radius: 0.5rem;
             font-size: 0.875rem;
         }
+
+        /* Guard-Alpha stop-justification verdict chip — semantic color by class
+           (mirrors templates/ai_advisor.html's .prism-sentiment-chip --modifier
+           BEM pattern; CSS vars only, no raw colors). */
+        .precond-verdict-chip {
+            display: inline-block;
+            padding: 0.2rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.6875rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            border: 1px solid;
+        }
+
+        .precond-verdict-chip--sufficient-met {
+            color: var(--studio-pos);
+            border-color: var(--studio-pos);
+            background: rgba(31, 122, 77, 0.07);
+        }
+
+        .precond-verdict-chip--sufficient-likely {
+            color: var(--studio-pos);
+            border-color: var(--studio-pos);
+            background: var(--studio-chip-bg, rgba(0, 0, 0, 0.04));
+        }
+
+        .precond-verdict-chip--not-met {
+            color: var(--studio-ink-dim);
+            border-color: var(--studio-border);
+            background: var(--studio-chip-bg, rgba(0, 0, 0, 0.04));
+        }
+
+        .precond-verdict-chip--negative-edge {
+            color: var(--studio-neg);
+            border-color: var(--studio-neg);
+            background: var(--studio-neg-tint, rgba(180, 58, 42, 0.06));
+        }
+
+        .precond-verdict-chip--insufficient-data {
+            color: var(--studio-warn);
+            border-color: var(--studio-warn);
+            background: var(--studio-warn-tint, rgba(176, 116, 25, 0.08));
+        }
+
+        /* A cold/missing replay cache never drops the replay column from the
+           table -- this styles that honest-unavailable row (AC-8). */
+        .precond-row-unavailable td {
+            color: var(--studio-ink-dim);
+            font-style: italic;
+        }
     </style>
 </head>
 
@@ -486,6 +537,43 @@
                     </tbody>
                 </table>
             </div>
+        </section>
+
+        <!-- Guard-Alpha stop-justification preconditions panel (Kaminski & Lo 2014) -->
+        <section data-testid="guard-alpha-preconditions-panel" class="metrics-section" style="margin-top:1.5rem;">
+            <h2 class="metrics-title">Stop-Justification Preconditions</h2>
+            <p class="metrics-caption">
+                Kaminski &amp; Lo (2014): a trailing stop is statistically justified only when
+                daily returns show persistence (positive autocorrelation) and a favorable
+                risk-adjusted edge. Replay = simulated if-held daily series from the last
+                autotune/replay run; Shadow = live if-held daily series since the current
+                position was opened.
+            </p>
+            <div class="metrics-overflow">
+                <table class="metrics-tbl" data-testid="guard-alpha-preconditions-table">
+                    <thead>
+                        <tr>
+                            <th>Symphony</th>
+                            <th>Sample</th>
+                            <th style="text-align:right">&rho;</th>
+                            <th style="text-align:right">95% CI</th>
+                            <th style="text-align:right">Daily Sharpe</th>
+                            <th style="text-align:right">N</th>
+                            <th>Verdict</th>
+                        </tr>
+                    </thead>
+                    <!-- Populated by renderGuardAlphaPreconditions() via DOM APIs
+                         (textContent/createElement) -- never innerHTML with
+                         interpolated symphony names or API strings (XSS hygiene:
+                         symphony identifiers are external-origin, from Composer). -->
+                    <tbody id="guard-alpha-preconditions-tbody"></tbody>
+                </table>
+            </div>
+            <p data-testid="guard-alpha-preconditions-empty-state" id="guard-alpha-preconditions-empty-state"
+                class="metrics-caption" style="display:none">
+                No symphony has enough persistence-check data yet — this populates after the
+                next autotune/replay run and as shadow history accumulates.
+            </p>
         </section>
     </div>
 
