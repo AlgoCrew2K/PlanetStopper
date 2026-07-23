@@ -60,8 +60,11 @@ import enum
 import hashlib
 import json
 import logging
+import math
 import os
 from dataclasses import dataclass, field
+
+import model_config
 
 # Re-export so the AC-12 bound tests can resolve it from this module.
 from advisors.strategy_builder_engine import (  # noqa: F401
@@ -913,6 +916,7 @@ def _build_generation_prompt(
     objective,
     n_plans: int = N_PLANS_PER_OBJECTIVE,
     membership=None,
+    reasoning_context: str | None = None,
 ) -> str:
     """Build the SDK prompt for the given objective.
 
@@ -929,6 +933,13 @@ def _build_generation_prompt(
         Number of distinct plans requested.
     membership : frozenset | set | None
         The valid ticker universe (included in prompt for reference).
+    reasoning_context : str | None
+        R2-1: an optional, ready-to-inject operator-context text block (the
+        real symphony tree + live stats + market-lens summaries — see
+        ai_advisor.build_reasoning_context). Additive/keyword, default None.
+        When falsy (None or ""), the returned prompt is BYTE-IDENTICAL to the
+        pre-R2-1 output (AC-8) — when truthy, appended as a distinct trailing
+        section, never mixed into the existing grammar text above it.
 
     Returns
     -------
@@ -951,7 +962,7 @@ def _build_generation_prompt(
             f"sample): {', '.join(sample)}" + (" ..." if len(membership) > 20 else "")
         )
 
-    return (
+    prompt = (
         f"You are a quantitative strategy designer for the Planet Stopper risk engine.\n\n"
         f"TASK: Generate exactly {n_plans} DISTINCT build-plans for objective='{obj_name}'.\n\n"
         f"CRITICAL — USE THE EXACT DSL GRAMMAR BELOW. Do NOT invent new field names.\n\n"
@@ -1027,6 +1038,9 @@ def _build_generation_prompt(
         f"Every plan must satisfy the '{obj_name}' structural requirement above. "
         f"Use diverse asset combinations across plans."
     )
+    if reasoning_context:
+        prompt += f"\n\n## OPERATOR CONTEXT\n\n{reasoning_context}"
+    return prompt
 
 
 # ---------------------------------------------------------------------------
@@ -1039,6 +1053,7 @@ def generate_build_plans(
     membership_set,
     *,
     n_plans: int = N_PLANS_PER_OBJECTIVE,
+    reasoning_context: str | None = None,
 ) -> GeneratorResult:
     """Generate N objective-shaped build-plans via the Anthropic SDK (tool-use).
 
@@ -1050,6 +1065,10 @@ def generate_build_plans(
         The valid ticker universe (AC-9 membership validation).
     n_plans : int
         Maximum number of structurally-distinct admitted plans to return.
+    reasoning_context : str | None
+        R2-1: threaded straight through to _build_generation_prompt (see its
+        docstring). Additive/keyword, default None — omitted or falsy
+        reproduces the pre-R2-1 prompt byte-for-byte (AC-8).
 
     Returns
     -------
@@ -1066,7 +1085,9 @@ def generate_build_plans(
         # Build the SDK client (patched in tests via the _build_client seam).
         client = _build_client()
 
-        prompt = _build_generation_prompt(objective, n_plans, membership)
+        prompt = _build_generation_prompt(
+            objective, n_plans, membership, reasoning_context=reasoning_context
+        )
 
         # Bounded retry on truncation (stop_reason="max_tokens").  The old bare literal
         # max_tokens=4096 was too small for 12 full-grammar plans; MAX_OUTPUT_TOKENS fixes
@@ -1075,7 +1096,7 @@ def generate_build_plans(
         response = None
         for _attempt in range(MAX_GENERATION_ATTEMPTS):
             response = client.messages.create(
-                model="claude-opus-4-8",
+                model=model_config.get_advisor_suggestion_model(),
                 max_tokens=MAX_OUTPUT_TOKENS,
                 tools=[_EMIT_BUILD_PLANS_TOOL],
                 tool_choice={"type": "tool", "name": "emit_build_plans"},
@@ -1205,10 +1226,20 @@ def admit_community_candidates(
 ) -> list:
     """Rank and admit community strategies by the objective OOS metric.
 
-    Ranking convention per objective (PM-approved):
-      cut_drawdown         — 'max_drawdown' descending (nearer zero = shallower, better)
-      volatility_mitigation— 'volatility' ascending (lowest first)
-      lift_risk_adjusted   — 'sharpe' descending (highest first)
+    Ranking convention per objective (PM-approved). Field names are the REAL
+    captplanet.strategies oos_metrics keys (DE-ATLAS-STAT-FIELD-001 — the
+    lowercase keys below existed on 0 live docs; generalizes the same
+    field-path bug fixed in community_strats._parse_sharpe). cut_drawdown and
+    volatility_mitigation read a KEY-UNION (DE-ATLAS-STAT-FIELD-002 — real
+    docs are raw-data-inconsistent, carrying either the %-suffixed or bare
+    key form; community_strats passes oos_metrics through verbatim with no
+    key normalization):
+      cut_drawdown          — 'Max Drawdown %' / 'Max Drawdown' (%-string),
+                              descending (nearer zero = shallower, better)
+      volatility_mitigation — 'Volatility (ann.) %' / 'Volatility (ann.)' (%-string),
+                              ascending (lowest first)
+      lift_risk_adjusted    — 'Sharpe' (plain-decimal string, NOT %-formatted,
+                              single key form), descending (highest first)
       diversify            — greedy low-ticker-overlap (Jaccard), deterministic+complete
 
     Missing / unparseable stat docs are KEPT-LAST (admitted after all docs that have
@@ -1230,22 +1261,56 @@ def admit_community_candidates(
 
         obj_name = objective.value if isinstance(objective, Objective) else str(objective)
 
-        def _stat(doc: dict, key: str) -> float | None:
+        def _stat(doc: dict, keys: list[str], *, percent: bool = False) -> float | None:
+            """Read the first parseable value from doc['oos_metrics'] across a
+            candidate key-union, trying each key in `keys` in order.
+
+            DE-ATLAS-STAT-FIELD-002: real captplanet.strategies docs are
+            raw-data-inconsistent — some carry a %-suffixed key form (e.g.
+            'Max Drawdown %'), others the bare form (e.g. 'Max Drawdown');
+            community_strats passes oos_metrics through verbatim (no key
+            normalization), so both forms genuinely coexist in the source
+            collection. No known doc carries more than one of a given pair, so
+            precedence among a genuine collision is unspecified but
+            deterministic (list order) — first key that yields a parseable
+            value wins; a present-but-unparseable value falls through to the
+            next candidate key rather than short-circuiting to None.
+
+            Mirrors community_strats._parse_sharpe's defensive contract
+            (DE-ATLAS-STAT-FIELD-001): missing key, non-numeric value, and
+            'nan'/'inf' (which pass Python's bare float() but are not valid
+            metric values) all resolve to None, never raise. When percent=True,
+            a trailing '%' is stripped before parsing each candidate key —
+            'Max Drawdown'/'Volatility (ann.)' (both key forms) are
+            %-string-valued on real docs; 'Sharpe' is plain-decimal and must
+            NOT be stripped.
+            """
             oos = doc.get("oos_metrics")
             if not isinstance(oos, dict):
                 return None
-            val = oos.get(key)
-            if val is None:
-                return None
-            try:
-                return float(val)
-            except (TypeError, ValueError):
-                return None
+            for key in keys:
+                val = oos.get(key)
+                if val is None:
+                    continue
+                raw = str(val).strip()
+                if percent and raw.endswith("%"):
+                    raw = raw[:-1]
+                try:
+                    parsed = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                if math.isnan(parsed) or math.isinf(parsed):
+                    continue
+                return parsed
+            return None
 
         if obj_name == "cut_drawdown":
-            # max_drawdown stored as a negative number; nearer zero = shallower = better.
-            # Sort descending: -0.10 > -0.30 > -0.55. Missing docs -> float("-inf") -> last.
-            keyed = [(_stat(d, "max_drawdown"), d) for d in raw]
+            # 'Max Drawdown' stored as a %-string negative number; nearer zero =
+            # shallower = better. Sort descending: -1.50% > -8.70% > -22.30%.
+            # Key-union: real docs use either 'Max Drawdown %' (dominant form)
+            # or the bare 'Max Drawdown' (DE-ATLAS-STAT-FIELD-002).
+            # Missing/unparseable docs -> float("-inf") -> last.
+            keyed = [(_stat(d, ["Max Drawdown %", "Max Drawdown"], percent=True), d) for d in raw]
             keyed.sort(
                 key=lambda x: x[0] if x[0] is not None else float("-inf"),
                 reverse=True,
@@ -1253,14 +1318,22 @@ def admit_community_candidates(
             ranked_docs = [d for _, d in keyed]
 
         elif obj_name == "volatility_mitigation":
-            # Lowest volatility first -> ascending. Missing -> float("+inf") -> last.
-            keyed = [(_stat(d, "volatility"), d) for d in raw]
+            # 'Volatility (ann.)' is a %-string. Lowest first -> ascending.
+            # Key-union: real docs use either 'Volatility (ann.) %' (dominant
+            # form) or the bare 'Volatility (ann.)' (DE-ATLAS-STAT-FIELD-002).
+            # Missing/unparseable -> float("+inf") -> last.
+            keyed = [
+                (_stat(d, ["Volatility (ann.) %", "Volatility (ann.)"], percent=True), d)
+                for d in raw
+            ]
             keyed.sort(key=lambda x: x[0] if x[0] is not None else float("+inf"))
             ranked_docs = [d for _, d in keyed]
 
         elif obj_name == "lift_risk_adjusted":
-            # Highest sharpe first -> descending. Missing -> float("-inf") -> last.
-            keyed = [(_stat(d, "sharpe"), d) for d in raw]
+            # 'Sharpe' is a plain-decimal string (NOT %-formatted), a single
+            # key form across all live docs — no key-union needed. Highest
+            # first -> descending. Missing/unparseable -> float("-inf") -> last.
+            keyed = [(_stat(d, ["Sharpe"]), d) for d in raw]
             keyed.sort(
                 key=lambda x: x[0] if x[0] is not None else float("-inf"),
                 reverse=True,
@@ -1300,12 +1373,15 @@ def admit_community_candidates(
                     CandidateInfo(
                         candidate_id=sid,
                         tree=doc.get("tree", {}),
-                        template_id="community",
+                        # F-027: template_id carries provenance, never a hardcoded
+                        # "community" literal (anti-hollow-core contract).
+                        template_id=PROVENANCE_ATLAS_SUGGESTED,
                         params={
                             "sid": sid,
                             "name": doc.get("name", ""),
                             "composition_hash": doc.get("composition_hash", ""),
                             "provenance": PROVENANCE_ATLAS_SUGGESTED,
+                            "objective": obj_name,
                         },
                         metrics={},
                         backtest_error=None,

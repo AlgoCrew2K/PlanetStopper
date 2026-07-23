@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -69,6 +70,35 @@ import app as app_module
 # ---------------------------------------------------------------------------
 # SPA migration helpers — route is now GET /ai-advisor (unified SPA)
 # ---------------------------------------------------------------------------
+
+
+# Matches the header candidate-alert bell <svg> added by advisor-suite-fixes.md
+# AC-5 (templates/_chrome.html, included on every page via {% include %}) — a
+# design-consistent inline SVG, not this Phase 3.6 cycle's sparkline SVG.
+# Anchored on the stable data-testid wrapper (also used by
+# tests/app/test_candidate_alert_indicator_render.py) rather than any SVG
+# attribute ordering, so it only ever strips THIS one known element.
+_CANDIDATE_ALERT_INDICATOR_RE = re.compile(
+    r'<a data-testid="candidate-alert-indicator".*?</a>', re.DOTALL
+)
+
+
+def _without_header_chrome_svg(html: str) -> str:
+    """Strip the header candidate-alert bell <svg> before checking for
+    Phase-3.6-sparkline <svg> presence/count.
+
+    This whole-page GET-/ai-advisor test suite predates AC-5 (advisor-suite-fixes.md,
+    2026-07-13), which legitimately added a second, unrelated <svg> to the shared
+    header chrome (templates/_chrome.html) present on EVERY page. The HR-1/HR-4/
+    ADV-7/ADV-8 invariants under test here are about the Strategy Builder
+    observation-card sparkline macro specifically ("no empty <svg> stub for a row
+    with no/empty/invalid points") — they were never about the page as a whole
+    having zero <svg> elements. Scoped removal via the stable
+    data-testid="candidate-alert-indicator" anchor keeps the invariant intact: a
+    stray SECOND sparkline-region <svg> (the actual defect these tests guard
+    against) would still be caught.
+    """
+    return _CANDIDATE_ALERT_INDICATOR_RE.sub("", html, count=1)
 
 
 def _make_spa_corr_module():
@@ -675,10 +705,12 @@ class TestGroupBC:
             "observation row. HR-1: old rows must render without crashing."
         )
 
-        html = resp.get_data(as_text=True)
+        html = _without_header_chrome_svg(resp.get_data(as_text=True))
 
         assert "<svg" not in html, (
-            "Rendered HTML contains '<svg' for a pre-3.6 observation (no equity_curve_downsampled). "
+            "Rendered HTML contains '<svg' for a pre-3.6 observation (no equity_curve_downsampled), "
+            "outside the header candidate-alert bell (already stripped — that one is expected, "
+            "added by advisor-suite-fixes.md AC-5). "
             "HR-1: old rows must not produce any SVG element — no empty stubs. "
             "The macro must guard with '{% if points %}' and old rows have points=None."
         )
@@ -919,9 +951,10 @@ class TestGroupSR:
         ):
             resp = client.get("/ai-advisor")
 
-        html = resp.get_data(as_text=True)
+        html = _without_header_chrome_svg(resp.get_data(as_text=True))
         assert "<svg" not in html, (
-            "Rendered HTML contains '<svg' for obs with sparkline_points=[0.0, None, 1.5]. "
+            "Rendered HTML contains '<svg' for obs with sparkline_points=[0.0, None, 1.5], "
+            "outside the header candidate-alert bell (already stripped — expected, AC-5). "
             "HR-4: the macro must skip render when any point is not a number (None check). "
             "A None value in the points list would produce an invalid SVG coordinate."
         )
@@ -952,9 +985,10 @@ class TestGroupSR:
         ):
             resp = client.get("/ai-advisor")
 
-        html = resp.get_data(as_text=True)
+        html = _without_header_chrome_svg(resp.get_data(as_text=True))
         assert "<svg" not in html, (
-            "Rendered HTML contains '<svg' for obs with sparkline_points=[] (empty list). "
+            "Rendered HTML contains '<svg' for obs with sparkline_points=[] (empty list), "
+            "outside the header candidate-alert bell (already stripped — expected, AC-5). "
             "HR-4 / HR-1: the macro must not render any SVG element when points is empty. "
             "An empty list is falsy; the '{% if points %}' guard must prevent any SVG output."
         )
@@ -1294,11 +1328,12 @@ class TestAdversarialCycle2Phase36:
             f"GET returned {resp.status_code} for mixed old+new obs. ADV-7."
         )
 
-        html = resp.get_data(as_text=True)
+        html = _without_header_chrome_svg(resp.get_data(as_text=True))
         svg_count = html.count("<svg")
 
         assert svg_count == 1, (
-            f"Expected exactly 1 <svg> element in the mixed-obs response, got {svg_count}. "
+            f"Expected exactly 1 sparkline <svg> element in the mixed-obs response "
+            f"(header candidate-alert bell already excluded — expected, AC-5), got {svg_count}. "
             "ADV-7: the old obs (no equity_curve_downsampled) must not produce an SVG stub. "
             "The new obs (with sparkline) must produce exactly one SVG."
         )
@@ -1342,10 +1377,11 @@ class TestAdversarialCycle2Phase36:
         ):
             resp = client.get("/ai-advisor")
 
-        html = resp.get_data(as_text=True)
+        html = _without_header_chrome_svg(resp.get_data(as_text=True))
 
         assert "<svg" not in html, (
-            "Rendered HTML contains '<svg' when equity_curve_downsampled is absent. "
+            "Rendered HTML contains '<svg' when equity_curve_downsampled is absent, outside "
+            "the header candidate-alert bell (already stripped — expected, AC-5). "
             "ADV-8a: absent key → sparkline_points=None → macro must skip render."
         )
 
@@ -1376,10 +1412,11 @@ class TestAdversarialCycle2Phase36:
         ):
             resp = client.get("/ai-advisor")
 
-        html = resp.get_data(as_text=True)
+        html = _without_header_chrome_svg(resp.get_data(as_text=True))
 
         assert "<svg" not in html, (
-            "Rendered HTML contains '<svg' when equity_curve_downsampled=[]. "
+            "Rendered HTML contains '<svg' when equity_curve_downsampled=[], outside the "
+            "header candidate-alert bell (already stripped — expected, AC-5). "
             "ADV-8b: empty list → falsy → macro must skip render. "
             "No empty SVG stub may appear."
         )

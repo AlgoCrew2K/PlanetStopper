@@ -18,6 +18,7 @@ NEVER raises — every failure mode degrades to ``(None, error_message)``.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import time
 
@@ -26,7 +27,9 @@ import requests.exceptions
 from pydantic import BaseModel
 
 import database
+import model_config
 import symphony_logic
+from advisors import prism_render, symphony_schema
 
 logger = logging.getLogger(__name__)
 
@@ -62,12 +65,50 @@ _REQUEST_TIMEOUT_SECONDS = 30.0
 # 36 h covers a missed council night while still allowing the next run to refresh.
 _LENS_CACHE_MAX_AGE_HOURS = 36
 
+# R2-1: honest per-source manifest returned by build_reasoning_context() when
+# nothing is injectable (falsy symphony_id, or every source degraded) — every
+# key defaults to "absent", never omitted, never fabricated as present.
+_EMPTY_MANIFEST: dict = {
+    "tree": "absent",
+    "stats": "absent",
+    "technicals": "absent",
+    "sentiment": "absent",
+    "derivatives": "absent",
+    "macro": "absent",
+    "fundamentals": "absent",
+}
+
+# R2-1: bounds INPUT-context growth/cost — the rendered real-tree text injected
+# into the SB generation prompt is capped at this many characters. This is
+# NOT derived from build_plan_generator.MAX_OUTPUT_TOKENS (a different,
+# OUTPUT-side ceiling on the SDK's structured-tool-use response) — it exists
+# purely to keep a large real symphony tree from meaningfully bloating every
+# generation call's input token cost / context-window footprint. Conservative,
+# uncalibrated value (no measured worst-case exists yet, unlike MAX_OUTPUT_TOKENS'
+# calibrated figure) — ~1,500 tokens at a rough 4-chars/token estimate.
+_MAX_TREE_RENDER_CHARS: int = 6000
+
 # _OOS_REPLAY_N_JOBS — bounds intraday-replay parallelism on the OOS-revalidation
 # path (C-1, DE-AUTOTUNE-OOM). Same 2-core / MemoryMax=3.0 GiB droplet root cause
 # as the autotuner path: generate_synthetic_history replays the full bot_state,
 # n_jobs=-1 forks 2 workers → parent ~2 GB + 2 copies > 3 GB → OOM-kill.
 # n_jobs=1 → joblib sequential backend (no fork), peak 2.03 GiB (990 MB headroom).
 _OOS_REPLAY_N_JOBS = 1
+
+# _OOS_HOLDOUT_FRACTION — F-013 (DE-ADVISOR-GATE3-DIRECTION-001): the fraction
+# of the OOS replay window Gate-3 carves off as a genuine held-out tail before
+# comparing a suggestion's guard-alpha to the baseline's. Mirrors
+# autotuner.FROZEN_EVAL_RATIO (autotuner.py:436, =0.20) — the same tail
+# fraction the autotuner's own 60/20/20 train/validation/frozen-eval
+# walk-forward split treats as genuinely unseen data.
+_OOS_HOLDOUT_FRACTION = 0.20
+
+# _OOS_HOLDOUT_PURGE_DAYS — F-013: the buffer of excluded days immediately
+# preceding the holdout tail, guarding against feature-lookback leakage into
+# the holdout. Half of autotuner.PURGE_DAYS (=20, autotuner.py:409), because
+# the 125-day OOS replay window is exactly half of the autotuner's 250-day
+# walk-forward window (synthetic_history.py:511-513: "exactly half").
+_OOS_HOLDOUT_PURGE_DAYS = 10
 
 
 def resolve_advisor_model() -> str:
@@ -139,8 +180,9 @@ _PARAM_DEFINITIONS: dict[str, dict[str, str]] = {
     },
     _UNTUNED_SUGGESTIBLE_KEY: {
         "definition": (
-            "Floor on the squeeze multiplier applied to the active stop. "
-            "Optuna structurally never tunes this — hand-set only; the "
+            "Floor on the post-squeeze stop distance — the tightest the stop "
+            "can shrink once the log-time squeeze is armed. Optuna "
+            "structurally never tunes this — hand-set only; the "
             "highest-value advisory target."
         ),
         "risk_polarity": "raising loosens risk",
@@ -1034,14 +1076,17 @@ def _fetch_fundamentals_for_ticker(ticker: str) -> dict:
                 tag_data = us_gaap.get(tag)
                 if not tag_data:
                     continue
-                # Walk the units (usually USD) for the most recent annual filing.
+                # Walk the units (usually USD) for the most recent reporting period.
                 for unit_type, unit_entries in tag_data.get("units", {}).items():
                     if not isinstance(unit_entries, list) or not unit_entries:
                         continue
-                    # Prefer 10-K entries; fall back to all entries when none present.
-                    annual_entries = [e for e in unit_entries if e.get("form") == "10-K"]
-                    entries_to_check = annual_entries or unit_entries
-                    for e in entries_to_check:
+                    # Consider ALL forms (10-K, 10-Q, ...) — the (end desc, filed
+                    # desc) sort below picks the most-recently-reported period
+                    # regardless of form type, so a fresher 10-Q is never
+                    # shadowed by a stale 10-K (advisor-suite-fixes.md AC-4;
+                    # operator-approved reversal of the prior 10-K-only
+                    # scope-out in lens-fundamentals-vintage-fix.completed.md).
+                    for e in unit_entries:
                         all_tag_entries.append((unit_type, e))
 
             if not all_tag_entries:
@@ -1669,6 +1714,112 @@ def assemble_advisor_context(
     return context
 
 
+def build_reasoning_context(
+    symphony_id: str, objective, *, composer_symphony_id: str | None = None
+) -> tuple[str, dict]:
+    """Assemble operator-context text + a per-source manifest for SB generation.
+
+    Real-money-critical honesty contract (R2-1): the Strategy Builder should
+    reason over the operator's ACTUAL symphony, not just an objective name.
+    This function gathers {the real tree (rendered), live Optuna stats, the 5
+    market-lens blocks} and renders them into a bounded prose block ready to
+    splice verbatim into a generation prompt, alongside an honest per-source
+    manifest a caller can use for provenance/attribution.
+
+    Args:
+        symphony_id: the symphony to reason about. Falsy (empty/None) means
+            a from-scratch (non-symphony-scoped) run — returns immediately
+            with zero I/O, matching the AC-8 byte-preservation floor one
+            layer up (build_plan_generator._build_generation_prompt).
+        objective: unused today beyond documenting intent — reserved for a
+            future objective-conditioned rendering; every source is gathered
+            unconditionally regardless of objective.
+        composer_symphony_id: the Composer hash ID, when known (preferred
+            for the tree fetch/lens-cache-serve calls per the project's
+            Composer hash rule — falls back to symphony_id when absent).
+
+    Returns:
+        (prompt_context, manifest):
+          prompt_context: "" when nothing is injectable, else a bounded,
+              human-readable text block (never a raw JSON tree dump).
+          manifest: {"tree": "present"|"absent", "stats": "present"|"absent",
+              "technicals"/"sentiment"/"derivatives"/"macro"/"fundamentals":
+              "available"|"stale"|"absent"} — an honest per-source record,
+              never fabricated. Degraded/failed sources are reflected
+              honestly, never silently dropped or faked as available.
+
+    D-1: never raises, under any failure mode.
+    """
+    if not symphony_id:
+        return "", dict(_EMPTY_MANIFEST)
+
+    manifest = dict(_EMPTY_MANIFEST)
+    sections: list[str] = []
+
+    # Real tree (AC-1) — rendered via symphony_schema.render_rules_text, never
+    # a raw JSON dump (leaks internal node ids, blows the token budget).
+    # Wrapped in its OWN try/except (D-1): this function's honesty contract
+    # must not depend on fetch_symphony_score's own D-1 contract holding.
+    try:
+        raw_tree = symphony_logic.fetch_symphony_score(composer_symphony_id or symphony_id)
+    except Exception:  # noqa: BLE001 - D-1: a collaborator failure degrades, never propagates
+        raw_tree = {}
+
+    if raw_tree:
+        rendered = symphony_schema.render_rules_text(raw_tree)
+        if rendered:
+            manifest["tree"] = "present"
+            bounded = rendered[:_MAX_TREE_RENDER_CHARS]
+            if len(rendered) > _MAX_TREE_RENDER_CHARS:
+                bounded += "\n... [truncated]"
+            sections.append(f"OPERATOR'S CURRENT STRATEGY:\n{bounded}")
+
+    # Live stats + the 5 market-lens blocks — reuse assemble_advisor_context's
+    # EXISTING nightly cache-serve path (never a fresh live fan-out on this
+    # per-click path). Wrapped in its own try/except (D-1).
+    try:
+        context = assemble_advisor_context(
+            "symphony", symphony_id=symphony_id, composer_symphony_id=composer_symphony_id
+        )
+    except Exception:  # noqa: BLE001 - D-1
+        context = None
+
+    if context is not None:
+        optuna_evidence = context.get("optuna_evidence") or {}
+        if optuna_evidence.get("available"):
+            manifest["stats"] = "present"
+            sections.append(
+                "LIVE PERFORMANCE EVIDENCE:\n"
+                f"train_alpha={optuna_evidence.get('train_alpha')} "
+                f"oos_alpha={optuna_evidence.get('oos_alpha')} "
+                f"baseline_decision={optuna_evidence.get('baseline_decision')}"
+            )
+
+        # Per-lens state = each lens's own "available" flag combined with the
+        # bundle-wide staleness classifier already computed by
+        # assemble_advisor_context — reusing the EXISTING classifier, never
+        # inventing a new one.
+        bundle_stale = bool(context.get("lens_data_stale"))
+        for lens_name in ("technicals", "sentiment", "derivatives", "macro", "fundamentals"):
+            lens_block = context.get(lens_name) or {}
+            if not lens_block.get("available"):
+                continue
+            manifest[lens_name] = "stale" if bundle_stale else "available"
+            # Reuse the Overview tab's existing structured-JSON-to-prose
+            # converter (prism_render.humanize_lens_summary) instead of a
+            # second hand-rolled renderer — it expects a JSON-encoded
+            # "summary" string, so the lens's real payload is re-encoded to
+            # match that calling convention.
+            import json  # noqa: PLC0415 - local import, matches this module's existing convention
+
+            prose = prism_render.humanize_lens_summary(
+                lens_name, {"summary": json.dumps(lens_block.get("payload"))}
+            )
+            sections.append(f"{lens_name.upper()}: {prose}")
+
+    return "\n\n".join(sections), manifest
+
+
 # ---------------------------------------------------------------------------
 # Claude client + structured-output request.
 # ---------------------------------------------------------------------------
@@ -1754,7 +1905,7 @@ def request_suggestions(
     # .parsed_output (see the extraction loop below).
     try:
         sdk_response = client.messages.parse(
-            model=os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8"),
+            model=model_config.get_advisor_suggestion_model(),
             max_tokens=_MAX_TOKENS,
             output_format=ConfigSuggestionsResponse,
             messages=_build_messages(context),
@@ -1958,6 +2109,45 @@ def check_risk_direction_agreement(suggestion: ConfigSuggestion) -> dict:
     }
 
 
+def _slice_oos_holdout(history_data: dict, acc_sym_ids: list) -> dict | None:
+    """Slice ``history_data`` down to a held-out tail window (with a purge
+    gap) for Gate-3 OOS re-validation (F-013 AC-4,
+    DE-ADVISOR-GATE3-DIRECTION-001).
+
+    Computes the holdout tail from the union of dates across ``acc_sym_ids``
+    entries in ``history_data``, then returns a NEW dict of the same
+    ``{sym_id: {date: ticks}}`` shape, restricted to ``acc_sym_ids`` and
+    narrowed to the holdout tail dates. Each symphony's date-map is filtered
+    to the intersection of the holdout dates and that symphony's OWN dates —
+    a symphony missing some holdout dates simply contributes what it has,
+    never a KeyError or a zeroed-out slice for the others.
+
+    Returns ``None`` when the replay window is too short to carve out a real
+    holdout (purge + minimum holdout size not met) — the caller MUST fail
+    closed in this case, never fall back to the full window.
+    """
+    relevant_dates: set[str] = set()
+    for sym_id in acc_sym_ids:
+        relevant_dates.update(history_data.get(sym_id, {}).keys())
+
+    sorted_dates = sorted(relevant_dates)
+    total_days = len(sorted_dates)
+    holdout_days = int(total_days * _OOS_HOLDOUT_FRACTION)
+    purge_start_idx = total_days - holdout_days - _OOS_HOLDOUT_PURGE_DAYS
+
+    if holdout_days <= 0 or purge_start_idx < 0:
+        return None
+
+    holdout_dates = set(sorted_dates[total_days - holdout_days :])
+    return {
+        sym_id: {
+            d: ticks for d, ticks in history_data.get(sym_id, {}).items() if d in holdout_dates
+        }
+        for sym_id in acc_sym_ids
+        if sym_id in history_data
+    }
+
+
 def revalidate_suggestion_oos(
     symphony_id: str,
     config_key: str,
@@ -1968,12 +2158,19 @@ def revalidate_suggestion_oos(
 
     A Claude suggestion is an *unvalidated hypothesis*; Optuna's output is
     walk-forward validated. Before an accepted suggestion can reach live config,
-    it must pass the same out-of-sample gate Optuna's own output faces: its OOS
-    alpha must strictly beat the current strategy's baseline OOS alpha.
+    it must pass the same out-of-sample gate Optuna's own output faces: its
+    guard-alpha on a genuinely held-out tail slice of the replay window (see
+    ``_slice_oos_holdout``) must strictly beat the current strategy's baseline
+    guard-alpha on that SAME slice.
 
-    ``run_simulation`` is called TWICE over the same history window —
-    apples-to-apples: once with ``current_strategy`` (the baseline), once with
-    the strategy patched to ``suggested_value``.
+    ``run_simulation`` is called TWICE over the IDENTICAL held-out tail slice
+    — apples-to-apples: once with ``current_strategy`` (the baseline), once
+    with the strategy patched to ``suggested_value``. ``run_simulation``
+    returns ``-total_guard_alpha`` (autotuner.py:1949, smaller = better); both
+    raw returns are re-negated to REAL guard-alpha before comparison or
+    storage (F-013 / DE-ADVISOR-GATE3-DIRECTION-001 — comparing the raw,
+    un-negated values, as this function did before this fix, INVERTED the
+    gate: it greenlit suggestions that made guard-alpha worse).
 
     Pass rule is strict ``>``: a TIE does NOT pass — a tie buys no validated
     improvement, mirroring the autotuner's own strict-positive cascade rule.
@@ -1991,8 +2188,29 @@ def revalidate_suggestion_oos(
         current_strategy: the current per-symphony strategy dict — the baseline.
 
     Returns:
-        ``{passed: bool, oos_alpha: float, baseline_oos_alpha: float,
-        detail: str}``.
+        ``{passed: bool, patched_guard_alpha: float | None,
+        baseline_guard_alpha: float | None, detail: str}``.
+
+        ``patched_guard_alpha`` / ``baseline_guard_alpha`` hold REAL
+        (re-negated) guard-alpha on the held-out tail when both
+        ``run_simulation`` calls succeed with finite objectives; ``None`` on
+        any fail-closed edge below (never honestly computed), so a raw
+        NaN/Infinity literal never lands in the persisted JSON blob
+        (``database.py:961`` ``oos_revalidation`` column).
+
+        Fails closed (``passed: False``, both guard-alpha fields ``None``,
+        ``run_simulation`` NEVER called) when:
+        - no bot_state account matches ``symphony_id`` (empty acc_sym_ids) —
+          an accidental 0.0-vs-0.0 tie would misrepresent this as a genuine
+          comparison;
+        - the replay window is too short to carve out a real holdout tail
+          (purge + minimum holdout size not met) — NEVER silently falls back
+          to full-window in-sample evaluation.
+
+        Also fails closed (``passed: False``, both guard-alpha fields
+        ``None``) when EITHER ``run_simulation`` call returns a non-finite
+        (NaN/Infinity) objective — the detail honestly names the data-quality
+        problem rather than claiming a genuine underperform.
     """
     # Lazy imports — deferred past the anthropic-SDK / optuna import-collision
     # window. Module-scope imports of autotuner or synthetic_history would break
@@ -2011,13 +2229,38 @@ def revalidate_suggestion_oos(
     bot_state = database.load_state()
 
     # acc_sym_ids: the bot_state keys whose normalized symphony name matches
-    # symphony_id. Mirrors the derivation in autotuner.run_autotuner's objective
-    # closure (autotuner.py line 314).
+    # symphony_id. Both sides are normalized: the advisor canonical ID is
+    # normalize_name(name), but the route passes symphony_id un-normalized
+    # (app.py:5846 reads it straight off the request payload) — matching the
+    # identical double-normalize comparison used at app.py:4660/5011/5313/5784.
+    # Pre-existing bug (single-sided normalize) fixed here as part of F-013
+    # because AC-5's honest "no matching account" fail-closed path depends on
+    # acc_sym_ids resolving correctly — the pre-fix code masked the mismatch
+    # by calling run_simulation unconditionally regardless of whether
+    # acc_sym_ids was empty (an accidental tie, not an honest rejection).
     acc_sym_ids = [
         k
         for k, v in bot_state.items()
-        if isinstance(v, dict) and database.normalize_name(v.get("name", "")) == symphony_id
+        if isinstance(v, dict)
+        and database.normalize_name(v.get("name", "")) == database.normalize_name(symphony_id)
     ]
+
+    if not acc_sym_ids:
+        # Fail closed WITHOUT calling run_simulation (or even fetching replay
+        # history) — an accidental 0.0-vs-0.0 tie from an empty account list
+        # is a silent-pass-shaped bug, not an honest "no matching symphony"
+        # rejection (F-013 AC-5).
+        detail = (
+            f"OOS re-validation FAILED for {config_key}={suggested_value} on "
+            f"{symphony_id}: no bot_state account matches this symphony — "
+            f"cannot compute a guard-alpha comparison."
+        )
+        return {
+            "passed": False,
+            "patched_guard_alpha": None,
+            "baseline_guard_alpha": None,
+            "detail": detail,
+        }
 
     # history_data: 125-day synthetic replay history. This call is on the
     # operator-accept path (rare human action), NOT the 1-minute engine cycle.
@@ -2032,39 +2275,87 @@ def revalidate_suggestion_oos(
     # deviation_dict: 45-day trailing execution-deviation penalties by exit reason.
     deviation_dict = calculate_historical_deviation(current_date_str)
 
-    # Patch the strategy to the suggested value — same window, only one knob
-    # changes, so the OOS comparison is apples-to-apples.
+    # holdout_history: a genuine held-out tail slice (F-013 AC-4) — the
+    # pre-fix implementation evaluated the FULL replay window on both calls,
+    # a false "OOS" claim (actually in-sample). Computed ONCE and passed to
+    # BOTH run_simulation calls below so the comparison stays apples-to-apples.
+    holdout_history = _slice_oos_holdout(history_data, acc_sym_ids)
+    if holdout_history is None:
+        # Fail closed WITHOUT calling run_simulation — never silently fall
+        # back to full-window in-sample evaluation (F-013 AC-5).
+        detail = (
+            f"OOS re-validation FAILED for {config_key}={suggested_value} on "
+            f"{symphony_id}: insufficient holdout history to carve out a "
+            f"genuine held-out tail (after the purge buffer) from the "
+            f"available replay window — refusing to fall back to full-window "
+            f"in-sample evaluation."
+        )
+        return {
+            "passed": False,
+            "patched_guard_alpha": None,
+            "baseline_guard_alpha": None,
+            "detail": detail,
+        }
+
+    # Patch the strategy to the suggested value — same holdout window, only
+    # one knob changes, so the comparison is apples-to-apples.
     patched_strategy = dict(current_strategy)
     patched_strategy[config_key] = suggested_value
 
-    # Call run_simulation twice: baseline first, then the patched strategy.
-    baseline_oos_alpha = run_simulation(
-        current_strategy, history_data, acc_sym_ids, current_date_str, deviation_dict
+    # Call run_simulation twice on the IDENTICAL holdout slice: baseline
+    # first, then the patched strategy. Raw return is -total_guard_alpha
+    # (autotuner.py:1949, smaller = better) — re-negated below.
+    baseline_raw = run_simulation(
+        current_strategy, holdout_history, acc_sym_ids, current_date_str, deviation_dict
     )
-    patched_oos_alpha = run_simulation(
-        patched_strategy, history_data, acc_sym_ids, current_date_str, deviation_dict
+    patched_raw = run_simulation(
+        patched_strategy, holdout_history, acc_sym_ids, current_date_str, deviation_dict
     )
 
-    # Strict `>` — a tie does not pass (autotuner strict-positive cascade rule).
-    passed = patched_oos_alpha > baseline_oos_alpha
+    if not (math.isfinite(baseline_raw) and math.isfinite(patched_raw)):
+        # Fail closed with an HONEST detail — a non-finite objective is a
+        # data-quality problem, not a genuine underperform (F-013 AC-5).
+        detail = (
+            f"OOS re-validation FAILED for {config_key}={suggested_value} on "
+            f"{symphony_id}: run_simulation returned a non-finite guard-alpha "
+            f"objective (baseline_raw={baseline_raw!r}, "
+            f"patched_raw={patched_raw!r}) — degraded or invalid replay "
+            f"data, cannot honestly compare."
+        )
+        return {
+            "passed": False,
+            "patched_guard_alpha": None,
+            "baseline_guard_alpha": None,
+            "detail": detail,
+        }
+
+    # Re-negate to REAL guard-alpha (F-013 fix — the raw run_simulation
+    # return is -total_guard_alpha; comparing on that raw value inverted the
+    # gate). Strict `>` — a tie does not pass (autotuner strict-positive
+    # cascade rule).
+    baseline_guard_alpha = -baseline_raw
+    patched_guard_alpha = -patched_raw
+    passed = patched_guard_alpha > baseline_guard_alpha
 
     if passed:
         detail = (
             f"OOS re-validation PASSED for {config_key}={suggested_value} on "
-            f"{symphony_id}: patched OOS alpha {patched_oos_alpha} strictly "
-            f"beats baseline {baseline_oos_alpha}."
+            f"{symphony_id}: patched guard-alpha {patched_guard_alpha} "
+            f"strictly beats baseline guard-alpha {baseline_guard_alpha} on "
+            f"the held-out tail window."
         )
     else:
         detail = (
             f"OOS re-validation FAILED for {config_key}={suggested_value} on "
-            f"{symphony_id}: patched OOS alpha {patched_oos_alpha} does not "
-            f"strictly beat baseline {baseline_oos_alpha} — not greenlit for a "
-            f"live config write."
+            f"{symphony_id}: patched guard-alpha {patched_guard_alpha} does "
+            f"not strictly beat baseline guard-alpha {baseline_guard_alpha} "
+            f"on the held-out tail window — not greenlit for a live config "
+            f"write."
         )
 
     return {
         "passed": passed,
-        "oos_alpha": patched_oos_alpha,
-        "baseline_oos_alpha": baseline_oos_alpha,
+        "patched_guard_alpha": patched_guard_alpha,
+        "baseline_guard_alpha": baseline_guard_alpha,
         "detail": detail,
     }

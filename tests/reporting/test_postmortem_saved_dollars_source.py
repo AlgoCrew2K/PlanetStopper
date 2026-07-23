@@ -536,6 +536,10 @@ class TestHistoryAggregationReadsProducerValues:
                         "strategy_params": {},
                         "next_day_holdings": [],
                         "attempted_trigger_level": 1.5,
+                        # F-008: get_history_summary excludes entries lacking a
+                        # recognized if_held_source — this fixture represents
+                        # ordinary valid data, not F-008 contamination.
+                        "if_held_source": "shadow_history",
                     }
                 ],
             }

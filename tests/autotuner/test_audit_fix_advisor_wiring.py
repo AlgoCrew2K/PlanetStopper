@@ -280,10 +280,20 @@ def test_run_divergence_explainer_is_called_during_run_autotuner():
     )
 
 
-def test_divergence_explainer_persists_a_row_when_flag_off():
-    """With SECOND_WINDOW_CVAR_ENABLED off (default), DE writes a NOT_APPLICABLE
-    row for the audit trail.  Verified by reading advisor_observations after
-    a run_autotuner cycle.
+def test_divergence_explainer_writes_no_row_when_flag_off():
+    """CONTRACT CHANGE (PM-adjudicated 2026-07-13, AC-14 Mechanism 2 —
+    advisor-remediation-r1, flagged by r1-engine's regression sweep at
+    commit 82479560): this test previously asserted the OPPOSITE — that a
+    NOT_APPLICABLE row IS persisted per cycle for the audit trail with the
+    flag off (literally the pre-AC-14 contract). That contract is now
+    overturned: database.get_advisor_observations_for_symphony has no role
+    filter, so the old NOT_APPLICABLE stub row leaked onto
+    /api/advisor-observations?symphony_id= on every autotune run. The
+    approved fix is for run_divergence_explainer to write NOTHING when the
+    flag is off. Verified end-to-end through a REAL run_autotuner cycle
+    (unchanged from the original test's integration-level rigor) — this is
+    the strongest form of the "no DE rows leak" proof for the autotuner's
+    own production call site (autotuner.py:2924).
     """
     # Ensure flag is off for this test (clear any prior set).
     import os
@@ -293,15 +303,10 @@ def test_divergence_explainer_persists_a_row_when_flag_off():
     _run_autotuner(symphony_name="DefensiveAlpha")
 
     de_rows = _fetch_advisor_observations("DIVERGENCE_EXPLAINER")
-    assert de_rows, (
-        "No DIVERGENCE_EXPLAINER row written during run_autotuner.  S3-AUDIT-002 + "
-        "divergence_explainer.py contract: even with the flag off, a NOT_APPLICABLE "
-        "row must be persisted per cycle for the audit trail."
-    )
-    # On the off-flag path, the verdict must be NOT_APPLICABLE.
-    _id, _role, _subject_type, _subject_id, verdict = de_rows[-1]
-    assert verdict == "NOT_APPLICABLE", (
-        f"DE flag-off verdict must be 'NOT_APPLICABLE'; got {verdict!r}."
+    assert de_rows == [], (
+        f"AC-14 Mechanism 2 REGRESSION: DIVERGENCE_EXPLAINER row(s) were "
+        f"written during run_autotuner with SECOND_WINDOW_CVAR_ENABLED off — "
+        f"the approved fix is to write nothing. Got: {de_rows}"
     )
 
 

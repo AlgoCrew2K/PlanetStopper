@@ -18,6 +18,13 @@ from history. No code change until operator provides the new credential + go-ahe
 
 ## Ready to build now
 
+### `autotune_runs.pbo` never persisted — small defect (found 2026-07-07, culling-engine recon)
+The production autotune call site (`autotuner.py:2826-2844`) does not pass `pbo=` to
+`database.save_autotune_run`, so the computed `_pbo_value` (used for the in-run veto) is
+never written — `autotune_runs.pbo` (migration 028) is `None` on every real row. Also no
+dashboard/context path surfaces the numeric PBO anywhere. Fix: thread `_pbo_value` into the
+save call; optionally surface it in `_build_optuna_section`. Tier 1; independent of sleeves.
+
 ### `tech-debt-cleanups.completed.md` — C3b + C3c
 C3a is a confirmed no-op (stash empty). C3c shipped (chore/tech-debt-c3bc). Remaining:
 - **C3b:** formal route self-skip closure — write the route-level RED test for the
@@ -29,9 +36,98 @@ Small; Tier 1.
 - **DEP-1:** tighten `anthropic~=0.85.0` and `feedparser>=6.0` to exact `==` pins in
   `requirements.txt` / `pyproject.toml`.
 
+### `POST /ai-advisor/suggest` does not hash-resolve `composer_symphony_id` (found 2026-07-20, F-023 doc-audit)
+**[SHIPPED 2026-07-21 -- `DE-OPS-CLUSTER-001`, `fix-ops-cluster` cycle. See DECISIONS.md.]**
+`ai_advisor_suggest()` (`app.py:5796`) resolves the client's raw `symphony_id` to a canonical
+normalized name for everything else, but passes it straight through unresolved as
+`composer_symphony_id` -- which `assemble_advisor_context`'s Composer `/score` call
+(`ai_advisor.py:1601-1604`) requires to be a HASH, not a name; a name silently degrades that
+request's condensed-logic context to empty (D-1, never crashes). Pre-existing (predates F-023),
+out of scope for that cycle. Fix candidate: reuse `resolved_id`'s existing hash-match loop.
+Tier 1.
+
+### Test-infra hardening: `test_live_*.py` needs a second opt-in gate beyond the `live` marker (found 2026-07-20, F-013 doc-verification incident)
+`tests/*/test_live_*.py` files rely solely on `pytestmark = pytest.mark.live` + pyproject.toml's
+default `-m 'not live and not slow and not perf'` addopts filter to stay excluded from normal
+runs. That `-m` filter is a single point of failure: any invocation that overrides addopts
+(e.g. `pytest ... -o addopts=""`, attempted as a workaround for an unrelated xdist issue) silently
+strips it, and if `ANTHROPIC_API_KEY` (or the equivalent live credential) is present in the
+environment, the test's own self-skip guard does not fire either — the live test runs for real.
+Confirmed 2026-07-20: an `-o addopts=""` invocation during F-013 doc-verification caused one
+unsanctioned real Anthropic API call via `tests/ai_advisor/test_live_claude_advisor.py`'s
+module-scoped fixture (advisor-context content, no trade action, cost trivial; disclosed and
+accepted as a low-impact process incident, DE-ADVISOR-GATE3-DIRECTION-001 doc-cycle). Fix
+candidate: require an explicit opt-in env var (e.g. `ALPHABOT_RUN_LIVE_TESTS=1`) in addition to
+the `live` marker, so a stripped `-m` filter alone can never let a live test execute. Tier 1.
+
 ---
 
 ## Low priority / tracked follow-on
+
+### Performance-tab double "+" glyph on pp-kind delta rows -- ACCEPTED-COSMETIC (F-024, register LOW, closed out 2026-07-21, `fix-ops-cluster`/`DE-OPS-CLUSTER-001`)
+`performance.js:77` and `:90` both self-sign their pp-kind delta rows (prepend `'+'` for a
+non-negative value) on top of an already-signed formatted string, producing a doubled glyph
+(e.g. "↑ ++0.64pp"). The underlying VALUE is correct -- only the glyph repeats. Explicitly kept
+OUT of scope by two prior cycles (`fix-f023-perf-view.md`, `fix-display-cluster.md`) and again by
+this FINAL confidence-program cycle's plan (`feature-plans/fix-ops-cluster.md` Scope Boundaries:
+"F-024 glyph (stays deferred cosmetic -- record as ACCEPTED-COSMETIC in the close-out)"). This is
+that close-out record: the finding is real, LOW severity, cosmetic-only, and deliberately not
+fixed across three consecutive cycles that all touched adjacent code (`fix-f023-perf-view`,
+`fix-display-cluster`, `fix-ops-cluster`) -- a standing decision, not an oversight. Trivial one-line fix (drop the redundant `'+'` prepend) if ever prioritized.
+
+### F-1 frozen-branch connection close isn't `try/finally`-wrapped -- LOW, accepted residual (found + accepted 2026-07-21, `fix-ops-cluster`/`DE-OPS-CLUSTER-001`)
+`get_state()`'s `closed_frozen`/`pre_market` branch (`app.py`, F-1 frozen-branch fix) opens a
+shared `_frozen_shadow_conn` and closes it with a plain statement after the per-symphony-loop-
+through-portfolio-calls span converges, NOT a `try/finally` wrapping that whole span (unlike the
+live branch's fix, which does use `try/finally`). An exception raised in the per-symphony loop
+itself, outside the narrow `(KeyError, TypeError, ValueError)` catch already there (e.g. a
+non-numeric `current_return` TypeErroring on `/100.0`), would propagate past the `close()` and
+leak the connection. Both foc-tw and foc-rev independently traced this during review and agreed:
+LOW severity (a read-only SQLite connection with no pending transaction, GC-recovered, no
+data-integrity risk; requires already-malformed snapshot data that would 500 the route
+regardless). Not fixed inline given cycle-velocity pressure and the severity gap. Optional cheap
+follow-up available (~4 lines: harden the two numeric coercions with try/except, closing both the
+leak AND the underlying pre-existing TypeError risk) if ever prioritized -- not blocking, PM's
+call. See `DE-OPS-CLUSTER-001` in `DECISIONS.md` for the full trace.
+
+### Sleeves: mis-citing float-imprecision example in the price-rounding docstring — COSMETIC (found 2026-07-08, P3 smoke cycle)
+The bracket price-rounding (`_round_to_equity_tick`, sleeves/alpaca_orders.py, task #35) cites
+`495.00 / 0.01 == 49499.999999999993` as motivation, but that expression is exactly `49500.0` in
+Python — the example doesn't reproduce. The Decimal-based decision is CORRECT (naive
+`floor(price*100)/100` genuinely misrounds e.g. $0.29→$0.28); only the illustrative citation is
+wrong. Now mirrored in 3 places (the source docstring, DECISIONS.md DE-SLEEVES-P3-001, docs/generated/sleeves.md).
+Trivial one-line fix — swap in a real reproducing example. Not fixed inline to avoid re-gating a comment typo.
+
+### tests/database/conftest.py init_db-before-guard footgun (found 2026-07-07, sleeves P1 cycle) — LOW
+Bare top-level `import database` in tests/database/conftest.py triggers database.py's
+module-level init_db() BEFORE tests/conftest.py's pytest_configure() DB_PATH guard fires,
+when tests/database is passed as an explicit pytest CLI target (bare `tests` root, as CI
+uses, is unaffected). Pre-existing on stock HEAD (confirmed via git stash by sleeve-db).
+Workaround: pre-set DB_PATH in the shell env. Fix candidate: defer init_db out of import
+time or make the database conftest set DB_PATH itself. Tier 1.
+
+### Fundamentals lens `sources[].url` hardcodes `type=10-K` query param — COSMETIC (found 2026-07-13, advisor-suite live re-verify)
+The AAPL fundamentals payload correctly selects the latest 10-Q (`end=2026-03-28`, `filed=2026-05-01`,
+`form=10-Q` — DE-ADVISOR-SUITE-FIX-001 AC-4, proven live), and `sources[].title` reads
+"Apple Inc. 10-Q (2026-05-01)", but the EDGAR browse URL still hardcodes `&type=10-K` in the query
+string. Data + title are correct; only the source deep-link's form filter is wrong. Trivial fix —
+thread the selected form into the URL builder (`ai_advisor.py` fundamentals section). Advisory-only.
+
+### Standardize AI-Advisor slide-in panels on the transform pattern — DEFERRED FOLLOW-UP (found 2026-07-13, AC-3b saga)
+The right-based chat/detail panel (`right:-440px` → `chat-panel--open`) has a latent paint
+fragility that produced a stale-headless-browser artifact during AC-3b (the panel *does* open
+instantly in a fresh browser — verified — so this was NOT a shipped bug and the transform fix was
+reverted net-zero). Consider deliberately standardizing all AI-Advisor slide-panels on the proven
+`#detail-panel` transform-translateX pattern as a hygiene follow-up, to eliminate the class of
+paint fragility. Deferred, not a defect. See DECISIONS.md DE-ADVISOR-SUITE-FIX-001 AC-3b.
+
+### `test_api_history` cross-test isolation gap — LOW (found 2026-07-13, advisor-suite gate)
+`tests/.../test_api_history` reads the absolute `_POST_MORTEMS_DIR` (module-level absolute path)
+which defeats `monkeypatch.chdir` — under a nested-path pytest invocation it reads the worktree's
+real `post_mortems/` instead of an isolated temp dir, so it passes/fails depending on ambient
+fixtures. Deterministic pre-existing isolation gap, NOT a production defect (the app path is
+correct). Fix: make the post-mortems dir resolution test-overridable (env var or fixture) so the
+test can point it at a temp dir. Deselected in bounded PM gate runs.
 
 ### Per-module test footprint (`tests/advisors/` single-process) — LOW PRIORITY
 **Discovered:** 2026-06-21 (reload-leak remediation diagnostic). **Priority:** LOW — gates
@@ -64,6 +160,20 @@ production — no accumulation occurs in the daemon or live path.
 file, then targeted test-infra fix (e.g. session-scoped fixtures, gc.collect teardowns, or
 test-file splitting). Do NOT address by weakening assertions or removing coverage — this is an
 infrastructure concern, not a test correctness problem.
+
+---
+
+### `docs/generated/app.md` Strategy Builder route section -- stale `app.py:38xx` line citations -- COSMETIC (found 2026-07-13, advisor-outage-degrade doc pass)
+The `POST /ai-advisor/strategy-builder/run` section of `docs/generated/app.md` cites several
+`app.py:38xx` line numbers (e.g. `app.py:3759`, `:3800`, `:3807`, `:3813`, `:3826`, `:3840`,
+`:3852-3879`) that were accurate when R1 wrote them but have drifted -- several routes
+(candidate-alert, 2026-07-12) were added to `app.py` since, and the route decorator now lives
+at `app.py:4739`. Flagged inline in the doc (a footnote noting the drift + the current line)
+rather than corrected line-by-line, since a full citation sweep of this section is its own
+small task, not scoped to the advisor-outage-degrade cycle that surfaced it. Fix candidate:
+re-derive every `app.py:N` citation in this section (and audit the rest of `app.md` for the
+same drift pattern -- this section is unlikely to be the only one). Tier 1; cosmetic, no
+functional impact -- the doc content itself is accurate, only the line pointers are stale.
 
 ---
 

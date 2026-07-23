@@ -1,0 +1,321 @@
+{
+    "date": "2026-06-22",
+    "summary": {
+        "total_monitored": 12,
+        "total_triggered": 11,
+        "positive_guard_alpha_count": 11
+    },
+    "tomorrow_target_holdings": {
+        "STATUS": "Pending Composer Rebalance"
+    },
+    "triggers": [
+        {
+            "symphony_name": "(INVEST) LQD + EYEG 5 ways Full Market",
+            "symphony_value": 1172.31,
+            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "exit_reason": "Take-Profit",
+            "exit_return": 2.82,
+            "attempted_trigger_level": 2.82,
+            "shadow_return": 0.37,
+            "shadow_hwm": 3.17,
+            "saved_pct_guard_alpha": 2.45,
+            "saved_dollars": 28.72,
+            "hwm_at_trigger": 2.94,
+            "time_triggered": "10:04",
+            "symphony_vol": 1.68,
+            "strategy_params": {
+                "TRIGGER_THRESHOLD_PCT": 15.0,
+                "TAKE_PROFIT_MC_PCT": 5.0,
+                "MAX_SQUEEZE_FLOOR": 0.2,
+                "VWAP_CROSS_HWM_PCT": 1.0,
+                "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+                "MAX_PARABOLIC_SQUEEZE": 0.5,
+                "VWAP_BLEED_MULTIPLIER": 1.5,
+                "VWAP_BLEED_TICKS": 10
+            },
+            "next_day_holdings": [
+                "Pending..."
+            ]
+        },
+        {
+            "symphony_name": "Planet of the Paragons: EYEG of the LQD",
+            "symphony_value": 1065.57,
+            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "exit_reason": "Take-Profit",
+            "exit_return": 2.91,
+            "attempted_trigger_level": 2.91,
+            "shadow_return": 0.3,
+            "shadow_hwm": 3.12,
+            "saved_pct_guard_alpha": 2.61,
+            "saved_dollars": 27.81,
+            "hwm_at_trigger": 3.12,
+            "time_triggered": "10:14",
+            "symphony_vol": 1.66,
+            "strategy_params": {
+                "TRIGGER_THRESHOLD_PCT": 15.0,
+                "TAKE_PROFIT_MC_PCT": 5.0,
+                "MAX_SQUEEZE_FLOOR": 0.2,
+                "VWAP_CROSS_HWM_PCT": 1.0,
+                "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+                "MAX_PARABOLIC_SQUEEZE": 0.5,
+                "VWAP_BLEED_MULTIPLIER": 1.5,
+                "VWAP_BLEED_TICKS": 10
+            },
+            "next_day_holdings": [
+                "Pending..."
+            ]
+        },
+        {
+            "symphony_name": "Corporate Chaos 5 ways ",
+            "symphony_value": 985.31,
+            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "exit_reason": "VWAP Breakdown",
+            "exit_return": 1.29,
+            "attempted_trigger_level": 1.94,
+            "shadow_return": 0.32,
+            "shadow_hwm": 1.94,
+            "saved_pct_guard_alpha": 0.97,
+            "saved_dollars": 9.56,
+            "hwm_at_trigger": 1.94,
+            "time_triggered": "10:26",
+            "symphony_vol": 1.32,
+            "strategy_params": {
+                "TRIGGER_THRESHOLD_PCT": 15.0,
+                "TAKE_PROFIT_MC_PCT": 5.0,
+                "MAX_SQUEEZE_FLOOR": 0.2,
+                "VWAP_CROSS_HWM_PCT": 1.0,
+                "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+                "MAX_PARABOLIC_SQUEEZE": 0.5,
+                "VWAP_BLEED_MULTIPLIER": 1.5,
+                "VWAP_BLEED_TICKS": 10
+            },
+            "next_day_holdings": [
+                "Pending..."
+            ]
+        },
+        {
+            "symphony_name": "Planet of the Golden Age (Buy Copy)",
+            "symphony_value": 1351.64,
+            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "exit_reason": "VWAP Breakdown",
+            "exit_return": 0.62,
+            "attempted_trigger_level": 1.66,
+            "shadow_return": -0.74,
+            "shadow_hwm": 1.66,
+            "saved_pct_guard_alpha": 1.36,
+            "saved_dollars": 18.38,
+            "hwm_at_trigger": 1.66,
+            "time_triggered": "10:25",
+            "symphony_vol": 3.42,
+            "strategy_params": {
+                "TRIGGER_THRESHOLD_PCT": 15.0,
+                "TAKE_PROFIT_MC_PCT": 5.0,
+                "MAX_SQUEEZE_FLOOR": 0.2,
+                "VWAP_CROSS_HWM_PCT": 1.0,
+                "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+                "MAX_PARABOLIC_SQUEEZE": 0.5,
+                "VWAP_BLEED_MULTIPLIER": 1.5,
+                "VWAP_BLEED_TICKS": 10
+            },
+            "next_day_holdings": [
+                "Pending..."
+            ]
+        },
+        {
+            "symphony_name": "Planet LQD: Run of the Feaver'd WaltAnansi USDs 2/3 Mixup",
+            "symphony_value": 1286.12,
+            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "exit_reason": "VWAP Breakdown",
+            "exit_return": 0.76,
+            "attempted_trigger_level": 2.01,
+            "shadow_return": -0.77,
+            "shadow_hwm": 2.01,
+            "saved_pct_guard_alpha": 1.53,
+            "saved_dollars": 19.68,
+            "hwm_at_trigger": 2.01,
+            "time_triggered": "10:27",
+            "symphony_vol": 3.13,
+            "strategy_params": {
+                "TRIGGER_THRESHOLD_PCT": 15.0,
+                "TAKE_PROFIT_MC_PCT": 5.0,
+                "MAX_SQUEEZE_FLOOR": 0.2,
+                "VWAP_CROSS_HWM_PCT": 1.0,
+                "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+                "MAX_PARABOLIC_SQUEEZE": 0.5,
+                "VWAP_BLEED_MULTIPLIER": 1.5,
+                "VWAP_BLEED_TICKS": 10
+            },
+            "next_day_holdings": [
+                "Pending..."
+            ]
+        },
+        {
+            "symphony_name": "Land of Feaver'd Allocations: Intelligent Novas",
+            "symphony_value": 1080.35,
+            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "exit_reason": "Take-Profit",
+            "exit_return": 1.85,
+            "attempted_trigger_level": 1.85,
+            "shadow_return": 0.51,
+            "shadow_hwm": 2.89,
+            "saved_pct_guard_alpha": 1.34,
+            "saved_dollars": 14.48,
+            "hwm_at_trigger": 2.54,
+            "time_triggered": "09:43",
+            "symphony_vol": 0.76,
+            "strategy_params": {
+                "TRIGGER_THRESHOLD_PCT": 15.0,
+                "TAKE_PROFIT_MC_PCT": 5.0,
+                "MAX_SQUEEZE_FLOOR": 0.2,
+                "VWAP_CROSS_HWM_PCT": 1.0,
+                "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+                "MAX_PARABOLIC_SQUEEZE": 0.5,
+                "VWAP_BLEED_MULTIPLIER": 1.5,
+                "VWAP_BLEED_TICKS": 10
+            },
+            "next_day_holdings": [
+                "Pending..."
+            ]
+        },
+        {
+            "symphony_name": "(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations",
+            "symphony_value": 1107.58,
+            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "exit_reason": "Take-Profit",
+            "exit_return": 1.86,
+            "attempted_trigger_level": 1.86,
+            "shadow_return": 0.52,
+            "shadow_hwm": 2.9,
+            "saved_pct_guard_alpha": 1.34,
+            "saved_dollars": 14.84,
+            "hwm_at_trigger": 2.55,
+            "time_triggered": "09:43",
+            "symphony_vol": 0.76,
+            "strategy_params": {
+                "TRIGGER_THRESHOLD_PCT": 15.0,
+                "TAKE_PROFIT_MC_PCT": 5.0,
+                "MAX_SQUEEZE_FLOOR": 0.2,
+                "VWAP_CROSS_HWM_PCT": 1.0,
+                "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+                "MAX_PARABOLIC_SQUEEZE": 0.5,
+                "VWAP_BLEED_MULTIPLIER": 1.5,
+                "VWAP_BLEED_TICKS": 10
+            },
+            "next_day_holdings": [
+                "Pending..."
+            ]
+        },
+        {
+            "symphony_name": "(INVEST) Planet of Projected Inflation: Corporate Chaos 2060",
+            "symphony_value": 1120.05,
+            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "exit_reason": "VWAP Breakdown",
+            "exit_return": 0.68,
+            "attempted_trigger_level": 1.25,
+            "shadow_return": -0.08,
+            "shadow_hwm": 1.25,
+            "saved_pct_guard_alpha": 0.76,
+            "saved_dollars": 8.51,
+            "hwm_at_trigger": 1.25,
+            "time_triggered": "10:26",
+            "symphony_vol": 1.77,
+            "strategy_params": {
+                "TRIGGER_THRESHOLD_PCT": 15.0,
+                "TAKE_PROFIT_MC_PCT": 5.0,
+                "MAX_SQUEEZE_FLOOR": 0.2,
+                "VWAP_CROSS_HWM_PCT": 1.0,
+                "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+                "MAX_PARABOLIC_SQUEEZE": 0.5,
+                "VWAP_BLEED_MULTIPLIER": 1.5,
+                "VWAP_BLEED_TICKS": 10
+            },
+            "next_day_holdings": [
+                "Pending..."
+            ]
+        },
+        {
+            "symphony_name": "Planet of the Reasonabilists: Era of the Erased Golden Age",
+            "symphony_value": 1559.67,
+            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "exit_reason": "VWAP Breakdown",
+            "exit_return": 0.67,
+            "attempted_trigger_level": 1.59,
+            "shadow_return": -1.22,
+            "shadow_hwm": 1.59,
+            "saved_pct_guard_alpha": 1.89,
+            "saved_dollars": 29.48,
+            "hwm_at_trigger": 1.59,
+            "time_triggered": "10:23",
+            "symphony_vol": 1.17,
+            "strategy_params": {
+                "TRIGGER_THRESHOLD_PCT": 15.0,
+                "TAKE_PROFIT_MC_PCT": 5.0,
+                "MAX_SQUEEZE_FLOOR": 0.2,
+                "VWAP_CROSS_HWM_PCT": 1.0,
+                "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+                "MAX_PARABOLIC_SQUEEZE": 0.5,
+                "VWAP_BLEED_MULTIPLIER": 1.5,
+                "VWAP_BLEED_TICKS": 10
+            },
+            "next_day_holdings": [
+                "Pending..."
+            ]
+        },
+        {
+            "symphony_name": "Planet of Erased History: Nova's Feaver'd Golden Age of EYEG",
+            "symphony_value": 1204.35,
+            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "exit_reason": "Take-Profit",
+            "exit_return": 2.14,
+            "attempted_trigger_level": 2.14,
+            "shadow_return": -0.41,
+            "shadow_hwm": 2.4,
+            "saved_pct_guard_alpha": 2.55,
+            "saved_dollars": 30.71,
+            "hwm_at_trigger": 2.4,
+            "time_triggered": "10:12",
+            "symphony_vol": 3.89,
+            "strategy_params": {
+                "TRIGGER_THRESHOLD_PCT": 15.0,
+                "TAKE_PROFIT_MC_PCT": 5.0,
+                "MAX_SQUEEZE_FLOOR": 0.2,
+                "VWAP_CROSS_HWM_PCT": 1.0,
+                "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+                "MAX_PARABOLIC_SQUEEZE": 0.5,
+                "VWAP_BLEED_MULTIPLIER": 1.5,
+                "VWAP_BLEED_TICKS": 10
+            },
+            "next_day_holdings": [
+                "Pending..."
+            ]
+        },
+        {
+            "symphony_name": "(INVEST:CRYPTO) We do a Little Trolling Planet's Mix v1.4 | 10.19.2022",
+            "symphony_value": 1619.8,
+            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "exit_reason": "VWAP Breakdown",
+            "exit_return": 0.45,
+            "attempted_trigger_level": 1.31,
+            "shadow_return": 0.04,
+            "shadow_hwm": 1.31,
+            "saved_pct_guard_alpha": 0.41,
+            "saved_dollars": 6.64,
+            "hwm_at_trigger": 1.31,
+            "time_triggered": "10:28",
+            "symphony_vol": 1.07,
+            "strategy_params": {
+                "TRIGGER_THRESHOLD_PCT": 15.0,
+                "TAKE_PROFIT_MC_PCT": 5.0,
+                "MAX_SQUEEZE_FLOOR": 0.2,
+                "VWAP_CROSS_HWM_PCT": 1.0,
+                "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+                "MAX_PARABOLIC_SQUEEZE": 0.5,
+                "VWAP_BLEED_MULTIPLIER": 1.5,
+                "VWAP_BLEED_TICKS": 10
+            },
+            "next_day_holdings": [
+                "Pending..."
+            ]
+        }
+    ]
+}

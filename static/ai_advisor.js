@@ -573,8 +573,18 @@
                 selectEl.innerHTML = '<option value="">Select symphony…</option>';
                 syms.forEach(function (sym) {
                     var opt = document.createElement('option');
-                    opt.value = sym;
-                    opt.textContent = sym;
+                    // F-023 / DE-PERFVIEW-ID-MISMATCH correction: the
+                    // accept/suggest flow's canonical key is the display
+                    // NAME, not the Composer hash -- POST /ai-advisor/accept
+                    // reads database.get_symphony_strategy/save_symphony_
+                    // strategy directly (normalize_name(display_name)-keyed
+                    // only, no hash resolution). The endpoint now returns
+                    // {id,name} objects (not bare strings), so this must
+                    // read sym.name explicitly -- but it stays the option
+                    // value, unlike performance.js's picker (which genuinely
+                    // needs sym.id since it feeds a hash-keyed query).
+                    opt.value = sym.name;
+                    opt.textContent = sym.name;
                     selectEl.appendChild(opt);
                 });
                 if (prevVal) selectEl.value = prevVal;
@@ -691,13 +701,30 @@
      * CSRF token from the prefetched _csrfToken (or fetches fresh on miss),
      * then POSTs to /ai-advisor/strategy-builder/run with X-CSRF-Token header.
      *
-     * On success: navigates to /ai-advisor (the unified SPA) so newly-persisted
-     * observations are rendered server-side from the read-only SQLite accessor.
-     * Note: navigates to /ai-advisor (not the old /ai-advisor/strategy-builder
-     * standalone URL) per the SPA-port fold-in contract.
+     * On success: renders the response IN-PLACE into #sb-run-results (survivor
+     * cards, 0-survivor honest state, rejected-candidates collapsible) — never
+     * navigates away, so the operator can tell THIS run's results from prior
+     * history (AC-1/AC-2, feature-plans/advisor-suite-fixes.md). No sparkline —
+     * the run endpoint returns no equity points; the persisted-history cards
+     * (server-rendered) keep the sparkline, these do not (accepted scope gap).
      *
      * On error: the sb-run-error div is shown inline.
      */
+    // AC-7 (F6, Gap F; r1-review Checkpoint-3 BLOCK finding): rejection_reason
+    // -> distinguishable copy. Mirrors the SB Jinja _REJECTION_COPY map and
+    // its Asset-Swaps/Logic-Changes JS siblings exactly (same 4 mapped
+    // values, same wording) so the operator sees identical explanations
+    // regardless of which surface (live run vs. persisted history vs. the
+    // other two evaluate routes) rejected the candidate. Extensible: an
+    // unmapped reason (null, or a future untracked class) renders NOTHING —
+    // never a fabricated blanket string.
+    var SB_LIVE_REJECTION_COPY = {
+        pbo_veto: 'This candidate failed the overfitting-robustness (PBO) check.',
+        below_spy_alpha: 'This candidate did not beat the SPY benchmark over the same period.',
+        oos_inferior_to_incumbent: 'This candidate did not outperform the live incumbent out-of-sample.',
+        fdr_not_winner: 'This candidate cleared the FDR-calibrated significance bar but was not the single strongest candidate this run.',
+    };
+
     async function sbRunAnalysis() {
         var btn = document.getElementById('sb-run-btn');
         var errDiv = document.getElementById('sb-run-error');
@@ -741,12 +768,124 @@
 
             var data = await resp.json();
             if (data.error) {
-                if (errDiv) { errDiv.textContent = data.error; errDiv.style.display = 'block'; }
+                // AC-11: error_category is a richer, still-sanitized cause token
+                // (a type(exc).__name__-shaped string) alongside the static
+                // "strategy-builder-error" token — non-null-only, never render
+                // the literal string "null"/"undefined" in the DOM.
+                var errText = data.error + (data.error_category ? ' (' + data.error_category + ')' : '');
+                if (errDiv) { errDiv.textContent = errText; errDiv.style.display = 'block'; }
                 if (resultsDiv) { resultsDiv.innerHTML = ''; }
             } else {
-                // Navigate to /ai-advisor (unified SPA) — the strategy-builder tab
-                // panel will re-render with newly-persisted observations.
-                window.location.href = '/ai-advisor';
+                var n = data.n_candidates || 0, thr = data.fdr_adjusted_threshold;
+                var sv = data.survivors || [], rj = data.rejected || [];
+                var html = '<div class="run-controls-note" data-testid="sb-live-summary">Evaluated ' + n +
+                    ' candidate' + (n === 1 ? '' : 's') + (thr != null ? ' — threshold α=' + thr.toFixed(4) : '') + '</div>';
+                // AC-11 (F5, Gap E): built-new/Atlas provenance rollup — no prior
+                // render surface existed for these two fields anywhere in the
+                // codebase (checked Jinja + every JS file); minimal factual line,
+                // same ' · ' separator convention already used elsewhere in this
+                // file.
+                if (data.built_new_count != null || data.atlas_count != null) {
+                    html += '<div class="run-controls-note" data-testid="sb-live-provenance">Built-new: ' +
+                        (data.built_new_count || 0) + ' · Atlas: ' + (data.atlas_count || 0) + '</div>';
+                }
+                // AC-11: degraded-run notice ("Opus produced 0 plans...") — server-
+                // authored prose, rendered verbatim, non-null-only.
+                if (data.mode_notice) {
+                    html += '<div class="empty-state" data-testid="sb-live-mode-notice">' +
+                        escHtml(data.mode_notice) + '</div>';
+                }
+                // AC-12: honest indicator when the drawdown/Pearson screens did not
+                // run this batch (no live-portfolio return series at route time).
+                if (data.screens_skipped) {
+                    html += '<div class="run-controls-note" data-testid="sb-live-screens-skipped">Screens skipped' +
+                        (data.screens_skipped_reason ? ': ' + escHtml(data.screens_skipped_reason) : '') + '</div>';
+                }
+                // AC-4/AC-5 (DEGRADE-FIX): honest notice when some candidates were
+                // compiled but could not be tradeability-checked because Composer's
+                // /backtest was unreachable (infra outage, not a genuine gate
+                // rejection) -- guarded on the boolean flag (mirrors the
+                // screens_skipped/screens_skipped_reason pairing above), server-
+                // authored prose rendered verbatim, distinct from the "0 passed
+                // the gate" empty-state and from survivor/rejected cards.
+                // Non-null-only -- never fabricated (AC-5).
+                if (data.backtest_unavailable) {
+                    html += '<div class="empty-state" data-testid="sb-live-backtest-unavailable">' +
+                        escHtml(data.backtest_unavailable_notice) + '</div>';
+                }
+                // R2-1 (AC-4/AC-5): run-level generation provenance -- model,
+                // injected-evidence manifest, and run-id, read straight off
+                // data.provenance (the route's 4-key object; see app.py's
+                // ai_advisor_strategy_builder_run()). Distinct from the
+                // existing built-new/Atlas TEMPLATE-provenance rollup above
+                // (data-testid="sb-live-provenance", AC-11/F5) -- same
+                // overloaded English word, different concept (per-candidate
+                // origin vs. this run's generation-context provenance),
+                // hence the disambiguated testid. Non-null-only: a null
+                // provenance (the pre-existing no-key error path, which
+                // never populates this field) renders nothing, mirroring
+                // the mode_notice/backtest_unavailable idiom above.
+                if (data.provenance) {
+                    var prov = data.provenance;
+                    var evidence = prov.evidence_injected || {};
+                    var evidenceParts = [];
+                    ['tree', 'stats', 'technicals', 'sentiment', 'derivatives', 'macro', 'fundamentals'].forEach(function (key) {
+                        var val = evidence[key];
+                        if (val) { evidenceParts.push(key + ': ' + val); }
+                    });
+                    html += '<div class="run-controls-note" data-testid="sb-live-generation-provenance">' +
+                        'Model: ' + escHtml(prov.generation_model || '') +
+                        (evidenceParts.length ? ' · Context — ' + escHtml(evidenceParts.join(', ')) : '') +
+                        (prov.run_id ? ' · Run: ' + escHtml(prov.run_id) : '') +
+                        '</div>';
+                }
+                function card(c, cls) {
+                    var extra = '';
+                    var modifierClass = '';
+                    if (cls === 'survivor') {
+                        // AC-9: low_power drives a CSS modifier only — the caveat
+                        // TEXT itself comes from c.caveats (server-appended
+                        // _LOW_POWER_CAVEAT when true), never re-derived or
+                        // hardcoded here; the numeric MIN_POWER_FOLD_DAYS threshold
+                        // never crosses into JS (locked AC-9 contract). Moot for
+                        // rejected candidates — didn't clear the gate either way,
+                        // mirrors app.py's own survivor-only scoping.
+                        if (c.low_power) { modifierClass = ' proposal-card--low-power'; }
+                        if (c.caveats && c.caveats.length) {
+                            extra += '<div class="caveats-block" data-testid="caveats-block">' +
+                                c.caveats.map(function (cv) { return '<p class="caveat-text">' + escHtml(cv) + '</p>'; }).join('') +
+                                '</div>';
+                        }
+                    } else {
+                        // AC-7: rejection_reason -> distinguishable copy via
+                        // SB_LIVE_REJECTION_COPY (byte-identical wording to the
+                        // persisted-history Jinja _REJECTION_COPY and the
+                        // Asset-Swaps/Logic-Changes JS REJECTION_COPY maps).
+                        // Unmapped/null reason renders nothing — never a
+                        // fabricated blanket string.
+                        var reasonCopy = c.rejection_reason ? SB_LIVE_REJECTION_COPY[c.rejection_reason] : null;
+                        if (reasonCopy) {
+                            extra += '<div class="apply-guidance" data-testid="apply-guidance">' +
+                                '<strong>Gate withheld:</strong> ' + escHtml(reasonCopy) + '</div>';
+                        }
+                    }
+                    return '<div class="proposal-card proposal-card--' + cls + modifierClass + '"><span class="card-candidate-id">' +
+                        escHtml(c.candidate_id || '') + '</span>' + extra + '</div>';
+                }
+                if (sv.length) {
+                    html += '<div class="proposal-cards" data-testid="sb-live-survivor-cards">' +
+                        sv.map(function (s) { return card(s, 'survivor'); }).join('') + '</div>';
+                } else {
+                    html += '<div class="empty-state" data-testid="sb-live-empty-state">Evaluated ' + n +
+                        ' candidates — 0 passed the gate</div>';
+                }
+                if (rj.length) {
+                    html += '<details class="rejected-collapsible" data-testid="sb-live-rejected-section">' +
+                        '<summary>Candidates that did not clear the gate (' + rj.length + ')</summary>' +
+                        '<div class="rejected-cards">' + rj.map(function (r) { return card(r, 'rejected'); }).join('') +
+                        '</div></details>';
+                }
+                if (resultsDiv) { resultsDiv.innerHTML = html; }
             }
         } catch (err) {
             if (errDiv) { errDiv.textContent = 'Request failed: ' + err.message; errDiv.style.display = 'block'; }
@@ -756,8 +895,140 @@
         }
     }
 
+    // ---------------------------------------------------------------------------
+    // Frontrunner Builder tab functions.
+    //
+    // Defined inside the IIFE so they share the _csrfToken closure, then
+    // exposed on window so Jinja onclick="..." works.
+    // ---------------------------------------------------------------------------
+
+    /**
+     * Frontrunner Builder run trigger.
+     *
+     * POSTs to /ai-advisor/frontrunner-builder/run. The route dispatches the
+     * (genuinely multi-minute, all-live-symphonies) build to a background
+     * executor and returns immediately — there is no synchronous result to
+     * render. On success this shows a status message telling the operator to
+     * reload the page later; it deliberately does NOT auto-navigate (unlike
+     * sbRunAnalysis) since results are not ready yet when the response lands.
+     */
+    async function frRunBuild() {
+        var btn = document.getElementById('fr-run-btn');
+        var statusDiv = document.getElementById('fr-run-status');
+        var errDiv = document.getElementById('fr-run-error');
+        if (!btn) { return; }
+
+        btn.disabled = true;
+        btn.textContent = 'Starting…';
+        if (statusDiv) { statusDiv.textContent = ''; }
+        if (errDiv) { errDiv.style.display = 'none'; errDiv.textContent = ''; }
+
+        try {
+            var csrfToken = _csrfToken;
+            if (!csrfToken) {
+                var tokenResp = await fetch('/api/csrf-token');
+                if (!tokenResp.ok) { throw new Error('Could not obtain CSRF token'); }
+                var tokenData = await tokenResp.json();
+                csrfToken = tokenData.csrf_token;
+            }
+
+            var resp = await fetch('/ai-advisor/frontrunner-builder/run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                body: JSON.stringify({}),
+            });
+            var data = await resp.json();
+
+            if (data && data.error) {
+                if (errDiv) { errDiv.textContent = data.error; errDiv.style.display = 'block'; }
+            } else if (statusDiv) {
+                statusDiv.textContent =
+                    'Build started in the background — this can take several minutes for ' +
+                    'multiple symphonies. Reload this page afterward to see new proposals.';
+            }
+        } catch (err) {
+            if (errDiv) { errDiv.textContent = 'Request failed: ' + err.message; errDiv.style.display = 'block'; }
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Run build';
+        }
+    }
+
+    /**
+     * Shared approve/reject dispatch for a frontrunner_proposals row.
+     *
+     * action: 'approve' | 'reject'. Disables both buttons in the card
+     * immediately (prevents double-submit) and replaces the card's action
+     * row with a status message on success.
+     */
+    function frDispatchProposalAction(action, proposalId) {
+        var card = document.getElementById('fr-card-' + proposalId);
+        var approveBtn = card ? card.querySelector('[data-testid="fr-approve-btn"]') : null;
+        var rejectBtn = card ? card.querySelector('[data-testid="fr-reject-btn"]') : null;
+        if (approveBtn) { approveBtn.disabled = true; }
+        if (rejectBtn) { rejectBtn.disabled = true; }
+        if (card) { card.style.opacity = '0.6'; }
+
+        var routePath = action === 'approve' ? '/ai-advisor/proposal/approve' : '/ai-advisor/proposal/reject';
+
+        (async function () {
+            try {
+                var csrfToken = _csrfToken;
+                if (!csrfToken) {
+                    var tokenResp = await fetch('/api/csrf-token');
+                    if (!tokenResp.ok) { throw new Error('Could not obtain CSRF token'); }
+                    var tokenData = await tokenResp.json();
+                    csrfToken = tokenData.csrf_token;
+                }
+
+                var resp = await fetch(routePath, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                    body: JSON.stringify({ proposal_id: proposalId }),
+                });
+                var data = await resp.json();
+
+                if (data && (data.success === true)) {
+                    if (card) {
+                        card.style.opacity = '1';
+                        var msg = action === 'approve'
+                            ? 'Approved — created in Composer' + (data.symphony_id ? ' (' + escHtml(data.symphony_id) + ')' : '') + '.'
+                            : 'Rejected.';
+                        var actionsRow = card.querySelector('.proposal-actions');
+                        if (actionsRow) {
+                            actionsRow.innerHTML =
+                                '<p style="color:' + cssVar('--studio-pos') + ';font-size:0.875rem;font-weight:700;">' +
+                                msg + '</p>';
+                        }
+                    }
+                } else {
+                    if (card) { card.style.opacity = '1'; }
+                    if (approveBtn) { approveBtn.disabled = false; }
+                    if (rejectBtn) { rejectBtn.disabled = false; }
+                    alert((action === 'approve' ? 'Approve' : 'Reject') + ' failed: ' + (data && data.error ? data.error : 'unknown error'));
+                }
+            } catch (err) {
+                if (card) { card.style.opacity = '1'; }
+                if (approveBtn) { approveBtn.disabled = false; }
+                if (rejectBtn) { rejectBtn.disabled = false; }
+                alert('Request failed: ' + err.message);
+            }
+        }());
+    }
+
+    function frApprove(proposalId) {
+        frDispatchProposalAction('approve', proposalId);
+    }
+
+    function frReject(proposalId) {
+        frDispatchProposalAction('reject', proposalId);
+    }
+
     // Expose on window so Jinja onclick="..." handlers can call them.
     window.openChatWithArtifact = openChatWithArtifact;
     window.sbRunAnalysis = sbRunAnalysis;
+    window.frRunBuild = frRunBuild;
+    window.frApprove = frApprove;
+    window.frReject = frReject;
 
 })();

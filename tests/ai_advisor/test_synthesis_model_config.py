@@ -19,9 +19,16 @@ Acceptance criteria (AC-1..AC-7):
   AC-4  advisors/advisor_chat.explain_artifact reads the model from
         ADVISOR_SYNTHESIS_MODEL (the shared env var), not a hardcoded literal.
 
-  AC-5  ai_advisor.request_suggestions reads the model from ADVISOR_SYNTHESIS_MODEL,
-        not _CLAUDE_MODEL alone. When the env var is set, the overridden model
-        reaches the mocked SDK call.
+  AC-5  ai_advisor.request_suggestions reads the model from ADVISOR_SUGGESTION_MODEL
+        (via model_config.get_advisor_suggestion_model(), default claude-fable-5).
+        SUPERSEDED 2026-07-13 by AC-16 (advisor-remediation-r1 cycle): the original
+        ADVISOR_SYNTHESIS_MODEL/Opus-default contract this AC described was
+        deliberately split into two independent knobs (model_config.py).
+        request_suggestions moved to the new ADVISOR_SUGGESTION_MODEL knob;
+        ADVISOR_SYNTHESIS_MODEL remains the contract for the nightly Market Prism
+        synthesis path only (unaffected — still tested below via
+        TestLensPipelineSynthesisModelEnvVar / TestAdvisorChatModelEnvVar). See
+        TestRequestSuggestionsModelEnvVar below for the current contract.
 
   AC-6  No hardcoded model literal remains at any LLM call site in
         advisors/lens_pipeline.py, advisors/advisor_chat.py, or ai_advisor.py.
@@ -64,6 +71,14 @@ _EXPECTED_DEFAULT_MODEL = "claude-opus-4-8"
 # The sentinel override used by all tests that set the env var — must be
 # recognisably distinct from any real model ID so assertion failures are obvious.
 _TEST_MODEL_OVERRIDE = "test-stub-model-do-not-use"
+
+# request_suggestions-specific contract post-AC-16 (advisor-remediation-r1,
+# 2026-07-13): model_config.get_advisor_suggestion_model() defaults to
+# claude-fable-5 and reads a SEPARATE env var from _EXPECTED_DEFAULT_MODEL/
+# ADVISOR_SYNTHESIS_MODEL above — those remain correct for the untouched
+# synthesis (lens_pipeline) and chat (advisor_chat) paths.
+_EXPECTED_SUGGESTIONS_DEFAULT_MODEL = "claude-fable-5"
+_SUGGESTION_MODEL_ENV_VAR = "ADVISOR_SUGGESTION_MODEL"
 
 # Repo root (two levels up from this file: tests/ai_advisor/ → tests/ → repo root).
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
@@ -476,16 +491,15 @@ class TestAdvisorChatModelEnvVar:
 
 
 class TestRequestSuggestionsModelEnvVar:
-    """AC-5: request_suggestions reads model from ADVISOR_SYNTHESIS_MODEL."""
+    """AC-5 (superseded 2026-07-13 by AC-16, advisor-remediation-r1): request_
+    suggestions reads model from ADVISOR_SUGGESTION_MODEL (model_config.py), not
+    ADVISOR_SYNTHESIS_MODEL — see the file-header AC-5 note above."""
 
     def test_env_var_set_overrides_suggestions_model(self, monkeypatch):
-        """When ADVISOR_SYNTHESIS_MODEL is set, request_suggestions must pass
+        """When ADVISOR_SUGGESTION_MODEL is set, request_suggestions must pass
         that value as the model kwarg to client.messages.parse.
-
-        RED: current code uses the module-level _CLAUDE_MODEL constant directly,
-        ignoring the env var.
         """
-        monkeypatch.setenv("ADVISOR_SYNTHESIS_MODEL", _TEST_MODEL_OVERRIDE)
+        monkeypatch.setenv(_SUGGESTION_MODEL_ENV_VAR, _TEST_MODEL_OVERRIDE)
         mock_client = _make_mock_parse_client()
 
         import ai_advisor
@@ -497,16 +511,17 @@ class TestRequestSuggestionsModelEnvVar:
         call_args = mock_client.messages.parse.call_args
         actual_model = call_args.kwargs.get("model") if call_args.kwargs else None
         assert actual_model == _TEST_MODEL_OVERRIDE, (
-            f"When 'ADVISOR_SYNTHESIS_MODEL'='{_TEST_MODEL_OVERRIDE}', "
+            f"When '{_SUGGESTION_MODEL_ENV_VAR}'='{_TEST_MODEL_OVERRIDE}', "
             f"request_suggestions must pass that value to messages.parse. "
             f"Got: {actual_model!r}."
         )
 
-    def test_env_var_unset_uses_opus_default_in_suggestions(self, monkeypatch):
-        """When ADVISOR_SYNTHESIS_MODEL is not set, request_suggestions must use
-        the Opus 4.8 default model ID, not the stale _CLAUDE_MODEL constant.
+    def test_env_var_unset_uses_fable_default_in_suggestions(self, monkeypatch):
+        """When ADVISOR_SUGGESTION_MODEL is not set, request_suggestions must use
+        the claude-fable-5 default model ID (AC-16, operator directive
+        2026-07-13), not the old Opus 4.8 / ADVISOR_SYNTHESIS_MODEL default.
         """
-        monkeypatch.delenv("ADVISOR_SYNTHESIS_MODEL", raising=False)
+        monkeypatch.delenv(_SUGGESTION_MODEL_ENV_VAR, raising=False)
         mock_client = _make_mock_parse_client()
 
         import ai_advisor
@@ -516,9 +531,9 @@ class TestRequestSuggestionsModelEnvVar:
 
         call_args = mock_client.messages.parse.call_args
         actual_model = call_args.kwargs.get("model") if call_args.kwargs else None
-        assert actual_model == _EXPECTED_DEFAULT_MODEL, (
-            f"When ADVISOR_SYNTHESIS_MODEL is unset, request_suggestions must "
-            f"default to {_EXPECTED_DEFAULT_MODEL!r}. Got: {actual_model!r}."
+        assert actual_model == _EXPECTED_SUGGESTIONS_DEFAULT_MODEL, (
+            f"When {_SUGGESTION_MODEL_ENV_VAR} is unset, request_suggestions must "
+            f"default to {_EXPECTED_SUGGESTIONS_DEFAULT_MODEL!r}. Got: {actual_model!r}."
         )
 
     def test_request_suggestions_never_raises_after_refactor(self, monkeypatch):
@@ -647,19 +662,22 @@ class TestSuiteOrderingRegression:
     """
 
     def test_env_override_does_not_persist_to_next_test_ai_advisor(self, monkeypatch):
-        """Setting ADVISOR_SYNTHESIS_MODEL in one test must not affect a subsequent
-        test that does NOT set it.
+        """Setting ADVISOR_SUGGESTION_MODEL in one test must not affect a
+        subsequent test that does NOT set it (AC-5, superseded by AC-16 —
+        request_suggestions now reads ADVISOR_SUGGESTION_MODEL, not
+        ADVISOR_SYNTHESIS_MODEL; see the class docstring above).
 
         Simulated by: set env var, invoke ai_advisor path, then check that reading
-        os.environ.get('ADVISOR_SYNTHESIS_MODEL') returns None (monkeypatch restores).
+        os.environ.get('ADVISOR_SUGGESTION_MODEL') returns the override
+        (monkeypatch restores it after this test).
 
         This test must be order-independent — it relies on monkeypatch teardown.
         """
         import os
 
         # Phase 1: simulate a prior test that sets the env var.
-        monkeypatch.setenv("ADVISOR_SYNTHESIS_MODEL", _TEST_MODEL_OVERRIDE)
-        assert os.environ.get("ADVISOR_SYNTHESIS_MODEL") == _TEST_MODEL_OVERRIDE
+        monkeypatch.setenv(_SUGGESTION_MODEL_ENV_VAR, _TEST_MODEL_OVERRIDE)
+        assert os.environ.get(_SUGGESTION_MODEL_ENV_VAR) == _TEST_MODEL_OVERRIDE
 
         # The monkeypatch fixture teardown (post-yield) restores env.
         # We cannot test the teardown within the same test, but we can assert
@@ -672,19 +690,20 @@ class TestSuiteOrderingRegression:
         call_args = mock_client.messages.parse.call_args
         actual_model_in_test = call_args.kwargs.get("model") if call_args.kwargs else None
         assert actual_model_in_test == _TEST_MODEL_OVERRIDE, (
-            "When ADVISOR_SYNTHESIS_MODEL is set within this test, the override must reach the client."
+            f"When {_SUGGESTION_MODEL_ENV_VAR} is set within this test, the override must reach the client."
         )
 
     def test_subsequent_test_unaffected_by_prior_env_mutation_ai_advisor(self, monkeypatch):
-        """When ADVISOR_SYNTHESIS_MODEL is NOT set in this test, the default
-        (Opus 4.8) must be used — even if a prior test in the same session set it.
+        """When ADVISOR_SUGGESTION_MODEL is NOT set in this test, the default
+        (claude-fable-5, AC-16) must be used — even if a prior test in the same
+        session set it.
 
         This is the companion to the prior test. Together they form the ordering regression.
         If monkeypatch isolation works, this test always passes regardless of test order.
         If isolation breaks (module-constant cached), this test fails when run AFTER
         test_env_override_does_not_persist_to_next_test_ai_advisor.
         """
-        monkeypatch.delenv("ADVISOR_SYNTHESIS_MODEL", raising=False)
+        monkeypatch.delenv(_SUGGESTION_MODEL_ENV_VAR, raising=False)
         mock_client = _make_mock_parse_client()
         import ai_advisor
 
@@ -692,9 +711,9 @@ class TestSuiteOrderingRegression:
             ai_advisor.request_suggestions(context={"scope": "order-test-2"})
         call_args = mock_client.messages.parse.call_args
         actual_model = call_args.kwargs.get("model") if call_args.kwargs else None
-        assert actual_model == _EXPECTED_DEFAULT_MODEL, (
-            f"After a prior test set ADVISOR_SYNTHESIS_MODEL, this test (which "
-            f"does NOT set it) must see the default {_EXPECTED_DEFAULT_MODEL!r}. "
+        assert actual_model == _EXPECTED_SUGGESTIONS_DEFAULT_MODEL, (
+            f"After a prior test set {_SUGGESTION_MODEL_ENV_VAR}, this test (which "
+            f"does NOT set it) must see the default {_EXPECTED_SUGGESTIONS_DEFAULT_MODEL!r}. "
             f"Got {actual_model!r}. Stale module-constant isolation failure."
         )
 

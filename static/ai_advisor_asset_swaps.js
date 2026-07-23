@@ -61,11 +61,11 @@
 
     function syncBtn() {
         if (!evalBtn) return;
-        var ready = (
-            symphonySelect && symphonySelect.value &&
-            fromInput && fromInput.value.trim() &&
-            toInput && toInput.value.trim()
-        );
+        // R2-3: tickers are now OPTIONAL. Both filled evaluates that exact
+        // pair (explicit-pair mode); both left blank lets the advisor
+        // propose objective-directed pairs (objective-only reasoned mode).
+        // Symphony selection is the only hard requirement to enable the button.
+        var ready = !!(symphonySelect && symphonySelect.value);
         evalBtn.disabled = !ready;
     }
 
@@ -92,6 +92,19 @@
         return decision || 'unknown';
     }
 
+    // AC-7 (F6, Gap F): rejection_reason -> distinguishable copy. Mirrors the
+    // SB Jinja _REJECTION_COPY map exactly (same 4 mapped values, same
+    // wording) so the operator sees the same explanation regardless of which
+    // surface rejected the candidate. Extensible: an unmapped reason (null,
+    // a legacy row, or a future untracked class) renders NOTHING — never a
+    // fabricated blanket string.
+    var REJECTION_COPY = {
+        pbo_veto: 'This candidate failed the overfitting-robustness (PBO) check.',
+        below_spy_alpha: 'This candidate did not beat the SPY benchmark over the same period.',
+        oos_inferior_to_incumbent: 'This candidate did not outperform the live incumbent out-of-sample.',
+        fdr_not_winner: 'This candidate cleared the FDR-calibrated significance bar but was not the single strongest candidate this run.',
+    };
+
     // ---------------------------------------------------------------------------
     // Render a single swap proposal card
     // ---------------------------------------------------------------------------
@@ -106,18 +119,22 @@
 
         var testId = isSurvivor ? 'swap-card-survivor' : (isError ? 'swap-card-error' : 'swap-card-rejected');
 
-        // Objective line
+        // Objective line — R2-3: the per-candidate dict carries objective_type
+        // (no bare "objective" key; each card can now come from an
+        // objective-directed reasoned run, not just an explicit-pair request).
         var objectiveLine =
             '<div class="swap-card-objective" data-testid="swap-card-objective">' +
-            escHtml(result.objective || '') +
+            escHtml(result.objective_type || '') +
             '</div>';
 
-        // From → To heading
+        // Incumbent → Candidate heading — R2-3: incumbent_asset/candidate_asset
+        // replace from_ticker/to_ticker (the per-candidate dict shape now also
+        // covers LLM-proposed pairs, not only the operator's explicit pair).
         var heading =
             '<div class="swap-card-heading">' +
-            '<span class="swap-ticker">' + escHtml(result.from_ticker || '') + '</span>' +
+            '<span class="swap-ticker">' + escHtml(result.incumbent_asset || '') + '</span>' +
             '<span class="swap-arrow">&rarr;</span>' +
-            '<span class="swap-ticker swap-ticker--new">' + escHtml(result.to_ticker || '') + '</span>' +
+            '<span class="swap-ticker swap-ticker--new">' + escHtml(result.candidate_asset || '') + '</span>' +
             '</div>';
 
         // Backtest error short-circuit (AC-X5)
@@ -177,14 +194,21 @@
         // Gate verdict row
         var pillClass = gatePillClass(result.gate_decision);
         var pillLabel = gatePillLabel(result.gate_decision);
+        // AC-7: rejection_reason is a TOP-LEVEL field on the per-candidate
+        // dict (R2-3 — no nested gate_result object on this shape, unlike
+        // the byte-preserved explicit-pair flat response's gate_result key).
+        // reasonCopy is '' (renders nothing) for a survivor or an unmapped
+        // reason — see REJECTION_COPY above.
+        var rejectionReason = result.rejection_reason || null;
+        var reasonCopy = REJECTION_COPY[rejectionReason] || '';
         var gateRow =
             '<div class="gate-verdict-row" data-testid="gate-verdict-row">' +
             '<span class="gate-pill ' + pillClass + '" data-testid="gate-pill">' +
             escHtml(pillLabel) +
             '</span>' +
-            '<span class="gate-reason" data-testid="gate-reason">' +
-            escHtml(result.gate_reason || '') +
-            '</span>' +
+            (reasonCopy
+                ? '<span class="gate-reason" data-testid="gate-reason">' + escHtml(reasonCopy) + '</span>'
+                : '') +
             (result.validation_days
                 ? '<span class="validation-days" data-testid="validation-days">n=' + result.validation_days + ' days</span>'
                 : '') +
@@ -222,12 +246,12 @@
 
         // "Discuss this" affordance — subtle text link, intentionally de-emphasised (AC-4.1).
         // Clicking opens the chat panel scoped to this artifact.
-        var artifactId = result.candidate_id || (result.from_ticker + '_' + result.to_ticker);
-        var artifactObjective = result.objective || '';
+        var artifactId = result.candidate_id || (result.incumbent_asset + '_' + result.candidate_asset);
+        var artifactObjective = result.objective_type || '';
         var artifactGate = result.gate_decision || '';
         var artifactKeyStat = result.baseline_stats && result.baseline_stats.sharpe_ratio != null
             ? 'Sharpe (baseline) ' + fmtStat(result.baseline_stats.sharpe_ratio) : '';
-        var artifactTitle = 'Explain: ' + (result.from_ticker || '') + ' → ' + (result.to_ticker || '');
+        var artifactTitle = 'Explain: ' + (result.incumbent_asset || '') + ' → ' + (result.candidate_asset || '');
         var artifactCtx = 'Asset Swap';
         var swArtifactJson = JSON.stringify({
             artifactId:      artifactId,
@@ -253,8 +277,8 @@
             'white-space:nowrap;"' +
             ' onclick="(function(e){var d=e.currentTarget.dataset.artifactJson;' +
             'try{if(typeof openChatPanel===\'function\'){openChatPanel(JSON.parse(d));}' +
-            'else{sessionStorage.setItem("pendingChatArtifact",d);window.location.href="/ai-advisor/chat";}}' +
-            'catch(ex){sessionStorage.setItem("pendingChatArtifact",d);window.location.href="/ai-advisor/chat";}})(event)">' +
+            'else{sessionStorage.setItem(\'pendingChatArtifact\',d);window.location.href=\'/ai-advisor/chat\';}}' +
+            'catch(ex){sessionStorage.setItem(\'pendingChatArtifact\',d);window.location.href=\'/ai-advisor/chat\';}})(event)">' +
             'Chat about this' +
             '</button>' +
             '</div>';
@@ -277,21 +301,74 @@
     // Render the results area
     // ---------------------------------------------------------------------------
 
-    function renderResults(result) {
+    function renderResults(data) {
         if (!resultsArea) return;
 
-        // Single result from operator-initiated evaluation.
-        var isSurvivor = result.gate_decision === 'ADOPT_CANDIDATE';
+        // R2-3 (AC-9): run-level generation provenance -- model, injected-
+        // evidence manifest, and run-id, read straight off data.provenance
+        // (the route's 4-key JSON object; see app.py's
+        // ai_advisor_asset_swaps_evaluate()). Computed FIRST, before the
+        // in-band-error branch split below, so it renders on BOTH the error
+        // and success paths -- the route populates a real provenance object
+        // on every in-band error branch too (no-key, hash-resolution-
+        // failure, exactly-one-ticker, engine-exception -- AC-8's mandate),
+        // mirroring static/ai_advisor_logic_changes.js's _renderResults()
+        // precedent exactly. Guarded so a stale-cached copy of this file
+        // talking to an old/legacy JSON shape never throws. Distinct testid
+        // (as-live-generation-provenance) from SB's/LC's equivalents --
+        // same overloaded concept, a different producing route.
+        //
+        // Scope: genuine TRANSPORT failures (thrown Error / non-ok HTTP
+        // status, no JSON body at all -- handled in evaluateSwap()'s
+        // .catch()) are a DIFFERENT category; renderError() stays untouched
+        // for those -- there is nothing to show there.
+        var provenanceHtml = '';
+        if (data.provenance && typeof data.provenance === 'object') {
+            var prov = data.provenance;
+            var evidence = prov.evidence_injected || {};
+            var evidenceParts = [];
+            ['tree', 'stats', 'technicals', 'sentiment', 'derivatives', 'macro', 'fundamentals'].forEach(function (key) {
+                var val = evidence[key];
+                if (val) { evidenceParts.push(key + ': ' + val); }
+            });
+            provenanceHtml =
+                '<div class="run-controls-note" data-testid="as-live-generation-provenance">' +
+                'Model: ' + escHtml(prov.generation_model || '') +
+                (evidenceParts.length ? ' · Context — ' + escHtml(evidenceParts.join(', ')) : '') +
+                (prov.run_id ? ' · Run: ' + escHtml(prov.run_id) : '') +
+                '</div>';
+        }
 
-        var html = '';
+        // In-band JSON error (200 status, valid JSON) -- the route always
+        // carries a real provenance alongside it, so render both together
+        // and stop (mirrors logic-changes.js's data.error branch).
+        if (data.error) {
+            resultsArea.innerHTML = provenanceHtml +
+                '<div class="no-survivors-state" data-testid="error-state">' +
+                '<div class="no-survivors-title">Evaluation error</div>' +
+                '<div class="no-survivors-body">' + escHtml(data.error) + '</div>' +
+                '</div>';
+            return;
+        }
 
-        if (isSurvivor) {
+        // R2-3 (AC-12): the route now returns survivors_detail/rejected_detail
+        // arrays on BOTH the explicit-pair (0-or-1 entry, additive) and the
+        // objective-only-reasoned (0-to-N entries) success shapes -- one
+        // array-driven renderer covers both modes (team-lead-approved unified
+        // renderer), preserving the existing swap-card-survivor/-rejected/
+        // -error testids via renderSwapCard.
+        var survivors = data.survivors_detail || [];
+        var rejected = data.rejected_detail || [];
+
+        var html = provenanceHtml;
+
+        if (survivors.length) {
             html +=
                 '<div class="section-header" data-testid="survivors-header">' +
                 'Swap Survivors (passed gate)' +
                 '</div>' +
                 '<div class="swap-cards">' +
-                renderSwapCard(result) +
+                survivors.map(renderSwapCard).join('') +
                 '</div>';
         } else {
             // AC-2.5: zero survivors is a valid non-error outcome.
@@ -299,17 +376,19 @@
                 '<div class="no-survivors-state" data-testid="no-survivors-state">' +
                 '<div class="no-survivors-title">No swap cleared the gate this run</div>' +
                 '<div class="no-survivors-body">' +
-                'The swap did not pass the acceptance gate. The result is shown below.' +
+                escHtml(data.message || 'The swap did not pass the acceptance gate.') +
                 '</div>' +
                 '</div>';
+        }
 
+        if (rejected.length) {
             html +=
                 '<div class="section-header" data-testid="rejected-header" ' +
                 'style="margin-top:1.25rem;">' +
                 'Rejected candidates' +
                 '</div>' +
                 '<div class="swap-cards">' +
-                renderSwapCard(result) +
+                rejected.map(renderSwapCard).join('') +
                 '</div>';
         }
 
@@ -341,7 +420,10 @@
             errorEl.textContent = '';
         }
 
-        if (!symphonyId || !fromTicker || !toTicker) return;
+        // R2-3: tickers are optional -- both blank triggers objective-only
+        // reasoned mode server-side; symphony selection is the only hard
+        // requirement (mirrors syncBtn()'s relaxed gate above).
+        if (!symphonyId) return;
 
         if (resultsArea) {
             resultsArea.innerHTML =
@@ -373,10 +455,12 @@
                 return resp.json();
             })
             .then(function (body) {
-                if (body.error) {
-                    renderError(body.error);
-                    return;
-                }
+                // R2-3: in-band body.error (200, valid JSON) is now handled
+                // INSIDE renderResults() itself, alongside the provenance the
+                // route always populates on that path (AC-8/AC-9) — mirrors
+                // static/ai_advisor_logic_changes.js's _renderResults(). Only
+                // a genuine transport failure (thrown Error, no JSON body)
+                // reaches renderError(), via .catch() below.
                 renderResults(body);
             })
             .catch(function (err) {

@@ -5,6 +5,7 @@ Pytest configuration and shared fixtures for Planet Stopper test suite.
 import os
 import pathlib
 import tempfile
+from unittest.mock import patch
 
 import pytest
 
@@ -144,6 +145,84 @@ def fixtures_dir() -> pathlib.Path:
     return pathlib.Path(__file__).parent / "fixtures"
 
 
+# ---------------------------------------------------------------------------
+# Session-level live-Mongo/Atlas guard — mirrors database._db_file()'s
+# pytest-sentinel pattern (database.py:55-74), applied to the Atlas/Mongo
+# read path instead of the state DB.
+#
+# Operator escalation (real-money-critical, 2026-07-11): a test in this suite
+# (test_fable_calls_per_symphony_are_bounded_by_a_budget_cap) forgot to mock
+# advisors.community_strats.load_community_strategies, and the code path it
+# exercised (advisors.frontrunner_builder._gather_atlas_frontrunner_patterns,
+# wired in during AC-3, 1b3e9fb) fell through to community_strats.py's
+# _fetch_fn, which calls the REAL pymongo.MongoClient(os.environ["MONGO_URI"])
+# — a genuine, BILLED Atlas connection attempt, 45 times in that one test.
+# database._db_file()'s guard makes an equivalent state-DB leak structurally
+# impossible (loud RuntimeError under pytest, gated on "pytest" in
+# sys.modules so production is never affected); this fixture is the analog
+# for the Atlas/Mongo read path.
+#
+# pymongo.MongoClient is the SINGLE real network choke point across the whole
+# Atlas surface — advisors/atlas_cache.py's own docstring states it "imports
+# no database.py, autotuner, or pymongo code" (enforced by an AST test,
+# tests/advisors/test_atlas_cache.py:627), and advisors/community_strats.py's
+# _fetch_fn is the only call site anywhere in the codebase that constructs
+# one (grep-verified). Patching it here at the pymongo module level, once,
+# session-wide, covers every current and future Atlas/Mongo caller — nobody
+# has to remember to mock it per-test.
+#
+# COMPOSES CORRECTLY with existing tests/advisors/test_community_strats*.py /
+# test_atlas_cache_populate.py tests that ALREADY do their own scoped
+# patch("pymongo.MongoClient", ...): unittest.mock.patch nests as a stack —
+# a test's own `with patch("pymongo.MongoClient", ...)` block temporarily
+# overrides this session-level sentinel for its duration and correctly
+# reverts to the sentinel (never to the true unmocked pymongo.MongoClient)
+# when the test's own patch exits. No existing test needed to change.
+#
+# A test that legitimately wants to exercise the Atlas path mocks
+# community_strats.load_community_strategies (the preferred, higher-level
+# seam — see tests/advisors/test_frontrunner_atlas_patterns.py) or
+# pymongo.MongoClient directly (the lower-level seam used by
+# test_community_strats*.py / test_atlas_cache_populate.py) — either way,
+# this sentinel is simply never reached.
+# ---------------------------------------------------------------------------
+
+
+def _live_mongo_client_blocked(*_args, **_kwargs):
+    raise RuntimeError(
+        "test attempted to construct a REAL pymongo.MongoClient under pytest — "
+        "this would make a genuine, BILLED Atlas connection attempt "
+        "(real-money-critical guard, operator escalation 2026-07-11). "
+        "Mock advisors.community_strats.load_community_strategies (preferred) "
+        "or patch('pymongo.MongoClient', ...) directly if this test genuinely "
+        "needs to exercise the Atlas fetch path."
+    )
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_live_mongo_atlas_connections():
+    """Session-autouse: make any REAL pymongo.MongoClient construction under
+    pytest fail loud instead of silently making a billed live Atlas call.
+
+    See the module comment above this fixture for the full rationale and why
+    this composes safely with tests that already patch pymongo.MongoClient
+    themselves. Gated only on the pytest session existing (this fixture only
+    runs under pytest at all) — no "pytest in sys.modules" check needed the
+    way database._db_file() requires one, since conftest.py fixtures are
+    never loaded outside a pytest session.
+    """
+    try:
+        import pymongo
+    except ImportError:
+        # pymongo not installed in this environment — no live connection is
+        # possible anyway; nothing to guard.
+        yield
+        return
+
+    with patch("pymongo.MongoClient", side_effect=_live_mongo_client_blocked):
+        yield
+
+
 @pytest.fixture(autouse=True)
 def _disable_csrf_for_tests(monkeypatch):
     """Disable the CSRF check for the entire test suite (A-3).
@@ -253,6 +332,56 @@ def _reset_account_totals_cache():
     _drain_and_reset()
     yield
     _drain_and_reset()
+
+
+@pytest.fixture(autouse=True)
+def _pin_execution_start_time_to_code_default(monkeypatch):
+    """Pin alpha_bot_execution.EXECUTION_START_TIME to the code-default "09:30"
+    for the entire test suite (math-r1 ADDENDUM 5 — latent test-isolation gap).
+
+    Root cause (r1-tuner, 2026-07-17): the local worktree's .env carries
+    EXECUTION_START_TIME='9:35' (the droplet-real operator value). Before
+    AC-5, no replay code path consulted this env var for exit-decision
+    purposes, so no test noticed the local-env drift. AC-5 (correctly)
+    wired autotuner._replay_execution_start_time() -> the real
+    alpha_bot_execution.EXECUTION_START_TIME into the replay's action-phase
+    gate (_replay_exit_tick, via replay_exit_sequence / run_simulation /
+    _collect_sim_returns / _collect_sim_returns_dated). Once that gate went
+    live, every pre-existing short hand-specified-tick test (tick_idx 0-4,
+    5 ticks or fewer) that never pinned this value found its entire tick
+    sequence sitting BEFORE the '9:35' action-phase offset (5) — the whole
+    action phase collapsed to a no-op regardless of the scenario under test.
+    26 failures across 10 files in tests/autotuner/, all one root cause.
+
+    This is exactly the pattern test_c3_replay_exit_parity.py's own
+    `_pin_execution_start_time_to_session_open` autouse fixture already
+    solved locally (same monkeypatch, same target, same "09:30" value) —
+    promoted here to suite-wide so it protects every OTHER file with the
+    same latent exposure, not just the one that happened to get it first.
+    The C3 file's local fixture is now redundant but harmless (same value,
+    same target — it simply re-pins what this fixture already pinned).
+
+    Hermetic side effect (intended): this also makes the suite immune to
+    future .env drift on any developer/CI machine — CI itself already runs
+    credential-less with no .env (default 09:30), so the 26 failures were
+    LOCAL-ONLY; this fixture makes local runs match CI's isolation instead
+    of the other way around.
+
+    Opt-out: any test that deliberately wants a NON-default
+    EXECUTION_START_TIME (e.g. tests/autotuner/test_ac5_replay_action_phase_gated_by_execution_start_time.py,
+    which exercises the action-phase gate's response to non-default values)
+    simply monkeypatches the attribute again within its own test body/fixture
+    AFTER this one has run — the later call wins for that test's duration and
+    is correctly reverted by monkeypatch's teardown stack. No test needed to
+    change: test_ac5_*.py drives _replay_exit_tick directly with an explicit
+    execution_start_hhmm= keyword argument (never reads this module attribute
+    at all) and test_n3_*.py's tests exercise the pure grace-window helpers
+    with explicit parameters — neither file depends on this attribute's
+    ambient value. The one test in the AC-6 bar-level battery that DOES need
+    a non-default value (the execution_start_time_pre_action_gate scenario)
+    sets it explicitly in a try/finally block around the call that needs it.
+    """
+    monkeypatch.setattr("alpha_bot_execution.EXECUTION_START_TIME", "09:30", raising=False)
 
 
 @pytest.fixture(autouse=True)

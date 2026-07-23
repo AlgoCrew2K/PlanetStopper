@@ -75,9 +75,15 @@ def _make_mongo_doc(
     ticker: str = "SPY",
     sharpe: float | None = 1.2,
 ) -> dict:
-    """Return a projected Mongo doc shape {sid, name, edn_string, oos_metrics}."""
+    """Return a projected Mongo doc shape {sid, name, edn_string, oos_metrics}.
+
+    oos_metrics uses the REAL captplanet.strategies field shape
+    (DE-ATLAS-SHARPE-FIELD-001): capital-S 'Sharpe', STRING-valued — not the
+    lowercase numeric 'sharpe' the pre-amendment code read, which exists on
+    0 of 11,227 live docs.
+    """
     tree = _make_minimal_tree(name=name, ticker=ticker)
-    oos_metrics = {"sharpe": sharpe} if sharpe is not None else {}
+    oos_metrics = {"Sharpe": str(sharpe)} if sharpe is not None else {}
     return {
         "sid": sid,
         "name": name,
@@ -508,7 +514,11 @@ class TestDeduplication:
     retaining the higher OOS Sharpe."""
 
     def _make_duplicate_pair(self, sharpe_a: float = 0.5, sharpe_b: float = 1.8) -> list:
-        """Return two docs whose trees hash identically (same ticker = same hash)."""
+        """Return two docs whose trees hash identically (same ticker = same hash).
+
+        oos_metrics uses the REAL captplanet.strategies field shape
+        (DE-ATLAS-SHARPE-FIELD-001): capital-S 'Sharpe', STRING-valued.
+        """
         # Same ticker → same tree structure → same composition_hash.
         tree = _make_minimal_tree(name="Dup Strategy", ticker="IVV")
         edn = _tree_as_edn_string(tree)
@@ -516,13 +526,13 @@ class TestDeduplication:
             "sid": "sid-dup-a",
             "name": "Dup A",
             "edn_string": edn,
-            "oos_metrics": {"sharpe": sharpe_a},
+            "oos_metrics": {"Sharpe": str(sharpe_a)},
         }
         doc_b = {
             "sid": "sid-dup-b",
             "name": "Dup B",
             "edn_string": edn,
-            "oos_metrics": {"sharpe": sharpe_b},
+            "oos_metrics": {"Sharpe": str(sharpe_b)},
         }
         return [doc_a, doc_b]
 
@@ -543,9 +553,11 @@ class TestDeduplication:
         )
         surviving = result["candidates"][0]
         # The surviving candidate must have the HIGHER sharpe, not the lower one.
-        actual_sharpe = surviving["oos_metrics"].get("sharpe")
+        # oos_metrics['Sharpe'] is stored as a string (real Mongo shape) — cast
+        # to float for the numeric comparison.
+        actual_sharpe = float(surviving["oos_metrics"].get("Sharpe"))
         assert actual_sharpe == pytest.approx(high_sharpe, rel=1e-6), (
-            # Tolerance: rel=1e-6 because sharpe is a float round-trip from JSON.
+            # Tolerance: rel=1e-6 because sharpe is a float round-trip through a string.
             f"dedup must retain the higher sharpe ({high_sharpe}); got {actual_sharpe!r}"
         )
 
@@ -572,7 +584,7 @@ class TestDeduplication:
             "sid": "sid-has-sharpe",
             "name": "Has sharpe",
             "edn_string": edn,
-            "oos_metrics": {"sharpe": 0.9},
+            "oos_metrics": {"Sharpe": "0.9"},
         }
         doc_without_sharpe = {
             "sid": "sid-no-sharpe",
@@ -589,7 +601,7 @@ class TestDeduplication:
         assert result["available"] is True
         assert len(result["candidates"]) == 1
         surviving = result["candidates"][0]
-        assert "sharpe" in surviving["oos_metrics"], (
+        assert "Sharpe" in surviving["oos_metrics"], (
             "dedup must keep the doc that HAS a sharpe over the one without"
         )
 
@@ -1027,21 +1039,37 @@ class TestProjection:
                 "pymongo.find() was not called — stub does not call pymongo yet (RED expected)"
             )
 
-        projection = captured_projections[0]
-        if projection is None:
+        if any(p is None for p in captured_projections):
             pytest.fail(
                 "find() was called with no projection argument — "
                 "AC-9 requires a projection to exclude heavy fields"
             )
 
-        # The projection must not include any 'backtest' or 'quantstats' keys.
+        # DE-ATLAS-SLOW-QUERY-001: _fetch_fn now issues TWO find() calls (a
+        # lightweight sharpe-sorted selection query, then a full-document query
+        # keyed by the selected ids) — see test_community_strats_fetch_query.py
+        # for the query-shape tests. AC-9's "no heavy backtest/quantstats fields"
+        # guard applies across BOTH calls; the "must include sid/name/edn_string/
+        # oos_metrics" guard applies to whichever call actually carries the full
+        # document (identified by requesting 'edn_string'), not call index 0 —
+        # the lightweight selection query legitimately omits those fields.
         heavy_field_substrings = ("backtest", "quantstats")
-        for key in projection or {}:
-            for heavy in heavy_field_substrings:
-                assert heavy.lower() not in str(key).lower(), (
-                    f"projection must exclude heavy field {key!r} "
-                    f"(matches forbidden substring {heavy!r}) — AC-9"
-                )
+        for captured in captured_projections:
+            for key in captured or {}:
+                for heavy in heavy_field_substrings:
+                    assert heavy.lower() not in str(key).lower(), (
+                        f"projection must exclude heavy field {key!r} "
+                        f"(matches forbidden substring {heavy!r}) — AC-9"
+                    )
+
+        full_doc_projections = [p for p in captured_projections if p and "edn_string" in p]
+        if not full_doc_projections:
+            pytest.fail(
+                "no find() call carried a projection containing 'edn_string' — AC-9 "
+                f"requires the full-document query to request it; captured "
+                f"projections={captured_projections!r}"
+            )
+        projection = full_doc_projections[0]
 
         # The projection MUST include the 4 lightweight required fields.
         required_projection_fields = {"sid", "name", "edn_string", "oos_metrics"}

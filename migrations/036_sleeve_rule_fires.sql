@@ -12,7 +12,7 @@
 -- No `PRAGMA foreign_keys=ON` anywhere in this codebase (verified against
 -- database.py and all prior migrations) -- every cross-table reference below
 -- is a SOFT FK (documented in comments, not DB-enforced), matching migration
--- 033_sleeves.sql's precedent.
+-- 035_sleeves.sql's precedent.
 --
 -- Table role:
 --   sleeve_rule_fires - one row per rule-engine tick evaluation that fired
@@ -30,7 +30,7 @@
 --                       own pacing bookkeeping in sleeve_runtime (AC-5).
 --
 -- Apply via:
---   sqlite3 alphabot_state.db < migrations/034_sleeve_rule_fires.sql
+--   sqlite3 alphabot_state.db < migrations/036_sleeve_rule_fires.sql
 
 CREATE TABLE IF NOT EXISTS sleeve_rule_fires (
     id                    INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,

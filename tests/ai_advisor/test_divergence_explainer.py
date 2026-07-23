@@ -670,49 +670,49 @@ def test_verdict_is_in_allowed_enum(
 def test_run_divergence_explainer_reads_env_flag_off(monkeypatch, flag_off_scenario):
     """run_divergence_explainer reads SECOND_WINDOW_CVAR_ENABLED from the env.
 
-    When the env var is '0' or absent, it must behave as §B disabled.
+    CONTRACT CHANGE (DE observations-feed leak, PM-adjudicated 2026-07-13):
+    database.get_advisor_observations_for_symphony has no role filter, so the
+    NOT_APPLICABLE stub row this function used to write when §B is off leaked
+    onto /api/advisor-observations?symphony_id=... on every autotune run (the
+    _ADVISOR_ROLES exclusion only ever protected the role-AGGREGATE path).
+    Approved fix: when §B is off, write NOTHING — no advisor_observations row
+    at all — rather than a NOT_APPLICABLE stub. The pure
+    compute_divergence_explainer_observation function (tested extensively
+    above) is UNCHANGED — it still computes and returns the NOT_APPLICABLE
+    dict shape; only the INTEGRATION entry point's write behavior changes.
     """
     mod = _import_divex()
     monkeypatch.setenv("SECOND_WINDOW_CVAR_ENABLED", "0")
 
-    written_verdicts = []
-
-    def capture_insert(**kwargs):
-        written_verdicts.append(kwargs.get("verdict"))
-        return 1
-
-    with patch("database.insert_advisor_observation", side_effect=capture_insert):
-        mod.run_divergence_explainer(
+    with patch("database.insert_advisor_observation") as mock_insert:
+        result = mod.run_divergence_explainer(
             flag_off_scenario["autotune_run"],
             None,
         )
 
-    assert written_verdicts == ["NOT_APPLICABLE"], (
-        "SECOND_WINDOW_CVAR_ENABLED=0 must produce NOT_APPLICABLE; "
-        f"got verdicts: {written_verdicts!r}"
+    mock_insert.assert_not_called()
+    assert result is None, (
+        f"SECOND_WINDOW_CVAR_ENABLED=0 must write NOTHING and return None "
+        f"(no row id — there is no row); got {result!r}"
     )
 
 
 def test_run_divergence_explainer_reads_env_flag_absent(monkeypatch, flag_off_scenario):
-    """When SECOND_WINDOW_CVAR_ENABLED is not set, §B is treated as disabled."""
+    """When SECOND_WINDOW_CVAR_ENABLED is not set, §B is treated as disabled —
+    same no-write contract as the explicit-off test above."""
     mod = _import_divex()
     monkeypatch.delenv("SECOND_WINDOW_CVAR_ENABLED", raising=False)
 
-    written_verdicts = []
-
-    def capture_insert(**kwargs):
-        written_verdicts.append(kwargs.get("verdict"))
-        return 1
-
-    with patch("database.insert_advisor_observation", side_effect=capture_insert):
-        mod.run_divergence_explainer(
+    with patch("database.insert_advisor_observation") as mock_insert:
+        result = mod.run_divergence_explainer(
             flag_off_scenario["autotune_run"],
             None,
         )
 
-    assert written_verdicts == ["NOT_APPLICABLE"], (
-        "absent SECOND_WINDOW_CVAR_ENABLED must treat §B as disabled and produce NOT_APPLICABLE; "
-        f"got verdicts: {written_verdicts!r}"
+    mock_insert.assert_not_called()
+    assert result is None, (
+        f"absent SECOND_WINDOW_CVAR_ENABLED must treat §B as disabled, write "
+        f"nothing, and return None; got {result!r}"
     )
 
 
@@ -773,35 +773,62 @@ def test_run_divergence_explainer_explicit_kwarg_overrides_env(monkeypatch, flag
 # ===========================================================================
 
 
-def test_run_divergence_explainer_returns_row_id(monkeypatch, flag_off_scenario):
-    """run_divergence_explainer returns the row id from insert_advisor_observation."""
+def test_run_divergence_explainer_returns_none_when_flag_off(monkeypatch, flag_off_scenario):
+    """CONTRACT CHANGE: with §B off, run_divergence_explainer writes nothing and
+    must return None — there is no row id to return, and a mocked
+    insert_advisor_observation returning a sentinel must NOT surface as the
+    result (that would mean insert was called, which it must not be)."""
     mod = _import_divex()
     monkeypatch.setenv("SECOND_WINDOW_CVAR_ENABLED", "0")
     sentinel_id = 42
 
-    with patch("database.insert_advisor_observation", return_value=sentinel_id):
+    with patch("database.insert_advisor_observation", return_value=sentinel_id) as mock_insert:
         result = mod.run_divergence_explainer(
             flag_off_scenario["autotune_run"],
             None,
         )
 
+    mock_insert.assert_not_called()
+    assert result is None, (
+        f"run_divergence_explainer with §B off must return None (no write, no "
+        f"row id); got {result!r}"
+    )
+
+
+def test_run_divergence_explainer_returns_row_id_when_flag_on(monkeypatch, flag_on_both_windows):
+    """The general 'returns the row id from insert_advisor_observation' contract
+    — previously only tested against the flag=off path (now the wrong path to
+    test it on, per the contract change above) — re-scoped to where it
+    actually applies: the §B-on write path, which is unaffected by the
+    off-path fix."""
+    mod = _import_divex()
+    monkeypatch.setenv("SECOND_WINDOW_CVAR_ENABLED", "1")
+    sentinel_id = 42
+
+    with patch("database.insert_advisor_observation", return_value=sentinel_id):
+        result = mod.run_divergence_explainer(
+            flag_on_both_windows["autotune_run"],
+            flag_on_both_windows["cvar_rows"][0],
+        )
+
     assert result == sentinel_id, (
-        f"run_divergence_explainer must return the row id from insert_advisor_observation; "
-        f"expected {sentinel_id}, got {result!r}"
+        f"run_divergence_explainer with §B on must return the row id from "
+        f"insert_advisor_observation; expected {sentinel_id}, got {result!r}"
     )
 
 
 def test_run_divergence_explainer_writes_exactly_one_row(
     monkeypatch, flag_off_scenario, flag_on_both_windows
 ):
-    """run_divergence_explainer must write exactly one advisor_observations row per call.
-
-    Phase-1 reality: one NOT_APPLICABLE row when §B off; one INFORMATIONAL row when §B on.
+    """CONTRACT CHANGE (flag_off leg only — flag_on leg unaffected):
+    run_divergence_explainer writes exactly one advisor_observations row when
+    §B is on (INFORMATIONAL); writes ZERO rows when §B is off (no more
+    NOT_APPLICABLE stub — see the no-write contract change above).
     """
     mod = _import_divex()
-    for flag_val, scenario, cvar, label in [
-        ("0", flag_off_scenario, None, "flag_off"),
-        ("1", flag_on_both_windows, flag_on_both_windows["cvar_rows"][0], "flag_on"),
+    for flag_val, scenario, cvar, label, expected_calls in [
+        ("0", flag_off_scenario, None, "flag_off", 0),
+        ("1", flag_on_both_windows, flag_on_both_windows["cvar_rows"][0], "flag_on", 1),
     ]:
         monkeypatch.setenv("SECOND_WINDOW_CVAR_ENABLED", flag_val)
         insert_calls = []
@@ -813,20 +840,29 @@ def test_run_divergence_explainer_writes_exactly_one_row(
         with patch("database.insert_advisor_observation", side_effect=capture):
             mod.run_divergence_explainer(scenario["autotune_run"], cvar)
 
-        assert len(insert_calls) == 1, (
-            f"{label}: run_divergence_explainer must write exactly one row; "
-            f"got {len(insert_calls)} insert calls"
+        assert len(insert_calls) == expected_calls, (
+            f"{label}: run_divergence_explainer must write exactly "
+            f"{expected_calls} row(s); got {len(insert_calls)} insert calls"
         )
 
 
 def test_run_divergence_explainer_writes_only_divergence_explainer_role(
     monkeypatch, flag_off_scenario, flag_on_both_windows
 ):
-    """Only DIVERGENCE_EXPLAINER advisor_role may be written — no other role on any path."""
+    """CONTRACT CHANGE (flag_off leg only — flag_on leg unaffected): when §B is
+    on, only DIVERGENCE_EXPLAINER advisor_role may be written. When §B is off,
+    NO role may be written at all (zero insert calls, per the no-write
+    contract change above) — the stronger, correct honesty guarantee."""
     mod = _import_divex()
-    for flag_val, scenario, cvar, label in [
-        ("0", flag_off_scenario, None, "flag_off"),
-        ("1", flag_on_both_windows, flag_on_both_windows["cvar_rows"][0], "flag_on"),
+    for flag_val, scenario, cvar, label, expected_roles in [
+        ("0", flag_off_scenario, None, "flag_off", []),
+        (
+            "1",
+            flag_on_both_windows,
+            flag_on_both_windows["cvar_rows"][0],
+            "flag_on",
+            ["DIVERGENCE_EXPLAINER"],
+        ),
     ]:
         monkeypatch.setenv("SECOND_WINDOW_CVAR_ENABLED", flag_val)
         written_roles = []
@@ -838,9 +874,9 @@ def test_run_divergence_explainer_writes_only_divergence_explainer_role(
         with patch("database.insert_advisor_observation", side_effect=capture):
             mod.run_divergence_explainer(scenario["autotune_run"], cvar)
 
-        assert written_roles == ["DIVERGENCE_EXPLAINER"], (
-            f"{label}: only 'DIVERGENCE_EXPLAINER' advisor_role may be written; "
-            f"got {written_roles!r}. Phase-2 roles must not be written by this module."
+        assert written_roles == expected_roles, (
+            f"{label}: expected written roles {expected_roles!r}; got {written_roles!r}. "
+            f"Phase-2 roles must not be written by this module; §B-off must write nothing."
         )
 
 

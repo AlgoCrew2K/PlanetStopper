@@ -1,0 +1,12 @@
+{
+  "layer": "arm_disarm_decision",
+  "scenario": "recovery_ladder_disarms_after_confirm_ticks",
+  "provenance": "MA-4 AC-1/AC-2. Disarm ONLY on genuine recovery: prob < TAKE_PROFIT_MC_PCT (5.0) sustained for disarm_confirm_ticks CONSECUTIVE ticks. Categorical spec decision; disarm_confirm_ticks passed EXPLICITLY (value-agnostic re: the frozen default).",
+  "constants": {"take_profit_mc_pct": 5.0, "trigger_threshold_pct": 15.0, "disarm_confirm_ticks": 3},
+  "initial": {"armed": true, "disarm_confirm_count": 0},
+  "sequence": [
+    {"prob_underperforming": 3.0, "is_triggered": false, "expect_armed": true, "expect_count": 1, "note": "recovery tick 1 -> count 1, still armed"},
+    {"prob_underperforming": 4.9, "is_triggered": false, "expect_armed": true, "expect_count": 2, "note": "recovery tick 2 (still < 5.0) -> count 2, still armed"},
+    {"prob_underperforming": 0.0, "is_triggered": false, "expect_armed": false, "expect_count": 0, "note": "recovery tick 3 -> count reaches 3 = disarm_confirm_ticks -> DISARM, ladder reset"}
+  ]
+}

@@ -62,6 +62,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+import alpha_bot_execution
 import autotuner
 import math_engine
 
@@ -130,6 +131,8 @@ def _production_exit_sequence(
     *,
     session_open_hhmm: str = "09:30",
     grace_minutes: int,
+    regime_label: str | None = None,
+    execution_start_hhmm: str | None = None,
 ) -> list[dict]:
     """Drive a tick sequence through the production exit path.
 
@@ -137,6 +140,39 @@ def _production_exit_sequence(
     is the resolve_trigger_priority string on the tick the position exits;
     None on every non-exit tick. After an exit fires the loop stops (the
     production engine commits the exit and freezes the symphony for the day).
+
+    ORACLE SYNC (math-r1 AC-3/AC-4/AC-5, PM addendum 2 @ a46be889, r1-tuner's
+    cross-cutting finding): this reference predates the math-r1 audit and
+    carried the SAME 3 gaps the pre-fix replay has — no MA-10 fail-open arm,
+    no regime-conditional exit_confirm_ticks, no EXECUTION_START_TIME
+    action-phase gate. All three are added here, additively, sourced from the
+    exact production lines cited below. The pre-existing VWAP-grace / TP-
+    re-arm / trailing-stop-primitive behavior this oracle already modeled
+    correctly is untouched.
+
+    New optional parameters (both default to the exact prior behavior, so
+    every existing caller is unaffected):
+      regime_label: fed into math_engine.apply_regime_exit_adjustment to
+        resolve exit_confirm_ticks, mirroring alpha_bot_execution.py:
+        1436-1448. None (the default) resolves to base_ticks unchanged —
+        identical to compute_exit_confirmation's own implicit default that
+        every pre-sync caller relied on.
+      execution_start_hhmm: the action-phase gate anchor (see below). None
+        (the default) falls back to session_open_hhmm's value, preserving
+        this file's existing convention exactly (all current fixtures/tests
+        pin EXECUTION_START_TIME == session open == "09:30").
+
+    TICK-0-ANCHOR BUG FIX (found while adding the action-phase gate): the
+    prior implementation overwrote base_open's hour/minute FROM
+    session_open_hhmm, conflating "tick_idx 0's wall clock" (production:
+    ALWAYS 09:30 — the data phase runs from session open regardless of
+    EXECUTION_START_TIME, alpha_bot_execution.py:876-885/681) with
+    "EXECUTION_START_TIME" (an independently configurable value). This never
+    manifested as a wrong RESULT because every existing caller only ever
+    passed session_open_hhmm="09:30" (both values coincided), but it was
+    latently wrong. base_open is now hardcoded to 09:30 unconditionally;
+    session_open_hhmm/execution_start_hhmm are consulted ONLY for the
+    grace-window and action-phase-gate comparisons, matching production.
     """
     hwm = -999.0
     armed = False
@@ -153,10 +189,30 @@ def _production_exit_sequence(
     take_profit_mc = params["TAKE_PROFIT_MC_PCT"]
     trigger_threshold = params["TRIGGER_THRESHOLD_PCT"]
 
-    # Production minute timeline: tick_idx 0 == session open.
+    effective_exec_start = (
+        execution_start_hhmm if execution_start_hhmm is not None else session_open_hhmm
+    )
+
+    # AC-4/F5: regime-conditional exit_confirm_ticks, resolved ONCE (mirrors
+    # production reading the offline-computed cached label once per cycle;
+    # the label does not change intra-day/intra-tick).
+    # alpha_bot_execution.py:1436-1448.
+    _regime_exit_ticks = math_engine.apply_regime_exit_adjustment(
+        regime_label=regime_label, base_ticks=math_engine.EXIT_CONFIRM_TICKS
+    )
+
+    # AC-5/F6: the action phase (para-arm, MC arm/disarm, trailing-stop
+    # confirm, TP confirm, VWAP checks, exit firing) does not run at all
+    # before EXECUTION_START_TIME (alpha_bot_execution.py:951-953, the hard
+    # `if current_time < market_open and not force_run: return` gate). Only
+    # the DATA phase (HWM/shadow_hwm tracking, :876-885) runs unconditionally
+    # from the true 09:30 session open. tick_idx 0 == 09:30 (N-3 convention).
+    _h, _m = effective_exec_start.split(":")
+    _action_phase_start_offset = (int(_h) - 9) * 60 + (int(_m) - 30)
+
+    # Production minute timeline: tick_idx 0 == the TRUE session open (09:30),
+    # unconditionally — never parameterized (see TICK-0-ANCHOR BUG FIX above).
     base_open = datetime(2026, 4, 6, 9, 30, tzinfo=_ET)
-    h, m = map(int, session_open_hhmm.split(":"))
-    base_open = base_open.replace(hour=h, minute=m)
 
     out: list[dict] = []
     for tick_idx, tick in enumerate(ticks):
@@ -170,27 +226,54 @@ def _production_exit_sequence(
         vwap_diff = tick.get("vwap_diff", 0.0)
         valid_vwap_weight = tick.get("valid_vwap_weight", 1.0)
 
+        # DATA PHASE (alpha_bot_execution.py:876-885): HWM/safe_hwm tracking
+        # runs unconditionally, even before EXECUTION_START_TIME.
         if ret > hwm:
             hwm = ret
         safe_hwm = max(hwm, ret)
 
+        if tick_idx < _action_phase_start_offset:
+            # ACTION PHASE NOT YET OPEN (alpha_bot_execution.py:951-953):
+            # production returns before evaluating para-arm, MC arm/disarm,
+            # trailing-stop confirm, TP confirm, VWAP, or firing. armed,
+            # below_stop_count, tp_armed, above_tp_count, para_armed,
+            # prev_return, breakeven_locked, hwm_hold_ticks, vwap_ticks,
+            # vwap_bleed_ticks all stay exactly as they were.
+            out.append(
+                {
+                    "tick_idx": tick_idx,
+                    "exit_reason": None,
+                    "armed": armed,
+                    "tp_armed": tp_armed,
+                    "para_armed": para_armed,
+                }
+            )
+            continue
+
         para_threshold = params.get("PARABOLIC_VELOCITY_THRESHOLD", 2.0)
         effective_prev = ret if prev_return is None else prev_return
-        _velocity, should_arm = math_engine.compute_para_arm_decision(
+        _velocity, should_arm_para = math_engine.compute_para_arm_decision(
             current_return=ret,
             prev_return=effective_prev,
             para_threshold=para_threshold,
             currently_armed=para_armed,
         )
         prev_return = ret
-        if should_arm:
+        if should_arm_para:
             para_armed = True
 
-        # MC arm / disarm — gated on mc_available (alpha_bot_execution.py:
-        # 1140-1163). An absent MC opinion drives no arm and no disarm.
+        # MC arm / disarm (alpha_bot_execution.py:1302-1347). MA-10 fail-open:
+        # an ABSENT MC opinion (mc_available=False) ARMS — never silently
+        # leaves the protective stop dark. should_arm is reset every tick
+        # (matches production's should_arm = False at the top of this block).
+        should_arm = False
         if mc_available and take_profit_mc <= mc < trigger_threshold:
-            if not armed:
-                armed = True
+            should_arm = True
+        elif not mc_available:
+            should_arm = True  # MA-10 fail-open (:1324-1326)
+
+        if should_arm and not armed:
+            armed = True
         elif armed:
             if mc_available and mc > (trigger_threshold * 2) and ret > 0.0:
                 armed = False
@@ -198,6 +281,11 @@ def _production_exit_sequence(
 
         time_ratio = tick_idx / max(1, len(ticks) - 1)
         dynamic_multiplier, dynamic_min_stop = math_engine.compute_time_squeeze_decay(time_ratio)
+        # R3-c AC-4: the production reference mirrors alpha_bot_execution.py:1467,
+        # which now passes squeeze_floor=acc_MAX_SQUEEZE_FLOOR. Source the floor
+        # from the params dict, defaulting to the alpha_bot_execution MODULE ATTR
+        # (the same source production defaults from — R1/F6 idiom), so a
+        # key-absent legacy params dict falls back identically on both sides.
         active_stop_dist = math_engine.compute_active_trailing_stop(
             vol,
             dynamic_multiplier,
@@ -205,6 +293,7 @@ def _production_exit_sequence(
             para_armed,
             breakeven_locked,
             params.get("MAX_PARABOLIC_SQUEEZE", 0.50),
+            squeeze_floor=params.get("MAX_SQUEEZE_FLOOR", alpha_bot_execution.MAX_SQUEEZE_FLOOR),
         )
         base_stop = safe_hwm - active_stop_dist
         hwm_hold_ticks, breakeven_locked, stop_level = math_engine.compute_breakeven_update(
@@ -216,7 +305,9 @@ def _production_exit_sequence(
             False,
         )
 
-        # Check 1: Trailing Stop — the real production primitive.
+        # Check 1: Trailing Stop — the real production primitive. AC-4/F5:
+        # exit_confirm_ticks is now the regime-resolved value, never the
+        # implicit module default.
         below_stop_count, is_trailing_hit = math_engine.compute_exit_confirmation(
             armed=armed,
             is_triggered=False,
@@ -224,6 +315,7 @@ def _production_exit_sequence(
             stop_trigger_level=stop_level,
             prob_underperforming=mc,
             current_below_stop_count=below_stop_count,
+            exit_confirm_ticks=_regime_exit_ticks,
         )
 
         # Check 2: Take Profit — the REAL production primitive.
@@ -262,7 +354,7 @@ def _production_exit_sequence(
             )
         )
         current_et = base_open + timedelta(minutes=tick_idx)
-        if math_engine.is_in_open_window_grace(current_et, session_open_hhmm, grace_minutes):
+        if math_engine.is_in_open_window_grace(current_et, effective_exec_start, grace_minutes):
             is_vwap_broken = False
             is_vwap_bleed_broken = False
 
@@ -273,10 +365,26 @@ def _production_exit_sequence(
                 is_vwap_bleed_broken=is_vwap_bleed_broken,
                 is_trailing_stop_hit=is_trailing_hit,
             )
-            out.append({"tick_idx": tick_idx, "exit_reason": reason})
+            out.append(
+                {
+                    "tick_idx": tick_idx,
+                    "exit_reason": reason,
+                    "armed": armed,
+                    "tp_armed": tp_armed,
+                    "para_armed": para_armed,
+                }
+            )
             return out
 
-        out.append({"tick_idx": tick_idx, "exit_reason": None})
+        out.append(
+            {
+                "tick_idx": tick_idx,
+                "exit_reason": None,
+                "armed": armed,
+                "tp_armed": tp_armed,
+                "para_armed": para_armed,
+            }
+        )
 
     return out
 
@@ -351,6 +459,12 @@ def _default_params() -> dict:
         "parity_tp_rearm_dip.json",
         "parity_no_exit_session.json",
         "parity_mc_sanity_veto.json",
+        # R3-c AC-4: floor-binding parity. Key-PRESENT (MAX_SQUEEZE_FLOOR in
+        # params) and key-ABSENT (falls back to the module attr on BOTH sides).
+        # If only ONE call site clamps, the sustained noise dip fires an exit on
+        # the replay while the production reference holds -> divergence -> RED.
+        "parity_squeeze_floor_binding_key_present.json",
+        "parity_squeeze_floor_binding_key_absent.json",
     ],
 )
 def test_replay_exit_decision_matches_production(fixture_name: str) -> None:
@@ -420,4 +534,67 @@ def test_replay_exit_and_production_exit_fire_on_same_tick() -> None:
     assert replay_exit["exit_reason"] == prod_exit["exit_reason"], (
         f"Exit-reason parity broken: production={prod_exit['exit_reason']}, "
         f"replay={replay_exit['exit_reason']}."
+    )
+
+
+# ===========================================================================
+# R3-c AC-4 — squeeze-floor fallback parity (key-ABSENT sources the floor from
+# the SAME module attr on both sides; a monkeypatch of that attr must shift
+# BOTH paths in lockstep — proving the fallback VALUE flows from the attr, not
+# a hardcoded literal on either side).
+# ===========================================================================
+
+
+def _decisions(seq: list[dict]) -> list[tuple[int, str | None]]:
+    return [(d["tick_idx"], d["exit_reason"]) for d in seq]
+
+
+def test_key_absent_fallback_sources_floor_from_module_attr_on_both_sides(monkeypatch) -> None:
+    """AC-4 fallback-drift guard.
+
+    A legacy params dict lacking MAX_SQUEEZE_FLOOR must make BOTH the production
+    reference (falls back to ``alpha_bot_execution.MAX_SQUEEZE_FLOOR``) and the
+    replay (falls back to ``autotuner._replay_squeeze_floor_default()`` — the
+    SAME attr) clamp identically. Monkeypatching that module attr must shift
+    both sides together: parity holds at every value, AND the exit outcome
+    flips with the attr — so the fallback value provably flows from the attr
+    into both call paths, not from a hardcoded 0.20 on one side.
+
+    RED at HEAD: the production reference calls the 7-arg seam (TypeError) and
+    the replay ignores the floor entirely — the test cannot pass until BOTH
+    sides read the module attr live.
+    """
+    fx = _load_fixture("parity_squeeze_floor_binding_key_absent.json")
+    ticks = fx["ticks"]
+    params = fx["params"]
+    grace = fx["grace_minutes"]
+    assert "MAX_SQUEEZE_FLOOR" not in params, "fixture must omit the key to exercise the fallback"
+
+    # Binding fallback (0.20): the squeezed noise dip is clamped -> NO exit on
+    # either side; parity holds.
+    monkeypatch.setattr(alpha_bot_execution, "MAX_SQUEEZE_FLOOR", 0.20, raising=False)
+    prod_bind = _decisions(_production_exit_sequence(ticks, params, grace_minutes=grace))
+    replay_bind = _decisions(_replay_seq(ticks, params, grace))
+    assert replay_bind == prod_bind, (
+        f"fallback parity broken at floor=0.20:\n  prod:   {prod_bind}\n  replay: {replay_bind}"
+    )
+    assert all(reason is None for _, reason in prod_bind), (
+        "with the fallback floor 0.20 wired, the squeezed noise dip must be "
+        f"clamped -> no exit. Got {prod_bind}."
+    )
+
+    # Non-binding fallback (near zero): the floor no longer binds -> the dip
+    # breaches the (effectively unclamped) stop and BOTH sides exit; parity
+    # still holds. The outcome flipped ONLY because the module attr changed ->
+    # the fallback value flows from the attr into both paths.
+    monkeypatch.setattr(alpha_bot_execution, "MAX_SQUEEZE_FLOOR", 1e-4, raising=False)
+    prod_tiny = _decisions(_production_exit_sequence(ticks, params, grace_minutes=grace))
+    replay_tiny = _decisions(_replay_seq(ticks, params, grace))
+    assert replay_tiny == prod_tiny, (
+        f"fallback parity broken at floor=1e-4:\n  prod:   {prod_tiny}\n  replay: {replay_tiny}"
+    )
+    assert any(reason is not None for _, reason in prod_tiny), (
+        "with a near-zero fallback floor the noise dip must breach the stop -> "
+        "exit; if it did not, the fallback value is NOT flowing from the module "
+        f"attr into the clamp. Got {prod_tiny}."
     )

@@ -1,5 +1,5 @@
 """
-Regression-pinning tests -- migration 033_sleeves.sql: client_order_id as the
+Regression-pinning tests -- migration 035_sleeves.sql: client_order_id as the
 durable pre-broker correlation key on sleeve_orders (+ broker_fill_id dedup
 on sleeve_fills), per PM steering (team-lead 2026-07-07 23:25):
 
@@ -27,7 +27,7 @@ sleeves.alpaca_orders does not exist yet.
 Fixture provenance: tests/fixtures/database/sleeves/sleeves_schema.json is
 schema-derived (authored from the plan + the sleeve-db/sleeve-integration-
 impl/sleeve-risk-impl interface-agreement thread, cross-checked against
-migrations/033_sleeves.sql -- not co-designed against a parser). Used here
+migrations/035_sleeves.sql -- not co-designed against a parser). Used here
 as an independent schema-shape oracle.
 """
 
@@ -41,7 +41,7 @@ import pytest
 
 import database as db_module
 
-_MIGRATION_FILENAME = "033_sleeves.sql"
+_MIGRATION_FILENAME = "035_sleeves.sql"
 _MIGRATION_PATH = Path(__file__).parents[2] / "migrations" / _MIGRATION_FILENAME
 _SCHEMA_FIXTURE_PATH = (
     Path(__file__).parents[2]

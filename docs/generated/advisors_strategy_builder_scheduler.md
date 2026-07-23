@@ -1,9 +1,9 @@
 # advisors/strategy_builder_scheduler
 
-> Weekly Strategy Builder Scheduler (AC-18): runs the real dual-mode builder (built-new + atlas-suggested) unattended for all four objectives with same-ISO-week idempotency and bounded retry; advisory-only, never raises.
+> Weekly Strategy Builder Scheduler (AC-18): runs the real dual-mode builder (built-new + atlas-suggested) unattended for all four objectives with same-ISO-week idempotency and bounded retry, then runs the Frontrunner Builder over all live symphonies; advisory-only, never raises.
 
 **Source:** `advisors/strategy_builder_scheduler.py`
-**Last updated:** 2026-06-20 (C5 dual-mode Atlas injection 147a181)
+**Last updated:** 2026-07-21 (fix-ops-cluster, `DE-OPS-CLUSTER-001` F-030 -- `run_weekly_build()`'s `propose_strategies` call now passes `invocation_source="weekly-scheduler"`, tagging every advisory-DB row this scheduler writes as attributable to the weekly cadence, distinct from the on-demand HTTP route and a direct engine call; see `docs/generated/advisors_strategy_builder_engine.md`'s F-030 section). Prior: 2026-07-14 (branch-integration merge — Frontrunner Builder AC-1 weekly hook `f1592a2` integrated on top of the AC-A1 dedup TypeError fix; prior: 2026-06-20 C5 dual-mode Atlas injection 147a181)
 
 ## Overview
 
@@ -33,16 +33,23 @@ Run the real dual-mode builder for all four objectives; skip if already ran this
 1. **Idempotency check:** `_already_ran_this_week()` — if any `STRATEGY_BUILDER` `advisor_observations` row exists from the current ISO week (Monday 00:00 UTC → Sunday 23:59 UTC), log and return (no-op). Prevents multiple runs per week on restarts or cron-overlap.
 2. **Per-objective Atlas injection:** for each `Objective`, call `_bpg.load_atlas_candidates(objective)` (CC-2 lazy import as `advisors.build_plan_generator`, `strategy_builder_scheduler.py:134`). `load_atlas_candidates` is D-1 (never raises) and bill-protected (`force_refresh=False` inside). On any Atlas error the inner `try/except` sets `community_candidates=[]` and logs the class name — built-new always proceeds (`strategy_builder_scheduler.py:135-142`).
 3. **Per-objective build:** call `propose_strategies(objective=objective, universe=[], screen_config=ScreenConfig(), live_returns=[], community_candidates=community_candidates)`. `universe=[]` triggers C1 self-sourcing from `universe_provider.get_tradeable_set()` (Q2-A). Atlas-suggested candidates flow through the same single-batch FDR gate as built-new (AC-21).
+   **F-030 (`DE-OPS-CLUSTER-001`, 2026-07-21):** this call now also passes `invocation_source="weekly-scheduler"`, attributing every advisory observation this scheduler persists to the weekly cadence — closes the register finding where 3 production `STRATEGY_BUILDER` rows had no reconstructable production origin.
 4. **Bounded retry:** each objective retries up to `MAX_ATTEMPTS` times on exception. A failed objective is logged (class name only, D-1) and the loop continues to the next objective — one objective's failure does not abort the others.
 5. **Never raises (D-1):** all exceptions are caught and logged with `type(exc).__name__` only — no key/path/message leak.
 
 **Returns:** `None`
 
+## Frontrunner Builder Hook (AC-1, 2026-07-11, commit f1592a2)
+
+After the four-objective loop completes, `run_weekly_build()` calls `advisors.frontrunner_builder.run_frontrunner_build()` (CC-2 lazy import as `_fbld`) over ALL live symphonies -- this is the Frontrunner Builder's own AC-1 weekly-cadence requirement, reusing this module's scheduler rather than adding a second one. Isolated in its own try/except so a frontrunner failure never blocks or aborts the objective loop above it, which has already completed by that point. This call NEVER creates a Composer symphony directly -- accepted frontrunner candidates are only queued for operator approval (`frontrunner_proposals` table); the actual Composer create happens exclusively via the operator-driven `POST /ai-advisor/proposal/approve` route (built wave-2, 2026-07-11, see `docs/generated/advisors_frontrunner_builder.md`). See `DE-FRONTRUNNER-001` and `DE-FRONTRUNNER-002` in `DECISIONS.md`.
+
 ## Internal Helpers
 
 ### `_already_ran_this_week() -> bool`
 
-Patchable idempotency seam. Checks `database.get_advisor_observations_for_symphony(symphony_id="", advisor_role="STRATEGY_BUILDER", limit=50)` for any row whose `created_at` falls in the current ISO year/week. Degrades to `False` (run anyway) on any DB error (D-1). Tests monkeypatch this to `True` (same-week no-op) or `False` (fresh run).
+Patchable idempotency seam. Checks `database.get_advisor_observations_for_role("STRATEGY_BUILDER", limit=50)` (real signature: `get_advisor_observations_for_role(advisor_role: str, limit: int = 50) -> list[dict]`, `database.py:1133`) for any row whose `created_at` falls in the current ISO year/week. Degrades to `False` (run anyway) on any DB error (D-1). Tests monkeypatch this to `True` (same-week no-op) or `False` (fresh run).
+
+**Bug fix (AC-A1, advisor-rewire cycle, 2026-07-12):** this function previously called `database.get_advisor_observations_for_symphony(symphony_id="", advisor_role="STRATEGY_BUILDER", limit=50)` — a signature that does not exist (`get_advisor_observations_for_symphony` takes only `symphony_id`). Every call raised `TypeError`, which was silently caught by the surrounding `except Exception` (the D-1 degrade at the bottom of this function), so `_already_ran_this_week()` always returned `False` — the same-ISO-week dedup guard never actually fired, and (before the AC-B3/AC-B1 weekly-suggestions orchestrator existed) a re-run of `run_weekly_build()` in the same week would have re-triggered a full 4-objective builder run with no idempotency protection. The ISO-week comparison logic itself (lines 64-87) was always correct — it was simply unreachable behind the swallowed exception. Fixed by calling the real `get_advisor_observations_for_role` accessor.
 
 ## Design Decisions
 
@@ -54,12 +61,17 @@ Patchable idempotency seam. Checks `database.get_advisor_observations_for_sympho
 
 **D-1 contract is stricter than `prism_scheduler.py`'s bounded retry.** `prism_scheduler.py` fails loudly after exhausting attempts (exit 1). The strategy scheduler continues to the next objective after exhaustion — a single objective's persistent failure should not block the others from running.
 
-**`symphony_id=""` for all scheduler observations.** The scheduler has no per-symphony context; all observations are keyed to the empty-string symphony ID. This matches the `_already_ran_this_week` check, which queries `symphony_id=""`.
+**`symphony_id=""` for all scheduler observations.** The scheduler has no per-symphony context; all observations are keyed to the empty-string symphony ID. This matches the `_already_ran_this_week` check, which queries the role-wide accessor rather than filtering by symphony.
+
+## Composition with the weekly orchestrator (advisor-rewire cycle, Workstream B)
+
+`advisors/weekly_suggestions_scheduler.py::run_weekly_suggestions()` calls `run_weekly_build()` as the first of three D-1-isolated steps in the weekly sweep (Strategy Builder, then Asset Swap, then Logic Change). This module was NOT modified to accommodate that orchestrator — it remains Strategy-Builder-only per its own AC-18 scope (verified by a static test asserting `strategy_builder_scheduler` does not gain a `run_weekly_suggestions` attribute). It can still be invoked standalone via `python -m advisors.strategy_builder_scheduler`.
 
 ## Internal Dependencies
 
 - `advisors.strategy_builder_engine` — `Objective`, `ScreenConfig`, `propose_strategies` (CC-2 lazy import)
 - `advisors.build_plan_generator` — `load_atlas_candidates` (CC-2 lazy import as `_bpg`, per-objective Atlas injection)
-- `database` — `get_advisor_observations_for_symphony` (inside `_already_ran_this_week`)
+- `advisors.frontrunner_builder` — `run_frontrunner_build()` (CC-2 lazy import as `_fbld`, AC-1 weekly hook, after the objective loop)
+- `database` — `get_advisor_observations_for_role` (inside `_already_ran_this_week`, fixed AC-A1; the pre-fix `get_advisor_observations_for_symphony` call raised a swallowed TypeError)
 
 No import of `alpha_bot_execution`, `app`, `autotuner`, or any execution module. Off-execution-path; advisory-only.

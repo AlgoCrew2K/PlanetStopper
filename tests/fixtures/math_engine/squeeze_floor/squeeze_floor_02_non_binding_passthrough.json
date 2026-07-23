@@ -1,0 +1,16 @@
+{
+  "name": "squeeze_floor_non_binding_passthrough",
+  "description": "AC-1: a high-vol symphony whose squeezed distance still exceeds the floor -> the floor does NOT bind and the squeezed value passes through unchanged. Catches an impl that clamps unconditionally (would raise a distance that should stay as-is).",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 2.0,
+    "dynamic_multiplier": 1.0,
+    "dynamic_min_stop": 0.10,
+    "para_armed": true,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.5,
+    "squeeze_floor": 0.20
+  },
+  "expected": 1.0,
+  "derivation": "safe_vol=2.0. raw=2.0*1.0=2.0. pre_squeeze=max(2.0,0.10)=2.0. para_armed -> active=2.0*0.5=1.0. squeeze_floor=0.20: clamp = max(1.0, min(0.20,2.0)) = max(1.0,0.20) = 1.0. The floor does NOT bind (1.0 already exceeds 0.20). Output 1.0 (unclamped)."
+}

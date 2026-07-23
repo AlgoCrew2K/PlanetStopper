@@ -3,7 +3,7 @@
 > Community symphonies sourced from **algo-db.com** (read via its `captplanet.strategies` MongoDB Atlas collection, weekly-cached): validates, deduplicates, and filters candidates for the Strategy Builder proposal suite.
 
 **Source:** `advisors/community_strats.py`
-**Last updated:** 2026-06-21 (DE-ATLAS-CACHE-001: _id:0 projection + _MAX_FETCH_DOCS=500 + server-side sort+limit)
+**Last updated:** 2026-07-11 (DE-ATLAS-SLOW-QUERY-001 + DE-ATLAS-SHARPE-FIELD-001 + DE-ATLAS-DEEP-TREE-001: the fetch is now a three-step, client-ranked query with NO server-side sort at all — `captplanet.strategies` has no usable index besides `_id`, so any Mongo-side sort is an unindexed COLLSCAN; ranking moved into Python. Also fixes a pre-existing field-name bug: the real OOS-sharpe field is `oos_metrics['Sharpe']` (capital S, string-valued), not `'sharpe'`, which was present on 0/11,227 live docs. `_MAX_FETCH_DOCS` tightened 500→100→50 for live-Atlas timeout headroom. The per-doc composition-hash step is now exception-contained — a pathologically deep tree drops only that one doc instead of aborting the whole batch.)
 
 ## Overview
 
@@ -26,7 +26,7 @@ Load and validate community strategies from the captplanet Atlas collection.
 | Name | Type | Description |
 |------|------|-------------|
 | `limit` | `int or None` | Cap the number of returned candidates (applied after dedup and sharpe filtering). `None` = no cap. |
-| `min_oos_sharpe` | `float or None` | Exclude candidates whose `oos_metrics['sharpe']` is below this floor. Docs that **lack** `oos_metrics` or lack the `sharpe` key are **kept** regardless. `None` = no floor applied. |
+| `min_oos_sharpe` | `float or None` | Exclude candidates whose `oos_metrics['Sharpe']` (capital S) is below this floor. Docs that **lack** `oos_metrics`, lack the `Sharpe` key, or whose `Sharpe` value is unparseable (non-numeric, percent-formatted, NaN, or Infinity) are **kept** regardless -- the floor only ever excludes a genuinely-parsed low value. `None` = no floor applied. |
 | `client` | `any` | Reserved for interface compatibility. Not used in this implementation. |
 | `force_refresh` | `bool` | When `True`, bypass the atlas_cache TTL and re-fetch from Mongo unconditionally. Default `False`. |
 
@@ -42,7 +42,7 @@ Load and validate community strategies from the captplanet Atlas collection.
             "name": str,
             "tree": dict,           # parsed + validated Composer decision tree
             "tickers": list,        # extract_tickers result (no '%' placeholders)
-            "oos_metrics": dict,    # or None
+            "oos_metrics": dict,    # or None -- raw passthrough of the doc's oos_metrics
             "composition_hash": str,  # SHA-256 hex of tree structure (see below)
         },
         ...
@@ -90,9 +90,9 @@ Each call executes these steps on the cached payload:
 
 ```
 cached_pull("captplanet.strategies", bounded_fetch_fn)
-    -> raw_docs (list of projected Mongo docs, capped at _MAX_FETCH_DOCS=500)
+    -> raw_docs (list of full-projection Mongo docs, capped at _MAX_FETCH_DOCS=50)
         -> per-doc: edn_string present? -> json.loads -> validate_tree -> extract_tickers
-        -> sharpe filter (docs lacking sharpe: kept)
+        -> sharpe filter via _parse_sharpe (oos_metrics['Sharpe']; unparseable/missing: kept)
         -> dedup by composition_hash (retain highest OOS sharpe per hash)
         -> limit
     -> {available, candidates, stats, source}
@@ -100,7 +100,7 @@ cached_pull("captplanet.strategies", bounded_fetch_fn)
 
 ### Mongo projection (`_PROJECTION`)
 
-`_fetch_fn` applies a server-side inclusion projection to limit network transfer to the fields the loader actually reads:
+`_PROJECTION` is the inclusion projection applied to the **step-3 targeted full-document fetch** (see "Atlas fetch" below) -- it limits network transfer to the fields the loader actually reads for the returned candidates. It is *not* used for the step-1 lightweight selection query, which uses its own inline `{"_id": 1, "oos_metrics.Sharpe": 1}` projection.
 
 ```python
 _PROJECTION: dict = {
@@ -117,32 +117,77 @@ _PROJECTION: dict = {
 
 The `backtest` and `quantstats_metrics` fields (multi-MB arrays per doc) are excluded from the projection.
 
-### Atlas fetch (weekly cache, server-side bounded, wall-clock bounded)
+### Atlas fetch (weekly cache, three-step client-ranked, wall-clock bounded)
 
-The live Atlas fetch is bounded in two independent ways.
-
-**Server-side bound -- `_MAX_FETCH_DOCS = 500`**
-
-`_fetch_fn` applies a server-side sort + limit before the cursor is materialized:
+**No server-side sort of any kind (DE-ATLAS-SLOW-QUERY-001, amended).** `captplanet.strategies` has no usable index besides `_id`. An earlier version of this fix (superseded within the same cycle) put the `oos_metrics.sharpe` sort on a lightweight, `edn_string`-free selection query on the theory that sorting small documents would be cheap even though the field is unindexed. A live-Atlas gate run proved this wrong: **any** server-side `sort=` against this collection is an unindexed COLLSCAN across the full ~11,227-doc corpus regardless of projection size, and it still exceeded `_ATLAS_FETCH_TIMEOUT_S` (observed 45.03 s, 0 candidates returned). The fetch was restructured again to remove server-side sorting entirely:
 
 ```python
-cursor = collection.find(
-    {},
-    _PROJECTION,
-    sort=[("oos_metrics.sharpe", pymongo.DESCENDING)],
-    allow_disk_use=True,
-).limit(_MAX_FETCH_DOCS)
+# Step 1 -- lightweight, UNSORTED, uncapped selection: pull only {_id, oos_metrics.Sharpe}
+# for the whole collection. No sort=, no .limit() -- no Mongo-side sort runs at all.
+selection_cursor = collection.find({}, {"_id": 1, "oos_metrics.Sharpe": 1})
+selection_docs = list(selection_cursor)
+
+# Step 2 -- client-side rank + bound: parse each doc's Sharpe defensively (via
+# _oos_sharpe/_parse_sharpe -- missing/unparseable -> -inf, sorts to the bottom,
+# never raises), sort descending in Python, slice to the top _MAX_FETCH_DOCS ids.
+selection_docs.sort(key=_oos_sharpe, reverse=True)
+top_ids = [doc["_id"] for doc in selection_docs[:_MAX_FETCH_DOCS]]
+
+# Step 3 -- targeted full-document fetch by the ids selected in step 2, an indexed
+# _id lookup ({"_id": {"$in": top_ids}}), so it needs no server-side sort.
+full_cursor = collection.find({"_id": {"$in": top_ids}}, _PROJECTION)
 ```
 
-- `sort=[("oos_metrics.sharpe", DESCENDING)]` ensures the cap keeps the best-sharpe docs. Docs missing `oos_metrics.sharpe` sort to the bottom in MongoDB's collation and may be excluded -- this is the intended fetch policy (highest-quality candidates fetched first). The Python-side keep-rule (docs lacking sharpe are kept after fetch) applies to the fetched subset and is independent.
-- `allow_disk_use=True` prevents the 32 MB in-memory sort limit from aborting the query on the ~11k-doc `captplanet.strategies` collection.
-- `.limit(_MAX_FETCH_DOCS)` caps the network transfer and in-process memory. 500 covers `MAX_COMMUNITY_CANDIDATES_PER_RUN = 20` with generous headroom for validation/dedup loss. Fetching all 11k docs unbounded OOM-killed the 4 GB droplet (DE-ATLAS-CACHE-001 Bug 2).
+- **Step 1** transfers only two small fields per document across all ~11,227 docs -- cheap even unindexed, and the ranking work (the expensive part) moves to Python where it is a single in-memory sort of a small list.
+- **Step 2** ranking uses `_oos_sharpe`, which now reads the corrected `oos_metrics['Sharpe']` field (see "Sharpe field correction" below) via the shared `_parse_sharpe` helper. Docs with a missing or unparseable Sharpe sort to `-inf` -- last, never excluded, never a crash.
+- **Step 3** is an indexed `_id` lookup (`$in`), so it needs no sort and completes quickly regardless of collection size.
 
-**Wall-clock bound -- `_ATLAS_FETCH_TIMEOUT_S = 12.0 s`**
+**`_MAX_FETCH_DOCS` -- tightened 500 → 100 → 50 (live-timing-driven, not a correctness bound).**
 
-`_bounded_fetch_fn` (nested def inside `load_community_strategies`) wraps `_fetch_fn` via a `ThreadPoolExecutor(max_workers=1)`. `fut.result(timeout=_ATLAS_FETCH_TIMEOUT_S)` fires if the fetch exceeds the window; the `_timeout_fired` closure flag is set to `True` before raising `_AtlasFetchTimeout`; `shutdown(wait=False, cancel_futures=True)` releases the calling thread. `serverSelectionTimeoutMS` and `connectTimeoutMS` cannot bound a `mongodb+srv://` SRV/TXT DNS hang -- the ThreadPoolExecutor timeout is the only reliable wall-clock bound. See `DE-CS-002` in `DECISIONS.md`.
+`edn_string` averages ~153 KB/doc live. Even with the sort eliminated, an indexed `_id` fetch of too many full documents dominates the 45 s timeout budget on its own, independent of any sort/index concern:
+
+- `500` (original, pre-cycle): OOM/latency risk on the 4 GB droplet; superseded.
+- `100` (first amendment): passed the live-Atlas gate at 33.95 s but left only ~11 s of headroom under the 45 s bound on the PM's test machine -- judged insufficient margin for the droplet's slower 2 vCPU single-thread parse.
+- `50` (current): roughly halves fetch+parse cost with zero functional impact on candidate quality; still 2.5x headroom over `MAX_COMMUNITY_CANDIDATES_PER_RUN=20` after validation/dedup loss.
+
+The public `limit` parameter (post-fetch, post-dedup, caller-level) is a separate, independent control -- not the same as `_MAX_FETCH_DOCS`.
+
+**Wall-clock bound -- `_ATLAS_FETCH_TIMEOUT_S = 45.0 s`**
+
+`_bounded_fetch_fn` (nested def inside `load_community_strategies`) wraps `_fetch_fn` via a `ThreadPoolExecutor(max_workers=1)`. `fut.result(timeout=_ATLAS_FETCH_TIMEOUT_S)` fires if the fetch exceeds the window; the `_timeout_fired` closure flag is set to `True` before raising `_AtlasFetchTimeout`; `shutdown(wait=False, cancel_futures=True)` releases the calling thread. `serverSelectionTimeoutMS` and `connectTimeoutMS` cannot bound a `mongodb+srv://` SRV/TXT DNS hang -- the ThreadPoolExecutor timeout is the only reliable wall-clock bound. See `DE-CS-002` in `DECISIONS.md`. (Note: `45.0` is the live value as of this cycle -- it was raised from an earlier `12.0` in a prior merged commit, independent of this fix.)
 
 `cached_pull` routes `_bounded_fetch_fn` through the weekly cache; the second call within the TTL returns the cached payload without touching Mongo or entering the timeout wrapper.
+
+### Sharpe field correction (DE-ATLAS-SHARPE-FIELD-001)
+
+A pre-existing, cycle-independent correctness bug was found via direct Mongo reads while diagnosing the live-Atlas gate failure above: all three Sharpe-consumption sites in this module (client-side selection ranking, the dedup tie-break, and the `min_oos_sharpe` filter) read `oos_metrics['sharpe']` (lowercase) -- a key present on **0 of 11,227** live `captplanet.strategies` docs. The real field is `oos_metrics['Sharpe']` (capital S), **string-valued**, present on **10,067 of 11,227** docs.
+
+`_parse_sharpe(oos_metrics) -> float | None` is the single shared parse contract now used by every consumption site:
+
+```python
+def _parse_sharpe(oos_metrics: Any) -> float | None:
+    if not isinstance(oos_metrics, dict):
+        return None
+    raw = oos_metrics.get("Sharpe")
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(value) or math.isinf(value):
+        return None
+    return value
+```
+
+Defensive rules -- never raises, all resolve to `None` (treated as "absent"):
+
+- Missing `oos_metrics` or missing `Sharpe` key.
+- Non-numeric string (e.g. `"N/A"`).
+- Percent-formatted string (e.g. `"12.3%"` -- `float()` rejects the `%` suffix).
+- `"nan"` / `"inf"` -- Python's bare `float()` *accepts* these as valid floats, but neither is a valid Sharpe ratio, so both are explicitly rejected via `math.isnan`/`math.isinf`.
+
+`_oos_sharpe(doc) -> float` wraps `_parse_sharpe(doc.get("oos_metrics"))`, returning `float("-inf")` when parsing yields `None`. `-inf` guarantees a missing/unparseable Sharpe always loses dedup ties and sorts to the bottom of the client-side selection ranking -- the same "absent, never excluded, never a crash" contract as before the fix, just now pointed at a field that actually has data.
 
 ### edn_string parse
 
@@ -164,9 +209,15 @@ The dedup key is a **local tree-structural hash** computed by `_composition_hash
 
 **This is NOT `database.compute_composition_hash`**, which takes a `list[str]` of symphony IDs and is used for portfolio-set identity (mode-resolver use). `_composition_hash` operates on a single tree dict and is local to this module.
 
+### Deep-tree exception containment (DE-ATLAS-DEEP-TREE-001)
+
+`_strip_ids` (the first step of `_composition_hash`) is recursive -- unlike `symphony_schema`'s deliberately iterative traversal -- and can raise `RecursionError` on a pathologically deep (but structurally valid) tree at roughly 500 nesting levels. The other three per-doc steps in the parse loop (`json.loads`, `validate_tree`, `extract_tickers`) each already had their own `try`/`except`; the composition-hash call site did not, so one pathological doc could propagate an uncaught exception out of `load_community_strategies`, violating the D-1 never-raising contract and losing the *entire* batch rather than just the one bad doc.
+
+Fixed by wrapping the composition-hash call in its own `try`/`except`, matching the containment pattern already given to the three steps above -- any exception there (`RecursionError`, `MemoryError`, or otherwise) now increments `parse_failed` and drops only that one doc; the loop continues with the remainder of the batch. `_strip_ids` itself is intentionally left recursive (a minimal, scoped fix) -- a rare deep doc dropping is acceptable latent-risk containment, not a live data-loss concern.
+
 ### Deduplication
 
-Within each `composition_hash` group, the candidate with the highest `oos_metrics['sharpe']` is retained. Ties resolve in favor of whichever was encountered first. Docs without a sharpe value use `-inf` for comparison (a doc with any real sharpe always wins over one with a missing sharpe). `stats['deduped']` counts the number of candidates removed by dedup.
+Within each `composition_hash` group, the candidate with the highest `_oos_sharpe(doc)` (i.e. the correctly-parsed `oos_metrics['Sharpe']`, see above) is retained. Ties resolve in favor of whichever was encountered first. Docs without a parseable sharpe value use `-inf` for comparison (a doc with any real, parseable sharpe always wins over one with a missing/unparseable sharpe). `stats['deduped']` counts the number of candidates removed by dedup.
 
 ### Stats invariant
 
@@ -185,11 +236,12 @@ pulled == (valid + missing_edn_string + parse_failed + validate_rejected
 |-----------|----------|-------------|
 | `MONGO_URI` not set | `"KeyError"` | `False` |
 | pymongo connection error | `"ServerSelectionTimeoutError"` (or similar) | `False` |
-| SRV/DNS or Mongo fetch hangs > `_ATLAS_FETCH_TIMEOUT_S` (12.0 s) | `"AtlasFetchTimeout"` | `False` |
+| SRV/DNS or Mongo fetch hangs > `_ATLAS_FETCH_TIMEOUT_S` (45.0 s) | `"AtlasFetchTimeout"` | `False` |
 | `atlas_cache.cached_pull` returns `None` (cache miss + fetch failed + no stale row, no timeout) | `"AtlasCacheUnavailable"` | `False` |
 | `atlas_cache.cached_pull` returns a non-list payload (corrupt cache) | `"TypeError"` | `False` |
 | Any other exception in the outer try block | `type(exc).__name__` | `False` |
 | Empty collection (zero docs) | -- | `True` (candidates=[], stats.pulled=0) |
+| A doc's `oos_metrics['Sharpe']` is missing/malformed | -- (not a failure) | `True` -- doc is kept, sorts/ties to `-inf` (see "Sharpe field correction") |
 
 `"AtlasFetchTimeout"` is set when `_timeout_fired[0]` is `True` (the wall-clock wrapper fired). `"AtlasCacheUnavailable"` is the named sentinel for the `raw_docs is None` path when no timeout fired. See `DE-CS-002` in `DECISIONS.md`.
 
@@ -212,6 +264,7 @@ pulled == (valid + missing_edn_string + parse_failed + validate_rejected
 - `concurrent.futures` -- `ThreadPoolExecutor` wall-clock timeout wrapper (`_bounded_fetch_fn`)
 - `json` -- `edn_string` parsing and composition hash canonical form
 - `hashlib` -- SHA-256 composition hash
+- `math` -- `isnan`/`isinf` rejection in `_parse_sharpe` (DE-ATLAS-SHARPE-FIELD-001)
 - `os` -- `MONGO_URI` env read inside `fetch_fn`
 - `pymongo` -- lazy-imported inside `_fetch_fn` only; not a module-level import
 
@@ -227,4 +280,4 @@ The canonical community-admission path for all production callers (Strategy Buil
 - Any failure (Atlas down, `MONGO_URI` unset, cache miss) degrades to `community_candidates=[]`; the proposal run completes as built-new-only.
 - Community candidates enter the single-batch FDR gate alongside built-new candidates (anti-overfit invariant).
 
-See `DE-HF1-001` and `DE-SB-C5` in `DECISIONS.md` for the full architectural rationale.
+See `DE-HF1-001`, `DE-SB-C5`, `DE-ATLAS-SLOW-QUERY-001`, and `DE-ATLAS-SHARPE-FIELD-001` in `DECISIONS.md` for the full architectural rationale.

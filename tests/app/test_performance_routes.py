@@ -74,6 +74,17 @@ def mock_analytics(monkeypatch):
         "volatility": None,  # Phase 2 addition
     }
     mock.list_available_symphonies.return_value = []
+    # Canonical shadow-series producer (DE-PROD-ACCURACY-001 Finding 4): the
+    # scope=aggregate path consumes this, not compute_aggregate_returns. None is
+    # the producer's own empty/day-1 contract.
+    mock.get_portfolio_bot_and_held_daily_returns.return_value = None
+    mock.get_single_day_shadow_returns.return_value = None
+    # Canonical per-symphony shadow-series producer (AC-3, math-r0 MA-6 /
+    # MAPERF-01): the scope=symphony path consumes this, not
+    # compute_per_symphony_returns (which read the selection-biased post-mortem
+    # trigger array — the retired call graph). None is the producer's own
+    # empty/no-data contract, matching its aggregate sibling.
+    mock.get_symphony_bot_and_held_daily_returns.return_value = None
 
     # Patch the module attribute directly (covers both `import analytics` and
     # `from analytics import X` usage in app.py once DV2 lands).
@@ -83,6 +94,9 @@ def mock_analytics(monkeypatch):
         "compute_per_symphony_returns",
         "compute_quantstats_metrics",
         "list_available_symphonies",
+        "get_portfolio_bot_and_held_daily_returns",
+        "get_single_day_shadow_returns",
+        "get_symphony_bot_and_held_daily_returns",
     ):
         monkeypatch.setattr(analytics_module, attr, getattr(mock, attr))
 
@@ -183,12 +197,19 @@ def test_get_performance_has_scope_toggle_ui(client, mock_analytics):
 def test_api_performance_aggregate_happy_path_30_days(client, mock_analytics):
     """
     GET /api/performance?scope=aggregate&days=60 with 30 days of fixture data:
-    JSON must contain the documented shape with all 7 metric keys and the
+    JSON must contain the documented shape with all metric keys and the
     correct observation_count + insufficient_history flag.
 
     Fixture-derived assertions only — we do NOT hardcode any of the producer
-    values.  The mocked analytics functions return lists of length 30; the test
+    values.  The mocked analytics producer returns lists of length 30; the test
     asserts the route preserves length and shape.
+
+    Re-pointed (DE-PROD-ACCURACY-001 Finding 4): the aggregate series now comes
+    from the canonical shadow_history producer
+    (get_portfolio_bot_and_held_daily_returns), not the post-mortem trigger
+    arrays via compute_aggregate_returns. Shape contract unchanged. Which series
+    lands in which payload field is pinned by
+    tests/app/test_canonical_portfolio_series.py, not here.
     """
     n_days = 30
     symphonies = ["sym-A", "sym-B"]
@@ -196,12 +217,13 @@ def test_api_performance_aggregate_happy_path_30_days(client, mock_analytics):
     mock_analytics.get_history_with_cache_invalidation.return_value = history
 
     dates = sorted(history.keys())
-    live_returns = [0.001 * (i + 1) for i in range(n_days)]
-    shadow_returns = [0.002 * (i + 1) for i in range(n_days)]
-    mock_analytics.compute_aggregate_returns.return_value = (
+    series_a = [0.001 * (i + 1) for i in range(n_days)]
+    series_b = [0.002 * (i + 1) for i in range(n_days)]
+    live_returns, shadow_returns = series_a, series_b
+    mock_analytics.get_portfolio_bot_and_held_daily_returns.return_value = (
         dates,
-        live_returns,
-        shadow_returns,
+        series_a,
+        series_b,
     )
     live_metrics = {
         "total_return": 0.05,
@@ -276,7 +298,8 @@ def test_api_performance_aggregate_insufficient_history_flag(client, mock_analyt
     shadow_returns = [0.002 * (i + 1) for i in range(n_days)]
 
     mock_analytics.get_history_with_cache_invalidation.return_value = history
-    mock_analytics.compute_aggregate_returns.return_value = (
+    # Re-pointed (Finding 4): aggregate consumes the canonical shadow producer.
+    mock_analytics.get_portfolio_bot_and_held_daily_returns.return_value = (
         dates,
         live_returns,
         shadow_returns,
@@ -338,23 +361,28 @@ def test_api_performance_symphony_happy_path(client, mock_analytics):
     """
     scope=symphony with a valid symphony_id returns that symphony's series only.
 
-    We seed the history with two symphonies and configure
-    ``compute_per_symphony_returns`` to return only the requested one's data;
-    then we assert the route actually called the per-symphony helper with the
-    correct symphony_id and that the response carries the right series length.
+    AC-3 (DE-MATH-AUDIT-001 MA-6 / MAPERF-01, math-r0): the per-symphony series
+    is sourced from ``analytics.get_symphony_bot_and_held_daily_returns`` (the
+    per-symphony analogue of the aggregate's canonical shadow_history producer)
+    — NEVER ``compute_per_symphony_returns``, which read a selection-biased
+    post-mortem trigger-array event sample (only the days the symphony
+    triggered) and annualized it as if those were consecutive trading days.
+    That callsite was retired for this route; ``compute_per_symphony_returns``
+    itself is untouched and still has a live caller elsewhere (the AI Advisor
+    Correlations panel, app.py — out of R0 scope).
+
+    We configure the new producer to return only the requested symphony's
+    data, then assert the route actually called it with the correct
+    symphony_id and that the response carries the right series length.
     """
     n_days = 20
-    symphonies = ["sym-A", "sym-B"]
-    history = _build_history_fixture(n_days, symphonies)
-    mock_analytics.get_history_with_cache_invalidation.return_value = history
-
-    sym_a_dates = sorted(history.keys())
-    sym_a_live = [0.001 * (i + 1) for i in range(n_days)]
-    sym_a_shadow = [0.002 * (i + 1) for i in range(n_days)]
-    mock_analytics.compute_per_symphony_returns.return_value = (
+    sym_a_dates = [f"2026-{((i // 28) % 12) + 1:02d}-{(i % 28) + 1:02d}" for i in range(n_days)]
+    sym_a_bot = [0.002 * (i + 1) for i in range(n_days)]
+    sym_a_held = [0.001 * (i + 1) for i in range(n_days)]
+    mock_analytics.get_symphony_bot_and_held_daily_returns.return_value = (
         sym_a_dates,
-        sym_a_live,
-        sym_a_shadow,
+        sym_a_bot,
+        sym_a_held,
     )
     mock_analytics.compute_quantstats_metrics.return_value = {
         "total_return": 0.03,
@@ -371,19 +399,15 @@ def test_api_performance_symphony_happy_path(client, mock_analytics):
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["scope"] == "symphony"
-    # Per-symphony helper was invoked with the requested symphony_id.
-    assert mock_analytics.compute_per_symphony_returns.called
-    call_args = mock_analytics.compute_per_symphony_returns.call_args
+    # Per-symphony producer was invoked with the requested symphony_id.
+    assert mock_analytics.get_symphony_bot_and_held_daily_returns.called
+    call_args = mock_analytics.get_symphony_bot_and_held_daily_returns.call_args
     # symphony_id may be passed positionally or via kwarg; accept either.
     positional = call_args.args
     kwargs = call_args.kwargs
-    sym_id_used = (
-        kwargs.get("symphony_id")
-        if "symphony_id" in kwargs
-        else (positional[1] if len(positional) >= 2 else None)
-    )
+    sym_id_used = kwargs.get("symphony_id") if "symphony_id" in kwargs else positional[0]
     assert sym_id_used == "sym-A", (
-        f"compute_per_symphony_returns must be called with sym-A, got {sym_id_used!r}"
+        f"get_symphony_bot_and_held_daily_returns must be called with sym-A, got {sym_id_used!r}"
     )
 
     # Returned series length derives from the fixture, not hardcoded.
@@ -450,20 +474,41 @@ def test_api_performance_symphony_unknown_id_returns_empty_state(client, mock_an
 # ---------------------------------------------------------------------------
 
 
-def test_api_performance_symphonies_returns_sorted_list(client, mock_analytics):
+def test_api_performance_symphonies_returns_sorted_list(client, mock_analytics, monkeypatch):
     """
-    GET /api/performance/symphonies returns ``{"symphonies": [...]}`` for the
-    UI dropdown.  We mock ``list_available_symphonies`` and assert the values
-    flow through unchanged.
+    GET /api/performance/symphonies returns ``{"symphonies": [{"id","name"}, ...]}``
+    for the UI dropdown, sorted by name.
+
+    F-023 (DE-PERFVIEW-ID-MISMATCH): the endpoint used to return bare NAME
+    strings (from post-mortem history) used as both the picker's label AND its
+    value; that value was then sent as ``symphony_id`` into a hash-keyed
+    ``shadow_history`` query, matching zero rows for every symphony. The
+    endpoint's data source is now ``database.load_state()`` (bot_state, keyed
+    by hash — each value has ``"name"``), matching the same hash<->name
+    co-location pattern ``get_settings()`` already uses elsewhere in app.py.
+    See tests/app/test_f023_performance_symphony_id_mismatch.py for the full
+    RED coverage (end-to-end id round-trip, unknown-id distinction, JS picker
+    updates); this test is the narrow "old shape is gone" regression guard.
     """
-    mock_analytics.get_history_with_cache_invalidation.return_value = {}
-    mock_analytics.list_available_symphonies.return_value = ["sym-A", "sym-B"]
+    fake_state = {
+        "hash-b-222": {"name": "sym-B"},
+        "hash-a-111": {"name": "sym-A"},
+    }
+    monkeypatch.setattr(app_module.database, "load_state", lambda: fake_state)
 
     resp = client.get("/api/performance/symphonies")
     assert resp.status_code == 200
     body = resp.get_json()
     assert "symphonies" in body
-    assert body["symphonies"] == ["sym-A", "sym-B"]
+    symphonies = body["symphonies"]
+    assert all(
+        isinstance(entry, dict) and "id" in entry and "name" in entry for entry in symphonies
+    ), (
+        f"expected [{{id,name}}] objects, got {symphonies!r} — the old bare-name-"
+        "list shape must be gone (F-023)"
+    )
+    assert [e["name"] for e in symphonies] == ["sym-A", "sym-B"], "list must be sorted by name"
+    assert {e["id"] for e in symphonies} == set(fake_state.keys())
 
 
 # ---------------------------------------------------------------------------

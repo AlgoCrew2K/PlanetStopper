@@ -16,6 +16,8 @@ from zoneinfo import ZoneInfo
 
 # Eastern (XNYS) calendar zone for trading-day <-> stored-UTC conversions
 # (see get_fire_count_for_rule_on_day).
+import numpy as np
+
 _ET_ZONE = ZoneInfo("America/New_York")
 
 
@@ -150,6 +152,18 @@ def init_db():
             after_value  TEXT    NOT NULL,
             operator     TEXT    NOT NULL,
             ts_utc       TEXT    NOT NULL
+        )
+    """)
+
+    # H1 DUAL-WRITE: candidate_alert_state is also created by migration 033.
+    # Single-row (id=1) viewed-marker for the header candidate-alert indicator
+    # (feature-plans/candidate-alert.md) — see database.py's Candidate Alert
+    # accessors section below.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS candidate_alert_state (
+            id                          INTEGER PRIMARY KEY CHECK (id = 1),
+            last_viewed_observation_id  INTEGER NOT NULL DEFAULT 0,
+            updated_at                  TEXT
         )
     """)
 
@@ -295,10 +309,51 @@ def load_state():
     return json.loads(row[0]) if row else {}
 
 
+def _sanitize_state_for_json(value):
+    """Recursively coerce a bot_state tree to JSON-safe native Python.
+
+    2026-07-09 production crash (VERDICT-droplet Finding 1, CRITICAL): a numpy
+    int64 reached bot_state on a Take-Profit path and every save_state raised
+    ``TypeError: Object of type int64 is not JSON serializable``. Each failed
+    save lost that cycle's ``triggered=True``; the next cycle reloaded
+    pre-trigger state and re-fired the same exit — 4 duplicate exit_triggers
+    rows in one morning (ids 80-83), up to 4 duplicate sell submissions in
+    LIVE_EXECUTION. Engine write sites feed math_engine products (tick
+    counters, MC probabilities, price levels) straight into bot_state, so the
+    single persistence choke point sanitizes:
+
+      np.integer -> int, np.bool_ -> bool;
+      floats (numpy AND plain) -> _finite_or_none: NaN/±inf persist as None
+      (the repo's isfinite-or-None idiom) — a NaN token silently poisons
+      downstream money math and a save-time crash re-fires exits, both worse
+      than an explicitly-null field every consumer already null-guards.
+
+    A recursive walk (not a ``json.dumps default=`` hook) because default= is
+    only invoked for non-serializable types — a plain float('nan') serializes
+    "successfully" as a poison NaN token and never reaches the hook. Unknown
+    non-JSON types still raise TypeError in json.dumps: no silent
+    serialization.
+    """
+    if isinstance(value, dict):
+        return {k: _sanitize_state_for_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_state_for_json(v) for v in value]
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        return _finite_or_none(float(value))
+    return value
+
+
 def save_state(state_dict):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE bot_state SET data = ? WHERE id = 1", (json.dumps(state_dict),))
+    cursor.execute(
+        "UPDATE bot_state SET data = ? WHERE id = 1",
+        (json.dumps(_sanitize_state_for_json(state_dict)),),
+    )
     conn.commit()
     conn.close()
 
@@ -654,6 +709,9 @@ def save_autotune_run(
     overfitting_verdict=None,
     # migration 028: Phase-3 PBO acceptance gate result.
     pbo=None,
+    # migration 023: S accumulator (SUM n_configs_searched over BACKTEST_SELECTION
+    # researcher_dof_ledger rows for this run's spec_bundle_id) — see AC-E1/E2.
+    s_count: int | None = None,
 ) -> int:
     """Persist one row of per-run Optuna validation metrics to autotune_runs.
 
@@ -690,6 +748,17 @@ def save_autotune_run(
       pbo: Probability of Backtest Overfitting from CSCV (Bailey et al. 2017).
            In (0, 1); higher means more overfitting evidence.  None when PBO
            could not be computed (insufficient CSCV paths).
+
+    S accumulator column (migration 023):
+      s_count: SUM of n_configs_searched over BACKTEST_SELECTION rows in
+               researcher_dof_ledger for this run's spec_bundle_id (distinct
+               from d_spec, which is COUNT DISTINCT bundles). None for legacy
+               pre-023 rows / callers that haven't been wired yet; 0 is the
+               honest NN1-compliant value (no BACKTEST_SELECTION evidence) and
+               must be persisted as literal 0, never coerced to NULL — callers
+               use `s_count=0`, not an omitted kwarg, to record that case.
+               Feeds overfitting_conscience Indicator-3 (operator drift) via
+               each run's prior_runs query.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -700,8 +769,8 @@ def save_autotune_run(
              baseline_decision, fallback_oos_alpha, default_oos_alpha,
              selection_tstat, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
              spec_bundle_id, n_effective, d_spec, gamma, overfitting_verdict,
-             pbo)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             pbo, s_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_timestamp,
@@ -721,6 +790,7 @@ def save_autotune_run(
             gamma,
             overfitting_verdict,
             pbo,
+            s_count,
         ),
     )
     conn.commit()
@@ -1466,6 +1536,174 @@ def get_cached_regime_label(
     return label
 
 
+# --- Candidate Alert (header indicator) — viewed-marker + survivor accessors ---
+# feature-plans/candidate-alert.md. Migration 033 (candidate_alert_state).
+#
+# Verdict-classification note: acceptance_gate.py:80-82 defines exactly three
+# decision strings (ADOPT_CANDIDATE / KEEP_INCUMBENT / REJECT_VETO_FAILED).
+# KEEP_INCUMBENT is the common "nothing changed" outcome for ASSET_SWAP/
+# LOGIC_CHANGE (asset_swap_engine.py / logic_change_engine.py persist it
+# verbatim, RC-4) — it must NOT count as a valid new candidate, so
+# ADOPT_CANDIDATE is the ONLY survivor condition below.
+
+# Role scope for the weekly-suggestion advisor_observations rows this feature
+# cares about. Deliberately excludes MARKET_PRISM/OVERFITTING_CONSCIENCE/
+# SPEC_CRITIC/NARRATOR/etc — those never count toward the marker, the survivor
+# count, or the last-run aggregate, even if a verdict string coincidentally
+# matches ADOPT_CANDIDATE.
+_CANDIDATE_ALERT_WEEKLY_ROLES = ("ASSET_SWAP", "LOGIC_CHANGE", "STRATEGY_BUILDER")
+
+# The sole verdict string that counts as a survivor (acceptance_gate.py:80
+# DECISION_ADOPT_CANDIDATE) — see the verdict-classification note above.
+_CANDIDATE_ALERT_SURVIVOR_VERDICT = "ADOPT_CANDIDATE"
+
+
+def get_candidate_alert_viewed_marker() -> int:
+    """Return the last-viewed advisor_observations.id for the candidate-alert
+    indicator, or 0 when unset (nothing viewed yet).
+
+    Read-only (architecture constraint 5). Never raises: a missing table/row
+    (e.g. a DB that predates migration 033) degrades to 0, the same value as
+    a freshly-migrated, never-viewed marker.
+    """
+    try:
+        conn = get_ro_connection()
+        try:
+            row = conn.execute(
+                "SELECT last_viewed_observation_id FROM candidate_alert_state WHERE id = 1"
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+    return row[0] if row else 0
+
+
+def set_candidate_alert_viewed_marker(observation_id: int) -> int:
+    """UPSERT the candidate-alert viewed-marker; returns the resulting value.
+
+    Monotonic: the stored marker becomes max(existing, observation_id) — a
+    call with a lower id (an out-of-order request, a stale client re-POSTing)
+    can never regress a marker that has already advanced further (AC-5
+    idempotency). Single-row table (id=1); ON CONFLICT DO UPDATE avoids a PK
+    collision on repeat calls.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO candidate_alert_state "
+            "(id, last_viewed_observation_id, updated_at) "
+            "VALUES (1, ?, datetime('now')) "
+            "ON CONFLICT(id) DO UPDATE SET "
+            "last_viewed_observation_id = MAX(last_viewed_observation_id, "
+            "                              excluded.last_viewed_observation_id), "
+            "updated_at = datetime('now')",
+            (observation_id,),
+        )
+        conn.commit()
+        row = cursor.execute(
+            "SELECT last_viewed_observation_id FROM candidate_alert_state WHERE id = 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else observation_id
+
+
+def mark_candidate_alert_viewed() -> int:
+    """Advance the candidate-alert viewed-marker to the current max weekly-
+    suggestion observation id.
+
+    Zero required arguments — server-computed only: a caller can never inject
+    an arbitrary observation id (the marker must not be settable to a value
+    the operator hasn't actually seen). Role-scoped to
+    _CANDIDATE_ALERT_WEEKLY_ROLES — a higher-id row from an unrelated role
+    (e.g. MARKET_PRISM) must never influence the marker. Returns 0 (no-op)
+    when no weekly-suggestion row has ever been written.
+    """
+    placeholders = ", ".join("?" for _ in _CANDIDATE_ALERT_WEEKLY_ROLES)
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            f"SELECT MAX(id) FROM advisor_observations WHERE advisor_role IN ({placeholders})",
+            _CANDIDATE_ALERT_WEEKLY_ROLES,
+        ).fetchone()
+    finally:
+        conn.close()
+    max_id = row[0] if row and row[0] is not None else 0
+    return set_candidate_alert_viewed_marker(max_id)
+
+
+def get_candidate_alert_new_valid_count() -> int:
+    """Count NEW survivor (verdict=='ADOPT_CANDIDATE') weekly-suggestion rows.
+
+    "New" = advisor_observations.id strictly greater than the current viewed
+    marker (id > marker, not >= — a row at the marker was already viewed).
+    Role-scoped to _CANDIDATE_ALERT_WEEKLY_ROLES; fail-closed on NULL/odd/
+    unrecognised verdicts (never counted). Read-only (architecture
+    constraint 5); never raises (degrades to 0).
+    """
+    try:
+        marker = get_candidate_alert_viewed_marker()
+        placeholders = ", ".join("?" for _ in _CANDIDATE_ALERT_WEEKLY_ROLES)
+        conn = get_ro_connection()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM advisor_observations "
+                f"WHERE advisor_role IN ({placeholders}) "
+                "AND verdict = ? AND id > ?",
+                (*_CANDIDATE_ALERT_WEEKLY_ROLES, _CANDIDATE_ALERT_SURVIVOR_VERDICT, marker),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+    return row[0] if row else 0
+
+
+def get_candidate_alert_last_run() -> dict | None:
+    """Return the latest weekly-suggestion batch's status, or None if never run.
+
+    No run_id/batch column exists for ASSET_SWAP/LOGIC_CHANGE/STRATEGY_BUILDER
+    rows — the three weekly engines run back-to-back within one invocation of
+    run_weekly_suggestions() (advisors/weekly_suggestions_scheduler.py), so the
+    calendar date (UTC) of the most recent row is a sound proxy for "one run".
+
+    Returns {"ran_at": <max created_at that date>, "evaluated": <row count
+    that date>, "survivors": <subset verdict=='ADOPT_CANDIDATE'>}. survivors=0
+    is a valid, honest result (AC-3 "know it's working" — an all-rejected
+    batch still proves the job ran); only a table with ZERO weekly-suggestion
+    rows ever returns None. Read-only; never raises.
+    """
+    try:
+        placeholders = ", ".join("?" for _ in _CANDIDATE_ALERT_WEEKLY_ROLES)
+        conn = get_ro_connection()
+        try:
+            row = conn.execute(
+                "SELECT MAX(created_at), COUNT(*), "
+                "SUM(CASE WHEN verdict = ? THEN 1 ELSE 0 END) "
+                "FROM advisor_observations "
+                f"WHERE advisor_role IN ({placeholders}) "
+                "AND substr(created_at, 1, 10) = ("
+                "  SELECT substr(MAX(created_at), 1, 10) FROM advisor_observations "
+                f"  WHERE advisor_role IN ({placeholders})"
+                ")",
+                (
+                    _CANDIDATE_ALERT_SURVIVOR_VERDICT,
+                    *_CANDIDATE_ALERT_WEEKLY_ROLES,
+                    *_CANDIDATE_ALERT_WEEKLY_ROLES,
+                ),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+    ran_at, evaluated, survivors = row
+    if ran_at is None:
+        return None
+    return {"ran_at": ran_at, "evaluated": evaluated or 0, "survivors": survivors or 0}
+
+
 # --- H1: Schema Migration Runner ---
 
 _MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations")
@@ -1508,8 +1746,10 @@ _MIGRATION_FILES = [
     "030_per_symphony_live_mode.sql",
     "031_shadow_history_sym_ts_index.sql",
     "032_prism_audit_log.sql",
-    "033_sleeves.sql",
-    "034_sleeve_rule_fires.sql",
+    "033_candidate_alert_state.sql",
+    "034_frontrunner_proposals.sql",
+    "035_sleeves.sql",
+    "036_sleeve_rule_fires.sql",
 ]
 
 
@@ -2033,6 +2273,24 @@ _VALID_DOF_EVIDENCE_SOURCES: frozenset[str] = frozenset(
         "CALIBRATION",
         "BACKTEST_SELECTION",
         "OOS",
+        # Distinct evidence KIND (not a producer/subsystem tag — mirrors the
+        # enum's existing kind-not-producer convention) for the frontrunner
+        # builder's overlay-candidate search breadth (AC-6). A structurally
+        # different search from the autotuner's own parameter optimization
+        # (separate search space; its own multiple-testing is handled
+        # per-batch by evaluate_candidate_batch) — recorded to the DoF ledger
+        # per AC-6, but ISOLATED from the autotuner's N_effective haircut:
+        # every real consumer (count_dof_backtest_selections,
+        # get_researcher_dof_ledger_for_run — the production N_effective feed
+        # at autotuner.py:2487) filters on the literal string
+        # 'BACKTEST_SELECTION', so a distinct value is excluded by
+        # construction, zero schema/query change. Team-lead-ratified
+        # 2026-07-11 (cff1264c) after a full researcher_dof_ledger consumer
+        # audit found the distinct-spec_bundle_id-only approach (the original
+        # f51cffe design) did NOT achieve isolation — every consumer
+        # excludes only the CURRENT run's own winning spec_bundle_id, never
+        # an arbitrary sentinel string.
+        "OVERLAY_BACKTEST_SELECTION",
     }
 )
 
@@ -2614,12 +2872,15 @@ def record_exit_trigger(
     math_mode: "str | None" = None,
     port_trigger_id: "str | None" = None,
     also_true: "list[str] | None" = None,
-) -> None:
-    """Write one exit-trigger telemetry row.
+) -> "int | None":
+    """Write one exit-trigger telemetry row. Returns the inserted row id.
 
     Opens its own connection — does NOT join the cycle's save_state transaction.
     A failure here must never fail the cycle; any exception is logged at ERROR
-    and swallowed.  Called from alpha_bot_execution.py at the triggered=True set site.
+    and swallowed (returning None).  Called from alpha_bot_execution.py at the
+    triggered=True set site, which stashes the returned id as _last_trigger_id
+    so shadow_history rows link to their exit_triggers row (Finding 10: the
+    column could never populate while this returned nothing).
 
     AC-P2.10: math_mode and port_trigger_id support port-level exit attribution.
     gate_state_json may be passed as a pre-serialised string (e.g. from tests)
@@ -2648,7 +2909,7 @@ def record_exit_trigger(
 
     try:
         conn = sqlite3.connect(_db_file(), timeout=10.0)
-        conn.execute(
+        cursor = conn.execute(
             "INSERT INTO exit_triggers "
             "(ts_utc, ts_et, symphony_id, account_id, triggered_reason, at_return, "
             " gate_state_json, cycle_id, math_mode, port_trigger_id, also_true_json) "
@@ -2667,10 +2928,13 @@ def record_exit_trigger(
                 also_true_json,
             ),
         )
+        row_id = cursor.lastrowid
         conn.commit()
         conn.close()
+        return row_id
     except Exception as exc:
         logging.error("record_exit_trigger failed for %s: %s", symphony_id, exc)
+        return None
 
 
 def get_recent_exit_triggers(limit: int = 50) -> "list[dict]":
@@ -3049,16 +3313,31 @@ def prune_old_shadow_history(retention_days: int) -> int:
     return total_deleted
 
 
-def load_latest_shadow_row(symphony_id: str, trading_day: str) -> "dict | None":
-    """Return the most-recent shadow_history row for a symphony+day, or None."""
+def load_latest_shadow_row(
+    symphony_id: str, trading_day: str, et_cutoff: "str | None" = None
+) -> "dict | None":
+    """Return the most-recent shadow_history row for a symphony+day, or None.
+
+    et_cutoff: optional ET time-of-day string ("HH:MM:SS") — when given, only
+    rows at/before that time qualify. Used by the Stage-1 post-mortem to hold
+    its declared snapshot basis when it runs off-schedule (the engine ticks
+    past close to ~16:04; a bare latest-row read would silently re-base a late
+    run onto EOD values).
+    """
     try:
         conn = sqlite3.connect(_db_file(), timeout=10.0)
         conn.row_factory = sqlite3.Row
+        params: list = [symphony_id, trading_day]
+        cutoff_clause = ""
+        if et_cutoff is not None:
+            cutoff_clause = "AND substr(ts_et, 12, 8) <= ? "
+            params.append(et_cutoff)
         row = conn.execute(
             "SELECT * FROM shadow_history "
             "WHERE symphony_id = ? AND trading_day = ? "
-            "ORDER BY ts_utc DESC LIMIT 1",
-            (symphony_id, trading_day),
+            + cutoff_clause
+            + "ORDER BY ts_utc DESC LIMIT 1",
+            params,
         ).fetchone()
         conn.close()
         if row is None:
@@ -3066,6 +3345,34 @@ def load_latest_shadow_row(symphony_id: str, trading_day: str) -> "dict | None":
         return dict(row)
     except Exception as exc:
         logging.error("load_latest_shadow_row failed for %s %s: %s", symphony_id, trading_day, exc)
+        return None
+
+
+def load_earliest_shadow_row(symphony_id: str, trading_day: str) -> "dict | None":
+    """Return the EARLIEST shadow_history row for a symphony+day, or None.
+
+    Stage-1's degradation tier for an all-post-cutoff day (daemon started after
+    the snapshot cutoff): when no row qualifies at/before the cutoff, the
+    earliest row of the day is the one nearest the declared basis — real
+    off-basis shadow data beats the action-phase-clobbered bot_state value.
+    """
+    try:
+        conn = sqlite3.connect(_db_file(), timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM shadow_history "
+            "WHERE symphony_id = ? AND trading_day = ? "
+            "ORDER BY ts_utc ASC LIMIT 1",
+            (symphony_id, trading_day),
+        ).fetchone()
+        conn.close()
+        if row is None:
+            return None
+        return dict(row)
+    except Exception as exc:
+        logging.error(
+            "load_earliest_shadow_row failed for %s %s: %s", symphony_id, trading_day, exc
+        )
         return None
 
 
@@ -3272,7 +3579,7 @@ def prune_old_triggers(retention_days: int) -> int:
     return deleted_total
 
 
-# --- Managed Sleeves P1: sleeve infrastructure + order layer (migration 033) ---
+# --- Managed Sleeves P1: sleeve infrastructure + order layer (migration 035) ---
 # All read paths below use get_ro_connection() (arch constraint 5); all writes use
 # get_connection(). Every query is parameterized (? placeholders) -- no f-string
 # SQL interpolation of caller-supplied values anywhere in this section.
@@ -3915,7 +4222,7 @@ def delete_sleeve_runtime(rule_id: int, key: str) -> None:
         conn.close()
 
 
-# --- sleeve_rule_fires: P2 rule engine fire log (migration 034) ---
+# --- sleeve_rule_fires: P2 rule engine fire log (migration 036) ---
 # One row per tick evaluation that fired (`when`/`if` matched, `then` attempted).
 # SHADOW rules record the fire + the would-have-ordered sizing and execute
 # nothing (AC-6); PAPER/LIVE fires additionally carry order_id once an order is
@@ -4100,6 +4407,194 @@ def get_fire_count_for_rule_on_day(rule_id: int, trading_day: str) -> int:
     finally:
         conn.close()
     return int(row[0])
+
+
+# --- 033: Frontrunner Proposals (mutable approval-status lifecycle) ---
+#
+# advisor_observations is append-only/immutable (see insert_advisor_observation
+# docstring) and has no update accessor by design. The frontrunner approval
+# workflow (pending -> approved/rejected -> uploaded) needs a MUTABLE row per
+# candidate, so this is a separate small state table (migration 033) — NOT a
+# repurposing of the append-only audit log. Shared by the Frontrunner Builder
+# and the propose_strategies retrofit (proposal_source distinguishes the two).
+
+_FRONTRUNNER_PROPOSAL_COLUMNS = [
+    "id",
+    "created_at",
+    "updated_at",
+    "symphony_id",
+    "proposal_source",
+    "approval_status",
+    "candidate_tree",
+    "metrics_json",
+    "created_symphony_id",
+    "error_message",
+]
+
+_VALID_PROPOSAL_APPROVAL_STATUSES = frozenset({"pending", "approved", "rejected", "uploaded"})
+
+
+def _parse_frontrunner_proposal_row(row: tuple, columns: list[str]) -> dict:
+    """Convert a raw frontrunner_proposals tuple into a typed dict.
+
+    candidate_tree and metrics_json are JSON blob columns and are
+    deserialised to Python objects so callers receive the original structure
+    rather than a raw JSON string (same precedent as advisor_observations'
+    raw_response handling).
+    """
+    result = {}
+    for col, val in zip(columns, row):
+        if col in ("candidate_tree", "metrics_json") and val is not None:
+            result[col] = json.loads(val)
+        else:
+            result[col] = val
+    return result
+
+
+def insert_frontrunner_proposal(
+    *,
+    symphony_id: str,
+    proposal_source: str,
+    candidate_tree: "dict | str",
+    metrics_json: "dict | str | None" = None,
+) -> int:
+    """Insert a new frontrunner proposal row (approval_status='pending'); return the new row id.
+
+    candidate_tree is required (the full spliced candidate symphony); a dict
+    is JSON-serialised, a pre-serialised JSON string is accepted as-is.
+    metrics_json defaults to '{}' when not supplied.
+    """
+    candidate_tree_str = (
+        json.dumps(candidate_tree) if isinstance(candidate_tree, dict) else candidate_tree
+    )
+    if metrics_json is None:
+        metrics_json_str = "{}"
+    elif isinstance(metrics_json, dict):
+        metrics_json_str = json.dumps(metrics_json)
+    else:
+        metrics_json_str = metrics_json
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO frontrunner_proposals "
+        "(symphony_id, proposal_source, candidate_tree, metrics_json) "
+        "VALUES (?, ?, ?, ?)",
+        (symphony_id, proposal_source, candidate_tree_str, metrics_json_str),
+    )
+    conn.commit()
+    row_id = cursor.lastrowid
+    conn.close()
+    return row_id
+
+
+def update_frontrunner_proposal_status(
+    proposal_id: int,
+    *,
+    approval_status: str,
+    created_symphony_id: str | None = None,
+    error_message: str | None = None,
+) -> bool:
+    """Update a proposal's approval_status (and optionally created_symphony_id /
+    error_message); return True if a row was updated, False if proposal_id
+    does not exist.
+
+    approval_status must be one of pending/approved/rejected/uploaded — raises
+    ValueError on an invalid value (a caller bug, not a runtime condition to
+    degrade silently on).
+    """
+    if approval_status not in _VALID_PROPOSAL_APPROVAL_STATUSES:
+        raise ValueError(
+            f"approval_status must be one of {sorted(_VALID_PROPOSAL_APPROVAL_STATUSES)}; "
+            f"got {approval_status!r}"
+        )
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE frontrunner_proposals SET approval_status = ?, "
+        "created_symphony_id = COALESCE(?, created_symphony_id), "
+        "error_message = ?, updated_at = datetime('now') WHERE id = ?",
+        (approval_status, created_symphony_id, error_message, proposal_id),
+    )
+    conn.commit()
+    updated = cursor.rowcount > 0
+    conn.close()
+    return updated
+
+
+def get_frontrunner_proposal(proposal_id: int) -> dict | None:
+    """Return one frontrunner proposal row by id, or None if not found.
+
+    Uses get_ro_connection() — read-only at the driver level (architecture
+    constraint 5).
+    """
+    conn = get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT " + ", ".join(_FRONTRUNNER_PROPOSAL_COLUMNS) + " FROM frontrunner_proposals "
+        "WHERE id = ?",
+        (proposal_id,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return _parse_frontrunner_proposal_row(row, _FRONTRUNNER_PROPOSAL_COLUMNS)
+
+
+def get_frontrunner_proposals_for_symphony(symphony_id: str) -> list[dict]:
+    """Return all frontrunner proposal rows for a given symphony, newest-first.
+
+    Returns an empty list when no rows match — never raises for an unknown
+    symphony_id. Uses get_ro_connection() (architecture constraint 5).
+    """
+    conn = get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT " + ", ".join(_FRONTRUNNER_PROPOSAL_COLUMNS) + " FROM frontrunner_proposals "
+        "WHERE symphony_id = ? ORDER BY id DESC",
+        (symphony_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_parse_frontrunner_proposal_row(row, _FRONTRUNNER_PROPOSAL_COLUMNS) for row in rows]
+
+
+def get_pending_frontrunner_proposals(limit: int = 50) -> list[dict]:
+    """Return pending frontrunner proposal rows, newest-first (the Advisor
+    tab's queue). Uses get_ro_connection() (architecture constraint 5).
+    """
+    conn = get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT " + ", ".join(_FRONTRUNNER_PROPOSAL_COLUMNS) + " FROM frontrunner_proposals "
+        "WHERE approval_status = 'pending' ORDER BY id DESC LIMIT ?",
+        (limit,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_parse_frontrunner_proposal_row(row, _FRONTRUNNER_PROPOSAL_COLUMNS) for row in rows]
+
+
+def count_uploaded_frontrunner_proposals() -> int:
+    """Return the count of frontrunner_proposals rows with approval_status='uploaded'.
+
+    AC-12's self-imposed local-count guard: Composer documents no per-account
+    symphony-count cap or create-time quota, and fetch_symphony_stats is
+    DEPLOYED-scoped (cannot see the undeployed symphonies this feature
+    creates) — so this LOCAL count of already-uploaded proposals substitutes
+    as the runaway-creation safety valve, checked by
+    advisors.frontrunner_builder.approve_frontrunner_proposal before every
+    composer_draft_client.save_symphony call.
+
+    Uses a read-only connection (architecture constraint 5).
+    """
+    conn = get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM frontrunner_proposals WHERE approval_status = 'uploaded'")
+    row = cursor.fetchone()
+    conn.close()
+    return int(row[0]) if row and row[0] is not None else 0
 
 
 # Initialize tables on import

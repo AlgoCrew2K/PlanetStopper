@@ -56,33 +56,8 @@ re-raises. Audit at authoring time:
 No whitelist exemptions are encoded in this test. If a legitimate
 top-level "log everything and re-raise" exception barrier is added
 later (e.g., wrapping the main() entry point), the implementer should
-explicitly add a `(function_name, ordinal)` entry to
-`WHITELISTED_BROAD_HANDLERS` below with a code-comment justification —
-never silently widen the regex.
-
-WHITELIST KEYING — (function_name, ordinal), NOT raw line number
-------------------------------------------------------------------
-Root-caused 2026-07-08 (CI run 28976339166): the whitelist originally
-keyed on hardcoded `lineno` values. The Managed Sleeves epic inserted an
-unrelated ~20-line block above two already-whitelisted, unchanged
-barriers, shifting both down (`seed_symphonies_into_bot_state`'s barrier
-1923→1943, `ensure_bot_state_seeded`'s 2012→2032) — their hardcoded
-whitelist entries silently went stale and both correctly-reviewed,
-unmodified broad catches were false-positive-flagged as new violations.
-A line-number whitelist breaks on ANY unrelated edit anywhere above it
-in the file; that is not a one-off, it is structurally guaranteed to
-recur on the next such edit.
-
-Re-keyed on `(enclosing_function_name, ordinal)`, where `ordinal` is the
-zero-based position of that handler among all broad handlers found
-within the SAME enclosing function, in source-line order. This is
-immune to line shifts anywhere else in the file (a function's own
-internal structure — and therefore its handlers' relative ordinals —
-only changes when that function itself is edited), while remaining more
-precise than whitelisting by bare function name alone: if an
-already-whitelisted function later gains an unreviewed SECOND broad
-catch, it gets the next ordinal and is NOT silently exempted — only the
-specific, previously-reviewed occurrence stays whitelisted.
+explicitly add a line-number entry to `WHITELISTED_LINENOS` below with
+a code-comment justification — never silently widen the regex.
 
 DESIGN DECISION — AST WALK, NOT REGEX
 -------------------------------------
@@ -120,38 +95,64 @@ ALPHA_BOT_PATH = REPO_ROOT / "alpha_bot_execution.py"
 # ---------------------------------------------------------------------------
 # Whitelist policy
 # ---------------------------------------------------------------------------
-# Set of (enclosing_function_name, ordinal) pairs for `ExceptHandler` nodes
-# that are explicitly allowed to be broad -- see the module docstring's
-# "WHITELIST KEYING" section for why this is keyed by function+ordinal
-# rather than a raw line number (line numbers broke on the very first
-# unrelated edit that shifted them). Future additions must come with an
-# inline code-comment justifying WHY the broad catch is safe (immediate
-# re-raise, top-level barrier with full traceback log, etc.). NEVER widen
-# this set as a quick-fix to make the test pass; the fix is to narrow the
-# except clause in production code instead.
-WHITELISTED_BROAD_HANDLERS: frozenset[tuple[str, int]] = frozenset(
+# WHY NOT RAW LINE NUMBERS (F7 lesson, 2026-07-18): this whitelist used to be
+# a `frozenset[int]` of raw `lineno` values. Every insertion earlier in
+# alpha_bot_execution.py (even a wholly unrelated feature, e.g. F7's +80
+# lines for a display-layer fix) shifts every handler below it, silently
+# breaking the pin and turning this test RED for a file that made zero
+# except-clause changes. Keying on STRUCTURE instead of POSITION survives
+# that: a handler is exempt only when BOTH hold:
+#   (1) its enclosing function name is in WHITELISTED_ENCLOSING_FUNCTIONS
+#       (survives line shifts anywhere in the file), AND
+#   (2) the handler's OWN source span (not just somewhere in its function)
+#       carries _BROAD_EXCEPT_WHITELIST_MARKERS (ties the exemption to that
+#       SPECIFIC handler -- a new, unrelated broad except added later
+#       inside either whitelisted function would NOT carry this marker and
+#       would still be caught; function-name-only keying would have
+#       blanket-exempted the whole function, which is forbidden).
+# The marker is pre-existing production-code text (each handler's own
+# justification comment, written when the handler was built) -- keying off
+# it needs ZERO changes to alpha_bot_execution.py.
+# NEVER widen this set as a quick-fix to make the test pass; the fix is to
+# narrow the except clause in production code instead.
+WHITELISTED_ENCLOSING_FUNCTIONS: frozenset[str] = frozenset(
     {
         # seed_symphonies_into_bot_state: per-account AC-4 partial-success barrier.
         # fetch_symphony_stats may raise any exception type (e.g. RuntimeError);
-        # narrowing is infeasible and would break AC-4. Ordinal 0 = this function's
-        # first (only) broad `except Exception`.
-        ("seed_symphonies_into_bot_state", 0),
+        # narrowing is infeasible and would break AC-4.
+        "seed_symphonies_into_bot_state",
         # ensure_bot_state_seeded: top-level daemon startup fail-safe barrier (AC-4).
         # Wraps load_state + presence-check + seed + save; must swallow all exception
-        # types to prevent daemon crash at startup. Ordinal 0 = this function's
-        # first (only) broad `except Exception`.
-        ("ensure_bot_state_seeded", 0),
-        # main: P3 Managed Sleeves engine-tick isolation barrier (2026-07-08,
-        # s3-review-approved as the epic's own AC-4-equivalent safety invariant).
-        # Wraps the sleeves tick_orchestrator call; ANY exception raised anywhere in
-        # sleeve processing must be caught here so a sleeve bug can never break the
-        # exit machine's own symphony trading on the same 1-minute cycle -- narrowing
-        # this catch would defeat the exact safety guarantee it exists to provide.
-        # Logs via logging.error before continuing. Ordinal 0 = this function's
-        # first broad `except Exception` (main() has exactly one).
-        ("main", 0),
+        # types to prevent daemon crash at startup.
+        "ensure_bot_state_seeded",
+        # main: P3 Managed Sleeves engine-tick isolation barrier (s3-review-approved
+        # epic invariant). ANY exception in sleeve processing must be caught so a
+        # sleeve bug can never break the exit machine's own symphony trading on the
+        # same 1-minute cycle; narrowing would defeat the guarantee it provides.
+        "main",
     }
 )
+
+# Marker substring required in a handler's own source span (see
+# _is_whitelisted_broad_handler) for the function-name exemption above to
+# apply. Both whitelisted handlers already carry this exact phrase in their
+# production-code justification comment (from
+# tests/engine/test_startup_seed_symphonies.py's TestFailSafeStartup, which
+# mandates the fail-safe behavior both handlers implement) — confirmed via
+# `grep -n "Mandated by tests/engine/test_startup_seed_symphonies.py"
+# alpha_bot_execution.py`, present at exactly these two handlers and nowhere
+# else in the file. If a handler's comment is ever reworded to drop this
+# exact phrase, this test intentionally goes RED again — a real signal the
+# whitelist needs re-review, not silent drift.
+# Per-function marker phrases (merge of the seeding-era single marker and the
+# Managed Sleeves epic's barrier): each whitelisted function requires ITS OWN
+# phrase inside the handler span, so one function's justification can never
+# exempt another function's handler.
+_BROAD_EXCEPT_WHITELIST_MARKERS: dict[str, str] = {
+    "seed_symphonies_into_bot_state": "Mandated by tests/engine/test_startup_seed_symphonies.py",
+    "ensure_bot_state_seeded": "Mandated by tests/engine/test_startup_seed_symphonies.py",
+    "main": "Sleeve-tick isolation barrier",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -203,37 +204,75 @@ def _is_bare_exception_handler(handler: ast.ExceptHandler) -> bool:
     return False
 
 
-def _find_broad_handlers(source: str) -> list[ast.ExceptHandler]:
-    """Walk the AST and return every ExceptHandler that matches the
-    broad-catch pattern AND is not in the whitelist.
+def _handler_source_span(source_lines: list[str], handler: ast.ExceptHandler) -> str:
+    """Return the raw source text spanning handler.lineno..handler.end_lineno
+    (1-indexed, inclusive) -- the physical lines the except clause AND its
+    body occupy (verified empirically: end_lineno covers through the last
+    body statement, not just the `except ... :` line).
 
-    Whitelisted by (enclosing_function_name, ordinal) -- see the module
-    docstring's "WHITELIST KEYING" section. `ordinal` is the zero-based
-    position of a handler among all broad handlers found within the SAME
-    enclosing function, determined by sorting all broad handlers by
-    `lineno` first (never by ast.walk's own traversal order, which is
-    breadth-first and not guaranteed to match source order for sibling
-    handlers) -- this makes ordinal assignment fully deterministic and
-    immune to any line shift anywhere else in the file.
+    Comments are not part of the AST, so this is a raw-text slice, not a
+    node walk -- used only to check for the whitelist marker comment, never
+    for control-flow decisions.
+    """
+    assert handler.end_lineno is not None, (
+        "ExceptHandler.end_lineno is None -- this repo's minimum supported "
+        "Python (3.8+) always populates it; something is unexpectedly odd "
+        "about the interpreter running this test."
+    )
+    return "\n".join(source_lines[handler.lineno - 1 : handler.end_lineno])
+
+
+def _is_whitelisted_broad_handler(
+    tree: ast.Module, source_lines: list[str], handler: ast.ExceptHandler
+) -> bool:
+    """Return True iff `handler` is an approved broad except -- BOTH its
+    enclosing function is in WHITELISTED_ENCLOSING_FUNCTIONS AND its own
+    source span carries _BROAD_EXCEPT_WHITELIST_MARKERS.
+
+    Requiring both prevents two failure modes a single-condition check
+    would allow:
+      - function-name-only: a NEW broad except added later anywhere else
+        inside one of the two whitelisted functions would be silently
+        exempted too (blanket function-wide exemption -- forbidden).
+      - marker-only: an unrelated comment elsewhere in the file that
+        happened to contain the marker phrase would falsely exempt some
+        other function's handler.
+    """
+    fn = _enclosing_function_name(tree, handler)
+    if fn not in WHITELISTED_ENCLOSING_FUNCTIONS:
+        return False
+    return _BROAD_EXCEPT_WHITELIST_MARKERS[fn] in _handler_source_span(source_lines, handler)
+
+
+def _find_broad_handlers(source: str) -> tuple[ast.Module, list[ast.ExceptHandler]]:
+    """Walk the AST and return (tree, offenders) -- every ExceptHandler that
+    matches the broad-catch pattern AND is not whitelisted, plus the parse
+    tree used to find them.
+
+    Returns the tree alongside the offenders (mirroring
+    _response_json_calls_in_function's established pattern elsewhere in this
+    file) so callers that also need to walk the AST for diagnostics (e.g.
+    _enclosing_function_name) reuse the SAME tree -- a second
+    ast.parse(source) call produces object-distinct nodes even for
+    identical source, so `sub is target` identity checks silently return
+    False across separate trees. (This exact bug previously made this
+    test's OWN failure message report every offender as being in
+    "<module>" instead of its real enclosing function -- harmless while
+    whitelisting was purely lineno-based, but load-bearing now that
+    whitelisting itself resolves enclosing-function names.)
     """
     tree = ast.parse(source)
-    all_broad = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ExceptHandler) and _is_bare_exception_handler(node)
-    ]
-    all_broad.sort(key=lambda node: node.lineno)
-
-    ordinal_by_function: dict[str, int] = {}
+    source_lines = source.splitlines()
     broad: list[ast.ExceptHandler] = []
-    for node in all_broad:
-        func_name = _enclosing_function_name(tree, node)
-        ordinal = ordinal_by_function.get(func_name, 0)
-        ordinal_by_function[func_name] = ordinal + 1
-        if (func_name, ordinal) in WHITELISTED_BROAD_HANDLERS:
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ExceptHandler):
+            continue
+        if not _is_bare_exception_handler(node):
+            continue
+        if _is_whitelisted_broad_handler(tree, source_lines, node):
             continue
         broad.append(node)
-    return broad
+    return tree, broad
 
 
 def _find_bare_excepts(source: str) -> list[ast.ExceptHandler]:
@@ -282,8 +321,7 @@ def test_no_broad_exception_handler_in_alpha_bot_execution():
     `except` masking everything else.
     """
     source = _read_source(ALPHA_BOT_PATH)
-    tree = ast.parse(source)
-    offenders = _find_broad_handlers(source)
+    tree, offenders = _find_broad_handlers(source)
 
     if not offenders:
         return  # GREEN
@@ -314,10 +352,10 @@ def test_broad_exception_handler_count_is_zero():
     Paired with Test 1: gives a single-line "found N, expected 0"
     diagnostic on regression. Counts ONLY non-whitelisted handlers, so
     a future legitimate broad-catch-with-reraise entry in
-    WHITELISTED_BROAD_HANDLERS does not break this assertion.
+    WHITELISTED_LINENOS does not break this assertion.
     """
     source = _read_source(ALPHA_BOT_PATH)
-    offenders = _find_broad_handlers(source)
+    _tree, offenders = _find_broad_handlers(source)
     assert len(offenders) == 0, (
         f"Expected zero non-whitelisted broad `except Exception` "
         f"handlers in alpha_bot_execution.py; found {len(offenders)} at "

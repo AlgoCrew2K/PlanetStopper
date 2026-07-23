@@ -1,0 +1,13 @@
+{
+  "layer": "arm_disarm_decision",
+  "scenario": "giveback_prob_trajectory_keeps_armed_through_deterioration",
+  "provenance": "MA-4 AC-4 (seam level). The audit's +3% -> -1.5% giveback prob trajectory: arm at a peak (prob in [5,15)), then prob climbs through 2x-trigger (30) into breakdown (>=60) as the position gives back. The seam MUST keep armed=True the whole way so compute_exit_confirmation downstream can fire the Trailing Stop. Under the OLD inverted disarm the prob=35 tick stripped armed. Categorical spec decision.",
+  "constants": {"take_profit_mc_pct": 5.0, "trigger_threshold_pct": 15.0, "disarm_confirm_ticks": 3},
+  "initial": {"armed": false, "disarm_confirm_count": 0},
+  "sequence": [
+    {"prob_underperforming": 10.0, "is_triggered": false, "expect_armed": true, "expect_count": 0, "note": "arm at the peak (in band)"},
+    {"prob_underperforming": 35.0, "is_triggered": false, "expect_armed": true, "expect_count": 0, "note": "giveback-through-positive: 35 > 2x trigger (30) -> OLD code DISARMED here; FIX stays armed"},
+    {"prob_underperforming": 70.0, "is_triggered": false, "expect_armed": true, "expect_count": 0, "note": "into the loss: 70 >= breakdown (60) -> stays armed"},
+    {"prob_underperforming": 72.0, "is_triggered": false, "expect_armed": true, "expect_count": 0, "note": "sustained breakdown -> still armed; exit gate is open downstream"}
+  ]
+}

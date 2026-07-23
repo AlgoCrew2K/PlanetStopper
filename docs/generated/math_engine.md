@@ -3,7 +3,7 @@
 > Pure risk-math primitives: trailing-stop mechanics, CRRA-EU utility, CVaR diagnostics, Monte Carlo gating, regime-match guard, VWAP signals, and the 6-layer exit-trigger resolver.
 
 **Source:** `math_engine.py`
-**Last updated:** 2026-06-02
+**Last updated:** 2026-07-18 (Math Remediation R3-c, `DE-MATH-R3C-001`, code-complete on `fix/math-r3c` @ `a5c011dd`, independent review IN FLIGHT -- NOT yet merged/deployed) — `compute_active_trailing_stop` gains an optional `squeeze_floor` param, see the extended entry below. Prior: 2026-07-18 (Math Remediation R3-b, `DE-MATH-R3B-001`, SHIPPED @ `origin/main` `f3c7e050`, droplet-deployed + verified) — new `compute_arm_disarm_decision` seam + `DISARM_CONFIRM_TICKS` constant; see the Arm/Disarm Decision section below. Prior: 2026-06-02 (initial generation)
 
 ## Overview
 
@@ -100,8 +100,10 @@ Returns `(dynamic_multiplier, dynamic_min_stop)`. `time_ratio` must be in `[0.0,
 
 **Reference:** `docs/research/m3-provenance/literature-pass.md §1`
 
-#### `compute_active_trailing_stop(symphony_vol, dynamic_multiplier, dynamic_min_stop, para_armed, breakeven_locked, parabolic_squeeze_multiplier) → float`
+#### `compute_active_trailing_stop(symphony_vol, dynamic_multiplier, dynamic_min_stop, para_armed, breakeven_locked, parabolic_squeeze_multiplier, squeeze_floor: float | None = None) → float`
 Returns the active trailing-stop distance in percentage points. `parabolic_squeeze_multiplier` must be strictly positive (rejects with `ValueError`). If `para_armed` or `breakeven_locked`, the stop is multiplied by `parabolic_squeeze_multiplier`.
+
+**`squeeze_floor` (optional, Math Remediation R3-c, `DE-MATH-R3C-001`, `:463`):** a post-squeeze lower clamp on the stop DISTANCE (pp), wiring the previously-dead `MAX_SQUEEZE_FLOOR` knob (MA-11) — one prior repo-wide hit (`alpha_bot_execution.py:1236`, assigned, never read). `None` or `<= 0` means no clamp; every pre-existing 6-arg call site (incl. `docs/research/risk/scripts/i2_compounding_sim.py:73`) stays byte-identical. Scoped INSIDE the squeeze branch (`:515-519`): once `para_armed or breakeven_locked` fires, `pre_squeeze_active` is snapshotted BEFORE the `*= parabolic_squeeze_multiplier` step, and when `squeeze_floor` is a positive finite number the clamp applies as `active = max(active, min(squeeze_floor, pre_squeeze_active))` — a NO-WIDENING clamp: bounding the floor by `pre_squeeze_active` means it can only limit shrinkage, never raise the stop above its pre-squeeze value (at defaults the floor, 0.20, exceeds `dynamic_min_stop` near close, 0.15, so a naive `max(squeezed, floor)` would have inverted the squeeze). `squeeze_floor` participates in the entry `_reject_non_finite` check unconditionally — a non-finite value rejects even when the squeeze branch never fires. Independent review is IN FLIGHT (`DE-MATH-R3C-001`) — not yet merged/deployed.
 
 #### `compute_breakeven_update(current_return, symphony_vol, base_stop_level, current_hold_ticks, currently_breakeven_locked, is_triggered) → tuple[int, bool, float]`
 Returns `(new_hold_ticks, new_breakeven_locked, stop_trigger_level)`. The breakeven latch is one-way: once `currently_breakeven_locked=True`, it is always `True`. The floor `0.0` is applied once the latch fires ("lock gains hard"). When `is_triggered=True`, returns `TRIGGERED_OVERRIDE_LEVEL` (-999.0).
@@ -111,10 +113,40 @@ Returns `(velocity, should_arm_transition)`. Velocity is `current_return - prev_
 
 ---
 
+### Arm/Disarm Decision (Trailing Stop)
+
+#### `compute_arm_disarm_decision(prob_underperforming: float | None, is_triggered: bool, armed: bool, disarm_confirm_count: int, take_profit_mc_pct: float, trigger_threshold_pct: float, disarm_confirm_ticks: int = DISARM_CONFIRM_TICKS) → tuple[bool, int]`
+Returns `(new_armed, new_disarm_confirm_count)`. Computes the trailing-stop's arm/disarm state update — the gate whose `armed` output feeds `compute_exit_confirmation`. Pure; `mc_available` is derived internally as `prob_underperforming is not None` (never a parameter); `current_return` is NOT a parameter. Extracted this cycle (Math Remediation R3-b, `DE-MATH-R3B-001`) from an inline block previously duplicated in both `alpha_bot_execution.py` and `autotuner.py:_replay_exit_tick`, replacing a disarm condition that had been INVERTED (MA-4) — it fired on a high `prob_underperforming` reading (deterioration) rather than a low one (recovery). See `DE-MATH-R3B-001` in `DECISIONS.md` for the full bug account and fix rationale.
+
+**Behavior:**
+- `is_triggered=True` → returns `(armed, disarm_confirm_count)` unchanged (frozen no-op).
+- **Arm:** `should_arm = (mc_available and take_profit_mc_pct <= prob_underperforming < trigger_threshold_pct) or (not mc_available)` (the second clause is the MA-10 fail-open — an absent MC opinion arms the stop rather than leaving it dark). `should_arm and not armed` → `(True, 0)`, a fresh arm with the ladder reset.
+- **Disarm (recovery-gated, hysteresis ladder):** while `armed`, a tick where `mc_available and prob_underperforming < take_profit_mc_pct` (strictly below the arm-band's own lower edge) increments `disarm_confirm_count`; once it reaches `disarm_confirm_ticks` (default `DISARM_CONFIRM_TICKS`), returns `(False, 0)` — disarmed. Any non-qualifying tick (still in-band, deteriorating, or MC-absent) resets the count to 0 and returns `(True, 0)` — stays armed. An MC-absent tick can never itself confirm a recovery.
+- Otherwise (not armed, not arming) → `(False, 0)`.
+
+**Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| `prob_underperforming` | `float \| None` | `run_monte_carlo`'s output — fraction of regime-matched paths that beat the portfolio; `None` = MC unavailable |
+| `is_triggered` | `bool` | Freezes the decision (no-op) once the position has already triggered |
+| `armed` | `bool` | Current arm state |
+| `disarm_confirm_count` | `int` | Current recovery-tick ladder count |
+| `take_profit_mc_pct` | `float` | Arm-band lower edge / recovery-disarm threshold (`TAKE_PROFIT_MC_PCT`, 5.0) |
+| `trigger_threshold_pct` | `float` | Arm-band upper edge (`TRIGGER_THRESHOLD_PCT`, 15.0) |
+| `disarm_confirm_ticks` | `int` | Consecutive qualifying ticks required to disarm; defaults to `DISARM_CONFIRM_TICKS` |
+
+**Returns:** `(new_armed, new_disarm_confirm_count)`.
+
+**Raises:** `ValueError` on non-finite float inputs (`_reject_non_finite`) or `disarm_confirm_ticks <= 0` (a disableable ladder would defeat the hysteresis it exists to provide).
+
+**Caller responsibility:** returns no telemetry string — both call sites diff prev/new `armed` to drive ARM/DISARM prints and the `below_stop_count=0` reset on disarm, matching the `compute_tp_confirmation` idiom.
+
+---
+
 ### Exit Confirmation
 
 #### `compute_exit_confirmation(armed, is_triggered, current_return, stop_trigger_level, prob_beating: float | None, current_below_stop_count, exit_confirm_ticks=EXIT_CONFIRM_TICKS) → tuple[int, bool]`
-Returns `(new_below_stop_count, is_trailing_stop_hit)`. `exit_confirm_ticks` consecutive qualifying ticks required (defaulting to `EXIT_CONFIRM_TICKS=3`; the regime-adjusted threshold is passed by the execution path). MC sanity gate: when `prob_beating >= MC_SANITY_THRESHOLD`, the exit is vetoed. When `prob_beating is None` (MC unavailable), the gate passes — insufficient MC data must never disable the protective stop.
+Returns `(new_below_stop_count, is_trailing_stop_hit)`. `exit_confirm_ticks` consecutive qualifying ticks required (defaulting to `EXIT_CONFIRM_TICKS=3`; the regime-adjusted threshold is passed by the execution path). MC sanity gate: when `prob_beating >= MC_BREAKDOWN_THRESHOLD`, the exit is vetoed. When `prob_beating is None` (MC unavailable), the gate passes — insufficient MC data must never disable the protective stop.
 
 #### `compute_tp_confirmation(mc_available, prob_beating, take_profit_mc_pct, current_return, is_triggered, tp_armed, above_tp_count) → tuple[bool, int, bool]`
 Returns `(new_tp_armed, new_above_tp_count, is_tp_hit)`. Arms when MC drops below `take_profit_mc_pct`; confirms when MC rises back above and `TP_CONFIRM_TICKS` ticks elapse. MC-unavailable ticks reset the counter.
@@ -263,7 +295,8 @@ Computes rolling `MC_VOL_WINDOW_DAYS`-day standard deviation of SPY returns. Ret
 | `MULT_CLOSE` | 0.5 | Dynamic stop multiplier at market close |
 | `EXIT_CONFIRM_TICKS` | 3 | Consecutive ticks to confirm trailing-stop exit |
 | `TP_CONFIRM_TICKS` | 2 | Consecutive ticks to confirm take-profit exit |
-| `MC_SANITY_THRESHOLD` | 60.0 | MC probability above which trailing stop is vetoed |
+| `DISARM_CONFIRM_TICKS` | 3 | Consecutive recovery ticks (`prob_underperforming` below `TAKE_PROFIT_MC_PCT`) required before `compute_arm_disarm_decision` disarms the trailing stop; frozen, not in `autotuner.OPTUNA_SEARCH_SPACE_KEYS` |
+| `MC_BREAKDOWN_THRESHOLD` | 60.0 | MC probability above which trailing stop is vetoed (H1 rename; the old name `MC_SANITY_THRESHOLD` survives only in a source-comment historical note, `math_engine.py:586`) |
 | `PBO_REJECT_THRESHOLD` | 0.5 | PBO > this value signals backtest overfitting |
 | `_CSCV_TOP_K` | 20 | Top-K PRE-BHY configs fed into `compute_pbo` |
 | `_CSCV_S` | 8 | Number of contiguous chronological blocks for IS/OOS partition |

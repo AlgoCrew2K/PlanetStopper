@@ -795,6 +795,10 @@ class TestHalfDayTimeShifts:
             mock_math.calculate_20d_vol.return_value = 0.15
             mock_math.compute_vwap_signals.return_value = (0.0, 0.0)
             mock_math.compute_para_arm_decision.return_value = (0.0, False)
+            # MA-4 (R3-b): complete the main() math surface — main() now calls the
+            # extracted arm/disarm seam. Defensive (scenario doesn't reach the action
+            # phase today). prob=80 (deterioration) + unarmed -> (False, 0), matches OLD.
+            mock_math.compute_arm_disarm_decision.return_value = (False, 0)
             # Intercept the time_squeeze call to capture the time_ratio argument
             mock_math.compute_time_squeeze_decay.side_effect = capture_time_squeeze
             mock_math.compute_active_trailing_stop.return_value = 2.0
@@ -1151,6 +1155,10 @@ class TestExecutionStartTimeGatePreservedOnHalfDays:
             mock_math.calculate_20d_vol.return_value = 0.15
             mock_math.compute_vwap_signals.return_value = (0.0, 0.0)
             mock_math.compute_para_arm_decision.return_value = (0.0, False)
+            # MA-4 (R3-b): complete the main() math surface — main() now calls the
+            # extracted arm/disarm seam. Defensive (scenario doesn't reach the action
+            # phase today). prob=80 (deterioration) + unarmed -> (False, 0), matches OLD.
+            mock_math.compute_arm_disarm_decision.return_value = (False, 0)
             mock_math.compute_time_squeeze_decay.return_value = (1.0, 0.3)
             mock_math.compute_active_trailing_stop.return_value = 2.0
             mock_math.compute_breakeven_update.return_value = (0, False, -2.0)

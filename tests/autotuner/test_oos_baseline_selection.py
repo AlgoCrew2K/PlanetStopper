@@ -489,7 +489,9 @@ def test_run_autotuner_aborts_cleanly_when_synthetic_history_empty():
         _extra = {"spec_bundle_id": _spec_id} if "spec_bundle_id" in _sig.parameters else {}
         result = autotuner.run_autotuner(_build_bot_state(), "2026-05-10", ["acc-1"], **_extra)
 
-    assert result is None, "Expected early-return None on empty history"
+    assert result == {"aborted": True, "reason": "Failed to generate synthetic history."}, (
+        "F-004: empty-history abort returns the structured marker (was bare None)"
+    )
     assert captured == [], "save_symphony_strategy MUST NOT be called when history fetch fails"
 
 

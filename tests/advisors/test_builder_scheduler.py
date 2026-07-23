@@ -220,3 +220,50 @@ def test_scheduler_never_raises_on_builder_failure(monkeypatch):
         run_fn()
     except Exception as exc:  # noqa: BLE001
         pytest.fail(f"scheduler must never raise on a builder failure (D-1); raised {exc!r}")
+
+
+# ===========================================================================
+# F-030 / AC-5 — the scheduler tags every propose_strategies call with a
+# distinguishable invocation_source, closing the register's "advisory-DB
+# writes with no reconstructable audit trail" gap for this call site.
+# Contract pinned in tests/advisors/test_strategy_builder_invocation_source.py.
+# ===========================================================================
+
+
+def test_scheduler_tags_propose_strategies_with_weekly_scheduler_source(monkeypatch):
+    scheduler = _load_scheduler()
+    import advisors.build_plan_generator as bpg  # noqa: PLC0415
+    import advisors.strategy_builder_engine as sbe  # noqa: PLC0415
+
+    seen_kwargs: list = []
+
+    def _fake_propose(*a, **k):
+        seen_kwargs.append(k)
+        return sbe.ProposalRun(
+            candidates=[],
+            gated_batch=sbe._empty_gate_batch(),
+            screened_survivors=[],
+            observations_written=0,
+        )
+
+    monkeypatch.setattr(sbe, "propose_strategies", _fake_propose, raising=False)
+    if hasattr(scheduler, "propose_strategies"):
+        monkeypatch.setattr(scheduler, "propose_strategies", _fake_propose, raising=False)
+    monkeypatch.setattr(bpg, "load_atlas_candidates", lambda *a, **k: [], raising=False)
+    if hasattr(scheduler, "load_atlas_candidates"):
+        monkeypatch.setattr(scheduler, "load_atlas_candidates", lambda *a, **k: [], raising=False)
+    for marker_name in ("_already_ran_this_week", "_is_this_weeks_row", "_has_run_this_week"):
+        if hasattr(scheduler, marker_name):
+            monkeypatch.setattr(scheduler, marker_name, lambda *a, **k: False, raising=False)
+
+    run_fn = _resolve_run_fn(scheduler)
+    run_fn()
+
+    assert seen_kwargs, "the scheduler must have called propose_strategies at least once"
+    for call_kwargs in seen_kwargs:
+        assert call_kwargs.get("invocation_source") == "weekly-scheduler", (
+            "F-030 AC-5 GAP: the weekly scheduler must tag every propose_strategies call "
+            "with the pinned 'weekly-scheduler' invocation_source so the resulting "
+            "advisory-DB writes are attributable to this scheduled path, distinct from a "
+            f"direct engine call or the on-demand HTTP route. Got call_kwargs={call_kwargs!r}"
+        )

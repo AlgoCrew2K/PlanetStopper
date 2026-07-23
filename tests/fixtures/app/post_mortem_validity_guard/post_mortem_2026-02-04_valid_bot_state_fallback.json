@@ -1,0 +1,31 @@
+{
+    "date": "2026-02-04",
+    "summary": {
+        "total_monitored": 1,
+        "total_triggered": 1,
+        "positive_guard_alpha_count": 1
+    },
+    "tomorrow_target_holdings": {
+        "STATUS": "Pending Composer Rebalance"
+    },
+    "triggers": [
+        {
+            "symphony_name": "Row-less Fallback Delta",
+            "symphony_value": 5000.0,
+            "account_id": "acct-vhg-3",
+            "exit_reason": "Trailing Stop",
+            "exit_return": -0.8,
+            "attempted_trigger_level": -0.5,
+            "shadow_return": -2.3,
+            "shadow_hwm": 1.0,
+            "saved_pct_guard_alpha": 1.5,
+            "saved_dollars": 75.0,
+            "if_held_source": "bot_state_fallback",
+            "hwm_at_trigger": 1.0,
+            "time_triggered": "09:52",
+            "symphony_vol": 1.4,
+            "strategy_params": {},
+            "next_day_holdings": ["Pending..."]
+        }
+    ]
+}

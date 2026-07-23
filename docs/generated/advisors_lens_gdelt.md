@@ -24,7 +24,7 @@ tags: [gdelt, sentiment, news-events, tone, lens, advisory, off-execution-path]
 
 **Source:** `advisors/lens_gdelt.py`
 **Contract reference:** `.claude/gdelt-contract.md` (pinned 2026-06-15)
-**Last updated:** 2026-06-18
+**Last updated:** 2026-07-13 (advisor-suite-fixes AC-6: bounded retry extended to transient network errors, not just HTTP 429 — see Design Invariants below)
 
 ## Overview
 
@@ -140,9 +140,20 @@ events are found, the result is `available=True` with `tone=None`.
 | Artlist reached + articles key present, neither tone nor events available | `"no_news_events"` |
 | Any caught exception | `type(exc).__name__` |
 
-**Bounded retry.** 429 responses on the tone endpoint trigger exponential backoff
-`min(BASE x 2^i, CAP)` up to `_GDELT_MAX_ATTEMPTS` total calls. No other HTTP
-status triggers a retry. Artlist is never retried.
+**Bounded retry (extended by AC-6, 2026-07-13 — contract §5 Amendment 2).** 429
+responses on the tone endpoint trigger exponential backoff `min(BASE x 2^i, CAP)`
+up to `_GDELT_MAX_ATTEMPTS` total calls. The retry now ALSO covers
+`requests.exceptions.Timeout` and `requests.exceptions.ConnectionError` on the
+tone GET, using the same per-attempt backoff formula and the same
+`_GDELT_MAX_ATTEMPTS` ceiling — mirroring `ai_advisor._fetch_with_backoff`
+(`ai_advisor.py:406-486`), which already retried these transient errors. Before
+this fix, a Timeout/ConnectionError on the FIRST attempt propagated straight
+out of the retry loop (only the non-raising 429 HTTP response ever reached the
+retry logic), so a single transient network blip produced an unrecoverable
+`available=False` even though a later attempt would likely have succeeded. No
+other HTTP status triggers a retry; a malformed 2xx body (e.g. `JSONDecodeError`)
+is still not retried. No new D-1 reason label — an exhausted retry still returns
+`type(exc).__name__` (`"Timeout"` / `"ConnectionError"`). Artlist is never retried.
 
 **Artlist is best-effort.** A failed artlist call does not degrade `available`
 or `tone`. On artlist failure: `sources=[]`, `events=[]`. The tone signal (if

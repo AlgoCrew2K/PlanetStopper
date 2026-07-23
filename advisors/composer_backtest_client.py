@@ -35,7 +35,6 @@ does not sleep between separate ``run_backtest`` calls.
 from __future__ import annotations
 
 import logging
-import math
 import time
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -85,8 +84,8 @@ class BacktestResult:
 
     On success: ``stats`` is the ``stats`` dict from the response,
     ``data_warnings`` is a list of any ticker-level history warnings,
-    ``daily_returns`` is a date-keyed dict of log returns derived from the
-    per-day portfolio values, and ``error`` is ``None``.
+    ``daily_returns`` is a date-keyed dict of simple (arithmetic) returns
+    derived from the per-day portfolio values, and ``error`` is ``None``.
 
     On failure: ``stats`` is ``None``, ``error`` is a non-empty string
     describing the failure reason, and all other fields are empty defaults.
@@ -99,7 +98,8 @@ class BacktestResult:
     # Always a list (never None) regardless of the raw response shape.
     data_warnings: list[Any]
 
-    # Date-keyed (ISO string) log returns derived from dvm_capital portfolio values.
+    # Date-keyed (ISO string) simple (arithmetic) returns derived from dvm_capital
+    # portfolio values (AC-5 / DE-MATH-R2-001: simple, not log — see _extract_returns).
     # Gate layer consumes this for walk-forward fold construction.
     # Empty dict on failure or when dvm_capital is absent.
     daily_returns: dict[str, float] = field(default_factory=dict)
@@ -131,7 +131,7 @@ def _day_int_to_iso(day_int: int | str) -> str:
 def _extract_returns(
     dvm_capital: dict[str, Any], symphony_id: str
 ) -> tuple[dict[str, float], dict[str, float]]:
-    """Extract date-keyed portfolio values and log returns from ``dvm_capital``.
+    """Extract date-keyed portfolio values and simple returns from ``dvm_capital``.
 
     ``dvm_capital`` shape (live capture 2026-05-31):
         {symphony_id: {day_int_str: portfolio_value_float, ...}}
@@ -140,7 +140,16 @@ def _extract_returns(
         (daily_portfolio_values, daily_returns)
     both keyed by ISO date string, sorted chronologically.
 
-    Log returns are computed as ln(V_t / V_{t-1}) for consecutive pairs.
+    Simple (arithmetic) returns are computed as V_t / V_{t-1} - 1 for
+    consecutive pairs — NOT log returns. AC-5 / DE-MATH-R2-001 (ma-stats M1):
+    every downstream consumer (analytics.compute_quantstats_metrics's
+    (1+r).prod()-1 compounding and quantstats' own cagr/calmar internals;
+    math_engine.compute_crra_eu_objective's W = 1 + r wealth-ratio math via
+    the PBO/CRRA-EU gate path) assumes simple-return compounding — feeding
+    log returns through simple-return math is a category error (log returns
+    require exp(sum(r))-1, not prod(1+r)-1), understating compounded return
+    by an amount that grows with volatility. Emitting the simple return
+    directly here fixes both consumers at their single shared producer.
     Gaps in the series (weekends, holidays) are non-trading days and skipped.
     Empty or missing inner dict → two empty dicts.
     """
@@ -179,7 +188,7 @@ def _extract_returns(
         _, prev_val = sorted_pairs[i - 1]
         curr_day, curr_val = sorted_pairs[i]
         if prev_val > 0 and curr_val > 0:
-            daily_returns[_day_int_to_iso(curr_day)] = math.log(curr_val / prev_val)
+            daily_returns[_day_int_to_iso(curr_day)] = (curr_val / prev_val) - 1.0
 
     return portfolio_values, daily_returns
 

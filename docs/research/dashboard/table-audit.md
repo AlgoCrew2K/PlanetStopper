@@ -1,5 +1,7 @@
 # Dashboard Per-Symphony Table Audit
 
+> **Superseded claim, 2026-07-18 (`DE-MATH-F7-001`):** this dated audit (2026-05-14) describes the MC Prob column's semantic as "probability the symphony beats SPY" (below, and in the proposed hover-text) and its proposed tooltip repeats that framing. Math Remediation F7 corrected this: the header tooltip now reads "Monte Carlo probability this symphony underperforms its own regime-matched historical baseline" -- SPY only selects the regime-matching historical analog days the kNN pool draws from; it is never the compared benchmark. This banner corrects the record; the audit body below is preserved unedited as a historical snapshot of the M2-era table design, not a rewrite. See `DE-MATH-F7-001` in `DECISIONS.md` for the full ruling (including why no directional tooltip sentence ships either).
+
 Read-only audit for the M2 dashboard expansion. No code changed.
 
 Sources read:

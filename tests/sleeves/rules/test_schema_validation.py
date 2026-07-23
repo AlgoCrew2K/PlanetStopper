@@ -72,7 +72,7 @@ Condition tree leaf/node shapes:
 
 Action dict shapes (`then` list entries), "type" enum-closed to exactly:
     {"buy", "sell", "go_to_cash", "set_stop", "notify"}   (matches the
-    `action` column example vocabulary in migrations/034_sleeve_rule_fires.sql:
+    `action` column example vocabulary in migrations/036_sleeve_rule_fires.sql:
     go_to_cash is the SLEEVE's own liquidate-to-cash action -- distinct from
     the plan's separate "existing Composer go-to-cash for symphonies"
     concept, which is out of actions.py's P2 scope.)

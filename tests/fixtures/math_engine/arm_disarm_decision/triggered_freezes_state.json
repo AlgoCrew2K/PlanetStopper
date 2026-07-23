@@ -1,0 +1,10 @@
+{
+  "layer": "arm_disarm_decision",
+  "scenario": "triggered_position_freezes_arm_and_ladder",
+  "provenance": "MA-4 AC-7. When is_triggered the entire arm/disarm block is a no-op in production (guarded not-triggered) -> the seam returns its inputs unchanged (armed + ladder frozen). Even a recovery-looking prob cannot flip a triggered position.",
+  "constants": {"take_profit_mc_pct": 5.0, "trigger_threshold_pct": 15.0, "disarm_confirm_ticks": 3},
+  "initial": {"armed": true, "disarm_confirm_count": 2},
+  "sequence": [
+    {"prob_underperforming": 3.0, "is_triggered": true, "expect_armed": true, "expect_count": 2, "note": "triggered -> freeze: inputs returned unchanged despite prob < floor"}
+  ]
+}

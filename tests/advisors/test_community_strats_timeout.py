@@ -82,11 +82,24 @@ def _make_fast_mongo_client_mock(docs: list) -> MagicMock:
     Real pymongo: find() -> Cursor; Cursor.limit(n) -> Cursor (same object, iterable).
     The mock must faithfully replicate this chain so that _fetch_fn's
     `collection.find(...).limit(_MAX_FETCH_DOCS)` still yields the fixture docs.
+
+    DE-ATLAS-SLOW-QUERY-001: _fetch_fn now issues TWO find() calls against the
+    same collection (a lightweight sharpe-sorted selection query, then a
+    full-document query keyed by the selected ids) — both routed through this
+    one static mock_collection.find.return_value. The selection query extracts
+    doc["_id"] from each result, so the fixture docs must carry an _id (real
+    Mongo always returns one for a projection that requests it, as the
+    selection query's {"_id": 1, ...} does). The cursor must also yield a
+    FRESH iterator per find() call (side_effect, not a single-shot
+    return_value) since it is now iterated twice per load_community_strategies()
+    call, not once.
     """
+    cursor_docs = [{"_id": d.get("sid", f"mock-id-{i}"), **d} for i, d in enumerate(docs)]
+
     mock_cursor = MagicMock()
-    mock_cursor.__iter__ = MagicMock(return_value=iter(docs))
+    mock_cursor.__iter__ = MagicMock(side_effect=lambda: iter(cursor_docs))
     # list(cursor) calls are used in _fetch_fn; make that work too
-    mock_cursor.__len__ = MagicMock(return_value=len(docs))
+    mock_cursor.__len__ = MagicMock(return_value=len(cursor_docs))
     # .limit(n) must return the same cursor so the chain find(...).limit(N) is iterable.
     # Without this, .limit() returns a fresh MagicMock that is not wired to iter(docs).
     mock_cursor.limit = MagicMock(return_value=mock_cursor)

@@ -93,6 +93,14 @@ def _trigger(
         "shadow_hwm": 0.0,
         "saved_pct_guard_alpha": exit_return - shadow_return,
         "saved_dollars": 0.0,
+        # F-008: real production triggers always carry a recognized if_held_source
+        # (reporting.py:generate_eod_snapshot stamps one of "shadow_history" /
+        # "shadow_history_post_cutoff" / "bot_state_fallback" on every trigger
+        # since DE-GUARD-ALPHA-SAVED-001). This helper builds ORDINARY VALID
+        # fixture data for tests unrelated to the F-008 validity guard itself —
+        # stamping it here keeps those tests passing under the new read-time
+        # guard without changing what they're actually exercising.
+        "if_held_source": "shadow_history",
         "hwm_at_trigger": 0.0,
         "time_triggered": "15:54",
         "symphony_vol": 0.0,
@@ -800,6 +808,10 @@ def test_analytics_consumes_full_reporting_schema_without_keyerror(tmp_path):
         "shadow_hwm": 2.10,
         "saved_pct_guard_alpha": 0.78,
         "saved_dollars": 9.87,
+        # F-008: the real producer schema includes if_held_source on every
+        # trigger since DE-GUARD-ALPHA-SAVED-001 — this canary claims to cover
+        # "every field reporting.py writes" so it must include it too.
+        "if_held_source": "shadow_history",
         "hwm_at_trigger": 2.30,
         "time_triggered": "15:54",
         "symphony_vol": 0.12,

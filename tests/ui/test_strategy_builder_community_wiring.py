@@ -55,7 +55,8 @@ def _make_fake_proposal_run(*, error: str | None = None) -> MagicMock:
     """Minimal ProposalRun-shaped MagicMock that the route handler can serialise.
 
     The route's response-building section accesses run.error, run.gated_batch,
-    run.candidates, run.screened_survivors, run.gated_batch.results /.n_candidates /.fdr_q.
+    run.candidates, run.screened_survivors, run.gated_batch.results /.n_candidates /.fdr_q,
+    and (AC-4/AC-5, DEGRADE-FIX) run.backtest_unavailable / run.backtest_unavailable_count.
     """
     run = MagicMock()
     run.error = error
@@ -69,6 +70,18 @@ def _make_fake_proposal_run(*, error: str | None = None) -> MagicMock:
 
     run.candidates = []
     run.screened_survivors = []
+    # AC-4/AC-5 (DEGRADE-FIX): a bare MagicMock() auto-vivifies ANY attribute
+    # access, so the route's getattr(run, "backtest_unavailable_count", 0)
+    # never falls back to its default here — it would return a child
+    # MagicMock, which jsonify() cannot serialise. Set explicitly to the real
+    # ProposalRun defaults (strategy_builder_engine.py:149-150).
+    run.backtest_unavailable = False
+    run.backtest_unavailable_count = 0
+    # R2-1: same auto-vivification trap for the new provenance/run_id fields
+    # (ProposalRun gains both this cycle) — front-run per r2-fe's flag before
+    # the route starts reading them, same precedent as backtest_unavailable above.
+    run.provenance = None
+    run.run_id = None
     return run
 
 

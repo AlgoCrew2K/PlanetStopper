@@ -108,6 +108,24 @@ def _validation_fold_slice(series: list, train_ratio: float, val_end_ratio: floa
     return series[val_start_idx:frozen_start_idx]
 
 
+def _valid_single_asset_tree(ticker: str) -> dict:
+    """A REAL, structurally-valid Composer tree holding one asset (R2-3: the
+    engine's new validate_tree guard in _evaluate_single_variant, wired
+    unconditionally for every swap variant — explicit-pair and reasoned alike
+    — rejects the old hand-built {"type": "root", ...} minimal dicts these
+    tests used pre-R2-3; validate_tree requires the real "step" vocabulary,
+    not "type". Built via the real symphony_schema constructors — the same
+    ones _spy_returns_fn_for already uses elsewhere in this codebase — so it
+    is genuinely valid, not another hand-guessed shape."""
+    from advisors import symphony_schema  # noqa: PLC0415
+
+    return symphony_schema.make_root(
+        "H-fixture Test Symphony",
+        "daily",
+        [symphony_schema.make_weight_equal([symphony_schema.make_asset(ticker)])],
+    )
+
+
 # ===========================================================================
 # H6 / RC-1 — the window-mismatch root cause, at the GATE layer.
 # ===========================================================================
@@ -233,23 +251,32 @@ class TestH6EngineFeedsFoldMatchedBaseline:
     """
 
     def test_propose_swap_default_baseline_is_fold_matched_not_full_history(
-        self, swap_engine, h6_fixture
+        self, swap_engine, gate_engine, h6_fixture
     ):
         """When no incumbent_oos_alpha is supplied, the gate's fallback_oos_alpha
-        must equal the baseline's VALIDATION-FOLD sum, not its full-history sum.
+        must equal the baseline's VALIDATION-FOLD oos_alpha, not its full-history sum.
 
         We spy on the real gate (evaluate_candidate_batch) to capture the
         incumbent_oos_alpha the engine passes, and assert it is fold-scaled.
         run_backtest is mocked to return a known deterministic baseline series.
-        """
-        from autotuner import TRAIN_RATIO, VALIDATION_RATIO
 
+        AC-5 rider correction (DE-MATH-R2-001): the reference value is derived
+        by calling the REAL gate_engine._fold_transform_single directly on the
+        FULL baseline series (it performs its own internal 60/20/20 split and
+        returns the genuine oos_alpha for its own validation fold) — not a
+        hand-rolled sum() over a manually-sliced fold. _fold_transform_single's
+        own oos_alpha now compounds genuinely (Pi(1+r/100)-1, not naive sum)
+        since composer_backtest_client emits simple returns instead of log
+        returns. This test's own H6/RC-1 invariant (fold-matched, not
+        full-history-matched) is unaffected and still asserted via the
+        belt-and-suspenders check below — only the exact reference number,
+        which must track whatever _fold_transform_single itself computes,
+        needed correcting.
+        """
         n = h6_fixture["series_length"]
         baseline_series_pct = [h6_fixture["incumbent"]["per_day_pct"]] * n  # percent/day
         baseline_full_history_sum = sum(baseline_series_pct)
-        baseline_fold_sum = sum(
-            _validation_fold_slice(baseline_series_pct, TRAIN_RATIO, TRAIN_RATIO + VALIDATION_RATIO)
-        )
+        baseline_fold_sum = gate_engine._fold_transform_single(baseline_series_pct).oos_alpha
 
         # The engine reads run_backtest(...).daily_returns.values() as FRACTIONS
         # (_backtest_returns_from_tree multiplies by 100 to get percent). So feed
@@ -267,19 +294,18 @@ class TestH6EngineFeedsFoldMatchedBaseline:
 
         real_batch = swap_engine.evaluate_candidate_batch
 
-        def _batch_spy(candidates, *, incumbent_oos_alpha=0.0, default_oos_alpha=0.0):
+        def _batch_spy(
+            candidates, *, incumbent_oos_alpha=0.0, default_oos_alpha=0.0, spy_returns_fn=None
+        ):
             captured["incumbent_oos_alpha"] = incumbent_oos_alpha
             return real_batch(
                 candidates,
                 incumbent_oos_alpha=incumbent_oos_alpha,
                 default_oos_alpha=default_oos_alpha,
+                spy_returns_fn=spy_returns_fn,
             )
 
-        score_tree = {
-            "id": "sym-h6",
-            "type": "root",
-            "children": [{"type": "asset", "ticker": "SPY", "weight": 1.0}],
-        }
+        score_tree = _valid_single_asset_tree("SPY")
         objective = swap_engine.SwapObjective(
             objective_type="reduce_correlation",
             target_pair=("sym-h6", "sym-other"),
@@ -354,19 +380,18 @@ class TestH5ExplicitZeroNotReplaced:
         captured = {"incumbent_oos_alpha": "__unset__"}
         real_batch = swap_engine.evaluate_candidate_batch
 
-        def _batch_spy(candidates, *, incumbent_oos_alpha=0.0, default_oos_alpha=0.0):
+        def _batch_spy(
+            candidates, *, incumbent_oos_alpha=0.0, default_oos_alpha=0.0, spy_returns_fn=None
+        ):
             captured["incumbent_oos_alpha"] = incumbent_oos_alpha
             return real_batch(
                 candidates,
                 incumbent_oos_alpha=incumbent_oos_alpha,
                 default_oos_alpha=default_oos_alpha,
+                spy_returns_fn=spy_returns_fn,
             )
 
-        score_tree = {
-            "id": "sym-h5",
-            "type": "root",
-            "children": [{"type": "asset", "ticker": "SPY", "weight": 1.0}],
-        }
+        score_tree = _valid_single_asset_tree("SPY")
         objective = swap_engine.SwapObjective(
             objective_type="reduce_correlation",
             target_pair=("sym-h5", "sym-other"),

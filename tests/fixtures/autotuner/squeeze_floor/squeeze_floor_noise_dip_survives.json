@@ -1,0 +1,23 @@
+{
+  "name": "squeeze_floor_noise_dip_survives",
+  "ac": "AC-5",
+  "description": "A squeezed (para_armed) position whose UNCLAMPED squeezed stop distance (0.15 * 0.50 = 0.075 pp at time_ratio=1.0) is breached by a small noise dip that does NOT breach the floor-clamped distance (0.15 pp). Under the WIRED floor the position must NOT exit. RED-on-old: at HEAD the replay ignores MAX_SQUEEZE_FLOOR (passed via the params dict, which the OLD 6-arg-internal signature accepts), so the noise dip fires a premature 'Trailing Stop' exit -- a BEHAVIORAL failure, not a TypeError.",
+  "expect_exit": false,
+  "exit_confirm_ticks": 1,
+  "params": {
+    "TRIGGER_THRESHOLD_PCT": 15.0,
+    "TAKE_PROFIT_MC_PCT": 5.0,
+    "VWAP_CROSS_HWM_PCT": 99.0,
+    "VWAP_BLEED_MULTIPLIER": 1.5,
+    "VWAP_BLEED_TICKS": 999,
+    "PARABOLIC_VELOCITY_THRESHOLD": 0.3,
+    "MAX_PARABOLIC_SQUEEZE": 0.50,
+    "MAX_SQUEEZE_FLOOR": 0.20
+  },
+  "ticks": [
+    {"time": "12:00", "return": -0.20, "mc_prob": 10.0, "vol": 0.01, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "12:01", "return": 0.15, "mc_prob": 10.0, "vol": 0.01, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "12:02", "return": -0.05, "mc_prob": 70.0, "vol": 0.01, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0}
+  ],
+  "derivation": "vol=0.01 makes the vol-scale term lose so pre_squeeze == dynamic_min_stop. VWAP disabled (cross 99, bleed ticks 999); TP never arms (no mc < 5). t0 (ret -0.20, mc 10 in [5,15)) arms the stop. t1 (ret +0.15) jumps velocity 0.35 >= PARABOLIC_VELOCITY_THRESHOLD 0.3 -> para arms; HWM=0.15; 0.15 < 0.2 breakeven-activation so breakeven never locks. t2 (ret -0.05, mc 70 >= breakdown 60) is the noise dip at time_ratio=1.0: min_stop=0.15. OLD: active=0.15*0.5=0.075, stop_level=0.15-0.075=0.075, below-stop threshold=0.075-0.10=-0.025; ret -0.05 <= -0.025 -> exits (confirm=1). NEW: active=max(0.075,min(0.20,0.15))=0.15, stop_level=0.15-0.15=0.0, threshold=0.0-0.10=-0.10; ret -0.05 <= -0.10 is FALSE -> no exit -> survives. exit_confirm_ticks=1 isolates the single-tick stop-distance decision (the confirm count is orthogonal to the floor question under test)."
+}

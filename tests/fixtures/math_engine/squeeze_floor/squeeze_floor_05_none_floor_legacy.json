@@ -1,0 +1,16 @@
+{
+  "name": "squeeze_floor_none_is_legacy_passthrough",
+  "description": "AC-1 back-compat: squeeze_floor=None (the default) applies NO clamp -- byte-identical to the legacy 6-arg squeezed value. Pins that the DEFAULT keeps every existing caller (incl. the 6-arg docs/research/risk/scripts/i2_compounding_sim.py witness) unchanged.",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 0.30,
+    "dynamic_multiplier": 1.0,
+    "dynamic_min_stop": 0.10,
+    "para_armed": true,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.5,
+    "squeeze_floor": null
+  },
+  "expected": 0.15,
+  "derivation": "pre_squeeze=max(0.30,0.10)=0.30. para_armed -> active=0.30*0.5=0.15. squeeze_floor=None -> no clamp. Output 0.15 (legacy squeezed value, no floor applied)."
+}

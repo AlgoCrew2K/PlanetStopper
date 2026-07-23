@@ -101,13 +101,30 @@ class TestAssetSwapsSenderHandoff:
         (e.g. setItem called with a variable whose value is set elsewhere).
         The write must be a direct, readable call so reviewers can verify the
         key is correct without tracing variable flow.
+
+        Re-pointed 2026-07-13 (advisor-suite-fixes.md AC-3, PM adjudication —
+        stale, not a code defect): this file's onclick handler is itself built
+        as a chain of single-quote-delimited JS SOURCE-STRING literals
+        (static/ai_advisor_asset_swaps.js:246-260), so an embedded JS single
+        quote inside the eventual attribute value must be written as \\' in
+        the SOURCE TEXT — matching the already-correct sibling pattern at
+        ai_advisor.js:298-301 (verified during this cycle's RED phase). The
+        original pattern only accepted an UNESCAPED quote immediately after
+        '(', which never matches this codebase's own escaping convention —
+        it predates AC-3 and was never exercised against real fixed source.
+        The invariant itself (key is a string literal, not a traced variable)
+        is unchanged — only the quote-escaping tolerance is widened.
         """
         src = _read(_ASSET_SWAPS_JS)
-        # Accept single or double quotes around the key name.
-        pattern = r"""sessionStorage\.setItem\(\s*['"]pendingChatArtifact['"]"""
+        # Accept single or double quotes around the key name, optionally
+        # backslash-escaped (this file's own source-string-literal convention).
+        pattern = r"""sessionStorage\.setItem\(\s*\\?['"]pendingChatArtifact\\?['"]"""
         assert re.search(pattern, src), (
             "ai_advisor_asset_swaps.js must contain:\n"
             "  sessionStorage.setItem('pendingChatArtifact', ...)\n"
+            "(optionally with a backslash-escaped quote, per this file's own\n"
+            "source-string-literal convention — see ai_advisor.js:298-301 for\n"
+            "the established correct pattern.)\n"
             "The key must be a string literal (not a variable) so the contract\n"
             "is auditable without tracing variable assignments.\n"
             "Pattern checked: " + pattern
@@ -129,10 +146,22 @@ class TestAssetSwapsSenderHandoff:
         URL is preceded (within 200 chars) by a sessionStorage.setItem call in
         the same source region.  A bare navigation without a setItem call
         immediately before it is the defect.
+
+        Re-pointed 2026-07-13 (advisor-suite-fixes.md AC-3, PM adjudication —
+        stale, not a code defect): same source-string-literal escaping as the
+        sibling test above — the actual GREEN source is
+        window.location.href=\\'/ai-advisor/chat\\' (backslash-escaped single
+        quotes, matching this file's own string-concatenation convention and
+        the already-correct ai_advisor.js:298-301 sibling). The original
+        pattern only matched an unescaped quote and never matched any
+        realistic fixed source. The invariant (every nav is preceded by a
+        setItem within 200 chars) is unchanged.
         """
         src = _read(_ASSET_SWAPS_JS)
 
-        nav_pattern = r"window\.location\.href\s*=\s*['\"]\/ai-advisor\/chat['\"]"
+        # Optional backslash-escaped quotes, per this file's own
+        # source-string-literal convention (see the sibling test above).
+        nav_pattern = r"window\.location\.href\s*=\s*\\?['\"]\/ai-advisor\/chat\\?['\"]"
         nav_matches = list(re.finditer(nav_pattern, src))
 
         assert nav_matches, (

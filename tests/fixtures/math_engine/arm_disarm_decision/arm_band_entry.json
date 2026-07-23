@@ -1,0 +1,10 @@
+{
+  "layer": "arm_disarm_decision",
+  "scenario": "arm_band_entry_arms_unarmed_position",
+  "provenance": "MA-4 settled ruling. Arm band [TAKE_PROFIT_MC_PCT, TRIGGER_THRESHOLD_PCT) = [5.0, 15.0) per scoping.md §1. Categorical decision derived from the spec, NOT a producer-computed value.",
+  "constants": {"take_profit_mc_pct": 5.0, "trigger_threshold_pct": 15.0, "disarm_confirm_ticks": 3},
+  "initial": {"armed": false, "disarm_confirm_count": 0},
+  "sequence": [
+    {"prob_underperforming": 10.0, "is_triggered": false, "expect_armed": true, "expect_count": 0, "note": "5.0 <= 10.0 < 15.0 in-band -> arm, ladder reset"}
+  ]
+}

@@ -3,7 +3,7 @@
 > Plan-to-Tree Compiler — Component 3 of the real Strategy Builder: deterministically compiles a Component-2 build-plan DSL dict into a validated Composer `raw_value` tree using ONLY `symphony_schema` constructors, then runs a bounded validate-and-repair loop so only valid, tradeable trees reach the downstream pipeline.
 
 **Source:** `advisors/plan_tree_compiler.py`
-**Last updated:** 2026-06-20 (binary-encoding-fix: unified canonical-flat binary condition encoding in _compile_condition)
+**Last updated:** 2026-07-13 (advisor-outage-degrade: infra-vs-rejection classification -- Composer outages degrade instead of dropping the plan; see DE-SB-DEGRADE-001)
 
 ## Overview
 
@@ -13,9 +13,9 @@ The module's two contracts:
 
 1. **Deterministic compilation (AC-14).** Same plan input → byte-identical tree output, modulo fresh `uuid4` `id` keys that `symphony_schema` assigns on every constructor call. The compiler never hand-builds node dicts; it only calls `symphony_schema` constructors so the emitted tree is always structurally valid by construction.
 
-2. **Bounded validate-and-repair loop (AC-15, AC-16).** `symphony_schema.validate_tree` gates every compiled tree — a HARD-error tree never reaches `backtest_fn`. When `backtest_fn` is supplied and returns a tradeability rejection (HTTP 400 envelope), the compiler identifies the named in-tree ticker and prunes it, then retries. A grammar rejection (HTTP 422) is dropped immediately without ticker pruning. The loop is bounded by `MAX_REPAIR_ATTEMPTS`.
+2. **Bounded validate-and-repair loop (AC-15, AC-16).** `symphony_schema.validate_tree` gates every compiled tree — a HARD-error tree never reaches `backtest_fn`. When `backtest_fn` is supplied and returns a tradeability rejection (HTTP 400 envelope), the compiler identifies the named in-tree ticker and prunes it, then retries. A grammar rejection (HTTP 422) is dropped immediately without ticker pruning. The loop is bounded by `MAX_REPAIR_ATTEMPTS`. An infra/transport failure (connection error, timeout, DNS failure, HTTP 5xx/429, or any other non-parseable/non-200/non-400 result — Composer unreachable, not rejecting) DEGRADES instead of dropping (advisor-outage-degrade, DE-SB-DEGRADE-001): the current validated tree is returned with `reason="backtest_unavailable"` and `tradeability_unverified=True`, so a Composer outage never silently zeroes the run.
 
-Off-execution-path. Advisory-only. Never raises — all failure paths degrade to `CompileResult(tree=None, reason=...)`.
+Off-execution-path. Advisory-only. Never raises — every failure path returns a `CompileResult` with `reason` set; a genuine drop carries `tree=None`, while the infra-degrade path (`reason="backtest_unavailable"`) carries the last validated tree with `tradeability_unverified=True` instead of dropping it.
 
 **`market_cap` scheme is producer-deprecated.** Composer retired market-cap weighting (HTTP 422 `node-type-not-supported`; captured 2026-06-20 at `tests/fixtures/strategy_builder/wt_marketcap_deprecated_envelope.json`). Plans with any `scheme=="market_cap"` node are detected by `_has_market_cap` and dropped immediately before compilation with `reason="market_cap_scheme_deprecated"`. `backtest_fn` is never called for these plans. See `DE-SB-MARKETCAP-DEPRECATED` in `DECISIONS.md`.
 
@@ -24,6 +24,7 @@ Off-execution-path. Advisory-only. Never raises — all failure paths degrade to
 | Name | Value | Description |
 |------|-------|-------------|
 | `MAX_REPAIR_ATTEMPTS` | `3` | Named bound on the validate/tradeability repair loop. Must be in 1..10 (test-asserted). Three attempts provides an initial compile plus two prune-and-retry cycles before declaring a plan unrepairable. Never unbounded (AC-15). |
+| `_INFRA_HTTP_STATUSES` | `frozenset({429, 500, 502, 503, 504})` | HTTP statuses classified as Composer-unreachable/overloaded, not a content rejection (advisor-outage-degrade, DE-SB-DEGRADE-001). Mirrors `composer_backtest_client._RETRYABLE_HTTP_STATUSES`. |
 
 ## Public Types
 
@@ -35,10 +36,11 @@ Return type of `compile_plan`. Never raises.
 @dataclass
 class CompileResult:
     tree:   dict | None = None   # compiled Composer raw_value tree; None on any drop
-    reason: str  | None = None   # set on a drop; None on success
+    reason: str  | None = None   # set on a drop or degrade; None on success
+    tradeability_unverified: bool = False  # True only on the infra-degrade path
 ```
 
-`reason` values (all strings; D-1: internal errors carry `type(exc).__name__` only):
+`reason` values (all strings; D-1: internal errors carry `type(exc).__name__` only). Every row's `tree` is `None` except `"backtest_unavailable"`, which carries the last validated tree (see below):
 
 | Reason | When |
 |--------|------|
@@ -46,11 +48,12 @@ class CompileResult:
 | `"InvalidPlan"` | Input is not a dict |
 | `"market_cap_scheme_deprecated"` | Any node in the DSL uses `scheme=="market_cap"` (Composer deprecated this; see AC-17 / DE-SB-MARKETCAP-DEPRECATED) |
 | `"validate_tree_hard_error"` | Compiled tree fails `validate_tree` (HARD errors) before backtest |
+| `"backtest_unavailable"` | Infra/transport failure during the repair loop (connection error, timeout, DNS failure, HTTP 5xx/429, or an unparseable envelope) — Composer unreachable, not rejecting. **Unlike every other row, `tree` is NOT `None` here** — the last validated tree is returned with `tradeability_unverified=True` (advisor-outage-degrade, DE-SB-DEGRADE-001) |
 | `"max_repair_attempts_exceeded"` | Tradeability repair loop exhausted `MAX_REPAIR_ATTEMPTS` without success |
 | `"no_in_tree_ticker_in_400"` | HTTP 400 received but no in-tree ticker identified in envelope text — no productive prune possible |
 | `"prune_degenerated_tree"` | Pruning the offending ticker left a degenerate tree (empty children where children are required) |
 | `"pruned_tree_invalid"` | Post-prune `validate_tree` returned HARD errors |
-| `"grammar_reject_{status}"` | HTTP 422 or other non-400 status from backtest — grammar reject, no ticker prune |
+| `"grammar_reject_{status}"` | HTTP 422 (or any other non-infra, non-400 status) from backtest — grammar reject, no ticker prune. Infra statuses (429/5xx) and unparseable envelopes are classified separately as `"backtest_unavailable"` (see above), not routed here. |
 | `type(exc).__name__` | Unexpected internal error (D-1 contract) |
 
 ## API Reference
@@ -78,8 +81,9 @@ Compile a single build-plan DSL dict into a validated Composer tree. Never raise
 6. **Compile-only return.** If `backtest_fn is None` → `CompileResult(tree=tree, reason=None)`.
 7. **Repair loop.** Each iteration calls `backtest_fn(current_tree)`:
    - `result.error is None` → success, return `CompileResult(tree=current_tree, reason=None)`.
+   - **Infra/transport failure** (`_is_infra_failure(status)` — checked BEFORE the 400 branch): no parseable `"HTTP {N}:"` prefix, or a parsed 5xx/429. Degrade immediately — return `CompileResult(tree=current_tree, reason="backtest_unavailable", tradeability_unverified=True)`. No extra retry at this layer (`run_backtest` already exhausted its own bounded backoff before returning the error).
    - HTTP 400 (tradeability): identify the in-tree offending ticker via `_find_prune_target`, prune it via `_prune_ticker_from_tree`, validate the pruned tree, then retry. Bounded by `MAX_REPAIR_ATTEMPTS`; exhaustion → `CompileResult(reason="max_repair_attempts_exceeded")`.
-   - HTTP 422 or other status (grammar or unknown): drop immediately → `CompileResult(reason="grammar_reject_{status}")`. No ticker pruning.
+   - HTTP 422 (or any other non-infra, non-400 status): drop immediately → `CompileResult(reason="grammar_reject_{status}")`. No ticker pruning.
 
 **Example (compile-only, no backtest):**
 ```python
@@ -130,6 +134,14 @@ The compiler is a pure dispatch table. Each DSL `kind`/`scheme` maps to exactly 
 
 The split between tradeability rejections (HTTP 400 → prune + retry) and grammar rejections (HTTP 422 → drop immediately) is made by parsing the status code from the `composer_backtest_client` error envelope format `"HTTP {status}: {text}"` (client line 360). The split is STATUS-driven, not message-text-driven — message text is used only to identify the ticker to prune, not to classify the error kind.
 
+### Infra-vs-rejection classification (advisor-outage-degrade, DE-SB-DEGRADE-001)
+
+Checked FIRST, before the 400/422 split above. `_is_infra_failure(status)` returns `True` when `status` (the `_parse_envelope_status` result) is `None` — no parseable `"HTTP {N}:"` prefix at all, covering timeouts, connection/DNS errors, invalid JSON on a 200, and the Retry-After-exhausted 429 message (which omits the colon) — OR `status` is in `_INFRA_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})`, mirroring `composer_backtest_client._RETRYABLE_HTTP_STATUSES`. Any other parsed status (400, 422, ...) is a genuine Composer content rejection, not infra.
+
+On an infra classification, the repair loop returns immediately with the CURRENT tree (initial, or partially pruned if an earlier attempt already pruned a genuine tradeability rejection) — `CompileResult(tree=current_tree, reason="backtest_unavailable", tradeability_unverified=True)`. No additional retry is added at this layer: `backtest_fn` (`composer_backtest_client.run_backtest`) already exhausts its own bounded exponential backoff (`BACKTEST_MAX_RETRY_WAIT_SECONDS`) before returning the error, so retrying again here would silently stack a second, unbounded-feeling retry layer on top.
+
+This closes the defect this cycle exists to fix: previously, ANY non-400 `backtest_fn` failure — including infra failures — fell through to the grammar-reject branch and dropped the plan (`tree=None`), so a real Composer outage silently zeroed Strategy Builder's output with no way to distinguish it from "every candidate was genuinely rejected." Genuine 400 (prune/retry) and 422 (grammar-drop) paths are byte-for-byte unchanged by this fix.
+
 ### Prune-target identification (AC-16 Revise-1)
 
 `_find_prune_target(text, tree_tickers)` cross-references uppercase candidates from the envelope text against `tree_tickers` (the real ticker set extracted from the current compiled tree via `symphony_schema.extract_tickers`). Only in-tree tickers are valid prune targets — a venue/market name or an off-tree ticker in the text is not pruned (would be a no-op wasting the repair budget).
@@ -158,3 +170,4 @@ No imports from `database`, `autotuner`, `app`, `ai_advisor`, or any execution m
 - **D-1 contract.** The outer `try/except` in `compile_plan` catches any unexpected internal error and returns `CompileResult(reason=type(exc).__name__)`. No key, path, or exception message body ever appears in a returned `reason` string.
 - **Advisory-only.** No `LIVE_EXECUTION` reference, no Composer write/deploy endpoint, no entry in `_SETTINGS_WRITE_ALLOWLIST`.
 - **Unified canonical-flat binary encoding (binary-encoding-fix, 2026-06-20).** The `binary` condition type in `_compile_condition` reads the same flat field names as the flat `if` path: `cond["lhs_fn"]`, `cond["lhs_ticker"]`, `cond["window"]`. Prior to this fix the binary-leaf branch of `_compile_condition` read a nested shape (`cond["lhs"]["fn"]`, `rhs:{const}`) — a different encoding than the flat-if path that Opus learned from `_EXAMPLE_IF_PLAN`. When Opus emitted flat field names inside a compound condition (blending the shape it learned from the worked flat-if example), the binary leaf raised `KeyError "lhs"` and the plan was dropped. The fix unifies onto ONE canonical binary encoding (flat) so generator and compiler share a single contract for all binary conditions, whether they appear as top-level flat-if conditions or as leaves inside compound conditions. The Composer output tree is byte-identical — only the input field names that `_compile_condition` reads changed. `binary_compound` and `flat-if` paths are untouched.
+- **Degrade, don't drop, on infra failure (advisor-outage-degrade, 2026-07-13).** The repair loop's infra-vs-rejection classification (`_is_infra_failure`) is checked BEFORE the 400/422 split, so a Composer outage never falls through to the grammar-drop path. The emitted tree on infra-degrade is the last VALIDATED tree — `validate_tree` still gated it before the repair loop ran — only its tradeability against Composer was never confirmed. Downstream (`strategy_builder_engine.py`), this candidate is NOT silently indistinguishable from a gate rejection: `CandidateInfo.tradeability_unverified` and the run-level `ProposalRun.backtest_unavailable`/`.backtest_unavailable_count` rollup surface the outage honestly. See `DE-SB-DEGRADE-001` in `DECISIONS.md`.

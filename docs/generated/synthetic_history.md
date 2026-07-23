@@ -3,7 +3,7 @@
 > 250-day Alpaca historical fetcher with parallel bar download, file cache, and eligibility guards — feeds the autotuner walk-forward replay.
 
 **Source:** `synthetic_history.py`
-**Last updated:** 2026-06-29
+**Last updated:** 2026-07-18 (Math Remediation R3-a, `DE-MATH-R3A-001` — pre-retune checklist item (b), MC band-edge arm-decision stability probed; `_MC_REPLAY_SIMULATION_PATHS` value unchanged, see the Monte Carlo Constants row below; prior: 2026-07-17, Math Remediation R1, `DE-MATH-R1-001` AC-1/MA-1 — `build_replay_day` stamps a real per-tick `last_percent_change` into replay holdings before every `run_monte_carlo` call; prior: 2026-06-29)
 
 ## Overview
 
@@ -12,6 +12,8 @@
 The fetch window is computed to guarantee at least `_REQUIRED_FETCH_TRADING_DAYS = 250 + 39 + 10 = 299` trading days (replay window + MC warmup + buffer). A widen-and-refetch loop (max 3 attempts, 60-day calendar step) handles upstream data gaps. A persistent shortfall raises `HistoryShortfallError`.
 
 Per-day returns are emitted in **percent** units (`tick["return"] = agg_ret * 100.0` at the producer boundary). This is the canonical return frame for the autotuner; the CRRA-EU branch converts to decimal fractions at its entry boundary via `RETURN_PCT_TO_FRACTION`.
+
+**Math Remediation R1 (`DE-MATH-R1-001` AC-1, MA-1 CRITICAL, 2026-07-17):** `build_replay_day` (see API Reference below) now stamps a REAL per-tick `last_percent_change` into the holdings it passes to `math_engine.run_monte_carlo`. Before this fix, `run_monte_carlo` received holdings carrying only ticker+allocation — no lpc at all — which `math_engine.py:1162-1166`'s (correct, unchanged) lpc-exclusion contract silently dropped from the MC baseline sum, making `mc_prob` constant across an entire replay day regardless of actual price action. This made the Trailing-Stop and Take-Profit exits structurally unreachable in the walk-forward replay, so three of the six Optuna-tuned parameters were objective-inert noise. The fix is confined ENTIRELY to this module — `alpha_bot_execution.py` and `math_engine.py` carry zero diff for this fix (see `DE-MATH-R1-001` for the architecture ruling and why the live `bot_state["current_holdings"]` construction sites were ruled off-limits).
 
 ## API Reference
 
@@ -38,6 +40,18 @@ effective_n_jobs = n_jobs if n_jobs is not None else _resolve_replay_n_jobs()
 
 ---
 
+### Per-Day Tick Builder
+
+#### `build_replay_day(sym_id, date_str, holdings, intraday_by_date, timestamps, hist_data_up_to_yesterday, yesterday_closes, spy_today) → list[dict]`
+
+Builds one symphony's replay tick list for a single day — API-free (consumes pre-fetched bar data, no live Alpaca call), so the replay's Monte-Carlo parity (neighbor_k, insufficient-MC handling, and — as of this cycle — per-tick lpc sensitivity) is testable from fixtures. `generate_synthetic_history`'s `process_day` delegates to this so the tick-building logic has one home. Returns a list of tick dicts with the replay tick schema: `{time, return, mc_prob, vol, vwap_diff, base_atr_pct, valid_vwap_weight}`. `mc_prob` is the `run_monte_carlo` result verbatim, including the `None` sentinel for an insufficient-MC tick (production's fail-safe contract).
+
+**Math Remediation R1 (AC-1/MA-1, `DE-MATH-R1-001`) — per-tick lpc stamping:** for each tick, a per-ticker `tick_lpc: dict[str, float]` is computed from the SAME `(c - y_close) / y_close` fraction already computed for the tick's aggregate return (`agg_ret`) — fraction basis vs. prior session close, confirmed by arithmetic cross-check against a captured Composer fixture (`tests/fixtures/composer/symphony_stats_meta.json`). A fresh, **non-mutating** `priced_holdings = [{**h, "last_percent_change": tick_lpc.get(h["ticker"])} for h in holdings]` list is built and passed to `math_engine.run_monte_carlo` in place of the caller's `holdings` argument, which is never modified — `holdings` is closure-captured and reused across every day of the same symphony's `Parallel(n_jobs=...)` replay, so an in-place stamp would leak a stale lpc value forward into a later day's call. A ticker with no bar for this tick, or a non-positive `y_close` (the two DISTINCT gapped-data branches — see `DE-MATH-R1-001` ADDENDUM 7), gets no `tick_lpc` entry: `last_percent_change` is then `None`, and `math_engine.run_monte_carlo`'s existing lpc-exclusion contract (`math_engine.py:1162-1166`, unchanged) drops it from the baseline sum exactly as it does for a genuinely lpc-less live holding — never a fabricated `0.0`. A missing PRIOR CLOSE is a separate, opposite-outcome branch: the code falls back to the tick's own close (`ret=0.0`), a REAL value that IS included in the sum.
+
+**Effect:** `mc_prob` now varies tick-to-tick within a replay day as lpc varies (previously constant for the entire day) — this is the fix that makes the Trailing-Stop arm band `[5,15)` and the exit gate `>=60` reachable in replay (see `autotuner.md`'s `_replay_exit_tick`).
+
+---
+
 ### Fetch Helpers
 
 #### `compute_fetch_window_start(end_date) → date`
@@ -55,7 +69,7 @@ The intraday tick-replay step (`Parallel(n_jobs=effective_n_jobs)(delayed(proces
 1. **Caller-supplied** (`n_jobs` param is not `None`): use it directly. The autotuner always supplies `n_jobs=1` (DE-AUTOTUNE-OOM).
 2. **Env-driven** (`n_jobs` is `None`): `_resolve_replay_n_jobs()` returns `int(ALPHABOT_MAX_JOBS)` when set, else `-1` (all cores). Tests set `ALPHABOT_MAX_JOBS=1` via `tests/conftest.py` to prevent xdist × cores fan-out from crashing the host.
 
-`n_jobs=1` uses joblib's sequential backend (no forked workers). This is reproducibility-neutral (`synthetic_history.py:35`): the replay result is independent of `n_jobs`.
+`n_jobs=1` uses joblib's sequential backend (no forked workers). This is reproducibility-neutral (`synthetic_history.py:35`): the replay result is independent of `n_jobs`. **This independence is why `build_replay_day`'s AC-1 lpc stamping had to be non-mutating** — `holdings` is a shared closure captured once per symphony and reused across every parallel day-worker; an in-place stamp would have introduced a `n_jobs`-order-dependent race, breaking this exact guarantee.
 
 ---
 
@@ -84,8 +98,14 @@ Raised when synthetic-history generation cannot meet the trading-day floor after
 |----------|-------|-------------|
 | `_MAX_JOBS_ENV` | `"ALPHABOT_MAX_JOBS"` | Env var name read by `_resolve_replay_n_jobs()` |
 
+### Monte Carlo Constants
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `_MC_REPLAY_SIMULATION_PATHS` | 300 | Path count `build_replay_day` passes to `math_engine.run_monte_carlo` — deliberately lower than `math_engine.MC_DEFAULT_SIMULATION_PATHS` (5000) as a replay-throughput approximation over 250 days × N symphonies. `DE-MATH-R1-001`'s AC-6 parity battery matches this config exactly (rather than the 5000-path default) so the battery tests decision-logic parity, not MC-sampling parity. **Math Remediation R3-a (`DE-MATH-R3A-001`, 2026-07-18) — probed, value unchanged:** `scripts/mc_band_edge_stability_probe.py` measured the arm-decision flip-rate of this 300-path estimate against higher reference counts near the lower arm-band boundary. Finding: instability very close to the boundary (committed headline scenario, 0.3pp inside the boundary) is proximity-driven and NOT reducible by more paths — even a production-parity-vs-parity (5000-vs-5000) self-comparison flips ~28% of the time (see `docs/generated/mc-band-edge-stability.md`) — while instability at larger offsets from the boundary IS reducible by more paths. No single-constant bump target is certified for the committed near-edge scenario, so **this value is unchanged by R3-a**, confirmed by a dedicated scope-guard test (`test_replay_constant_is_currently_the_probed_300`). See `DE-MATH-R3A-001` in `DECISIONS.md` for the full pre-retune checklist record — an input for R3-b/c/d, not itself a live-path change. |
+
 ## Internal Dependencies
 
-- `math_engine` — `MC_MIN_HISTORY_DAYS`, `MC_VOL_WINDOW_DAYS` (for `_MC_WARMUP_TRADING_DAYS` computation)
+- `math_engine` — `MC_MIN_HISTORY_DAYS`, `MC_VOL_WINDOW_DAYS` (for `_MC_WARMUP_TRADING_DAYS` computation), `calculate_20d_vol`, `calculate_14d_atr_pct`, `run_monte_carlo` (the sole replay-path call site — see `DE-MATH-R1-001`'s call-site enumeration, confirmed via `tests/integration/test_run_monte_carlo_consumers_enumerated.py`), and the existing lpc-exclusion contract at `math_engine.py:1162-1166` (read-only; this cycle supplies the missing input, never relaxes the contract)
 - Alpaca Markets data API (`ALPACA_BASE_URL`, `ALPACA_KEY`, `ALPACA_SECRET`)
 - `joblib.Parallel` — parallel intraday tick-day replay (parallelism bounded by caller or env)

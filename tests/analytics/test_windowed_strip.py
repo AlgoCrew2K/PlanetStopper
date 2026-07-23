@@ -98,6 +98,25 @@ def _sym_dict(sym_id: str, if_held_pct: float, value: float) -> dict:
     }
 
 
+def _twr_fallback_sym_dict(sym_id: str, value: float, twr_pct: float) -> dict:
+    """A zero-deposit symphony that uses the TWR fallback (F-018 fixture helper).
+
+    Mirrors tests/analytics/test_twr_outlier_exclusion.py's `_twr_fallback_sym`:
+    simple_return=0.0 AND net_deposits=0.0 (the exact condition
+    get_symphony_cumulative_return checks, analytics.py:826, to set _twr_fallback
+    and exclude the symphony from get_portfolio_cumulative_return's VW aggregate,
+    F4 fix). F-018's fixture uses this to prove compute_windowed_portfolio_strip's
+    windowed_alpha loop must apply the SAME exclusion."""
+    return {
+        "id": sym_id,
+        "value": value,
+        "simple_return": 0.0,
+        "net_deposits": 0.0,
+        "time_weighted_return": twr_pct / 100.0,
+        "max_drawdown": 0.08,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Epoch-additive + W1 windowing reference (derives expected values)
 # ---------------------------------------------------------------------------
@@ -209,25 +228,54 @@ class TestWindowedGuardAlpha:
         assert alpha_all == pytest.approx(
             _epoch_additive_alpha(old_scen["shadow_history_rows"]), abs=1e-6
         )
-        assert abs(alpha_30) < abs(alpha_all) - 1e-6, (
-            f"30d-window alpha {alpha_30} must be smaller than ALL {alpha_all} when the "
-            "divergence is OLDER than 30 days — windowing must bite."
+        # math-r0 AC-8b: a 30d window over data aged 40+ days back has < 2
+        # in-window rows -- the deliberate conservatism floor -- so windowing
+        # "bites" so completely the function honestly reports None (insufficient
+        # data) rather than a fabricated smaller-but-nonzero number. None is the
+        # strongest form of "smaller than ALL" here (there is no windowed signal
+        # left at all), not a regression of this test's intent.
+        assert alpha_30 is None, (
+            f"30d-window alpha must be None (< 2 in-window rows -- the divergence is "
+            "aged 40+ days outside the 30-calendar-day window, so the AC-8b "
+            f"conservatism floor never clears); got {alpha_30}"
         )
 
     def test_never_triggered_zero_on_every_window(self, fixture, tmp_path):
+        """Never-triggered -> a genuinely-COMPUTED 0.0 on every window that has
+        >=2 in-window rows (real data confirming zero divergence). A window
+        that excludes the fixture's rows entirely (< 2 in-window — the fixture's
+        trading_days are fixed calendar dates that age relative to whenever this
+        suite runs) is math-r0 AC-8b's "insufficient data" state: None, not a
+        fabricated 0.0 — that distinction is the whole point of AC-8b, so this
+        test derives the expected outcome per window from the fixture's OWN
+        dates rather than assuming every window clears the >=2-row floor."""
         import analytics
 
         scen = fixture["scenarios"]["never_triggered_n2ooA"]
         if_held = scen["if_held_pct"]
         sym_id = scen["symphony_id"]
         db_file = _make_db(tmp_path, {"a": scen})
+        row_dates = [r["trading_day"] for r in scen["shadow_history_rows"]]
         for window in ("all", "30d", "90d", "1y", "ytd"):
+            cutoff = analytics._window_cutoff_date(window)
+            cutoff_iso = cutoff.isoformat() if cutoff is not None else None
+            in_window_count = sum(1 for d in row_dates if cutoff_iso is None or d >= cutoff_iso)
+
             alpha = analytics.compute_windowed_symphony_guard_alpha(
                 _sym_dict(sym_id, if_held, 10000.0), None, window=window, db_path=db_file
             )
-            assert alpha == pytest.approx(0.0, abs=1e-9), (
-                f"never-triggered guard alpha must be 0.0 on window={window}; got {alpha}"
-            )
+            if in_window_count < 2:
+                assert alpha is None, (
+                    f"window={window} has only {in_window_count} in-window row(s) "
+                    f"(< 2, the AC-8b conservatism floor) -- expected None (insufficient "
+                    f"data), got {alpha}"
+                )
+            else:
+                assert alpha == pytest.approx(0.0, abs=1e-9), (
+                    f"never-triggered guard alpha must be a genuinely-computed 0.0 on "
+                    f"window={window} ({in_window_count} in-window rows, shadow==current "
+                    f"on all of them); got {alpha}"
+                )
 
 
 # ===========================================================================
@@ -274,6 +322,128 @@ class TestWindowedPortfolioStrip:
         )
         assert strip.get("insufficient_history") is True, (
             "F7 FAIL: insufficient_history must be True for a sub-30-day window."
+        )
+
+
+# ===========================================================================
+# F-018 — windowed_alpha must exclude the TWR-fallback symphony (basis mix)
+# ===========================================================================
+
+_F018_FIXTURE = (
+    Path(__file__).parent.parent / "fixtures" / "math" / "guard_alpha_windowed_basis_mix.json"
+)
+
+
+class TestF018WindowedAlphaBasisConsistency:
+    """F-018 golden fixture (feature-plans/fix-display-cluster.md AC-4):
+    compute_windowed_portfolio_strip's windowed_alpha loop must exclude the
+    TWR-fallback symphony, matching the exclusion its if_held anchor (via
+    get_portfolio_cumulative_return -> _value_weighted_portfolio, the shipped
+    F4 fix, analytics.py:972-978) already applies. Today it does not: two
+    different symphony-weighting populations feed one sum, understating the
+    windowed guard-alpha headline ~2x on every window (conf-truth's
+    independently-recomputed figures on the live snapshot: 0.627195 = the
+    current WRONG mixed-basis output, 1.241529 = the RIGHT consistent-basis
+    output — see docs/audit/confidence-program/truth/
+    f014-lifetime-label-basis-mismatch.md). Both the wrong and right expected
+    values here are DERIVED IN-TEST from the fixture's raw shadow_history rows
+    via the same _epoch_additive_alpha helper the sibling windowing tests use
+    — none hardcoded."""
+
+    @pytest.fixture(scope="class")
+    def basis_fixture(self) -> dict:
+        return json.loads(_F018_FIXTURE.read_text(encoding="utf-8"))
+
+    def test_windowed_alpha_excludes_twr_fallback_symphony(self, basis_fixture, tmp_path):
+        import analytics
+
+        norm = basis_fixture["scenarios"]["normal_symphony"]
+        twr = basis_fixture["scenarios"]["twr_fallback_symphony"]
+        db_file = _make_db(tmp_path, {"norm": norm, "twr": twr})
+
+        norm_sym = _sym_dict(norm["symphony_id"], norm["if_held_pct"], norm["value"])
+        norm_sym["net_deposits"] = norm["net_deposits"]
+        twr_sym = _twr_fallback_sym_dict(twr["symphony_id"], twr["value"], twr["twr_pct"])
+        symphonies = [norm_sym, twr_sym]
+
+        strip = analytics.compute_windowed_portfolio_strip(
+            symphonies, {}, window="all", db_path=db_file
+        )
+
+        # WRONG (current bug): windowed_alpha value-weighted across BOTH symphonies
+        # (no TWR-fallback exclusion) — this is what the code produces today.
+        norm_divergence = _epoch_additive_alpha(norm["shadow_history_rows"])
+        twr_divergence = _epoch_additive_alpha(twr["shadow_history_rows"])
+        wrong_mixed_alpha = (norm_divergence * norm["value"] + twr_divergence * twr["value"]) / (
+            norm["value"] + twr["value"]
+        )
+
+        # RIGHT (F-018 fix): windowed_alpha excludes the TWR-fallback symphony —
+        # with only normSym surviving the exclusion, this collapses to normSym's
+        # own divergence (a trivial single-element weighted average).
+        right_consistent_alpha = norm_divergence
+
+        # Fixture sanity: the two must actually differ (twrSym's outlier
+        # divergence must materially skew the mixed figure), else this test
+        # cannot distinguish a wrong implementation from a right one.
+        assert wrong_mixed_alpha != pytest.approx(right_consistent_alpha, abs=1e-6), (
+            "fixture sanity: wrong-mixed and right-consistent alpha must differ "
+            f"for this test to be meaningful (got {wrong_mixed_alpha} vs "
+            f"{right_consistent_alpha})"
+        )
+
+        produced_alpha = strip.get("guard_alpha")
+        assert produced_alpha != pytest.approx(wrong_mixed_alpha, abs=1e-6), (
+            f"F-018 FAIL: guard_alpha ({produced_alpha}) matches the WRONG "
+            f"mixed-basis figure ({wrong_mixed_alpha}) — windowed_alpha still "
+            "includes the TWR-fallback symphony (twrSymF018) in its "
+            "value-weighted average; the old formula's output must be GONE."
+        )
+        assert produced_alpha == pytest.approx(right_consistent_alpha, abs=1e-6), (
+            f"F-018 FAIL: guard_alpha ({produced_alpha}) != the RIGHT "
+            f"10-symphony-consistent figure ({right_consistent_alpha}) — the "
+            "TWR-fallback symphony must be excluded from windowed_alpha's "
+            "value-weighted average, matching the exclusion "
+            "get_portfolio_cumulative_return already applies to if_held "
+            "(same condition: simple_return==0.0 AND net_deposits==0.0)."
+        )
+
+    def test_dry_run_anchors_on_the_same_consistent_basis_as_if_held(self, basis_fixture, tmp_path):
+        """cumulative_return.dry_run = if_held(10-sym-consistent basis) +
+        windowed_alpha(10-sym-consistent basis) — BOTH terms on the SAME basis.
+        Catches a partial fix where windowed_alpha is corrected but the two
+        terms still don't reconcile (or vice versa)."""
+        import analytics
+
+        norm = basis_fixture["scenarios"]["normal_symphony"]
+        twr = basis_fixture["scenarios"]["twr_fallback_symphony"]
+        db_file = _make_db(tmp_path, {"norm": norm, "twr": twr})
+
+        norm_sym = _sym_dict(norm["symphony_id"], norm["if_held_pct"], norm["value"])
+        norm_sym["net_deposits"] = norm["net_deposits"]
+        twr_sym = _twr_fallback_sym_dict(twr["symphony_id"], twr["value"], twr["twr_pct"])
+        symphonies = [norm_sym, twr_sym]
+
+        strip = analytics.compute_windowed_portfolio_strip(
+            symphonies, {}, window="all", db_path=db_file
+        )
+        cr = strip.get("cumulative_return") or {}
+
+        # if_held on the 10-symphony-consistent basis == get_portfolio_cumulative_return's
+        # own if_held (already F4-excludes the TWR-fallback symphony — an UNCHANGED,
+        # pre-existing, shipped function; calling it directly here does not depend on
+        # the F-018 fix itself, only reuses the already-correct sibling anchor).
+        expected_if_held = analytics.get_portfolio_cumulative_return(
+            symphonies, {}, db_path=db_file
+        )["if_held"]
+        norm_divergence = _epoch_additive_alpha(norm["shadow_history_rows"])
+        expected_dry_run = expected_if_held + norm_divergence
+
+        assert cr.get("dry_run") == pytest.approx(expected_dry_run, abs=1e-6), (
+            f"F-018 FAIL: cumulative_return.dry_run ({cr.get('dry_run')}) != "
+            f"if_held(10-sym) + windowed_alpha(10-sym) ({expected_dry_run}) — "
+            "the two terms feeding dry_run must be computed on the SAME "
+            "symphony basis (both excluding the TWR-fallback symphony)."
         )
 
 

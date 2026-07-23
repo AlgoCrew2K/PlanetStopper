@@ -15,6 +15,7 @@ import optuna
 import acceptance_gate as _acceptance_gate
 import database
 import math_engine
+import regime_classifier
 import synthetic_history
 from advisors import divergence_explainer as _de
 from advisors import overfitting_conscience as _oc
@@ -72,6 +73,42 @@ def _replay_execution_start_time() -> str:
     return alpha_bot_execution.EXECUTION_START_TIME
 
 
+def _replay_squeeze_floor_default() -> float:
+    """Return the replay's default MAX_SQUEEZE_FLOOR (R3-c / MA-11, AC-4).
+
+    Shares production's single source of truth (alpha_bot_execution.MAX_SQUEEZE_FLOOR
+    — the same attr production's acc_params.get("MAX_SQUEEZE_FLOOR", MAX_SQUEEZE_FLOOR)
+    falls back to, alpha_bot_execution.py:1236) so a per-symphony params dict
+    missing the key resolves to the IDENTICAL floor on both paths — never a
+    replay-local mirror literal. Read live at call time (not cached at import),
+    so an operator's env override or a test monkeypatch of the module attr
+    reaches the replay exactly as it reaches production. The import is
+    function-local because a top-level `import alpha_bot_execution` would be
+    circular (alpha_bot_execution imports autotuner).
+
+    Called inline at the single compute_active_trailing_stop call site inside
+    _replay_exit_tick — every caller of _replay_exit_tick gets this default
+    automatically; there is nothing for a future call site to remember to
+    thread through.
+    """
+    import alpha_bot_execution
+
+    return alpha_bot_execution.MAX_SQUEEZE_FLOOR
+
+
+def _replay_execution_start_offset_minutes(execution_start_hhmm: str) -> int:
+    """Return EXECUTION_START_TIME's minute-bar offset past the 09:30 ET
+    session open (tick_idx 0).
+
+    Single source of truth for the ``(h - 9) * 60 + (m - 30)`` formula,
+    shared by ``_replay_in_open_window_grace`` (N-3, VWAP-grace suppression
+    window) and ``_replay_in_action_phase`` (AC-5/F6, the action-phase gate)
+    so the two consumers can never drift apart.
+    """
+    h, m = execution_start_hhmm.split(":")
+    return (int(h) - 9) * 60 + (int(m) - 30)
+
+
 def _replay_in_open_window_grace(
     tick_idx: int, execution_start_hhmm: str, grace_minutes: int
 ) -> bool:
@@ -96,11 +133,29 @@ def _replay_in_open_window_grace(
         + grace_minutes). AC-5 / N-3 — closes the replay-vs-production
         grace-window misalignment.
     """
-    h, m = execution_start_hhmm.split(":")
     # The session opens at 09:30 ET; tick_idx 0 == 09:30. exec_start sits
     # this many minutes past tick 0.
-    start_offset = (int(h) - 9) * 60 + (int(m) - 30)
+    start_offset = _replay_execution_start_offset_minutes(execution_start_hhmm)
     return start_offset <= tick_idx < start_offset + grace_minutes
+
+
+def _replay_in_action_phase(tick_idx: int, execution_start_hhmm: str) -> bool:
+    """Return True iff `tick_idx` is at or after EXECUTION_START_TIME's
+    session-open-anchored offset — i.e. production's ACTION PHASE would have
+    run on this tick.
+
+    AC-5/F6 (DISTINCT from and NOT satisfied by the N-3 VWAP-grace gate
+    above): production's entire action phase — para-arm, MC arm/disarm,
+    trailing-stop confirm, TP confirm, VWAP checks, and exit firing — never
+    runs before EXECUTION_START_TIME (the hard
+    ``if current_time < market_open and not force_run: return`` gate,
+    alpha_bot_execution.py:951-953). Only the DATA phase (HWM tracking) runs
+    unconditionally from the true 09:30 session open
+    (alpha_bot_execution.py:876-885). tick_idx < the offset means the action
+    phase has not opened yet.
+    """
+    start_offset = _replay_execution_start_offset_minutes(execution_start_hhmm)
+    return tick_idx >= start_offset
 
 
 # --- PORT-LEVEL REPLAY BLIND SPOT (AC-8 / plan D-C3b) ---
@@ -423,6 +478,9 @@ _CPCV_K_TEST_GROUPS = 2  # k: number of groups held out as test per split
 _CPCV_N_SPLITS = math.comb(_CPCV_N_GROUPS, _CPCV_K_TEST_GROUPS)
 # φ[N,k] = (k/N)·C(N,k) — number of complete OOS backtest paths.
 # At N=6, k=2: φ = (2/6)·15 = 5 paths, each assembled from N/k=3 non-overlapping splits.
+# Retained as documented combinatorial theory (φ = C(N−1,k−1)); NOT consumed by
+# any runtime scoring path post-R2 — split-level scoring uses _CPCV_N_SPLITS
+# exclusively (DE-MATH-R2-001).
 _CPCV_N_PATHS = int((_CPCV_K_TEST_GROUPS / _CPCV_N_GROUPS) * _CPCV_N_SPLITS)
 
 
@@ -443,16 +501,13 @@ def _generate_cpcv_folds(
     Each returned fold descriptor is a dict:
         ``train_dates``     — set of effective (post-purge/embargo) training dates
         ``test_dates``      — set of raw test dates (all k_test groups, unpurged)
-        ``path_membership`` — list of path indices this split contributes to
 
-    Path assignment: canonical mlfinlab ``_fill_backtest_paths`` first-available-slot
-    algorithm. Each group tracks a "next available path pointer" initialised to 0.
-    Combinations are iterated in lexicographic order; for each combination, each of
-    its k test-groups (lower group index first) is assigned to that group's current
-    pointer, then that group's pointer is incremented. A fold's ``path_membership``
-    is the UNIQUE (deduplicated, sorted) set of path indices its k groups were
-    assigned to. Membership length is VARIABLE: adjacent pairs share one path
-    (length 1) while non-adjacent pairs span two paths (length 2).
+    (Historical note, AC-1/R2/DE-MATH-R2-001: fold descriptors carried a
+    ``path_membership`` key — the mlfinlab canonical first-available-slot
+    φ-path assignment — through R1. Split-level scoring retired path
+    reconstruction entirely (canonical CPCV backtest paths are a refit-world
+    construct, mathematically forced to span the full eligible window in a
+    no-refit codebase); this function now returns only the two keys above.)
 
     Purge/embargo per-seam arithmetic (LdP 2018 Ch.7.4):
         For each contiguous train segment adjacent to a test block, remove
@@ -476,7 +531,6 @@ def _generate_cpcv_folds(
     Reference: López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4.
     """
     n_dates = len(sorted_dates)
-    n_paths = int((k_test / n_groups) * math.comb(n_groups, k_test))
     # Build group index boundaries (contiguous equal-ish partitions).
     # Using integer floor partitioning: group g contains indices [starts[g], starts[g+1]).
     group_size, remainder = divmod(n_dates, n_groups)
@@ -490,12 +544,8 @@ def _generate_cpcv_folds(
     # Precompute each group's date set.
     groups: list[list] = [sorted_dates[starts[g] : starts[g + 1]] for g in range(n_groups)]
 
-    # Canonical first-available-slot path assignment (mlfinlab _fill_backtest_paths):
-    # each group tracks the index of the next unoccupied path slot.
-    group_path_ptr: list[int] = [0] * n_groups
-
     folds = []
-    for split_idx, test_combo in enumerate(itertools.combinations(range(n_groups), k_test)):
+    for test_combo in itertools.combinations(range(n_groups), k_test):
         test_group_set = set(test_combo)
         train_group_indices = [g for g in range(n_groups) if g not in test_group_set]
 
@@ -539,55 +589,35 @@ def _generate_cpcv_folds(
             if start_pos < end_pos:
                 effective_train_dates.update(g_dates[start_pos:end_pos])
 
-        # Canonical first-available-slot path assignment (mlfinlab _fill_backtest_paths).
-        # For each test group (lower index first), assign its OOS prediction to that
-        # group's current pointer slot, then advance the pointer.  The fold's membership
-        # is the UNIQUE (deduplicated) set of path indices used, kept in sorted order so
-        # _aggregate_cpcv_paths assembles paths in chronological sequence.
-        assigned_paths: set[int] = set()
-        for g in sorted(test_combo):  # lower group index first (lexicographic)
-            assigned_paths.add(group_path_ptr[g])
-            group_path_ptr[g] += 1
-
         folds.append(
             {
                 "train_dates": effective_train_dates,
                 "test_dates": raw_test_dates,
-                "path_membership": sorted(assigned_paths),
             }
         )
 
     return folds
 
 
-def _aggregate_cpcv_paths(folds: list, n_paths: int = _CPCV_N_PATHS) -> list:
-    """Assemble φ OOS backtest paths from CPCV fold descriptors.
-
-    Each path is the union of test dates from all folds whose ``path_membership``
-    includes that path's index. Returns a list of n_paths sets, where path i
-    contains all test dates contributed by splits assigned to path i.
-
-    The paths are returned as a list of sorted date lists so callers can index
-    directly into them (path[i] is a list of date strings for the i-th path).
-
-    Pure function — no I/O, no DB calls.
-
-    Args:
-        folds:    List of fold descriptors from _generate_cpcv_folds.
-        n_paths:  Number of paths to assemble (default _CPCV_N_PATHS=5).
-
-    Returns:
-        List of n_paths sorted date lists, one per path.
-
-    Reference: López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4.
-    """
-    path_date_sets: list[set] = [set() for _ in range(n_paths)]
-    for fold in folds:
-        for path_idx in fold.get("path_membership", []):
-            if 0 <= path_idx < n_paths:
-                path_date_sets[path_idx].update(fold["test_dates"])
-    # Return sorted lists so paths are deterministically ordered for the objective.
-    return [sorted(s) for s in path_date_sets]
+# _aggregate_cpcv_paths DELETED (AC-1, R2, team-lead RULED Option A / split-level
+# scoring — feature-plans/math-r2.md ADDENDUM 3/5): canonical N=6/k=2 CPCV
+# backtest-path reconstruction is mathematically forced to make every path span
+# the FULL eligible window (phi paths, each stitched from N/k non-overlapping
+# splits whose test groups union to ALL N groups) — a REFIT-WORLD construct.
+# With no per-fold refit in this codebase (guard_alpha for a date is a pure
+# function of (date, trial params), independent of fold/path assignment),
+# path-level aggregation is structurally incompatible with non-identical
+# scores no matter how date-attribution is implemented (proven three
+# independent ways: r2-test's live probe, r2-stats's φ=C(N−1,k−1) bijection
+# proof + empirical, the PM's refit-world argument). The honest CSCV-native
+# granularity is the C(6,2)=15 SPLIT ensemble itself — see run_autotuner's
+# objective() closure, which scores each split's own test_dates directly via
+# _collect_sim_returns_dated(..., score_dates=...) instead of aggregating into
+# 5 always-identical full-window paths. Confirmed zero surviving consumers
+# repo-wide (r2-stats's full-repo trace, DECISIONS.md DE-MATH-R2-001): no
+# persisted autotune_runs column, no Overfitting Conscience / Spec Critic
+# reader, and math_engine.compute_pbo runs its OWN independent S=8-block CSCV
+# construction untouched by this retirement.
 
 
 def build_symphony_study_name(timestamp: str, symphony_id: str) -> str:
@@ -1124,6 +1154,7 @@ def _replay_exit_tick(
     p,
     grace_minutes,
     execution_start_hhmm: str = "09:30",
+    exit_confirm_ticks: int = math_engine.EXIT_CONFIRM_TICKS,
 ):
     """Run ONE replay tick of the production exit path; mutate `state` in place.
 
@@ -1143,13 +1174,18 @@ def _replay_exit_tick(
 
     `state` is a mutable dict carrying per-position transient state across
     ticks within a single day. `n_ticks` is the day's tick count, used to
-    derive time_ratio from the actual session length.
+    derive time_ratio from the actual session length. `exit_confirm_ticks`
+    (AC-4/F5) is the regime-resolved confirm-tick count a day-level caller
+    may pass through to compute_exit_confirmation; it defaults to the same
+    module constant compute_exit_confirmation itself defaults to, so a
+    caller that never resolves a regime label sees unchanged behavior.
     """
     ret = tick.get("return", 0.0)
     # mc_prob may be the None sentinel (MC unavailable / insufficient MC
     # history) — production's run_monte_carlo None contract. mc_available
     # gates every MC-driven branch exactly as production does; an absent MC
-    # opinion drives no arm, no disarm, no TP transition, and no MC veto.
+    # opinion drives no disarm and no TP transition, but DOES fail-open the
+    # arm (MA-10, below).
     mc = tick.get("mc_prob", 50.0)
     mc_available = mc is not None
     vol = tick.get("vol", 1.0)
@@ -1159,9 +1195,21 @@ def _replay_exit_tick(
     take_profit_mc = p.get("TAKE_PROFIT_MC_PCT", 5.0)
     trigger_threshold = p.get("TRIGGER_THRESHOLD_PCT", 15.0)
 
+    # DATA PHASE (alpha_bot_execution.py:876-885): HWM tracking runs
+    # unconditionally from the true 09:30 session open, even before
+    # EXECUTION_START_TIME.
     if ret > state["hwm"]:
         state["hwm"] = ret
     safe_hwm = max(state["hwm"], ret)
+
+    # AC-5/F6: production's ACTION PHASE (para-arm through firing, below)
+    # does not run at all before EXECUTION_START_TIME — see
+    # _replay_in_action_phase's docstring for the exact production gate this
+    # mirrors. This is DISTINCT from the N-3 VWAP-grace suppression further
+    # down, which only silences VWAP signals inside a grace window AFTER the
+    # action phase has already opened.
+    if not _replay_in_action_phase(tick_idx, execution_start_hhmm):
+        return None
 
     # --- PARABOLIC SQUEEZE LOGIC ---
     para_threshold = p.get("PARABOLIC_VELOCITY_THRESHOLD", 2.0)
@@ -1176,15 +1224,37 @@ def _replay_exit_tick(
     if should_arm:
         state["para_armed"] = True
 
-    # MC arm / disarm — gated on mc_available (alpha_bot_execution.py
-    # 1140-1163). An absent MC opinion drives neither an arm nor a disarm.
-    if mc_available and take_profit_mc <= mc < trigger_threshold:
-        if not state["armed"]:
-            state["armed"] = True
-    elif state["armed"]:
-        if mc_available and mc > (trigger_threshold * 2) and ret > 0.0:
-            state["armed"] = False
-            state["below_stop_count"] = 0
+    # Arm/disarm decision (R3-b, MA-4 fix): delegated to the shared pure seam
+    # so replay and production (alpha_bot_execution.py) share ONE decision
+    # surface — R3-d retunes by replaying exit decisions, so a divergent exit
+    # surface would invalidate the tune. Recovery-disarm is prob-based only
+    # (current_return plays no role) and requires a disarm_confirm_ticks-tick
+    # hysteresis ladder to avoid chatter near the boundary — see
+    # math_engine.compute_arm_disarm_decision's docstring. MA-10 fail-open
+    # (an absent MC opinion ARMS the stop) is preserved inside the seam.
+    # is_triggered=False is a LITERAL, not read from `state` (which carries no
+    # "triggered" key): the replay breaks on the first trigger and never
+    # re-enters a tick with triggered state mid-day (see this function's
+    # docstring), so the seam is called only on not-yet-triggered ticks by
+    # construction — mirrors the is_triggered=False already passed below to
+    # compute_exit_confirmation, compute_tp_confirmation and
+    # compute_vwap_breakdown_update.
+    armed_before_disarm_decision = state["armed"]
+    state["armed"], state["disarm_confirm_count"] = math_engine.compute_arm_disarm_decision(
+        prob_underperforming=mc,
+        is_triggered=False,
+        armed=armed_before_disarm_decision,
+        disarm_confirm_count=state["disarm_confirm_count"],
+        take_profit_mc_pct=take_profit_mc,
+        trigger_threshold_pct=trigger_threshold,
+    )
+    # AC-7: the below_stop_count=0 reset is CALLER-side (the seam returns no
+    # telemetry) — mirrors production's diff-before/after pattern
+    # (alpha_bot_execution.py:1396-1411). No print here: the replay path has
+    # never printed (it is a silent walk-forward simulation), matching the
+    # pre-fix code.
+    if armed_before_disarm_decision and not state["armed"]:
+        state["below_stop_count"] = 0
 
     # --- TIME SQUEEZE DECAY LOGIC ---
     # time_ratio is derived from the ACTUAL session length so half-day
@@ -1203,6 +1273,7 @@ def _replay_exit_tick(
         state["para_armed"],
         state["breakeven_locked"],
         p.get("MAX_PARABOLIC_SQUEEZE", 0.50),
+        squeeze_floor=p.get("MAX_SQUEEZE_FLOOR", _replay_squeeze_floor_default()),
     )
     base_stop = safe_hwm - active_stop_dist
 
@@ -1220,11 +1291,14 @@ def _replay_exit_tick(
     )
 
     # Check 1: Trailing Stop — the canonical math_engine primitive. It owns
-    # MAGNITUDE_FLOOR_PCT, MC_BREAKDOWN_THRESHOLD and EXIT_CONFIRM_TICKS; the
-    # replay never duplicates those exit-rule literals (AC-1). The replay passes
+    # MAGNITUDE_FLOOR_PCT and MC_BREAKDOWN_THRESHOLD; the replay never
+    # duplicates those exit-rule literals (AC-1). The replay passes
     # prob_underperforming=mc to the SAME primitive, so the corrected gate
     # (>= MC_BREAKDOWN_THRESHOLD) flows through automatically — replay parity is
     # preserved by a value-preserving rename (mc local is unchanged).
+    # exit_confirm_ticks (AC-4/F5) is passed EXPLICITLY, never left to
+    # compute_exit_confirmation's own module-level default, so a day-level
+    # caller's regime-resolved tick count actually reaches this call.
     state["below_stop_count"], is_trailing_hit = math_engine.compute_exit_confirmation(
         armed=state["armed"],
         is_triggered=False,
@@ -1232,6 +1306,7 @@ def _replay_exit_tick(
         stop_trigger_level=stop_level,
         prob_underperforming=mc,
         current_below_stop_count=state["below_stop_count"],
+        exit_confirm_ticks=exit_confirm_ticks,
     )
 
     # Check 2: Take Profit — the shared, pure math_engine.compute_tp_confirmation
@@ -1311,6 +1386,7 @@ def _fresh_replay_state():
         "hwm_hold_ticks": 0,
         "below_stop_count": 0,
         "above_tp_count": 0,
+        "disarm_confirm_count": 0,
         "vwap_ticks": 0,
         "vwap_bleed_ticks": 0,
     }
@@ -1320,15 +1396,25 @@ def replay_exit_sequence(ticks, params, *, grace_minutes):
     """Run the replay's per-tick exit loop over one day; return the decision trace.
 
     Pure helper exposing the replay's per-tick exit decision (AC-6). Returns
-    one {"tick_idx", "exit_reason"} dict per executed tick — exit_reason is the
-    resolve_trigger_priority string on the tick the position exits, None on
-    every non-exit tick. The loop stops after the first exit (production
-    commits the exit and freezes the symphony for the day).
+    one {"tick_idx", "exit_reason", "armed", "tp_armed", "para_armed"} dict
+    per executed tick — exit_reason is the resolve_trigger_priority string on
+    the tick the position exits, None on every non-exit tick; the three
+    *_armed keys mirror test_c3_replay_exit_parity._production_exit_sequence's
+    output shape so AC-6's parity battery can compare STATE, not just the
+    exit decision. The loop stops after the first exit (production commits
+    the exit and freezes the symphony for the day).
 
     Runs the SAME _replay_exit_tick per-tick core that run_simulation and
     _collect_sim_returns call — so this helper IS the replay path, not a copy.
     It is the observability seam the bit-identical AC-6 parity test compares
     against the production exit harness.
+
+    AC-4 is deliberately NOT wired through here: day-level regime resolution
+    lives above this single-day entry point (see _collect_sim_returns_dated),
+    and _production_exit_sequence's AC-6 scenarios all use regime_label=None
+    to match this function's implicit default — extending this signature
+    would break that alignment (test_ac6_bar_level_replay_production_parity.py
+    module docstring).
     """
     state = _fresh_replay_state()
     n_ticks = len(ticks)
@@ -1346,7 +1432,15 @@ def replay_exit_sequence(ticks, params, *, grace_minutes):
             grace_minutes,
             execution_start_hhmm=execution_start_hhmm,
         )
-        out.append({"tick_idx": tick_idx, "exit_reason": reason})
+        out.append(
+            {
+                "tick_idx": tick_idx,
+                "exit_reason": reason,
+                "armed": state["armed"],
+                "tp_armed": state["tp_armed"],
+                "para_armed": state["para_armed"],
+            }
+        )
         if reason is not None:
             break
     return out
@@ -1382,6 +1476,15 @@ def _collect_sim_returns(
 
     for sym_id in acc_sym_ids:
         dates_data = history_data.get(sym_id, {})
+        # AC-4 (R2 residual): resolve the regime-conditional exit_confirm_ticks
+        # fresh per simulated day, mirroring _collect_sim_returns_dated's
+        # established pattern — the undated search-objective path (Optuna's
+        # actual per-trial score) must share the same regime-faithful exit
+        # semantics as the dated selection/diagnostic path, not the hardcoded
+        # module default. sorted_dates/date_to_idx are precomputed once per
+        # symphony (not resorted per date).
+        sorted_dates = sorted(dates_data.keys())
+        date_to_idx = {d: i for i, d in enumerate(sorted_dates)}
         for date, ticks in dates_data.items():
             if not ticks:
                 continue
@@ -1397,6 +1500,9 @@ def _collect_sim_returns(
             triggered_return = None
             eod_return = ticks[-1]["return"]
             n_ticks = len(ticks)
+            _regime_exit_ticks = _replay_resolve_regime_exit_ticks(
+                dates_data, sorted_dates, date_to_idx[date]
+            )
 
             # Per-tick exit loop via the single shared core _replay_exit_tick —
             # the SAME per-tick exit path run_simulation and replay_exit_sequence
@@ -1412,6 +1518,7 @@ def _collect_sim_returns(
                     p,
                     grace_minutes,
                     execution_start_hhmm=execution_start_hhmm,
+                    exit_confirm_ticks=_regime_exit_ticks,
                 )
                 if reason_str is not None:
                     penalty = deviation_dict.get(reason_str, -0.20)
@@ -1428,18 +1535,77 @@ def _collect_sim_returns(
     return daily_returns
 
 
-def _collect_sim_returns_dated(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
+def _replay_resolve_regime_exit_ticks(dates_data: dict, sorted_dates: list, date_idx: int) -> int:
+    """AC-4/F5: recompute the regime-conditional exit_confirm_ticks fresh for
+    one replay day, using ONLY EOD daily returns from dates STRICTLY BEFORE
+    ``sorted_dates[date_idx]`` (no lookahead — walk-forward integrity).
+
+    Mirrors production's apply_regime_exit_adjustment(regime_label, base_ticks)
+    composition (alpha_bot_execution.py:1436-1448), but resolves the label via
+    regime_classifier.classify_regime() over the replay's own trailing history
+    instead of the live per-symphony regime-label cache accessor in
+    database.py — reading that FORBIDDEN in replay code (ruled contract, PM
+    addendum 2 @ a46be889): it is a single-row latest-wins live table with no
+    per-historical-date granularity, so consulting it for a walk-forward day
+    would inject TODAY's label into every one of the ~250 replayed days.
+
+    Insufficient trailing history (< regime_classifier.MIN_LABEL_SERIES_LENGTH)
+    -> classify_regime returns None -> apply_regime_exit_adjustment's own safe
+    default (base_ticks unchanged) — never an invented replay-only fallback.
+
+    `sorted_dates`/`date_idx` are precomputed once per symphony by the caller
+    (not resorted per date) so this stays O(window) per call.
+    """
+    trailing_dates = sorted_dates[:date_idx][-regime_classifier.MIN_LABEL_SERIES_LENGTH :]
+    trailing_returns = [
+        dates_data[d][-1].get("return", 0.0) / RETURN_PCT_TO_FRACTION
+        for d in trailing_dates
+        if dates_data.get(d)
+    ]
+    label = regime_classifier.classify_regime(trailing_returns)
+    return math_engine.apply_regime_exit_adjustment(
+        regime_label=label, base_ticks=math_engine.EXIT_CONFIRM_TICKS
+    )
+
+
+def _collect_sim_returns_dated(
+    p, history_data, acc_sym_ids, current_date_str, deviation_dict, *, score_dates=None
+):
     """Date-labeled variant of _collect_sim_returns for the CSCV PBO gate.
 
     Returns ``list[tuple[str, float]]`` of (date, guard_alpha) pairs so the
     objective closure can build a collision-free cscv_date_returns union dict
-    across CPCV paths.
+    across CPCV splits.
 
     This function is intentionally NOT a wrapper around _collect_sim_returns —
     it has its own implementation so that test mocks of ``autotuner._collect_sim_returns``
     (which return flat floats) do not intercept the dated-variant call.  The two
     functions share the same per-tick exit logic via ``_replay_exit_tick`` and
     ``_fresh_replay_state``; the only difference is the return type.
+
+    AC-4/F5: this is the per-date replay loop that resolves the
+    regime-conditional exit_confirm_ticks fresh per simulated day (see
+    _replay_resolve_regime_exit_ticks) — the day-level orchestration
+    test_ac4_regime_conditional_exit_ticks.py's no-lookahead test drives
+    directly.
+
+    Parameters
+    ----------
+    score_dates : set[str] | None (keyword-only, default None)
+        AC-1-adjacent (regime-lookback chronology purity, ADDENDUM 5/6): when
+        provided, restricts which dates actually undergo the expensive
+        per-tick replay and contribute to the returned list — dates in
+        ``history_data`` but NOT in ``score_dates`` are skipped entirely (no
+        replay, no output entry). Every date in ``history_data`` still
+        participates in ``sorted_dates``/regime-lookback chronology for
+        WHATEVER dates ARE scored, regardless of score_dates membership —
+        this is the decoupling that lets a per-split CPCV caller pass the
+        FULL per-symphony history (correct, gap-free regime chronology) while
+        restricting each split's own scored-date set, instead of the old
+        pattern of pre-filtering history_data down to one unit's dates (which
+        would corrupt the trailing-window chronology into a gappy sample —
+        see test_ac1_regime_lookback_chronology_purity.py). None (default)
+        preserves the original behavior: every date in history_data is scored.
     """
     dated_returns: list[tuple[str, float]] = []
     grace_minutes = _replay_grace_minutes()
@@ -1447,13 +1613,24 @@ def _collect_sim_returns_dated(p, history_data, acc_sym_ids, current_date_str, d
 
     for sym_id in acc_sym_ids:
         dates_data = history_data.get(sym_id, {})
+        sorted_dates = sorted(dates_data.keys())
+        date_to_idx = {d: i for i, d in enumerate(sorted_dates)}
         for date, ticks in dates_data.items():
             if not ticks:
+                continue
+            if score_dates is not None and date not in score_dates:
+                # Not a scored date for this call — skip the expensive
+                # per-tick replay entirely. The date remains present in
+                # dates_data/sorted_dates so regime-lookback for OTHER
+                # (scored) dates still sees its EOD return.
                 continue
             day_state = _fresh_replay_state()
             triggered_return = None
             eod_return = ticks[-1]["return"]
             n_ticks = len(ticks)
+            _regime_exit_ticks = _replay_resolve_regime_exit_ticks(
+                dates_data, sorted_dates, date_to_idx[date]
+            )
             for tick_idx, tick in enumerate(ticks):
                 reason_str = _replay_exit_tick(
                     day_state,
@@ -1463,6 +1640,7 @@ def _collect_sim_returns_dated(p, history_data, acc_sym_ids, current_date_str, d
                     p,
                     grace_minutes,
                     execution_start_hhmm=execution_start_hhmm,
+                    exit_confirm_ticks=_regime_exit_ticks,
                 )
                 if reason_str is not None:
                     penalty = deviation_dict.get(reason_str, -0.20)
@@ -1476,29 +1654,32 @@ def _collect_sim_returns_dated(p, history_data, acc_sym_ids, current_date_str, d
 
 
 # Partial-sentinel detection threshold: a CPCV trial's value is the MEAN across
-# _CPCV_N_PATHS path scores. If ONE path is a Sortino sentinel (1e6, a zero-downside
-# path) and the rest are small, the mean is ~= _SORTINO_SENTINEL / _CPCV_N_PATHS — far
-# above any genuine Sortino/CRRA-EU score, yet != 1e6 so an exact-float compare misses
-# it. Any value at or above this threshold contains a sentinel path and is degenerate.
-_PARTIAL_SENTINEL_MEAN_THRESHOLD = math_engine._SORTINO_SENTINEL / _CPCV_N_PATHS
+# _CPCV_N_SPLITS split scores (AC-1, R2: split-level scoring — team-lead RULED
+# Option A, superseding the old 5-path aggregate; see DECISIONS.md
+# DE-MATH-R2-001). If ONE split is a Sortino sentinel (1e6, a zero-downside
+# split) and the rest are small, the mean is ~= _SORTINO_SENTINEL / _CPCV_N_SPLITS
+# — far above any genuine Sortino/CRRA-EU score, yet != 1e6 so an exact-float
+# compare misses it. Any value at or above this threshold contains a sentinel
+# split and is degenerate.
+_PARTIAL_SENTINEL_MEAN_THRESHOLD = math_engine._SORTINO_SENTINEL / _CPCV_N_SPLITS
 
 
 def _trial_has_sentinel_path(t) -> bool:
-    """True if the trial's persisted per-path CPCV scores include a Sortino sentinel.
+    """True if the trial's persisted per-split CPCV scores include a Sortino sentinel.
 
-    Path-score-level detection is the GAP-FREE check: a trial whose value is the
-    mean across _CPCV_N_PATHS paths can hide a sentinel path (1e6) when the OTHER
-    paths are net-negative enough to drag the mean below the aggregate threshold
-    (e.g. a path at the CRRA wealth floor ~-999, or large-negative Sortino). The
-    objective persists path_scores (set_user_attr) so the filter can see the
+    Split-score-level detection is the GAP-FREE check: a trial whose value is the
+    mean across _CPCV_N_SPLITS splits can hide a sentinel split (1e6) when the OTHER
+    splits are net-negative enough to drag the mean below the aggregate threshold
+    (e.g. a split at the CRRA wealth floor ~-999, or large-negative Sortino). The
+    objective persists split_scores (set_user_attr) so the filter can see the
     sentinel directly rather than inferring it from the aggregate value.
     """
     if not hasattr(t, "user_attrs"):
         return False
-    path_scores = t.user_attrs.get("path_scores")
-    if not path_scores:
+    split_scores = t.user_attrs.get("split_scores")
+    if not split_scores:
         return False
-    return any(s == math_engine._SORTINO_SENTINEL for s in path_scores)
+    return any(s == math_engine._SORTINO_SENTINEL for s in split_scores)
 
 
 def filter_sortino_sentinels(trials):
@@ -1506,13 +1687,13 @@ def filter_sortino_sentinels(trials):
 
     Drops a trial if ANY of:
       - value is None (no usable objective);
-      - a persisted per-path score equals math_engine._SORTINO_SENTINEL — the
-        gap-free PATH-SCORE-level check (see _trial_has_sentinel_path); catches a
-        one-sentinel-path mean even when net-negative other paths drag the mean
+      - a persisted per-split score equals math_engine._SORTINO_SENTINEL — the
+        gap-free SPLIT-SCORE-level check (see _trial_has_sentinel_path); catches a
+        one-sentinel-split mean even when net-negative other splits drag the mean
         below the aggregate threshold;
-      - value >= _SORTINO_SENTINEL / _CPCV_N_PATHS — the aggregate fallback for
-        trials WITHOUT persisted path_scores (a pure sentinel, or a partial mean
-        whose non-sentinel paths are non-negative).
+      - value >= _SORTINO_SENTINEL / _CPCV_N_SPLITS — the aggregate fallback for
+        trials WITHOUT persisted split_scores (a pure sentinel, or a partial mean
+        whose non-sentinel splits are non-negative).
     A sentinel's magnitude would dominate the cross-trial BHY/haircut distribution
     and let a degenerate trial masquerade as a genuine signal. Returns a new list
     preserving input order.
@@ -1685,6 +1866,13 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
 
     for sym_id in acc_sym_ids:
         dates_data = history_data.get(sym_id, {})
+        # AC-4 (R2 residual): resolve the regime-conditional exit_confirm_ticks
+        # fresh per simulated day, mirroring _collect_sim_returns_dated's
+        # established pattern — the adoption cascade (oos_alpha/
+        # fallback_oos_alpha/default_oos_alpha) must share the same
+        # regime-faithful exit semantics as the selection/diagnostic path.
+        sorted_dates = sorted(dates_data.keys())
+        date_to_idx = {d: i for i, d in enumerate(sorted_dates)}
         for date, ticks in dates_data.items():
             if not ticks:
                 continue
@@ -1701,6 +1889,9 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
             eod_return = ticks[-1]["return"]
             day_max_return = max(t.get("return", 0.0) for t in ticks)
             n_ticks = len(ticks)
+            _regime_exit_ticks = _replay_resolve_regime_exit_ticks(
+                dates_data, sorted_dates, date_to_idx[date]
+            )
 
             # Per-tick exit loop via the single shared core _replay_exit_tick —
             # the SAME per-tick exit path _collect_sim_returns and
@@ -1716,6 +1907,7 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
                     p,
                     grace_minutes,
                     execution_start_hhmm=execution_start_hhmm,
+                    exit_confirm_ticks=_regime_exit_ticks,
                 )
                 if reason_str is not None:
                     penalty = deviation_dict.get(reason_str, -0.20)
@@ -2172,7 +2364,7 @@ def run_autotuner(
         return {"aborted": True, "reason": str(e)}
     if not history_125d:
         print("  -> Autotuner aborted: Failed to generate synthetic history.")
-        return
+        return {"aborted": True, "reason": "Failed to generate synthetic history."}
 
     # Extract global dates and partition 60/20/20 (train / validation / frozen-eval).
     all_dates = set()
@@ -2183,7 +2375,7 @@ def run_autotuner(
     total_days = len(sorted_dates)
     if total_days < 2:
         print("  -> Autotuner aborted: Need at least 2 days of history for WFA.")
-        return
+        return {"aborted": True, "reason": "Need at least 2 days of history for WFA."}
 
     # Three-fold split: TRAIN_RATIO / VALIDATION_RATIO / FROZEN_EVAL_RATIO (60/20/20).
     # Reference: López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4.
@@ -2202,6 +2394,16 @@ def run_autotuner(
     # logic to O1's train | test purge, now applied at the train | validation boundary).
     effective_train_cutoff = max(0, val_start_idx - PURGE_DAYS - EMBARGO_DAYS)
     train_dates = set(sorted_dates[:effective_train_cutoff])
+    # AC-2 (MA-5): genuinely computed purge-integrity check, not a hardcoded
+    # literal — verifies the CPCV-eligible window's tail (train_dates, which
+    # AC-1's split-level scoring reads via _cpcv_eligible_dates =
+    # sorted(train_dates)) sits >= PURGE_DAYS + EMBARGO_DAYS trading days
+    # before val_start_idx (the validation window the OOS adoption cascade
+    # reads). A real assertion, not an attestation: it can genuinely go False
+    # on a short-history edge case where effective_train_cutoff's max(0, ...)
+    # clamp bites, honestly surfacing an insufficient-gap condition instead of
+    # silently claiming purge integrity that was never actually enforced.
+    purge_integrity_ok = (val_start_idx - effective_train_cutoff) >= (PURGE_DAYS + EMBARGO_DAYS)
 
     # Boundary 2 — validation | frozen-eval: purge + embargo on validation side.
     # Exclude the last PURGE_DAYS + EMBARGO_DAYS of raw_val_dates so validation samples
@@ -2233,8 +2435,15 @@ def run_autotuner(
         }
         history_frozen[sym_id] = {d: t for d, t in sym_data.items() if d in frozen_dates}
 
-    # OOS cascade uses the full validation fold — same contract as the pre-O6 OOS test fold.
-    history_test = history_validation_full
+    # AC-2 (MA-5): the OOS adoption cascade (oos_alpha/fallback_oos_alpha/
+    # default_oos_alpha below) reads history_validation_full DIRECTLY — no
+    # intermediate history_test alias. CPCV/trial selection above is now
+    # restricted to the TRAIN-only purge-trimmed window (train_dates), so
+    # validation_dates_full is a genuine, never-seen holdout: the old
+    # `history_test = history_validation_full` assignment implied the OOS
+    # cascade's window WAS the validation window incidentally; it is now a
+    # deliberate, correct choice made possible by CPCV no longer touching
+    # validation dates at all.
 
     # Extract unique normalized symphony names from the current bot_state
     symphony_names = set()
@@ -2255,16 +2464,23 @@ def run_autotuner(
         current_params = strat_data.get("params", {})
         original_params = current_params.copy()
 
-        # CPCV Phase 2: pre-compute the C(N,k)=15 fold descriptors and the 5 backtest paths
-        # ONCE per symphony (not inside the trial callback) so the path structure is stable
-        # across all trials and the per-trial cost is exactly _CPCV_N_PATHS simulations.
-        # frozen_dates is the held-out group — it is EXCLUDED from CPCV and consumed once
-        # post-selection as the honest post-selection read (unchanged from the pre-CPCV design).
+        # CPCV Phase 2: pre-compute the C(N,k)=15 fold descriptors ONCE per symphony
+        # (not inside the trial callback) so the fold structure is stable across all
+        # trials. AC-1 (R2, team-lead RULED Option A / split-level scoring —
+        # DECISIONS.md DE-MATH-R2-001): CPCV scores each of the 15 real splits
+        # directly on its own test_dates; the old 5-path aggregation
+        # (_aggregate_cpcv_paths) is retired — canonical CPCV backtest-path
+        # reconstruction is a refit-world construct that always collapses to 5
+        # identical full-window scores in a no-refit codebase (see the retirement
+        # comment above _generate_cpcv_folds).
         #
-        # The CPCV folds cover the non-frozen portion of history: sorted_dates up to (but not
-        # including) the frozen-eval split. The frozen fold is never passed to _generate_cpcv_folds
-        # so it cannot appear in any fold's train_dates or test_dates.
-        _cpcv_eligible_dates = sorted_dates[:frozen_start_idx]
+        # AC-2 (MA-5): the CPCV-eligible window is TRAIN-ONLY — train_dates, the
+        # SAME purge/embargo-trimmed cutoff already computed above for
+        # history_train (effective_train_cutoff = val_start_idx - PURGE_DAYS -
+        # EMBARGO_DAYS) — NOT train+validation combined as before. This makes
+        # validation_dates_full (used below for the OOS adoption cascade) a
+        # genuine, never-seen holdout: CPCV selection never touches it.
+        _cpcv_eligible_dates = sorted(train_dates)
         _cpcv_folds = _generate_cpcv_folds(
             sorted_dates=_cpcv_eligible_dates,
             n_groups=_CPCV_N_GROUPS,
@@ -2272,16 +2488,17 @@ def run_autotuner(
             purge_days=PURGE_DAYS,
             embargo_days=EMBARGO_DAYS,
         )
-        _cpcv_paths = _aggregate_cpcv_paths(_cpcv_folds, n_paths=_CPCV_N_PATHS)
-        # Pre-build per-path history dicts (sliced from history_125d) so the objective
-        # callback does not repeat the set-intersection each trial (pure performance).
-        _cpcv_path_histories: list[dict] = []
-        for _path_dates in _cpcv_paths:
-            _path_date_set = set(_path_dates)
-            _ph: dict = {}
-            for _sid, _sym_data in history_125d.items():
-                _ph[_sid] = {d: t for d, t in _sym_data.items() if d in _path_date_set}
-            _cpcv_path_histories.append(_ph)
+        # The per-symphony CPCV-eligible history — the SAME train-only,
+        # purge-trimmed slice as history_train (built once above, unused
+        # elsewhere). Every one of the 15 splits' calls below shares this ONE
+        # dict (never pre-filtered further to a single split's own dates) so
+        # _replay_resolve_regime_exit_ticks's trailing window sees the FULL
+        # train-only chronology, never a gappy per-split subset (AC-1-adjacent
+        # regime-lookback chronology purity, ADDENDUM 5/6) — the score_dates
+        # kwarg on _collect_sim_returns_dated restricts which dates actually
+        # undergo the expensive per-tick replay per split, decoupling "what
+        # informs the regime label" from "what gets scored".
+        _cpcv_history = history_train
 
         def objective(trial):
             p = current_params.copy()
@@ -2323,80 +2540,90 @@ def run_autotuner(
                 return 0.0
             target_sym_id = acc_sym_ids[0]
 
-            # CPCV aggregate: score this trial on the mean across the _CPCV_N_PATHS paths.
-            # Each path is simulated ONCE per trial (NOT 15 separate Optuna evaluations).
-            # The 15-split expansion is reserved for the Phase-3 PBO gate on the single
-            # BHY-winning config; it must never appear here (15× trial count blowup).
-            # n_optuna / compute_n_effective / BHY are UNTOUCHED — CPCV changes WHAT data
-            # each trial scores on, not HOW MANY tests exist (AC-5 anti-double-count).
-            path_scores: list[float] = []
-            # daily_date_returns / cscv_date_returns: date-labeled unions of per-path
-            # triggered returns. Built as dicts (date -> guard_alpha) via union/update —
-            # NOT via list.extend. Under the current state-independent per-day sim
-            # (autotuner.py:1335 re-inits day_state per day), a given date yields the
-            # SAME guard_alpha in every CPCV path it appears in, so the CPCV paths
-            # overlap on dates (each path covers the full eligible window). A positional
-            # list.extend would therefore store _CPCV_N_PATHS copies of every date's
-            # return — inflating the haircut t-stat T by ~_CPCV_N_PATHS and the t-stat
-            # itself by ~sqrt(_CPCV_N_PATHS) (C2b), making the BHY/Yekutieli FDR gate too
-            # easy to clear. The date-keyed dicts collapse the duplication: exactly one
-            # entry per distinct triggered date, so T == the true distinct-date count.
+            # CPCV: score this trial on the mean across the _CPCV_N_SPLITS=15 real
+            # splits (AC-1, R2: split-level scoring — team-lead RULED Option A).
+            # Each split is scored ONCE per trial (NOT 15 separate Optuna
+            # evaluations — n_optuna / compute_n_effective / BHY are UNTOUCHED;
+            # CPCV changes WHAT data each trial scores on, not HOW MANY tests
+            # exist). _cpcv_history is the SAME train-only per-symphony dict for
+            # every split's call (never pre-filtered to one split's own dates —
+            # see _cpcv_history's construction above); score_dates restricts
+            # which dates actually contribute to THIS split's returns, so the
+            # 15 splits produce genuinely distinct scores (unlike the old
+            # 5-path aggregation, which always collapsed to 5 identical
+            # full-window scores — MA-2).
             #   - daily_date_returns: RAW PERCENT (daily_returns's T5 provenance contract;
-            #     _haircut_select:1493 divides by RETURN_PCT_TO_FRACTION before the U-transform).
+            #     _haircut_select divides by RETURN_PCT_TO_FRACTION before the U-transform).
             #   - cscv_date_returns: DECIMAL (compute_pbo's contract; divided here — C1).
+            # Both are built as dicts (date -> guard_alpha) via union/update — a date
+            # can appear in multiple splits (each group is a test group in
+            # _CPCV_K_TEST_GROUPS-1 x (_CPCV_N_GROUPS-1 choose _CPCV_K_TEST_GROUPS-1)
+            # splits), and every appearance yields the SAME guard_alpha for that date
+            # (state-independent per-day sim, no per-fold refit) — the date-keyed
+            # dicts collapse the duplication to exactly one entry per distinct
+            # triggered date, so T == the true distinct-date count, never inflated
+            # by split multiplicity.
+            split_scores: list[float] = []
             daily_date_returns: dict[str, float] = {}
             cscv_date_returns: dict[str, float] = {}
-            for _path_hist in _cpcv_path_histories:
-                path_returns = _collect_sim_returns(
-                    p, _path_hist, [target_sym_id], current_date_str, deviation_dict
+            for _fold in _cpcv_folds:
+                _split_dates = set(_fold["test_dates"])
+                # _collect_sim_returns_dated (not a separate _collect_sim_returns
+                # call) is the single source of truth for this split's returns —
+                # both the flat score input and the date-labeled union are
+                # derived from the SAME replay pass, avoiding a redundant second
+                # full replay over the split's dates.
+                _dated_returns = _collect_sim_returns_dated(
+                    p,
+                    _cpcv_history,
+                    [target_sym_id],
+                    current_date_str,
+                    deviation_dict,
+                    score_dates=_split_dates,
                 )
-                path_scores.append(
+                _split_returns_pct = [_ga for _d, _ga in _dated_returns]
+                split_scores.append(
                     math_engine.compute_crra_eu_objective(
-                        [r / RETURN_PCT_TO_FRACTION for r in path_returns], _gamma
+                        [r / RETURN_PCT_TO_FRACTION for r in _split_returns_pct], _gamma
                     )
                     if _objective_kind == "crra_eu"
-                    else compute_sortino_ratio(path_returns)
+                    else compute_sortino_ratio(_split_returns_pct)
                 )
-                # Date-labeled unions. Uses _collect_sim_returns_dated (not an inline
-                # return_dates=True call) to avoid conflating the mock boundary: tests
-                # that patch _collect_sim_returns for flat-return assertions must not
-                # intercept the dated-variant call that feeds these dicts.
-                for _date, _ga in _collect_sim_returns_dated(
-                    p, _path_hist, [target_sym_id], current_date_str, deviation_dict
-                ):
+                for _date, _ga in _dated_returns:
                     # daily_returns is RAW PERCENT (T5 provenance) — no divide here.
                     daily_date_returns[_date] = _ga
                     # C1 fix: divide by RETURN_PCT_TO_FRACTION so the stored value is
                     # DECIMAL, matching compute_pbo -> compute_crra_eu_objective's
                     # contract (W = max(WEALTH_ARG_FLOOR, 1 + r)). Mirrors the inline
-                    # path-score divide above. Storing raw percent floored W on any
+                    # split-score divide above. Storing raw percent floored W on any
                     # sub--1% day (U ~= -999), corrupting the PBO IS-best/OOS rank.
                     cscv_date_returns[_date] = _ga / RETURN_PCT_TO_FRACTION
 
             # Persist the per-date-aggregated return series (one entry per distinct
-            # triggered date — NOT _CPCV_N_PATHS copies) so _haircut_select can source
+            # triggered date — NOT _CPCV_N_SPLITS copies) so _haircut_select can source
             # T = len(daily_returns) == the true distinct-date count and re-transform
             # through the active gamma. Raw percent (T5 provenance contract — not U values).
             trial.set_user_attr("daily_returns", list(daily_date_returns.values()))
             # Persist the date-labeled union for the Phase-3 CSCV PBO gate.
-            # Keys are date strings within the CPCV-eligible window (sorted_dates[:frozen_start_idx]).  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
+            # Keys are date strings within the CPCV-eligible window (sorted(train_dates)).
             # Values are DECIMAL guard_alpha returns (raw percent / RETURN_PCT_TO_FRACTION,
             # applied at the store site above — C1 fix). This matches compute_pbo's
             # decimal contract; it does NOT share daily_returns's raw-percent contract.
             trial.set_user_attr("cscv_date_returns", cscv_date_returns)
-            # Persist the per-path CPCV scores so filter_sortino_sentinels can detect a
-            # sentinel path at the PATH-SCORE level. The trial value is the MEAN across
-            # paths; a single sentinel path (1e6) can be masked in the mean when the
-            # other paths are net-negative, so the aggregate value alone is insufficient
-            # to flag a degenerate zero-downside path (Sortino branch only — CRRA-EU
+            # Persist the per-split CPCV scores so filter_sortino_sentinels can detect a
+            # sentinel split at the SPLIT-SCORE level. The trial value is the MEAN across
+            # splits; a single sentinel split (1e6) can be masked in the mean when the
+            # other splits are net-negative, so the aggregate value alone is insufficient
+            # to flag a degenerate zero-downside split (Sortino branch only — CRRA-EU
             # never emits the sentinel).
-            trial.set_user_attr("path_scores", path_scores)
+            trial.set_user_attr("split_scores", split_scores)
 
-            # Trial score: mean across the _CPCV_N_PATHS path scores.
-            # An empty path contributes 0.0 (same fallback as the pre-CPCV single-fold path).
-            if not path_scores:
+            # Trial score: mean across the _CPCV_N_SPLITS split scores.
+            # An empty split-score list contributes 0.0 (same fallback as the
+            # pre-CPCV single-fold path).
+            if not split_scores:
                 return 0.0
-            return sum(path_scores) / len(path_scores)
+            return sum(split_scores) / len(split_scores)
 
         start_time = time.time()
 
@@ -2605,7 +2832,7 @@ def run_autotuner(
         target_sym_id = acc_sym_ids[0] if acc_sym_ids else None
         oos_alpha = -run_simulation(
             best_p,
-            history_test,
+            history_validation_full,
             [target_sym_id] if target_sym_id else [],
             current_date_str,
             deviation_dict,
@@ -2637,7 +2864,7 @@ def run_autotuner(
         fallback_params = current_params.copy()
         fallback_oos_alpha = -run_simulation(
             fallback_params,
-            history_test,
+            history_validation_full,
             [target_sym_id] if target_sym_id else [],
             current_date_str,
             deviation_dict,
@@ -2647,7 +2874,7 @@ def run_autotuner(
         default_params = database.DEFAULT_STRATEGY.copy()
         default_oos_alpha = -run_simulation(
             default_params,
-            history_test,
+            history_validation_full,
             [target_sym_id] if target_sym_id else [],
             current_date_str,
             deviation_dict,
@@ -2683,7 +2910,21 @@ def run_autotuner(
             deviation_dict,
         )
         if _objective_kind == "crra_eu":
-            frozen_eval_sharpe_value = None  # Sortino not applicable to CRRA-EU objective
+            # AC-3 (MA-9): the real CRRA-EU analog of the Sortino branch below —
+            # mirrors run_simulation_crra_eu's own pct->fraction conversion
+            # (RETURN_PCT_TO_FRACTION) + compute_crra_eu_objective call, applied
+            # to the frozen fold instead of a training/validation fold. Sortino
+            # is genuinely inapplicable to a CRRA-EU objective (different
+            # utility metric), but "inapplicable" no longer means "None" — the
+            # frozen fold's 20% data budget must buy a real measurement under
+            # whichever objective actually governs this symphony.
+            frozen_eval_sharpe_value = (
+                math_engine.compute_crra_eu_objective(
+                    [r / RETURN_PCT_TO_FRACTION for r in frozen_eval_returns], _gamma
+                )
+                if frozen_eval_returns
+                else None
+            )
         else:
             frozen_eval_sharpe_value = (
                 compute_sortino_ratio(frozen_eval_returns) if frozen_eval_returns else None
@@ -2711,7 +2952,10 @@ def run_autotuner(
             winner_trial_is_none=(winner_trial is None if haircut_trials else True),
             winner_p_adj=(winner_p_adj if haircut_trials else None),
             nn1_compliant=(d_spec == 0),
-            purge_integrity_ok=True,  # purge invariant enforced at fold-build time above
+            # AC-2 (MA-5): genuinely computed above (val_start_idx -
+            # effective_train_cutoff >= PURGE_DAYS + EMBARGO_DAYS) — no
+            # hardcoded literal.
+            purge_integrity_ok=purge_integrity_ok,
             oos_alpha=oos_alpha,
             fallback_oos_alpha=fallback_oos_alpha,
             default_oos_alpha=default_oos_alpha,
@@ -2831,6 +3075,34 @@ def run_autotuner(
             f"D_spec={d_spec} n_effective={n_eff}"
         )
 
+        # AC-E2 (feature-plans/advisor-weekly-suggestions.md, Workstream E): hoisted
+        # ABOVE save_autotune_run so the accumulated S is persisted into THIS run's
+        # autotune_runs.s_count row.  Previously this query ran only AFTER the save
+        # (feeding solely the in-memory _oc_run dict below), so autotune_runs.s_count
+        # stayed NULL on every row forever — a later run's prior_runs query always
+        # saw None, so overfitting_conscience Indicator-3 (operator drift) could
+        # structurally never fire on live data.  Control-flow reorder only: the
+        # current-run I-1/I-2 S computation and verdict logic in
+        # overfitting_conscience.py are unchanged (it re-derives its own S from
+        # these same ledger rows).
+        # Reads ledger rows via advisor_ro_query (wall integrity contract).
+        _oc_ledger_rows = database.advisor_ro_query(
+            "SELECT evidence_source, n_configs_searched, touched_frozen_eval, "
+            "spec_bundle_id, facet_name FROM researcher_dof_ledger "
+            "WHERE spec_bundle_id = ?",
+            (stored_hash,),
+        )
+        # S = SUM(n_configs_searched) over BACKTEST_SELECTION rows for this run's
+        # bundle — same filter overfitting_conscience.compute_overfitting_conscience_
+        # observation applies to its own matching_rows (I-1/I-2 S accounting).
+        # n_configs_searched is NOT NULL DEFAULT 1 (migration 018) so no None guard
+        # is needed; int() cast mirrors compute_n_effective's defensive style.
+        _s_count_for_persistence = sum(
+            int(_row["n_configs_searched"])
+            for _row in _oc_ledger_rows
+            if _row["evidence_source"] == "BACKTEST_SELECTION"
+        )
+
         # S3-AUDIT-001: capture the inserted row id directly from save_autotune_run
         # (which now returns cursor.lastrowid) — eliminates the read-after-write
         # get_latest_autotune_run dance that raced and always fell back to id=0.
@@ -2852,17 +3124,12 @@ def run_autotuner(
             d_spec=d_spec,
             gamma=_gamma,
             overfitting_verdict=_overfitting_verdict,
+            # AC-E2: hoisted DoF-ledger S sum (see above) — feeds Indicator-3 drift
+            # detection on later runs via the prior_runs query below.
+            s_count=_s_count_for_persistence,
         )
 
         # Sprint 3: Overfitting Conscience — post-save observation.
-        # Reads ledger rows via advisor_ro_query (wall integrity contract);
-        # persists the observation via insert_advisor_observation.
-        _oc_ledger_rows = database.advisor_ro_query(
-            "SELECT evidence_source, n_configs_searched, touched_frozen_eval, "
-            "spec_bundle_id, facet_name FROM researcher_dof_ledger "
-            "WHERE spec_bundle_id = ?",
-            (stored_hash,),
-        )
         _oc_run = {
             "id": _inserted_id,
             "symphony_id": normalized_name,

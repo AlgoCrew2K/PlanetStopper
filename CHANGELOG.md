@@ -25,7 +25,7 @@ Builds **brand-new strategy symphonies from scratch**, shaped to the objective y
 - **Lift risk-adjusted return** — improve Sharpe-family metrics
 - **Volatility mitigation** — dampen intraday swing exposure with inverse-vol or low-vol filters
 
-Claude Opus designs strategies from scratch, proposes its own tickers based on market knowledge, validates each one against the live tradeable US-equity universe (~12,700 symbols via Alpaca), compiles them into valid Composer trees, and runs every candidate through the same BHY/FDR statistical anti-overfit gate that the autotuner uses. Only candidates that clear the gate are surfaced to you. Zero survivors is a valid, non-error outcome — the gate is the point. You apply any survivor in Composer yourself; the Builder never deploys anything on your behalf.
+Claude designs strategies from scratch, proposes its own tickers based on market knowledge, validates each one against the live tradeable US-equity universe (~12,700 symbols via Alpaca), compiles them into valid Composer trees, and runs every candidate through the same BHY/FDR statistical anti-overfit gate that the autotuner uses. Only candidates that clear the gate are surfaced to you. Zero survivors is a valid, non-error outcome — the gate is the point. You apply any survivor in Composer yourself; the Builder never deploys anything on your behalf.
 
 The Builder also runs automatically once per week across all four objectives, accumulating proposals on the Strategy Builder tab for your review.
 

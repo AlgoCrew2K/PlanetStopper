@@ -43,6 +43,7 @@ import json
 import math
 import os
 import re
+import sqlite3
 from datetime import UTC, date
 
 import database
@@ -80,6 +81,36 @@ _MIN_QUANTSTATS_OBSERVATIONS = 2
 # volatility (sqrt-time rule). Matches the 252-day basis quantstats uses in
 # compute_quantstats_metrics' `volatility` key. Source: ux-design-deliverable.md §Change 4.
 _ANNUALIZATION_TRADING_DAYS = 252
+
+# F-008: the 3 if_held_source values reporting.py:generate_eod_snapshot stamps
+# on every trigger since DE-GUARD-ALPHA-SAVED-001 (PR #80). A trigger entry
+# lacking this field (pre-PR-80 capture, e.g. the real 2026-06-22 droplet
+# file) or carrying an unrecognized value is semantically untrustworthy.
+_TRUSTED_IF_HELD_SOURCES = frozenset(
+    {"shadow_history", "shadow_history_post_cutoff", "bot_state_fallback"}
+)
+
+
+# ---------------------------------------------------------------------------
+# is_valid_post_mortem_entry
+# ---------------------------------------------------------------------------
+
+
+def is_valid_post_mortem_entry(entry: object) -> bool:
+    """Return True iff `entry` carries a recognized if_held_source provenance stamp.
+
+    Single source of truth for the F-008 data-integrity guard — every reader
+    of post_mortem_*.json trigger entries (this module's load_post_mortem_history
+    and get_history_summary, plus app.py's guard_alpha_summary) routes through
+    this function so they cannot diverge. Never raises — non-dict input is
+    simply invalid, and a non-string if_held_source (e.g. a corrupted-but-
+    syntactically-valid file stamping a list/dict) is invalid rather than
+    crashing the frozenset membership check on an unhashable type.
+    """
+    if not isinstance(entry, dict):
+        return False
+    value = entry.get("if_held_source")
+    return isinstance(value, str) and value in _TRUSTED_IF_HELD_SOURCES
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +175,8 @@ def load_post_mortem_history(days: int = 60, base_dir: str = ".") -> dict:
         day_entries: dict = {}
         for trig in triggers:
             if not isinstance(trig, dict):
+                continue
+            if not is_valid_post_mortem_entry(trig):
                 continue
             symphony_id = trig.get(_PRODUCER_SYMPHONY_ID)
             if symphony_id is None:
@@ -482,6 +515,7 @@ def get_symphony_today_change(
     bot_state_entry: dict | None,
     trading_day: str | None = None,
     db_path: str | None = None,
+    conn: sqlite3.Connection | None = None,
 ) -> dict:
     """
     Per-symphony Today's Change.
@@ -495,6 +529,9 @@ def get_symphony_today_change(
          row exists — preserves pre-M1F semantics for callers that don't inject trading_day.
     trading_day: override for today; defaults to sym_dict["trading_day"] then today.
     db_path: override DB file path (for tests).
+    conn: F-1 — optional pre-opened read-only connection; reused instead of
+        opening a fresh one, so a per-request caller (e.g. the /api/state
+        per-symphony loop) can share ONE connection across every symphony/metric.
     """
     if_held = float(sym_dict["last_percent_change"]) * 100.0
 
@@ -508,7 +545,7 @@ def get_symphony_today_change(
     dry_run: float | None = None
     if symphony_id:
         _db_file = db_path if db_path is not None else _get_shadow_db_file()
-        row = _load_latest_shadow_row_for_analytics(symphony_id, _trading_day, _db_file)
+        row = _load_latest_shadow_row_for_analytics(symphony_id, _trading_day, _db_file, conn=conn)
         if row is not None:
             dry_run = float(row["shadow_return"])
 
@@ -529,22 +566,39 @@ def _get_shadow_db_file() -> str:
 
 
 def _load_latest_shadow_row_for_analytics(
-    symphony_id: str, trading_day: str, db_file: str
+    symphony_id: str, trading_day: str, db_file: str, conn: sqlite3.Connection | None = None
 ) -> dict | None:
-    """Read the most-recent shadow_history row for (symphony_id, trading_day)."""
-    import sqlite3
+    """Read the most-recent shadow_history row for (symphony_id, trading_day).
 
+    conn: F-1 — optional pre-opened read-only connection; reused instead of
+    opening a fresh connect() per call, so a per-request caller (e.g. the
+    /api/state per-symphony loop) can share ONE connection across every
+    symphony/metric. row_factory is saved and restored around the query
+    (try/finally) so a shared connection is never left mutated for the next
+    caller, even if the query itself raises.
+    """
     try:
-        conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT * FROM shadow_history "
-            "WHERE symphony_id = ? AND trading_day = ? "
-            "ORDER BY ts_utc DESC LIMIT 1",
-            (symphony_id, trading_day),
-        ).fetchone()
-        conn.close()
-        return dict(row) if row is not None else None
+        _owns_conn = conn is None
+        _conn = (
+            conn
+            if conn is not None
+            else sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
+        )
+        _prior_row_factory = _conn.row_factory
+        try:
+            _conn.row_factory = sqlite3.Row
+            row = _conn.execute(
+                "SELECT * FROM shadow_history "
+                "WHERE symphony_id = ? AND trading_day = ? "
+                "ORDER BY ts_utc DESC LIMIT 1",
+                (symphony_id, trading_day),
+            ).fetchone()
+            result = dict(row) if row is not None else None
+        finally:
+            _conn.row_factory = _prior_row_factory
+        if _owns_conn:
+            _conn.close()
+        return result
     except Exception:
         return None
 
@@ -653,7 +707,7 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
 
 
 def _get_shadow_divergence_trajectory(
-    symphony_id: str, db_file: str
+    symphony_id: str, db_file: str, conn: sqlite3.Connection | None = None
 ) -> list[list[tuple[float, float]]] | None:
     """Return the symphony's LIFETIME per-day EOD ``(shadow_return, current_return)``
     pairs GROUPED BY position epoch — the inputs to the EPOCH-ADDITIVE guard-alpha
@@ -692,11 +746,18 @@ def _get_shadow_divergence_trajectory(
 
     Returns None when fewer than 2 distinct trading days exist in total (no recorded
     divergence yet — both series coincide).
-    """
-    import sqlite3
 
+    conn: F-1 — optional pre-opened read-only connection; reused instead of
+    opening a fresh connect() per call (see _load_latest_shadow_row_for_analytics
+    for the shared-connection rationale).
+    """
     try:
-        conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
+        _owns_conn = conn is None
+        _conn = (
+            conn
+            if conn is not None
+            else sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
+        )
         # Lifetime scope: NO position_epoch filter. The MAX(ts_utc) per
         # (symphony_id, trading_day) collapses each day to its EOD row; a trading_day
         # belongs to exactly one epoch, so the cross-epoch series is the ordered
@@ -705,7 +766,7 @@ def _get_shadow_divergence_trajectory(
         # missing position_epoch column (pre-migration DB) raises OperationalError;
         # the fallback query treats the whole history as one legacy epoch.
         try:
-            rows = conn.execute(
+            rows = _conn.execute(
                 "SELECT trading_day, shadow_return, current_return, position_epoch "
                 "FROM shadow_history "
                 "WHERE symphony_id = ? "
@@ -719,7 +780,7 @@ def _get_shadow_divergence_trajectory(
             # Legacy schema with no position_epoch column — one implicit epoch.
             rows = [
                 (r[0], r[1], r[2], None)
-                for r in conn.execute(
+                for r in _conn.execute(
                     "SELECT trading_day, shadow_return, current_return "
                     "FROM shadow_history "
                     "WHERE symphony_id = ? "
@@ -730,7 +791,8 @@ def _get_shadow_divergence_trajectory(
                     (symphony_id,),
                 ).fetchall()
             ]
-        conn.close()
+        if _owns_conn:
+            _conn.close()
     except Exception:
         return None
 
@@ -756,6 +818,7 @@ def get_symphony_cumulative_return(
     bot_state_entry: dict | None,
     trading_day: str | None = None,
     db_path: str | None = None,
+    conn: sqlite3.Connection | None = None,
 ) -> dict:
     """
     Per-symphony Cumulative Return.
@@ -785,6 +848,10 @@ def get_symphony_cumulative_return(
     exclude the symphony from the portfolio VW aggregate (F4 / CA-3 fix): the TWR
     fallback is defensible per-card but a 318% outlier pollutes the portfolio figure.
     Per-symphony if_held is still the correct TWR*100 value for the card display.
+
+    conn: F-1 — optional pre-opened read-only connection; reused instead of
+    opening a fresh connect() per call (see _load_latest_shadow_row_for_analytics
+    for the shared-connection rationale).
     """
     if sym_dict.get("simple_return") is None:
         return {"if_held": None, "dry_run": None}
@@ -803,7 +870,7 @@ def get_symphony_cumulative_return(
     dry_run: float = if_held
     if symphony_id:
         _db_file = db_path if db_path is not None else _get_shadow_db_file()
-        trajectory = _get_shadow_divergence_trajectory(symphony_id, _db_file)
+        trajectory = _get_shadow_divergence_trajectory(symphony_id, _db_file, conn=conn)
         if trajectory is not None:
             # Lifetime guard alpha = EPOCH-ADDITIVE sum of each epoch's own divergence
             # (semantic B). Each epoch's divergence is computed in its OWN frame
@@ -829,6 +896,7 @@ def get_symphony_max_drawdown(
     bot_state_entry: dict | None,
     trading_day: str | None = None,
     db_path: str | None = None,
+    conn: sqlite3.Connection | None = None,
 ) -> dict:
     """
     Per-symphony Max Drawdown.
@@ -850,6 +918,10 @@ def get_symphony_max_drawdown(
              (AC-M1F.3.5).
 
     Returns {"if_held": None, "dry_run": None} when max_drawdown is None (missing data).
+
+    conn: F-1 — optional pre-opened read-only connection; reused instead of
+    opening a fresh connect() per call (see _load_latest_shadow_row_for_analytics
+    for the shared-connection rationale).
     """
     if sym_dict.get("max_drawdown") is None:
         return {"if_held": None, "dry_run": None}
@@ -860,7 +932,7 @@ def get_symphony_max_drawdown(
     dry_run: float | None = None
     if symphony_id:
         _db_file = db_path if db_path is not None else _get_shadow_db_file()
-        trajectory = _get_shadow_divergence_trajectory(symphony_id, _db_file)
+        trajectory = _get_shadow_divergence_trajectory(symphony_id, _db_file, conn=conn)
         if trajectory is not None:
             # Build the bot's EPOCH-ADDITIVE divergence equity series, then
             # peak-to-trough (semantic B). Divergence accrues within each epoch from
@@ -916,6 +988,11 @@ def _value_weighted_portfolio(
     missing data — used by CR and MDD where 0.0 is ambiguous with real zero.
     When none_on_empty=False (default): returns {"if_held": 0.0, "dry_run": 0.0}
     — used by TC where 0.0 is semantically correct for no-data.
+
+    **kwargs (trading_day/db_path/conn) pass straight through to per_sym_fn on
+    every iteration below — F-1: a caller-supplied conn is forwarded to EVERY
+    symphony in this loop, so the whole portfolio aggregate shares ONE
+    connection instead of opening one per symphony.
     """
     total_weight = 0.0
     if_held_wsum = 0.0
@@ -969,14 +1046,21 @@ def get_portfolio_today_change(
     *,
     trading_day: str | None = None,
     db_path: str | None = None,
+    conn: sqlite3.Connection | None = None,
 ) -> dict:
-    """Value-weighted portfolio Today's Change across all symphonies."""
+    """Value-weighted portfolio Today's Change across all symphonies.
+
+    conn: F-1 — optional pre-opened read-only connection, forwarded to the
+    per-symphony get_symphony_today_change call inside _value_weighted_portfolio's
+    loop so all symphonies share ONE connection instead of one each.
+    """
     return _value_weighted_portfolio(
         symphonies,
         bot_state,
         get_symphony_today_change,
         trading_day=trading_day,
         db_path=db_path,
+        conn=conn,
     )
 
 
@@ -986,8 +1070,13 @@ def get_portfolio_cumulative_return(
     *,
     trading_day: str | None = None,
     db_path: str | None = None,
+    conn: sqlite3.Connection | None = None,
 ) -> dict:
-    """Value-weighted portfolio Cumulative Return across all symphonies."""
+    """Value-weighted portfolio Cumulative Return across all symphonies.
+
+    conn: F-1 — optional pre-opened read-only connection (see
+    get_portfolio_today_change for the shared-connection rationale).
+    """
     return _value_weighted_portfolio(
         symphonies,
         bot_state,
@@ -995,6 +1084,7 @@ def get_portfolio_cumulative_return(
         none_on_empty=True,
         trading_day=trading_day,
         db_path=db_path,
+        conn=conn,
     )
 
 
@@ -1004,8 +1094,13 @@ def get_portfolio_max_drawdown(
     *,
     trading_day: str | None = None,
     db_path: str | None = None,
+    conn: sqlite3.Connection | None = None,
 ) -> dict:
-    """Value-weighted portfolio Max Drawdown across all symphonies."""
+    """Value-weighted portfolio Max Drawdown across all symphonies.
+
+    conn: F-1 — optional pre-opened read-only connection (see
+    get_portfolio_today_change for the shared-connection rationale).
+    """
     return _value_weighted_portfolio(
         symphonies,
         bot_state,
@@ -1013,6 +1108,7 @@ def get_portfolio_max_drawdown(
         none_on_empty=True,
         trading_day=trading_day,
         db_path=db_path,
+        conn=conn,
     )
 
 
@@ -1196,6 +1292,33 @@ def get_history_with_cache_invalidation(days: int = 60, base_dir: str = ".") -> 
     return data
 
 
+def _load_position_value_weights() -> dict[str, float]:
+    """Per-symphony position values from bot_state ``current_value`` — the genuine
+    value-weight source for the canonical portfolio series (audit Finding 6: the
+    prior abs(current_return) "value-weight proxy" let the day's biggest movers
+    dominate, exaggerating portfolio levels ~4x).
+
+    Only positive finite values participate. An empty dict means "no position
+    values available" (day-1 droplet) and the caller degrades to EQUAL weight —
+    never back to the abs-return proxy.
+    """
+    try:
+        state = database.load_state()
+    except Exception:
+        return {}
+    weights: dict[str, float] = {}
+    for sym_id, entry in (state or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        try:
+            value = float(entry.get("current_value"))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value) and value > 0.0:
+            weights[sym_id] = value
+    return weights
+
+
 def get_portfolio_daily_returns_from_shadow(
     db_file: str | None = None,
     days: int = 125,
@@ -1203,10 +1326,11 @@ def get_portfolio_daily_returns_from_shadow(
     """Build a continuous portfolio-level daily return series from shadow_history.
 
     Aggregates per-symphony shadow_return values for each trading day using the
-    last row per (symphony_id, trading_day). Value-weights by current_return proxy
-    (equal-weight fallback when current_return is 0 or unavailable). Returns
-    (dates_sorted_ascending, portfolio_daily_returns) or None when fewer than 2
-    distinct trading days exist — callers should fall back to post_mortem data.
+    last row per (symphony_id, trading_day). Value-weights by bot_state
+    ``current_value`` (equal-weight fallback when no position values exist).
+    Returns (dates_sorted_ascending, portfolio_daily_returns) or None when fewer
+    than 2 distinct trading days exist — callers should fall back to post_mortem
+    data.
 
     This is the correct source for the hero chart hist series: it is continuous
     (written every cycle for every tracked symphony, not only on exit days), so its
@@ -1247,15 +1371,20 @@ def get_portfolio_daily_returns_from_shadow(
     if len(sorted_days) < 2:
         return None
 
+    value_weights = _load_position_value_weights()
+
     out_dates: list[str] = []
     out_returns: list[float] = []
     for day in sorted_days:
         entries = day_map[day]
         weight_sum = 0.0
         ret_wsum = 0.0
-        for sym_ret, sym_cr in entries.values():
-            # Use absolute current_return as weight proxy; fall back to equal-weight.
-            w = abs(sym_cr) if sym_cr != 0.0 else 1.0
+        for sym_id, (sym_ret, _sym_cr) in entries.items():
+            # Genuine value-weight from bot_state current_value; EQUAL weight when
+            # no position values exist — never the abs(return) proxy (Finding 6).
+            w = value_weights.get(sym_id, 0.0) if value_weights else 1.0
+            if w <= 0.0:
+                continue
             weight_sum += w
             ret_wsum += sym_ret * w
         if weight_sum > 0.0:
@@ -1284,9 +1413,10 @@ def get_portfolio_bot_and_held_daily_returns(
     Per day, using the last row per (symphony_id, trading_day):
       - Bot  = value-weighted ``shadow_return``  (the guard's series — frozen at exit)
       - Held = value-weighted ``current_return`` (the if-held baseline — kept holding)
-    BOTH series use the SAME per-symphony weight that day (``abs(current_return)``
-    proxy, equal-weight fallback) so Bot and Held are commensurable and their
-    difference is a real guard effect, not a re-weighting artefact. For an
+    BOTH series use the SAME per-symphony weight (bot_state ``current_value``;
+    equal-weight fallback when no position values exist) so Bot and Held are
+    commensurable and their difference is a real guard effect, not a
+    re-weighting artefact. For an
     untriggered symphony shadow_return == current_return, so its Bot and Held
     contributions coincide; an all-untriggered day yields bot == held EXACTLY (no
     fabricated divergence).
@@ -1341,6 +1471,8 @@ def get_portfolio_bot_and_held_daily_returns(
     if len(sorted_days) < 2:
         return None
 
+    value_weights = _load_position_value_weights()
+
     out_dates: list[str] = []
     bot_returns: list[float] = []
     held_returns: list[float] = []
@@ -1349,10 +1481,13 @@ def get_portfolio_bot_and_held_daily_returns(
         weight_sum = 0.0
         bot_wsum = 0.0
         held_wsum = 0.0
-        for sym_ret, sym_cr in entries.values():
-            # ONE weight per symphony/day (abs current_return proxy, equal-weight
-            # fallback), applied to BOTH series so Bot and Held stay commensurable.
-            w = abs(sym_cr) if sym_cr != 0.0 else 1.0
+        for sym_id, (sym_ret, sym_cr) in entries.items():
+            # ONE weight per symphony (bot_state current_value; equal-weight when
+            # no position values exist — never the abs(return) proxy, Finding 6),
+            # applied to BOTH series so Bot and Held stay commensurable.
+            w = value_weights.get(sym_id, 0.0) if value_weights else 1.0
+            if w <= 0.0:
+                continue
             weight_sum += w
             bot_wsum += sym_ret * w
             held_wsum += sym_cr * w
@@ -1360,6 +1495,86 @@ def get_portfolio_bot_and_held_daily_returns(
             out_dates.append(day)
             bot_returns.append(bot_wsum / weight_sum)
             held_returns.append(held_wsum / weight_sum)
+
+    if len(out_dates) < 2:
+        return None
+
+    return out_dates, bot_returns, held_returns
+
+
+def get_symphony_bot_and_held_daily_returns(
+    symphony_id: str,
+    db_file: str | None = None,
+    days: int | None = 125,
+) -> tuple[list[str], list[float], list[float]] | None:
+    """Per-symphony analogue of ``get_portfolio_bot_and_held_daily_returns`` — the
+    canonical CONTINUOUS shadow_history series for ONE symphony (AC-3 / MA-6 /
+    MAPERF-01).
+
+    Fix direction: ``/api/performance?scope=symphony`` was sourcing its series from
+    ``compute_per_symphony_returns`` over post-mortem trigger arrays — a selection-
+    biased event sample containing ONLY the days the symphony triggered (every
+    zero-trigger day silently absent). ``compute_quantstats_metrics`` then placed
+    those K trigger-day observations on a synthetic CONSECUTIVE daily index and
+    annualized as if they were K consecutive trading days (a 4-trigger sample
+    averaging ~0.45%/day annualizing to ~209.8% CAGR). This function instead reads
+    the last row per (symphony_id, trading_day) from shadow_history directly — the
+    same source class the aggregate scope uses (Finding 4) — so every trading day
+    the symphony has a shadow_history row appears, triggered or not.
+
+    NOT epoch-scoped: like its portfolio sibling, this is the continuous per-day
+    series for risk-metric computation, distinct from the epoch-additive guard-alpha
+    trajectory (``compute_windowed_symphony_guard_alpha`` et al.) used by the
+    History tab / windowed strip, which remains untouched.
+
+    Per day: Bot = ``shadow_return``, Held = ``current_return`` (no weighting needed
+    — a single symphony contributes to itself).
+
+    Args:
+        symphony_id: the symphony to read.
+        db_file: shadow DB path override (tests); defaults to the live shadow DB.
+        days:    cap on the most recent trading days to include. ``None`` = all
+                 history.
+
+    Returns:
+        (dates_ascending, bot_daily_returns_pct, held_daily_returns_pct), or None
+        when fewer than 2 distinct trading days exist for this symphony (mirrors
+        the aggregate function's floor — the route's own honest-empty-state path
+        takes over below that).
+    """
+    import sqlite3
+
+    _db_file = db_file if db_file is not None else _get_shadow_db_file()
+    try:
+        conn = sqlite3.connect(f"file:{_db_file}?mode=ro", uri=True, timeout=10.0)
+        rows = conn.execute(
+            "SELECT trading_day, shadow_return, current_return "
+            "FROM shadow_history "
+            "WHERE symphony_id = ? "
+            "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+            "                WHERE s2.symphony_id = shadow_history.symphony_id "
+            "                  AND s2.trading_day = shadow_history.trading_day) "
+            "ORDER BY trading_day ASC",
+            (symphony_id,),
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return None
+
+    if not rows:
+        return None
+
+    all_dates = [r[0] for r in rows]
+    all_bot = [float(r[1]) if r[1] is not None else 0.0 for r in rows]
+    all_held = [float(r[2]) if r[2] is not None else 0.0 for r in rows]
+
+    # Keep the most recent `days` trading days (all history when days is None).
+    if days is None:
+        out_dates, bot_returns, held_returns = all_dates, all_bot, all_held
+    else:
+        out_dates = all_dates[-days:]
+        bot_returns = all_bot[-days:]
+        held_returns = all_held[-days:]
 
     if len(out_dates) < 2:
         return None
@@ -1387,7 +1602,7 @@ def get_single_day_shadow_returns(
     try:
         conn = sqlite3.connect(f"file:{_db_file}?mode=ro", uri=True, timeout=10.0)
         rows = conn.execute(
-            "SELECT trading_day, shadow_return, current_return "
+            "SELECT trading_day, symphony_id, shadow_return, current_return "
             "FROM shadow_history "
             "WHERE ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
             "                WHERE s2.symphony_id = shadow_history.symphony_id "
@@ -1401,17 +1616,21 @@ def get_single_day_shadow_returns(
     if not rows:
         return None
 
-    # Use the latest trading_day only; value-weight by abs(current_return).
+    # Use the latest trading_day only; same weight policy as the multi-day series
+    # (bot_state current_value, equal-weight fallback — never the abs proxy).
     latest_day = rows[0][0]
     day_rows = [r for r in rows if r[0] == latest_day]
+    value_weights = _load_position_value_weights()
 
     weight_sum = 0.0
     bot_wsum = 0.0
     held_wsum = 0.0
-    for _day, shadow_ret, cur_ret in day_rows:
+    for _day, sym_id, shadow_ret, cur_ret in day_rows:
         shadow_f = float(shadow_ret) if shadow_ret is not None else 0.0
         cur_f = float(cur_ret) if cur_ret is not None else 0.0
-        w = abs(cur_f) if cur_f != 0.0 else 1.0
+        w = value_weights.get(sym_id, 0.0) if value_weights else 1.0
+        if w <= 0.0:
+            continue
         weight_sum += w
         bot_wsum += shadow_f * w
         held_wsum += cur_f * w
@@ -1462,7 +1681,7 @@ def _window_cutoff_date(window: object) -> date | None:
 
 
 def _get_windowed_divergence_trajectory(
-    symphony_id: str, db_file: str, window: object
+    symphony_id: str, db_file: str, window: object, conn: sqlite3.Connection | None = None
 ) -> list[list[tuple[float, float]]] | None:
     """Like ``_get_shadow_divergence_trajectory`` (lifetime, epoch-grouped) but filtered
     to the rows whose trading_day falls within ``window`` (W1 slice-then-regroup).
@@ -1473,13 +1692,20 @@ def _get_windowed_divergence_trajectory(
     identical to the lifetime trajectory (the consistency anchor with AC-1).
 
     Returns None when fewer than 2 in-window trading days exist.
-    """
-    import sqlite3
 
+    conn: F-1 — optional pre-opened read-only connection; reused instead of
+    opening a fresh connect() per call (see _load_latest_shadow_row_for_analytics
+    for the shared-connection rationale).
+    """
     cutoff = _window_cutoff_date(window)
     try:
-        conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
-        rows = conn.execute(
+        _owns_conn = conn is None
+        _conn = (
+            conn
+            if conn is not None
+            else sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
+        )
+        rows = _conn.execute(
             "SELECT trading_day, shadow_return, current_return, position_epoch "
             "FROM shadow_history sh "
             "WHERE symphony_id = ? "
@@ -1489,7 +1715,8 @@ def _get_windowed_divergence_trajectory(
             "ORDER BY trading_day ASC",
             (symphony_id,),
         ).fetchall()
-        conn.close()
+        if _owns_conn:
+            _conn.close()
     except Exception:
         return None
 
@@ -1531,23 +1758,32 @@ def compute_windowed_symphony_guard_alpha(
     *,
     window: object,
     db_path: str | None = None,
+    conn: sqlite3.Connection | None = None,
 ) -> float | None:
     """Per-symphony guard alpha (dry_run − if_held) over a SELECTABLE window (AC-3).
 
     The guard alpha IS the epoch-additive divergence (dry_run − if_held cancels the
     if_held baseline), so this is the window-sliced, epoch-regrouped, epoch-additive
     sum. window="all" reproduces the AC-1 lifetime guard alpha EXACTLY. Untriggered
-    symphonies (shadow == current) yield 0.0 on every window. Returns None when the
-    symphony has no id (cannot read shadow history); 0.0 when the window has < 2 days
-    of recorded divergence (no recorded guard effect in the window).
+    symphonies (shadow == current) yield a genuinely-computed 0.0 on every window.
+    Returns None when the symphony has no id (cannot read shadow history) OR when
+    the window has < 2 days of recorded divergence — the deliberate conservatism
+    floor in ``_get_windowed_divergence_trajectory`` (AC-8b: this is an "unknown,
+    insufficient data" state, not a computed zero; the floor itself is unchanged,
+    only its return encoding — collapsing both cases into a fabricated 0.0 made
+    the two indistinguishable to callers, which silently withheld the day-1
+    intraday fallback even when a thin window held a REAL divergence).
+
+    conn: F-1 — optional pre-opened read-only connection (see
+    _load_latest_shadow_row_for_analytics for the shared-connection rationale).
     """
     symphony_id = sym_dict.get("id")
     if not symphony_id:
         return None
     _db_file = db_path if db_path is not None else _get_shadow_db_file()
-    trajectory = _get_windowed_divergence_trajectory(symphony_id, _db_file, window)
+    trajectory = _get_windowed_divergence_trajectory(symphony_id, _db_file, window, conn=conn)
     if trajectory is None:
-        return 0.0
+        return None
     return _epoch_additive_divergence(trajectory)
 
 
@@ -1557,6 +1793,7 @@ def compute_windowed_portfolio_strip(
     *,
     window: object,
     db_path: str | None = None,
+    conn: sqlite3.Connection | None = None,
 ) -> dict:
     """Recompute the hero comparison strip FOR a selectable window (AC-3).
 
@@ -1580,19 +1817,24 @@ def compute_windowed_portfolio_strip(
 
     F7 vol gate: vol_bot/vol_held are None and insufficient_history is True when the
     window's trading-day count is below _WINDOWED_VOL_MIN_DAYS (Bailey/de-Prado floor).
+
+    conn: F-1 — optional pre-opened read-only connection, forwarded to every
+    per-symphony call below (the 3 portfolio helpers plus the windowed
+    guard-alpha loop) so the whole windowed strip shares ONE connection
+    instead of opening one per symphony per helper.
     """
     _db_file = db_path if db_path is not None else _get_shadow_db_file()
 
     # CR / MDD / TC reuse the existing per-symphony helpers via VW aggregation. The
     # windowed guard alpha is added to the (window-independent) if_held baseline so the
     # picker re-windows only the guard EFFECT, never the Composer lifetime anchor.
-    cr = get_portfolio_cumulative_return(symphonies, bot_state, db_path=_db_file)
-    mdd = get_portfolio_max_drawdown(symphonies, bot_state, db_path=_db_file)
+    cr = get_portfolio_cumulative_return(symphonies, bot_state, db_path=_db_file, conn=conn)
+    mdd = get_portfolio_max_drawdown(symphonies, bot_state, db_path=_db_file, conn=conn)
     # today_change is window-independent (today only). It needs last_percent_change,
     # which the live route supplies but a minimal caller may omit; degrade to a null
     # strip entry rather than failing the whole windowed strip.
     try:
-        tc = get_portfolio_today_change(symphonies, bot_state, db_path=_db_file)
+        tc = get_portfolio_today_change(symphonies, bot_state, db_path=_db_file, conn=conn)
     except (KeyError, TypeError, ValueError):
         tc = {"dry_run": None, "if_held": None}
 
@@ -1608,9 +1850,19 @@ def compute_windowed_portfolio_strip(
             continue
         if not (math.isfinite(w) and w > 0.0):
             continue
+        # F-018: exclude the TWR-fallback symphony (zero-deposit, simple_return==0.0)
+        # from this value-weighted average -- the SAME exclusion condition
+        # get_symphony_cumulative_return checks (analytics.py:826) to set
+        # _twr_fallback and exclude it from _value_weighted_portfolio's if_held
+        # aggregate (the shipped F4 fix). windowed_alpha's if_held anchor already
+        # excludes it via that path; without the same exclusion here, this loop's
+        # own average mixes a different symphony population onto one basis,
+        # understating the windowed guard-alpha headline.
+        if sym.get("simple_return") == 0.0 and sym.get("net_deposits") == 0.0:
+            continue
         entry = bot_state.get(sym.get("id"))
         sym_alpha = compute_windowed_symphony_guard_alpha(
-            sym, entry, window=window, db_path=_db_file
+            sym, entry, window=window, db_path=_db_file, conn=conn
         )
         if sym_alpha is None:
             continue
@@ -1679,6 +1931,10 @@ def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
         "by_reason": {},
     }
     daily_map: dict = {}
+    # F-020: per-day exit grouping — a pure reshape of the same per-trigger
+    # fields already parsed below (symphony_id/exit_reason/detail), keyed by
+    # the same date_part daily_map already uses. No new computation.
+    daily_exits_map: dict = {}
 
     for f_path in files:
         try:
@@ -1689,7 +1945,10 @@ def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
             with open(f_path, encoding="utf-8") as fh:
                 data = _json.load(fh)
             day_alpha = 0.0
+            day_exits: list = []
             for t in data.get("triggers", []):
+                if not is_valid_post_mortem_entry(t):
+                    continue
                 alpha = t.get("saved_pct_guard_alpha", 0.0)
                 dollars = t.get("saved_dollars", 0.0)
                 reason = t.get("exit_reason", "Unknown")
@@ -1707,7 +1966,21 @@ def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
                 br["dollars"] += dollars
                 if alpha > 0:
                     br["wins"] += 1
+                day_exits.append(
+                    {
+                        "symphony_id": t.get("symphony_id", ""),
+                        "reason": reason,
+                        "detail": t.get("detail", alpha),
+                        # Same sourcing as the todays_exits path below (Finding 11) —
+                        # zero new I/O, same `t` dict, same loop iteration.
+                        "time_triggered": t.get("time_triggered")
+                        or t.get("timestamp")
+                        or t.get("ts", ""),
+                    }
+                )
             daily_map[date_part] = daily_map.get(date_part, 0.0) + day_alpha
+            if day_exits:
+                daily_exits_map[date_part] = daily_exits_map.get(date_part, []) + day_exits
         except Exception:
             continue
 
@@ -1719,6 +1992,11 @@ def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
         stats["win_rate"] = 0.0
 
     stats["daily_alpha"] = [daily_map[d] for d in sorted(daily_map)]
+    # AC-3a/AC-3b (F-020): parallel dates array (same sort order as daily_alpha
+    # above) + per-day exit grouping, sourced from the SAME already-computed
+    # daily_map keys / per-trigger fields — zero new math.
+    stats["daily_dates"] = sorted(daily_map)
+    stats["daily_exits"] = daily_exits_map
 
     today_str = _date.today().isoformat()
     today_file = os.path.join(base_dir, "post_mortem_" + today_str + ".json")
@@ -1746,7 +2024,10 @@ def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
             sym_name = _name_map.get(sym_id) or t.get("symphony_name") or sym_id
             todays_exits.append(
                 {
-                    "ts": t.get("timestamp", t.get("ts", "")),
+                    # Finding 11: the producer writes the trigger time as
+                    # time_triggered (reporting.py) — timestamp/ts never existed,
+                    # so the Time column rendered an em-dash even on this path.
+                    "ts": t.get("time_triggered") or t.get("timestamp") or t.get("ts", ""),
                     "symphony_id": sym_id,
                     "symphony_name": sym_name,
                     "reason": t.get("exit_reason", t.get("reason", "")),

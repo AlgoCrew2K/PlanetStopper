@@ -56,11 +56,12 @@ def _already_ran_this_week() -> bool:
 
         # Fetch recent STRATEGY_BUILDER observations — we only need to check
         # whether any row exists from this ISO week.
-        rows = database.get_advisor_observations_for_symphony(
-            symphony_id="",
-            advisor_role="STRATEGY_BUILDER",
-            limit=50,
-        )
+        # AC-A1: the real signature is get_advisor_observations_for_role(advisor_role,
+        # limit) (database.py:1133) — the prior get_advisor_observations_for_symphony(
+        # symphony_id=..., advisor_role=..., limit=...) call raised TypeError (that
+        # function takes only symphony_id), silently swallowed by the outer except
+        # below, so the dedup guard always degraded to False.
+        rows = database.get_advisor_observations_for_role("STRATEGY_BUILDER", limit=50)
 
         for row in rows:
             created_at = row.get("created_at") or row.get("timestamp") or ""
@@ -100,13 +101,19 @@ def _already_ran_this_week() -> bool:
 
 
 def run_weekly_build() -> None:
-    """Run the real builder for all four objectives; skip if already ran this week.
+    """Run the real builder for all four objectives, then the Frontrunner
+    Builder over all live symphonies; skip if already ran this week.
 
     Orchestration contract:
       1. Idempotency check: if _already_ran_this_week() → log + return (no-op).
       2. For each of the four objectives: call propose_strategies; on any failure
          log type(exc).__name__ only (D-1) and continue to the next objective.
-      3. Never raises (D-1).
+      3. Run the Frontrunner Builder (advisors.frontrunner_builder.run_frontrunner_build)
+         over ALL live symphonies (feature-plans/frontrunner-builder.md AC-1). This
+         call NEVER creates a Composer symphony directly — accepted candidates are
+         only queued for operator approval (frontrunner_proposals table); the actual
+         Composer create happens exclusively via the operator-driven /approve route.
+      4. Never raises (D-1).
     """
     try:
         # CC-2 lazy imports — off-execution-path.
@@ -159,6 +166,10 @@ def run_weekly_build() -> None:
                     screen_config=ScreenConfig(),
                     live_returns=[],
                     community_candidates=community_candidates,
+                    # F-030: attribute every advisory-DB write from this call
+                    # to the weekly scheduler, distinct from the on-demand
+                    # HTTP route and a direct engine call.
+                    invocation_source="weekly-scheduler",
                 )
                 logger.info("strategy_builder_scheduler: objective=%s completed", objective.value)
                 break  # success — no retry needed
@@ -177,6 +188,21 @@ def run_weekly_build() -> None:
                         MAX_ATTEMPTS,
                     )
                     # D-1: do NOT re-raise — continue to the next objective.
+
+    # AC-1: run the Frontrunner Builder over all live symphonies. Isolated in
+    # its own try/except so a failure here never blocks/aborts the objective
+    # loop above (which already completed) — same D-1 per-phase isolation
+    # pattern used for the Atlas load above.
+    try:
+        import advisors.frontrunner_builder as _fbld  # noqa: PLC0415
+
+        logger.info("strategy_builder_scheduler: starting frontrunner build")
+        _fbld.run_frontrunner_build()
+        logger.info("strategy_builder_scheduler: frontrunner build complete")
+    except Exception as exc:
+        logger.warning(
+            "strategy_builder_scheduler: frontrunner build failed (%s)", type(exc).__name__
+        )
 
     logger.info("strategy_builder_scheduler: weekly build complete")
 

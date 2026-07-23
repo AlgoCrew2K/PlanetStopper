@@ -23,7 +23,7 @@
 --                     never in memory. Schema-ready now; consumed by P2.
 --
 -- Apply via:
---   sqlite3 alphabot_state.db < migrations/033_sleeves.sql
+--   sqlite3 alphabot_state.db < migrations/035_sleeves.sql
 
 CREATE TABLE IF NOT EXISTS sleeves (
     id            INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,

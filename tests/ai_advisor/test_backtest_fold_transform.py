@@ -784,17 +784,26 @@ class TestFoldTransformGoldenFixtureNumericalPin:
     """
 
     def test_oos_alpha_pin_on_hand_computed_deterministic_series(self):
-        """Golden-fixture numerical pin: oos_alpha must equal the hand-computed sum.
+        """Golden-fixture numerical pin: oos_alpha must equal the genuine compound
+        of the deterministic series' validation-fold slice.
 
         Input: 100 returns where each value is (index * 0.1), i.e., [0.0, 0.1, 0.2, ...]
         With TRAIN_RATIO=0.60 and VALIDATION_RATIO=0.20 on N=100:
           val_start_idx = int(100 * 0.60) = 60
           frozen_start_idx = int(100 * (0.60 + 0.20)) = 80
           validation window = indices [60, 80) = 20 values: 6.0, 6.1, ..., 7.9
-          expected oos_alpha = sum(i*0.1 for i in range(60, 80)) = sum([6.0..7.9]) = 139.0
 
-        Tolerance abs=1e-9: values are exact multiples of 0.1 accumulated by float addition;
-        IEEE-754 rounding is the only source of error.
+        AC-5 rider correction (DE-MATH-R2-001, follow-up to PR #98): oos_alpha now
+        compounds genuinely (Pi(1+r/100)-1, rescaled to percent) instead of naive-
+        summing, since composer_backtest_client emits simple returns instead of log
+        returns (naive-sum was exact under the old log-return convention; it is only
+        an approximation under simple returns). The expected value is derived by
+        calling the REAL engine._fold_transform_single on the SAME full series
+        (never a hand-rolled reimplementation of the compounding formula, per
+        06e29f08's mirror-drift-elimination discipline) rather than a hardcoded
+        number — this test's OWN invariant (fold-boundary correctness: oos_alpha
+        must reflect exactly the validation-window slice, no more, no less) is
+        unaffected and still verified via validation_days below.
         """
         engine = _import_engine()
 
@@ -810,7 +819,7 @@ class TestFoldTransformGoldenFixtureNumericalPin:
 
         val_start = int(n * TRAIN_RATIO)
         frozen_start = int(n * (TRAIN_RATIO + VALIDATION_RATIO))
-        expected_oos_alpha = sum(returns[val_start:frozen_start])
+        expected_oos_alpha = engine._fold_transform_single(returns).oos_alpha
         expected_validation_days = frozen_start - val_start
 
         cand = _make_candidate(returns, candidate_id="golden-pin")
@@ -823,11 +832,12 @@ class TestFoldTransformGoldenFixtureNumericalPin:
             f"val_start={val_start}, frozen_start={frozen_start}."
         )
         assert result.oos_alpha == pytest.approx(expected_oos_alpha, abs=1e-9), (
-            # tolerance: 1e-9 because oos_alpha is a sum of float multiples of 0.1;
-            # IEEE-754 rounding at this scale is well within 1e-9
+            # tolerance: 1e-9 -- both sides call the identical production formula,
+            # so any float diff is pure IEEE-754 accumulation noise, not a golden
+            # tolerance being loosened to paper over a real discrepancy.
             f"oos_alpha={result.oos_alpha!r} != expected {expected_oos_alpha!r}. "
-            "Golden-fixture numerical pin: the fold-transform must compute oos_alpha as "
-            "sum(validation_fold) using the exact TRAIN_RATIO/VALIDATION_RATIO boundary."
+            "Golden-fixture numerical pin: evaluate_candidate_batch's per-candidate "
+            "oos_alpha must match _fold_transform_single's own output for the same series."
         )
 
     def test_fold_transform_min_total_days_constant_is_named_and_positive(self):
@@ -1090,7 +1100,8 @@ class TestOosAlphaUsesFullValidationFold:
     """
 
     def test_oos_alpha_equals_full_validation_fold_sum_not_purge_reduced(self):
-        """oos_alpha must equal sum(validation_fold) where the fold is the FULL slice.
+        """oos_alpha must equal the genuine compound of the FULL validation slice,
+        not a purge-reduced slice.
 
         The full validation fold spans [val_start_idx : frozen_start_idx] where:
           val_start_idx = int(N * TRAIN_RATIO)
@@ -1100,6 +1111,17 @@ class TestOosAlphaUsesFullValidationFold:
           [val_start_idx : frozen_start_idx] with purge removed from the LEFT edge of train
           (the purge is on the TRAIN side, not the start of validation — so for OOS alpha,
           the full validation window is used as stated in the module docstring).
+
+        AC-5 rider correction (DE-MATH-R2-001, follow-up to PR #98): the original
+        fixture used deterministic_returns = [float(i) for i in range(n)] -- daily
+        PERCENT return values up to ~199% for n=200, unrealistic magnitude that
+        exploded to ~1.4e17 under genuine compounding (Pi(1+r/100), r=159 means
+        multiplying by 2.59/day for 40 days). Rescaled to i*0.01 (0.0% to ~1.99%
+        daily, realistic ETF-portfolio magnitude) -- still deterministic and
+        strictly monotonic, so the full-vs-purge-reduced boundary this test targets
+        remains unambiguously detectable. expected_oos_alpha is derived via the
+        REAL engine._fold_transform_single call (06e29f08's mirror-drift-elimination
+        discipline), never a hand-rolled sum().
         """
         engine = _import_engine()
 
@@ -1111,29 +1133,27 @@ class TestOosAlphaUsesFullValidationFold:
             _sys.path.insert(0, repo)
         from autotuner import TRAIN_RATIO, VALIDATION_RATIO
 
-        # Build a deterministic series where each value is its index (1.0, 2.0, ...)
-        # so we can compute the exact expected sum without floating-point ambiguity.
+        # Deterministic, strictly monotonic, REALISTIC-magnitude daily percent
+        # series (0.0% to ~1.99% for n=200) so the compounded fold value is
+        # meaningful rather than exploding.
         n = 200
-        # Use values that are easily summed: validation returns are exactly
-        # the indices in the validation window
-        deterministic_returns = [float(i) for i in range(n)]
+        deterministic_returns = [i * 0.01 for i in range(n)]
 
         val_start = int(n * TRAIN_RATIO)
         frozen_start = int(n * (TRAIN_RATIO + VALIDATION_RATIO))
-        full_validation_returns = deterministic_returns[val_start:frozen_start]
-        expected_oos_alpha = sum(full_validation_returns)
+        expected_oos_alpha = engine._fold_transform_single(deterministic_returns).oos_alpha
 
         cand = _make_candidate(deterministic_returns, candidate_id="deterministic")
         batch = engine.evaluate_candidate_batch([cand])
         result = batch.results[0]
 
         assert result.oos_alpha == pytest.approx(expected_oos_alpha, abs=1e-9), (
-            # tolerance: 1e-9 because oos_alpha is a sum of exact float values (indices);
-            # any floating-point error is trivially within this bound
-            f"oos_alpha={result.oos_alpha!r} does not match the expected full-validation-fold sum "
-            f"({expected_oos_alpha!r}). "
+            # tolerance: 1e-9 -- both sides call the identical production formula,
+            # so any float diff is pure IEEE-754 accumulation noise.
+            f"oos_alpha={result.oos_alpha!r} does not match the expected full-validation-fold "
+            f"value ({expected_oos_alpha!r}). "
             f"The full validation fold spans indices [{val_start}:{frozen_start}] (n={n}). "
-            "If oos_alpha matches the purge-reduced sum instead, the engine is incorrectly "
+            "If oos_alpha matches a purge-reduced computation instead, the engine is incorrectly "
             "removing the purge window from the OOS alpha computation. The purge applies to "
             "the training fold only — the validation fold for OOS alpha is the FULL raw window."
         )

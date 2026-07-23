@@ -54,7 +54,7 @@ CONTRACT this file specifies for the GREEN implementer (sleeve-integration-impl)
         # ask the broker "did this order actually get created?" independent
         # of whether our own HTTP response round-trip completed. Pairs with
         # database.attach_alpaca_order_id() (tests/database/
-        # test_033_sleeves_client_order_id.py) which persists the recovered
+        # test_035_sleeves_client_order_id.py) which persists the recovered
         # alpaca_order_id/status onto the pre-existing RESERVED row.
         ...
     def get_account(*, live_mode: bool = False, live_keys_present: bool = False) -> OrderResult: ...
@@ -595,7 +595,7 @@ class TestBoundedRetryBackoff:
 # 7. Lost-ack recovery via client_order_id (PM steering, 2026-07-07)
 #
 # DB-side half (RESERVED row + attach_alpaca_order_id) is pinned in
-# tests/database/test_033_sleeves_client_order_id.py. This class covers the
+# tests/database/test_035_sleeves_client_order_id.py. This class covers the
 # NETWORK-side half: recovering an order from the BROKER by client_order_id
 # after our own process lost the submit response.
 # ---------------------------------------------------------------------------

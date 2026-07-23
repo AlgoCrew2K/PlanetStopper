@@ -526,29 +526,40 @@ class TestCumulativeDeltaSelfConsistency:
 # ---------------------------------------------------------------------------
 
 
-class TestUpdateComparisonRowsPrefersWindowedCumulativeReturn:
-    """On initial page load, portfolio_strip.cumulative_return carries account-basis
-    if_held (~63.95%). The windowed strip (post-picker-click) carries VW if_held (~26.65%).
+class TestUpdateComparisonRowsSourcesLifetimeCumulativeReturn:
+    """SUPERSEDED 2026-07-21 (DE-DISPLAY-TRUTH-001 / F-014) — the two tests below
+    are REWRITTEN, not deleted, to pin the contract that replaced the one this
+    class used to check.
 
-    The implementer's fix plan: _compute_portfolio_strip stores the windowed cumulative
-    row as `windowed_cumulative_return` in the strip. updateComparisonRows must prefer
-    `ps.windowed_cumulative_return` over `ps.cumulative_return` for the cumulative row
-    so the initial-load Held value is windowed VW, not account-basis.
+    Era-1 (dash-render-fix, 2026-06-04, the class docstring above this note):
+    portfolio_strip.cumulative_return carried the ACCOUNT-BASIS all-time if_held
+    (~63.95%), and the SSR "Cumulative" row label itself did not yet claim
+    "lifetime" — preferring a windowed value for that row was the correct fix
+    available at the time (windowing the wrong-basis number was less wrong than
+    leaving it alone).
 
-    These tests are RED until index.js is updated to prefer windowed_cumulative_return.
+    That era is over. F-014 (this cycle) found the label had since become
+    "Cumulative · lifetime" (templates/index.html:920) while this JS still
+    clobbered it with a windowed value on every 30s poll — the SAME preference
+    this class used to require was BY THEN the bug, not the fix, because
+    cumulative_return is now genuinely the VW-basis LIFETIME value (F-018's
+    basis-consistency fix + this cycle's F-014 fix together). Preferring
+    windowed_cumulative_return under a "lifetime" label silently mislabels a
+    windowed figure as lifetime — exactly what F-014 exists to prevent.
 
-    Note: the window-picker path (fetchWindowedStrip) already wraps the full windowed
-    strip as portfolio_strip — so for the picker case the values in cumulative_return ARE
-    windowed VW. The problem is the initial poll where the strip's cumulative_return
-    carries the account-basis values. The windowed_cumulative_return field decouples
-    the two paths.
+    See tests/dashboard/test_display_truth_cluster_js.py
+    (TestF014CumulativeLifetimeRowSourcesLifetimeValue) for the RED/GREEN pair
+    that drove this fix, and DECISIONS.md's DE-DISPLAY-TRUTH-001 entry for the
+    full account-basis-vs-VW-basis history across both eras.
     """
 
-    def test_update_comparison_rows_references_windowed_cumulative_return(self):
-        """updateComparisonRows must reference `windowed_cumulative_return` in its
-        cumulative row definition so it can prefer the windowed VW values over the
-        account-basis cumulative_return on initial load.
-        """
+    def test_update_comparison_rows_does_not_prefer_windowed_cumulative_return(self):
+        """SUPERSEDED CONTRACT (was: 'must reference windowed_cumulative_return' —
+        see class docstring). The cumulative row's SSR label reads "Cumulative ·
+        lifetime" — it must source the lifetime cumulative_return only, never a
+        windowed value. Preferring windowed_cumulative_return here would silently
+        clobber the lifetime-labeled figure with a windowed one on every poll —
+        the exact defect F-014 removed."""
         js = _js()
 
         start = js.find("function updateComparisonRows")
@@ -556,21 +567,42 @@ class TestUpdateComparisonRowsPrefersWindowedCumulativeReturn:
         end_marker = js.find("\n    function ", start + 1)
         body = js[start:end_marker] if end_marker != -1 else js[start : start + 3000]
 
-        assert "windowed_cumulative_return" in body, (
-            "RENDER-BASIS FAIL: updateComparisonRows does not reference "
-            "`windowed_cumulative_return`. The cumulative row must prefer the windowed VW "
-            "values (dry_run ~27.56%, if_held ~26.65%) over the account-basis values "
-            "(if_held ~63.95%) on initial page load. "
-            "The implementer must: (1) add windowed_cumulative_return to portfolio_strip "
-            "in app.py, (2) have updateComparisonRows prefer it for the cumulative row."
+        row_anchor = body.find("id: 'cumulative'")
+        assert row_anchor != -1, (
+            "the `id: 'cumulative'` row entry was not found in updateComparisonRows "
+            "-- this test's location assumptions may be stale; update the markers."
+        )
+        # Anchor the closing boundary on `higherIsBetter` (which always follows the
+        # `values:` expression) rather than the first bare "},"  -- the value
+        # expression itself legitimately contains "|| {}," (an empty-dict fallback),
+        # which a naive `body.find("},", row_anchor)` matches FIRST, truncating the
+        # slice before the real closing brace and silently breaking any assertion
+        # that needs the full "|| {}" text.
+        hib_anchor = body.find("higherIsBetter", row_anchor)
+        assert hib_anchor != -1, (
+            "the `higherIsBetter` field was not found after the cumulative row's "
+            "`id:` -- this test's location assumptions may be stale; update the markers."
+        )
+        row_close = body.find("},", hib_anchor)
+        row_entry = body[row_anchor : row_close if row_close != -1 else hib_anchor + 100]
+
+        assert "windowed_cumulative_return" not in row_entry, (
+            "F-014 REGRESSION: updateComparisonRows' cumulative row once again "
+            "prefers ps.windowed_cumulative_return -- this clobbers the "
+            "'Cumulative · lifetime'-labeled value (templates/index.html:920) with "
+            f"a windowed one on every poll. Row entry: {row_entry!r}"
+        )
+        assert "ps.cumulative_return" in row_entry, (
+            f"F-014 REGRESSION: the cumulative row no longer sources "
+            f"ps.cumulative_return at all -- row entry: {row_entry!r}"
         )
 
-    def test_cumulative_row_values_object_falls_back_to_cumulative_return(self):
-        """When windowed_cumulative_return is absent (cold path), updateComparisonRows
-        must fall back to cumulative_return so the row still renders rather than breaking.
-        The fallback pattern `ps.windowed_cumulative_return || ps.cumulative_return || {}`
-        or equivalent must be present.
-        """
+    def test_cumulative_row_values_object_sources_cumulative_return_only(self):
+        """SUPERSEDED CONTRACT (was: 'must reference BOTH windowed_cumulative_return
+        (preferred) and cumulative_return (fallback)' — see class docstring). There
+        is no windowed/fallback structure anymore — the row sources
+        cumulative_return unconditionally (the `|| {}` guard is the pre-existing
+        missing-data fallback, unrelated to windowing)."""
         js = _js()
 
         start = js.find("function updateComparisonRows")
@@ -578,16 +610,32 @@ class TestUpdateComparisonRowsPrefersWindowedCumulativeReturn:
         end_marker = js.find("\n    function ", start + 1)
         body = js[start:end_marker] if end_marker != -1 else js[start : start + 3000]
 
-        # Both field names must co-exist in the rows definition — the windowed field
-        # as the preferred source and cumulative_return as the fallback.
-        has_windowed = "windowed_cumulative_return" in body
-        has_fallback = "cumulative_return" in body
-        assert has_windowed and has_fallback, (
-            "RENDER-BASIS FAIL: updateComparisonRows must reference both "
-            "`windowed_cumulative_return` (preferred) and `cumulative_return` (fallback). "
-            f"has_windowed={has_windowed}, has_fallback={has_fallback}. "
-            "A cold cache must degrade gracefully — the row must not break when "
-            "windowed_cumulative_return is absent from the strip."
+        row_anchor = body.find("id: 'cumulative'")
+        assert row_anchor != -1, (
+            "the `id: 'cumulative'` row entry was not found in updateComparisonRows "
+            "-- this test's location assumptions may be stale; update the markers."
+        )
+        # Anchor the closing boundary on `higherIsBetter` (which always follows the
+        # `values:` expression) rather than the first bare "},"  -- the value
+        # expression itself legitimately contains "|| {}," (an empty-dict fallback),
+        # which a naive `body.find("},", row_anchor)` matches FIRST, truncating the
+        # slice before the real closing brace and silently breaking any assertion
+        # that needs the full "|| {}" text.
+        hib_anchor = body.find("higherIsBetter", row_anchor)
+        assert hib_anchor != -1, (
+            "the `higherIsBetter` field was not found after the cumulative row's "
+            "`id:` -- this test's location assumptions may be stale; update the markers."
+        )
+        row_close = body.find("},", hib_anchor)
+        row_entry = body[row_anchor : row_close if row_close != -1 else hib_anchor + 100]
+
+        assert "ps.cumulative_return || {}" in row_entry, (
+            "F-014 REGRESSION: the cumulative row's `values:` expression must be "
+            f"exactly `ps.cumulative_return || {{}}` -- got row entry: {row_entry!r}"
+        )
+        assert "windowed_cumulative_return" not in row_entry, (
+            f"F-014 REGRESSION: a windowed_cumulative_return reference reappeared "
+            f"in the cumulative row -- row entry: {row_entry!r}"
         )
 
     def test_app_portfolio_strip_exposes_windowed_cumulative_return(self):

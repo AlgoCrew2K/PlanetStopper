@@ -30,15 +30,28 @@ They FAIL today and go GREEN when flask+risk-engine wire Option A.
 
 from __future__ import annotations
 
+import os
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+import analytics
 import app as app_module
+import database
 
 # The picker's default window (templates/index.html active button + label).
 _DEFAULT_WINDOW = "30d"
+
+
+@pytest.fixture(autouse=True)
+def _analytics_shadow_db_seam(_isolate_db, monkeypatch):
+    """See tests/app/test_performance_symphony_scope_source.py for the full
+    rationale: analytics.py's shadow-history readers resolve their DB file via
+    the analytics.DB_FILE test-time seam, not the DB_PATH env var _isolate_db
+    sets -- point analytics at the same per-test DB."""
+    monkeypatch.setattr(analytics, "DB_FILE", os.environ["DB_PATH"])
 
 
 @pytest.fixture
@@ -46,6 +59,30 @@ def client():
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         yield c
+
+
+@pytest.fixture
+def sym_x_shadow_history():
+    """Two recent shadow_history rows for "sym-x" (the fixture's ONLY
+    symphony) with a real divergence, so the default-window (30d) guard_alpha
+    is a genuinely-computed number -- not the math-r0 AC-8b "< 2 in-window
+    rows" insufficient-data None. Without this, the hero-vs-strip consistency
+    this test file pins (Option A) can't be exercised: both sides would
+    trivially agree on None, which proves nothing about the windowed VALUE."""
+    today = date.today()
+    for i, d in enumerate((today, today - timedelta(days=1))):
+        database.record_shadow_observation(
+            symphony_id="sym-x",
+            account_id="ACC1",
+            cycle_id=f"cyc-{i}",
+            ts_utc=f"{d.isoformat()}T20:00:00Z",
+            ts_et=f"{d.isoformat()}T16:00:00",
+            trading_day=d.isoformat(),
+            current_return=-0.5,
+            shadow_return=2.0,  # real divergence, not a genuine zero
+            is_post_trigger=1,
+            trigger_id=None,
+        )
 
 
 def _live_bot_state():
@@ -82,9 +119,17 @@ _WARM_CACHE = {
 
 
 class TestDefaultHeroGuardAlphaMatchesWindowedDefault:
-    def test_default_poll_guard_alpha_equals_windowed_default(self, client, monkeypatch):
+    def test_default_poll_guard_alpha_equals_windowed_default(
+        self, client, monkeypatch, sym_x_shadow_history
+    ):
         """WARM-CACHE path (the live condition): the default /api/state hero's WINDOWED guard
         alpha must EQUAL /api/strip/<default-window>'s guard alpha. No 67-vs-29 jump on first click.
+
+        math-r0 AC-8b: with NO shadow_history seeded, compute_windowed_symphony_guard_alpha
+        honestly returns None (insufficient windowed data), and BOTH sides would trivially
+        agree on None -- proving nothing about the windowed VALUE this test exists to pin.
+        sym_x_shadow_history seeds two real, divergent rows so the default-window guard_alpha
+        is a genuine number both routes must independently agree on.
         """
         monkeypatch.setattr(app_module, "_account_totals_cache", dict(_WARM_CACHE), raising=False)
         with (

@@ -402,6 +402,13 @@ def build_replay_day(
         agg_ret = 0.0
         weighted_vwap_diff = 0.0
         valid_alloc = 0.0
+        # AC-1 (MA-1): per-ticker last_percent_change for THIS tick, reusing
+        # the same (c - y_close) / y_close fraction computed below for
+        # agg_ret. Keyed by ticker, not stamped onto `holdings` in place —
+        # `holdings` is closure-captured and reused across every day of the
+        # same symphony's replay under Parallel(n_jobs=...), so an in-place
+        # stamp would leak a stale value into a later call.
+        tick_lpc: dict[str, float] = {}
 
         for h in holdings:
             ticker = h["ticker"]
@@ -416,17 +423,29 @@ def build_replay_day(
                 if y_close > 0:
                     ret = (c - y_close) / y_close
                     agg_ret += alloc * ret
+                    tick_lpc[ticker] = ret
 
                 if v > 0:
                     weighted_vwap_diff += alloc * ((c - v) / v)
                 valid_alloc += alloc
+
+        # AC-1 (MA-1): stamp this tick's lpc onto a FRESH holdings copy —
+        # never mutate `holdings`/`h` in place (see comment above). A ticker
+        # with no bar this tick (or a non-positive y_close) has no tick_lpc
+        # entry; last_percent_change is then None, and
+        # math_engine.run_monte_carlo's existing lpc-exclusion contract
+        # (:1162-1166) drops it from current_symphony_return exactly as it
+        # does for a genuinely lpc-less live holding — never a fabricated 0.0.
+        priced_holdings = [
+            {**h, "last_percent_change": tick_lpc.get(h["ticker"])} for h in holdings
+        ]
 
         # neighbor_k must equal production's MC_DEFAULT_NEIGHBOR_K so the
         # replay's mc_prob matches the live engine's estimand — with a smaller
         # k the kNN bootstrap CDF is a coarse step function. Seed is
         # per-(symphony, day) so cache rebuilds produce bit-identical series.
         mc_prob = math_engine.run_monte_carlo(
-            holdings,
+            priced_holdings,
             hist_data_up_to_yesterday,
             spy_today,
             _MC_REPLAY_SIMULATION_PATHS,

@@ -1,15 +1,29 @@
 # advisors/strategy_builder_engine
 
-> Phase-2 Strategy Builder proposal engine: drives the real C1→C2→C3 builder pipeline to generate candidates, backtests them, gates via Harvey-Liu FDR + C5b PBO veto + SPY-OOS baseline, and persists survivors as advisory observations.
+> Phase-2 Strategy Builder proposal engine: drives the real C1→C2→C3 builder pipeline to generate candidates, backtests them, gates via Harvey-Liu FDR + C5b PBO veto + SPY-OOS baseline, persists survivors as advisory observations, and (R2-1) carries a run-level provenance object — generation model, mode, injected-evidence manifest, run-id — on every `ProposalRun`; (AC-10) also queues survivors for the Frontrunner Builder's shared approval-to-Composer-create path.
 
 **Source:** `advisors/strategy_builder_engine.py`
-**Last updated:** 2026-06-20
+**Last updated:** 2026-07-21 (fix-ops-cluster, `DE-OPS-CLUSTER-001` F-030 -- `propose_strategies`/`_persist_survivor`/`_persist_rejected` gain `invocation_source`, an additive advisory-DB write-attribution field; see the new F-030 section below). Prior: 2026-07-14 (branch-integration merge — Frontrunner Builder AC-10 retrofit `f1592a2` integrated with R2-1 provenance; 2026-07-13 (R2-1 -- `ProposalRun.run_id`/`.provenance` + `propose_strategies(reasoning_context=, reasoning_manifest=, run_id=)`, `DE-ADVISOR-R2-1-001`; Internal Dependencies corrected per r2-review's Finding-2 (transitive `alpha_bot_execution` import via the new `import ai_advisor` edge) -- see below; prior: advisor-outage-degrade: honest backtest_unavailable rollup, DE-SB-DEGRADE-001; also reconciled a pre-existing gap -- ProposalRun.error_category, added in R1 AC-11, was never documented here until now) ALSO: 2026-07-11 (AC-10 Frontrunner Builder retrofit, `f1592a2`; prior: 2026-06-20)
 
 ## Overview
 
 `advisors/strategy_builder_engine.py` proposes new candidate symphonies from scratch (versus engines that mutate live ones). The pipeline is: generate candidate trees via the real C1→C2→C3 builder (C4 body swap) and/or caller-injected community strategies → backtest via `composer_backtest_client` (1 req/s) → gate the full batch via `backtest_gate_engine.evaluate_candidate_batch` (Harvey-Liu BHY FDR, **C5b: + PBO veto + real SPY-OOS baseline**) → apply `ScreenConfig` post-gate presentation filters → persist survivors and rejected candidates as advisory observations.
 
 Off-execution-path (never imported from `alpha_bot_execution.py`). Advisory-only (`is_advisory_only=1` on all persisted observations). Never raises — all exceptions surface as `ProposalRun.error`.
+
+## F-030 -- advisory-DB write attribution (`DE-OPS-CLUSTER-001`, 2026-07-21)
+
+**The finding (register, LOW/governance):** 3 production `STRATEGY_BUILDER` advisory-DB rows (2026-07-13, pre-audit) were written via a DIRECT off-HTTP call to `propose_strategies` -- matching the on-demand route's default params but carrying zero HTTP/journal trace, unattributable to any production invocation path (the scheduler ran once that week, the route had zero hits, no cron/timer). The data itself was coherent and benign; the gap was that the production advisory DB could be written with no reconstructable audit trail.
+
+**Fix:** a new `invocation_source: str | None = None` param on `propose_strategies`, resolved inside the function (`invocation_source if invocation_source is not None else "unattributed-direct-call"`) -- the same None-resolved-inside-the-function pattern `reasoning_manifest` already uses. Threaded through both `_persist_survivor` and `_persist_rejected` (which also gained the same keyword-only param, default `"unattributed-direct-call"`) into `raw_response["invocation_source"]` -- additive, alongside the existing `run_id`/`evidence_injected` keys in that free-form JSON blob column (no schema migration). Each production caller tags its own call:
+
+| Caller | `invocation_source` value |
+|--------|---------------------------|
+| `POST /ai-advisor/strategy-builder/run` (`app.py`) | `"http-route:/ai-advisor/strategy-builder/run"` |
+| `advisors/strategy_builder_scheduler.py::run_weekly_build()` | `"weekly-scheduler"` |
+| A direct engine call with no `invocation_source` passed (dev/debug, the register finding's exact scenario) | `"unattributed-direct-call"` (honest default, never a silent `None`) |
+
+`ProposalRun`'s dataclass shape is genuinely untouched -- `invocation_source` lives only in the persisted `raw_response` blob, mirroring where `run_id`/`evidence_injected` already live.
 
 ## Constants
 
@@ -69,7 +83,10 @@ class CandidateInfo:
     metrics: dict = field(default_factory=dict)
     backtest_error: str | None = None
     data_warnings: list = field(default_factory=list)
+    tradeability_unverified: bool = False  # advisor-outage-degrade, see below
 ```
+
+`tradeability_unverified` is `True` only when `plan_tree_compiler.compile_plan` degraded this candidate's tree on an infra/transport failure (Composer unreachable) instead of pruning or dropping it — the tree's tradeability against Composer was never confirmed (advisor-outage-degrade, `DE-SB-DEGRADE-001`). Community candidates (Atlas-sourced, not compiled via `plan_tree_compiler`) always default `False`.
 
 `template_id` carries provenance; it is never `"T1"`–`"T7"` for built-new candidates (the old template-stamper was removed in C4). It is never `"community"` for atlas-sourced candidates after C5 (the `community_candidate_infos` adapter was deleted; the tag is now `"atlas-suggested"`).
 
@@ -85,11 +102,22 @@ class ProposalRun:
     screened_survivors: list[CandidateGateResult]
     observations_written: int
     error: str | None = None
+    error_category: str | None = None       # R1 AC-11: sanitized type(exc).__name__ -- safe to surface, `error` is not
+    backtest_unavailable: bool = False       # advisor-outage-degrade AC-4: True iff >=1 candidate was tradeability-unverified
+    backtest_unavailable_count: int = 0      # advisor-outage-degrade AC-4: count, computed pre-Step-2-filter (see below)
+    run_id: str = ""                         # R2-1 AC-6: UUID minted once per run, stable across every return path
+    provenance: dict | None = None           # R2-1 AC-4/AC-6: {generation_model, mode, evidence_injected, run_id}
 ```
+
+`error_category` (R1, AC-11 -- a pre-existing field this file never documented until this pass) lets the route surface a safe, sanitized failure cause (`type(exc).__name__`) without ever echoing `error`'s raw exception text, which may carry hostnames, paths, or credentials (the same AC-23 precedent as the route's own error boundary).
+
+`backtest_unavailable` / `backtest_unavailable_count` (advisor-outage-degrade, `DE-SB-DEGRADE-001`) roll up the honest outage signal from `CandidateInfo.tradeability_unverified`. **Computed from the FULL pre-Step-2-backtest `candidate_infos` list, NOT from `candidates` above** — `candidates` is filtered to only those whose OWN Step-2 metrics `run_backtest` call also succeeded, which a sustained outage would fail too, silently zeroing a `candidates`-derived count in exactly the case this flag exists to surface. Verified by hand for the sustained-outage case: `run.candidates` goes empty while `backtest_unavailable_count` still reports the true count.
+
+`run_id` / `provenance` (R2-1, `DE-ADVISOR-R2-1-001`) — see the dedicated "R2-1 — Reasoning-Context Threading + Provenance Contract" section below for the full shape, minting rules, and honesty guarantees.
 
 ## API Reference
 
-### `propose_strategies(objective, universe, screen_config, live_returns, symphony_id, *, incumbent_oos_alpha, default_oos_alpha, community_candidates) -> ProposalRun`
+### `propose_strategies(objective, universe, screen_config, live_returns, symphony_id, *, incumbent_oos_alpha, default_oas_alpha, community_candidates, reasoning_context, reasoning_manifest, run_id, invocation_source) -> ProposalRun`
 
 Propose new candidate symphonies from scratch. Never raises.
 
@@ -105,20 +133,28 @@ Propose new candidate symphonies from scratch. Never raises.
 | `incumbent_oos_alpha` | `float` | OOS alpha of the incumbent strategy, passed to `evaluate_candidate_batch` |
 | `default_oas_alpha` | `float` | Fallback OOS alpha when no incumbent alpha is available. In production, the C5b SPY-fold baseline — sourced internally by `propose_strategies` via a `run_backtest` call before the candidate loop — overrides this value inside `evaluate_candidate_batch`. Callers do not need to wire the SPY baseline; it is automatic as of C5b (commit 5d6e04a). |
 | `community_candidates` | `list[CandidateInfo] \| None` | Optional pre-built `CandidateInfo` objects. As of C5, callers supply these via `build_plan_generator.load_atlas_candidates(objective)` (the canonical path for both the route and the scheduler). Appended to the built-new list and flow through the **same single-batch FDR gate** (AC-2). Capped at `MAX_COMMUNITY_CANDIDATES_PER_RUN` internally (AC-3). `None` and `[]` are identical — no community candidates are injected (AC-6). |
+| `reasoning_context` | `str \| None` | R2-1: an optional, ready-to-inject operator-context text block (see `ai_advisor.build_reasoning_context`), threaded into `_generate_candidate_trees` → `build_plan_generator.generate_build_plans`. Additive/keyword, default `None` — every pre-R2-1 caller's exact call shape is unaffected. |
+| `reasoning_manifest` | `dict \| None` | R2-1: the honest per-source manifest paired with `reasoning_context` (see `ai_advisor.build_reasoning_context`). Stamped into `ProposalRun.provenance["evidence_injected"]` verbatim; falls back to `ai_advisor._EMPTY_MANIFEST` (never fabricated as present) when omitted. |
+| `run_id` | `str \| None` | R2-1: an optional caller-supplied run id, used verbatim when provided; a fresh `str(uuid.uuid4())` is minted when omitted. Threaded onto `ProposalRun.run_id` and `ProposalRun.provenance["run_id"]`. |
+| `invocation_source` | `str \| None` | F-030 (`DE-OPS-CLUSTER-001`): identifies the caller of this run (e.g. `"http-route:/ai-advisor/strategy-builder/run"`, `"weekly-scheduler"`) so every advisory-DB write it produces is attributable back to a production invocation path. `None` (the default) resolves to the honest `"unattributed-direct-call"` marker — the register finding's exact scenario (a direct engine call bypassing Flask/HTTP logging). Same None-resolved-inside-the-function pattern as `reasoning_manifest`. Threaded through `_persist_survivor`/`_persist_rejected` into `raw_response["invocation_source"]`, additive alongside `run_id`/`evidence_injected` — `ProposalRun`'s dataclass shape is unchanged. |
 
 **Returns:** `ProposalRun` where:
 - `candidates` contains only successfully-backtested `CandidateInfo` objects
 - `gated_batch.n_candidates` equals the number of successfully-backtested candidates
 - `screened_survivors` is a subset of `gated_batch.survivors`
 - `error` is non-None on catastrophic failure
+- `backtest_unavailable` / `backtest_unavailable_count` (advisor-outage-degrade AC-4) are `True`/`>0` when one or more candidates were emitted tradeability-unverified by `plan_tree_compiler.compile_plan` because Composer's backtest endpoint was unreachable — an honest signal distinct from a normal gate rejection or from `error`. Computed over the full candidate list BEFORE the Step-2 backtest-success filter, so it stays accurate even when the same outage also empties `candidates`.
+- `run_id` / `provenance` (R2-1) are populated on EVERY return path, including the earliest error returns (see the R2-1 section below) — never `None`/`""` by omission.
 
 **FDR integrity invariant:** `evaluate_candidate_batch` receives ALL successfully-backtested candidates — built-new (real C1→C2→C3) and atlas-suggested together in one batch. Wide exploration pays one batch-wide multiple-testing correction. Screens apply only to gate survivors. The gate input is never pre-filtered or split.
 
 **Pipeline:**
 
 ```
-Step 1:  _generate_candidate_trees(objective, universe)
-         C4: C1 (self-source or universe override) → C2 (build_plan_generator) → C3 (compile)
+Step 0:  mint run_id + provenance UNCONDITIONALLY, before the try block (R2-1)
+Step 1:  _generate_candidate_trees(objective, universe, reasoning_context=reasoning_context)
+         C4: C1 (self-source or universe override) → C2 (build_plan_generator, R2-1 threads
+             reasoning_context into the generation prompt) → C3 (compile)
          → CandidateInfo list (provenance="built-new")
 Step 1b: extend with community_candidates[:MAX_COMMUNITY_CANDIDATES_PER_RUN]
          (no-op when community_candidates is None or [])
@@ -144,7 +180,7 @@ Step 5:  persist survivors + rejected candidates
 
 ### C2 — Build-plan generation
 
-`build_plan_generator.generate_build_plans(gen_objective, membership_set)` is called. The `sbe.Objective` value is mapped to `build_plan_generator.Objective` via `.value` (string-keyed, 4-way). If the generator returns no plans (`result.plans` empty), `_generate_candidate_trees` returns `[]` cleanly (D-1 honest degradation, logs `result.reason`).
+`build_plan_generator.generate_build_plans(gen_objective, membership_set, reasoning_context=reasoning_context)` is called (the `reasoning_context=` kwarg is R2-1; `None` when the run is not symphony-scoped). The `sbe.Objective` value is mapped to `build_plan_generator.Objective` via `.value` (string-keyed, 4-way). If the generator returns no plans (`result.plans` empty), `_generate_candidate_trees` returns `[]` cleanly (D-1 honest degradation, logs `result.reason`).
 
 ### C3 — Plan compilation
 
@@ -212,8 +248,81 @@ Pre-C5, `run.error` was echoed verbatim in the route JSON response. `run.error` 
 
 ---
 
+## Frontrunner Builder Retrofit (AC-10, 2026-07-11, commit f1592a2)
+
+`_persist_survivor` additionally queues every non-rejected candidate onto the `frontrunner_proposals` table via `database.insert_frontrunner_proposal(symphony_id, proposal_source="strategy_builder_retrofit", candidate_tree=info.tree, metrics_json={cagr, sharpe, calmar, max_drawdown})`, immediately after the existing `advisor_observations` persist. This closes the pre-existing gap where a Strategy Builder survivor could only ever be an advisory observation, never a Composer upload. `proposal_source` distinguishes these rows from the Frontrunner Builder's own (`"frontrunner_builder"`); both flow through the SAME `advisors.frontrunner_builder.approve_frontrunner_proposal` on operator approval -- one shared approval-to-Composer-create path for the whole feature, not two. This module does NOT import `advisors.frontrunner_builder` -- the queue write goes through `database.insert_frontrunner_proposal` directly, so there is no cross-module coupling beyond the shared table + shared approval function (called from elsewhere, not from here). D-1: a queue-write failure is logged and swallowed -- it never breaks the `advisor_observations` persist that already succeeded above it. See `DE-FRONTRUNNER-001` in `DECISIONS.md` and `docs/generated/advisors_frontrunner_builder.md`.
+
+---
+
+## AC-4 Outage Rollup — `backtest_unavailable` (advisor-outage-degrade, DE-SB-DEGRADE-001, commit 4230641b, 2026-07-13)
+
+Before this fix, `plan_tree_compiler.compile_plan`'s repair loop treated ANY non-400 `backtest_fn` failure — including Composer infra outages (timeouts, connection/DNS errors, 5xx, 429-exhausted) — the same as a genuine HTTP-422 grammar rejection, dropping the plan. A real Composer outage therefore silently zeroed this engine's output with no distinguishable reason from "the gate rejected everything."
+
+`_generate_candidate_trees` now threads `compile_result.tradeability_unverified` forward onto each `CandidateInfo`. `propose_strategies` computes `backtest_unavailable_count = sum(1 for info in candidate_infos if info.tradeability_unverified)` over the FULL pre-Step-2 list (see the `ProposalRun` field notes above for why NOT `candidates`), and surfaces `backtest_unavailable = backtest_unavailable_count > 0` on the returned `ProposalRun`.
+
+No change to `evaluate_candidate_batch`, the FDR gate, or any screen — a tradeability-unverified candidate still competes for survivorship on its actual backtest metrics exactly like any other candidate (Step 2's own `run_backtest` call is unaffected by `plan_tree_compiler`'s classification; the two are independent Composer calls). This field is purely an honesty signal for the operator, not a new filter.
+
+Route/UI surfacing (AC-5) shipped the same cycle — see `DE-SB-DEGRADE-001` in `DECISIONS.md`.
+
+---
+
+## R2-1 — Reasoning-Context Threading + Provenance Contract (`DE-ADVISOR-R2-1-001`, 2026-07-13)
+
+**Cross-cutting contract, not an SB-only feature.** This is the shared provenance surface `DE-ADVISOR-R2-1-001` establishes for the whole R2 program — R2-2 (Logic Changes) and R2-3 (Asset Swaps) reuse the SAME `ai_advisor.build_reasoning_context` assembler and extend the SAME `provenance` shape to their own engines/routes, rather than each port inventing its own.
+
+### `provenance` — minted unconditionally, before the try block
+
+```python
+run_id = run_id or str(uuid.uuid4())
+provenance: dict = {
+    "generation_model": model_config.get_advisor_suggestion_model(),
+    "mode": "build-new",
+    "evidence_injected": reasoning_manifest or ai_advisor._EMPTY_MANIFEST,
+    "run_id": run_id,
+}
+```
+
+This dict is built at the TOP of `propose_strategies`, before `_has_composer_key()` is even checked — so every return path below, including the earliest error returns (missing Composer key, an exception in Step 1), carries the SAME `run_id`/`provenance`, never fabricated and never left `None` by omission. `run_id`/`generation_model`/`mode` are cheap, non-fabricated facts about the CALL ITSELF (not a claim that generation succeeded) — the honesty burden is carried entirely by `evidence_injected`'s own per-source values, which already reflect whatever `reasoning_manifest` the caller actually passed in (built by `ai_advisor.build_reasoning_context` before any Composer-key check ran).
+
+**The `evidence_injected` manifest is the honesty artifact — not a footnote.** It is `reasoning_manifest` verbatim (never re-derived or summarized): the SAME per-source `present`/`absent`/`available`/`stale` dict `ai_advisor.build_reasoning_context` returned. A caller that never ran `build_reasoning_context` at all (or ran it on a from-scratch request) gets `ai_advisor._EMPTY_MANIFEST` — every key `"absent"`, never a fabricated `"available"`. This is what makes R2's "reasoning is real AND observable" thesis concrete at the engine layer: the exact same manifest an operator can inspect on the response JSON is the exact same object gating what was injected into the generation prompt — there is no second, lossy summary in between.
+
+### Threading
+
+`reasoning_context` flows: `propose_strategies(reasoning_context=)` → `_generate_candidate_trees(objective, universe, reasoning_context=reasoning_context)` → `build_plan_generator.generate_build_plans(..., reasoning_context=reasoning_context)` → `_build_generation_prompt(..., reasoning_context=reasoning_context)` (see [advisors/build_plan_generator](advisors_build_plan_generator.md)). `reasoning_manifest` does NOT thread through this chain — it is consumed once, at the top of `propose_strategies`, to build `provenance["evidence_injected"]`, and never passed to the generator (the generator only needs the already-rendered prompt text).
+
+### Persistence
+
+`run_id` and `evidence_injected` are stamped into every persisted advisory observation's `raw_response` alongside the existing survivor/rejected fields — so any proposal traces back to the exact run and the exact evidence manifest that produced it (AC-6, traceability).
+
+### Route-boundary serialization guard (a named pattern for R2-2/R2-3 to reuse)
+
+`app.py`'s `ai_advisor_strategy_builder_run()` route reads `run.provenance` defensively:
+
+```python
+provenance = getattr(run, "provenance", None)
+if not isinstance(provenance, dict):
+    provenance = None
+```
+
+**Why `getattr(..., default)` alone is NOT enough here:** several pre-existing test fixtures construct a bare `MagicMock()` as a `ProposalRun` stand-in. `MagicMock` auto-vivifies ANY attribute access into a new child `Mock` object rather than raising `AttributeError` — so `getattr(mock_run, "provenance", None)`'s `default` branch never actually fires against a mock missing that attribute; it silently returns a non-`None`, non-dict `Mock`. Passed straight to `jsonify()`, that raises `TypeError: Object of type Mock is not JSON serializable`. The `isinstance(provenance, dict)` check is the only reliable guard against this — and it fails CLOSED (`None`, never a fabricated dict) rather than raising. This is the same defensive shape as the pre-existing `getattr(run, "backtest_unavailable_count", 0)` read one paragraph above it in the route, but that field only needs `bool()`/`int()` coercion (safe against a truthy-but-wrong `Mock`); `provenance` is handed straight to `jsonify()` as a nested object, where a `Mock` is fatal, not just wrong. See [app](app.md) for the full route section and [static/ai_advisor.js](static_ai_advisor_js.md) for the render side.
+
+### AC-9 wording reconciliation (r2-review gate finding)
+
+The feature plan's AC-9 reads "bounded so a large real tree can't blow `build_plan_generator.MAX_OUTPUT_TOKENS`" — this engine module has no involvement in that bound at all (it lives entirely in `ai_advisor.build_reasoning_context` via `_MAX_TREE_RENDER_CHARS`, an INPUT-context bound, independent of `MAX_OUTPUT_TOKENS`). Documented at the source of truth: see [ai_advisor](ai_advisor.md)'s `build_reasoning_context` entry, "AC-9 wording reconciliation." Noted here only so a reader arriving at this engine's AC-9 references is pointed to the accurate account rather than the plan's loose phrasing.
+
+### What R2-1 deliberately did NOT change
+
+- No new admission concept, DSL change, or provenance TAG (`built-new`/`atlas-suggested` are unchanged) — `provenance` (the R2-1 dict) and `template_id` (the pre-existing built-new/atlas-suggested tag) are two independently-named concepts that happen to share the English word "provenance"; do not conflate them (see the route-side disambiguation note in [static/ai_advisor.js](static_ai_advisor_js.md)).
+- No gate/PBO/FDR/SPY math change — R1 parity is untouched (characterization-tested).
+- No change to `evaluate_candidate_batch`, `backtest_gate_engine`, or any screen.
+- The from-scratch (non-symphony-scoped) path never calls `ai_advisor.build_reasoning_context` at all (the route-level decision, not this engine's) — `reasoning_context`/`reasoning_manifest` arrive as `None` on that path, so `provenance["evidence_injected"]` is `ai_advisor._EMPTY_MANIFEST` and `_generate_candidate_trees` byte-preserves the pre-R2-1 generation prompt (AC-8).
+
+---
+
 ## Internal Dependencies
 
+- `ai_advisor` — `_EMPTY_MANIFEST` (R2-1, module-level `import ai_advisor` at `strategy_builder_engine.py:21` — NOT a lazy/CC-2 import like the other `advisors.*` dependencies below; used only as the `provenance["evidence_injected"]` fallback default when `reasoning_manifest` is omitted). This module does NOT call `ai_advisor.build_reasoning_context` itself — that call happens at the route layer (see [app](app.md)); the engine only consumes the already-assembled `reasoning_context` string and `reasoning_manifest` dict as plain parameters.
+- `model_config` — `get_advisor_suggestion_model()` (R2-1, `provenance["generation_model"]` source — read at call time, never a hardcoded literal)
 - `advisors.universe_provider` — `get_tradeable_set()` (C1, CC-2 lazy import inside `_generate_candidate_trees`)
 - `advisors.build_plan_generator` — `generate_build_plans`, `Objective` (C2, CC-2 lazy import); `load_atlas_candidates` is the canonical community-admission path for both route and scheduler callers
 - `advisors.plan_tree_compiler` — `compile_plan` (C3, CC-2 lazy import)
@@ -221,6 +330,10 @@ Pre-C5, `run.error` was echoed verbatim in the route JSON response. `run.error` 
 - `advisors.backtest_gate_engine` — `evaluate_candidate_batch`, `BacktestCandidate`, `CandidateGateResult`, `GatedBatch`, `HARVEY_LIU_FDR_Q`, `SURVIVOR_OVERFITTING_CAVEAT`
 - `advisors.composer_backtest_client` — `run_backtest` (1 req/s pacing; also used for SPY benchmark sourcing, Step 2a, AC-25)
 - `analytics` — `compute_quantstats_metrics`
-- `database` — `insert_advisor_observation`
+- `database` — `insert_advisor_observation`, `insert_frontrunner_proposal` (AC-10 retrofit)
 
-No import of `alpha_bot_execution`, `autotuner`, or any execution module. Off-execution-path; advisory-only. The sole production callers are `app.py:3813` (`ai_advisor_strategy_builder_run` route) and `advisors/strategy_builder_scheduler.py` (`run_weekly_build`). `autotuner.py` does NOT call `propose_strategies` — a prior doc claim to the contrary was stale (corrected in C4 doc pass).
+**Direct imports at this file's own top level:** no `alpha_bot_execution`, `autotuner`, or execution-module import — verified by grepping this file directly.
+
+**Transitive import (R2-1, ACCEPTED — r2-review Finding-2):** this module's new `import ai_advisor` (line 21) transitively imports `alpha_bot_execution` at module-load time via `ai_advisor.py`'s own `import symphony_logic` (`ai_advisor.py:30`) → `symphony_logic.py`'s `from alpha_bot_execution import COMPOSER_BASE_URL, get_composer_headers` (`symphony_logic.py:19`). Reviewed and accepted for three reasons: (1) **import-only, no cycle** — `alpha_bot_execution.py` does not import back up this chain; (2) **not a new dependency, only a new path to an old one** — `ai_advisor.py` already carried this exact transitive import before R2-1 (its `import symphony_logic` predates this cycle); R2-1 makes it reachable through a second route (`strategy_builder_engine` → `ai_advisor`), it does not introduce it; (3) **Architecture Constraint #1 ("no blocking I/O on the execution path") stays intact** — nothing in this import chain executes I/O at import time, and `strategy_builder_engine.py` itself is lazy-imported inside the route handler (CC-2, `app.py`), so none of this chain loads at daemon startup regardless. Practical consequence: the literal claim "no execution-module import" is no longer exactly true for this file's full transitive closure (only for its own top-level `import` statements) — off-execution-path and advisory-only remain true in the sense that matters (no execution-path caller, no engine-cycle I/O, no startup-path load). **Known follow-up (non-blocking, logged 2026-07-13):** strengthen the SB import-guard test to a full-source-text transitive scan, matching the precedent in `tests/ai_advisor/test_correlation_diagnostic_guards.py`, so this accepted transitive path is explicitly asserted rather than left to an implicit direct-import-only check. See `DE-ADVISOR-R2-1-001` in `DECISIONS.md`.
+
+The sole production callers are `app.py:3813` (`ai_advisor_strategy_builder_run` route) and `advisors/strategy_builder_scheduler.py` (`run_weekly_build`). `autotuner.py` does NOT call `propose_strategies` — a prior doc claim to the contrary was stale (corrected in C4 doc pass).

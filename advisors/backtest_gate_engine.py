@@ -48,10 +48,12 @@ Harvey & Liu 2015 (BHY/Yekutieli FDR, DOI 10.3905/jpm.2015.42.1.013).
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
+import database
 from acceptance_gate import AcceptanceVerdict, evaluate_acceptance_gate
 
 # ---------------------------------------------------------------------------
@@ -67,6 +69,7 @@ from autotuner import (  # noqa: E402
     EMBARGO_DAYS,
     HARVEY_LIU_FDR_Q,
     PURGE_DAYS,
+    RETURN_PCT_TO_FRACTION,
     TRAIN_RATIO,
     VALIDATION_RATIO,
     benjamini_hochberg_adjust,
@@ -125,14 +128,56 @@ THIN_WINDOW_CAVEAT = (
     " BHY gate. The gate is therefore likely to WITHHOLD on thin series."
 )
 
+# Number of leading bytes of the SHA-256 digest used to derive a candidate's
+# bootstrap seed (AC-D3 order-independence fix). 4 bytes -> a 32-bit unsigned
+# int, comfortably within numpy.random.default_rng's accepted seed range.
+_STABLE_SEED_DIGEST_BYTES = 4
+
+
+def _stable_seed_from_candidate_id(candidate_id: str) -> int:
+    """Deterministic bootstrap seed derived from a candidate's OWN id.
+
+    AC-D3 fix: evaluate_candidate_batch previously seeded compute_sortino_tstat's
+    nonparametric bootstrap with the candidate's ENUMERATE POSITION in the input
+    list (``seed=idx``). Reversing (or otherwise reordering) the SAME candidate
+    set therefore reassigned different seeds to each candidate, producing a
+    different bootstrap SE / t-stat / BHY-adjusted p-value for the identical
+    candidate and return series -- the gate was order-dependent, violating the
+    "BHY-FDR output is unchanged for a fixed candidate set" invariant.
+
+    Deriving the seed from the candidate's own ``candidate_id`` instead makes it
+    independent of batch position: the same candidate always gets the same seed,
+    regardless of what order it was submitted in or who else is in the batch.
+
+    SHA-256 (not the builtin ``hash()``) is used deliberately: CPython randomizes
+    ``hash()`` for ``str`` per-process (PYTHONHASHSEED) unless explicitly disabled,
+    so it would NOT be reproducible across process restarts. SHA-256 is stable
+    across processes and Python versions -- required by compute_sortino_tstat's
+    own reproducibility contract ("the haircut decision is reproducible under a
+    fixed trial set").
+
+    Returns:
+        A non-negative int in [0, 2**32) suitable for numpy.random.default_rng.
+    """
+    digest = hashlib.sha256(candidate_id.encode("utf-8")).digest()
+    return int.from_bytes(digest[:_STABLE_SEED_DIGEST_BYTES], byteorder="big")
+
+
 # ---------------------------------------------------------------------------
 # C5b — overfitting-cull strengthening constants
 # ---------------------------------------------------------------------------
 
 # CRRA risk-aversion coefficient passed to math_engine.compute_pbo.
-# Mirrors the autotuner's gamma (autotuner.py: GAMMA = 1.0, default CRRA parameter).
-# Source: Bailey & López de Prado 2014, §3 CSCV algorithm; autotuner.py module constant.
-_BATCH_PBO_GAMMA: float = 1.0
+# Aligned to the frozen Phase-1 THEORY gamma (database.PHASE1_THEORY_GAMMA = "2.0",
+# council synthesis §2.5 — the canonical, most risk-averse value in the W-H2 fixture
+# set {0.5, 1.0, 2.0}), consumed via float() exactly as autotuner.py:1592 does
+# (`float(database.PHASE1_THEORY_GAMMA)`) — single source of truth, no duplicated
+# literal. The prior value here cited an autotuner module constant that does not
+# exist and diverged from the frozen THEORY gamma, giving the advisor PBO veto a
+# different risk-aversion than the autotuner's own PBO gate for the "same" decision
+# (DE-MATH-AUDIT-001 MA-STATS-M2 — false-citation finding).
+# Source: database.py PHASE1_THEORY_GAMMA; Bailey & López de Prado 2014 §3 CSCV algorithm.
+_BATCH_PBO_GAMMA: float = float(database.PHASE1_THEORY_GAMMA)
 
 # Minimum number of date-keyed configs required to compute a meaningful batch PBO.
 # compute_pbo with K=1 cannot rank the IS-best against other OOS configs (no ranking
@@ -165,6 +210,16 @@ _SPY_UNAVAILABLE_DEFAULT_OOS_ALPHA: float = float("+inf")
 # over the same fold window (AC-25). This constant isolates the ticker from the logic.
 # Source: feature-plans/strategy-builder-real.md §AC-25 (SPY-OOS-over-the-fold baseline).
 SPY_BENCHMARK_TICKER: str = "SPY"
+
+# AC-17: panel_breakdown annotation stamped when the empty-params tie neutralization
+# fires (see the panel-score block in evaluate_candidate_batch below). Every current
+# engine construction site builds candidates with candidate_params={}/incumbent_params={}
+# — there is no real parameter vector to compare, so the panel score is an artifact of
+# missing data, not a genuine stability signal. This marker records that fact on the
+# persisted verdict so a future reader of panel_breakdown is not misled into thinking a
+# real parameter-distance comparison occurred.
+# Source: feature-plans/advisor-remediation-r1.md AC-17(c); r1-engine design (msg 082fd634).
+_PANEL_NA_NOTE: str = "not applicable — no parameter-vector representation"
 
 
 # ---------------------------------------------------------------------------
@@ -503,7 +558,16 @@ def _fold_transform_single(daily_returns_pct: list) -> _FoldResult:
     # with how autotuner.py:history_test = history_validation_full feeds the
     # OOS cascade.
     validation_returns = daily_returns_pct[val_start_idx:frozen_start_idx]
-    oos_alpha = sum(validation_returns)
+    # AC-5 rider (DE-MATH-R2-001): genuine compounding, not naive sum.
+    # composer_backtest_client._extract_returns now emits SIMPLE returns
+    # (AC-5), so `sum(validation_returns)` is only a first-order approximation
+    # of the true compounded return (it ignores variance drag / Jensen's
+    # inequality) — under the OLD log-return convention, summing was exact
+    # (sum of logs = log of the compounded factor), but that exactness does
+    # not carry over to simple returns. Compound genuinely instead:
+    # Π(1 + r/100) - 1, rescaled back to percent so every caller's existing
+    # percent-scale contract (all 7 call sites across advisors/) is preserved.
+    oos_alpha = (math.prod(1.0 + r / 100.0 for r in validation_returns) - 1.0) * 100.0
     validation_days = len(validation_returns)
 
     thin = validation_days < FOLD_TRANSFORM_MIN_VALIDATION_DAYS
@@ -606,12 +670,31 @@ def evaluate_candidate_batch(
     # Mirrors autotuner.py:2518-2538 (pbo=None when K<2; one batch pbo applied to
     # every candidate's evaluate_acceptance_gate call as a batch-level statistic).
     # Source: Bailey & López de Prado 2014 §3.4; autotuner.py PBO wiring pattern.
+    #
+    # UNIT BOUNDARY (AC-1, DE-MATH-AUDIT-001 MA-3): every producer of
+    # BacktestCandidate.dated_returns writes PERCENT-scale values (``r * 100.0`` on
+    # a Composer log-return, traced through composer_backtest_client.py:182 ->
+    # strategy_builder_engine.py:997, asset_swap_engine.py:954,
+    # logic_change_engine.py:677, frontrunner_builder.py:1605). math_engine.compute_pbo
+    # (math_engine.py:1939-1942) requires DECIMAL returns -- it feeds
+    # compute_crra_eu_objective's ``W = max(WEALTH_ARG_FLOOR, 1 + r)`` wealth argument,
+    # which saturates at the floor for any percent-scale value below -1.0 (i.e. any
+    # real trading day worse than -1%), producing a loss-magnitude-blind, saturating
+    # utility that corrupts the IS-best/OOS ranking the PBO veto depends on. This is
+    # the identical bug class the autotuner already fixed on its own path
+    # (autotuner.py:2369-2374); the advisor path never received the fix. We convert
+    # HERE, once, at the batch boundary -- a fresh dict per candidate (never mutating
+    # candidate.dated_returns, which other callers may still consume in its native
+    # percent scale) -- using the same named constant the autotuner divide uses
+    # (RETURN_PCT_TO_FRACTION = 100.0, imported above).
     # --------------------------------------------------------------------------
     import math_engine as _math_engine  # local import — avoids circular import risk
 
     _batch_pbo: float | None = None
     _dated_configs: list[dict[str, float]] = [
-        dict(c.dated_returns) for c in candidates if c.dated_returns
+        {date: pct / RETURN_PCT_TO_FRACTION for date, pct in c.dated_returns.items()}
+        for c in candidates
+        if c.dated_returns
     ]
     if len(_dated_configs) >= _PBO_MIN_CONFIGS:
         # Intersection of all date keys: only dates present in every config.
@@ -689,13 +772,24 @@ def evaluate_candidate_batch(
     # Only non-zero validation folds contribute to the BHY; empty folds (too-short
     # series / purge failure) produce t=0.0 → p=0.5 which fails BHY conservatively.
     # --------------------------------------------------------------------------
-    # Each candidate's t-stat is computed with a deterministic seed derived from its
-    # index (same seed-derivation strategy as autotuner.py:_haircut_select:1256 where
-    # seed=trial_idx ensures reproducible cross-study haircut decisions).
+    # AC-D3 fix: each candidate's t-stat is seeded from a STABLE hash of its own
+    # candidate_id (_stable_seed_from_candidate_id), NOT its enumerate() position
+    # in this batch. A position-derived seed (the prior `seed=idx`) made the same
+    # candidate's bootstrap SE / t-stat / BHY-adjusted p-value depend on what order
+    # it was submitted in, which made evaluate_candidate_batch's output non-
+    # deterministic for a fixed candidate SET (violates the "unchanged for a fixed
+    # candidate set" invariant tested by test_lens_blend_efficacy.py's
+    # TestGateOutputUnchangedByCandidateOrder). This is a DIFFERENT seed-derivation
+    # context than autotuner.py:_haircut_select's seed=trial_idx (that call site
+    # seeds by TRIAL index within one fixed, never-reordered Optuna study — not
+    # touched here).
     tstats: list[float] = []
-    for idx, (cand, fold) in enumerate(zip(candidates, fold_results)):
+    for cand, fold in zip(candidates, fold_results):
         if fold.validation_returns_pct:
-            t = compute_sortino_tstat(fold.validation_returns_pct, seed=idx)
+            t = compute_sortino_tstat(
+                fold.validation_returns_pct,
+                seed=_stable_seed_from_candidate_id(cand.candidate_id),
+            )
         else:
             # Empty validation fold (series too short) → conservative 0.0.
             # compute_haircut_pvalue(0.0) = 0.5, fails BHY.
@@ -775,6 +869,19 @@ def evaluate_candidate_batch(
             cand.incumbent_params, cand.theory_prior_params
         )
 
+        # AC-17: when BOTH candidate_params AND incumbent_params are structurally
+        # empty, there is no parameter vector to compare — _compute_parameter_
+        # stability_score's neutral-prior fallback (0.5) against the incumbent's
+        # hardcoded 1.0 would otherwise cap every such candidate at KEEP_INCUMBENT
+        # regardless of OOS performance (panel_score 0.5 < 0.75, unconditionally).
+        # Tie cand_stability to inc_stability so the decision rests entirely on the
+        # OOS-superiority precondition (acceptance_gate.py:257) and the hard vetoes,
+        # never on this panel-score artifact of missing parameter data. Requires
+        # BOTH sides empty — a one-side-empty shape is a caller bug, not this case.
+        _params_na = not cand.candidate_params and not cand.incumbent_params
+        if _params_na:
+            cand_stability = inc_stability
+
         # BHY veto input for THIS candidate:
         # - winner_trial_is_none=True iff this candidate is NOT the BHY winner.
         #   (Any non-winner, including veto-eligible ones, gets winner_trial_is_none=True.)
@@ -808,6 +915,17 @@ def evaluate_candidate_batch(
             pbo=_batch_pbo,
         )
 
+        # AC-17(c): stamp the N/A marker on panel_breakdown whenever the tie
+        # neutralization fired above — regardless of the eventual decision (an
+        # OOS-inferior empty-params candidate still hits the tie condition
+        # structurally; it just loses separately on the OOS comparison).
+        # acceptance_gate.py itself is untouched — AcceptanceVerdict is a
+        # NamedTuple, so this is an immutable-update via ._replace().
+        if _params_na:
+            verdict = verdict._replace(
+                panel_breakdown={**verdict.panel_breakdown, "note": _PANEL_NA_NOTE}
+            )
+
         # Survivor overfitting caveat is MANDATORY for ADOPT_CANDIDATE (AC-3.3).
         if verdict.decision == "ADOPT_CANDIDATE":
             caveats.append(SURVIVOR_OVERFITTING_CAVEAT)
@@ -821,8 +939,17 @@ def evaluate_candidate_batch(
         #      high-PBO AND below-SPY reports the PBO reason (AC-24 stage order).
         #   3. SPY-fold baseline not met (oos_alpha <= spy-fold default) → "below_spy_alpha".
         #      Stage-2 gate — only reached when PBO did not veto.
-        #   4. All other causes (BHY non-winner, nn1, purge) → "fdr_not_winner".
-        # Source: feature-plans/strategy-builder-real.md §AC-24/AC-25; handoff §rejection_reason.
+        #   4. Not the batch's BHY/Yekutieli FDR winner (this_winner_trial_is_none, or
+        #      nn1/purge failure) → "fdr_not_winner". EXPLICIT check (AC-7b) — no longer
+        #      a blind catch-all, since a genuine FDR winner can still lose to the
+        #      incumbent (case 5 below) and must not be mislabeled as a non-winner.
+        #   5. Cleared every veto, WAS the FDR winner, beat SPY/default — the only
+        #      remaining KEEP_INCUMBENT cause per acceptance_gate.py's own cascade is
+        #      losing to the incumbent specifically (OOS-alpha or panel-score margin)
+        #      → "oos_inferior_to_incumbent" (AC-7b). Previously fell through to
+        #      "fdr_not_winner", indistinguishable from a genuine non-winner.
+        # Source: feature-plans/strategy-builder-real.md §AC-24/AC-25; feature-plans/
+        # advisor-remediation-r1.md AC-7b (plan @ 39d56fd5); handoff §rejection_reason.
         _rejection_reason: str | None
 
         if verdict.decision == "ADOPT_CANDIDATE":
@@ -839,9 +966,13 @@ def evaluate_candidate_batch(
             # candidate is withheld with below_spy_alpha (the baseline could not be
             # established — AC-25 edge-14 conservative WITHHOLD).
             _rejection_reason = "below_spy_alpha"
-        else:
-            # Catch-all: BHY/Yekutieli FDR non-winner, or nn1/purge/thin-window failure.
+        elif this_winner_trial_is_none:
+            # Genuinely not the batch's BHY/Yekutieli FDR winner (or failed nn1/purge).
             _rejection_reason = "fdr_not_winner"
+        else:
+            # AC-7b residual: cleared every veto, IS the FDR winner, beat SPY/default —
+            # the only remaining KEEP_INCUMBENT cause is the incumbent comparison itself.
+            _rejection_reason = "oos_inferior_to_incumbent"
 
         results.append(
             CandidateGateResult(

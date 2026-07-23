@@ -73,6 +73,17 @@ EXECUTION_START_TIME = os.getenv("EXECUTION_START_TIME", "09:30")
 # to avoid open-volatility false exits (V2, AC-V2.1). TP and Trailing Stop are unaffected.
 VWAP_OPEN_WINDOW_GRACE_MINUTES = int(os.getenv("VWAP_OPEN_WINDOW_GRACE_MINUTES", "15"))
 
+# --- MAPERF-15 STALENESS TRIPWIRE (AC-4, DE-MATH-F7-001) ---
+# Consecutive 1-minute engine cycles (this project's cadence -- CLAUDE.md
+# "Engine runs 1-minute cadence during market hours") of a bit-static
+# post-trigger current_return before logging a single loud warning.
+# docs/research/composer/maperf15-post-sale-lpc-semantics.md's evidence shows
+# Composer's last_percent_change moving within 3 seconds under normal live
+# conditions -- 30 cycles (~30 minutes) is a conservative floor well above
+# any legitimate quiet period, chosen to avoid false alarms while still
+# catching a genuine tracking-behavior freeze within the same session.
+MAPERF15_STATIC_LPC_CYCLES = 30
+
 # --- STRATEGY PARAMETERS ---
 TRIGGER_THRESHOLD_PCT = float(os.getenv("TRIGGER_THRESHOLD_PCT", "15.0"))
 MAX_SQUEEZE_FLOOR = float(os.getenv("MAX_SQUEEZE_FLOOR", "0.20"))
@@ -626,6 +637,14 @@ def main():
         # data gate: US equity open is always 09:30 ET regardless of EXECUTION_START_TIME
         REAL_MARKET_OPEN = dt_time(9, 30)
 
+        # AC-4: real market-hours discriminator for the MAPERF-15 tripwire,
+        # independent of --force. force_run bypasses the closed-market
+        # early-returns below (:636, :952) so the per-symphony loop can still
+        # execute on a closed day/pre-open — this flag lets the tripwire
+        # itself refuse to fire in that case rather than trusting "the loop
+        # ran" as a proxy for "the market is open".
+        maperf15_market_hours_now = is_trading and REAL_MARKET_OPEN <= current_time < market_close
+
         # Fully closed: holiday/weekend, after post-mortem window, or before 09:30 —
         # persist Composer inception fields and sleep. The pre-09:30 case preserves
         # bc65d57 behavior: dashboard gets fresh CR/MDD even before market open.
@@ -780,6 +799,7 @@ def main():
                             "mc_history": [],
                             "below_stop_count": 0,
                             "above_tp_count": 0,
+                            "disarm_confirm_count": 0,
                             "vwap_ticks": 0,
                             "vwap_bleed_ticks": 0,
                             "breakeven_locked": False,
@@ -840,6 +860,7 @@ def main():
                             entry["hwm_hold_ticks"] = 0
                             entry["below_stop_count"] = 0
                             entry["above_tp_count"] = 0
+                            entry["disarm_confirm_count"] = 0
                             entry["vwap_ticks"] = 0
                             entry["vwap_bleed_ticks"] = 0
                             entry["stop_trigger"] = None
@@ -932,6 +953,42 @@ def main():
                         # AC-3: scope this row to the current position epoch.
                         position_epoch=bot_state[s_id].get("position_epoch"),
                     )
+
+                    # AC-4 (DE-MATH-F7-001): passive MAPERF-15 staleness
+                    # tripwire. Watches THIS raw current_return (Composer
+                    # last_percent_change * 100, the value just written to
+                    # shadow_history above) for a triggered symphony -- NOT
+                    # the action-phase True-Shadow-Return override, which is a
+                    # completely separate, engine-reconstructed value that
+                    # never reaches shadow_history. Never raises, never gates
+                    # any decision -- passive bookkeeping + a single log line.
+                    if is_post_trigger and maperf15_market_hours_now:
+                        _prev_raw_return = bot_state[s_id].get("_maperf15_last_raw_return")
+                        if _prev_raw_return is not None and current_return == _prev_raw_return:
+                            _static_streak = bot_state[s_id].get("_maperf15_static_streak", 0) + 1
+                        else:
+                            _static_streak = 0
+                        bot_state[s_id]["_maperf15_static_streak"] = _static_streak
+                        if _static_streak >= MAPERF15_STATIC_LPC_CYCLES and not bot_state[s_id].get(
+                            "_maperf15_warned"
+                        ):
+                            logging.warning(
+                                "[MAPERF-15] %s (%s): current_return static across "
+                                "%d consecutive market-hours cycles post-trigger -- "
+                                "DE-GUARD-ALPHA-SAVED-001's if-held source "
+                                "(shadow_history.current_return / Composer "
+                                "last_percent_change) may have stopped tracking. "
+                                "See docs/research/composer/"
+                                "maperf15-post-sale-lpc-semantics.md.",
+                                s_id,
+                                sym.get("name", ""),
+                                MAPERF15_STATIC_LPC_CYCLES,
+                            )
+                            bot_state[s_id]["_maperf15_warned"] = True
+                    else:
+                        bot_state[s_id]["_maperf15_static_streak"] = 0
+                        bot_state[s_id]["_maperf15_warned"] = False
+                    bot_state[s_id]["_maperf15_last_raw_return"] = current_return
 
                     # AC-2 / D12 bookkeeping: persist the current cycle's
                     # holdings-positive boolean so the NEXT cycle's
@@ -1224,6 +1281,7 @@ def main():
                         "mc_history": [],
                         "below_stop_count": 0,
                         "above_tp_count": 0,
+                        "disarm_confirm_count": 0,
                         "vwap_ticks": 0,
                         "vwap_bleed_ticks": 0,
                         "breakeven_locked": False,
@@ -1244,6 +1302,7 @@ def main():
                 for key in [
                     "below_stop_count",
                     "above_tp_count",
+                    "disarm_confirm_count",
                     "vwap_ticks",
                     "vwap_bleed_ticks",
                     "hwm_hold_ticks",
@@ -1299,9 +1358,6 @@ def main():
                     bleed_multiplier=acc_VWAP_BLEED_MULTIPLIER,
                 )
 
-                should_arm = False
-                arm_reason = ""
-
                 # run_monte_carlo returns the out-of-band insufficient sentinel
                 # (None) when MC history is too short. Insufficient MC = the MC
                 # second opinion is absent: no disarm, no TP — and no MC veto of
@@ -1315,36 +1371,44 @@ def main():
                 # to None (unprecedented regime); both paths converge here.
                 mc_available = prob_underperforming is not None
 
-                if (
-                    mc_available
-                    and acc_TAKE_PROFIT_MC_PCT <= prob_underperforming < acc_TRIGGER_THRESHOLD_PCT
-                ):
-                    should_arm = True
-                    arm_reason = f"MC Prob {prob_underperforming:.1f}%"
-                elif not mc_available:
-                    should_arm = True
-                    arm_reason = "MC Absent (fail-open)"
+                # Arm/disarm decision (R3-b, MA-4 fix): delegated to the shared
+                # pure seam so production and the autotuner replay share ONE
+                # decision surface. Recovery-disarm is prob-based only (the OLD
+                # inverted disarm's `current_return > 0` leg is gone) and requires
+                # a disarm_confirm_ticks-tick hysteresis ladder — see
+                # math_engine.compute_arm_disarm_decision's docstring.
+                # NOTE: distinct from `prev_armed` above (cycle-start snapshot
+                # consumed by the chart_event "Armed" diff at :~1650) — this is
+                # the seam's own before/after pair, scoped to this transition.
+                armed_before_disarm_decision = bot_state[symphony_id]["armed"]
+                (
+                    bot_state[symphony_id]["armed"],
+                    bot_state[symphony_id]["disarm_confirm_count"],
+                ) = math_engine.compute_arm_disarm_decision(
+                    prob_underperforming=prob_underperforming,
+                    is_triggered=bot_state[symphony_id]["triggered"],
+                    armed=armed_before_disarm_decision,
+                    disarm_confirm_count=bot_state[symphony_id]["disarm_confirm_count"],
+                    take_profit_mc_pct=acc_TAKE_PROFIT_MC_PCT,
+                    trigger_threshold_pct=acc_TRIGGER_THRESHOLD_PCT,
+                )
 
-                if (
-                    should_arm
-                    and not bot_state[symphony_id]["armed"]
-                    and not bot_state[symphony_id]["triggered"]
-                ):
-                    bot_state[symphony_id]["armed"] = True
+                # Telemetry + the AC-7 below_stop_count reset are CALLER-side (the
+                # seam returns no string) — diff before/after armed, matching the
+                # compute_tp_confirmation transition-print idiom below.
+                if not armed_before_disarm_decision and bot_state[symphony_id]["armed"]:
+                    arm_reason = (
+                        f"MC Prob {prob_underperforming:.1f}%"
+                        if mc_available
+                        else "MC Absent (fail-open)"
+                    )
                     print(f"  *** {symphony_name} ARMED ({arm_reason}) ***")
                     database.log_symphony_event(
                         symphony_id, f"{symphony_name} ARMED ({arm_reason})", "armed"
                     )
-
-                elif bot_state[symphony_id]["armed"] and not bot_state[symphony_id]["triggered"]:
-                    if (
-                        mc_available
-                        and prob_underperforming > (acc_TRIGGER_THRESHOLD_PCT * 2)
-                        and current_return > 0.0
-                    ):
-                        bot_state[symphony_id]["armed"] = False
-                        bot_state[symphony_id]["below_stop_count"] = 0
-                        print(f"  *** {symphony_name} DISARMED (Conditions Recovered) ***")
+                elif armed_before_disarm_decision and not bot_state[symphony_id]["armed"]:
+                    bot_state[symphony_id]["below_stop_count"] = 0
+                    print(f"  *** {symphony_name} DISARMED (Conditions Recovered) ***")
 
                 # Do not pollute the rolling MC history with:
                 #   (a) the None sentinel — a None entry breaks averaging/comparison;
@@ -1409,6 +1473,7 @@ def main():
                     parabolic_squeeze_multiplier=acc_params.get(
                         "MAX_PARABOLIC_SQUEEZE", MAX_PARABOLIC_SQUEEZE
                     ),
+                    squeeze_floor=acc_MAX_SQUEEZE_FLOOR,
                 )
 
                 base_stop_level = safe_hwm - active_trailing_stop
@@ -1538,7 +1603,29 @@ def main():
                     print(f"  🩸 {symphony_name[:35]} VWAP Bleed Limit Reached. Forcing exit.")
 
                 safe_name = symphony_name[:35].encode("ascii", "ignore").decode("ascii")
-                arm_prob_str = f"{prob_underperforming:.1f}%" if mc_available else "N/A"
+                # DE-MATH-F7-001 (AC-1): post-trigger, prob_underperforming is
+                # computed against a fictional 0% baseline -- the True-Shadow-
+                # Return override above (:1189-1204) swaps in frozen
+                # current_holdings with no last_percent_change, collapsing
+                # run_monte_carlo's baseline to 0. This guards the console
+                # print AND the two persist sites below (bot_state +
+                # chart_history) against that fabricated value, reusing the
+                # SAME bot_state[symphony_id]["triggered"] flag the PA-M4
+                # comment above already reads for the identical reason. All
+                # decision math above (arm/disarm/TP-confirm/exit-confirm/
+                # VWAP) already consumed the real, unguarded
+                # prob_underperforming for this cycle -- an untriggered
+                # symphony's displayed/persisted value stays byte-identical.
+                # ADDENDUM 2 timing: on the cycle the stop actually fires,
+                # this flag is still False (it flips at :1808, later, in the
+                # execution-queue pass) so that cycle's real reading is never
+                # suppressed.
+                is_triggered_now = bot_state[symphony_id]["triggered"]
+                persisted_mc_prob = None if is_triggered_now else prob_underperforming
+                if is_triggered_now:
+                    arm_prob_str = "Exited"
+                else:
+                    arm_prob_str = f"{prob_underperforming:.1f}%" if mc_available else "N/A"
                 print(
                     f"  -> {safe_name}: Ret: {current_return:.2f}% | HWM: {high_water_mark:.2f}% | Stop Dist: {active_trailing_stop:.2f}% | ArmProb: {arm_prob_str}"  # noqa: E501  # un-wrappable long line
                 )
@@ -1546,7 +1633,7 @@ def main():
                 bot_state[symphony_id]["name"] = symphony_name
                 bot_state[symphony_id]["account"] = account
                 bot_state[symphony_id]["current_return"] = current_return
-                bot_state[symphony_id]["mc_prob"] = prob_underperforming
+                bot_state[symphony_id]["mc_prob"] = persisted_mc_prob
                 bot_state[symphony_id]["stop_trigger"] = stop_trigger_level
                 bot_state[symphony_id]["active_stop_distance"] = active_trailing_stop
                 bot_state[symphony_id]["symphony_vol"] = symphony_vol
@@ -1595,7 +1682,7 @@ def main():
                         "return": current_return,
                         "stop": tracked_stop,
                         "event": chart_event,
-                        "mc_prob": prob_underperforming,
+                        "mc_prob": persisted_mc_prob,
                         "vol": symphony_vol,
                         "vwap_diff": weighted_vwap_diff,
                         "base_atr_pct": 0.0,
@@ -1813,8 +1900,13 @@ def main():
                         bot_state[sym_id]["triggered_at_time"] = current_time_str
 
                         # H1: non-blocking telemetry write — opens its own connection,
-                        # never joins save_state transaction; failure is swallowed.
-                        database.record_exit_trigger(
+                        # never joins save_state transaction; failure is swallowed
+                        # (returns None). The returned row id is stashed as
+                        # _last_trigger_id so the data phase's shadow writes link
+                        # post-trigger rows to this exit_triggers row (Finding 10:
+                        # the read at the record_shadow_observation site existed
+                        # with no writer, so trigger_id never populated).
+                        _trigger_row_id = database.record_exit_trigger(
                             symphony_id=sym_id,
                             account_id=bot_state[sym_id].get("account"),
                             triggered_reason=reason,
@@ -1830,6 +1922,7 @@ def main():
                             also_true=item["also_true"],
                             cycle_id=bot_state.get("last_successful_cycle_at"),
                         )
+                        bot_state[sym_id]["_last_trigger_id"] = _trigger_row_id
 
                         bot_state[sym_id]["high_water_mark"] = -999.0
 
@@ -1910,6 +2003,10 @@ def main():
                 discord_webhook_url=DISCORD_WEBHOOK_URL,
             )
         except Exception as _sleeves_exc:
+            # Sleeve-tick isolation barrier (P3, s3-review-approved epic invariant):
+            # ANY exception from sleeve processing is contained here so a sleeve
+            # bug can never break the exit machine's own symphony trading on this
+            # 1-minute cycle. Narrowing this catch would defeat that guarantee.
             logging.error("[sleeves] tick processing error: %s", _sleeves_exc)
 
         database.save_state(bot_state)
@@ -1968,6 +2065,7 @@ def seed_symphonies_into_bot_state(bot_state: dict) -> int:
                 "mc_history": [],
                 "below_stop_count": 0,
                 "above_tp_count": 0,
+                "disarm_confirm_count": 0,
                 "vwap_ticks": 0,
                 "vwap_bleed_ticks": 0,
                 "breakeven_locked": False,

@@ -17,6 +17,10 @@ CompileResult : dataclass
               a clean drop.
       .reason (str | None) — set on a drop; None on success.
               D-1: carries only type(exc).__name__ on an internal error.
+      .tradeability_unverified (bool) — True only when the repair loop
+              degraded on an infra/transport failure (see below): the tree
+              IS returned (not None) but its tradeability was never checked
+              against Composer. Default False.
 
 compile_plan(plan, *, backtest_fn=None) -> CompileResult
     Compile a single build-plan into a Composer tree. The DSL NODE/CONDITION
@@ -24,9 +28,14 @@ compile_plan(plan, *, backtest_fn=None) -> CompileResult
     result (a HARD-error tree NEVER reaches backtest). When backtest_fn is
     supplied, a bounded repair loop runs: a tradeability rejection (HTTP 400
     envelope) prunes the named ticker and retries; a grammar rejection (HTTP 422
-    envelope) is NOT blind-ticker-pruned. market_cap-scheme plans are a
-    producer-deprecated drop (Composer retired market-cap weighting — captured
-    2026-06-20). Never raises (D-1).
+    envelope) is NOT blind-ticker-pruned. An infra/transport failure (connection
+    error, timeout, DNS failure, HTTP 5xx/429, or any other non-parseable /
+    non-200 / non-400 result — Composer is unreachable, not rejecting) DEGRADES
+    instead of dropping: the current validated tree is returned with
+    reason="backtest_unavailable" and tradeability_unverified=True, so a
+    Composer outage never silently zeroes the run. market_cap-scheme plans are
+    a producer-deprecated drop (Composer retired market-cap weighting —
+    captured 2026-06-20). Never raises (D-1).
 
 Design constraints
 ------------------
@@ -36,7 +45,10 @@ Design constraints
 - Advisory-only: no LIVE_EXECUTION, no Composer write/deploy.
 - The error-envelope split parses the composer_backtest_client format
   "HTTP {status}: {text}" (composer_backtest_client.py:360) by STATUS CODE,
-  not by message text.
+  not by message text. A failure with no parseable "HTTP {N}:" prefix at all
+  (timeout, transport/connection/DNS error, invalid-JSON-on-200, or the
+  Retry-After-exhausted 429 message — none of these carry that prefix) is
+  classified infra, same as a parsed 5xx/429.
 """
 
 from __future__ import annotations
@@ -55,10 +67,17 @@ MAX_REPAIR_ATTEMPTS: int = 3
 
 @dataclass
 class CompileResult:
-    """Result of compiling one build-plan. tree is None on a clean drop."""
+    """Result of compiling one build-plan. tree is None on a clean drop.
+
+    tradeability_unverified is True only on the infra-degrade path: tree is
+    NOT None (it's the last validated tree) but its tradeability against
+    Composer was never confirmed because Composer was unreachable, not
+    rejecting.
+    """
 
     tree: dict | None = None
     reason: str | None = None
+    tradeability_unverified: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +260,36 @@ def _prune_node(node, ticker: str):
 
 
 # ---------------------------------------------------------------------------
+# Infra-vs-rejection classification for a backtest_fn failure.
+#
+# A genuine Composer rejection (400 tradeability, 422 grammar, or any other
+# status Composer actually returned) always carries a parsed HTTP status via
+# _parse_envelope_status. An infra/transport failure — Composer unreachable
+# or overloaded, NOT rejecting the content — either carries a 5xx/429 status
+# (composer_backtest_client.py retries these internally with its own bounded
+# backoff before giving up and returning the error) or carries no parseable
+# "HTTP {N}:" prefix at all (timeout, connection/DNS error, invalid JSON on
+# a 200, or the Retry-After-exhausted 429 message, which omits the colon).
+# ---------------------------------------------------------------------------
+
+# HTTP statuses that mean "Composer is overloaded/unreachable", not "Composer
+# rejected this content". Matches composer_backtest_client._RETRYABLE_HTTP_STATUSES.
+_INFRA_HTTP_STATUSES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+
+
+def _is_infra_failure(status: int | None) -> bool:
+    """True when a backtest_fn failure is infra/transport, not a content rejection.
+
+    ``status`` is the result of ``_parse_envelope_status`` on the failure
+    envelope. None (no parseable "HTTP {N}:" prefix — timeout, transport
+    error, invalid JSON, or an unparseable 429) and any parsed 5xx/429 status
+    are both infra. Any other parsed status (400, 422, ...) is a genuine
+    Composer rejection and is NOT infra.
+    """
+    return status is None or status in _INFRA_HTTP_STATUSES
+
+
+# ---------------------------------------------------------------------------
 # Condition DSL -> symphony_schema compound condition constructors.
 # ---------------------------------------------------------------------------
 
@@ -408,9 +457,12 @@ def compile_plan(plan, *, backtest_fn=None) -> CompileResult:
     Returns
     -------
     CompileResult
-        .tree   — compiled tree on success, None on any drop.
-        .reason — None on success; a string on any drop (D-1: type(exc).__name__
-                  on internal error).
+        .tree   — compiled tree on success or infra-degrade, None on any
+                  clean drop.
+        .reason — None on success; a string on any drop or degrade (D-1:
+                  type(exc).__name__ on internal error; "backtest_unavailable"
+                  on infra-degrade).
+        .tradeability_unverified — True only on infra-degrade.
 
     Never raises (D-1). Any garbage input or internal error degrades cleanly.
     """
@@ -452,8 +504,12 @@ def compile_plan(plan, *, backtest_fn=None) -> CompileResult:
 
         # --- Bounded repair loop -----------------------------------------
         # Attempt backtest; on HTTP 400 (tradeability) prune the named ticker
-        # and retry; on HTTP 422 (grammar) drop immediately. The loop is
-        # bounded by MAX_REPAIR_ATTEMPTS (the test asserts <= MAX + 1 calls).
+        # and retry; on HTTP 422 (grammar) drop immediately; on an infra/
+        # transport failure, degrade (emit the current validated tree
+        # unverified) rather than drop — Composer is unreachable, not
+        # rejecting, and dropping would silently zero the run on an outage.
+        # The loop is bounded by MAX_REPAIR_ATTEMPTS (the test asserts
+        # <= MAX + 1 calls).
         attempts = 0
         current_tree = tree
 
@@ -468,6 +524,21 @@ def compile_plan(plan, *, backtest_fn=None) -> CompileResult:
             # Parse the envelope: "HTTP {status}: {text}"
             envelope = result.error
             status = _parse_envelope_status(envelope)
+
+            if _is_infra_failure(status):
+                # Composer unreachable/overloaded, not rejecting. No extra
+                # retry here — backtest_fn (composer_backtest_client.run_backtest)
+                # already ran its own bounded exponential backoff before
+                # returning this error, so retrying again would silently
+                # stack a second unbounded-feeling retry layer on top.
+                # current_tree is the last validated tree (initial, or
+                # partially pruned if earlier attempts pruned a genuine
+                # tradeability rejection) — that's exactly what's emitted.
+                return CompileResult(
+                    tree=current_tree,
+                    reason="backtest_unavailable",
+                    tradeability_unverified=True,
+                )
 
             if status == 400:
                 # Tradeability rejection: prune named in-tree ticker and retry.

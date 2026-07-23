@@ -107,8 +107,21 @@ def _patch_builder_seams(monkeypatch, sbe, gen, *, plans: list[dict], membership
       (We patch the function on the sbe module's import site AND the gen module so the
       body-swap can reference it either way; raising=False tolerates whichever name the
       impl wires.)
+    - run_backtest → a deterministic success BacktestResult (no network call). This
+      file's own module docstring ("WHAT IS MOCKED... run_backtest (network)") already
+      declared this seam mocked, but the implementation never caught up: a39a1476
+      (AC-12, advisor-remediation-r1) wired _generate_candidate_trees's real
+      compile_plan(plan, backtest_fn=run_backtest) call site, and this helper's
+      run_backtest mock was never added. Without it, every one of the 4 tests using
+      this helper made a REAL unmocked call to Composer's live production /backtest
+      endpoint on every run — silently green wherever network egress to Composer was
+      reachable (confirmed: Composer's /backtest does not enforce auth, so it even
+      succeeds with empty credentials), silently red (empty infos) wherever it was
+      not, e.g. CI. compile_plan only reads .error on this success path, so a minimal
+      stats={} fake is sufficient — it never inspects .stats/.daily_returns here.
     """
     import advisors.universe_provider as up  # noqa: PLC0415
+    from advisors.composer_backtest_client import BacktestResult  # noqa: PLC0415
 
     monkeypatch.setattr(up, "get_tradeable_set", lambda *a, **k: frozenset(membership))
     monkeypatch.setattr(
@@ -126,6 +139,14 @@ def _patch_builder_seams(monkeypatch, sbe, gen, *, plans: list[dict], membership
         monkeypatch.setattr(
             sbe, "get_tradeable_set", lambda *a, **k: frozenset(membership), raising=False
         )
+
+    def _fake_run_backtest(*a, **k):
+        return BacktestResult(stats={}, data_warnings=[], error=None)
+
+    # sbe imports run_backtest at module level (`from ... import run_backtest`), so the
+    # name bound in sbe's own namespace — the one compile_plan(backtest_fn=run_backtest)
+    # actually receives — must be patched there, not on composer_backtest_client.
+    monkeypatch.setattr(sbe, "run_backtest", _fake_run_backtest, raising=False)
 
 
 def _all_objectives(sbe):
@@ -174,7 +195,29 @@ def test_sbe_objective_values_map_to_generator_objective_by_value(sbe, gen):
 def test_ac20_propose_strategies_signature_unchanged(sbe):
     """AC-20: the body swap must NOT change propose_strategies' public signature. The
     parameters / defaults / kinds are frozen (a new Objective enum member is not a
-    signature change). The ONLY production caller is the route (app.py:3816)."""
+    signature change). The ONLY production caller is the route (app.py:3816).
+
+    Re-frozen for R2-1 (advisor-r2-1-context-provenance.md, r2-review finding):
+    R2-1 correctly adds 3 new keyword-only, default=None params —
+    reasoning_context / reasoning_manifest / run_id — for reasoning-context
+    injection + provenance threading (AC-4/AC-6/AC-8). That's a genuine,
+    intentional signature change, not a regression, so this characterization
+    test is updated to pin the NEW frozen shape (mirrors the same re-freeze
+    pattern applied to test_generate_build_plans_public_signature_is_frozen
+    in test_build_plan_generator_truncation.py) rather than deleted — it still
+    catches any FUTURE unintended drift. The keyword-only + default-None
+    assertions below are the backward-compatibility proof: every pre-R2-1
+    caller (positional objective/universe/screen_config/live_returns/
+    symphony_id, keyword incumbent_oos_alpha/default_oos_alpha/
+    community_candidates) is unaffected by the addition.
+
+    Re-frozen AGAIN for the ops-cluster cycle (F-030/AC-5, fix-ops-cluster.md,
+    running-register.md F-030 — "log/audit-trail every propose_strategies
+    invocation at the engine level ... with its caller/source"): adds a 4th
+    keyword-only, default=None param — invocation_source — for the same
+    additive-traceability reason as run_id (main-ruled 2026-07-21: an
+    intentional, additive, keyword-only default=None change, update this
+    test rather than delete it, mirroring the exact R2-1 precedent above)."""
     sig = inspect.signature(sbe.propose_strategies)
     params = list(sig.parameters.keys())
     assert params == [
@@ -186,9 +229,31 @@ def test_ac20_propose_strategies_signature_unchanged(sbe):
         "incumbent_oos_alpha",
         "default_oos_alpha",
         "community_candidates",
-    ], f"propose_strategies signature must be frozen (AC-20); got {params}"
+        "reasoning_context",
+        "reasoning_manifest",
+        "run_id",
+        "invocation_source",
+    ], f"propose_strategies signature must be frozen (AC-20 + R2-1 + F-030); got {params}"
     # universe stays positional-or-keyword with no required-arg change.
     assert sig.parameters["universe"].default is inspect.Parameter.empty or True
+    # R2-1 + F-030 additions: all 4 new params must be keyword-only with
+    # default=None — a positional-or-keyword addition would risk silently
+    # shifting positional callers, and a non-None default would make omitting
+    # them not a no-op (AC-8's from-scratch byte-preservation contract).
+    for new_param in (
+        "reasoning_context",
+        "reasoning_manifest",
+        "run_id",
+        "invocation_source",
+    ):
+        assert sig.parameters[new_param].kind is inspect.Parameter.KEYWORD_ONLY, (
+            f"R2-1/F-030 GAP: {new_param!r} must be keyword-only, got "
+            f"{sig.parameters[new_param].kind}"
+        )
+        assert sig.parameters[new_param].default is None, (
+            f"R2-1/F-030 GAP: {new_param!r} must default to None (omitting it must be a "
+            f"no-op), got {sig.parameters[new_param].default!r}"
+        )
 
 
 # ===========================================================================

@@ -118,7 +118,12 @@
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: { legend: { display: false } },
-                scales: { x: { display: false }, y: { display: false } }
+                // F-025: the y-axis (magnitude) must stay visible so this chart's
+                // day-by-day cumulative series (~-3% scale) can't be visually
+                // conflated with the adjacent VW-lifetime scalar headline (~+34%,
+                // opposite sign, ~12x magnitude). X stays hidden -- the
+                // hero-data-as-of legend span already covers time.
+                scales: { x: { display: false }, y: { display: true } }
             }
         });
         applyHeroWindow(_heroWindow);
@@ -326,7 +331,14 @@
             if (!sym || !sym.id) return;
             fetch('/api/chart/' + sym.id)
                 .then(function (r) { return r.json(); })
-                .then(function (data) { renderSparkline(sym.id, data, sym); renderMcDial(sym.id, data); })
+                .then(function (data) {
+                    renderSparkline(sym.id, data, sym);
+                    // Thread the triggered/exited flag onto chartData so renderMcDial
+                    // can actively render the honest exited state instead of scanning
+                    // history for a (possibly stale, resurrected) reading.
+                    data.triggered = sym.triggered;
+                    renderMcDial(sym.id, data);
+                })
                 .catch(function () {});
         });
     }
@@ -658,11 +670,18 @@
         var last = data.slice(-1)[0] || {};
         sym = sym || {};
 
-        // mc_prob: scan data array backwards (top-level is null); skip sentinels
+        // mc_prob: for a TRIGGERED (exited) symphony, never scan history for a
+        // stale pre-trigger reading -- once post-trigger rows carry the honest
+        // None sentinel (AC-1), a backward null-scan cannot tell "no data yet"
+        // from "exited" and would resurrect the last real pre-trigger value as
+        // if it were current. Short-circuit on trigger STATE before the scan.
         var mcProb = null;
-        for (var i = data.length - 1; i >= 0; i--) {
-            var candidate = sentinelToNull(data[i].mc_prob != null ? data[i].mc_prob : null);
-            if (candidate != null) { mcProb = candidate; break; }
+        if (!sym.triggered) {
+            // mc_prob: scan data array backwards (top-level is null); skip sentinels
+            for (var i = data.length - 1; i >= 0; i--) {
+                var candidate = sentinelToNull(data[i].mc_prob != null ? data[i].mc_prob : null);
+                if (candidate != null) { mcProb = candidate; break; }
+            }
         }
 
         // stop distance = shadow_hwm - current stop level (sentinel-guard both)
@@ -688,10 +707,17 @@
         var mcText = mcProb != null ? mcProb.toFixed(1) + '%' : '—';
         setEl('dp-rm-mc', mcText);
         var mcBar = document.getElementById('dp-rm-mc-bar');
-        if (mcBar && mcProb != null) {
-            var pct = Math.max(0, Math.min(100, mcProb));
-            mcBar.style.width = pct + '%';
-            mcBar.style.background = mcProb < 15 ? cs('--studio-warn') : (mcProb > 80 ? cs('--studio-ink-dim') : cs('--studio-accent'));
+        if (mcBar) {
+            if (mcProb != null) {
+                var pct = Math.max(0, Math.min(100, mcProb));
+                mcBar.style.width = pct + '%';
+                mcBar.style.background = mcProb < 15 ? cs('--studio-warn') : (mcProb > 80 ? cs('--studio-ink-dim') : cs('--studio-accent'));
+            } else {
+                // Neutral reset -- never leave the bar showing a stale
+                // width/color from a previous (possibly pre-trigger) render.
+                mcBar.style.width = '0%';
+                mcBar.style.background = cs('--studio-ink-faint');
+            }
         }
 
         setEl('dp-rm-stop', stopDist);
@@ -829,6 +855,25 @@
     var MC_CIRCUMFERENCE = 94.25; // 2 * π * 15
 
     function renderMcDial(symId, chartData) {
+        var dials = document.querySelectorAll('[data-testid="mc-dial"][data-sym-id="' + symId + '"]');
+
+        // Exited/triggered: actively render an honest "-" state. Never scan
+        // history for a stale pre-trigger reading (that would resurrect it as
+        // "current"), and never silently skip the render (that freezes the
+        // dial at whatever was last drawn) -- both are the F7 defects.
+        if (chartData && chartData.triggered) {
+            dials.forEach(function (svg) {
+                var arc = svg.querySelector('.mc-arc');
+                var text = svg.querySelector('.mc-text');
+                if (arc) {
+                    arc.setAttribute('stroke-dashoffset', MC_CIRCUMFERENCE.toFixed(2));
+                    arc.style.stroke = cs('--studio-ink-faint');
+                }
+                if (text) text.textContent = '—';
+            });
+            return;
+        }
+
         // mc_prob in chart data points is 0-100 scale; top-level chartData.mc_prob may be null.
         // Use last non-null mc_prob from data array, falling back to top-level fields.
         var mcProb = null;
@@ -847,7 +892,6 @@
         var arcColor = mcProb < 15 ? cs('--studio-warn')
                      : mcProb > 80 ? cs('--studio-ink-dim')
                      : cs('--studio-accent');
-        var dials = document.querySelectorAll('[data-testid="mc-dial"][data-sym-id="' + symId + '"]');
         dials.forEach(function (svg) {
             var arc = svg.querySelector('.mc-arc');
             var text = svg.querySelector('.mc-text');
@@ -877,16 +921,19 @@
         // comp-cumulative-delta / comp-mdd-delta) — not just bot/held text.
         var rows = [
             { id: 'today',      deltaTestid: 'comp-today-delta',      values: ps.today_change      || {}, higherIsBetter: true },
-            // Prefer windowed_cumulative_return (VW-basis, same window as guard_alpha)
-            // over cumulative_return (which may carry account-basis if_held ~63.95%).
-            // Falls back to cumulative_return when windowed_cumulative_return is absent
-            // (e.g. cold cache) so the row still renders rather than breaking.
-            { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.windowed_cumulative_return || ps.cumulative_return || {}, higherIsBetter: true },
+            // F-014: this row's SSR label reads "Cumulative · lifetime"
+            // (templates/index.html:920) -- it must source the lifetime
+            // cumulative_return only. Do NOT prefer a windowed value here; that
+            // clobbers the lifetime-labeled figure with a windowed one on every poll.
+            { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.cumulative_return || {}, higherIsBetter: true },
             { id: 'mdd',        deltaTestid: 'comp-mdd-delta',        values: ps.max_drawdown      || {}, higherIsBetter: false }
         ];
         rows.forEach(function (row) {
-            var bot  = sentinelToNull(typeof row.values.dry_run === 'number' ? row.values.dry_run : (Number(row.values.dry_run) || null)) || 0;
-            var held = sentinelToNull(typeof row.values.if_held  === 'number' ? row.values.if_held  : (Number(row.values.if_held)  || null)) || 0;
+            // F-016: sentinelToNull's null result must survive to fmtPct (which has
+            // its own honest '--' branch for null) -- do NOT coerce to 0 here, that
+            // fabricates a false "no change" reading for a genuinely missing value.
+            var bot  = sentinelToNull(typeof row.values.dry_run === 'number' ? row.values.dry_run : (Number(row.values.dry_run) || null));
+            var held = sentinelToNull(typeof row.values.if_held  === 'number' ? row.values.if_held  : (Number(row.values.if_held)  || null));
             var maxAbs = Math.max(Math.abs(bot), Math.abs(held), 1);
 
             var botBars  = document.querySelectorAll('[data-testid="comp-bar-bot"][data-row="'  + row.id + '"]');
@@ -903,11 +950,16 @@
             var heldText = document.querySelector('[data-testid="comp-' + row.id + '-held-text"]');
             if (botText) {
                 botText.textContent = 'Bot ' + fmtPct(bot);
-                setPosNeg(botText, row.higherIsBetter ? bot : -bot);
+                // F-016: guard setPosNeg -- its `value >= 0` check is TRUE for null in
+                // JS (null coerces to 0), which would mis-classify a missing value as
+                // positive/green if called unguarded.
+                if (bot !== null) setPosNeg(botText, row.higherIsBetter ? bot : -bot);
+                else botText.classList.remove('pos', 'neg');
             }
             if (heldText) {
                 heldText.textContent = 'Held ' + fmtPct(held);
-                setPosNeg(heldText, row.higherIsBetter ? held : -held);
+                if (held !== null) setPosNeg(heldText, row.higherIsBetter ? held : -held);
+                else heldText.classList.remove('pos', 'neg');
             }
 
             // AC-4a: recompute + write the alpha (.vs-delta) span every poll so the
@@ -918,11 +970,16 @@
             // matching the template's mdd_alpha and the per-card convention.
             var deltaEl = document.querySelector('[data-testid="' + row.deltaTestid + '"]');
             if (deltaEl) {
-                var deltaAlpha = row.higherIsBetter
-                    ? (bot - held)
-                    : (Math.abs(held) - Math.abs(bot));
-                deltaEl.textContent = 'α ' + fmtPct(deltaAlpha);
-                setPosNeg(deltaEl, deltaAlpha);
+                if (bot !== null && held !== null) {
+                    var deltaAlpha = row.higherIsBetter
+                        ? (bot - held)
+                        : (Math.abs(held) - Math.abs(bot));
+                    deltaEl.textContent = 'α ' + fmtPct(deltaAlpha);
+                    setPosNeg(deltaEl, deltaAlpha);
+                } else {
+                    deltaEl.textContent = 'α ' + fmtPct(null);
+                    deltaEl.classList.remove('pos', 'neg');
+                }
             }
         });
 
@@ -1033,9 +1090,10 @@
             // Update MC dial from sym.mc_prob on every poll. renderMcDial accepts a
             // chartData object; pass a minimal stub so the arc updates without a
             // full chart fetch. The mc-dial querySelector is inside renderMcDial.
-            if (sym.mc_prob != null) {
-                renderMcDial(id, { mc_prob: sym.mc_prob, data: [] });
-            }
+            // Always call (never skip on null) -- an exited symphony's mc_prob is
+            // honestly null (AC-1), and renderMcDial must actively render that
+            // state rather than freeze at whatever was last drawn.
+            renderMcDial(id, { triggered: sym.triggered, mc_prob: sym.mc_prob, data: [] });
 
             // Find the card element by data-sym-id attribute; there may be one in
             // active section and one in standby — update whichever exists.
@@ -1150,7 +1208,15 @@
     // Section counts derive from data.symphonies list (active = armed/triggered/tp_armed/para_armed).
     // The "data as of" legend span refreshes from meta.portfolio.data_as_of each tick.
     function updateSectionMeta(data) {
-        var syms = Array.isArray(data.symphonies) ? data.symphonies : [];
+        // F-011: data.symphonies genuinely does not exist on the closed/frozen
+        // /api/state branch (app.py emits state/bot_state only there) -- read the
+        // real field, present on BOTH branches, and filter to symphony entries the
+        // same way the server does (isinstance(v, dict) and "name" in v) since
+        // state/bot_state also carries flat non-symphony metadata keys.
+        var stateObj = (data && (data.bot_state || data.state)) || {};
+        var syms = Object.keys(stateObj)
+            .map(function (k) { return stateObj[k]; })
+            .filter(function (v) { return v && typeof v === 'object' && 'name' in v; });
         var activeCount  = syms.filter(function (s) {
             return s.armed || s.tp_armed || s.para_armed || s.triggered;
         }).length;
@@ -1341,8 +1407,8 @@
     }
 
     // AC-1: fetch /api/guard-alpha-summary and populate the dollar-saved panel.
-    // Called once on page load — the aggregate changes only when a new guard event fires,
-    // so continuous polling is unnecessary (post_mortem files are written at EOD).
+    // Called on page load AND on each SSE cycle-complete event (Finding 8) — no
+    // continuous polling; the panel updates when the engine actually cycles.
     // Uses dollar-saved-headline — NOT guard-alpha-headline (that carries the windowed
     // % guard alpha from /api/strip/<window> and must not be clobbered).
     function fetchGuardAlphaSummary() {
@@ -1361,7 +1427,13 @@
                     if (countEl) countEl.textContent = '0';
                     if (labelEl) labelEl.textContent = data.basis_label || '';
                 } else {
-                    if (headlineEl) headlineEl.textContent = '$' + data.cumulative_saved_dollars.toFixed(2);
+                    // Finding 9: sign drives format ("-$N.NN") and color — same idiom
+                    // as the guard-alpha-headline renderer. Never hardcoded green.
+                    var saved = data.cumulative_saved_dollars;
+                    if (headlineEl) {
+                        headlineEl.textContent = (saved < 0 ? '-$' : '$') + Math.abs(saved).toFixed(2);
+                        headlineEl.style.color = saved >= 0 ? cs('--studio-pos') : cs('--studio-neg');
+                    }
                     if (countEl) countEl.textContent = data.guard_event_count;
                     if (labelEl) labelEl.textContent = data.basis_label || '';
                 }
@@ -1377,7 +1449,9 @@
         // AC-3: SSE event-driven update — primary path; poll (above) is the resilience fallback.
         if (typeof EventSource !== 'undefined') {
             var _es = new EventSource('/api/events');
-            _es.addEventListener('cycle-complete', function () { loadState(); });
+            // Finding 8: the $-saved panel rides the same event — a page left open
+            // across the EOD post-mortem write (or a new guard event) updates live.
+            _es.addEventListener('cycle-complete', function () { loadState(); fetchGuardAlphaSummary(); });
             _es.onerror = function () { /* silent — poll fallback handles reconnect */ };
         }
 
