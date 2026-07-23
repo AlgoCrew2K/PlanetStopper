@@ -24,7 +24,10 @@ pollutes -- the real repo's cache/ directory.
 
 from __future__ import annotations
 
+import pytest
+
 import autotuner
+import database
 import synthetic_history
 
 
@@ -50,4 +53,62 @@ class TestCacheMissNeverFetches:
         assert result is None, (
             f"Expected None on a cache miss (honest degradation, no fabricated "
             f"data), got {result!r}."
+        )
+
+
+class TestWarmCacheReturnsRealStatsWithoutFetching:
+    def test_warm_cache_returns_real_series_and_never_calls_fetch_bars(self, tmp_path, monkeypatch):
+        """PM ruling requirement (c) (2026-07-23 follow-up): 'warm cache ->
+        real replay stats WITHOUT any fetch call'. Mocks
+        synthetic_history.load_cached_history -- the cache-READ boundary --
+        to simulate a HIT, regardless of how the cache-file KEY is derived
+        internally (robust to a future refactor sharing key-derivation with
+        generate_synthetic_history, which the PM separately directed ga-impl
+        to do). Proves the real if-held series flows through via the REAL
+        collect_if_held_daily_returns on a genuine hit, with zero
+        fetch_bars calls -- the positive-path sibling of the cold-cache test
+        above."""
+        monkeypatch.chdir(tmp_path)
+
+        sym_id = "sym-warm-cache-001"
+        history_data = {
+            sym_id: {
+                "2026-01-05": [{"return": 1.5}],
+                "2026-01-06": [{"return": -2.0}],
+                "2026-01-07": [{"return": 0.3}],
+            }
+        }
+
+        monkeypatch.setattr(
+            database,
+            "load_state",
+            lambda: {sym_id: {"current_holdings": [{"ticker": "SPY"}]}},
+        )
+        monkeypatch.setattr(
+            synthetic_history,
+            "load_cached_history",
+            lambda cache_file: history_data,
+        )
+
+        fetch_calls: list = []
+
+        def _tracking_fetch_bars(*args, **kwargs):
+            fetch_calls.append((args, kwargs))
+            return []
+
+        monkeypatch.setattr(synthetic_history, "fetch_bars", _tracking_fetch_bars)
+
+        result = autotuner.build_if_held_replay_series(sym_id)
+
+        expected = autotuner.collect_if_held_daily_returns(history_data, sym_id)
+        assert result == pytest.approx(expected), (
+            f"Expected the REAL collect_if_held_daily_returns output on the "
+            f"cache-hit data ({expected!r}), got {result!r} -- a warm cache "
+            "must produce genuinely computed stats, not a fabricated or "
+            "partial value."
+        )
+        assert fetch_calls == [], (
+            f"synthetic_history.fetch_bars was called {len(fetch_calls)} "
+            "time(s) even though the cache HIT -- a warm cache must never "
+            "touch the network either (PM ruling 2026-07-23)."
         )

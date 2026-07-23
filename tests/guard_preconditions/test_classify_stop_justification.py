@@ -320,6 +320,31 @@ class TestVerdictCopy:
             f"found anywhere across all 5 verdict_copy() outputs: {combined!r})"
         )
 
+    def test_not_met_copy_is_evidence_scoped_not_a_demonstrated_claim(self):
+        """PM RULING A (2026-07-23, on TestNotMetAmbiguousRegion's terminal-
+        else region): rho < SR but rho+CI >= SR CANNOT statistically rule the
+        sufficient condition in OR out. The copy must state this as an
+        EVIDENCE finding -- 'not demonstrated' at the 95% CI level -- never
+        as a settled fact about THIS symphony. The K&L expected-return-drag
+        conclusion must stay framed as the CONDITIONAL THEOREM ('under
+        random-walk dynamics, a stop overlay reduces expected return'), never
+        asserted as a demonstrated claim about this symphony's own data.
+        Declarative "is not met" framing (the pre-ruling copy) overclaims in
+        the negative direction, violating AC-4's spirit just as surely as an
+        overclaim in the positive direction would."""
+        copy = gp.verdict_copy("NOT_MET").lower()
+        assert "not demonstrated" in copy, (
+            f"NOT_MET copy={copy!r} must state the sufficient condition is "
+            "'not demonstrated' at the 95% CI level (evidence-scoped, per PM "
+            "ruling 2026-07-23) rather than asserting it as a settled fact."
+        )
+        assert "random-walk" in copy or "random walk" in copy, (
+            f"NOT_MET copy={copy!r} must frame the K&L expected-return-drag "
+            "conclusion as the CONDITIONAL theorem ('under random-walk "
+            "dynamics...'), never as a demonstrated claim about this "
+            "specific symphony -- PM ruling 2026-07-23."
+        )
+
 
 # ---------------------------------------------------------------------------
 # AC-9: citation -- correct DOI, dead URL never referenced
