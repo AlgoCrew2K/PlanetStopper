@@ -114,13 +114,65 @@ class TestVerdictClassNames:
 
 class TestSufficientMetBoundary:
     def test_exact_equality_rho_minus_ci_equals_sr_is_sufficient_met(self):
-        """AC-3: 'rho - CI >= SR' -- the boundary is inclusive."""
+        """AC-3: 'rho - CI >= SR' -- the boundary is inclusive.
+
+        This is also the float64-representation-noise case: 0.30-0.10 ==
+        0.19999999999999998 in IEEE 754 binary64, not exactly 0.2 -- a raw
+        `>=` comparison here falls through to SUFFICIENT_LIKELY without a
+        tolerance. See TestBoundaryEpsilonTolerance below for the dedicated
+        regression pin on the tolerance itself."""
         stats = _stats(rho=0.30, rho_ci=0.10, sharpe_daily=0.20)  # rho-ci == sr exactly
         assert gp.classify_stop_justification(stats) == "SUFFICIENT_MET"
 
     def test_just_below_boundary_is_sufficient_likely(self):
         stats = _stats(rho=0.30, rho_ci=0.1000001, sharpe_daily=0.20)  # rho-ci < sr by epsilon
         assert gp.classify_stop_justification(stats) == "SUFFICIENT_LIKELY"
+
+
+class TestBoundaryEpsilonTolerance:
+    """Dedicated regression pin for guard_preconditions._BOUNDARY_EPS, added
+    at ga-impl's own request (327cd6d2 review discussion): the exact-equality
+    boundary tests above only prove the tolerance is BIG ENOUGH to absorb
+    float64 subtraction noise (~1e-17). Nothing previously proved it isn't
+    TOO generous -- i.e. that it doesn't quietly swallow a real, intentional
+    difference. This class pins both directions plus the constant's own
+    sane-bounds contract."""
+
+    def test_boundary_eps_is_a_named_constant_within_sane_bounds(self):
+        assert hasattr(gp, "_BOUNDARY_EPS"), (
+            "guard_preconditions.py must export _BOUNDARY_EPS as a named "
+            "module-scope constant (no-magic-numbers rule)."
+        )
+        eps = gp._BOUNDARY_EPS
+        assert 1e-12 < eps < 1e-6, (
+            f"_BOUNDARY_EPS={eps!r} is outside a sane range (1e-12, 1e-6) -- "
+            "too small risks not absorbing float64 subtraction noise "
+            "(~1e-17 scale needs ~1e-9 headroom); too large risks silently "
+            "reclassifying genuinely-different boundary values as equal."
+        )
+
+    def test_a_real_difference_ten_times_the_epsilon_still_falls_through(self):
+        """rho-ci is set exactly 1e-8 (10x _BOUNDARY_EPS=1e-9, but still 10x
+        TIGHTER than the pre-existing test_just_below_boundary_is_sufficient_
+        likely's 1e-7 margin) below the SUFFICIENT_MET boundary -- proves the
+        tolerance does not leak into a real, if small, difference."""
+        stats = _stats(rho=0.30, rho_ci=0.10 + 1e-8, sharpe_daily=0.20)
+        assert gp.classify_stop_justification(stats) == "SUFFICIENT_LIKELY", (
+            "A difference of 1e-8 (10x _BOUNDARY_EPS) below the SUFFICIENT_MET "
+            "boundary must NOT be absorbed by the epsilon tolerance -- got "
+            f"{gp.classify_stop_justification(stats)!r}, expected "
+            "SUFFICIENT_LIKELY (correctly falls through)."
+        )
+
+    def test_a_real_difference_ten_times_the_epsilon_on_likely_boundary_falls_through(self):
+        """Same discriminating check on the SUFFICIENT_LIKELY/NOT_MET
+        boundary (rho - sharpe_daily >= -_BOUNDARY_EPS)."""
+        stats = _stats(rho=0.20 - 1e-8, rho_ci=0.15, sharpe_daily=0.20)
+        assert gp.classify_stop_justification(stats) == "NOT_MET", (
+            "A difference of 1e-8 (10x _BOUNDARY_EPS) below the SUFFICIENT_"
+            "LIKELY boundary must NOT be absorbed by the epsilon tolerance -- "
+            f"got {gp.classify_stop_justification(stats)!r}, expected NOT_MET."
+        )
 
 
 class TestSufficientLikelyBoundary:
