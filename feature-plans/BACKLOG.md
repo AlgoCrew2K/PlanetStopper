@@ -106,6 +106,16 @@ discriminator to the cache key shape (or split into a separate cache namespace p
 both accessors can safely share the cache. Source: ga-impl, guard-alpha-preconditions cycle,
 2026-07-23.
 
+Separately (same variable, independently findable, not introduced or fixed this cycle):
+the declared type hint has drifted from actual usage. `database.py:2967` declares
+`_shadow_cr_cache: dict[tuple[str, str], float] = {}` with a comment describing a
+`(symphony_id, trading_day) -> cumulative shadow return` shape, but the real production
+consumer (`analytics._get_shadow_cumulative_trajectory`, `analytics.py:659-665`) keys it
+with a 4-tuple `(symphony_id, today, db_file, resolved_epoch)` and stores a `list[float]`,
+not a bare `float`. Fix candidate: correct the declared type hint (and the stale comment)
+to match actual usage in the same pass as the column-discriminator fix above, since both
+touch the same declaration line.
+
 ### Sleeves: mis-citing float-imprecision example in the price-rounding docstring — COSMETIC (found 2026-07-08, P3 smoke cycle)
 The bracket price-rounding (`_round_to_equity_tick`, sleeves/alpaca_orders.py, task #35) cites
 `495.00 / 0.01 == 49499.999999999993` as motivation, but that expression is exactly `49500.0` in
