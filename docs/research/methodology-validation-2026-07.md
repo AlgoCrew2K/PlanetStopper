@@ -1,0 +1,252 @@
+# PlanetStopper R&D Methodology — External Validation Report
+
+**Date:** 2026-07-23
+
+**Provenance:** Two-pass adversarially-verified deep-research workflow (25 sources fetched, 50 claims extracted-and-verified by independent 3-vote panels, 46 confirmed / 4 refuted across both passes), plus internal code audits with `file:line` evidence. Pass 1 covers institutional quant R&D practice (23/25 claims confirmed, 2 refuted). Pass 2 covers the 2023–2026 agentic/LLM quant frontier plus the direct stop-loss-efficacy literature (23/25 claims confirmed, 2 refuted). All findings below are traceable to a primary source and a vote tally; nothing in this report is unverified synthesis unless explicitly labeled `[interpretation]`.
+
+---
+
+## Executive Verdict
+
+PlanetStopper's statistical core **matches, and in several respects exceeds, both documented institutional quant practice and the published agentic/LLM quant-research frontier.** Its Probability-of-Backtest-Overfitting (PBO) veto is a verbatim implementation of the canonical Bailey/Borwein/López de Prado/Zhu statistic (vote 3-0, 3-0), its combinatorially-purged cross-validation (CPCV, N=6/k=2) plus PBO layering onto walk-forward optimization is exactly the design the literature finds superior to plain walk-forward (vote 3-0/2-1/3-0), and its batch-wide Benjamini-Hochberg-Yekutieli (BHY) false-discovery-rate correction implements the trial-count-aware multiple-testing control the literature calls mandatory, not optional (vote 3-0/2-1/3-0/3-0). Against the agentic frontier specifically, PlanetStopper's FDR+PBO gating of LLM-generated candidates **exceeds** the evaluation hygiene of the closest published analogue, TradingAgents (vote 8-1), and exceeds the overfitting controls of the most recent multi-agent strategy-discovery framework, QuantEvolve, which relies on a single train/validation/test split with no multiplicity correction and whose own authors concede resulting data-snooping exposure (vote 5-1).
+
+Five gaps survived adversarial verification and are not offset by any of the above:
+
+1. **Transaction costs are absent from the exit-tuning loop.** The Optuna objective, the walk-forward replay, and `acceptance_gate.py`/`backtest_gate_engine.py` all score gross-of-cost returns — precisely the strategy category (high-turnover, signal-driven exit trading) both the institutional literature (vote 3-0, 3-0) and the LLM-trading-agent literature (vote 12-0) identify as most cost-fragile and least valid to evaluate gross.
+2. **No incubation/paper-trading gate exists** between a candidate clearing the statistical bar and it surfacing as a recommendation. Documented allocator practice institutionalizes a ≥6-month out-of-sample incubation window before capital-allocation attention (vote 3-0, 3-0, 3-0); PlanetStopper's own shadow_history if-held tracking is a partial live-OOS analogue for the exit engine, but no equivalent forward window exists for newly LLM-built symphonies.
+3. **Parametric lookahead bias is unaddressed by any statistical gate.** LLM weights memorize historical price paths; a backtest window overlapping the generating model's training cutoff is invisibly contaminated. Measured magnitudes from the frontier literature: Sharpe decay of 51.48–62.23% and total-return decay of 50.18–71.85% across five state-of-the-art LLM trading agents when evaluation crosses the knowledge cutoff (vote 12-0). CPCV/PBO/BHY-FDR gate selection noise; none of them detect weight-resident memorization.
+4. **Homogeneous-council debate is not independent-expert aggregation.** Across 36 configurations (4 models × 9 benchmarks), multi-agent debate beats simple chain-of-thought under 20% of the time, and same-source agents produce correlated errors and false consensus rather than diversified opinion (vote 3-0, primary source arXiv 2502.08788). This applies directly to Market Prism's five same-family Claude analysts plus synthesizer.
+5. **Guard Alpha's expected-return case is conditional, not unconditional, and the condition is currently unmeasured.** Kaminski & Lo (2014) prove that under random-walk returns, trailing-stop overlays *always* reduce expected return; value exists only under momentum persistence (sufficient condition ρ ≥ Sharpe ratio at the decision frequency) or regime-switching where the low-regime mean sits below the risk-free rate (vote 16-1). Guard Alpha's premise has a favorable prior — Composer symphonies are often momentum-tilted — but that prior has not been measured per symphony against existing `shadow_history`/`exit_triggers` data.
+
+None of these five gaps is a defect in the statistical machinery itself; all five are missing measurements or missing stages layered around otherwise sound gating.
+
+---
+
+## Section 1 — What the Evidence Validates
+
+### 1.1 PBO veto matches the canonical statistic
+
+PlanetStopper's PBO>0.5 veto operationalizes exactly the statistic defined in Bailey, Borwein, López de Prado & Zhu (*J. Computational Finance*, 2017) — the probability that the in-sample-optimal configuration underperforms the OOS median. Code verification during research confirmed a canonical CSCV implementation (`math_engine.py:1908-2019`: S=8 contiguous blocks, C(8,4)=70 symmetric IS/OOS combinations, IS-argmax, OOS logit-rank) with the >0.5 veto wired at four independent gate sites (`math_engine.py:79`, `acceptance_gate.py:208`, `autotuner.py:2724`, `backtest_gate_engine.py:830`). The primary paper explicitly names exit thresholds and stop-losses as its own motivating example of the combinatorial search surface requiring this control — "combinations that can be tested... are in the billions." The paper does not itself prescribe 0.5 as the decision threshold (that is PlanetStopper's choice), and PlanetStopper scores via CRRA expected utility rather than Sharpe, which the paper's metric-agnostic framework permits. **Verdict: MATCHES/EXCEEDS institutional standard.** (Vote: 3-0, 3-0 merged.)
+
+### 1.2 CPCV-over-walk-forward is the literature-supported design
+
+Simple hold-out and plain walk-forward validation are documented as unreliable for detecting backtest overfitting — walk-forward shows higher temporal variability and weaker stationarity than combinatorial methods in controlled ground-truth experiments. PlanetStopper's layering of CPCV folds (N=6, k=2 — the canonical *Advances in Financial Machine Learning* configuration) plus a PBO veto onto its walk-forward optimizer is precisely the evidence-supported design; a walk-forward-only tuner would be inadequate by this literature. Caveat: the head-to-head CPCV-superiority comparison (Arian/Norouzi/Seco, *Knowledge-Based Systems* 305, 2024) is run in a synthetic controlled environment with a low citation count — one of the two merged claims passed only 2-1 — so treat this as directionally strong but not definitive. (Vote: 3-0, 2-1, 3-0 merged.)
+
+### 1.3 Trial-count-aware multiple-testing correction is mandatory, and PlanetStopper's is conservative
+
+Testing many configurations makes false positives near-certain; under zero skill, expected maximum Sharpe across N trials grows predictably via closed-form extreme-value-theory approximation; a backtest reported without its trial count is, in Harvey's own words, "worthless, regardless of how excellent the reported performance." PlanetStopper's batch-wide BHY FDR with `n_effective` set to the full batch size (`autotuner.py:916-951`, citing Harvey & Liu 2015's Yekutieli arbitrary-dependence factor c(N); `backtest_gate_engine.py:708-717` applies the identical correction across Strategy Builder batches) implements the prescribed control — conservatively, since counting raw dependent trials rather than independent ones is the safe direction under BHY. Qualification: the Deflated Sharpe Ratio paper's Appendix A.3 prescribes correcting for the number of *independent* trials cumulatively, and PlanetStopper's batch-local counting understates the cumulative multi-week search (see Recommendation 5). (Vote: 3-0, 2-1, 3-0, 3-0 merged.)
+
+### 1.4 Harvey-Liu-Zhu operational hurdles are an available external benchmark
+
+Harvey, Liu & Zhu establish operational thresholds for any multiple-testing-gated pipeline: a minimum t-statistic of 3.0 (not the traditional 2.0) for new factors, a BHY-implied benchmark stabilizing at t=3.39 at 1% FDR post-2010 (2.78 at 5% FDR), and empirical evidence that 27–53% of 296 published "significant" factors fail once multiple testing is controlled. The framework ships as runnable reference code (`Haircut_SR.m`), adopted institutionally (Man Group) and in open-source ports. These are external reference hurdles PlanetStopper's BHY-gated pipeline can and should be checked against, though HLZ calibrate 3.0/3.18/3.39 to the accumulated academic factor literature rather than a single firm's within-batch gate, and Jensen/Kelly/Pedersen (*J. Finance* 2023) dispute whether the hurdles are necessary — a dispute over strictness, not over whether the recommendation exists. One adjacent claim — that Harvey's `Profit_Hurdle.m` specifically validates batch-wide (as opposed to per-candidate) gating — was **refuted 0-3** and must not be cited as support for PlanetStopper's batch design. (Vote: 3-0, 3-0, 3-0, 3-0 merged.)
+
+### 1.5 Volatility-scaled overlays rest on the best-validated risk mechanism available
+
+Realized variance strongly forecasts next-period variance but only weakly forecasts next-period returns, so cutting exposure after volatility spikes sheds substantial risk at low expected-return cost. Moreira-Muir (*J. Finance*, 2017): inverse-prior-month-variance scaling yields market alpha of 4.9%/yr, appraisal ratio 0.33, and a +25% Sharpe improvement, robust across market/value/momentum/profitability/ROE/investment/BAB/carry factors. Independent large-cohort evidence (888 real Quantopian algorithms) confirms the *input* quantities are the persistent ones: IS-to-OOS R² was 0.67 for annual volatility and 0.34 for max drawdown, versus <0.025 for Sharpe/alpha/IR. PlanetStopper's volatility scaling and drawdown-focused exit engine are built on statistically persistent quantities rather than return forecasts — the right side of this asymmetry. Caveat: the Quantopian cohort is retail-scale over a single low-vol regime (2010–2015) with short OOS windows, and Moreira-Muir validates vol-managed overlays specifically, not trailing stops per se (see §2.5 for the direct stop-loss evidence). (Vote: 3-0, 3-0, 3-0 merged.)
+
+### 1.6 The mass-candidate-generation-behind-strict-gates architecture parallels institutional practice
+
+WorldQuant treats mass-parallel candidate-signal production as core R&D strategy — targeting and hitting one million alphas by 2016, now holding millions — while structurally separating layers: raw data → enhanced data → human/ML alpha generation → strategy construction → capital allocation by dedicated allocation groups. PlanetStopper's architecture is structurally analogous at retail scale: LLM build-plan generation in a constrained DSL feeding deterministic compilation, Composer backtests, and strict statistical gates, with all agentic output advisory-only and off the execution path — the generation layer never touches capital directly. Caveat: WorldQuant's alpha counts are self-reported/unaudited, and the analogy validates the *architecture* (mass generation behind separation-of-concerns gates), not LLM generation quality specifically. (Vote: 3-0, 3-0 merged.)
+
+### 1.7 PlanetStopper's gating exceeds the published agentic frontier's own evaluation hygiene
+
+TradingAgents is the closest published analogue to Market Prism — a trading-firm-mimicking hierarchy of specialist analysts (fundamental/sentiment/news/technical), adversarial bull/bear debate, and a facilitator that records a structured entry — overlapping 4 of Prism's 5 lenses. But TradingAgents' headline results (cumulative returns 26.62%/24.36%/23.21%, Sharpe 8.21/6.39/5.60 on AAPL/GOOGL/AMZN, Jan–Mar 2024) come from a single 3-month, 3-stock window with **zero** of the overfitting controls PlanetStopper applies: no walk-forward, no CPCV, no PBO, no deflated Sharpe, no multiple-testing correction, no transaction-cost model. The authors themselves concede their Sharpe ratios exceed their expected empirical range. A full-text grep of the paper confirmed zero occurrences of "transaction cost," CPCV, PBO, deflated Sharpe, or multiple-testing correction. Separately, QuantEvolve (ICAIF 2025 workshop) — a more recent multi-agent evolutionary strategy-discovery framework — gates its population with only a single train/validation/test split, no CPCV, no PBO, no deflated Sharpe, no multiple-testing correction, and its authors explicitly concede resulting data-snooping exposure. PlanetStopper's CPCV + PBO>0.5 veto + batch-wide BHY FDR + conservative-withhold SPY-OOS baseline therefore **exceeds the published agentic state of the art on exactly the frontier's self-acknowledged weakness.** (TradingAgents comparison: vote 8-1 merged, architecture/debate claim verified verbatim, performance-figures claim 2-1 against Table 1. QuantEvolve comparison: vote 5-1 merged.)
+
+### 1.8 The advisory-only, off-execution-path design matches the dominant real-firm deployment pattern
+
+The dominant generative-AI deployment pattern at hedge funds as of early-to-mid 2025 is workflow/research augmentation with human-in-the-loop (RAG over internal research, summarization, coding, drafting), not autonomous trading decision-making. PlanetStopper's architecture — advisory observations only, no agentic path to `LIVE_EXECUTION`, allowlist-gated settings writes — matches or exceeds this institutional norm for LLM containment. Known outliers exist and keep this a "dominant pattern," not a universal one (Bridgewater AIA Labs' ~$2B ML fund runs an LLM ensemble in decision generation; Man Group's Alpha Assistant can draft trades but not execute them, still requiring PM sign-off). Source quality here is secondary (allocator blog + AIMA industry survey of 150 managers/~$788bn AUM), so this finding carries medium rather than high confidence. (Vote: 3-0.)
+
+---
+
+## Section 2 — Where the Evidence Challenges
+
+### 2.1 Transaction costs are the clearest, doubly-confirmed gap
+
+**Institutional side:** transaction-cost survivability is inversely related to turnover — value and momentum survive costs at scale (break-even $83B/$52B US) while high-turnover short-term reversal dies beyond $9B US / $13B globally, and the institutional standard is to build cost-awareness *into* the optimization objective (a cost-minimizing construction under a tracking-error constraint multiplies net capacity by roughly an order of magnitude in the source study). High-turnover signal-driven trading — the category nearest a trailing-stop exit engine — is the most cost-fragile and cannot be validated on gross returns alone. Caveat: the source PDF (Frazzini/Israel/Moskowitz, HBS) is a preliminary "not for quotation" draft, and a companion claim that real-world costs are ~10x *lower* than academic estimates was **refuted 1-2** — magnitude is contested in the optimistic direction, which only strengthens rather than weakens the fragility conclusion (an independent replication, Novy-Marx & Velikov, finds costs ~10x *higher* than the FIM estimate). (Vote: 3-0, 3-0 merged.)
+
+**Agentic-frontier side, independently:** the LLM trading-agent literature is near-universally silent on transaction costs — across five audited systems (FinMem, TradingAgents, FinAgent, FinCon, QuantAgent), 35 of 40 system×friction-component cells are unmodeled, and the 5 modeled cells are all commissions only. Charging realistic frictions collapses reported performance: TradingAgents' portfolio Sharpe falls 0.43→0.22 and QuantAgent's falls −0.96→−1.15, both ending below buy-and-hold, in a one-year 2025–2026 reproduction. A broader reproducibility audit of 19 primary LLM-trading-agent studies found only 2/19 disclose an extractable time-consistent train/test split, only 1/19 specifies a transaction-cost model, only 1/19 documents survivorship handling, and 15/19 sit at the lowest reproducibility tier (R0) with 0/19 reaching full reproducibility. PlanetStopper's disclosed split machinery is ahead of the great majority of this field — but shares its central, most-quantified alpha-killer: no friction model in the Composer-backtest gate or the SPY-OOS-alpha baseline. (Vote: 12-0 merged across 4 claims, agentic side; 3-0/3-0 merged, institutional side.)
+
+### 2.2 No incubation/paper-trading gate
+
+Across 888 real, code-frozen Quantopian algorithms, in-sample Sharpe predicted out-of-sample Sharpe with R² ≈ 0.02 (all single return metrics <0.025); days spent backtesting correlated positively and highly significantly (p<0.0001, though weakly, Spearman R²≈0.017) with OOS Sharpe shortfall — direct empirical support for trial-count-penalized selection metrics like PBO/DSR; and Quantopian's own allocators institutionalized a ≥6-month out-of-sample incubation requirement before capital-allocation attention. This is a concrete, documented gap: PlanetStopper's admission pipeline is backtest-only, lacking the paper-trading stage that documented allocator practice requires, though Guard Alpha's `shadow_history` if-held tracking is a partial live-OOS analogue for the *exit engine specifically* — no equivalent forward-incubation window is evidenced for newly LLM-built symphonies before they surface as recommendations. Caveats: the Quantopian cohort is retail-scale, single-regime, and its "OOS" period is a short wall-clock-forward simulation after code freeze rather than live capital deployment — a paper-trading equivalent, not full live validation. (Vote: 3-0, 3-0, 3-0 merged.)
+
+### 2.3 Parametric lookahead bias — unaddressed by any statistical gate
+
+This is the agentic frontier's signature failure mode, and it applies directly to Strategy Builder. LLM weights memorize historical price paths; any backtest window overlapping the generating model's training cutoff is contaminated invisibly to standard data-pipeline audits — the bias "lives inside the model's weights," not in the data feed. Measured magnitudes across five state-of-the-art LLM trading agents (matched in-cutoff vs. post-cutoff windows, GPT-4o backbone): Sharpe-ratio decay ranging 51.48% (QuantAgent) to 62.23% (FinCON); total-return decay ranging 50.18% (TradingAgents) to 71.85% (FinMem). A separate debiasing study found that stripping memorized-price knowledge from a high-memorization model cut mean in-sample 2010–2020 backtest returns by 45.4% (NVDA specifically −78.2%) while leaving genuine 2025 out-of-sample performance essentially unchanged (+1.8%) — direct evidence the pre-debiasing "edge" was memorization, not skill. A parallel text-channel leak (news-article timestamps recording publication time rather than pipeline-availability time) afflicts any text-ingesting lens. CPCV, PBO, and BHY-FDR all gate *selection noise across trials* — none of them detect weight-resident memorization, because the contamination is present identically in every candidate drawn from the same model. Mitigations documented in the literature: post-cutoff-only evaluation windows, entity anonymization, point-in-time models, and — most practically for PlanetStopper — a paper-trading/incubation period (this compounds directly with the §2.2 gap). (Vote: 12-0 merged across 4 claims, corroborated by 12+ additional papers with no dissent.)
+
+### 2.4 Homogeneous-council debate is not independent-expert aggregation
+
+Across 36 configurations (5 multi-agent-debate methods × 9 benchmarks × 4 foundation models), no debate configuration exceeded a 20% win rate against a simple chain-of-thought single-agent baseline; adding debate rounds or agents does not reliably improve, and can degrade, performance, because same-source agents produce correlated errors and false consensus rather than independent votes. Model heterogeneity is the literature's documented antidote — heterogeneous debate consistently improves outcomes where homogeneous debate does not. This finding is specifically scoped to homogeneous/same-source debate, which is exactly Market Prism's configuration: five same-family Claude analysts plus a Claude synthesizer. Prism's design partially mitigates the failure mode by splitting *data modalities* across lenses (each analyst sees different inputs — technicals, sentiment, derivatives, macro, fundamentals), which decorrelates evidence even where it does not decorrelate model priors — but the synthesizer's output should be treated as one correlated opinion with a useful audit trail, not as an ensemble vote, and cross-analyst "debate" rounds should not be expected to add accuracy beyond what the data-modality split already provides. **Citation correction (binding):** the primary source for this statistic is Zhang et al., arXiv 2502.08788 ("Stop Overvaluing Multi-Agent Debate") — a secondary paper (arXiv 2605.16895) quotes it and was originally miscited as primary during research; cite 2502.08788 going forward. (Vote: 3-0.)
+
+### 2.5 Guard Alpha's expected-return case is conditional, and the condition is unmeasured
+
+Kaminski & Lo (*Journal of Financial Markets* 18, 2014) is the canonical direct evidence on when trailing-stop rules add or destroy expected-return value, and it proves the answer is conditional, not unconditional:
+
+- **Under random-walk (IID) returns**, the stopping premium is *always* negative (Δ = −p₀·(μ−rf)) — the paper's own words: "stop-loss rules never stop losses" when returns are unforecastable at the relevant frequency.
+- **Under momentum** (AR(1) return-generating process), the premium can be positive under a sufficient condition: ρ ≥ π/σ ≡ SR — the return-series serial correlation must meet or exceed the strategy's own Sharpe ratio at the same sampling frequency. This is a demanding bar, and it is a *sufficient*, not *necessary*, condition — it should not be read as "stops are only justified when ρ ≥ SR."
+- **Under two-state regime-switching**, value exists only if the low-regime equity mean sits below the risk-free rate (μ₂ < rf), with a minimum regime-detection accuracy of p̃₀,₂ ≥ (μ₁−rf)/(μ₁−μ₂). If both regimes' expected returns dominate the risk-free asset, a stop-loss policy *always* decreases expected portfolio return regardless of detection accuracy.
+- The paper's own 1950–2004 empirics found stops added 50–100bp/month during stop-out periods via flight-to-quality — the non-IID case observed in the wild.
+
+**Implication for Guard Alpha:** its entire expected-return case rests on the momentum/regime-persistence properties of the specific Composer symphonies it overlays. This is a favorable prior — Composer symphonies are frequently momentum-tilted, and Guard Alpha's regime-match guard and Monte Carlo exit gating are architecturally aligned with the regime-detection-accuracy condition — but it is a prior, not a measurement. All of these results are *expected-return* statements specifically; variance and drawdown reduction under IID conditions still hold regardless, which matters directly for a CRRA-utility objective that is not purely return-maximizing. **Citation correction (binding):** the `alo.mit.edu` working-paper PDF URL returns 404 — cite DOI 10.1016/j.finmar.2013.07.001 or SSRN 968338 going forward, never the dead MIT mirror. (Vote: 16-1 merged across 5 claims; two pairs were near-duplicates comparing the working-paper and published versions.)
+
+---
+
+## Section 3 — Internal Ground Truth: Transaction-Cost Audit
+
+An internal code audit (independent of the external literature review, cross-referenced by `file:line`) confirms the transaction-cost gap identified in Section 2.1 is real and traces it to specific code paths:
+
+- **Optuna CRRA-EU objective — NOT MODELED.** `compute_crra_eu_objective` takes raw returns; the wealth ratio is explicitly documented as "gross" (`autotuner.py:700-715`). The only haircut applied anywhere in this path is the BHY statistical false-discovery correction (`autotuner.py:1520`) — a selection-bias control, not a cost.
+- **Walk-forward replay — NOT MODELED.** `_collect_sim_returns` (`autotuner.py:1346-1419`) uses close-based returns sourced from `synthetic_history.py:564`, with a −0.20% modeling-uncertainty penalty that is explicitly a haircut for estimation risk, not a transaction cost — there is no spread, slippage, or commission applied to any simulated fill. This is the exit-trigger tuning loop specifically — the single most cost-exposed surface in the system, per Section 2.1's institutional and agentic-frontier evidence alike — and it is 100% gross-of-cost.
+- **`acceptance_gate.py` / `backtest_gate_engine.py` — NOT MODELED cost-wise.** The "zero-sample-cost" language that appears in these modules refers to a computational-cost heuristic (compute budget), not a financial transaction-cost model — a naming trap for anyone auditing this from the outside.
+- **Composer backtest client — COSTS MODELED, but downstream-split.** `composer_backtest_client.py:237-296` sends `apply_reg_fee=True`, `apply_taf_fee=True`, `slippage_percent=0.005` to Composer's `/backtest` endpoint. A captured-from-producer fixture (`tests/fixtures/composer/backtest_response_v1.json`) shows real modeled costs on a $10,000 backtest — `reg_fee: 76.49`, `taf_fee: 21.12`, `slippage: 26295.25` — and `dvm_capital` day-1 is 9950.25 vs. 10000.00, consistent with a net-of-cost return series. This means the Strategy Builder statistical gate *does* consume net-of-cost returns for candidate screening. However, two structural qualifications limit this: (a) the parsed `costs` dict is dead code — assigned at `composer_backtest_client.py:222` and never read anywhere downstream; and (b) this path only feeds the Strategy Builder pipeline (C1→C2→C3→gate) — **the core Optuna autotuner never calls Composer's backtest API at all**, so the exit-tuning loop gets no cost signal from this modeled path.
+- **Live Guard-Alpha $-saved — NOT MODELED, snapshot-based.** `reporting.py:50-61` computes `saved_dollars` from decision-time mark-to-market snapshots (`alpha_bot_execution.py:1810`), never reconciled to real Composer fills. The headline $-saved figure is gross of real execution cost.
+- **Turnover.** Quantifiable today for the exit leg from the `exit_triggers` table (`migrations/005_exit_triggers.sql`); re-entry is not logged as a discrete event and must be inferred from `bot_state["triggered"]` state transitions.
+
+**Overall:** no research-side gate driving exit-engine parameters ever sees a cost-adjusted return; the one cost-aware path in the system (Strategy Builder, via Composer's backtest fees/slippage) gates only new-candidate proposals, not exit-parameter retunes; and no realized transaction-cost figure feeds back into selection or reporting anywhere in the pipeline. This internal finding independently confirms — at the `file:line` level — the transaction-cost gap that both the institutional literature (Section 2.1, institutional side) and the LLM-trading-agent reproducibility literature (Section 2.1, agentic side) identify as the most consequential omission for a system whose core activity is high-turnover exit trading.
+
+---
+
+## Section 4 — Prioritized Recommendations
+
+Recommendations are ordered by (a) how directly they close a validated gap and (b) how much they can reuse data/infrastructure that already exists versus requiring new build.
+
+1. **Measure the Kaminski-Lo preconditions per symphony from existing `shadow_history`/`exit_triggers` data.** Guard Alpha's expected-return case (Section 2.5) is currently a prior, not a measurement. Compute per-symphony serial correlation (ρ) against the required Sharpe-ratio threshold (ρ ≥ SR), and/or estimate the two-state regime-switching condition (μ₂ < rf in the low regime) directly from data the system already logs. This requires no new data collection — only new analysis over data already retained within the 180-day `shadow_history` window.
+2. **Add a friction term to the exit-tuning replay, and reconcile $-saved against realized fills.** Introduce spread/slippage/commission assumptions into `_collect_sim_returns` (or an equivalent cost-adjustment layer) so the walk-forward objective that actually drives exit-parameter selection stops scoring gross returns. Separately, reconcile the Guard-Alpha $-saved headline against real Composer fill data rather than decision-time snapshots, closing both the institutional-side and internal-audit-confirmed cost gap at once.
+3. **Add a forward-incubation window for LLM-built survivors.** A paper-trading period between a Strategy Builder candidate clearing the statistical gate and it surfacing as a recommendation — mirroring the ≥6-month allocator-practice gate documented in Section 2.2 — also partially mitigates the parametric-lookahead-bias gap (Section 2.3), since a forward window by construction cannot be contaminated by pre-cutoff training-data memorization.
+4. **Use post-cutoff-only or cutoff-aware backtest windows for Opus-generated trees.** Where a forward-incubation window (Recommendation 3) is not yet available, restrict or flag any backtest window for an LLM-generated candidate that overlaps the generating model's training cutoff, per the documented mitigation pattern (post-cutoff-only evaluation, entity anonymization, point-in-time models).
+5. **Maintain a cumulative trial ledger and compute Deflated Sharpe Ratio alongside PBO.** The DSR paper's "worthless without N" logic applies to the *cumulative* search across all runs and builder batches, not one batch in isolation (Section 1.3's qualification); PlanetStopper's current batch-local `n_effective` counting is conservative within a batch but understates the true multi-week search.
+6. **Treat Prism consensus as one correlated opinion, and evaluate backbone heterogeneity.** Given the homogeneous-debate finding (Section 2.4), do not read council agreement as five independent votes. Consider whether introducing one or two non-Claude analyst backbones into Market Prism would measurably decorrelate lens errors, or whether the council's existing per-lens data-modality split already provides sufficient decorrelation without the added complexity and cost of a heterogeneous backbone.
+7. **Design-time literature grounding via the quant-corpus pattern.** The operator maintains a separate, self-hosted quant-research corpus (`docs/quant-corpus.md`) that injects literature into LLM strategy-design surfaces at design time while deliberately keeping its nightly council literature-free. The analogous pattern for PlanetStopper is grounding Strategy Builder's generation prompts in citable literature at build-plan-generation time (Component 2, `advisors/build_plan_generator.py`) rather than relying on the LLM's undifferentiated training-data priors — this would give C2 generation an explicit, auditable evidentiary basis distinct from the parametric-memorization risk flagged in Recommendation 4. The corpus also supplies a validated practitioner source catalog (Alpha Architect, Quantpedia, NBER/RePEc, central-bank working-paper series, etc.) that can seed future research passes on this topic without re-deriving a source pool from scratch.
+
+---
+
+## Section 5 — Caveats and Refuted Claims
+
+### Refuted claims (do not cite)
+
+| # | Claim | Vote | Source |
+|---|---|---|---|
+| 1 | Harvey's `Profit_Hurdle.m` specifically validates *batch-wide* (vs. per-candidate) acceptance gating of the kind PlanetStopper applies. | **0-3** | https://people.duke.edu/~charvey/backtesting/ |
+| 2 | Measured from ~$1 trillion of live institutional trades (1998–2011), real-world transaction costs are less than one-tenth of prior academic estimates, implying strategy capacity an order of magnitude larger than previously suggested. | **1-2** | https://www.hbs.edu/faculty/Shared%20Documents/events/328/TradingCostEfficiency_FULL_112912.pdf |
+| 3 | QuantEvolve's hypothesis-driven multi-agent + quality-diversity evolutionary architecture establishes multi-agent hypothesis-generation pipelines as the 2025 state of the art in agentic quant strategy generation. | **0-3** | https://arxiv.org/pdf/2510.18569 |
+| 4 | Existing LLM trading-agent systems (FinMem, TradingAgents, FinRobot) are evaluated on short historical windows with no look-ahead-bias control whatsoever, leaving reported gains entirely unvalidated against contamination. | **1-2** | https://arxiv.org/html/2605.24564 |
+
+### Carried caveats (Pass 1)
+
+Coverage gap: at synthesis time, zero claims covering the 2023–2026 agentic/LLM frontier survived Pass-1's 3-vote verification — this half of the mandate was fully addressed only in Pass 2. The direct stop-loss-efficacy literature (Kaminski & Lo) was similarly uncovered in Pass 1 and addressed only in Pass 2. Contested magnitudes: transaction-cost dollar figures from Frazzini/Israel/Moskowitz are the optimistic end of a range disputed by Novy-Marx & Velikov (who find costs ~10x higher) — present as one study's estimate, not a settled fact. Harvey-Liu-Zhu's "most published findings are false" conclusion and t>3.0 hurdle are disputed by Jensen/Kelly/Pedersen (2023) on strictness, not on whether the underlying recommendation exists. CPCV-superiority evidence (Arian et al. 2024) is from a synthetic controlled environment with low citation count. The Quantopian 888-algorithm cohort is retail, single-regime, and short-OOS-window. WorldQuant's alpha counts are self-reported and unaudited. The DSR paper's independent-trial-count prescription is a batch-vs-cumulative scope nuance, not a defect in PlanetStopper's within-batch accounting.
+
+### Carried caveats (Pass 2)
+
+Most evidence-base-2 sources are arXiv preprints, not yet peer-reviewed; several headline figures (Profit Mirage's leakage-decay percentages, Alpha Illusion's friction reproduction) are single-study results on one model backbone and a one-year, five-ticker window. The 35/40-unmodeled-friction-cells figure means all five audited LLM systems *do* model commissions — the gap is specifically the friction stack beyond commissions (spread, impact, latency, financing, taxes, token cost, borrow cost). The 2/19-clean-split and 15/19-R0-reproducibility figures are reporting/auditability findings from a systematic literature audit, not direct proof that the underlying studies performed zero hygiene internally. The homogeneous multi-agent-debate finding is scoped specifically to same-source debate — heterogeneous-backbone debate is the documented exception, not covered by this critique. The Kaminski-Lo random-walk result is an expected-return-only statement; variance reduction survives under IID returns, and the result assumes a positive risk premium. The real-firm-deployment-pattern finding rests on secondary sources (an allocator blog and the AIMA industry survey) with a known counterexample class (Bridgewater AIA Labs) — read as dominant pattern, not universal. This field moves on a roughly quarterly cycle; all agentic-frontier findings are scoped 2024–mid-2026, and the "early-stage deployment" characterization is dated specifically to March 2025. All PlanetStopper-specific assessments in this report are architecture-level mappings from its documented design (project `CLAUDE.md` contracts and the internal methodology dossier) — they are not runtime audits of, e.g., whether Composer backtest windows for Opus-generated trees actually overlap Opus's training cutoff, which was not empirically tested in this research pass.
+
+### Citation corrections (binding for all future citation of this material)
+
+- Multi-agent-debate statistics (Section 2.4): cite **arXiv 2502.08788** (Zhang et al., "Stop Overvaluing Multi-Agent Debate") as primary. Do not cite arXiv 2605.16895 as the source of this statistic — it is a secondary paper quoting 2502.08788.
+- Kaminski & Lo (Section 2.5): cite **DOI 10.1016/j.finmar.2013.07.001** or **SSRN 968338**. The `alo.mit.edu` working-paper PDF URL is dead (404) and must not be cited going forward.
+
+---
+
+## Section 6 — Open Questions
+
+Merged and deduplicated across both research passes:
+
+1. Does PlanetStopper model per-trade transaction costs and slippage anywhere in the Optuna objective or the Composer-backtest gates — do Composer backtests net out costs consistently, and what realized turnover does the tuned exit engine generate? *(Partially answered by Section 3's internal audit; the remaining open question is realized-vs-modeled turnover and cost drag at the exit leg specifically.)*
+2. What does the direct stop-loss literature (Kaminski & Lo 2014; momentum-crash and regime-dependence work more broadly) conclude for the *specific* return dynamics of the Composer symphonies Guard Alpha overlays — momentum-tilted vs. mean-reverting — and do those symphonies empirically fall in the value-adding regime?
+3. Do PlanetStopper's Composer backtest windows for Opus-generated candidate trees overlap Claude Opus's training cutoff, and would a post-cutoff-only evaluation window (or an entity-anonymization probe, per the FinCAD/Look-Ahead-Bench pattern) materially shrink the FDR-surviving candidate set — i.e., how much of current survivor alpha is parametric memorization rather than genuine edge?
+4. Can the existing `shadow_history` data answer the Kaminski-Lo precondition question (Recommendation 1) per-symphony without any new infrastructure, or does it require additional instrumentation (e.g., finer decision-frequency serial-correlation estimates)?
+5. What transaction-cost/slippage assumptions does Composer's `/backtest` endpoint embed internally, and is the SPY-OOS-alpha baseline comparison cost-symmetric — would charging realistic frictions on candidate trees (which trade more frequently than buy-and-hold SPY) eliminate the measured OOS alpha, following the 0.43→0.22 Sharpe-collapse pattern documented in the LLM-trading-agent literature?
+6. Would introducing model heterogeneity into the Market Prism council (e.g., one or two non-Claude analyst backbones) measurably decorrelate lens errors per the documented heterogeneity antidote, or does the council's existing per-lens data-modality split already provide sufficient decorrelation without that added complexity?
+7. Should PlanetStopper maintain a cumulative trial ledger (total configurations searched across all Optuna runs and Strategy Builder batches, not just one batch) and add an explicit Deflated Sharpe Ratio computation alongside PBO?
+
+*(Note: questions 6 and 7 restate Recommendations 6 and 5 respectively — they are carried here as open questions because the research passes framed them as unresolved verification targets, not settled action items; the Recommendations section above states the PM's prioritized response to each.)*
+
+---
+
+## Section 7 — Sources
+
+The 25 sources fetched and scored during Pass 2 (the pass-2 JSON's canonical `sources` array), each tagged with its quality tier and research angle exactly as recorded by the research workflow:
+
+| # | Source | Quality | Angle |
+|---|---|---|---|
+| 1 | https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2326253 (Bailey, Borwein, López de Prado & Zhu — PBO) | primary | Institutional backtest-hygiene canon (academic/primary) |
+| 2 | https://academic.oup.com/rfs/article/29/1/5/1843824 (Harvey, Liu & Zhu — RFS 2016) | primary | Institutional backtest-hygiene canon (academic/primary) |
+| 3 | https://www.sciencedirect.com/science/article/abs/pii/S0950705124011110 (Arian, Norouzi & Seco — CPCV vs. walk-forward) | primary | Institutional backtest-hygiene canon (academic/primary) |
+| 4 | https://people.duke.edu/~charvey/backtesting/ (Harvey backtesting reference code) | primary | Institutional backtest-hygiene canon (academic/primary) |
+| 5 | https://alphaarchitect.com/taming-the-momentum-roller-coaster-fact-or-fiction/ | blog | Stop-loss and exit-overlay evidence (contrarian/skeptical) |
+| 6 | https://amoreira2.github.io/alan-moreira.github.io/VolPortfolios_published.pdf (Moreira & Muir) | primary | Stop-loss and exit-overlay evidence (contrarian/skeptical) |
+| 7 | https://www.man.com/insights/the-impact-of-volatility-targeting | primary | Stop-loss and exit-overlay evidence (contrarian/skeptical) |
+| 8 | https://onlinelibrary.wiley.com/doi/abs/10.1111/irfi.12328 | primary | Stop-loss and exit-overlay evidence (contrarian/skeptical) |
+| 9 | https://www.worldquant.com/ideas/the-power-of-exponential-thinking/ | primary | Institutional strategy R&D pipeline (practitioner/implementation) |
+| 10 | https://www.hbs.edu/faculty/Shared%20Documents/events/328/TradingCostEfficiency_FULL_112912.pdf (Frazzini, Israel & Moskowitz) | primary | Institutional strategy R&D pipeline (practitioner/implementation) |
+| 11 | https://community.portfolio123.com/uploads/short-url/3WHpAUOzhCG8QAUez71HpoWnA62.pdf (Wiecki, Campbell, Lent & Stauth) | primary | Institutional strategy R&D pipeline (practitioner/implementation) |
+| 12 | https://www.davidhbailey.com/dhbpapers/deflated-sharpe.pdf (Bailey & López de Prado — DSR) | primary | Institutional strategy R&D pipeline (practitioner/implementation) |
+| 13 | https://bsic.it/modelling-transaction-costs-and-market-impact/ | blog | Institutional strategy R&D pipeline (practitioner/implementation) |
+| 14 | https://www.streetofwalls.com/finance-training-courses/quantitative-hedge-fund-training/what-is-a-quant-hedge-fund/ | blog | Institutional strategy R&D pipeline (practitioner/implementation) |
+| 15 | https://arxiv.org/abs/2503.21422 (LLM-in-quant survey) | primary | LLM alpha mining and agentic strategy generation (state-of-art) |
+| 16 | https://arxiv.org/pdf/2412.20138 (TradingAgents) | primary | LLM alpha mining and agentic strategy generation (state-of-art) |
+| 17 | https://arxiv.org/html/2605.16895v1 (Alpha Illusion — friction audit) | primary | LLM alpha mining and agentic strategy generation (state-of-art) |
+| 18 | https://arxiv.org/pdf/2510.18569 (QuantEvolve) | primary | LLM alpha mining and agentic strategy generation (state-of-art) |
+| 19 | https://arxiv.org/html/2605.19337v1 (Agentic Trading evidence-map survey) | primary | LLM-specific failure modes and real-firm adoption (recent news/risk) |
+| 20 | https://resonanzcapital.com/insights/how-hedge-funds-are-really-using-generative-ai-and-why-it-matters-for-manager-selection | secondary | LLM-specific failure modes and real-firm adoption (recent news/risk) |
+| 21 | https://resonanzcapital.com/insights/ai-use-by-hedge-funds-made-tangible-from-lego-bots-to-alpha-assistants | secondary | LLM-specific failure modes and real-firm adoption (recent news/risk) |
+| 22 | https://arxiv.org/html/2605.24564 (parametric lookahead bias coinage) | primary | LLM-specific failure modes and real-firm adoption (recent news/risk) |
+| 23 | https://arxiv.org/html/2605.05211v1 | secondary | LLM-specific failure modes and real-firm adoption (recent news/risk) |
+| 24 | https://papers.ssrn.com/sol3/papers.cfm?abstract_id=968338 (Kaminski & Lo, working paper) | primary | Stop-loss direct evidence (follow-up) |
+| 25 | https://alo.mit.edu/wp-content/uploads/2015/06/When-Do-Stop-Loss-Rules-Stop-Losses.pdf (Kaminski & Lo, MIT mirror) | primary | Stop-loss direct evidence (follow-up) |
+
+**Dead-link note:** entry 25 (`alo.mit.edu`) returns 404 as of this research pass. Per the binding citation correction in Section 5, cite **DOI 10.1016/j.finmar.2013.07.001** (published *Journal of Financial Markets* version) or entry 24 (**SSRN 968338**, working paper) instead — never the dead MIT mirror.
+
+### Source list by theme, with additional corroborating citations
+
+The list below reorganizes the same 25 sources by research theme and adds sources that were cited within individual findings' evidence but did not appear in the pass-2 JSON's top-level 25-entry array (either because they are pass-1-only, or because they were introduced as supporting citations inside a specific finding rather than as a top-level fetch target). Quality tiers: **primary** (peer-reviewed paper, working paper on a preprint server, or first-party institutional publication), **secondary** (industry survey, allocator commentary, trade press), **blog** (practitioner blog, not independently peer-reviewed but from a named, track-recorded author or firm).
+
+**Institutional backtest-hygiene canon**
+
+- Bailey, Borwein, López de Prado & Zhu, "The Probability of Backtest Overfitting" — SSRN 2326253 — *primary*
+- Harvey, Liu & Zhu, "...and the Cross-Section of Expected Returns" — *Review of Financial Studies* 29(1), 5 — *primary*
+- Harvey, backtesting reference code and materials — people.duke.edu/~charvey/backtesting/ — *primary*
+- Arian, Norouzi & Seco, CPCV vs. walk-forward comparison — *Knowledge-Based Systems* 305, S0950705124011110 — *primary*
+- Bailey & López de Prado, "The Deflated Sharpe Ratio" — davidhbailey.com/dhbpapers/deflated-sharpe.pdf — *primary*
+
+**Stop-loss and exit-overlay evidence**
+
+- Kaminski & Lo, "When Do Stop-Loss Rules Stop Losses?" — DOI 10.1016/j.finmar.2013.07.001 (published, *J. Financial Markets* 18, 2014, 234–254) / SSRN 968338 (working paper) — *primary*. **Note:** the alo.mit.edu PDF mirror is dead (404); do not cite it.
+- Moreira & Muir, "Volatility-Managed Portfolios" — *Journal of Finance* 2017 (amoreira2.github.io mirror) — *primary*
+- Man Group, "The Impact of Volatility Targeting" — man.com/insights — *primary*
+- Wiley Online Library, irfi.12328 (stop-loss/regime-dependence) — *primary*
+- Alpha Architect, "Taming the Momentum Roller Coaster: Fact or Fiction?" — alphaarchitect.com — *blog*
+- Wiecki, Campbell, Lent & Stauth, Quantopian 888-algorithm IS/OOS study — SSRN 2745220 / *J. of Investing* 25(3):69 (2016), portfolio123.com mirror — *primary*
+
+**Institutional strategy R&D pipeline**
+
+- WorldQuant (Tulchinsky), "The Power of Exponential Thinking" — worldquant.com/ideas — *primary* (first-party)
+- Frazzini, Israel & Moskowitz, "Trading Costs" (HBS working draft) — hbs.edu — *primary* (draft, "not for quotation")
+- BSIC, "Modelling Transaction Costs and Market Impact" — bsic.it — *blog*
+- Street of Walls, quant hedge fund training material — streetofwalls.com — *blog*
+
+**LLM alpha mining and agentic strategy generation**
+
+- "From Deep Learning to LLMs: A Survey of AI in Quantitative Investment" — arXiv 2503.21422 — *primary*
+- TradingAgents — arXiv 2412.20138 — *primary*
+- "Alpha Illusion" (transaction-cost/friction audit of 5 LLM trading agents) — arXiv 2605.16895 — *primary*
+- QuantEvolve — arXiv 2510.18569 — *primary*
+- "Agentic Trading: When LLM Agents Meet Financial Markets" (evidence-map survey, 77 studies/19 primary) — arXiv 2605.19337 — *primary*
+- Alpha-GPT — ResearchGate 397425151 — *primary* (pass-1-only fetch, not in the pass-2 top-25)
+- "Profit Mirage" (parametric lookahead bias, Sharpe/return decay measurements) — arXiv 2510.07920 — *primary* (cited within Finding 2.3; not a top-level fetch target in either pass's `sources` array)
+- Glasserman & Lin, lookahead-bias foundations — arXiv 2309.17322 — *primary* (cited within Finding 2.3)
+- Zhang et al., "Stop Overvaluing Multi-Agent Debate" (**primary citation for the homogeneous-debate finding**) — arXiv 2502.08788 — *primary* (cited within Finding 2.4; the binding citation-correction source)
+
+**LLM-specific failure modes and real-firm adoption**
+
+- Resonanz Capital, "How Hedge Funds Are Really Using Generative AI" — resonanzcapital.com — *secondary*
+- Resonanz Capital, "AI Use by Hedge Funds Made Tangible" — resonanzcapital.com — *secondary*
+- "Parametric lookahead bias" coinage paper — arXiv 2605.24564 — *primary*
+- arXiv 2605.05211 — *secondary*
+- "Lookahead Bias in Pretrained Language Models" — ResearchGate 379767258 / SSRN 4754678 — *primary* (pass-1-only fetch, not in the pass-2 top-25)
+- AIMA, H1-2025 industry survey (~150 managers, ~$788bn AUM) — aima.org — *secondary* (cited within Finding 1.8)
+
+Additional corroborating sources cited within verified findings but not independently 3-vote-verified in isolation: arXiv 2601.13770 (Look-Ahead-Bench), arXiv 2603.26797 (MemGuard-Alpha), ideas.repec.org mirror of the published Kaminski-Lo paper.
+
+---
+
+*End of report. This document compiles two completed deep-research passes and one completed internal code audit; no new research or code analysis was performed in the writing of this document.*
