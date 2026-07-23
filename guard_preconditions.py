@@ -177,10 +177,16 @@ _VERDICT_COPY: dict[str, str] = {
         "is likely but not confirmed at the 95% level."
     ),
     "NOT_MET": (
-        "Observed return persistence does not clear the daily Sharpe ratio "
-        "bar -- the expected-return sufficient condition for stop "
-        "justification is not met. This says nothing about variance or "
-        "drawdown reduction, which can survive under an IID return process."
+        "At the 95% confidence level, this evidence does not demonstrate "
+        "that observed return persistence clears the daily Sharpe ratio bar "
+        "-- the expected-return sufficient condition for stop justification "
+        "is not demonstrated by this symphony's data (not disproven either; "
+        "an evidence finding, not a settled fact). Under random-walk "
+        "dynamics, Kaminski & Lo's (2014) theorem holds that a trailing-stop "
+        "overlay drags down expected return relative to a static hold; that "
+        "conditional theorem is not itself confirmed or refuted here. This "
+        "says nothing about variance or drawdown reduction, which can "
+        "survive under an IID return process."
     ),
     "NEGATIVE_EDGE": (
         "The daily Sharpe ratio is zero or negative, so no level of return "

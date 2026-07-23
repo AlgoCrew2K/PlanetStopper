@@ -1576,52 +1576,30 @@ def build_if_held_replay_series(symphony_id: str) -> "list | None":
     tests/app/test_guard_alpha_preconditions_route.py (route-level: same
     guarantee end-to-end through the real route).
 
-    Cache-key derivation intentionally mirrors synthetic_history.
-    generate_synthetic_history's own tickers -> holdings-hash -> versioned-
-    filename steps EXACTLY (same md5-of-sorted-holdings-json, same
-    "synthetic_history_v4_<date>_<hash>.json" naming) so this cache-only
-    reader and generate_synthetic_history's nightly fetch-and-write agree on
-    which file represents "today's synthetic history for this bot_state" --
-    computed over the FULL bot_state (not just symphony_id) because that is
-    what the nightly write is keyed on; only load_cached_history's actual
-    file I/O is reused directly (no network-capable call is invoked here).
+    Cache-key derivation and the actual file read are delegated ENTIRELY to
+    synthetic_history.get_cached_synthetic_history_only, which shares its
+    tickers -> holdings-hash -> versioned-filename derivation with
+    generate_synthetic_history's own nightly fetch-and-write via one common
+    helper (synthetic_history._resolve_history_cache_key) -- this function
+    never re-derives that key independently, so it cannot silently drift
+    from the writer and permanently miss a genuine same-day, same-holdings
+    cache hit (PM hard requirement, 2026-07-23).
     """
     bot_state = database.load_state()
     if symphony_id not in bot_state:
         return None
 
-    all_tickers = set()
-    symphony_holdings = {}
-    for sym_id, state in bot_state.items():
-        if isinstance(state, dict) and "current_holdings" in state:
-            holdings = state["current_holdings"]
-            symphony_holdings[sym_id] = holdings
-            for h in holdings:
-                all_tickers.add(h["ticker"])
+    # ET "today" via synthetic_history.utc_to_eastern -- the SAME DST-aware
+    # conversion generate_synthetic_history itself uses to resolve "today"
+    # (synthetic_history.py:540), already a module-level dependency of this
+    # file. Deliberately NOT alpha_bot_execution.get_current_et: that module
+    # does load_dotenv + reads several credentials at import time and pulls
+    # a wide production import graph (including autotuner itself) -- heavy
+    # and side-effectful to import on-demand from an advisory dashboard GET
+    # just for a date string.
+    current_date_str = synthetic_history.utc_to_eastern(datetime.now(UTC)).strftime("%Y-%m-%d")
 
-    if not all_tickers:
-        return None
-
-    # CC-2 lazy import: alpha_bot_execution imports autotuner at module level,
-    # so a top-level import here would be circular. Reuses the single ET-date
-    # source of truth run_autotuner's own daily invocation depends on, rather
-    # than re-deriving timezone conversion logic.
-    from alpha_bot_execution import get_current_et
-
-    current_date_str = get_current_et().strftime("%Y-%m-%d")
-
-    import hashlib
-
-    holdings_str = json.dumps(symphony_holdings, sort_keys=True)
-    holdings_hash = hashlib.md5(holdings_str.encode("utf-8")).hexdigest()
-    cache_file = os.path.join(
-        "cache", f"synthetic_history_v4_{current_date_str}_{holdings_hash}.json"
-    )
-
-    # load_cached_history never raises (OSError/JSONDecodeError/etc. all
-    # degrade to None) -- a missing file (the cache-miss case this contract
-    # requires) is just one of those caught cases, never a live fetch.
-    history_data = synthetic_history.load_cached_history(cache_file)
+    history_data = synthetic_history.get_cached_synthetic_history_only(bot_state, current_date_str)
     if history_data is None or symphony_id not in history_data:
         return None
 

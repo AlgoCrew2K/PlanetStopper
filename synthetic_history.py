@@ -482,10 +482,26 @@ def build_replay_day(
     return ticks
 
 
-def generate_synthetic_history(bot_state, current_date_str, *, n_jobs: int | None = None):
-    print("  -> Generating Synthetic Forward-Looking Intraday History...")
+def _resolve_history_cache_key(
+    bot_state: dict, current_date_str: str
+) -> tuple[set, dict, "str | None"]:
+    """Derive (all_tickers, symphony_holdings, cache_file) for bot_state on
+    current_date_str.
 
-    # 1. Extract tickers
+    SINGLE SOURCE OF TRUTH for the tickers -> holdings-hash -> versioned-
+    filename cache-key derivation: generate_synthetic_history (the network-
+    capable writer) and get_cached_synthetic_history_only (the cache-only
+    reader used by autotuner.build_if_held_replay_series) both call this
+    function rather than each deriving the key independently -- a mirrored
+    re-implementation could silently drift from this one, making the
+    cache-only reader permanently miss even on a genuine same-day,
+    same-holdings hit, with no test catching it until it happens live.
+
+    cache_file is None when bot_state has no holdings anywhere (an empty
+    portfolio has nothing to cache or read -- mirrors
+    generate_synthetic_history's own prior "if not all_tickers: return {}"
+    short-circuit).
+    """
     all_tickers = set()
     symphony_holdings = {}
     for sym_id, state in bot_state.items():
@@ -496,9 +512,8 @@ def generate_synthetic_history(bot_state, current_date_str, *, n_jobs: int | Non
                 all_tickers.add(h["ticker"])
 
     if not all_tickers:
-        return {}
+        return all_tickers, symphony_holdings, None
 
-    # Check cache based on date and exact holdings
     import hashlib
 
     holdings_str = json.dumps(symphony_holdings, sort_keys=True)
@@ -517,6 +532,39 @@ def generate_synthetic_history(bot_state, current_date_str, *, n_jobs: int | Non
     cache_file = os.path.join(
         cache_dir, f"synthetic_history_v4_{current_date_str}_{holdings_hash}.json"
     )
+    return all_tickers, symphony_holdings, cache_file
+
+
+def get_cached_synthetic_history_only(bot_state: dict, current_date_str: str) -> "dict | None":
+    """CACHE-ONLY read of the synthetic-history file cache -- NEVER triggers
+    a live fetch (contrast with generate_synthetic_history, which fetches on
+    a cache miss). Uses the IDENTICAL cache-key derivation as
+    generate_synthetic_history (via the shared _resolve_history_cache_key)
+    so this reader and the network-capable writer always agree on which file
+    represents "today's synthetic history for this bot_state".
+
+    Returns None on: no holdings anywhere in bot_state, a cold cache (no
+    file for today's key), or a corrupt/unreadable cache file (see
+    load_cached_history, which never raises).
+
+    Sole consumer: autotuner.build_if_held_replay_series (the guard-alpha-
+    preconditions dashboard route's cache-hit-only replay seam -- off the
+    execution path, must never drive Alpaca fetch volume from a GET).
+    """
+    _, _, cache_file = _resolve_history_cache_key(bot_state, current_date_str)
+    if cache_file is None:
+        return None
+    return load_cached_history(cache_file)
+
+
+def generate_synthetic_history(bot_state, current_date_str, *, n_jobs: int | None = None):
+    print("  -> Generating Synthetic Forward-Looking Intraday History...")
+
+    all_tickers, symphony_holdings, cache_file = _resolve_history_cache_key(
+        bot_state, current_date_str
+    )
+    if cache_file is None:
+        return {}
 
     if os.path.exists(cache_file):
         print(f"  -> Loading cached synthetic history from {cache_file}...")
