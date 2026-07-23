@@ -1535,6 +1535,33 @@ def _collect_sim_returns(
     return daily_returns
 
 
+def collect_if_held_daily_returns(history_data: dict, sym_id: str) -> list:
+    """Stub -- implementation pending (TDD RED phase, guard-alpha-preconditions).
+
+    Contract (feature-plans/guard-alpha-preconditions.md, AC-5 amended): return
+    the full if-held daily EOD return series for one symphony -- ticks[-1]["return"]
+    for EVERY date in history_data[sym_id], unconditionally (never filtered to
+    triggered days, and NEVER the guard_alpha delta _collect_sim_returns computes).
+    Pure extraction, no re-simulation, no I/O.
+    """
+    raise NotImplementedError("collect_if_held_daily_returns: TDD RED phase stub")
+
+
+def build_if_held_replay_series(symphony_id: str) -> "list | None":
+    """Stub -- implementation pending (TDD RED phase, guard-alpha-preconditions).
+
+    ROUTE-FACING ORCHESTRATION SEAM (open question flagged to PM/ga-flask,
+    non-blocking, see .claude/tdd-handoff.md "Open Question: replay data
+    sourcing"): assembles the 250-day history_data for symphony_id (reusing
+    synthetic_history's existing file-cached fetch, per the plan's "reuse the
+    existing replay seam") and returns collect_if_held_daily_returns(...) on
+    it. This is the ONE function the GET route depends on for the primary
+    sample, so the route never has to know how history_data is assembled.
+    Returns None if the symphony has no resolvable history.
+    """
+    raise NotImplementedError("build_if_held_replay_series: TDD RED phase stub")
+
+
 def _replay_resolve_regime_exit_ticks(dates_data: dict, sorted_dates: list, date_idx: int) -> int:
     """AC-4/F5: recompute the regime-conditional exit_confirm_ticks fresh for
     one replay day, using ONLY EOD daily returns from dates STRICTLY BEFORE

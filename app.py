@@ -3080,6 +3080,20 @@ def get_windowed_strip(window):
     return jsonify(strip)
 
 
+@app.route("/api/guard-alpha-preconditions")
+def guard_alpha_preconditions():
+    """Stub -- implementation pending (TDD RED phase, guard-alpha-preconditions).
+
+    Contract (feature-plans/guard-alpha-preconditions.md AC-6, AC-7, AC-8):
+    per-symphony {rho, rho_ci, sharpe_daily, n_obs, verdict, sample_source}
+    for the replay ("replay") and shadow ("shadow") samples, read-only,
+    honest degradation, global auth hook, never a 500. See
+    .claude/tdd-handoff.md for the full response schema this stub must grow
+    into.
+    """
+    return jsonify({"_stub": "TDD RED phase -- not implemented"})
+
+
 @app.route("/api/guard-alpha-summary")
 def guard_alpha_summary():
     """Return cumulative dollar-saved + guard-event count from post_mortem JSON files.

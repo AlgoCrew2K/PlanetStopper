@@ -706,6 +706,21 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
     return result
 
 
+def get_shadow_current_return_daily_series(symphony_id: str, db_file: str) -> list[float] | None:
+    """Stub -- implementation pending (TDD RED phase, guard-alpha-preconditions).
+
+    Contract (feature-plans/guard-alpha-preconditions.md, AC-5 amended): return
+    the RAW per-day current_return values from shadow_history, in trading-day
+    order, EOD-row-only (last row per trading_day by ts_utc -- never an
+    intraday row), current-epoch-scoped via the SAME epoch-resolution pattern
+    as _get_shadow_cumulative_trajectory above -- but selecting current_return
+    instead of shadow_return, and NEVER differencing the values (current_return
+    is already a per-day return, not cumulative -- see project memory
+    project_shadow_return_per_day_proven_empirically.md).
+    """
+    raise NotImplementedError("get_shadow_current_return_daily_series: TDD RED phase stub")
+
+
 def _get_shadow_divergence_trajectory(
     symphony_id: str, db_file: str, conn: sqlite3.Connection | None = None
 ) -> list[list[tuple[float, float]]] | None:

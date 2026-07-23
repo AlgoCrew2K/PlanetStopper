@@ -1,0 +1,8 @@
+{
+  "description": "Constructed IID (phi=0) daily if-held return series -- the no-persistence control. Golden fixture pinning that a series with genuinely near-zero lag-1 autocorrelation classifies NOT_MET against a moderate positive daily Sharpe (the K&L random-walk case: no persistence means the overlay is expected-return drag).",
+  "provenance": "Deterministic construction, not captured from any producer. Python: rnd = random.Random(seed=101); shocks = [rnd.uniform(-1.0, 1.0) for _ in range(55)]; phi=0 (no AR recursion -- each value is an independent draw); daily_returns_pct[t] = (0.05 * shocks[t] + 0.02) * 100. Expected rho/sharpe are computed by the test from this raw series via an independent reference formula, never hardcoded here.",
+  "n_obs": 55,
+  "phi": 0.0,
+  "seed": 101,
+  "daily_returns_pct": [2.8115, -1.0525, 6.6525, 6.2398, 1.6714, 3.6347, -0.8548, -0.783, -0.1148, 3.9242, -0.8762, 6.7111, -2.2964, -1.0671, -2.1114, 4.6989, 0.6651, 1.7168, 0.2603, 3.3743, 1.0389, -0.9173, 1.3015, 0.0429, -1.892, 5.2339, 3.8015, 3.6479, 5.8245, 0.9464, 0.7928, 1.2297, 1.0455, 3.6894, -2.9348, 1.6411, 2.3508, 0.4551, -2.7813, 4.046, -2.9056, 2.6441, -1.4663, -2.6542, -1.1916, -2.3426, -1.4924, 3.8487, 4.2828, 0.6278, 3.5239, 1.7513, 1.9845, 5.759, 0.1129]
+}
