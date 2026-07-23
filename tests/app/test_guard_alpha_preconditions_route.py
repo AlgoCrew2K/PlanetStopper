@@ -125,7 +125,18 @@ class TestResponseSchemaAndDisagreement:
 
     def test_replay_only_symphony_has_honest_sample_source(self, client, monkeypatch):
         """Edge case: symphony present in replay but absent from shadow_history
-        (never triggered / new) -> replay-only row, sample_source honest."""
+        (never triggered / new) -> replay row real, shadow row DEGRADED
+        (never fabricated, never bare None).
+
+        UNIFORM DEGRADED-ROW CONTRACT: every sample ("replay" and "shadow")
+        is ALWAYS an object with all 6 fields, never bare null -- when
+        unavailable, verdict="INSUFFICIENT_DATA" and n_obs=0 (the SAME
+        classify_stop_justification vocabulary a genuinely-thin real sample
+        would produce), so the panel never has to null-check a sample before
+        reading its fields. This mirrors the pattern surfaced during
+        implementation for the replay-cache-miss case (see
+        TestColdCacheNeverFetchesEndToEnd below) -- applied symmetrically to
+        BOTH samples for consistency."""
         sym_id = "sym-replay-only-002"
         replay_returns = _load_returns("persistence_stats_iid_control.json")
 
@@ -149,10 +160,97 @@ class TestResponseSchemaAndDisagreement:
 
         assert resp.status_code == 200
         sym_entry = resp.get_json()["symphonies"][sym_id]
-        assert "replay" in sym_entry
-        assert sym_entry.get("shadow") is None, (
-            f"A symphony absent from shadow_history must get shadow=None "
-            f"(honest, never fabricated) -- got {sym_entry.get('shadow')!r}."
+        assert "replay" in sym_entry and sym_entry["replay"] is not None
+        shadow_row = sym_entry.get("shadow")
+        assert shadow_row is not None, (
+            "A symphony absent from shadow_history must still get a real "
+            "'shadow' object (uniform degraded-row contract), never bare "
+            f"None -- got {shadow_row!r}."
+        )
+        assert shadow_row.get("verdict") == "INSUFFICIENT_DATA", (
+            f"Degraded shadow row must report verdict='INSUFFICIENT_DATA' "
+            f"(honest, uses the same 5-class vocabulary), got {shadow_row!r}."
+        )
+        assert shadow_row.get("n_obs") == 0
+
+
+# ---------------------------------------------------------------------------
+# PM ruling (2026-07-23): replay data sourcing is CACHE-HIT-ONLY end-to-end
+# through the REAL route -- a cold cache must never trigger a live fetch, no
+# matter how deep in the call stack. autotuner.build_if_held_replay_series is
+# NOT mocked in this test (unlike every other route test) -- the REAL
+# function runs (currently a stub, so this legitimately fails with
+# NotImplementedError until ga-impl lands it) so this test proves the
+# guarantee holds through the whole real call chain, not just at a mocked
+# boundary.
+# ---------------------------------------------------------------------------
+
+
+class TestColdCacheNeverFetchesEndToEnd:
+    def test_cold_cache_route_degrades_honestly_and_never_fetches(
+        self, client, monkeypatch, tmp_path
+    ):
+        import synthetic_history as synthetic_history_module
+
+        monkeypatch.chdir(tmp_path)  # guarantees an empty ./cache dir
+
+        sym_id = "sym-cold-cache-004"
+        shadow_returns = _load_returns("persistence_stats_iid_control.json")
+
+        monkeypatch.setattr(
+            database_module,
+            "load_state",
+            lambda: {sym_id: {"name": "Cold Cache Symphony", "current_return": 0.0}},
+        )
+        # autotuner_module.build_if_held_replay_series is deliberately NOT
+        # mocked here -- the real function must run and prove it degrades
+        # honestly on a cache miss without reaching the network.
+        monkeypatch.setattr(
+            analytics_module,
+            "get_shadow_current_return_daily_series",
+            lambda sid, db_file: shadow_returns,
+        )
+
+        fetch_calls: list = []
+
+        def _tracking_fetch_bars(*args, **kwargs):
+            fetch_calls.append((args, kwargs))
+            return []
+
+        monkeypatch.setattr(synthetic_history_module, "fetch_bars", _tracking_fetch_bars)
+
+        resp = client.get(_ROUTE)
+
+        assert fetch_calls == [], (
+            f"synthetic_history.fetch_bars was called {len(fetch_calls)} time(s) "
+            "via the real route path on a cold cache -- the route must NEVER be "
+            "able to drive a live fetch (PM ruling 2026-07-23)."
+        )
+        assert resp.status_code == 200, (
+            f"Cold cache must still yield 200 with an honest degraded replay "
+            f"entry, not a 500. Got {resp.status_code}: {resp.data!r}"
+        )
+        sym_entry = resp.get_json()["symphonies"][sym_id]
+        # UNIFORM DEGRADED-ROW CONTRACT (see TestResponseSchemaAndDisagreement
+        # ::test_replay_only_symphony_has_honest_sample_source for the
+        # symmetric shadow-side case): "replay" is ALWAYS an object, never
+        # bare null -- on a cold cache it reports verdict="INSUFFICIENT_DATA"
+        # and n_obs=0, the same vocabulary a genuinely-thin real sample uses.
+        replay_row = sym_entry.get("replay")
+        assert replay_row is not None, (
+            "On a cold cache, the replay sample must still be a real object "
+            "(uniform degraded-row contract), never bare None -- got "
+            f"{replay_row!r}."
+        )
+        assert replay_row.get("verdict") == "INSUFFICIENT_DATA", (
+            f"Degraded replay row must report verdict='INSUFFICIENT_DATA', got {replay_row!r}."
+        )
+        assert replay_row.get("n_obs") == 0
+        assert sym_entry.get("shadow") is not None, (
+            "The shadow sample IS available in this scenario and must still be "
+            "shown -- a cold replay cache must not suppress the whole symphony "
+            "row (AC-8: fall back to shadow-only, never silently prefer one by "
+            "omitting the other)."
         )
 
 

@@ -340,3 +340,23 @@ class TestCitation:
             "guard_preconditions.py must NOT cite the dead alo.mit.edu URL "
             "(AC-9 explicitly forbids it)."
         )
+
+    def test_source_contains_correct_paper_title(self):
+        """PM correction (2026-07-23): the paper at DOI 10.1016/j.finmar.2013.07.001
+        is Kaminski & Lo, "When Do Stop-Loss Rules Stop Losses?", Journal of
+        Financial Markets 18 (2014), pp. 234-254 -- NOT "An Analysis of
+        Trailing Stop-Loss Strategies" / pp. 108-125 (a different, incorrect
+        title that was in an earlier draft of this stub)."""
+        src = pathlib.Path(gp.__file__).read_text(encoding="utf-8")
+        assert "When Do Stop-Loss Rules Stop Losses?" in src, (
+            'guard_preconditions.py must cite the correct paper title "When Do '
+            'Stop-Loss Rules Stop Losses?" (AC-9, PM correction 2026-07-23).'
+        )
+
+    def test_source_never_references_incorrect_earlier_title(self):
+        src = pathlib.Path(gp.__file__).read_text(encoding="utf-8")
+        assert "An Analysis of Trailing Stop-Loss Strategies" not in src, (
+            "guard_preconditions.py must NOT cite the incorrect earlier-draft "
+            'title "An Analysis of Trailing Stop-Loss Strategies" -- regression '
+            "guard against reverting the PM's 2026-07-23 citation correction."
+        )
