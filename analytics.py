@@ -707,18 +707,80 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
 
 
 def get_shadow_current_return_daily_series(symphony_id: str, db_file: str) -> list[float] | None:
-    """Stub -- implementation pending (TDD RED phase, guard-alpha-preconditions).
+    """Return the RAW per-day current_return values from shadow_history, in
+    trading-day order, EOD-row-only (last row per trading_day by ts_utc --
+    never an intraday row), current-epoch-scoped via the SAME epoch-resolution
+    pattern as _get_shadow_cumulative_trajectory above -- but selecting
+    current_return instead of shadow_return, and NEVER differencing the values
+    (current_return is already a per-day return, not cumulative -- see project
+    memory project_shadow_return_per_day_proven_empirically.md).
 
-    Contract (feature-plans/guard-alpha-preconditions.md, AC-5 amended): return
-    the RAW per-day current_return values from shadow_history, in trading-day
-    order, EOD-row-only (last row per trading_day by ts_utc -- never an
-    intraday row), current-epoch-scoped via the SAME epoch-resolution pattern
-    as _get_shadow_cumulative_trajectory above -- but selecting current_return
-    instead of shadow_return, and NEVER differencing the values (current_return
-    is already a per-day return, not cumulative -- see project memory
-    project_shadow_return_per_day_proven_empirically.md).
+    Returns None only when the symphony has zero rows (genuinely absent);
+    a present-but-thin symphony (even a single day) returns a real short
+    list -- insufficiency is compute_persistence_stats's job via N_MIN_OBS,
+    not this accessor's.
+
+    Deliberately does NOT use database._shadow_cr_cache: that shared dict is
+    keyed (symphony_id, today, db_file, resolved_epoch) regardless of WHICH
+    column the caller selected, and _get_shadow_cumulative_trajectory already
+    populates it for shadow_return under that exact key shape -- reusing it
+    here for a different column (current_return) risks one accessor silently
+    serving the other's cached series for the same key. This route is
+    off-execution-path and advisory-only, so the correctness risk outweighs
+    the caching win.
     """
-    raise NotImplementedError("get_shadow_current_return_daily_series: TDD RED phase stub")
+    try:
+        conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
+        try:
+            # Existence probe only -- the query below re-derives "current
+            # epoch" itself via a nested subquery, so the fetched value is
+            # never needed in Python; this call's sole purpose is to raise
+            # OperationalError on a legacy table with no position_epoch
+            # column at all.
+            conn.execute(
+                "SELECT position_epoch FROM shadow_history "
+                "WHERE symphony_id = ? ORDER BY ts_utc DESC LIMIT 1",
+                (symphony_id,),
+            ).fetchone()
+            has_epoch_column = True
+        except sqlite3.OperationalError:
+            has_epoch_column = False
+
+        if has_epoch_column:
+            # `IS` (not `=`) so a NULL current epoch matches NULL legacy rows.
+            rows = conn.execute(
+                "SELECT trading_day, current_return "
+                "FROM shadow_history "
+                "WHERE symphony_id = ? "
+                "  AND position_epoch IS ( "
+                "        SELECT position_epoch FROM shadow_history s3 "
+                "        WHERE s3.symphony_id = ? "
+                "        ORDER BY s3.ts_utc DESC LIMIT 1) "
+                "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+                "                WHERE s2.symphony_id = shadow_history.symphony_id "
+                "                  AND s2.trading_day = shadow_history.trading_day) "
+                "ORDER BY trading_day ASC",
+                (symphony_id, symphony_id),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT trading_day, current_return "
+                "FROM shadow_history "
+                "WHERE symphony_id = ? "
+                "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+                "                WHERE s2.symphony_id = shadow_history.symphony_id "
+                "                  AND s2.trading_day = shadow_history.trading_day) "
+                "ORDER BY trading_day ASC",
+                (symphony_id,),
+            ).fetchall()
+        conn.close()
+    except Exception:
+        return None
+
+    if not rows:
+        return None
+
+    return [float(r[1]) for r in rows]
 
 
 def _get_shadow_divergence_trajectory(

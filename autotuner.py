@@ -1536,30 +1536,97 @@ def _collect_sim_returns(
 
 
 def collect_if_held_daily_returns(history_data: dict, sym_id: str) -> list:
-    """Stub -- implementation pending (TDD RED phase, guard-alpha-preconditions).
-
-    Contract (feature-plans/guard-alpha-preconditions.md, AC-5 amended): return
-    the full if-held daily EOD return series for one symphony -- ticks[-1]["return"]
-    for EVERY date in history_data[sym_id], unconditionally (never filtered to
-    triggered days, and NEVER the guard_alpha delta _collect_sim_returns computes).
+    """Return the full if-held daily EOD return series for one symphony --
+    ticks[-1]["return"] for EVERY date in history_data[sym_id], unconditionally
+    (never filtered to triggered days, and NEVER the guard_alpha delta
+    _collect_sim_returns computes -- see this feature's recon finding 1).
     Pure extraction, no re-simulation, no I/O.
     """
-    raise NotImplementedError("collect_if_held_daily_returns: TDD RED phase stub")
+    dates_data = history_data.get(sym_id, {})
+    result = []
+    for date in sorted(dates_data.keys()):
+        ticks = dates_data[date]
+        if not ticks:
+            continue
+        result.append(ticks[-1]["return"])
+    return result
 
 
 def build_if_held_replay_series(symphony_id: str) -> "list | None":
-    """Stub -- implementation pending (TDD RED phase, guard-alpha-preconditions).
+    """ROUTE-FACING ORCHESTRATION SEAM. PM-RULED CONTRACT (2026-07-23, resolves
+    the data-sourcing open question flagged during RED-writing): CACHE-HIT-ONLY.
 
-    ROUTE-FACING ORCHESTRATION SEAM (open question flagged to PM/ga-flask,
-    non-blocking, see .claude/tdd-handoff.md "Open Question: replay data
-    sourcing"): assembles the 250-day history_data for symphony_id (reusing
-    synthetic_history's existing file-cached fetch, per the plan's "reuse the
-    existing replay seam") and returns collect_if_held_daily_returns(...) on
-    it. This is the ONE function the GET route depends on for the primary
-    sample, so the route never has to know how history_data is assembled.
-    Returns None if the symphony has no resolvable history.
+    This function may read synthetic_history's EXISTING file cache (e.g. via
+    synthetic_history.load_cached_history) and any already-persisted replay
+    data, then return collect_if_held_daily_returns(...) on whatever it finds.
+    It must NEVER trigger a live fetch (synthetic_history.fetch_bars or
+    synthetic_history.generate_synthetic_history's fetch fallback branch) --
+    on a cache miss it returns None immediately, and the caller (the GET
+    route) renders the honest degraded state for that sample ("replay sample
+    unavailable -- populates after the next autotune/replay run"), falling
+    back to a shadow-only row per AC-8.
+
+    WHY: Architecture Constraint 5 (the dashboard/UI never reruns the engine
+    -- assembling 250-day history on request is engine machinery, not a read);
+    request latency (a cold fetch can take minutes inside a dashboard GET);
+    and the standing bill-protection directive (a dashboard refresh must never
+    be able to drive Alpaca fetch volume). Pinned by
+    tests/autotuner/test_build_if_held_replay_series.py (accessor-level: cold
+    cache -> None, synthetic_history.fetch_bars never called) and
+    tests/app/test_guard_alpha_preconditions_route.py (route-level: same
+    guarantee end-to-end through the real route).
+
+    Cache-key derivation intentionally mirrors synthetic_history.
+    generate_synthetic_history's own tickers -> holdings-hash -> versioned-
+    filename steps EXACTLY (same md5-of-sorted-holdings-json, same
+    "synthetic_history_v4_<date>_<hash>.json" naming) so this cache-only
+    reader and generate_synthetic_history's nightly fetch-and-write agree on
+    which file represents "today's synthetic history for this bot_state" --
+    computed over the FULL bot_state (not just symphony_id) because that is
+    what the nightly write is keyed on; only load_cached_history's actual
+    file I/O is reused directly (no network-capable call is invoked here).
     """
-    raise NotImplementedError("build_if_held_replay_series: TDD RED phase stub")
+    bot_state = database.load_state()
+    if symphony_id not in bot_state:
+        return None
+
+    all_tickers = set()
+    symphony_holdings = {}
+    for sym_id, state in bot_state.items():
+        if isinstance(state, dict) and "current_holdings" in state:
+            holdings = state["current_holdings"]
+            symphony_holdings[sym_id] = holdings
+            for h in holdings:
+                all_tickers.add(h["ticker"])
+
+    if not all_tickers:
+        return None
+
+    # CC-2 lazy import: alpha_bot_execution imports autotuner at module level,
+    # so a top-level import here would be circular. Reuses the single ET-date
+    # source of truth run_autotuner's own daily invocation depends on, rather
+    # than re-deriving timezone conversion logic.
+    from alpha_bot_execution import get_current_et
+
+    current_date_str = get_current_et().strftime("%Y-%m-%d")
+
+    import hashlib
+
+    holdings_str = json.dumps(symphony_holdings, sort_keys=True)
+    holdings_hash = hashlib.md5(holdings_str.encode("utf-8")).hexdigest()
+    cache_file = os.path.join(
+        "cache", f"synthetic_history_v4_{current_date_str}_{holdings_hash}.json"
+    )
+
+    # load_cached_history never raises (OSError/JSONDecodeError/etc. all
+    # degrade to None) -- a missing file (the cache-miss case this contract
+    # requires) is just one of those caught cases, never a live fetch.
+    history_data = synthetic_history.load_cached_history(cache_file)
+    if history_data is None or symphony_id not in history_data:
+        return None
+
+    series = collect_if_held_daily_returns(history_data, symphony_id)
+    return series if series else None
 
 
 def _replay_resolve_regime_exit_ticks(dates_data: dict, sorted_dates: list, date_idx: int) -> int:
