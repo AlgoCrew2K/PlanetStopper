@@ -5,6 +5,7 @@ import concurrent.futures
 import hmac
 import io
 import logging
+import math
 import os
 import queue
 import secrets
@@ -3124,12 +3125,26 @@ def guard_alpha_preconditions():
         _daemon_log.debug("guard_alpha_preconditions: load_state failed", exc_info=True)
         bot_state_dict = {}
 
+    def _json_safe_float(value):
+        # Strict-JSON guard (RFC 8259): json.dumps serializes float('nan') /
+        # float('inf') as the bare tokens NaN/Infinity, which a real
+        # browser's response.json() rejects -- invalidating the WHOLE
+        # response, not just this field. compute_persistence_stats
+        # legitimately returns nan on a genuinely flat (zero-variance)
+        # series -- that's correct math-layer behavior; sanitize only at
+        # this JSON-facing boundary, never in the stats object itself (the
+        # verdict classification below runs against the real, unsanitized
+        # stats).
+        if value is None or math.isnan(value) or math.isinf(value):
+            return None
+        return value
+
     def _sample_row(daily_returns, sample_source):
         stats = gp.compute_persistence_stats(daily_returns)
         return {
-            "rho": stats.rho,
-            "rho_ci": stats.rho_ci,
-            "sharpe_daily": stats.sharpe_daily,
+            "rho": _json_safe_float(stats.rho),
+            "rho_ci": _json_safe_float(stats.rho_ci),
+            "sharpe_daily": _json_safe_float(stats.sharpe_daily),
             "n_obs": stats.n_obs,
             "verdict": gp.classify_stop_justification(stats),
             "sample_source": sample_source,
