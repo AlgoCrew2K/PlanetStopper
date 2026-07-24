@@ -130,7 +130,17 @@ module-level init_db() BEFORE tests/conftest.py's pytest_configure() DB_PATH gua
 when tests/database is passed as an explicit pytest CLI target (bare `tests` root, as CI
 uses, is unaffected). Pre-existing on stock HEAD (confirmed via git stash by sleeve-db).
 Workaround: pre-set DB_PATH in the shell env. Fix candidate: defer init_db out of import
-time or make the database conftest set DB_PATH itself. Tier 1.
+time, or move the seed fixture's `database` import inside the fixture function so it is
+no longer module-scope. Tier 1.
+
+**Independently reproduced a second time** (found 2026-07-24, exit-friction-realized-savings
+cycle, ga2-tw): identical RuntimeError, identical trigger condition, this time on an
+already-shipped, presumably-GREEN file (`tests/database/test_029_exit_triggers_also_true.py`)
+— reproduced BEFORE the cycle's own new `tests/database/test_exit_turnover_stats.py` was ever
+touched, ruling out a cycle-introduced regression. Confirms this is a recurring footgun for
+anyone invoking pytest against `tests/database/` files directly as a CLI target, not a one-off
+from the original 2026-07-07 report. Same workaround applies (`export DB_PATH=<any writable
+temp path>`); not needed for full-suite runs via `testpaths`/no-args or `/run-tests`.
 
 ### Fundamentals lens `sources[].url` hardcodes `type=10-K` query param — COSMETIC (found 2026-07-13, advisor-suite live re-verify)
 The AAPL fundamentals payload correctly selects the latest 10-Q (`end=2026-03-28`, `filed=2026-05-01`,
