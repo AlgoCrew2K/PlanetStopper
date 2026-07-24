@@ -765,17 +765,122 @@
             .catch(function () { /* silent -- panel keeps its last-known state */ });
     }
 
+    // --- Exit-turnover panel (AC-8, exit-friction-realized-savings) ---
+
+    function turnoverWindowCell(windowStats) {
+        var td = document.createElement('td');
+        td.style.textAlign = 'right';
+        if (!windowStats) {
+            td.textContent = '--';
+            return td;
+        }
+        // RULING C: every window cell names its actual retained-history days
+        // (coverage_days) beside the count -- never let a nominal 365d column
+        // header imply a full year the retention policy can't back.
+        td.textContent = windowStats.exit_count + ' (' + windowStats.coverage_days + 'd retained)';
+        return td;
+    }
+
+    // Builds one <tr> via DOM APIs only (createElement/textContent) -- symphony
+    // identifiers are external-origin (Composer); never interpolated into innerHTML.
+    function exitTurnoverRowEl(symphonyId, turnover) {
+        var tr = document.createElement('tr');
+        tr.setAttribute('data-testid', 'exit-turnover-row');
+
+        var nameTd = document.createElement('td');
+        nameTd.textContent = symphonyId;
+        tr.appendChild(nameTd);
+
+        var windows = (turnover && turnover.windows) || {};
+        tr.appendChild(turnoverWindowCell(windows['30']));
+        tr.appendChild(turnoverWindowCell(windows['90']));
+        tr.appendChild(turnoverWindowCell(windows['365']));
+
+        var dragTd = document.createElement('td');
+        dragTd.style.textAlign = 'right';
+        var drag = turnover && turnover.est_annual_friction_drag_pct;
+        dragTd.textContent = (drag === null || drag === undefined) ? '--' : Number(drag).toFixed(3) + '%';
+        tr.appendChild(dragTd);
+
+        return tr;
+    }
+
+    function renderExitTurnover(entries) {
+        var tbody = document.getElementById('exit-turnover-tbody');
+        var emptyState = document.getElementById('exit-turnover-empty-state');
+        if (!tbody || !emptyState) return;
+
+        while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+
+        if (entries.length === 0) {
+            emptyState.style.display = '';
+            return;
+        }
+
+        emptyState.style.display = 'none';
+        entries.forEach(function (entry) {
+            tbody.appendChild(exitTurnoverRowEl(entry.symphony_id, entry.turnover));
+        });
+    }
+
+    // AC-8 fetch chain: sources the symphony-id list from
+    // /api/performance/symphonies (the same source loadSymphonies() uses for
+    // the picker), then fetches /api/exit-turnover per symphony. Explicit
+    // 401 handling (never a bare .ok check) so an unauthenticated poll
+    // degrades to the panel's empty-state instead of throwing on a non-JSON
+    // response body.
+    function fetchExitTurnover() {
+        fetch('/api/performance/symphonies')
+            .then(function (response) {
+                if (response.status === 401) return null;
+                if (!response.ok) return null;
+                return response.json();
+            })
+            .then(function (body) {
+                var symphonies = (body && body.symphonies) || [];
+                if (symphonies.length === 0) {
+                    renderExitTurnover([]);
+                    return;
+                }
+                return Promise.all(
+                    symphonies.map(function (sym) {
+                        return fetch('/api/exit-turnover?symphony_id=' + encodeURIComponent(sym.id))
+                            .then(function (response) {
+                                if (response.status === 401) return null;
+                                if (!response.ok) return null;
+                                return response.json();
+                            })
+                            .then(function (turnover) {
+                                return { symphony_id: sym.id, turnover: turnover };
+                            })
+                            .catch(function () {
+                                return { symphony_id: sym.id, turnover: null };
+                            });
+                    })
+                ).then(function (entries) {
+                    renderExitTurnover(entries.filter(function (e) { return e.turnover; }));
+                });
+            })
+            .catch(function (err) {
+                console.error('fetchExitTurnover failed', err);
+                renderExitTurnover([]);
+            });
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
         wireUI();
         loadSymphonies().then(refresh);
         fetchGuardAlphaPreconditions();
+        fetchExitTurnover();
 
-        // Post-mortems land once a day; the preconditions panel changes at most
-        // once per autotune/replay run and once per engine cycle -- folding it
-        // into the existing 60s poll (no new timer) stays above the 15s floor.
+        // Post-mortems land once a day; the preconditions and exit-turnover
+        // panels change at most once per autotune/replay run and once per
+        // engine cycle -- folding both into the existing 60s poll (no new
+        // timer) stays above the 15s floor.
         setInterval(function () {
             refresh();
             fetchGuardAlphaPreconditions();
+            fetchExitTurnover();
         }, 60000);
     });
 })();

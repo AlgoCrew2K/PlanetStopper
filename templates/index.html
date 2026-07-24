@@ -1061,6 +1061,18 @@
       <span data-testid="guard-event-count" id="guard-event-count" style="font-size:1.1em;font-weight:600;color:var(--studio-ink);">&mdash;</span>
       <span style="font-size:1.1em;color:var(--studio-ink);"> exits</span>
       <div data-testid="dollar-saved-basis-label" id="dollar-saved-basis-label" style="font-size:11px;color:var(--studio-ink-dim);margin-top:6px;"></div>
+      <!-- AC-6 (exit-friction-realized-savings): realized-basis (EOD-marks) figure,
+           additive sibling to the snapshot-basis headline above. The "marks basis"
+           qualifier is a STATIC caption (never JS-injected) so it can never be
+           silently dropped by a JS bug — RULING A / AC-5 honesty addendum: this
+           captures post-snapshot drift through the rebalance window, not
+           fill-level slippage. Populated by fetchGuardAlphaSummary() in static/index.js. -->
+      <div style="font-size:0.95em;color:var(--studio-ink-dim);margin-top:8px;">
+        <span data-testid="dollar-saved-realized-headline" id="dollar-saved-realized-headline" style="font-weight:600;">&mdash;</span>
+        <span> realized (marks basis), </span>
+        <span id="dollar-saved-realized-coverage">&mdash;</span>
+        <span> exits</span>
+      </div>
     </div>
 
     <!-- ======================== ACTIVE SECTION ======================== -->

@@ -575,6 +575,43 @@
                 next autotune/replay run and as shadow history accumulates.
             </p>
         </section>
+
+        <!-- Exit-turnover panel (AC-8, exit-friction-realized-savings): per-symphony
+             30/90/365-day exit_count + coverage_days (RULING C -- every window cell
+             names its actual retained-history days, never implies a full nominal
+             window the retention policy can't back) + an estimated annual friction
+             drag. Populated by fetchExitTurnover() in static/performance.js. -->
+        <section data-testid="exit-turnover-panel" class="metrics-section" style="margin-top:1.5rem;">
+            <h2 class="metrics-title">Exit Turnover &amp; Estimated Friction Drag</h2>
+            <p class="metrics-caption">
+                Exit-leg trigger counts per symphony over trailing 30/90/365-day windows,
+                with the actual retained-history days each window's count is based on
+                (older exit_triggers rows are retention-pruned) and an estimated
+                annualized friction drag from the simulated per-round-trip exit cost.
+            </p>
+            <div class="metrics-overflow">
+                <table class="metrics-tbl" data-testid="exit-turnover-table">
+                    <thead>
+                        <tr>
+                            <th>Symphony</th>
+                            <th style="text-align:right">30d</th>
+                            <th style="text-align:right">90d</th>
+                            <th style="text-align:right">365d</th>
+                            <th style="text-align:right">Est. Annual Friction Drag</th>
+                        </tr>
+                    </thead>
+                    <!-- Populated by renderExitTurnover() via DOM APIs (textContent/
+                         createElement) -- never innerHTML with interpolated symphony
+                         names or API strings (XSS hygiene: symphony identifiers are
+                         external-origin, from Composer). -->
+                    <tbody id="exit-turnover-tbody"></tbody>
+                </table>
+            </div>
+            <p data-testid="exit-turnover-empty-state" id="exit-turnover-empty-state"
+                class="metrics-caption" style="display:none">
+                No exit-trigger history yet for any symphony.
+            </p>
+        </section>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
