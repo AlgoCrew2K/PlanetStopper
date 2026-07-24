@@ -3,7 +3,7 @@
 > Per-symphony Kaminski & Lo (2014) stop-justification precondition math: lag-1 return persistence vs. daily Sharpe ratio, classified into 5 honest verdict classes. Pure stdlib, no I/O.
 
 **Source:** `guard_preconditions.py`
-**Last updated:** 2026-07-23 (guard-alpha-preconditions cycle, `DE-GUARD-ALPHA-PRECONDITIONS-001` -- first doc-gen entry, new module)
+**Last updated:** 2026-07-24 (guard-alpha-preconditions, live-gate correction R3, `DE-GUARD-ALPHA-PRECONDITIONS-001` -- added a retention-interaction disclosure to the N_MIN_OBS entry below; no change to this module's own code, which carries zero R3 diff). Prior: 2026-07-23 (first doc-gen entry, new module)
 
 ## Overview
 
@@ -56,7 +56,7 @@ Returns the human-readable rationale string for one of the 5 verdict classes (`_
 
 ### `N_MIN_OBS: int = 40`
 
-`[PM-ASSUMED]` per the feature plan's AC-3, aligned with `synthetic_history._MC_WARMUP_TRADING_DAYS` (39).
+`[PM-ASSUMED]` per the feature plan's AC-3, aligned with `synthetic_history._MC_WARMUP_TRADING_DAYS` (39). **Known retention interaction (honest disclosure, PM live-gate finding, 2026-07-24):** the droplet's `shadow_history` table retains ~23 trading days, below this floor -- so the SHADOW sample (see `analytics.get_shadow_current_return_daily_series`) will practically render `INSUFFICIENT_DATA` in production until the operator extends retention. This is a known product-level knob, not a defect this module introduces or is scoped to fix; `N_MIN_OBS` itself stays unchanged and principled. The REPLAY sample (`autotuner.build_if_held_replay_series`, N≈250) is unaffected. See `DE-GUARD-ALPHA-PRECONDITIONS-001`'s Live-Gate Correction section in `DECISIONS.md`.
 
 ### `_Z_95_TWO_SIDED: float = 1.96`
 
