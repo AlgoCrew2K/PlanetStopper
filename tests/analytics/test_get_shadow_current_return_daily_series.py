@@ -1,7 +1,28 @@
 """
 RED tests -- analytics.get_shadow_current_return_daily_series (guard-alpha-
 preconditions AC-5, amended per PM ruling on recon finding 2 + the EOD-only
-addendum).
+addendum + the PM's LIVE-GATE R1 correction, 2026-07-24).
+
+R1 LIVE-GATE FINDING (supersedes the epoch-scoping half of the original
+AC-5 amendment -- read this before TestAllEpochsConcatenated below): a
+read-only probe of the production droplet DB found position_epoch is a UUID
+that churns every 1-2 trading days (14-18 distinct epochs per symphony over
+23 retained trading days). Scoping this accessor to the CURRENT epoch only
+(as originally specified, mirroring the epoch-additive $-saved semantic)
+capped every symphony's shadow n_obs at 1-2 -- permanently INSUFFICIENT_DATA
+in production, even though 23 real trading days of data existed. The
+epoch-additive rule is load-bearing for the CUMULATIVE $-saved computation
+(get_symphony_cumulative_return, where chaining a prior epoch's absolute
+level into a new position would fabricate phantom returns) but does NOT
+apply to PER-DAY current_return values: each EOD current_return is that
+day's own if-held return (production-proven, see
+project_shadow_return_per_day_proven_empirically.md) regardless of which
+trigger-cycle epoch it happened to fall in -- concatenating per-day values
+ACROSS epochs is statistically valid, unlike chaining a cumulative level.
+THE FIX: drop the epoch filter entirely. Keep EOD-per-day selection (one
+row per trading_day, still via MAX(ts_utc)) and no-differencing (still raw
+per-day values) -- those two contracts are unaffected and still pinned
+below.
 
 THE TRAP THIS FILE PINS (recon finding 2): the feature plan originally read
 "daily diffs of shadow_history.current_return". Project memory
@@ -281,54 +302,102 @@ class TestEodOnlySelection:
 
 
 # ---------------------------------------------------------------------------
-# Epoch scoping: current epoch only, mirrors _get_shadow_cumulative_trajectory
+# R1 (PM live-gate correction, 2026-07-24): ALL epochs concatenated, NOT
+# scoped to current epoch. This class REPLACES the pre-live-gate
+# TestCurrentEpochScoping, which pinned the opposite (now-superseded)
+# behavior -- see this module's docstring for the full rationale.
 # ---------------------------------------------------------------------------
 
 
-class TestCurrentEpochScoping:
-    def test_only_latest_epoch_rows_are_returned(self, tmp_path: Path):
+class TestAllEpochsConcatenated:
+    def test_production_shaped_churning_epochs_all_contribute(self, tmp_path: Path):
+        """PRODUCTION-SHAPED fixture (PM's explicit live-gate request):
+        UUID-like epoch labels churning every 1-2 trading days (matching the
+        14-18-epochs-per-23-days production pattern), minute-cadence rows
+        per day (several intraday snapshots, not just one), and a weekend
+        gap in the trading-day sequence. Asserts n_obs == the number of
+        DISTINCT trading days, regardless of how many epoch boundaries fall
+        within that span -- on the droplet's real data this yields ~23; this
+        fixture uses a smaller but structurally identical 7-trading-day
+        span (5 weekdays, a weekend gap, then 2 more weekdays) crossing 5
+        distinct epochs."""
         db_file = str(tmp_path / "shadow.db")
         conn = sqlite3.connect(db_file)
         conn.execute(_SHADOW_SCHEMA_WITH_EPOCH)
-        epoch_a = "2026-01-05T14:30:00Z"  # older position
-        epoch_b = "2026-03-02T14:30:00Z"  # current position
-        older_values = [1.0, -2.0, 0.5]
-        current_values = [-0.5, 0.8, -1.2, 2.0]
-        for i, cr in enumerate(older_values):
-            day = f"2026-01-{5 + i:02d}"
-            _insert_row(
-                conn,
-                ts_utc=f"{day}T19:00:00Z",
-                trading_day=day,
-                current_return=cr,
-                shadow_return=cr,
-                position_epoch=epoch_a,
-            )
-        for i, cr in enumerate(current_values):
-            day = f"2026-03-{2 + i:02d}"
-            _insert_row(
-                conn,
-                ts_utc=f"{day}T19:00:00Z",
-                trading_day=day,
-                current_return=cr,
-                shadow_return=cr,
-                position_epoch=epoch_b,
-            )
+
+        # 7 trading days (Mon-Fri, weekend gap, Mon-Tue) -- EOD current_return
+        # per day (the value that must survive into the result).
+        days_and_eod = [
+            ("2026-07-13", -1.20),  # Mon -- epoch_1
+            ("2026-07-14", 0.85),  # Tue -- epoch_1 (churns after 2 days)
+            ("2026-07-15", 2.40),  # Wed -- epoch_2 (churns after 1 day)
+            ("2026-07-16", -3.10),  # Thu -- epoch_3
+            ("2026-07-17", 0.55),  # Fri -- epoch_3 (churns after 2 days)
+            # weekend gap: 2026-07-18/19 have no trading_day rows at all
+            ("2026-07-20", 1.75),  # Mon -- epoch_4 (churns after 1 day)
+            ("2026-07-21", -0.40),  # Tue -- epoch_5
+        ]
+        epoch_by_day = {
+            "2026-07-13": "3f9a2b10-3a4b-4c1d-9e2f-1a2b3c4d5e01",
+            "2026-07-14": "3f9a2b10-3a4b-4c1d-9e2f-1a2b3c4d5e01",
+            "2026-07-15": "7c1e6d20-8b3c-4f2a-a1d4-9b8c7d6e5f02",
+            "2026-07-16": "a4d8f931-1c2d-4e3f-b5a6-8c7d6e5f4a03",
+            "2026-07-17": "a4d8f931-1c2d-4e3f-b5a6-8c7d6e5f4a03",
+            "2026-07-20": "d2e5c847-9a1b-4c2d-8e3f-6a5b4c3d2e04",
+            "2026-07-21": "18b3a962-4d5e-4f1a-9c2b-3d4e5f6a7b05",
+        }
+        # Minute-cadence intraday rows per day: several snapshots culminating
+        # in the true EOD row (last by ts_utc) -- proves EOD-only selection
+        # (existing contract) survives dense intraday rows even under heavy
+        # epoch churn.
+        intraday_offsets_min = [31, 90, 180, 270, 385]  # 09:31, 10:30, ... EOD ~15:55
+
+        for day, eod_value in days_and_eod:
+            epoch = epoch_by_day[day]
+            for offset in intraday_offsets_min:
+                hh = 9 + offset // 60
+                mm = offset % 60
+                is_eod_row = offset == intraday_offsets_min[-1]
+                # Only the LAST (EOD) row carries the "real" value; earlier
+                # intraday rows carry an obviously-wrong sentinel so a bug
+                # that picks a non-EOD row is loudly caught, not silently
+                # coincidentally correct.
+                value = eod_value if is_eod_row else -999.0
+                _insert_row(
+                    conn,
+                    ts_utc=f"{day}T{hh:02d}:{mm:02d}:00Z",
+                    trading_day=day,
+                    current_return=value,
+                    shadow_return=value,
+                    position_epoch=epoch,
+                )
         conn.commit()
         conn.close()
 
         result = analytics.get_shadow_current_return_daily_series(_SYM_ID, db_file)
 
-        assert result == pytest.approx(current_values), (
-            f"Expected only the CURRENT epoch's values {current_values!r}, got "
-            f"{result!r}. A result including any of {older_values!r} means an "
-            "older position's returns leaked across the epoch boundary "
-            "(never stitch across epochs, AC-5)."
+        expected = [eod for _day, eod in days_and_eod]
+        distinct_trading_days = len({d for d, _ in days_and_eod})
+
+        assert result is not None
+        assert len(result) == distinct_trading_days == 7, (
+            f"Expected n_obs == 7 (the distinct trading days spanned, "
+            f"regardless of 5 epoch boundaries crossing them), got "
+            f"len(result)={len(result)!r}. A result capped at 1-2 means the "
+            "epoch filter is still active -- exactly the live-gate bug "
+            f"(every symphony permanently INSUFFICIENT_DATA in production)."
+        )
+        assert result == pytest.approx(expected), (
+            f"Expected the 7 real EOD values {expected!r} in trading-day "
+            f"order, got {result!r} -- either wrong values leaked through "
+            "(a non-EOD -999.0 sentinel) or the day ordering is wrong."
         )
 
-    def test_legacy_schema_without_epoch_column_degrades_to_single_segment(self, tmp_path: Path):
-        """Mirrors _get_shadow_cumulative_trajectory's tolerance of a
-        pre-migration table with no position_epoch column at all."""
+    def test_legacy_schema_without_epoch_column_still_works(self, tmp_path: Path):
+        """A pre-migration table with no position_epoch column at all must
+        behave identically to the epoch-column case now that the epoch
+        filter is dropped entirely -- there is no longer any branching on
+        column presence to test separately."""
         db_file = str(tmp_path / "shadow_legacy.db")
         conn = sqlite3.connect(db_file)
         conn.execute(_SHADOW_SCHEMA_LEGACY_NO_EPOCH)
@@ -350,8 +419,8 @@ class TestCurrentEpochScoping:
         result = analytics.get_shadow_current_return_daily_series(_SYM_ID, db_file)
 
         assert result == pytest.approx(values), (
-            f"Legacy (no position_epoch column) DB must degrade to a single "
-            f"implicit segment, not raise or return None -- got {result!r}."
+            f"Legacy (no position_epoch column) DB must still return all "
+            f"trading days -- got {result!r}."
         )
 
 
