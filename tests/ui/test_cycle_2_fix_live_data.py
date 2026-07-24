@@ -66,6 +66,48 @@ import app as app_module
 _TEMPLATES_DIR = pathlib.Path(__file__).parent.parent.parent / "templates"
 _STATIC_DIR = pathlib.Path(__file__).parent.parent.parent / "static"
 
+
+def _setinterval_delays_ms(src: str) -> list[int]:
+    """Extract the numeric delay (2nd argument) from every setInterval(...)
+    call in `src`.
+
+    Tolerant of a multi-line callback argument containing its own nested
+    parens/braces (e.g. an anonymous `function () { ...; ...; }` body with
+    internal calls) -- a same-line-only regex like
+    `setInterval\\s*\\([^,)]+,\\s*(\\d+)` breaks the moment the callback
+    itself contains a `)` (even the empty `()` of `function ()`), which is
+    exactly the shape `setInterval(function () {...}, 60000)` produces.
+    This walks the setInterval call's own parenthesis-nesting DEPTH so a
+    callback's internal commas/parens are never mistaken for the call's own
+    argument separator or closing paren -- robust to any future refactor of
+    the callback's shape (named function reference, anonymous function,
+    arrow function, or a callback that itself calls other functions),
+    unlike the single-line-numeric-literal regex this replaces.
+    """
+    delays: list[int] = []
+    for m in re.finditer(r"setInterval\s*\(", src):
+        i = m.end()  # position right after the opening '(' of setInterval(
+        depth = 1
+        last_top_level_comma: int | None = None
+        while i < len(src) and depth > 0:
+            ch = src[i]
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            elif ch == "," and depth == 1:
+                last_top_level_comma = i
+            i += 1
+        if last_top_level_comma is not None:
+            delay_arg = src[last_top_level_comma + 1 : i]
+            num_match = re.search(r"\d+", delay_arg)
+            if num_match:
+                delays.append(int(num_match.group()))
+    return delays
+
+
 # Minimal chart_archive history: 35 days × 1 symphony, both live_ret and f_ret set.
 _THIRTY_FIVE_DAYS = [f"2026-04-{d:02d}" for d in range(1, 29)] + [
     f"2026-05-{d:02d}" for d in range(1, 8)
@@ -431,7 +473,7 @@ def test_index_html_has_setinterval_for_polling():
         )
     else:
         # Fall back to checking inline numeric literals
-        intervals = re.findall(r"setInterval\s*\([^,)]+,\s*(\d+)", src)
+        intervals = _setinterval_delays_ms(src)
         assert len(intervals) > 0, (
             "setInterval found but no numeric interval argument detected. "
             "Must have setInterval(<fn>, <ms>) with ms ≤ 60000 or a POLL_INTERVAL_MS constant."
@@ -460,7 +502,7 @@ def test_index_html_setinterval_not_above_60s():
             f"POLL_INTERVAL_MS = {n} ms exceeds 60000 ms maximum for state poll."
         )
     # Also check any inline numeric setInterval calls
-    intervals = re.findall(r"setInterval\s*\([^,)]+,\s*(\d+)", src)
+    intervals = _setinterval_delays_ms(src)
     for n in intervals:
         assert int(n) <= 60000, (
             f"setInterval interval {n} ms exceeds 60000 ms maximum for state poll."
@@ -758,7 +800,7 @@ def test_history_js_has_setinterval():
         "Currently history.js is one-shot only — it loads data once and never refreshes."
     )
 
-    intervals = re.findall(r"setInterval\s*\([^,)]+,\s*(\d+)", src)
+    intervals = _setinterval_delays_ms(src)
     assert len(intervals) > 0, (
         "setInterval found in history.js but no numeric interval argument detected. "
         "Must have setInterval(<fn>, <ms>) with ms ≤ 60000."
@@ -812,7 +854,7 @@ def test_performance_js_setinterval_targets_api_performance():
         "If the setInterval is only for animation (not data), the page shows stale data."
     )
 
-    intervals = re.findall(r"setInterval\s*\([^,)]+,\s*(\d+)", src)
+    intervals = _setinterval_delays_ms(src)
     assert len(intervals) > 0, (
         "performance.js setInterval has no numeric interval — must be ≤ 60000 ms."
     )
@@ -858,7 +900,7 @@ def test_ai_advisor_js_setinterval_targets_live_endpoint():
         "If the setInterval is only for a spinner/animation, the page shows stale data."
     )
 
-    intervals = re.findall(r"setInterval\s*\([^,)]+,\s*(\d+)", src)
+    intervals = _setinterval_delays_ms(src)
     assert len(intervals) > 0, (
         "ai_advisor.js setInterval has no numeric interval — must be ≤ 60000 ms."
     )
