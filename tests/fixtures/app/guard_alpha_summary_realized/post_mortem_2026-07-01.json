@@ -1,0 +1,52 @@
+{
+    "date": "2026-07-01",
+    "summary": {
+        "total_monitored": 3,
+        "total_triggered": 2,
+        "positive_guard_alpha_count": 2
+    },
+    "triggers": [
+        {
+            "symphony_name": "Symphony Gamma",
+            "symphony_value": 10000.0,
+            "account_id": "ACC-1",
+            "exit_reason": "Trailing Stop",
+            "exit_return": -1.5,
+            "attempted_trigger_level": -1.0,
+            "shadow_return": -3.0,
+            "shadow_hwm": 2.0,
+            "saved_pct_guard_alpha": 1.5,
+            "saved_dollars": 150.0,
+            "if_held_source": "shadow_history",
+            "hwm_at_trigger": 2.0,
+            "time_triggered": "13:10:00",
+            "symphony_vol": 0.2,
+            "strategy_params": {},
+            "next_day_holdings": ["SPY"],
+            "realized_observed_return": -2.8,
+            "realized_source": "shadow_history",
+            "saved_dollars_realized": 130.0
+        },
+        {
+            "symphony_name": "Symphony Delta",
+            "symphony_value": 5000.0,
+            "account_id": "ACC-2",
+            "exit_reason": "Take-Profit",
+            "exit_return": 3.2,
+            "attempted_trigger_level": 3.0,
+            "shadow_return": 1.0,
+            "shadow_hwm": 3.2,
+            "saved_pct_guard_alpha": 2.2,
+            "saved_dollars": 110.0,
+            "if_held_source": "shadow_history",
+            "hwm_at_trigger": 3.2,
+            "time_triggered": "11:05:00",
+            "symphony_vol": 0.11,
+            "strategy_params": {},
+            "next_day_holdings": ["QQQ"],
+            "realized_observed_return": 1.1,
+            "realized_source": "shadow_history",
+            "saved_dollars_realized": 105.0
+        }
+    ]
+}

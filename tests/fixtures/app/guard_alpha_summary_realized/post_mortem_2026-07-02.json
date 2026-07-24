@@ -1,0 +1,49 @@
+{
+    "date": "2026-07-02",
+    "summary": {
+        "total_monitored": 2,
+        "total_triggered": 2,
+        "positive_guard_alpha_count": 1
+    },
+    "triggers": [
+        {
+            "symphony_name": "Symphony Epsilon",
+            "symphony_value": 8000.0,
+            "account_id": "ACC-1",
+            "exit_reason": "Trailing Stop",
+            "exit_return": -0.8,
+            "attempted_trigger_level": -0.5,
+            "shadow_return": -2.0,
+            "shadow_hwm": 1.0,
+            "saved_pct_guard_alpha": 1.2,
+            "saved_dollars": 96.0,
+            "if_held_source": "shadow_history",
+            "hwm_at_trigger": 1.0,
+            "time_triggered": "15:40:00",
+            "symphony_vol": 0.19,
+            "strategy_params": {},
+            "next_day_holdings": ["IWM"],
+            "realized_observed_return": -1.9,
+            "realized_source": "shadow_history",
+            "saved_dollars_realized": 88.0
+        },
+        {
+            "symphony_name": "Symphony Zeta",
+            "symphony_value": 6000.0,
+            "account_id": "ACC-2",
+            "exit_reason": "Trailing Stop",
+            "exit_return": -1.0,
+            "attempted_trigger_level": -0.8,
+            "shadow_return": -0.5,
+            "shadow_hwm": 0.5,
+            "saved_pct_guard_alpha": -0.5,
+            "saved_dollars": -30.0,
+            "if_held_source": "shadow_history",
+            "hwm_at_trigger": 0.5,
+            "time_triggered": "09:50:00",
+            "symphony_vol": 0.09,
+            "strategy_params": {},
+            "next_day_holdings": ["AGG"]
+        }
+    ]
+}
