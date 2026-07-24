@@ -116,37 +116,71 @@ not a bare `float`. Fix candidate: correct the declared type hint (and the stale
 to match actual usage in the same pass as the column-discriminator fix above, since both
 touch the same declaration line.
 
-### `tests/test_scope_guard_f7.py::test_math_engine_not_in_diff` is now a permanent tripwire, not an F7-scoped guard -- LOW, tracked (found 2026-07-24, exit-friction-realized-savings cycle, ga2-tw)
-This test enforces "`math_engine.py` has zero diff since the F7 RED anchor commit" -- correct
-and useful DURING the F7 cycle (`feature-plans/math-f7.md` AC-5: `math_engine.py` out of scope
-for that cycle's display/diagnostic-only fix), but the anchor is git-derived from a FIXED
-historical commit (`git log --follow` on `tests/execution/test_f7_ac1_persist_guard.py`,
-resolving to `7752bb00`) and the diff window is anchor-to-CURRENT-HEAD, unbounded going
-forward -- it never stops enforcing "F7 scope" once F7 itself shipped. Any LATER cycle that
-legitimately touches `math_engine.py` (as two already have: `6f38b86e` "MA-11 wire
-MAX_SQUEEZE_FLOOR" and `43a458f8` "MA-4 disarm-band", both already-shipped math-remediation
-cycles) trips this test forever afterward, for every subsequent branch, regardless of
-relevance to F7.
+### `tests/test_scope_guard_f7.py::test_math_engine_not_in_diff` was a permanent tripwire, not an F7-scoped guard -- FIXED this cycle (found + fixed 2026-07-24, exit-friction-realized-savings cycle, ga2-tw)
+**[FIXED `bb731525`, same cycle.]** Kept as the record of the defect and its fix. The test
+enforced "`math_engine.py` has zero diff since the F7 RED anchor commit" -- correct and useful
+DURING the F7 cycle (`feature-plans/math-f7.md` AC-5: `math_engine.py` out of scope for that
+cycle's display/diagnostic-only fix), but the anchor was git-derived from a FIXED historical
+commit (`git log --follow` on `tests/execution/test_f7_ac1_persist_guard.py`, resolving to
+`7752bb00`) with an unbounded anchor-to-CURRENT-HEAD diff window -- it never stopped enforcing
+"F7 scope" once F7 itself shipped. Any LATER cycle touching `math_engine.py` (`6f38b86e` MA-11,
+`43a458f8` MA-4, both already-shipped math-remediation cycles) tripped it forever afterward,
+for every subsequent branch, regardless of relevance to F7 -- reproduced and independently
+re-verified on this branch (anchor SHA, both offending commits, their ancestry to the fork
+point `ccda9abe`, clean working tree, and the live test failure).
 
-Independently re-verified by this doc-writer (not taken on ga2-tw's report alone):
-`git log --follow --format=%H -- tests/execution/test_f7_ac1_persist_guard.py | tail -1`
-resolves to `7752bb00f81b3d7dd3aa5ead4de15d32684ddcfe`, matching the test's own
-dynamically-computed anchor; `git log 7752bb00..HEAD -- math_engine.py` on
-`feat/exit-friction-realized-savings` shows exactly the two commits above; `git merge-base
---is-ancestor <sha> ccda9abe` (the branch's fork point from `origin/main`) confirms BOTH are
-ancestors of the fork point -- pre-existing, not introduced by this cycle; `git status --short
-math_engine.py` is clean on the current working tree (neither ga2-impl's nor ga2-flask's GREEN
-work touches the file, per this cycle's own AC-10 blast-radius test); running the test
-directly reproduces the failure. Zero new failures vs fork-point (the correct merge-gate
-framing) -- but the test is broken for every future cycle until retired or re-anchored.
+**Second, independent root cause found while fixing it:** CI had been passing this test
+VACUOUSLY, not correctly. `.github/workflows/tests.yml`'s `actions/checkout@v4` has no
+`fetch-depth` override (shallow, depth 1 by default), which breaks `git log --follow`'s
+ability to walk back past the shallow boundary -- in that shallow clone the "anchor" silently
+resolved to the shallow tip commit itself, collapsing the diff-since-anchor to a commit diffed
+against itself (always empty). CI was never actually exercising the assertion.
 
-Fix candidate: (a) retire the test now that F7 (`DE-MATH-F7-001`) is long shipped, or (b) if a
-standing "`math_engine.py` stays frozen" intent still applies for some other reason, re-anchor
-it to a rolling reference instead of a dead historical SHA. The test's own docstring says it
-"mirrors `tests/test_scope_guard.py`'s git-diff-since-RED-commit idiom exactly" -- worth
-checking whether that sibling test has the same unbounded-window staleness problem in the same
-remediation pass, since it is likely the same design pattern. Not this cycle's fix to make --
-flagged per house rule (no pre-existing failures carried silently).
+**Fix:** F7 is a shipped, closed cycle (PR #99, merged `bd2c8d5d`) -- its scope claim is a
+fixed historical fact, not a live-forever invariant. Rebound the diff to F7's own two fixed
+endpoints (`7752bb00..bd2c8d5d`) instead of `<anchor>..HEAD` -- permanently correct (verified
+empty diff on `math_engine.py` in that exact range) and shallow-clone-safe (a shallow clone
+missing those specific commits makes the diff command itself fail loudly, rc=128, routing to
+the existing skip path, rather than silently resolving to a wrong anchor). Verified GREEN: 2/2
+in the file.
+
+**Sibling `tests/test_scope_guard.py` (DE-EOD-BASIS-001) has the IDENTICAL design flaw and is
+CURRENTLY FAILING right now -- NOT fixed by `bb731525` (different AC/cycle, out of this
+cycle's scope). Tracked as its own entry immediately below.**
+
+### `tests/test_scope_guard.py` (DE-EOD-BASIS-001) has the same permanent-tripwire design as the F7 sibling above -- CURRENTLY FAILING, tracked (found 2026-07-24, exit-friction-realized-savings cycle, ga2-tw flagged the design match; independently run + fully re-verified by this doc-writer, not taken on report alone -- ga2-tw explicitly had not run it)
+Structurally identical to the F7 scope guard fixed above: dynamically resolves its anchor via
+`git log --follow -- tests/dashboard/test_eod_account_basis.py` (resolves to `848acf94`, the
+DE-EOD-BASIS-001 PR #89 commit), then diffs `<anchor>..HEAD` forever, checking two forbidden
+files (`alpha_bot_execution.py`, `math_engine.py`). Both defects independently confirmed:
+
+1. **Already tripped, not merely at future risk.** `pytest tests/test_scope_guard.py -n0`
+   FAILS 2/2 (`test_alpha_bot_execution_not_in_diff` AND `test_math_engine_not_in_diff`) on the
+   current tree. `git log 848acf94..HEAD -- alpha_bot_execution.py` shows 5 offending commits
+   (`0c5d3e86` Managed Sleeves, `6f38b86e` MA-11, `43a458f8` MA-4, `ed194259` F7 AC-1/AC-4,
+   `ba331a30` non-finite persistence policy); `git log 848acf94..HEAD -- math_engine.py` shows
+   2 (`6f38b86e`, `43a458f8` -- same pair as the F7 sibling). `git merge-base --is-ancestor`
+   confirms ALL FIVE are ancestors of this branch's fork point (`ccda9abe`) -- pre-existing,
+   not introduced by exit-friction-realized-savings. `git status --short alpha_bot_execution.py
+   math_engine.py` is clean on the current working tree.
+2. **Same CI shallow-clone masking risk.** `.github/workflows/tests.yml`'s
+   `actions/checkout@v4` has no `fetch-depth` override -- verified directly (no `fetch-depth`
+   key anywhere in the checkout step) -- the identical condition that made the F7 sibling pass
+   vacuously in CI rather than genuinely.
+
+**Fix-pattern nuance vs. the F7 sibling:** DE-EOD-BASIS-001's PR #89 was squash-merged into a
+SINGLE commit (`848acf94`) containing both the RED tests and the GREEN implementation --
+unlike F7, which had a separate RED-anchor commit (`7752bb00`) and a later, distinct merge
+commit (`bd2c8d5d`) to rebind between. There is no two-endpoint "cycle range" to rebind to
+here; a fix would need either (a) retire the test now that DE-EOD-BASIS-001 (2026-07-02) is
+long shipped, or (b) rebind to `848acf94^..848acf94` (that single commit's own diff against
+its parent) if the "these files stay frozen" intent still matters -- a narrower, single-commit
+variant of the F7 fix, not a direct copy.
+
+Not fixed in this pass -- flagged per house rule (no pre-existing failures carried silently).
+PM should decide whether this gets the same immediate-fix treatment `bb731525` gave the F7
+sibling (it is failing on every full-suite run right now, same as F7 was) or stays
+BACKLOG-tracked for a dedicated remediation pass.
 
 ### Sleeves: mis-citing float-imprecision example in the price-rounding docstring — COSMETIC (found 2026-07-08, P3 smoke cycle)
 The bracket price-rounding (`_round_to_equity_tick`, sleeves/alpaca_orders.py, task #35) cites
