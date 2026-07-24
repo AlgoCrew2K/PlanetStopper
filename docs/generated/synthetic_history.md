@@ -3,7 +3,7 @@
 > 250-day Alpaca historical fetcher with parallel bar download, file cache, and eligibility guards — feeds the autotuner walk-forward replay.
 
 **Source:** `synthetic_history.py`
-**Last updated:** 2026-07-18 (Math Remediation R3-a, `DE-MATH-R3A-001` — pre-retune checklist item (b), MC band-edge arm-decision stability probed; `_MC_REPLAY_SIMULATION_PATHS` value unchanged, see the Monte Carlo Constants row below; prior: 2026-07-17, Math Remediation R1, `DE-MATH-R1-001` AC-1/MA-1 — `build_replay_day` stamps a real per-tick `last_percent_change` into replay holdings before every `run_monte_carlo` call; prior: 2026-06-29)
+**Last updated:** 2026-07-23 (guard-alpha-preconditions, `DE-GUARD-ALPHA-PRECONDITIONS-001` -- shared cache-key derivation DRY refactor: `_resolve_history_cache_key` extracted as the single source of truth for `generate_synthetic_history`'s own key derivation, plus a new cache-only reader `get_cached_synthetic_history_only` for `autotuner.build_if_held_replay_series`'s cache-hit-only replay seam; see the new Cache-Key Derivation section below). Prior: 2026-07-18 (Math Remediation R3-a, `DE-MATH-R3A-001` — pre-retune checklist item (b), MC band-edge arm-decision stability probed; `_MC_REPLAY_SIMULATION_PATHS` value unchanged, see the Monte Carlo Constants row below; prior: 2026-07-17, Math Remediation R1, `DE-MATH-R1-001` AC-1/MA-1 — `build_replay_day` stamps a real per-tick `last_percent_change` into replay holdings before every `run_monte_carlo` call; prior: 2026-06-29)
 
 ## Overview
 
@@ -25,6 +25,8 @@ Generates the full synthetic history dict for all symphonies present in `bot_sta
 
 This is the single call site for both `autotuner.run_autotuner` (pre-market) and `ai_advisor.revalidate_suggestion_oos` (on-demand).
 
+**Cache-key derivation is shared, not mirrored (guard-alpha-preconditions, `DE-GUARD-ALPHA-PRECONDITIONS-001`, 2026-07-23):** the tickers -> holdings-hash -> versioned-filename derivation (previously inline in this function) is now delegated entirely to `_resolve_history_cache_key` (see the new Cache-Key Derivation section below) -- the SAME function `get_cached_synthetic_history_only`'s cache-only read uses, so a genuine same-day/same-holdings cache write here is always found by that reader. Behavior of this function is unchanged (byte-identical cache filenames); only the derivation's location moved.
+
 **Parameters:**
 | Name | Type | Description |
 |------|------|-------------|
@@ -37,6 +39,18 @@ This is the single call site for both `autotuner.run_autotuner` (pre-market) and
 effective_n_jobs = n_jobs if n_jobs is not None else _resolve_replay_n_jobs()
 ```
 `_resolve_replay_n_jobs()` reads `ALPHABOT_MAX_JOBS` and defaults to `-1` (all cores) when unset. The `autotuner` passes `n_jobs=_AUTOTUNE_REPLAY_N_JOBS` (= 1) to avoid OOM on the 2-core / 3.0 GiB droplet (DE-AUTOTUNE-OOM). All other callers receive `n_jobs=None` and inherit env-driven behavior.
+
+---
+
+### Cache-Key Derivation & Cache-Only Replay Read (guard-alpha-preconditions, `DE-GUARD-ALPHA-PRECONDITIONS-001`, 2026-07-23)
+
+#### `_resolve_history_cache_key(bot_state: dict, current_date_str: str) -> tuple[set, dict, str | None]`
+
+**SINGLE SOURCE OF TRUTH** for the tickers -> holdings-hash -> versioned-filename cache-key derivation (all-tickers set, symphony-holdings dict, and the resolved cache filename). Extracted from `generate_synthetic_history`'s prior inline logic (PM hard DRY requirement) so the network-capable writer (`generate_synthetic_history`, above) and the new cache-only reader (`get_cached_synthetic_history_only`, next) both call ONE function rather than each deriving the key independently -- a mirrored re-implementation could silently drift from this one, making the cache-only reader permanently miss even on a genuine same-day, same-holdings hit, with no test catching it until it happens live. Returns the cache-file component as `None` when `bot_state` has no holdings anywhere (mirrors the old `if not all_tickers: return {}` short-circuit `generate_synthetic_history` used to have inline).
+
+#### `get_cached_synthetic_history_only(bot_state: dict, current_date_str: str) -> dict | None`
+
+CACHE-ONLY read of the synthetic-history file cache -- **NEVER triggers a live fetch** (contrast with `generate_synthetic_history` above, which fetches on a cache miss). Uses `_resolve_history_cache_key` (above) for the identical cache-key derivation `generate_synthetic_history` uses, so this reader and the network-capable writer always agree on which file represents "today's synthetic history for this `bot_state`." Returns `None` on: no holdings anywhere in `bot_state`, a cold cache (no file for today's key), or a corrupt/unreadable cache file (delegates to `load_cached_history`, which never raises). Sole consumer: `autotuner.build_if_held_replay_series` (see `docs/generated/autotuner.md`) -- the guard-alpha-preconditions dashboard route's cache-hit-only replay seam, which must never drive Alpaca fetch volume from a GET.
 
 ---
 
