@@ -177,10 +177,11 @@ long shipped, or (b) rebind to `848acf94^..848acf94` (that single commit's own d
 its parent) if the "these files stay frozen" intent still matters -- a narrower, single-commit
 variant of the F7 fix, not a direct copy.
 
-Not fixed in this pass -- flagged per house rule (no pre-existing failures carried silently).
-PM should decide whether this gets the same immediate-fix treatment `bb731525` gave the F7
-sibling (it is failing on every full-suite run right now, same as F7 was) or stays
-BACKLOG-tracked for a dedicated remediation pass.
+**PM RULING (2026-07-24):** IN-CYCLE fix, not BACKLOG-only. Same disposition as the F7
+sibling -- ga2-tw owns it, same rebind-to-a-fixed-range pattern, sequenced after this cycle's
+main exit-friction-realized-savings line lands. Flagged per house rule in the meantime (no
+pre-existing failures carried silently) -- this entry gets a `[FIXED <sha>]` annotation the
+same way the F7 entry above did once that commit lands.
 
 **Class finding (not just these two instances) -- PM + ga2-tw, 2026-07-24:** fixed-SHA-based
 scope guards (the `git log --follow -- <anchor-file>` then `diff <anchor>..HEAD` idiom used by
@@ -196,14 +197,19 @@ going forward: (a) bind the check to the OWNING cycle's own fixed, CLOSED range
 F7 -- or (b) explicitly retire/delete the scope guard at cycle close, since its job (prevent
 scope creep DURING active development) is done once the PR merges and CI is green on it.
 
-**Census (this doc-writer, 2026-07-24):** grepped the full `tests/` tree for the
-`git log --follow`-anchor + `diff --name-only <anchor> HEAD` idiom. Exactly these two files
-use it -- no other instance found. (A third, similarly-named
+**Census -- CLOSED, not an open remediation-scope task.** This doc-writer grepped the full
+`tests/` tree for the `git log --follow`-anchor + `diff --name-only <anchor> HEAD` idiom:
+exactly these two files use it -- no other instance found. (A third, similarly-named
 `tests/autotuner/test_r3c_scope_guard.py` was checked and is a DIFFERENT, safer pattern: a
 static assertion against current constant values with zero git subprocess calls -- already
-following durable pattern (b) above by construction, not exposed to either failure mode.) If a
-new scope-guard test is ever added, it should follow one of the two durable patterns from the
-outset rather than the anchor-to-HEAD idiom.
+following durable pattern (b) above by construction, not exposed to either failure mode.)
+**Independently corroborated by ga2-tw via a second, broader method** (a literal `git`/`'git'`
+substring grep across all of `tests/` -- the widest possible net for anything shelling into
+git, not just this specific idiom): same result, exactly these two files, nothing else. Two
+independent search methods agreeing means the blast radius for this defect class is confirmed
+closed at 2, not an unknown-sized suite-wide risk. If a new scope-guard test is ever added, it
+should follow one of the two durable patterns from the outset rather than the anchor-to-HEAD
+idiom.
 
 ### Sleeves: mis-citing float-imprecision example in the price-rounding docstring — COSMETIC (found 2026-07-08, P3 smoke cycle)
 The bracket price-rounding (`_round_to_equity_tick`, sleeves/alpaca_orders.py, task #35) cites
