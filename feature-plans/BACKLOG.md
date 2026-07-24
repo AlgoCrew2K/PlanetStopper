@@ -144,44 +144,54 @@ missing those specific commits makes the diff command itself fail loudly, rc=128
 the existing skip path, rather than silently resolving to a wrong anchor). Verified GREEN: 2/2
 in the file.
 
-**Sibling `tests/test_scope_guard.py` (DE-EOD-BASIS-001) has the IDENTICAL design flaw and is
-CURRENTLY FAILING right now -- NOT fixed by `bb731525` (different AC/cycle, out of this
-cycle's scope). Tracked as its own entry immediately below.**
+**Sibling `tests/test_scope_guard.py` (DE-EOD-BASIS-001) had the IDENTICAL design flaw --
+NOT fixed by `bb731525` itself (different AC/cycle), but FIXED in-cycle by a follow-up commit,
+`361d218c`. Full record in its own entry immediately below.**
 
-### `tests/test_scope_guard.py` (DE-EOD-BASIS-001) has the same permanent-tripwire design as the F7 sibling above -- CURRENTLY FAILING, tracked (found 2026-07-24, exit-friction-realized-savings cycle, ga2-tw flagged the design match; independently run + fully re-verified by this doc-writer, not taken on report alone -- ga2-tw explicitly had not run it)
-Structurally identical to the F7 scope guard fixed above: dynamically resolves its anchor via
-`git log --follow -- tests/dashboard/test_eod_account_basis.py` (resolves to `848acf94`, the
-DE-EOD-BASIS-001 PR #89 commit), then diffs `<anchor>..HEAD` forever, checking two forbidden
-files (`alpha_bot_execution.py`, `math_engine.py`). Both defects independently confirmed:
+### `tests/test_scope_guard.py` (DE-EOD-BASIS-001) was a permanent tripwire, not an EOD-basis-scoped guard -- FIXED this cycle (found + fixed 2026-07-24, exit-friction-realized-savings cycle, ga2-tw)
+**[FIXED `361d218c`, same cycle.]** Kept as the record of the defect and its fix, same pattern
+as the F7 entry above. Structurally identical to the F7 scope guard: dynamically resolved its
+anchor via `git log --follow -- tests/dashboard/test_eod_account_basis.py` (resolves to
+`848acf94`, the DE-EOD-BASIS-001 PR #89 commit), then diffed `<anchor>..HEAD` forever, checking
+two forbidden files (`alpha_bot_execution.py`, `math_engine.py`). Both defects independently
+confirmed before the fix (by ga2-tw, then re-verified by this doc-writer, not taken on report
+alone):
 
 1. **Already tripped, not merely at future risk.** `pytest tests/test_scope_guard.py -n0`
-   FAILS 2/2 (`test_alpha_bot_execution_not_in_diff` AND `test_math_engine_not_in_diff`) on the
-   current tree. `git log 848acf94..HEAD -- alpha_bot_execution.py` shows 5 offending commits
+   FAILED 2/2 (`test_alpha_bot_execution_not_in_diff` AND `test_math_engine_not_in_diff`) prior
+   to the fix. `git log 848acf94..HEAD -- alpha_bot_execution.py` showed 5 offending commits
    (`0c5d3e86` Managed Sleeves, `6f38b86e` MA-11, `43a458f8` MA-4, `ed194259` F7 AC-1/AC-4,
-   `ba331a30` non-finite persistence policy); `git log 848acf94..HEAD -- math_engine.py` shows
+   `ba331a30` non-finite persistence policy); `git log 848acf94..HEAD -- math_engine.py` showed
    2 (`6f38b86e`, `43a458f8` -- same pair as the F7 sibling). `git merge-base --is-ancestor`
-   confirms ALL FIVE are ancestors of this branch's fork point (`ccda9abe`) -- pre-existing,
-   not introduced by exit-friction-realized-savings. `git status --short alpha_bot_execution.py
-   math_engine.py` is clean on the current working tree.
+   confirmed ALL FIVE were ancestors of this branch's fork point (`ccda9abe`) -- pre-existing,
+   not introduced by exit-friction-realized-savings.
 2. **Same CI shallow-clone masking risk.** `.github/workflows/tests.yml`'s
-   `actions/checkout@v4` has no `fetch-depth` override -- verified directly (no `fetch-depth`
-   key anywhere in the checkout step) -- the identical condition that made the F7 sibling pass
-   vacuously in CI rather than genuinely.
+   `actions/checkout@v4` has no `fetch-depth` override -- the identical condition that made
+   the F7 sibling pass vacuously in CI rather than genuinely.
 
-**Fix-pattern nuance vs. the F7 sibling:** DE-EOD-BASIS-001's PR #89 was squash-merged into a
-SINGLE commit (`848acf94`) containing both the RED tests and the GREEN implementation --
-unlike F7, which had a separate RED-anchor commit (`7752bb00`) and a later, distinct merge
-commit (`bd2c8d5d`) to rebind between. There is no two-endpoint "cycle range" to rebind to
-here; a fix would need either (a) retire the test now that DE-EOD-BASIS-001 (2026-07-02) is
-long shipped, or (b) rebind to `848acf94^..848acf94` (that single commit's own diff against
-its parent) if the "these files stay frozen" intent still matters -- a narrower, single-commit
-variant of the F7 fix, not a direct copy.
+**Fix (`361d218c`):** DE-EOD-BASIS-001's PR #89 was squash-merged into a SINGLE commit
+(`848acf94`) containing both the RED tests and the GREEN implementation -- unlike F7, which had
+a separate RED-anchor commit (`7752bb00`) and a later, distinct merge commit (`bd2c8d5d`) to
+rebind between. With no two-endpoint "cycle range" available, the fix rebinds to that single
+commit's own diff against its ACTUAL parent SHA -- `30b89c01..848acf94` (not the speculative
+`848acf94^..848acf94` shorthand this entry originally floated as a fix candidate; ga2-tw
+resolved `^` to the literal parent SHA before rebinding). Verified BEFORE rebinding, exactly as
+F7's promise was verified: the diff between those two commits on the two forbidden files is
+empty -- DE-EOD-BASIS-001 genuinely kept its scope promise, no historical violation to report.
+Shallow-clone safety re-verified the same way as F7 (real depth=1 reproduction: fails loudly,
+`fatal: bad object`, rc=128, routing to the pre-existing skip path rather than silently
+resolving wrong). Verified GREEN: 3/3 (both scope tests + the meta test).
 
-**PM RULING (2026-07-24):** IN-CYCLE fix, not BACKLOG-only. Same disposition as the F7
-sibling -- ga2-tw owns it, same rebind-to-a-fixed-range pattern, sequenced after this cycle's
-main exit-friction-realized-savings line lands. Flagged per house rule in the meantime (no
-pre-existing failures carried silently) -- this entry gets a `[FIXED <sha>]` annotation the
-same way the F7 entry above did once that commit lands.
+**Independently re-verified by this doc-writer** (not taken on ga2-tw's report alone): parent
+SHA of `848acf94` confirmed as `30b89c01` via `git rev-parse 848acf94^`; `pytest
+tests/test_scope_guard.py -n0` re-run directly -- 3/3 PASSED; `pytest tests/test_scope_guard_f7.py
+-n0` re-run to confirm the F7 fix is still intact -- 2/2 PASSED; `git diff --name-only 30b89c01
+848acf94 -- alpha_bot_execution.py math_engine.py` re-run directly -- empty, confirming the
+scope-promise-held claim.
+
+**Both scope-guard files in this class are now FIXED -- no open items remain in that class.**
+The Class finding and Census below remain accurate as the standing record of the pattern (for
+any FUTURE scope-guard test written the same way), not as a description of current failures.
 
 **Class finding (not just these two instances) -- PM + ga2-tw, 2026-07-24:** fixed-SHA-based
 scope guards (the `git log --follow -- <anchor-file>` then `diff <anchor>..HEAD` idiom used by
