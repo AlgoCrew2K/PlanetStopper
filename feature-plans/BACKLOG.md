@@ -182,6 +182,29 @@ PM should decide whether this gets the same immediate-fix treatment `bb731525` g
 sibling (it is failing on every full-suite run right now, same as F7 was) or stays
 BACKLOG-tracked for a dedicated remediation pass.
 
+**Class finding (not just these two instances) -- PM + ga2-tw, 2026-07-24:** fixed-SHA-based
+scope guards (the `git log --follow -- <anchor-file>` then `diff <anchor>..HEAD` idiom used by
+both files above) go stale BY CONSTRUCTION, not by accident, with two independent structural
+failure modes: (a) silently VACUOUS under any CI shallow checkout -- `fetch-depth` less than
+full history breaks dynamic anchor-discovery, collapsing the diff to a commit checked against
+itself (this is why CI never caught either instance); (b) even with full history, GUARANTEED
+to eventually false-fail the moment any future, unrelated cycle touches the forbidden file --
+there is no way to write "diff since some point in the past, forever" that stays both
+meaningful and non-brittle in a long-lived, actively-developed codebase. The durable patterns
+going forward: (a) bind the check to the OWNING cycle's own fixed, CLOSED range
+(RED-anchor..that-cycle's-own-merge-commit) once the cycle ships -- what `bb731525` did for
+F7 -- or (b) explicitly retire/delete the scope guard at cycle close, since its job (prevent
+scope creep DURING active development) is done once the PR merges and CI is green on it.
+
+**Census (this doc-writer, 2026-07-24):** grepped the full `tests/` tree for the
+`git log --follow`-anchor + `diff --name-only <anchor> HEAD` idiom. Exactly these two files
+use it -- no other instance found. (A third, similarly-named
+`tests/autotuner/test_r3c_scope_guard.py` was checked and is a DIFFERENT, safer pattern: a
+static assertion against current constant values with zero git subprocess calls -- already
+following durable pattern (b) above by construction, not exposed to either failure mode.) If a
+new scope-guard test is ever added, it should follow one of the two durable patterns from the
+outset rather than the anchor-to-HEAD idiom.
+
 ### Sleeves: mis-citing float-imprecision example in the price-rounding docstring — COSMETIC (found 2026-07-08, P3 smoke cycle)
 The bracket price-rounding (`_round_to_equity_tick`, sleeves/alpaca_orders.py, task #35) cites
 `495.00 / 0.01 == 49499.999999999993` as motivation, but that expression is exactly `49500.0` in
