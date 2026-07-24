@@ -314,6 +314,71 @@ class TestHonestDegradation:
 
 
 # ---------------------------------------------------------------------------
+# Strict-JSON safety: compute_persistence_stats legitimately produces
+# math.nan for a zero-variance (flat) series (guard_preconditions.py's
+# documented zero-variance branch). Python's json module serializes
+# float('nan') as the RAW, UNQUOTED literal `NaN` -- INVALID per strict JSON
+# (RFC 8259). A real browser's response.json() / JSON.parse REJECTS a bare
+# NaN token and throws, which invalidates the WHOLE response document, not
+# just the offending field -- one flat-return symphony could silently break
+# the panel for every symphony in the response. Python-side round-trip tests
+# (resp.get_json(), Python's json.loads) do NOT catch this: Python's json
+# module is lenient and accepts NaN by default, same as it serializes it --
+# so this failure mode is invisible unless the raw bytes are inspected under
+# strict parsing rules.
+# ---------------------------------------------------------------------------
+
+
+class TestStrictJsonSafety:
+    def test_flat_zero_variance_series_never_leaks_nan_into_response(self, client, monkeypatch):
+        """A symphony with a genuinely flat (all-identical-value) but
+        AVAILABLE (non-empty, above N_MIN_OBS) replay series is a real,
+        plausible production scenario (e.g. an illiquid or pegged holding
+        with zero observed daily change over the replay window) -- distinct
+        from the UNAVAILABLE case _degraded_row() already guards, since this
+        series is truthy and routes through the REAL _sample_row ->
+        compute_persistence_stats path."""
+        sym_id = "sym-flat-zero-variance-005"
+        flat_series = [1.0] * (gp.N_MIN_OBS + 5)  # non-empty, >= N_MIN_OBS, zero variance
+
+        monkeypatch.setattr(
+            database_module,
+            "load_state",
+            lambda: {sym_id: {"name": "Flat Symphony", "current_return": 0.0}},
+        )
+        monkeypatch.setattr(
+            autotuner_module,
+            "build_if_held_replay_series",
+            lambda sid: flat_series,
+        )
+        monkeypatch.setattr(
+            analytics_module,
+            "get_shadow_current_return_daily_series",
+            lambda sid, db_file: None,
+        )
+
+        resp = client.get(_ROUTE)
+
+        assert resp.status_code == 200
+        raw = resp.data.decode("utf-8")
+        assert "NaN" not in raw and "Infinity" not in raw, (
+            "Route response contains a raw NaN/Infinity token -- invalid per "
+            "strict JSON (RFC 8259). A real browser's response.json() throws "
+            "on this, breaking the WHOLE response (not just this field) for "
+            f"every symphony, not just the flat one. Raw response: {raw!r}"
+        )
+
+        def _reject_constant(token):
+            raise ValueError(f"strict JSON parse rejects the token {token!r}")
+
+        # The actual discriminator: Python's json.loads is lenient by default
+        # (accepts NaN/Infinity same as it serializes them) so resp.get_json()
+        # would NOT catch this -- parse_constant forces strict RFC 8259
+        # behavior, mirroring what a real browser's JSON.parse enforces.
+        json.loads(raw, parse_constant=_reject_constant)
+
+
+# ---------------------------------------------------------------------------
 # AC-8: auth gate
 # ---------------------------------------------------------------------------
 
