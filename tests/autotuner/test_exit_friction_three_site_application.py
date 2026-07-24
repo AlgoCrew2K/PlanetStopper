@@ -283,7 +283,13 @@ class TestRunSimulationFrictionApplication:
         # Both scenarios stay below the missed-upside/drawdown thresholds, so
         # the delta reduces to friction * NEGATIVE_GUARD_ALPHA_MULT (the
         # guard_alpha stays negative in both cases -- see the fixture math).
-        assert (expected_off - expected_on) == pytest.approx(
+        # SIGN NOTE (found in GREEN review, ga2-impl): run_simulation returns
+        # -total_guard_alpha (see _expected_run_simulation_return's own
+        # `return -total`), so a MORE negative total_on (friction makes
+        # guard_alpha more negative) produces a LARGER positive expected_on.
+        # The comparison is therefore expected_on - expected_off (positive),
+        # not expected_off - expected_on.
+        assert (expected_on - expected_off) == pytest.approx(
             friction * autotuner.SORTINO_OBJ_NEGATIVE_GUARD_ALPHA_MULT, abs=1e-9
         ), "Hand-derivation sanity check failed -- fixture scenario assumption violated."
 
