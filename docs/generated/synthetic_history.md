@@ -3,7 +3,7 @@
 > 250-day Alpaca historical fetcher with parallel bar download, file cache, and eligibility guards — feeds the autotuner walk-forward replay.
 
 **Source:** `synthetic_history.py`
-**Last updated:** 2026-07-18 (Math Remediation R3-a, `DE-MATH-R3A-001` — pre-retune checklist item (b), MC band-edge arm-decision stability probed; `_MC_REPLAY_SIMULATION_PATHS` value unchanged, see the Monte Carlo Constants row below; prior: 2026-07-17, Math Remediation R1, `DE-MATH-R1-001` AC-1/MA-1 — `build_replay_day` stamps a real per-tick `last_percent_change` into replay holdings before every `run_monte_carlo` call; prior: 2026-06-29)
+**Last updated:** 2026-07-24 (guard-alpha-preconditions, live-gate correction R2, `DE-GUARD-ALPHA-PRECONDITIONS-001` -- `get_cached_synthetic_history_only` now probes backward up to a new `AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS=10` NYSE trading days instead of exact-today-only, since the cache is written once per weekly autotune cycle and was cold 6 of 7 days by construction; see the updated section + new Cache-Probe Constants table below). Prior: 2026-07-23 (guard-alpha-preconditions, `DE-GUARD-ALPHA-PRECONDITIONS-001` -- shared cache-key derivation DRY refactor: `_resolve_history_cache_key` extracted as the single source of truth for `generate_synthetic_history`'s own key derivation, plus a new cache-only reader `get_cached_synthetic_history_only` for `autotuner.build_if_held_replay_series`'s cache-hit-only replay seam; see the new Cache-Key Derivation section below). Prior: 2026-07-18 (Math Remediation R3-a, `DE-MATH-R3A-001` — pre-retune checklist item (b), MC band-edge arm-decision stability probed; `_MC_REPLAY_SIMULATION_PATHS` value unchanged, see the Monte Carlo Constants row below; prior: 2026-07-17, Math Remediation R1, `DE-MATH-R1-001` AC-1/MA-1 — `build_replay_day` stamps a real per-tick `last_percent_change` into replay holdings before every `run_monte_carlo` call; prior: 2026-06-29)
 
 ## Overview
 
@@ -25,6 +25,8 @@ Generates the full synthetic history dict for all symphonies present in `bot_sta
 
 This is the single call site for both `autotuner.run_autotuner` (pre-market) and `ai_advisor.revalidate_suggestion_oos` (on-demand).
 
+**Cache-key derivation is shared, not mirrored (guard-alpha-preconditions, `DE-GUARD-ALPHA-PRECONDITIONS-001`, 2026-07-23):** the tickers -> holdings-hash -> versioned-filename derivation (previously inline in this function) is now delegated entirely to `_resolve_history_cache_key` (see the new Cache-Key Derivation section below) -- the SAME function `get_cached_synthetic_history_only`'s cache-only read uses, so a genuine same-day/same-holdings cache write here is always found by that reader. Behavior of this function is unchanged (byte-identical cache filenames); only the derivation's location moved.
+
 **Parameters:**
 | Name | Type | Description |
 |------|------|-------------|
@@ -37,6 +39,21 @@ This is the single call site for both `autotuner.run_autotuner` (pre-market) and
 effective_n_jobs = n_jobs if n_jobs is not None else _resolve_replay_n_jobs()
 ```
 `_resolve_replay_n_jobs()` reads `ALPHABOT_MAX_JOBS` and defaults to `-1` (all cores) when unset. The `autotuner` passes `n_jobs=_AUTOTUNE_REPLAY_N_JOBS` (= 1) to avoid OOM on the 2-core / 3.0 GiB droplet (DE-AUTOTUNE-OOM). All other callers receive `n_jobs=None` and inherit env-driven behavior.
+
+---
+
+### Cache-Key Derivation & Cache-Only Replay Read (guard-alpha-preconditions, `DE-GUARD-ALPHA-PRECONDITIONS-001`, 2026-07-23)
+
+#### `_resolve_history_cache_key(bot_state: dict, current_date_str: str) -> tuple[set, dict, str | None]`
+
+**SINGLE SOURCE OF TRUTH** for the tickers -> holdings-hash -> versioned-filename cache-key derivation (all-tickers set, symphony-holdings dict, and the resolved cache filename). Extracted from `generate_synthetic_history`'s prior inline logic (PM hard DRY requirement) so the network-capable writer (`generate_synthetic_history`, above) and the new cache-only reader (`get_cached_synthetic_history_only`, next) both call ONE function rather than each deriving the key independently -- a mirrored re-implementation could silently drift from this one, making the cache-only reader permanently miss even on a genuine same-day, same-holdings hit, with no test catching it until it happens live. Returns the cache-file component as `None` when `bot_state` has no holdings anywhere (mirrors the old `if not all_tickers: return {}` short-circuit `generate_synthetic_history` used to have inline).
+
+#### `get_cached_synthetic_history_only(bot_state: dict, current_date_str: str) -> dict | None`
+
+CACHE-ONLY read of the synthetic-history file cache -- **NEVER triggers a live fetch** (contrast with `generate_synthetic_history` above, which fetches on a cache miss). Uses `_resolve_history_cache_key` (above) for the identical cache-key derivation `generate_synthetic_history` uses, re-derived once per candidate date (see BACKWARD PROBE below), so this reader and the network-capable writer always agree on which file represents a given date's synthetic history for this `bot_state`. Returns `None` on: no holdings anywhere in `bot_state`, every candidate date in the backward window missing or corrupt/unreadable (delegates to `load_cached_history`, which never raises). Sole consumer: `autotuner.build_if_held_replay_series` (see `docs/generated/autotuner.md`) -- the guard-alpha-preconditions dashboard route's cache-hit-only replay seam, which must never drive Alpaca fetch volume from a GET.
+
+**BACKWARD PROBE (corrected 2026-07-24 at the PM's live gate, `DE-GUARD-ALPHA-PRECONDITIONS-001` R2).** Originally this function checked ONLY `current_date_str`'s exact cache file -- since the synthetic-history cache is written once per weekly autotune cycle, that meant a cold miss on 6 of 7 days by construction (the droplet's newest cache file was 6 calendar days stale when the PM's live gate ran). The fix walks backward from `current_date_str` through up to `AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS=10` NYSE trading days (via `market_calendar.is_trading_day` -- this project's single source of truth for trading-day determination, never a re-derived weekday proxy), re-deriving the cache key via `_resolve_history_cache_key` at EACH candidate date for the CURRENT `bot_state` holdings. `current_date_str` itself (offset 0) is checked first and returned immediately on a hit -- newest-hit-wins falls out of the loop order, not a separate sort step. A holdings change since an aged file was written naturally degrades to a miss for that candidate: the aged file's embedded holdings-hash reflects the OLD holdings and simply won't match a freshly computed hash for current holdings, no special-casing needed. Every candidate is still only ever `load_cached_history` -- zero network calls anywhere in the walk, re-verified (not merely assumed) by `tests/synthetic_history/test_autotune_cache_backward_probe.py`.
+
 
 ---
 
@@ -91,6 +108,12 @@ Raised when synthetic-history generation cannot meet the trading-day floor after
 | `_CALENDAR_DAYS_PER_TRADING_DAY` | 1.5 | Calendar-to-trading-day padding factor |
 | `_FETCH_WIDEN_STEP_CALENDAR_DAYS` | 60 | Step size for widen-and-refetch |
 | `_MAX_FETCH_WIDEN_ATTEMPTS` | 3 | Hard bound on widen loop |
+
+### Cache-Probe Constants (guard-alpha-preconditions, `DE-GUARD-ALPHA-PRECONDITIONS-001` R2, 2026-07-24)
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS` | 10 | Bound on `get_cached_synthetic_history_only`'s backward date-scan (see that function's BACKWARD PROBE note above). Source: weekly autotune cadence plus a buffer for a missed/aborted run -- the droplet's newest cache file was 6 calendar days stale when the PM's live gate ran, so 10 covers a full missed week with margin. |
 
 ### Parallelism Constants
 

@@ -1535,6 +1535,78 @@ def _collect_sim_returns(
     return daily_returns
 
 
+def collect_if_held_daily_returns(history_data: dict, sym_id: str) -> list:
+    """Return the full if-held daily EOD return series for one symphony --
+    ticks[-1]["return"] for EVERY date in history_data[sym_id], unconditionally
+    (never filtered to triggered days, and NEVER the guard_alpha delta
+    _collect_sim_returns computes -- see this feature's recon finding 1).
+    Pure extraction, no re-simulation, no I/O.
+    """
+    dates_data = history_data.get(sym_id, {})
+    result = []
+    for date in sorted(dates_data.keys()):
+        ticks = dates_data[date]
+        if not ticks:
+            continue
+        result.append(ticks[-1]["return"])
+    return result
+
+
+def build_if_held_replay_series(symphony_id: str) -> "list | None":
+    """ROUTE-FACING ORCHESTRATION SEAM. PM-RULED CONTRACT (2026-07-23, resolves
+    the data-sourcing open question flagged during RED-writing): CACHE-HIT-ONLY.
+
+    This function may read synthetic_history's EXISTING file cache (e.g. via
+    synthetic_history.load_cached_history) and any already-persisted replay
+    data, then return collect_if_held_daily_returns(...) on whatever it finds.
+    It must NEVER trigger a live fetch (synthetic_history.fetch_bars or
+    synthetic_history.generate_synthetic_history's fetch fallback branch) --
+    on a cache miss it returns None immediately, and the caller (the GET
+    route) renders the honest degraded state for that sample ("replay sample
+    unavailable -- populates after the next autotune/replay run"), falling
+    back to a shadow-only row per AC-8.
+
+    WHY: Architecture Constraint 5 (the dashboard/UI never reruns the engine
+    -- assembling 250-day history on request is engine machinery, not a read);
+    request latency (a cold fetch can take minutes inside a dashboard GET);
+    and the standing bill-protection directive (a dashboard refresh must never
+    be able to drive Alpaca fetch volume). Pinned by
+    tests/autotuner/test_build_if_held_replay_series.py (accessor-level: cold
+    cache -> None, synthetic_history.fetch_bars never called) and
+    tests/app/test_guard_alpha_preconditions_route.py (route-level: same
+    guarantee end-to-end through the real route).
+
+    Cache-key derivation and the actual file read are delegated ENTIRELY to
+    synthetic_history.get_cached_synthetic_history_only, which shares its
+    tickers -> holdings-hash -> versioned-filename derivation with
+    generate_synthetic_history's own nightly fetch-and-write via one common
+    helper (synthetic_history._resolve_history_cache_key) -- this function
+    never re-derives that key independently, so it cannot silently drift
+    from the writer and permanently miss a genuine same-day, same-holdings
+    cache hit (PM hard requirement, 2026-07-23).
+    """
+    bot_state = database.load_state()
+    if symphony_id not in bot_state:
+        return None
+
+    # ET "today" via synthetic_history.utc_to_eastern -- the SAME DST-aware
+    # conversion generate_synthetic_history itself uses to resolve "today"
+    # (synthetic_history.py:540), already a module-level dependency of this
+    # file. Deliberately NOT alpha_bot_execution.get_current_et: that module
+    # does load_dotenv + reads several credentials at import time and pulls
+    # a wide production import graph (including autotuner itself) -- heavy
+    # and side-effectful to import on-demand from an advisory dashboard GET
+    # just for a date string.
+    current_date_str = synthetic_history.utc_to_eastern(datetime.now(UTC)).strftime("%Y-%m-%d")
+
+    history_data = synthetic_history.get_cached_synthetic_history_only(bot_state, current_date_str)
+    if history_data is None or symphony_id not in history_data:
+        return None
+
+    series = collect_if_held_daily_returns(history_data, symphony_id)
+    return series if series else None
+
+
 def _replay_resolve_regime_exit_ticks(dates_data: dict, sorted_dates: list, date_idx: int) -> int:
     """AC-4/F5: recompute the regime-conditional exit_confirm_ticks fresh for
     one replay day, using ONLY EOD daily returns from dates STRICTLY BEFORE

@@ -624,11 +624,158 @@
         syncSymphonyVisibility();
     }
 
+    // --- Guard-Alpha stop-justification preconditions panel (Kaminski & Lo 2014) ---
+
+    // Verdict -> chip modifier class (mirrors ai_advisor.js's sentiment-chip map).
+    var PRECOND_VERDICT_CHIP_CLASS = {
+        'SUFFICIENT_MET':    'precond-verdict-chip--sufficient-met',
+        'SUFFICIENT_LIKELY': 'precond-verdict-chip--sufficient-likely',
+        'NOT_MET':            'precond-verdict-chip--not-met',
+        'NEGATIVE_EDGE':      'precond-verdict-chip--negative-edge',
+        'INSUFFICIENT_DATA':  'precond-verdict-chip--insufficient-data',
+    };
+
+    function preconditionChipEl(verdict) {
+        var chip = document.createElement('span');
+        var cls = PRECOND_VERDICT_CHIP_CLASS[verdict] || 'precond-verdict-chip--insufficient-data';
+        chip.className = 'precond-verdict-chip ' + cls;
+        chip.textContent = verdict ? verdict.replace(/_/g, ' ') : 'INSUFFICIENT DATA';
+        return chip;
+    }
+
+    function preconditionNumCell(value, digits, prefix) {
+        var td = document.createElement('td');
+        td.style.textAlign = 'right';
+        td.textContent = (value === null || value === undefined)
+            ? '--'
+            : (prefix || '') + Number(value).toFixed(digits);
+        return td;
+    }
+
+    // Builds one <tr> via DOM APIs only (createElement/textContent) -- symphony
+    // identifiers and sample data are external-origin (Composer / computed from
+    // live series); never interpolated into innerHTML.
+    function preconditionRowEl(symphonyId, sampleLabel, row) {
+        var tr = document.createElement('tr');
+        tr.setAttribute('data-testid', 'guard-alpha-preconditions-row');
+
+        var nameTd = document.createElement('td');
+        nameTd.textContent = symphonyId;
+        tr.appendChild(nameTd);
+
+        var sampleTd = document.createElement('td');
+        sampleTd.textContent = sampleLabel;
+        tr.appendChild(sampleTd);
+
+        tr.appendChild(preconditionNumCell(row.rho, 3));
+        tr.appendChild(preconditionNumCell(row.rho_ci, 3, '±'));
+        tr.appendChild(preconditionNumCell(row.sharpe_daily, 3));
+
+        var nTd = document.createElement('td');
+        nTd.style.textAlign = 'right';
+        nTd.textContent = (row.n_obs === null || row.n_obs === undefined) ? '--' : String(row.n_obs);
+        tr.appendChild(nTd);
+
+        var verdictTd = document.createElement('td');
+        verdictTd.appendChild(preconditionChipEl(row.verdict));
+        tr.appendChild(verdictTd);
+
+        return tr;
+    }
+
+    // The route's uniform degraded-row contract means "replay" is always a
+    // full object, never bare null -- a cold/missing cache (cache-hit-only
+    // per the operator ruling; never fetches to backfill) shows as
+    // verdict=INSUFFICIENT_DATA + n_obs=0. Swap in this friendlier copy for
+    // that specific case instead of a row of dashes.
+    var PRECOND_REPLAY_UNAVAILABLE_MESSAGE =
+        'replay sample unavailable — populates after the next autotune run';
+
+    function preconditionUnavailableRowEl(symphonyId, sampleLabel) {
+        var tr = document.createElement('tr');
+        tr.setAttribute('data-testid', 'guard-alpha-preconditions-row');
+        tr.className = 'precond-row-unavailable';
+
+        var nameTd = document.createElement('td');
+        nameTd.textContent = symphonyId;
+        tr.appendChild(nameTd);
+
+        var sampleTd = document.createElement('td');
+        sampleTd.textContent = sampleLabel;
+        tr.appendChild(sampleTd);
+
+        var msgTd = document.createElement('td');
+        msgTd.colSpan = 5;
+        msgTd.textContent = PRECOND_REPLAY_UNAVAILABLE_MESSAGE;
+        tr.appendChild(msgTd);
+
+        return tr;
+    }
+
+    // Panel-level empty state (AC-7 edge case: "all symphonies insufficient ->
+    // panel-level empty state") -- usable means at least one sample for this
+    // symphony cleared INSUFFICIENT_DATA.
+    function _preconditionEntryIsUsable(entry) {
+        if (!entry) return false;
+        var replayOk = entry.replay && entry.replay.verdict && entry.replay.verdict !== 'INSUFFICIENT_DATA';
+        var shadowOk = entry.shadow && entry.shadow.verdict && entry.shadow.verdict !== 'INSUFFICIENT_DATA';
+        return !!(replayOk || shadowOk);
+    }
+
+    function renderGuardAlphaPreconditions(data) {
+        var tbody = document.getElementById('guard-alpha-preconditions-tbody');
+        var emptyState = document.getElementById('guard-alpha-preconditions-empty-state');
+        if (!tbody || !emptyState) return;
+
+        var symphonies = (data && data.symphonies) || {};
+        var ids = Object.keys(symphonies);
+        var anyUsable = ids.some(function (id) { return _preconditionEntryIsUsable(symphonies[id]); });
+
+        while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+
+        if (ids.length === 0 || !anyUsable) {
+            emptyState.style.display = '';
+            return;
+        }
+
+        emptyState.style.display = 'none';
+        ids.forEach(function (id) {
+            var entry = symphonies[id];
+            var replay = entry.replay;
+            var replayIsColdCache = replay && replay.verdict === 'INSUFFICIENT_DATA' && replay.n_obs === 0;
+            if (replayIsColdCache) {
+                tbody.appendChild(preconditionUnavailableRowEl(id, 'Replay'));
+            } else if (replay) {
+                tbody.appendChild(preconditionRowEl(id, 'Replay', replay));
+            }
+            if (entry.shadow) tbody.appendChild(preconditionRowEl(id, 'Shadow', entry.shadow));
+        });
+    }
+
+    function fetchGuardAlphaPreconditions() {
+        fetch('/api/guard-alpha-preconditions')
+            .then(function (response) {
+                if (!response.ok) return;
+                return response.json();
+            })
+            .then(function (data) {
+                if (!data) return;
+                renderGuardAlphaPreconditions(data);
+            })
+            .catch(function () { /* silent -- panel keeps its last-known state */ });
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
         wireUI();
         loadSymphonies().then(refresh);
+        fetchGuardAlphaPreconditions();
 
-        // Post-mortems land once a day; 60s polling is above the 15s floor.
-        setInterval(refresh, 60000);
+        // Post-mortems land once a day; the preconditions panel changes at most
+        // once per autotune/replay run and once per engine cycle -- folding it
+        // into the existing 60s poll (no new timer) stays above the 15s floor.
+        setInterval(function () {
+            refresh();
+            fetchGuardAlphaPreconditions();
+        }, 60000);
     });
 })();

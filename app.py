@@ -5,6 +5,7 @@ import concurrent.futures
 import hmac
 import io
 import logging
+import math
 import os
 import queue
 import secrets
@@ -3078,6 +3079,138 @@ def get_windowed_strip(window):
             _daemon_log.debug("strip intraday fallback failed", exc_info=True)
 
     return jsonify(strip)
+
+
+@app.route("/api/guard-alpha-preconditions")
+def guard_alpha_preconditions():
+    """Per-symphony Kaminski & Lo (2014) stop-justification preconditions.
+
+    Contract (feature-plans/guard-alpha-preconditions.md AC-6, AC-7, AC-8): for
+    every symphony in database.load_state(), returns a "replay" sample
+    (simulated if-held daily series from the last autotune/replay run) and a
+    "shadow" sample (live if-held daily series since the current position was
+    opened) -- {rho, rho_ci, sharpe_daily, n_obs, verdict, sample_source}.
+
+    UNIFORM DEGRADED-ROW CONTRACT: both "replay" and "shadow" are ALWAYS a
+    full 6-field object, never bare null. When real data is available, all 6
+    fields come from a real run of compute_persistence_stats +
+    classify_stop_justification. When unavailable (cold/missing replay cache,
+    or a symphony with no shadow_history yet), the row degrades to
+    {rho/rho_ci/sharpe_daily: None, n_obs: 0, verdict: "INSUFFICIENT_DATA"} --
+    the same 5-class vocabulary a genuinely-thin real sample would produce,
+    so callers never have to null-check a sample before reading its fields.
+    sample_source stays STABLE per sample family ("if_held_replay" /
+    "shadow_history") whether the row is real or degraded -- it identifies
+    WHICH sample this is, never WHY it's unavailable (AC-8's disagreement
+    display keys on sample identity).
+
+    Cache-hit-only on the replay sample (operator ruling): this route never
+    triggers a network fetch or 250-day history assembly to backfill a cold
+    cache -- autotuner.build_if_held_replay_series may serve from its local
+    file-cache CPU-only, but a cache miss degrades per the contract above
+    rather than fetching.
+
+    Read-only -- no SQL in this route; database.load_state, the two sample
+    accessors, and the math layer are the only calls made. Auth via the
+    global _auth_before_request hook (no extra decorator needed, same as
+    guard_alpha_summary). Never a 500 -- one symphony's data-source failure
+    degrades just that entry (AC-6).
+    """
+    import autotuner  # noqa: PLC0415 -- lazy per CC-2 precedent (app.py:3430), keeps Optuna deps off module load
+    import guard_preconditions as gp
+
+    try:
+        bot_state_dict = database.load_state()
+    except Exception:
+        _daemon_log.debug("guard_alpha_preconditions: load_state failed", exc_info=True)
+        bot_state_dict = {}
+
+    def _json_safe_float(value):
+        # Strict-JSON guard (RFC 8259): json.dumps serializes float('nan') /
+        # float('inf') as the bare tokens NaN/Infinity, which a real
+        # browser's response.json() rejects -- invalidating the WHOLE
+        # response, not just this field. compute_persistence_stats
+        # legitimately returns nan on a genuinely flat (zero-variance)
+        # series -- that's correct math-layer behavior; sanitize only at
+        # this JSON-facing boundary, never in the stats object itself (the
+        # verdict classification below runs against the real, unsanitized
+        # stats).
+        if value is None or math.isnan(value) or math.isinf(value):
+            return None
+        return value
+
+    def _sample_row(daily_returns, sample_source):
+        stats = gp.compute_persistence_stats(daily_returns)
+        return {
+            "rho": _json_safe_float(stats.rho),
+            "rho_ci": _json_safe_float(stats.rho_ci),
+            "sharpe_daily": _json_safe_float(stats.sharpe_daily),
+            "n_obs": stats.n_obs,
+            "verdict": gp.classify_stop_justification(stats),
+            "sample_source": sample_source,
+        }
+
+    def _degraded_row(sample_source):
+        # Hand-built rather than routed through compute_persistence_stats([])
+        # -- avoids depending on unpinned empty-list behavior in the math
+        # layer; sample_source stays stable per the uniform contract above.
+        return {
+            "rho": None,
+            "rho_ci": None,
+            "sharpe_daily": None,
+            "n_obs": 0,
+            "verdict": "INSUFFICIENT_DATA",
+            "sample_source": sample_source,
+        }
+
+    db_file = analytics._get_shadow_db_file()
+    symphonies_out: dict = {}
+
+    for sym_id in bot_state_dict:
+        try:
+            try:
+                replay_series = autotuner.build_if_held_replay_series(sym_id)
+            except Exception:
+                _daemon_log.debug(
+                    "guard_alpha_preconditions: replay series failed for %s",
+                    sym_id,
+                    exc_info=True,
+                )
+                replay_series = None
+
+            replay_row = (
+                _sample_row(replay_series, "if_held_replay")
+                if replay_series
+                else _degraded_row("if_held_replay")
+            )
+
+            try:
+                shadow_series = analytics.get_shadow_current_return_daily_series(sym_id, db_file)
+            except Exception:
+                _daemon_log.debug(
+                    "guard_alpha_preconditions: shadow series failed for %s",
+                    sym_id,
+                    exc_info=True,
+                )
+                shadow_series = None
+
+            shadow_row = (
+                _sample_row(shadow_series, "shadow_history")
+                if shadow_series
+                else _degraded_row("shadow_history")
+            )
+
+            symphonies_out[sym_id] = {"replay": replay_row, "shadow": shadow_row}
+        except Exception:
+            # AC-6: one symphony's failure must never 500 the whole route --
+            # skip this entry entirely rather than surface a half-built one.
+            _daemon_log.debug(
+                "guard_alpha_preconditions: symphony %s degraded entirely",
+                sym_id,
+                exc_info=True,
+            )
+
+    return jsonify({"symphonies": symphonies_out})
 
 
 @app.route("/api/guard-alpha-summary")

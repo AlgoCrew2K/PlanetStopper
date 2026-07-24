@@ -3,7 +3,7 @@
 > Client-side logic for the read-only Performance tab: fetches aggregate/per-symphony return series + quantstats metrics, renders a cumulative-return Chart.js curve and a 7-metric comparison table, and drives the scope/window/symphony picker controls.
 
 **Source:** `static/performance.js`
-**Last updated:** 2026-07-20 (fix-f023-perf-view, `DE-PERFVIEW-ID-MISMATCH`, F-023 -- first doc-gen entry for this file. `loadSymphonies()` and `renderBanner()` updated for the `GET /api/performance/symphonies` `{id,name}` contract fix -- see `docs/generated/app.md`'s `GET /api/performance/symphonies` section for the route-side root cause and fix.)
+**Last updated:** 2026-07-23 (guard-alpha-preconditions, `DE-GUARD-ALPHA-PRECONDITIONS-001` -- new Guard-Alpha Stop-Justification Preconditions panel: `fetchGuardAlphaPreconditions()` + `renderGuardAlphaPreconditions()` render `GET /api/guard-alpha-preconditions`'s per-symphony verdict table; see the new section below and `docs/generated/app.md`). Prior: 2026-07-20 (fix-f023-perf-view, `DE-PERFVIEW-ID-MISMATCH`, F-023 -- first doc-gen entry for this file. `loadSymphonies()` and `renderBanner()` updated for the `GET /api/performance/symphonies` `{id,name}` contract fix -- see `docs/generated/app.md`'s `GET /api/performance/symphonies` section for the route-side root cause and fix.)
 
 ## Overview
 
@@ -97,6 +97,24 @@ Wires the `scope-toggle` and `days-picker` segmented controls (`wireSegControl`)
 - `fmt()` formats a raw metric value per its `kind` tag (`pct_frac`/`frac`/`pp`/`pct`/plain number); returns `'—'` for `null`/`undefined`/non-finite/`|value| > 1000` (defensive against a corrupt or NaN producer value reaching the DOM).
 - `fmtDelta()` formats `shadow - live` with a directional arrow (`↑`/`↓`), same `'—'` guards as `fmt()`.
 
+---
+
+### Guard-Alpha Stop-Justification Preconditions Panel (guard-alpha-preconditions, `DE-GUARD-ALPHA-PRECONDITIONS-001`, 2026-07-23)
+
+Independent panel, independent fetch/render cycle, and independent DOM subtree from the rest of this file -- reads `GET /api/guard-alpha-preconditions` (see `docs/generated/app.md`), a THEORETICAL PRECONDITION read distinct from the `renderHeadlineStats()` guard-alpha $-saved delta above.
+
+#### `fetchGuardAlphaPreconditions()`
+
+Fetches `/api/guard-alpha-preconditions`, calls `renderGuardAlphaPreconditions(data)` on success. **401-guarded**: `if (!response.ok) return;` short-circuits before `.json()` -- an unauthenticated response never reaches the renderer. Failures are silent (`.catch()` no-op) -- the panel keeps its last-known state rather than clearing on a transient error, same convention as `fetchGuardAlphaSummary()` in `static/index.js`. Called once on `DOMContentLoaded` and folded into the existing 60s `refresh()` poll (no new `setInterval` timer).
+
+#### `renderGuardAlphaPreconditions(data)`
+
+Clears `#guard-alpha-preconditions-tbody` and rebuilds it from `data.symphonies` (a `{symphony_id: {replay, shadow}}` map). **Panel-level empty state (AC-7):** when there are zero symphonies, or none has at least one sample that cleared `INSUFFICIENT_DATA` (`_preconditionEntryIsUsable`), shows `#guard-alpha-preconditions-empty-state` and renders no rows -- never an empty table with no explanation. Per symphony: the "replay" sample renders via `preconditionUnavailableRowEl()` (a friendlier "replay sample unavailable — populates after the next autotune run" message, `PRECOND_REPLAY_UNAVAILABLE_MESSAGE`) specifically when it is a cold-cache degrade (`verdict === 'INSUFFICIENT_DATA' && n_obs === 0`) rather than the generic verdict-chip row -- AC-8's cold-cache case gets its own honest copy instead of looking like a thin-but-real sample. The "shadow" sample always renders via the standard `preconditionRowEl()`.
+
+#### `preconditionRowEl(symphonyId, sampleLabel, row)` / `preconditionUnavailableRowEl(symphonyId, sampleLabel)` / `preconditionChipEl(verdict)` / `preconditionNumCell(value, digits, prefix)` (internal helpers)
+
+Build one `<tr>`/cell/chip via **DOM APIs only** (`createElement`/`textContent`) -- never `innerHTML` with interpolated symphony names or API response strings (XSS hygiene: symphony identifiers are external-origin, from Composer). `preconditionChipEl` maps a verdict string to its `.precond-verdict-chip--<modifier>` CSS class via the `PRECOND_VERDICT_CHIP_CLASS` table (falls back to the insufficient-data modifier for an unrecognized verdict), mirroring `ai_advisor.js`'s sentiment-chip BEM pattern. `preconditionNumCell` renders `'--'` for `null`/`undefined`, else `Number(value).toFixed(digits)` with an optional prefix (e.g. `'±'` for the CI column).
+
 ## Types
 
 - **`METRIC_LABELS`** -- array of `[key, label, kind, isPrimary, invert?]` tuples driving `renderMetrics()`'s row order and formatting; order defines rendering order, with risk-adjusted metrics leading per `ux-design-deliverable.md` §2.1 (capital preservation ranks above return).
@@ -106,6 +124,7 @@ Wires the `scope-toggle` and `days-picker` segmented controls (`wireSegControl`)
 
 - `GET /api/performance` -- primary data fetch; response fields consumed: `dates`, `live_returns`, `shadow_returns`, `live_metrics`, `shadow_metrics`, `observation_count`, `window_days`, `insufficient_history`, and (scope=symphony only) `symphony_id_recognized` (AC-4, `DE-PERFVIEW-ID-MISMATCH`)
 - `GET /api/performance/symphonies` -- symphony picker population; `{id, name}` objects (F-023, `DE-PERFVIEW-ID-MISMATCH`, was bare name strings) -- see `docs/generated/app.md`
+- `GET /api/guard-alpha-preconditions` -- Stop-Justification Preconditions panel fetch; response fields consumed: `symphonies.<id>.replay`/`.shadow` (each `{rho, rho_ci, sharpe_daily, n_obs, verdict, sample_source}`) (`DE-GUARD-ALPHA-PRECONDITIONS-001`) -- see `docs/generated/app.md`
 - `Chart.js` (global) -- cumulative-return line chart
 - CSS custom properties: `--studio-accent`, `--studio-ink-dim`, `--studio-pos`, `--studio-neg`, `--studio-paper`, `--studio-ink-faint`, `--studio-rule`
-- DOM elements (from `templates/performance.html`): `#returns-chart`, `#metrics-tbody`, `#insufficient-banner`, `#symphony-picker`, `#symphony-picker-wrapper`, `#scope-toggle`, `#days-picker`, `#obs-caption`, `#guard-alpha-value`, `#sharpe-delta-value`, `#sortino-delta-value`, `#mdd-reduction-value`, `[data-testid="perf-chart-block"]`, `[data-testid="metrics-table"]`, `[data-testid="headline-strip"]`
+- DOM elements (from `templates/performance.html`): `#returns-chart`, `#metrics-tbody`, `#insufficient-banner`, `#symphony-picker`, `#symphony-picker-wrapper`, `#scope-toggle`, `#days-picker`, `#obs-caption`, `#guard-alpha-value`, `#sharpe-delta-value`, `#sortino-delta-value`, `#mdd-reduction-value`, `[data-testid="perf-chart-block"]`, `[data-testid="metrics-table"]`, `[data-testid="headline-strip"]`, `#guard-alpha-preconditions-tbody`, `#guard-alpha-preconditions-empty-state`, `[data-testid="guard-alpha-preconditions-panel"]`

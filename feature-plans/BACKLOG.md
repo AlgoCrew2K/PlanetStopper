@@ -90,6 +90,32 @@ follow-up available (~4 lines: harden the two numeric coercions with try/except,
 leak AND the underlying pre-existing TypeError risk) if ever prioritized -- not blocking, PM's
 call. See `DE-OPS-CLUSTER-001` in `DECISIONS.md` for the full trace.
 
+### `database._shadow_cr_cache` needs a column discriminator before a second column-selecting accessor can share it -- LOW, accepted residual (found 2026-07-23, guard-alpha-preconditions cycle)
+`database._shadow_cr_cache` (`database.py:2967`) is keyed `(symphony_id, today, db_file,
+resolved_epoch)` regardless of WHICH `shadow_history` column's series is cached under that key.
+`analytics._get_shadow_cumulative_trajectory` (`analytics.py:612-706`) already writes
+`shadow_return` series under that exact key shape. This cycle's new
+`analytics.get_shadow_current_return_daily_series` (guard-alpha-preconditions feature, commit
+`327cd6d2`) selects `current_return` instead of `shadow_return` for the same symphony -- reusing
+the shared cache under the identical key shape would risk one accessor silently serving the
+other's cached series for the same symphony/day/epoch (a cross-column collision, not merely a
+stale-value bug). Interim mitigation, already shipped: the new accessor deliberately does NOT
+cache at all (rationale documented in-source at `analytics.py:723-730`) -- correct but
+suboptimal, a perf/DB-load tradeoff, not a correctness bug. Fix candidate: add a column
+discriminator to the cache key shape (or split into a separate cache namespace per column) so
+both accessors can safely share the cache. Source: ga-impl, guard-alpha-preconditions cycle,
+2026-07-23.
+
+Separately (same variable, independently findable, not introduced or fixed this cycle):
+the declared type hint has drifted from actual usage. `database.py:2967` declares
+`_shadow_cr_cache: dict[tuple[str, str], float] = {}` with a comment describing a
+`(symphony_id, trading_day) -> cumulative shadow return` shape, but the real production
+consumer (`analytics._get_shadow_cumulative_trajectory`, `analytics.py:659-665`) keys it
+with a 4-tuple `(symphony_id, today, db_file, resolved_epoch)` and stores a `list[float]`,
+not a bare `float`. Fix candidate: correct the declared type hint (and the stale comment)
+to match actual usage in the same pass as the column-discriminator fix above, since both
+touch the same declaration line.
+
 ### Sleeves: mis-citing float-imprecision example in the price-rounding docstring — COSMETIC (found 2026-07-08, P3 smoke cycle)
 The bracket price-rounding (`_round_to_equity_tick`, sleeves/alpaca_orders.py, task #35) cites
 `495.00 / 0.01 == 49499.999999999993` as motivation, but that expression is exactly `49500.0` in

@@ -1,0 +1,8 @@
+{
+  "description": "Constructed AR(1) daily if-held return series with the SAME positive lag-1 persistence structure as persistence_stats_ar1_positive.json but a negative drift, giving sharpe_daily <= 0. Golden fixture pinning the NEGATIVE_EDGE verdict class and, specifically, that it takes priority over SUFFICIENT_MET/LIKELY even though rho >= sharpe_daily is trivially true whenever sharpe_daily <= 0 (AC-3's explicit trap).",
+  "provenance": "Deterministic construction, not captured from any producer. Identical generation to persistence_stats_ar1_positive.json (phi=0.55, seed=7, same AR(1) shock sequence) except daily_returns_pct[t] = (0.06 * r[t] - 0.03) * 100 -- a negative drift instead of +0.035. rho is therefore numerically IDENTICAL to the positive-drift fixture (autocorrelation is invariant to an additive shift); only the mean (and hence sharpe_daily) changes sign. Expected rho/sharpe are computed by the test from this raw series via an independent reference formula, never hardcoded here.",
+  "n_obs": 60,
+  "phi": 0.55,
+  "seed": 7,
+  "daily_returns_pct": [-5.114, -8.3525, -4.1327, -8.7537, -5.734, -6.1154, -10.0175, -6.7704, -10.6238, -7.9893, -10.9059, -12.2597, -8.9986, -2.377, -7.1717, -8.6156, -4.5594, 1.5149, 0.4084, -2.3652, 3.0642, -5.1057, 0.1435, -3.7958, -7.7066, -10.1751, -9.2445, -2.641, -6.6338, -4.0194, -1.8937, -3.9228, -2.9346, -8.2106, -11.1506, -11.0113, -5.2414, -5.1017, -6.3862, -3.8356, -4.0214, -5.9646, -1.098, 0.4341, -4.1821, -2.7571, -2.564, 1.7414, 2.3611, -2.5961, 2.9842, -4.2919, -4.6931, -0.8455, -5.9912, -4.7776, -9.5072, -4.5604, -0.6834, -0.8495]
+}

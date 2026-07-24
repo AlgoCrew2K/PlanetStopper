@@ -706,6 +706,70 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
     return result
 
 
+def get_shadow_current_return_daily_series(symphony_id: str, db_file: str) -> list[float] | None:
+    """Return the RAW per-day current_return values from shadow_history, in
+    trading-day order, EOD-row-only (last row per trading_day by ts_utc --
+    never an intraday row), across ALL position epochs concatenated, and
+    NEVER differencing the values (current_return is already a per-day
+    return, not cumulative -- see project memory
+    project_shadow_return_per_day_proven_empirically.md).
+
+    NOT epoch-scoped (PM live-gate correction R1, 2026-07-24, supersedes the
+    epoch-scoping half of the original AC-5 amendment): a read-only probe of
+    the production droplet DB found position_epoch is a UUID that churns
+    every 1-2 trading days (14-18 distinct epochs per symphony over 23
+    retained trading days). Scoping this accessor to the current epoch only
+    (the original spec, mirroring _get_shadow_cumulative_trajectory's
+    epoch-additive pattern) capped every symphony's shadow n_obs at 1-2 --
+    permanently INSUFFICIENT_DATA in production despite real trading history
+    existing. The epoch-additive rule is load-bearing for
+    _get_shadow_cumulative_trajectory's CUMULATIVE $-saved level (chaining a
+    prior epoch's absolute level into a new position would fabricate
+    phantom returns there) and that function is UNCHANGED -- but a per-day
+    current_return is that day's own independent if-held observation
+    regardless of which trigger-cycle epoch it fell in, so concatenating
+    per-day values across epochs is statistically valid, unlike chaining a
+    cumulative level. THE FIX: no epoch filter at all, epoch-column presence
+    is irrelevant, and a legacy (pre-migration) table with no position_epoch
+    column behaves identically to one with the column -- there is no longer
+    any branching on column presence.
+
+    Returns None only when the symphony has zero rows (genuinely absent);
+    a present-but-thin symphony (even a single day) returns a real short
+    list -- insufficiency is compute_persistence_stats's job via N_MIN_OBS,
+    not this accessor's.
+
+    Deliberately does NOT use database._shadow_cr_cache: that shared dict is
+    keyed (symphony_id, today, db_file, resolved_epoch) regardless of WHICH
+    column the caller selected, and _get_shadow_cumulative_trajectory already
+    populates it for shadow_return under that exact key shape -- reusing it
+    here for a different column (current_return) risks one accessor silently
+    serving the other's cached series for the same key. This route is
+    off-execution-path and advisory-only, so the correctness risk outweighs
+    the caching win.
+    """
+    try:
+        conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
+        rows = conn.execute(
+            "SELECT trading_day, current_return "
+            "FROM shadow_history "
+            "WHERE symphony_id = ? "
+            "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+            "                WHERE s2.symphony_id = shadow_history.symphony_id "
+            "                  AND s2.trading_day = shadow_history.trading_day) "
+            "ORDER BY trading_day ASC",
+            (symphony_id,),
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return None
+
+    if not rows:
+        return None
+
+    return [float(r[1]) for r in rows]
+
+
 def _get_shadow_divergence_trajectory(
     symphony_id: str, db_file: str, conn: sqlite3.Connection | None = None
 ) -> list[list[tuple[float, float]]] | None:
