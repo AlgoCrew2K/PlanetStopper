@@ -13,6 +13,7 @@ import requests
 from dotenv import load_dotenv
 from joblib import Parallel, delayed
 
+import market_calendar
 import math_engine
 
 load_dotenv()
@@ -535,26 +536,65 @@ def _resolve_history_cache_key(
     return all_tickers, symphony_holdings, cache_file
 
 
+# Weekly autotune cadence (run_autotuner's own daily EOD invocation writes a
+# fresh cache once per week's worth of walk-forward runs in practice) plus a
+# buffer for a missed/aborted run or an operator pause -- PM live-gate
+# ruling R2, 2026-07-24: the droplet's newest cache file was 6 calendar days
+# (5 NYSE trading days) stale at gate time under a same-day-only probe, so
+# 10 covers a full missed week with margin.
+AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS: int = 10
+
+
 def get_cached_synthetic_history_only(bot_state: dict, current_date_str: str) -> "dict | None":
     """CACHE-ONLY read of the synthetic-history file cache -- NEVER triggers
     a live fetch (contrast with generate_synthetic_history, which fetches on
     a cache miss). Uses the IDENTICAL cache-key derivation as
     generate_synthetic_history (via the shared _resolve_history_cache_key)
     so this reader and the network-capable writer always agree on which file
-    represents "today's synthetic history for this bot_state".
+    represents "a given date's synthetic history for this bot_state".
 
-    Returns None on: no holdings anywhere in bot_state, a cold cache (no
-    file for today's key), or a corrupt/unreadable cache file (see
+    BACKWARD PROBE (PM live-gate ruling R2, 2026-07-24): the cache is
+    written once per autotune cycle (weekly cadence), so a same-day-only
+    probe is cold most days by construction (the droplet's cache was 6
+    calendar days stale at live-gate time). Walks backward from
+    current_date_str through up to AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS NYSE
+    trading days (via market_calendar.is_trading_day -- this project's
+    single source of truth for trading-day determination, never a
+    re-derived weekday proxy), re-deriving the cache key for CURRENT
+    holdings at EACH candidate date via the shared _resolve_history_cache_key
+    -- so a holdings change since an aged file was written naturally
+    degrades to a miss for that candidate (the aged file's embedded hash
+    reflects the OLD holdings and never matches a freshly computed hash for
+    current holdings; no special-casing needed). current_date_str itself
+    (offset 0) is checked first and always wins when present -- still
+    zero network, every candidate is only ever load_cached_history, never
+    fetch_bars.
+
+    Returns None on: no holdings anywhere in bot_state, every candidate in
+    the backward window missing or corrupt/unreadable (see
     load_cached_history, which never raises).
 
     Sole consumer: autotuner.build_if_held_replay_series (the guard-alpha-
     preconditions dashboard route's cache-hit-only replay seam -- off the
     execution path, must never drive Alpaca fetch volume from a GET).
     """
-    _, _, cache_file = _resolve_history_cache_key(bot_state, current_date_str)
-    if cache_file is None:
-        return None
-    return load_cached_history(cache_file)
+    candidate_date = datetime.strptime(current_date_str, "%Y-%m-%d").date()
+    trading_days_back = 0
+    while trading_days_back <= AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS:
+        candidate_date_str = candidate_date.strftime("%Y-%m-%d")
+        _, _, cache_file = _resolve_history_cache_key(bot_state, candidate_date_str)
+        if cache_file is not None:
+            history_data = load_cached_history(cache_file)
+            if history_data is not None:
+                return history_data
+
+        # Step to the previous NYSE trading day for the next candidate.
+        candidate_date -= timedelta(days=1)
+        while not market_calendar.is_trading_day(candidate_date):
+            candidate_date -= timedelta(days=1)
+        trading_days_back += 1
+
+    return None
 
 
 def generate_synthetic_history(bot_state, current_date_str, *, n_jobs: int | None = None):

@@ -709,11 +709,30 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
 def get_shadow_current_return_daily_series(symphony_id: str, db_file: str) -> list[float] | None:
     """Return the RAW per-day current_return values from shadow_history, in
     trading-day order, EOD-row-only (last row per trading_day by ts_utc --
-    never an intraday row), current-epoch-scoped via the SAME epoch-resolution
-    pattern as _get_shadow_cumulative_trajectory above -- but selecting
-    current_return instead of shadow_return, and NEVER differencing the values
-    (current_return is already a per-day return, not cumulative -- see project
-    memory project_shadow_return_per_day_proven_empirically.md).
+    never an intraday row), across ALL position epochs concatenated, and
+    NEVER differencing the values (current_return is already a per-day
+    return, not cumulative -- see project memory
+    project_shadow_return_per_day_proven_empirically.md).
+
+    NOT epoch-scoped (PM live-gate correction R1, 2026-07-24, supersedes the
+    epoch-scoping half of the original AC-5 amendment): a read-only probe of
+    the production droplet DB found position_epoch is a UUID that churns
+    every 1-2 trading days (14-18 distinct epochs per symphony over 23
+    retained trading days). Scoping this accessor to the current epoch only
+    (the original spec, mirroring _get_shadow_cumulative_trajectory's
+    epoch-additive pattern) capped every symphony's shadow n_obs at 1-2 --
+    permanently INSUFFICIENT_DATA in production despite real trading history
+    existing. The epoch-additive rule is load-bearing for
+    _get_shadow_cumulative_trajectory's CUMULATIVE $-saved level (chaining a
+    prior epoch's absolute level into a new position would fabricate
+    phantom returns there) and that function is UNCHANGED -- but a per-day
+    current_return is that day's own independent if-held observation
+    regardless of which trigger-cycle epoch it fell in, so concatenating
+    per-day values across epochs is statistically valid, unlike chaining a
+    cumulative level. THE FIX: no epoch filter at all, epoch-column presence
+    is irrelevant, and a legacy (pre-migration) table with no position_epoch
+    column behaves identically to one with the column -- there is no longer
+    any branching on column presence.
 
     Returns None only when the symphony has zero rows (genuinely absent);
     a present-but-thin symphony (even a single day) returns a real short
@@ -731,48 +750,16 @@ def get_shadow_current_return_daily_series(symphony_id: str, db_file: str) -> li
     """
     try:
         conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
-        try:
-            # Existence probe only -- the query below re-derives "current
-            # epoch" itself via a nested subquery, so the fetched value is
-            # never needed in Python; this call's sole purpose is to raise
-            # OperationalError on a legacy table with no position_epoch
-            # column at all.
-            conn.execute(
-                "SELECT position_epoch FROM shadow_history "
-                "WHERE symphony_id = ? ORDER BY ts_utc DESC LIMIT 1",
-                (symphony_id,),
-            ).fetchone()
-            has_epoch_column = True
-        except sqlite3.OperationalError:
-            has_epoch_column = False
-
-        if has_epoch_column:
-            # `IS` (not `=`) so a NULL current epoch matches NULL legacy rows.
-            rows = conn.execute(
-                "SELECT trading_day, current_return "
-                "FROM shadow_history "
-                "WHERE symphony_id = ? "
-                "  AND position_epoch IS ( "
-                "        SELECT position_epoch FROM shadow_history s3 "
-                "        WHERE s3.symphony_id = ? "
-                "        ORDER BY s3.ts_utc DESC LIMIT 1) "
-                "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
-                "                WHERE s2.symphony_id = shadow_history.symphony_id "
-                "                  AND s2.trading_day = shadow_history.trading_day) "
-                "ORDER BY trading_day ASC",
-                (symphony_id, symphony_id),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT trading_day, current_return "
-                "FROM shadow_history "
-                "WHERE symphony_id = ? "
-                "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
-                "                WHERE s2.symphony_id = shadow_history.symphony_id "
-                "                  AND s2.trading_day = shadow_history.trading_day) "
-                "ORDER BY trading_day ASC",
-                (symphony_id,),
-            ).fetchall()
+        rows = conn.execute(
+            "SELECT trading_day, current_return "
+            "FROM shadow_history "
+            "WHERE symphony_id = ? "
+            "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+            "                WHERE s2.symphony_id = shadow_history.symphony_id "
+            "                  AND s2.trading_day = shadow_history.trading_day) "
+            "ORDER BY trading_day ASC",
+            (symphony_id,),
+        ).fetchall()
         conn.close()
     except Exception:
         return None
