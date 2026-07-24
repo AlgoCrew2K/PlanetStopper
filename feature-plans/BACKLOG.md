@@ -116,6 +116,38 @@ not a bare `float`. Fix candidate: correct the declared type hint (and the stale
 to match actual usage in the same pass as the column-discriminator fix above, since both
 touch the same declaration line.
 
+### `tests/test_scope_guard_f7.py::test_math_engine_not_in_diff` is now a permanent tripwire, not an F7-scoped guard -- LOW, tracked (found 2026-07-24, exit-friction-realized-savings cycle, ga2-tw)
+This test enforces "`math_engine.py` has zero diff since the F7 RED anchor commit" -- correct
+and useful DURING the F7 cycle (`feature-plans/math-f7.md` AC-5: `math_engine.py` out of scope
+for that cycle's display/diagnostic-only fix), but the anchor is git-derived from a FIXED
+historical commit (`git log --follow` on `tests/execution/test_f7_ac1_persist_guard.py`,
+resolving to `7752bb00`) and the diff window is anchor-to-CURRENT-HEAD, unbounded going
+forward -- it never stops enforcing "F7 scope" once F7 itself shipped. Any LATER cycle that
+legitimately touches `math_engine.py` (as two already have: `6f38b86e` "MA-11 wire
+MAX_SQUEEZE_FLOOR" and `43a458f8` "MA-4 disarm-band", both already-shipped math-remediation
+cycles) trips this test forever afterward, for every subsequent branch, regardless of
+relevance to F7.
+
+Independently re-verified by this doc-writer (not taken on ga2-tw's report alone):
+`git log --follow --format=%H -- tests/execution/test_f7_ac1_persist_guard.py | tail -1`
+resolves to `7752bb00f81b3d7dd3aa5ead4de15d32684ddcfe`, matching the test's own
+dynamically-computed anchor; `git log 7752bb00..HEAD -- math_engine.py` on
+`feat/exit-friction-realized-savings` shows exactly the two commits above; `git merge-base
+--is-ancestor <sha> ccda9abe` (the branch's fork point from `origin/main`) confirms BOTH are
+ancestors of the fork point -- pre-existing, not introduced by this cycle; `git status --short
+math_engine.py` is clean on the current working tree (neither ga2-impl's nor ga2-flask's GREEN
+work touches the file, per this cycle's own AC-10 blast-radius test); running the test
+directly reproduces the failure. Zero new failures vs fork-point (the correct merge-gate
+framing) -- but the test is broken for every future cycle until retired or re-anchored.
+
+Fix candidate: (a) retire the test now that F7 (`DE-MATH-F7-001`) is long shipped, or (b) if a
+standing "`math_engine.py` stays frozen" intent still applies for some other reason, re-anchor
+it to a rolling reference instead of a dead historical SHA. The test's own docstring says it
+"mirrors `tests/test_scope_guard.py`'s git-diff-since-RED-commit idiom exactly" -- worth
+checking whether that sibling test has the same unbounded-window staleness problem in the same
+remediation pass, since it is likely the same design pattern. Not this cycle's fix to make --
+flagged per house rule (no pre-existing failures carried silently).
+
 ### Sleeves: mis-citing float-imprecision example in the price-rounding docstring — COSMETIC (found 2026-07-08, P3 smoke cycle)
 The bracket price-rounding (`_round_to_equity_tick`, sleeves/alpaca_orders.py, task #35) cites
 `495.00 / 0.01 == 49499.999999999993` as motivation, but that expression is exactly `49500.0` in
