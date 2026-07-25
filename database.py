@@ -4941,5 +4941,30 @@ def record_incubation_fetch_outcome(candidate_hash: str, ok: bool) -> int:
         conn.close()
 
 
+def get_incubation_daily_series(candidate_hash: str) -> "tuple[list[float], list[float | None]]":
+    """Return (forward_return_pct, spy_return_pct) — two lists, ordered by
+    trading_day ASCENDING, index-aligned (index i in both lists is the same
+    trading_day, since both columns come from the same incubation_daily row).
+    spy_return_pct entries are None wherever that row's spy_return_pct column is
+    NULL (the SPY-missing degradation case) — never skipped/compacted, which would
+    misalign the two lists. Shaped to drop directly into evaluate_promotion's first
+    two positional args. Empty tuple of empty lists ([], []) for a candidate with
+    zero recorded days or an unknown hash — never raises. Read path
+    (get_ro_connection(), architecture constraint 5).
+    """
+    conn = get_ro_connection()
+    try:
+        rows = conn.execute(
+            "SELECT forward_return_pct, spy_return_pct FROM incubation_daily "
+            "WHERE candidate_hash = ? ORDER BY trading_day ASC",
+            (candidate_hash,),
+        ).fetchall()
+    finally:
+        conn.close()
+    forward_return_pct = [row[0] for row in rows]
+    spy_return_pct = [row[1] for row in rows]
+    return forward_return_pct, spy_return_pct
+
+
 # Initialize tables on import
 init_db()
