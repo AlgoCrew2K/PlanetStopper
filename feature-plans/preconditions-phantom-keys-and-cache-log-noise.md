@@ -1,17 +1,17 @@
 # Feature: Preconditions Phantom-Keys Filter + Cache-Miss Log Honesty
-Status: ready
+Status: code-complete at `39147312`
 Created: 2026-07-25
 
 ## Summary
 Two small hygiene fixes to existing codepaths, both found during PM live probing on 2026-07-24. (a) `GET /api/guard-alpha-preconditions` iterates the top level of `bot_state` as if every key were a symphony, so 5 non-symphony metadata keys (`date`, `last_execution_mode`, `last_market_close_snapshot`, `last_successful_cycle_at`, `post_mortem_run`) render as phantom INSUFFICIENT_DATA "symphonies" (16 rows served, 11 real). (b) `synthetic_history.get_cached_synthetic_history_only`'s 10-trading-day walk-back logs every plain missing-file probe as `WARNING "corrupt or unreadable cache file ... [Errno 2]"` — ~16 misleading warnings per call for what is an EXPECTED cache miss (the cache is written weekly, so most days the newest-date probes are simply absent). Neither fix changes any verdict math, cache semantics, or return values. No TDD Toxic Pair required (small fixes to existing codepaths — project exception class), but every behavior change is pinned by tests, and the full PR gate applies.
 
 ## Acceptance Criteria
-- [ ] AC-1: `GET /api/guard-alpha-preconditions` returns ONLY real symphony entries — none of the 5 known non-symphony `bot_state` top-level keys ever appears as a symphony row, in either the response dict or any aggregate count.
-- [ ] AC-2: the discrimination is STRUCTURAL (an entry qualifies as a symphony by the shape of its value in `bot_state` — recon the real droplet `bot_state` blob to pin the discriminator), NOT a hardcoded denylist of those 5 names — a future non-symphony metadata key must be excluded without a code change. A name denylist is an automatic review reject.
-- [ ] AC-3: a REAL symphony with degenerate/missing sub-data still appears, with its existing honest degraded verdicts — the filter may only exclude non-symphony entries, never degrade real ones (no-self-regression).
-- [ ] AC-4: a `bot_state` containing ONLY metadata keys yields the route's existing honest empty state (zero symphony rows, HTTP 200) — never an error.
-- [ ] AC-5: `synthetic_history`'s cache-probe walk-back distinguishes MISSING (`FileNotFoundError`/ENOENT) from CORRUPT (file exists but unreadable/unparseable): a plain miss logs at most ONE compact line per walk-back at INFO or lower (wording says "cache miss", never "corrupt"), while genuine corruption keeps the existing per-file `WARNING "corrupt or unreadable"`.
-- [ ] AC-6: zero change to cache lookup semantics, return values, walk-back depth (`AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS=10`), or any consumer behavior — (b) is logging-only; (a) is response-filtering-only. `alpha_bot_execution.py` and `math_engine.py` carry zero diff.
+- [x] AC-1: `GET /api/guard-alpha-preconditions` returns ONLY real symphony entries — none of the 5 known non-symphony `bot_state` top-level keys ever appears as a symphony row, in either the response dict or any aggregate count.
+- [x] AC-2: the discrimination is STRUCTURAL (an entry qualifies as a symphony by the shape of its value in `bot_state` — recon the real droplet `bot_state` blob to pin the discriminator), NOT a hardcoded denylist of those 5 names — a future non-symphony metadata key must be excluded without a code change. A name denylist is an automatic review reject.
+- [x] AC-3: a REAL symphony with degenerate/missing sub-data still appears, with its existing honest degraded verdicts — the filter may only exclude non-symphony entries, never degrade real ones (no-self-regression).
+- [x] AC-4: a `bot_state` containing ONLY metadata keys yields the route's existing honest empty state (zero symphony rows, HTTP 200) — never an error.
+- [x] AC-5: `synthetic_history`'s cache-probe walk-back distinguishes MISSING (`FileNotFoundError`/ENOENT) from CORRUPT (file exists but unreadable/unparseable): a plain miss logs at most ONE compact line per walk-back at INFO or lower (wording says "cache miss", never "corrupt"), while genuine corruption keeps the existing per-file `WARNING "corrupt or unreadable"`.
+- [x] AC-6: zero change to cache lookup semantics, return values, walk-back depth (`AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS=10`), or any consumer behavior — (b) is logging-only; (a) is response-filtering-only. `alpha_bot_execution.py` and `math_engine.py` carry zero diff.
 
 ## Architecture
 - **(a)** `app.py::guard_alpha_preconditions()` — insert one structural filter where the route iterates `state_data`/`bot_state` top-level items, before per-symphony verdict computation. The discriminator lives in one small named helper (pure, unit-testable) so the route body stays readable. `guard_preconditions.py` is untouched.
