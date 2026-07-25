@@ -94,21 +94,23 @@ def test_sim_exit_friction_pct_units_are_percentage_points_not_decimal_fraction(
     autotuner = _import_autotuner()
 
     expected = composer_backtest_client._DEFAULT_SLIPPAGE_PERCENT * autotuner.RETURN_PCT_TO_FRACTION
+    # Local variable, not the bare ALL_CAPS attribute, on the left of the
+    # comparisons below -- avoids ruff SIM300 (Yoda condition) while reading
+    # the same as `actual == expected`, the conventional pytest ordering.
+    actual = autotuner.SIM_EXIT_FRICTION_PCT
 
-    assert autotuner.SIM_EXIT_FRICTION_PCT == pytest.approx(expected, abs=1e-9), (
+    assert actual == pytest.approx(expected, abs=1e-9), (
         f"SIM_EXIT_FRICTION_PCT must equal _DEFAULT_SLIPPAGE_PERCENT "
         f"({composer_backtest_client._DEFAULT_SLIPPAGE_PERCENT}) * "
         f"RETURN_PCT_TO_FRACTION ({autotuner.RETURN_PCT_TO_FRACTION}) = {expected} "
-        f"percentage points, got {autotuner.SIM_EXIT_FRICTION_PCT}. A value of "
+        f"percentage points, got {actual}. A value of "
         f"0.005 here (the Composer client's fraction, uncorrected) would apply "
         f"100x too little friction at the percent-point-scaled subtraction site."
     )
 
     # Sanity guard against the exact wrong-unit trap: the bare fraction must
     # NOT be what shipped.
-    assert autotuner.SIM_EXIT_FRICTION_PCT != pytest.approx(
-        composer_backtest_client._DEFAULT_SLIPPAGE_PERCENT, abs=1e-9
-    ), (
+    assert actual != pytest.approx(composer_backtest_client._DEFAULT_SLIPPAGE_PERCENT, abs=1e-9), (
         "SIM_EXIT_FRICTION_PCT must NOT equal the raw Composer client fraction "
         "(0.005) -- that is a decimal-fraction value copied without converting "
         "to this file's percent-point convention (Finding E)."
