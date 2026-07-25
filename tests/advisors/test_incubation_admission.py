@@ -73,6 +73,43 @@ class TestCandidateHashConvention:
             "community_strats._composition_hash() -- do not fork the hash logic."
         )
 
+    def test_candidate_hash_matches_an_independently_computed_reference_value(self):
+        """HASH1b (ga3-rev non-tautology upgrade, 2026-07-25): the test above is
+        satisfied trivially if candidate_hash() simply delegates to
+        community_strats._composition_hash() (the handoff's own recommended
+        implementation) -- that proves DELEGATION, not that the underlying
+        algorithm is correct (both sides could share the same bug, or one could
+        just call the other with no independent verification). This test computes
+        the expected hash a SECOND way, inline in the test file using only
+        stdlib json/hashlib -- no import of community_strats at all -- so a
+        genuinely broken hash (wrong key order, wrong separator, id not stripped,
+        etc.) fails here even if candidate_hash() and community_strats agree with
+        each other."""
+        import hashlib
+        import json
+
+        from advisors.incubation import candidate_hash
+
+        tree = _spy_tree()
+
+        def _strip_ids(obj):
+            if isinstance(obj, dict):
+                return {k: _strip_ids(v) for k, v in obj.items() if k != "id"}
+            if isinstance(obj, list):
+                return [_strip_ids(item) for item in obj]
+            return obj
+
+        canonical = json.dumps(_strip_ids(tree), sort_keys=True, separators=(",", ":"))
+        independently_computed = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+        assert candidate_hash(tree) == independently_computed, (
+            f"candidate_hash({tree!r}) = {candidate_hash(tree)!r} does not match the "
+            f"independently-computed reference hash {independently_computed!r} "
+            "(strip 'id' keys recursively -> json.dumps(sort_keys=True, "
+            "separators=(',',':')) -> sha256 hexdigest). A pass here proves the "
+            "ALGORITHM is correct, not merely that two functions agree with each other."
+        )
+
     def test_candidate_hash_is_independent_of_node_uuids(self):
         """HASH2: two independently-constructed, structurally-identical trees (fresh
         uuid4 node ids each time, per symphony_schema's constructor contract) must

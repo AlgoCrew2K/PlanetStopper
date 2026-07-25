@@ -113,6 +113,39 @@ class TestIncubationRouteEmptyState:
 # ---------------------------------------------------------------------------
 
 
+class TestIncubationRouteNoStaleCaching:
+    def test_status_change_between_two_requests_is_reflected_on_the_second(
+        self, client, isolated_db
+    ):
+        """AC-5 (ga3-rev caching upgrade, promoted by the PM 2026-07-25): no path
+        may cache/serve status from a frozen snapshot. Two GET requests, with a
+        real status transition in between (via the same production accessor the
+        tick uses), must return DIFFERENT status values -- proving the route has
+        no response cache, no memoized ledger read, and no reliance on a frozen
+        field anywhere in its path. A route that cached the first response (or
+        read a frozen raw_response field instead of the live ledger) would return
+        the SAME stale status on both requests."""
+        _admit("hash-nocache-1")
+
+        first = client.get("/api/incubation")
+        first_row = next(
+            r for r in first.get_json()["incubating"] if r.get("candidate_hash") == "hash-nocache-1"
+        )
+        assert first_row.get("status") == "INCUBATING"
+
+        db_module.set_incubation_status("hash-nocache-1", "PROMOTED")
+
+        second = client.get("/api/incubation")
+        second_row = next(
+            r for r in second.get_json()["incubating"] if r.get("candidate_hash") == "hash-nocache-1"
+        )
+        assert second_row.get("status") == "PROMOTED", (
+            f"Expected the second request to reflect the real status transition to "
+            f"PROMOTED, got {second_row.get('status')!r}. The route must read the "
+            "live ledger on every request -- no caching, no frozen snapshot."
+        )
+
+
 class TestIncubationRowContent:
     def test_incubating_row_has_day_count_badge(self, client, isolated_db):
         _admit("hash-route-1")

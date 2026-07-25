@@ -125,6 +125,60 @@ class TestNormalTick:
         )
 
 
+    def test_rerunning_the_same_tick_response_twice_inserts_zero_duplicates(
+        self, isolated_db, monkeypatch
+    ):
+        """TICK1b (ga3-rev structural-idempotency upgrade, promoted by the PM
+        2026-07-25): calling run_incubation_tick() TWICE in a row, with
+        run_backtest returning the EXACT SAME full-history daily_returns dict
+        both times, must insert zero duplicate rows the second time. This proves
+        idempotency is STRUCTURAL -- backed by incubation_daily's
+        UNIQUE(candidate_hash, trading_day) constraint and an INSERT-OR-IGNORE
+        (or equivalent explicit dedup) write path -- rather than depending on
+        'the loop only looks at dates after the last known day' logic, which can
+        break on an out-of-order response or a full-history segment the daemon
+        re-processes after a restart."""
+        import advisors.incubation as incubation_module
+
+        _admit("hash-rerun-1", "cand-rerun")
+
+        # The SAME response object every call -- not a generator/iterator that
+        # would silently exhaust and change behavior on the second tick.
+        fixed_response = {"2026-01-05": 0.30, "2026-01-06": 0.10, "2026-01-07": -0.05}
+
+        router = _run_backtest_router(
+            {
+                "cand-rerun": lambda: _fake_result(dict(fixed_response)),
+                "__spy__": lambda: _fake_result(
+                    {"2026-01-05": 0.05, "2026-01-06": 0.05, "2026-01-07": 0.05}
+                ),
+            }
+        )
+        monkeypatch.setattr(incubation_module, "run_backtest", router)
+
+        incubation_module.run_incubation_tick()
+        overview_after_first = db_module.get_incubation_overview()
+        row_after_first = next(
+            r for r in overview_after_first if r["candidate_hash"] == "hash-rerun-1"
+        )
+        assert row_after_first["days_observed"] == 3
+
+        # Re-run with the IDENTICAL full-history response -- every date key was
+        # already recorded, so this must be a complete no-op at the row level.
+        incubation_module.run_incubation_tick()
+        overview_after_second = db_module.get_incubation_overview()
+        row_after_second = next(
+            r for r in overview_after_second if r["candidate_hash"] == "hash-rerun-1"
+        )
+        assert row_after_second["days_observed"] == 3, (
+            "Re-running the tick with the SAME full-history response must not "
+            f"insert duplicate incubation_daily rows -- expected days_observed to "
+            f"stay at 3, got {row_after_second['days_observed']}. Idempotency must "
+            "be structural (UNIQUE(candidate_hash, trading_day) + INSERT OR IGNORE "
+            "or equivalent), not merely 'the loop skips already-seen dates' logic."
+        )
+
+
 # ---------------------------------------------------------------------------
 # TICK2: catch-up after a multi-day gap, one call
 # ---------------------------------------------------------------------------
