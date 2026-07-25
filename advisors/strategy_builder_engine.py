@@ -841,6 +841,36 @@ def _persist_rejected(
     )
 
 
+def _resolve_admission_mdd_baseline(raw_mdd: float | None) -> float | None:
+    """Convert a candidate's backtest max_drawdown into the incubation ledger's
+    positive-pct-magnitude convention, or signal "decline admission" via None.
+
+    Unit correction (.claude/tdd-handoff.md "Migration 037"): quantstats'
+    max_drawdown is a NEGATIVE fraction; the ledger stores a POSITIVE pct
+    magnitude — a real value converts via abs(raw_mdd) * 100.0. A genuinely
+    unknown baseline (raw_mdd is None) must NOT coerce to 0.0: a 0.0 baseline
+    would fabricate an mdd_breach verdict the first time evaluate_promotion
+    checks any nonzero forward drawdown, misreporting missing data as a
+    risk-exceeded finding (review Finding 1). None in, None out — the caller
+    (Step 4b below) treats a None return as "decline this candidate's
+    admission," never a manufactured risk verdict.
+
+    Reachability (review Finding 1, severity re-grade): as of this cycle, a
+    candidate whose info.metrics["max_drawdown"] is None CANNOT reach this
+    seam via propose_strategies() in production — _passes_screens already
+    fails closed on ANY None metric before Step 4b ever runs, unconditionally
+    (see TestAdversarialCycle3::test_passes_screens_returns_false_when_max_drawdown_is_none
+    in tests/advisors/test_strategy_builder_engine.py). This function is
+    SECOND-LAYER DEFENSE, not a fix for a currently-exploitable bug — it
+    exists so the code never does the wrong thing if a future refactor ever
+    changes call ordering, _passes_screens's None-handling, or adds an
+    alternate entry point that bypasses screens.
+    """
+    if raw_mdd is None:
+        return None
+    return abs(raw_mdd) * 100.0
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -1098,14 +1128,20 @@ def propose_strategies(
             try:
                 _hash = incubation.candidate_hash(info.tree)
                 _raw_mdd = info.metrics.get("max_drawdown")
-                # Unit correction (.claude/tdd-handoff.md "Migration 037"):
-                # quantstats' max_drawdown is a NEGATIVE fraction; the ledger
-                # stores a POSITIVE pct magnitude. An unknown MDD (insufficient
-                # backtest data) degrades to 0.0 — a conservative choice, since
-                # a 0% baseline makes the forward-MDD-breach comparison trip on
-                # the candidate's very first drawdown rather than silently
-                # never firing.
-                _backtest_mdd_pct = abs(_raw_mdd) * 100.0 if _raw_mdd is not None else 0.0
+                _backtest_mdd_pct = _resolve_admission_mdd_baseline(_raw_mdd)
+                if _backtest_mdd_pct is None:
+                    # Review Finding 1: an unresolvable MDD baseline declines
+                    # admission entirely — never a coerced 0.0 that would
+                    # fabricate a risk-exceeded verdict from missing data. See
+                    # _resolve_admission_mdd_baseline's docstring for the
+                    # reachability note (this branch is second-layer defense,
+                    # unreachable via propose_strategies today).
+                    logger.info(
+                        "propose_strategies: candidate %s declined incubation "
+                        "admission (unresolvable backtest MDD baseline)",
+                        cid,
+                    )
+                    continue
                 _admission = incubation.admit_candidate(
                     candidate_hash=_hash,
                     tree_json=json.dumps(info.tree),
