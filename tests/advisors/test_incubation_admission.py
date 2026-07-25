@@ -338,6 +338,137 @@ class TestAdmissionWiringEndToEnd:
         )
 
 
+class TestResolveAdmissionMddBaseline:
+    """Review Finding 1 fix seam (ga3-adv extracts; PM ruling, 2026-07-25):
+    `_resolve_admission_mdd_baseline(raw_mdd: float | None) -> float | None`
+    -- the pure function Step 4b calls to convert a candidate's backtest
+    max_drawdown into the ledger's positive-pct-magnitude convention, OR
+    signal "decline admission" via None when the baseline itself is unknown.
+    Pure unit tests -- no DB, no propose_strategies, no gate.
+
+    REACHABILITY NOTE (frozen for every reader of this class, per PM
+    instruction -- state this plainly so no future reader infers a live
+    production bug): as of this cycle, a candidate whose
+    info.metrics["max_drawdown"] is None CANNOT reach this seam via
+    propose_strategies() in production -- _passes_screens
+    (strategy_builder_engine.py:516-518) already fails closed on ANY None
+    metric before Step 4b ever runs, unconditionally, with no
+    screen_config-dependent bypass (pinned by the existing
+    tests/advisors/test_strategy_builder_engine.py::TestAdversarialCycle3::
+    test_passes_screens_returns_false_when_max_drawdown_is_none, which
+    verified GREEN independently before this fix). This seam is SECOND-LAYER
+    DEFENSE, not a fix for a currently-exploitable bug -- it exists so the
+    code never does the wrong thing (fabricating an mdd_breach verdict from
+    a coerced 0.0 baseline) if a future refactor ever changes call ordering,
+    _passes_screens's None-handling, or adds an alternate entry point that
+    bypasses screens."""
+
+    def test_none_input_returns_none(self):
+        from advisors.strategy_builder_engine import _resolve_admission_mdd_baseline
+
+        assert _resolve_admission_mdd_baseline(None) is None, (
+            "A None backtest MDD baseline must resolve to None (the decline-"
+            "admission signal), never a coerced 0.0 -- a 0.0 baseline would "
+            "fabricate a risk-exceeded verdict the first time "
+            "evaluate_promotion checks forward_mdd > 0 + epsilon (review "
+            "Finding 1)."
+        )
+
+    def test_negative_fraction_converts_to_positive_pct_magnitude(self):
+        from advisors.strategy_builder_engine import _resolve_admission_mdd_baseline
+
+        assert _resolve_admission_mdd_baseline(-0.08) == pytest.approx(8.0), (
+            "A real quantstats-convention negative fraction (-0.08 = an 8% "
+            "drawdown) must convert to the ledger's positive-pct-magnitude "
+            "convention (8.0) -- unchanged from the existing behavior for a "
+            "real (non-None) baseline."
+        )
+
+    def test_larger_negative_fraction_converts_correctly(self):
+        from advisors.strategy_builder_engine import _resolve_admission_mdd_baseline
+
+        assert _resolve_admission_mdd_baseline(-0.15) == pytest.approx(15.0)
+
+    def test_zero_drawdown_converts_to_zero_not_treated_as_missing(self):
+        """Edge case: a genuinely zero (not None) drawdown must convert to
+        0.0, never conflated with the "unknown baseline" None-decline path --
+        0.0 is a real, meaningful backtest result (a monotonically
+        non-decreasing candidate), distinct from "we don't know"."""
+        from advisors.strategy_builder_engine import _resolve_admission_mdd_baseline
+
+        result = _resolve_admission_mdd_baseline(0.0)
+        assert result is not None, (
+            "A real 0.0 drawdown must NOT be treated as a None/unknown "
+            "baseline -- only an actual None input signals decline."
+        )
+        assert result == pytest.approx(0.0)
+
+    def test_positive_input_still_converts_via_abs(self):
+        """Robustness: quantstats' documented convention is a negative
+        fraction, but the seam must not misbehave on an unexpected positive
+        value -- abs() handles either sign identically."""
+        from advisors.strategy_builder_engine import _resolve_admission_mdd_baseline
+
+        assert _resolve_admission_mdd_baseline(0.05) == pytest.approx(5.0)
+
+
+class TestStep4bDeclinesOnNoneSeamResult:
+    """Integration proof that Step 4b correctly ACTS on a None return from
+    _resolve_admission_mdd_baseline -- by mocking the seam function DIRECTLY
+    (not by constructing a real None-max_drawdown candidate through the real
+    screens gate, which cannot happen today -- see the reachability note on
+    TestResolveAdmissionMddBaseline above). This is the honest way to prove
+    Step 4b's decline-on-None BEHAVIOR without misrepresenting the
+    currently-unreachable production path as live: the candidate here has a
+    perfectly real, non-None computed max_drawdown (it passes the real
+    screens gate normally) -- only the SEAM's return value is forced to None
+    for this one test, isolating exactly "what does Step 4b do when the seam
+    says decline," independent of how a None might arise in practice."""
+
+    def test_step4b_declines_admission_when_seam_returns_none(self, isolated_db, monkeypatch):
+        from advisors.incubation import candidate_hash
+
+        monkeypatch.setattr(sbe, "_has_composer_key", lambda: True)
+        monkeypatch.setattr(
+            sbe,
+            "_generate_candidate_trees",
+            MagicMock(return_value=[_make_candidate_info("cand-declined")]),
+        )
+        monkeypatch.setattr(sbe, "run_backtest", _routed_run_backtest)
+        monkeypatch.setattr(sbe, "_resolve_admission_mdd_baseline", lambda raw_mdd: None)
+
+        run = sbe.propose_strategies(
+            objective=sbe.Objective.diversify,
+            universe=["SPY", "QQQ"],
+            screen_config=sbe.ScreenConfig(),
+            live_returns=[],
+            symphony_id="sym-test-declined-mdd",
+        )
+
+        assert run.screened_survivors, (
+            "Test setup must produce a real gate survivor to reach Step 4b at "
+            f"all. ProposalRun: {run}"
+        )
+
+        declined_hash = candidate_hash(_spy_tree())
+        incubating_hashes = {r["candidate_hash"] for r in db_module.get_incubating()}
+        assert declined_hash not in incubating_hashes, (
+            "When the MDD-resolution seam returns None, Step 4b must decline "
+            "admission -- the candidate must never enter the incubation "
+            f"ledger. Ledger: {incubating_hashes}"
+        )
+
+        # D-1: the underlying advisor_observations persist must still succeed
+        # -- declining admission is not the same as a broken persist.
+        declined_rows = db_module.get_advisor_observations_for_subject(
+            "strategy_proposal", "cand-declined"
+        )
+        assert declined_rows, (
+            "Declining admission must not break the existing "
+            "advisor_observations persist for the candidate (D-1)."
+        )
+
+
 class TestSingleAdmissionSeam:
     """SEAM1: admission is wired at exactly ONE call site (recon finding b, ruled
     accepted by the PM). Both the on-demand route and the weekly scheduler already
