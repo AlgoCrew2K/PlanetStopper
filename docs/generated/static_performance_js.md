@@ -3,7 +3,7 @@
 > Client-side logic for the read-only Performance tab: fetches aggregate/per-symphony return series + quantstats metrics, renders a cumulative-return Chart.js curve and a 7-metric comparison table, and drives the scope/window/symphony picker controls.
 
 **Source:** `static/performance.js`
-**Last updated:** 2026-07-23 (guard-alpha-preconditions, `DE-GUARD-ALPHA-PRECONDITIONS-001` -- new Guard-Alpha Stop-Justification Preconditions panel: `fetchGuardAlphaPreconditions()` + `renderGuardAlphaPreconditions()` render `GET /api/guard-alpha-preconditions`'s per-symphony verdict table; see the new section below and `docs/generated/app.md`). Prior: 2026-07-20 (fix-f023-perf-view, `DE-PERFVIEW-ID-MISMATCH`, F-023 -- first doc-gen entry for this file. `loadSymphonies()` and `renderBanner()` updated for the `GET /api/performance/symphonies` `{id,name}` contract fix -- see `docs/generated/app.md`'s `GET /api/performance/symphonies` section for the route-side root cause and fix.)
+**Last updated:** 2026-07-24 (exit-friction-realized-savings, `DE-EXIT-FRICTION-REALIZED-001` -- new Exit-Turnover panel: `fetchExitTurnover()` + `renderExitTurnover()` render `GET /api/exit-turnover`'s per-symphony 30/90/365-day exit counts + estimated annual friction drag; see the new section below and `docs/generated/app.md`). Prior: 2026-07-23 (guard-alpha-preconditions, `DE-GUARD-ALPHA-PRECONDITIONS-001` -- new Guard-Alpha Stop-Justification Preconditions panel: `fetchGuardAlphaPreconditions()` + `renderGuardAlphaPreconditions()` render `GET /api/guard-alpha-preconditions`'s per-symphony verdict table; see the new section below and `docs/generated/app.md`). Prior: 2026-07-20 (fix-f023-perf-view, `DE-PERFVIEW-ID-MISMATCH`, F-023 -- first doc-gen entry for this file. `loadSymphonies()` and `renderBanner()` updated for the `GET /api/performance/symphonies` `{id,name}` contract fix -- see `docs/generated/app.md`'s `GET /api/performance/symphonies` section for the route-side root cause and fix.)
 
 ## Overview
 
@@ -115,6 +115,32 @@ Clears `#guard-alpha-preconditions-tbody` and rebuilds it from `data.symphonies`
 
 Build one `<tr>`/cell/chip via **DOM APIs only** (`createElement`/`textContent`) -- never `innerHTML` with interpolated symphony names or API response strings (XSS hygiene: symphony identifiers are external-origin, from Composer). `preconditionChipEl` maps a verdict string to its `.precond-verdict-chip--<modifier>` CSS class via the `PRECOND_VERDICT_CHIP_CLASS` table (falls back to the insufficient-data modifier for an unrecognized verdict), mirroring `ai_advisor.js`'s sentiment-chip BEM pattern. `preconditionNumCell` renders `'--'` for `null`/`undefined`, else `Number(value).toFixed(digits)` with an optional prefix (e.g. `'±'` for the CI column).
 
+---
+
+### Exit-Turnover Panel (exit-friction-realized-savings, `DE-EXIT-FRICTION-REALIZED-001`, 2026-07-24)
+
+Independent panel, independent fetch/render cycle from the rest of this file -- reads `GET /api/exit-turnover` per symphony (see `docs/generated/app.md`), rendering per-symphony 30/90/365-day exit-trigger counts plus an estimated annual friction drag beside the Guard-Alpha Stop-Justification Preconditions panel above.
+
+#### `fetchExitTurnover()`
+
+Two-stage fetch chain, both stages 401-guarded (explicit `if (response.status === 401) return null;` check, never a bare `.ok` check, so an unauthenticated poll degrades to the panel's empty state instead of throwing on a non-JSON body):
+1. Fetches `GET /api/performance/symphonies` (the same source `loadSymphonies()` uses for the picker) to get the live symphony-id list. Zero symphonies -> `renderExitTurnover([])` (empty state), no further fetches.
+2. Fans out one `GET /api/exit-turnover?symphony_id=<id>` call per symphony via `Promise.all`; a per-symphony fetch failure or non-OK response resolves to `{symphony_id, turnover: null}` rather than rejecting the whole batch (`.catch()` per-entry). Entries with `turnover: null` are filtered out before rendering.
+
+Called once on `DOMContentLoaded` and folded into the existing 60s `setInterval` block alongside `fetchGuardAlphaPreconditions()` -- no new timer, stays above the 15s live-cycle poll floor.
+
+#### `renderExitTurnover(entries)`
+
+Clears `#exit-turnover-tbody` and rebuilds it from `entries` (`[{symphony_id, turnover}]`). **Panel-level empty state:** zero entries shows `#exit-turnover-empty-state` ("No exit-trigger history yet for any symphony.") and renders no rows. Otherwise builds one row per entry via `exitTurnoverRowEl()`.
+
+#### `turnoverWindowCell(windowStats)` / `exitTurnoverRowEl(symphonyId, turnover)` (internal helpers)
+
+Build cells/rows via **DOM APIs only** (`createElement`/`textContent`) -- symphony identifiers are external-origin (Composer); never interpolated into `innerHTML` (same XSS-hygiene convention as the Preconditions panel above).
+
+**`turnoverWindowCell`'s honesty render (RULING C):** each window cell renders `windowStats.exit_count + ' (' + windowStats.coverage_days + 'd retained)'` -- NEVER a bare count under a "365d" column header, which would silently imply a full year of coverage the retention-pruned `exit_triggers` table can't back. A missing/null `windowStats` renders `'--'`.
+
+**`exitTurnoverRowEl`'s drag-column render:** `Number(turnover.est_annual_friction_drag_pct).toFixed(3) + '%'`, or `'--'` when the field is `null`/`undefined`.
+
 ## Types
 
 - **`METRIC_LABELS`** -- array of `[key, label, kind, isPrimary, invert?]` tuples driving `renderMetrics()`'s row order and formatting; order defines rendering order, with risk-adjusted metrics leading per `ux-design-deliverable.md` §2.1 (capital preservation ranks above return).
@@ -125,6 +151,7 @@ Build one `<tr>`/cell/chip via **DOM APIs only** (`createElement`/`textContent`)
 - `GET /api/performance` -- primary data fetch; response fields consumed: `dates`, `live_returns`, `shadow_returns`, `live_metrics`, `shadow_metrics`, `observation_count`, `window_days`, `insufficient_history`, and (scope=symphony only) `symphony_id_recognized` (AC-4, `DE-PERFVIEW-ID-MISMATCH`)
 - `GET /api/performance/symphonies` -- symphony picker population; `{id, name}` objects (F-023, `DE-PERFVIEW-ID-MISMATCH`, was bare name strings) -- see `docs/generated/app.md`
 - `GET /api/guard-alpha-preconditions` -- Stop-Justification Preconditions panel fetch; response fields consumed: `symphonies.<id>.replay`/`.shadow` (each `{rho, rho_ci, sharpe_daily, n_obs, verdict, sample_source}`) (`DE-GUARD-ALPHA-PRECONDITIONS-001`) -- see `docs/generated/app.md`
+- `GET /api/exit-turnover` -- Exit-Turnover panel fetch, one call per symphony; response fields consumed: `windows.{30,90,365}.{exit_count, coverage_days}`, `est_annual_friction_drag_pct` (`DE-EXIT-FRICTION-REALIZED-001`) -- see `docs/generated/app.md`
 - `Chart.js` (global) -- cumulative-return line chart
 - CSS custom properties: `--studio-accent`, `--studio-ink-dim`, `--studio-pos`, `--studio-neg`, `--studio-paper`, `--studio-ink-faint`, `--studio-rule`
-- DOM elements (from `templates/performance.html`): `#returns-chart`, `#metrics-tbody`, `#insufficient-banner`, `#symphony-picker`, `#symphony-picker-wrapper`, `#scope-toggle`, `#days-picker`, `#obs-caption`, `#guard-alpha-value`, `#sharpe-delta-value`, `#sortino-delta-value`, `#mdd-reduction-value`, `[data-testid="perf-chart-block"]`, `[data-testid="metrics-table"]`, `[data-testid="headline-strip"]`, `#guard-alpha-preconditions-tbody`, `#guard-alpha-preconditions-empty-state`, `[data-testid="guard-alpha-preconditions-panel"]`
+- DOM elements (from `templates/performance.html`): `#returns-chart`, `#metrics-tbody`, `#insufficient-banner`, `#symphony-picker`, `#symphony-picker-wrapper`, `#scope-toggle`, `#days-picker`, `#obs-caption`, `#guard-alpha-value`, `#sharpe-delta-value`, `#sortino-delta-value`, `#mdd-reduction-value`, `[data-testid="perf-chart-block"]`, `[data-testid="metrics-table"]`, `[data-testid="headline-strip"]`, `#guard-alpha-preconditions-tbody`, `#guard-alpha-preconditions-empty-state`, `[data-testid="guard-alpha-preconditions-panel"]`, `#exit-turnover-tbody`, `#exit-turnover-empty-state`, `[data-testid="exit-turnover-panel"]`
