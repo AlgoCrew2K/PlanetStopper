@@ -13,6 +13,7 @@ Advisory-only (is_advisory_only=1 on all persisted observations).
 from __future__ import annotations
 
 import enum
+import json
 import logging
 import math
 import uuid
@@ -21,7 +22,7 @@ from dataclasses import dataclass, field
 import ai_advisor
 import database
 import model_config
-from advisors import symphony_schema
+from advisors import incubation, symphony_schema
 from advisors.backtest_gate_engine import (
     HARVEY_LIU_FDR_Q,
     SURVIVOR_OVERFITTING_CAVEAT,
@@ -634,6 +635,7 @@ def _persist_survivor(
     run_id: str = "",
     evidence_injected: dict | None = None,
     invocation_source: str = "unattributed-direct-call",
+    candidate_hash: str | None = None,
 ) -> None:
     """Persist an ADOPT_CANDIDATE survivor (or rejected candidate) as an advisory observation.
 
@@ -665,6 +667,15 @@ def _persist_survivor(
             route tag, "weekly-scheduler", or the honest
             "unattributed-direct-call" default), so every advisory-DB write
             is attributable back to its production invocation path.
+        candidate_hash: Strategy Incubation Gate (AC-5, amended) — the
+            tree-structural hash this candidate was (or would have been)
+            admitted into the incubation ledger under. Stamped into
+            raw_response as the ONLY additive key this feature adds; status
+            is deliberately NOT frozen here (advisor_observations rows are
+            append-only, so a frozen status could never reflect a later
+            promotion/failure) — it is computed live via this join key at
+            render/API time instead. None for rejected candidates, which are
+            never admitted.
     """
     _live_returns = live_returns or []
     # returns_pct kwarg takes priority; info._returns_pct is a test/fallback seam
@@ -725,6 +736,10 @@ def _persist_survivor(
         "evidence_injected": evidence_injected if evidence_injected is not None else {},
         # F-030 (AC-5): additive, same free-form-blob precedent as run_id above.
         "invocation_source": invocation_source,
+        # Strategy Incubation Gate (AC-5, amended): the ONLY additive key this
+        # feature adds — an immutable join key, never a frozen status (see
+        # the candidate_hash docstring entry above).
+        "candidate_hash": candidate_hash,
     }
 
     # PA-3: live_baseline key is ABSENT (not None, not present) when live_returns empty.
@@ -1062,6 +1077,56 @@ def propose_strategies(
             if _passes_screens(info.metrics, live_returns, screen_config, returns_pct):
                 screened_survivors.append(gate_result)
 
+        # Step 4b: Strategy Incubation Gate — admit every screened survivor into
+        # the forward-incubation ledger at this ONE seam (.claude/tdd-handoff.md
+        # "Admission adapter — single wiring seam"; neither the route nor the
+        # weekly scheduler may call incubation.admit_candidate directly, both
+        # already reach it through this function). Cap-aware priority ordering
+        # (AC-2) is OUR responsibility as the caller: sort by gate-time
+        # oos_alpha descending so a MAX_INCUBATING cap naturally excludes the
+        # lowest-oos_alpha candidates first, then admit in that order. D-1:
+        # one candidate's admission failure never breaks another's, and never
+        # breaks the existing Step-5 persist below (same try/except-and-log
+        # pattern as the shipped insert_frontrunner_proposal precedent,
+        # strategy_builder_engine.py:770-789).
+        _candidate_hashes: dict[str, str] = {}
+        for gate_result in sorted(screened_survivors, key=lambda gr: gr.oos_alpha, reverse=True):
+            cid = gate_result.candidate_id
+            info = next((i for i in candidate_infos if i.candidate_id == cid), None)
+            if info is None:
+                continue
+            try:
+                _hash = incubation.candidate_hash(info.tree)
+                _raw_mdd = info.metrics.get("max_drawdown")
+                # Unit correction (.claude/tdd-handoff.md "Migration 037"):
+                # quantstats' max_drawdown is a NEGATIVE fraction; the ledger
+                # stores a POSITIVE pct magnitude. An unknown MDD (insufficient
+                # backtest data) degrades to 0.0 — a conservative choice, since
+                # a 0% baseline makes the forward-MDD-breach comparison trip on
+                # the candidate's very first drawdown rather than silently
+                # never firing.
+                _backtest_mdd_pct = abs(_raw_mdd) * 100.0 if _raw_mdd is not None else 0.0
+                _admission = incubation.admit_candidate(
+                    candidate_hash=_hash,
+                    tree_json=json.dumps(info.tree),
+                    objective=info.params.get("objective", ""),
+                    provenance=info.template_id,
+                    backtest_mdd_pct=_backtest_mdd_pct,
+                )
+                _candidate_hashes[cid] = _hash
+                if not _admission.get("admitted"):
+                    logger.info(
+                        "propose_strategies: candidate %s not admitted into incubation (reason=%s)",
+                        cid,
+                        _admission.get("reason"),
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "propose_strategies: incubation admission failed for candidate %s (%s)",
+                    cid,
+                    type(exc).__name__,
+                )
+
         # Step 5: Persist survivors (is_advisory_only=1)
         obs_written = 0
         n_survivors = len(screened_survivors)
@@ -1084,6 +1149,7 @@ def propose_strategies(
                     run_id=run_id,
                     evidence_injected=provenance["evidence_injected"],
                     invocation_source=_invocation_source,
+                    candidate_hash=_candidate_hashes.get(cid),
                 )
                 obs_written += 1
             except Exception:
