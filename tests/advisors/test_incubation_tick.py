@@ -314,6 +314,65 @@ class TestFetchFailureEscalation:
             f"the candidate yet, got status={row['status']!r}."
         )
 
+    def test_failure_counter_persists_across_a_simulated_process_restart(
+        self, isolated_db, monkeypatch
+    ):
+        """TICK5b (ga3-adv recon finding, 2026-07-25, ruled by ga3-tw): the
+        consecutive-fetch-failure counter must be DURABLY persisted (the
+        strategy_incubation.consecutive_fetch_failures column), not an
+        in-memory-only counter. An in-memory dict would technically satisfy
+        the two tests above (they call run_incubation_tick() repeatedly within
+        one process) but would silently reset to 0 on every real app.py
+        restart, defeating the escalation threshold in production. This test
+        simulates a restart by evicting advisors.incubation from sys.modules
+        and re-importing it between tick calls -- any module-level Python
+        state (e.g. a dict keyed by candidate_hash) is destroyed by this; a
+        real DB column is not."""
+        import sys
+
+        import advisors.incubation as incubation_module
+
+        _admit("hash-restart-1", "cand-restart-failing")
+
+        def _make_router():
+            return _run_backtest_router(
+                {
+                    "cand-restart-failing": lambda: _fake_result(
+                        error="HTTP 500: transient upstream error"
+                    ),
+                    "__spy__": lambda: _fake_result({"2026-01-05": 0.05}),
+                }
+            )
+
+        monkeypatch.setattr(incubation_module, "run_backtest", _make_router())
+        for _ in range(3):
+            incubation_module.run_incubation_tick()
+
+        # Simulate a process restart: evict the module and re-import it fresh.
+        del sys.modules["advisors.incubation"]
+        import advisors.incubation as incubation_module_after_restart
+
+        assert incubation_module_after_restart is not incubation_module, (
+            "Test setup invariant broken: the re-import did not produce a new "
+            "module object -- the sys.modules eviction did not take effect."
+        )
+        monkeypatch.setattr(incubation_module_after_restart, "run_backtest", _make_router())
+
+        for _ in range(2):
+            incubation_module_after_restart.run_incubation_tick()
+
+        overview = db_module.get_incubation_overview()
+        row = next(r for r in overview if r["candidate_hash"] == "hash-restart-1")
+        assert row["status"] == "EXPIRED", (
+            "5 consecutive failures (3 before + 2 after a simulated process "
+            f"restart) must expire the candidate, got status={row['status']!r}. "
+            "If this test fails while the same-process 5-failure test passes, the "
+            "failure counter is stored in-memory (module-level state) instead of "
+            "the durable strategy_incubation.consecutive_fetch_failures column -- "
+            "it must survive a real daemon restart."
+        )
+        assert row["status_reason"] == "fetch_failures_exhausted"
+
     def test_success_resets_the_consecutive_failure_counter(self, isolated_db, monkeypatch):
         """TICK5 (adversarial): 4 failures, then 1 success, then 4 more failures must
         NOT expire the candidate (the counter reset on the success) -- only a 5th
