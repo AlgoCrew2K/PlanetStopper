@@ -221,9 +221,7 @@ def test_strategy_incubation_has_fetch_failure_count_column(migrated_db):
         f"Columns present: {sorted(columns.keys())}."
     )
     _cid, _name, col_type, not_null, default_value, _pk = columns["fetch_failure_count"]
-    assert col_type.upper() == "INTEGER", (
-        f"fetch_failure_count must be INTEGER, got {col_type!r}."
-    )
+    assert col_type.upper() == "INTEGER", f"fetch_failure_count must be INTEGER, got {col_type!r}."
     assert not_null == 1, "fetch_failure_count must be NOT NULL."
     # SQLite stores the DEFAULT clause as text ("0"); compare as int for robustness.
     assert default_value is not None and int(default_value) == 0, (
@@ -323,9 +321,7 @@ class TestRegisterIncubationCandidate:
             "window) must not be re-admitted."
         )
 
-    def test_duplicate_hash_while_failed_after_refractory_elapsed_reenters(
-        self, migrated_db
-    ):
+    def test_duplicate_hash_while_failed_after_refractory_elapsed_reenters(self, migrated_db):
         """REG5: a FAILED hash re-proposed AFTER the refractory window elapses is
         admitted again with a RESET clock (fresh incubation attempt)."""
         db_module.register_incubation_candidate(
@@ -364,7 +360,9 @@ class TestRegisterIncubationCandidate:
         )
         assert result["status"] == "INCUBATING"
 
-        incubating = [r for r in db_module.get_incubating() if r["candidate_hash"] == "hash-failed-old"]
+        incubating = [
+            r for r in db_module.get_incubating() if r["candidate_hash"] == "hash-failed-old"
+        ]
         assert len(incubating) == 1, "Refractory reentry must produce exactly one INCUBATING row."
 
     def test_duplicate_hash_while_expired_within_refractory_is_noop(self, migrated_db):
@@ -417,14 +415,18 @@ class TestRegisterIncubationCandidate:
 class TestAppendIncubationDay:
     def test_append_new_day_returns_true(self, migrated_db):
         """APP1: appending a genuinely new (candidate_hash, trading_day) row returns True."""
-        db_module.register_incubation_candidate("hash-app-1", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.register_incubation_candidate(
+            "hash-app-1", "{}", "cut_drawdown", "built-new", 8.0
+        )
         result = db_module.append_incubation_day("hash-app-1", "2026-08-03", 0.25, 0.10)
         assert result is True
 
     def test_append_duplicate_day_is_idempotent(self, migrated_db):
         """APP2: appending the SAME (candidate_hash, trading_day) twice never raises
         and never creates a duplicate row (tick-rerun safety)."""
-        db_module.register_incubation_candidate("hash-app-2", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.register_incubation_candidate(
+            "hash-app-2", "{}", "cut_drawdown", "built-new", 8.0
+        )
         first = db_module.append_incubation_day("hash-app-2", "2026-08-03", 0.25, 0.10)
         second = db_module.append_incubation_day("hash-app-2", "2026-08-03", 0.99, 0.99)
         assert first is True
@@ -446,7 +448,9 @@ class TestAppendIncubationDay:
 class TestSetIncubationStatus:
     def test_set_status_updates_status_and_reason(self, migrated_db):
         """SET1: set_incubation_status persists status + status_reason."""
-        db_module.register_incubation_candidate("hash-set-1", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.register_incubation_candidate(
+            "hash-set-1", "{}", "cut_drawdown", "built-new", 8.0
+        )
         db_module.set_incubation_status("hash-set-1", "FAILED", "mdd_breach")
 
         overview = db_module.get_incubation_overview()
@@ -456,7 +460,9 @@ class TestSetIncubationStatus:
 
     def test_set_status_promoted_sets_promoted_at(self, migrated_db):
         """SET2: transitioning to PROMOTED sets promoted_at (non-null)."""
-        db_module.register_incubation_candidate("hash-set-2", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.register_incubation_candidate(
+            "hash-set-2", "{}", "cut_drawdown", "built-new", 8.0
+        )
         db_module.set_incubation_status("hash-set-2", "PROMOTED")
 
         overview = db_module.get_incubation_overview()
@@ -465,14 +471,14 @@ class TestSetIncubationStatus:
 
     def test_set_status_non_promoted_leaves_promoted_at_null(self, migrated_db):
         """SET3: a FAILED/EXPIRED transition must NOT set promoted_at."""
-        db_module.register_incubation_candidate("hash-set-3", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.register_incubation_candidate(
+            "hash-set-3", "{}", "cut_drawdown", "built-new", 8.0
+        )
         db_module.set_incubation_status("hash-set-3", "FAILED", "mdd_breach")
 
         overview = db_module.get_incubation_overview()
         row = next(r for r in overview if r["candidate_hash"] == "hash-set-3")
-        assert row["promoted_at"] is None, (
-            "A FAILED transition must not populate promoted_at."
-        )
+        assert row["promoted_at"] is None, "A FAILED transition must not populate promoted_at."
 
 
 # ---------------------------------------------------------------------------
@@ -518,7 +524,9 @@ class TestGetIncubationOverview:
 
     def test_overview_days_observed_reflects_incubation_daily_count(self, migrated_db):
         """GO2: days_observed is a true COUNT(*) of incubation_daily rows for that hash."""
-        db_module.register_incubation_candidate("hash-go-days", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.register_incubation_candidate(
+            "hash-go-days", "{}", "cut_drawdown", "built-new", 8.0
+        )
         db_module.append_incubation_day("hash-go-days", "2026-08-03", 0.1, 0.05)
         db_module.append_incubation_day("hash-go-days", "2026-08-04", 0.2, 0.05)
         db_module.append_incubation_day("hash-go-days", "2026-08-05", -0.1, 0.05)
@@ -544,13 +552,17 @@ class TestGetIncubationOverview:
 class TestRecordIncubationFetchOutcome:
     def test_failure_increments_from_zero(self, migrated_db):
         """RFO1: a fresh candidate's first ok=False call returns 1 (0 -> 1)."""
-        db_module.register_incubation_candidate("hash-rfo-1", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.register_incubation_candidate(
+            "hash-rfo-1", "{}", "cut_drawdown", "built-new", 8.0
+        )
         result = db_module.record_incubation_fetch_outcome("hash-rfo-1", ok=False)
         assert result == 1, f"Expected the first failure to bring the count to 1, got {result}."
 
     def test_repeated_failures_increment_monotonically(self, migrated_db):
         """RFO2: three consecutive ok=False calls return 1, 2, 3 in order."""
-        db_module.register_incubation_candidate("hash-rfo-2", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.register_incubation_candidate(
+            "hash-rfo-2", "{}", "cut_drawdown", "built-new", 8.0
+        )
         results = [
             db_module.record_incubation_fetch_outcome("hash-rfo-2", ok=False) for _ in range(3)
         ]
@@ -560,7 +572,9 @@ class TestRecordIncubationFetchOutcome:
 
     def test_success_resets_count_to_zero(self, migrated_db):
         """RFO3: ok=True resets the count to 0 regardless of its prior value."""
-        db_module.register_incubation_candidate("hash-rfo-3", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.register_incubation_candidate(
+            "hash-rfo-3", "{}", "cut_drawdown", "built-new", 8.0
+        )
         db_module.record_incubation_fetch_outcome("hash-rfo-3", ok=False)
         db_module.record_incubation_fetch_outcome("hash-rfo-3", ok=False)
         db_module.record_incubation_fetch_outcome("hash-rfo-3", ok=False)
@@ -571,7 +585,9 @@ class TestRecordIncubationFetchOutcome:
     def test_return_value_matches_the_persisted_column(self, migrated_db):
         """RFO4: the returned int always equals the actual persisted
         fetch_failure_count value -- not a stale/cached value from before the write."""
-        db_module.register_incubation_candidate("hash-rfo-4", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.register_incubation_candidate(
+            "hash-rfo-4", "{}", "cut_drawdown", "built-new", 8.0
+        )
         db_module.record_incubation_fetch_outcome("hash-rfo-4", ok=False)
         returned = db_module.record_incubation_fetch_outcome("hash-rfo-4", ok=False)
 
@@ -589,14 +605,14 @@ class TestRecordIncubationFetchOutcome:
             f"{persisted}, and both must equal 2 after two consecutive failures."
         )
 
-    def test_success_after_failures_persists_the_reset_not_just_the_return_value(
-        self, migrated_db
-    ):
+    def test_success_after_failures_persists_the_reset_not_just_the_return_value(self, migrated_db):
         """RFO5 (adversarial): a buggy implementation could return 0 on success
         without actually writing 0 to the column (e.g. returning a hardcoded
         literal instead of the post-write value). Verify the reset is durable by
         reading the column back independently after the call returns."""
-        db_module.register_incubation_candidate("hash-rfo-5", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.register_incubation_candidate(
+            "hash-rfo-5", "{}", "cut_drawdown", "built-new", 8.0
+        )
         db_module.record_incubation_fetch_outcome("hash-rfo-5", ok=False)
         db_module.record_incubation_fetch_outcome("hash-rfo-5", ok=False)
         db_module.record_incubation_fetch_outcome("hash-rfo-5", ok=True)
@@ -627,7 +643,9 @@ class TestGetIncubationDailySeries:
     def test_empty_for_a_candidate_with_zero_recorded_days(self, migrated_db):
         """GDS1: a freshly-admitted candidate with no incubation_daily rows yet
         returns ([], []), never raises."""
-        db_module.register_incubation_candidate("hash-gds-1", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.register_incubation_candidate(
+            "hash-gds-1", "{}", "cut_drawdown", "built-new", 8.0
+        )
         forward, spy = db_module.get_incubation_daily_series("hash-gds-1")
         assert forward == []
         assert spy == []
@@ -644,7 +662,9 @@ class TestGetIncubationDailySeries:
         """GDS3: rows inserted OUT OF ORDER must come back sorted by trading_day
         ascending -- the caller (evaluate_promotion) needs chronological order for
         compounding math."""
-        db_module.register_incubation_candidate("hash-gds-3", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.register_incubation_candidate(
+            "hash-gds-3", "{}", "cut_drawdown", "built-new", 8.0
+        )
         # Insert deliberately out of chronological order.
         db_module.append_incubation_day("hash-gds-3", "2026-01-07", 0.30, 0.10)
         db_module.append_incubation_day("hash-gds-3", "2026-01-05", 0.10, 0.05)
@@ -665,7 +685,9 @@ class TestGetIncubationDailySeries:
         including when spy_return_pct is NULL for some days (SPY-missing
         degradation), which must appear as None at the matching index, not be
         skipped/compacted (which would misalign the two lists)."""
-        db_module.register_incubation_candidate("hash-gds-4", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.register_incubation_candidate(
+            "hash-gds-4", "{}", "cut_drawdown", "built-new", 8.0
+        )
         db_module.append_incubation_day("hash-gds-4", "2026-01-05", 0.10, 0.05)
         db_module.append_incubation_day("hash-gds-4", "2026-01-06", 0.20, None)
         db_module.append_incubation_day("hash-gds-4", "2026-01-07", 0.30, 0.09)
@@ -684,8 +706,12 @@ class TestGetIncubationDailySeries:
     def test_does_not_include_another_candidates_rows(self, migrated_db):
         """GDS5: rows belonging to a DIFFERENT candidate_hash must never leak into
         this candidate's series (adversarial cross-candidate isolation check)."""
-        db_module.register_incubation_candidate("hash-gds-5a", "{}", "cut_drawdown", "built-new", 8.0)
-        db_module.register_incubation_candidate("hash-gds-5b", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.register_incubation_candidate(
+            "hash-gds-5a", "{}", "cut_drawdown", "built-new", 8.0
+        )
+        db_module.register_incubation_candidate(
+            "hash-gds-5b", "{}", "cut_drawdown", "built-new", 8.0
+        )
         db_module.append_incubation_day("hash-gds-5a", "2026-01-05", 0.10, 0.05)
         db_module.append_incubation_day("hash-gds-5b", "2026-01-05", 99.0, 99.0)
 

@@ -137,7 +137,9 @@ class TestIncubationRouteNoStaleCaching:
 
         second = client.get("/api/incubation")
         second_row = next(
-            r for r in second.get_json()["incubating"] if r.get("candidate_hash") == "hash-nocache-1"
+            r
+            for r in second.get_json()["incubating"]
+            if r.get("candidate_hash") == "hash-nocache-1"
         )
         assert second_row.get("status") == "PROMOTED", (
             f"Expected the second request to reflect the real status transition to "

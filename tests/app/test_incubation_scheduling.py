@@ -60,8 +60,7 @@ class TestIncubationTickThreadSpawn:
             app_module._run_incubation_tick()
 
         assert captured_kwargs.get("daemon") is True, (
-            f"threading.Thread(...) must be called with daemon=True, got kwargs: "
-            f"{captured_kwargs}"
+            f"threading.Thread(...) must be called with daemon=True, got kwargs: {captured_kwargs}"
         )
 
 
@@ -91,4 +90,6 @@ class TestIncubationTickSchedulingSlot:
             "from run_scheduler() -- test assumption broken, investigate before "
             "trusting this file's other assertions."
         )
-        assert '"03:30"' in source, "See test_run_scheduler_source_registers_incubation_tick_at_0330."
+        assert '"03:30"' in source, (
+            "See test_run_scheduler_source_registers_incubation_tick_at_0330."
+        )

@@ -72,7 +72,7 @@ def _fake_result(daily_returns: dict[str, float] | None = None, error: str | Non
     )
 
 
-def _run_backtest_router(responses: dict[str, "callable"]):
+def _run_backtest_router(responses: dict[str, callable]):
     """Build a run_backtest side_effect that dispatches on the tree's 'marker' key,
     or on the SPY-benchmark tree's known name (per .claude/tdd-handoff.md's pinned
     100%-SPY tree construction)."""
@@ -103,12 +103,8 @@ class TestNormalTick:
 
         router = _run_backtest_router(
             {
-                "cand-ok": lambda: _fake_result(
-                    {"2026-01-05": 0.30, "2026-01-06": 0.10}
-                ),
-                "__spy__": lambda: _fake_result(
-                    {"2026-01-05": 0.05, "2026-01-06": 0.02}
-                ),
+                "cand-ok": lambda: _fake_result({"2026-01-05": 0.30, "2026-01-06": 0.10}),
+                "__spy__": lambda: _fake_result({"2026-01-05": 0.05, "2026-01-06": 0.02}),
             }
         )
         monkeypatch.setattr(incubation_module, "run_backtest", router)
@@ -123,7 +119,6 @@ class TestNormalTick:
         assert row["status"] == "INCUBATING", (
             "A 2-day-old candidate must remain INCUBATING (window is 63 days)."
         )
-
 
     def test_rerunning_the_same_tick_response_twice_inserts_zero_duplicates(
         self, isolated_db, monkeypatch
@@ -248,9 +243,7 @@ class TestComposer422Handling:
 
         router = _run_backtest_router(
             {
-                "cand-422": lambda: _fake_result(
-                    error="HTTP 422: node-type-not-supported"
-                ),
+                "cand-422": lambda: _fake_result(error="HTTP 422: node-type-not-supported"),
                 "__spy__": lambda: _fake_result({"2026-01-05": 0.05}),
             }
         )

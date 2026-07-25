@@ -199,8 +199,7 @@ def test_subscript_style_scan_detects_a_planted_violation():
     )
     hits = _find_dict_style_or_env_access(planted_source, "INCUBATION_WINDOW_TRADING_DAYS")
     assert hits == [2], (
-        f"Expected the scan to detect the planted subscript violation at "
-        f"line 2, got {hits}."
+        f"Expected the scan to detect the planted subscript violation at line 2, got {hits}."
     )
 
 
@@ -211,7 +210,7 @@ def test_env_style_scan_detects_a_planted_violation():
         "import os\n"
         "\n"
         "def _read_config():\n"
-        "    n = int(os.environ.get(\"INCUBATION_MAX_FETCH_FAILURES\", 5))\n"
+        '    n = int(os.environ.get("INCUBATION_MAX_FETCH_FAILURES", 5))\n'
         "    return n\n"
     )
     hits = _find_dict_style_or_env_access(planted_source, "INCUBATION_MAX_FETCH_FAILURES")
@@ -227,9 +226,7 @@ def test_scan_reports_zero_hits_on_source_with_no_violation():
     completes the non-vacuity triangle (can detect a real hit; does not
     fabricate one)."""
     clean_source = (
-        "def _read_config(p):\n"
-        "    unrelated = p.get('SOME_OTHER_KEY', 1)\n"
-        "    return unrelated\n"
+        "def _read_config(p):\n    unrelated = p.get('SOME_OTHER_KEY', 1)\n    return unrelated\n"
     )
     hits = _find_dict_style_or_env_access(clean_source, "MAX_INCUBATING")
     assert hits == [], (

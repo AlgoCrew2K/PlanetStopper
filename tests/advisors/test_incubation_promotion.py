@@ -30,7 +30,10 @@ import pathlib
 import pytest
 
 _FIXTURE_PATH = (
-    pathlib.Path(__file__).parent.parent / "fixtures" / "math" / "incubation_promotion_scenarios.json"
+    pathlib.Path(__file__).parent.parent
+    / "fixtures"
+    / "math"
+    / "incubation_promotion_scenarios.json"
 )
 
 _FIXTURE = json.loads(_FIXTURE_PATH.read_text(encoding="utf-8"))
@@ -190,9 +193,7 @@ class TestPromotionPurity:
         composer_backtest_client (the single seam tests mock), never a raw HTTP call."""
         import pathlib
 
-        module_path = (
-            pathlib.Path(__file__).parent.parent.parent / "advisors" / "incubation.py"
-        )
+        module_path = pathlib.Path(__file__).parent.parent.parent / "advisors" / "incubation.py"
         assert module_path.is_file(), (
             f"advisors/incubation.py not found at {module_path} -- module not yet created."
         )

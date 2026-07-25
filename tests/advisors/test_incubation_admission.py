@@ -50,13 +50,17 @@ _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
 
 def _spy_tree():
     return symphony_schema.make_root(
-        "SPY Only", "daily", [symphony_schema.make_weight_equal([symphony_schema.make_asset("SPY")])]
+        "SPY Only",
+        "daily",
+        [symphony_schema.make_weight_equal([symphony_schema.make_asset("SPY")])],
     )
 
 
 def _qqq_tree():
     return symphony_schema.make_root(
-        "QQQ Only", "daily", [symphony_schema.make_weight_equal([symphony_schema.make_asset("QQQ")])]
+        "QQQ Only",
+        "daily",
+        [symphony_schema.make_weight_equal([symphony_schema.make_asset("QQQ")])],
     )
 
 
@@ -240,7 +244,9 @@ def _run_propose_strategies_against_real_db(monkeypatch):
     call, per the structural no-live-API guard) but a REAL database write path --
     proves the admission wiring reaches the DB, not just that a function exists."""
     monkeypatch.setattr(sbe, "_has_composer_key", lambda: True)
-    monkeypatch.setattr(sbe, "_generate_candidate_trees", MagicMock(return_value=[_make_candidate_info()]))
+    monkeypatch.setattr(
+        sbe, "_generate_candidate_trees", MagicMock(return_value=[_make_candidate_info()])
+    )
     monkeypatch.setattr(sbe, "run_backtest", _routed_run_backtest)
 
     return sbe.propose_strategies(
@@ -275,9 +281,7 @@ class TestAdmissionWiringEndToEnd:
             f"Ledger contains: {hashes}. Admission is not wired at the Step-5 seam."
         )
 
-    def test_persisted_raw_response_carries_the_same_candidate_hash(
-        self, isolated_db, monkeypatch
-    ):
+    def test_persisted_raw_response_carries_the_same_candidate_hash(self, isolated_db, monkeypatch):
         """WIRE2 (AC-5 join-key contract): the advisor_observations row's
         raw_response.candidate_hash must be the SAME value the incubation ledger
         used -- this is the only join key the live-status badge relies on."""
@@ -300,9 +304,7 @@ class TestAdmissionWiringEndToEnd:
             "Status is computed live via the candidate_hash join, not stored here."
         )
 
-    def test_admission_failure_does_not_break_the_existing_persist(
-        self, isolated_db, monkeypatch
-    ):
+    def test_admission_failure_does_not_break_the_existing_persist(self, isolated_db, monkeypatch):
         """WIRE3 (D-1): if the admission call raises, the existing
         insert_advisor_observation persist must still succeed -- mirrors the shipped
         insert_frontrunner_proposal try/except precedent (strategy_builder_engine.py
@@ -480,12 +482,8 @@ class TestSingleAdmissionSeam:
         _WORKTREE_ROOT / "advisors" / "strategy_builder_scheduler.py",
     )
 
-    @pytest.mark.parametrize(
-        "forbidden_file", _FORBIDDEN_FILES, ids=lambda p: p.name
-    )
-    def test_admission_symbols_not_referenced_outside_strategy_builder_engine(
-        self, forbidden_file
-    ):
+    @pytest.mark.parametrize("forbidden_file", _FORBIDDEN_FILES, ids=lambda p: p.name)
+    def test_admission_symbols_not_referenced_outside_strategy_builder_engine(self, forbidden_file):
         assert forbidden_file.is_file(), f"Expected file not found: {forbidden_file}"
         source = forbidden_file.read_text(encoding="utf-8")
         for symbol in ("admit_candidate", "register_incubation_candidate"):

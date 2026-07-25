@@ -113,7 +113,9 @@ class TestIncubationJsWiring:
         # innerHTML assignment in the same neighborhood (loose structural check --
         # a tight AST check is out of scope for a source-string test).
         if "/api/incubation" not in js:
-            pytest.skip("incubation fetch not yet present -- covered by test_js_fetches_incubation_route")
+            pytest.skip(
+                "incubation fetch not yet present -- covered by test_js_fetches_incubation_route"
+            )
         idx = js.index("/api/incubation")
         window = js[max(0, idx - 400) : idx + 2000]
         assert ".innerHTML" not in window, (
