@@ -8,7 +8,10 @@ THE IMPLEMENTATION DELIVERABLES (all must land for these tests to go GREEN):
   1. migrations/037_strategy_incubation.sql:
        strategy_incubation(id, candidate_hash UNIQUE, tree_json, objective,
        provenance, admitted_at, backtest_mdd_pct, status DEFAULT 'INCUBATING',
-       status_reason, status_changed_at, promoted_at)
+       status_reason, status_changed_at, promoted_at,
+       fetch_failure_count INTEGER NOT NULL DEFAULT 0 [added 2026-07-25, PM
+       ruling -- see .claude/tdd-handoff.md; NOT in the first 037 commit
+       (787e0649), a follow-up amendment to the same unshipped migration])
        incubation_daily(id, candidate_hash, trading_day, forward_return_pct,
        spy_return_pct, UNIQUE(candidate_hash, trading_day))
   2. database._MIGRATION_FILES: append '037_strategy_incubation.sql' after
@@ -21,6 +24,11 @@ THE IMPLEMENTATION DELIVERABLES (all must land for these tests to go GREEN):
        set_incubation_status(candidate_hash, status, status_reason=None) -> None
        get_incubating() -> list[dict]
        get_incubation_overview() -> list[dict] (each row + days_observed)
+       record_incubation_fetch_outcome(candidate_hash, ok: bool) -> int
+           [added 2026-07-25, PM ruling -- ok=False increments
+           fetch_failure_count, ok=True resets it to 0, returns the resulting
+           count. The ONLY sanctioned write path to that column -- no raw SQL
+           against it from advisors/incubation.py.]
 
 Coverage (all FAIL RED until GREEN implementation lands):
   M1: migration file exists on disk
@@ -28,12 +36,14 @@ Coverage (all FAIL RED until GREEN implementation lands):
   M3: run_migrations() is idempotent for 037
   M4: 037 registered in _MIGRATION_FILES after 036 (order-vs-neighbor, no is-last pin)
   M5: migration does not reference the optimization DB (two-DB boundary)
+  M6: strategy_incubation has the fetch_failure_count column (schema pin)
 
   REG1-REG7: register_incubation_candidate idempotency/refractory/cap contract
   APP1-APP2: append_incubation_day idempotency
   SET1-SET3: set_incubation_status write contract
   GI1-GI3: get_incubating filter/order/empty contract
   GO1-GO3: get_incubation_overview all-statuses/days_observed/empty contract
+  RFO1-RFO5: record_incubation_fetch_outcome increment/reset/return contract
 
 Fixture: none -- rows are seeded directly via the production accessors under
 test, matching feedback_no_hardcoded_test_values -- every expected value is
@@ -182,6 +192,35 @@ def test_037_migration_does_not_reference_opt_db():
     assert not re.search(r"alphabot_opt|\.opt\.db", sql, re.IGNORECASE), (
         "037_strategy_incubation.sql must not reference the optimization DB "
         "(architecture constraint 3: two-DB boundary)."
+    )
+
+
+def test_strategy_incubation_has_fetch_failure_count_column(migrated_db):
+    """M6 (PM ruling, 2026-07-25 -- added after the first 037 commit 787e0649
+    shipped without it): strategy_incubation must have a fetch_failure_count
+    INTEGER NOT NULL DEFAULT 0 column -- the durable home for the daily tick's
+    consecutive-fetch-failure counter (record_incubation_fetch_outcome's only
+    write target). Schema-level pin, independent of the accessor-behavior tests
+    below, per the PM's explicit 'extend the 037 schema test to pin the column'
+    instruction."""
+    conn = sqlite3.connect(migrated_db)
+    try:
+        columns = {row[1]: row for row in conn.execute("PRAGMA table_info(strategy_incubation)")}
+    finally:
+        conn.close()
+
+    assert "fetch_failure_count" in columns, (
+        "strategy_incubation is missing the fetch_failure_count column. "
+        f"Columns present: {sorted(columns.keys())}."
+    )
+    _cid, _name, col_type, not_null, default_value, _pk = columns["fetch_failure_count"]
+    assert col_type.upper() == "INTEGER", (
+        f"fetch_failure_count must be INTEGER, got {col_type!r}."
+    )
+    assert not_null == 1, "fetch_failure_count must be NOT NULL."
+    # SQLite stores the DEFAULT clause as text ("0"); compare as int for robustness.
+    assert default_value is not None and int(default_value) == 0, (
+        f"fetch_failure_count must DEFAULT 0, got default={default_value!r}."
     )
 
 
@@ -484,3 +523,87 @@ class TestGetIncubationOverview:
     def test_overview_empty_ledger_returns_empty_list(self, migrated_db):
         """GO3: an empty ledger returns [], never raises."""
         assert db_module.get_incubation_overview() == []
+
+
+# ---------------------------------------------------------------------------
+# RFO1-RFO5: record_incubation_fetch_outcome contract
+# (PM ruling, 2026-07-25 -- the sole sanctioned write path to
+#  strategy_incubation.fetch_failure_count; advisors/incubation.py's daily tick
+#  is the only production caller, but the accessor's increment/reset/return
+#  contract is tested here directly, independent of the tick.)
+# ---------------------------------------------------------------------------
+
+
+class TestRecordIncubationFetchOutcome:
+    def test_failure_increments_from_zero(self, migrated_db):
+        """RFO1: a fresh candidate's first ok=False call returns 1 (0 -> 1)."""
+        db_module.register_incubation_candidate("hash-rfo-1", "{}", "cut_drawdown", "built-new", 8.0)
+        result = db_module.record_incubation_fetch_outcome("hash-rfo-1", ok=False)
+        assert result == 1, f"Expected the first failure to bring the count to 1, got {result}."
+
+    def test_repeated_failures_increment_monotonically(self, migrated_db):
+        """RFO2: three consecutive ok=False calls return 1, 2, 3 in order."""
+        db_module.register_incubation_candidate("hash-rfo-2", "{}", "cut_drawdown", "built-new", 8.0)
+        results = [
+            db_module.record_incubation_fetch_outcome("hash-rfo-2", ok=False) for _ in range(3)
+        ]
+        assert results == [1, 2, 3], (
+            f"Expected [1, 2, 3] for three consecutive failures, got {results}."
+        )
+
+    def test_success_resets_count_to_zero(self, migrated_db):
+        """RFO3: ok=True resets the count to 0 regardless of its prior value."""
+        db_module.register_incubation_candidate("hash-rfo-3", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.record_incubation_fetch_outcome("hash-rfo-3", ok=False)
+        db_module.record_incubation_fetch_outcome("hash-rfo-3", ok=False)
+        db_module.record_incubation_fetch_outcome("hash-rfo-3", ok=False)
+
+        result = db_module.record_incubation_fetch_outcome("hash-rfo-3", ok=True)
+        assert result == 0, f"Expected a success to reset the count to 0, got {result}."
+
+    def test_return_value_matches_the_persisted_column(self, migrated_db):
+        """RFO4: the returned int always equals the actual persisted
+        fetch_failure_count value -- not a stale/cached value from before the write."""
+        db_module.register_incubation_candidate("hash-rfo-4", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.record_incubation_fetch_outcome("hash-rfo-4", ok=False)
+        returned = db_module.record_incubation_fetch_outcome("hash-rfo-4", ok=False)
+
+        conn = db_module.get_connection()
+        try:
+            persisted = conn.execute(
+                "SELECT fetch_failure_count FROM strategy_incubation WHERE candidate_hash = ?",
+                ("hash-rfo-4",),
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        assert returned == persisted == 2, (
+            f"Returned value {returned} must match the persisted column value "
+            f"{persisted}, and both must equal 2 after two consecutive failures."
+        )
+
+    def test_success_after_failures_persists_the_reset_not_just_the_return_value(
+        self, migrated_db
+    ):
+        """RFO5 (adversarial): a buggy implementation could return 0 on success
+        without actually writing 0 to the column (e.g. returning a hardcoded
+        literal instead of the post-write value). Verify the reset is durable by
+        reading the column back independently after the call returns."""
+        db_module.register_incubation_candidate("hash-rfo-5", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.record_incubation_fetch_outcome("hash-rfo-5", ok=False)
+        db_module.record_incubation_fetch_outcome("hash-rfo-5", ok=False)
+        db_module.record_incubation_fetch_outcome("hash-rfo-5", ok=True)
+
+        conn = db_module.get_connection()
+        try:
+            persisted = conn.execute(
+                "SELECT fetch_failure_count FROM strategy_incubation WHERE candidate_hash = ?",
+                ("hash-rfo-5",),
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        assert persisted == 0, (
+            f"Expected the reset to be durably persisted at 0, found {persisted} "
+            "in the database on independent read-back."
+        )

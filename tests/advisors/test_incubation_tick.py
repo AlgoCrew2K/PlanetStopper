@@ -317,10 +317,11 @@ class TestFetchFailureEscalation:
     def test_failure_counter_persists_across_a_simulated_process_restart(
         self, isolated_db, monkeypatch
     ):
-        """TICK5b (ga3-adv recon finding, 2026-07-25, ruled by ga3-tw): the
-        consecutive-fetch-failure counter must be DURABLY persisted (the
-        strategy_incubation.consecutive_fetch_failures column), not an
-        in-memory-only counter. An in-memory dict would technically satisfy
+        """TICK5b (ga3-adv recon finding, 2026-07-25; column name + accessor
+        design finalized by PM ruling): the consecutive-fetch-failure counter
+        must be DURABLY persisted (the strategy_incubation.fetch_failure_count
+        column, written exclusively via database.record_incubation_fetch_outcome),
+        not an in-memory-only counter. An in-memory dict would technically satisfy
         the two tests above (they call run_incubation_tick() repeatedly within
         one process) but would silently reset to 0 on every real app.py
         restart, defeating the escalation threshold in production. This test
@@ -368,7 +369,7 @@ class TestFetchFailureEscalation:
             f"restart) must expire the candidate, got status={row['status']!r}. "
             "If this test fails while the same-process 5-failure test passes, the "
             "failure counter is stored in-memory (module-level state) instead of "
-            "the durable strategy_incubation.consecutive_fetch_failures column -- "
+            "the durable strategy_incubation.fetch_failure_count column -- "
             "it must survive a real daemon restart."
         )
         assert row["status_reason"] == "fetch_failures_exhausted"
