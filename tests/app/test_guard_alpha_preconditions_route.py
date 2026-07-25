@@ -432,3 +432,245 @@ class TestReadOnlyScope:
                 f"guard_alpha_preconditions() source contains {forbidden!r} -- "
                 "this route must be read-only SQLite (AC-6, Security Considerations)."
             )
+
+
+# ---------------------------------------------------------------------------
+# Hygiene cycle (fix/route-phantom-keys-log-noise, 2026-07-25): structural
+# symphony-entry discriminator + phantom-key exclusion.
+#
+# THE DEFECT: guard_alpha_preconditions() iterates `for sym_id in
+# bot_state_dict:` over EVERY top-level bot_state key, including 5 known
+# non-symphony metadata keys (date, last_execution_mode,
+# last_market_close_snapshot, last_successful_cycle_at, post_mortem_run) --
+# each renders as a phantom INSUFFICIENT_DATA "symphony" row (16 rows served,
+# 11 real, on the droplet). See feature-plans/preconditions-phantom-keys-
+# and-cache-log-noise.md.
+#
+# THE FIX: a structural (shape-of-the-value) discriminator --
+# `_is_symphony_state_entry(value) -> bool` = isinstance(value, dict) and
+# "name" in value -- the SAME convention already used at 7 other app.py call
+# sites (including _compute_portfolio_strip, app.py:1504) to build the real
+# symphony list from bot_state. Deliberately NOT a name-based denylist of
+# the 5 known keys -- AC-2 requires a future non-symphony metadata key to be
+# excluded WITHOUT a code change; a name denylist is an automatic review
+# reject.
+# ---------------------------------------------------------------------------
+
+# Realistic non-symphony bot_state metadata values -- mirrors the real value
+# TYPES the engine writes (alpha_bot_execution.py): date/last_successful_
+# cycle_at/post_mortem_run are plain date/timestamp strings;
+# last_execution_mode is the bool LIVE_EXECUTION (alpha_bot_execution.py:70,
+# :725); last_market_close_snapshot is dict-valued but its keys are
+# trading_day/captured_at_et/data_as_of/portfolio_strip/shadow_divergence/
+# accounts_map -- never "name" (alpha_bot_execution.py:1135-1145).
+_REALISTIC_METADATA_KEYS = {
+    "date": "2026-07-24",
+    "last_execution_mode": True,
+    "last_successful_cycle_at": "2026-07-24T15:59:00-04:00",
+    "post_mortem_run": "2026-07-24",
+    "last_market_close_snapshot": {
+        "trading_day": "2026-07-24",
+        "captured_at_et": "16:00:00 ET",
+        "data_as_of": "16:00 ET",
+        "portfolio_strip": {},
+        "shadow_divergence": {"by_symphony": {}, "portfolio": None},
+        "accounts_map": {},
+    },
+}
+
+
+class TestSymphonyEntryDiscriminatorHelper:
+    """Pure unit tests for app._is_symphony_state_entry -- no I/O, no Flask
+    client. The route-level filtering tests below exercise the same
+    discriminator wired into the real route."""
+
+    def test_real_symphony_shaped_dict_qualifies(self):
+        assert (
+            app_module._is_symphony_state_entry(
+                {"name": "Growth Symphony", "current_return": 1.5, "triggered": False}
+            )
+            is True
+        )
+
+    def test_degenerate_dict_with_only_name_still_qualifies(self):
+        # A thin/degenerate real symphony (AC-3, no-self-regression) -- as
+        # long as "name" survives, the entry is still symphony-shaped.
+        assert app_module._is_symphony_state_entry({"name": ""}) is True
+
+    def test_metadata_dict_without_name_key_is_excluded(self):
+        # Mirrors last_market_close_snapshot's real shape exactly.
+        assert (
+            app_module._is_symphony_state_entry(
+                _REALISTIC_METADATA_KEYS["last_market_close_snapshot"]
+            )
+            is False
+        )
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "2026-07-24",  # date / post_mortem_run shape
+            True,  # last_execution_mode shape (LIVE_EXECUTION is a real bool)
+            "2026-07-24T15:59:00-04:00",  # last_successful_cycle_at shape
+        ],
+    )
+    def test_non_dict_metadata_values_are_excluded(self, value):
+        assert app_module._is_symphony_state_entry(value) is False
+
+    @pytest.mark.parametrize("value", [None, [], [{"name": "x"}], 42, 3.14])
+    def test_other_non_dict_shapes_are_excluded(self, value):
+        assert app_module._is_symphony_state_entry(value) is False
+
+
+class TestPhantomKeyExclusion:
+    """Route-level pin for the hygiene-cycle phantom-keys fix (AC-1..AC-4).
+
+    bot_state top-level keys mixed: real symphony entries + the 5 known
+    non-symphony metadata keys (realistic value shapes, see
+    _REALISTIC_METADATA_KEYS above) -- proves the route's response never
+    surfaces a metadata key as a symphony row.
+    """
+
+    def test_phantom_metadata_keys_never_appear_as_symphony_rows(self, client, monkeypatch):
+        sym_a = "sym-real-a"
+        sym_b = "sym-real-b"
+        bot_state = {
+            sym_a: {"name": "Real Symphony A", "current_return": 1.0},
+            sym_b: {"name": "Real Symphony B", "current_return": -0.5},
+            **_REALISTIC_METADATA_KEYS,
+        }
+        monkeypatch.setattr(database_module, "load_state", lambda: bot_state)
+        monkeypatch.setattr(autotuner_module, "build_if_held_replay_series", lambda sid: None)
+        monkeypatch.setattr(
+            analytics_module, "get_shadow_current_return_daily_series", lambda sid, db_file: None
+        )
+
+        resp = client.get(_ROUTE)
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        symphonies = data["symphonies"]
+        assert set(symphonies.keys()) == {sym_a, sym_b}, (
+            f"Expected exactly the 2 real symphony keys, got "
+            f"{sorted(symphonies.keys())!r} -- a phantom metadata key leaked "
+            f"into the response as a fake symphony row."
+        )
+        for metadata_key in _REALISTIC_METADATA_KEYS:
+            assert metadata_key not in symphonies, (
+                f"Metadata key {metadata_key!r} must never appear as a "
+                f"symphony row (AC-1), got it present with value "
+                f"{symphonies.get(metadata_key)!r}."
+            )
+
+    def test_metadata_only_bot_state_yields_honest_empty_state(self, client, monkeypatch):
+        # AC-4: no real symphony entries anywhere, only known metadata keys.
+        monkeypatch.setattr(database_module, "load_state", lambda: dict(_REALISTIC_METADATA_KEYS))
+
+        resp = client.get(_ROUTE)
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data.get("symphonies") == {}, (
+            f"A metadata-only bot_state must yield the route's honest empty "
+            f"state (zero symphony rows, HTTP 200), got {data!r}."
+        )
+
+    def test_degenerate_real_symphony_still_appears_alongside_metadata(self, client, monkeypatch):
+        # AC-3 no-self-regression: a real-but-thin symphony (keeps "name",
+        # nothing else) must still render its existing honest degraded
+        # verdict -- the filter may only exclude non-symphony entries, never
+        # degrade real ones.
+        thin_sym = "sym-thin-real"
+        bot_state = {
+            thin_sym: {"name": "Thin Symphony"},
+            **_REALISTIC_METADATA_KEYS,
+        }
+        monkeypatch.setattr(database_module, "load_state", lambda: bot_state)
+        monkeypatch.setattr(autotuner_module, "build_if_held_replay_series", lambda sid: None)
+        monkeypatch.setattr(
+            analytics_module, "get_shadow_current_return_daily_series", lambda sid, db_file: None
+        )
+
+        resp = client.get(_ROUTE)
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert thin_sym in data["symphonies"], (
+            f"A real-but-thin symphony (only 'name' set) must still appear "
+            f"in the response -- the phantom-key filter must never degrade "
+            f"a real (if sparse) entry, got "
+            f"keys={list(data['symphonies'].keys())!r}."
+        )
+        entry = data["symphonies"][thin_sym]
+        assert entry["replay"]["verdict"] == "INSUFFICIENT_DATA"
+        assert entry["shadow"]["verdict"] == "INSUFFICIENT_DATA"
+        # Joint proof (non-vacuity): "thin_sym present" alone is true even on
+        # UNFILTERED code (nothing ever removed it). The real no-self-
+        # regression claim is the CONJUNCTION -- the thin real symphony
+        # survives WHILE the co-present metadata keys are excluded -- which
+        # only a correct filter satisfies simultaneously.
+        for metadata_key in _REALISTIC_METADATA_KEYS:
+            assert metadata_key not in data["symphonies"], (
+                f"Metadata key {metadata_key!r} must be excluded even when a "
+                f"genuinely thin real symphony is present in the same "
+                f"bot_state, got it present with value "
+                f"{data['symphonies'].get(metadata_key)!r}."
+            )
+
+    def test_novel_metadata_shaped_key_excluded_without_a_denylist_entry(
+        self, client, monkeypatch
+    ):
+        # AC-2 anti-rot proof: a key NEVER referenced anywhere in app.py's
+        # source, dict-valued but WITHOUT "name" -- a hardcoded denylist of
+        # the 5 known names would leave this present (masquerading as a
+        # phantom symphony); only a genuinely structural rule excludes it.
+        novel_key = "future_engine_telemetry_marker_zz9"
+        assert novel_key not in inspect.getsource(app_module), (
+            f"Test invariant violated: {novel_key!r} must not already be "
+            f"referenced anywhere in app.py -- otherwise this is not a "
+            f"genuine 'novel' key and the anti-rot proof is meaningless."
+        )
+        real_sym = "sym-real-c"
+        bot_state = {
+            real_sym: {"name": "Real Symphony C"},
+            novel_key: {"some_future_field": "some_value"},  # dict, no "name"
+        }
+        monkeypatch.setattr(database_module, "load_state", lambda: bot_state)
+        monkeypatch.setattr(autotuner_module, "build_if_held_replay_series", lambda sid: None)
+        monkeypatch.setattr(
+            analytics_module, "get_shadow_current_return_daily_series", lambda sid, db_file: None
+        )
+
+        resp = client.get(_ROUTE)
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert novel_key not in data["symphonies"], (
+            f"Novel metadata-shaped key {novel_key!r} (never referenced in "
+            f"app.py source) leaked into the response as a symphony row -- "
+            f"this indicates a name-based denylist implementation rather "
+            f"than AC-2's required structural discriminator."
+        )
+        assert real_sym in data["symphonies"]
+
+    def test_non_dict_stray_value_is_excluded_and_never_500s(self, client, monkeypatch):
+        # Plan edge case: "A symphony value that is structurally degenerate
+        # (e.g. not a dict) -> excluded by the structural rule; this is
+        # correct -- it was never renderable as a symphony."
+        real_sym = "sym-real-d"
+        bot_state = {
+            real_sym: {"name": "Real Symphony D"},
+            "some_stray_scalar_key": 12345,
+            "some_stray_list_key": [1, 2, 3],
+        }
+        monkeypatch.setattr(database_module, "load_state", lambda: bot_state)
+        monkeypatch.setattr(autotuner_module, "build_if_held_replay_series", lambda sid: None)
+        monkeypatch.setattr(
+            analytics_module, "get_shadow_current_return_daily_series", lambda sid, db_file: None
+        )
+
+        resp = client.get(_ROUTE)
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert set(data["symphonies"].keys()) == {real_sym}
