@@ -142,17 +142,68 @@ class TestCandidateHashConvention:
 # ---------------------------------------------------------------------------
 
 
-def _make_fake_result(n_days: int = 100, base_return: float = 0.001):
+def _make_fake_result(n_days: int = 150, base_return: float = 0.001, factor_cycle=None):
     from advisors.composer_backtest_client import BacktestResult
 
+    # Default cycle is the original monotonic-positive pattern -- kept as the
+    # default for any other caller of this helper (none currently pass
+    # factor_cycle), but WIRE-test callers below pass a mixed-sign cycle (see
+    # the second root-cause note on _routed_run_backtest).
+    cycle = factor_cycle if factor_cycle is not None else [0.8, 0.9, 1.0, 1.1, 1.2]
     returns: dict[str, float] = {}
     d = date(2022, 1, 1)
     for i in range(n_days):
-        returns[d.isoformat()] = base_return * (1 + (i % 5) * 0.1 - 0.2)
+        returns[d.isoformat()] = base_return * cycle[i % len(cycle)]
         d += timedelta(days=1)
     return BacktestResult(
         stats={"sharpe": 0.5, "cagr": 0.08}, data_warnings=[], daily_returns=returns
     )
+
+
+# Matches propose_strategies' own internal 100%-SPY benchmark tree name
+# (strategy_builder_engine.py:993-998 -- symphony_schema.make_root("SPY Benchmark", ...)).
+_SPY_BENCHMARK_TREE_NAME = "SPY Benchmark"
+
+# Mixed-sign factor cycle -- MUST include at least one negative entry per
+# cycle. Second root cause (found while fixing the first, verified against
+# backtest_gate_engine.py:786-799 + autotuner.compute_sortino_tstat): the
+# BHY/FDR gate scores candidates via a SORTINO t-statistic, which needs a
+# non-zero DOWNSIDE deviation to be meaningful. The original all-positive
+# cycle [0.8,0.9,1.0,1.1,1.2] has zero down-days -> undefined/degenerate
+# downside deviation -> compute_sortino_tstat falls back to t=0.0 -> p=0.5
+# ("empty validation fold" sentinel per backtest_gate_engine.py:773) -> fails
+# BHY regardless of how large oos_alpha is. This cycle keeps ~80% up-days
+# (strong net positive drift) with one down-day per 5, giving Sortino a real
+# downside sample to compute against.
+_MIXED_SIGN_CYCLE = [1.5, 1.0, 0.5, -0.4, 1.2]
+
+
+def _routed_run_backtest(raw_value, symphony_id: str = "", **kwargs):
+    """Dispatch on tree name so the candidate genuinely beats the SPY baseline.
+
+    Two compounding root causes found and fixed here (ga3-adv found the first,
+    2026-07-25; the second surfaced while verifying the first fix):
+
+    1. A naive `lambda *a, **k: _make_fake_result()` returns the IDENTICAL
+       series for both the candidate and propose_strategies' own internal
+       SPY-benchmark call (Step 2a) -- producing an exact oos_alpha TIE. The
+       gate condition is non-strict (`fold.oos_alpha <= _effective_
+       default_oos_alpha`), so a tie is classified as NOT beating SPY ->
+       rejection_reason='below_spy_alpha'. Fixed by dispatching on tree name
+       (mirrors test_incubation_tick.py's `_run_backtest_router` pattern) so
+       SPY gets a clearly worse series than the candidate.
+    2. An all-positive return series (zero down-days) breaks the Sortino
+       t-statistic the BHY/FDR gate scores on (see _MIXED_SIGN_CYCLE above) --
+       candidates were being rejected with rejection_reason='fdr_not_winner'
+       (winner_p_adj=0.5, the degenerate-fold sentinel) even after fix #1
+       resolved the SPY tie. Fixed by using a mixed-sign cycle with a real,
+       if minority, share of down-days.
+    """
+    if isinstance(raw_value, dict) and raw_value.get("name") == _SPY_BENCHMARK_TREE_NAME:
+        # SPY: net negative drift, same mixed-sign shape (down-days included).
+        return _make_fake_result(base_return=-0.006, factor_cycle=_MIXED_SIGN_CYCLE)
+    # Candidate: net strongly positive drift, same mixed-sign shape.
+    return _make_fake_result(base_return=0.006, factor_cycle=_MIXED_SIGN_CYCLE)
 
 
 def _make_candidate_info(candidate_id: str = "cand-1"):
@@ -190,7 +241,7 @@ def _run_propose_strategies_against_real_db(monkeypatch):
     proves the admission wiring reaches the DB, not just that a function exists."""
     monkeypatch.setattr(sbe, "_has_composer_key", lambda: True)
     monkeypatch.setattr(sbe, "_generate_candidate_trees", MagicMock(return_value=[_make_candidate_info()]))
-    monkeypatch.setattr(sbe, "run_backtest", lambda *a, **k: _make_fake_result())
+    monkeypatch.setattr(sbe, "run_backtest", _routed_run_backtest)
 
     return sbe.propose_strategies(
         objective=sbe.Objective.diversify,
