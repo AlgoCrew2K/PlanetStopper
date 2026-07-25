@@ -116,6 +116,111 @@ not a bare `float`. Fix candidate: correct the declared type hint (and the stale
 to match actual usage in the same pass as the column-discriminator fix above, since both
 touch the same declaration line.
 
+### `tests/test_scope_guard_f7.py::test_math_engine_not_in_diff` was a permanent tripwire, not an F7-scoped guard -- FIXED this cycle (found + fixed 2026-07-24, exit-friction-realized-savings cycle, ga2-tw)
+**[FIXED `bb731525`, same cycle.]** Kept as the record of the defect and its fix. The test
+enforced "`math_engine.py` has zero diff since the F7 RED anchor commit" -- correct and useful
+DURING the F7 cycle (`feature-plans/math-f7.md` AC-5: `math_engine.py` out of scope for that
+cycle's display/diagnostic-only fix), but the anchor was git-derived from a FIXED historical
+commit (`git log --follow` on `tests/execution/test_f7_ac1_persist_guard.py`, resolving to
+`7752bb00`) with an unbounded anchor-to-CURRENT-HEAD diff window -- it never stopped enforcing
+"F7 scope" once F7 itself shipped. Any LATER cycle touching `math_engine.py` (`6f38b86e` MA-11,
+`43a458f8` MA-4, both already-shipped math-remediation cycles) tripped it forever afterward,
+for every subsequent branch, regardless of relevance to F7 -- reproduced and independently
+re-verified on this branch (anchor SHA, both offending commits, their ancestry to the fork
+point `ccda9abe`, clean working tree, and the live test failure).
+
+**Second, independent root cause found while fixing it:** CI had been passing this test
+VACUOUSLY, not correctly. `.github/workflows/tests.yml`'s `actions/checkout@v4` has no
+`fetch-depth` override (shallow, depth 1 by default), which breaks `git log --follow`'s
+ability to walk back past the shallow boundary -- in that shallow clone the "anchor" silently
+resolved to the shallow tip commit itself, collapsing the diff-since-anchor to a commit diffed
+against itself (always empty). CI was never actually exercising the assertion.
+
+**Fix:** F7 is a shipped, closed cycle (PR #99, merged `bd2c8d5d`) -- its scope claim is a
+fixed historical fact, not a live-forever invariant. Rebound the diff to F7's own two fixed
+endpoints (`7752bb00..bd2c8d5d`) instead of `<anchor>..HEAD` -- permanently correct (verified
+empty diff on `math_engine.py` in that exact range) and shallow-clone-safe (a shallow clone
+missing those specific commits makes the diff command itself fail loudly, rc=128, routing to
+the existing skip path, rather than silently resolving to a wrong anchor). Verified GREEN: 2/2
+in the file.
+
+**Sibling `tests/test_scope_guard.py` (DE-EOD-BASIS-001) had the IDENTICAL design flaw --
+NOT fixed by `bb731525` itself (different AC/cycle), but FIXED in-cycle by a follow-up commit,
+`361d218c`. Full record in its own entry immediately below.**
+
+### `tests/test_scope_guard.py` (DE-EOD-BASIS-001) was a permanent tripwire, not an EOD-basis-scoped guard -- FIXED this cycle (found + fixed 2026-07-24, exit-friction-realized-savings cycle, ga2-tw)
+**[FIXED `361d218c`, same cycle.]** Kept as the record of the defect and its fix, same pattern
+as the F7 entry above. Structurally identical to the F7 scope guard: dynamically resolved its
+anchor via `git log --follow -- tests/dashboard/test_eod_account_basis.py` (resolves to
+`848acf94`, the DE-EOD-BASIS-001 PR #89 commit), then diffed `<anchor>..HEAD` forever, checking
+two forbidden files (`alpha_bot_execution.py`, `math_engine.py`). Both defects independently
+confirmed before the fix (by ga2-tw, then re-verified by this doc-writer, not taken on report
+alone):
+
+1. **Already tripped, not merely at future risk.** `pytest tests/test_scope_guard.py -n0`
+   FAILED 2/2 (`test_alpha_bot_execution_not_in_diff` AND `test_math_engine_not_in_diff`) prior
+   to the fix. `git log 848acf94..HEAD -- alpha_bot_execution.py` showed 5 offending commits
+   (`0c5d3e86` Managed Sleeves, `6f38b86e` MA-11, `43a458f8` MA-4, `ed194259` F7 AC-1/AC-4,
+   `ba331a30` non-finite persistence policy); `git log 848acf94..HEAD -- math_engine.py` showed
+   2 (`6f38b86e`, `43a458f8` -- same pair as the F7 sibling). `git merge-base --is-ancestor`
+   confirmed ALL FIVE were ancestors of this branch's fork point (`ccda9abe`) -- pre-existing,
+   not introduced by exit-friction-realized-savings.
+2. **Same CI shallow-clone masking risk.** `.github/workflows/tests.yml`'s
+   `actions/checkout@v4` has no `fetch-depth` override -- the identical condition that made
+   the F7 sibling pass vacuously in CI rather than genuinely.
+
+**Fix (`361d218c`):** DE-EOD-BASIS-001's PR #89 was squash-merged into a SINGLE commit
+(`848acf94`) containing both the RED tests and the GREEN implementation -- unlike F7, which had
+a separate RED-anchor commit (`7752bb00`) and a later, distinct merge commit (`bd2c8d5d`) to
+rebind between. With no two-endpoint "cycle range" available, the fix rebinds to that single
+commit's own diff against its ACTUAL parent SHA -- `30b89c01..848acf94` (not the speculative
+`848acf94^..848acf94` shorthand this entry originally floated as a fix candidate; ga2-tw
+resolved `^` to the literal parent SHA before rebinding). Verified BEFORE rebinding, exactly as
+F7's promise was verified: the diff between those two commits on the two forbidden files is
+empty -- DE-EOD-BASIS-001 genuinely kept its scope promise, no historical violation to report.
+Shallow-clone safety re-verified the same way as F7 (real depth=1 reproduction: fails loudly,
+`fatal: bad object`, rc=128, routing to the pre-existing skip path rather than silently
+resolving wrong). Verified GREEN: 3/3 (both scope tests + the meta test).
+
+**Independently re-verified by this doc-writer** (not taken on ga2-tw's report alone): parent
+SHA of `848acf94` confirmed as `30b89c01` via `git rev-parse 848acf94^`; `pytest
+tests/test_scope_guard.py -n0` re-run directly -- 3/3 PASSED; `pytest tests/test_scope_guard_f7.py
+-n0` re-run to confirm the F7 fix is still intact -- 2/2 PASSED; `git diff --name-only 30b89c01
+848acf94 -- alpha_bot_execution.py math_engine.py` re-run directly -- empty, confirming the
+scope-promise-held claim.
+
+**Both scope-guard files in this class are now FIXED -- no open items remain in that class.**
+The Class finding and Census below remain accurate as the standing record of the pattern (for
+any FUTURE scope-guard test written the same way), not as a description of current failures.
+
+**Class finding (not just these two instances) -- PM + ga2-tw, 2026-07-24:** fixed-SHA-based
+scope guards (the `git log --follow -- <anchor-file>` then `diff <anchor>..HEAD` idiom used by
+both files above) go stale BY CONSTRUCTION, not by accident, with two independent structural
+failure modes: (a) silently VACUOUS under any CI shallow checkout -- `fetch-depth` less than
+full history breaks dynamic anchor-discovery, collapsing the diff to a commit checked against
+itself (this is why CI never caught either instance); (b) even with full history, GUARANTEED
+to eventually false-fail the moment any future, unrelated cycle touches the forbidden file --
+there is no way to write "diff since some point in the past, forever" that stays both
+meaningful and non-brittle in a long-lived, actively-developed codebase. The durable patterns
+going forward: (a) bind the check to the OWNING cycle's own fixed, CLOSED range
+(RED-anchor..that-cycle's-own-merge-commit) once the cycle ships -- what `bb731525` did for
+F7 -- or (b) explicitly retire/delete the scope guard at cycle close, since its job (prevent
+scope creep DURING active development) is done once the PR merges and CI is green on it.
+
+**Census -- CLOSED, not an open remediation-scope task.** This doc-writer grepped the full
+`tests/` tree for the `git log --follow`-anchor + `diff --name-only <anchor> HEAD` idiom:
+exactly these two files use it -- no other instance found. (A third, similarly-named
+`tests/autotuner/test_r3c_scope_guard.py` was checked and is a DIFFERENT, safer pattern: a
+static assertion against current constant values with zero git subprocess calls -- already
+following durable pattern (b) above by construction, not exposed to either failure mode.)
+**Independently corroborated by ga2-tw via a second, broader method** (a literal `git`/`'git'`
+substring grep across all of `tests/` -- the widest possible net for anything shelling into
+git, not just this specific idiom): same result, exactly these two files, nothing else. Two
+independent search methods agreeing means the blast radius for this defect class is confirmed
+closed at 2, not an unknown-sized suite-wide risk. If a new scope-guard test is ever added, it
+should follow one of the two durable patterns from the outset rather than the anchor-to-HEAD
+idiom.
+
 ### Sleeves: mis-citing float-imprecision example in the price-rounding docstring — COSMETIC (found 2026-07-08, P3 smoke cycle)
 The bracket price-rounding (`_round_to_equity_tick`, sleeves/alpaca_orders.py, task #35) cites
 `495.00 / 0.01 == 49499.999999999993` as motivation, but that expression is exactly `49500.0` in
@@ -130,7 +235,17 @@ module-level init_db() BEFORE tests/conftest.py's pytest_configure() DB_PATH gua
 when tests/database is passed as an explicit pytest CLI target (bare `tests` root, as CI
 uses, is unaffected). Pre-existing on stock HEAD (confirmed via git stash by sleeve-db).
 Workaround: pre-set DB_PATH in the shell env. Fix candidate: defer init_db out of import
-time or make the database conftest set DB_PATH itself. Tier 1.
+time, or move the seed fixture's `database` import inside the fixture function so it is
+no longer module-scope. Tier 1.
+
+**Independently reproduced a second time** (found 2026-07-24, exit-friction-realized-savings
+cycle, ga2-tw): identical RuntimeError, identical trigger condition, this time on an
+already-shipped, presumably-GREEN file (`tests/database/test_029_exit_triggers_also_true.py`)
+— reproduced BEFORE the cycle's own new `tests/database/test_exit_turnover_stats.py` was ever
+touched, ruling out a cycle-introduced regression. Confirms this is a recurring footgun for
+anyone invoking pytest against `tests/database/` files directly as a CLI target, not a one-off
+from the original 2026-07-07 report. Same workaround applies (`export DB_PATH=<any writable
+temp path>`); not needed for full-suite runs via `testpaths`/no-args or `/run-tests`.
 
 ### Fundamentals lens `sources[].url` hardcodes `type=10-K` query param — COSMETIC (found 2026-07-13, advisor-suite live re-verify)
 The AAPL fundamentals payload correctly selects the latest 10-Q (`end=2026-03-28`, `filed=2026-05-01`,

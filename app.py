@@ -3235,6 +3235,16 @@ def guard_alpha_summary():
             strings extracted from filenames; both None when no files exist.
         basis_label (str): "snapshot-time basis, since <earliest>" when files exist;
             "no guard events yet" for empty-state.
+        saved_dollars_realized (float): AC-6 (exit-friction-realized-savings) —
+            sum of saved_dollars_realized across valid trigger entries that carry
+            the field. Additive to cumulative_saved_dollars, never a replacement;
+            0.0 when no entries have realized data. This is an EOD-marks basis
+            (RULING A) — it captures post-snapshot drift through the rebalance
+            window, not fill-level slippage.
+        realized_coverage (dict): {"with_data": int, "total": int} — AC-7: an
+            entry missing realized data is EXCLUDED from saved_dollars_realized,
+            COUNTED in total, never counted in with_data, never substituted with
+            the snapshot-basis value.
     """
     import glob as _glob
     import json as _json  # noqa: PLC0415 — stdlib, lazy for locality
@@ -3247,6 +3257,14 @@ def guard_alpha_summary():
     guard_event_count = 0
     excluded_invalid_count = 0
     dates: list[str] = []
+    # AC-6/AC-7 (exit-friction-realized-savings): realized-basis aggregate +
+    # coverage counters, additive to the snapshot-basis aggregate above.
+    # Initialized here — before both the post-mortem-files loop below AND the
+    # day-1 exit_triggers-intraday fallback branch further down — so either
+    # path returns the honest zeroed state when no realized data exists yet.
+    saved_dollars_realized = 0.0
+    realized_with_data = 0
+    realized_total = 0
 
     for fpath in files:
         try:
@@ -3268,6 +3286,16 @@ def guard_alpha_summary():
             if analytics.is_valid_post_mortem_entry(t):
                 cumulative_saved_dollars += float(t.get("saved_dollars", 0.0))
                 guard_event_count += 1
+                # AC-6/AC-7/AC-9: saved_dollars_realized is additive-only — absent
+                # on old-format files and on entries Stage-2 couldn't resolve a
+                # shadow_history row for. Counted in realized_total regardless
+                # (same denominator as guard_event_count); only counted in
+                # realized_with_data and summed when the field is present —
+                # never substituted with the snapshot-basis value.
+                realized_total += 1
+                if "saved_dollars_realized" in t:
+                    saved_dollars_realized += float(t["saved_dollars_realized"])
+                    realized_with_data += 1
             else:
                 excluded_invalid_count += 1
 
@@ -3362,6 +3390,62 @@ def guard_alpha_summary():
             "date_range": date_range,
             "basis_label": basis_label,
             "source": source,
+            # AC-6 (exit-friction-realized-savings): realized (EOD-marks) basis,
+            # additive to the snapshot-basis fields above — never a replacement
+            # (DE-GUARD-ALPHA-SAVED-001 semantics preserved).
+            "saved_dollars_realized": saved_dollars_realized,
+            "realized_coverage": {"with_data": realized_with_data, "total": realized_total},
+        }
+    )
+
+
+@app.route("/api/exit-turnover")
+def exit_turnover():
+    """Return per-symphony exit-trigger turnover stats + an estimated annual
+    friction drag (AC-8, exit-friction-realized-savings).
+
+    ?symphony_id=<id>  — required. Missing/empty -> 400 with a JSON error body
+                         (never a 500, never a silent empty 200).
+
+    Delegates to database.get_exit_turnover_stats (30/90/365-day exit_count +
+    coverage_days per window — coverage_days is capped by retained history, so
+    a retention-pruned 365-day window never silently claims a full year — see
+    RULING C) and database.compute_est_annual_friction_drag_pct (pure
+    arithmetic; takes autotuner.SIM_EXIT_FRICTION_PCT as an explicit parameter,
+    no autotuner<->database import coupling).
+
+    Read-only, covered by the global _auth_before_request hook (no extra
+    decorator needed, same as guard_alpha_summary) — NOT in
+    _SETTINGS_WRITE_ALLOWLIST, no LIVE_EXECUTION interaction.
+
+    Returns JSON: {"symphony_id": str, "windows": {"30": {...}, "90": {...},
+    "365": {...}}, "est_annual_friction_drag_pct": float}. A symphony with zero
+    exit_triggers rows is a valid, honest empty-state (200 with zeroed windows),
+    not a 404. An unexpected lookup failure degrades to the same zeroed shape
+    rather than a 500.
+    """
+    import autotuner  # noqa: PLC0415 -- lazy per CC-2 precedent (app.py:3119), keeps Optuna deps off module load
+
+    symphony_id = request.args.get("symphony_id", "").strip()
+    if not symphony_id:
+        return jsonify({"error": "symphony_id is required"}), 400
+
+    _zeroed_windows = {w: {"exit_count": 0, "coverage_days": 0} for w in (30, 90, 365)}
+    try:
+        stats = database.get_exit_turnover_stats(symphony_id)
+        drag_pct = database.compute_est_annual_friction_drag_pct(
+            stats, autotuner.SIM_EXIT_FRICTION_PCT
+        )
+    except Exception:
+        _daemon_log.debug("exit_turnover: stats lookup failed for %s", symphony_id, exc_info=True)
+        stats = _zeroed_windows
+        drag_pct = 0.0
+
+    return jsonify(
+        {
+            "symphony_id": symphony_id,
+            "windows": {str(k): v for k, v in stats.items()},
+            "est_annual_friction_drag_pct": drag_pct,
         }
     )
 

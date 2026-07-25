@@ -3,7 +3,7 @@
 > Discord webhook notifications and QuickChart-embedded EOD post-mortem generation.
 
 **Source:** `reporting.py`
-**Last updated:** 2026-07-19 (`DE-AUTOTUNE-REPORTING-001`: `send_eod_discord_post` shape-guards the per-symphony changes dict against non-`{old,new}` sibling entries and distinguishes an aborted autotune run from a genuine no-change day -- see the new API Reference entry below.) Prior: 2026-07-09 (DE-PROD-ACCURACY-001: Stage-1 if-held sourcing corrected to read the `shadow_history` table directly, with explicit `if_held_source` provenance and an off-schedule snapshot-cutoff invariant; supersedes the 2026-06-22 doc claim below)
+**Last updated:** 2026-07-24 (exit-friction-realized-savings, `DE-EXIT-FRICTION-REALIZED-001` -- Stage 2 gains additive realized-basis $-saved fields (`realized_observed_return`/`realized_source`/`saved_dollars_realized`), sourced exclusively from `shadow_history` via the same accessor Stage 1 uses; see the new Stage 2 section below.) Prior: 2026-07-19 (`DE-AUTOTUNE-REPORTING-001`: `send_eod_discord_post` shape-guards the per-symphony changes dict against non-`{old,new}` sibling entries and distinguishes an aborted autotune run from a genuine no-change day -- see the new API Reference entry below.) Prior: 2026-07-09 (DE-PROD-ACCURACY-001: Stage-1 if-held sourcing corrected to read the `shadow_history` table directly, with explicit `if_held_source` provenance and an off-schedule snapshot-cutoff invariant; supersedes the 2026-06-22 doc claim below)
 
 ## Overview
 
@@ -83,6 +83,26 @@ Every consumer can distinguish these tiers via the `if_held_source` field on eac
 | `if_held_source` | Provenance marker: `"shadow_history"` \| `"shadow_history_post_cutoff"` \| `"bot_state_fallback"`. No silent source switching -- every entry declares which tier resolved it. **This is also the F-008 read-time validity discriminator** (see above) -- an entry lacking this field, or carrying a value outside these three, is excluded by every live aggregate. |
 | `saved_pct_guard_alpha` | `exit_return - if_held_return` -- positive means the exit saved money |
 | `saved_dollars` | `current_value x saved_pct_guard_alpha / 100` |
+
+### Stage 2 realized-basis $-saved fields (exit-friction-realized-savings, `DE-EXIT-FRICTION-REALIZED-001`, 2026-07-24)
+
+Stage 2 (post-rebalance, 16:00 ET) additively stamps each already-written trigger entry with a second, independent $-saved figure computed from the first post-rebalance OBSERVED value, alongside (never replacing) Stage 1's decision-time snapshot basis above.
+
+**Sourcing rule (RULING A, credited to ga2-tw's pre-RED recon):** `database.load_latest_shadow_row(sym_id, current_date_str, et_cutoff=None)` — the SAME accessor Stage 1 uses, called with NO cutoff (the opposite of Stage-1's `STAGE1_SNAPSHOT_CUTOFF_ET` restriction: "post-rebalance" means the latest available row, not a time-gated one). **NEVER `sym.get("current_return")` from `bot_state`** — that field is the exact DE-GUARD-ALPHA-SAVED-001 defect class (PR #80: the action phase clobbers it every cycle with a frozen-basket reconstruction; 7 of 11 audited production days were sign-flipped before that fix). Reusing it here would silently reintroduce the same defect for the new field. No new external API call — this reuses the `shadow_history` table Stage 1 already reads.
+
+**Honesty contract:** when no qualifying `shadow_history` row exists (pre-feature post-mortems, a symphony with zero shadow rows that day), the three fields below are simply ABSENT from the trigger entry — never fabricated, never defaulted to the snapshot value. This is the producer-side half of AC-7's coverage-accounting contract (the consumer side lives in `app.py`'s `guard_alpha_summary()` — see `docs/generated/app.md`).
+
+**Marks-basis honesty addendum:** this is an EOD-MARKS basis — it captures post-snapshot PRICE DRIFT through the actual rebalance window, NOT fill-level execution slippage. True fill-level reconciliation would require new Composer/Alpaca API integration and stays out of scope (see the Decisions table in `feature-plans/exit-friction-realized-savings.md`). Every consumer-facing label (API field name, dashboard caption) says "marks basis" or "realized (marks)" explicitly — never implying fill-level truth.
+
+**New trigger-entry fields (additive-only, AC-9):**
+
+| Field | Semantics |
+|-------|-----------|
+| `realized_observed_return` | The post-rebalance if-held return (`round(realized_ret, 2)`) from the latest `shadow_history` row for the symphony+day, no cutoff. Absent when no qualifying row exists. |
+| `realized_source` | Provenance marker, always `"shadow_history"` when present (mirrors Stage 1's `if_held_source` field so a silent degradation is structurally impossible — there is no fallback tier for Stage 2, unlike Stage 1's three-tier lookup). Absent together with the other two fields when no row exists. |
+| `saved_dollars_realized` | `current_value * (triggered_at_return - realized_observed_return) / 100` -- same formula shape as Stage 1's `saved_dollars`, with `realized_observed_return` substituted for the Stage-1 if-held `live_ret`. Absent when no qualifying row exists. |
+
+**Consumed by:** `GET /api/guard-alpha-summary` (`app.py`, `guard_alpha_summary()`) — aggregates `saved_dollars_realized` across valid trigger entries additively into `saved_dollars_realized` (route-level field, same name) and reports `realized_coverage: {with_data, total}` (AC-7). See `docs/generated/app.md`.
 
 ---
 

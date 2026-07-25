@@ -3,7 +3,7 @@
 > Client-side dashboard controller: state polling, event-driven updates via SSE, guard-alpha panel, window-picker, visible staleness cue, and honest post-trigger MC rendering.
 
 **Source:** `static/index.js`
-**Last updated:** 2026-07-21 (fix-display-cluster, `DE-DISPLAY-TRUTH-001`) — F-011 (`updateSectionMeta` field fix), F-014 (`updateComparisonRows` lifetime-source fix), F-016 locus 1 (`updateComparisonRows` null-vs-zero honest empty-state), F-025 (`renderHeroChart` y-axis visible); see the new sections below. Prior: 2026-07-18 (Math Remediation F7, `DE-MATH-F7-001`) — MC dial + detail-view chart-fallback exited-state render honesty (AC-2); see the F7 section below. Prior: 2026-06-23 (feat/dashboard-realtime-push: EventSource SSE wiring + showConnectionLost staleness cue)
+**Last updated:** 2026-07-24 (exit-friction-realized-savings, `DE-EXIT-FRICTION-REALIZED-001` -- `fetchGuardAlphaSummary()` gains an additive realized-basis (marks) headline render; see the updated section below.) Prior: 2026-07-21 (fix-display-cluster, `DE-DISPLAY-TRUTH-001`) — F-011 (`updateSectionMeta` field fix), F-014 (`updateComparisonRows` lifetime-source fix), F-016 locus 1 (`updateComparisonRows` null-vs-zero honest empty-state), F-025 (`renderHeroChart` y-axis visible); see the new sections below. Prior: 2026-07-18 (Math Remediation F7, `DE-MATH-F7-001`) — MC dial + detail-view chart-fallback exited-state render honesty (AC-2); see the F7 section below. Prior: 2026-06-23 (feat/dashboard-realtime-push: EventSource SSE wiring + showConnectionLost staleness cue)
 
 ## Overview
 
@@ -82,6 +82,15 @@ Fetches `GET /api/guard-alpha-summary` once on `DOMContentLoaded`. Populates:
 
 Non-200 responses are silently ignored (advisory-only display). Does NOT clobber `#guard-alpha-headline`, which is owned by the windowed strip path.
 
+**Realized-basis (marks) headline render (exit-friction-realized-savings, `DE-EXIT-FRICTION-REALIZED-001`, 2026-07-24):** an additive sibling render, independent of the snapshot-basis branch above, driven by `data.realized_coverage` (`{with_data, total}`) and `data.saved_dollars_realized`:
+
+| Condition | `#dollar-saved-realized-headline` | `#dollar-saved-realized-coverage` |
+|-----------|--------------------------------------|--------------------------------------|
+| `coverage.with_data === 0` | `'no realized data yet'` (AC-7 honesty requirement -- a bare `$0.00` would misrepresent "no data" as "measured zero") | `'0 of ' + coverage.total` |
+| `coverage.with_data > 0` | `(realizedSaved < 0 ? '-$' : '$') + Math.abs(realizedSaved).toFixed(2)`, colored `--studio-pos`/`--studio-neg` by sign | `coverage.with_data + ' of ' + coverage.total` |
+
+The "marks basis" qualifier text itself lives in `templates/index.html` as a STATIC caption (never JS-injected) so it can never be silently dropped by a JS bug -- see `docs/generated/app.md`'s `GET /api/guard-alpha-summary` section for the route-side `saved_dollars_realized`/`realized_coverage` field semantics and the RULING A sourcing rule.
+
 ### `fetchWindowedStrip(token)`
 Fetches `GET /api/strip/<token>` for a time-window button click. Re-windows the hero guard-alpha headline and the comparison rows (Bot / Held / Delta) by wrapping the strip dict as a pseudo-poll payload and calling `renderGuardAlpha` and `updateComparisonRows`. Errors are logged to console and silently swallowed (the dashboard retains its prior state on strip failure).
 
@@ -123,7 +132,7 @@ The SSE path is always attempted first. The poll continues running as an uncondi
 
 - `GET /api/state` — primary state source for `loadState()`
 - `GET /api/events` — SSE stream for cycle-complete notifications
-- `GET /api/guard-alpha-summary` — dollar-saved panel data
+- `GET /api/guard-alpha-summary` — dollar-saved panel data (both snapshot and, as of exit-friction-realized-savings, the additive realized/marks-basis figure)
 - `GET /api/strip/<token>` — windowed strip for the time-window picker
 - `GET /api/hero-chart/<token>` — hero chart re-windowing (separate fetch on picker click)
 - `GET /api/chart/<sym.id>` — per-symphony chart history, feeding both `renderSparkline` and `renderMcDial`; F7 threads `sym.triggered` onto this payload before the `renderMcDial` call (see above)

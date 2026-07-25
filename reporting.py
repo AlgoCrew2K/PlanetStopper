@@ -167,6 +167,34 @@ def generate_eod_snapshot(
                 ) == sym.get("account"):
                     trigger["next_day_holdings"] = sym_holdings
 
+                    # AC-5: realized-basis $-saved. Source the post-rebalance
+                    # observed value from the shadow_history TABLE (latest row,
+                    # no cutoff -- "post-rebalance" means latest-available, the
+                    # OPPOSITE of Stage-1's STAGE1_SNAPSHOT_CUTOFF_ET). NEVER
+                    # sym.get("current_return") from bot_state -- that is the
+                    # exact DE-GUARD-ALPHA-SAVED-001 defect (PR #80) this
+                    # sourcing rule exists to avoid repeating in Stage 2.
+                    # Absent shadow_history data -> fields stay absent
+                    # entirely (no fallback tier for Stage 2, per ruling).
+                    shadow_row = database.load_latest_shadow_row(
+                        sym_id, current_date_str, et_cutoff=None
+                    )
+                    if shadow_row is not None and shadow_row.get("current_return") is not None:
+                        f_ret = sym.get("triggered_at_return", 0.0)
+                        sym_val = sym.get("current_value", 0.0)
+                        realized_ret = float(shadow_row["current_return"])
+                        trigger["realized_observed_return"] = round(realized_ret, 2)
+                        trigger["realized_source"] = "shadow_history"
+
+                        # AC-6: same formula shape as the snapshot-basis
+                        # saved_dollars above, with realized_ret substituted
+                        # for the Stage-1 if-held live_ret.
+                        saved_pct_realized = f_ret - realized_ret
+                        saved_dollars_realized = (
+                            sym_val * (saved_pct_realized / 100.0) if sym_val > 0 else 0.0
+                        )
+                        trigger["saved_dollars_realized"] = round(saved_dollars_realized, 2)
+
             for holding in sym.get("current_holdings", []):
                 ticker = holding.get("ticker", "UNKNOWN")
                 weight = holding.get("allocation", 0.0)

@@ -1446,6 +1446,23 @@ def replay_exit_sequence(ticks, params, *, grace_minutes):
     return out
 
 
+# Simulated-exit friction: a replay-only cost term subtracted at every
+# triggered-exit accounting site below (_collect_sim_returns,
+# _collect_sim_returns_dated, run_simulation), distinct from the deviation-
+# dict `penalty` term. Value is 0.5 PERCENTAGE POINTS, derived from
+# composer_backtest_client._DEFAULT_SLIPPAGE_PERCENT (0.005, a decimal
+# fraction = 0.5%, composer_backtest_client.py:71) converted to this file's
+# percent-point convention via RETURN_PCT_TO_FRACTION (100.0) — NOT the bare
+# 0.005 literal, which would apply 100x too little friction at these
+# percent-point-scaled subtraction sites. Closes the gap identified in
+# docs/research/methodology-validation-2026-07.md (gross-of-cost replay
+# objective vs Composer's own slippage-adjusted backtests). Deliberately kept
+# out of math_engine.py (the live engine's decision-math module) and out of
+# OPTUNA_SEARCH_SPACE_KEYS / the per-trial params dict / os.environ — this is
+# a fixed replay-environment parameter, never tunable by the optimizer.
+SIM_EXIT_FRICTION_PCT: float = 0.5
+
+
 def _collect_sim_returns(
     p, history_data, acc_sym_ids, current_date_str, deviation_dict, *, return_dates=False
 ):
@@ -1522,7 +1539,10 @@ def _collect_sim_returns(
                 )
                 if reason_str is not None:
                     penalty = deviation_dict.get(reason_str, -0.20)
-                    triggered_return = tick.get("return", 0.0) + penalty
+                    # SIM_EXIT_FRICTION_PCT is a distinct term (never folded
+                    # into `penalty`) -- see the constant's definition above
+                    # _collect_sim_returns for the derivation (AC-2v2).
+                    triggered_return = tick.get("return", 0.0) + penalty - SIM_EXIT_FRICTION_PCT
                     break
 
             if triggered_return is not None:
@@ -1716,7 +1736,10 @@ def _collect_sim_returns_dated(
                 )
                 if reason_str is not None:
                     penalty = deviation_dict.get(reason_str, -0.20)
-                    triggered_return = tick.get("return", 0.0) + penalty
+                    # SIM_EXIT_FRICTION_PCT is a distinct term (never folded
+                    # into `penalty`) -- see the constant's definition above
+                    # _collect_sim_returns for the derivation (AC-2v2).
+                    triggered_return = tick.get("return", 0.0) + penalty - SIM_EXIT_FRICTION_PCT
                     break
             if triggered_return is not None:
                 guard_alpha = triggered_return - eod_return
@@ -1983,7 +2006,10 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
                 )
                 if reason_str is not None:
                     penalty = deviation_dict.get(reason_str, -0.20)
-                    triggered_return = tick.get("return", 0.0) + penalty
+                    # SIM_EXIT_FRICTION_PCT is a distinct term (never folded
+                    # into `penalty`) -- see the constant's definition above
+                    # _collect_sim_returns for the derivation (AC-2v2).
+                    triggered_return = tick.get("return", 0.0) + penalty - SIM_EXIT_FRICTION_PCT
                     break
 
             if triggered_return is not None:
@@ -3020,6 +3046,17 @@ def run_autotuner(
         # Stability and prior-anchor scores are computed as placeholder 1.0/1.0
         # until the full advisor wiring is in place; the gate's load-bearing
         # invariants (vetoes-dominant, one-directional brake) hold regardless.
+        #
+        # FORWARD-LOOKING FRICTION-MISMATCH RISK (incumbent_stability_score /
+        # incumbent_prior_anchor_score specifically): if a future cycle wires
+        # real DB-sourced values into these two INCUMBENT fields, confirm
+        # they were computed on a friction-consistent basis with the
+        # candidate score. A historical incumbent score computed by whatever
+        # replay code existed when that history was recorded (possibly
+        # gross-of-cost, pre-dating SIM_EXIT_FRICTION_PCT — see autotuner.py)
+        # compared against a candidate score from TODAY's friction-aware
+        # replay is a mismatched comparison — nothing currently catches that
+        # silently. See tests/autotuner/test_incumbent_score_friction_tripwire.py.
         _gate_verdict = _acceptance_gate.evaluate_acceptance_gate(
             winner_trial_is_none=(winner_trial is None if haircut_trials else True),
             winner_p_adj=(winner_p_adj if haircut_trials else None),

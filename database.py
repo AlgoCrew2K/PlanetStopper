@@ -3579,6 +3579,87 @@ def prune_old_triggers(retention_days: int) -> int:
     return deleted_total
 
 
+# AC-8 turnover windows: exit_triggers is pruned daily at TRIGGER_TELEMETRY_
+# RETENTION_DAYS (default 90, app.py) via prune_old_triggers above -- a
+# trailing-365-day window sourced from this table cannot structurally back a
+# true year of history by default. _TURNOVER_WINDOWS_DAYS names the windows
+# this feature reports; coverage_days (below) makes the honesty explicit per
+# window instead of silently implying full coverage the table can't back.
+_TURNOVER_WINDOWS_DAYS: tuple[int, ...] = (30, 90, 365)
+
+
+def get_exit_turnover_stats(symphony_id: str, *, now_utc: "datetime | None" = None) -> dict:
+    """Per-symphony exit-turnover stats from exit_triggers, for each window in
+    _TURNOVER_WINDOWS_DAYS: {"exit_count": int, "coverage_days": int}.
+
+    coverage_days = min(window, actual retained history for this symphony) --
+    actual retained history is the day-span between now_utc and the EARLIEST
+    exit_triggers row for this symphony (0 with zero rows). This is what
+    keeps a 365-day bucket honest once retention pruning (or a young
+    symphony) has capped the real history well below a year (AC-8, recon
+    Finding C). Re-entry legs are not counted -- exit_triggers only ever
+    records exit events (documented limitation, not a bug).
+
+    Never raises -- an empty table or any DB error degrades to
+    {"exit_count": 0, "coverage_days": 0} for every window.
+    """
+    if now_utc is None:
+        now_utc = datetime.now(UTC)
+
+    zero_result = {
+        window: {"exit_count": 0, "coverage_days": 0} for window in _TURNOVER_WINDOWS_DAYS
+    }
+    try:
+        conn = get_connection()
+        earliest_row = conn.execute(
+            "SELECT MIN(ts_utc) FROM exit_triggers WHERE symphony_id = ?",
+            (symphony_id,),
+        ).fetchone()
+        earliest_ts = earliest_row[0] if earliest_row else None
+        if earliest_ts:
+            earliest_dt = datetime.strptime(earliest_ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+            actual_days = max(0, (now_utc - earliest_dt).days)
+        else:
+            actual_days = 0
+
+        result = {}
+        for window in _TURNOVER_WINDOWS_DAYS:
+            cutoff = (now_utc - timedelta(days=window)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            count_row = conn.execute(
+                "SELECT COUNT(*) FROM exit_triggers WHERE symphony_id = ? AND ts_utc >= ?",
+                (symphony_id, cutoff),
+            ).fetchone()
+            exit_count = count_row[0] if count_row else 0
+            result[window] = {
+                "exit_count": exit_count,
+                "coverage_days": min(window, actual_days),
+            }
+        conn.close()
+        return result
+    except Exception as exc:
+        logging.error("get_exit_turnover_stats failed for %s: %s", symphony_id, exc)
+        return zero_result
+
+
+def compute_est_annual_friction_drag_pct(turnover_stats: dict, friction_pct: float) -> float:
+    """Pure function (no DB access): estimated annual friction drag from a
+    turnover_stats dict shaped like get_exit_turnover_stats's return value,
+    plus the friction constant value as an explicit parameter (callers pass
+    autotuner.SIM_EXIT_FRICTION_PCT -- this function stays decoupled from
+    autotuner, no autotuner<->database import).
+
+    exits_per_year scales the 365-day window's exit_count up by
+    (365 / coverage_days) when coverage_days > 0 -- correcting for a
+    retention-capped window under-counting a true year (AC-8). Returns 0.0
+    (never raises / never divides by zero) when coverage_days is 0.
+    """
+    window_365 = turnover_stats.get(365, {"exit_count": 0, "coverage_days": 0})
+    coverage_days = window_365.get("coverage_days", 0)
+    exit_count = window_365.get("exit_count", 0)
+    exits_per_year = exit_count * (365 / coverage_days) if coverage_days > 0 else 0.0
+    return exits_per_year * friction_pct
+
+
 # --- Managed Sleeves P1: sleeve infrastructure + order layer (migration 035) ---
 # All read paths below use get_ro_connection() (arch constraint 5); all writes use
 # get_connection(). Every query is parameterized (? placeholders) -- no f-string

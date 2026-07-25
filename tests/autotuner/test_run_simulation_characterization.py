@@ -506,17 +506,29 @@ def test_run_simulation_triggered_exit_pins_specific_guard_alpha():
     expected total is therefore the un-weighted product.
 
     Producer pin: oos_alpha = -(-0.80) = 0.80.
+
+    Expectations re-derived for SIM_EXIT_FRICTION_PCT (AC-2v2,
+    DE-EXIT-FRICTION-REALIZED-001, 2026-07-24): run_simulation now subtracts
+    the friction constant at trigger time (autotuner.py:1984-1987), as a
+    term DISTINCT from the deviation-dict penalty above -- both missed-upside
+    and drawdown-from-peak stay comfortably under their thresholds with
+    friction added (0.90 vs the 1.0/1.5 thresholds), so only the
+    guard-alpha-only branch is affected; no branch-selection change here.
     """
+    import autotuner  # local import: matches this file's established lazy-import convention
+
     # Derive the expected total_guard_alpha from the named producer constants —
     # no literal hardcoded. D5: no decay weight, so the per-day contribution is
-    # just penalty * negative-guard-alpha multiplier.
+    # just (penalty - friction) * negative-guard-alpha multiplier.
     DEFAULT_VWAP_BREAKDOWN_PENALTY = -0.40  # calculate_historical_deviation default
     GUARD_ALPHA_NEGATIVE_MULTIPLIER = 2.0  # NEGATIVE_GUARD_ALPHA_LOSS_AVERSE_MULT
 
-    # guard_alpha (per day, single-day OOS) = penalty * 2.0 (no decay weight).
-    # run_simulation returns -total_guard_alpha; caller flips back ->
-    # oos_alpha = total_guard_alpha (sign-equivalent).
-    expected_total = DEFAULT_VWAP_BREAKDOWN_PENALTY * GUARD_ALPHA_NEGATIVE_MULTIPLIER
+    # guard_alpha (per day, single-day OOS) = (penalty - friction) * 2.0 (no
+    # decay weight). run_simulation returns -total_guard_alpha; caller flips
+    # back -> oos_alpha = total_guard_alpha (sign-equivalent).
+    expected_total = (
+        DEFAULT_VWAP_BREAKDOWN_PENALTY - autotuner.SIM_EXIT_FRICTION_PCT
+    ) * GUARD_ALPHA_NEGATIVE_MULTIPLIER
     # The .2f pin: format expected to match producer.
     expected_formatted = f"{expected_total:.2f}"
 
@@ -605,12 +617,22 @@ def test_run_simulation_drawdown_penalty_fires_when_peak_exceeds_threshold():
     # Per-day 3-tick fixture: ramp up to a high HWM, then crash to a low
     # exit return. Tick returns: [4.0, 10.0, 1.0]. HWM after tick 1 = 10.0;
     # exit fires on tick 2 (idx=2) at return=1.0; penalty=-0.40 ->
-    # triggered_return = 0.6. safe_hwm = 10.0; drawdown_from_peak = 9.4;
-    # missed_upside = 10.0 - 0.6 = 9.4; eod_return = 1.0 (the last tick).
+    # triggered_return = 0.6 (0.1 with friction, see below). safe_hwm = 10.0;
+    # eod_return = 1.0 (the last tick).
+    #
+    # Expectations re-derived for SIM_EXIT_FRICTION_PCT (AC-2v2,
+    # DE-EXIT-FRICTION-REALIZED-001, 2026-07-24): triggered_return now also
+    # subtracts the friction constant, a term distinct from the deviation
+    # penalty. Both missed-upside and drawdown-from-peak still comfortably
+    # exceed their thresholds with friction added (~9.9 vs the 1.0/1.5
+    # thresholds), so the same two penalty branches fire; no branch-selection
+    # change.
     high_tick = _trigger_tick(ret=4.0)
     peak_tick = _trigger_tick(ret=10.0)
     crash_tick = _trigger_tick(ret=1.0)
     history = _make_history({d: [high_tick, peak_tick, crash_tick] for d in _TEST_DATES_5})
+
+    import autotuner  # local import: matches this file's established lazy-import convention
 
     # Hand-compute expected total_guard_alpha per OOS day. Re-pinned for
     # Decision D5: no recency-decay weight — the objective appends RAW
@@ -626,12 +648,12 @@ def test_run_simulation_drawdown_penalty_fires_when_peak_exceeds_threshold():
     weight = 1.0  # D5: recency-decay weighting removed — raw guard-alpha
 
     safe_hwm = 10.0
-    triggered_return = 1.0 + DEFAULT_VWAP_BREAKDOWN_PENALTY  # 0.6
+    triggered_return = 1.0 + DEFAULT_VWAP_BREAKDOWN_PENALTY - autotuner.SIM_EXIT_FRICTION_PCT  # 0.1
     eod_return = 1.0
     day_max_return = 10.0
-    guard_alpha = triggered_return - eod_return  # -0.4
-    missed_upside = day_max_return - triggered_return  # 9.4
-    drawdown_from_peak = safe_hwm - triggered_return  # 9.4
+    guard_alpha = triggered_return - eod_return  # -0.9
+    missed_upside = day_max_return - triggered_return  # 9.9
+    drawdown_from_peak = safe_hwm - triggered_return  # 9.9
 
     total = 0.0
     if missed_upside > MISSED_UPSIDE_THRESHOLD:
@@ -950,12 +972,15 @@ def test_run_simulation_eod_return_taken_from_last_tick():
     default["VWAP_CROSS_HWM_PCT"] = 2.5
 
     # Day's ticks: [3.0 first, 1.0 trigger, 5.0 last]. HWM after tick 0 = 3.0.
-    # Trigger fires on tick_idx=1 (call 2 of the day). triggered_return = 1.0 +
-    # (-0.40) = 0.60. eod_return = 5.0 (last tick). guard_alpha = 0.60 - 5.0
-    # = -4.40. safe_hwm = max(3.0, 1.0) at tick 1 = 3.0 (HWM doesn't update
+    # Trigger fires on tick_idx=1 (call 2 of the day). eod_return = 5.0 (last
+    # tick). safe_hwm = max(3.0, 1.0) at tick 1 = 3.0 (HWM doesn't update
     # because 1.0 < 3.0). day_max_return = max(3.0, 1.0, 5.0) = 5.0.
-    # missed_upside = 5.0 - 0.6 = 4.4 (> 1.0 -> penalty fires).
-    # drawdown_from_peak = 3.0 - 0.6 = 2.4 (> 1.5 -> penalty fires).
+    #
+    # Expectations re-derived for SIM_EXIT_FRICTION_PCT (AC-2v2,
+    # DE-EXIT-FRICTION-REALIZED-001, 2026-07-24): triggered_return now also
+    # subtracts the friction constant, distinct from the deviation penalty.
+    # missed_upside and drawdown_from_peak both still exceed their thresholds
+    # with friction added, so the same two penalty branches fire.
     history = _make_history(
         {
             d: [
@@ -967,14 +992,16 @@ def test_run_simulation_eod_return_taken_from_last_tick():
         }
     )
 
+    import autotuner  # local import: matches this file's established lazy-import convention
+
     PENALTY = -0.40
     safe_hwm = 3.0
-    triggered_return = 1.0 + PENALTY
+    triggered_return = 1.0 + PENALTY - autotuner.SIM_EXIT_FRICTION_PCT  # -0.9
     eod_return = 5.0
     day_max_return = 5.0
-    guard_alpha = triggered_return - eod_return  # -4.4
-    missed_upside = day_max_return - triggered_return  # 4.4
-    drawdown_from_peak = safe_hwm - triggered_return  # 2.4
+    guard_alpha = triggered_return - eod_return  # -5.9
+    missed_upside = day_max_return - triggered_return  # 5.9
+    drawdown_from_peak = safe_hwm - triggered_return  # 3.9
     # Re-pinned for Decision D5: recency-decay weighting removed — the objective
     # appends raw guard-alpha, so the per-day weight is 1.0 (no exp(-rate·days_ago)).
     weight = 1.0

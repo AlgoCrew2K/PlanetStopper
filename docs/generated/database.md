@@ -3,11 +3,11 @@
 > SQLite state management for Planet Stopper: schema, migrations, all read/write accessors for the state DB, and a pytest sentinel guard that structurally prevents tests from writing to the production DB.
 
 **Source:** `database.py`
-**Last updated:** 2026-07-14 (branch-integration merge — Frontrunner Builder migration renumbered 033→**034** `frontrunner_proposals` on top of main's migration 033 `candidate_alert_state`; combines: Frontrunner Builder `frontrunner_proposals` table + accessors + `_VALID_DOF_EVIDENCE_SOURCES` addition; candidate-alert cycle migration 033 `candidate_alert_state` — five new accessors, `get_candidate_alert_viewed_marker`/`set_candidate_alert_viewed_marker`/`mark_candidate_alert_viewed`/`get_candidate_alert_new_valid_count`/`get_candidate_alert_last_run`, back the header candidate-alert indicator; prior: Workstream E, advisor-rewire cycle: `save_autotune_run` gains `s_count`; prior: 2026-07-09 DE-PROD-ACCURACY-001: `save_state` sanitizes numpy/non-finite values via `_sanitize_state_for_json` before every write, new `load_latest_shadow_row`/`load_earliest_shadow_row` Stage-1 accessors, `record_exit_trigger` now returns the inserted row id; prior: 2026-07-02 DE-PRISM-NUMERIC-VERIFY-001 `get_latest_market_prism_verification_for_run` accessor; prior: DE-ADVISOR-LATENCY `get_latest_market_lens_cache()`; DE-PRISM-SOURCES-001 `get_latest_market_prism_sources_for_run`)
+**Last updated:** 2026-07-24 (exit-friction-realized-savings, `DE-EXIT-FRICTION-REALIZED-001` -- new `get_exit_turnover_stats`/`compute_est_annual_friction_drag_pct` accessors in the Exit Trigger Telemetry section below; no schema migration, `exit_triggers` already existed. Prior: 2026-07-14 (branch-integration merge — Frontrunner Builder migration renumbered 033→**034** `frontrunner_proposals` on top of main's migration 033 `candidate_alert_state`; combines: Frontrunner Builder `frontrunner_proposals` table + accessors + `_VALID_DOF_EVIDENCE_SOURCES` addition; candidate-alert cycle migration 033 `candidate_alert_state` — five new accessors, `get_candidate_alert_viewed_marker`/`set_candidate_alert_viewed_marker`/`mark_candidate_alert_viewed`/`get_candidate_alert_new_valid_count`/`get_candidate_alert_last_run`, back the header candidate-alert indicator; prior: Workstream E, advisor-rewire cycle: `save_autotune_run` gains `s_count`; prior: 2026-07-09 DE-PROD-ACCURACY-001: `save_state` sanitizes numpy/non-finite values via `_sanitize_state_for_json` before every write, new `load_latest_shadow_row`/`load_earliest_shadow_row` Stage-1 accessors, `record_exit_trigger` now returns the inserted row id; prior: 2026-07-02 DE-PRISM-NUMERIC-VERIFY-001 `get_latest_market_prism_verification_for_run` accessor; prior: DE-ADVISOR-LATENCY `get_latest_market_lens_cache()`; DE-PRISM-SOURCES-001 `get_latest_market_prism_sources_for_run`)
 
 ## Overview
 
-`database.py` is the single write layer for `alphabot_state.db`. It owns schema initialization, 34 numbered migration SQL files (001–034), and every public accessor function. `_MIGRATION_FILES` wires 31 active entries (004–034); migrations 001–003 use a separate bootstrap path. The dashboard uses `get_ro_connection()` for all reads; the engine uses `get_connection()` for writes. The two-DB pattern (state DB here; Optuna studies in a separate DB) is an architecture hard rule — no cross-DB joins in application code.
+`database.py` is the single write layer for `alphabot_state.db`. It owns schema initialization, 36 numbered migration SQL files (001-036), and every public accessor function. `_MIGRATION_FILES` wires 33 active entries (004-036); migrations 001-003 use a separate bootstrap path. **[Reconcile note, exit-friction-realized-savings doc pass, 2026-07-24: this Overview and the Schema Migrations section below were stale at 34/31/034 -- predating the Managed Sleeves epic (`035_sleeves.sql`, `036_sleeve_rule_fires.sql`, PR #94), which never updated this file. Corrected in this sweep; no migration added by exit-friction-realized-savings itself.]** The dashboard uses `get_ro_connection()` for all reads; the engine uses `get_connection()` for writes. The two-DB pattern (state DB here; Optuna studies in a separate DB) is an architecture hard rule — no cross-DB joins in application code.
 
 WAL journal mode is enabled at `init_db()` time, allowing concurrent Flask reads while the engine holds a write lock.
 
@@ -15,7 +15,7 @@ WAL journal mode is enabled at `init_db()` time, allowing concurrent Flask reads
 
 ## Schema Migrations
 
-Migrations are listed in `_MIGRATION_FILES` and applied by `run_migrations()`. They are idempotent (tracked in `schema_migrations`). Current highest: **034** (`034_frontrunner_proposals.sql`), applied after main's **033** (`033_candidate_alert_state.sql`).
+Migrations are listed in `_MIGRATION_FILES` and applied by `run_migrations()`. They are idempotent (tracked in `schema_migrations`). Current highest: **036** (`036_sleeve_rule_fires.sql`), following **035** (`035_sleeves.sql`) -- both from the Managed Sleeves epic (PR #94); see `docs/generated/sleeves.md` for their schema.
 
 Notable ordering: 021 is listed before 020 — intentional. See `ARCH-002` inline comment; reordering would corrupt live DBs.
 
@@ -350,6 +350,18 @@ Writes one `exit_triggers` telemetry row. Opens its own connection; swallows exc
 
 #### `get_recent_exit_triggers(limit: int = 50) → list[dict]`
 Returns the `limit` most-recent `exit_triggers` rows across all symphonies.
+
+#### `get_exit_turnover_stats(symphony_id: str, *, now_utc: datetime | None = None) → dict` (exit-friction-realized-savings, `DE-EXIT-FRICTION-REALIZED-001`, 2026-07-24)
+Per-symphony exit-turnover stats from `exit_triggers`, keyed by window (`_TURNOVER_WINDOWS_DAYS = (30, 90, 365)`): `{window: {"exit_count": int, "coverage_days": int}}`.
+
+**`coverage_days` honesty contract (RULING C, AC-8, credited to ga2-tw's pre-RED recon):** `min(window, actual_days)`, where `actual_days` is the day-span between `now_utc` and the EARLIEST `exit_triggers` row for this symphony (0 with zero rows). `exit_triggers` is pruned daily via `prune_old_triggers`/`TRIGGER_TELEMETRY_RETENTION_DAYS` (default 90, `app.py:788`, operator-configurable) — a bare `365`-day `exit_count` would silently imply a full year of coverage the table structurally cannot back once retention pruning (or a young symphony) has capped real history well below that. This is OPERATOR KNOB #2, alongside `SHADOW_HISTORY_RETENTION_DAYS` (default 180) which gates the Kaminski-Lo precondition sample size (`N_MIN_OBS=40`, see `docs/generated/guard_preconditions.md`) — both retention knobs belong on the operator's radar as one decision surface.
+
+Exit-leg-only (documented limitation, not a bug) — `exit_triggers` only ever records exit events; re-entry is implicit in Composer's daily rebalance and not discretely logged (inferring round-trips from `bot_state["triggered"]` transitions is explicitly deferred, per the feature plan's Scope Boundaries).
+
+Never raises — an empty table or any DB error degrades to `{"exit_count": 0, "coverage_days": 0}` for every window.
+
+#### `compute_est_annual_friction_drag_pct(turnover_stats: dict, friction_pct: float) → float` (exit-friction-realized-savings, `DE-EXIT-FRICTION-REALIZED-001`, 2026-07-24)
+Pure function, no DB access. Scales the 365-day window's `exit_count` up by `365 / coverage_days` (correcting for a retention-capped window under-counting a true year) and multiplies by `friction_pct` (callers pass `autotuner.SIM_EXIT_FRICTION_PCT` — this function stays decoupled from `autotuner`, no `autotuner`↔`database` import coupling). Returns `0.0` (never raises, never divides by zero) when `coverage_days` is 0.
 
 ---
 

@@ -1437,6 +1437,27 @@
                     if (countEl) countEl.textContent = data.guard_event_count;
                     if (labelEl) labelEl.textContent = data.basis_label || '';
                 }
+
+                // AC-6 (exit-friction-realized-savings): realized-basis (EOD-marks)
+                // headline — additive sibling render, independent of the
+                // snapshot-basis guard_event_count branch above.
+                var realizedHeadlineEl = document.getElementById('dollar-saved-realized-headline');
+                var realizedCoverageEl = document.getElementById('dollar-saved-realized-coverage');
+                var coverage = data.realized_coverage || { with_data: 0, total: 0 };
+                if (coverage.with_data === 0) {
+                    // AC-7 honesty requirement: a real-looking "$0.00" would
+                    // misrepresent "we have no data" as "we measured zero" —
+                    // never render a bare zero for no realized coverage.
+                    if (realizedHeadlineEl) realizedHeadlineEl.textContent = 'no realized data yet';
+                    if (realizedCoverageEl) realizedCoverageEl.textContent = '0 of ' + coverage.total;
+                } else {
+                    var realizedSaved = data.saved_dollars_realized;
+                    if (realizedHeadlineEl) {
+                        realizedHeadlineEl.textContent = (realizedSaved < 0 ? '-$' : '$') + Math.abs(realizedSaved).toFixed(2);
+                        realizedHeadlineEl.style.color = realizedSaved >= 0 ? cs('--studio-pos') : cs('--studio-neg');
+                    }
+                    if (realizedCoverageEl) realizedCoverageEl.textContent = coverage.with_data + ' of ' + coverage.total;
+                }
             })
             .catch(function (err) { console.error('guard-alpha-summary load failed', err); });
     }

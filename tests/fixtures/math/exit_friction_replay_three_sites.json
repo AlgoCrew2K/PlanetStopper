@@ -1,0 +1,23 @@
+{
+    "description": "AC-2v2/AC-4 golden scenario for the exit-friction subtraction, shared across all three replay exit-accounting sites (_collect_sim_returns, _collect_sim_returns_dated, run_simulation). Expected objective values are DERIVED in-test from these raw inputs via the documented formula, never hardcoded (house test rule).",
+    "symphony_id": "sym-A",
+    "trading_date": "2026-04-01",
+    "deviation_reason": "Trailing Stop",
+    "deviation_penalty_pct": -0.20,
+    "single_tick_day": {
+        "description": "Minimal one-tick day: trigger tick == eod tick. Used to pin the core friction-subtraction delta in isolation (no missed-upside/drawdown penalty complications in run_simulation).",
+        "ticks": [
+            {"return": 3.0}
+        ],
+        "trigger_tick_idx": 0
+    },
+    "friction_exceeds_gain_day": {
+        "description": "Two-tick day engineered so the trigger fires on tick 0 (return 5.0, deviation penalty 0.0 for this scenario) while the EOD tick (tick 1, return 4.7) is different -- guard_alpha is POSITIVE without friction (+0.3) and must flip NEGATIVE with the real friction constant (0.5 > 0.3), flowing through unclamped (plan Edge Case).",
+        "ticks": [
+            {"return": 5.0},
+            {"return": 4.7}
+        ],
+        "trigger_tick_idx": 0,
+        "deviation_penalty_pct_override": 0.0
+    }
+}
