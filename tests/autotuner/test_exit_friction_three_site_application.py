@@ -259,7 +259,9 @@ class TestRunSimulationFrictionApplication:
             _patched_replay_core(_SINGLE_TICK_DAY["trigger_tick_idx"], _REASON),
             patch.object(autotuner, "SIM_EXIT_FRICTION_PCT", 0.0),
         ):
-            result = autotuner.run_simulation({}, history, [_SYM], "2026-05-10", {_REASON: _PENALTY})
+            result = autotuner.run_simulation(
+                {}, history, [_SYM], "2026-05-10", {_REASON: _PENALTY}
+            )
 
         assert result == pytest.approx(expected, abs=1e-9), (
             f"run_simulation with friction=0.0 must reproduce the pre-feature "
@@ -274,11 +276,12 @@ class TestRunSimulationFrictionApplication:
         expected_off = self._expected_run_simulation_return(autotuner, friction=0.0)
 
         with _patched_replay_core(_SINGLE_TICK_DAY["trigger_tick_idx"], _REASON):
-            result_on = autotuner.run_simulation({}, history, [_SYM], "2026-05-10", {_REASON: _PENALTY})
+            result_on = autotuner.run_simulation(
+                {}, history, [_SYM], "2026-05-10", {_REASON: _PENALTY}
+            )
 
         assert result_on == pytest.approx(expected_on, abs=1e-9), (
-            f"run_simulation friction-on result mismatch. "
-            f"expected={expected_on}, got={result_on}"
+            f"run_simulation friction-on result mismatch. expected={expected_on}, got={result_on}"
         )
         # Both scenarios stay below the missed-upside/drawdown thresholds, so
         # the delta reduces to friction * NEGATIVE_GUARD_ALPHA_MULT (the

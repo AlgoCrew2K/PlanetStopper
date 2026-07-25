@@ -3606,7 +3606,9 @@ def get_exit_turnover_stats(symphony_id: str, *, now_utc: "datetime | None" = No
     if now_utc is None:
         now_utc = datetime.now(UTC)
 
-    zero_result = {window: {"exit_count": 0, "coverage_days": 0} for window in _TURNOVER_WINDOWS_DAYS}
+    zero_result = {
+        window: {"exit_count": 0, "coverage_days": 0} for window in _TURNOVER_WINDOWS_DAYS
+    }
     try:
         conn = get_connection()
         earliest_row = conn.execute(

@@ -33,7 +33,9 @@ import app as app_module
 _REALIZED_FIXTURE_DIR = (
     pathlib.Path(__file__).parent.parent / "fixtures" / "app" / "guard_alpha_summary_realized"
 )
-_OLD_FORMAT_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "app" / "guard_alpha_summary"
+_OLD_FORMAT_FIXTURE_DIR = (
+    pathlib.Path(__file__).parent.parent / "fixtures" / "app" / "guard_alpha_summary"
+)
 
 _PM_2026_07_01 = json.loads((_REALIZED_FIXTURE_DIR / "post_mortem_2026-07-01.json").read_text())
 _PM_2026_07_02 = json.loads((_REALIZED_FIXTURE_DIR / "post_mortem_2026-07-02.json").read_text())
@@ -45,7 +47,9 @@ def _valid_triggers(*post_mortems):
 
     out = []
     for pm in post_mortems:
-        out.extend(t for t in pm.get("triggers", []) if analytics_module.is_valid_post_mortem_entry(t))
+        out.extend(
+            t for t in pm.get("triggers", []) if analytics_module.is_valid_post_mortem_entry(t)
+        )
     return out
 
 

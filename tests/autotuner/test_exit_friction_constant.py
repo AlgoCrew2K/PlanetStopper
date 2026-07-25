@@ -124,7 +124,9 @@ def test_sim_exit_friction_pct_source_comment_cites_composer_client_and_validati
     and the validation-report doc path.
     """
     src = _AUTOTUNER_SRC.read_text(encoding="utf-8")
-    assert "SIM_EXIT_FRICTION_PCT" in src, "SIM_EXIT_FRICTION_PCT assignment not found in autotuner.py."
+    assert "SIM_EXIT_FRICTION_PCT" in src, (
+        "SIM_EXIT_FRICTION_PCT assignment not found in autotuner.py."
+    )
 
     # Locate the assignment line and look at a window of preceding comment
     # lines (the house convention for named-constant provenance comments,
