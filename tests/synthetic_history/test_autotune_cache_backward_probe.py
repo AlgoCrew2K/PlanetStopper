@@ -33,6 +33,7 @@ takes it as a parameter and does no clock reads itself.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta
 
 import synthetic_history
@@ -207,4 +208,146 @@ class TestHoldingsChangeDegradesHonestly:
             f"be served for the current (different) holdings-hash -- got "
             f"{result!r}. Silently serving it would be stale-holdings data "
             "leakage."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Hygiene cycle (fix/route-phantom-keys-log-noise, 2026-07-25): cache-miss
+# vs corruption log classification.
+#
+# THE DEFECT: get_cached_synthetic_history_only's backward walk-back (up to
+# AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS=10 candidates) calls load_cached_history
+# per candidate, and a PLAIN MISSING file (the expected case -- the cache is
+# written weekly, so most days the newest-date probes are simply absent) hits
+# load_cached_history's broad `except (OSError, ...)` handler and logs a
+# WARNING "corrupt or unreadable cache file ... [Errno 2] ..." -- up to ~16
+# misleading WARNINGs per call for what is normal operation, not corruption.
+#
+# THE FIX (observable contract only -- deliberately NOT prescribing HOW
+# load_cached_history/get_cached_synthetic_history_only implement the split,
+# so either (a) a kwarg on load_cached_history with a behavior-preserving
+# default, or (b) an os.path.exists() pre-check in the walk-back loop before
+# ever calling load_cached_history, satisfies these tests):
+#   - A plain miss produces AT MOST ONE compact log record per walk-back
+#     call, at level <= INFO, whose message says "miss" and never "corrupt".
+#   - Genuine corruption (a file that EXISTS but is unparseable) still
+#     produces the existing per-file WARNING with "corrupt" wording,
+#     unaffected -- and the walk-back continues past it exactly as today.
+#   - Zero change to return values (a hit's content is unaffected either way).
+# ---------------------------------------------------------------------------
+
+
+class TestCacheMissLogClassification:
+    def test_all_miss_walk_back_logs_at_most_one_record_never_saying_corrupt(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        monkeypatch.chdir(tmp_path)  # empty cache dir -- every candidate is a plain miss
+
+        with caplog.at_level(logging.DEBUG):
+            result = synthetic_history.get_cached_synthetic_history_only(_BOT_STATE, _ANCHOR)
+
+        assert result is None
+        records = list(caplog.records)
+        assert len(records) <= 1, (
+            f"A full all-miss walk-back ({synthetic_history.AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS + 1} "
+            f"candidates) produced {len(records)} log record(s) -- expected at most 1 "
+            f"(one honest summary, not one WARNING per missing file). Records: "
+            f"{[r.getMessage() for r in records]!r}"
+        )
+        assert not any(r.levelno >= logging.WARNING for r in records), (
+            f"A plain cache miss must never log at WARNING or above -- it is the "
+            f"EXPECTED case (weekly cache vs daily probes), not an anomaly. Records: "
+            f"{[(r.levelname, r.getMessage()) for r in records]!r}"
+        )
+        if records:
+            msg = records[0].getMessage().lower()
+            assert records[0].levelno <= logging.INFO, (
+                f"The miss-summary record must be at INFO or lower, got "
+                f"{records[0].levelname} ({records[0].getMessage()!r})."
+            )
+            assert "miss" in msg, (
+                f"The miss-summary record must say 'miss', got {records[0].getMessage()!r}."
+            )
+            assert "corrupt" not in msg, (
+                f"A plain miss must never use corruption wording, got {records[0].getMessage()!r}."
+            )
+
+    def test_day_zero_hit_emits_zero_log_records(self, tmp_path, monkeypatch, caplog):
+        # Plan edge case: "Walk-back where day-0 hits immediately -> zero
+        # miss lines (nothing to summarize)."
+        monkeypatch.chdir(tmp_path)
+        content = {"sym-backward-probe-001": {_ANCHOR: [{"return": 4.4}]}}
+        _write_cache_file(_BOT_STATE, _ANCHOR, content)
+
+        with caplog.at_level(logging.DEBUG):
+            result = synthetic_history.get_cached_synthetic_history_only(_BOT_STATE, _ANCHOR)
+
+        assert result == content
+        assert len(caplog.records) == 0, (
+            f"An immediate day-0 hit must produce zero log records (nothing was "
+            f"missing to summarize), got "
+            f"{[(r.levelname, r.getMessage()) for r in caplog.records]!r}"
+        )
+
+    def test_mixed_miss_then_hit_logs_at_most_one_record_and_result_unchanged(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        # Plan edge case: "Walk-back where SOME days miss and an older day
+        # hits -> still at most one INFO summary; the hit proceeds normally."
+        monkeypatch.chdir(tmp_path)
+        aged_date = _n_business_days_before(_ANCHOR, 3)
+        content = {"sym-backward-probe-001": {aged_date: [{"return": 1.5}]}}
+        _write_cache_file(_BOT_STATE, aged_date, content)
+        # No file written for _ANCHOR or the 2 candidates in between -- those
+        # are plain misses preceding the hit.
+
+        with caplog.at_level(logging.DEBUG):
+            result = synthetic_history.get_cached_synthetic_history_only(_BOT_STATE, _ANCHOR)
+
+        assert result == content, (
+            "The hit's content must be unaffected by the log-classification "
+            f"change (AC-6 return-value parity), got {result!r}."
+        )
+        records = list(caplog.records)
+        assert len(records) <= 1, (
+            f"Misses preceding a hit must still collapse to at most 1 summary "
+            f"record, got {len(records)}: {[r.getMessage() for r in records]!r}"
+        )
+        assert not any(r.levelno >= logging.WARNING for r in records)
+        if records:
+            assert "corrupt" not in records[0].getMessage().lower()
+
+    def test_corrupt_file_mid_walkback_still_warns_and_walkback_continues(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        # Plan edge case: "A genuinely corrupt file mid-walk-back -> WARNING
+        # fires for that file; the walk-back continues past it exactly as
+        # today." Corrupt file at day-0 (exists but unparseable), valid hit
+        # at an aged date behind it.
+        monkeypatch.chdir(tmp_path)
+        _, _, today_cache_file = synthetic_history._resolve_history_cache_key(_BOT_STATE, _ANCHOR)
+        assert today_cache_file is not None
+        with open(today_cache_file, "w", encoding="utf-8") as f:
+            f.write("{ this is not valid json")  # genuinely corrupt, file EXISTS
+
+        aged_date = _n_business_days_before(_ANCHOR, 2)
+        aged_content = {"sym-backward-probe-001": {aged_date: [{"return": 6.6}]}}
+        _write_cache_file(_BOT_STATE, aged_date, aged_content)
+
+        with caplog.at_level(logging.DEBUG):
+            result = synthetic_history.get_cached_synthetic_history_only(_BOT_STATE, _ANCHOR)
+
+        assert result == aged_content, (
+            f"The walk-back must continue past the corrupt day-0 file and find "
+            f"the valid aged hit behind it, got {result!r}."
+        )
+        warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warning_records, (
+            "A genuinely corrupt (existing but unparseable) cache file must still "
+            "produce a WARNING -- AC-6: corruption wording/level preserved verbatim. "
+            f"All records: {[(r.levelname, r.getMessage()) for r in caplog.records]!r}"
+        )
+        assert any("corrupt" in r.getMessage().lower() for r in warning_records), (
+            f"The corrupt-file WARNING must use 'corrupt' wording (unchanged), got "
+            f"{[r.getMessage() for r in warning_records]!r}"
         )

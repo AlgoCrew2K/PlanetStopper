@@ -24,6 +24,8 @@ pollutes -- the real repo's cache/ directory.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 import autotuner
@@ -78,17 +80,32 @@ class TestWarmCacheReturnsRealStatsWithoutFetching:
                 "2026-01-07": [{"return": 0.3}],
             }
         }
+        bot_state = {sym_id: {"current_holdings": [{"ticker": "SPY"}]}}
 
-        monkeypatch.setattr(
-            database,
-            "load_state",
-            lambda: {sym_id: {"current_holdings": [{"ticker": "SPY"}]}},
-        )
+        monkeypatch.setattr(database, "load_state", lambda: bot_state)
         monkeypatch.setattr(
             synthetic_history,
             "load_cached_history",
             lambda cache_file: history_data,
         )
+
+        # fix/route-phantom-keys-log-noise (AC-5/AC-6): get_cached_synthetic_
+        # history_only now gates load_cached_history behind a real
+        # os.path.exists(cache_file) precheck (a plain-missing candidate is
+        # never even handed to the mocked loader) -- so mocking the loader
+        # alone no longer suffices to simulate a hit. Materialize a real
+        # (content-irrelevant, since the loader is mocked above) dummy file
+        # at the SAME path production resolves: same bot_state + the same
+        # "today" (ET) date derivation build_if_held_replay_series itself
+        # uses (synthetic_history.utc_to_eastern(datetime.now(UTC))), fed
+        # through the shared synthetic_history._resolve_history_cache_key
+        # (never a hand-rolled hash) -- so the walk-back's day-0 candidate
+        # finds it and the mocked loader fires as intended.
+        current_date_str = synthetic_history.utc_to_eastern(datetime.now(UTC)).strftime("%Y-%m-%d")
+        _, _, cache_file = synthetic_history._resolve_history_cache_key(bot_state, current_date_str)
+        assert cache_file is not None
+        with open(cache_file, "w", encoding="utf-8") as f:
+            f.write("{}")  # content irrelevant -- load_cached_history is mocked above
 
         fetch_calls: list = []
 

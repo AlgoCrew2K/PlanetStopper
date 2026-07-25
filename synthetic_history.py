@@ -545,6 +545,35 @@ def _resolve_history_cache_key(
 AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS: int = 10
 
 
+def _log_cache_miss_summary(missed_dates: list, current_date_str: str) -> None:
+    """Emit at most ONE compact INFO line summarizing plain (file-does-not-
+    exist) cache misses accumulated during get_cached_synthetic_history_only's
+    backward walk -- a no-op when missed_dates is empty (an immediate day-0
+    hit, or a walk-back where bot_state has no holdings at all, has nothing
+    to summarize).
+
+    Collapses what was previously up to AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS+1
+    per-file WARNING "corrupt or unreadable" records (a plain ENOENT miss is
+    the EXPECTED case under the weekly cache cadence, not a corruption
+    signal -- feature-plans/preconditions-phantom-keys-and-cache-log-noise.md
+    AC-5) into a single honest line. Deliberately distinct from, and never
+    fired instead of, load_cached_history's own per-file WARNING -- that
+    path is untouched and still fires verbatim for a genuinely corrupt
+    (existing but unparseable) cache file.
+    """
+    if not missed_dates:
+        return
+    logging.info(
+        "synthetic_history: cache miss for %d candidate date(s) (%s .. %s) "
+        "while walking back from %s -- expected under the weekly cache "
+        "cadence, not an anomaly",
+        len(missed_dates),
+        missed_dates[0],
+        missed_dates[-1],
+        current_date_str,
+    )
+
+
 def get_cached_synthetic_history_only(bot_state: dict, current_date_str: str) -> "dict | None":
     """CACHE-ONLY read of the synthetic-history file cache -- NEVER triggers
     a live fetch (contrast with generate_synthetic_history, which fetches on
@@ -567,8 +596,21 @@ def get_cached_synthetic_history_only(bot_state: dict, current_date_str: str) ->
     reflects the OLD holdings and never matches a freshly computed hash for
     current holdings; no special-casing needed). current_date_str itself
     (offset 0) is checked first and always wins when present -- still
-    zero network, every candidate is only ever load_cached_history, never
-    fetch_bars.
+    zero network, every candidate is only ever an os.path.exists check plus
+    (when present) load_cached_history, never fetch_bars.
+
+    CACHE-MISS LOG CLASSIFICATION (feature-plans/preconditions-phantom-keys-
+    and-cache-log-noise.md AC-5/AC-6): each candidate's file is existence-
+    checked BEFORE load_cached_history is called at all, so a plain missing
+    file never reaches load_cached_history and never raises -- it's
+    collected into a local accumulator instead. load_cached_history itself
+    is untouched: it is only ever called for a candidate whose file exists,
+    so its existing per-file WARNING path/wording still fires verbatim, and
+    unchanged, for a genuinely corrupt/unreadable file (and for its OTHER
+    caller, generate_synthetic_history, which is not touched by this
+    function at all). At most one aggregate INFO summary is emitted per call
+    via _log_cache_miss_summary, right before returning (on a hit or on
+    exhaustion) -- never per missing file.
 
     Returns None on: no holdings anywhere in bot_state, every candidate in
     the backward window missing or corrupt/unreadable (see
@@ -580,13 +622,25 @@ def get_cached_synthetic_history_only(bot_state: dict, current_date_str: str) ->
     """
     candidate_date = datetime.strptime(current_date_str, "%Y-%m-%d").date()
     trading_days_back = 0
+    missed_dates: list = []
     while trading_days_back <= AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS:
         candidate_date_str = candidate_date.strftime("%Y-%m-%d")
         _, _, cache_file = _resolve_history_cache_key(bot_state, candidate_date_str)
         if cache_file is not None:
-            history_data = load_cached_history(cache_file)
-            if history_data is not None:
-                return history_data
+            if not os.path.exists(cache_file):
+                # Plain miss -- collected silently, never passed to
+                # load_cached_history (which would otherwise raise+WARN on
+                # the ENOENT it can't distinguish from real corruption).
+                missed_dates.append(candidate_date_str)
+            else:
+                # File exists: any failure here is genuine corruption, and
+                # load_cached_history's existing WARNING path is untouched.
+                # (A vanish-between-check-and-read race degrades to that
+                # same WARNING -- acceptable, not worth defending against.)
+                history_data = load_cached_history(cache_file)
+                if history_data is not None:
+                    _log_cache_miss_summary(missed_dates, current_date_str)
+                    return history_data
 
         # Step to the previous NYSE trading day for the next candidate.
         candidate_date -= timedelta(days=1)
@@ -594,6 +648,7 @@ def get_cached_synthetic_history_only(bot_state: dict, current_date_str: str) ->
             candidate_date -= timedelta(days=1)
         trading_days_back += 1
 
+    _log_cache_miss_summary(missed_dates, current_date_str)
     return None
 
 
