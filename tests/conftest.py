@@ -24,6 +24,35 @@ import pytest
 # The per-test _isolate_db fixture (below) provides per-test isolation for
 # read-back assertions.  Both mechanisms coexist: pytest_configure sets a
 # safe session-wide default, _isolate_db overrides per-test.
+#
+# PER-WORKER PATH FIX (ledger UPDATE-18 flake class; exit-friction-realized-
+# savings cycle, 2026-07-25, 2/2 reproduction on PR #113 CI same night):
+# under xdist (this project's standing addopts: "-n 2 --dist loadfile"),
+# EVERY worker subprocess (gw0, gw1, ...) — and the controller's own
+# collection pass — INHERITS DB_PATH from the controller's environment via
+# standard OS subprocess inheritance. The `"DB_PATH" not in os.environ`
+# guard below is therefore False for every worker, so before this fix every
+# worker silently reused the controller's ONE session DB file. Any test
+# file whose import chain transitively reaches database.py (e.g. via
+# acceptance_gate -> advisors.overfitting_conscience/spec_critic ->
+# database) then triggers database.py's unconditional module-level
+# init_db() — full schema DDL, including the WAL-mode PRAGMA — against that
+# SAME shared SQLite file from multiple OS processes concurrently during
+# collection, occasionally exceeding the busy-timeout
+# ("sqlite3.OperationalError: database is locked", worse on Windows'
+# distinct file-locking behavior vs POSIX). --dist loadfile's hash-based
+# file-to-worker distribution shifts with every new test file added to the
+# suite, so a previously-rare interleaving can start reproducing reliably
+# without any new file doing anything wrong on its own — exactly what
+# happened here (2/2 on this cycle's PR, zero new import-time work added).
+#
+# FIX: branch on PYTEST_XDIST_WORKER (an env var xdist sets fresh inside
+# EVERY worker subprocess specifically for this per-worker-resource
+# pattern) so each worker gets its own unique temp DB path regardless of
+# what it inherited. Applies to both DB_PATH and its ATLAS_CACHE_DB_PATH
+# sibling below (identical latent shared-file exposure). database.py's
+# module-level init_db() itself is intentionally untouched — out of scope;
+# this conftest guard is the complete fix for the CI race.
 # ---------------------------------------------------------------------------
 
 _SESSION_TEMP_DIR: tempfile.TemporaryDirectory | None = None
@@ -60,21 +89,31 @@ def pytest_configure(config):
     This is the earliest possible hook — it runs before collection begins,
     ensuring that database.py's module-level init_db() call never resolves
     to the production alphabot_state.db when running under pytest.
+
+    PYTEST_XDIST_WORKER (set by xdist inside every worker subprocess, e.g.
+    "gw0"/"gw1"; absent in the controller / no-xdist runs) forces a
+    worker-unique path even when DB_PATH/ATLAS_CACHE_DB_PATH were already
+    inherited from the controller's environment — see the module-level
+    comment above for the full race this closes.
     """
     global _SESSION_TEMP_DIR
-    if "DB_PATH" not in os.environ:
-        _SESSION_TEMP_DIR = tempfile.TemporaryDirectory(prefix="pytest_session_db_")
-        session_db = os.path.join(_SESSION_TEMP_DIR.name, "session_alphabot_state.db")
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+    suffix = f"_{worker_id}" if worker_id else ""
+
+    if worker_id is not None or "DB_PATH" not in os.environ:
+        if _SESSION_TEMP_DIR is None:
+            _SESSION_TEMP_DIR = tempfile.TemporaryDirectory(prefix="pytest_session_db_")
+        session_db = os.path.join(_SESSION_TEMP_DIR.name, f"session_alphabot_state{suffix}.db")
         os.environ["DB_PATH"] = session_db
 
     # Route the Atlas cache DB to a session-temp path so tests never read a
     # stale production cache (alphabot_atlas_cache.db in the project root).
     # This ensures tests that mock MongoClient see a cold cache, not a live
     # cached result from a previous operator run with real credentials.
-    if "ATLAS_CACHE_DB_PATH" not in os.environ:
+    if worker_id is not None or "ATLAS_CACHE_DB_PATH" not in os.environ:
         if _SESSION_TEMP_DIR is None:
             _SESSION_TEMP_DIR = tempfile.TemporaryDirectory(prefix="pytest_session_db_")
-        atlas_cache_db = os.path.join(_SESSION_TEMP_DIR.name, "session_atlas_cache.db")
+        atlas_cache_db = os.path.join(_SESSION_TEMP_DIR.name, f"session_atlas_cache{suffix}.db")
         os.environ["ATLAS_CACHE_DB_PATH"] = atlas_cache_db
 
     # ---------------------------------------------------------------------
