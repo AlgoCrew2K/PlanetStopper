@@ -4899,5 +4899,47 @@ def get_incubation_overview() -> "list[dict]":
     return [dict(zip(columns, row)) for row in rows]
 
 
+def record_incubation_fetch_outcome(candidate_hash: str, ok: bool) -> int:
+    """The ONLY sanctioned way advisors/incubation.py touches
+    strategy_incubation.fetch_failure_count — no raw SQL against that column from
+    outside database.py (added 2026-07-25, PM ruling, supersedes an earlier
+    first-pass "no new accessor" decision — see .claude/tdd-handoff.md).
+
+    ok=False (a fetch error, not a 422 — those go straight to
+    set_incubation_status(..., "EXPIRED", ...) and never call this) increments
+    fetch_failure_count by 1; ok=True (a successful fetch, regardless of whether it
+    yielded any new date keys) resets it to 0. Returns the RESULTING count after the
+    write, so the caller in advisors/incubation.py can compare it against
+    INCUBATION_MAX_FETCH_FAILURES in the same call, no second round-trip query.
+    Policy (the threshold comparison, what to do once the count is reached) stays in
+    advisors/incubation.py — this accessor only stores and returns the count, it
+    never reads INCUBATION_MAX_FETCH_FAILURES or decides EXPIRED itself (same
+    policy/storage split used everywhere else in this handoff). Write path
+    (get_connection()), parameterized SQL.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        if ok:
+            cursor.execute(
+                "UPDATE strategy_incubation SET fetch_failure_count = 0 WHERE candidate_hash = ?",
+                (candidate_hash,),
+            )
+        else:
+            cursor.execute(
+                "UPDATE strategy_incubation SET fetch_failure_count = fetch_failure_count + 1 "
+                "WHERE candidate_hash = ?",
+                (candidate_hash,),
+            )
+        conn.commit()
+        row = cursor.execute(
+            "SELECT fetch_failure_count FROM strategy_incubation WHERE candidate_hash = ?",
+            (candidate_hash,),
+        ).fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+    finally:
+        conn.close()
+
+
 # Initialize tables on import
 init_db()

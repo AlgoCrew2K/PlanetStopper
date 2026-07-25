@@ -23,6 +23,10 @@
 --                          (INCUBATING -> PROMOTED, or INCUBATING -> FAILED/EXPIRED
 --                          with a 90-day refractory window before re-admission is
 --                          possible -- enforced by register_incubation_candidate()).
+--                          fetch_failure_count is a durable per-candidate bookkeeping
+--                          counter for the daily tick's consecutive-Composer-fetch-
+--                          failure escalation (added 2026-07-25, ga3-adv schema-gap
+--                          finding -- see database.py's record_incubation_fetch_outcome()).
 --   incubation_daily    - one row per candidate per observed forward trading day;
 --                          UNIQUE(candidate_hash, trading_day) makes a tick re-run
 --                          or a same-day double-fire structurally idempotent
@@ -73,8 +77,21 @@ CREATE TABLE IF NOT EXISTS strategy_incubation (
                                                               -- refractory-window anchor; NULL until
                                                               -- the first transition away from
                                                               -- INCUBATING
-    promoted_at          TEXT                                 -- set only on the transition to
+    promoted_at          TEXT,                                -- set only on the transition to
                                                               -- PROMOTED
+    fetch_failure_count  INTEGER NOT NULL DEFAULT 0            -- durable consecutive-Composer-
+                                                              -- fetch-failure counter for the daily
+                                                              -- tick (TICK4/TICK5) -- cannot be
+                                                              -- derived from incubation_daily gaps
+                                                              -- (a genuine fetch failure leaves ZERO
+                                                              -- rows there, no data trail); an
+                                                              -- in-memory-only counter would silently
+                                                              -- reset on every app.py restart, so it
+                                                              -- lives here instead. The ONLY sanctioned
+                                                              -- writer is database.py's
+                                                              -- record_incubation_fetch_outcome() --
+                                                              -- no raw SQL against this column from
+                                                              -- advisors/incubation.py or elsewhere
 );
 
 -- accelerates get_incubating()'s hot filter (WHERE status = 'INCUBATING')
