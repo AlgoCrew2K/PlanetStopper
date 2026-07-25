@@ -595,8 +595,14 @@
     document.addEventListener('DOMContentLoaded', function () {
         loadRecentRuns();
         loadSymphonies();
+        refreshIncubationChips();
         // 15 s floor — faster than the engine's minute cadence makes no sense.
-        setInterval(loadRecentRuns, 15000);
+        // Also drives the incubation status-chip refresh (AC-5), folded into
+        // this existing interval rather than a new timer.
+        setInterval(function () {
+            loadRecentRuns();
+            refreshIncubationChips();
+        }, 15000);
 
         var selectEl = document.getElementById('symphony-id-input');
         var runBtn = document.getElementById('get-suggestions-btn');
@@ -662,6 +668,38 @@
         }());
 
     });
+
+    // ---------------------------------------------------------------------------
+    // Strategy incubation gate — live status chip refresh (AC-5).
+    //
+    // Chips are server-rendered on page load (app.py's ai_advisor_tab() stamps
+    // a live-joined status onto each survivor at that request), but incubation
+    // status can change between page loads (e.g. INCUBATING -> PROMOTED days
+    // later) — this keeps already-rendered chips in sync without a full page
+    // reload. Folded into the existing 15 s poll interval below rather than a
+    // new timer. Property assignment only (className/textContent), never
+    // innerHTML — status_reason is server-derived text.
+    // ---------------------------------------------------------------------------
+
+    function refreshIncubationChips() {
+        var chips = document.querySelectorAll('[data-testid="incubation-status-chip"]');
+        if (!chips.length) { return; }
+        fetch('/api/incubation')
+            .then(function (resp) { return resp.json(); })
+            .then(function (body) {
+                var rows = (body && body.incubating) || [];
+                var byHash = {};
+                rows.forEach(function (r) { byHash[r.candidate_hash] = r; });
+                chips.forEach(function (chip) {
+                    var hash = chip.dataset.candidateHash;
+                    var row = hash ? byHash[hash] : null;
+                    if (!row) { return; }
+                    chip.className = 'incubation-status-chip incubation-status-chip--' + row.badge_modifier;
+                    chip.textContent = row.badge_label;
+                });
+            })
+            .catch(function () { /* leave last-known chip state in place */ });
+    }
 
     // ---------------------------------------------------------------------------
     // Strategy Builder tab functions (moved from inline script in deleted
