@@ -332,7 +332,11 @@ The feature plan's AC-9 reads "bounded so a large real tree can't blow `build_pl
 
 ```python
 _hash = incubation.candidate_hash(info.tree)
-_backtest_mdd_pct = abs(info.metrics.get("max_drawdown")) * 100.0 if ... else 0.0
+_backtest_mdd_pct = _resolve_admission_mdd_baseline(info.metrics.get("max_drawdown"))
+if _backtest_mdd_pct is None:
+    # review Finding 1: decline admission, never a coerced 0.0 baseline.
+    logger.info("propose_strategies: candidate %s declined incubation admission ...", cid)
+    continue
 _admission = incubation.admit_candidate(
     candidate_hash=_hash,
     tree_json=json.dumps(info.tree),
@@ -343,6 +347,14 @@ _admission = incubation.admit_candidate(
 ```
 
 Survivors are processed in `oos_alpha` descending order (`sorted(screened_survivors, key=lambda gr: gr.oos_alpha, reverse=True)`) — this is what makes the incubation ledger's `MAX_INCUBATING` cap (20, see `docs/generated/database.md`) exclude the LOWEST-`oos_alpha` candidates first when a batch would otherwise overflow it, rather than an arbitrary batch-order truncation. D-1: one candidate's admission failure (caught in its own `try/except`) never breaks another candidate's admission, and never breaks the pre-existing Step-5 `_persist_survivor` call below it — same try/except-and-log pattern as the shipped `insert_frontrunner_proposal` precedent (see "Frontrunner Builder Retrofit" above).
+
+### `_resolve_admission_mdd_baseline(raw_mdd: float | None) -> float | None` (review Finding 1, `7173d269`, 2026-07-25)
+
+Pure function extracted from the inline `abs(...) * 100.0 if ... else 0.0` expression Step 4b originally used. Converts a candidate's backtest `max_drawdown` (quantstats' negative-fraction convention) into the ledger's positive-pct-magnitude convention -- `-0.08` (an 8% drawdown) converts to `8.0` -- **or signals "decline this candidate's admission entirely" by returning `None` when the input itself is `None`.** Step 4b treats a `None` return as a decline: it logs the reason and `continue`s to the next candidate, never calling `admit_candidate`. A genuinely real `0.0` drawdown (a monotonically non-decreasing candidate) is NOT treated as missing -- only an actual `None` input triggers the decline path; `0.0` in still converts to `0.0` out.
+
+**Why this replaced the prior `... else 0.0` coercion:** the original code substituted a `0.0` baseline for a missing MDD as "a conservative choice." Review Finding 1 (`ga3-rev`) correctly identified this as backwards -- a fabricated `0.0` baseline is not conservative, it manufactures a false result: `evaluate_promotion`'s early-fail check (see `docs/generated/advisors_incubation.md`) compares forward MDD against `INCUBATION_MDD_BREACH_MULT * backtest_mdd_pct`, so a `0.0` baseline would trip an `mdd_breach` verdict the very first time the candidate showed ANY nonzero forward drawdown -- misreporting genuinely missing data as a risk-exceeded finding, not "erring safe."
+
+**Severity, as re-graded by `ga3-tw`'s adversarial verification (frozen in `.claude/tdd-handoff.md`) -- read this precisely, it is deliberately NOT "closes a live bug":** as of this cycle, a candidate whose `info.metrics["max_drawdown"]` is `None` **cannot reach Step 4b at all** via the real `propose_strategies()` call path in production. `_passes_screens` (`strategy_builder_engine.py:516-518`) already fails closed on ANY `None` metric earlier in the pipeline, unconditionally, with no `screen_config`-dependent bypass -- pinned by the pre-existing `tests/advisors/test_strategy_builder_engine.py::TestAdversarialCycle3::test_passes_screens_returns_false_when_max_drawdown_is_none`, which was independently verified GREEN before this fix landed. `_resolve_admission_mdd_baseline`'s `None`-handling is therefore **second-layer defense, not a fix for a currently-exploitable bug** -- correct, honest defensive code that ensures the seam never manufactures a fabricated verdict if a future refactor ever changes call ordering, changes `_passes_screens`'s `None`-handling, or adds an alternate entry point that bypasses screens. `evaluate_promotion` itself is byte-unchanged by this fix.
 
 **`_persist_survivor` gains one new optional kwarg, `candidate_hash: str | None = None`.** Threaded through from Step 4b's result (`_candidate_hashes.get(cid)`, `None` for rejected candidates, which are never admitted). Stamped into `raw_response["candidate_hash"]` as the ONLY additive key this feature adds — deliberately **not** a frozen `"incubation_status"` key, because `advisor_observations` rows are append-only/immutable (no update/delete accessor exists): a status frozen at persist time would always read the admission-moment value and could never reflect a later promotion/failure. Status is instead computed LIVE at render/API time by joining this `candidate_hash` against the incubation ledger — see `app.py`'s `_incubation_badge`/`GET /api/incubation`/`ai_advisor_tab()` stamping in `docs/generated/app.md`.
 
