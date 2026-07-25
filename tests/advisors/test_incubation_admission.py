@@ -306,12 +306,19 @@ class TestAdmissionWiringEndToEnd:
         """WIRE3 (D-1): if the admission call raises, the existing
         insert_advisor_observation persist must still succeed -- mirrors the shipped
         insert_frontrunner_proposal try/except precedent (strategy_builder_engine.py
-        :770-789). Simulated by making database.register_incubation_candidate raise."""
-        monkeypatch.setattr(
-            db_module,
-            "register_incubation_candidate",
-            MagicMock(side_effect=RuntimeError("simulated DB failure")),
-        )
+        :770-789). Simulated by making database.register_incubation_candidate raise.
+
+        Non-vacuity note (PM-required check, 2026-07-25): a detached-worktree check
+        at a commit where the Step-5 admission wiring was absent showed this test
+        PASSING vacuously -- register_incubation_candidate already existed (from
+        ga3-db's earlier work) but was simply never CALLED, so the mocked
+        RuntimeError never fired and observations_written>=1 held anyway (the base
+        persist doesn't depend on admission at all). The mock_register.assert_called()
+        line below closes that gap: it fails if admission wiring is absent OR never
+        reaches the mocked call, distinguishing 'admission failed gracefully' from
+        'admission was never attempted.'"""
+        mock_register = MagicMock(side_effect=RuntimeError("simulated DB failure"))
+        monkeypatch.setattr(db_module, "register_incubation_candidate", mock_register)
         try:
             run = _run_propose_strategies_against_real_db(monkeypatch)
         except RuntimeError:
@@ -320,6 +327,11 @@ class TestAdmissionWiringEndToEnd:
                 "must be caught and logged (D-1), never propagated to break the "
                 "existing advisor_observations persistence."
             )
+        assert mock_register.called, (
+            "register_incubation_candidate was never called -- this test cannot "
+            "verify D-1 admission-failure resilience unless admission was actually "
+            "attempted (non-vacuity requirement)."
+        )
         assert run.observations_written >= 1, (
             "The existing advisor_observations persist must still succeed even when "
             f"admission raises. Got observations_written={run.observations_written}."
