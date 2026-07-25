@@ -269,8 +269,7 @@ class TestCacheMissLogClassification:
                 f"The miss-summary record must say 'miss', got {records[0].getMessage()!r}."
             )
             assert "corrupt" not in msg, (
-                f"A plain miss must never use corruption wording, got "
-                f"{records[0].getMessage()!r}."
+                f"A plain miss must never use corruption wording, got {records[0].getMessage()!r}."
             )
 
     def test_day_zero_hit_emits_zero_log_records(self, tmp_path, monkeypatch, caplog):

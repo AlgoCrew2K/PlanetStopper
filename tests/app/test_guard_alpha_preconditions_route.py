@@ -617,9 +617,7 @@ class TestPhantomKeyExclusion:
                 f"{data['symphonies'].get(metadata_key)!r}."
             )
 
-    def test_novel_metadata_shaped_key_excluded_without_a_denylist_entry(
-        self, client, monkeypatch
-    ):
+    def test_novel_metadata_shaped_key_excluded_without_a_denylist_entry(self, client, monkeypatch):
         # AC-2 anti-rot proof: a key NEVER referenced anywhere in app.py's
         # source, dict-valued but WITHOUT "name" -- a hardcoded denylist of
         # the 5 known names would leave this present (masquerading as a
